@@ -47,6 +47,7 @@ from jailbee.upgrade import ACTION_COMMANDS
 if TYPE_CHECKING:
     from jailbee.accounts.models import ActivityEvent
     from jailbee.dashboard.model import RepoGroup, Row
+    from jailbee.orchestration.view import GrantView
 
 DETAILS_MAX_ROWS = 8  # content rows inside the border, for the label/value grid
 DETAILS_ACTIVITY_ROWS = 3  # rows every view reserves under it while any container has activity
@@ -399,6 +400,23 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
     )
 
 
+def _publish_summary(g: GrantView) -> str:
+    """A grant's publish rights on one card line, as escaped markup; ``none`` when empty."""
+    parts: list[str] = []
+    if g.publish_issues:
+        parts.append(f"issues {', '.join(escape(k) for k in g.publish_issues)}")
+    if g.publish_foreign_repos and g.publish_foreign_actions:
+        repos = ", ".join(escape(r) for r in g.publish_foreign_repos)
+        parts.append(f"foreign {repos} ({', '.join(escape(k) for k in g.publish_foreign_actions)})")
+    if g.publish_prs:
+        parts.append("PRs")
+    if g.publish_pr_reviews:
+        parts.append("PR reviews")
+    if not parts:
+        return "none"
+    return " · ".join([*parts, f"{g.publish_rate}/hour"])
+
+
 def _orchestration_lines(c: ContainerInfo) -> tuple[str, ...]:
     """An orchestrator's or child's card lines, as escaped markup; empty for others."""
 
@@ -425,6 +443,7 @@ def _orchestration_lines(c: ContainerInfo) -> tuple[str, ...]:
             f"[dim]may:[/dim] {', '.join(escape(o) for o in g.operations)}",
             rights("may grant:", g.mounts, g.loose, g.egress),
             f"[dim]default runner:[/dim] {escape(g.default_runner or 'inherit')}",
+            f"[dim]publish:[/dim] {_publish_summary(g)}",
         )
     if c.child is not None:
         ch = c.child

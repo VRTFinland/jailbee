@@ -1262,6 +1262,7 @@ def _orch(**kw: Any) -> ContainerInfo:
         mounts=kw.pop("mounts", ("data",)),
         loose=kw.pop("loose", False),
         egress=kw.pop("egress", ()),
+        **kw.pop("publish", {}),
     )
     unread = kw.pop("unread", 0)
     gs = _gs(unread_inbox=unread) if unread else None
@@ -1291,6 +1292,27 @@ def test_orchestrator_card_lines() -> None:
         "[dim]may:[/dim] spawn, stop",
         "[dim]may grant:[/dim] mounts data · loose no · egress —",
         "[dim]default runner:[/dim] inherit",
+        "[dim]publish:[/dim] none",
+    )
+
+
+def test_orchestrator_card_shows_publish_rights() -> None:
+    p = dd.container_panel(
+        _orch(
+            publish={
+                "publish_issues": ("comment", "state"),
+                "publish_foreign_repos": ("org/[x]",),
+                "publish_foreign_actions": ("comment",),
+                "publish_prs": True,
+                "publish_pr_reviews": True,
+                "publish_rate": 12,
+            }
+        ),
+        NOW,
+    )
+    assert p.orchestration[4] == (
+        r"[dim]publish:[/dim] issues comment, state · foreign org/\[x] (comment)"
+        " · PRs · PR reviews · 12/hour"
     )
 
 
@@ -1335,7 +1357,8 @@ def test_panel_lines_draw_orchestration_after_exceptions() -> None:
     assert "may:" in body[row + 2]
     assert "may grant:" in body[row + 3]
     assert body[row + 4] == "default runner: inherit"
-    assert body[row + 5] == "⚠ behind"
+    assert body[row + 5] == "publish: none"
+    assert body[row + 6] == "⚠ behind"
 
 
 def test_child_of_unknown_orchestrator_state_is_not_marked_stopped() -> None:

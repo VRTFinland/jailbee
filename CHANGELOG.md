@@ -35,6 +35,8 @@ before editing `## Unreleased`.
   audit log. Children never receive publish rights. Upgrade the host CLI and
   broker together: the optional `publish` grant-label key is not understood
   by older brokers. The staged container helper needs no base-image rebuild.
+  The terminal dashboard's `Orchestration…` menu shows and edits the publish
+  rights alongside the other grant fields.
 - Built-in `none` and `all` autostart profiles are available alongside configured
   profiles. Restart commands and the dashboard can choose a profile and reset
   explicit service selections; `none` skips repository startup while preserving

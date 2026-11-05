@@ -513,11 +513,18 @@ def orchestrate_grant_argv(
     egress: Sequence[str] | None = None,
     runner: Runner | None = None,
     clear_runner: bool = False,
+    publish_issues: Sequence[str] | None = None,
+    publish_foreign: tuple[Sequence[str], Sequence[str]] | None = None,
+    publish_prs: bool | None = None,
+    publish_pr_reviews: bool | None = None,
+    publish_rate: int | None = None,
 ) -> list[str]:
     """`jailbee orchestrate grant`: options before the separator, in signature order.
 
     ``None`` leaves a field as it is. An empty ``mounts`` / ``egress`` clears
-    the list (``--clear-mounts`` / ``--clear-egress``).
+    the list (``--clear-mounts`` / ``--clear-egress``); an empty
+    ``publish_issues``, or ``publish_foreign`` with no repositories, clears
+    those rights (``none``). ``publish_foreign`` is ``(repos, kinds)``.
     """
     options: list[str] = []
     if profile is not None:
@@ -542,7 +549,53 @@ def orchestrate_grant_argv(
             options += ["--runner-model", runner.model]
     if clear_runner:
         options.append("--clear-runner")
+    if publish_issues is not None:
+        options += ["--publish-issues", ",".join(publish_issues) or "none"]
+    if publish_foreign is not None:
+        repos, kinds = publish_foreign
+        entries = [f"{repo}:{','.join(kinds)}" for repo in repos] or ["none"]
+        options += [item for e in entries for item in ("--publish-foreign-issues", e)]
+    if publish_prs is not None:
+        options.append("--publish-prs" if publish_prs else "--no-publish-prs")
+    if publish_pr_reviews is not None:
+        options.append("--publish-pr-reviews" if publish_pr_reviews else "--no-publish-pr-reviews")
+    if publish_rate is not None:
+        options += ["--publish-rate", str(publish_rate)]
     return ["orchestrate", "grant", *options, "--", name]
+
+
+def parse_foreign_issue_answer(text: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """``owner/name[, owner/name]: kind[, kind]`` as ``(repos, kinds)``; blank is ``((), ())``.
+
+    Repositories are casefolded and both lists sorted, as the grant stores
+    them. Raises ``ValueError`` with a readable reason for a malformed answer.
+    """
+    from pydantic import ValidationError
+
+    from jailbee.orchestration.grant import ISSUE_ACTION_KINDS, ForeignIssueRights
+
+    answer = text.strip()
+    if not answer:
+        return (), ()
+    repos_part, sep, kinds_part = answer.partition(":")
+    if not sep:
+        raise ValueError("Write the repositories, a colon, then the kinds: owner/name: comment")
+    repos = tuple(sorted({r.casefold() for r in repos_part.replace(",", " ").split()}))
+    kinds = tuple(sorted(set(kinds_part.replace(",", " ").split())))
+    if not repos:
+        raise ValueError("Name at least one owner/name repository, or *")
+    if not kinds:
+        raise ValueError("Name at least one issue action kind")
+    unknown = [k for k in kinds if k not in ISSUE_ACTION_KINDS]
+    if unknown:
+        raise ValueError(
+            f"Unknown issue action {unknown[0]!r}; known: {', '.join(ISSUE_ACTION_KINDS)}"
+        )
+    try:
+        ForeignIssueRights.model_validate({"repos": repos, "actions": kinds})
+    except ValidationError as e:
+        raise ValueError(str(e.errors()[0]["msg"]).removeprefix("Value error, ")) from e
+    return repos, kinds
 
 
 def orchestrate_profile_save_argv(name: str, profile: str, *, force: bool = False) -> list[str]:

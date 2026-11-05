@@ -146,7 +146,8 @@ repository must use the same kinds. `--publish-foreign-issues none` clears the
 foreign block alone. `--publish-prs/--no-publish-prs` and
 `--publish-pr-reviews/--no-publish-pr-reviews` toggle their rights.
 `--no-publish` clears everything and is exclusive with other publish flags.
-A bare `grant` keeps existing publish rights. `show` and `ls` display them.
+A bare `grant` keeps existing publish rights. `show` and `ls` display them;
+the terminal dashboard's `Orchestration…` menu shows and edits them too.
 Profiles may carry the same block; the repo cap intersects rights and takes
 the smaller rate, while `publish: false` forbids publication.
 

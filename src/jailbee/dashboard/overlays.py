@@ -85,6 +85,7 @@ def validate_answer(prompt: TextPrompt, text: str) -> str | None:
         "container-rename",
         "container-orchestration-egress",
         "container-orchestration-save-profile",
+        "container-orchestration-publish-foreign",
     )
     if not answer and prompt.purpose not in clears:
         return f"{prompt.label} cannot be empty"
@@ -92,6 +93,17 @@ def validate_answer(prompt: TextPrompt, text: str) -> str | None:
         answer.isascii() and answer.isdecimal() and 1 <= int(answer) <= 64
     ):
         return "Children limit must be a whole number from 1 to 64"
+    if prompt.purpose == "container-orchestration-publish-rate" and not (
+        answer.isascii() and answer.isdecimal() and 1 <= int(answer) <= 500
+    ):
+        return "Publish rate must be a whole number from 1 to 500"
+    if prompt.purpose == "container-orchestration-publish-foreign":
+        from jailbee.dashboard.actions import parse_foreign_issue_answer
+
+        try:
+            parse_foreign_issue_answer(answer)
+        except ValueError as e:
+            return str(e)
     if prompt.purpose == "container-memory-other":
         from jailbee.memory_limit import validate_size
 

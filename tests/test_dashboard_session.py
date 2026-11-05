@@ -585,6 +585,7 @@ def _orchestration_session(
     kinds=(),
     egress=(),
     loose=False,
+    publish=None,
 ):
     from jailbee.orchestration.view import GrantView
 
@@ -593,7 +594,14 @@ def _orchestration_session(
         info = dataclasses.replace(
             info,
             configured_mounts=tuple(kinds),
-            grant=GrantView(limit=2, operations=ops, mounts=mounts, loose=loose, egress=egress),
+            grant=GrantView(
+                limit=2,
+                operations=ops,
+                mounts=mounts,
+                loose=loose,
+                egress=egress,
+                **(publish or {}),
+            ),
         )
     group = dmodel.RepoGroup(
         "alpha", str(tmp_path), None, [info], orchestration_profiles=tuple(profiles)
@@ -985,6 +993,11 @@ def test_orchestration_edit_entries_labels(mocker, tmp_path):
         ("Grant mount docs: off", "mount:docs"),
         ("Egress for children: pypi.org…", "egress"),
         ("Default runner: inherit (agent default)…", "runner"),
+        ("Publish issues: none…", "publish-issues"),
+        ("Publish foreign issues: none…", "publish-foreign"),
+        ("Publish PRs: off", "publish:prs"),
+        ("Publish PR reviews: off", "publish:pr-reviews"),
+        ("Publish rate: 30/hour…", "publish-rate"),
         ("Re-apply profile 'bugfixer'", "profile:bugfixer"),
         ("Save as profile…", "save-profile"),
         ("Revoke…", "revoke"),
@@ -1457,6 +1470,11 @@ def test_menu_locally_unchanged(mocker, tmp_path):
         "mount:data",
         "egress",
         "runner",
+        "publish-issues",
+        "publish-foreign",
+        "publish:prs",
+        "publish:pr-reviews",
+        "publish-rate",
         "profile:bugfixer",
         "save-profile",
         "revoke",
@@ -1564,3 +1582,277 @@ def test_services_menu_order_and_ssh_action_gates(mocker, tmp_path):
     actions = session.submit_picker(picker, picker.entries[0])
     assert isinstance(actions, Picker)
     assert {e.value for e in actions.entries} == {"stop", "restart", "logs"}
+
+
+# --- publish rights -------------------------------------------------------
+
+
+def _publish_issues_picker(session):
+    return session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "publish-issues")
+    )
+
+
+def test_publish_labels_summarise_the_grant(mocker, tmp_path):
+    session, _ = _orchestration_session(
+        mocker,
+        tmp_path,
+        grant=True,
+        publish={
+            "publish_issues": ("comment", "state"),
+            "publish_foreign_repos": ("org/lib", "org/x"),
+            "publish_foreign_actions": ("comment",),
+            "publish_prs": True,
+            "publish_rate": 12,
+        },
+    )
+    labels = {e.value: e.label for e in session.open_orchestration("alpha-one").entries}
+    assert labels["publish-issues"] == "Publish issues: comment, state…"
+    assert labels["publish-foreign"] == "Publish foreign issues: org/lib, org/x (comment)…"
+    assert labels["publish:prs"] == "Publish PRs: on"
+    assert labels["publish:pr-reviews"] == "Publish PR reviews: off"
+    assert labels["publish-rate"] == "Publish rate: 12/hour…"
+
+
+def test_publish_issues_picker_lists_every_kind(mocker, tmp_path):
+    session, quiet = _orchestration_session(
+        mocker, tmp_path, grant=True, publish={"publish_issues": ("assign", "comment")}
+    )
+    picker = _publish_issues_picker(session)
+    quiet.assert_not_called()
+    assert picker.purpose == "container-orchestration-publish-issues"
+    assert picker.back.purpose == "container-orchestration"
+    assert [(e.label, e.value) for e in picker.entries] == [
+        ("create: off", "issue:create"),
+        ("edit: off", "issue:edit"),
+        ("comment: on", "issue:comment"),
+        ("labels: off", "issue:labels"),
+        ("state: off", "issue:state"),
+        ("assign_self: on (via assign)", "issue:assign_self"),
+        ("assign: on", "issue:assign"),
+    ]
+
+
+def test_publish_issue_toggles_send_the_whole_list(mocker, tmp_path):
+    session, quiet = _orchestration_session(
+        mocker, tmp_path, grant=True, publish={"publish_issues": ("comment",)}
+    )
+    picker = _publish_issues_picker(session)
+    picker = session.submit_picker(picker, PickerEntry("", "issue:create"))
+    assert quiet.call_args.args[1] == [
+        "orchestrate",
+        "grant",
+        "--publish-issues",
+        "comment,create",
+        "--",
+        "alpha-one",
+    ]
+    # the reopened sub-picker sits on the toggled kind and shows the patched grant
+    assert picker.purpose == "container-orchestration-publish-issues"
+    assert picker.entries[picker.start_index].value == "issue:create"
+    assert picker.entries[picker.start_index].label == "create: on"
+    picker = session.submit_picker(picker, PickerEntry("", "issue:comment"))
+    assert quiet.call_args.args[1][2:4] == ["--publish-issues", "create"]
+    session.submit_picker(picker, PickerEntry("", "issue:create"))
+    assert quiet.call_args.args[1][2:4] == ["--publish-issues", "none"]
+    assert session.groups[0].containers[0].grant.publish_issues == ()
+
+
+def test_publish_issue_toggle_failure_closes_the_menu(mocker, tmp_path):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    quiet.return_value = False
+    picker = _publish_issues_picker(session)
+    assert session.submit_picker(picker, PickerEntry("", "issue:create")) is None
+    assert session.overlay is None
+    assert session.groups[0].containers[0].grant.publish_issues == ()
+
+
+@pytest.mark.parametrize(
+    ("value", "on", "flag"),
+    [
+        ("publish:prs", False, "--publish-prs"),
+        ("publish:prs", True, "--no-publish-prs"),
+        ("publish:pr-reviews", False, "--publish-pr-reviews"),
+        ("publish:pr-reviews", True, "--no-publish-pr-reviews"),
+    ],
+)
+def test_publish_pr_toggles(mocker, tmp_path, value, on, flag):
+    field = "publish_prs" if value == "publish:prs" else "publish_pr_reviews"
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True, publish={field: on})
+    out = session.submit_picker(session.open_orchestration("alpha-one"), PickerEntry("", value))
+    assert quiet.call_args.args[1] == ["orchestrate", "grant", flag, "--", "alpha-one"]
+    assert getattr(session.groups[0].containers[0].grant, field) is (not on)
+    assert out.entries[out.start_index].value == value
+
+
+def test_publish_rate_prompt_validates_and_runs(mocker, tmp_path):
+    from jailbee.dashboard.overlays import validate_answer
+
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    prompt = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "publish-rate")
+    )
+    assert prompt.purpose == "container-orchestration-publish-rate"
+    assert prompt.initial == "30"
+    for bad in ("0", "501", "x", "", "-1", "1.5"):
+        assert validate_answer(prompt, bad)
+    assert validate_answer(prompt, " 500 ") is None
+    out = session.submit_prompt(prompt, " 10 ")
+    assert quiet.call_args.args[1] == [
+        "orchestrate",
+        "grant",
+        "--publish-rate",
+        "10",
+        "--",
+        "alpha-one",
+    ]
+    assert session.groups[0].containers[0].grant.publish_rate == 10
+    assert out.entries[out.start_index].value == "publish-rate"
+
+
+def test_publish_foreign_prompt_prefills_and_runs(mocker, tmp_path):
+    session, quiet = _orchestration_session(
+        mocker,
+        tmp_path,
+        grant=True,
+        publish={
+            "publish_foreign_repos": ("org/lib",),
+            "publish_foreign_actions": ("comment", "state"),
+        },
+    )
+    prompt = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "publish-foreign")
+    )
+    assert prompt.purpose == "container-orchestration-publish-foreign"
+    assert prompt.initial == "org/lib: comment, state"
+    out = session.submit_prompt(prompt, "Org/Lib, other/x : comment,  edit")
+    assert quiet.call_args.args[1] == [
+        "orchestrate",
+        "grant",
+        "--publish-foreign-issues",
+        "org/lib:comment,edit",
+        "--publish-foreign-issues",
+        "other/x:comment,edit",
+        "--",
+        "alpha-one",
+    ]
+    grant = session.groups[0].containers[0].grant
+    assert grant.publish_foreign_repos == ("org/lib", "other/x")
+    assert grant.publish_foreign_actions == ("comment", "edit")
+    assert out.entries[out.start_index].value == "publish-foreign"
+
+
+def test_empty_publish_foreign_answer_clears(mocker, tmp_path):
+    from jailbee.dashboard.overlays import validate_answer
+
+    session, quiet = _orchestration_session(
+        mocker,
+        tmp_path,
+        grant=True,
+        publish={"publish_foreign_repos": ("org/lib",), "publish_foreign_actions": ("comment",)},
+    )
+    prompt = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "publish-foreign")
+    )
+    assert validate_answer(prompt, "  ") is None
+    session.submit_prompt(prompt, "  ")
+    assert quiet.call_args.args[1] == [
+        "orchestrate",
+        "grant",
+        "--publish-foreign-issues",
+        "none",
+        "--",
+        "alpha-one",
+    ]
+    grant = session.groups[0].containers[0].grant
+    assert (grant.publish_foreign_repos, grant.publish_foreign_actions) == ((), ())
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["org/lib", "org/lib:", ": comment", "org/lib: close", "lib: comment", "*, org/x: comment"],
+)
+def test_publish_foreign_prompt_rejects_malformed_answers(mocker, tmp_path, answer):
+    from jailbee.dashboard.overlays import validate_answer
+
+    session, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    prompt = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "publish-foreign")
+    )
+    assert validate_answer(prompt, answer)
+
+
+def test_publish_foreign_prompt_accepts_any_repository(mocker, tmp_path):
+    from jailbee.dashboard.overlays import validate_answer
+
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    prompt = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "publish-foreign")
+    )
+    assert validate_answer(prompt, "*: comment") is None
+    session.submit_prompt(prompt, "*: comment")
+    assert quiet.call_args.args[1][2:4] == ["--publish-foreign-issues", "*:comment"]
+
+
+def _ssh_publish_session(mocker, tmp_path, allow, publish=None):
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True, publish=publish)
+    session.over_ssh = True
+    session.ssh_policy = RemoteSSHConfig.model_validate(
+        {
+            "commands": {"mode": "allowlist", "allow": ["orchestrate grant", *allow]},
+            "restrict_host": False,
+            "orchestration": "ssh",
+        }
+    )
+    return session, quiet
+
+
+def test_ssh_hides_publish_widening_without_manual_publish_permission(mocker, tmp_path):
+    session, _ = _ssh_publish_session(mocker, tmp_path, allow=[])
+    values = [e.value for e in session.open_orchestration("alpha-one").entries]
+    assert not {"publish-issues", "publish-foreign", "publish:prs", "publish:pr-reviews"} & set(
+        values
+    )
+    assert "publish-rate" in values  # lowering the rate always narrows
+
+
+def test_ssh_offers_publish_widening_the_session_could_do_itself(mocker, tmp_path):
+    session, _ = _ssh_publish_session(
+        mocker, tmp_path, allow=["issue apply", "pr push", "review apply"]
+    )
+    values = [e.value for e in session.open_orchestration("alpha-one").entries]
+    assert {"publish-issues", "publish-foreign", "publish:prs", "publish:pr-reviews"} <= set(values)
+    picker = _publish_issues_picker(session)
+    assert len(picker.entries) == 7
+
+
+def test_ssh_offers_turning_publish_rights_off(mocker, tmp_path):
+    session, _ = _ssh_publish_session(
+        mocker,
+        tmp_path,
+        allow=[],
+        publish={
+            "publish_issues": ("comment",),
+            "publish_foreign_repos": ("org/lib",),
+            "publish_foreign_actions": ("comment",),
+            "publish_prs": True,
+            "publish_pr_reviews": True,
+        },
+    )
+    values = [e.value for e in session.open_orchestration("alpha-one").entries]
+    assert {"publish-issues", "publish-foreign", "publish:prs", "publish:pr-reviews"} <= set(values)
+    picker = _publish_issues_picker(session)
+    assert [e.value for e in picker.entries] == ["issue:comment"]
+
+
+@pytest.mark.parametrize("value", ["publish-rate", "publish-foreign"])
+def test_publish_prompt_escape_returns_to_orchestration(mocker, tmp_path, value):
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
+    session.overlay = session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", value)
+    )
+    session.overlay_cancel()
+    quiet.assert_not_called()
+    assert session.overlay.purpose == "container-orchestration"

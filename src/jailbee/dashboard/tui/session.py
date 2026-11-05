@@ -198,6 +198,9 @@ def _normalised(grant: GrantView | None) -> GrantView | None:
         operations=tuple(sorted(set(grant.operations))),
         mounts=tuple(sorted(set(grant.mounts))),
         egress=tuple(sorted(set(grant.egress))),
+        publish_issues=tuple(sorted(set(grant.publish_issues))),
+        publish_foreign_repos=tuple(sorted(set(grant.publish_foreign_repos))),
+        publish_foreign_actions=tuple(sorted(set(grant.publish_foreign_actions))),
     )
 
 
@@ -229,6 +232,8 @@ class _GrantPatch:
 log = logging.getLogger(__name__)
 
 _TOGGLE_OPERATIONS = ("import", "refresh", "restart", "stop", "destroy")  # spawn/message baseline
+# publish issue kinds in the order the sub-picker lists them
+_PUBLISH_ISSUE_KINDS = ("create", "edit", "comment", "labels", "state", "assign_self", "assign")
 GRANT_PATCH_SECONDS = 15.0  # how long a local grant edit outlasts a snapshot that lacks it
 NOTICE_SECONDS = 2.5  # how long a transient subtitle message stays up
 FAILURE_NOTICE_SECONDS = 8.0  # a refused account command's reason, long enough to read
@@ -1148,6 +1153,7 @@ class DashboardSession:
                 inherited += f" from {group.default_runner_source}"
             runner_label = grant.default_runner or f"inherit ({inherited})"
             entries.append(PickerEntry(f"Default runner: {runner_label}…", "runner"))
+            entries.extend(self._publish_entries(container, grant))
             for p in group.orchestration_profiles:
                 entries.append(PickerEntry(f"Re-apply profile '{p}'", f"profile:{p}"))
             if permitted(
@@ -1282,11 +1288,15 @@ class DashboardSession:
             return self._reopen_orchestration(container, "pending")
         if picker.purpose == "container-orchestration-runner":
             return self._submit_runner(container, entry.value)
+        if picker.purpose == "container-orchestration-publish-issues":
+            return self._toggle_publish_issue(container, entry.value)
         if entry.value == "runner":
             return self._runner_picker(container)
-        if entry.value in ("limit", "egress"):
+        if entry.value == "publish-issues":
+            return self._publish_issues_picker(container)
+        if entry.value in ("limit", "egress", "publish-rate", "publish-foreign"):
             return self._orchestration_prompt(container, found[1], entry.value)
-        if entry.value.startswith(("op:", "mount:")) or entry.value == "loose":
+        if entry.value.startswith(("op:", "mount:", "publish:")) or entry.value == "loose":
             return self._orchestration_choice(container, entry.value)
         if entry.value.startswith("profile:"):
             argv = dact.orchestrate_grant_argv(container, profile=entry.value[len("profile:") :])
@@ -1359,6 +1369,90 @@ class DashboardSession:
         )
         return self._reopen_orchestration(container, "runner")
 
+    def _publish_widening_permitted(self, container: str, right: str) -> bool:
+        """Whether this session may add publish ``right``: it could publish that by hand.
+
+        Mirrors the CLI's remote check (`orchestrate grant` over SSH refuses a
+        new publish right the session's own policy would not let it publish);
+        always true locally.
+        """
+        argv = {
+            "issues": ["issue", "apply", container],
+            "prs": ["pr", "push", container, "--source-manifest", "publish.json"],
+            "reviews": ["review", "apply", container],
+        }[right]
+        return permitted(argv, self.ssh_policy, over_ssh=self.over_ssh)
+
+    def _publish_entries(self, container: str, grant: GrantView) -> list[PickerEntry]:
+        """The publish rows of the Orchestration menu; turning a right off is always offered."""
+        entries: list[PickerEntry] = []
+        issues_ok = self._publish_widening_permitted(container, "issues")
+        if grant.publish_issues or issues_ok:
+            listed = ", ".join(grant.publish_issues) or "none"
+            entries.append(PickerEntry(f"Publish issues: {listed}…", "publish-issues"))
+        if grant.publish_foreign_repos or issues_ok:
+            foreign = "none"
+            if grant.publish_foreign_repos and grant.publish_foreign_actions:
+                foreign = (
+                    f"{', '.join(grant.publish_foreign_repos)}"
+                    f" ({', '.join(grant.publish_foreign_actions)})"
+                )
+            entries.append(PickerEntry(f"Publish foreign issues: {foreign}…", "publish-foreign"))
+        if grant.publish_prs or self._publish_widening_permitted(container, "prs"):
+            state = "on" if grant.publish_prs else "off"
+            entries.append(PickerEntry(f"Publish PRs: {state}", "publish:prs"))
+        if grant.publish_pr_reviews or self._publish_widening_permitted(container, "reviews"):
+            state = "on" if grant.publish_pr_reviews else "off"
+            entries.append(PickerEntry(f"Publish PR reviews: {state}", "publish:pr-reviews"))
+        entries.append(PickerEntry(f"Publish rate: {grant.publish_rate}/hour…", "publish-rate"))
+        return entries
+
+    def _publish_issues_picker(self, container: str, start_index: int = 0) -> Picker | None:
+        found = self._listed_container(container)
+        if found is None or found[1].grant is None or not self._orchestration_editable(found[1]):
+            self.set_notice("Orchestration is not available for this container")
+            return None
+        info = found[1]
+        granted = found[1].grant.publish_issues
+        widen = self._publish_widening_permitted(container, "issues")
+        entries: list[PickerEntry] = []
+        for kind in _PUBLISH_ISSUE_KINDS:
+            if kind not in granted and not widen:
+                continue
+            state = "on" if kind in granted else "off"
+            if kind == "assign_self" and kind not in granted and "assign" in granted:
+                state = "on (via assign)"
+            entries.append(PickerEntry(f"{kind}: {state}", f"issue:{kind}"))
+        return Picker(
+            "container-orchestration-publish-issues",
+            f"Issue actions '{info.display_name}' may publish",
+            tuple(entries),
+            target=container,
+            back=self.open_orchestration(container),
+            start_index=start_index,
+        )
+
+    def _toggle_publish_issue(self, container: str, value: str) -> Picker | None:
+        found = self._listed_container(container)
+        repo = self.repo_for(container, "container")
+        if found is None or repo is None or found[1].grant is None:
+            self.set_notice(f"'{container}' is gone")
+            return None
+        grant = found[1].grant
+        kind = value.removeprefix("issue:")
+        current = set(grant.publish_issues)
+        new = tuple(sorted(current - {kind} if kind in current else current | {kind}))
+        argv = dact.orchestrate_grant_argv(container, publish_issues=new)
+        if not self.run_quiet_cli(repo, argv):
+            return self._close_after_failure()
+        self._patch_grant(container, replace(grant, publish_issues=new))
+        before = self._publish_issues_picker(container)
+        index = (
+            next((i for i, e in enumerate(before.entries) if e.value == value), 0) if before else 0
+        )
+        self.overlay = self._publish_issues_picker(container, start_index=index)
+        return self.overlay if isinstance(self.overlay, Picker) else None
+
     def _orchestration_editable(self, info: ContainerInfo) -> bool:
         """Whether the menu applies to ``info`` and `orchestrate grant` may run for it."""
         return dact.orchestration_offered(
@@ -1379,6 +1473,30 @@ class DashboardSession:
                 "Children limit (1-64)",
                 initial=str(grant.limit),
                 target=container,
+            )
+        if value == "publish-rate":
+            return TextPrompt(
+                "container-orchestration-publish-rate",
+                f"Orchestration for '{info.display_name}'",
+                "Publish actions per hour (1-500)",
+                initial=str(grant.publish_rate),
+                target=container,
+                back=self.open_orchestration(container),
+            )
+        if value == "publish-foreign":
+            initial = ""
+            if grant.publish_foreign_repos:
+                initial = (
+                    f"{', '.join(grant.publish_foreign_repos)}: "
+                    f"{', '.join(grant.publish_foreign_actions)}"
+                )
+            return TextPrompt(
+                "container-orchestration-publish-foreign",
+                f"Orchestration for '{info.display_name}'",
+                "Foreign issue rights (owner/name, …: kind, …; * for any repo; empty clears)",
+                initial=initial,
+                target=container,
+                back=self.open_orchestration(container),
             )
         return TextPrompt(
             "container-orchestration-egress",
@@ -1415,6 +1533,12 @@ class DashboardSession:
             new = [m for m in current if m != kind] if kind in current else [*current, kind]
             new_mounts = tuple(new)
             argv = dact.orchestrate_grant_argv(container, mounts=new_mounts)
+        elif value == "publish:prs":
+            argv = dact.orchestrate_grant_argv(container, publish_prs=not grant.publish_prs)
+        elif value == "publish:pr-reviews":
+            argv = dact.orchestrate_grant_argv(
+                container, publish_pr_reviews=not grant.publish_pr_reviews
+            )
         patched = replace(grant)
         if value.startswith("op:"):
             op = value[len("op:") :]
@@ -1424,6 +1548,10 @@ class DashboardSession:
             patched = replace(grant, loose=not grant.loose)
         elif value.startswith("mount:"):
             patched = replace(grant, mounts=new_mounts)
+        elif value == "publish:prs":
+            patched = replace(grant, publish_prs=not grant.publish_prs)
+        elif value == "publish:pr-reviews":
+            patched = replace(grant, publish_pr_reviews=not grant.publish_pr_reviews)
         if argv is None or not self.run_quiet_cli(repo, argv):
             return self._close_after_failure()
         self._patch_grant(container, patched)
@@ -1491,6 +1619,20 @@ class DashboardSession:
             argv = dact.orchestrate_grant_argv(container, children=limit)
             patched = replace(grant, limit=limit)
             value = "limit"
+        elif prompt.purpose == "container-orchestration-publish-rate":
+            rate = int(answer)
+            argv = dact.orchestrate_grant_argv(container, publish_rate=rate)
+            patched = replace(grant, publish_rate=rate)
+            value = "publish-rate"
+        elif prompt.purpose == "container-orchestration-publish-foreign":
+            try:
+                repos, kinds = dact.parse_foreign_issue_answer(answer)
+            except ValueError as e:
+                self.set_notice(str(e))
+                return self._reopen_orchestration(container, "publish-foreign")
+            argv = dact.orchestrate_grant_argv(container, publish_foreign=(repos, kinds))
+            patched = replace(grant, publish_foreign_repos=repos, publish_foreign_actions=kinds)
+            value = "publish-foreign"
         else:
             hosts = tuple(answer.replace(",", " ").split())
             argv = dact.orchestrate_grant_argv(container, egress=hosts)
@@ -2381,6 +2523,8 @@ class DashboardSession:
             "container-orchestration-limit",
             "container-orchestration-egress",
             "container-orchestration-save-profile",
+            "container-orchestration-publish-rate",
+            "container-orchestration-publish-foreign",
         ):
             return self._submit_orchestration_text(prompt, answer)
         if prompt.purpose == "container-retarget":
@@ -2586,6 +2730,7 @@ class DashboardSession:
             "container-orchestration",
             "container-orchestration-revoke",
             "container-orchestration-runner",
+            "container-orchestration-publish-issues",
             "container-orchestration-overwrite-profile",
             "container-orchestration-adopt",
             "container-orchestration-release",
