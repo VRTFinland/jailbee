@@ -616,7 +616,9 @@ def test_host_restart_passes_runtime_options(make_cfg, tmp_path, monkeypatch):
 
 def test_config_short_option_value_double_dash_is_not_separator(make_cfg, tmp_path, monkeypatch):
     from typer.testing import CliRunner
+
     from jailbee import cli
+
     cfg = make_cfg(tmp_path)
     loaded = Mock(return_value=cfg)
     monkeypatch.setattr(cli, "_load_or_exit", loaded)

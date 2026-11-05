@@ -264,6 +264,7 @@ def test_args_require_enabled_service(tmp_path):
 def test_cli_redacts_runtime_env_in_status_and_failure(tmp_path, monkeypatch):
     from jailbee.services.launch_store import LaunchRequest
     from tests.test_services_runtime import runtime
+
     rt, proc = runtime(tmp_path, {"web": {"run": "web"}})
     monkeypatch.setattr("jailbee.services.container_cmd._runtime", lambda _: rt)
     secret = "secret-runtime-value"
@@ -276,11 +277,14 @@ def test_cli_redacts_runtime_env_in_status_and_failure(tmp_path, monkeypatch):
         assert secret not in result.output
     proc.immediate_exit.add("svc-web")
     original = proc.tmux
+
     def capture(args):
         if args[0] == "capture-pane":
             import subprocess
+
             return subprocess.CompletedProcess(args, 0, secret, "")
         return original(args)
+
     proc.tmux = capture
     result = runner.invoke(container_app, ["service", "restart", "web", "--env", f"TOKEN={secret}"])
     assert result.exit_code == 1
