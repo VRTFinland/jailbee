@@ -28,8 +28,10 @@ Then choose the implementation vehicle by what the work needs:
 
 - **Subagents** share this container and work tree and return their result
   straight to you. Use them for investigation and review. Light work needing
-  no development environment (text, docs or skill wording) goes to a fork or
-  a fresh subagent when saving your context matters; tiny edits can be done inline.
+  no development environment (text, docs or skill wording) goes to a fresh
+  subagent, or a forked copy of your own agent session where your agent has
+  one (not a `fork` child container), when saving your context matters;
+  tiny edits can be done inline.
 - **Child containers** have their own checkout, branch, environment and
   long-running agent session. Use one when work benefits from its own
   development environment: code changes with test suites, services, long

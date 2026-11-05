@@ -56,8 +56,9 @@ Work benefiting from its own development environment (code with test suites,
 services, multi-step implementation or whole plans) goes to a child briefed
 with the findings and acceptance tests; the child implements, tests and
 commits, and the orchestrator merges or stages its work on `done`. Light
-text, doc or skill changes go to a fork or a fresh subagent when saving
-context matters; tiny edits can be done inline. Beyond those tiny edits,
+text, doc or skill changes go to a fresh subagent (or a forked copy of the
+agent's own session, not a `fork` child container) when saving context
+matters; tiny edits can be done inline. Beyond those tiny edits,
 the orchestrator does the work itself only when it needs its own live
 environment or the user asks. Subagents remain the tool for investigation
 and review here, and for plan tasks inside a child.
