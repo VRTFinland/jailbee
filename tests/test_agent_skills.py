@@ -395,7 +395,10 @@ def test_orchestration_skills_escalate_when_inbox_cli_is_unavailable(name: str) 
 
 def test_child_routes_working_inbox_requests_to_orchestrator() -> None:
     text = _skill_text(CHILD)
-    assert "When the inbox CLI works, route orchestration requests and blockers to your orchestrator." in " ".join(text.split())
+    assert (
+        "When the inbox CLI works, route orchestration requests and blockers to your orchestrator."
+        in " ".join(text.split())
+    )
 
 
 def test_orchestration_skill_covers_review_focus() -> None:
@@ -463,7 +466,14 @@ def test_child_skill_limits_the_child() -> None:
     ):
         assert needle in text, needle
     assert "never read, write or move files under `~/.jailbee/orchestration/`" in text
-    for forbidden in (".json.tmp", "references/protocol.md", "~/.jailbee/orchestration/outbox", "inbox/read/", "mv`", "{\"version\": 1"):
+    for forbidden in (
+        ".json.tmp",
+        "references/protocol.md",
+        "~/.jailbee/orchestration/outbox",
+        "inbox/read/",
+        "mv`",
+        '{"version": 1',
+    ):
         assert forbidden not in text, forbidden
     assert "Never" in text
     for forbidden_act in ("merge", "push", "spawn", "destroy"):
@@ -1201,7 +1211,9 @@ def _tagged_blocks() -> list[tuple[str, str]]:
     blocks = []
     for m in _JSON_BLOCK.finditer(text):
         kind = m.group("kind")
-        assert kind in _KINDS, f"orchestration-protocol.md: json block without a valid kind tag:\n{m.group('body')}"
+        assert kind in _KINDS, (
+            f"orchestration-protocol.md: json block without a valid kind tag:\n{m.group('body')}"
+        )
         blocks.append((kind, m.group("body")))
     assert blocks, "orchestration-protocol.md"
     return blocks

@@ -410,8 +410,7 @@ def cmd_grant(settings: Settings, *, as_json: bool = False) -> int:
     actions = foreign_issues.get("actions")
     foreign_text = (
         "; ".join(
-            f"{text(repo)} ({', '.join(text(action) for action in actions)})"
-            for repo in repos
+            f"{text(repo)} ({', '.join(text(action) for action in actions)})" for repo in repos
         )
         if isinstance(repos, list) and isinstance(actions, list)
         else "-"

@@ -1565,7 +1565,7 @@ def test_wait_msg_prefix_ignores_status_ack_but_wakes_on_message(script, base, t
     ack = write_inbox(base, FIRST, {**status("s"), "state": "done", "detail": "delivered to kid"})
     r = run(script, "wait", "--wake-on", "msg:done", "--timeout", "0", env=env_for(base, tmp_path))
     assert r.returncode == 1
-    done = write_inbox(base, SECOND, {**message("d"), "kind": "done"})
+    write_inbox(base, SECOND, {**message("d"), "kind": "done"})
     r = run(script, "wait", "--wake-on", "msg:done", "--timeout", "0", env=env_for(base, tmp_path))
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == "d"
@@ -1577,7 +1577,7 @@ def test_wait_status_prefix_ignores_message_of_same_word(script, base, tmp_path)
     env = env_for(base, tmp_path)
     r = run(script, "wait", "--wake-on", "status:done", "--timeout", "0", env=env)
     assert r.returncode == 1
-    refused = write_inbox(base, SECOND, {**status("s"), "state": "refused"})
+    write_inbox(base, SECOND, {**status("s"), "state": "refused"})
     r = run(script, "wait", "--wake-on", "status:refused", "--timeout", "0", env=env)
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == "s"
@@ -1589,7 +1589,7 @@ def test_wait_recommended_filter_skips_acks_wakes_on_failures(script, base, tmp_
     write_inbox(base, SECOND, {**status("b", "m-2"), "state": "started"})
     env = env_for(base, tmp_path)
     assert run(script, "wait", "--wake-on", flt, "--timeout", "0", env=env).returncode == 1
-    failed = write_inbox(base, "20260101T000003Z-c.json", {**status("c", "m-3"), "state": "failed"})
+    write_inbox(base, "20260101T000003Z-c.json", {**status("c", "m-3"), "state": "failed"})
     r = run(script, "wait", "--wake-on", flt, "--timeout", "0", env=env)
     assert r.stdout.strip() == "c"
 
@@ -1775,7 +1775,7 @@ def test_wait_poll_respects_timeout(script, base, tmp_path):
 
 def test_wait_filter_matches_status_state(script, base, tmp_path):
     write_inbox(base, FIRST, status("ignored"))
-    expected = write_inbox(base, SECOND, {**status("failed"), "state": "failed"})
+    write_inbox(base, SECOND, {**status("failed"), "state": "failed"})
     r = run(
         script, "wait", "--wake-on", "failed,refused", "--timeout", "0", env=env_for(base, tmp_path)
     )
@@ -1819,7 +1819,7 @@ def test_send_reserves_status_before_publishing(script, base, tmp_path):
 
 def test_wait_first_report_from_stopped_child(script, base, tmp_path):
     child_snapshot(base, running=False)
-    path = write_inbox(base, FIRST, {**message("first"), "from": "kid", "kind": "note"})
+    write_inbox(base, FIRST, {**message("first"), "from": "kid", "kind": "note"})
     r = run(script, "wait", "--wake-on", "done", "--timeout", "0", env=env_for(base, tmp_path))
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == "first"
@@ -1897,7 +1897,7 @@ def test_send_wait_sigint_exits_130_without_traceback(base, tmp_path):
         _, stderr = proc.communicate(timeout=5)
         assert proc.returncode == 130
         assert "Traceback" not in stderr
-        path = write_inbox(base, FIRST, status("late", ref=mid))
+        write_inbox(base, FIRST, status("late", ref=mid))
         result = subprocess.run(
             [sys.executable, "-m", "jailbee.inbox", "wait", "--timeout", "0"],
             env=env,
