@@ -20,6 +20,7 @@ STORE = "store"
 REFUSED = "refused"
 BUSY = "busy"
 NOT_FOUND = "not_found"
+DUPLICATE = "duplicate"
 
 ERROR_CODES: frozenset[str] = frozenset(
     {
@@ -30,6 +31,7 @@ ERROR_CODES: frozenset[str] = frozenset(
         REFUSED,
         BUSY,
         NOT_FOUND,
+        DUPLICATE,
     }
 )
 

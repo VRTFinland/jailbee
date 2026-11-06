@@ -7,7 +7,7 @@ import pytest
 from jailbee.orchestration import broker, socket_ops, wire
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.socket_ops import NextArgs, Waiter, Waiters
-from jailbee.orchestration.store import BrokerStore
+from jailbee.orchestration.store import BrokerStore, StoreError
 from tests.test_orchestration_broker import Rig, _child, _orch
 
 if TYPE_CHECKING:
@@ -180,13 +180,14 @@ def test_settle_delays_and_reselects(env: Env) -> None:
     ws.add(env.waiter())
     assert env.evaluate(ws, mono=0.0) == []
     env.put("m2")
-    assert env.evaluate(ws, mono=1.0) == []  # match found: settle until 2.0
+    assert env.evaluate(ws, mono=1.0) == []  # m2 found: settle until 2.0
+    env.store.ack(env.orch, "m2", now=1.2)  # the first pick is taken meanwhile
     env.store.insert_item(
         env.orch, "proj-orch", {"type": "message", "id": "m1", "kind": "n"}, now=50.0
     )
     assert env.evaluate(ws, mono=1.5) == []
     [(_, res)] = env.evaluate(ws, mono=2.0)
-    assert res == {"kind": "message", "id": "m2"}
+    assert res == {"kind": "message", "id": "m1"}  # re-selected, not cached
 
 
 def test_timeout(env: Env) -> None:
@@ -267,3 +268,42 @@ def test_quiet_without_children_view_is_bad_request(env: Env) -> None:
     ws.add(env.waiter(quiet=5))
     [(_, res)] = env.evaluate(ws)
     assert isinstance(res, wire.WireError) and res.code == wire.BAD_REQUEST
+
+
+def test_a_store_error_answers_only_that_waiter(env: Env, monkeypatch) -> None:
+    env.store.insert_item(
+        env.kid, "proj-kid", {"type": "message", "id": "k1", "kind": "n"}, now=1.0
+    )
+    ws = Waiters()
+    ws.add(env.waiter(uuid=env.orch, conn_id=1))
+    ws.add(env.waiter(uuid=env.kid, conn_id=2))
+    real = env.store.unacked
+
+    def unacked(uuid: str):  # type: ignore[no-untyped-def]
+        if uuid == env.orch:
+            raise StoreError("locked")
+        return real(uuid)
+
+    monkeypatch.setattr(env.store, "unacked", unacked)
+    answered = {w.conn_id: res for w, res in env.evaluate(ws)}
+    assert answered[2] == {"kind": "message", "id": "k1"}
+    err = answered[1]
+    assert isinstance(err, wire.WireError) and err.code == wire.STORE
+    assert len(ws) == 0
+
+
+@pytest.mark.parametrize("kw", [{"quiet": 5}, {"digest": 5}])
+def test_a_waiter_that_lost_its_context_is_not_orchestrated(env: Env, kw: dict[str, int]) -> None:
+    ws = Waiters()
+    ws.add(env.waiter(**kw))
+    del env.memory.contexts[env.orch]
+    [(_, res)] = env.evaluate(ws)
+    assert isinstance(res, wire.WireError) and res.code == wire.NOT_ORCHESTRATED
+
+
+def test_a_plain_waiter_without_context_keeps_waiting(env: Env) -> None:
+    ws = Waiters()
+    ws.add(env.waiter())
+    del env.memory.contexts[env.orch]
+    assert env.evaluate(ws) == []
+    assert len(ws) == 1

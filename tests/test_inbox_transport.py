@@ -225,6 +225,21 @@ def test_call_send_two_drops_unreachable(path):
         srv.close()
 
 
+def test_call_send_error_response_is_final_and_not_resent(path):
+    srv = serve(
+        path,
+        lambda r: wire.fail(wire.STORE, "disk full"),
+        lambda r: wire.ok({"state": "queued"}),
+    )
+    try:
+        with pytest.raises(BrokerError) as exc:
+            call_send(lambda: Client(path), {"id": "x"}, timeout=5)
+        assert exc.value.code == wire.STORE
+        assert len(srv.requests) == 1
+    finally:
+        srv.close()
+
+
 def test_call_send_connect_failure_not_resent(path):
     made = []
 

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import logging
 import math
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from jailbee.inbox.render import jq_tostring
@@ -13,12 +16,15 @@ from jailbee.orchestration import broker, publishing, wake, wire
 from jailbee.orchestration.actions import Outcome, refused
 from jailbee.orchestration.outbox import grant_json_text
 from jailbee.orchestration.protocol import ManifestError, body_file_of, parse_manifest
+from jailbee.orchestration.store import StoreError
 from jailbee.outbox_io import _validate_outbox_name
 
 if TYPE_CHECKING:
     from jailbee.orchestration.actions import ActionContext
     from jailbee.orchestration.protocol import Manifest
     from jailbee.orchestration.store import BrokerStore, StoredItem
+
+log = logging.getLogger(__name__)
 
 
 def handle_send(
@@ -52,13 +58,24 @@ def handle_send(
     if ctx.role() == "none":
         raise wire.WireError(wire.NOT_ORCHESTRATED, "this container has no orchestration role")
 
+    ctx = dataclasses.replace(ctx, now=datetime.now(UTC))
     recorded = store.lookup_request(ctx.sender.key, request_id)
     if recorded is not None and recorded.item is not None:
+        # A crash between the journal and the insert may have lost the item;
+        # the insert ignores a duplicate.
+        store.insert_item(
+            ctx.sender.key, ctx.sender.full, recorded.item, now=time.time(), acked=wait
+        )
         return recorded.item
     if recorded is not None or publishing.was_accepted(ctx, request_id):
-        # The file transport drops these silently; a socket client needs an
-        # answer. The real status is (or will be) in its inbox. Not recorded.
-        return _item(request_id, refused("request already handled; see the inbox for its status"))
+        # The file transport drops these silently; a socket client needs a
+        # stable answer that is not a refusal. The real status is (or will be)
+        # in its inbox, or was already reported.
+        raise wire.WireError(
+            wire.DUPLICATE,
+            f"request {request_id} was already handled; "
+            "its status is in the inbox or was already reported",
+        )
 
     text = json.dumps(manifest)
     files = {file_name: text}
@@ -91,7 +108,11 @@ def handle_send(
     def reply(ref: str, outcome: Outcome) -> None:
         assert item is not None
         store.insert_item(ctx.sender.key, ctx.sender.full, item, now=time.time(), acked=wait)
-        broker.clear_reply_path(ctx, ref)
+        try:
+            broker.clear_reply_path(ctx, ref)
+        except OSError:
+            # Only a stale gate remains; the status itself is delivered.
+            log.warning("broker: %s: could not clear the reply gate of %s", ctx.sender.full, ref)
 
     outcome = broker._handle_manifest(
         ctx,
@@ -316,7 +337,10 @@ class Waiters:
         """Answer every waiter that is ready; the answered ones are removed."""
         answered: list[tuple[Waiter, dict[str, object] | wire.WireError]] = []
         for uuid, waiter in list(self._by_uuid.items()):
-            outcome = _evaluate_one(waiter, memory, store, now=now, mono=mono)
+            try:
+                outcome = _evaluate_one(waiter, memory, store, now=now, mono=mono)
+            except StoreError as e:
+                outcome = wire.WireError(wire.STORE, str(e))
             if outcome is not None:
                 del self._by_uuid[uuid]
                 answered.append((waiter, outcome))
@@ -330,6 +354,8 @@ def _evaluate_one(
         return None
     uuid = waiter.uuid
     ctx = memory.contexts.get(uuid)
+    if (waiter.quiet or waiter.digest) and (ctx is None or ctx.role() != "orchestrator"):
+        return wire.WireError(wire.NOT_ORCHESTRATED, "this container is not an orchestrator")
     view = (
         memory.children.get(ctx.sender.full)
         if ctx is not None and ctx.role() == "orchestrator"

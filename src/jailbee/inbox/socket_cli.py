@@ -106,11 +106,16 @@ def cmd_send(request: SendRequest) -> int:
     request = validate(request)
     ident, manifest, body = prepare_send(request)
     timeout = cli.parse_timeout(request.timeout or "30m") if request.wait else CALL_TIMEOUT
+    # Like the file path: the id is printed before the broker is asked.
+    print(ident, flush=True)
     try:
         item = call_send(
             _factory, {"manifest": manifest, "body": body, "wait": request.wait}, timeout=timeout
         )
     except BrokerError as exc:
+        if exc.code == wire.DUPLICATE:
+            print(f"{PROG}: {exc.detail}", file=sys.stderr)
+            return 0
         return _fail(exc)
     except TimeoutError:
         print(
@@ -119,7 +124,6 @@ def cmd_send(request: SendRequest) -> int:
             file=sys.stderr,
         )
         return 3
-    print(ident, flush=True)
     if not request.wait:
         return 0
     print(pretty(cli._clean_json(item)))

@@ -8,11 +8,9 @@ once per second.
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 import queue
 import time
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from jailbee.orchestration import socket_ops, wire
@@ -89,7 +87,6 @@ def _dispatch(
         ctx = memory.contexts.get(uuid)
         if ctx is None:
             raise wire.WireError(wire.NOT_ORCHESTRATED, "this container has no orchestration role")
-        ctx = dataclasses.replace(ctx, now=datetime.now(UTC))
         return socket_ops.handle_send(
             ctx,
             memory,

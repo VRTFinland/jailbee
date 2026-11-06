@@ -62,7 +62,16 @@ def test_error_response_round_trip():
 
 def test_error_codes_frozenset():
     assert wire.ERROR_CODES == frozenset(
-        {"version", "bad_request", "not_orchestrated", "store", "refused", "busy", "not_found"}
+        {
+            "version",
+            "bad_request",
+            "not_orchestrated",
+            "store",
+            "refused",
+            "busy",
+            "not_found",
+            "duplicate",
+        }
     )
 
 

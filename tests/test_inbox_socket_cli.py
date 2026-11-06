@@ -353,3 +353,28 @@ def test_send_wait_no_reply_exit_3(broker: FakeBroker, sockdir: Path, tmp_path: 
     r = run(sockdir, "send", "stop", "--child", "kid", "--wait", "--timeout", "1", tmp=tmp_path)
     assert r.returncode == 3
     assert "no reply from the host broker" in r.stderr
+    assert r.stdout.startswith("stop-")  # the id was printed before the call
+
+
+def test_send_prints_the_id_before_the_broker_answers(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path
+) -> None:
+    broker.on("send", error=(wire.STORE, "disk full"))
+    r = run(sockdir, "send", "stop", "--child", "kid", tmp=tmp_path)
+    assert r.returncode == 1
+    assert r.stdout.startswith("stop-")
+    assert "disk full" in r.stderr
+    assert len(broker.requests) == 1  # an error response is final
+
+
+@pytest.mark.parametrize("wait", [False, True])
+def test_send_duplicate_is_exit_0_with_a_note(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path, wait: bool
+) -> None:
+    detail = "request x was already handled; its status is in the inbox or was already reported"
+    broker.on("send", error=(wire.DUPLICATE, detail))
+    extra = ["--wait"] if wait else []
+    r = run(sockdir, "send", "stop", "--child", "kid", *extra, tmp=tmp_path)
+    assert r.returncode == 0
+    assert r.stdout.strip().startswith("stop-") and len(r.stdout.split()) == 1
+    assert "already handled" in r.stderr

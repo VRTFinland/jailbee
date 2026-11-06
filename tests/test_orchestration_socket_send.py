@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -146,3 +147,53 @@ def test_done_reply_path_is_written_before_the_reply(env: Env, monkeypatch) -> N
     monkeypatch.setattr(env.store, "insert_item", insert)
     env.send(_message("d2", kind="done"))
     assert seen == [{"ref": "d2", "state": "done", "detail": "delivered"}]
+
+
+def test_accepted_publish_without_a_row_is_a_duplicate(env: Env, monkeypatch) -> None:
+    monkeypatch.setattr("jailbee.orchestration.publishing.was_accepted", lambda ctx, ref: True)
+    with pytest.raises(wire.WireError) as exc:
+        env.send(_message("p1"))
+    assert exc.value.code == wire.DUPLICATE
+    assert "request p1 was already handled" in exc.value.detail
+    env.rig.dispatch.assert_not_called()
+
+
+def test_recorded_row_without_an_item_is_a_duplicate(env: Env) -> None:
+    env.store.record_request(
+        env.ctx.sender.key, "p2", digest=None, state="ignored", detail="", item=None, now=1.0
+    )
+    with pytest.raises(wire.WireError) as exc:
+        env.send(_message("p2"))
+    assert exc.value.code == wire.DUPLICATE
+    env.rig.dispatch.assert_not_called()
+
+
+@pytest.mark.parametrize("wait", [True, False])
+def test_recorded_item_is_inserted_idempotently(env: Env, wait: bool) -> None:
+    # A crash between the journal and the insert left the row without the item.
+    item = {"version": 1, "id": "s-1", "type": "status", "ref": "r1", "state": "done"}
+    key = env.ctx.sender.key
+    env.store.record_request(key, "r1", digest=None, state="done", detail="", item=item, now=1.0)
+    assert env.send(_message("r1"), wait=wait) == item
+    row = env.store.get(key, "s-1")
+    assert row is not None and (row.acked_at is not None) is wait
+    assert env.send(_message("r1"), wait=wait) == item
+    assert len(env.store.history(key)) == 1
+    env.rig.dispatch.assert_not_called()
+
+
+def test_a_failing_reply_path_cleanup_does_not_fail_the_send(env: Env, monkeypatch) -> None:
+    def boom(ctx: object, ref: str) -> None:
+        raise OSError("read-only")
+
+    monkeypatch.setattr(broker, "clear_reply_path", boom)
+    item = env.send(_message("d3", kind="done"))
+    assert item["state"] == "done"
+    assert env.store.get(env.ctx.sender.key, str(item["id"])) is not None
+
+
+def test_handlers_see_the_time_of_handling(env: Env) -> None:
+    env.send(_message("t1"))
+    seen = env.rig.dispatch.call_args.args[0].now
+    assert seen != env.ctx.now
+    assert abs(seen.timestamp() - time.time()) < 60
