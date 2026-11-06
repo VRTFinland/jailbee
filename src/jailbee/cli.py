@@ -11770,10 +11770,32 @@ def base_usage_cmd(
         info("No golden images found.")
         return
 
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.docker_seed_state import get as get_seed_state
+
+    seed_status: dict[str, str] = {}
+    try:
+        with Session(get_engine()) as session:
+            for usage in usages:
+                state = get_seed_state(session, usage.base_alias)
+                if state is None:
+                    continue
+                date = state.seeded_at.date().isoformat()
+                seed_status[usage.base_alias] = (
+                    f"{state.image_count} images, {humanize(state.size_bytes)} ({date})"
+                    if state.outcome == "seeded"
+                    else f"{state.outcome} {date}"
+                )
+    except Exception as exc:
+        warn(f"Could not read Docker seed state: {exc}")
+
     table = Table(title="Golden image disk usage")
     table.add_column("IMAGE")
     table.add_column("DATE")
     table.add_column("SIZE", justify="right")
+    table.add_column("DOCKER")
 
     grand_total = 0
     grand_prunable = 0
@@ -11781,11 +11803,15 @@ def base_usage_cmd(
         subtotal = 0
         prunable = 0
         if u.live_size_bytes is not None:
-            table.add_row(u.base_alias, "[dim]live[/dim]", humanize(u.live_size_bytes))
+            table.add_row(
+                u.base_alias, "[dim]live[/dim]", humanize(u.live_size_bytes),
+                seed_status.get(u.base_alias, ""),
+            )
             subtotal += u.live_size_bytes
         if u.instance_name is not None:
             table.add_row(
-                u.instance_name, "[dim]live (instance)[/dim]", humanize(u.instance_size_bytes)
+                u.instance_name, "[dim]live (instance)[/dim]", humanize(u.instance_size_bytes),
+                seed_status.get(u.base_alias, ""),
             )
             subtotal += u.instance_size_bytes or 0
         for a in u.archives:
