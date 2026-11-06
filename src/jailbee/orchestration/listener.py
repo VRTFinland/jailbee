@@ -342,6 +342,10 @@ class Listener:
             self._flush(conn)
             if conn_id not in self._conns:
                 return
+            if conn.inbuf and not self._held(conn):
+                self._parse(conn)  # the reply backlog drained below the cap
+                if conn_id not in self._conns:
+                    return
         if mask & selectors.EVENT_READ:
             self._read(conn)
 
@@ -428,9 +432,8 @@ class Listener:
         if not conn.outbuf and conn.close_after_flush:
             self._drop_conn(conn.conn_id, event=True)
             return
-        if conn.inbuf and not self._held(conn):
-            self._parse(conn)  # the reply backlog drained below the cap
-            return
+        # Taking the next request after a drained backlog is the caller's job
+        # (the write event or `_reply`): `_parse` itself sends through here.
         self._update_interest(conn)
 
     def _update_interest(self, conn: _Conn) -> None:

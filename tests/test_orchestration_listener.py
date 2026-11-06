@@ -443,3 +443,20 @@ def test_reset_container_drops_connections_and_keeps_listening(
     again = q.get(timeout=2)
     assert isinstance(again, RequestEvent) and again.uuid == "u"
     lis.reset_container("unknown")  # no-op
+
+
+def test_a_run_of_invalid_lines_is_answered_without_recursion(
+    env: tuple[Listener, queue.Queue[Event], Path],
+) -> None:
+    lis, q, root = env
+    lis.open_container("u", root / "u")
+    c = connect(root / "u")
+    c.sendall(b"x\n" * 3000)
+    with c.makefile("rb") as reader:
+        for _ in range(3000):
+            line = reader.readline()
+            assert line, "connection dropped"
+            assert wire.decode_response(line).error_code == wire.BAD_REQUEST
+    c.sendall(req("after"))
+    ev = q.get(timeout=2)
+    assert isinstance(ev, RequestEvent) and ev.request.op == "after"
