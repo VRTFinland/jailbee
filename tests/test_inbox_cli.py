@@ -48,7 +48,6 @@ def _cells(line: str) -> list[str]:
     return re.split(r"\s{2,}", line.strip())
 
 
-
 def test_status_table_running_child():
     from jailbee.inbox.render import render_status
 
@@ -167,7 +166,9 @@ def test_status_non_finite_cpu_prints_question_mark(cpu):
     assert _cells(out.splitlines()[1])[4] == "?"
 
 
-@pytest.mark.parametrize(("value", "expected"), [("0", 0), ("2s", 2), ("3m", 180), ("1h", 3600), ("none", None)])
+@pytest.mark.parametrize(
+    ("value", "expected"), [("0", 0), ("2s", 2), ("3m", 180), ("1h", 3600), ("none", None)]
+)
 def test_parse_timeout(value, expected):
     from jailbee.inbox.cli import parse_timeout
 

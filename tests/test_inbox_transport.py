@@ -76,8 +76,6 @@ def test_socket_path_default_and_override():
     assert transport.socket_path({"JAILBEE_ORCHESTRATION_SOCKET": "/x/y"}) == Path("/x/y")
 
 
-
-
 def test_exit_code_and_message():
     assert transport.EXIT_UNREACHABLE == 4
     assert "host broker is not reachable" in transport.UNREACHABLE_MESSAGE
@@ -305,5 +303,3 @@ def test_call_send_timeout_propagates(path):
     finally:
         release.set()
         srv.close()
-
-

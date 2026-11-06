@@ -12,7 +12,16 @@ from pathlib import Path
 from typing import Any
 
 from jailbee.inbox.errors import InboxUsage
-from jailbee.inbox.render import (SaturatedNumber, clean_c0c1, clean_c1, jq_tostring, pretty, render_status, sanitize_json_value, tsv)
+from jailbee.inbox.render import (
+    SaturatedNumber,
+    clean_c0c1,
+    clean_c1,
+    jq_tostring,
+    pretty,
+    render_status,
+    sanitize_json_value,
+    tsv,
+)
 
 PROG = "jailbee inbox"
 

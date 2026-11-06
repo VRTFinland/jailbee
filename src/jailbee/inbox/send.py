@@ -12,6 +12,7 @@ from typing import BinaryIO
 
 from jailbee.inbox.errors import InboxBadUsage, InboxUsage
 
+
 @dataclass(frozen=True)
 class SendRequest:
     type: str
@@ -329,5 +330,3 @@ def prepare_send(req: SendRequest) -> tuple[str, dict[str, object], str | None]:
         except UnicodeDecodeError:
             raise InboxUsage(f"the {req.type} text is not valid UTF-8") from None
     return id_, build_manifest(req, id_, body_name), body
-
-

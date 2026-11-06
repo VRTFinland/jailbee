@@ -27,13 +27,17 @@ def test_help_documents_model_suffix(capsys):
 
 @pytest.mark.parametrize("model", ["opus[1m]", "sonnet[1m]"])
 def test_valid_model_suffix(model):
-    request = send.SendRequest(type="spawn", branch="feature", new=True, agent="claude", model=model, text="hello")
+    request = send.SendRequest(
+        type="spawn", branch="feature", new=True, agent="claude", model=model, text="hello"
+    )
     assert send.validate(request).model == model
 
 
 @pytest.mark.parametrize("model", ["OPUS[1m]", "opus[2m]", "opus[1M]", "opus [1m]"])
 def test_invalid_model_suffix(model):
-    request = send.SendRequest(type="spawn", branch="feature", new=True, agent="claude", model=model, text="hello")
+    request = send.SendRequest(
+        type="spawn", branch="feature", new=True, agent="claude", model=model, text="hello"
+    )
     with pytest.raises(InboxBadUsage):
         send.validate(request)
 

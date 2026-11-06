@@ -195,20 +195,20 @@ def wait(
             "--quiet-after",
             help=(
                 "Print quiet-child CHILD (exit 0) after a running, not-done child is silent "
-                "for DUR. Its status.activity_at counts as activity. Needs a fresh broker children view (<=15m)."
+                "for DUR. Its status.activity_at counts as activity. "
+                "Needs a fresh broker children view (<=15m)."
             ),
         ),
     ] = None,
-    path: Annotated[
-        bool, typer.Option("--path", help="Obsolete; prints the message id.")
-    ] = False,
+    path: Annotated[bool, typer.Option("--path", help="Obsolete; prints the message id.")] = False,
     digest: Annotated[
         str | None,
         typer.Option(
             "--digest",
             help=(
                 "Print digest and the status table (exit 0) every DUR while a child is running "
-                "and not done. First due DUR after the first wait --digest (tracked by the broker). "
+                "and not done. First due DUR after the first wait --digest "
+                "(tracked by the broker). "
                 "Real messages and quiet-child win; --wake-on does not apply. "
                 "Needs a fresh broker children view (<=15m)."
             ),

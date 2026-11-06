@@ -15,5 +15,3 @@ def valid_wake_token(token: str) -> bool:
     if token.startswith(STATUS_PREFIX):
         return token[len(STATUS_PREFIX) :] in STATUS_STATES
     return token in WAKE_TOKENS
-
-

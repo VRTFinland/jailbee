@@ -335,4 +335,3 @@ def test_container_cli_inbox_end_to_end(monkeypatch, tmp_path):
     assert sent.exit_code == 4
     assert "broker socket is missing" in sent.output
     assert not (tmp_path / "outbox").exists()
-
