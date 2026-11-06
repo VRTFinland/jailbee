@@ -650,3 +650,61 @@ def test_running_status_wait_found_at_once_returns_by_state(
     assert rc == 0
     assert json.loads(capsys.readouterr().out)["state"] == "done"
     assert not any(q.op == "next" for q in made[0].requests)
+
+
+def _paging_list(items: list[dict[str, object]], size: int) -> Handler:
+    """A broker that pages `list` by seq (cursor = index); a plain call gets page one."""
+
+    def handle(req: wire.Request) -> wire.Response:
+        if "after" not in req.args:
+            return wire.ok(items[:size])
+        start = int(req.args["after"] or 0)
+        end = start + size
+        return wire.ok({"items": items[start:end], "next": end if end < len(items) else None})
+
+    return handle
+
+
+def test_ls_pages_through_a_long_inbox(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
+    items: list[dict[str, object]] = [
+        {"id": f"m{n}", "type": "message", "from": "kid", "kind": "note", "body": "x"}
+        for n in range(7)
+    ]
+    broker.handlers["list"] = _paging_list(items, 3)
+    r = run(sockdir, "ls", tmp=tmp_path)
+    assert r.returncode == 0
+    assert [line.split()[0] for line in r.stdout.splitlines()] == [f"m{n}" for n in range(7)]
+
+
+def test_ls_accepts_an_older_broker_plain_list(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path
+) -> None:
+    broker.on("list", [{"id": "m1", "type": "message", "from": "kid", "kind": "note"}])
+    r = run(sockdir, "ls", tmp=tmp_path)
+    assert r.returncode == 0
+    assert r.stdout.split()[0] == "m1"
+
+
+def test_wait_status_finds_its_status_on_a_later_page(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from jailbee.inbox import socket_cli
+
+    items: list[dict[str, object]] = [
+        {"id": f"m{n}", "type": "message", "kind": "note"} for n in range(5)
+    ] + [{"id": "s1", "type": "status", "ref": "req-1", "state": "done"}]
+    handler = _paging_list(items, 2)
+
+    def call(op: str, args: dict[str, object] | None = None) -> object:
+        if op == "list":
+            resp = handler(wire.Request("list", dict(args or {})))
+            return resp.result
+        if op == "read":
+            return items[-1]
+        return {"acked": True}
+
+    monkeypatch.setattr(socket_cli, "_call", call)
+    monkeypatch.setattr(
+        socket_cli, "call_next", lambda *a, **k: pytest.fail("the status is already unread")
+    )
+    assert socket_cli.wait_status("req-1", 5.0) == 0

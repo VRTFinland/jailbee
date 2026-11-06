@@ -296,11 +296,12 @@ class BrokerStore:
         with self._tx(write=False) as con:
             return [_row_item(r) for r in con.execute(sql, params).fetchall()]
 
-    def unacked(self, uuid: str) -> list[StoredItem]:
+    def unacked(self, uuid: str, *, after: int = 0, limit: int = -1) -> list[StoredItem]:
+        """Unacked items oldest first; ``after``/``limit`` page by ``seq``."""
         return self._items(
             f"SELECT {_ITEM_COLS} FROM items "
-            "WHERE recipient_uuid=? AND acked_at IS NULL ORDER BY seq",
-            (uuid,),
+            "WHERE recipient_uuid=? AND acked_at IS NULL AND seq>? ORDER BY seq LIMIT ?",
+            (uuid, after, limit),
         )
 
     def history(self, uuid: str) -> list[StoredItem]:

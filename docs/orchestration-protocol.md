@@ -34,7 +34,10 @@ Messages are one JSON object per line (UTF-8, newline-terminated), at most
 1 MiB including the newline. A longer line gets a `bad_request` response and
 the connection is closed. A client keeps its write side open until the reply has
 arrived: a half-close is treated as a disconnect. A container may hold at most
-8 connections; a ninth is answered with `busy` and closed.
+8 connections; a ninth is answered with `busy` and closed. Each connection has
+one request in flight: the broker reads the next line only after answering the
+previous one (a parked `next` counts), and stops reading a connection whose
+replies the client is not collecting.
 
 ### Envelopes
 
@@ -64,7 +67,7 @@ client exits 4 (`jb apply` / restart the broker to align versions).
 | Op | Args | Result |
 | --- | --- | --- |
 | `send` | `manifest` (an object, as in the file transport), `body` (string or null; the body file's text), `wait` (bool) | The status item for the manifest (an `InboxStatus` object). Delivered already read when `wait` is true, unread otherwise. |
-| `list` | none | The unread items, oldest first, in the shape `jailbee inbox ls` prints (long texts cut). |
+| `list` | `after` (optional; 0 for the first page, then the previous page's `next`) | The unread items, oldest first, in the shape `jailbee inbox ls` prints (long texts cut), one page at a time: `{"items": [...], "next": cursor or null}`. Without `after` (older clients) a plain list of the oldest items that fit one reply. |
 | `read` | `id`, `keep` (bool) | The unread item. Marks it read unless `keep`. `jailbee inbox read` calls it with `keep: true`, prints the item, then calls `ack`. |
 | `ack` | `id` | `{"acked": bool}`. Marks the item read. `jailbee inbox read` uses it after printing; if the ack fails the message stays unread. |
 | `next` | `wake_on` (list of wake tokens or null), `quiet_after` and `digest` (positive seconds or null), `timeout` (seconds or null for none) | A long-poll: `{"kind":"message","id":...}`, `{"kind":"quiet-child","child":...}`, `{"kind":"digest","children":[...],"last_from_child":{...},"observed_at":...}` or `{"kind":"timeout"}`. Nothing is marked read. |

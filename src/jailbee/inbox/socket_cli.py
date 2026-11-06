@@ -3,7 +3,7 @@
 import os
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from jailbee.inbox import cli
@@ -48,8 +48,23 @@ def _fail(exc: BrokerError) -> int:
     return 2 if exc.code == wire.BAD_REQUEST else 1
 
 
+def _unread() -> Iterator[dict[str, Any]]:
+    """Every unread item, oldest first, one `list` page at a time.
+
+    An older broker ignores `after` and answers a plain list: that is all.
+    """
+    after: Any = 0
+    while after is not None:
+        result = _call("list", {"after": after})
+        if isinstance(result, list):
+            yield from result
+            return
+        yield from result["items"]
+        after = result.get("next")
+
+
 def cmd_ls() -> int:
-    for item in _call("list"):
+    for item in _unread():
         print(ls_line(item))
     return 0
 
@@ -180,7 +195,7 @@ def wait_status(
     deadline = None if timeout is None else clock() + timeout
     wake_on = ["queued", "started", "done", "refused", "failed"]
     while True:
-        for item in _call("list"):
+        for item in _unread():
             if item.get("type") == "status" and item.get("ref") == ref:
                 ident = str(item["id"])
                 if cmd_read(ident):

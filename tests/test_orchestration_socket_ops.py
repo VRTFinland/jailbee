@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -337,3 +338,57 @@ def test_waiter_evaluation_and_children_do_not_load_item_json(
     assert socket_ops.handle_children(env.memory, env.store, env.orch)["last_from_child"] == {
         "kid": 900.0
     }
+
+
+def _fill_over_a_mebibyte(env: Env) -> list[str]:
+    ids = [f"msg-{n:05d}-{'f' * 40}" for n in range(5000)]
+    with env.store._tx() as con:  # one transaction: 5 000 inserts stay fast
+        con.executemany(
+            "INSERT INTO items(recipient_uuid, recipient_full, id, type, kind_or_state, "
+            "created_at, item_json) VALUES(?,?,?,?,?,?,?)",
+            [
+                (
+                    env.orch,
+                    "proj-orch",
+                    i,
+                    "message",
+                    "note",
+                    100.0,
+                    json.dumps({"type": "message", "id": i, "kind": "note", "body": "b" * 300}),
+                )
+                for i in ids
+            ],
+        )
+    return ids
+
+
+def test_paged_list_walks_more_than_a_line_of_unread(env: Env) -> None:
+    ids = _fill_over_a_mebibyte(env)
+    seen: list[str] = []
+    after: object = 0
+    pages = 0
+    while after is not None:
+        page = socket_ops.handle_list(env.store, env.orch, after=after)
+        assert isinstance(page, dict)
+        assert len(wire.encode_response(wire.ok(page))) < wire.MAX_LINE_BYTES
+        seen += [str(i["id"]) for i in page["items"]]
+        after = page["next"]
+        pages += 1
+    assert seen == ids
+    assert pages > 1
+
+
+def test_unpaged_list_of_more_than_a_line_still_fits(env: Env) -> None:
+    """An older client's plain `list` gets the oldest items that fit, not an error."""
+    ids = _fill_over_a_mebibyte(env)
+    got = socket_ops.handle_list(env.store, env.orch)
+    assert isinstance(got, list)
+    assert len(wire.encode_response(wire.ok(got))) < wire.MAX_LINE_BYTES
+    assert [i["id"] for i in got] == ids[: len(got)]
+
+
+def test_paged_list_rejects_a_bad_cursor(env: Env) -> None:
+    for bad in (-1, "x", 1.5, True):
+        with pytest.raises(wire.WireError) as exc:
+            socket_ops.handle_list(env.store, env.orch, after=bad)
+        assert exc.value.code == wire.BAD_REQUEST

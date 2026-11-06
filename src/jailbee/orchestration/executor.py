@@ -100,6 +100,8 @@ def _dispatch(
             wait=args.get("wait") is True,
         )
     if op == "list":
+        if "after" in args:
+            return socket_ops.handle_list(store, uuid, after=args["after"])
         return socket_ops.handle_list(store, uuid)
     if op == "read":
         return socket_ops.handle_read(

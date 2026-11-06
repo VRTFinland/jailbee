@@ -176,9 +176,46 @@ def _list_view(item: dict[str, object]) -> dict[str, object]:
     return view
 
 
-def handle_list(store: BrokerStore, uuid: str) -> list[dict[str, object]]:
-    """The unacked items of a container's inbox, oldest first, in `ls` shape."""
-    return [_list_view(row.item) for row in store.unacked(uuid)]
+# A list page's encoded items stay under this, well inside one wire line.
+LIST_PAGE_BYTES = wire.MAX_LINE_BYTES // 2
+_LIST_FETCH = 256  # rows read per store query while filling a page
+
+_NO_CURSOR = object()
+
+
+def _list_page(store: BrokerStore, uuid: str, after: int) -> tuple[list[dict[str, object]], int | None]:
+    """The oldest unacked views after seq `after` that fit `LIST_PAGE_BYTES`,
+    and the cursor of the next page (None when this page reached the end)."""
+    views: list[dict[str, object]] = []
+    used = 0
+    while True:
+        rows = store.unacked(uuid, after=after, limit=_LIST_FETCH)
+        for row in rows:
+            view = _list_view(row.item)
+            size = len(json.dumps(view, ensure_ascii=False).encode()) + 2
+            if views and used + size > LIST_PAGE_BYTES:
+                return views, after
+            views.append(view)
+            used += size
+            after = row.seq
+        if len(rows) < _LIST_FETCH:
+            return views, None
+
+
+def handle_list(store: BrokerStore, uuid: str, *, after: object = _NO_CURSOR) -> object:
+    """The unacked items of a container's inbox, oldest first, in `ls` shape.
+
+    With `after` (0 for the first page, then the previous page's `next`) the
+    answer is one page, ``{"items": [...], "next": cursor | None}``. Without it
+    (an older client) it is a plain list of the oldest items that fit one page:
+    truncated rather than an oversized reply that could never be sent.
+    """
+    if after is _NO_CURSOR:
+        return _list_page(store, uuid, 0)[0]
+    if type(after) is not int or after < 0:
+        raise wire.WireError(wire.BAD_REQUEST, "after must be a non-negative integer")
+    items, cursor = _list_page(store, uuid, after)
+    return {"items": items, "next": cursor}
 
 
 def handle_read(
