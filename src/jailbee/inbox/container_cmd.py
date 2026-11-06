@@ -160,7 +160,7 @@ def _send(request: send.SendRequest, source: str | None = None) -> None:
 
 @inbox_app.command(
     help=(
-        "Print the id of the oldest unread message (exit 0); --path prints its path; "
+        "Print the id of the oldest unread message (exit 0); --path is obsolete; "
         "exit 1 on timeout, 4 = host broker not reachable. "
         "Use ls to handle every unread message. Nothing is marked read. "
         "Only one wait may run; a second exits 2."

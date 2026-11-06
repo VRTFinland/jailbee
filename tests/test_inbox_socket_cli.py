@@ -293,6 +293,95 @@ def test_send_validation_unchanged(broker: FakeBroker, sockdir: Path, tmp_path: 
     assert broker.requests == []
 
 
+@pytest.mark.parametrize(
+    ("args", "error"),
+    [
+        (["update", "--child", "kid", "--ref", "abc", "--base", "main"], "mutually exclusive"),
+        (["restart", "--child", "kid", "--text", "go", "--resume", "BAD"], "--resume"),
+        (["rights", "--child", "kid", "--mount", "repo"], "grants need --for"),
+        (["rights", "--for", "1h"], "at least one grant or revoke"),
+        (["restart", "--child", "kid", "--text", "go", "--agent-only", "--services", "api"], "--agent-only"),
+    ],
+)
+def test_send_invalid_options_never_reach_broker(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path, args: list[str], error: str
+) -> None:
+    broker.on("send", send_status("queued"))
+    result = run(sockdir, "send", *args, tmp=tmp_path)
+    assert result.returncode == 2
+    assert error in result.stderr
+    assert broker.requests == []
+
+
+@pytest.mark.parametrize(
+    ("args", "expected", "body"),
+    [
+        (["update", "--child", "kid", "--ref", "abc", "--merge"],
+         {"version": 1, "type": "update", "child": "kid", "ref": "abc", "merge": True}, None),
+        (["update", "--child", "kid", "--base", "main"],
+         {"version": 1, "type": "update", "child": "kid", "base": "main"}, None),
+        (["rights", "--child", "kid", "--loose", "--mount", "repo", "--egress", "example.com", "--for", "1h"],
+         {"version": 1, "type": "rights", "child": "kid", "grant": {"loose": True, "mounts": ["repo"], "egress": ["example.com"], "for": "1h"}}, None),
+        (["spawn", "--branch", "feature", "--new", "--text", "go", "--services", " api, worker "],
+         {"version": 2, "type": "spawn", "kind": "new", "branch": "feature", "rights": {"version": 1, "mounts": [], "loose": False, "egress": []}, "services": ["api", "worker"]}, "go"),
+        (["spawn", "--branch", "feature", "--text", "go", "--services", ""],
+         {"version": 2, "type": "spawn", "kind": "fork", "branch": "feature", "rights": {"version": 1, "mounts": [], "loose": False, "egress": []}, "services": []}, "go"),
+        (["restart", "--child", "kid", "--text", "go", "--resume", "last", "--services", "api,worker"],
+         {"version": 1, "type": "restart", "child": "kid", "resume": "last", "services": ["api", "worker"]}, "go"),
+        (["restart", "--child", "kid", "--text", "go", "--resume", "12345678-1234-1234-1234-123456789abc", "--services", ""],
+         {"version": 1, "type": "restart", "child": "kid", "resume": "12345678-1234-1234-1234-123456789abc", "services": []}, "go"),
+    ],
+)
+def test_send_cli_manifest_fields(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path,
+    args: list[str], expected: dict[str, object], body: str | None,
+) -> None:
+    broker.on("send", send_status("queued"))
+    result = run(sockdir, "send", *args, tmp=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert len(broker.requests) == 1
+    request = broker.requests[0]
+    assert request.op == "send"
+    ident = result.stdout.strip()
+    if body is not None:
+        expected = {**expected, "prompt_file": f"{ident}.md"}
+    assert request.args == {"manifest": {**expected, "id": ident}, "body": body, "wait": False}
+
+
+@pytest.mark.parametrize("option", ["--quiet-after", "--digest"])
+@pytest.mark.parametrize("value", ["0", "0s", "garbage", "-1", "1d"])
+def test_wait_invalid_durations_never_reach_broker(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path, option: str, value: str
+) -> None:
+    broker.on("next", {"kind": "timeout"})
+    result = run(sockdir, "wait", f"{option}={value}", tmp=tmp_path)
+    assert result.returncode == 2
+    assert broker.requests == []
+
+
+@pytest.mark.parametrize(("option", "key"), [("--quiet-after", "quiet_after"), ("--digest", "digest")])
+@pytest.mark.parametrize(("value", "seconds"), [("2s", 2), ("3m", 180), ("1h", 3600)])
+def test_wait_duration_conversion(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path, option: str, key: str,
+    value: str, seconds: int,
+) -> None:
+    broker.on("next", {"kind": "timeout"})
+    result = run(sockdir, "wait", option, value, "--timeout", "0", tmp=tmp_path)
+    assert result.returncode == 1
+    assert len(broker.requests) == 1
+    assert broker.requests[0].op == "next"
+    assert broker.requests[0].args[key] == seconds
+
+
+def test_stale_socket_reports_unreachable(sockdir: Path, tmp_path: Path) -> None:
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.bind(str(sockdir / "broker.sock"))
+    sock.close()
+    result = run(sockdir, "ls", tmp=tmp_path)
+    assert result.returncode == 4
+    assert "the host broker is not reachable" in result.stderr
+
+
 def test_children(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
     broker.on(
         "children", {"observed_at": time.time(), "children": [child()], "last_from_child": {}}
