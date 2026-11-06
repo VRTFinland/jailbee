@@ -1769,7 +1769,7 @@ def test_exec_pipe_deadline_and_expiry_between_spawns(incus, mocker):
     destination.communicate.assert_called_once_with(timeout=5)
     popen.reset_mock()
     source.poll.return_value = None
-    popen.side_effect = lambda *args, **kwargs: (setattr(clock, "return_value", 105.0) or source)
+    popen.side_effect = lambda *args, **kwargs: setattr(clock, "return_value", 105.0) or source
     with pytest.raises(IncusTimeoutError):
         incus.with_deadline(105).exec_pipe("src", ["save"], "dst", ["load"])
     assert popen.call_count == 1
@@ -1816,9 +1816,12 @@ def _pipe_processes(mocker, src_code=0, dst_code=0):
     destination.wait.return_value = dst_code
     destination.poll.return_value = dst_code
     # Replace the module reference, not subprocess.Popen process-wide.
-    subprocess_mock = SimpleNamespace(Popen=mocker.Mock(), PIPE=subprocess.PIPE,
-                                      DEVNULL=subprocess.DEVNULL,
-                                      TimeoutExpired=subprocess.TimeoutExpired)
+    subprocess_mock = SimpleNamespace(
+        Popen=mocker.Mock(),
+        PIPE=subprocess.PIPE,
+        DEVNULL=subprocess.DEVNULL,
+        TimeoutExpired=subprocess.TimeoutExpired,
+    )
     mocker.patch("jailbee.incus.subprocess", subprocess_mock)
     subprocess_mock.Popen.side_effect = [source, destination]
     return source, destination, subprocess_mock.Popen
@@ -1841,10 +1844,14 @@ def test_exec_pipe_connects_source_stdout_to_destination_stdin(incus, mocker):
 
 @pytest.mark.parametrize("side", ["source", "destination"])
 def test_exec_pipe_reports_failure_and_stderr(incus, mocker, side):
-    source, destination, popen = _pipe_processes(mocker, int(side == "source"), int(side == "destination"))
+    _source, destination, popen = _pipe_processes(
+        mocker, int(side == "source"), int(side == "destination")
+    )
+
     def write_stderr(*args, **kwargs):
         popen.call_args_list[0 if side == "source" else 1].kwargs["stderr"].write(b"bad \xff")
         return b"loaded", None
+
     destination.communicate.side_effect = write_stderr
     with pytest.raises(IncusError, match=side + ".*bad") as exc:
         incus.exec_pipe("src", ["save"], "dst", ["load"])
@@ -1894,9 +1901,12 @@ def test_exec_pipe_interrupt_reaps_both(incus, mocker):
 
 
 def test_exec_pipe_dry_run_runs_nothing(mocker):
-    subprocess_mock = SimpleNamespace(Popen=mocker.Mock(), PIPE=subprocess.PIPE,
-                                      DEVNULL=subprocess.DEVNULL,
-                                      TimeoutExpired=subprocess.TimeoutExpired)
+    subprocess_mock = SimpleNamespace(
+        Popen=mocker.Mock(),
+        PIPE=subprocess.PIPE,
+        DEVNULL=subprocess.DEVNULL,
+        TimeoutExpired=subprocess.TimeoutExpired,
+    )
     mocker.patch("jailbee.incus.subprocess", subprocess_mock)
     assert Incus(dry_run=True).exec_pipe("src", ["save"], "dst", ["load"]) == ""
     subprocess_mock.Popen.assert_not_called()
@@ -1905,9 +1915,12 @@ def test_exec_pipe_dry_run_runs_nothing(mocker):
 def test_exec_pipe_guard_checks_both_instances(incus, mocker):
     incus.guard_instance("dst", "expected")
     mocker.patch.object(incus, "config_get_checked", return_value="changed")
-    subprocess_mock = SimpleNamespace(Popen=mocker.Mock(), PIPE=subprocess.PIPE,
-                                      DEVNULL=subprocess.DEVNULL,
-                                      TimeoutExpired=subprocess.TimeoutExpired)
+    subprocess_mock = SimpleNamespace(
+        Popen=mocker.Mock(),
+        PIPE=subprocess.PIPE,
+        DEVNULL=subprocess.DEVNULL,
+        TimeoutExpired=subprocess.TimeoutExpired,
+    )
     mocker.patch("jailbee.incus.subprocess", subprocess_mock)
     with pytest.raises(IncusError, match="identity changed"):
         incus.exec_pipe("src", ["save"], "dst", ["load"])

@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from jailbee.docker_seed_state import get, record
 from jailbee.db.models import GoldenSeedState
+from jailbee.docker_seed_state import get, record
 
 
 def test_seed_state_record_overwrites_per_alias() -> None:

@@ -11810,13 +11810,17 @@ def base_usage_cmd(
         prunable = 0
         if u.live_size_bytes is not None:
             table.add_row(
-                u.base_alias, "[dim]live[/dim]", humanize(u.live_size_bytes),
+                u.base_alias,
+                "[dim]live[/dim]",
+                humanize(u.live_size_bytes),
                 seed_status.get(u.base_alias, ""),
             )
             subtotal += u.live_size_bytes
         if u.instance_name is not None:
             table.add_row(
-                u.instance_name, "[dim]live (instance)[/dim]", humanize(u.instance_size_bytes),
+                u.instance_name,
+                "[dim]live (instance)[/dim]",
+                humanize(u.instance_size_bytes),
                 seed_status.get(u.base_alias, ""),
             )
             subtotal += u.instance_size_bytes or 0

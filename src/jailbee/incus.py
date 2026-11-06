@@ -284,6 +284,7 @@ class Incus:
                 raise IncusError(
                     "container identity changed during publication; refusing worker write"
                 )
+
     # Optimistic-concurrency retry tuning for instance-config read-modify-writes.
     _ETAG_RETRIES = 5
     _ETAG_BACKOFF = 0.2  # seconds; linear backoff (attempt+1) * _ETAG_BACKOFF
@@ -596,8 +597,12 @@ class Incus:
         timeout: int | None = None,
     ) -> str:
         """Stream source stdout directly to destination stdin and return its output."""
-        src_args = self._exec_args(src, src_cmd, uid=None, gid=None, cwd=None, env=None, init_groups=False)
-        dst_args = self._exec_args(dst, dst_cmd, uid=None, gid=None, cwd=None, env=None, init_groups=False)
+        src_args = self._exec_args(
+            src, src_cmd, uid=None, gid=None, cwd=None, env=None, init_groups=False
+        )
+        dst_args = self._exec_args(
+            dst, dst_cmd, uid=None, gid=None, cwd=None, env=None, init_groups=False
+        )
         self._check_guard(src_args)
         self._check_guard(dst_args)
         if self.dry_run:
@@ -616,16 +621,20 @@ class Incus:
                 if self._deadline is not None:
                     self._bounded_timeout(None, src_args)
                 source = subprocess.Popen(
-                    [self.binary, *src_args], stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE, stderr=src_err,
+                    [self.binary, *src_args],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=src_err,
                 )
                 processes.append(source)
                 assert source.stdout is not None
                 if self._deadline is not None:
                     self._bounded_timeout(None, dst_args)
                 destination = subprocess.Popen(
-                    [self.binary, *dst_args], stdin=source.stdout,
-                    stdout=subprocess.PIPE, stderr=dst_err,
+                    [self.binary, *dst_args],
+                    stdin=source.stdout,
+                    stdout=subprocess.PIPE,
+                    stderr=dst_err,
                 )
                 processes.append(destination)
                 source.stdout.close()

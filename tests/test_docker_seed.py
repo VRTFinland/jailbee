@@ -18,13 +18,17 @@ def rig(make_cfg, tmp_path, monkeypatch):
     monkeypatch.setattr(golden, "promote_instance", Mock())
     monkeypatch.setattr(golden, "promote_image", Mock())
     monkeypatch.setattr(golden, "_strip_local_nics", Mock())
-    monkeypatch.setattr(golden, "resolve_golden_placement", lambda *args: golden.GoldenPlacement("pool", "btrfs"))
+    monkeypatch.setattr(
+        golden, "resolve_golden_placement", lambda *args: golden.GoldenPlacement("pool", "btrfs")
+    )
+
     def execute(name, cmd, **kwargs):
         if cmd[:3] == ["docker", "image", "ls"] and "--format" in cmd:
             return "app:latest\n"
         if cmd[:3] == ["docker", "system", "df"]:
             return '{"Type":"Images","Size":"1.2GB"}\n'
         return ""
+
     incus.exec.side_effect = execute
     return cfg, incus
 
@@ -35,7 +39,12 @@ def test_instance_seeds_and_promotes(rig):
     result = docker_seed.seed_golden(cfg, incus, req, deadline=docker_seed.time.monotonic() + 60)
     assert (result.outcome, result.image_count, result.size_bytes) == ("seeded", 1, 1200000000)
     staging = golden.golden_seeding_name(cfg.golden.alias)
-    incus.copy.assert_called_once_with(golden.golden_instance_name(cfg.golden.alias), staging, instance_only=True, config={"security.nesting": "true"})
+    incus.copy.assert_called_once_with(
+        golden.golden_instance_name(cfg.golden.alias),
+        staging,
+        instance_only=True,
+        config={"security.nesting": "true"},
+    )
     incus.exec_pipe.assert_called_once()
     golden.promote_instance.assert_called_once_with(
         incus, staging, cfg.golden.alias, cleanup_incus=incus
@@ -45,8 +54,16 @@ def test_instance_seeds_and_promotes(rig):
 
 def test_image_mode_and_cleanup(rig, monkeypatch):
     cfg, incus = rig
-    monkeypatch.setattr(golden, "resolve_golden_placement", lambda *args: golden.GoldenPlacement("pool", "dir"))
-    result = docker_seed.seed_golden(cfg, incus, docker_seed.SeedRequest(None, False, False), deadline=docker_seed.time.monotonic() + 60, source_name="ephemeral")
+    monkeypatch.setattr(
+        golden, "resolve_golden_placement", lambda *args: golden.GoldenPlacement("pool", "dir")
+    )
+    result = docker_seed.seed_golden(
+        cfg,
+        incus,
+        docker_seed.SeedRequest(None, False, False),
+        deadline=docker_seed.time.monotonic() + 60,
+        source_name="ephemeral",
+    )
     assert result.outcome == "seeded" and result.source == "seed-container"
     incus.init.assert_called_once()
     golden.promote_image.assert_called_once()
@@ -85,7 +102,12 @@ def test_no_images_skips(rig):
     cfg, incus = rig
     incus.exec.side_effect = None
     incus.exec.return_value = ""
-    result = docker_seed.seed_golden(cfg, incus, docker_seed.SeedRequest("source", False, True), deadline=docker_seed.time.monotonic() + 60)
+    result = docker_seed.seed_golden(
+        cfg,
+        incus,
+        docker_seed.SeedRequest("source", False, True),
+        deadline=docker_seed.time.monotonic() + 60,
+    )
     assert result.outcome == "skipped"
     incus.copy.assert_not_called()
     docker_seed.record_outcome.assert_called_once_with(cfg, result)
@@ -94,7 +116,12 @@ def test_no_images_skips(rig):
 def test_failure_cleans_staging_and_records(rig):
     cfg, incus = rig
     incus.exec_pipe.side_effect = IncusError("pipe failed")
-    result = docker_seed.seed_golden(cfg, incus, docker_seed.SeedRequest("source", False, True), deadline=docker_seed.time.monotonic() + 60)
+    result = docker_seed.seed_golden(
+        cfg,
+        incus,
+        docker_seed.SeedRequest("source", False, True),
+        deadline=docker_seed.time.monotonic() + 60,
+    )
     assert result.outcome == "failed" and "pipe failed" in result.detail
     incus.delete.assert_called_once_with(golden.golden_seeding_name(cfg.golden.alias), force=True)
     golden.promote_instance.assert_not_called()
@@ -138,7 +165,10 @@ def test_create_seed_options_and_fallback(rig, monkeypatch):
     assert opts.clone_commit == "upstream-sha"
     assert opts.skip_agents and opts.autostart_services == []
     assert opts.autostart_override == "wait" and opts.cpu == cfg.defaults.cpu
-    assert opts.mirror_endpoint == extras.mirror_endpoint and opts.litellm_payload == extras.litellm_payload
+    assert (
+        opts.mirror_endpoint == extras.mirror_endpoint
+        and opts.litellm_payload == extras.litellm_payload
+    )
     assert prepare.call_args.kwargs["interaction"] == create_flow.Interaction.none()
     local.assert_not_called()
     remote.return_value = None
@@ -155,7 +185,11 @@ def test_run_seed_cleanup(rig, monkeypatch, keep, fail):
     incus.exists.side_effect = [False, True]
     create = Mock(side_effect=RuntimeError("create failed") if fail else None, return_value=name)
     monkeypatch.setattr(docker_seed, "create_seed_container", create)
-    monkeypatch.setattr(docker_seed, "seed_golden", Mock(return_value=docker_seed.SeedOutcome("seeded", "seed-container")))
+    monkeypatch.setattr(
+        docker_seed,
+        "seed_golden",
+        Mock(return_value=docker_seed.SeedOutcome("seeded", "seed-container")),
+    )
     destroy = Mock()
     monkeypatch.setattr(lifecycle, "destroy_container", destroy)
     result = docker_seed.run_seed(cfg, incus, Mock(), docker_seed.SeedRequest(None, keep, True))
@@ -187,15 +221,20 @@ def test_timer_stops_and_joins_before_cleanup(rig, monkeypatch):
     clock = iter([0, 0, 3601, 3601])
     monkeypatch.setattr(docker_seed.time, "monotonic", lambda: next(clock))
     events = []
+
     class Timer:
         def __init__(self, delay, callback):
             self.callback = callback
+
         def start(self):
             self.callback()
+
         def cancel(self):
             events.append("cancel")
+
         def join(self):
             events.append("join")
+
     monkeypatch.setattr(docker_seed.threading, "Timer", Timer)
     monkeypatch.setattr(docker_seed, "create_seed_container", Mock(return_value=name))
     monkeypatch.setattr(lifecycle, "destroy_container", lambda *a, **kw: events.append("destroy"))
@@ -219,7 +258,9 @@ def test_preflight_source_and_lookup_errors(rig, monkeypatch):
         docker_seed.preflight(cfg, incus, req)
     incus.exec.side_effect = None
     docker_seed.preflight(cfg, incus, req)
-    monkeypatch.setattr(docker_seed, "shared_golden_reason_for", Mock(side_effect=RuntimeError("db unavailable")))
+    monkeypatch.setattr(
+        docker_seed, "shared_golden_reason_for", Mock(side_effect=RuntimeError("db unavailable"))
+    )
     with pytest.raises(docker_seed.SeedPreflightError, match="db unavailable"):
         docker_seed.preflight(cfg, incus, req)
 
@@ -230,13 +271,16 @@ def test_record_outcome_database_error_warns(make_cfg, tmp_path, monkeypatch):
     monkeypatch.setattr(db, "get_engine", Mock(side_effect=RuntimeError("database unavailable")))
     warning = Mock()
     monkeypatch.setattr(docker_seed, "warn", warning)
-    docker_seed.record_outcome(make_cfg(tmp_path), docker_seed.SeedOutcome("seeded", "seed-container"))
+    docker_seed.record_outcome(
+        make_cfg(tmp_path), docker_seed.SeedOutcome("seeded", "seed-container")
+    )
     assert "database unavailable" in warning.call_args.args[0]
 
 
 def test_seed_operation_order(rig, monkeypatch):
     cfg, incus = rig
     events = []
+
     def execute(name, cmd, **kwargs):
         if cmd[:3] == ["docker", "image", "ls"]:
             if "--format" in cmd:
@@ -251,10 +295,18 @@ def test_seed_operation_order(rig, monkeypatch):
         if cmd[:2] == ["systemctl", "stop"]:
             events.append("stop-docker")
         return ""
+
     incus.exec.side_effect = execute
     incus.exec_pipe.side_effect = lambda *a, **kw: events.append("save-load")
-    monkeypatch.setattr(docker_seed, "stop_container", lambda *a, **kw: events.append("stop-instance"))
+    monkeypatch.setattr(
+        docker_seed, "stop_container", lambda *a, **kw: events.append("stop-instance")
+    )
     monkeypatch.setattr(golden, "promote_instance", lambda *a, **kw: events.append("promote"))
-    result = docker_seed.seed_golden(cfg, incus, docker_seed.SeedRequest("source", False, True), deadline=docker_seed.time.monotonic() + 60)
+    result = docker_seed.seed_golden(
+        cfg,
+        incus,
+        docker_seed.SeedRequest("source", False, True),
+        deadline=docker_seed.time.monotonic() + 60,
+    )
     assert result.outcome == "seeded"
     assert events == ["remove", "save-load", "inspect", "stop-docker", "stop-instance", "promote"]

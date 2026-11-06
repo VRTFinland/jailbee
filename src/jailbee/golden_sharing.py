@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from jailbee.config import SCRATCH_BASE_ALIAS
-from jailbee.db import get_engine
 from sqlmodel import Session, select
 
+from jailbee.config import SCRATCH_BASE_ALIAS
+from jailbee.db import get_engine
+
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Iterable
 
     from jailbee.config import Config
     from jailbee.db.models import RegisteredRepo
