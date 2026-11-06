@@ -59,6 +59,7 @@ MAX_CONNECTIONS_PER_CONTAINER = 8
 MAX_INFLIGHT_PER_CONTAINER = MAX_CONNECTIONS_PER_CONTAINER  # queued, unanswered requests
 _ACCEPT_PAUSE = 1.0  # seconds a listening socket rests after EMFILE/ENFILE
 _RECV_BYTES = 65536
+_SUN_PATH_MAX = 107  # Linux sockaddr_un.sun_path minus the terminating NUL
 OUTBUF_CAP = 4 * 1024 * 1024  # unsent reply bytes above which intake stops
 
 
@@ -108,6 +109,23 @@ def _prepare_dir(sock_dir: Path) -> bool:
         raise OSError(f"{sock_dir} is not a directory owned by the current user")
     os.chmod(sock_dir, 0o700)
     return created
+
+
+def _bind(sock: socket.socket, path: Path) -> None:
+    """Bind ``sock`` at ``path``, through the directory's fd when ``path`` is too long.
+
+    ``sun_path`` holds 107 bytes; ``<home>/.local/state/.../sock/<uuid>.<token>/
+    broker.sock`` can exceed that. ``/proc/self/fd/<dir fd>/broker.sock`` names
+    the same file in a few dozen bytes.
+    """
+    if len(os.fsencode(path)) <= _SUN_PATH_MAX:
+        sock.bind(str(path))
+        return
+    fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        sock.bind(f"/proc/self/fd/{fd}/{path.name}")
+    finally:
+        os.close(fd)
 
 
 class Listener:
@@ -165,7 +183,13 @@ class Listener:
         """Start listening for ``uuid``; return True when ``sock_dir`` was created."""
         created = _prepare_dir(sock_dir)
         path = sock_dir / SOCKET_NAME
-        self._call(lambda: self._open(uuid, path))
+        try:
+            self._call(lambda: self._open(uuid, path))
+        except BaseException:
+            if created:  # leave no empty directory behind per failed round
+                with contextlib.suppress(OSError):
+                    sock_dir.rmdir()
+            raise
         return created
 
     def socket_dir(self, uuid: str) -> Path | None:
@@ -187,7 +211,7 @@ class Listener:
         """
         if not self.has_container(uuid):
             raise OSError(f"no socket for {uuid}")
-        _prepare_dir(sock_dir)
+        created = _prepare_dir(sock_dir)
 
         def rotate() -> None:
             server = self._servers.get(uuid)
@@ -196,7 +220,13 @@ class Listener:
             self._close_server(uuid, events=True, unlink=True)
             self._open(uuid, sock_dir / SOCKET_NAME)
 
-        self._call(rotate)
+        try:
+            self._call(rotate)
+        except BaseException:
+            if created:
+                with contextlib.suppress(OSError):
+                    sock_dir.rmdir()
+            raise
 
     def is_connected(self, conn_id: int) -> bool:
         """Whether the connection is still open (its answer can still arrive)."""
@@ -319,7 +349,7 @@ class Listener:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             sock.setblocking(False)
-            sock.bind(str(path))
+            _bind(sock, path)
             os.chmod(path, 0o600)
             sock.listen(16)
         except BaseException:

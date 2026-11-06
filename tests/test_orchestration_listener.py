@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import errno
+import os
 import queue
 import shutil
 import socket
@@ -597,3 +598,50 @@ def test_a_held_connection_stops_reading_once_a_line_s_worth_is_buffered(
     buffered = len(lis._conns[ev.conn_id].inbuf)
     assert wire.MAX_LINE_BYTES <= buffered < wire.MAX_LINE_BYTES + 65536
     assert sent < len(blob)  # the rest waits in the kernel: reading paused
+
+
+def _connect_long(directory: Path) -> socket.socket:
+    """Connect to a socket whose path exceeds the AF_UNIX limit (as a test client)."""
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(2)
+        s.connect(f"/proc/self/fd/{fd}/broker.sock")
+        return s
+    finally:
+        os.close(fd)
+
+
+def test_a_socket_path_beyond_the_af_unix_limit_still_binds(
+    env: tuple[Listener, queue.Queue[Event], Path],
+) -> None:
+    """`~/.local/state/jailbee/orchestration/sock/<uuid>.<token>/broker.sock` is ~118 bytes."""
+    lis, q, root = env
+    long_dir = root / ("h" * 60) / f"{'u' * 36}.{'f' * 16}"
+    assert len(str(long_dir / "broker.sock")) > 108
+    lis.open_container("u", long_dir)
+    assert (long_dir / "broker.sock").exists()
+    c = _connect_long(long_dir)
+    c.sendall(req("list"))
+    assert isinstance(q.get(timeout=2), RequestEvent)
+    lis.rotate_container("u", long_dir.with_name(f"{'u' * 36}.{'e' * 16}"))
+    assert not long_dir.exists()
+
+
+def test_a_failed_open_leaves_no_directory_behind(
+    env: tuple[Listener, queue.Queue[Event], Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lis, _, root = env
+
+    def refuse(self: socket.socket, address: object) -> None:
+        raise OSError(errno.EADDRINUSE, "nope")
+
+    monkeypatch.setattr(socket.socket, "bind", refuse)
+    with pytest.raises(OSError):
+        lis.open_container("u", root / "u.1")
+    assert not (root / "u.1").exists()
+    lis_dir_existing = root / "keep"
+    lis_dir_existing.mkdir(mode=0o700)
+    with pytest.raises(OSError):
+        lis.open_container("k", lis_dir_existing)
+    assert lis_dir_existing.exists()  # not ours to remove
