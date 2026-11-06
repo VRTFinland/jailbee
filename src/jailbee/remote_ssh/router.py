@@ -289,6 +289,7 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "apply",
         "upgrade",
         "base build",
+        "base seed",
         "base prune",
         "repo ls",
         "repo rm",

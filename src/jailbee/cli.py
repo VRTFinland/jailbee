@@ -4163,6 +4163,7 @@ if TYPE_CHECKING:
     from jailbee.config.models_remote import RemoteSSHConfig
     from jailbee.dashboard.columns import TableWindow
     from jailbee.db.models import BackgroundJob
+    from jailbee.docker_seed import SeedOutcome
     from jailbee.doctor import CheckResult
     from jailbee.doctor_scroll import ScrollState
     from jailbee.forking import ForkSource
@@ -11509,14 +11510,63 @@ app.add_typer(base_app)
 
 
 @base_app.command("build")
-def base_build_cmd(config: ConfigOption = None) -> None:
+def base_build_cmd(
+    docker_from: Annotated[
+        str | None,
+        typer.Option(
+            "--docker-from",
+            help="Seed from a running container.",
+            autocompletion=completion.complete_container,
+        ),
+    ] = None,
+    no_docker_seed: Annotated[
+        bool, typer.Option("--no-docker-seed", help="Skip configured Docker image seeding once.")
+    ] = False,
+    keep_seed: Annotated[
+        bool, typer.Option("--keep-seed", help="Keep the temporary docker-seed container.")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
     """Build the golden image (long operation, takes several minutes)."""
     from jailbee.golden import build_golden_image
     from jailbee.incus import Incus, IncusError
 
+    if docker_from is not None and no_docker_seed:
+        error("--docker-from and --no-docker-seed are mutually exclusive")
+        raise typer.Exit(2)
     cfg = _load_or_exit(config)
+    incus = Incus()
+    from jailbee import docker_seed
+
+    explicit = docker_from is not None
+    requested = not no_docker_seed and (
+        explicit or (cfg.golden.docker_seed is not None and cfg.golden.docker_seed.enabled)
+    )
+    req = docker_seed.SeedRequest(docker_from, keep_seed, explicit)
+    if requested:
+        if docker_from is not None:
+            from jailbee.lifecycle import resolve_container_for_interactive
+
+            try:
+                req = docker_seed.SeedRequest(
+                    resolve_container_for_interactive(cfg, incus, docker_from), keep_seed, True
+                )
+            except ValueError as exc:
+                error(str(exc))
+                raise typer.Exit(2) from exc
+        try:
+            docker_seed.preflight(cfg, incus, req)
+        except docker_seed.SeedPreflightError as exc:
+            if explicit:
+                error(str(exc))
+                raise typer.Exit(2) from exc
+            skipped = docker_seed.SeedOutcome("skipped", "seed-container", detail=str(exc))
+            docker_seed.record_outcome(cfg, skipped)
+            warn(f"Docker seeding skipped: {exc}")
+            requested = False
+
     try:
-        build_golden_image(cfg, Incus())
+        build_golden_image(cfg, incus)
     except (IncusError, ValueError) as e:
         # A provisioning failure carries apt's own stdout and stderr, which
         # is the diagnosis. Typer installs no global handler, so without this
@@ -11527,6 +11577,76 @@ def base_build_cmd(config: ConfigOption = None) -> None:
         raise typer.Exit(1) from e
 
     _record_upgrade_action(cfg, "base_build")
+    if requested:
+        outcome = docker_seed.run_seed(cfg, incus, _load_global(), req)
+        _print_docker_seed_outcome(outcome)
+
+
+@base_app.command("seed")
+def base_seed_cmd(
+    docker_from: Annotated[
+        str | None,
+        typer.Option(
+            "--docker-from",
+            help="Seed from a running container.",
+            autocompletion=completion.complete_container,
+        ),
+    ] = None,
+    keep_seed: Annotated[
+        bool, typer.Option("--keep-seed", help="Keep the temporary docker-seed container.")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Seed the existing golden image with Docker images."""
+    from jailbee import docker_seed
+    from jailbee.golden import golden_exists
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    incus = Incus()
+    if not golden_exists(cfg, incus):
+        error(f"No golden image '{cfg.golden.alias}' exists; run jailbee base build first")
+        raise typer.Exit(2)
+    if docker_from is None and (
+        cfg.golden.docker_seed is None or not cfg.golden.docker_seed.enabled
+    ):
+        error("golden.docker_seed is not configured")
+        raise typer.Exit(2)
+
+    explicit = docker_from is not None
+    source = docker_from
+    if source is not None:
+        from jailbee.lifecycle import resolve_container_for_interactive
+
+        try:
+            source = resolve_container_for_interactive(cfg, incus, source)
+        except ValueError as exc:
+            error(str(exc))
+            raise typer.Exit(2) from exc
+    req = docker_seed.SeedRequest(source, keep_seed, explicit)
+    try:
+        docker_seed.preflight(cfg, incus, req)
+    except docker_seed.SeedPreflightError as exc:
+        error(str(exc))
+        raise typer.Exit(2) from exc
+    outcome = docker_seed.run_seed(cfg, incus, _load_global(), req)
+    _print_docker_seed_outcome(outcome)
+    if outcome.outcome == "failed":
+        raise typer.Exit(1)
+
+
+def _print_docker_seed_outcome(outcome: "SeedOutcome") -> None:
+    from jailbee.maintenance import humanize
+
+    if outcome.outcome == "seeded":
+        success(
+            f"Seeded {outcome.image_count} Docker images ({humanize(outcome.size_bytes)}) "
+            f"from {outcome.source}"
+        )
+    elif outcome.outcome == "skipped":
+        warn(f"Docker seeding skipped: {outcome.detail}")
+    else:
+        warn(f"Docker seeding failed: {outcome.detail}")
 
 
 @base_app.command("prune")
