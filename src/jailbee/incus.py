@@ -20,6 +20,12 @@ from typing import Any
 
 import yaml
 
+# Per-instance disk device through which the host broker mounts an orchestrated
+# container's private socket directory. `incus copy` duplicates per-instance
+# devices, and a started copy would then reach the broker with the SOURCE
+# container's identity, so every copy must drop this device before it starts.
+ORCHESTRATION_DEVICE = "jailbee-orchestration"
+
 
 class IncusError(Exception):
     """Raised when an `incus` CLI invocation fails."""
@@ -450,6 +456,10 @@ class Incus:
         source's snapshots too (verified 2026-10-16). ``storage_pool`` puts the
         copy's root disk on that pool; None leaves the pool to the profile.
         ``config`` is set on the copy as it is created.
+
+        The copy then has its inherited ``ORCHESTRATION_DEVICE`` removed, if
+        any, so it cannot start under the source's broker identity. The removal
+        is idempotent: most sources have no such device.
         """
         args = ["copy", source, dest]
         if instance_only:
@@ -459,6 +469,7 @@ class Incus:
         for key, value in (config or {}).items():
             args += ["-c", f"{key}={value}"]
         self._run(args)
+        self.config_device_remove(dest, ORCHESTRATION_DEVICE, missing_ok=True)
 
     def rename(self, old: str, new: str) -> None:
         """Rename an instance. Incus refuses while it is running."""

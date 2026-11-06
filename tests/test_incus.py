@@ -108,13 +108,13 @@ def test_init_and_copy_pass_config_as_c_options(incus, mocker):
         "user.b=x y",
     ]
     incus.copy("g", "c", config={"user.a": "1"})
-    assert run.call_args[0][0] == ["incus", "copy", "g", "c", "-c", "user.a=1"]
+    assert run.call_args_list[1][0][0] == ["incus", "copy", "g", "c", "-c", "user.a=1"]
 
 
 def test_copy_calls_incus_copy(incus, mocker):
     run = _mock_run(mocker)
     incus.copy("source", "dest")
-    args = run.call_args[0][0]
+    args = run.call_args_list[0][0][0]
     assert args[:3] == ["incus", "copy", "source"]
     assert "dest" in args
 
@@ -122,16 +122,41 @@ def test_copy_calls_incus_copy(incus, mocker):
 def test_copy_defaults_unchanged(incus, mocker):
     run = _mock_run(mocker)
     incus.copy("g", "c")
-    assert run.call_args[0][0] == ["incus", "copy", "g", "c"]
+    assert run.call_args_list[0][0][0] == ["incus", "copy", "g", "c"]
 
 
 def test_copy_instance_only_onto_pool(incus, mocker):
     run = _mock_run(mocker)
     incus.copy("g", "c", storage_pool="cow", instance_only=True)
-    args = run.call_args[0][0]
+    args = run.call_args_list[0][0][0]
     assert args[:4] == ["incus", "copy", "g", "c"]
     assert "--instance-only" in args
     assert args[args.index("-s") + 1] == "cow"
+
+
+def test_copy_strips_orchestration_device_from_dest_after_copy(incus, mocker):
+    """A copy inherits the source's per-instance broker device, which would
+    make a started copy talk to the broker as the source. It must go."""
+    run = _mock_run(mocker)
+    incus.copy("g", "c")
+    calls = [c[0][0] for c in run.call_args_list]
+    assert calls == [
+        ["incus", "copy", "g", "c"],
+        ["incus", "config", "device", "remove", "c", "jailbee-orchestration"],
+    ]
+
+
+def test_copy_tolerates_missing_orchestration_device(incus, mocker):
+    """Most sources have no broker device; the removal must not fail the copy."""
+    run = mocker.patch(
+        "jailbee.incus.subprocess.run",
+        side_effect=[
+            _cp(returncode=0),
+            _cp(returncode=1, stderr="Error: Device not found"),
+        ],
+    )
+    incus.copy("g", "c")
+    assert run.call_count == 2
 
 
 def test_rename_calls_incus_rename(incus, mocker):
