@@ -174,6 +174,7 @@ class Incus:
         self.dry_run = dry_run
         # Default for `exec` calls that pass no timeout; see `with_exec_timeout`.
         self.exec_timeout: int | None = None
+        self._deadline: float | None = None
         self._client_version: tuple[int, ...] | None = None
         self._client_version_probed = False
         self._guarded_instances: dict[str, str] = {}
@@ -184,13 +185,27 @@ class Incus:
 
     # ---- Internal helpers ---------------------------------------------------
 
+    def with_deadline(self, deadline: float) -> Incus:
+        """Return a shallow copy bounded by an absolute monotonic deadline."""
+        clone = copy.copy(self)
+        clone._deadline = deadline if self._deadline is None else min(self._deadline, deadline)
+        return clone
+
+    def _bounded_timeout(self, timeout: float | None, args: list[str]) -> float | None:
+        if self._deadline is None:
+            return timeout
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
+            raise IncusTimeoutError(f"`incus {_render_args(args)}` timed out: deadline expired")
+        return remaining if timeout is None else min(timeout, remaining)
+
     def _run(
         self,
         args: list[str],
         *,
         capture_output: bool = True,
         check: bool = True,
-        timeout: int | None = None,
+        timeout: float | None = None,
         input_text: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         self._check_guard(args)
@@ -205,6 +220,7 @@ class Incus:
         stdin_kwargs: dict[str, Any] = (
             {"stdin": subprocess.DEVNULL} if input_text is None else {"input": input_text}
         )
+        timeout = self._bounded_timeout(timeout, args)
         try:
             result = subprocess.run(
                 cmd,
@@ -295,7 +311,9 @@ class Incus:
                 return self._run(args, **kwargs)
             except IncusError as e:
                 if "ETag doesn't match" in str(e) and attempt < self._ETAG_RETRIES - 1:
-                    time.sleep(self._ETAG_BACKOFF * (attempt + 1))
+                    delay = self._bounded_timeout(self._ETAG_BACKOFF * (attempt + 1), args)
+                    assert delay is not None
+                    time.sleep(delay)
                     continue
                 raise
         # Unreachable: the loop either returns or raises on the final attempt.
@@ -586,6 +604,8 @@ class Incus:
             return ""
         timeout = timeout if timeout is not None else self.exec_timeout
         deadline = None if timeout is None else time.monotonic() + timeout
+        if self._deadline is not None:
+            deadline = self._deadline if deadline is None else min(deadline, self._deadline)
 
         def remaining() -> float | None:
             return None if deadline is None else max(0.0, deadline - time.monotonic())
@@ -593,12 +613,16 @@ class Incus:
         processes: list[subprocess.Popen[bytes]] = []
         with tempfile.TemporaryFile() as src_err, tempfile.TemporaryFile() as dst_err:
             try:
+                if self._deadline is not None:
+                    self._bounded_timeout(None, src_args)
                 source = subprocess.Popen(
                     [self.binary, *src_args], stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE, stderr=src_err,
                 )
                 processes.append(source)
                 assert source.stdout is not None
+                if self._deadline is not None:
+                    self._bounded_timeout(None, dst_args)
                 destination = subprocess.Popen(
                     [self.binary, *dst_args], stdin=source.stdout,
                     stdout=subprocess.PIPE, stderr=dst_err,
@@ -703,19 +727,20 @@ class Incus:
         stdin_kwargs: dict[str, Any] = (
             {"stdin": subprocess.DEVNULL} if input_bytes is None else {"input": input_bytes}
         )
+        bounded_timeout = self._bounded_timeout(timeout, args)
         try:
             result = subprocess.run(
                 [self.binary, *args],
                 capture_output=True,
                 check=False,
-                timeout=timeout,
+                timeout=bounded_timeout,
                 **stdin_kwargs,
             )
         except FileNotFoundError as e:
             raise _missing_binary_error(self.binary) from e
         except subprocess.TimeoutExpired as e:
             raise IncusTimeoutError(
-                f"`incus {_render_args(args)}` timed out after {timeout}s"
+                f"`incus {_render_args(args)}` timed out after {bounded_timeout}s"
             ) from e
         if max_bytes is not None and len(result.stdout) > max_bytes:
             raise IncusError(f"`incus {_render_args(args)}` output exceeded {max_bytes} bytes")
@@ -745,6 +770,9 @@ class Incus:
         if self.dry_run:
             return ""
         deadline = None if timeout is None else time.monotonic() + timeout
+        if self._deadline is not None:
+            self._bounded_timeout(None, args)
+            deadline = self._deadline if deadline is None else min(deadline, self._deadline)
         chunks: list[bytes] = []
         size = 0
         with tempfile.TemporaryFile() as stderr:

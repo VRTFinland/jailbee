@@ -1717,6 +1717,73 @@ def test_with_exec_timeout_bounds_exec_calls_without_their_own_timeout(incus, mo
     assert bounded.binary == incus.binary
 
 
+def test_deadline_bounds_lifecycle_and_preserves_original(incus, mocker):
+    clock = mocker.patch("jailbee.incus.time.monotonic", return_value=100.0)
+    run = _mock_run(mocker)
+    bounded = incus.with_deadline(110.5)
+    bounded.copy("src", "dst")
+    assert run.call_args.kwargs["timeout"] == 10.5
+    clock.return_value = 108.0
+    bounded.start("dst")
+    assert run.call_args.kwargs["timeout"] == 2.5
+    bounded.publish("dst", "image")
+    assert run.call_args.kwargs["timeout"] == 2.5
+    incus.start("dst")
+    assert run.call_args.kwargs["timeout"] is None
+
+
+def test_deadline_composes_with_exec_timeout_and_nested_deadlines(incus, mocker):
+    mocker.patch("jailbee.incus.time.monotonic", return_value=100.0)
+    run = _mock_run(mocker)
+    bounded = incus.with_exec_timeout(8).with_deadline(105).with_deadline(120)
+    bounded.exec("c", ["true"])
+    assert run.call_args.kwargs["timeout"] == 5
+    bounded.exec("c", ["true"], timeout=2)
+    assert run.call_args.kwargs["timeout"] == 2
+    bounded.start("c")
+    assert run.call_args.kwargs["timeout"] == 5
+
+
+def test_expired_deadline_prevents_run_and_binary_exec(incus, mocker):
+    mocker.patch("jailbee.incus.time.monotonic", return_value=100.0)
+    run = _mock_run(mocker)
+    bounded = incus.with_deadline(100.0)
+    with pytest.raises(IncusTimeoutError):
+        bounded.start("c")
+    with pytest.raises(IncusTimeoutError):
+        bounded.exec_bytes("c", ["true"])
+    run.assert_not_called()
+
+
+def test_exec_bytes_deadline_caps_explicit_timeout(incus, mocker):
+    mocker.patch("jailbee.incus.time.monotonic", return_value=100.0)
+    run = _mock_run_bytes(mocker)
+    incus.with_deadline(103.5).exec_bytes("c", ["true"], timeout=10)
+    assert run.call_args.kwargs["timeout"] == 3.5
+
+
+def test_exec_pipe_deadline_and_expiry_between_spawns(incus, mocker):
+    source, destination, popen = _pipe_processes(mocker)
+    clock = mocker.patch("jailbee.incus.time.monotonic", return_value=100.0)
+    incus.with_deadline(105).exec_pipe("src", ["save"], "dst", ["load"])
+    destination.communicate.assert_called_once_with(timeout=5)
+    popen.reset_mock()
+    source.poll.return_value = None
+    popen.side_effect = lambda *args, **kwargs: (setattr(clock, "return_value", 105.0) or source)
+    with pytest.raises(IncusTimeoutError):
+        incus.with_deadline(105).exec_pipe("src", ["save"], "dst", ["load"])
+    assert popen.call_count == 1
+    source.kill.assert_called_once()
+
+
+def test_exec_capped_expired_deadline_does_not_spawn(incus, mocker):
+    mocker.patch("jailbee.incus.time.monotonic", return_value=100.0)
+    popen = mocker.patch("jailbee.incus.subprocess.Popen")
+    with pytest.raises(IncusTimeoutError):
+        incus.with_deadline(100).exec_capped("c", ["true"], max_bytes=10)
+    popen.assert_not_called()
+
+
 def test_config_get_checked_distinguishes_missing_and_failure(incus, mocker):
     run = _mock_run(mocker, stdout="\n")
     assert incus.config_get_checked("c", "user.test") is None
