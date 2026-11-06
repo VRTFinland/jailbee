@@ -513,14 +513,33 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
 
 
 def _refund(root: Path, full: str, entry: dict[str, Any]) -> None:
-    """Return the hourly reservation of a publish the in-lock policy refused whole."""
-    budget = _load(root, "publish-budget.json")
-    stamps = list(budget.get(full, []))
-    for _ in entry["actions"]:
-        if entry["started_at"] in stamps:
-            stamps.remove(entry["started_at"])
-    budget[full] = stamps
-    _save(root, "publish-budget.json", budget)
+    """Commit the refund and its idempotency marker together."""
+    for name in ("publish-budget.json", "publish-inflight.json"):
+        import_json_document(root, name, _validate_document, for_write=True)
+    store = open_state_store(root)
+    with store._tx() as con:
+        def read(name: str) -> dict[str, Any]:
+            row = con.execute("SELECT value FROM state WHERE key=?", (name,)).fetchone()
+            return json.loads(row[0]) if row else {}
+
+        current = read("publish-inflight.json")
+        saved = current.get(full)
+        if saved is None or saved.get("ref") != entry["ref"] or saved.get("refunded"):
+            return
+        budget = read("publish-budget.json")
+        stamps = list(budget.get(full, []))
+        for _ in saved["actions"]:
+            if saved["started_at"] in stamps:
+                stamps.remove(saved["started_at"])
+        budget[full] = stamps
+        saved["refunded"] = True
+        for name, value in (("publish-budget.json", budget), ("publish-inflight.json", current)):
+            con.execute(
+                "INSERT INTO state(key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (name, json.dumps(value)),
+            )
+    entry["refunded"] = True
 
 
 def settle(ctx: ActionContext, reply: Callable[[str, Outcome], None]) -> None:
@@ -553,8 +572,6 @@ def settle(ctx: ActionContext, reply: Callable[[str, Outcome], None]) -> None:
         _save(ctx.root, "publish-inflight.json", current)
     if result.get("policy_refused") and not entry.get("refunded"):
         _refund(ctx.root, ctx.sender.full, entry)
-        entry["refunded"] = True
-        _save(ctx.root, "publish-inflight.json", current)
     reply(entry["ref"], Outcome(result["state"], result["detail"]))
     del current[ctx.sender.full]
     _save(ctx.root, "publish-inflight.json", current)

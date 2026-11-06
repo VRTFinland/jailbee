@@ -791,6 +791,34 @@ def _assign_manifest(files, add):
     )
 
 
+def test_refund_is_not_repeated_after_delivery_failure(rig):
+    ctx, _m, files, _, publish = rig
+    _assign_manifest(files, ["bob"])
+    ctx.sender.config[labels.GRANT] = Grant(
+        publish=PublishRights(issues=("assign_self",))
+    ).to_label()
+    publish.side_effect = lambda *a, **kw: kw["policy"](_assign_batch(rig, add=("bob",)))
+    accept(rig)
+    store = open_state_store(ctx.root)
+    stamp = ctx.now.isoformat()
+    store.kv_put("publish-budget.json", {ctx.sender.full: [stamp, stamp]})
+    import sqlite3
+
+    with sqlite3.connect(store.path) as con:
+        con.execute("CREATE TRIGGER fail_refund BEFORE UPDATE ON state "
+                    "WHEN NEW.key='publish-inflight.json' AND NEW.value LIKE '%refunded%' "
+                    "BEGIN SELECT RAISE(ABORT, 'interrupted'); END")
+    with pytest.raises(Exception, match="interrupted"):
+        publishing.settle(ctx, lambda *args: None)
+    assert store.kv_get("publish-budget.json") == {ctx.sender.full: [stamp, stamp]}
+    with sqlite3.connect(store.path) as con:
+        con.execute("DROP TRIGGER fail_refund")
+    with pytest.raises(RuntimeError):
+        publishing.settle(ctx, lambda *args: (_ for _ in ()).throw(RuntimeError("delivery")))
+    publishing.settle(ctx, lambda *args: None)
+    assert store.kv_get("publish-budget.json") == {ctx.sender.full: [stamp]}
+
+
 def test_assign_self_refusal_in_the_lock_leaves_the_budget_unchanged(rig):
     ctx, _m, files, _, publish = rig
     _assign_manifest(files, ["bob"])
