@@ -871,8 +871,9 @@ def _migrate_inbox(ctx: ActionContext, memory: BrokerMemory, uuid: str) -> bool:
     Read history (`inbox/read/`) goes in acked, then unread `inbox/` items
     unacked, in file-name order, ids kept (duplicates are ignored), then
     `inbox/read/` again for files moved there meanwhile (acked). Files are
-    removed only after their inserts; unparsable ones are renamed aside. True when the recipient row may be
-    written: already migrated, or done now. False means retry next round.
+    removed only after their inserts; unparsable ones are renamed aside. True
+    when the recipient row may be written: already migrated, or done now.
+    False means retry next round.
     """
     store = memory.store
     assert store is not None

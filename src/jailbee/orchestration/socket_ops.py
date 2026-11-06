@@ -186,7 +186,9 @@ _LIST_FETCH = 256  # rows read per store query while filling a page
 _NO_CURSOR = object()
 
 
-def _list_page(store: BrokerStore, uuid: str, after: int) -> tuple[list[dict[str, object]], int | None]:
+def _list_page(
+    store: BrokerStore, uuid: str, after: int
+) -> tuple[list[dict[str, object]], int | None]:
     """The oldest unacked views after seq `after` that fit `LIST_PAGE_BYTES`,
     and the cursor of the next page (None when this page reached the end)."""
     views: list[dict[str, object]] = []
