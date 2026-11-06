@@ -228,12 +228,15 @@ def _activity(started: float, work: dict[str, object], now: float, previous: flo
     return computed if previous is None else max(previous, computed)
 
 
-def sync_children(ctx: ActionContext, cache: child_status.StatusCache | None = None) -> None:
+def sync_children(
+    ctx: ActionContext, cache: child_status.StatusCache | None = None
+) -> list[dict[str, object]]:
     """Refresh the heartbeat and retain fallback boot times across broker restarts.
 
     With a `cache`, also collect each child's status (#64) at the cache's
     cadence. Without one nothing is collected and `status` stays absent from
     the published items; durable status is still carried over untouched.
+    Returns the published `children` list.
     """
     path = ctx.root / "inbox-state" / f"{ctx.sender.full}.json"
     previous: dict[str, dict[str, object]] = {}
@@ -338,3 +341,4 @@ def sync_children(ctx: ActionContext, cache: child_status.StatusCache | None = N
         "0444",
         uid=ctx.cfg.container_user.uid,
     )
+    return children

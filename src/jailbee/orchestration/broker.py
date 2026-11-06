@@ -91,6 +91,14 @@ LOCK_FILE = "broker.lock"
 UPGRADED_EXIT = 75
 
 
+@dataclass(frozen=True)
+class ChildrenView:
+    """An orchestrator's published children list and when it was observed."""
+
+    observed_at: float
+    children: list[dict[str, object]]
+
+
 @dataclass
 class BrokerMemory:
     """What the broker remembers between rounds (in memory only)."""
@@ -106,6 +114,10 @@ class BrokerMemory:
     seq: Iterator[int] = field(default_factory=itertools.count)
     # Probe cadence and CPU readings behind the published child status (#64).
     status: StatusCache = field(default_factory=StatusCache)
+    # Orchestrator full name -> its children as last published by sync_children.
+    children: dict[str, ChildrenView] = field(default_factory=dict)
+    # Container key (volatile.uuid) -> the context built for it in the last round.
+    contexts: dict[str, ActionContext] = field(default_factory=dict)
 
     def warn_once(self, key: str, msg: str, *args: object) -> None:
         if key not in self.warned:
@@ -207,6 +219,11 @@ def _reply(ctx: ActionContext, ref: str, outcome: Outcome, memory: BrokerMemory)
         now=ctx.now,
         seq=next(memory.seq),
     )
+    clear_reply_path(ctx, ref)
+
+
+def clear_reply_path(ctx: ActionContext, ref: str) -> None:
+    """Drop the done-reply gate once the status for `ref` reached the sender."""
     path = finishing.reply_path(ctx, ctx.sender)
     if path.exists():
         saved = json.loads(path.read_text())
@@ -490,7 +507,7 @@ def _handle_raw(
         delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
         return
     ref = PurePosixPath(raw.file_name).stem
-    outcome: Outcome | None
+    outcome: Outcome | None = None
     manifest: Manifest | None = None
     try:
         manifest = parse_manifest(raw.file_name, raw.text, raw.files)
@@ -498,11 +515,54 @@ def _handle_raw(
         outcome = refused(str(e))
     else:
         ref = manifest.id
+
+    def record(ref: str, outcome: Outcome | None) -> None:
+        journal.record(
+            ctx.sender.key,
+            digest,
+            ref,
+            outcome.state if outcome else "ignored",
+            ctx.now,
+            container_full=ctx.sender.full,
+        )
+
+    _handle_manifest(
+        ctx,
+        memory,
+        ref=ref,
+        manifest=manifest,
+        outcome=outcome,
+        record=record,
+        reply=lambda ref, outcome: _reply(ctx, ref, outcome, memory),
+        before_publish=lambda: delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid),
+        label=raw.file_name,
+    )
+
+
+def _handle_manifest(
+    ctx: ActionContext,
+    memory: BrokerMemory,
+    *,
+    ref: str,
+    manifest: Manifest | None,
+    outcome: Outcome | None,
+    record: Callable[[str, Outcome | None], None],
+    reply: Callable[[str, Outcome], None],
+    before_publish: Callable[[], None],
+    label: str | None = None,
+) -> Outcome | None:
+    """Steps shared by both transports once a request has been parsed.
+
+    `outcome` is a preset refusal (parse failure); with a `manifest` and no
+    preset the manifest is dispatched. `record` journals, `reply` delivers the
+    status, `before_publish` is the file transport's outbox deletion.
+    """
+    if manifest is not None and outcome is None:
         try:
             outcome = dispatch(ctx, manifest)
         except Exception:
             # The detail goes to the container; the exception text stays in the log.
-            log.exception("broker: %s: handler for %s failed", ctx.sender.full, raw.file_name)
+            log.exception("broker: %s: handler for %s failed", ctx.sender.full, label or ref)
             outcome = refused("broker error")
     if (
         isinstance(manifest, MessageManifest)
@@ -528,23 +588,16 @@ def _handle_raw(
             json.dumps({"ref": ref, "state": outcome.state, "detail": outcome.detail}),
         )
     # Journal before anything else: a crash after acting must never act again.
-    journal.record(
-        ctx.sender.key,
-        digest,
-        ref,
-        outcome.state if outcome else "ignored",
-        ctx.now,
-        container_full=ctx.sender.full,
-    )
+    record(ref, outcome)
     if outcome is not None:
         _watch_manifest(ctx, manifest, ref, outcome)
         _refresh_children_snapshot(ctx, manifest, outcome, memory)
-        _reply(ctx, ref, outcome, memory)
+        reply(ref, outcome)
     is_publish = (
         isinstance(manifest, PublishManifest) and outcome is not None and outcome.state == "started"
     )
     try:
-        delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
+        before_publish()
     except Exception:
         if is_publish:
             publishing.abort_before_start(
@@ -564,6 +617,7 @@ def _handle_raw(
                 ctx, ref, "publish worker could not start; retry with a new id"
             )
             raise
+    return outcome
 
 
 def _refresh_children_snapshot(
@@ -583,9 +637,14 @@ def _refresh_children_snapshot(
         return
     try:
         ctx.nodes = _nodes(ctx.incus.list_containers(), repo_configs(memory))
-        inbox_state.sync_children(ctx, memory.status)
+        _remember_children(ctx, memory, inbox_state.sync_children(ctx, memory.status))
     except Exception:
         log.exception("broker: child inbox state of %s failed", ctx.sender.full)
+
+
+def _remember_children(ctx: ActionContext, memory: BrokerMemory, children: object) -> None:
+    if isinstance(children, list):
+        memory.children[ctx.sender.full] = ChildrenView(time.time(), children)
 
 
 def _watch_drained(ctx: ActionContext, req: QueuedRequest, outcome: Outcome) -> None:
@@ -741,6 +800,8 @@ def tick(
     for full in [f for f in memory.grant_written if f not in present]:
         del memory.grant_written[full]
     memory.env_ensured.intersection_update(present)
+    for full in [f for f in memory.children if f not in present]:
+        del memory.children[full]
     # Warn workers before deleting a vanished parent's queued finish reports.
     unnotified = finishing.notify_orphaned_finishes(
         incus,
@@ -786,6 +847,7 @@ def tick(
         and not publishes
         and not (former_publishers & present)
     ):
+        memory.contexts.clear()
         return False
 
     try:
@@ -827,7 +889,10 @@ def tick(
             _clear_stale_stop_labels(incus, node)
 
     orchestrators: list[ActionContext] = []
+    for key in [k for k in memory.contexts if k not in {n.key for n in nodes.values()}]:
+        del memory.contexts[key]
     for node in nodes.values():
+        memory.contexts.pop(node.key, None)
         if not _labelled(node.config):
             try:
                 if node.running and node.full in former_publishers:
@@ -864,6 +929,7 @@ def tick(
                         finish=finishing.flush_callback(ctx),
                     )
                 continue
+            memory.contexts[node.key] = ctx
             if ctx.role() == "orchestrator":
                 orchestrators.append(ctx)
             if node.running:
@@ -892,7 +958,7 @@ def tick(
             log.exception("broker: queue of %s failed", ctx.sender.full)
         if ctx.sender.running:
             try:
-                inbox_state.sync_children(ctx, memory.status)
+                _remember_children(ctx, memory, inbox_state.sync_children(ctx, memory.status))
             except Exception:
                 log.exception("broker: child inbox state of %s failed", ctx.sender.full)
     memory.status.prune(set(nodes), seen)
