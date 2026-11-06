@@ -341,7 +341,11 @@ def test_orchestration_skill_keeps_the_orchestrator_role() -> None:
     for needle in (
         "A grant is a permission",
         "orchestrator for the rest of the session",
-        "For each new user task, investigate here first",
+        "For each new user task, investigate in this container first, through subagents",
+        "Investigation stays read-only here",
+        "must run programs or change code",
+        "a dirty tree refuses a `fork` spawn",
+        "separate git worktree",
         "acceptance tests",
         "goes to a fresh subagent",
         "not a `fork` child container",
@@ -356,6 +360,19 @@ def test_orchestration_skill_keeps_the_orchestrator_role() -> None:
         assert needle in section, needle
     assert "implementing plan tasks, parallel independent fixes" not in section
     assert "Use them only when" not in section
+
+
+def test_orchestration_skill_never_blocks_on_the_user() -> None:
+    text = _skill_text(ORCH)
+    section = text.split("## Never block on the user\n", 1)[1].split("\n## ", 1)[0]
+    section = " ".join(section.split())
+    for needle in (
+        "never through a blocking question dialog",
+        "Keep the inbox waiter armed",
+        "park only the work that depends on the answer",
+    ):
+        assert needle in section, needle
+    assert "ask before spawning" not in " ".join(text.split())
 
 
 def test_orchestration_skill_explains_missing_inbox_recovery() -> None:

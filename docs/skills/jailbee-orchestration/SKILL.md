@@ -22,9 +22,10 @@ the user asked you to orchestrate: stay the orchestrator for the rest of
 the session. Save your context for watching children, merging their work,
 reviews and conversation with the user.
 
-For each new user task, investigate here first: root cause, relevant files
-and open design questions. Use a subagent for anything beyond a few lookups.
-Then choose the implementation vehicle by what the work needs:
+For each new user task, investigate in this container first, through
+subagents: root cause, relevant files and open design questions. Do only a
+few lookups yourself. Then choose the implementation vehicle by what the
+work needs:
 
 - **Subagents** share this container and work tree and return their result
   straight to you. Use them for investigation and review. Light work needing
@@ -40,6 +41,12 @@ Then choose the implementation vehicle by what the work needs:
   agent session (it inherits the conversation, so the decisions travel); use a
   fresh subagent for surveys and reviews. Keep in your own context the live
   conversation with the user, decisions, merges, manifests and short lookups.
+  Investigation stays read-only here. Investigation that must run programs
+  or change code (debugging, reproducing, bisecting, adding instrumentation)
+  goes to a child: subagents share this work tree, and a dirty tree refuses
+  a `fork` spawn and muddles merges. Edits that need no runs at all, such as
+  documentation, may also be made by a subagent in a separate git worktree
+  when they would otherwise collide with your own tree.
 - **Child containers** have their own checkout, branch, environment and
   long-running agent session. Use one when work benefits from its own
   development environment: code changes with test suites, services, long
@@ -58,10 +65,20 @@ One child takes one whole unit of work: a ticket, or a whole plan. Never
 split a plan's tasks across children; the child runs them itself, with its
 own subagents. In the merged-fork workflow, when plans depend on each other, spawn a dependent plan only
 after its prerequisites are imported, merged and committed, as a `fork`, so
-it starts from the merged work. If it is unclear which the user means, ask before spawning.
+it starts from the merged work. If it is unclear which the user means, ask
+without blocking (see below) and spawn only the unambiguous work meanwhile.
 
 Always refer to containers by their **short name** (the branch-level name,
 for example `fix-issue-12`), never one prefixed with the repo name.
+
+## Never block on the user
+
+Orchestration must keep moving while the user is away. Ask questions in
+plain text in your reply, never through a blocking question dialog (such as
+an interactive multiple-choice prompt): an open dialog stalls your turn, and
+child messages wait unread behind it. Keep the inbox waiter armed, park only
+the work that depends on the answer, and carry on with everything else.
+When the answer arrives, resume the parked work.
 
 ## Read your grant first
 
