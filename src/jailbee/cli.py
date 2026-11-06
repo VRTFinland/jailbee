@@ -1774,6 +1774,9 @@ def upgrade_cmd(
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Show what would run, change nothing")
     ] = False,
+    no_docker_seed: Annotated[
+        bool, typer.Option("--no-docker-seed", help="Skip Docker image seeding in every repo.")
+    ] = False,
 ) -> None:
     """Run `base build` and `apply` in every registered repo, restarting nothing.
 
@@ -1798,6 +1801,7 @@ def upgrade_cmd(
         dry_run=dry_run,
         version=__version__,
         now=_now(),
+        docker_seed=not no_docker_seed,
     )
     if not all(r.ok for r in results):
         raise typer.Exit(1)
