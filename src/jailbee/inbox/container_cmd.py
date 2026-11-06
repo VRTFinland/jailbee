@@ -230,6 +230,15 @@ def read(
     _run(lambda settings: cli.cmd_read(settings, ident, keep=keep))
 
 
+@inbox_app.command(help="Summarise the orchestration grant available to this container.")
+def grant(
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Print the sanitised grant document.")
+    ] = False,
+) -> None:
+    _run(lambda settings: cli.cmd_grant(settings, as_json=json_output))
+
+
 @inbox_app.command(
     help=(
         "List the default runner and runners a spawn or restart may name "

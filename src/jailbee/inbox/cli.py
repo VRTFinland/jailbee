@@ -352,6 +352,70 @@ def runners_json(settings: Settings) -> list[dict[str, object]]:
     return result
 
 
+def cmd_grant(settings: Settings, *, as_json: bool = False) -> int:
+    path = settings.base / "grant.json"
+    try:
+        grant = _load(path)
+    except FileNotFoundError:
+        print(
+            f"{PROG}: no orchestration grant here yet (the broker writes it a few seconds "
+            "after the grant; if it stays missing, tell the human)",
+            file=sys.stderr,
+        )
+        return 1
+    except (OSError, ValueError, UnicodeError):
+        print(f"{PROG}: invalid grant.json", file=sys.stderr)
+        return 1
+    if not isinstance(grant, dict):
+        print(f"{PROG}: invalid grant.json", file=sys.stderr)
+        return 1
+    safe = sanitize_json_value(grant)
+    if as_json:
+        print(pretty(safe))
+        return 0
+
+    def text(value: object) -> str:
+        if isinstance(value, str):
+            return clean_c0c1(value)
+        if isinstance(value, (int, Decimal)) and not isinstance(value, bool):
+            return str(value)
+        return "-"
+
+    operations = grant.get("operations")
+    operations_text = (
+        ", ".join(text(item) for item in operations) if isinstance(operations, list) else "-"
+    )
+    grantable = grant.get("grantable")
+    grantable = grantable if isinstance(grantable, dict) else {}
+    mounts = grantable.get("mounts")
+    egress = grantable.get("egress")
+    mounts_text = ", ".join(text(item) for item in mounts) if isinstance(mounts, list) else "-"
+    egress_text = ", ".join(text(item) for item in egress) if isinstance(egress, list) else "-"
+    publish = grant.get("publish")
+    publish = publish if isinstance(publish, dict) else {}
+    issues = publish.get("issues")
+    issue_text = ", ".join(text(item) for item in issues) if isinstance(issues, list) else "-"
+    default_runner = grant.get("default_runner")
+    runner_text = "none"
+    if isinstance(default_runner, dict):
+        agent = text(default_runner.get("agent"))
+        runner_text = agent
+        if isinstance(default_runner.get("profile"), str):
+            runner_text += " -P " + text(default_runner["profile"])
+        if isinstance(default_runner.get("model"), str):
+            runner_text += " " + text(default_runner["model"])
+    print("operations: " + operations_text)
+    print("max_running_children: " + text(grant.get("max_running_children")))
+    print("grantable mounts: " + mounts_text)
+    print("grantable loose: " + ("yes" if grantable.get("loose") is True else "no"))
+    print("grantable egress: " + egress_text)
+    print("publish issues: " + issue_text)
+    print("publish pull_requests: " + ("yes" if publish.get("pull_requests") is True else "no"))
+    print("publish pr_reviews: " + ("yes" if publish.get("pr_reviews") is True else "no"))
+    print("default runner: " + runner_text)
+    return 0
+
+
 def cmd_runners(settings: Settings, *, as_json: bool = False) -> int:
     try:
         entries = runners_json(settings)

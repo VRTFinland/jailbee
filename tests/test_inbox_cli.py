@@ -1065,6 +1065,73 @@ def _runners_env(
     return env
 
 
+def _grant_document() -> dict[str, object]:
+    return {
+        "version": 1,
+        "max_running_children": 3,
+        "operations": ["spawn", "message", "import"],
+        "grantable": {"mounts": ["data"], "loose": True, "egress": ["pypi.org"]},
+        "publish": {
+            "issues": ["create", "comment"],
+            "pull_requests": True,
+            "pr_reviews": False,
+        },
+        "default_runner": {"agent": "claude-jb", "profile": "team", "model": "haiku"},
+    }
+
+
+def test_grant_missing_file_exits_1(script, base, tmp_path):
+    result = run(script, "grant", env=env_for(base, tmp_path))
+    assert result.returncode == 1
+    assert "no orchestration grant here yet" in result.stderr
+
+
+def test_grant_invalid_json_exits_1(script, base, tmp_path):
+    (base / "grant.json").write_text("{broken")
+    result = run(script, "grant", env=env_for(base, tmp_path))
+    assert result.returncode == 1
+    assert "invalid grant.json" in result.stderr
+
+
+def test_grant_human_output_summarises_rights_and_sanitises_controls(script, base, tmp_path):
+    grant = _grant_document()
+    grant["default_runner"] = {"agent": "claude\x1b", "profile": "team\x07", "model": "haiku\u009b"}
+    (base / "grant.json").write_text(json.dumps(grant))
+    result = run(script, "grant", env=env_for(base, tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert "spawn, message, import" in result.stdout
+    assert "max_running_children: 3" in result.stdout
+    assert "mounts: data" in result.stdout
+    assert "loose: yes" in result.stdout
+    assert "egress: pypi.org" in result.stdout
+    assert "issues: create, comment" in result.stdout
+    assert "pull_requests: yes" in result.stdout
+    assert "default runner: claude? -P team? haiku?" in result.stdout
+    assert _raw_controls(result.stdout) == []
+
+
+def test_grant_json_is_sanitised_and_pretty_printed(script, base, tmp_path):
+    grant = _grant_document()
+    grant["default_runner"] = {"agent": "claude\x07", "profile": "team", "model": "haiku"}
+    (base / "grant.json").write_text(json.dumps(grant))
+    result = run(script, "grant", "--json", env=env_for(base, tmp_path))
+    assert result.returncode == 0, result.stderr
+    expected = _grant_document()
+    expected["default_runner"] = {"agent": "claude?", "profile": "team", "model": "haiku"}
+    assert json.loads(result.stdout) == expected
+    assert '\n  "version"' in result.stdout
+
+
+def test_grant_help_is_wired_in_container_cli():
+    from typer.testing import CliRunner
+
+    from jailbee.container_cli import container_app
+
+    result = CliRunner().invoke(container_app, ["inbox", "grant", "--help"])
+    assert result.exit_code == 0
+    assert "--json" in result.output
+
+
 def test_runners_shows_configured_default(script, base, tmp_path):
     (base / "grant.json").write_text(
         json.dumps(
