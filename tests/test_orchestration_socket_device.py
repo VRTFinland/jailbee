@@ -308,6 +308,45 @@ def test_a_copy_found_after_a_broker_restart_kills_the_directory_it_mounts(env) 
     assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(env.listener.dirs[UUID])
 
 
+@pytest.mark.parametrize("failure", ["list", "project"])
+def test_a_restart_does_not_reuse_an_unverified_directory(env, failure) -> None:
+    env.set(orch())
+    env.tick()
+    old = env.listener.dirs[UUID]
+    src = dict(env.devices["proj-orch"][ORCHESTRATION_DEVICE])
+    env.elsewhere = [{**_c("proj-copy", **{"volatile.uuid": "uuid-copy"}), "project": "other"}]
+    env.devices["other/proj-copy"] = {ORCHESTRATION_DEVICE: src}
+    _restart_broker(env)
+    if failure == "list":
+        def listing(*, fast=False, all_projects=False):
+            if all_projects:
+                raise IncusError("cannot list projects")
+            return env._list(fast=fast)
+
+        env.rig.incus.list_containers.side_effect = listing
+    else:
+        env.rig.incus.current_project.return_value = ""
+    env.tick()
+    assert env.listener.dirs[UUID] != old
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(env.listener.dirs[UUID])
+    assert env.devices["other/proj-copy"][ORCHESTRATION_DEVICE]["source"] == str(old)
+    env.tick()
+    assert env.listener.opened == [UUID]  # no churn once the fresh listener is live
+
+
+def test_a_failed_copy_directory_removal_never_allows_reuse(env, monkeypatch) -> None:
+    env.set(orch())
+    env.tick()
+    old = env.listener.dirs[UUID]
+    _restart_broker(env)
+    _copy_of_the_source(env)
+    monkeypatch.setattr(socket_device, "remove_dir", MagicMock(side_effect=OSError("EBUSY")))
+    env.tick()
+    assert old.exists()  # the copy may still hold it after a lazy detach
+    assert env.listener.dirs[UUID] != old
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(env.listener.dirs[UUID])
+
+
 def test_a_restart_reuses_no_legacy_directory(env) -> None:
     """The old broker reset the socket in place: a copy may hold `sock/<uuid>`."""
     legacy = env.rig.root / "sock" / UUID

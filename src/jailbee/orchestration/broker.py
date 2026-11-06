@@ -156,6 +156,10 @@ class BrokerMemory:
     absent_uuids: set[str] = field(default_factory=set)
     # volatile.uuid values two or more listed instances share (no socket for them).
     shared_uuids: set[str] = field(default_factory=set)
+    # Directory reuse requires a complete device inventory in the current round.
+    socket_devices_verified: bool = False
+    # Never serve a directory a foreign device named, even if cleanup failed.
+    unsafe_socket_dirs: set[str] = field(default_factory=set)
 
     def warn_once(self, key: str, msg: str, *args: object) -> None:
         if key not in self.warned:
@@ -938,7 +942,11 @@ def _ensure_socket(ctx: ActionContext, memory: BrokerMemory) -> None:
     try:
         if not listener.has_container(uuid):
             recorded = ctx.incus.config_device_get(full, ORCHESTRATION_DEVICE, "source")
-            reused = socket_device.reusable_dir(ctx.root, uuid, recorded)
+            reused = (
+                socket_device.reusable_dir(ctx.root, uuid, recorded)
+                if memory.socket_devices_verified and recorded not in memory.unsafe_socket_dirs
+                else None
+            )
             if reused is None and recorded and socket_device.dir_uuid(recorded) == uuid:
                 # e.g. a legacy `sock/<uuid>`: never served again, so remove it.
                 with contextlib.suppress(OSError):
@@ -1119,6 +1127,7 @@ def _strip_copy(
     assert listener is not None
     if not source or not path:
         return
+    memory.unsafe_socket_dirs.add(path)
     if str(listener.socket_dir(source)) == path:
         _rotate_socket(incus, memory, root, source, where)
         return
@@ -1164,6 +1173,7 @@ def _check_socket_devices(
     """
     if memory.listener is None or memory.store is None:
         return
+    memory.socket_devices_verified = others is not None
     others = others or []
     _forget_vanished(raw, memory)
     memory.shared_uuids = _shared_uuids(raw + others)
