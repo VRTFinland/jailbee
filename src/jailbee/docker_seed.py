@@ -6,6 +6,7 @@ import fnmatch
 import json
 import math
 import re
+import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -20,6 +21,7 @@ from jailbee.stopping import stop_container
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
+    from jailbee.global_config import GlobalConfig
 
 
 @dataclass(frozen=True)
@@ -45,7 +47,10 @@ class SeedPreflightError(Exception):
 def preflight(cfg: Config, incus: Incus, req: SeedRequest) -> None:
     if not golden.repo_uses_docker(cfg):
         raise SeedPreflightError("Docker is not installed in the golden")
-    reason = shared_golden_reason_for(cfg)
+    try:
+        reason = shared_golden_reason_for(cfg)
+    except Exception as exc:
+        raise SeedPreflightError(f"Cannot check golden ownership: {exc}") from exc
     if reason:
         raise SeedPreflightError(f"Cannot seed shared golden: {reason}")
     name = req.source_container
@@ -122,12 +127,15 @@ def record_outcome(cfg: Config, outcome: SeedOutcome) -> None:
     from jailbee import docker_seed_state
     from jailbee.db import get_engine
 
-    with Session(get_engine()) as session:
-        docker_seed_state.record(session, alias=cfg.golden.alias, container_prefix=cfg.container_prefix,
-                                 seeded_at=datetime.now(UTC), source=outcome.source, outcome=outcome.outcome,
-                                 image_count=outcome.image_count, size_bytes=outcome.size_bytes,
-                                 detail=outcome.detail)
-        session.commit()
+    try:
+        with Session(get_engine()) as session:
+            docker_seed_state.record(session, alias=cfg.golden.alias, container_prefix=cfg.container_prefix,
+                                     seeded_at=datetime.now(UTC), source=outcome.source, outcome=outcome.outcome,
+                                     image_count=outcome.image_count, size_bytes=outcome.size_bytes,
+                                     detail=outcome.detail)
+            session.commit()
+    except Exception as exc:
+        warn(f"Could not record Docker seed outcome: {exc}")
 
 
 def seed_golden(
@@ -197,3 +205,78 @@ def seed_golden(
                 warn(f"Could not delete seed staging instance {staging}: {exc}")
     record_outcome(cfg, result)
     return result
+
+
+def create_seed_container(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> str:
+    from jailbee import create_flow, git, lifecycle
+
+    sha = git.rev_parse_remote(cfg.repo_root, cfg.upstream_remote, cfg.default_branch)
+    sha = sha or git.rev_parse(cfg.repo_root, cfg.default_branch)
+    if not sha:
+        raise ValueError(f"Cannot resolve default branch {cfg.default_branch}")
+    extras = create_flow.host_extras(cfg, incus, gcfg, network=cfg.defaults.network)
+    for message in extras.warnings:
+        warn(message)
+    create_flow.prepare_host(cfg, incus, gcfg, interaction=create_flow.Interaction.none(), on_warning=warn)
+    opts = lifecycle.NewContainerOptions(
+        container_branch="docker-seed", name=None, network=cfg.defaults.network,
+        memory=None, cpu=cfg.defaults.cpu, from_base=cfg.golden.alias, clone=True,
+        clone_commit=sha, autostart_override="wait", skip_agents=True,
+        autostart_services=[],
+        autostart_profile=cfg.golden.docker_seed.autostart_profile if cfg.golden.docker_seed else None,
+        mirror_endpoint=extras.mirror_endpoint, mirror_ca_path=extras.mirror_ca_path,
+        litellm_payload=extras.litellm_payload, storage_pool=cfg.defaults.storage_pool,
+    )
+    return lifecycle.new_container(cfg, incus, opts, confirm_fn=None)
+
+
+def run_seed(cfg: Config, incus: Incus, gcfg: GlobalConfig, req: SeedRequest) -> SeedOutcome:
+    from jailbee import create_flow, lifecycle
+
+    timeout = cfg.golden.docker_seed.timeout if cfg.golden.docker_seed else 60
+    deadline = time.monotonic() + timeout * 60
+    if req.source_container:
+        return seed_golden(cfg, incus, req, deadline=deadline)
+
+    name = f"{cfg.container_prefix}-docker-seed"
+    owned = False
+    try:
+        if incus.exists(name):
+            raise ValueError(f"The docker-seed container {name} already exists")
+        owned = True
+
+        def stop_on_timeout() -> None:
+            try:
+                if incus.exists(name):
+                    incus.stop(name, force=True)
+            except IncusError as exc:
+                warn(f"Could not stop timed-out seed container {name}: {exc}")
+
+        timer = threading.Timer(max(0, deadline - time.monotonic()), stop_on_timeout)
+        timer.start()
+        try:
+            name = create_seed_container(cfg, incus, gcfg)
+        finally:
+            timer.cancel()
+            timer.join()
+        _remaining(deadline)
+        result = seed_golden(cfg, incus, req, deadline=deadline, source_name=name)
+        _remaining(deadline)
+        return result
+    except (IncusError, RuntimeError, ValueError, TimeoutError, create_flow.CreateError) as exc:
+        detail = str(exc)
+        if time.monotonic() >= deadline:
+            detail = "Docker seeding timed out"
+        result = SeedOutcome("failed", "seed-container", detail=detail)
+        record_outcome(cfg, result)
+        return result
+    finally:
+        if owned:
+            try:
+                if incus.exists(name):
+                    if req.keep_seed:
+                        info(f"Keeping seed container {name}")
+                    else:
+                        lifecycle.destroy_container(cfg, incus, name, force=True)
+            except (IncusError, RuntimeError, ValueError) as exc:
+                warn(f"Could not destroy seed container {name}: {exc}")

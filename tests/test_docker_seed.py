@@ -92,3 +92,144 @@ def test_preflight(rig, monkeypatch):
     monkeypatch.setattr(golden, "repo_uses_docker", lambda cfg: False)
     with pytest.raises(docker_seed.SeedPreflightError, match="Docker"):
         docker_seed.preflight(cfg, incus, docker_seed.SeedRequest(None, False, False))
+
+
+def test_create_seed_options_and_fallback(rig, monkeypatch):
+    from jailbee import create_flow, git, lifecycle
+
+    cfg, incus = rig
+    remote = Mock(return_value="upstream-sha")
+    local = Mock(return_value="local-sha")
+    monkeypatch.setattr(git, "rev_parse_remote", remote)
+    monkeypatch.setattr(git, "rev_parse", local)
+    extras = create_flow.HostExtras(("127.0.0.1", 123), None, {"x": 1}, ())
+    monkeypatch.setattr(create_flow, "host_extras", Mock(return_value=extras))
+    prepare = Mock()
+    monkeypatch.setattr(create_flow, "prepare_host", prepare)
+    create = Mock(return_value="seed")
+    monkeypatch.setattr(lifecycle, "new_container", create)
+    assert docker_seed.create_seed_container(cfg, incus, Mock()) == "seed"
+    opts = create.call_args.args[2]
+    assert opts.clone_commit == "upstream-sha"
+    assert opts.skip_agents and opts.autostart_services == []
+    assert opts.autostart_override == "wait" and opts.cpu == cfg.defaults.cpu
+    assert opts.mirror_endpoint == extras.mirror_endpoint and opts.litellm_payload == extras.litellm_payload
+    assert prepare.call_args.kwargs["interaction"] == create_flow.Interaction.none()
+    local.assert_not_called()
+    remote.return_value = None
+    docker_seed.create_seed_container(cfg, incus, Mock())
+    assert create.call_args.args[2].clone_commit == "local-sha"
+
+
+@pytest.mark.parametrize("keep,fail", [(False, False), (False, True), (True, False)])
+def test_run_seed_cleanup(rig, monkeypatch, keep, fail):
+    from jailbee import lifecycle
+
+    cfg, incus = rig
+    name = f"{cfg.container_prefix}-docker-seed"
+    incus.exists.side_effect = [False, True]
+    create = Mock(side_effect=RuntimeError("create failed") if fail else None, return_value=name)
+    monkeypatch.setattr(docker_seed, "create_seed_container", create)
+    monkeypatch.setattr(docker_seed, "seed_golden", Mock(return_value=docker_seed.SeedOutcome("seeded", "seed-container")))
+    destroy = Mock()
+    monkeypatch.setattr(lifecycle, "destroy_container", destroy)
+    result = docker_seed.run_seed(cfg, incus, Mock(), docker_seed.SeedRequest(None, keep, True))
+    assert result.outcome == ("failed" if fail else "seeded")
+    if keep:
+        destroy.assert_not_called()
+    else:
+        destroy.assert_called_once_with(cfg, incus, name, force=True)
+
+
+def test_existing_seed_is_never_destroyed(rig, monkeypatch):
+    from jailbee import lifecycle
+
+    cfg, incus = rig
+    incus.exists.return_value = True
+    destroy = Mock()
+    monkeypatch.setattr(lifecycle, "destroy_container", destroy)
+    result = docker_seed.run_seed(cfg, incus, Mock(), docker_seed.SeedRequest(None, False, True))
+    assert result.outcome == "failed" and "already exists" in result.detail
+    destroy.assert_not_called()
+
+
+def test_timer_stops_and_joins_before_cleanup(rig, monkeypatch):
+    from jailbee import lifecycle
+
+    cfg, incus = rig
+    name = f"{cfg.container_prefix}-docker-seed"
+    incus.exists.side_effect = [False, True, True]
+    clock = iter([0, 0, 3601, 3601])
+    monkeypatch.setattr(docker_seed.time, "monotonic", lambda: next(clock))
+    events = []
+    class Timer:
+        def __init__(self, delay, callback):
+            self.callback = callback
+        def start(self):
+            self.callback()
+        def cancel(self):
+            events.append("cancel")
+        def join(self):
+            events.append("join")
+    monkeypatch.setattr(docker_seed.threading, "Timer", Timer)
+    monkeypatch.setattr(docker_seed, "create_seed_container", Mock(return_value=name))
+    monkeypatch.setattr(lifecycle, "destroy_container", lambda *a, **kw: events.append("destroy"))
+    result = docker_seed.run_seed(cfg, incus, Mock(), docker_seed.SeedRequest(None, False, True))
+    assert result.outcome == "failed" and "timed out" in result.detail
+    incus.stop.assert_called_once_with(name, force=True)
+    assert events == ["cancel", "join", "destroy"]
+
+
+def test_preflight_source_and_lookup_errors(rig, monkeypatch):
+    cfg, incus = rig
+    monkeypatch.setattr(golden, "repo_uses_docker", lambda cfg: True)
+    monkeypatch.setattr(docker_seed, "shared_golden_reason_for", lambda cfg: None)
+    req = docker_seed.SeedRequest("source", False, True)
+    incus.list_containers.return_value = []
+    with pytest.raises(docker_seed.SeedPreflightError, match="does not exist"):
+        docker_seed.preflight(cfg, incus, req)
+    incus.list_containers.return_value = [{"name": "source", "status": "Running"}]
+    incus.exec.side_effect = IncusError("docker unavailable")
+    with pytest.raises(docker_seed.SeedPreflightError, match="docker unavailable"):
+        docker_seed.preflight(cfg, incus, req)
+    incus.exec.side_effect = None
+    docker_seed.preflight(cfg, incus, req)
+    monkeypatch.setattr(docker_seed, "shared_golden_reason_for", Mock(side_effect=RuntimeError("db unavailable")))
+    with pytest.raises(docker_seed.SeedPreflightError, match="db unavailable"):
+        docker_seed.preflight(cfg, incus, req)
+
+
+def test_record_outcome_database_error_warns(make_cfg, tmp_path, monkeypatch):
+    from jailbee import db
+
+    monkeypatch.setattr(db, "get_engine", Mock(side_effect=RuntimeError("database unavailable")))
+    warning = Mock()
+    monkeypatch.setattr(docker_seed, "warn", warning)
+    docker_seed.record_outcome(make_cfg(tmp_path), docker_seed.SeedOutcome("seeded", "seed-container"))
+    assert "database unavailable" in warning.call_args.args[0]
+
+
+def test_seed_operation_order(rig, monkeypatch):
+    cfg, incus = rig
+    events = []
+    def execute(name, cmd, **kwargs):
+        if cmd[:3] == ["docker", "image", "ls"]:
+            if "--format" in cmd:
+                return "app:v1"
+            return "old-id"
+        if cmd[:3] == ["docker", "image", "rm"]:
+            events.append("remove")
+        if cmd[:3] == ["docker", "image", "inspect"]:
+            events.append("inspect")
+        if cmd[:3] == ["docker", "system", "df"]:
+            return '{"Type":"Images","Size":"1MB"}'
+        if cmd[:2] == ["systemctl", "stop"]:
+            events.append("stop-docker")
+        return ""
+    incus.exec.side_effect = execute
+    incus.exec_pipe.side_effect = lambda *a, **kw: events.append("save-load")
+    monkeypatch.setattr(docker_seed, "stop_container", lambda *a, **kw: events.append("stop-instance"))
+    monkeypatch.setattr(golden, "promote_instance", lambda *a, **kw: events.append("promote"))
+    result = docker_seed.seed_golden(cfg, incus, docker_seed.SeedRequest("source", False, True), deadline=docker_seed.time.monotonic() + 60)
+    assert result.outcome == "seeded"
+    assert events == ["remove", "save-load", "inspect", "stop-docker", "stop-instance", "promote"]
