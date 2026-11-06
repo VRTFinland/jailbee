@@ -87,3 +87,67 @@ def test_entirely_corrupt_legacy_is_quarantined(tmp_path: Path, caplog: pytest.L
     assert not Journal(tmp_path).seen("c", "d")
     assert path.with_name("journal.jsonl.corrupt").exists()
     assert "malformed" in caplog.text
+
+
+def test_failed_record_rolls_back_without_false_seen(tmp_path: Path) -> None:
+    import sqlite3
+
+    from jailbee.orchestration.store import StoreError
+
+    journal = Journal(tmp_path)
+    assert not journal.seen("c", "d")
+    with sqlite3.connect(tmp_path / "broker.db") as con:
+        con.execute("CREATE TRIGGER fail_journal BEFORE INSERT ON journal "
+                    "BEGIN SELECT RAISE(ABORT, 'disk failure'); END")
+    with pytest.raises(StoreError):
+        journal.record("c", "d", "m", "ok", AT)
+    assert not Journal(tmp_path).seen("c", "d")
+    with sqlite3.connect(tmp_path / "broker.db") as con:
+        con.execute("DROP TRIGGER fail_journal")
+    journal.record("c", "d", "m", "ok", AT)
+    assert Journal(tmp_path).seen("c", "d")
+
+
+def test_import_rename_gap_does_not_reimport(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from pathlib import Path
+
+    path = tmp_path / "journal.jsonl"
+    path.write_text('{"container_full":"c","digest":"d"}\n')
+    replace = Path.replace
+
+    def fail_replace(self: Path, target: Path) -> Path:
+        if self == path:
+            raise OSError("rename failed")
+        return replace(self, target)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "replace", fail_replace)
+        assert Journal(tmp_path).seen("c", "d")
+    path.write_text('{"container_full":"other","digest":"d"}\n')
+    journal = Journal(tmp_path)
+    assert journal.seen("c", "d")
+    assert not journal.seen("other", "d")
+    assert path.with_name("journal.jsonl.migrated").exists()
+
+
+def test_unreadable_import_retries_before_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from pathlib import Path
+
+    from jailbee.orchestration.store import StoreError
+
+    path = tmp_path / "journal.jsonl"
+    path.write_text('{"container_full":"c","digest":"d"}\n')
+    read_text = Path.read_text
+
+    def fail_read(self: Path, *args: object, **kwargs: object) -> str:
+        if self == path:
+            raise OSError("unreadable")
+        return read_text(self, *args, **kwargs)
+
+    journal = Journal(tmp_path)
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "read_text", fail_read)
+        with pytest.raises(StoreError):
+            journal.record("other", "d", "m", "ok", AT)
+    assert journal.seen("c", "d")
+    assert not journal.seen("other", "d")
