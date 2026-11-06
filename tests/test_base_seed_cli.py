@@ -79,6 +79,9 @@ def test_base_seed_preflight_failure_exits_two(mocker, make_cfg, tmp_path) -> No
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.incus.Incus", return_value=mocker.Mock(spec=Incus))
     mocker.patch("jailbee.golden.golden_exists", return_value=True)
+    mocker.patch(
+        "jailbee.lifecycle.resolve_container_for_interactive", return_value="project-feature"
+    )
     mocker.patch("jailbee.docker_seed.preflight", side_effect=SeedPreflightError("unsafe"))
 
     result = runner.invoke(app, ["base", "seed", "--docker-from", "feature"])
@@ -96,6 +99,9 @@ def test_base_seed_failed_outcome_exits_one(mocker, make_cfg, tmp_path) -> None:
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.incus.Incus", return_value=mocker.Mock(spec=Incus))
     mocker.patch("jailbee.golden.golden_exists", return_value=True)
+    mocker.patch(
+        "jailbee.lifecycle.resolve_container_for_interactive", return_value="project-feature"
+    )
     mocker.patch("jailbee.docker_seed.preflight")
     mocker.patch(
         "jailbee.docker_seed.run_seed",
@@ -153,6 +159,78 @@ def test_base_build_seeds_when_configured(mocker, make_cfg, tmp_path) -> None:
     preflight.assert_called_once()
     run_seed.assert_called_once()
     assert "no images" in result.output
+
+
+def test_base_build_disabled_seed_config_skips_seeding(mocker, make_cfg, tmp_path) -> None:
+    from jailbee.cli import app
+    from jailbee.config.models_golden import DockerSeed
+
+    cfg = make_cfg(tmp_path, golden={"docker_seed": DockerSeed(enabled=False)})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.golden.build_golden_image")
+    preflight = mocker.patch("jailbee.docker_seed.preflight")
+
+    result = runner.invoke(app, ["base", "build"])
+
+    assert result.exit_code == 0, result.output
+    preflight.assert_not_called()
+
+
+def test_base_build_unconfigured_seed_config_skips_seeding(mocker, make_cfg, tmp_path) -> None:
+    from jailbee.cli import app
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.golden.build_golden_image")
+    preflight = mocker.patch("jailbee.docker_seed.preflight")
+
+    result = runner.invoke(app, ["base", "build"])
+
+    assert result.exit_code == 0, result.output
+    preflight.assert_not_called()
+
+
+def test_base_build_explicit_preflight_failure_does_not_build(mocker, make_cfg, tmp_path) -> None:
+    from jailbee.cli import app
+    from jailbee.docker_seed import SeedPreflightError
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.incus.Incus")
+    build = mocker.patch("jailbee.golden.build_golden_image")
+    mocker.patch(
+        "jailbee.lifecycle.resolve_container_for_interactive", return_value="project-feature"
+    )
+    mocker.patch("jailbee.docker_seed.preflight", side_effect=SeedPreflightError("not running"))
+
+    result = runner.invoke(app, ["base", "build", "--docker-from", "feature"])
+
+    assert result.exit_code == 2
+    assert "not running" in result.output
+    build.assert_not_called()
+
+
+def test_base_build_failed_seed_outcome_does_not_fail_build(mocker, make_cfg, tmp_path) -> None:
+    from jailbee.cli import app
+    from jailbee.config.models_golden import DockerSeed
+    from jailbee.docker_seed import SeedOutcome
+
+    cfg = make_cfg(tmp_path, golden={"docker_seed": DockerSeed()})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.golden.build_golden_image")
+    mocker.patch("jailbee.docker_seed.preflight")
+    mocker.patch(
+        "jailbee.docker_seed.run_seed",
+        return_value=SeedOutcome("failed", "seed-container", detail="load failed"),
+    )
+
+    result = runner.invoke(app, ["base", "build"])
+
+    assert result.exit_code == 0, result.output
+    assert "load failed" in result.output
 
 
 def test_base_build_no_seed_option_skips_seeding(mocker, make_cfg, tmp_path) -> None:
