@@ -137,17 +137,42 @@ def test_unreadable_import_retries_before_record(tmp_path: Path, monkeypatch: py
 
     path = tmp_path / "journal.jsonl"
     path.write_text('{"container_full":"c","digest":"d"}\n')
-    read_text = Path.read_text
+    read_bytes = Path.read_bytes
 
-    def fail_read(self: Path, *args: object, **kwargs: object) -> str:
+    def fail_read(self: Path) -> bytes:
         if self == path:
             raise OSError("unreadable")
-        return read_text(self, *args, **kwargs)
+        return read_bytes(self)
 
     journal = Journal(tmp_path)
     with monkeypatch.context() as patch:
-        patch.setattr(Path, "read_text", fail_read)
+        patch.setattr(Path, "read_bytes", fail_read)
         with pytest.raises(StoreError):
             journal.record("other", "d", "m", "ok", AT)
     assert journal.seen("c", "d")
     assert not journal.seen("other", "d")
+
+
+def test_torn_utf8_preserves_prior_rows(tmp_path: Path) -> None:
+    path = tmp_path / "journal.jsonl"
+    path.write_bytes(b'{"container_full":"c","digest":"d"}\n{"bad":"\xff')
+    assert Journal(tmp_path).seen("c", "d")
+    assert path.with_name("journal.jsonl.migrated").exists()
+
+
+def test_legacy_nonstring_metadata_keeps_identity(tmp_path: Path) -> None:
+    path = tmp_path / "journal.jsonl"
+    path.write_text('{"container_key":"c","digest":"d","outcome":null,"at":0}\n')
+    assert Journal(tmp_path).seen("c", "d")
+
+
+def test_legacy_fields_preserved(tmp_path: Path) -> None:
+    import sqlite3
+
+    path = tmp_path / "journal.jsonl"
+    path.write_text('{"container_key":"uuid","container_full":"name","digest":"d",'
+                    '"manifest_id":"m","outcome":"ok","at":"then"}\n')
+    assert Journal(tmp_path).seen("uuid", "d")
+    with sqlite3.connect(tmp_path / "broker.db") as con:
+        row = con.execute("SELECT container_full, manifest_id, outcome, at FROM journal").fetchone()
+    assert row == ("name", "m", "ok", "then")

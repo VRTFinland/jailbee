@@ -52,16 +52,8 @@ class Journal:
         def load(con: sqlite3.Connection) -> None:
             nonlocal corrupt
             try:
-                text = path.read_text(encoding="utf-8")
+                text = path.read_bytes()
             except FileNotFoundError:
-                return
-            except UnicodeError as exc:
-                _log.warning("malformed journal %s: %s", path, exc)
-                try:
-                    path.replace(path.with_name(path.name + ".corrupt"))
-                except OSError as rename_exc:
-                    raise _RetryImport from rename_exc
-                corrupt = True
                 return
             except OSError as exc:
                 _log.warning("cannot read journal %s: %s", path, exc)
@@ -70,21 +62,22 @@ class Journal:
             bad = 0
             for number, line in enumerate(text.splitlines(), 1):
                 try:
-                    entry = json.loads(line)
+                    entry = json.loads(line.decode("utf-8"))
                     if not isinstance(entry, dict):
                         raise ValueError("entry is not an object")
                     key = entry.get("container_key") or entry["container_full"]
                     digest = entry["digest"]
                     if not isinstance(key, str) or not isinstance(digest, str):
                         raise ValueError("invalid key or digest")
-                    values = (key, digest, entry.get("container_full") or key,
-                              entry.get("manifest_id", ""), entry.get("outcome", ""),
-                              entry.get("at", ""))
-                    if not all(isinstance(value, str) for value in values):
-                        raise ValueError("invalid journal fields")
+                    def field(name: str, default: str = "") -> str:
+                        value = entry.get(name)
+                        return default if value is None else str(value)
+
+                    values = (key, digest, field("container_full", key) or key,
+                              field("manifest_id"), field("outcome"), field("at"))
                     con.execute("INSERT OR IGNORE INTO journal VALUES (?, ?, ?, ?, ?, ?)", values)
                     valid += 1
-                except (ValueError, KeyError, TypeError) as exc:
+                except (ValueError, KeyError, TypeError, UnicodeError) as exc:
                     bad += 1
                     _log.warning("malformed journal %s line %d: %s", path, number, exc)
             corrupt = bool(bad and not valid)
