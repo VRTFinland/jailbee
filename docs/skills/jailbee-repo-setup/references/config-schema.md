@@ -308,6 +308,7 @@ golden:
   disable_snippets: []
   enable_snippets: []             # low-level: opt-in snippets from install.d.available/ (by name)
   stacks: {}                      # recommended: see "Stacks" section below
+  docker_seed: null               # opt-in: see Docker image seeding below
 ```
 
 - `java` / `node`: version pins. Only take effect once the matching snippet is staged (via `stacks` or `enable_snippets`). `amazon-corretto-N` maps to apt package `java-N-amazon-corretto-jdk`; anything else is passed through as a literal apt package name.
@@ -317,6 +318,9 @@ golden:
 - `disable_snippets`: names to drop from the resolved snippet set — logical name (`"registry-mirror-ca"`), numbered name (`"90-registry-mirror-ca"`), or full filename (`.sh` optional); also drops snippets `stacks` auto-added.
 - `enable_snippets`: low-level escape hatch. Names of opt-in snippets from `install.d.available/` to install (friendly name like `nodejs`/`docker`, or full filename `30-nodejs`); unioned with the snippets `stacks` implies; complements `disable_snippets`.
 - `stacks`: recommended high-level toggles — see below.
+- `docker_seed`: `null` disables seeding; when present, `enabled` defaults true. Use this only with Docker in the golden. Fields: `enabled` (bool), `autostart_profile` (optional existing profile), `timeout` (positive minutes, default 60), and `images` (optional fnmatch globs over tagged `repo:tag` names; default `[]` selects all tagged images).
+
+**Data exposure:** a seeded golden contains full Docker image contents, including private code or data baked into those images. Only enable seeding when the contents may be distributed to all containers from the golden. A host-local override may set `golden.docker_seed.enabled: false`. Shared goldens are skipped. On non-btrfs storage every container gets a full copy of the image data.
 
 ## Stacks (`golden.stacks`)
 

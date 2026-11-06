@@ -278,6 +278,48 @@ Do **not** put `network`/`mounts` on an individual step inside a stage —
 `jailbee config validate` (and every other command that loads the config)
 rejects that; those two keys only exist on the stage now.
 
+### `golden.docker_seed` — warm images for Docker repos
+
+For a repo whose Docker workflow repeatedly pulls the same tagged images, opt
+in by adding `golden.docker_seed` alongside `golden.stacks.docker`. The seed
+source is a temporary container made from the newly built golden; an existing
+running container can be selected for a one-off run with `--docker-from`.
+Seeding is automatic after `jailbee base build` and for newly built goldens in
+`jailbee upgrade`; `jailbee base seed` refreshes the current golden without a
+rebuild. These commands run on the host.
+
+```yaml
+golden:
+  stacks:
+    docker: true
+  docker_seed:
+    enabled: true
+    autostart_profile: seed  # optional existing profile
+    timeout: 60              # minutes for the whole seeding phase
+    images:                  # optional fnmatch globs over repo:tag
+      - "registry.example.com/team/*"
+```
+
+The empty `images` list (default) includes all tagged images; untagged images
+are ignored. Use a host-local layer to disable this shared repo setting on one
+machine:
+
+```yaml
+golden:
+  docker_seed:
+    enabled: false
+```
+
+**Warn about data exposure:** the golden stores the full contents of selected
+images, including any private code or data baked into them. Only opt in when
+those contents are appropriate to distribute to every container from the
+golden. A shared golden is never seeded. On non-btrfs storage each container
+gets a full copy of the images, so factor the storage cost into the decision.
+A seed failure after `base build` warns but leaves the plain golden promoted;
+`base seed` reports preflight failure with exit 2 and seeding failure with exit
+1. `jailbee upgrade --no-docker-seed` skips seeding for the entire run.
+See the [configuration reference](../../config.md#docker-image-seeding).
+
 ### `golden.stacks` — pin the version and stage the runtime in one field
 
 Read the manifest files (`engines.node` in package.json, `.tool-versions`, `pom.xml` `maven.compiler.source`, etc.) and set `golden.stacks` accordingly — one key both pins the version and stages the matching snippet (no separate `enable_snippets` entry needed):

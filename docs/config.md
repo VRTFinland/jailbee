@@ -320,6 +320,7 @@ Several keys are exempt from this pipeline — see [Keys that bypass the deep-me
 | `defaults.{memory,cpu,...}` | repo | Repo size determines limits |
 | `golden.{java,node,ubuntu_version}` | repo | Stack-specific (`golden.python` is deprecated — see below) |
 | `golden.stacks` | repo | Repo's runtime/tool set — see [Stacks](#stacks-goldenstacks) |
+| `golden.docker_seed` | repo, host-local opt-out | Repo's tagged Docker images are copied into the golden; hosts can disable with `enabled: false` locally |
 | `golden.extra_apt_packages` | repo | Repo's system-level deps |
 | `jetbrains.ide` | repo | Repo's stack determines the IDE |
 | `jetbrains.autostart` | repo | Repo decides whether autostart launches IDE |
@@ -1409,6 +1410,62 @@ Stack-derived Java/Node values override `golden.java`/`golden.node`, including
 | `disable_snippets` | list[string] | `[]` | Names of bundled snippets to drop from the effective set at `jailbee base build`. Matches the logical name (`"registry-mirror-ca"`), the numbered name (`"90-registry-mirror-ca"`), or the full filename (`"90-registry-mirror-ca.sh"`) — same name forms `enable_snippets` accepts. Also drops snippets auto-added by `golden.stacks`. See [Disabling bundled snippets](#disabling-bundled-snippets). |
 | `enable_snippets` | list[string] | `[]` | Names of opt-in `install.d.available/` snippets to stage into the effective set (by logical name, e.g. `"nodejs"`, or full filename, e.g. `"30-nodejs"`/`"30-nodejs.sh"`). Unioned with the snippets `golden.stacks` implies. See [Opt-in snippets](#opt-in-snippets-installdavailable). Unknown names are ignored with a warning. |
 | `stacks` | object | all fields off | High-level `java`/`node`/`python`/`docker`/`ecr` toggles — the recommended way to enable a runtime. See [Stacks](#stacks-goldenstacks). |
+| `docker_seed` | object \| null | `null` (off) | Seed tagged Docker images into this repo's golden so new containers start warm. See [Docker image seeding](#docker-image-seeding). |
+
+### Docker image seeding (`golden.docker_seed`)
+
+Docker image seeding is opt-in by presence of this block and applies only when
+this golden includes Docker. A configured, enabled block seeds tagged images
+from a temporary container created from the freshly built golden after
+`jailbee base build`; `jailbee base seed` repeats the operation without
+rebuilding. Shared goldens are never seeded. Use this for repos whose Docker
+workflows repeatedly pull the same images.
+
+```yaml
+golden:
+  stacks:
+    docker: true
+  docker_seed:
+    enabled: true                 # default true when the block is present
+    autostart_profile: seed       # optional profile for the temporary seed container
+    timeout: 60                   # whole seeding phase, in minutes
+    images:                       # optional fnmatch globs over repo:tag names
+      - "registry.example.com/team/*"
+```
+
+`images` defaults to `[]`, meaning every tagged image; untagged `<none>` images
+are always excluded. A profile name must exist under `autostart.profiles`.
+The config is team-shared, but each host can opt out in its host-local
+`~/.config/jailbee/repos/<container_prefix>.yaml` layer; the map deep-merges,
+so this disables seeding without discarding the other settings:
+
+```yaml
+golden:
+  docker_seed:
+    enabled: false
+```
+
+**Security:** a golden containing Docker images also carries their contents,
+including any private code, credentials, datasets or other data baked into
+those images. Treat the golden, its copies and its storage as sensitive; seed
+only images suitable for distribution to every container created from it.
+
+On btrfs, Incus copies can share image extents. On non-btrfs storage, every
+container gets a full copy of the seeded image data, increasing storage use.
+A `jailbee base build` still succeeds if seeding fails: the plain golden stays
+promoted, the seed failure is reported and recorded, and the command's exit
+status reflects the build only. `jailbee base seed` is explicit: preflight
+errors exit 2 and a seeding failure exits 1. `jailbee upgrade` seeds only
+goldens built by that run; seeding failures do not make the upgrade sweep
+fail, and `--no-docker-seed` disables seeding for the whole sweep. See
+[Docker seeding commands](commands.md#docker-seeding).
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `true` when block exists | Enable configured automatic seeding; set false in the host-local layer to disable it on one host. |
+| `autostart_profile` | string \| null | `null` | Optional existing autostart profile used for the temporary seed container. |
+| `timeout` | int | `60` minutes | Positive whole-phase deadline. |
+| `images` | list[string] | `[]` | `fnmatch` globs applied to tagged `repo:tag` names; empty selects all tagged images. |
 
 ### Master switches — opt-in by default
 
