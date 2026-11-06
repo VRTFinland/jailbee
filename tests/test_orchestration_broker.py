@@ -282,6 +282,8 @@ class Rig:
         self.deliver = MagicMock()
         self.flush_pending = MagicMock(return_value=0)
         self.delete = MagicMock()
+        self.read_inbox_dir = MagicMock(return_value={})
+        self.delete_inbox_files = MagicMock()
         self.write_grant = MagicMock()
         self.ensure_env = MagicMock()
         self.dispatch = MagicMock(
@@ -296,6 +298,8 @@ class Rig:
             ("deliver", self.deliver),
             ("flush_pending", self.flush_pending),
             ("delete_outbox_files", self.delete),
+            ("read_inbox_dir", self.read_inbox_dir),
+            ("delete_inbox_files", self.delete_inbox_files),
             ("write_grant_json", self.write_grant),
             ("ensure_orchestration_env", self.ensure_env),
             ("dispatch", self.dispatch),

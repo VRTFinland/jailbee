@@ -332,6 +332,7 @@ def sync_children(
     # can run long (child imports, slow `incus exec`), which would make the
     # heartbeat look stale the moment it lands.
     text = json.dumps({"version": 1, "updated_at": time.time(), "children": children})
+    # TODO(socket-phase3): the socket `children` op replaces this file; remove it.
     _atomic_write(
         ctx.incus,
         ctx.sender.full,

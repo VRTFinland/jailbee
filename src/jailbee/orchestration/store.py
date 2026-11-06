@@ -250,7 +250,14 @@ class BrokerStore:
         *,
         now: float,
         acked: bool = False,
+        acked_at: float | None = None,
     ) -> bool:
+        """Insert unless the id exists; `now` is `created_at`.
+
+        `acked_at` (implies acked) stamps the ack separately, for history
+        imported with an older `created_at`.
+        """
+        ack_time = acked_at if acked_at is not None else (now if acked else None)
         item_type = str(item.get("type", ""))
         detail = item.get("state") if item_type == "status" else item.get("kind")
         with self._tx() as con:
@@ -268,7 +275,7 @@ class BrokerStore:
                     _opt_str(item.get("from")),
                     now,
                     json.dumps(item),
-                    now if acked else None,
+                    ack_time,
                 ),
             )
             return cur.rowcount > 0

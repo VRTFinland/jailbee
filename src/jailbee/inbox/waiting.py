@@ -110,6 +110,7 @@ def last_from_child(base: Path, warned: set[Path] | None = None) -> dict[str, fl
 
 def _read_digest_stamp(base: Path, now: float) -> float | None:
     """The last digest time, or None when missing, unreadable or in the future."""
+    # TODO(socket-phase3): the store keeps digest_at; remove the digest-at file.
     path = base / "digest-at"
     try:
         if path.is_symlink() or not path.is_file():

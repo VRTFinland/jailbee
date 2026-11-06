@@ -46,6 +46,9 @@ from jailbee.orchestration.child_status import StatusCache
 from jailbee.orchestration.journal import Journal, manifest_digest
 from jailbee.orchestration.listener import Listener
 from jailbee.orchestration.outbox import (
+    INBOX_DIR,
+    INBOX_READ_DIR,
+    delete_inbox_files,
     delete_outbox_files,
     deliver,
     ensure_orchestration_env,
@@ -53,6 +56,7 @@ from jailbee.orchestration.outbox import (
     grant_json_text,
     has_container_jailbee,
     has_pending,
+    read_inbox_dir,
     read_outbox,
     write_grant_json,
 )
@@ -80,7 +84,7 @@ from jailbee.orchestration.state import (
     state_root,
 )
 from jailbee.orchestration.store import BrokerStore, StoreError, store_path
-from jailbee.outbox_io import _validate_outbox_name
+from jailbee.outbox_io import OutboxReadError, _validate_outbox_name
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
@@ -499,6 +503,7 @@ def _settle_agent_watch(
 
 def _sync_grant_json(ctx: ActionContext, memory: BrokerMemory) -> None:
     """Write the effective grant into an orchestrator when it changed since the last write."""
+    # TODO(socket-phase3): the socket `grant` op replaces grant.json; remove this writer.
     grant = ctx.grant()
     if grant is None:
         memory.grant_written.pop(ctx.sender.full, None)
@@ -732,9 +737,83 @@ def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
         )
 
 
-def _migrate_inbox(ctx: ActionContext, memory: BrokerMemory) -> None:
-    """Move parked file-protocol items into the store."""
-    # Phase 4.1: nothing to migrate yet.
+#: Files read per `incus exec` while migrating one inbox directory. The read
+#: helper returns the first N files by name (each at most `MAX_FILE_BYTES`), so
+#: the directory is paged by deleting each page once it is in the store. A
+#: standing unparsable file stays put and shows up on every page; a page with
+#: nothing new ends the directory (unparsable files beyond a page of them are
+#: left alone).
+MIGRATE_PAGE = 64
+
+
+def _stamp_time(name: str, default: float) -> float:
+    """The emission time encoded in an inbox file name, else `default`."""
+    try:
+        return datetime.strptime(name[:16], "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC).timestamp()
+    except ValueError:
+        return default
+
+
+def _migrate_dir(
+    ctx: ActionContext, store: BrokerStore, uuid: str, directory: str, *, acked: bool
+) -> None:
+    full = ctx.sender.full
+    uid = ctx.cfg.container_user.uid
+    seen: set[str] = set()
+    while True:
+        files = read_inbox_dir(ctx.incus, full, directory, uid=uid, limit=MIGRATE_PAGE)
+        page = sorted(n for n in files if n.endswith(".json") and n not in seen)
+        if not page:
+            return
+        seen.update(page)
+        now = time.time()
+        done: list[str] = []
+        for name in page:
+            try:
+                item = json.loads(files[name])
+                if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                    raise ValueError("not an inbox item")
+            except ValueError:
+                log.warning("broker: %s: skipped unparsable %s/%s", full, directory, name)
+                continue
+            store.insert_item(
+                uuid,
+                full,
+                item,
+                now=_stamp_time(name, now),
+                acked_at=now if acked else None,
+            )
+            done.append(name)
+        # Only after every insert of the page succeeded (an error raised above).
+        delete_inbox_files(ctx.incus, full, directory, done, uid=uid)
+        if len(files) < MIGRATE_PAGE:
+            return
+
+
+def _migrate_inbox(ctx: ActionContext, memory: BrokerMemory, uuid: str) -> bool:
+    """Move a container's file inbox into the store before it becomes a recipient.
+
+    Read history (`inbox/read/`) goes in acked, then unread `inbox/` items
+    unacked, in file-name order, ids kept (duplicates are ignored). Files are
+    removed only after their inserts. True when the recipient row may be
+    written: already migrated, or done now. False means retry next round.
+    """
+    store = memory.store
+    assert store is not None
+    full = ctx.sender.full
+    if store.recipient_uuid(full) is not None:
+        return True
+    if not ctx.sender.running:
+        return False
+    try:
+        _migrate_dir(ctx, store, uuid, INBOX_READ_DIR, acked=True)
+        _migrate_dir(ctx, store, uuid, INBOX_DIR, acked=False)
+    except (IncusError, OSError, StoreError, OutboxReadError) as exc:
+        memory.warn_once(
+            f"migrate:{full}", "broker: %s: could not migrate the file inbox: %s", full, exc
+        )
+        return False
+    return True
 
 
 def _ensure_socket(ctx: ActionContext, memory: BrokerMemory) -> None:
@@ -761,7 +840,8 @@ def _ensure_socket(ctx: ActionContext, memory: BrokerMemory) -> None:
                 memory.reassert.add(uuid)
         socket_device.attach(ctx.incus, full, ctx.root, uuid, reassert=uuid in memory.reassert)
         memory.reassert.discard(uuid)
-        _migrate_inbox(ctx, memory)
+        if not _migrate_inbox(ctx, memory, uuid):
+            return
         store.set_recipient(full, uuid, now=time.time())
         memory.attached[full] = uuid
     except (IncusError, OSError, StoreError) as exc:

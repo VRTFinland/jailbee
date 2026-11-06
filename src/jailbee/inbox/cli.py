@@ -543,6 +543,7 @@ def cmd_wait(
 
     seconds, quiet, digest_seconds, wake = parse_wait_args(timeout, wake_on, quiet_after, digest)
     settings.inbox.mkdir(parents=True, exist_ok=True)
+    # TODO(socket-phase3): the broker serializes waiters; remove wait.lock.
     fd = os.open(settings.base / "wait.lock", os.O_WRONLY | os.O_CREAT, 0o644)
     try:
         try:

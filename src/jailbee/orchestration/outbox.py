@@ -112,6 +112,41 @@ def delete_outbox_files(incus: Incus, full: str, names: Sequence[str], *, uid: i
     incus.exec(full, ["rm", "-f", "--", *names], uid=uid, cwd=OUTBOX_DIR)
 
 
+#: Container directory of read (acked) inbox items.
+INBOX_READ_DIR = f"{INBOX_DIR}/read"
+
+
+def read_inbox_dir(
+    incus: Incus, full: str, directory: str, *, uid: int | None, limit: int
+) -> dict[str, str]:
+    """Read the first `limit` `*.json` files (by name) of one inbox directory.
+
+    Bounded like `read_outbox`: files over `MAX_FILE_BYTES` and dot files are
+    never returned (so they are never migrated either) and at most `limit`
+    files come back per call; callers page by deleting what they handled.
+    """
+    return read_text_outbox(
+        incus,
+        full,
+        directory,
+        uid=uid,
+        max_file_bytes=MAX_FILE_BYTES,
+        timeout=60,
+        select=(("*.json", limit),),
+    )
+
+
+def delete_inbox_files(
+    incus: Incus, full: str, directory: str, names: Sequence[str], *, uid: int | None
+) -> None:
+    """Delete plain-named files from an inbox directory in one exec (argv only)."""
+    for name in names:
+        _validate_outbox_name(name)
+    if not names:
+        return
+    incus.exec(full, ["rm", "-f", "--", *names], uid=uid, cwd=directory)
+
+
 def _atomic_write(
     incus: Incus, full: str, directory: str, name: str, text: str, mode: str, *, uid: int | None
 ) -> None:
