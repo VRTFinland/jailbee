@@ -643,9 +643,12 @@ class Incus:
             except FileNotFoundError as e:
                 raise _missing_binary_error(self.binary) from e
             except subprocess.TimeoutExpired as e:
-                raise IncusTimeoutError(
-                    f"`incus exec` pipe {src} -> {dst} timed out after {timeout}s"
-                ) from e
+                message = (
+                    f"`incus exec` pipe {src} -> {dst} exceeded its deadline"
+                    if timeout is None and self._deadline is not None
+                    else f"`incus exec` pipe {src} -> {dst} timed out after {timeout}s"
+                )
+                raise IncusTimeoutError(message) from e
             finally:
                 for proc in processes:
                     if proc.poll() is None:

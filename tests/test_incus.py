@@ -1869,6 +1869,18 @@ def test_exec_pipe_timeout_kills_and_reaps_both(incus, mocker):
         proc.wait.assert_called()
 
 
+def test_exec_pipe_deadline_timeout_has_useful_message_without_none(incus, mocker):
+    _source, destination, _ = _pipe_processes(mocker)
+    destination.communicate.side_effect = subprocess.TimeoutExpired("load", 5)
+    mocker.patch("jailbee.incus.time.monotonic", return_value=100.0)
+
+    with pytest.raises(IncusTimeoutError) as exc:
+        incus.with_deadline(110).exec_pipe("src", ["save"], "dst", ["load"])
+
+    assert "deadline" in str(exc.value)
+    assert "Nones" not in str(exc.value)
+
+
 def test_exec_pipe_uses_one_deadline(incus, mocker):
     source, destination, _ = _pipe_processes(mocker)
     mocker.patch("jailbee.incus.time.monotonic", side_effect=[100, 102, 108])
