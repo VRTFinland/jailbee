@@ -51,7 +51,8 @@ def _fail(exc: BrokerError) -> int:
 def _unread() -> Iterator[dict[str, Any]]:
     """Every unread item, oldest first, one `list` page at a time.
 
-    An older broker ignores `after` and answers a plain list: that is all.
+    A broker that ignores `after` (an unreleased development build; every
+    released broker with a socket pages) answers a plain list: that is all.
     """
     after: Any = 0
     while after is not None:

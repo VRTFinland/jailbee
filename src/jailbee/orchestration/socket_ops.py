@@ -212,8 +212,15 @@ def handle_list(store: BrokerStore, uuid: str, *, after: object = _NO_CURSOR) ->
 
     With `after` (0 for the first page, then the previous page's `next`) the
     answer is one page, ``{"items": [...], "next": cursor | None}``. Without it
-    (an older client) it is a plain list of the oldest items that fit one page:
-    truncated rather than an oversized reply that could never be sent.
+    it is a plain list of the oldest items that fit one page: truncated rather
+    than an oversized reply that could never be sent.
+
+    The truncation is silent, and only the plain form could make an `ls` or
+    a `send --wait` miss a later item. No released client sends it: the socket
+    transport first shipped with paging, and every client before that uses
+    the file transport, so the plain form only answers unreleased development
+    builds. Broker and in-container client come from the same jailbee
+    release, so a released client always pages.
     """
     if after is _NO_CURSOR:
         return _list_page(store, uuid, 0)[0]
