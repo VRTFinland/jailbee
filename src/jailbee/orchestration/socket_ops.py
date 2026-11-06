@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from jailbee.inbox.render import jq_tostring
 from jailbee.orchestration import broker, publishing, wake, wire
 from jailbee.orchestration.actions import Outcome, refused
 from jailbee.orchestration.outbox import grant_json_text
@@ -116,9 +117,47 @@ def _item(ref: str, outcome: Outcome) -> dict[str, object]:
     return loaded
 
 
+# Longest text any `ls_line` cell shows is 60 characters; keep headroom.
+_LIST_TEXT_CAP = 200
+_LIST_FIELDS = (
+    "id",
+    "type",
+    "kind",
+    "from",
+    "ref",
+    "state",
+    "body",
+    "detail",
+    "imported_sha",
+    "import_error",
+    "on_done_reason",
+)
+_LIST_TEXT_FIELDS = ("body", "detail", "on_done_reason")
+
+
+def _list_view(item: dict[str, object]) -> dict[str, object]:
+    """Only what `inbox.render.ls_line` reads, long texts cut, so a long inbox
+    of big bodies still fits one response line. `ls_line` output is unchanged."""
+    view: dict[str, object] = {}
+    for key in _LIST_FIELDS:
+        if key not in item:
+            continue
+        value = item[key]
+        if key in _LIST_TEXT_FIELDS and value is not None and value is not False:
+            # ls_line stringifies (jq_tostring) then cuts; do the same up front.
+            value = jq_tostring(value)
+            value = value[:_LIST_TEXT_CAP]
+        elif key == "imported_sha" and isinstance(value, str):
+            value = value[:12]
+        elif key == "import_error" and value is not None and value is not False:
+            value = True
+        view[key] = value
+    return view
+
+
 def handle_list(store: BrokerStore, uuid: str) -> list[dict[str, object]]:
-    """The unacked items of a container's inbox, oldest first."""
-    return [row.item for row in store.unacked(uuid)]
+    """The unacked items of a container's inbox, oldest first, in `ls` shape."""
+    return [_list_view(row.item) for row in store.unacked(uuid)]
 
 
 def handle_read(
@@ -302,6 +341,7 @@ def _evaluate_one(
             store.unacked(uuid),
             history,
             view.children if view is not None else None,
+            children_observed_at=view.observed_at if view is not None else None,
             wake=waiter.wake,
             quiet=waiter.quiet,
             digest=waiter.digest,

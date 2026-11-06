@@ -32,6 +32,7 @@ def sel(unacked=(), history=None, children=None, **kw):
     kw.setdefault("digest", 0)
     kw.setdefault("digest_at", None)
     kw.setdefault("now", 1000.0)
+    kw.setdefault("children_observed_at", kw["now"])
     hist = list(unacked) if history is None else history
     return select_wakeup(list(unacked), hist, children, **kw)
 
@@ -191,3 +192,36 @@ def test_invalid_children_with_quiet_or_digest_raise(children):
 def test_invalid_children_without_quiet_digest_behave_as_none():
     assert sel([Row("a")], children=None, wake=frozenset({"note"}))[0] == MessageWake("a")
     assert sel([Row("a")], children=[{"name": 1}], wake=frozenset({"done"}))[0] is None
+    # c1 is valid but a later entry is not: the whole list counts as absent, so
+    # started is reset and the first-message override cannot fire for c1.
+    row = Row("a", kind_or_state="note", from_name="c1", created_at=500.0)
+    valid = [child("c1", started_at=100.0)]
+    assert sel([row], children=valid, wake=frozenset({"done"}))[0] == MessageWake("a")
+    broken = [child("c1", started_at=100.0), {"name": 1}]
+    assert sel([row], children=broken, wake=frozenset({"done"}))[0] is None
+
+
+@pytest.mark.parametrize("observed", [1000.0 - 901, 1000.0 + 6, None])
+def test_stale_or_future_children_list_is_not_fresh(observed):
+    with pytest.raises(WakeUsage):
+        sel([], children=[child()], quiet=5, children_observed_at=observed, wake=frozenset())
+    row = Row("a", from_name="c1", created_at=500.0)
+    got = sel(
+        [row],
+        children=[child(started_at=100.0)],
+        children_observed_at=observed,
+        wake=frozenset({"done"}),
+    )
+    assert got[0] is None
+
+
+@pytest.mark.parametrize("observed", [1000.0 - 900, 1000.0 + 5])
+def test_children_list_age_boundaries_are_fresh(observed):
+    row = Row("a", from_name="c1", created_at=500.0)
+    got = sel(
+        [row],
+        children=[child(started_at=100.0)],
+        children_observed_at=observed,
+        wake=frozenset({"done"}),
+    )
+    assert got[0] == MessageWake("a")

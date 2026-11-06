@@ -211,6 +211,7 @@ def test_newer_schema_is_refused(tmp_path: Path) -> None:
     )
     con.commit()
     con.close()
+    store_mod._MIGRATED.clear()  # the process-wide cache would skip the check
     with pytest.raises(StoreError, match="newer"):
         BrokerStore(path).recipients()
 
@@ -242,4 +243,59 @@ def test_module_recipient_uuid_never_writes(tmp_path: Path) -> None:
     assert store_mod.recipient_uuid(tmp_path, "p") is None
     assert path.stat().st_size == 0
     path.write_bytes(b"garbage" * 100)
+    with pytest.raises(StoreError):
+        store_mod.recipient_uuid(tmp_path, "p")
+
+
+def test_module_recipient_uuid_missing_table_is_none(tmp_path: Path) -> None:
+    con = sqlite3.connect(store_path(tmp_path))
+    con.execute("CREATE TABLE other(x)")
+    con.commit()
+    con.close()
     assert store_mod.recipient_uuid(tmp_path, "p") is None
+
+
+def test_module_recipient_uuid_locked_db_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    BrokerStore(store_path(tmp_path)).set_recipient("p", "u", now=1.0)
+    monkeypatch.setattr(store_mod, "_BUSY_TIMEOUT_MS", 50)
+    lock = sqlite3.connect(store_path(tmp_path), isolation_level=None)
+    lock.execute("PRAGMA locking_mode=EXCLUSIVE")
+    lock.execute("BEGIN EXCLUSIVE")
+    try:
+        with pytest.raises(StoreError):
+            store_mod.recipient_uuid(tmp_path, "p")
+    finally:
+        lock.close()
+
+
+def test_migrations_run_once_per_path_per_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = store_path(tmp_path)
+    BrokerStore(path).recipients()
+    calls: list[int] = []
+    real = BrokerStore._migrate
+    monkeypatch.setattr(
+        BrokerStore, "_migrate", staticmethod(lambda con: (calls.append(1), real(con))[1])
+    )
+    BrokerStore(path).recipients()
+    BrokerStore(path).recipients()
+    assert calls == []
+
+
+def test_migration_cache_is_dropped_when_the_file_vanishes(tmp_path: Path) -> None:
+    path = store_path(tmp_path)
+    BrokerStore(path).set_recipient("p", "u", now=1.0)
+    path.unlink()
+    for suffix in ("-wal", "-shm"):
+        Path(str(path) + suffix).unlink(missing_ok=True)
+    assert BrokerStore(path).recipients() == {}
+
+
+def test_unopenable_db_path_is_a_store_error(tmp_path: Path) -> None:
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory")
+    with pytest.raises(StoreError):
+        BrokerStore(blocker / "broker.db").recipients()

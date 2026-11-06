@@ -94,6 +94,7 @@ def select_wakeup(
     history: Sequence[WakeRow],
     children: Sequence[Mapping[str, object]] | None,
     *,
+    children_observed_at: float | None,
     wake: frozenset[str] | None,
     quiet: int,
     digest: int,
@@ -110,6 +111,9 @@ def select_wakeup(
     running: set[str] = set()
     try:
         assert children is not None
+        # Same freshness window as `inbox.waiting.select_wakeup`'s `updated_at`.
+        assert children_observed_at is not None and _number(children_observed_at)
+        assert -5 <= now - children_observed_at <= 900
         for child in children:
             name = child["name"]
             assert isinstance(name, str) and isinstance(child["running"], bool)

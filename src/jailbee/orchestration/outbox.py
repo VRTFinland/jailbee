@@ -127,7 +127,7 @@ def _item_json(item: InboxItem) -> str:
     return item.model_dump_json(by_alias=True) + "\n"
 
 
-def _insert_into_store(root: Path, full: str, item: InboxItem) -> bool:
+def _insert_into_store(root: Path, full: str, item: InboxItem | dict[str, object]) -> bool:
     """Insert `item` unacked when `full`'s inbox lives in the store; else False.
 
     The stored object is the same JSON `_item_json` writes to a file.
@@ -137,9 +137,8 @@ def _insert_into_store(root: Path, full: str, item: InboxItem) -> bool:
     uuid = store.recipient_uuid(root, full)
     if uuid is None:
         return False
-    store.BrokerStore(store.store_path(root)).insert_item(
-        uuid, full, json.loads(item.model_dump_json(by_alias=True)), now=time.time()
-    )
+    data = item if isinstance(item, dict) else json.loads(item.model_dump_json(by_alias=True))
+    store.BrokerStore(store.store_path(root)).insert_item(uuid, full, data, now=time.time())
     return True
 
 
@@ -186,13 +185,24 @@ def deliver(
     An item is also parked behind any already-parked one, so order is kept.
     `seq` orders items emitted within one second (see `inbox_file_name`).
     """
+    from jailbee.orchestration import store
     from jailbee.orchestration.store import StoreError
 
     try:
-        if _insert_into_store(root, recipient_full, item):
-            return "delivered"
+        if store.recipient_uuid(root, recipient_full) is not None:
+            # A store recipient never gets the file inbox. Behind parked files
+            # the item waits too (`flush_pending` moves them all in order).
+            if not has_pending(root, recipient_full) and _insert_into_store(
+                root, recipient_full, item
+            ):
+                return "delivered"
+            atomic_write_text(
+                pending_dir(root, recipient_full) / inbox_file_name(item, now, seq=seq),
+                _item_json(item),
+            )
+            return "parked"
     except StoreError:
-        logging.getLogger(__name__).exception("broker store insert failed; parking item")
+        logging.getLogger(__name__).exception("broker store unavailable; parking item")
         atomic_write_text(
             pending_dir(root, recipient_full) / inbox_file_name(item, now, seq=seq),
             _item_json(item),
@@ -244,6 +254,14 @@ def _note_quarantined(
         }
     )
     name = inbox_file_name(note, datetime.now(UTC))
+    from jailbee.orchestration.store import StoreError
+
+    try:
+        if _insert_into_store(root, recipient_full, note):
+            return
+    except StoreError:
+        atomic_write_text(pending_dir(root, recipient_full) / name, _item_json(note))
+        return
     try:
         _atomic_write(incus, recipient_full, INBOX_DIR, name, _item_json(note), "0644", uid=uid)
     except IncusError:
@@ -258,9 +276,20 @@ def flush_pending(
     uid: int | None,
     finish: Callable[[PendingFinish], InboxMessage] | None = None,
 ) -> int:
-    """Deliver parked files in name order; stop at the first failure."""
+    """Deliver parked files in name order; stop at the first failure.
+
+    A store recipient's files are moved into the broker store (plain items
+    unacked); a file is unlinked only after its insert succeeded.
+    """
+    from jailbee.orchestration import store
+    from jailbee.orchestration.store import StoreError
+
     directory = pending_dir(root, recipient_full)
     if not directory.is_dir():
+        return 0
+    try:
+        to_store = store.recipient_uuid(root, recipient_full) is not None
+    except StoreError:
         return 0
     delivered = 0
     for path in sorted(p for p in directory.iterdir() if _deliverable(p)):
@@ -278,6 +307,26 @@ def flush_pending(
                 break
             text = _item_json(finish(item))
             name = name.removesuffix(FINISH_SUFFIX) + ".json"
+        if to_store:
+            try:
+                loaded = json.loads(text)
+                assert isinstance(loaded, dict) and isinstance(loaded.get("id"), str)
+            except (ValueError, AssertionError):
+                logging.getLogger(__name__).error("invalid pending item %s", path)
+                path.rename(path.with_name(path.name + ".bad"))
+                _note_quarantined(incus, root, recipient_full, path.name + ".bad", uid=uid)
+                continue
+            try:
+                inserted = _insert_into_store(root, recipient_full, loaded)
+            except StoreError:
+                logging.getLogger(__name__).exception("broker store insert failed; keeping files")
+                break
+            if not inserted:  # the recipient row vanished; keep the file
+                break
+            with contextlib.suppress(FileNotFoundError):
+                path.unlink()
+            delivered += 1
+            continue
         try:
             _atomic_write(
                 incus,

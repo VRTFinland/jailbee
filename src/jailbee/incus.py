@@ -6,6 +6,7 @@ this interface, which makes them unit-testable with mocks.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import os
@@ -458,8 +459,9 @@ class Incus:
         ``config`` is set on the copy as it is created.
 
         The copy then has its inherited ``ORCHESTRATION_DEVICE`` removed, if
-        any, so it cannot start under the source's broker identity. The removal
-        is idempotent: most sources have no such device.
+        it has one (most sources do not), so it cannot start under the
+        source's broker identity. The device is probed first and removed
+        strictly: a failed removal raises rather than leaving the copy behind.
         """
         args = ["copy", source, dest]
         if instance_only:
@@ -469,7 +471,14 @@ class Incus:
         for key, value in (config or {}).items():
             args += ["-c", f"{key}={value}"]
         self._run(args)
-        self.config_device_remove(dest, ORCHESTRATION_DEVICE, missing_ok=True)
+        if self.config_device_get(dest, ORCHESTRATION_DEVICE, "type") is not None:
+            try:
+                self.config_device_remove(dest, ORCHESTRATION_DEVICE)
+            except IncusError:
+                # Do not leave a copy that would start as the source.
+                with contextlib.suppress(IncusError):
+                    self.delete(dest, force=True)
+                raise
 
     def rename(self, old: str, new: str) -> None:
         """Rename an instance. Incus refuses while it is running."""

@@ -48,6 +48,9 @@ class Env:
         return Waiter(**{**base, **kw})  # type: ignore[arg-type]
 
     def evaluate(self, ws: Waiters, now: float = 1000.0, mono: float = 0.0):  # type: ignore[no-untyped-def]
+        view = self.memory.children.get("proj-orch")
+        if view is not None:  # the broker republishes the list every round
+            self.memory.children["proj-orch"] = broker.ChildrenView(now, view.children)
         return ws.evaluate(self.memory, self.store, now=now, mono=mono)
 
 
@@ -220,6 +223,42 @@ def test_digest_first_stamps_then_fires(env: Env) -> None:
     assert [c["name"] for c in res["children"]] == ["kid"]  # type: ignore[attr-defined]
     assert res["last_from_child"] == {}
     assert env.store.get_digest_at(env.orch) == 1013.0
+
+
+def test_settle_reselect_replacing_digest_keeps_the_stamp(env: Env) -> None:
+    ws = Waiters()
+    ws.add(env.waiter(digest=10))
+    assert env.evaluate(ws, now=1000.0) == []
+    assert env.store.get_digest_at(env.orch) == 1000.0
+    assert env.evaluate(ws, now=1011.0, mono=1.0) == []  # digest found: settling
+    env.put("m1", at=1011.5)
+    [(_, res)] = env.evaluate(ws, now=1012.5, mono=2.5)
+    assert res == {"kind": "message", "id": "m1"}
+    assert env.store.get_digest_at(env.orch) == 1000.0
+
+
+def test_list_stays_under_wire_cap_and_keeps_ls_line(env: Env) -> None:
+    from jailbee.inbox.render import ls_line
+
+    big = "x" * (100 * 1024)
+    for n in range(20):
+        item: dict[str, object] = {
+            "type": "message",
+            "id": f"m{n:02d}",
+            "kind": "note",
+            "from": "kid",
+            "body": big,
+            "extra": big,
+            "imported_sha": "a" * 40,
+            "on_done_reason": big,
+            "import_error": big,
+        }
+        env.store.insert_item(env.orch, "proj-orch", item, now=100.0 + n)
+    full = [r.item for r in env.store.unacked(env.orch)]
+    got = socket_ops.handle_list(env.store, env.orch)
+    resp = wire.encode_response(wire.Response(ok=True, result=got))
+    assert len(resp) < wire.MAX_LINE_BYTES
+    assert [ls_line(i) for i in got] == [ls_line(i) for i in full]
 
 
 def test_quiet_without_children_view_is_bad_request(env: Env) -> None:

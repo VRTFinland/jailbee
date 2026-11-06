@@ -414,13 +414,118 @@ def test_deliver_inserts_into_store_for_store_recipient(tmp_path: Path, running:
     assert not outbox.has_pending(tmp_path, FULL)
 
 
-def test_deliver_store_ignores_existing_pending(tmp_path: Path) -> None:
+def test_deliver_store_parks_behind_existing_pending(tmp_path: Path) -> None:
     store = _store_recipient(tmp_path)
     directory = pending_dir(tmp_path, FULL)
     directory.mkdir(parents=True)
-    (directory / inbox_file_name(_item("0"), AT)).write_text("{}")
-    outbox.deliver(_incus(), tmp_path, FULL, _item("1"), running=True, uid=1000, now=AT)
-    assert [s.id for s in store.unacked("uuid-1")] == ["h-1"]
+    (directory / inbox_file_name(_item("0"), AT)).write_text(
+        _item("0").model_dump_json(by_alias=True)
+    )
+    later = datetime(2026, 10, 25, 11, 0, tzinfo=UTC)
+    result = outbox.deliver(_incus(), tmp_path, FULL, _item("1"), running=True, uid=1000, now=later)
+    assert result == "parked"
+    assert store.unacked("uuid-1") == []
+    assert (directory / inbox_file_name(_item("1"), later)).is_file()
+    # The next flush moves both, in order.
+    assert outbox.flush_pending(_incus(), tmp_path, FULL, uid=1000) == 2
+    assert [s.id for s in store.unacked("uuid-1")] == ["h-0", "h-1"]
+    assert not outbox.has_pending(tmp_path, FULL)
+
+
+def test_flush_store_recipient_moves_plain_and_finish_in_name_order(tmp_path: Path) -> None:
+    store = _store_recipient(tmp_path)
+    directory = pending_dir(tmp_path, FULL)
+    directory.mkdir(parents=True)
+    (directory / "a.json").write_text(_item("a").model_dump_json(by_alias=True))
+    (directory / "b.finish.json").write_text(_finish_item().model_dump_json())
+    (directory / "c.json").write_text(_item("c").model_dump_json(by_alias=True))
+    finish = MagicMock(return_value=_finished_message())
+    incus = _incus()
+    assert outbox.flush_pending(incus, tmp_path, FULL, uid=1000, finish=finish) == 3
+    assert [s.id for s in store.unacked("uuid-1")] == ["h-a", "h-f", "h-c"]
+    incus.exec_with_input.assert_not_called()
+    assert list(directory.iterdir()) == []
+
+
+def test_flush_store_recipient_without_finish_stops_at_finish(tmp_path: Path) -> None:
+    store = _store_recipient(tmp_path)
+    directory = pending_dir(tmp_path, FULL)
+    directory.mkdir(parents=True)
+    (directory / "a.json").write_text(_item("a").model_dump_json(by_alias=True))
+    (directory / "b.finish.json").write_text(_finish_item().model_dump_json())
+    (directory / "c.json").write_text(_item("c").model_dump_json(by_alias=True))
+    assert outbox.flush_pending(_incus(), tmp_path, FULL, uid=1000) == 1
+    assert [s.id for s in store.unacked("uuid-1")] == ["h-a"]
+    assert (directory / "b.finish.json").is_file()
+    assert (directory / "c.json").is_file()
+
+
+def test_flush_store_recipient_stops_at_store_error_and_keeps_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration import store as store_mod
+
+    _store_recipient(tmp_path)
+    directory = pending_dir(tmp_path, FULL)
+    directory.mkdir(parents=True)
+    (directory / "a.json").write_text(_item("a").model_dump_json(by_alias=True))
+    (directory / "b.json").write_text(_item("b").model_dump_json(by_alias=True))
+
+    def boom(self, *a, **k):
+        raise store_mod.StoreError("locked")
+
+    monkeypatch.setattr(store_mod.BrokerStore, "insert_item", boom)
+    assert outbox.flush_pending(_incus(), tmp_path, FULL, uid=1000) == 0
+    assert sorted(p.name for p in directory.iterdir()) == ["a.json", "b.json"]
+
+
+def test_flush_store_recipient_quarantines_invalid_and_notes_in_store(tmp_path: Path) -> None:
+    store = _store_recipient(tmp_path)
+    directory = pending_dir(tmp_path, FULL)
+    directory.mkdir(parents=True)
+    (directory / "a.finish.json").write_text("invalid")
+    (directory / "b.json").write_text("not json")
+    (directory / "c.json").write_text(_item("c").model_dump_json(by_alias=True))
+    incus = _incus()
+    assert outbox.flush_pending(incus, tmp_path, FULL, uid=1000, finish=MagicMock()) == 1
+    incus.exec_with_input.assert_not_called()
+    items = store.unacked("uuid-1")
+    kinds = [(i.type, i.kind_or_state) for i in items]
+    assert kinds.count(("message", "note")) == 2
+    assert [i.id for i in items if i.type == "status"] == ["h-c"]
+    assert (directory / "a.finish.json.bad").is_file()
+    assert (directory / "b.json.bad").is_file()
+    assert not outbox.has_pending(tmp_path, FULL)
+
+
+def test_quarantine_note_falls_back_to_pending_when_store_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration import store as store_mod
+
+    _store_recipient(tmp_path)
+    directory = pending_dir(tmp_path, FULL)
+    directory.mkdir(parents=True)
+    (directory / "a.finish.json").write_text("invalid")
+
+    def boom(self, *a, **k):
+        raise store_mod.StoreError("locked")
+
+    monkeypatch.setattr(store_mod.BrokerStore, "insert_item", boom)
+    outbox.flush_pending(_incus(), tmp_path, FULL, uid=1000, finish=MagicMock())
+    parked = [p for p in directory.iterdir() if p.name.endswith(".json")]
+    assert len(parked) == 1
+    assert json.loads(parked[0].read_text())["kind"] == "note"
+
+
+def test_deliver_parks_when_the_store_lookup_is_unreadable(tmp_path: Path) -> None:
+    from jailbee.orchestration.store import store_path
+
+    store_path(tmp_path).write_bytes(b"garbage" * 100)
+    incus = _incus()
+    result = outbox.deliver(incus, tmp_path, FULL, _item("1"), running=True, uid=1000, now=AT)
+    assert result == "parked"
+    incus.exec_with_input.assert_not_called()
 
 
 def test_deliver_without_row_uses_files(tmp_path: Path) -> None:

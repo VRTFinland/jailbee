@@ -137,26 +137,44 @@ def test_copy_instance_only_onto_pool(incus, mocker):
 def test_copy_strips_orchestration_device_from_dest_after_copy(incus, mocker):
     """A copy inherits the source's per-instance broker device, which would
     make a started copy talk to the broker as the source. It must go."""
-    run = _mock_run(mocker)
+    run = mocker.patch(
+        "jailbee.incus.subprocess.run",
+        side_effect=[_cp(), _cp_out("disk\n"), _cp()],
+    )
     incus.copy("g", "c")
     calls = [c[0][0] for c in run.call_args_list]
     assert calls == [
         ["incus", "copy", "g", "c"],
+        ["incus", "config", "device", "get", "c", "jailbee-orchestration", "type"],
         ["incus", "config", "device", "remove", "c", "jailbee-orchestration"],
     ]
 
 
-def test_copy_tolerates_missing_orchestration_device(incus, mocker):
-    """Most sources have no broker device; the removal must not fail the copy."""
+def test_copy_without_orchestration_device_removes_nothing(incus, mocker):
+    """Most sources have no broker device: only the probe runs, no removal."""
+    run = mocker.patch(
+        "jailbee.incus.subprocess.run",
+        side_effect=[_cp(), _cp(returncode=1, stderr="Error: Device not found")],
+    )
+    incus.copy("g", "c")
+    calls = [c[0][0] for c in run.call_args_list]
+    assert [c[2:4] for c in calls] == [["g", "c"], ["device", "get"]]
+
+
+def test_copy_fails_when_the_orchestration_device_cannot_be_removed(incus, mocker):
+    """The copy must not survive carrying the source's broker device."""
+    mocker.patch("jailbee.incus.time.sleep")
     run = mocker.patch(
         "jailbee.incus.subprocess.run",
         side_effect=[
-            _cp(returncode=0),
-            _cp(returncode=1, stderr="Error: Device not found"),
+            _cp(),
+            _cp_out("disk\n"),
+            *[_cp(returncode=1, stderr="Error: permission denied")] * 10,
         ],
     )
-    incus.copy("g", "c")
-    assert run.call_count == 2
+    with pytest.raises(IncusError, match="permission denied"):
+        incus.copy("g", "c")
+    assert run.call_args_list[-1][0][0] == ["incus", "delete", "c", "--force"]
 
 
 def test_rename_calls_incus_rename(incus, mocker):
@@ -899,6 +917,10 @@ _ETAG_ERROR = (
     "7f9e605efdd7c0dd24d3b57f5a5c3da77577b0887dce23b975924dc7e65ddb09 vs "
     "41d56c299e1e9f3312aa24812cf29f6701b6f0b225c26322593ddb16c4465047"
 )
+
+
+def _cp_out(stdout: str) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
 
 
 def _cp(returncode: int = 0, stderr: str = "") -> subprocess.CompletedProcess:

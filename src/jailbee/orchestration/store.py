@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
 from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass
@@ -20,6 +21,13 @@ from typing import Any
 
 _BUSY_TIMEOUT_MS = 5000
 _log = logging.getLogger(__name__)
+
+# (path, migration count) pairs already migrated by this process. Only a cache
+# that saves the migration transaction on every new `BrokerStore` instance (one
+# is made per delivery); it holds no behavioural state and is dropped for a path
+# whose file has vanished. Other processes migrate for themselves.
+_MIGRATED: set[tuple[str, int]] = set()
+_MIGRATED_LOCK = threading.Lock()
 
 # Ordered schema migrations. Append new scripts; never edit an applied one.
 _MIGRATIONS: list[str] = [
@@ -101,7 +109,10 @@ def store_path(root: Path) -> Path:
 def recipient_uuid(root: Path, full: str) -> str | None:
     """Cheap read-only lookup: never creates, migrates or writes the database.
 
-    Returns None when the file or table is missing or on any SQLite error.
+    Returns None only when the file or the ``recipients`` table is missing (no
+    store inbox exists yet). Any other SQLite error (locked, corrupt) raises
+    `StoreError`: the answer is unknown, and treating it as "no store" would
+    send an item to the file inbox of a store recipient.
     """
     path = store_path(root)
     if not path.exists():
@@ -112,9 +123,12 @@ def recipient_uuid(root: Path, full: str) -> str | None:
             row = con.execute("SELECT uuid FROM recipients WHERE full=?", (full,)).fetchone()
         finally:
             con.close()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc):
+            return None
+        raise StoreError(str(exc)) from exc
     except sqlite3.Error as exc:
-        _log.debug("recipient lookup in %s failed: %s", path, exc)
-        return None
+        raise StoreError(str(exc)) from exc
     return None if row is None else str(row[0])
 
 
@@ -142,12 +156,14 @@ def _row_item(row: tuple[Any, ...]) -> StoredItem:
 class BrokerStore:
     def __init__(self, path: Path) -> None:
         self.path = path
-        self._ready = False
 
     @contextlib.contextmanager
     def _tx(self, write: bool = True) -> Iterator[sqlite3.Connection]:
+        key = (str(self.path), len(_MIGRATIONS))
         try:
             if not self.path.exists():
+                with _MIGRATED_LOCK:
+                    _MIGRATED.discard(key)
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 with contextlib.suppress(FileExistsError):
                     os.close(os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
@@ -155,9 +171,12 @@ class BrokerStore:
             try:
                 con.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
                 _enable_wal(con)
-                if not self._ready:
+                with _MIGRATED_LOCK:
+                    migrated = key in _MIGRATED
+                if not migrated:
                     self._migrate(con)
-                    self._ready = True
+                    with _MIGRATED_LOCK:
+                        _MIGRATED.add(key)
                 con.execute("BEGIN IMMEDIATE" if write else "BEGIN")
                 try:
                     yield con
@@ -168,7 +187,7 @@ class BrokerStore:
                 con.execute("COMMIT")
             finally:
                 con.close()
-        except sqlite3.DatabaseError as exc:
+        except (sqlite3.DatabaseError, OSError) as exc:
             raise StoreError(str(exc)) from exc
 
     @staticmethod
