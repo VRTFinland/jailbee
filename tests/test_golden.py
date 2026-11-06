@@ -196,6 +196,38 @@ def test_promote_instance_restores_previous_golden_when_rename_fails():
     incus.delete.assert_not_called()
 
 
+@pytest.mark.parametrize("mode", ["instance", "image"])
+def test_promotion_rollback_uses_cleanup_client(mode):
+    from jailbee.golden import promote_image, promote_instance
+
+    incus = _incus(existing=("base--golden",), images=("base",))
+    cleanup = _incus()
+    if mode == "instance":
+        original = incus.rename.side_effect
+
+        def rename(src, dst):
+            if src == "base--seeding":
+                raise IncusError("timeout")
+            original(src, dst)
+
+        incus.rename.side_effect = rename
+        with pytest.raises(IncusError, match="timeout"):
+            promote_instance(incus, "base--seeding", "base", cleanup_incus=cleanup)
+        cleanup.rename.assert_called_once_with("base--old", "base--golden")
+    else:
+        original = incus.image_alias_rename.side_effect
+
+        def rename_alias(src, dst):
+            if src == "base--new":
+                raise IncusError("timeout")
+            original(src, dst)
+
+        incus.image_alias_rename.side_effect = rename_alias
+        with pytest.raises(IncusError, match="timeout"):
+            promote_image(incus, "base--seeding", "base", cleanup_incus=cleanup)
+        cleanup.image_alias_rename.assert_called_once_with("base--old", "base")
+
+
 def test_build_calls_launch_exec_publish_delete():
     cfg = load_config(FIXTURES / "full_config.yaml")
     incus = _incus()

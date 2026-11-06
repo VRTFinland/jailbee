@@ -543,8 +543,11 @@ def _remove_other_forms(cfg: Config, incus: Incus, *, instance_mode: bool) -> No
         info(f"Removed {removed} old golden archive(s), {humanize(total)}")
 
 
-def promote_instance(incus: Incus, staging: str, alias: str) -> None:
+def promote_instance(
+    incus: Incus, staging: str, alias: str, *, cleanup_incus: Incus | None = None
+) -> None:
     """Replace the stopped golden, restoring its predecessor if promotion fails."""
+    cleanup = cleanup_incus if cleanup_incus is not None else incus
     golden = golden_instance_name(alias)
     aside = f"{alias}--old"
     _strip_local_nics(incus, staging)
@@ -559,18 +562,21 @@ def promote_instance(incus: Incus, staging: str, alias: str) -> None:
         if set_aside:
             _best_effort(
                 f"restore the previous golden {golden} from {aside}",
-                lambda: incus.rename(aside, golden),
+                lambda: cleanup.rename(aside, golden),
             )
         raise
     if set_aside:
         _best_effort(
             f"delete the previous golden {aside}",
-            lambda: incus.delete(aside, force=True),
+            lambda: cleanup.delete(aside, force=True),
         )
 
 
-def promote_image(incus: Incus, staging: str, alias: str) -> None:
+def promote_image(
+    incus: Incus, staging: str, alias: str, *, cleanup_incus: Incus | None = None
+) -> None:
     """Publish a stopped instance and atomically replace the golden alias."""
+    cleanup = cleanup_incus if cleanup_incus is not None else incus
     new_alias = f"{alias}--new"
     old_alias = f"{alias}--old"
     info(f"Publishing as {alias}")
@@ -584,13 +590,13 @@ def promote_image(incus: Incus, staging: str, alias: str) -> None:
         if had_old:
             _best_effort(
                 f"restore the previous golden image {alias} from {old_alias}",
-                lambda: incus.image_alias_rename(old_alias, alias),
+                lambda: cleanup.image_alias_rename(old_alias, alias),
             )
         raise
     if had_old:
         _best_effort(
             f"delete the previous golden image {old_alias}",
-            lambda: incus.image_delete(old_alias),
+            lambda: cleanup.image_delete(old_alias),
         )
 
 
