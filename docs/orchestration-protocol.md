@@ -21,8 +21,11 @@ as a read-only disk device named `jailbee-orchestration`, mounted at
 `JAILBEE_ORCHESTRATION_SOCKET`). The broker identifies the caller by which
 socket accepted the connection, never by anything in the request. Only
 orchestrators and children get the device. Jailbee's own copies strip it at
-once; a raw `incus copy` keeps it until the broker's next round removes it, so
-the copy cannot reach the original's socket.
+once; a raw `incus copy` keeps it until the broker's next round removes it and
+drops every connection made through it, so the copy cannot keep speaking as the
+original. Two instances that share one instance uuid (an `incus import` beside
+the original) get no socket at all while both exist: the broker logs it and
+both use the file transport.
 
 Messages and statuses that the broker delivers live in `broker.db` (unread and
 read), not in files. `jailbee inbox ls`, `read` and `wait` read them through the

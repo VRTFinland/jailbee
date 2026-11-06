@@ -371,3 +371,32 @@ def test_teardown_keeps_items_when_export_fails(env, monkeypatch) -> None:
     env.tick()
     assert [i.id for i in env.store.unacked(UUID)] == ["m1"]
     assert env.store.recipients() == {"proj-orch": UUID}
+
+
+def test_two_instances_with_one_uuid_get_no_socket(env, caplog: pytest.LogCaptureFixture) -> None:
+    """E.g. `incus import` of a backup beside the original: one identity, two speakers."""
+    twin = _c("proj-twin", **{labels.GRANT: GRANT.to_label(), "volatile.uuid": UUID})
+    env.set(orch(), twin)
+    with caplog.at_level(logging.WARNING):
+        env.tick()
+    assert adds(env) == []
+    assert env.store.recipients() == {}
+    assert "share the instance uuid" in caplog.text
+
+
+def test_a_twin_appearing_beside_a_served_container_tears_its_socket_down(env) -> None:
+    env.set(orch())
+    env.tick()
+    assert env.store.recipients() == {"proj-orch": UUID}
+    src = env.devices["proj-orch"][ORCHESTRATION_DEVICE]
+    twin = _c("proj-twin", **{labels.GRANT: GRANT.to_label(), "volatile.uuid": UUID})
+    env.devices["proj-twin"] = {ORCHESTRATION_DEVICE: dict(src)}
+    env.set(orch(), twin)
+    env.tick()
+    assert ORCHESTRATION_DEVICE not in env.devices["proj-orch"]
+    assert ORCHESTRATION_DEVICE not in env.devices["proj-twin"]
+    assert UUID in env.listener.closed
+    assert env.store.recipients() == {}
+    env.set(orch())  # the twin is gone again: served as before
+    env.tick()
+    assert env.store.recipients() == {"proj-orch": UUID}

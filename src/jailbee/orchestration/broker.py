@@ -153,6 +153,8 @@ class BrokerMemory:
     last_purge: float | None = None
     # Store uuids the previous purge did not find in the listing.
     absent_uuids: set[str] = field(default_factory=set)
+    # volatile.uuid values two or more listed instances share (no socket for them).
+    shared_uuids: set[str] = field(default_factory=set)
 
     def warn_once(self, key: str, msg: str, *args: object) -> None:
         if key not in self.warned:
@@ -900,6 +902,8 @@ def _ensure_socket(ctx: ActionContext, memory: BrokerMemory) -> None:
     if listener is None or store is None or not uuid:
         return
     full = ctx.sender.full
+    if uuid in memory.shared_uuids:
+        return  # _check_socket_devices warned and tore down
     if listener.has_container(uuid) and memory.attached.get(full) == uuid:
         return
     try:
@@ -1011,6 +1015,17 @@ def _forget_vanished(raw: list[dict[str, Any]], memory: BrokerMemory) -> None:
             memory.warn_once(f"socket-gone:{full}", "broker: %s: %s", full, exc)
 
 
+def _shared_uuids(raw: list[dict[str, Any]]) -> set[str]:
+    seen: set[str] = set()
+    shared: set[str] = set()
+    for entry in raw:
+        config = entry.get("config")
+        uuid = config.get("volatile.uuid") if isinstance(config, dict) else None
+        if isinstance(uuid, str) and uuid:
+            (shared if uuid in seen else seen).add(uuid)
+    return shared
+
+
 def _check_socket_devices(
     incus: Incus, raw: list[dict[str, Any]], memory: BrokerMemory, root: Path
 ) -> None:
@@ -1018,10 +1033,26 @@ def _check_socket_devices(
     if memory.listener is None or memory.store is None:
         return
     _forget_vanished(raw, memory)
+    memory.shared_uuids = _shared_uuids(raw)
     for entry in raw:
         name = entry.get("name")
         config = entry.get("config")
         if not isinstance(name, str) or not isinstance(config, dict):
+            continue
+        uuid = config.get("volatile.uuid")
+        if uuid in memory.shared_uuids:
+            # The socket identifies a caller by uuid only: two instances with
+            # one uuid (an `incus import` beside the original) would speak as
+            # each other, so neither gets the socket (file transport instead).
+            memory.warn_once(
+                f"socket-shared:{name}",
+                "broker: %s and another instance share the instance uuid %s; "
+                "no broker socket for either",
+                name,
+                uuid,
+            )
+            if name in memory.attached or socket_device.has_device(entry):
+                _teardown_socket(incus, memory, name, uuid, root)
             continue
         if socket_device.mismatched(entry):
             log.warning("broker: %s carries another instance's socket device; removing", name)
