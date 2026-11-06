@@ -1,0 +1,348 @@
+"""Host-side SQLite message store for the orchestration broker.
+
+Stdlib only. Every method opens a short-lived connection (open, run one
+transaction, close), so broker threads and separate worker processes may write
+concurrently through SQLite's own locking (WAL + ``busy_timeout``).
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import os
+import sqlite3
+from collections.abc import Collection, Iterator, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+
+_BUSY_TIMEOUT_MS = 5000
+
+# Ordered schema migrations. Append new scripts; never edit an applied one.
+_MIGRATIONS: list[str] = [
+    """
+    CREATE TABLE items (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        recipient_uuid TEXT NOT NULL,
+        recipient_full TEXT NOT NULL,
+        id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        kind_or_state TEXT,
+        ref TEXT,
+        from_name TEXT,
+        created_at REAL NOT NULL,
+        item_json TEXT NOT NULL,
+        acked_at REAL,
+        UNIQUE(recipient_uuid, id)
+    );
+    CREATE INDEX items_unacked ON items(recipient_uuid, acked_at, seq);
+    CREATE TABLE requests (
+        sender_uuid TEXT NOT NULL,
+        id TEXT NOT NULL,
+        digest TEXT,
+        state TEXT NOT NULL,
+        detail TEXT NOT NULL,
+        item_json TEXT,
+        at REAL NOT NULL,
+        PRIMARY KEY(sender_uuid, id)
+    );
+    CREATE TABLE recipients (
+        full TEXT PRIMARY KEY,
+        uuid TEXT NOT NULL,
+        attached_at REAL NOT NULL
+    );
+    CREATE TABLE digest (
+        uuid TEXT PRIMARY KEY,
+        at REAL NOT NULL
+    );
+    """,
+]
+
+
+class StoreError(Exception):
+    """The broker store failed (corrupt file, locked too long, ...)."""
+
+
+@dataclass(frozen=True)
+class StoredItem:
+    seq: int
+    recipient_uuid: str
+    recipient_full: str
+    id: str
+    type: str
+    kind_or_state: str | None
+    ref: str | None
+    from_name: str | None
+    created_at: float
+    item: dict[str, object]
+    acked_at: float | None
+
+
+@dataclass(frozen=True)
+class RecordedRequest:
+    state: str
+    detail: str
+    item: dict[str, object] | None
+
+
+_ITEM_COLS = (
+    "seq, recipient_uuid, recipient_full, id, type, kind_or_state, ref, "
+    "from_name, created_at, item_json, acked_at"
+)
+
+
+def store_path(root: Path) -> Path:
+    return root / "broker.db"
+
+
+def recipient_uuid(root: Path, full: str) -> str | None:
+    """Cheap lookup that never creates the database."""
+    path = store_path(root)
+    if not path.exists():
+        return None
+    return BrokerStore(path).recipient_uuid(full)
+
+
+def _opt_str(value: object) -> str | None:
+    return None if value is None else str(value)
+
+
+def _row_item(row: tuple[object, ...]) -> StoredItem:
+    loaded = json.loads(str(row[9]))
+    return StoredItem(
+        seq=int(str(row[0])),
+        recipient_uuid=str(row[1]),
+        recipient_full=str(row[2]),
+        id=str(row[3]),
+        type=str(row[4]),
+        kind_or_state=_opt_str(row[5]),
+        ref=_opt_str(row[6]),
+        from_name=_opt_str(row[7]),
+        created_at=float(str(row[8])),
+        item=loaded if isinstance(loaded, dict) else {},
+        acked_at=None if row[10] is None else float(str(row[10])),
+    )
+
+
+class BrokerStore:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._ready = False
+
+    @contextlib.contextmanager
+    def _tx(self) -> Iterator[sqlite3.Connection]:
+        try:
+            if not self.path.exists():
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                with contextlib.suppress(FileExistsError):
+                    os.close(os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+            con = sqlite3.connect(self.path, timeout=_BUSY_TIMEOUT_MS / 1000, isolation_level=None)
+            try:
+                con.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+                con.execute("PRAGMA journal_mode=WAL")
+                if not self._ready:
+                    self._migrate(con)
+                    self._ready = True
+                con.execute("BEGIN IMMEDIATE")
+                try:
+                    yield con
+                except BaseException:
+                    con.execute("ROLLBACK")
+                    raise
+                con.execute("COMMIT")
+            finally:
+                con.close()
+        except sqlite3.DatabaseError as exc:
+            raise StoreError(str(exc)) from exc
+
+    @staticmethod
+    def _migrate(con: sqlite3.Connection) -> None:
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            con.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+            row = con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+            current = int(row[0]) if row else 0
+            for n, script in enumerate(_MIGRATIONS[current:], start=current + 1):
+                _run_script(con, script)
+                con.execute(
+                    "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (str(n),),
+                )
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+        con.execute("COMMIT")
+
+    # -- items ---------------------------------------------------------
+
+    def insert_item(
+        self,
+        recipient_uuid: str,
+        recipient_full: str,
+        item: Mapping[str, object],
+        *,
+        now: float,
+        acked: bool = False,
+    ) -> bool:
+        item_type = str(item.get("type", ""))
+        detail = item.get("state") if item_type == "status" else item.get("kind")
+        with self._tx() as con:
+            cur = con.execute(
+                "INSERT OR IGNORE INTO items(recipient_uuid, recipient_full, id, type, "
+                "kind_or_state, ref, from_name, created_at, item_json, acked_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    recipient_uuid,
+                    recipient_full,
+                    str(item["id"]),
+                    item_type,
+                    _opt_str(detail),
+                    _opt_str(item.get("ref")),
+                    _opt_str(item.get("from")),
+                    now,
+                    json.dumps(item),
+                    now if acked else None,
+                ),
+            )
+            return cur.rowcount > 0
+
+    def _items(self, sql: str, params: tuple[object, ...]) -> list[StoredItem]:
+        with self._tx() as con:
+            return [_row_item(r) for r in con.execute(sql, params).fetchall()]
+
+    def unacked(self, uuid: str) -> list[StoredItem]:
+        return self._items(
+            f"SELECT {_ITEM_COLS} FROM items "
+            "WHERE recipient_uuid=? AND acked_at IS NULL ORDER BY seq",
+            (uuid,),
+        )
+
+    def history(self, uuid: str) -> list[StoredItem]:
+        return self._items(
+            f"SELECT {_ITEM_COLS} FROM items WHERE recipient_uuid=? ORDER BY seq", (uuid,)
+        )
+
+    def get(self, uuid: str, id: str) -> StoredItem | None:
+        rows = self._items(
+            f"SELECT {_ITEM_COLS} FROM items WHERE recipient_uuid=? AND id=?", (uuid, id)
+        )
+        return rows[0] if rows else None
+
+    def ack(self, uuid: str, id: str, *, now: float) -> bool:
+        with self._tx() as con:
+            con.execute(
+                "UPDATE items SET acked_at=? WHERE recipient_uuid=? AND id=? AND acked_at IS NULL",
+                (now, uuid, id),
+            )
+            row = con.execute(
+                "SELECT 1 FROM items WHERE recipient_uuid=? AND id=?", (uuid, id)
+            ).fetchone()
+            return row is not None
+
+    # -- requests ------------------------------------------------------
+
+    def record_request(
+        self,
+        uuid: str,
+        id: str,
+        *,
+        digest: str | None,
+        state: str,
+        detail: str,
+        item: Mapping[str, object] | None,
+        now: float,
+    ) -> None:
+        with self._tx() as con:
+            con.execute(
+                "INSERT OR REPLACE INTO requests(sender_uuid, id, digest, state, detail, "
+                "item_json, at) VALUES(?,?,?,?,?,?,?)",
+                (uuid, id, digest, state, detail, None if item is None else json.dumps(item), now),
+            )
+
+    def lookup_request(self, uuid: str, id: str) -> RecordedRequest | None:
+        with self._tx() as con:
+            row = con.execute(
+                "SELECT state, detail, item_json FROM requests WHERE sender_uuid=? AND id=?",
+                (uuid, id),
+            ).fetchone()
+        if row is None:
+            return None
+        loaded = None if row[2] is None else json.loads(row[2])
+        return RecordedRequest(
+            state=str(row[0]),
+            detail=str(row[1]),
+            item=loaded if isinstance(loaded, dict) else None,
+        )
+
+    # -- recipients ----------------------------------------------------
+
+    def set_recipient(self, full: str, uuid: str, *, now: float) -> None:
+        with self._tx() as con:
+            con.execute(
+                "INSERT OR REPLACE INTO recipients(full, uuid, attached_at) VALUES(?,?,?)",
+                (full, uuid, now),
+            )
+
+    def remove_recipient(self, full: str) -> None:
+        with self._tx() as con:
+            con.execute("DELETE FROM recipients WHERE full=?", (full,))
+
+    def recipient_uuid(self, full: str) -> str | None:
+        with self._tx() as con:
+            row = con.execute("SELECT uuid FROM recipients WHERE full=?", (full,)).fetchone()
+        return None if row is None else str(row[0])
+
+    def recipients(self) -> dict[str, str]:
+        with self._tx() as con:
+            return {str(f): str(u) for f, u in con.execute("SELECT full, uuid FROM recipients")}
+
+    # -- digest --------------------------------------------------------
+
+    def get_digest_at(self, uuid: str) -> float | None:
+        with self._tx() as con:
+            row = con.execute("SELECT at FROM digest WHERE uuid=?", (uuid,)).fetchone()
+        return None if row is None else float(row[0])
+
+    def set_digest_at(self, uuid: str, at: float) -> None:
+        with self._tx() as con:
+            con.execute("INSERT OR REPLACE INTO digest(uuid, at) VALUES(?,?)", (uuid, at))
+
+    # -- purging -------------------------------------------------------
+
+    def purge_vanished(self, live_uuids: Collection[str]) -> int:
+        live = list(live_uuids)
+        removed = 0
+        with self._tx() as con:
+            con.execute("CREATE TEMP TABLE live(uuid TEXT PRIMARY KEY)")
+            con.executemany("INSERT OR IGNORE INTO live VALUES(?)", [(u,) for u in live])
+            for table, col in (
+                ("items", "recipient_uuid"),
+                ("requests", "sender_uuid"),
+                ("digest", "uuid"),
+                ("recipients", "uuid"),
+            ):
+                cur = con.execute(f"DELETE FROM {table} WHERE {col} NOT IN (SELECT uuid FROM live)")
+                removed += max(cur.rowcount, 0)
+            con.execute("DROP TABLE live")
+        return removed
+
+    def purge_acked_older_than(self, uuid: str, cutoff: float) -> int:
+        with self._tx() as con:
+            cur = con.execute(
+                "DELETE FROM items WHERE recipient_uuid=? AND acked_at IS NOT NULL AND acked_at<?",
+                (uuid, cutoff),
+            )
+            con.execute("DELETE FROM requests WHERE sender_uuid=? AND at<?", (uuid, cutoff))
+            return max(cur.rowcount, 0)
+
+
+def _run_script(con: sqlite3.Connection, script: str) -> None:
+    """Run a multi-statement script inside the caller's open transaction."""
+    statement = ""
+    for line in script.splitlines():
+        statement += line + "\n"
+        if sqlite3.complete_statement(statement):
+            con.execute(statement)
+            statement = ""
+    if statement.strip():
+        con.execute(statement)
