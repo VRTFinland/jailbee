@@ -226,6 +226,7 @@ def _merge_into_child(
         uid=uid,
         now=ctx.now,
         seq=next(ctx.seq),
+        recipient_uuid=child.config.get("volatile.uuid"),
     )
     return done(outcome)
 
@@ -333,5 +334,6 @@ def handle_update(ctx: ActionContext, manifest: Manifest) -> Outcome:
         uid=ctx.cfg.container_user.uid,
         now=ctx.now,
         seq=next(ctx.seq),
+        recipient_uuid=child.config.get("volatile.uuid"),
     )
     return done(f"{child.short} has {ref} at {oid[:12]}")

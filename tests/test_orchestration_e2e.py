@@ -1,18 +1,12 @@
-"""End to end through the real broker, handlers, queue, outbox and inbox code.
+"""Socket request dispatch through real handlers, queue and durable store delivery.
 
-Only `Incus` (a small in-memory fake), `start_create`, `live_create_jobs`,
-config loading and the `sync.*` git calls of `done`/`import` are replaced;
-everything between an outbox file and an inbox file is the production code
-path.
+Incus, creation and git transport are faked; parsed socket send operations,
+status recording, broker maintenance and inbox storage use production code.
 """
 
 from __future__ import annotations
 
-import base64
-import io
 import json
-import sqlite3
-import tarfile
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
@@ -26,12 +20,9 @@ from jailbee.incus import IncusError
 from jailbee.orchestration import actions, broker, labels, watch
 from jailbee.orchestration.grant import Grant
 from jailbee.orchestration.journal import Journal
-from jailbee.orchestration.outbox import (
-    CONTAINER_JAILBEE,
-    INBOX_DIR,
-    LEGACY_INBOX_HELPER,
-    OUTBOX_DIR,
-)
+from jailbee.orchestration.outbox import CONTAINER_JAILBEE
+from jailbee.orchestration import socket_ops
+from jailbee.orchestration.store import BrokerStore, store_path
 from jailbee.orchestration.state import load_queue, pending_dir
 from jailbee.sync import FetchResult, MergeInContainerResult, PushResult
 from tests.conftest import make_config
@@ -44,12 +35,12 @@ HEAD = "c" * 40
 
 
 class FakeIncus:
-    """Containers, their labels, outboxes and inbox writes, in memory."""
+    """Containers, labels and queued socket sends, with inboxes in the real store."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
         self.containers: dict[str, dict[str, Any]] = {}
-        self.outbox: dict[str, dict[str, str]] = {}
+        self.requests: dict[str, list[dict[str, Any]]] = {}
         self.events: list[tuple[Any, ...]] = []
 
     def add(self, name: str, *, running: bool, **config: str) -> None:
@@ -58,7 +49,7 @@ class FakeIncus:
             "status": "Running" if running else "Stopped",
             "config": {"volatile.uuid": f"uuid-{name}", **config},
         }
-        self.outbox.setdefault(name, {})
+        self.requests.setdefault(name, [])
 
     def set_running(self, name: str, running: bool) -> None:
         self.containers[name]["status"] = "Running" if running else "Stopped"
@@ -94,38 +85,16 @@ class FakeIncus:
     def exec_capped(self, name: str, argv: list[str], **kw: object) -> str:
         if argv[:3] == ["python3", "-I", "-c"]:
             return json.dumps({"issue": [], "pr": []})
-        if argv[4] != OUTBOX_DIR:
+        if argv[4] in ("/home/dev/.jailbee/issue-outbox", "/home/dev/.jailbee/pr-outbox"):
+            import base64
             return base64.b64encode(bytes(1024)).decode()
-        assert argv[4] == OUTBOX_DIR
-        buf = io.BytesIO()
-        with tarfile.open(fileobj=buf, mode="w") as tar:
-            for file_name, text in sorted(self.outbox[name].items()):
-                data = text.encode()
-                info = tarfile.TarInfo(f"./{file_name}")
-                info.size = len(data)
-                tar.addfile(info, io.BytesIO(data))
-        return base64.b64encode(buf.getvalue()).decode()
+        raise AssertionError(f"unexpected capped exec {argv}")
 
     def exec(self, name: str, argv: list[str], **kw: object) -> str:
         if argv[:2] == ["sh", "-c"] and argv[-1] == "/home/dev/.jailbee/orchestration/role":
             self.events.append(("role", name, kw.get("uid")))
             return ""
-        if argv == ["mkdir", "-p", INBOX_DIR, OUTBOX_DIR]:
-            self.events.append(("mkdir", name, kw.get("uid")))
-            return ""
-        if argv in (["test", "-x", CONTAINER_JAILBEE], ["rm", "-f", LEGACY_INBOX_HELPER]):
-            return ""
-        if argv[:3] == ["rm", "-f", "--"]:
-            with sqlite3.connect(self.root / "broker.db") as con:
-                ids = {
-                    row[0]
-                    for row in con.execute(
-                        "SELECT manifest_id FROM journal WHERE container_key=?", (f"uuid-{name}",)
-                    )
-                }
-            self.events.append(("rm", name, tuple(argv[3:]), ids))
-            for file_name in argv[3:]:
-                self.outbox[name].pop(file_name, None)
+        if argv == ["test", "-x", CONTAINER_JAILBEE]:
             return ""
         if "status" in argv and "--porcelain" in argv:
             return ""
@@ -138,22 +107,16 @@ class FakeIncus:
         return self
 
     def exec_with_input(self, name: str, argv: list[str], text: str, **kw: object) -> str:
-        directory, file_name = argv[-3], argv[-2]
-        self.events.append(("write", name, directory, file_name, json.loads(text)))
-        return ""
+        raise AssertionError(f"container file transport must not run: {argv}")
 
-    # -- views ---------------------------------------------------------------
-
-    def inbox(self, name: str) -> list[tuple[str, dict[str, Any]]]:
-        return [
-            (e[3], e[4])
-            for e in self.events
-            if e[0] == "write" and e[1] == name and e[2] == INBOX_DIR
-        ]
+    def inbox(self, name: str) -> list[tuple[int, dict[str, Any]]]:
+        store = BrokerStore(store_path(self.root))
+        uuid = self.containers[name]["config"]["volatile.uuid"]
+        return [(row.seq, row.item) for row in store.unacked(uuid)]
 
 
 def _manifest(incus: FakeIncus, full: str, data: dict[str, Any]) -> None:
-    incus.outbox[full][f"{data['id']}.json"] = json.dumps(data)
+    incus.requests[full].append(data)
 
 
 @pytest.fixture
@@ -176,6 +139,16 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
     monkeypatch.setattr(broker, "repo_configs", lambda memory=None: {"proj": cfg})
     monkeypatch.setattr(broker, "load_global_config", lambda path: (GlobalConfig(), []))
+    real_serve = broker._serve
+    store = BrokerStore(store_path(root))
+
+    def serve(ctx, journal, memory):
+        real_serve(ctx, journal, memory)
+        for manifest in list(incus.requests[ctx.sender.full]):
+            socket_ops.handle_send(ctx, memory, store, manifest=manifest, body=None, wait=False)
+            incus.requests[ctx.sender.full].remove(manifest)
+
+    monkeypatch.setattr(broker, "_serve", serve)
     return {"root": root, "cfg": cfg, "incus": incus, "start_create": start_create}
 
 
@@ -201,11 +174,11 @@ def test_spawn_queues_then_starts_after_a_stop(world: dict[str, Any]) -> None:
 
     # Round 1: the only slot is taken by c1 -> the spawn queues; c1 stops.
     assert broker.tick(incus, root=root, journal=journal, now=T0, memory=memory)  # type: ignore[arg-type]  # fake
-    world["start_create"].assert_called_once()
+    assert world["start_create"].call_count == 1, _statuses(incus, "proj-orch")
     assert load_queue(root) == {}
     assert incus.containers["proj-c1"]["status"] == "Stopped"
     assert incus.containers["proj-c1"]["config"][labels.STOPPED_HEAD] == HEAD
-    assert incus.outbox["proj-orch"] == {}
+    assert incus.requests["proj-orch"] == []
 
     # The refreshed cleanup snapshot frees the slot in the same round.
     # Round 2 with a stopped orchestrator does not start it twice.
@@ -230,26 +203,14 @@ def test_spawn_queues_then_starts_after_a_stop(world: dict[str, Any]) -> None:
     assert [name for name, _ in inbox] == sorted(name for name, _ in inbox)
     assert not list(pending_dir(root, "proj-orch").glob("*.json"))
 
-    # Journal before reply, reply before delete, per manifest.
-    events = [e for e in incus.events if e[0] in ("rm", "write") and e[1] == "proj-orch"]
-    kinds = [
-        (e[0], e[2] if e[0] == "rm" else e[4].get("ref"))
-        for e in events
-        if e[0] == "rm" or e[2] == INBOX_DIR
-    ]
-    assert kinds[:4] == [
-        ("write", "a-spawn"),
-        ("rm", ("a-spawn.json",)),
-        ("write", "b-stop"),
-        ("rm", ("b-stop.json",)),
-    ]
-    rms = [e for e in events if e[0] == "rm"]
-    assert [e[3] for e in rms] == [{"a-spawn"}, {"a-spawn", "b-stop"}]
-    with sqlite3.connect(root / "broker.db") as con:
-        rows = con.execute(
-            "SELECT manifest_id, container_key FROM journal ORDER BY manifest_id"
-        ).fetchall()
-    assert rows == [("a-spawn", "uuid-proj-orch"), ("b-stop", "uuid-proj-orch")]
+    # A repeated socket request returns the recorded status, without starting twice.
+    ctx = memory.contexts["uuid-proj-orch"]
+    store = BrokerStore(store_path(root))
+    old = store.lookup_request(ctx.sender.key, "a-spawn")
+    assert old is not None and old.state == "queued"
+    result = socket_ops.handle_send(ctx, memory, store, manifest={"id": "a-spawn"}, body=None, wait=False)
+    assert result["state"] == "queued"
+    world["start_create"].assert_called_once()
 
 
 DONE_SHA = "d" * 40
@@ -290,7 +251,7 @@ def test_orchestrator_message_reaches_a_running_child(world: dict[str, Any]) -> 
     assert _statuses(incus, "proj-orch") == [("m-1", "done", "delivered to c1")]
 
 
-def test_orchestrator_message_to_a_stopped_child_parks_then_flushes_on_start(
+def test_orchestrator_message_to_a_stopped_child_is_stored_without_start(
     world: dict[str, Any],
 ) -> None:
     root: Path = world["root"]
@@ -303,15 +264,16 @@ def test_orchestrator_message_to_a_stopped_child_parks_then_flushes_on_start(
         {"version": 1, "id": "m-1", "type": "message", "to": "c1", "body": "later"},
     )
     _tick(world, memory)
-    assert _messages(incus, "proj-c1") == []
-    assert len(list(pending_dir(root, "proj-c1").iterdir())) == 1
-    assert _statuses(incus, "proj-orch")[0][1] == "queued"
+    assert _messages(incus, "proj-c1")[0]["body"] == "later"
+    assert not pending_dir(root, "proj-c1").exists()
+    assert _statuses(incus, "proj-orch")[0][1] == "done"
+    assert BrokerStore(store_path(root)).recipients() == {}
 
     incus.set_running("proj-c1", True)
     _tick(world, memory, 5)
     [msg] = _messages(incus, "proj-c1")
     assert msg["body"] == "later"
-    assert not any(pending_dir(root, "proj-c1").iterdir())
+    assert not list(pending_dir(root, "proj-c1").glob("*.json"))
 
 
 @pytest.fixture

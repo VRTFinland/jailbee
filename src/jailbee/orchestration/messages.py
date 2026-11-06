@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 def _relay(ctx: ActionContext, target: Node, manifest: MessageManifest) -> Outcome:
-    """Deliver `manifest` to `target`'s inbox, parking it when `target` is not running."""
+    """Deliver to the target instance, parking only when store delivery is unavailable."""
     # Built from a dict: the wire name `from` is an alias, which mypy cannot see.
     msg = InboxMessage.model_validate(
         {
@@ -49,11 +49,12 @@ def _relay(ctx: ActionContext, target: Node, manifest: MessageManifest) -> Outco
         uid=ctx.cfg.container_user.uid,
         now=ctx.now,
         seq=next(ctx.seq),
+        recipient_uuid=target.config.get("volatile.uuid"),
     )
     if result == "delivered":
         return done(f"delivered to {target.short}")
     return Outcome(
-        "queued", f"{target.short} is not running; the message is delivered when it starts"
+        "queued", f"delivery to {target.short} is queued; the broker will retry"
     )
 
 
@@ -146,17 +147,22 @@ def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
     atomic_write_text(finishing.reply_path(ctx, ctx.sender), "{}\n")
     if target.running and not outbox.has_pending(ctx.root, target.full):
         # Persist intent before a destroy marker can exist: a broker crash
-        # before the inbox write must leave a retryable delivery gate.
+        # before the store insert must leave a retryable delivery gate.
         pending = finishing.park(ctx, target, item)
         msg, summary = finishing.complete(ctx, ctx.sender, target, item)
         seq = next(ctx.seq)
+        from jailbee.orchestration.store import StoreError
+
         try:
-            outbox.write_inbox(
-                ctx.incus, target.full, msg, uid=uid, now=ctx.now, seq=seq, root=ctx.root
+            inserted = outbox._insert_into_store(
+                ctx.root, target.full, msg, recipient_uuid=target.config.get("volatile.uuid")
             )
-        except IncusError:
+        except StoreError:
+            inserted = False
+        if not inserted:
             outbox.deliver(
-                ctx.incus, ctx.root, target.full, msg, running=False, uid=uid, now=ctx.now, seq=seq
+                ctx.incus, ctx.root, target.full, msg, running=target.running,
+                uid=uid, now=ctx.now, seq=seq, recipient_uuid=target.config.get("volatile.uuid")
             )
         pending.unlink(missing_ok=True)
         return done(summary)

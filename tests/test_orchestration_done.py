@@ -71,7 +71,7 @@ class Rig:
             return_value=importing.Imported("refs/jailbee/from/fix-1/fix-1", SHA),
         )
         self.head = mocker.patch("jailbee.orchestration.actions._child_head", return_value=SHA)
-        self.write_inbox = mocker.patch("jailbee.orchestration.outbox.write_inbox")
+        self.insert_store = mocker.patch("jailbee.orchestration.outbox._insert_into_store", return_value=True)
         self.deliver = mocker.patch(
             "jailbee.orchestration.messages.deliver", return_value="delivered"
         )
@@ -191,7 +191,7 @@ def test_done_with_surrogate_outbox_text_is_retained_and_serializable(
     assert pending.count == 1 and pending.issue == (name,)
     rig.outbox_probe.return_value = pending
     messages.handle_message(rig.ctx, _done())
-    msg = rig.write_inbox.call_args.args[2]
+    msg = rig.insert_store.call_args.args[2]
     assert msg.on_done == "keep"
     assert "1 staged GitHub action(s)" in msg.on_done_reason
     assert "force: true" in msg.body
@@ -214,7 +214,7 @@ def test_every_done_reports_staged_github_actions(tmp_path, mocker, policy, impo
     pending = PendingGithub(("003-x.json",), (), ('issue/003-x.json: create "Title"',))
     probe = mocker.patch("jailbee.orchestration.child_outbox.probe", return_value=pending)
     out = messages.handle_message(rig.ctx, _done())
-    msg = rig.write_inbox.call_args.args[2]
+    msg = rig.insert_store.call_args.args[2]
     assert msg.on_done == "keep"
     assert msg.on_done_reason == (
         "child `fix-1` has 1 staged GitHub action(s) in its outbox (issue: 003-x.json); "
@@ -237,7 +237,7 @@ def test_done_unknown_outbox_is_reported_and_never_schedules_destroy(tmp_path, m
     _policy(rig, policy)
     mocker.patch("jailbee.orchestration.child_outbox.probe", side_effect=ChildOutboxError("read"))
     messages.handle_message(rig.ctx, _done())
-    msg = rig.write_inbox.call_args.args[2]
+    msg = rig.insert_store.call_args.args[2]
     assert msg.on_done == "keep" and "outbox could not be checked" in msg.on_done_reason
     assert labels.PENDING_DESTROY not in [c.args[1] for c in rig.incus.config_set.call_args_list]
 
@@ -249,17 +249,17 @@ def test_done_imports_then_delivers_then_marks_destroy(
     _policy(rig, "destroy")
     order = MagicMock()
     order.attach_mock(rig.import_child, "import_child")
-    order.attach_mock(rig.write_inbox, "write_inbox")
+    order.attach_mock(rig.insert_store, "insert_store")
     order.attach_mock(rig.incus.config_set, "set")
     out = messages.handle_message(rig.ctx, _done())
     calls = [
         c[0]
         for c in order.mock_calls
-        if c[0] in {"import_child", "write_inbox"}
+        if c[0] in {"import_child", "insert_store"}
         or (c[0] == "set" and c.args[1] == labels.PENDING_DESTROY)
     ]
-    assert calls == ["import_child", "set", "write_inbox"]
-    msg = rig.write_inbox.call_args.args[2]
+    assert calls == ["import_child", "set", "insert_store"]
+    msg = rig.insert_store.call_args.args[2]
     assert msg.imported_sha == SHA and msg.on_done == "destroy"
     assert out.state == "done" and "will be destroyed" in out.detail
 
@@ -269,7 +269,7 @@ def test_done_durable_finish_survives_crash_before_delivery(
 ) -> None:
     rig = _make(tmp_path, mocker)
     _policy(rig, "destroy")
-    rig.write_inbox.side_effect = RuntimeError("broker crashed")
+    rig.insert_store.side_effect = RuntimeError("broker crashed")
     with pytest.raises(RuntimeError, match="broker crashed"):
         messages.handle_message(rig.ctx, _done())
     assert list(pending_dir(tmp_path, "myrepo-orch").glob("*.finish.json"))
@@ -290,7 +290,7 @@ def test_done_import_failure_delivers_with_error_and_keeps(
     _policy(rig, "destroy")
     rig.import_child.return_value = "boom"
     out = messages.handle_message(rig.ctx, _done())
-    msg = rig.write_inbox.call_args.args[2]
+    msg = rig.insert_store.call_args.args[2]
     assert msg.import_error == "boom" and msg.on_done == "keep"
     assert "import failed: boom" in out.detail
     assert labels.PENDING_DESTROY not in [c.args[1] for c in rig.incus.config_set.call_args_list]
@@ -308,7 +308,7 @@ def test_done_without_destroy_grant_at_completion_is_a_kept_import_not_an_error(
         orch.full: Node(orch.full, orch.short, True, {labels.GRANT: grant.to_label()}),
     }
     out = messages.handle_message(rig.ctx, _done())
-    msg = rig.write_inbox.call_args.args[2]
+    msg = rig.insert_store.call_args.args[2]
     assert msg.import_error is None and msg.on_done == "keep"
     assert msg.imported_sha == SHA
     assert msg.on_done_reason and "destroy permission" in msg.on_done_reason
@@ -328,7 +328,7 @@ def test_done_marker_failure_is_a_kept_import_not_an_error(
 
     rig.incus.config_set.side_effect = config_set
     out = messages.handle_message(rig.ctx, _done())
-    msg = rig.write_inbox.call_args.args[2]
+    msg = rig.insert_store.call_args.args[2]
     assert msg.import_error is None and msg.on_done == "keep"
     assert msg.imported_sha == SHA
     assert msg.on_done_reason and "could not schedule destruction" in msg.on_done_reason
@@ -345,7 +345,7 @@ def test_done_checks_target_ref_before_skipping_import(
     mocker.patch("jailbee.sync._container_ref_oid", return_value=target_oid)
     messages.handle_message(rig.ctx, _done())
     assert rig.import_child.call_count == (0 if target_oid == SHA else 1)
-    assert rig.write_inbox.call_args.args[2].imported_sha == SHA
+    assert rig.insert_store.call_args.args[2].imported_sha == SHA
 
 
 @pytest.mark.parametrize("change", ["head", "branch", "during_import"])
@@ -388,7 +388,7 @@ def test_done_keeps_child_when_destroy_grant_revoked(tmp_path: Path, mocker: Moc
         orch.full: Node(orch.full, orch.short, True, {labels.GRANT: grant.to_label()}),
     }
     messages.handle_message(rig.ctx, _done())
-    msg = rig.write_inbox.call_args.args[2]
+    msg = rig.insert_store.call_args.args[2]
     assert msg.on_done == "keep"
     assert labels.PENDING_DESTROY not in [c.args[1] for c in rig.incus.config_set.call_args_list]
 
@@ -401,7 +401,7 @@ def test_done_with_destroyed_orchestrator_refused_and_kept(
     out = messages.handle_message(rig.ctx, _done())
     assert out.state == "refused" and "no longer exists" in out.detail
     rig.incus.config_set.assert_any_call(CHILD, labels.DONE_SHA, SHA)
-    rig.write_inbox.assert_not_called()
+    rig.insert_store.assert_not_called()
     rig.import_child.assert_not_called()
 
 
@@ -465,9 +465,9 @@ def test_done_fetches_sets_labels_and_relays(tmp_path: Path, mocker: MockerFixtu
     )
     calls = [c.args for c in rig.incus.config_set.call_args_list]
     assert calls == [(CHILD, labels.DONE_SHA, SHA), (CHILD, labels.STATE, labels.STATE_DONE)]
-    msg = rig.write_inbox.call_args.args[2]
+    msg = rig.insert_store.call_args.args[2]
     assert (msg.kind, msg.body, msg.from_) == ("done", "all finished", "fix-1")
-    assert rig.write_inbox.call_args.kwargs["seq"] == 1
+    assert rig.insert_store.call_args.kwargs["recipient_uuid"] is None
     assert out == done(f"imported into orch at {'a' * 12}; this container is kept")
 
 
@@ -568,8 +568,6 @@ def test_done_probe_timeout_refused_without_labels(tmp_path: Path, mocker: Mocke
 
 
 def test_flush_stale_finish_after_parent_transfer_keeps_child(tmp_path, mocker):
-    import json
-
     from jailbee.orchestration import finishing, outbox
 
     rig = _make(tmp_path, mocker, orch_running=False)
@@ -579,14 +577,16 @@ def test_flush_stale_finish_after_parent_transfer_keeps_child(tmp_path, mocker):
     old = rig.ctx.nodes["myrepo-orch"]
     rig.ctx.nodes = {CHILD: child, old.full: old}
     rig.ctx.sender = old
-    atomic = mocker.patch("jailbee.orchestration.outbox._atomic_write")
+    from jailbee.orchestration.store import BrokerStore, store_path
+    store = BrokerStore(store_path(tmp_path))
+    mocker.stop(rig.insert_store)
     assert (
         outbox.flush_pending(
-            rig.incus, tmp_path, old.full, uid=None, finish=finishing.flush_callback(rig.ctx)
+            rig.incus, tmp_path, old.full, uid=None, finish=finishing.flush_callback(rig.ctx), recipient_uuid="old-uuid"
         )
         == 1
     )
-    message = json.loads(atomic.call_args.args[4])
+    message = store.unacked("old-uuid")[0].item
     assert message["import_error"] and message["on_done"] == "keep"
     assert not list(pending_dir(tmp_path, old.full).glob("*.finish.json"))
     rig.import_child.assert_not_called()

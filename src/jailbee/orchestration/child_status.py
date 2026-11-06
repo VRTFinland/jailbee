@@ -55,7 +55,7 @@ def clean_text(value: str, limit: int) -> str:
     return text
 
 
-WAITER_COMMS = frozenset({"jailbee", "jailbee-inbox"})
+WAITER_COMMS = frozenset({"jailbee"})
 """Process names of the orchestration waiters, which are not work the child does."""
 
 

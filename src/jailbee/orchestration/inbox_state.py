@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 
 from jailbee import lifecycle, procstat
 from jailbee.orchestration import agent_watch, child_status, labels
-from jailbee.orchestration.outbox import _BASE, _atomic_write
 from jailbee.orchestration.state import atomic_write_text
 
 if TYPE_CHECKING:
@@ -328,18 +327,4 @@ def sync_children(
         children.append(item)
         durable.append(entry)
     atomic_write_text(path, json.dumps({"owner": ctx.sender.key, "children": durable}))
-    # Stamped now, not with `ctx.now`: that is the round's start, and a round
-    # can run long (child imports, slow `incus exec`), which would make the
-    # heartbeat look stale the moment it lands.
-    text = json.dumps({"version": 1, "updated_at": time.time(), "children": children})
-    # TODO(socket-phase3): the socket `children` op replaces this file; remove it.
-    _atomic_write(
-        ctx.incus,
-        ctx.sender.full,
-        _BASE,
-        "children.json",
-        text + "\n",
-        "0444",
-        uid=ctx.cfg.container_user.uid,
-    )
     return children

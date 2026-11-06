@@ -238,6 +238,7 @@ def _settle_destroys_locked(ctx: ActionContext) -> None:
             uid=ctx.cfg.container_user.uid,
             now=ctx.now,
             seq=next(ctx.seq),
+            recipient_uuid=ctx.sender.config.get("volatile.uuid"),
         )
 
 
@@ -249,6 +250,7 @@ def notify_orphaned_finishes(
     *,
     now: datetime,
     seq: Iterator[int],
+    identities: dict[str, str] | None = None,
 ) -> set[str]:
     """Tell surviving workers about undeliverable reports before purging them.
 
@@ -301,6 +303,7 @@ def notify_orphaned_finishes(
                     uid=item.uid,
                     now=now,
                     seq=next(seq),
+                    recipient_uuid=(identities or {}).get(item.child_full),
                 )
             except IncusError as exc:
                 logging.getLogger(__name__).warning(

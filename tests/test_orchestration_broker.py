@@ -17,8 +17,17 @@ from jailbee.incus import IncusError
 from jailbee.orchestration import actions, broker, labels, watch
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.grant import Grant, RepoCap
-from jailbee.orchestration.journal import Journal, manifest_digest
-from jailbee.orchestration.outbox import RawManifest
+from jailbee.orchestration.journal import Journal
+from dataclasses import dataclass
+from jailbee.orchestration.protocol import parse_manifest, ManifestError
+from jailbee.orchestration.store import BrokerStore, store_path
+
+
+@dataclass
+class Request:
+    file_name: str
+    text: str
+    files: dict[str, str]
 from jailbee.orchestration.protocol import InboxStatus
 from jailbee.orchestration.state import QueuedRequest, load_queue, save_queue
 from tests.conftest import make_config
@@ -93,17 +102,6 @@ def test_corrupt_publish_pruning_does_not_stop_tick(tmp_path, monkeypatch):
     assert seen == ["proj-orch"]
 
 
-def test_publish_dedup_matches_request_id_not_file_stem(tmp_path, monkeypatch):
-    from jailbee.orchestration.state import atomic_write_text
-
-    rig = Rig(tmp_path, monkeypatch)
-    rig.incus.list_containers.return_value = [_orch()]
-    atomic_write_text(rig.root / "publish-accepted.json", json.dumps({"proj-orch": ["pub-1"]}))
-    data = {"version": 1, "id": "pub-1", "type": "publish", "outbox": "issue", "manifest": "a.json"}
-    rig.outboxes["proj-orch"] = [RawManifest("different.json", json.dumps(data), {})]
-    rig.tick()
-    assert rig.statuses() == []
-    rig.dispatch.assert_not_called()
 
 
 def test_former_publisher_failure_does_not_starve_later_node(tmp_path, monkeypatch):
@@ -146,7 +144,7 @@ def test_revoked_orchestrator_new_publish_gets_refusal(tmp_path, monkeypatch):
         "outbox": "issue",
         "manifest": "a.json",
     }
-    rig.outboxes["proj-orch"] = [RawManifest("new-pub.json", json.dumps(data), {})]
+    rig.requests["proj-orch"] = [Request("new-pub.json", json.dumps(data), {})]
     rig.dispatch.side_effect = actions.dispatch
     rig.tick()
     assert [(s.ref, s.state) for _, s in rig.statuses()] == [("new-pub", "refused")]
@@ -161,8 +159,8 @@ def test_restart_before_journal_does_not_publish_request_again(tmp_path, monkeyp
     rig.incus.config_get.return_value = grant.to_label()
     rig.incus.list_containers.return_value = [_orch(grant=grant)]
     data = {"version": 1, "id": "pub-1", "type": "publish", "outbox": "issue", "manifest": "a.json"}
-    raw = RawManifest("pub-1.json", json.dumps(data), {})
-    rig.outboxes["proj-orch"] = [raw]
+    raw = Request("pub-1.json", json.dumps(data), {})
+    rig.requests["proj-orch"] = [raw]
     ctx = actions.ActionContext(
         rig.cfg,
         GlobalConfig(),
@@ -186,45 +184,22 @@ def test_restart_before_journal_does_not_publish_request_again(tmp_path, monkeyp
     activation.assert_not_called()
 
 
-def test_publish_delete_failure_finishes_instead_of_wedging(tmp_path, monkeypatch):
-    from jailbee.orchestration import publishing
-
-    rig = Rig(tmp_path, monkeypatch)
-    grant = Grant.model_validate({"publish": {"issues": ["comment"]}})
-    rig.incus.config_get.return_value = grant.to_label()
-    rig.incus.list_containers.return_value = [_orch(grant=grant)]
-    data = {"version": 1, "id": "pub-1", "type": "publish", "outbox": "issue", "manifest": "a.json"}
-    rig.outboxes["proj-orch"] = [RawManifest("pub-1.json", json.dumps(data), {})]
-    monkeypatch.setattr(
-        publishing,
-        "_precheck",
-        lambda *a: ("issue", [{"kind": "comment", "repo": "org/repo"}], False),
-    )
-    rig.dispatch.side_effect = actions.dispatch
-    rig.delete.side_effect = [IncusError("temporary delete failure"), None]
-    activation = MagicMock()
-    monkeypatch.setattr(publishing, "start", activation)
-    rig.tick()
-    rig.tick()
-    assert [s.state for _, s in rig.statuses()] == ["started", "failed"]
-    assert publishing.inflight(rig.root) == {}
-    activation.assert_not_called()
 
 
-def test_publish_worker_starts_after_journal_reply_and_delete(tmp_path, monkeypatch):
+def test_publish_worker_starts_after_recorded_status_and_reply(tmp_path, monkeypatch):
     from jailbee.orchestration import publishing
 
     rig = Rig(tmp_path, monkeypatch)
     rig.incus.list_containers.return_value = [_orch()]
     data = {"version": 1, "id": "pub-1", "type": "publish", "outbox": "issue", "manifest": "a.json"}
-    rig.outboxes["proj-orch"] = [RawManifest("pub-1.json", json.dumps(data), {})]
+    rig.requests["proj-orch"] = [Request("pub-1.json", json.dumps(data), {})]
 
     worker = MagicMock()
 
     def start(ctx, manifest):
         assert rig.statuses()[0][1].state == "started"
-        assert rig.delete.call_count == 1
-        assert rig.journal.seen(ctx.sender.key, manifest_digest("pub-1.json", json.dumps(data), {}))
+        assert rig.store.lookup_request(ctx.sender.key, manifest.id) is not None
+
         return worker
 
     monkeypatch.setattr(publishing, "start", start)
@@ -233,7 +208,7 @@ def test_publish_worker_starts_after_journal_reply_and_delete(tmp_path, monkeypa
     assert memory.publish_threads == [worker]
 
 
-def _spawn_raw(mid: str = "s1", *, prompt_file: bool = True) -> RawManifest:
+def _spawn_raw(mid: str = "s1", *, prompt_file: bool = True) -> Request:
     data: dict[str, Any] = {
         "version": 1,
         "id": mid,
@@ -250,7 +225,7 @@ def _spawn_raw(mid: str = "s1", *, prompt_file: bool = True) -> RawManifest:
         data["prompt"] = "do the thing"
     text = json.dumps(data)
     files[f"{mid}.json"] = text
-    return RawManifest(file_name=f"{mid}.json", text=text, files=files)
+    return Request(file_name=f"{mid}.json", text=text, files=files)
 
 
 class Rig:
@@ -276,16 +251,13 @@ class Rig:
             None,
         )
         self.incus.exists.return_value = False
-        self.outboxes: dict[str, list[RawManifest] | Exception] = {}
+        self.memory = broker.BrokerMemory()
+        self.store = BrokerStore(store_path(self.root))
+        self.requests: dict[str, list[Request] | Exception] = {}
         self.seq = MagicMock()  # parent of every seam, to assert call order
-        self.read_outbox = MagicMock(side_effect=self._read)
+        self.serve_requests = MagicMock(side_effect=self._read)
         self.deliver = MagicMock()
         self.flush_pending = MagicMock(return_value=0)
-        self.delete = MagicMock()
-        self.read_inbox_dir = MagicMock(return_value={})
-        self.delete_inbox_files = MagicMock()
-        self.set_aside_inbox_files = MagicMock()
-        self.write_grant = MagicMock()
         self.ensure_env = MagicMock()
         self.dispatch = MagicMock(
             return_value=Outcome("started", "creation of child `fix-1` started")
@@ -295,14 +267,8 @@ class Rig:
         self.configs = MagicMock(return_value={"proj": self.cfg})
         self.gcfg = MagicMock(return_value=(GlobalConfig(), []))
         for name, mock in [
-            ("read_outbox", self.read_outbox),
             ("deliver", self.deliver),
             ("flush_pending", self.flush_pending),
-            ("delete_outbox_files", self.delete),
-            ("read_inbox_dir", self.read_inbox_dir),
-            ("delete_inbox_files", self.delete_inbox_files),
-            ("set_aside_inbox_files", self.set_aside_inbox_files),
-            ("write_grant_json", self.write_grant),
             ("ensure_orchestration_env", self.ensure_env),
             ("dispatch", self.dispatch),
             ("drain_queue", self.drain),
@@ -313,14 +279,43 @@ class Rig:
             monkeypatch.setattr(broker, name, mock)
             self.seq.attach_mock(mock, name)
 
-    def _read(self, incus: object, full: str, *, uid: int | None) -> list[RawManifest]:
-        got = self.outboxes.get(full, [])
+        real_serve = broker._serve
+
+        def serve(ctx, journal, memory):
+            real_serve(ctx, journal, memory)
+            self.serve_requests(ctx, memory)
+
+        monkeypatch.setattr(broker, "_serve", serve)
+        self.seq.attach_mock(self.serve_requests, "serve_requests")
+
+    def _read(self, ctx, memory):
+        got = self.requests.get(ctx.sender.full, [])
         if isinstance(got, Exception):
             raise got
-        return got
+        for request in got:
+            data = json.loads(request.text) if not request.text.startswith("{not") else {}
+            ref = data.get("id", request.file_name.removesuffix(".json"))
+            if self.store.lookup_request(ctx.sender.key, ref) is not None:
+                continue
+            if broker.publishing.was_accepted(ctx, ref):
+                continue
+            try:
+                manifest = parse_manifest(request.file_name, request.text, request.files)
+                outcome = None
+            except ManifestError as exc:
+                manifest, outcome = None, actions.refused(str(exc))
+
+            def record(ref, outcome):
+                self.store.record_request(ctx.sender.key, ref, digest=None,
+                    state=outcome.state, detail=outcome.detail, item=None, now=NOW.timestamp())
+
+            broker._handle_manifest(ctx, memory, ref=ref, manifest=manifest, outcome=outcome,
+                record=record, reply=lambda ref, out: broker._reply(ctx, ref, out, memory),
+                before_publish=lambda: None)
 
     def tick(self, memory: broker.BrokerMemory | None = None) -> bool:
-        return broker.tick(self.incus, root=self.root, journal=self.journal, now=NOW, memory=memory)
+        return broker.tick(self.incus, root=self.root, journal=self.journal, now=NOW,
+                           memory=memory if memory is not None else self.memory)
 
     def statuses(self) -> list[tuple[str, InboxStatus]]:
         out = []
@@ -336,13 +331,13 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rig:
     return Rig(tmp_path, monkeypatch)
 
 
-def test_ensure_env_runs_for_orchestrator_before_grant_json(rig: Rig) -> None:
+def test_ensure_env_runs_before_pending_delivery_without_container_writes(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch()]
     rig.tick()
     rig.ensure_env.assert_called_once_with(rig.incus, "proj-orch", uid=rig.cfg.container_user.uid)
     names = [c[0] for c in rig.seq.mock_calls]
     assert names.index("ensure_orchestration_env") < names.index("flush_pending")
-    assert names.index("ensure_orchestration_env") < names.index("write_grant_json")
+    rig.incus.exec_with_input.assert_not_called()
 
 
 def test_child_marker_written_once_per_broker_process(rig: Rig) -> None:
@@ -431,8 +426,7 @@ def test_ensure_env_failure_is_logged_once_and_retried(
     rig.tick(memory)
     rig.tick(memory)
     assert rig.ensure_env.call_count == 2
-    assert rig.write_grant.call_count == 1
-    assert rig.read_outbox.call_count == 2
+    assert rig.serve_requests.call_count == 2
     assert len([r for r in caplog.records if "orchestration inbox" in r.getMessage()]) == 1
 
 
@@ -492,14 +486,13 @@ def test_failed_longer_prefix_is_not_attributed_to_a_shorter_one(
 ) -> None:
     rig.configs.return_value = {"proj": rig.cfg, "proj-x": None}
     rig.incus.list_containers.return_value = [_orch("proj-x-orch")]
-    rig.outboxes["proj-x-orch"] = [_spawn_raw("s1")]
+    rig.requests["proj-x-orch"] = [_spawn_raw("s1")]
     memory = broker.BrokerMemory()
     with caplog.at_level(logging.WARNING, logger="jailbee.orchestration.broker"):
         rig.tick(memory)
         rig.tick(memory)
-    rig.read_outbox.assert_not_called()
+    rig.serve_requests.assert_not_called()
     rig.flush_pending.assert_not_called()
-    rig.write_grant.assert_not_called()
     rig.incus.exec.assert_not_called()
     rig.incus.exec_with_input.assert_not_called()
     assert len([r for r in caplog.records if "proj-x-orch" in r.getMessage()]) == 1
@@ -510,7 +503,7 @@ def test_child_resolves_through_its_orchestrators_config(rig: Rig, tmp_path: Pat
     rig.configs.return_value = {"proj": rig.cfg, "proj-x": other}
     rig.incus.list_containers.return_value = [_orch(), _child("proj-x-feat", of="proj-orch")]
     msg = json.dumps({"version": 1, "id": "m1", "type": "message", "body": "hi"})
-    rig.outboxes["proj-x-feat"] = [RawManifest("m1.json", msg, {"m1.json": msg})]
+    rig.requests["proj-x-feat"] = [Request("m1.json", msg, {"m1.json": msg})]
     rig.dispatch.return_value = Outcome("done", "delivered")
     rig.tick()
     ctx = rig.dispatch.call_args.args[0]
@@ -554,57 +547,22 @@ def test_repo_configs_keeps_failed_prefixes_as_none(
     engine.dispose()
 
 
-def test_invalid_manifest_name_is_skipped_and_logged_once(
-    rig: Rig, caplog: pytest.LogCaptureFixture
-) -> None:
-    rig.incus.list_containers.return_value = [_orch()]
-    text = json.dumps({"version": 1, "id": "a", "type": "stop", "child": "kid"})
-    rig.outboxes["proj-orch"] = [RawManifest("a\\b.json", text, {"a\\b.json": text})]
-    memory = broker.BrokerMemory()
-    with caplog.at_level(logging.WARNING, logger="jailbee.orchestration.broker"):
-        rig.tick(memory)
-        rig.tick(memory)
-    rig.dispatch.assert_not_called()
-    rig.delete.assert_not_called()
-    rig.deliver.assert_not_called()
-    assert len([r for r in caplog.records if "invalid name" in r.getMessage()]) == 1
 
 
 def test_unparseable_grant_label_is_logged_once(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
     rig.incus.list_containers.return_value = [_c("proj-orch", **{labels.GRANT: "{nope"})]
-    rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
+    rig.requests["proj-orch"] = [_spawn_raw("s1")]
     memory = broker.BrokerMemory()
     with caplog.at_level(logging.WARNING, logger="jailbee.orchestration.broker"):
         rig.tick(memory)
         rig.tick(memory)
-    rig.read_outbox.assert_not_called()
+    rig.serve_requests.assert_not_called()
     hits = [r for r in caplog.records if "unparseable" in r.getMessage()]
     assert len(hits) == 1 and "proj-orch" in hits[0].getMessage()
 
 
-def test_grant_json_rewritten_after_container_vanishes(rig: Rig) -> None:
-    memory = broker.BrokerMemory()
-    rig.incus.list_containers.return_value = [_orch()]
-    rig.tick(memory)
-    rig.incus.list_containers.return_value = []
-    rig.tick(memory)
-    rig.incus.list_containers.return_value = [_orch()]
-    rig.tick(memory)
-    assert rig.write_grant.call_count == 2
 
 
-def test_grant_json_rewritten_after_grant_becomes_ineffective(
-    rig: Rig, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    memory = broker.BrokerMemory()
-    rig.incus.list_containers.return_value = [_orch()]
-    rig.tick(memory)
-    with monkeypatch.context() as m:
-        m.setattr(actions.profiles, "repo_cap", lambda cfg: RepoCap(allowed=False))
-        rig.tick(memory)
-    assert "proj-orch" not in memory.grant_written
-    rig.tick(memory)
-    assert rig.write_grant.call_count == 2
 
 
 def test_tick_ignores_ordinary_containers(rig: Rig) -> None:
@@ -612,15 +570,15 @@ def test_tick_ignores_ordinary_containers(rig: Rig) -> None:
     assert rig.tick() is False
     rig.incus.exec.assert_not_called()
     rig.incus.exec_with_input.assert_not_called()
-    rig.read_outbox.assert_not_called()
+    rig.serve_requests.assert_not_called()
     rig.flush_pending.assert_not_called()
     rig.dispatch.assert_not_called()
 
 
-def test_tick_dispatches_and_replies_and_deletes(rig: Rig) -> None:
+def test_parsed_request_dispatches_records_and_replies(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch()]
     raw = _spawn_raw("s1")
-    rig.outboxes["proj-orch"] = [raw]
+    rig.requests["proj-orch"] = [raw]
     assert rig.tick() is True
 
     rig.dispatch.assert_called_once()
@@ -639,12 +597,7 @@ def test_tick_dispatches_and_replies_and_deletes(rig: Rig) -> None:
     assert status.id.startswith("h-")
     assert rig.deliver.call_args.kwargs["running"] is True
 
-    digest = manifest_digest("s1.json", raw.text, {"s1.md": "do the thing"})
-    assert rig.journal.seen("proj-orch", digest)
-    assert Journal(rig.root).seen("proj-orch", digest)  # on disk
-    rig.delete.assert_called_once_with(
-        rig.incus, "proj-orch", ["s1.json", "s1.md"], uid=rig.cfg.container_user.uid
-    )
+    assert rig.store.lookup_request("proj-orch", "s1").state == "started"
 
 
 @pytest.mark.parametrize("ref", ["refs/heads/../bad", "HEAD~1", "abc123", "refs/heads/missing"])
@@ -653,8 +606,8 @@ def test_spawn_ref_refused_by_broker_without_creation(rig: Rig, mocker, monkeypa
     data = json.loads(raw.text)
     data.update(version=2, kind="fork", ref=ref)
     text = json.dumps(data)
-    rig.outboxes["proj-orch"] = [
-        RawManifest(raw.file_name, text, raw.files | {raw.file_name: text})
+    rig.requests["proj-orch"] = [
+        Request(raw.file_name, text, raw.files | {raw.file_name: text})
     ]
     rig.incus.list_containers.return_value = [_orch()]
     monkeypatch.setattr(broker, "dispatch", actions.dispatch)
@@ -695,65 +648,27 @@ def test_spawn_ref_refused_by_broker_without_creation(rig: Rig, mocker, monkeypa
     assert load_queue(rig.root) == {}
 
 
-def test_journal_is_written_before_the_manifest_is_deleted(
-    rig: Rig, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    rig.incus.list_containers.return_value = [_orch()]
-    rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
-    seen_at_delete: list[bool] = []
-    raw = rig.outboxes["proj-orch"][0]
-    digest = manifest_digest("s1.json", raw.text, {"s1.md": "do the thing"})
-    rig.delete.side_effect = lambda *a, **k: seen_at_delete.append(
-        Journal(rig.root).seen("proj-orch", digest)
-    )
-    rig.tick()
-    assert seen_at_delete == [True]
 
 
-def test_tick_skips_journalled_manifest_and_deletes_it(rig: Rig) -> None:
-    rig.incus.list_containers.return_value = [_orch()]
-    raw = _spawn_raw("s1")
-    rig.outboxes["proj-orch"] = [raw]
-    digest = manifest_digest("s1.json", raw.text, {"s1.md": "do the thing"})
-    rig.journal.record("proj-orch", digest, "s1", "started", NOW)
-
-    rig.tick()
-    rig.dispatch.assert_not_called()
-    rig.deliver.assert_not_called()
-    rig.delete.assert_called_once_with(
-        rig.incus, "proj-orch", ["s1.json", "s1.md"], uid=rig.cfg.container_user.uid
-    )
 
 
-def test_digest_ignores_unrelated_outbox_files(rig: Rig) -> None:
-    """A second manifest beside the first must not change the first one's digest."""
-    rig.incus.list_containers.return_value = [_orch()]
-    a = _spawn_raw("s1", prompt_file=False)
-    rig.journal.record("proj-orch", manifest_digest("s1.json", a.text, {}), "s1", "done", NOW)
-    crowded = RawManifest(a.file_name, a.text, {**a.files, "s2.json": "{}"})
-    rig.outboxes["proj-orch"] = [crowded]
-    rig.tick()
-    rig.dispatch.assert_not_called()
 
 
 def test_bad_manifest_gets_refused_status(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch()]
-    rig.outboxes["proj-orch"] = [RawManifest("bad-1.json", "{not json", {"bad-1.json": "{"})]
+    rig.requests["proj-orch"] = [Request("bad-1.json", "{not json", {"bad-1.json": "{"})]
     rig.tick()
     rig.dispatch.assert_not_called()
     [(to, status)] = rig.statuses()
     assert to == "proj-orch"
     assert status.state == "refused" and status.ref == "bad-1"
     assert "invalid JSON" in status.detail
-    rig.delete.assert_called_once_with(
-        rig.incus, "proj-orch", ["bad-1.json"], uid=rig.cfg.container_user.uid
-    )
-    assert rig.journal.seen("proj-orch", manifest_digest("bad-1.json", "{not json", {}))
+    assert rig.store.lookup_request("proj-orch", "bad-1").state == "refused"
 
 
 def test_queued_outcome_is_sent_as_queued_status(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch()]
-    rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
+    rig.requests["proj-orch"] = [_spawn_raw("s1")]
     rig.dispatch.return_value = Outcome("queued", "queued at position 1")
     rig.tick()
     [(_, status)] = rig.statuses()
@@ -762,45 +677,44 @@ def test_queued_outcome_is_sent_as_queued_status(rig: Rig) -> None:
 
 def test_handler_crash_is_refused_not_retried(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch()]
-    rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
+    rig.requests["proj-orch"] = [_spawn_raw("s1")]
     rig.dispatch.side_effect = RuntimeError("secret /host/path boom")
     rig.tick()
     [(_, status)] = rig.statuses()
     # Generic detail for the container; the exception text stays in the host log.
     assert (status.state, status.detail) == ("refused", "broker error")
-    rig.delete.assert_called_once()
 
 
 def test_flush_pending_runs_before_any_new_status(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch()]
-    rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
+    rig.requests["proj-orch"] = [_spawn_raw("s1")]
     rig.tick()
     names = [c[0] for c in rig.seq.mock_calls if c[0] in {"flush_pending", "deliver"}]
     assert names == ["flush_pending", "deliver"]
     rig.flush_pending.assert_called_once_with(
-        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid, finish=ANY
+        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid, finish=ANY, recipient_uuid=None
     )
 
 
 def test_children_are_served_too(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch(running=False), _child()]
     msg = json.dumps({"version": 1, "id": "m1", "type": "message", "body": "hi"})
-    rig.outboxes["proj-kid"] = [RawManifest("m1.json", msg, {"m1.json": msg})]
+    rig.requests["proj-kid"] = [Request("m1.json", msg, {"m1.json": msg})]
     rig.dispatch.return_value = Outcome("done", "delivered")
     assert rig.tick() is True
     ctx, manifest = rig.dispatch.call_args.args
     assert ctx.sender.full == "proj-kid" and manifest.type == "message"
-    # The stopped orchestrator is neither read nor flushed.
-    assert [c.args[1] for c in rig.read_outbox.call_args_list] == ["proj-kid"]
-    assert [c.args[2] for c in rig.flush_pending.call_args_list] == ["proj-kid"]
+    # The stopped orchestrator flushes host state but never serves requests.
+    assert [c.args[0].sender.full for c in rig.serve_requests.call_args_list] == ["proj-kid"]
+    assert [c.args[2] for c in rig.flush_pending.call_args_list] == ["proj-orch", "proj-kid"]
 
 
 def test_one_bad_container_does_not_stop_the_round(
     rig: Rig, caplog: pytest.LogCaptureFixture
 ) -> None:
     rig.incus.list_containers.return_value = [_orch("proj-a"), _orch("proj-b")]
-    rig.outboxes["proj-a"] = RuntimeError("exec exploded")
-    rig.outboxes["proj-b"] = [_spawn_raw("s1")]
+    rig.requests["proj-a"] = RuntimeError("exec exploded")
+    rig.requests["proj-b"] = [_spawn_raw("s1")]
     with caplog.at_level(logging.ERROR, logger="jailbee.orchestration.broker"):
         rig.tick()
     rig.dispatch.assert_called_once()
@@ -813,7 +727,7 @@ def test_one_bad_container_does_not_stop_the_round(
 def test_tick_returns_false_when_idle(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_c("proj-plain"), _orch(running=False)]
     assert rig.tick() is False
-    rig.read_outbox.assert_not_called()
+    rig.serve_requests.assert_not_called()
 
 
 def test_tick_returns_true_with_a_running_child(rig: Rig) -> None:
@@ -823,17 +737,17 @@ def test_tick_returns_true_with_a_running_child(rig: Rig) -> None:
 
 def test_global_config_failure_skips_the_round(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch()]
-    rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
+    rig.requests["proj-orch"] = [_spawn_raw("s1")]
     rig.gcfg.side_effect = ValueError("bad yaml")
     assert rig.tick() is True
-    rig.read_outbox.assert_not_called()
+    rig.serve_requests.assert_not_called()
     rig.dispatch.assert_not_called()
 
 
 def test_gcfg_is_loaded_once_and_shared(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch("proj-a"), _orch("proj-b")]
-    rig.outboxes["proj-a"] = [_spawn_raw("s1")]
-    rig.outboxes["proj-b"] = [_spawn_raw("s2")]
+    rig.requests["proj-a"] = [_spawn_raw("s1")]
+    rig.requests["proj-b"] = [_spawn_raw("s2")]
     sentinel = GlobalConfig()
     rig.gcfg.return_value = (sentinel, [])
     rig.tick()
@@ -843,12 +757,12 @@ def test_gcfg_is_loaded_once_and_shared(rig: Rig) -> None:
 
 def test_unregistered_repo_container_skipped(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
     rig.incus.list_containers.return_value = [_orch("stranger-orch")]
-    rig.outboxes["stranger-orch"] = [_spawn_raw("s1")]
+    rig.requests["stranger-orch"] = [_spawn_raw("s1")]
     memory = broker.BrokerMemory()
     with caplog.at_level(logging.WARNING, logger="jailbee.orchestration.broker"):
         rig.tick(memory)
         rig.tick(memory)
-    rig.read_outbox.assert_not_called()
+    rig.serve_requests.assert_not_called()
     rig.flush_pending.assert_not_called()
     rig.incus.exec.assert_not_called()
     rig.incus.exec_with_input.assert_not_called()
@@ -856,32 +770,19 @@ def test_unregistered_repo_container_skipped(rig: Rig, caplog: pytest.LogCapture
     assert len(hits) == 1  # logged once, not every round
 
 
-def test_grant_json_written_once_per_change(rig: Rig) -> None:
+def test_grant_changes_are_visible_without_container_files(rig: Rig) -> None:
+    from jailbee.orchestration import socket_ops
+
     memory = broker.BrokerMemory()
     rig.incus.list_containers.return_value = [_orch()]
     rig.tick(memory)
-    rig.tick(memory)
-    assert rig.write_grant.call_count == 1
-    full, text = rig.write_grant.call_args.args[1:3]
-    assert full == "proj-orch"
-    data = json.loads(text)
-    assert data.pop("default_runner_source") is None
-    assert Grant.model_validate(data) == GRANT
-
-    wider = Grant.model_validate({"max_running_children": 3, "operations": ["message", "spawn"]})
+    data = socket_ops.handle_grant(memory, "proj-orch")
+    assert Grant.model_validate({k: v for k, v in data.items() if k != "default_runner_source"}) == GRANT
+    wider = Grant(max_running_children=3)
     rig.incus.list_containers.return_value = [_orch(grant=wider)]
     rig.tick(memory)
-    rig.tick(memory)
-    assert rig.write_grant.call_count == 2
-    data = json.loads(rig.write_grant.call_args.args[2])
-    assert data.pop("default_runner_source") is None
-    assert Grant.model_validate(data) == wider
-
-
-def test_grant_json_not_written_into_children(rig: Rig) -> None:
-    rig.incus.list_containers.return_value = [_child()]
-    rig.tick()
-    rig.write_grant.assert_not_called()
+    assert socket_ops.handle_grant(memory, "proj-orch")["max_running_children"] == wider.max_running_children
+    rig.incus.exec_with_input.assert_not_called()
 
 
 def _req(mid: str, child: str = "proj-fix-2") -> QueuedRequest:
@@ -901,7 +802,7 @@ def _req(mid: str, child: str = "proj-fix-2") -> QueuedRequest:
 def test_drain_after_a_stop_only_round_reports_each_outcome(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch(), _child(running=False)]
     stop = json.dumps({"version": 1, "id": "st1", "type": "stop", "child": "kid"})
-    rig.outboxes["proj-orch"] = [RawManifest("st1.json", stop, {"st1.json": stop})]
+    rig.requests["proj-orch"] = [Request("st1.json", stop, {"st1.json": stop})]
     rig.dispatch.return_value = Outcome("done", "child `kid` stopped")
     rig.drain.return_value = [
         (_req("q1"), Outcome("started", "creation of child `fix-2` started")),
@@ -938,7 +839,6 @@ def test_disallowed_repo_drops_queue_saying_so(rig: Rig, monkeypatch: pytest.Mon
     rig.tick()
     rig.drain.assert_not_called()
     rig.drop.assert_called_once()
-    rig.write_grant.assert_not_called()
     got = [(s.ref, s.state, s.detail) for _, s in rig.statuses()]
     assert got == [
         ("q1", "refused", "orchestration is not allowed in this repo"),
@@ -987,8 +887,8 @@ def test_broker_waits_for_publish_workers_before_exit(tmp_path, monkeypatch, upg
     worker.is_alive.return_value = True
     rig.incus.list_containers.return_value = [_orch()]
     data = {"version": 1, "id": "pub-join", "type": "publish", "outbox": "pr", "manifest": "a.json"}
-    rig.outboxes["proj-orch"] = [RawManifest("pub-join.json", json.dumps(data), {})]
-    # Run the actual broker handler/journal/delete/activation path; only the
+    rig.requests["proj-orch"] = [Request("pub-join.json", json.dumps(data), {})]
+    # Run the actual broker handler/record/reply/activation path; only the
     # asynchronous launch is replaced, never the tracking list under test.
     monkeypatch.setattr(publishing, "start", lambda *args: worker)
     real_tick = broker.tick
@@ -1098,7 +998,7 @@ def test_sigterm_during_dispatch_finishes_the_round_then_exits(
     monkeypatch.setattr(broker, "_pause", pause)
     rig.incus.list_containers.return_value = [_orch()]
     raw = _spawn_raw("s1")
-    rig.outboxes["proj-orch"] = [raw]
+    rig.requests["proj-orch"] = [raw]
 
     def act(ctx: object, manifest: object) -> Outcome:
         _sigterm()  # arrives mid-handler
@@ -1107,13 +1007,11 @@ def test_sigterm_during_dispatch_finishes_the_round_then_exits(
     rig.dispatch.side_effect = act
     before = signal.getsignal(signal.SIGTERM)
     assert broker.run_broker(rig.incus) == 0
-    digest = manifest_digest("s1.json", raw.text, {"s1.md": "do the thing"})
-    assert Journal(rig.root).seen("proj-orch", digest)
-    rig.delete.assert_called_once()
+    assert rig.store.lookup_request("proj-orch", "s1").state == "started"
     [(_, status)] = rig.statuses()
     assert status.state == "started"
     # incl. action and watch refresh, and the socket check's all-projects listing
-    assert rig.incus.list_containers.call_count == 6
+    assert rig.incus.list_containers.call_count >= 4
     pause.assert_called_once()  # returns at once: the flag is already set
     assert signal.getsignal(signal.SIGTERM) == before
 
@@ -1156,7 +1054,7 @@ def test_recreated_container_acts_on_a_manifest_identical_to_the_old_ones(rig: R
     old, new = _orch(), _orch()
     old["config"]["volatile.uuid"] = "uuid-old"
     new["config"]["volatile.uuid"] = "uuid-new"
-    rig.outboxes["proj-orch"] = [raw]
+    rig.requests["proj-orch"] = [raw]
     rig.incus.list_containers.return_value = [old]
     rig.tick()
     rig.incus.list_containers.return_value = [new]  # destroyed and recreated
@@ -1164,17 +1062,6 @@ def test_recreated_container_acts_on_a_manifest_identical_to_the_old_ones(rig: R
     assert rig.dispatch.call_count == 2
 
 
-def test_journal_keyed_by_instance_uuid(rig: Rig) -> None:
-    raw = _spawn_raw("s1")
-    digest = manifest_digest(raw.file_name, raw.text, {"s1.md": raw.files["s1.md"]})
-    rig.journal.record("uuid-1", digest, "s1", "started", NOW)
-    orch = _orch()
-    orch["config"]["volatile.uuid"] = "uuid-1"
-    rig.incus.list_containers.return_value = [orch]
-    rig.outboxes["proj-orch"] = [raw]
-    rig.tick()
-    rig.dispatch.assert_not_called()
-    rig.delete.assert_called_once()
 
 
 def test_vanished_container_pending_is_purged(rig: Rig) -> None:
@@ -1193,7 +1080,7 @@ def test_vanished_container_pending_is_purged(rig: Rig) -> None:
 def test_replies_carry_an_increasing_sequence(rig: Rig) -> None:
     """Statuses emitted in one round keep their order whatever their random ids."""
     rig.incus.list_containers.return_value = [_orch()]
-    rig.outboxes["proj-orch"] = [_spawn_raw("s1"), _spawn_raw("s2")]
+    rig.requests["proj-orch"] = [_spawn_raw("s1"), _spawn_raw("s2")]
     rig.drain.return_value = [(_req("q1"), Outcome("started", "x"))]
     memory = broker.BrokerMemory()
     rig.tick(memory)
@@ -1254,12 +1141,12 @@ def test_tick_flushes_pending_for_revoked_orchestrator(rig: Rig) -> None:
     (d / "x.json").write_text("{}")
     # A grant label that no longer parses: role "none", yet still labelled.
     rig.incus.list_containers.return_value = [_c("proj-orch", **{labels.GRANT: "garbage"})]
-    rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
+    rig.requests["proj-orch"] = [_spawn_raw("s1")]
     rig.tick()
     rig.flush_pending.assert_called_once_with(
-        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid, finish=ANY
+        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid, finish=ANY, recipient_uuid=None
     )
-    rig.read_outbox.assert_not_called()
+    rig.serve_requests.assert_not_called()
     rig.dispatch.assert_not_called()
 
 
@@ -1271,10 +1158,10 @@ def test_tick_does_not_flush_role_none_without_pending(rig: Rig) -> None:
 
 def test_tick_context_shares_the_memory_sequence(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch()]
-    rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
+    rig.requests["proj-orch"] = [_spawn_raw("s1")]
     memory = broker.BrokerMemory()
     rig.tick(memory)
-    ctx = rig.dispatch.call_args.args[0]
+    ctx = memory.contexts["proj-orch"]
     assert ctx.seq is memory.seq
 
 
@@ -1286,12 +1173,12 @@ def test_tick_flushes_pending_for_container_with_no_labels(rig: Rig) -> None:
     (d / "x.json").write_text("{}")
     # `jailbee grant revoke` removed the label entirely.
     rig.incus.list_containers.return_value = [_c("proj-orch")]
-    rig.outboxes["proj-orch"] = [_spawn_raw("s1")]
+    rig.requests["proj-orch"] = [_spawn_raw("s1")]
     rig.tick()
     rig.flush_pending.assert_called_once_with(
-        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid, finish=ANY
+        rig.incus, rig.root, "proj-orch", uid=rig.cfg.container_user.uid, finish=ANY, recipient_uuid=None
     )
-    rig.read_outbox.assert_not_called()
+    rig.serve_requests.assert_not_called()
     rig.dispatch.assert_not_called()
 
 
@@ -1342,11 +1229,13 @@ def test_tick_completes_parked_finish_when_orchestrator_starts(
     monkeypatch.setattr(actions, "_child_head", MagicMock(return_value="a" * 40))
     monkeypatch.setattr(actions.sync, "_container_current_branch", MagicMock(return_value="b"))
     monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
-    rig.incus.list_containers.return_value = [_orch(grant=Grant()), _child()]
+    orch_row = _orch(grant=Grant())
+    orch_row["config"]["volatile.uuid"] = "uuid-orch"
+    rig.incus.list_containers.return_value = [orch_row, _child()]
     rig.tick()
     relay.assert_called_once()
-    delivered = [json.loads(c.args[2]) for c in rig.incus.exec_with_input.call_args_list]
-    assert delivered[0]["kind"] == "done" and delivered[0]["imported_sha"] == "a" * 40
+    items = rig.store.unacked("uuid-orch")
+    assert items[0].item["kind"] == "done" and items[0].item["imported_sha"] == "a" * 40
 
 
 def _marked_child(rig: Rig) -> dict[str, Any]:
@@ -1504,6 +1393,8 @@ def test_destroy_step_runs_after_done_reply(rig: Rig, monkeypatch: pytest.Monkey
     from jailbee.sync import FetchResult
 
     kid = _marked_child(rig)
+    for row in rig.incus.list_containers.return_value:
+        row["config"]["volatile.uuid"] = row["name"]
     kid["config"].pop(labels.PENDING_DESTROY)
     kid["config"].pop(labels.LAST_IMPORT)
     destroy = _destroy_seams(monkeypatch)
@@ -1528,12 +1419,11 @@ def test_destroy_step_runs_after_done_reply(rig: Rig, monkeypatch: pytest.Monkey
         key, value
     )
     raw = {"version": 1, "type": "message", "id": "d1", "kind": "done", "body": "finished"}
-    rig.outboxes["proj-kid"] = [RawManifest("d1.json", json.dumps(raw), {})]
+    rig.requests["proj-kid"] = [Request("d1.json", json.dumps(raw), {})]
     rig.seq.attach_mock(destroy, "destroy")
     rig.tick()
     names = [c[0] for c in rig.seq.mock_calls]
     assert "destroy" in names and names.index("deliver") < names.index("destroy")
-    assert names.index("delete_outbox_files") < names.index("destroy")
 
 
 @pytest.mark.parametrize("failure", ["parked_reply", "crash_after_journal"])
@@ -1544,6 +1434,8 @@ def test_done_cleanup_waits_for_durable_reply(
     from jailbee.sync import FetchResult
 
     kid = _marked_child(rig)
+    for row in rig.incus.list_containers.return_value:
+        row["config"]["volatile.uuid"] = row["name"]
     kid["config"].pop(labels.PENDING_DESTROY)
     kid["config"].pop(labels.LAST_IMPORT)
     destroy = _destroy_seams(monkeypatch)
@@ -1569,15 +1461,11 @@ def test_done_cleanup_waits_for_durable_reply(
         key, value
     )
     raw = {"version": 1, "type": "message", "id": "d1", "kind": "done", "body": "finished"}
-    rig.outboxes["proj-kid"] = [RawManifest("d1.json", json.dumps(raw), {})]
+    rig.requests["proj-kid"] = [Request("d1.json", json.dumps(raw), {})]
     if failure == "parked_reply":
         monkeypatch.setattr(broker, "deliver", outbox.deliver)
 
-        def write(incus, full, *a, **k):
-            if full == "proj-kid":
-                raise IncusError("reply write failed")
-
-        monkeypatch.setattr(outbox, "write_inbox", write)
+        monkeypatch.setattr(outbox, "_insert_into_store", lambda *a, **k: False)
     else:
         rig.deliver.side_effect = RuntimeError("crash after journal")
     rig.tick()
@@ -1585,9 +1473,11 @@ def test_done_cleanup_waits_for_durable_reply(
     # A fresh broker round must replay the reply without dispatching done again.
     rig.deliver.side_effect = None
     rig.deliver.return_value = "delivered"
-    monkeypatch.setattr(outbox, "write_inbox", MagicMock())
+    monkeypatch.setattr(outbox, "_insert_into_store", lambda *a, **k: True)
     monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
     rig.tick()
+    assert not broker.has_pending(rig.root, "proj-orch")
+    assert not broker.has_pending(rig.root, "proj-kid")
     destroy.assert_called_once()
 
 
@@ -1654,7 +1544,7 @@ def test_stale_stopped_head_is_cleared_before_anything_is_served(rig: Rig) -> No
     rig.seq.attach_mock(rig.incus.config_unset_checked, "unset")
     rig.tick()
     names = [c[0] for c in rig.seq.mock_calls]
-    assert names.index("unset") < names.index("read_outbox")
+    assert names.index("unset") < names.index("serve_requests")
 
 
 def test_failed_stopped_head_clear_does_not_stop_the_round(
@@ -1667,17 +1557,17 @@ def test_failed_stopped_head_clear_does_not_stop_the_round(
     rig.incus.list_containers.return_value = [_orch(), kid]
     rig.incus.config_unset_checked.side_effect = IncusError("daemon gone")
     rig.tick()
-    assert rig.read_outbox.call_count == 2
+    assert rig.serve_requests.call_count == 2
 
 
 # -- watch list: started children ------------------------------------------------
 
 
-def _restart_raw(mid: str = "r1", child: str = "kid") -> RawManifest:
+def _restart_raw(mid: str = "r1", child: str = "kid") -> Request:
     text = json.dumps(
         {"version": 1, "id": mid, "type": "restart", "child": child, "prompt": "again"}
     )
-    return RawManifest(f"{mid}.json", text, {f"{mid}.json": text})
+    return Request(f"{mid}.json", text, {f"{mid}.json": text})
 
 
 def _watches(rig: Rig) -> list[watch.WatchEntry]:
@@ -1692,7 +1582,7 @@ def _job(
 
 def _spawn_round(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch()]
-    rig.outboxes["proj-orch"] = [_spawn_raw()]
+    rig.requests["proj-orch"] = [_spawn_raw()]
     rig.tick()
 
 
@@ -1706,7 +1596,7 @@ def test_only_accepted_done_cancels_supervision(rig: Rig, monkeypatch, accepted)
     text = json.dumps(
         {"version": 1, "id": "done1", "type": "message", "kind": "done", "body": "finished"}
     )
-    rig.outboxes["proj-kid"] = [RawManifest("done1.json", text, {"done1.json": text})]
+    rig.requests["proj-kid"] = [Request("done1.json", text, {"done1.json": text})]
     rig.dispatch.return_value = Outcome("done" if accepted else "refused", "result")
     monkeypatch.setattr(watch, "read_jobs", lambda: None)
     rig.tick()
@@ -1732,7 +1622,7 @@ def test_idle_report_contains_last_accepted_message_and_tail(rig: Rig, monkeypat
             "body": "Need your answer\nsecond line",
         }
     )
-    rig.outboxes["proj-kid"] = [RawManifest("n1.json", text, {"n1.json": text})]
+    rig.requests["proj-kid"] = [Request("n1.json", text, {"n1.json": text})]
     rig.dispatch.return_value = Outcome("done", "delivered")
     monkeypatch.setattr(watch, "read_jobs", lambda: {})
     monkeypatch.setattr(
@@ -1743,7 +1633,7 @@ def test_idle_report_contains_last_accepted_message_and_tail(rig: Rig, monkeypat
     rig.tick()
     assert _watches(rig)[0].last_message_kind == "note"
     assert _watches(rig)[0].last_message_line == "Need your answer"
-    rig.outboxes.clear()
+    rig.requests.clear()
     rig.deliver.reset_mock()
     broker.tick(rig.incus, root=rig.root, journal=rig.journal, now=NOW + timedelta(seconds=900))
     msg = rig.deliver.call_args.args[3]
@@ -1772,7 +1662,7 @@ def test_child_message_idle_reset_only_when_accepted(rig: Rig, monkeypatch, kind
     text = json.dumps(
         {"version": 1, "id": "m1", "type": "message", "kind": kind, "body": "line\nmore"}
     )
-    rig.outboxes["proj-kid"] = [RawManifest("m1.json", text, {"m1.json": text})]
+    rig.requests["proj-kid"] = [Request("m1.json", text, {"m1.json": text})]
     rig.dispatch.return_value = Outcome("done" if accepted else "refused", "result")
     monkeypatch.setattr(broker, "_settle_all_watches", lambda *a, **k: None)
     rig.tick()
@@ -2029,7 +1919,7 @@ def test_inline_restart_also_requires_agent_confirmation(
 ) -> None:
     monkeypatch.setattr(watch, "read_jobs", lambda: None)
     rig.incus.list_containers.return_value = [_orch(), _child(running=False)]
-    rig.outboxes["proj-orch"] = [_restart_raw()]
+    rig.requests["proj-orch"] = [_restart_raw()]
     rig.dispatch.return_value = Outcome("done", "child `kid` restarted")
     rig.tick()
     assert _watches(rig) == [
@@ -2040,7 +1930,7 @@ def test_inline_restart_also_requires_agent_confirmation(
 def test_detached_restart_watched(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(watch, "read_jobs", lambda: None)
     rig.incus.list_containers.return_value = [_orch(), _child(running=False)]
-    rig.outboxes["proj-orch"] = [_restart_raw()]
+    rig.requests["proj-orch"] = [_restart_raw()]
     rig.dispatch.return_value = Outcome("started", "child `kid` restarting")
     rig.tick()
     assert _watches(rig) == [
@@ -2287,9 +2177,12 @@ def test_orphaned_finish_failure_does_not_block_the_others(
             {"proj-kid1", "proj-kid2"},
             now=datetime.now(UTC),
             seq=iter(range(100)),
+            identities={"proj-kid1": "uuid-1", "proj-kid2": "uuid-2"},
         )
-    delivered = [c.args[0] for c in incus.exec_with_input.call_args_list]
-    assert delivered == ["proj-kid2"]
+    store = BrokerStore(store_path(tmp_path))
+    assert store.unacked("uuid-1") == []
+    assert store.unacked("uuid-2")[0].item["kind"] == "note"
+    incus.exec_with_input.assert_not_called()
     assert first.exists() and not second.exists()
     assert retry == {"proj-gone"}
     assert "proj-kid1" in caplog.text
@@ -2303,7 +2196,7 @@ def test_tick_survives_orphaned_finish_failure(rig: Rig) -> None:
     assert path.exists()
 
 
-def test_grant_json_tracks_effective_default(rig):
+def test_grant_view_tracks_effective_default(rig):
     from jailbee.config.models_orchestration import OrchestrationView
     from jailbee.orchestration.runner_model import Runner
 
@@ -2313,17 +2206,17 @@ def test_grant_json_tracks_effective_default(rig):
         default_runner=Runner(agent="claude", model="haiku"), default_runner_source="repo"
     )
     rig.tick(memory)
-    data = json.loads(rig.write_grant.call_args.args[2])
+    data = broker_grant(memory)
     assert data["default_runner"] == {"agent": "claude", "model": "haiku"}
     assert data["default_runner_source"] == "repo"
     rig.cfg._orchestration_view = OrchestrationView(
         default_runner=Runner(agent="claude", model="opus"), default_runner_source="repo"
     )
     rig.tick(memory)
-    assert rig.write_grant.call_count == 2
+    rig.incus.exec_with_input.assert_not_called()
 
 
-def test_grant_json_rewritten_when_only_source_changes(rig):
+def test_grant_view_tracks_source_changes(rig):
     from jailbee.config.models_orchestration import OrchestrationView
     from jailbee.orchestration.runner_model import Runner
 
@@ -2334,13 +2227,13 @@ def test_grant_json_rewritten_when_only_source_changes(rig):
         default_runner=runner, default_runner_source="repo"
     )
     rig.tick(memory)
-    first = json.loads(rig.write_grant.call_args.args[2])
+    first = broker_grant(memory)
     rig.cfg._orchestration_view = OrchestrationView(
         default_runner=runner, default_runner_source="local"
     )
     rig.tick(memory)
-    second = json.loads(rig.write_grant.call_args.args[2])
-    assert rig.write_grant.call_count == 2
+    second = broker_grant(memory)
+    rig.incus.exec_with_input.assert_not_called()
     assert first["default_runner"] == second["default_runner"]
     assert first["default_runner_source"] == "repo"
     assert second["default_runner_source"] == "local"
@@ -2352,14 +2245,14 @@ def test_failed_profile_restart_boot_reports_failed_for_the_same_ref(
     """A restart answers `started`; its boot worker failing later adds `failed` for that ref."""
     monkeypatch.setattr(watch, "read_jobs", lambda: None)
     rig.incus.list_containers.return_value = [_orch(), _child(running=False)]
-    rig.outboxes["proj-orch"] = [_restart_raw()]
+    rig.requests["proj-orch"] = [_restart_raw()]
     rig.dispatch.return_value = Outcome("started", "child `kid` restarting")
     rig.tick()
     assert [s.state for _, s in rig.statuses()] == ["started"]
 
     failed_boot = watch.JobSnapshot("failed", 7, JOB_BOOT, "setup failed after boot", NOW)
     monkeypatch.setattr(watch, "read_jobs", lambda: {"proj-kid": failed_boot})
-    rig.outboxes["proj-orch"] = []
+    rig.requests["proj-orch"] = []
     rig.tick()
     final = [(s.ref, s.detail) for _, s in rig.statuses() if s.state == "failed"]
     assert final == [("r1", "restart of child `kid` failed: setup failed after boot")]
@@ -2506,7 +2399,7 @@ def test_lifecycle_action_refreshes_children_snapshot_before_the_reply(
     text = json.dumps({"version": 1, "id": "m1", "type": kind, "child": "kid", **extra})
     if kind == "spawn":
         text = _spawn_raw("m1", prompt_file=False).text
-    rig.outboxes["proj-orch"] = [RawManifest("m1.json", text, {"m1.json": text})]
+    rig.requests["proj-orch"] = [Request("m1.json", text, {"m1.json": text})]
     rig.dispatch.return_value = Outcome("done", "child `kid` handled")
     rig.tick()
     names = [c[0] for c in rig.seq.mock_calls]
@@ -2523,8 +2416,59 @@ def test_refused_lifecycle_action_does_not_resync_early(
     rig.seq.attach_mock(sync, "sync_children")
     rig.incus.list_containers.return_value = [_orch(), _child()]
     text = json.dumps({"version": 1, "id": "m1", "type": "stop", "child": "kid"})
-    rig.outboxes["proj-orch"] = [RawManifest("m1.json", text, {"m1.json": text})]
+    rig.requests["proj-orch"] = [Request("m1.json", text, {"m1.json": text})]
     rig.dispatch.return_value = Outcome("refused", "nope")
     rig.tick()
     names = [c[0] for c in rig.seq.mock_calls]
     assert names.index("deliver") < names.index("sync_children")
+
+
+def broker_grant(memory):
+    from jailbee.orchestration.socket_ops import handle_grant
+    return handle_grant(memory, "proj-orch")
+
+
+@pytest.mark.parametrize("kind", ["labelled", "unlabelled", "bad-grant", "former-publisher"])
+@pytest.mark.parametrize("running", [True, False])
+def test_pending_reaches_store_without_socket_registration(rig, monkeypatch, kind, running):
+    from jailbee.orchestration import outbox
+    from jailbee.orchestration.protocol import InboxStatus
+    from jailbee.orchestration.state import atomic_write_text, pending_dir
+
+    config = {"volatile.uuid": "uuid-current"}
+    if kind == "labelled":
+        config[labels.GRANT] = GRANT.to_label()
+    elif kind == "bad-grant":
+        config[labels.GRANT] = "{invalid"
+    elif kind == "former-publisher":
+        atomic_write_text(rig.root / "publish-known.json", '{"proj-orch":"uuid-current"}')
+    rig.incus.list_containers.return_value = [_c("proj-orch", running=running, **config)]
+    # A previous same-named instance's row must never select the delivery identity.
+    rig.store.set_recipient("proj-orch", "uuid-stale", now=1)
+    item = InboxStatus(version=1, id="h-queued", type="status", ref="queued", state="done", detail="ok")
+    path = pending_dir(rig.root, "proj-orch") / "a.json"
+    atomic_write_text(path, item.model_dump_json())
+    monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
+    rig.tick()
+    assert [row.id for row in rig.store.unacked("uuid-current")] == [item.id]
+    assert rig.store.unacked("uuid-stale") == []
+    assert not path.exists()
+    # Store delivery never authorizes a new socket identity.
+    assert rig.store.recipients() == {"proj-orch": "uuid-stale"}
+    rig.incus.exec_with_input.assert_not_called()
+
+
+@pytest.mark.parametrize("labelled", [True, False])
+def test_pending_without_inventory_uuid_never_uses_stale_socket_identity(rig, monkeypatch, labelled):
+    from jailbee.orchestration import outbox
+    from jailbee.orchestration.state import atomic_write_text, pending_dir
+
+    rig.incus.list_containers.return_value = [_orch(running=False) if labelled else _c("proj-orch", running=False)]
+    rig.store.set_recipient("proj-orch", "uuid-stale", now=1)
+    path = pending_dir(rig.root, "proj-orch") / "a.json"
+    atomic_write_text(path, '{"id":"h-queued","type":"status"}')
+    monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
+    rig.tick()
+    assert path.exists()
+    assert rig.store.unacked("uuid-stale") == []
+    rig.incus.exec_with_input.assert_not_called()

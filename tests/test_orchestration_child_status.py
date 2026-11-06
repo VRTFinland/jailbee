@@ -68,7 +68,7 @@ WAITER_CMDLINES = [
     "/opt/jailbee/venv/bin/python -P -m jailbee.container_main inbox send --wait spawn.json",
     "/opt/jailbee/venv/bin/python -P -m jailbee.container_main inbox send spawn.json --wait",
     "python3 /usr/local/bin/jailbee inbox wait --quiet-after 5m",
-    "/usr/bin/python3 /usr/local/bin/jailbee-inbox wait --digest 1h",
+    "/usr/bin/python3 /usr/local/bin/jailbee inbox wait --digest 1h",
     "python3 -m jailbee.inbox send --wait m.json",
 ]
 
@@ -77,7 +77,7 @@ WAITER_CMDLINES = [
 def test_longest_command_excludes_inbox_waiters_by_cmdline(waiter):
     samples = _tree()
     samples[7] = ProcSample("python", 0, 50, ppid=4)
-    samples[8] = ProcSample("jailbee-inbox", 0, 45, ppid=4)
+    samples[8] = ProcSample("jailbee", 0, 45, ppid=4)
     cmd = {7: waiter}
     got = longest_command(
         samples, agent_pid=3, uptime=1100.0, clk_tck=100, cmdline=lambda pid: cmd.get(pid)

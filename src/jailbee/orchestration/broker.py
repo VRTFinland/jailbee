@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from functools import partial
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _metadata_version
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from jailbee import __version__
@@ -44,49 +44,34 @@ from jailbee.orchestration.actions import (
     refused,
 )
 from jailbee.orchestration.child_status import StatusCache
-from jailbee.orchestration.journal import Journal, manifest_digest
+from jailbee.orchestration.journal import Journal
 from jailbee.orchestration.listener import Listener
 from jailbee.orchestration.outbox import (
-    INBOX_DIR,
-    INBOX_READ_DIR,
-    delete_inbox_files,
-    delete_outbox_files,
     deliver,
     ensure_orchestration_env,
     flush_pending,
-    grant_json_text,
     has_container_jailbee,
     has_pending,
-    read_inbox_dir,
-    read_outbox,
-    set_aside_inbox_files,
-    write_grant_json,
 )
 from jailbee.orchestration.protocol import (
     DestroyManifest,
     InboxMessage,
     InboxStatus,
-    ManifestError,
     MessageManifest,
     PublishManifest,
     RestartManifest,
     SpawnManifest,
     StopManifest,
-    body_file_of,
-    inbox_file_name_for,
     new_host_id,
-    parse_manifest,
 )
 from jailbee.orchestration.state import (
     atomic_write_text,
     load_queue,
-    pending_dir,
     purge_vanished_pending,
     save_queue,
     state_root,
 )
 from jailbee.orchestration.store import BrokerStore, StoreError, store_path
-from jailbee.outbox_io import OutboxReadError, _validate_outbox_name
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
@@ -95,7 +80,6 @@ if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
     from jailbee.orchestration.listener import Event
-    from jailbee.orchestration.outbox import RawManifest
     from jailbee.orchestration.protocol import Manifest
     from jailbee.orchestration.socket_ops import Waiters
     from jailbee.orchestration.state import QueuedRequest
@@ -124,14 +108,12 @@ class ChildrenView:
 class BrokerMemory:
     """What the broker remembers between rounds (in memory only)."""
 
-    # Orchestrator full name -> grant.json text last written into it.
-    grant_written: dict[str, str] = field(default_factory=dict)
     publish_threads: list[threading.Thread] = field(default_factory=list)
     env_ensured: set[str] = field(default_factory=set)
     env_roles: dict[str, str | None] = field(default_factory=dict)
     # Keys of warnings already logged, so a standing problem is logged once.
     warned: set[str] = field(default_factory=set)
-    # Inbox file sequence: orders the items emitted within one second.
+    # Host spool sequence: orders the items emitted within one second.
     seq: Iterator[int] = field(default_factory=itertools.count)
     # Probe cadence and CPU readings behind the published child status (#64).
     status: StatusCache = field(default_factory=StatusCache)
@@ -356,6 +338,7 @@ def _reply(ctx: ActionContext, ref: str, outcome: Outcome, memory: BrokerMemory)
         uid=ctx.cfg.container_user.uid,
         now=ctx.now,
         seq=next(memory.seq),
+        recipient_uuid=ctx.sender.config.get("volatile.uuid"),
     )
     clear_reply_path(ctx, ref)
 
@@ -553,6 +536,7 @@ def _settle_agent_watch(
                 uid=ctx.cfg.container_user.uid,
                 now=ctx.now,
                 seq=next(memory.seq),
+        recipient_uuid=ctx.sender.config.get("volatile.uuid"),
             )
         else:
             _reply(ctx, entry.ref, outcome, memory)
@@ -594,6 +578,7 @@ def _settle_agent_watch(
                 uid=ctx.cfg.container_user.uid,
                 now=ctx.now,
                 seq=next(memory.seq),
+        recipient_uuid=ctx.sender.config.get("volatile.uuid"),
             )
     index = entries.index(entry)
     if updated is None:
@@ -601,81 +586,6 @@ def _settle_agent_watch(
     else:
         entries[index] = updated
     watch.save_watch(ctx.root, watches)
-
-
-def _sync_grant_json(ctx: ActionContext, memory: BrokerMemory) -> None:
-    """Write the effective grant into an orchestrator when it changed since the last write."""
-    # TODO(socket-phase3): the socket `grant` op replaces grant.json; remove this writer.
-    grant = ctx.grant()
-    if grant is None:
-        memory.grant_written.pop(ctx.sender.full, None)
-        return
-    text = grant_json_text(grant, *ctx.default_runner())
-    if memory.grant_written.get(ctx.sender.full) == text:
-        return
-    write_grant_json(ctx.incus, ctx.sender.full, text, uid=ctx.cfg.container_user.uid)
-    memory.grant_written[ctx.sender.full] = text
-
-
-def _handle_raw(
-    ctx: ActionContext, raw: RawManifest, journal: Journal, memory: BrokerMemory
-) -> None:
-    uid = ctx.cfg.container_user.uid
-    try:
-        _validate_outbox_name(raw.file_name)
-    except ValueError:
-        memory.warn_once(
-            f"bad-name:{ctx.sender.full}:{raw.file_name}",
-            "broker: %s: ignoring outbox file with an invalid name %r",
-            ctx.sender.full,
-            raw.file_name,
-        )
-        return
-    body = body_file_of(raw.file_name, raw.text)
-    bodies = {body: raw.files[body]} if body is not None and body in raw.files else {}
-    names = [raw.file_name, *bodies]
-    digest = manifest_digest(raw.file_name, raw.text, bodies)
-    try:
-        envelope = json.loads(raw.text)
-        request_id = envelope.get("id") if isinstance(envelope, dict) else None
-    except (ValueError, RecursionError):
-        request_id = None
-    if journal.seen(ctx.sender.key, digest) or (
-        isinstance(request_id, str) and publishing.was_accepted(ctx, request_id)
-    ):
-        delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid)
-        return
-    ref = PurePosixPath(raw.file_name).stem
-    outcome: Outcome | None = None
-    manifest: Manifest | None = None
-    try:
-        manifest = parse_manifest(raw.file_name, raw.text, raw.files)
-    except ManifestError as e:
-        outcome = refused(str(e))
-    else:
-        ref = manifest.id
-
-    def record(ref: str, outcome: Outcome | None) -> None:
-        journal.record(
-            ctx.sender.key,
-            digest,
-            ref,
-            outcome.state if outcome else "ignored",
-            ctx.now,
-            container_full=ctx.sender.full,
-        )
-
-    _handle_manifest(
-        ctx,
-        memory,
-        ref=ref,
-        manifest=manifest,
-        outcome=outcome,
-        record=record,
-        reply=lambda ref, outcome: _reply(ctx, ref, outcome, memory),
-        before_publish=lambda: delete_outbox_files(ctx.incus, ctx.sender.full, names, uid=uid),
-        label=raw.file_name,
-    )
 
 
 def _handle_manifest(
@@ -690,11 +600,11 @@ def _handle_manifest(
     before_publish: Callable[[], None],
     label: str | None = None,
 ) -> Outcome | None:
-    """Steps shared by both transports once a request has been parsed.
+    """Dispatch a parsed socket request, recording before replying or publishing.
 
     `outcome` is a preset refusal (parse failure); with a `manifest` and no
     preset the manifest is dispatched. `record` journals, `reply` delivers the
-    status, `before_publish` is the file transport's outbox deletion.
+    status; `before_publish` is the caller's pre-activation hook.
     """
     if manifest is not None and outcome is None:
         try:
@@ -762,7 +672,7 @@ def _handle_manifest(
 def _refresh_children_snapshot(
     ctx: ActionContext, manifest: Manifest | None, outcome: Outcome, memory: BrokerMemory
 ) -> None:
-    """Republish children.json right after the broker changed a child's state.
+    """Refresh the children view right after the broker changed a child's state.
 
     Otherwise the orchestrator can read `done` for a `stop` and still see
     `running: true` until the end of the round. Failures only cost the lag.
@@ -839,95 +749,6 @@ def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
         )
 
 
-#: Files read per `incus exec` while migrating one inbox directory. The read
-#: helper returns the first N files by name (each at most `MAX_FILE_BYTES`), so
-#: the directory is paged by deleting each page once it is in the store and
-#: renaming its unparsable files aside, so every page brings new files.
-MIGRATE_PAGE = 64
-
-
-def _stamp_time(name: str, default: float) -> float:
-    """The emission time encoded in an inbox file name, else `default`."""
-    try:
-        return datetime.strptime(name[:16], "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC).timestamp()
-    except ValueError:
-        return default
-
-
-def _migrate_dir(
-    ctx: ActionContext, store: BrokerStore, uuid: str, directory: str, *, acked: bool
-) -> None:
-    full = ctx.sender.full
-    uid = ctx.cfg.container_user.uid
-    seen: set[str] = set()
-    while True:
-        files = read_inbox_dir(ctx.incus, full, directory, uid=uid, limit=MIGRATE_PAGE)
-        page = sorted(n for n in files if n.endswith(".json") and n not in seen)
-        if not page:
-            return
-        seen.update(page)
-        now = time.time()
-        done: list[str] = []
-        unparsable: list[str] = []
-        for name in page:
-            try:
-                item = json.loads(files[name])
-                if not isinstance(item, dict) or not isinstance(item.get("id"), str):
-                    raise ValueError("not an inbox item")
-            except ValueError:
-                log.warning("broker: %s: set aside unparsable %s/%s", full, directory, name)
-                unparsable.append(name)
-                continue
-            store.insert_item(
-                uuid,
-                full,
-                item,
-                now=_stamp_time(name, now),
-                acked_at=now if acked else None,
-            )
-            if acked:
-                # Inserted unread by an earlier pass, then moved to read/.
-                store.ack(uuid, item["id"], now=now)
-            done.append(name)
-        # Only after every insert of the page succeeded (an error raised above).
-        delete_inbox_files(ctx.incus, full, directory, done, uid=uid)
-        # Renamed out of the `*.json` paging, so a page of them hides nothing.
-        set_aside_inbox_files(ctx.incus, full, directory, unparsable, uid=uid)
-        if len(files) < MIGRATE_PAGE:
-            return
-
-
-def _migrate_inbox(ctx: ActionContext, memory: BrokerMemory, uuid: str) -> bool:
-    """Move a container's file inbox into the store before it becomes a recipient.
-
-    Read history (`inbox/read/`) goes in acked, then unread `inbox/` items
-    unacked, in file-name order, ids kept (duplicates are ignored), then
-    `inbox/read/` again for files moved there meanwhile (acked). Files are
-    removed only after their inserts; unparsable ones are renamed aside. True
-    when the recipient row may be written: already migrated, or done now.
-    False means retry next round.
-    """
-    store = memory.store
-    assert store is not None
-    full = ctx.sender.full
-    if store.recipient_uuid(full) is not None:
-        return True
-    if not ctx.sender.running:
-        return False
-    try:
-        _migrate_dir(ctx, store, uuid, INBOX_READ_DIR, acked=True)
-        _migrate_dir(ctx, store, uuid, INBOX_DIR, acked=False)
-        # A file moved to read/ while the inbox/ pass ran was inserted unread:
-        # this pass acks it.
-        _migrate_dir(ctx, store, uuid, INBOX_READ_DIR, acked=True)
-    except (IncusError, OSError, StoreError, OutboxReadError) as exc:
-        memory.warn_once(
-            f"migrate:{full}", "broker: %s: could not migrate the file inbox: %s", full, exc
-        )
-        return False
-    return True
-
-
 def _ensure_socket(ctx: ActionContext, memory: BrokerMemory) -> None:
     """Open the listener, attach the device and record the recipient (idempotent)."""
     listener, store = memory.listener, memory.store
@@ -974,8 +795,6 @@ def _ensure_socket(ctx: ActionContext, memory: BrokerMemory) -> None:
             raise OSError(f"no socket directory for {uuid}")
         socket_device.attach(ctx.incus, full, live, reassert=uuid in memory.reassert)
         memory.reassert.discard(uuid)
-        if not _migrate_inbox(ctx, memory, uuid):
-            return
         store.set_recipient(full, uuid, now=time.time())
         memory.attached[full] = uuid
     except (IncusError, OSError, StoreError) as exc:
@@ -985,42 +804,20 @@ def _ensure_socket(ctx: ActionContext, memory: BrokerMemory) -> None:
         )
 
 
-def _export_unacked(
-    store: BrokerStore, memory: BrokerMemory, root: Path, full: str, uuid: str
-) -> None:
-    """Park each unacked store item as a pending file, then ack it.
-
-    The file path's `flush_pending` delivers them; an item is acked only once
-    its file is written, so a failure loses nothing.
-    """
-    for row in store.unacked(uuid):
-        name = inbox_file_name_for(
-            row.id, datetime.fromtimestamp(row.created_at, UTC), seq=next(memory.seq)
-        )
-        atomic_write_text(pending_dir(root, full) / name, json.dumps(row.item))
-        store.ack(uuid, row.id, now=time.time())
-
-
 def _teardown_socket(
     incus: Incus, memory: BrokerMemory, full: str, uuid: str | None, root: Path
 ) -> None:
-    """Remove the device, close the listener and drop the recipient row.
-
-    Unacked store items move to the pending dir first, so none is lost.
-    """
+    """Remove socket access; unread items stay in the durable store."""
     listener, store = memory.listener, memory.store
     if listener is None or store is None:
         return
     try:
         uuid = uuid or memory.attached.get(full) or store.recipient_uuid(full)
         if uuid:
-            _export_unacked(store, memory, root, full, uuid)
             # Closed before the detach, so a failed detach still fails closed.
             listener.close_container(uuid)
         socket_device.detach(incus, full)
         store.remove_recipient(full)
-        if uuid:  # an insert that raced the row's removal
-            _export_unacked(store, memory, root, full, uuid)
         memory.attached.pop(full, None)
         memory.reassert.discard(uuid or "")
     except (IncusError, OSError, StoreError) as exc:
@@ -1225,7 +1022,7 @@ def _check_socket_devices(
         if uuid in memory.shared_uuids:
             # The socket identifies a caller by uuid only: two instances with
             # one uuid (an `incus import` beside the original) would speak as
-            # each other, so neither gets the socket (file transport instead).
+            # each other, so neither gets the socket.
             memory.warn_once(
                 f"socket-shared:{name}",
                 "broker: %s and another instance share the instance uuid %s; "
@@ -1234,8 +1031,7 @@ def _check_socket_devices(
                 uuid,
             )
             if name in memory.attached or socket_device.has_device(entry):
-                # No uuid: only the recorded recipient's unread items are
-                # exported, to it, never to a twin listed first.
+                # Close only the recorded socket, never a twin listed first.
                 _teardown_socket(incus, memory, name, None, root)
             continue
         if socket_device.mismatched(entry):
@@ -1255,23 +1051,20 @@ def _check_socket_devices(
 
 
 def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
-    """One running orchestrator or child: parked messages, grant copy, outbox."""
+    """One running orchestrator or child: socket setup and durable deliveries."""
     _ensure_env(ctx, memory)
     uid = ctx.cfg.container_user.uid
     # Parked messages first, so a new status never overtakes them.
     flush_pending(
-        ctx.incus, ctx.root, ctx.sender.full, uid=uid, finish=finishing.flush_callback(ctx)
+        ctx.incus, ctx.root, ctx.sender.full, uid=uid, finish=finishing.flush_callback(ctx) if ctx.sender.running else None,
+        recipient_uuid=ctx.sender.config.get("volatile.uuid")
     )
-    if ctx.role() == "orchestrator":
-        _sync_grant_json(ctx, memory)
     path = finishing.reply_path(ctx, ctx.sender)
     if path.exists():
         saved = json.loads(path.read_text())
         if saved.get("ref"):
             _reply(ctx, saved["ref"], Outcome(saved["state"], saved["detail"]), memory)
     publishing.settle(ctx, lambda ref, out: _reply(ctx, ref, out, memory))
-    for raw in read_outbox(ctx.incus, ctx.sender.full, uid=uid):
-        _handle_raw(ctx, raw, journal, memory)
 
 
 def _settle_queue(ctx: ActionContext, memory: BrokerMemory) -> None:
@@ -1357,10 +1150,7 @@ def tick(
         and _labelled(e["config"])
     ]
     active = any(e.get("status") == "Running" for e in candidates)
-    # A container that is gone (or recreated later) gets grant.json written afresh.
     present = {e.get("name") for e in raw}
-    for full in [f for f in memory.grant_written if f not in present]:
-        del memory.grant_written[full]
     memory.env_ensured.intersection_update(present)
     for full in [f for f in memory.children if f not in present]:
         del memory.children[full]
@@ -1372,6 +1162,8 @@ def tick(
         {str(e["name"]) for e in raw if e.get("status") == "Running"},
         now=now,
         seq=memory.seq,
+        identities={str(e["name"]): str(e["config"]["volatile.uuid"]) for e in raw
+                    if isinstance(e.get("config"), dict) and e["config"].get("volatile.uuid")},
     )
     # Parked messages of a vanished container must never reach a namesake.
     # A directory still holding a report whose notice failed is kept for a retry.
@@ -1396,7 +1188,6 @@ def tick(
         e["name"]
         for e in raw
         if isinstance(e.get("name"), str)
-        and e.get("status") == "Running"
         and not (isinstance(e.get("config"), dict) and _labelled(e["config"]))
         and has_pending(root, e["name"])
     ]
@@ -1457,16 +1248,20 @@ def tick(
         memory.contexts.pop(node.key, None)
         if not _labelled(node.config):
             try:
-                if node.running and node.full in former_publishers:
+                if node.full in former_publishers:
                     former_ctx = context(node)
                     if former_ctx is not None:
-                        _serve(former_ctx, journal, memory)
+                        if node.running:
+                            _serve(former_ctx, journal, memory)
+                        else:
+                            publishing.settle(former_ctx, partial(_reply, former_ctx, memory=memory))
+                            _flush_unlabelled(node, context, root, incus)
                     continue
                 if node.full in publishes:
                     publish_ctx = context(node)
                     if publish_ctx is not None:
                         publishing.settle(publish_ctx, partial(_reply, publish_ctx, memory=memory))
-                if node.running and has_pending(root, node.full):
+                if has_pending(root, node.full):
                     _flush_unlabelled(node, context, root, incus)
             except Exception:
                 log.exception("broker: serving former publisher %s failed", node.full)
@@ -1481,16 +1276,16 @@ def tick(
                     "broker: %s has an unparseable orchestration grant label; ignored",
                     node.full,
                 )
-                # Its inbox leaves the store (nothing is lost), then parked
-                # messages, including those, still get delivered.
+                # Socket access ends, but durable messages remain deliverable.
                 _teardown_socket(incus, memory, node.full, node.config.get("volatile.uuid"), root)
-                if node.running and has_pending(root, node.full):
+                if has_pending(root, node.full):
                     flush_pending(
                         incus,
                         root,
                         node.full,
                         uid=ctx.cfg.container_user.uid,
-                        finish=finishing.flush_callback(ctx),
+                        finish=finishing.flush_callback(ctx) if ctx.sender.running else None,
+                        recipient_uuid=node.config.get("volatile.uuid"),
                     )
                 continue
             memory.contexts[node.key] = ctx
@@ -1498,6 +1293,10 @@ def tick(
                 orchestrators.append(ctx)
             if node.running:
                 _serve(ctx, journal, memory)
+            else:
+                flush_pending(incus, root, node.full, uid=ctx.cfg.container_user.uid,
+                              finish=finishing.flush_callback(ctx) if ctx.sender.running else None,
+                              recipient_uuid=node.config.get("volatile.uuid"))
         except Exception:
             log.exception("broker: serving %s failed", node.full)
 
@@ -1594,7 +1393,7 @@ def _clear_stale_stop_labels(incus: Incus, node: Node) -> None:
 def _flush_unlabelled(
     node: Node, context: Callable[[Node], ActionContext | None], root: Path, incus: Incus
 ) -> None:
-    """Flush parked messages of a running container without orchestration labels."""
+    """Flush host-spooled messages even for stopped, unlabelled recipients."""
     try:
         ctx = context(node)
         if ctx is not None:
@@ -1603,7 +1402,8 @@ def _flush_unlabelled(
                 root,
                 node.full,
                 uid=ctx.cfg.container_user.uid,
-                finish=finishing.flush_callback(ctx),
+                finish=finishing.flush_callback(ctx) if ctx.sender.running else None,
+                recipient_uuid=node.config.get("volatile.uuid"),
             )
     except Exception:
         log.exception("broker: flushing %s failed", node.full)

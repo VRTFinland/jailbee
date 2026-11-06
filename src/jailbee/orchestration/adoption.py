@@ -105,6 +105,7 @@ def _notify(
             uid=cfg.container_user.uid,
             now=now,
             seq=seq,
+            recipient_uuid=str(_config(rows.get(recipient, {})).get("volatile.uuid") or "") or None,
         )
     except (OSError, IncusError) as exc:
         return f"could not notify {short_name(cfg, recipient)}: {exc}"

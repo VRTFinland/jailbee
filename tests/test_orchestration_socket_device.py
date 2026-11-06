@@ -622,7 +622,7 @@ def test_recreated_container_is_dropped_even_when_not_served(env) -> None:
     assert "proj-orch" not in env.memory.attached
 
 
-def test_unparseable_grant_tears_down_and_exports_unacked_items(env) -> None:
+def test_unparseable_grant_tears_down_but_retains_unacked_items(env) -> None:
     env.set(orch())
     env.tick()
     env.store.insert_item(
@@ -640,25 +640,24 @@ def test_unparseable_grant_tears_down_and_exports_unacked_items(env) -> None:
     assert env.store.recipients() == {}
     assert env.listener.closed == [UUID]
     assert ORCHESTRATION_DEVICE not in env.devices.get("proj-orch", {})
-    assert env.store.unacked(UUID) == []
-    files = sorted(state.pending_dir(env.rig.root, "proj-orch").iterdir())
-    assert [f.name.rsplit("-", 1)[-1] for f in files] == ["m2.json", "m3.json"]
-    assert json.loads(files[0].read_text())["id"] == "m2"
+    assert [i.id for i in env.store.unacked(UUID)] == ["m2", "m3"]
+    assert not state.pending_dir(env.rig.root, "proj-orch").exists()
 
 
-def test_teardown_keeps_items_when_export_fails(env, monkeypatch) -> None:
+def test_teardown_keeps_items_without_export(env, monkeypatch) -> None:
     env.set(orch())
     env.tick()
     env.store.insert_item(
         UUID, "proj-orch", {"type": "message", "id": "m1", "kind": "note"}, now=1.0
     )
-    monkeypatch.setattr(
-        broker, "atomic_write_text", MagicMock(side_effect=OSError("disk full")), raising=False
-    )
+    export = MagicMock(side_effect=AssertionError("teardown must not export store items"))
+    monkeypatch.setattr(broker, "atomic_write_text", export)
     env.set(_c("proj-orch", **{labels.GRANT: "{not json", "volatile.uuid": UUID}))
     env.tick()
     assert [i.id for i in env.store.unacked(UUID)] == ["m1"]
-    assert env.store.recipients() == {"proj-orch": UUID}
+    assert env.store.recipients() == {}
+    assert UUID in env.listener.closed
+    export.assert_not_called()
 
 
 def test_two_instances_with_one_uuid_get_no_socket(env, caplog: pytest.LogCaptureFixture) -> None:
@@ -704,5 +703,5 @@ def test_a_twin_does_not_take_the_original_s_unread_messages(env) -> None:
     assert not state.pending_dir(env.rig.root, "proj-a-twin").exists() or not list(
         state.pending_dir(env.rig.root, "proj-a-twin").iterdir()
     )
-    files = list(state.pending_dir(env.rig.root, "proj-orch").iterdir())
-    assert [f.name.rsplit("-", 1)[-1] for f in files] == ["m1.json"]
+    assert not state.pending_dir(env.rig.root, "proj-orch").exists()
+    assert [(i.id, i.recipient_full) for i in env.store.unacked(UUID)] == [("m1", "proj-orch")]

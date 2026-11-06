@@ -108,7 +108,7 @@ def test_orchestrator_message_queued_when_child_stopped(
     deliver.return_value = "parked"
     ctx = _orch(tmp_path, [_node("fix-1", False, **{labels.SPAWNED_BY: "myrepo-orch"})])
     out = messages.handle_message(ctx, _msg(to="fix-1"))
-    assert out == Outcome("queued", "fix-1 is not running; the message is delivered when it starts")
+    assert out == Outcome("queued", "delivery to fix-1 is queued; the broker will retry")
     assert deliver.call_args.kwargs["running"] is False
 
 
@@ -145,7 +145,7 @@ def test_child_message_queued_when_orchestrator_gone(tmp_path: Path, deliver: Ma
     out = messages.handle_message(_child_ctx(tmp_path, orch_listed=False), _msg())
     assert deliver.call_args.args[2] == "myrepo-orch"
     assert deliver.call_args.kwargs["running"] is False
-    assert out == Outcome("queued", "orch is not running; the message is delivered when it starts")
+    assert out == Outcome("queued", "delivery to orch is queued; the broker will retry")
 
 
 def test_child_may_name_its_orchestrator_in_to(tmp_path: Path, deliver: MagicMockT) -> None:

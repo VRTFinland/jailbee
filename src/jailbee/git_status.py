@@ -19,12 +19,14 @@ from jailbee.config import CONTAINER_USERNAME
 from jailbee.host_target import TargetSnapshot
 from jailbee.incus import Incus, IncusError
 from jailbee.issue_outbox import ISSUE_OUTBOX_SUBPATH
-from jailbee.orchestration.outbox import INBOX_DIR as ORCH_INBOX_DIR
-from jailbee.orchestration.outbox import OUTBOX_DIR as ORCH_OUTBOX_DIR
 from jailbee.pr_outbox import OUTBOX_SUBPATH
 from jailbee.submodules import HOST_SOURCE
 
 log = logging.getLogger(__name__)
+
+# Legacy probe fields, removed with the dashboard consumer cleanup.
+ORCH_INBOX_DIR = f"/home/{CONTAINER_USERNAME}/.jailbee/orchestration/inbox"
+ORCH_OUTBOX_DIR = f"/home/{CONTAINER_USERNAME}/.jailbee/orchestration/outbox"
 
 _SHORTSTAT_RE = re.compile(r"(?P<ins>\d+)\s+insertion|(?P<del>\d+)\s+deletion")
 

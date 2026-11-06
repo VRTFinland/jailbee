@@ -130,7 +130,7 @@ def state_root() -> Path:
 
 def pending_dir(root: Path, recipient_full: str) -> Path:
     """Return the directory holding messages not yet delivered to `recipient_full`."""
-    # TODO(socket-phase3): the store replaces the pending dir; remove it.
+    # Permanent host-only spool: retries and deferred finish work precede store delivery.
     return root / "pending" / recipient_full
 
 

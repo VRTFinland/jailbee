@@ -59,22 +59,6 @@ def _finished_message():
     return InboxMessage(version=1, id="h-f", type="message", from_="c", body="done")
 
 
-def test_flush_runs_finish_callback_in_order(tmp_path: Path) -> None:
-    from jailbee.orchestration.protocol import finish_file_name
-
-    directory = pending_dir(tmp_path, FULL)
-    directory.mkdir(parents=True)
-    (directory / inbox_file_name(_item("1"), AT, seq=0)).write_text(_item("1").model_dump_json())
-    path = directory / finish_file_name(_finish_item(), AT, seq=1)
-    path.write_text(_finish_item().model_dump_json())
-    (directory / inbox_file_name(_item("3"), AT, seq=2)).write_text(_item("3").model_dump_json())
-    incus = _incus()
-    finish = MagicMock(return_value=_finished_message())
-    assert outbox.flush_pending(incus, tmp_path, FULL, uid=1000, finish=finish) == 3
-    writes = incus.exec_with_input.call_args_list
-    assert [json.loads(c.args[2])["id"] for c in writes] == ["h-1", "h-f", "h-3"]
-    assert writes[1].args[1][-2] == path.name.replace(".finish.json", ".json")
-    finish.assert_called_once_with(_finish_item())
 
 
 def test_flush_stops_at_finish_item_without_callback(tmp_path: Path) -> None:
@@ -83,50 +67,20 @@ def test_flush_stops_at_finish_item_without_callback(tmp_path: Path) -> None:
     path = directory / "a.finish.json"
     path.write_text(_finish_item().model_dump_json())
     incus = _incus()
-    assert outbox.flush_pending(incus, tmp_path, FULL, uid=1000) == 0
+    assert flush(incus, tmp_path, FULL, uid=1000) == 0
     assert path.exists()
     incus.exec_with_input.assert_not_called()
 
 
-def test_flush_keeps_finish_item_when_write_fails(tmp_path: Path) -> None:
-    directory = pending_dir(tmp_path, FULL)
-    directory.mkdir(parents=True)
-    path = directory / "a.finish.json"
-    path.write_text(_finish_item().model_dump_json())
-    incus = _incus()
-    incus.exec_with_input.side_effect = IncusError("offline")
-    finish = MagicMock(return_value=_finished_message())
-    assert outbox.flush_pending(incus, tmp_path, FULL, uid=1000, finish=finish) == 0
-    assert path.exists()
-    incus.exec_with_input.side_effect = None
-    assert outbox.flush_pending(incus, tmp_path, FULL, uid=1000, finish=finish) == 1
-    assert finish.call_count == 2
 
 
-def test_flush_quarantines_invalid_finish_and_continues(tmp_path: Path) -> None:
-    directory = pending_dir(tmp_path, FULL)
-    directory.mkdir(parents=True)
-    path = directory / "a.finish.json"
-    path.write_text("invalid")
-    (directory / "b.json").write_text(_item("1").model_dump_json())
-    assert outbox.flush_pending(_incus(), tmp_path, FULL, uid=1000, finish=MagicMock()) == 1
-    assert path.with_name(path.name + ".bad").exists()
 
 
-def test_ensure_env_removes_legacy_helper_and_installs_nothing() -> None:
-    incus = _incus()
-    outbox.ensure_orchestration_env(incus, FULL, uid=1000)
-    assert incus.exec.call_args_list == [
-        ((FULL, ["mkdir", "-p", outbox.INBOX_DIR, outbox.OUTBOX_DIR]), {"uid": 1000}),
-        ((FULL, ["test", "-x", "/usr/local/bin/jailbee"]), {}),
-        ((FULL, ["rm", "-f", "/usr/local/bin/jailbee-inbox"]), {}),
-    ]
-    incus.exec_with_input.assert_not_called()
 
 
 def test_ensure_env_missing_launcher_raises() -> None:
     incus = _incus()
-    incus.exec.side_effect = [None, IncusError("missing")]
+    incus.exec.side_effect = IncusError("missing")
     with pytest.raises(outbox.ContainerJailbeeMissing) as exc:
         outbox.ensure_orchestration_env(incus, FULL, uid=1000)
     assert type(exc.value) is outbox.ContainerJailbeeMissing
@@ -134,229 +88,55 @@ def test_ensure_env_missing_launcher_raises() -> None:
         "container image has no in-container jailbee (needed for `jailbee inbox`) — "
         "run `jb base build` on the host, then recreate the container"
     )
-    assert len(incus.exec.call_args_list) == 2
+    assert len(incus.exec.call_args_list) == 1
 
 
-def test_read_outbox_caps_and_sorts(monkeypatch: pytest.MonkeyPatch) -> None:
-    files = {f"m{i:02d}.json": "{}" for i in range(40)}
-    files["p.md"] = "body"
-    seen: dict[str, object] = {}
-
-    def fake(incus: object, container: str, directory: str, **kw: object) -> dict[str, str]:
-        seen.update(container=container, directory=directory, **kw)
-        return files
-
-    monkeypatch.setattr(outbox, "read_text_outbox", fake)
-    out = outbox.read_outbox(_incus(), FULL, uid=1000)
-    assert [m.file_name for m in out] == [f"m{i:02d}.json" for i in range(32)]
-    assert "p.md" in out[0].files
-    assert seen["directory"] == outbox.OUTBOX_DIR
-    assert seen["max_file_bytes"] == outbox.MAX_FILE_BYTES
-    assert seen["uid"] == 1000
-    assert seen["select"] == (("*.json", 32), ("*.md", 64))
 
 
-def test_read_outbox_selects_manifests_and_bodies_separately() -> None:
-    """40 manifests plus 40 bodies sorting after every manifest: all 32 read
-    manifests still arrive with their bodies (one name-ordered cap of 64 would
-    have cut m25..m32's bodies)."""
-    incus = MagicMock()
-    incus.exec_capped.return_value = ""
-    outbox.read_outbox(incus, FULL, uid=1000)
-    argv = incus.exec_capped.call_args.args[1]
-    assert argv[-4:] == ["*.json", "32", "*.md", "64"]
-    per_file = outbox.MAX_FILE_BYTES + 2048
-    assert argv[-5] == str((32 + 64) * per_file + 10240)  # no legit round is truncated
 
 
-def test_first_32_manifests_parse_with_their_bodies(monkeypatch: pytest.MonkeyPatch) -> None:
-    from jailbee.orchestration.protocol import MessageManifest, parse_manifest
-
-    everything: dict[str, str] = {}
-    for i in range(1, 41):
-        everything[f"m{i:02d}.json"] = json.dumps(
-            {"version": 1, "id": f"m{i:02d}", "type": "message", "body_file": f"p{i:02d}.md"}
-        )
-        everything[f"p{i:02d}.md"] = f"body {i}"
-    # What the container-side selection yields: first 32 json + first 64 md.
-    jsons = sorted(n for n in everything if n.endswith(".json"))[:32]
-    mds = sorted(n for n in everything if n.endswith(".md"))[:64]
-    selected = {n: everything[n] for n in [*jsons, *mds]}
-    monkeypatch.setattr(outbox, "read_text_outbox", lambda *a, **k: selected)
-    raws = outbox.read_outbox(MagicMock(), FULL, uid=1000)
-    assert [r.file_name for r in raws] == jsons
-    for i, raw in enumerate(raws, start=1):
-        m = parse_manifest(raw.file_name, raw.text, raw.files)
-        assert isinstance(m, MessageManifest)
-        assert m.body == f"body {i}"
 
 
-def test_read_outbox_ignores_non_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(outbox, "read_text_outbox", lambda *a, **k: {"x.md": "y"})
-    assert outbox.read_outbox(_incus(), FULL, uid=None) == []
 
 
-def test_write_inbox_is_atomic_rename() -> None:
-    incus = _incus()
-    item = _item("1")
-    outbox.write_inbox(incus, FULL, item, uid=1000, now=AT)
-    args, kwargs = incus.exec_with_input.call_args
-    argv = args[1]
-    name = inbox_file_name(item, AT)
-    assert args[0] == FULL
-    assert argv[:2] == ["sh", "-c"]
-    assert "mv" in argv[2]
-    assert argv[3:] == ["sh", outbox.INBOX_DIR, name, "0644"]
-    assert ".$2.tmp" in argv[2]
-    assert '"type":"status"' in args[2].replace(" ", "")
-    assert kwargs["uid"] == 1000
 
 
-def test_deliver_parks_when_not_running(tmp_path: Path) -> None:
-    incus = _incus()
-    item = _item("1")
-    outbox.deliver(incus, tmp_path, FULL, item, running=False, uid=None, now=AT)
-    incus.exec_with_input.assert_not_called()
-    incus.exec.assert_not_called()
-    assert (pending_dir(tmp_path, FULL) / inbox_file_name(item, AT)).is_file()
 
 
-def test_deliver_writes_when_running(tmp_path: Path) -> None:
-    incus = _incus()
-    outbox.deliver(incus, tmp_path, FULL, _item("1"), running=True, uid=None, now=AT)
-    incus.exec_with_input.assert_called_once()
-    assert not pending_dir(tmp_path, FULL).exists()
 
 
-def test_deliver_parks_on_incus_error(tmp_path: Path) -> None:
-    incus = _incus()
-    incus.exec_with_input.side_effect = IncusError("boom")
-    item = _item("1")
-    outbox.deliver(incus, tmp_path, FULL, item, running=True, uid=None, now=AT)
-    assert (pending_dir(tmp_path, FULL) / inbox_file_name(item, AT)).is_file()
 
 
-def test_park_then_flush_delivers_in_name_order(tmp_path: Path) -> None:
-    incus = _incus()
-    later = datetime(2026, 10, 25, 11, 0, tzinfo=UTC)
-    i1, i2 = _item("a"), _item("b")
-    outbox.deliver(incus, tmp_path, FULL, i2, running=False, uid=None, now=later)
-    outbox.deliver(incus, tmp_path, FULL, i1, running=False, uid=None, now=AT)
-    assert outbox.flush_pending(incus, tmp_path, FULL, uid=None) == 2
-    names = [c.args[1][5] for c in incus.exec_with_input.call_args_list]
-    assert names == [inbox_file_name(i1, AT), inbox_file_name(i2, later)]
-    assert list(pending_dir(tmp_path, FULL).iterdir()) == []
 
 
-def test_flush_stops_at_first_failure(tmp_path: Path) -> None:
-    incus = _incus()
-    later = datetime(2026, 10, 25, 11, 0, tzinfo=UTC)
-    outbox.deliver(incus, tmp_path, FULL, _item("a"), running=False, uid=None, now=AT)
-    outbox.deliver(incus, tmp_path, FULL, _item("b"), running=False, uid=None, now=later)
-    incus.exec_with_input.side_effect = [None, IncusError("x")]
-    assert outbox.flush_pending(incus, tmp_path, FULL, uid=None) == 1
-    left = [p.name for p in pending_dir(tmp_path, FULL).iterdir()]
-    assert left == [inbox_file_name(_item("b"), later)]
 
 
 def test_flush_without_pending_dir(tmp_path: Path) -> None:
-    assert outbox.flush_pending(_incus(), tmp_path, FULL, uid=None) == 0
+    assert flush(_incus(), tmp_path, FULL, uid=None) == 0
 
 
-def test_delete_runs_one_rm_in_outbox_cwd() -> None:
-    incus = _incus()
-    outbox.delete_outbox_files(incus, FULL, ["a.json", "-b.md"], uid=1000)
-    incus.exec.assert_called_once_with(
-        FULL, ["rm", "-f", "--", "a.json", "-b.md"], uid=1000, cwd=outbox.OUTBOX_DIR
-    )
 
 
-def test_delete_refuses_path_names() -> None:
-    incus = _incus()
-    with pytest.raises(ValueError):
-        outbox.delete_outbox_files(incus, FULL, ["ok.json", "../x.json"], uid=None)
-    incus.exec.assert_not_called()
 
 
-def test_write_grant_json_is_read_only_atomic() -> None:
-    incus = _incus()
-    outbox.write_grant_json(incus, FULL, '{"version": 1}', uid=1000)
-    args, _ = incus.exec_with_input.call_args
-    assert args[1][3:] == ["sh", outbox.GRANT_FILE.rsplit("/", 1)[0], "grant.json", "0444"]
-    assert args[2] == '{"version": 1}'
-    assert outbox.GRANT_FILE.endswith("/.jailbee/orchestration/grant.json")
 
 
-def test_flush_pending_follows_emission_order_within_a_second(tmp_path: Path) -> None:
-    incus = _incus()
-    first, second = _item("ffff"), _item("0000")
-    outbox.deliver(incus, tmp_path, FULL, first, running=False, uid=None, now=AT, seq=7)
-    outbox.deliver(incus, tmp_path, FULL, second, running=False, uid=None, now=AT, seq=8)
-    outbox.flush_pending(incus, tmp_path, FULL, uid=None)
-    written = [c.args[1][-2] for c in incus.exec_with_input.call_args_list]
-    assert written == [inbox_file_name(first, AT, seq=7), inbox_file_name(second, AT, seq=8)]
 
 
-def test_write_inbox_uses_the_sequence(tmp_path: Path) -> None:
-    incus = _incus()
-    item = _item("1")
-    outbox.deliver(incus, tmp_path, FULL, item, running=True, uid=None, now=AT, seq=3)
-    assert incus.exec_with_input.call_args.args[1][-2] == inbox_file_name(item, AT, seq=3)
 
 
-def test_read_outbox_skips_dot_files(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`.name.tmp`-style temp files are half-written; never manifests."""
-    files = {".m1.json": "{}", "m2.json": "{}", ".p.md": "x"}
-    monkeypatch.setattr(outbox, "read_text_outbox", lambda *a, **k: files)
-    out = outbox.read_outbox(_incus(), FULL, uid=None)
-    assert [m.file_name for m in out] == ["m2.json"]
-    assert ".p.md" not in out[0].files
 
 
-def test_bounded_selection_excludes_dot_files_in_the_container() -> None:
-    """Temp files must not use up the per-round selection count either."""
-    incus = MagicMock()
-    incus.exec_capped.return_value = ""
-    outbox.read_outbox(incus, FULL, uid=1000)
-    script = incus.exec_capped.call_args.args[1][2]
-    assert "! -name '.*'" in script
 
 
-def test_deliver_returns_delivered_when_written(tmp_path: Path) -> None:
-    result = outbox.deliver(_incus(), tmp_path, FULL, _item("1"), running=True, uid=None, now=AT)
-    assert result == "delivered"
 
 
-def test_deliver_returns_parked_when_not_running(tmp_path: Path) -> None:
-    result = outbox.deliver(_incus(), tmp_path, FULL, _item("1"), running=False, uid=None, now=AT)
-    assert result == "parked"
 
 
-def test_deliver_returns_parked_on_incus_error(tmp_path: Path) -> None:
-    incus = _incus()
-    incus.exec_with_input.side_effect = IncusError("boom")
-    result = outbox.deliver(incus, tmp_path, FULL, _item("1"), running=True, uid=None, now=AT)
-    assert result == "parked"
 
 
-def test_deliver_parks_behind_existing_pending(tmp_path: Path) -> None:
-    incus = _incus()
-    outbox.deliver(incus, tmp_path, FULL, _item("a"), running=False, uid=None, now=AT)
-    later = datetime(2026, 10, 25, 11, 0, tzinfo=UTC)
-    item = _item("b")
-    result = outbox.deliver(incus, tmp_path, FULL, item, running=True, uid=None, now=later)
-    assert result == "parked"
-    incus.exec_with_input.assert_not_called()
-    assert (pending_dir(tmp_path, FULL) / inbox_file_name(item, later)).is_file()
 
 
-def test_deliver_ignores_dot_files_in_pending(tmp_path: Path) -> None:
-    incus = _incus()
-    directory = pending_dir(tmp_path, FULL)
-    directory.mkdir(parents=True)
-    (directory / ".x.tmp").write_text("{}")
-    result = outbox.deliver(incus, tmp_path, FULL, _item("1"), running=True, uid=None, now=AT)
-    assert result == "delivered"
 
 
 def test_has_pending_ignores_quarantined_bad_files(tmp_path: Path) -> None:
@@ -368,29 +148,8 @@ def test_has_pending_ignores_quarantined_bad_files(tmp_path: Path) -> None:
     assert outbox.has_pending(tmp_path, FULL) is True
 
 
-def test_flush_quarantine_notes_the_recipient(tmp_path: Path) -> None:
-    directory = pending_dir(tmp_path, FULL)
-    directory.mkdir(parents=True)
-    (directory / "a.finish.json").write_text("invalid")
-    incus = _incus()
-    assert outbox.flush_pending(incus, tmp_path, FULL, uid=1000, finish=MagicMock()) == 0
-    notes = [json.loads(c.args[2]) for c in incus.exec_with_input.call_args_list]
-    assert len(notes) == 1
-    assert notes[0]["kind"] == "note"
-    assert "a.finish.json.bad" in notes[0]["body"]
-    assert "could not be read" in notes[0]["body"]
 
 
-def test_flush_quarantine_note_is_parked_when_the_write_fails(tmp_path: Path) -> None:
-    directory = pending_dir(tmp_path, FULL)
-    directory.mkdir(parents=True)
-    (directory / "a.finish.json").write_text("invalid")
-    incus = _incus()
-    incus.exec_with_input.side_effect = IncusError("offline")
-    outbox.flush_pending(incus, tmp_path, FULL, uid=1000, finish=MagicMock())
-    parked = [p for p in directory.iterdir() if p.name.endswith(".json")]
-    assert len(parked) == 1
-    assert json.loads(parked[0].read_text())["kind"] == "note"
 
 
 def _store_recipient(root: Path):
@@ -405,7 +164,7 @@ def _store_recipient(root: Path):
 def test_deliver_inserts_into_store_for_store_recipient(tmp_path: Path, running: bool) -> None:
     store = _store_recipient(tmp_path)
     incus = _incus()
-    result = outbox.deliver(incus, tmp_path, FULL, _item("1"), running=running, uid=1000, now=AT)
+    result = deliver(incus, tmp_path, FULL, _item("1"), running=running, uid=1000, now=AT)
     assert result == "delivered"
     assert [s.id for s in store.unacked("uuid-1")] == ["h-1"]
     assert store.unacked("uuid-1")[0].item == json.loads(_item("1").model_dump_json(by_alias=True))
@@ -422,12 +181,12 @@ def test_deliver_store_parks_behind_existing_pending(tmp_path: Path) -> None:
         _item("0").model_dump_json(by_alias=True)
     )
     later = datetime(2026, 10, 25, 11, 0, tzinfo=UTC)
-    result = outbox.deliver(_incus(), tmp_path, FULL, _item("1"), running=True, uid=1000, now=later)
+    result = deliver(_incus(), tmp_path, FULL, _item("1"), running=True, uid=1000, now=later)
     assert result == "parked"
     assert store.unacked("uuid-1") == []
     assert (directory / inbox_file_name(_item("1"), later)).is_file()
     # The next flush moves both, in order.
-    assert outbox.flush_pending(_incus(), tmp_path, FULL, uid=1000) == 2
+    assert flush(_incus(), tmp_path, FULL, uid=1000) == 2
     assert [s.id for s in store.unacked("uuid-1")] == ["h-0", "h-1"]
     assert not outbox.has_pending(tmp_path, FULL)
 
@@ -441,7 +200,7 @@ def test_flush_store_recipient_moves_plain_and_finish_in_name_order(tmp_path: Pa
     (directory / "c.json").write_text(_item("c").model_dump_json(by_alias=True))
     finish = MagicMock(return_value=_finished_message())
     incus = _incus()
-    assert outbox.flush_pending(incus, tmp_path, FULL, uid=1000, finish=finish) == 3
+    assert flush(incus, tmp_path, FULL, uid=1000, finish=finish) == 3
     assert [s.id for s in store.unacked("uuid-1")] == ["h-a", "h-f", "h-c"]
     incus.exec_with_input.assert_not_called()
     assert list(directory.iterdir()) == []
@@ -454,7 +213,7 @@ def test_flush_store_recipient_without_finish_stops_at_finish(tmp_path: Path) ->
     (directory / "a.json").write_text(_item("a").model_dump_json(by_alias=True))
     (directory / "b.finish.json").write_text(_finish_item().model_dump_json())
     (directory / "c.json").write_text(_item("c").model_dump_json(by_alias=True))
-    assert outbox.flush_pending(_incus(), tmp_path, FULL, uid=1000) == 1
+    assert flush(_incus(), tmp_path, FULL, uid=1000) == 1
     assert [s.id for s in store.unacked("uuid-1")] == ["h-a"]
     assert (directory / "b.finish.json").is_file()
     assert (directory / "c.json").is_file()
@@ -474,8 +233,8 @@ def test_flush_store_recipient_stops_at_store_error_and_keeps_files(
     def boom(self, *a, **k):
         raise store_mod.StoreError("locked")
 
-    monkeypatch.setattr(store_mod.BrokerStore, "insert_for_recipient", boom)
-    assert outbox.flush_pending(_incus(), tmp_path, FULL, uid=1000) == 0
+    monkeypatch.setattr(store_mod.BrokerStore, "insert_item", boom)
+    assert flush(_incus(), tmp_path, FULL, uid=1000) == 0
     assert sorted(p.name for p in directory.iterdir()) == ["a.json", "b.json"]
 
 
@@ -487,7 +246,7 @@ def test_flush_store_recipient_quarantines_invalid_and_notes_in_store(tmp_path: 
     (directory / "b.json").write_text("not json")
     (directory / "c.json").write_text(_item("c").model_dump_json(by_alias=True))
     incus = _incus()
-    assert outbox.flush_pending(incus, tmp_path, FULL, uid=1000, finish=MagicMock()) == 1
+    assert flush(incus, tmp_path, FULL, uid=1000, finish=MagicMock()) == 1
     incus.exec_with_input.assert_not_called()
     items = store.unacked("uuid-1")
     kinds = [(i.type, i.kind_or_state) for i in items]
@@ -511,8 +270,8 @@ def test_quarantine_note_falls_back_to_pending_when_store_fails(
     def boom(self, *a, **k):
         raise store_mod.StoreError("locked")
 
-    monkeypatch.setattr(store_mod.BrokerStore, "insert_for_recipient", boom)
-    outbox.flush_pending(_incus(), tmp_path, FULL, uid=1000, finish=MagicMock())
+    monkeypatch.setattr(store_mod.BrokerStore, "insert_item", boom)
+    flush(_incus(), tmp_path, FULL, uid=1000, finish=MagicMock())
     parked = [p for p in directory.iterdir() if p.name.endswith(".json")]
     assert len(parked) == 1
     assert json.loads(parked[0].read_text())["kind"] == "note"
@@ -523,69 +282,97 @@ def test_deliver_parks_when_the_store_lookup_is_unreadable(tmp_path: Path) -> No
 
     store_path(tmp_path).write_bytes(b"garbage" * 100)
     incus = _incus()
-    result = outbox.deliver(incus, tmp_path, FULL, _item("1"), running=True, uid=1000, now=AT)
+    result = deliver(incus, tmp_path, FULL, _item("1"), running=True, uid=1000, now=AT)
     assert result == "parked"
     incus.exec_with_input.assert_not_called()
 
 
-def test_deliver_without_row_uses_files(tmp_path: Path) -> None:
-    _store_recipient(tmp_path)
-    incus = _incus()
-    result = outbox.deliver(
-        incus, tmp_path, "other-full", _item("1"), running=True, uid=1000, now=AT
-    )
-    assert result == "delivered"
-    incus.exec_with_input.assert_called_once()
 
 
-def test_write_inbox_with_root_inserts_into_store(tmp_path: Path) -> None:
-    store = _store_recipient(tmp_path)
-    incus = _incus()
-    outbox.write_inbox(incus, FULL, _item("1"), uid=1000, now=AT, root=tmp_path)
-    assert [s.id for s in store.unacked("uuid-1")] == ["h-1"]
-    incus.exec_with_input.assert_not_called()
 
 
-def test_write_inbox_without_root_writes_file(tmp_path: Path) -> None:
-    _store_recipient(tmp_path)
-    incus = _incus()
-    outbox.write_inbox(incus, FULL, _item("1"), uid=1000, now=AT)
-    incus.exec_with_input.assert_called_once()
 
 
-def test_write_inbox_store_error_becomes_incus_error(tmp_path: Path, mocker) -> None:
-    from jailbee.orchestration.store import BrokerStore, StoreError
-
-    _store_recipient(tmp_path)
-    mocker.patch.object(BrokerStore, "insert_for_recipient", side_effect=StoreError("boom"))
-    with pytest.raises(IncusError, match="boom"):
-        outbox.write_inbox(_incus(), FULL, _item("1"), uid=1000, now=AT, root=tmp_path)
 
 
 def test_deliver_store_error_parks_item(tmp_path: Path, mocker) -> None:
     from jailbee.orchestration.store import BrokerStore, StoreError
 
     _store_recipient(tmp_path)
-    mocker.patch.object(BrokerStore, "insert_for_recipient", side_effect=StoreError("boom"))
-    result = outbox.deliver(_incus(), tmp_path, FULL, _item("1"), running=True, uid=1000, now=AT)
+    mocker.patch.object(BrokerStore, "insert_item", side_effect=StoreError("boom"))
+    result = deliver(_incus(), tmp_path, FULL, _item("1"), running=True, uid=1000, now=AT)
     assert result == "parked"
     assert (pending_dir(tmp_path, FULL) / inbox_file_name(_item("1"), AT)).exists()
 
 
-def test_store_insert_rechecks_the_recipient_in_its_own_transaction(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A teardown that drops the recipient between lookup and insert strands nothing."""
-    from jailbee.orchestration import store as store_mod
 
+
+def deliver(incus, root, full, item, **kw):
+    return outbox.deliver(incus, root, full, item, recipient_uuid="uuid-1", **kw)
+
+
+def flush(incus, root, full, **kw):
+    return outbox.flush_pending(incus, root, full, recipient_uuid="uuid-1", **kw)
+
+
+def test_launcher_check_never_creates_transport_directories():
+    incus = _incus()
+    outbox.ensure_orchestration_env(incus, FULL, uid=1000)
+    incus.exec.assert_called_once_with(FULL, ["test", "-x", outbox.CONTAINER_JAILBEE])
+    incus.exec_with_input.assert_not_called()
+
+
+@pytest.mark.parametrize("running", [True, False])
+def test_no_socket_row_needed_for_verified_delivery(tmp_path, running):
+    from jailbee.orchestration.store import BrokerStore, store_path
+    store = BrokerStore(store_path(tmp_path))
+    incus = _incus()
+    assert deliver(incus, tmp_path, FULL, _item("1"), running=running, uid=None, now=AT) == "delivered"
+    assert [row.id for row in store.unacked("uuid-1")] == ["h-1"]
+    assert store.recipients() == {}  # Delivery never grants socket access.
+    incus.exec.assert_not_called()
+    incus.exec_with_input.assert_not_called()
+
+
+def test_missing_identity_parks_never_uses_namesakes_socket_row(tmp_path):
     store = _store_recipient(tmp_path)
-    real = store_mod.recipient_uuid
-
-    def lookup_then_teardown(root: Path, full: str) -> str | None:
-        found = real(root, full)
-        store.remove_recipient(full)  # the broker's teardown runs now
-        return found
-
-    monkeypatch.setattr(store_mod, "recipient_uuid", lookup_then_teardown)
-    assert outbox._insert_into_store(tmp_path, FULL, _item("1")) is False
+    incus = _incus()
+    assert outbox.deliver(incus, tmp_path, FULL, _item("1"), running=True, uid=None, now=AT) == "parked"
     assert store.unacked("uuid-1") == []
+    assert outbox.flush_pending(incus, tmp_path, FULL, uid=None) == 0
+    assert outbox.has_pending(tmp_path, FULL)
+    incus.exec.assert_not_called()
+    incus.exec_with_input.assert_not_called()
+
+
+def test_verified_identity_ignores_namesakes_stale_socket_row(tmp_path):
+    store = _store_recipient(tmp_path)
+    assert outbox.deliver(_incus(), tmp_path, FULL, _item("1"), running=False,
+                         uid=None, now=AT, recipient_uuid="uuid-new") == "delivered"
+    assert store.unacked("uuid-1") == []
+    assert [row.id for row in store.unacked("uuid-new")] == ["h-1"]
+    assert store.recipients() == {FULL: "uuid-1"}
+
+
+def test_flush_retry_after_insert_before_unlink_does_not_duplicate(tmp_path, monkeypatch):
+    store = _store_recipient(tmp_path)
+    directory = pending_dir(tmp_path, FULL)
+    directory.mkdir(parents=True)
+    path = directory / "a.json"
+    path.write_text(_item("a").model_dump_json())
+    with monkeypatch.context() as patch:
+        patch.setattr(type(path), "unlink", lambda *a, **kw: (_ for _ in ()).throw(OSError("disk")))
+        with pytest.raises(OSError):
+            flush(_incus(), tmp_path, FULL, uid=None)
+    assert path.exists()
+    assert flush(_incus(), tmp_path, FULL, uid=None) == 1
+    assert [row.id for row in store.unacked("uuid-1")] == ["h-a"]
+
+
+def test_sequence_orders_spooled_items_not_random_ids(tmp_path):
+    store = _store_recipient(tmp_path)
+    first, second = _item("ffff"), _item("0000")
+    for seq, item in enumerate((first, second)):
+        outbox.deliver(_incus(), tmp_path, FULL, item, running=False, uid=None, now=AT, seq=seq)
+    assert flush(_incus(), tmp_path, FULL, uid=None) == 2
+    assert [row.id for row in store.unacked("uuid-1")] == [first.id, second.id]

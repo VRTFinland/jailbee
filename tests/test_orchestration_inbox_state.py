@@ -25,14 +25,12 @@ def context(tmp_path):
     )
 
 
-def delivered(ctx):
-    return json.loads(ctx.incus.exec_with_input.call_args.args[2])
 
 
 def test_snapshot_persists_start_across_broker_restart(tmp_path):
     ctx = context(tmp_path)
-    inbox_state.sync_children(ctx)
-    first = delivered(ctx)
+    snapshot = inbox_state.sync_children(ctx)
+    first = {"children": snapshot}
     assert first["children"] == [
         {
             "name": "kid",
@@ -43,37 +41,29 @@ def test_snapshot_persists_start_across_broker_restart(tmp_path):
         }
     ]
     ctx.now += timedelta(minutes=10)
-    inbox_state.sync_children(ctx)
-    assert delivered(ctx)["children"] == first["children"]
-    assert delivered(ctx)["children"][0]["started_at"] == first["children"][0]["started_at"]
+    snapshot = inbox_state.sync_children(ctx)
+    assert {"children": snapshot}["children"] == first["children"]
+    assert {"children": snapshot}["children"][0]["started_at"] == first["children"][0]["started_at"]
 
 
-def test_heartbeat_stamped_at_write_not_round_start(tmp_path, monkeypatch):
-    # A broker round can run long (imports, slow `incus exec`); `ctx.now` is
-    # the round's start, so stamping it made the heartbeat stale on arrival.
-    ctx = context(tmp_path)
-    written = ctx.now.timestamp() + 58
-    monkeypatch.setattr(inbox_state.time, "time", lambda: written)
-    inbox_state.sync_children(ctx)
-    assert delivered(ctx)["updated_at"] == written
 
 
 def test_snapshot_stop_restart_and_removal(tmp_path):
     ctx = context(tmp_path)
-    inbox_state.sync_children(ctx)
+    snapshot = inbox_state.sync_children(ctx)
     start = ctx.now.timestamp()
     ctx.now += timedelta(minutes=1)
     ctx.nodes = {"p-kid": Node("p-kid", "kid", False, {labels.SPAWNED_BY: "p-orch"})}
-    inbox_state.sync_children(ctx)
-    assert delivered(ctx)["children"][0]["running"] is False
-    assert delivered(ctx)["children"][0]["started_at"] == start
+    snapshot = inbox_state.sync_children(ctx)
+    assert {"children": snapshot}["children"][0]["running"] is False
+    assert {"children": snapshot}["children"][0]["started_at"] == start
     ctx.now += timedelta(minutes=1)
     ctx.nodes = context(tmp_path).nodes
-    inbox_state.sync_children(ctx)
-    assert delivered(ctx)["children"][0]["started_at"] == ctx.now.timestamp()
+    snapshot = inbox_state.sync_children(ctx)
+    assert {"children": snapshot}["children"][0]["started_at"] == ctx.now.timestamp()
     ctx.nodes = {}
-    inbox_state.sync_children(ctx)
-    assert delivered(ctx)["children"] == []
+    snapshot = inbox_state.sync_children(ctx)
+    assert {"children": snapshot}["children"] == []
 
 
 def test_snapshot_uses_incus_boot_timestamp_and_new_instance(tmp_path):
@@ -93,24 +83,15 @@ def test_snapshot_uses_incus_boot_timestamp_and_new_instance(tmp_path):
         ],
         {"p": cfg},
     )
-    inbox_state.sync_children(ctx)
-    assert delivered(ctx)["children"][0]["started_at"] == ctx.now.timestamp() - 3600
+    snapshot = inbox_state.sync_children(ctx)
+    assert {"children": snapshot}["children"][0]["started_at"] == ctx.now.timestamp() - 3600
     ctx.nodes = {
         "p-kid": Node("p-kid", "kid", True, {labels.SPAWNED_BY: "p-orch", "volatile.uuid": "two"})
     }
-    inbox_state.sync_children(ctx)
-    assert delivered(ctx)["children"][0]["started_at"] == ctx.now.timestamp()
+    snapshot = inbox_state.sync_children(ctx)
+    assert {"children": snapshot}["children"][0]["started_at"] == ctx.now.timestamp()
 
 
-def test_snapshot_failed_write_can_retry(tmp_path):
-    ctx = context(tmp_path)
-    ctx.incus.exec_with_input.side_effect = IncusError("stopped")
-    with pytest.raises(IncusError):
-        inbox_state.sync_children(ctx)
-    ctx.now += timedelta(seconds=5)
-    ctx.incus.exec_with_input.side_effect = None
-    inbox_state.sync_children(ctx)
-    assert delivered(ctx)["children"][0]["started_at"] == ctx.now.timestamp() - 5
 
 
 def _kid_with(ctx, config):
@@ -148,8 +129,8 @@ def test_snapshot_running_is_container_state_and_done_is_separate(tmp_path, conf
     # `done` carries the finished state the quiet watchdog needs.
     ctx = context(tmp_path)
     _kid_with(ctx, config)
-    inbox_state.sync_children(ctx)
-    child = delivered(ctx)["children"][0]
+    snapshot = inbox_state.sync_children(ctx)
+    child = {"children": snapshot}["children"][0]
     assert child["running"] is True
     assert child["done"] is done
 
@@ -162,34 +143,34 @@ def test_snapshot_stopped_finished_child(tmp_path):
             "p-kid", "kid", False, {labels.SPAWNED_BY: "p-orch", labels.STATE: labels.STATE_DONE}
         ),
     }
-    inbox_state.sync_children(ctx)
-    child = delivered(ctx)["children"][0]
+    snapshot = inbox_state.sync_children(ctx)
+    child = {"children": snapshot}["children"][0]
     assert (child["running"], child["done"]) == (False, True)
 
 
 def test_snapshot_finished_child_keeps_start_time(tmp_path):
     ctx = context(tmp_path)
-    inbox_state.sync_children(ctx)
+    snapshot = inbox_state.sync_children(ctx)
     start = ctx.now.timestamp()
     ctx.now += timedelta(minutes=5)
     _kid_with(ctx, {labels.STATE: labels.STATE_DONE})
-    inbox_state.sync_children(ctx)
+    snapshot = inbox_state.sync_children(ctx)
     ctx.now += timedelta(minutes=5)
-    inbox_state.sync_children(ctx)
-    assert delivered(ctx)["children"][0]["started_at"] == start
+    snapshot = inbox_state.sync_children(ctx)
+    assert {"children": snapshot}["children"][0]["started_at"] == start
 
 
 def test_snapshot_publishes_latest_session(tmp_path):
     ctx = context(tmp_path)
     ids = ["01234567-89ab-cdef-0123-456789abcdef", "12345678-89ab-cdef-0123-456789abcdef"]
     _kid_with(ctx, {labels.AGENT_SESSIONS: json.dumps(ids)})
-    inbox_state.sync_children(ctx)
-    assert delivered(ctx)["children"][0]["session"] == ids[-1]
+    snapshot = inbox_state.sync_children(ctx)
+    assert {"children": snapshot}["children"][0]["session"] == ids[-1]
     saved = json.loads((tmp_path / "inbox-state" / "p-orch.json").read_text())
     assert saved["children"][0]["session"] == ids[-1]
     _kid_with(ctx, {})
-    inbox_state.sync_children(ctx)
-    assert delivered(ctx)["children"][0]["session"] is None
+    snapshot = inbox_state.sync_children(ctx)
+    assert {"children": snapshot}["children"][0]["session"] is None
     assert (
         json.loads((tmp_path / "inbox-state" / "p-orch.json").read_text())["children"][0]["session"]
         is None
@@ -258,8 +239,8 @@ def probes(monkeypatch):
     return p
 
 
-def published_status(ctx):
-    return delivered(ctx)["children"][0].get("status")
+def published_status(snapshot):
+    return snapshot[0].get("status")
 
 
 def _cache(cpu=None):
@@ -274,8 +255,8 @@ def test_sync_children_publishes_status_for_running_child(tmp_path, probes):
         "p-kid", "kid", True, {labels.SPAWNED_BY: "p-orch"}, None, 77, 10, 5_000
     )
     cache = _cache(cpu=50.0)
-    inbox_state.sync_children(ctx, cache)
-    st = published_status(ctx)
+    snapshot = inbox_state.sync_children(ctx, cache)
+    st = published_status(snapshot)
     assert set(st) == {
         "observed_at",
         "agent",
@@ -305,9 +286,9 @@ def test_sync_children_busy_cpu_alone_is_not_progress(tmp_path, probes):
     started = ctx.now.timestamp() - 3600
     ctx.nodes["p-kid"] = Node("p-kid", "kid", True, {labels.SPAWNED_BY: "p-orch"}, started)
     for _ in range(3):
-        inbox_state.sync_children(ctx, _cache(cpu=80.0))
+        snapshot = inbox_state.sync_children(ctx, _cache(cpu=80.0))
         ctx.now += timedelta(seconds=300)
-    st = published_status(ctx)
+    st = published_status(snapshot)
     assert st["cpu_percent"] == 80.0
     assert st["last_busy_at"] > started  # still published for display
     assert st["activity_at"] == started  # agent event and commit predate the start
@@ -319,41 +300,41 @@ def test_sync_children_memory_subtracts_cache_and_clamps(tmp_path, probes, monke
         "p-kid", "kid", True, {labels.SPAWNED_BY: "p-orch"}, None, 77, 10, 5_000
     )
     monkeypatch.setattr(inbox_state.procstat, "read_container_cache", lambda *a, **k: 2_000)
-    inbox_state.sync_children(ctx, _cache())
-    assert published_status(ctx)["memory_bytes"] == 3_000
+    snapshot = inbox_state.sync_children(ctx, _cache())
+    assert published_status(snapshot)["memory_bytes"] == 3_000
     ctx.now += timedelta(seconds=100)
     monkeypatch.setattr(inbox_state.procstat, "read_container_cache", lambda *a, **k: 9_000)
-    inbox_state.sync_children(ctx, _cache())
-    assert published_status(ctx)["memory_bytes"] == 0
+    snapshot = inbox_state.sync_children(ctx, _cache())
+    assert published_status(snapshot)["memory_bytes"] == 0
     ctx.now += timedelta(seconds=100)
     monkeypatch.setattr(inbox_state.procstat, "read_container_cache", lambda *a, **k: None)
-    inbox_state.sync_children(ctx, _cache())
-    assert published_status(ctx)["memory_bytes"] == 5_000
+    snapshot = inbox_state.sync_children(ctx, _cache())
+    assert published_status(snapshot)["memory_bytes"] == 5_000
 
 
 def test_sync_children_memory_none_without_usage(tmp_path, probes):
     ctx = context(tmp_path)
-    inbox_state.sync_children(ctx, _cache())
-    assert published_status(ctx)["memory_bytes"] is None
+    snapshot = inbox_state.sync_children(ctx, _cache())
+    assert published_status(snapshot)["memory_bytes"] is None
 
 
 def test_sync_children_rate_limits_exec_probes(tmp_path, probes):
     ctx = context(tmp_path)
     cache = _cache()
-    inbox_state.sync_children(ctx, cache)
+    snapshot = inbox_state.sync_children(ctx, cache)
     ctx.now += timedelta(seconds=10)
-    inbox_state.sync_children(ctx, cache)
+    snapshot = inbox_state.sync_children(ctx, cache)
     assert probes.head_calls == 1
     assert probes.agent_calls == 1
     assert len(cache.samplers["p-orch"].calls) == 1
     ctx.now += timedelta(seconds=60)
-    inbox_state.sync_children(ctx, cache)
+    snapshot = inbox_state.sync_children(ctx, cache)
     assert probes.head_calls == 2
 
 
 def test_sync_children_exec_goes_through_bounded_incus(tmp_path, probes):
     ctx = context(tmp_path)
-    inbox_state.sync_children(ctx, _cache())
+    snapshot = inbox_state.sync_children(ctx, _cache())
     ctx.incus.with_exec_timeout.assert_called_with(inbox_state.STATUS_EXEC_TIMEOUT_S)
     assert probes.incus_used
     assert all(i is ctx.incus.with_exec_timeout.return_value for i in probes.incus_used)
@@ -364,14 +345,14 @@ def test_sync_children_status_survives_broker_restart(tmp_path, probes):
     ctx.nodes["p-kid"] = Node(
         "p-kid", "kid", True, {labels.SPAWNED_BY: "p-orch"}, ctx.now.timestamp() - 3600
     )
-    inbox_state.sync_children(ctx, _cache(cpu=80.0))
-    busy_at = published_status(ctx)["last_busy_at"]
+    snapshot = inbox_state.sync_children(ctx, _cache(cpu=80.0))
+    busy_at = published_status(snapshot)["last_busy_at"]
     assert busy_at == ctx.now.timestamp()
     probes.agent_status = None  # nothing known after the restart yet
     probes.head = (None, None)
     ctx.now += timedelta(seconds=300)
-    inbox_state.sync_children(ctx, _cache(cpu=None))  # fresh cache, cold sampler
-    st = published_status(ctx)
+    snapshot = inbox_state.sync_children(ctx, _cache(cpu=None))  # fresh cache, cold sampler
+    st = published_status(snapshot)
     assert st["last_busy_at"] == busy_at
     # Busyness is kept for display but is not progress: activity_at stays below it.
     assert st["activity_at"] < busy_at
@@ -382,23 +363,23 @@ def test_sync_children_status_survives_broker_restart(tmp_path, probes):
 def test_sync_children_probe_failure_keeps_previous_head(tmp_path, probes):
     ctx = context(tmp_path)
     cache = _cache()
-    inbox_state.sync_children(ctx, cache)
+    snapshot = inbox_state.sync_children(ctx, cache)
     probes.head_error = RuntimeError("boom")
     ctx.now += timedelta(seconds=120)
-    inbox_state.sync_children(ctx, cache)
-    assert published_status(ctx)["head"] == HEAD
+    snapshot = inbox_state.sync_children(ctx, cache)
+    assert published_status(snapshot)["head"] == HEAD
     assert probes.head_calls == 2
 
 
 def test_sync_children_exec_timeout_keeps_previous_and_does_not_raise(tmp_path, probes):
     ctx = context(tmp_path)
     cache = _cache()
-    inbox_state.sync_children(ctx, cache)
+    snapshot = inbox_state.sync_children(ctx, cache)
     probes.head = (None, None)  # probe_head's answer to IncusError (timeout)
     probes.agent_status = None  # agent_watch.probe's answer to IncusError
     ctx.now += timedelta(seconds=120)
-    inbox_state.sync_children(ctx, cache)
-    st = published_status(ctx)
+    snapshot = inbox_state.sync_children(ctx, cache)
+    st = published_status(snapshot)
     assert st["head"] == HEAD and st["dirty"] is False
     assert st["agent"] == AGENT
 
@@ -406,7 +387,7 @@ def test_sync_children_exec_timeout_keeps_previous_and_does_not_raise(tmp_path, 
 def test_sync_children_real_probe_head_timeout_keeps_previous(tmp_path, monkeypatch, probes):
     ctx = context(tmp_path)
     cache = _cache()
-    inbox_state.sync_children(ctx, cache)
+    snapshot = inbox_state.sync_children(ctx, cache)
     monkeypatch.undo()  # real probe_head, with a hanging exec
     monkeypatch.setattr(inbox_state.lifecycle, "container_repo_dir", lambda *a: "/repo")
     monkeypatch.setattr(inbox_state.agent_watch, "agent_snapshot", lambda *a, **k: dict(AGENT))
@@ -414,38 +395,38 @@ def test_sync_children_real_probe_head_timeout_keeps_previous(tmp_path, monkeypa
     monkeypatch.setattr(inbox_state.agent_watch, "probe", lambda *a, **k: None)
     ctx.incus.with_exec_timeout.return_value.exec.side_effect = IncusError("timed out")
     ctx.now += timedelta(seconds=120)
-    inbox_state.sync_children(ctx, cache)
-    assert published_status(ctx)["head"] == HEAD
+    snapshot = inbox_state.sync_children(ctx, cache)
+    assert published_status(snapshot)["head"] == HEAD
 
 
 def test_sync_children_stopped_child_keeps_head_only(tmp_path, probes):
     ctx = context(tmp_path)
     cache = _cache(cpu=10.0)
-    inbox_state.sync_children(ctx, cache)
+    snapshot = inbox_state.sync_children(ctx, cache)
     ctx.nodes["p-kid"] = Node("p-kid", "kid", False, {labels.SPAWNED_BY: "p-orch"})
     ctx.now += timedelta(seconds=300)
-    inbox_state.sync_children(ctx, cache)
-    assert published_status(ctx) == {"head": HEAD, "last_to_child_at": None}
+    snapshot = inbox_state.sync_children(ctx, cache)
+    assert published_status(snapshot) == {"head": HEAD, "last_to_child_at": None}
 
 
 def test_sync_children_never_observed_stopped_child_has_null_status(tmp_path, probes):
     ctx = context(tmp_path)
     ctx.nodes["p-kid"] = Node("p-kid", "kid", False, {labels.SPAWNED_BY: "p-orch"})
-    inbox_state.sync_children(ctx, _cache())
-    assert delivered(ctx)["children"][0]["status"] is None
+    snapshot = inbox_state.sync_children(ctx, _cache())
+    assert {"children": snapshot}["children"][0]["status"] is None
 
 
 def test_sync_children_without_cache_has_no_status(tmp_path, probes):
     ctx = context(tmp_path)
-    inbox_state.sync_children(ctx)
-    assert "status" not in delivered(ctx)["children"][0]
+    snapshot = inbox_state.sync_children(ctx)
+    assert "status" not in {"children": snapshot}["children"][0]
     assert probes.head_calls == 0
 
 
 def test_sync_children_without_cache_preserves_durable_status(tmp_path, probes):
     ctx = context(tmp_path)
-    inbox_state.sync_children(ctx, _cache(cpu=30.0))
-    inbox_state.sync_children(ctx)
+    snapshot = inbox_state.sync_children(ctx, _cache(cpu=30.0))
+    snapshot = inbox_state.sync_children(ctx)
     saved = json.loads((tmp_path / "inbox-state" / "p-orch.json").read_text())
     assert saved["children"][0]["status"]["head"] == HEAD
 
@@ -457,8 +438,8 @@ def test_sync_children_hostile_subject_is_cleaned_by_real_probe(tmp_path, probes
     ctx.incus.with_exec_timeout.return_value.exec.return_value = (
         f"{'a' * 40}\x1f100\x1f{hostile}\nCLEAN\n"
     )
-    inbox_state.sync_children(ctx, _cache())
-    subject = published_status(ctx)["head"]["subject"]
+    snapshot = inbox_state.sync_children(ctx, _cache())
+    subject = published_status(snapshot)["head"]["subject"]
     assert subject.startswith("?[2J?x")
     assert len(subject) == child_status.SUBJECT_LIMIT and subject.endswith("…")
     assert not any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in subject)
@@ -470,17 +451,18 @@ def test_sync_children_rejects_hostile_sha_through_real_probe(tmp_path, probes, 
     ctx.incus.with_exec_timeout.return_value.exec.return_value = (
         "\x1b[2J" + "a" * 1_000_000 + "\x1f100\x1fs\nCLEAN\n"
     )
-    inbox_state.sync_children(ctx, _cache())
-    assert published_status(ctx)["head"] is None
-    assert len(ctx.incus.exec_with_input.call_args.args[2]) < 10_000
+    snapshot = inbox_state.sync_children(ctx, _cache())
+    assert published_status(snapshot)["head"] is None
+    assert len(json.dumps(snapshot)) < 10_000
+    ctx.incus.exec_with_input.assert_not_called()
 
 
 @pytest.mark.parametrize(("cpu", "busy"), [(4.99, False), (5.0, True), (5.01, True)])
 def test_cpu_threshold_boundary(tmp_path, probes, cpu, busy):
     ctx = context(tmp_path)
-    inbox_state.sync_children(ctx, _cache(cpu=cpu))
+    snapshot = inbox_state.sync_children(ctx, _cache(cpu=cpu))
     expected = ctx.now.timestamp() if busy else None
-    assert published_status(ctx)["last_busy_at"] == expected
+    assert published_status(snapshot)["last_busy_at"] == expected
 
 
 def test_activity_at_ignores_far_future_child_supplied_times(tmp_path, probes, monkeypatch):
@@ -493,12 +475,12 @@ def test_activity_at_ignores_far_future_child_supplied_times(tmp_path, probes, m
         lambda *a, **k: {**AGENT, "last_event_at": now + 20_000},
     )
     cache = _cache()
-    inbox_state.sync_children(ctx, cache)
-    assert published_status(ctx)["activity_at"] < now + 1
+    snapshot = inbox_state.sync_children(ctx, cache)
+    assert published_status(snapshot)["activity_at"] < now + 1
     # Not clamped to now: it stays at the unknown-signals floor round after round.
     ctx.now += timedelta(seconds=120)
-    inbox_state.sync_children(ctx, cache)
-    assert published_status(ctx)["activity_at"] < now + 1
+    snapshot = inbox_state.sync_children(ctx, cache)
+    assert published_status(snapshot)["activity_at"] < now + 1
 
 
 def test_activity_at_counts_child_time_within_slack(tmp_path, probes, monkeypatch):
@@ -509,8 +491,8 @@ def test_activity_at_counts_child_time_within_slack(tmp_path, probes, monkeypatc
         "agent_snapshot",
         lambda *a, **k: {**AGENT, "last_event_at": now + 4},
     )
-    inbox_state.sync_children(ctx, _cache())
-    assert published_status(ctx)["activity_at"] == now + 4
+    snapshot = inbox_state.sync_children(ctx, _cache())
+    assert published_status(snapshot)["activity_at"] == now + 4
 
 
 def test_failed_agent_snapshot_does_not_lower_activity_or_last_event(tmp_path, probes, monkeypatch):
@@ -521,12 +503,12 @@ def test_failed_agent_snapshot_does_not_lower_activity_or_last_event(tmp_path, p
     monkeypatch.setattr(inbox_state.agent_watch, "agent_snapshot", lambda *a, **k: snaps.pop(0))
     probes.head = (None, None)
     cache = _cache()
-    inbox_state.sync_children(ctx, cache)
-    first = published_status(ctx)["activity_at"]
+    snapshot = inbox_state.sync_children(ctx, cache)
+    first = published_status(snapshot)["activity_at"]
     assert first == max(now, 0) or first >= event
     ctx.now += timedelta(seconds=40)
-    inbox_state.sync_children(ctx, cache)
-    st = published_status(ctx)
+    snapshot = inbox_state.sync_children(ctx, cache)
+    st = published_status(snapshot)
     assert st["agent"]["last_event_at"] == event
     assert st["activity_at"] >= first
 
@@ -546,8 +528,8 @@ def test_activity_at_never_decreases_and_a_recreated_child_starts_fresh(
     )
     probes.head = (None, None)
     cache = _cache()
-    inbox_state.sync_children(ctx, cache)
-    first = published_status(ctx)["activity_at"]
+    snapshot = inbox_state.sync_children(ctx, cache)
+    first = published_status(snapshot)["activity_at"]
     assert first == now - 10
     # The event ages out: no carried agent time, no head, no CPU; only the
     # start time (now - 1000) is left, so only the floor holds activity up.
@@ -556,15 +538,15 @@ def test_activity_at_never_decreases_and_a_recreated_child_starts_fresh(
     saved["children"][0]["status"]["agent"] = None
     path.write_text(json.dumps(saved))
     ctx.now += timedelta(seconds=40)
-    inbox_state.sync_children(ctx, cache)
-    st = published_status(ctx)
+    snapshot = inbox_state.sync_children(ctx, cache)
+    st = published_status(snapshot)
     assert st["agent"]["last_event_at"] is None
     assert st["activity_at"] == first
     # A recreated child (new key, earlier start) must not inherit that floor.
     ctx.nodes["p-kid"] = Node("p-kid", "kid", True, {**cfg, "volatile.uuid": "new"}, now - 2000)
     ctx.now += timedelta(seconds=40)
-    inbox_state.sync_children(ctx, cache)
-    assert published_status(ctx)["activity_at"] == now - 2000
+    snapshot = inbox_state.sync_children(ctx, cache)
+    assert published_status(snapshot)["activity_at"] == now - 2000
 
 
 def test_repo_dir_comes_from_node_config_without_an_incus_call(tmp_path, probes, monkeypatch):
@@ -582,7 +564,7 @@ def test_repo_dir_comes_from_node_config_without_an_incus_call(tmp_path, probes,
         "probe_head",
         lambda incus, full, repo, *, uid: seen.append(repo) or (HEAD, False),
     )
-    inbox_state.sync_children(ctx, _cache())
+    snapshot = inbox_state.sync_children(ctx, _cache())
     assert seen == ["/r/x"] and calls == []
 
 
@@ -592,7 +574,7 @@ def test_repo_dir_falls_back_to_bounded_incus_when_label_missing(tmp_path, probe
     monkeypatch.setattr(
         inbox_state.lifecycle, "container_repo_dir", lambda *a: calls.append(a) or "/fallback"
     )
-    inbox_state.sync_children(ctx, _cache())
+    snapshot = inbox_state.sync_children(ctx, _cache())
     assert len(calls) == 1 and calls[0][1] is ctx.incus.with_exec_timeout.return_value
 
 
@@ -635,8 +617,8 @@ def test_two_orchestrators_sharing_one_cache_both_get_cpu(tmp_path, probes):
             ctx.nodes[kid] = node
             ctx.now += timedelta(seconds=100)
             time.sleep(0.002)
-            inbox_state.sync_children(ctx, cache)
-            seen.append((round_no, kid, published_status(ctx)["cpu_percent"]))
+            snapshot = inbox_state.sync_children(ctx, cache)
+            seen.append((round_no, kid, published_status(snapshot)["cpu_percent"]))
     for round_no, kid, cpu in seen:
         if round_no == 0:
             assert cpu is None
@@ -668,6 +650,15 @@ def test_note_delivery_swallows_oserror(tmp_path):
 def test_last_to_child_at_published_after_note_delivery(tmp_path, probes):
     ctx = context(tmp_path)
     inbox_state.note_delivery(tmp_path, "p-orch", "p-kid", 123.0)
-    inbox_state.sync_children(ctx, _cache())
-    assert published_status(ctx)["last_to_child_at"] == 123.0
-    assert published_status(ctx)["activity_at"] >= ctx.now.timestamp()
+    snapshot = inbox_state.sync_children(ctx, _cache())
+    assert published_status(snapshot)["last_to_child_at"] == 123.0
+    assert published_status(snapshot)["activity_at"] >= ctx.now.timestamp()
+
+
+def test_snapshot_never_writes_container_files(tmp_path):
+    ctx = context(tmp_path)
+    children = inbox_state.sync_children(ctx)
+    assert children[0]["name"] == "kid"
+    saved = json.loads((tmp_path / "inbox-state" / "p-orch.json").read_text())
+    assert saved["children"][0]["name"] == "kid"
+    ctx.incus.exec_with_input.assert_not_called()

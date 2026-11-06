@@ -465,7 +465,7 @@ def new_host_id() -> str:
 
 
 def inbox_file_name(item: InboxItem, now: datetime, *, seq: int = 0) -> str:
-    """``<stamp>-<seq:08d>-<id>.json``: names sort in emission order.
+    """Host spool name ``<stamp>-<seq:08d>-<id>.json``, in emission order.
 
     The stamp has one-second resolution and ids are random, so `seq` — a
     per-process counter the broker owns (`BrokerMemory.seq`) — orders the
