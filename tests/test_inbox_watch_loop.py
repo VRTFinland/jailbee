@@ -195,7 +195,7 @@ def test_wait_rechecks_without_event(tmp_path):
             pass
 
         def wait(self, timeout):
-            message.write_text('{"type":"message","kind":"note"}')
+            message.write_text('{"id":"arrival","type":"message","kind":"note"}')
 
         def close(self):
             pass

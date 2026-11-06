@@ -491,6 +491,7 @@ def cmd_wait(
     wake_on: str | None = None,
     quiet_after: str | None = None,
     digest: str | None = None,
+    path: bool = False,
 ) -> int:
     from jailbee.inbox.waiting import run_wait, valid_wake_token
 
@@ -523,7 +524,12 @@ def cmd_wait(
         if line == "digest":
             return _print_digest(settings)
         if line is not None:
-            print(line)
+            if path or line == "digest" or line.startswith("quiet-child "):
+                print(line)
+            else:
+                ident = message_id(Path(line))
+                if ident is not None:
+                    print(ident)
         return rc
     finally:
         os.close(fd)
@@ -552,5 +558,12 @@ def cmd_send(settings: Settings, request: "SendRequest") -> int:
     ident = publish(settings, request)
     print(ident, flush=True)
     if request.wait:
-        return wait_for_status(settings, ident, parse_timeout(request.timeout or "30m"))
+        result = wait_for_status(settings, ident, parse_timeout(request.timeout or "30m"))
+        if result == 3:
+            print(
+                "jailbee inbox: no reply from the host broker; if this repeats, tell the human "
+                "(the broker may not be running)",
+                file=sys.stderr,
+            )
+        return result
     return 0

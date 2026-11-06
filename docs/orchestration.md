@@ -650,9 +650,10 @@ matches only a message (including the broker's `idle`/`blocked` reports),
 usage error (exit 2). The recommended filter above wakes on child reports and
 on failed or refused manifests, but not on successful acks, which `send --wait`
 already returns.
-It returns the oldest matching unread path; **nothing is marked read**, even
-when it does not match. Omit the filter for any unread message. The first
-message from a child after each spawn/restart always wakes, regardless of
+It prints the oldest matching unread message's id; use `jailbee inbox read <id>`
+to inspect it. Pass `--path` to print the file path instead. **Nothing is marked
+read**, even when a message does not match. Omit the filter for any unread
+message. The first message from a child after each spawn/restart always wakes, regardless of
 kind; read history prevents later notes from counting as first again.
 After waking, list and handle all unread messages, including filtered notes.
 

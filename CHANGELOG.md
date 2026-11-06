@@ -10,7 +10,12 @@ before editing `## Unreleased`.
 
 ### Added
 
+- `jailbee inbox grant` summarizes the orchestration grant available to the container.
 - Optional Docker image seeding for Docker-enabled golden images, with `jailbee base seed` and upgrade integration.
+
+### Changed
+
+- `jailbee inbox wait` prints the woken message's id; `--path` gives the old path output.
 
 ## 1.8.3 - 2026-11-05
 

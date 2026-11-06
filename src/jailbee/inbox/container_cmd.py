@@ -142,7 +142,8 @@ def _send(request: send.SendRequest, source: str | None = None) -> None:
 
 @inbox_app.command(
     help=(
-        "Print the path of the oldest unread message (exit 0); exit 1 on timeout. "
+        "Print the id of the oldest unread message (exit 0); --path prints its path; "
+        "exit 1 on timeout. "
         "After arrival, wait briefly for the burst to settle, then use ls to handle every "
         "unread message. Nothing is marked read. Only one wait may run; a second exits 2. "
         "Concurrent send --wait is safe: wait skips its reserved statuses until the sender exits."
@@ -182,6 +183,9 @@ def wait(
             ),
         ),
     ] = None,
+    path: Annotated[
+        bool, typer.Option("--path", help="Print the message file path instead of its id.")
+    ] = False,
     digest: Annotated[
         str | None,
         typer.Option(
@@ -197,7 +201,12 @@ def wait(
 ) -> None:
     _run(
         lambda settings: cli.cmd_wait(
-            settings, timeout=timeout, wake_on=wake_on, quiet_after=quiet_after, digest=digest
+            settings,
+            timeout=timeout,
+            wake_on=wake_on,
+            quiet_after=quiet_after,
+            digest=digest,
+            path=path,
         )
     )
 

@@ -134,7 +134,7 @@ def test_wait_timeout_none_outlives_a_finite_timeout_and_wakes(script, base, tmp
             proc.kill()
             proc.communicate()
     assert proc.returncode == 0, err
-    assert out.strip().endswith(FIRST)
+    assert out.strip() == "h-0000aaaa"
 
 
 def test_wait_timeout_none_with_quiet_after(script, base, tmp_path):
@@ -348,7 +348,7 @@ def test_wait_settles_after_wakeup_and_returns_burst(script, base, tmp_path):
         write_inbox(base, "20261025T100001Z-00000003-h-0000cccc.json", message("h-0000cccc"))
         out, err = proc.communicate(timeout=15)
     ls = run(script, "ls", env=env)
-    assert proc.returncode == 0 and out.strip().endswith(FIRST), err
+    assert proc.returncode == 0 and out.strip() == "h-0000aaaa", err
     assert "h-0000aaaa" in ls.stdout and "h-0000bbbb" in ls.stdout
     assert "h-0000cccc" in ls.stdout
 
@@ -378,7 +378,7 @@ def test_wait_settle_zero_disables(script, base, tmp_path):
     assert proc.returncode == 0, err
     # The default 1 s settle would hold it at least that long.
     assert time.monotonic() - started < 0.9
-    assert out.strip().endswith(FIRST)
+    assert out.strip() == "h-0000aaaa"
 
 
 @pytest.mark.parametrize("settle", ["abc", "-1", "1e2", "."])
@@ -397,7 +397,7 @@ def test_wait_returns_immediately_when_message_waiting(script, base, tmp_path):
     start = time.monotonic()
     r = run(script, "wait", "--timeout", "5", env=env_for(base, tmp_path))
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip().endswith(FIRST)
+    assert r.stdout.strip() == "h-0000aaaa"
     assert time.monotonic() - start < 2
 
 
@@ -406,7 +406,7 @@ def test_wait_prints_oldest_first(script, base, tmp_path):
     write_inbox(base, FIRST, message("h-0000aaaa"))
     r = run(script, "wait", "--timeout", "0", env=env_for(base, tmp_path))
     assert r.returncode == 0
-    assert r.stdout.strip().endswith(FIRST)
+    assert r.stdout.strip() == "h-0000aaaa"
 
 
 def test_wait_sees_new_message_via_poll_fallback(script, base, tmp_path):
@@ -421,7 +421,7 @@ def test_wait_sees_new_message_via_poll_fallback(script, base, tmp_path):
     r = run(script, "wait", "--timeout", "10", env=env)
     t.join()
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip().endswith(FIRST)
+    assert r.stdout.strip() == "h-0000aaaa"
 
 
 def test_wait_times_out_with_exit_1(script, base, tmp_path):
@@ -678,6 +678,10 @@ def test_send_wait_times_out_with_3(script, base, tmp_path):
     r = send(script, base, tmp_path, "message", "--text", "go", "--wait", "--timeout", "1")
     assert r.returncode == 3
     assert r.stdout.startswith("message-")
+    assert (
+        "no reply from the host broker; if this repeats, tell the human "
+        "(the broker may not be running)"
+    ) in r.stderr
 
 
 def test_ls_marks_imported_and_failed_imports(script, base, tmp_path):
@@ -980,12 +984,14 @@ def test_wait_with_many_unread_messages_does_not_die_of_sigpipe(script, base, tm
     # SIGPIPE (exit 141) once the listing outgrew the pipe buffer.
     inbox = base / "inbox"
     for i in range(2000):
-        (inbox / f"20261025T100000Z-{i:08d}-h-0000aaaa.json").write_text("{}")
+        (inbox / f"20261025T100000Z-{i:08d}-h-0000aaaa.json").write_text(
+            json.dumps({"id": f"h-{i:08d}", "type": "message", "kind": "note"})
+        )
     env = env_for(base, tmp_path)
     for _ in range(3):
         r = run(script, "wait", "--timeout", "0", env=env)
         assert r.returncode == 0, (r.returncode, r.stderr)
-        assert r.stdout.strip().endswith("20261025T100000Z-00000000-h-0000aaaa.json")
+        assert r.stdout.strip() == "h-00000000"
 
 
 HOSTILE = "a\x1b[2Jb\x1b]52;c;Zm9v\x07c\u009bd\x7fe\x00fä"
@@ -1539,7 +1545,7 @@ def test_wait_idle_filter_matches_host_report_without_consuming_notes(script, ba
     idle = write_inbox(base, SECOND, {**message("i"), "kind": "idle"})
     r = run(script, "wait", "--wake-on", "idle", "--timeout", "0", env=env_for(base, tmp_path))
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == str(idle)
+    assert r.stdout.strip() == "i"
     assert note.exists() and idle.exists()
 
 
@@ -1550,7 +1556,7 @@ def test_wait_filter_leaves_nonmatches_unread(script, base, tmp_path):
         script, "wait", "--wake-on", "done,failed", "--timeout", "0", env=env_for(base, tmp_path)
     )
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == str(done)
+    assert r.stdout.strip() == "d"
     assert note.exists() and done.exists()
     assert not (base / "inbox/read").exists()
 
@@ -1562,7 +1568,7 @@ def test_wait_msg_prefix_ignores_status_ack_but_wakes_on_message(script, base, t
     done = write_inbox(base, SECOND, {**message("d"), "kind": "done"})
     r = run(script, "wait", "--wake-on", "msg:done", "--timeout", "0", env=env_for(base, tmp_path))
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == str(done)
+    assert r.stdout.strip() == "d"
     assert ack.exists()
 
 
@@ -1574,7 +1580,7 @@ def test_wait_status_prefix_ignores_message_of_same_word(script, base, tmp_path)
     refused = write_inbox(base, SECOND, {**status("s"), "state": "refused"})
     r = run(script, "wait", "--wake-on", "status:refused", "--timeout", "0", env=env)
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == str(refused)
+    assert r.stdout.strip() == "s"
 
 
 def test_wait_recommended_filter_skips_acks_wakes_on_failures(script, base, tmp_path):
@@ -1585,7 +1591,7 @@ def test_wait_recommended_filter_skips_acks_wakes_on_failures(script, base, tmp_
     assert run(script, "wait", "--wake-on", flt, "--timeout", "0", env=env).returncode == 1
     failed = write_inbox(base, "20260101T000003Z-c.json", {**status("c", "m-3"), "state": "failed"})
     r = run(script, "wait", "--wake-on", flt, "--timeout", "0", env=env)
-    assert r.stdout.strip() == str(failed)
+    assert r.stdout.strip() == "c"
 
 
 @pytest.mark.parametrize(
@@ -1613,19 +1619,34 @@ def test_wait_bad_wake_filter(script, base, tmp_path, value):
     assert "wake-on" in r.stderr
 
 
+def test_wait_idless_message_is_skipped_and_warned(script, base, tmp_path):
+    path = write_inbox(base, FIRST, {"type": "message", "kind": "note"})
+    result = run(script, "wait", "--timeout", "0", env=env_for(base, tmp_path))
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert f"skipping unreadable message {path}" in result.stderr
+
+
+def test_wait_path_option_preserves_path_output(script, base, tmp_path):
+    path = write_inbox(base, FIRST, message("readable"))
+    result = run(script, "wait", "--path", "--timeout", "0", env=env_for(base, tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(path)
+
+
 def test_wait_first_child_report_overrides_once_per_start(script, base, tmp_path):
     child_snapshot(base)
     first = write_inbox(base, FIRST, {**message("first"), "from": "kid", "kind": "note"})
     args = ("wait", "--wake-on", "done", "--timeout", "0")
     env = env_for(base, tmp_path)
-    assert run(script, *args, env=env).stdout.strip() == str(first)
+    assert run(script, *args, env=env).stdout.strip() == "first"
     assert first.exists()
     run(script, "read", "first", env=env)
     second = write_inbox(base, SECOND, {**message("second"), "from": "kid", "kind": "note"})
     assert run(script, *args, env=env).returncode == 1
     child_snapshot(base, started=time.time() - 0.01)
     os.utime(second, None)
-    assert run(script, *args, env=env).stdout.strip() == str(second)
+    assert run(script, *args, env=env).stdout.strip() == "second"
 
 
 @pytest.mark.parametrize("read", [False, True])
@@ -1733,7 +1754,7 @@ def test_wait_skips_reserved_status_until_sender_exits(script, base, tmp_path):
         fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
         assert run(script, "wait", "--timeout", "0", env=env).returncode == 1
         assert path.exists()
-    assert run(script, "wait", "--timeout", "0", env=env).stdout.strip() == str(path)
+    assert run(script, "wait", "--timeout", "0", env=env).stdout.strip() == "reply"
 
 
 def test_wait_poll_respects_timeout(script, base, tmp_path):
@@ -1758,7 +1779,7 @@ def test_wait_filter_matches_status_state(script, base, tmp_path):
     r = run(
         script, "wait", "--wake-on", "failed,refused", "--timeout", "0", env=env_for(base, tmp_path)
     )
-    assert r.stdout.strip() == str(expected)
+    assert r.stdout.strip() == "failed"
     assert len(list((base / "inbox").glob("*.json"))) == 2
 
 
@@ -1801,7 +1822,7 @@ def test_wait_first_report_from_stopped_child(script, base, tmp_path):
     path = write_inbox(base, FIRST, {**message("first"), "from": "kid", "kind": "note"})
     r = run(script, "wait", "--wake-on", "done", "--timeout", "0", env=env_for(base, tmp_path))
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == str(path)
+    assert r.stdout.strip() == "first"
 
 
 @pytest.mark.parametrize("sig", [15, 9])
@@ -1834,7 +1855,7 @@ def test_killed_send_releases_reply_reservation(script, base, tmp_path, sig):
         path = write_inbox(base, FIRST, status("late", ref=mid))
         r = run(script, "wait", "--timeout", "0", env=env)
         assert r.returncode == 0, r.stderr
-        assert r.stdout.strip() == str(path)
+        assert r.stdout.strip() == "late"
         assert path.exists()
     finally:
         try:
@@ -1885,7 +1906,7 @@ def test_send_wait_sigint_exits_130_without_traceback(base, tmp_path):
             timeout=5,
         )
         assert result.returncode == 0
-        assert result.stdout.strip() == str(path)
+        assert result.stdout.strip() == "late"
     finally:
         if proc.poll() is None:
             proc.kill()

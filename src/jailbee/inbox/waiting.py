@@ -167,7 +167,18 @@ def select_wakeup(
         children = {}
         running.clear()
 
+    from jailbee.inbox.cli import _warning, message_id
+
     records = _records(base)
+
+    readable_records: list[tuple[Path, dict[str, Any], int]] = []
+    for record in records:
+        path, _, _ = record
+        if path.parent == base / "inbox" and message_id(path) is None:
+            _warning(path)
+            continue
+        readable_records.append(record)
+    records = readable_records
 
     first: dict[str, Path] = {}
     latest = {name: children[name] for name in running}

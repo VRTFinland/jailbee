@@ -26,10 +26,20 @@ def test_select_respects_filter_and_first_report(tmp_path):
             "children": [{"name": "kid", "running": True, "started_at": 900}],
         },
     )
-    put(tmp_path / "inbox/read/old.json", {"type": "message", "from": "kid", "kind": "note"}, 950)
-    put(tmp_path / "inbox/a.json", {"type": "message", "from": "kid", "kind": "note"}, 1000)
+    put(
+        tmp_path / "inbox/read/old.json",
+        {"id": "old", "type": "message", "from": "kid", "kind": "note"},
+        950,
+    )
+    put(
+        tmp_path / "inbox/a.json",
+        {"id": "a", "type": "message", "from": "kid", "kind": "note"},
+        1000,
+    )
     selected = put(
-        tmp_path / "inbox/b.json", {"type": "message", "from": "other", "kind": "question"}, 1001
+        tmp_path / "inbox/b.json",
+        {"id": "b", "type": "message", "from": "other", "kind": "question"},
+        1001,
     )
     assert select_wakeup(tmp_path, frozenset({"question"}), 0, 1001) == str(selected)
     (tmp_path / "inbox/read/old.json").unlink()
@@ -38,10 +48,26 @@ def test_select_respects_filter_and_first_report(tmp_path):
     )
 
 
+def test_select_skips_message_without_readable_id(tmp_path, capsys):
+    from jailbee.inbox.waiting import select_wakeup
+
+    missing_id = put(tmp_path / "inbox/a.json", {"type": "message", "kind": "note"})
+    selected = put(
+        tmp_path / "inbox/b.json",
+        {"id": "readable", "type": "message", "kind": "note"},
+        1001,
+    )
+
+    assert select_wakeup(tmp_path, None, 0, 1000) == str(selected)
+    assert f"skipping unreadable message {missing_id}" in capsys.readouterr().err
+
+
 def test_select_skips_live_reserved_status(tmp_path):
     from jailbee.inbox.waiting import find_status, select_wakeup
 
-    status = put(tmp_path / "inbox/a.json", {"type": "status", "state": "done", "ref": "abc"})
+    status = put(
+        tmp_path / "inbox/a.json", {"id": "abc", "type": "status", "state": "done", "ref": "abc"}
+    )
     lock = tmp_path / "status-waits/abc.lock"
     lock.parent.mkdir()
     with lock.open("w") as stream:
@@ -79,7 +105,7 @@ def test_select_ignores_partially_invalid_snapshot(tmp_path):
             "children": [{"name": "kid", "running": True, "started_at": 900}, {}],
         },
     )
-    message = put(tmp_path / "inbox/a.json", {"type": "message", "kind": "note"})
+    message = put(tmp_path / "inbox/a.json", {"id": "a", "type": "message", "kind": "note"})
     assert select_wakeup(tmp_path, None, 0, 1000) == str(message)
     with pytest.raises(InboxUsage, match=r"needs a fresh broker children\.json"):
         select_wakeup(tmp_path, None, 1, 1000)
@@ -226,7 +252,9 @@ def test_digest_message_wins(tmp_path):
 
     snapshot(tmp_path, [kid()])
     (tmp_path / "digest-at").write_text(str(NOW - 9999))
-    message = put(tmp_path / "inbox/a.json", {"type": "message", "from": "kid", "kind": "note"})
+    message = put(
+        tmp_path / "inbox/a.json", {"id": "a", "type": "message", "from": "kid", "kind": "note"}
+    )
     assert select_wakeup(tmp_path, frozenset({"note"}), 0, NOW, 60) == str(message)
 
 
@@ -328,9 +356,12 @@ def test_cmd_wait_digest_message_wins_and_digest_follows(tmp_path, capsys):
     stamp = tmp_path / "digest-at"
     old = time.time() - 120
     stamp.write_text(str(old))
-    message = put(tmp_path / "inbox/a.json", {"type": "message", "from": "alpha", "kind": "note"})
+    message = put(
+        tmp_path / "inbox/a.json",
+        {"id": "a", "type": "message", "from": "alpha", "kind": "note"},
+    )
     assert cli.cmd_wait(settings, digest="1m", timeout="0") == 0
-    assert capsys.readouterr().out.strip() == str(message)
+    assert capsys.readouterr().out.strip() == "a"
     assert float(stamp.read_text()) == old  # a message wakeup does not consume the digest
     message.unlink()
     assert cli.cmd_wait(settings, digest="1m", timeout="0") == 0

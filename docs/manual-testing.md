@@ -6048,10 +6048,10 @@ clone:
 jailbee inbox send message --kind question --text "which file name?"   # prints the manifest id
 ```
 
-In the orchestrator, `jailbee inbox wait` returns the path of the first unread
-message (it uses inotify when available, polls every
-`JAILBEE_INBOX_POLL` seconds otherwise); `ls` lists unread messages and `read
-<id>` prints one and moves it to `inbox/read/`. Mark the earlier `status`
+In the orchestrator, `jailbee inbox wait` prints the id of the first unread
+message (use `--path` to print its path; it uses inotify when available, polls
+every `JAILBEE_INBOX_POLL` seconds otherwise); `ls` lists unread messages and
+`read <id>` prints one and moves it to `inbox/read/`. Mark the earlier `status`
 messages read first, or `wait` returns at once.
 
 1. In the child, with inotify available and no unread messages, start `jailbee inbox wait --timeout none`.
