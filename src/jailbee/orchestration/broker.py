@@ -88,6 +88,7 @@ if TYPE_CHECKING:
     from jailbee.orchestration.listener import Event
     from jailbee.orchestration.outbox import RawManifest
     from jailbee.orchestration.protocol import Manifest
+    from jailbee.orchestration.socket_ops import Waiters
     from jailbee.orchestration.state import QueuedRequest
     from jailbee.orchestration.watch import JobSnapshot
 
@@ -135,11 +136,19 @@ class BrokerMemory:
     requests: queue.Queue[Event] = field(default_factory=queue.Queue)
     # Container full name -> volatile.uuid whose socket device we attached.
     attached: dict[str, str] = field(default_factory=dict)
+    # Parked `next` long-polls, answered by the executor.
+    waiters: Waiters = field(default_factory=lambda: _new_waiters())
 
     def warn_once(self, key: str, msg: str, *args: object) -> None:
         if key not in self.warned:
             self.warned.add(key)
             log.warning(msg, *args)
+
+
+def _new_waiters() -> Waiters:
+    from jailbee.orchestration.socket_ops import Waiters
+
+    return Waiters()
 
 
 class StopFlag:
@@ -1209,6 +1218,8 @@ def run_broker(incus: Incus) -> int:
         publishing.recover(root)
         log.info("orchestration broker starting")
         _stage_container_app(memory)
+        from jailbee.orchestration import executor
+
         while not stop.requested:
             try:
                 active = tick(
@@ -1221,7 +1232,12 @@ def run_broker(incus: Incus) -> int:
             if installed is not None and installed != __version__:
                 log.info("jailbee %s installed, running %s; restarting", installed, __version__)
                 return UPGRADED_EXIT
-            _pause(ACTIVE_INTERVAL if active else IDLE_INTERVAL, stop)
+            interval = ACTIVE_INTERVAL if active else IDLE_INTERVAL
+            if memory.listener is not None:
+                executor.evaluate_waiters(memory)
+                executor.serve_requests(memory, until=time.monotonic() + interval, stop=stop)
+            else:
+                _pause(interval, stop)
         log.info("orchestration broker stopping")
         return 0
     finally:

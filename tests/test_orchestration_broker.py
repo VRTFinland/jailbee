@@ -23,6 +23,20 @@ from jailbee.orchestration.protocol import InboxStatus
 from jailbee.orchestration.state import QueuedRequest, load_queue, save_queue
 from tests.conftest import make_config
 
+
+@pytest.fixture(autouse=True)
+def _serve_requests_through_pause(monkeypatch: pytest.MonkeyPatch) -> None:
+    """run_broker waits via the executor; these tests drive that wait through `_pause`."""
+    import time
+
+    from jailbee.orchestration import executor
+
+    def serve(memory: Any, *, until: float, stop: Any) -> None:
+        broker._pause(round(until - time.monotonic(), 2), stop)
+
+    monkeypatch.setattr(executor, "serve_requests", serve)
+
+
 if TYPE_CHECKING:
     from pathlib import Path
 
