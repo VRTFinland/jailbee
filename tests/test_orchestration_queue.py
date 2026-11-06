@@ -190,6 +190,25 @@ def test_start_child_records_reservation(tmp_path: Path, monkeypatch: pytest.Mon
     }
 
 
+def test_started_child_remains_watched_when_reservation_store_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from jailbee.create_flow import CreateStarted
+    from jailbee.orchestration.store import StoreError
+    from jailbee.orchestration.watch import load_watch
+
+    rig = Rig(tmp_path, limit=2)
+    monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
+    launch = MagicMock(return_value=CreateStarted("proj-fix-1", 777, tmp_path / "log"))
+    monkeypatch.setattr(actions, "start_create", launch)
+    monkeypatch.setattr(actions, "save_reservations", MagicMock(side_effect=StoreError("disk full")))
+
+    assert actions.handle_spawn(rig.ctx(), _m(kind="new")).state == "started"
+    launch.assert_called_once()
+    assert "could not reserve creating child" in caplog.text
+    assert load_watch(tmp_path)["proj-orch"][0].child_full == "proj-fix-1"
+
+
 def test_dead_reservation_does_not_count(
     tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
 ) -> None:

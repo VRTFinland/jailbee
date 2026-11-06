@@ -81,7 +81,7 @@ _MIGRATIONS: list[str] = [
 ]
 
 
-class StoreError(Exception):
+class StoreError(OSError):
     """The broker store failed (corrupt file, locked too long, ...)."""
 
 
