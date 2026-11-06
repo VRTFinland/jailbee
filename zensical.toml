@@ -35,6 +35,7 @@ nav = [
     "commands.md",
     "git-bridge.md",
     "orchestration.md",
+    "orchestration-protocol.md",
     "remote-gui.md",
     "project-config.md",
     "troubleshooting.md",

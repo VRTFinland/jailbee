@@ -1,9 +1,9 @@
-# Orchestration protocol: manifest and inbox schema
+# Orchestration protocol
 
-This file is the authoritative schema for the orchestration outbox and inbox.
-The broker on the host validates every manifest against it; a manifest that
-does not match is answered with a `refused` status. All names are **short
-names** (the branch-level name, never one prefixed with the repo).
+This page documents the wire format behind `jailbee inbox`. Agents use the
+`jailbee inbox` commands; this schema is for protocol development and review.
+The host broker validates manifests and answers invalid requests with `refused`.
+All names are **short names** (the branch-level name, never repo-prefixed).
 
 ## Directories
 
@@ -543,3 +543,79 @@ egress host is covered by an entry in `grantable.egress`, or effective loose
 permission allows it within the repo egress cap (if set). This rule applies
 to spawn and runtime grants. Anything else is
 `refused`.
+
+
+### Child rights specifics
+
+
+Give up rights orchestration supplied; ask for additional rights with a
+`question` message, never a grant. `child` must be absent or your own short
+name, and `grant` must be absent (even null is not allowed). Otherwise the
+broker replies `children may only revoke their own rights`.
+
+<!-- kind: child-outbox -->
+```json
+{"version": 1, "id": "rights-1", "type": "rights",
+ "revoke": {"loose": true, "mounts": ["aws"], "egress": ["pypi.org"]}}
+```
+
+At least one item is required. CLI: `jailbee inbox send rights --revoke-loose
+--revoke-mount aws --revoke-egress pypi.org --wait`. A successful revoke replies
+`done` and sends the parent a `note` such as `fix-12 gave up: loose`.
+Hand-added rights not owned by orchestration are left as is with a detail,
+not an error.
+
+The orchestrator's `rights` operation allows grants within its current
+permission and repo cap; revoke-only needs no operation but still an active
+grant. Effective loose permission implies narrower egress within the repo
+cap (or any host if the cap has no egress list), at spawn and runtime alike.
+Every grant has `for` (max 24h or `never`), never shortens a right orchestration owns and skips one held by hand,
+and is checked/applied whole with best-effort rollback on failure. A child
+never sends the grant block.
+
+
+### Child inbox specifics
+
+
+Files are named `<UTC yyyymmddThhmmssZ>-<seq>-<id>.json`, so a plain sort is
+emission order. Host-generated ids look like `h-<8 hex>`. Move a handled
+message to `inbox/read/` (or use `jailbee inbox read <id>`).
+
+A `message` from your orchestrator (`from` is its short name):
+
+<!-- kind: inbox -->
+```json
+{"version": 1, "id": "h-3fa9c012", "type": "message", "from": "main-orch",
+ "kind": "note", "body": "Use the existing parser.", "in_reply_to": "h-77aa01bc"}
+```
+
+An `update` message carries optional `imported_ref` and `imported_sha`
+(full commit ID), plus a body naming the parent's source. With no selector,
+that is its current branch at `refs/jailbee/from/<orchestrator>/<branch>`.
+An explicit ref, commit or host base arrives instead at
+`refs/jailbee/update/<orchestrator>/<manifest-id>`, isolated from branch
+updates and imported child refs. Always use the message's ref. Commit or stash,
+`git merge <imported_ref>`, resolve conflicts, commit, then continue. The
+broker never merges into your worktree. Other import fields on messages are
+`import_error`, `on_done` (`destroy` or `keep`) and `on_done_reason` (why a
+successfully imported child is kept).
+
+Done status details say where the work was imported and whether the child
+will be destroyed or kept. Import errors keep the child and are delivered
+to the orchestrator for retry. A queued finish waits for parent delivery
+before import/cleanup; a vanished parent keeps the child and reports an error.
+
+A `status` reply answers one of your manifests; `ref` is the manifest id and
+`state` is `done` (delivered), `queued` (your orchestrator is not running; the
+message is delivered when it starts) or `refused`. Only `refused` is final and
+needs action. The two `done`-check refusals above are joined by
+`could not fetch your branch to the host: ...` and
+`could not record the done report: ...`, which are not your manifest's fault:
+retry `done` once under a new id, and send `blocked` if it repeats.
+
+<!-- kind: inbox -->
+```json
+{"version": 1, "id": "h-0a1b2c40", "type": "status", "ref": "msg-0003",
+ "state": "refused",
+ "detail": "uncommitted changes: commit everything before reporting done"}
+```

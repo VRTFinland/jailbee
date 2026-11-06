@@ -406,10 +406,12 @@ def test_orchestration_skill_describes_resuming_child_sessions() -> None:
 
 
 def test_orchestration_protocol_examples_use_short_names() -> None:
-    proto = _skill_text(ORCH, "references/protocol.md")
+    proto = _protocol_text()
     for t in ("spawn", "message", "import", "restart", "stop", "destroy"):
         assert f'"type": "{t}"' in proto, t
     assert "<repo>-" not in proto
+    assert "outbox" in {kind for kind, _ in _tagged_blocks()}
+    assert "child-outbox" in {kind for kind, _ in _tagged_blocks()}
     assert "<repo>-" not in _skill_text(ORCH)
 
 
@@ -1161,14 +1163,18 @@ _JSON_BLOCK = re.compile(r"(?:<!-- kind: (?P<kind>[\w-]+) -->\n)?```json\n(?P<bo
 _KINDS = {"outbox", "child-outbox", "inbox", "grant"}
 
 
-def _tagged_blocks(skill: str) -> list[tuple[str, str]]:
-    text = _skill_text(skill, "references/protocol.md")
+def _protocol_text() -> str:
+    return (Path(__file__).resolve().parents[1] / "docs" / "orchestration-protocol.md").read_text()
+
+
+def _tagged_blocks() -> list[tuple[str, str]]:
+    text = _protocol_text()
     blocks = []
     for m in _JSON_BLOCK.finditer(text):
         kind = m.group("kind")
-        assert kind in _KINDS, f"{skill}: json block without a valid kind tag:\n{m.group('body')}"
+        assert kind in _KINDS, f"orchestration-protocol.md: json block without a valid kind tag:\n{m.group('body')}"
         blocks.append((kind, m.group("body")))
-    assert blocks, skill
+    assert blocks, "orchestration-protocol.md"
     return blocks
 
 
@@ -1182,8 +1188,7 @@ def _validate_grant_json(data: dict) -> None:
     assert (source is None) == (grant.default_runner is None)
 
 
-@pytest.mark.parametrize("skill", [ORCH, CHILD])
-def test_protocol_examples_parse_with_broker_models(skill: str) -> None:
+def test_protocol_examples_parse_with_broker_models() -> None:
     from jailbee.orchestration.protocol import (
         InboxMessage,
         InboxStatus,
@@ -1194,7 +1199,7 @@ def test_protocol_examples_parse_with_broker_models(skill: str) -> None:
 
     # Any body_file / prompt_file the examples name is "next to the manifest".
     files = {"spawn-fix-12.md": "Fix issue 12.", "restart-fix-12-b.md": "Try again."}
-    for kind, body in _tagged_blocks(skill):
+    for kind, body in _tagged_blocks():
         data = json.loads(body)
         if kind in ("outbox", "child-outbox"):
             manifest = parse_manifest(f"{data['id']}.json", body, files)
@@ -1232,7 +1237,7 @@ def test_grant_json_example_validation_rejects_invalid_fields(changes: dict) -> 
 
 def test_protocol_block_tag_check_rejects_an_untagged_block(monkeypatch) -> None:
     monkeypatch.setattr(
-        sys.modules[__name__], "_skill_text", lambda *_a, **_k: '```json\n{"version": 1}\n```\n'
+        sys.modules[__name__], "_protocol_text", lambda: '```json\n{"version": 1}\n```\n'
     )
     with pytest.raises(AssertionError, match="without a valid kind tag"):
-        _tagged_blocks(ORCH)
+        _tagged_blocks()

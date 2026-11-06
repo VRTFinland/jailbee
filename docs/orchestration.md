@@ -861,6 +861,12 @@ directory without such a mount is not there in the child; it would have to
 travel in the prompt, which is capped at 64 KiB. When children share such a
 directory, each should write only its own files in it.
 
+## Protocol reference
+
+The wire schema behind `jailbee inbox` is documented in the
+[orchestration protocol reference](orchestration-protocol.md). Agents use the
+inbox commands; the schema page is for protocol development and review.
+
 ## Skills
 
 Two skills teach the agents the protocol, so they cooperate without help:
