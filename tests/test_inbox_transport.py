@@ -76,11 +76,11 @@ def test_socket_path_default_and_override():
     assert transport.socket_path({"JAILBEE_ORCHESTRATION_SOCKET": "/x/y"}) == Path("/x/y")
 
 
-def test_socket_available(path):
+def test_socket_available_is_parent_dir_exists(sockdir, path):
     env = {"JAILBEE_ORCHESTRATION_SOCKET": str(path)}
-    assert not transport.socket_available(env)
-    path.touch()
-    assert transport.socket_available(env)
+    assert transport.socket_available(env)  # dir exists, socket file does not
+    gone = {"JAILBEE_ORCHESTRATION_SOCKET": str(sockdir / "nope" / "b.sock")}
+    assert not transport.socket_available(gone)
 
 
 def test_exit_code_and_message():
@@ -235,3 +235,63 @@ def test_call_send_connect_failure_not_resent(path):
     with pytest.raises(BrokerUnreachable):
         call_send(factory, {}, timeout=1)
     assert len(made) == 1
+
+
+def test_call_next_backoff_resets_after_reconnect():
+    script = [True, False, False, True, False, None]  # connected?; None = success
+
+    class Stub:
+        def __init__(self, step):
+            self.step = step
+            self.connected = step is True
+
+        def call(self, op, args, *, timeout):
+            if self.step is None:
+                return {"kind": "message"}
+            raise BrokerUnreachable()
+
+        def close(self):
+            pass
+
+    it = iter(script)
+    sleeps: list[float] = []
+    result = call_next(lambda: Stub(next(it)), {}, timeout=None, sleep=sleeps.append)
+    assert result == {"kind": "message"}
+    assert sleeps == [0.5, 1.0, 2.0, 0.5, 1.0]
+
+
+def test_call_send_resends_after_partial_write(path, monkeypatch):
+    # the first connection is accepted but the request never reaches it
+    srv = serve(path, lambda r: None, lambda r: wire.ok({"state": "queued"}))
+    real = Client.call
+    state = {"n": 0}
+
+    def flaky(self, op, args, *, timeout):
+        state["n"] += 1
+        if state["n"] == 1:
+            self._connect()
+            raise BrokerUnreachable()  # dropped during sendall: request_written False
+        return real(self, op, args, timeout=timeout)
+
+    monkeypatch.setattr(Client, "call", flaky)
+    try:
+        assert call_send(lambda: Client(path), {"id": "x"}, timeout=5) == {"state": "queued"}
+    finally:
+        srv.close()
+
+
+def test_call_send_timeout_propagates(path):
+    release = threading.Event()
+
+    def slow(_r):
+        release.wait(5)
+        return None
+
+    srv = serve(path, slow)
+    try:
+        with pytest.raises(TimeoutError):
+            call_send(lambda: Client(path), {"id": "x"}, timeout=0.2)
+        assert len(srv.requests) == 1
+    finally:
+        release.set()
+        srv.close()

@@ -60,7 +60,14 @@ def socket_path(environ: Mapping[str, str]) -> Path:
 
 
 def socket_available(environ: Mapping[str, str]) -> bool:
-    return os.path.lexists(socket_path(environ))
+    """True when the container has the orchestration device.
+
+    The socket's parent directory is the mount point Incus creates whenever the
+    device is attached, even if the host side is missing; so a missing socket
+    file or a refused connection inside it means "broker down" (exit 4), and
+    only a container without the device uses the file path.
+    """
+    return os.path.isdir(socket_path(environ).parent)
 
 
 class Client:
@@ -181,6 +188,8 @@ def call_next(
             ever_connected = ever_connected or client.connected
             if not ever_connected:
                 raise
+            if client.connected:
+                backoff = _BACKOFF_START  # the broker was reachable again
         except TimeoutError:
             return {"kind": "timeout"}
         finally:
@@ -199,14 +208,18 @@ def call_send(
     timeout: float | None,
 ) -> Any:
     """Send once; re-send the same request once if the connection dropped
-    after it was written (the broker is idempotent by manifest id)."""
+    after it was written, or while it was being written (the broker never got
+    a full line, and is idempotent by manifest id).
+
+    A client-side ``TimeoutError`` propagates unchanged; callers map it to
+    exit 3, like a "no reply" timeout."""
     first = client_factory()
     try:
         return first.call("send", args, timeout=timeout)
     except BrokerVersionMismatch:
         raise
     except BrokerUnreachable:
-        if not first.request_written:
+        if not (first.request_written or first.connected):
             raise
     finally:
         first.close()

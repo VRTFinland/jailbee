@@ -6,19 +6,30 @@ as events; responses are written back through :meth:`Listener.respond`. All
 selector and socket state is owned by the listener thread; other threads hand
 work over through a command queue plus a wakeup socket pair.
 
+A client that half-closes (``SHUT_WR``) before its reply is dropped: EOF is
+treated as a disconnect, so clients must keep the write side open until the
+response has arrived.
+
+Stopping the listener leaves the socket files in place, so clients get
+ECONNREFUSED while the broker is down; only :meth:`Listener.close_container`
+(the role ended) removes a socket file.
+
 Standard library only.
 """
 
 from __future__ import annotations
 
 import contextlib
+import errno
 import itertools
 import logging
 import os
 import queue
 import selectors
 import socket
+import stat
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +40,8 @@ from jailbee.orchestration import wire
 log = logging.getLogger(__name__)
 
 SOCKET_NAME = "broker.sock"
+MAX_CONNECTIONS_PER_CONTAINER = 8
+_ACCEPT_PAUSE = 1.0  # seconds a listening socket rests after EMFILE/ENFILE
 _RECV_BYTES = 65536
 
 
@@ -80,6 +93,7 @@ class Listener:
         self._ids = itertools.count(1)
         self._lock = threading.Lock()
         self._known: set[str] = set()
+        self._paused: dict[str, float] = {}  # uuid -> monotonic resume time
         self._thread: threading.Thread | None = None
         self._running = False
 
@@ -112,16 +126,20 @@ class Listener:
 
     def open_container(self, uuid: str, sock_dir: Path) -> bool:
         """Start listening for ``uuid``; return True when ``sock_dir`` was created."""
+        if sock_dir.is_symlink():
+            raise OSError(f"{sock_dir} is a symlink")
         created = not sock_dir.exists()
         sock_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if created:
-            os.chmod(sock_dir, 0o700)
+        st = os.lstat(sock_dir)
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+            raise OSError(f"{sock_dir} is not a directory owned by the current user")
+        os.chmod(sock_dir, 0o700)
         path = sock_dir / SOCKET_NAME
         self._call(lambda: self._open(uuid, path))
         return created
 
     def close_container(self, uuid: str) -> None:
-        self._call(lambda: self._close_server(uuid, events=True))
+        self._call(lambda: self._close_server(uuid, events=True, unlink=True))
 
     def respond(self, conn_id: int, response: wire.Response) -> None:
         try:
@@ -156,7 +174,13 @@ class Listener:
                 done.set()
 
         self._post(run)
-        done.wait()
+        while not done.wait(0.1):
+            thread = self._thread
+            if thread is None or not thread.is_alive():
+                # The loop is gone (shutdown): nobody else will run the command.
+                self._run_commands()
+                done.wait()
+                break
         if box:
             raise box[0]
 
@@ -164,8 +188,9 @@ class Listener:
 
     def _run(self) -> None:
         while self._running:
+            timeout = self._resume_paused()
             try:
-                events = self._sel.select(timeout=1.0)
+                events = self._sel.select(timeout=timeout)
             except Exception:
                 log.exception("listener select failed")
                 continue
@@ -184,6 +209,21 @@ class Listener:
                         self._drop_conn(ident, event=True)
             self._run_commands()
         self._run_commands()
+
+    def _resume_paused(self) -> float:
+        """Re-register rested listening sockets; return the select timeout."""
+        timeout = 1.0
+        now = time.monotonic()
+        for uuid, until in list(self._paused.items()):
+            if until <= now:
+                del self._paused[uuid]
+                server = self._servers.get(uuid)
+                if server is not None:
+                    with contextlib.suppress(Exception):
+                        self._sel.register(server.sock, selectors.EVENT_READ, ("listen", uuid))
+            else:
+                timeout = min(timeout, until - now)
+        return timeout
 
     def _drain_wake(self) -> None:
         with contextlib.suppress(OSError):
@@ -220,8 +260,9 @@ class Listener:
         with self._lock:
             self._known.add(uuid)
 
-    def _close_server(self, uuid: str, events: bool) -> None:
+    def _close_server(self, uuid: str, events: bool, unlink: bool = False) -> None:
         server = self._servers.pop(uuid, None)
+        self._paused.pop(uuid, None)
         with self._lock:
             self._known.discard(uuid)
         if server is None:
@@ -231,8 +272,9 @@ class Listener:
         with contextlib.suppress(Exception):
             self._sel.unregister(server.sock)
         server.sock.close()
-        with contextlib.suppress(OSError):
-            server.path.unlink()
+        if unlink:
+            with contextlib.suppress(OSError):
+                server.path.unlink()
 
     def _shutdown_all(self) -> None:
         for uuid in list(self._servers):
@@ -247,10 +289,21 @@ class Listener:
                 sock, _ = server.sock.accept()
             except (BlockingIOError, InterruptedError):
                 return
-            except OSError:
-                log.exception("accept failed for %s", uuid)
+            except OSError as exc:
+                if exc.errno in (errno.EMFILE, errno.ENFILE):
+                    log.error("accept for %s hit the fd limit; pausing %.0fs", uuid, _ACCEPT_PAUSE)
+                    with contextlib.suppress(Exception):
+                        self._sel.unregister(server.sock)
+                    self._paused[uuid] = time.monotonic() + _ACCEPT_PAUSE
+                else:
+                    log.exception("accept failed for %s", uuid)
                 return
             sock.setblocking(False)
+            if len(server.conns) >= MAX_CONNECTIONS_PER_CONTAINER:
+                with contextlib.suppress(OSError):
+                    sock.send(wire.encode_response(wire.fail(wire.BUSY, "too many connections")))
+                sock.close()
+                continue
             conn_id = next(self._ids)
             self._conns[conn_id] = _Conn(conn_id, uuid, sock)
             server.conns.add(conn_id)
@@ -296,6 +349,8 @@ class Listener:
                 request = wire.decode_request(line)
             except wire.WireError as exc:
                 self._send(conn.conn_id, wire.encode_response(wire.fail(exc.code, exc.detail)))
+                if conn.conn_id not in self._conns:
+                    return  # dropped while replying (e.g. EPIPE)
                 continue
             self._requests.put(RequestEvent(conn.uuid, conn.conn_id, request))
 
