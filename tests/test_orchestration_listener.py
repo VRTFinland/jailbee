@@ -49,6 +49,18 @@ def connect(path: Path) -> socket.socket:
     return s
 
 
+def connect_retrying(path: Path) -> socket.socket:
+    """`connect`, waiting while the listen backlog is full (EAGAIN on AF_UNIX)."""
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            return connect(path)
+        except BlockingIOError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.01)
+
+
 def recv_line(s: socket.socket) -> bytes:
     buf = b""
     while not buf.endswith(b"\n"):
@@ -499,8 +511,9 @@ def test_open_send_close_loops_cannot_flood_the_queue(
     lis.open_container("bad", root / "bad")
     lis.open_container("good", root / "good")
     for _ in range(100):
-        c = connect(root / "bad")
-        c.sendall(req("list"))
+        c = connect_retrying(root / "bad")
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+            c.sendall(req("list"))  # refused as busy now and then: fine
         c.close()
     good = connect(root / "good")
     good.sendall(req("list"))
@@ -553,7 +566,10 @@ def test_a_disconnect_without_a_request_in_flight_queues_nothing(
     lis, q, root = env
     lis.open_container("u", root / "u")
     for _ in range(20):
-        connect(root / "u").close()
+        connect_retrying(root / "u").close()
+    deadline = time.monotonic() + 5
+    while lis._servers["u"].conns and time.monotonic() < deadline:
+        time.sleep(0.01)  # every close noticed, so the next connection is accepted
     c = connect(root / "u")
     c.sendall(req("list"))
     ev = q.get(timeout=2)
