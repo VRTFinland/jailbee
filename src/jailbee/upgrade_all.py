@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 BuildStatus = Literal["skipped", "planned", "built", "shared", "failed"]
 ApplyStatus = Literal["skipped", "planned", "applied", "failed", "blocked"]
+SeedStatus = Literal["-", "seeded", "skipped", "failed"]
 
 
 @dataclass
@@ -45,6 +46,7 @@ class RepoResult:
     prefix: str | None
     build: BuildStatus = "skipped"
     apply: ApplyStatus = "skipped"
+    seed: SeedStatus = "-"
     reasons: list[str] = field(default_factory=list)
     error: str | None = None
 
@@ -117,6 +119,7 @@ def run_upgrade_all(
     dry_run: bool,
     version: str,
     now: datetime,
+    docker_seed: bool = True,
 ) -> list[RepoResult]:
     """Upgrade every repo in `roots`; return one result per repo, in order."""
     from jailbee.apply import run_apply
@@ -188,6 +191,39 @@ def run_upgrade_all(
             if not applied.fully_successful:
                 result.error = "; ".join(f"{n}: {m}" for n, m in applied.port_failures)
 
+        seed_cfg = cfg.golden.docker_seed
+        if (
+            docker_seed
+            and seed_cfg is not None
+            and seed_cfg.enabled
+            and result.build == "built"
+            and result.apply not in {"failed", "blocked"}
+        ):
+            from jailbee.docker_seed import SeedOutcome, SeedPreflightError, SeedRequest, preflight
+            from jailbee.tui import warn
+
+            request = SeedRequest(None, False, False)
+            try:
+                preflight(cfg, incus, request)
+            except SeedPreflightError as e:
+                result.seed = "skipped"
+                warn(f"Docker seeding skipped for {cfg.container_prefix}: {e}")
+                from jailbee.docker_seed import record_outcome
+
+                record_outcome(cfg, SeedOutcome("skipped", "seed-container", detail=str(e)))
+            else:
+                from jailbee.docker_seed import run_seed
+
+                outcome = run_seed(cfg, incus, gcfg, request)
+                if outcome.outcome == "seeded":
+                    result.seed = "seeded"
+                elif outcome.outcome == "skipped":
+                    result.seed = "skipped"
+                elif outcome.outcome == "failed":
+                    result.seed = "failed"
+                if result.seed == "failed":
+                    warn(f"Docker seeding failed for {cfg.container_prefix}: {outcome.detail}")
+
     _print_summary(results, dry_run=dry_run)
     if all(r.ok for r in results):
         success("Dry run complete." if dry_run else "Upgrade complete; no container was restarted.")
@@ -200,7 +236,7 @@ def _print_summary(results: list[RepoResult], *, dry_run: bool) -> None:
     info_plain("")
     info_plain("Summary" + (" (dry run)" if dry_run else ""))
     for r in results:
-        line = f"  {r.prefix or r.root}: base build {r.build}, apply {r.apply}"
+        line = f"  {r.prefix or r.root}: base build {r.build}, apply {r.apply}, seed {r.seed}"
         if r.error:
             line += f" — {r.error}"
         info_plain(line)

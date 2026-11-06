@@ -68,7 +68,7 @@ def _notes(mocker: MockerFixture, *actions: str) -> None:
     )
 
 
-def _run(roots, *, force=False, dry_run=False):
+def _run(roots, *, force=False, dry_run=False, docker_seed=True):
     return run_upgrade_all(
         roots,
         Incus(),
@@ -77,7 +77,60 @@ def _run(roots, *, force=False, dry_run=False):
         dry_run=dry_run,
         version=VERSION,
         now=NOW,
+        docker_seed=docker_seed,
     )
+
+
+def test_upgrade_seeds_only_a_built_alias_after_apply(make_cfg, tmp_path, mocker, fakes) -> None:
+    build, apply = fakes
+    a = _cfg(make_cfg, tmp_path, "aa")
+    b = _cfg(make_cfg, tmp_path, "bb", alias=a.golden.alias)
+    for cfg in (a, b):
+        object.__setattr__(cfg.golden, "docker_seed", type("SeedConfig", (), {"enabled": True})())
+    _load(mocker, {a.repo_root: a, b.repo_root: b})
+    _observe("aa", "1.0.0")
+    _observe("bb", "1.0.0")
+    _notes(mocker, "base_build", "apply")
+    preflight = mocker.patch("jailbee.docker_seed.preflight")
+    run_seed = mocker.patch(
+        "jailbee.docker_seed.run_seed",
+        create=True,
+        return_value=type("Outcome", (), {"outcome": "seeded", "detail": ""})(),
+    )
+
+    results = _run([a.repo_root, b.repo_root])
+
+    assert [r.build for r in results] == ["built", "shared"]
+    assert [r.seed for r in results] == ["seeded", "-"]
+    assert build.call_count == 1
+    assert apply.call_count == 2
+    preflight.assert_called_once()
+    run_seed.assert_called_once()
+
+
+def test_seed_preflight_failure_records_skipped_without_blocking_repo(
+    make_cfg, tmp_path, mocker, fakes
+) -> None:
+    from jailbee.docker_seed import SeedPreflightError
+
+    a = _cfg(make_cfg, tmp_path, "aa")
+    object.__setattr__(a.golden, "docker_seed", type("SeedConfig", (), {"enabled": True})())
+    _load(mocker, {a.repo_root: a})
+    preflight = mocker.patch(
+        "jailbee.docker_seed.preflight", side_effect=SeedPreflightError("no docker")
+    )
+    record_outcome = mocker.patch("jailbee.docker_seed.record_outcome", create=True)
+    run_seed = mocker.patch("jailbee.docker_seed.run_seed", create=True)
+    warn = mocker.patch("jailbee.tui.warn")
+
+    (result,) = _run([a.repo_root], force=True)
+
+    assert result.seed == "skipped"
+    assert result.ok
+    preflight.assert_called_once()
+    record_outcome.assert_called_once()
+    run_seed.assert_not_called()
+    warn.assert_called_once()
 
 
 def test_force_builds_and_applies_every_repo(make_cfg, tmp_path, mocker, fakes) -> None:
@@ -92,6 +145,47 @@ def test_force_builds_and_applies_every_repo(make_cfg, tmp_path, mocker, fakes) 
     assert build.call_count == 2
     assert apply.call_count == 2
     assert all(r.ok for r in results)
+
+
+def test_seed_skips_repo_when_build_blocks_apply(make_cfg, tmp_path, mocker, fakes) -> None:
+    build, _ = fakes
+    build.side_effect = IncusError("build failed")
+    a = _cfg(make_cfg, tmp_path, "aa")
+    object.__setattr__(a.golden, "docker_seed", type("SeedConfig", (), {"enabled": True})())
+    _load(mocker, {a.repo_root: a})
+    preflight = mocker.patch("jailbee.docker_seed.preflight")
+    run_seed = mocker.patch("jailbee.docker_seed.run_seed", create=True)
+
+    (result,) = _run([a.repo_root], force=True)
+
+    assert result.build == "failed"
+    assert result.apply == "blocked"
+    assert result.seed == "-"
+    preflight.assert_not_called()
+    run_seed.assert_not_called()
+
+
+def test_seed_failure_does_not_stop_sweep(make_cfg, tmp_path, mocker, fakes) -> None:
+    a = _cfg(make_cfg, tmp_path, "aa")
+    b = _cfg(make_cfg, tmp_path, "bb")
+    for cfg in (a, b):
+        object.__setattr__(cfg.golden, "docker_seed", type("SeedConfig", (), {"enabled": True})())
+    _load(mocker, {a.repo_root: a, b.repo_root: b})
+    mocker.patch("jailbee.docker_seed.preflight")
+    run_seed = mocker.patch(
+        "jailbee.docker_seed.run_seed",
+        create=True,
+        side_effect=[
+            type("Outcome", (), {"outcome": "failed", "detail": "load failed"})(),
+            type("Outcome", (), {"outcome": "seeded", "detail": ""})(),
+        ],
+    )
+
+    results = _run([a.repo_root, b.repo_root], force=True)
+
+    assert [r.seed for r in results] == ["failed", "seeded"]
+    assert [r.ok for r in results] == [True, True]
+    assert run_seed.call_count == 2
 
 
 def test_apply_never_restarts(make_cfg, tmp_path, mocker, fakes) -> None:
@@ -119,6 +213,20 @@ def test_default_runs_only_what_the_notes_owe(make_cfg, tmp_path, mocker, fakes)
     assert apply.call_count == 1
     assert results[0].build == "skipped"
     assert results[0].apply == "applied"
+
+
+def test_docker_seed_false_skips_seed(make_cfg, tmp_path, mocker, fakes) -> None:
+    a = _cfg(make_cfg, tmp_path, "aa")
+    object.__setattr__(a.golden, "docker_seed", type("SeedConfig", (), {"enabled": True})())
+    _load(mocker, {a.repo_root: a})
+    preflight = mocker.patch("jailbee.docker_seed.preflight")
+    run_seed = mocker.patch("jailbee.docker_seed.run_seed", create=True)
+
+    (result,) = _run([a.repo_root], force=True, docker_seed=False)
+
+    assert result.seed == "-"
+    preflight.assert_not_called()
+    run_seed.assert_not_called()
 
 
 def test_default_skips_a_repo_with_nothing_owed(make_cfg, tmp_path, mocker, fakes) -> None:
