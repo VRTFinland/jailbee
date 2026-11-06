@@ -6,6 +6,7 @@ import os
 import sqlite3
 import stat
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -203,6 +204,33 @@ def test_migrations_extendable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     assert row[0] == str(len(extended))
 
 
+def test_failed_migration_rolls_back_and_can_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = store_path(tmp_path)
+    st = BrokerStore(path)
+    st.recipients()
+    original = list(store_mod._MIGRATIONS)
+    script = "CREATE TABLE migration_probe(x);\nINSERT INTO migration_probe VALUES (42);"
+    monkeypatch.setattr(store_mod, "_MIGRATIONS", [*original, script + "\nINSERT INTO missing VALUES (1);"])
+    with pytest.raises(StoreError):
+        st.recipients()
+    with sqlite3.connect(path) as con:
+        assert con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() == (
+            str(len(original)),
+        )
+        assert con.execute(
+            "SELECT name FROM sqlite_master WHERE name='migration_probe'"
+        ).fetchone() is None
+    monkeypatch.setattr(store_mod, "_MIGRATIONS", [*original, script])
+    st.recipients()
+    with sqlite3.connect(path) as con:
+        assert con.execute("SELECT x FROM migration_probe").fetchall() == [(42,)]
+        assert con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() == (
+            str(len(original) + 1),
+        )
+
+
 def test_state_roundtrip_and_literal_prefix(st: BrokerStore) -> None:
     assert st.kv_get("missing") is None
     st.kv_put("a%_one", {"items": [1, True]})
@@ -226,17 +254,30 @@ def test_import_once_atomic_and_shared(tmp_path: Path) -> None:
         first.import_once("legacy", failing)
     assert second.kv_get("key") is None
 
+    entered = threading.Event()
+    release = threading.Event()
+    competing = threading.Event()
+
     def load(con: sqlite3.Connection) -> None:
         calls.append(1)
         con.execute("INSERT INTO state VALUES ('key', '2')")
+        entered.set()
+        assert release.wait(5)
 
-    threads = [
-        threading.Thread(target=s.import_once, args=("legacy", load)) for s in (first, second)
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    def compete() -> bool:
+        competing.set()
+        return second.import_once("legacy", load)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        winner = pool.submit(first.import_once, "legacy", load)
+        try:
+            assert entered.wait(5)
+            contender = pool.submit(compete)
+            assert competing.wait(5)
+        finally:
+            release.set()
+        assert winner.result(timeout=10) is True
+        assert contender.result(timeout=10) is False
     assert calls == [1]
     assert second.kv_get("key") == 2
     first.kv_put("key", 3)
