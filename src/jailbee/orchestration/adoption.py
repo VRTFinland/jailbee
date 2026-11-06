@@ -14,8 +14,8 @@ from jailbee.lifecycle import short_name
 from jailbee.orchestration import commands, labels, outbox, rights, state, watch
 from jailbee.orchestration.grant import GrantError, effective_grant
 from jailbee.orchestration.profiles import repo_cap
-from jailbee.orchestration.store import PendingImportError
 from jailbee.orchestration.protocol import InboxMessage, new_host_id
+from jailbee.orchestration.store import PendingImportError
 
 if TYPE_CHECKING:
     from pathlib import Path

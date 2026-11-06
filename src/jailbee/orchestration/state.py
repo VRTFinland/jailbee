@@ -68,9 +68,9 @@ def load_reservations(root: Path) -> dict[str, list[Reservation]]:
     Raises PendingImportError while the legacy import cannot finish: an empty
     answer would undercount slots and let spawns exceed the cap.
     """
-    raw = import_json_document(
-        root, RESERVATIONS_FILE, _validate_reservations, strict=True
-    ).kv_get(RESERVATIONS_FILE)
+    raw = import_json_document(root, RESERVATIONS_FILE, _validate_reservations, strict=True).kv_get(
+        RESERVATIONS_FILE
+    )
     if raw is None:
         return {}
     groups = cast(dict[str, Any], raw)["reservations"]
