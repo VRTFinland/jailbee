@@ -336,7 +336,12 @@ def repo_uses_docker(cfg: Config) -> bool:
 GOLDEN_INSTANCE_SUFFIX = "--golden"
 
 
-_GOLDEN_FAMILY_SUFFIXES = (GOLDEN_INSTANCE_SUFFIX, "--build", "--old")
+_GOLDEN_FAMILY_SUFFIXES = (GOLDEN_INSTANCE_SUFFIX, "--build", "--old", "--seeding")
+
+
+def golden_seeding_name(alias: str) -> str:
+    """Name of the disposable Docker image loading instance."""
+    return f"{alias}--seeding"
 
 
 def golden_instance_name(alias: str) -> str:
@@ -471,7 +476,11 @@ def _recover_leftovers(cfg: Config, incus: Incus) -> None:
     aside = f"{alias}--old"
     # The pre-1.x name of the build container, still recovered so an upgrade
     # does not inherit a leaked one under a name nothing else looks at.
-    for build in (golden_build_name(alias), f"{cfg.container_prefix}-base-build"):
+    for build in (
+        golden_build_name(alias),
+        golden_seeding_name(alias),
+        f"{cfg.container_prefix}-base-build",
+    ):
         if incus.exists(build):
             warn(f"Removing leftover {build} from a previous failed build")
             incus.delete(build, force=True)
@@ -528,6 +537,57 @@ def _remove_other_forms(cfg: Config, incus: Incus, *, instance_mode: bool) -> No
         info(f"Removed {removed} old golden archive(s), {humanize(total)}")
 
 
+def promote_instance(incus: Incus, staging: str, alias: str) -> None:
+    """Replace the stopped golden, restoring its predecessor if promotion fails."""
+    golden = golden_instance_name(alias)
+    aside = f"{alias}--old"
+    _strip_local_nics(incus, staging)
+    incus.config_unset(staging, "security.nesting")
+    set_aside = incus.exists(golden)
+    if set_aside:
+        incus.rename(golden, aside)
+    info(f"Promoting {staging} to {golden}")
+    try:
+        incus.rename(staging, golden)
+    except BaseException:
+        if set_aside:
+            _best_effort(
+                f"restore the previous golden {golden} from {aside}",
+                lambda: incus.rename(aside, golden),
+            )
+        raise
+    if set_aside:
+        _best_effort(
+            f"delete the previous golden {aside}",
+            lambda: incus.delete(aside, force=True),
+        )
+
+
+def promote_image(incus: Incus, staging: str, alias: str) -> None:
+    """Publish a stopped instance and atomically replace the golden alias."""
+    new_alias = f"{alias}--new"
+    old_alias = f"{alias}--old"
+    info(f"Publishing as {alias}")
+    incus.publish(staging, new_alias)
+    had_old = incus.image_exists(alias)
+    if had_old:
+        incus.image_alias_rename(alias, old_alias)
+    try:
+        incus.image_alias_rename(new_alias, alias)
+    except BaseException:
+        if had_old:
+            _best_effort(
+                f"restore the previous golden image {alias} from {old_alias}",
+                lambda: incus.image_alias_rename(old_alias, alias),
+            )
+        raise
+    if had_old:
+        _best_effort(
+            f"delete the previous golden image {old_alias}",
+            lambda: incus.image_delete(old_alias),
+        )
+
+
 def build_golden_image(cfg: Config, incus: Incus) -> None:
     """Build the golden from a fresh Ubuntu container.
 
@@ -548,7 +608,6 @@ def build_golden_image(cfg: Config, incus: Incus) -> None:
     alias = cfg.golden.alias
     build_container = golden_build_name(alias)
     golden = golden_instance_name(alias)
-    aside = f"{alias}--old"
     stacks = cfg.golden.stacks
 
     placement = resolve_golden_placement(cfg, incus)
@@ -692,52 +751,10 @@ def build_golden_image(cfg: Config, incus: Incus) -> None:
         # One version only: deleting an image or golden instance never breaks
         # the containers made from it on btrfs, and ZFS defers the delete itself.
         if placement.instance_mode:
-            # The build-time NIC (jailbee-loose) and nesting flag are build
-            # needs; a copy of the golden takes its NIC and config from profiles.
-            _strip_local_nics(incus, build_container)
-            incus.config_unset(build_container, "security.nesting")
-            set_aside = False
-            if incus.exists(golden):
-                incus.rename(golden, aside)
-                set_aside = True
-            info(f"Promoting {build_container} to {golden}")
-            try:
-                incus.rename(build_container, golden)
-            except BaseException:
-                if set_aside:
-                    _best_effort(
-                        f"restore the previous golden {golden} from {aside}",
-                        lambda: incus.rename(aside, golden),
-                    )
-                raise
+            promote_instance(incus, build_container, alias)
             promoted = True
-            if set_aside:
-                _best_effort(
-                    f"delete the previous golden {aside}",
-                    lambda: incus.delete(aside, force=True),
-                )
         else:
-            new_alias = f"{alias}--new"
-            old_alias = f"{alias}--old"
-            info(f"Publishing as {alias}")
-            incus.publish(build_container, new_alias)
-            had_old = incus.image_exists(alias)
-            if had_old:
-                incus.image_alias_rename(alias, old_alias)
-            try:
-                incus.image_alias_rename(new_alias, alias)
-            except BaseException:
-                if had_old:
-                    _best_effort(
-                        f"restore the previous golden image {alias} from {old_alias}",
-                        lambda: incus.image_alias_rename(old_alias, alias),
-                    )
-                raise
-            if had_old:
-                _best_effort(
-                    f"delete the previous golden image {old_alias}",
-                    lambda: incus.image_delete(old_alias),
-                )
+            promote_image(incus, build_container, alias)
     finally:
         if not promoted:
             info("Deleting build container")

@@ -110,6 +110,42 @@ def _call_index(incus, name, *args, **kwargs):
     raise AssertionError(f"{name}{args} not called; calls: {incus.mock_calls}")
 
 
+def test_seeding_instance_is_a_golden_family_name():
+    from jailbee.golden import golden_seeding_name, is_golden_instance_name
+
+    assert golden_seeding_name("base") == "base--seeding"
+    assert is_golden_instance_name("base--seeding")
+
+
+def test_recover_leftovers_deletes_a_seeding_instance(make_cfg, tmp_path):
+    from jailbee.golden import _recover_leftovers, golden_seeding_name
+
+    cfg = make_cfg(tmp_path)
+    staging = golden_seeding_name(cfg.golden.alias)
+    incus = _incus(existing=(staging,))
+    _recover_leftovers(cfg, incus)
+    incus.delete.assert_called_once_with(staging, force=True)
+
+
+def test_promote_instance_restores_previous_golden_when_rename_fails():
+    from jailbee.golden import promote_instance
+
+    incus = _incus(existing=("base--golden", "base--seeding"))
+    original = incus.rename.side_effect
+
+    def rename(src, dst):
+        if src == "base--seeding":
+            raise IncusError("promotion failed")
+        original(src, dst)
+
+    incus.rename.side_effect = rename
+    with pytest.raises(IncusError, match="promotion failed"):
+        promote_instance(incus, "base--seeding", "base")
+    assert incus.exists("base--golden")
+    assert not incus.exists("base--old")
+    incus.delete.assert_not_called()
+
+
 def test_build_calls_launch_exec_publish_delete():
     cfg = load_config(FIXTURES / "full_config.yaml")
     incus = _incus()
