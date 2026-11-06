@@ -381,7 +381,8 @@ def test_broker_source_worker_runs_real_domain_gates(source_publisher, tmp_path,
         "rights": {"pull_requests": True},
     }
     publishing._run(p["cfg"], tmp_path, "full", "c", entry)
-    result = json.loads(publishing._result(tmp_path, "full", "pub-real").read_text())
+    result = publishing._get_result(tmp_path, "full", "pub-real")
+    assert result is not None
     assert result["state"] == "done"
     assert result["actions"] == [{"kind": "source", "repo": "acme/widgets"}]
     assert result["urls"] == ["https://github.com/acme/widgets/pull/42"]
