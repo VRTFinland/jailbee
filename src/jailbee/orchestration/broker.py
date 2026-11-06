@@ -67,11 +67,14 @@ from jailbee.orchestration.protocol import (
     SpawnManifest,
     StopManifest,
     body_file_of,
+    inbox_file_name_for,
     new_host_id,
     parse_manifest,
 )
 from jailbee.orchestration.state import (
+    atomic_write_text,
     load_queue,
+    pending_dir,
     purge_vanished_pending,
     save_queue,
     state_root,
@@ -136,6 +139,9 @@ class BrokerMemory:
     requests: queue.Queue[Event] = field(default_factory=queue.Queue)
     # Container full name -> volatile.uuid whose socket device we attached.
     attached: dict[str, str] = field(default_factory=dict)
+    # volatile.uuids whose sock dir this process created: the device must be
+    # re-asserted (remove + add) until that has succeeded once.
+    reassert: set[str] = field(default_factory=set)
     # Parked `next` long-polls, answered by the executor.
     waiters: Waiters = field(default_factory=lambda: _new_waiters())
 
@@ -702,7 +708,9 @@ def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
             if role == "none":
                 memory.env_ensured.discard(full)
                 memory.env_roles.pop(full, None)
-                _teardown_socket(ctx.incus, memory, full, ctx.sender.config.get("volatile.uuid"))
+                _teardown_socket(
+                    ctx.incus, memory, full, ctx.sender.config.get("volatile.uuid"), ctx.root
+                )
                 return
             if full in memory.env_ensured and memory.env_roles.get(full) == role:
                 _ensure_socket(ctx, memory)
@@ -739,10 +747,20 @@ def _ensure_socket(ctx: ActionContext, memory: BrokerMemory) -> None:
     if listener.has_container(uuid) and memory.attached.get(full) == uuid:
         return
     try:
-        created = False
         if not listener.has_container(uuid):
-            created = listener.open_container(uuid, socket_device.sock_dir(ctx.root, uuid))
-        socket_device.attach(ctx.incus, full, ctx.root, uuid, reassert=created)
+            sdir = socket_device.sock_dir(ctx.root, uuid)
+            existed = sdir.exists()
+            try:
+                created = listener.open_container(uuid, sdir)
+            except OSError:
+                # The directory may be ours although the bind failed.
+                if not existed and sdir.exists():
+                    memory.reassert.add(uuid)
+                raise
+            if created:
+                memory.reassert.add(uuid)
+        socket_device.attach(ctx.incus, full, ctx.root, uuid, reassert=uuid in memory.reassert)
+        memory.reassert.discard(uuid)
         _migrate_inbox(ctx, memory)
         store.set_recipient(full, uuid, now=time.time())
         memory.attached[full] = uuid
@@ -753,28 +771,96 @@ def _ensure_socket(ctx: ActionContext, memory: BrokerMemory) -> None:
         )
 
 
-def _teardown_socket(incus: Incus, memory: BrokerMemory, full: str, uuid: str | None) -> None:
-    """Remove the device, close the listener and drop the recipient row."""
+def _export_unacked(
+    store: BrokerStore, memory: BrokerMemory, root: Path, full: str, uuid: str
+) -> None:
+    """Park each unacked store item as a pending file, then ack it.
+
+    The file path's `flush_pending` delivers them; an item is acked only once
+    its file is written, so a failure loses nothing.
+    """
+    for row in store.unacked(uuid):
+        name = inbox_file_name_for(
+            row.id, datetime.fromtimestamp(row.created_at, UTC), seq=next(memory.seq)
+        )
+        atomic_write_text(pending_dir(root, full) / name, json.dumps(row.item))
+        store.ack(uuid, row.id, now=time.time())
+
+
+def _teardown_socket(
+    incus: Incus, memory: BrokerMemory, full: str, uuid: str | None, root: Path
+) -> None:
+    """Remove the device, close the listener and drop the recipient row.
+
+    Unacked store items move to the pending dir first, so none is lost.
+    """
     listener, store = memory.listener, memory.store
     if listener is None or store is None:
         return
-    uuid = uuid or memory.attached.get(full)
     try:
+        uuid = uuid or memory.attached.get(full) or store.recipient_uuid(full)
+        if uuid:
+            _export_unacked(store, memory, root, full, uuid)
         socket_device.detach(incus, full)
         if uuid:
             listener.close_container(uuid)
         store.remove_recipient(full)
+        if uuid:  # an insert that raced the row's removal
+            _export_unacked(store, memory, root, full, uuid)
         memory.attached.pop(full, None)
+        memory.reassert.discard(uuid or "")
     except (IncusError, OSError, StoreError) as exc:
         memory.warn_once(
             f"socket-off:{full}", "broker: %s: could not remove the broker socket: %s", full, exc
         )
 
 
-def _check_socket_devices(incus: Incus, raw: list[dict[str, Any]], memory: BrokerMemory) -> None:
+def _forget_vanished(raw: list[dict[str, Any]], memory: BrokerMemory) -> None:
+    """Close listeners and drop state of containers that are gone or recreated.
+
+    No device call: a vanished container has no device to remove, and a
+    recreated one is set up (under its new uuid) when it is next served.
+    """
+    listener, store = memory.listener, memory.store
+    if listener is None or store is None:
+        return
+    live: dict[str, str | None] = {}
+    for entry in raw:
+        name, config = entry.get("name"), entry.get("config")
+        if isinstance(name, str) and isinstance(config, dict):
+            uuid = config.get("volatile.uuid")
+            live[name] = uuid if isinstance(uuid, str) and uuid else None
+    try:
+        recipients = store.recipients()
+    except StoreError as exc:
+        memory.warn_once("socket-recipients", "broker: cannot read the recipients: %s", exc)
+        recipients = {}
+    for full in set(memory.attached) | set(recipients):
+        current = live.get(full, "")  # "" -> the name is gone
+        if current is None:
+            continue  # present but without a uuid: nothing to compare
+        known = {u for u in (memory.attached.get(full), recipients.get(full)) if u}
+        stale = known if current == "" else {u for u in known if u != current}
+        if not stale:
+            continue
+        try:
+            for uuid in stale:
+                listener.close_container(uuid)
+                memory.reassert.discard(uuid)
+            memory.attached.pop(full, None)
+            if recipients.get(full) in stale:
+                store.remove_recipient(full)
+        except (OSError, StoreError) as exc:
+            memory.warn_once(f"socket-gone:{full}", "broker: %s: %s", full, exc)
+
+
+def _check_socket_devices(
+    incus: Incus, raw: list[dict[str, Any]], memory: BrokerMemory, root: Path
+) -> None:
     """Strip foreign devices, tear down lost roles and notice vanished devices."""
     if memory.listener is None or memory.store is None:
         return
+    _forget_vanished(raw, memory)
     for entry in raw:
         name = entry.get("name")
         config = entry.get("config")
@@ -792,7 +878,7 @@ def _check_socket_devices(incus: Incus, raw: list[dict[str, Any]], memory: Broke
             if name in memory.attached and not socket_device.has_device(entry):
                 memory.attached.pop(name, None)
         elif name in memory.attached or socket_device.has_device(entry):
-            _teardown_socket(incus, memory, name, config.get("volatile.uuid"))
+            _teardown_socket(incus, memory, name, config.get("volatile.uuid"), root)
 
 
 def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
@@ -887,7 +973,7 @@ def tick(
     prune_reservations(root)
     memory.publish_threads[:] = [worker for worker in memory.publish_threads if worker.is_alive()]
     raw = incus.list_containers()
-    _check_socket_devices(incus, raw, memory)
+    _check_socket_devices(incus, raw, memory, root)
     candidates = [
         e
         for e in raw
@@ -1020,7 +1106,9 @@ def tick(
                     "broker: %s has an unparseable orchestration grant label; ignored",
                     node.full,
                 )
-                # Messages parked while it was an orchestrator still get delivered.
+                # Its inbox leaves the store (nothing is lost), then parked
+                # messages, including those, still get delivered.
+                _teardown_socket(incus, memory, node.full, node.config.get("volatile.uuid"), root)
                 if node.running and has_pending(root, node.full):
                     flush_pending(
                         incus,

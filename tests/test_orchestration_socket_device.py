@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import queue
 from typing import TYPE_CHECKING, Any
@@ -8,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from jailbee.incus import ORCHESTRATION_DEVICE, IncusError
-from jailbee.orchestration import broker, labels, socket_device
+from jailbee.orchestration import broker, labels, socket_device, state
 from jailbee.orchestration.store import BrokerStore, store_path
 from tests.test_orchestration_broker import GRANT, Rig, _c
 
@@ -22,6 +23,7 @@ class FakeListener:
     def __init__(self) -> None:
         self.open: set[str] = set()
         self.created = True
+        self.fail_open_after_mkdir = False
         self.opened: list[str] = []
         self.closed: list[str] = []
 
@@ -29,6 +31,9 @@ class FakeListener:
         return uuid in self.open
 
     def open_container(self, uuid: str, sock_dir: Path) -> bool:
+        if self.fail_open_after_mkdir:
+            sock_dir.mkdir(parents=True, exist_ok=True)
+            raise OSError("bind failed")
         self.open.add(uuid)
         self.opened.append(uuid)
         return self.created
@@ -127,9 +132,12 @@ def test_role_opens_listener_attaches_device_and_records_recipient(env, make, na
 def test_second_round_does_not_readd(env) -> None:
     env.set(orch())
     env.tick()
+    env.rig.incus.config_device_get.reset_mock()
     env.tick()
     assert adds(env) == ["proj-orch"]
     assert env.listener.opened == [UUID]
+    # a settled container costs no per-round incus call
+    env.rig.incus.config_device_get.assert_not_called()
 
 
 def test_created_dir_reasserts_device(env) -> None:
@@ -165,6 +173,19 @@ def test_mismatched_source_is_removed_and_reattached(env) -> None:
     env.devices["proj-orch"] = {ORCHESTRATION_DEVICE: {"source": "/x/sock/other"}}
     env.tick()
     assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"].endswith(UUID)
+
+
+def test_foreign_device_on_a_served_container_is_replaced(env) -> None:
+    env.set(orch())
+    env.tick()
+    assert adds(env) == ["proj-orch"]
+    env.listener.created = False
+    env.devices["proj-orch"] = {ORCHESTRATION_DEVICE: {"source": "/x/sock/other"}}
+    env.tick()
+    assert adds(env) == ["proj-orch", "proj-orch"]
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(
+        env.rig.root / "sock" / UUID
+    )
 
 
 def test_mismatched_on_unlabelled_container_is_removed(env) -> None:
@@ -207,3 +228,108 @@ def test_no_volatile_uuid_skips_socket(env) -> None:
 
 def test_memory_has_request_queue() -> None:
     assert isinstance(broker.BrokerMemory().requests, queue.Queue)
+
+
+def test_reassert_survives_an_attach_failure(env) -> None:
+    src = str(env.rig.root / "sock" / UUID)
+    env.devices["proj-orch"] = {ORCHESTRATION_DEVICE: {"source": src}}
+    env.remove.side_effect = IncusError("boom")
+    env.set(orch())
+    env.tick()  # created=True, but the remove fails
+    assert env.store.recipients() == {}
+    env.remove.side_effect = env._remove
+    env.listener.created = False
+    env.tick()
+    assert adds(env) == ["proj-orch"]  # same source, yet still re-asserted
+    env.tick()
+    env.rig.incus.config_device_get.reset_mock()
+    env.tick()
+    assert adds(env) == ["proj-orch"]  # and only once
+    assert env.memory.reassert == set()
+
+
+def test_reassert_survives_a_bind_failure(env) -> None:
+    src = str(env.rig.root / "sock" / UUID)
+    env.devices["proj-orch"] = {ORCHESTRATION_DEVICE: {"source": src}}
+    env.listener.fail_open_after_mkdir = True
+    env.set(orch())
+    env.tick()
+    assert env.store.recipients() == {}
+    env.listener.fail_open_after_mkdir = False
+    env.listener.created = False
+    env.tick()
+    assert adds(env) == ["proj-orch"]
+
+
+def test_vanished_container_is_forgotten_without_a_device_call(env) -> None:
+    env.set(orch())
+    env.tick()
+    env.remove.reset_mock()
+    env.set()
+    env.tick()
+    assert env.listener.closed == [UUID]
+    assert env.memory.attached == {}
+    assert env.store.recipients() == {}
+    env.remove.assert_not_called()
+
+
+def test_recreated_container_closes_the_old_listener(env) -> None:
+    env.set(orch("u1"))
+    env.tick()
+    env.set(orch("u2"))
+    env.devices.clear()
+    env.tick()
+    assert env.listener.closed == ["u1"]
+    assert env.listener.open == {"u2"}
+    assert env.store.recipients() == {"proj-orch": "u2"}
+    assert env.memory.attached == {"proj-orch": "u2"}
+
+
+def test_recreated_container_is_dropped_even_when_not_served(env) -> None:
+    env.set(orch("u1"))
+    env.tick()
+    env.set(_c("proj-orch", running=False, **{"volatile.uuid": "u2", labels.GRANT: "x"}))
+    env.devices.clear()
+    env.tick()
+    assert "u1" in env.listener.closed
+    assert env.store.recipients() == {}
+    assert "proj-orch" not in env.memory.attached
+
+
+def test_unparseable_grant_tears_down_and_exports_unacked_items(env) -> None:
+    env.set(orch())
+    env.tick()
+    env.store.insert_item(
+        UUID, "proj-orch", {"type": "message", "id": "m1", "kind": "note"}, now=1.0
+    )
+    env.store.insert_item(
+        UUID, "proj-orch", {"type": "message", "id": "m2", "kind": "note"}, now=2.0
+    )
+    env.store.ack(UUID, "m1", now=3.0)
+    env.store.insert_item(
+        UUID, "proj-orch", {"type": "message", "id": "m3", "kind": "note"}, now=4.0
+    )
+    env.set(_c("proj-orch", **{labels.GRANT: "{not json", "volatile.uuid": UUID}))
+    env.tick()
+    assert env.store.recipients() == {}
+    assert env.listener.closed == [UUID]
+    assert ORCHESTRATION_DEVICE not in env.devices.get("proj-orch", {})
+    assert env.store.unacked(UUID) == []
+    files = sorted(state.pending_dir(env.rig.root, "proj-orch").iterdir())
+    assert [f.name.rsplit("-", 1)[-1] for f in files] == ["m2.json", "m3.json"]
+    assert json.loads(files[0].read_text())["id"] == "m2"
+
+
+def test_teardown_keeps_items_when_export_fails(env, monkeypatch) -> None:
+    env.set(orch())
+    env.tick()
+    env.store.insert_item(
+        UUID, "proj-orch", {"type": "message", "id": "m1", "kind": "note"}, now=1.0
+    )
+    monkeypatch.setattr(
+        broker, "atomic_write_text", MagicMock(side_effect=OSError("disk full")), raising=False
+    )
+    env.set(_c("proj-orch", **{labels.GRANT: "{not json", "volatile.uuid": UUID}))
+    env.tick()
+    assert [i.id for i in env.store.unacked(UUID)] == ["m1"]
+    assert env.store.recipients() == {"proj-orch": UUID}

@@ -472,8 +472,13 @@ def inbox_file_name(item: InboxItem, now: datetime, *, seq: int = 0) -> str:
     items written within one second. The stamp leads, so a counter reset
     by a broker restart cannot reorder anything across seconds.
     """
+    return inbox_file_name_for(item.id, now, seq=seq)
+
+
+def inbox_file_name_for(item_id: str, now: datetime, *, seq: int = 0) -> str:
+    """`inbox_file_name` for a bare id (an item known only as stored JSON)."""
     stamp = now.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
-    return f"{stamp}-{seq:08d}-{item.id}.json"
+    return f"{stamp}-{seq:08d}-{item_id}.json"
 
 
 def _load_object(text: str) -> dict[str, Any]:
