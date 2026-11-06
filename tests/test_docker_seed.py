@@ -217,8 +217,11 @@ def test_timer_stops_and_joins_before_cleanup(rig, monkeypatch):
 
     cfg, incus = rig
     name = f"{cfg.container_prefix}-docker-seed"
-    incus.exists.side_effect = [False, True, True]
-    clock = iter([0, 0, 3601, 3601])
+    incus.exists.side_effect = [False, True]
+    watchdog = Mock()
+    watchdog.exists.return_value = True
+    incus.with_deadline.side_effect = [watchdog, incus]
+    clock = iter([0, 0, 3601, 3601, 3601])
     monkeypatch.setattr(docker_seed.time, "monotonic", lambda: next(clock))
     events = []
 
@@ -240,7 +243,9 @@ def test_timer_stops_and_joins_before_cleanup(rig, monkeypatch):
     monkeypatch.setattr(lifecycle, "destroy_container", lambda *a, **kw: events.append("destroy"))
     result = docker_seed.run_seed(cfg, incus, Mock(), docker_seed.SeedRequest(None, False, True))
     assert result.outcome == "failed" and "timed out" in result.detail
-    incus.stop.assert_called_once_with(name, force=True)
+    watchdog.stop.assert_called_once_with(name, force=True)
+    incus.stop.assert_not_called()
+    assert incus.with_deadline.call_args_list[0].args == (3631,)
     assert events == ["cancel", "join", "destroy"]
 
 

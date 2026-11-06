@@ -311,8 +311,11 @@ def run_seed(cfg: Config, incus: Incus, gcfg: GlobalConfig, req: SeedRequest) ->
 
         def stop_on_timeout() -> None:
             try:
-                if incus.exists(name):
-                    incus.stop(name, force=True)
+                # The work deadline has expired; give the watchdog its own
+                # short budget so joining it cannot hang on an unresponsive daemon.
+                watchdog = incus.with_deadline(time.monotonic() + 30)
+                if watchdog.exists(name):
+                    watchdog.stop(name, force=True)
             except IncusError as exc:
                 warn(f"Could not stop timed-out seed container {name}: {exc}")
 
