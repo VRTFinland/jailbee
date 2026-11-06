@@ -944,11 +944,17 @@ def _ensure_socket(ctx: ActionContext, memory: BrokerMemory) -> None:
             recorded = ctx.incus.config_device_get(full, ORCHESTRATION_DEVICE, "source")
             reused = (
                 socket_device.reusable_dir(ctx.root, uuid, recorded)
-                if memory.socket_devices_verified and recorded not in memory.unsafe_socket_dirs
+                if (
+                    memory.socket_devices_verified
+                    and recorded not in memory.unsafe_socket_dirs
+                    and not store.kv_get(f"socket-retired:{recorded}")
+                )
                 else None
             )
             if reused is None and recorded and socket_device.dir_uuid(recorded) == uuid:
-                # e.g. a legacy `sock/<uuid>`: never served again, so remove it.
+                # Persist retirement before cleanup: an invisible or lazily
+                # detached copy may hold it across another broker restart.
+                store.kv_put(f"socket-retired:{recorded}", True)
                 with contextlib.suppress(OSError):
                     socket_device.remove_dir(ctx.root, recorded)
             sdir = reused or socket_device.fresh_sock_dir(ctx.root, uuid)
@@ -1113,6 +1119,21 @@ def _strip_copy(
 ) -> None:
     """Remove a foreign socket device; move the socket if it named the live directory."""
     where = name if project is None else f"{project}/{name}"
+    source = socket_device.source_uuid(entry)
+    path = socket_device.source(entry)
+    listener, store = memory.listener, memory.store
+    assert listener is not None and store is not None
+    if source and path:
+        memory.unsafe_socket_dirs.add(path)
+        try:
+            # Keep the foreign device visible until its directory is durably
+            # retired, even when removal or a later rotation fails.
+            store.kv_put(f"socket-retired:{path}", True)
+        except StoreError as exc:
+            memory.warn_once(f"socket-retire:{path}", "broker: %s: %s", path, exc)
+            with contextlib.suppress(OSError):
+                listener.close_container(source)
+            return
     log.warning("broker: %s carries another instance's socket device; removing", where)
     try:
         socket_device.detach(incus, name, project=project)
@@ -1121,13 +1142,8 @@ def _strip_copy(
     # Whether or not the detach worked (it may fail, or be lazy while the
     # copy holds the directory), a copy that mounts the source's live
     # directory moves the source to a fresh one.
-    source = socket_device.source_uuid(entry)
-    path = socket_device.source(entry)
-    listener = memory.listener
-    assert listener is not None
     if not source or not path:
         return
-    memory.unsafe_socket_dirs.add(path)
     if str(listener.socket_dir(source)) == path:
         _rotate_socket(incus, memory, root, source, where)
         return

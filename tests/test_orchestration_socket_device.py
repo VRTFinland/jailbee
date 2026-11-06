@@ -347,6 +347,26 @@ def test_a_failed_copy_directory_removal_never_allows_reuse(env, monkeypatch) ->
     assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(env.listener.dirs[UUID])
 
 
+def test_a_failed_directory_removal_stays_retired_after_another_restart(env, monkeypatch) -> None:
+    env.set(orch())
+    env.tick()
+    old = env.listener.dirs[UUID]
+    snapshot_device = dict(env.devices["proj-orch"][ORCHESTRATION_DEVICE])
+    _restart_broker(env)
+    _copy_of_the_source(env)
+    with monkeypatch.context() as patch:
+        patch.setattr(socket_device, "remove_dir", MagicMock(side_effect=OSError("EBUSY")))
+        env.tick()
+    assert old.exists()
+    assert ORCHESTRATION_DEVICE not in env.devices["proj-copy"]
+    # A snapshot restore can name the retired directory after its foreign
+    # device disappeared; a lazily detached copy may still hold that mount.
+    env.devices["proj-orch"][ORCHESTRATION_DEVICE] = snapshot_device
+    _restart_broker(env)
+    env.tick()
+    assert env.listener.dirs[UUID] != old
+
+
 def test_a_restart_reuses_no_legacy_directory(env) -> None:
     """The old broker reset the socket in place: a copy may hold `sock/<uuid>`."""
     legacy = env.rig.root / "sock" / UUID
