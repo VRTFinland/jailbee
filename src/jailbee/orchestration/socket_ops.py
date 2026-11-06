@@ -66,6 +66,9 @@ def handle_send(
         store.insert_item(
             ctx.sender.key, ctx.sender.full, recorded.item, now=time.time(), acked=wait
         )
+        if wait and isinstance(recorded.item.get("id"), str):
+            # An earlier send without --wait left it unread; the client prints it now.
+            store.ack(ctx.sender.key, str(recorded.item["id"]), now=time.time())
         return recorded.item
     if recorded is not None or publishing.was_accepted(ctx, request_id):
         # The file transport drops these silently; a socket client needs a

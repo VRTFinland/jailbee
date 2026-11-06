@@ -197,3 +197,12 @@ def test_handlers_see_the_time_of_handling(env: Env) -> None:
     seen = env.rig.dispatch.call_args.args[0].now
     assert seen != env.ctx.now
     assert abs(seen.timestamp() - time.time()) < 60
+
+
+def test_a_waiting_resend_marks_the_earlier_unread_status_read(env: Env) -> None:
+    """`send` without --wait, then the same id with --wait: printed, so not also unread."""
+    item = env.send(_message())
+    key = env.ctx.sender.key
+    assert [i.id for i in env.store.unacked(key)] == [item["id"]]
+    assert env.send(_message(), wait=True) == item
+    assert env.store.unacked(key) == []
