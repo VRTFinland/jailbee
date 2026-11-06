@@ -23,6 +23,40 @@ to import the module first.  Pass ``--include-import-time`` to count them.
 CAVEAT: a subset by lines means *redundant coverage*, not redundant
 assertions.  The output is a candidate list for human or LLM review, never an
 auto-delete list.
+
+Recording the data (about 100 s per shard with ``-n 8``; five shards, each run
+in the FOREGROUND because one Bash call is limited to 10 minutes; needs PyPI
+egress for ``uv run --with``).  Split the test files into five groups of
+similar line count, then for each group N in 1..5::
+
+    mkdir -p .local/test-audit/cov .local/test-audit/shards
+    uv run python - <<'PY'
+    import pathlib
+    def size(p): return len(p.read_text().splitlines())
+    files = sorted(pathlib.Path("tests").glob("test_*.py"), key=lambda p: -size(p))
+    groups = [[] for _ in range(5)]
+    sizes = [0] * 5
+    for f in files:
+        i = sizes.index(min(sizes))
+        groups[i].append(str(f))
+        sizes[i] += size(f)
+    for n, g in enumerate(groups, 1):
+        pathlib.Path(f".local/test-audit/shards/{n}.txt").write_text("\\n".join(g) + "\\n")
+    PY
+
+    export JAILBEE_NO_UPDATE_CHECK=1
+    COVERAGE_FILE=.local/test-audit/cov/shardN uv run --with coverage --with pytest-cov \\
+      pytest $(cat .local/test-audit/shards/N.txt) -n 8 -q --cov=src/jailbee \\
+      --cov-context=test --cov-report= -p no:cacheprovider \\
+      --junitxml=.local/test-audit/cov/shardN.xml --timeout=600
+
+Then combine and report (the static report must exist first for the keeper
+hints: ``uv run python scripts/test_audit_static.py``)::
+
+    (cd .local/test-audit/cov && uv run --with coverage coverage combine --keep \\
+      --data-file=combined shard1 shard2 shard3 shard4 shard5)
+    uv run --with coverage python scripts/test_audit_coverage.py
+    uv run --with coverage python scripts/test_audit_coverage.py --common-threshold 0 --tag=_raw
 """
 
 from __future__ import annotations
