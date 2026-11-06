@@ -19,6 +19,7 @@ from jailbee.db.models import (
     BackgroundJob,
     DismissedNotice,
     EgressOverride,
+    GoldenSeedState,
     PoolIP,
     RefreshState,
     RegisteredRepo,
@@ -324,6 +325,14 @@ def _execute_removal_locked(
             for row in session.exec(select(PoolIP)).all():
                 if _pool_owned(row.container_prefix, plan.prefix, known, ownership):
                     session.delete(row)
+            alias = plan.cfg.golden.alias if plan.cfg is not None else f"{plan.prefix}-base"
+            golden_delete_approved = plan.golden_kept_reason is None and (
+                alias in plan.golden_images or f"{alias}--golden" in plan.golden_instances
+            )
+            if golden_delete_approved:
+                seed_state = session.get(GoldenSeedState, alias)
+                if seed_state is not None:
+                    session.delete(seed_state)
             for records in (
                 session.exec(select(RefreshState)).all(),
                 session.exec(select(RepoUpgradeState)).all(),
@@ -455,6 +464,7 @@ def plan_removal(
             "sent_record": sum(
                 r.container_prefix == prefix for r in session.exec(select(SentRecord)).all()
             ),
+            "docker_seed_state": int(session.get(GoldenSeedState, alias) is not None),
         }
     profiles = [
         f"{prefix}-{s}"
@@ -515,7 +525,13 @@ def plan_removal(
         golden_instances = [
             n
             for n in dict.fromkeys(
-                (f"{alias}--golden", f"{alias}--build", f"{alias}--old", f"{prefix}-base-build")
+                (
+                    f"{alias}--golden",
+                    f"{alias}--build",
+                    f"{alias}--old",
+                    f"{alias}--seeding",
+                    f"{prefix}-base-build",
+                )
             )
             if n in instance_names and n not in ownership
         ]
