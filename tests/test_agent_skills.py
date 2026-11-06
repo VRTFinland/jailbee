@@ -384,10 +384,18 @@ def test_orchestration_skill_never_blocks_on_the_user() -> None:
     assert "ask before spawning" not in " ".join(text.split())
 
 
-def test_orchestration_skill_routes_missing_cli_to_the_human() -> None:
-    text = _skill_text(ORCH)
-    assert "command is missing or reports the broker unavailable" in text
+@pytest.mark.parametrize("name", [ORCH, "jailbee-orchestration-child"])
+def test_orchestration_skills_escalate_when_inbox_cli_is_unavailable(name: str) -> None:
+    text = _skill_text(name)
+    assert "jailbee inbox" in text
+    assert "command is missing or reports the broker unavailable" in " ".join(text.split())
     assert "tell the human" in text
+    assert "never hand-roll the protocol" in text
+
+
+def test_child_routes_working_inbox_requests_to_orchestrator() -> None:
+    text = _skill_text(CHILD)
+    assert "When the inbox CLI works, route orchestration requests and blockers to your orchestrator." in " ".join(text.split())
 
 
 def test_orchestration_skill_covers_review_focus() -> None:

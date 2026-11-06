@@ -11,6 +11,10 @@ the orchestrator the exact repository, target, title, body and action content
 with `jailbee inbox send message --text "..."`; use `--kind question` when you
 need a result. Do not write GitHub outbox files or directories by hand.
 
+When the inbox CLI works, route orchestration requests and blockers to your
+orchestrator. If a `jailbee inbox` command is missing or reports the broker
+unavailable, tell the human; never hand-roll the protocol.
+
 ## You are a worker
 
 An orchestrator (`$JAILBEE_ORCHESTRATOR`, with `JAILBEE_ROLE=child` set) gave
