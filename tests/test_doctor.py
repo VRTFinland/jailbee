@@ -2004,10 +2004,11 @@ def test_docker_seed_doctor_does_not_warn_without_a_golden(make_cfg, tmp_path, m
 
 
 @pytest.mark.parametrize(
-    "outcome,expected_ok", [("failed", False), ("skipped", False), ("seeded", True)]
+    "outcome,expected_ok,recommends_seed",
+    [("failed", False, True), ("skipped", True, False), ("seeded", True, False)],
 )
 def test_docker_seed_doctor_reports_stored_outcome(
-    make_cfg, tmp_path, mocker, outcome, expected_ok
+    make_cfg, tmp_path, mocker, outcome, expected_ok, recommends_seed
 ):
     from datetime import UTC, datetime
 
@@ -2039,7 +2040,7 @@ def test_docker_seed_doctor_reports_stored_outcome(
     assert row is not None and row.ok is expected_ok
     if outcome != "seeded":
         assert "no images" in row.detail
-        assert "jailbee base seed" in row.detail
+    assert ("jailbee base seed" in row.detail) is recommends_seed
 
 
 def test_run_checks_includes_docker_seed_check(make_cfg, tmp_path, mocker):

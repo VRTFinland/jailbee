@@ -338,8 +338,13 @@ def _check_docker_seed(cfg: Config, incus: Incus) -> CheckResult | None:
         if not exists:
             return None
         detail = "no seed state is recorded"
-    elif state.outcome in {"failed", "skipped"}:
-        detail = f"last result {state.outcome}: {state.detail or 'no detail'}"
+    elif state.outcome == "failed":
+        detail = f"last result failed: {state.detail or 'no detail'}"
+    elif state.outcome == "skipped":
+        # Skips include non-retryable causes such as no images or unavailable golden.
+        return CheckResult(
+            "Docker golden seed", True, f"last result skipped: {state.detail or 'no detail'}"
+        )
     else:
         return CheckResult("Docker golden seed", True, f"{state.image_count} images seeded")
     return CheckResult("Docker golden seed", False, f"{detail} — run `jailbee base seed`")
