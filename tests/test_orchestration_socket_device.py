@@ -318,6 +318,7 @@ def test_a_restart_does_not_reuse_an_unverified_directory(env, failure) -> None:
     env.devices["other/proj-copy"] = {ORCHESTRATION_DEVICE: src}
     _restart_broker(env)
     if failure == "list":
+
         def listing(*, fast=False, all_projects=False):
             if all_projects:
                 raise IncusError("cannot list projects")
