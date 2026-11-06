@@ -644,10 +644,8 @@ def import_json_document(
     pending = f"pending:{name}"
     blocked = False
     with store._tx() as con:
-        has_pending = con.execute("SELECT 1 FROM meta WHERE key=?", (pending,)).fetchone()
-        if for_write and has_pending:
-            blocked = True
-        elif not con.execute("SELECT 1 FROM meta WHERE key=?", (marker,)).fetchone():
+        # A writer retries a pending import once too, so it never waits for a reader.
+        if not con.execute("SELECT 1 FROM meta WHERE key=?", (marker,)).fetchone():
             try:
                 load(con)
             except _LegacyImportRetryError:

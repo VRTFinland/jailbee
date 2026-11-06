@@ -250,7 +250,7 @@ def test_unreadable_legacy_blocks_save_until_import_succeeds(tmp_path, monkeypat
     assert (tmp_path / "reservations.json.migrated").exists()
 
 
-def test_failed_read_requires_reload_before_saving_even_after_recovery(tmp_path, monkeypatch):
+def test_writer_retries_pending_import_before_saving(tmp_path, monkeypatch):
     from pathlib import Path
 
     import pytest
@@ -272,9 +272,10 @@ def test_failed_read_requires_reload_before_saving_even_after_recovery(tmp_path,
     with pytest.raises(StoreError):
         state.load_reservations(tmp_path)
     monkeypatch.setattr(Path, "read_text", original)
-    assert state.load_reservations(tmp_path) == {"orch": [state.Reservation("a", 1, "t")]}
-    state.save_reservations(tmp_path, {})
-    assert state.load_reservations(tmp_path) == {}
+    # No reader resolved the import in between: the writer must do it itself.
+    state.save_reservations(tmp_path, {"orch": [state.Reservation("b", 2, "u")]})
+    assert state.load_reservations(tmp_path) == {"orch": [state.Reservation("b", 2, "u")]}
+    assert (tmp_path / "reservations.json.migrated").exists()
 
 
 def test_reservations_import_once_and_ignore_recreated_source(tmp_path):
