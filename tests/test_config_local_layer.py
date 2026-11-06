@@ -7,6 +7,7 @@ import yaml
 from pydantic import SecretStr
 
 from jailbee.config import ConfigError
+from jailbee.config.loader import load_config_from_layers
 from jailbee.config.local_layer import (
     all_local_credential_groups,
     all_local_litellm_views,
@@ -32,6 +33,26 @@ def _write_local(prefix: str, data: object) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(data, sort_keys=False))
     return path
+
+
+def test_local_layer_can_disable_docker_seed(tmp_path):
+    cfg = load_config_from_layers(
+        {},
+        {
+            "container_prefix": "seed-test",
+            "golden": {"docker_seed": {"timeout": 45, "images": ["app:*"]}},
+        },
+        tmp_path / ".jailbee" / "config.yaml",
+        origin="repo config",
+        local_raw={"golden": {"docker_seed": {"enabled": False}}},
+        local_origin="local config",
+        skip_git=True,
+    )
+
+    assert cfg.golden.docker_seed is not None
+    assert cfg.golden.docker_seed.enabled is False
+    assert cfg.golden.docker_seed.timeout == 45
+    assert cfg.golden.docker_seed.images == ["app:*"]
 
 
 def test_local_dir_sits_next_to_global_yaml():

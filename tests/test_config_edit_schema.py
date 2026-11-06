@@ -300,8 +300,9 @@ def test_build_specs_covers_every_config_leaf():
     """
     from jailbee.config_edit.schema import build_specs
 
-    # Services add a model-map leaf; fork.warm_paths adds a string-list leaf.
-    assert len(build_specs(Config)) == 117
+    # Services add a model-map leaf; fork.warm_paths adds a string-list leaf;
+    # golden.docker_seed contributes its four editable submodel leaves.
+    assert len(build_specs(Config)) == 121
     # remote.ssh.gpg adds one opt-in global boolean.
     assert len(build_specs(GlobalConfig)) == 59
 

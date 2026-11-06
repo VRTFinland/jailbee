@@ -71,7 +71,7 @@ from jailbee.config.models_columns import (
     sanitize_column_blocks,
     validate_column_blocks,
 )
-from jailbee.config.models_golden import Golden, IdeName, Stacks
+from jailbee.config.models_golden import DockerSeed, Golden, IdeName, Stacks
 from jailbee.config.models_host import (
     POOL_PRESETS,
     HostDevice,
@@ -161,6 +161,7 @@ __all__ = [
     "ConfirmConfig",
     "Credentials",
     "DockerRegistryMirrorRepoConfig",
+    "DockerSeed",
     "ForkConfig",
     "GitConfig",
     "GitUserConfig",
