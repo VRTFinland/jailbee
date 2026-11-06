@@ -291,7 +291,7 @@ def create_seed_container(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> str:
         litellm_payload=extras.litellm_payload,
         storage_pool=cfg.defaults.storage_pool,
     )
-    return lifecycle.new_container(cfg, incus, opts, confirm_fn=None)
+    return lifecycle.new_container(cfg, incus, opts, confirm_fn=lambda _message: False)
 
 
 def run_seed(cfg: Config, incus: Incus, gcfg: GlobalConfig, req: SeedRequest) -> SeedOutcome:

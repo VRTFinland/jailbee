@@ -161,6 +161,8 @@ def test_create_seed_options_and_fallback(rig, monkeypatch):
     create = Mock(return_value="seed")
     monkeypatch.setattr(lifecycle, "new_container", create)
     assert docker_seed.create_seed_container(cfg, incus, Mock()) == "seed"
+    confirm = create.call_args.kwargs["confirm_fn"]
+    assert callable(confirm) and confirm("Unexpected escalation?") is False
     opts = create.call_args.args[2]
     assert opts.clone_commit == "upstream-sha"
     assert opts.skip_agents and opts.autostart_services == []
