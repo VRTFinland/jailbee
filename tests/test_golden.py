@@ -127,6 +127,56 @@ def test_recover_leftovers_deletes_a_seeding_instance(make_cfg, tmp_path):
     incus.delete.assert_called_once_with(staging, force=True)
 
 
+@pytest.mark.parametrize("driver", ["dir", "btrfs"])
+def test_build_invalidates_seed_state_only_after_promotion(make_cfg, tmp_path, driver):
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import docker_seed_state
+    from jailbee.db import get_engine
+
+    cfg = make_cfg(tmp_path)
+    with Session(get_engine()) as session:
+        docker_seed_state.record(
+            session,
+            alias=cfg.golden.alias,
+            container_prefix=cfg.container_prefix,
+            seeded_at=datetime.now(UTC),
+            source="seed-container",
+            outcome="seeded",
+            image_count=3,
+            size_bytes=123,
+        )
+    incus = _incus(pools_driver=driver)
+    incus.exec.side_effect = IncusError("build failed")
+    with pytest.raises(IncusError, match="build failed"):
+        build_golden_image(cfg, incus)
+    with Session(get_engine()) as session:
+        assert docker_seed_state.get(session, cfg.golden.alias).image_count == 3
+    incus.exec.side_effect = None
+    build_golden_image(cfg, incus)
+    with Session(get_engine()) as session:
+        assert docker_seed_state.get(session, cfg.golden.alias) is None
+
+
+def test_seed_recovery_restores_old_and_cleans_image_leftovers(make_cfg, tmp_path):
+    from jailbee.golden import recover_seed_leftovers
+
+    cfg = make_cfg(tmp_path)
+    alias = cfg.golden.alias
+    incus = _incus(
+        existing=(f"{alias}--old", f"{alias}--seeding", f"{alias}--build"),
+        images=(alias, f"{alias}--new"),
+    )
+    recover_seed_leftovers(cfg, incus)
+    assert incus.exists(f"{alias}--golden")
+    assert not incus.exists(f"{alias}--seeding")
+    assert incus.exists(f"{alias}--build")
+    assert not incus.image_exists(f"{alias}--new")
+    assert incus.image_exists(alias)
+
+
 def test_promote_instance_restores_previous_golden_when_rename_fails():
     from jailbee.golden import promote_instance
 

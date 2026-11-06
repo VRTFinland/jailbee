@@ -472,18 +472,24 @@ def _best_effort(what: str, action: Callable[[], None]) -> bool:
 def _recover_leftovers(cfg: Config, incus: Incus) -> None:
     """Undo what an interrupted build left behind, before anything is created."""
     alias = cfg.golden.alias
-    golden = golden_instance_name(alias)
-    aside = f"{alias}--old"
     # The pre-1.x name of the build container, still recovered so an upgrade
     # does not inherit a leaked one under a name nothing else looks at.
-    for build in (
-        golden_build_name(alias),
-        golden_seeding_name(alias),
-        f"{cfg.container_prefix}-base-build",
-    ):
+    for build in (golden_build_name(alias), f"{cfg.container_prefix}-base-build"):
         if incus.exists(build):
             warn(f"Removing leftover {build} from a previous failed build")
             incus.delete(build, force=True)
+    recover_seed_leftovers(cfg, incus)
+
+
+def recover_seed_leftovers(cfg: Config, incus: Incus) -> None:
+    """Recover interrupted promotion without touching an unrelated build instance."""
+    alias = cfg.golden.alias
+    golden = golden_instance_name(alias)
+    aside = f"{alias}--old"
+    staging = golden_seeding_name(alias)
+    if incus.exists(staging):
+        warn(f"Removing leftover {staging} from a previous seed")
+        incus.delete(staging, force=True)
     # A crash between "golden set aside" and "build promoted" leaves only the
     # aside copy: it is still the newest complete golden, so put it back.
     if incus.exists(aside):
@@ -586,6 +592,20 @@ def promote_image(incus: Incus, staging: str, alias: str) -> None:
             f"delete the previous golden image {old_alias}",
             lambda: incus.image_delete(old_alias),
         )
+
+
+def _invalidate_seed_state(alias: str) -> None:
+    """Forget seed results for the golden that was just replaced."""
+    try:
+        from sqlmodel import Session
+
+        from jailbee import docker_seed_state
+        from jailbee.db import get_engine
+
+        with Session(get_engine()) as session:
+            docker_seed_state.delete(session, alias)
+    except Exception as exc:
+        warn(f"Could not clear Docker seed state for {alias}: {exc}")
 
 
 def build_golden_image(cfg: Config, incus: Incus) -> None:
@@ -755,6 +775,7 @@ def build_golden_image(cfg: Config, incus: Incus) -> None:
             promoted = True
         else:
             promote_image(incus, build_container, alias)
+        _invalidate_seed_state(alias)
     finally:
         if not promoted:
             info("Deleting build container")
