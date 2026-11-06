@@ -148,11 +148,64 @@ class BrokerMemory:
     reassert: set[str] = field(default_factory=set)
     # Parked `next` long-polls, answered by the executor.
     waiters: Waiters = field(default_factory=lambda: _new_waiters())
+    # `_monotonic()` of the last retention purge; None until the first round.
+    last_purge: float | None = None
 
     def warn_once(self, key: str, msg: str, *args: object) -> None:
         if key not in self.warned:
             self.warned.add(key)
             log.warning(msg, *args)
+
+
+PURGE_INTERVAL = 3600.0
+DEFAULT_RETENTION_DAYS = 30
+
+
+def _monotonic() -> float:
+    return time.monotonic()
+
+
+def _purge_messages(memory: BrokerMemory, raw: list[dict[str, object]], now: datetime) -> None:
+    """Once per hour: age out acked messages per repo and drop vanished containers' rows.
+
+    Never raises: a failed purge is logged and tried again next hour.
+    """
+    store = memory.store
+    if store is None:
+        return
+    mono = _monotonic()
+    if memory.last_purge is not None and mono - memory.last_purge < PURGE_INTERVAL:
+        return
+    memory.last_purge = mono
+    try:
+        entry_config: dict[str, dict[str, str]] = {}
+        for e in raw:
+            conf = e.get("config")
+            if isinstance(e.get("name"), str) and isinstance(conf, dict):
+                entry_config[str(e["name"])] = conf
+        live = {c["volatile.uuid"] for c in entry_config.values() if c.get("volatile.uuid")}
+        # An empty listing must never wipe the store (the store guards too).
+        if live:
+            removed = store.purge_vanished(live)
+            if removed:
+                log.info("broker: purged %d message rows of vanished containers", removed)
+        recipients = store.recipients()
+        if not recipients:
+            return
+        configs = repo_configs(memory)
+    except Exception:
+        log.exception("broker: message purge failed")
+        return
+    for full, uuid in recipients.items():
+        try:
+            days = DEFAULT_RETENTION_DAYS
+            if full in entry_config:
+                cfg = owner_config(full, entry_config[full], configs)
+                if cfg is not None:
+                    days = cfg.orchestration_view().repo.message_retention_days
+            store.purge_acked_older_than(uuid, now.timestamp() - days * 86400)
+        except Exception:
+            log.exception("broker: message purge of %s failed", full)
 
 
 def _new_waiters() -> Waiters:
@@ -1054,6 +1107,7 @@ def tick(
     memory.publish_threads[:] = [worker for worker in memory.publish_threads if worker.is_alive()]
     raw = incus.list_containers()
     _check_socket_devices(incus, raw, memory, root)
+    _purge_messages(memory, raw, now)
     candidates = [
         e
         for e in raw
