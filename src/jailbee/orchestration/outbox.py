@@ -147,6 +147,27 @@ def delete_inbox_files(
     incus.exec(full, ["rm", "-f", "--", *names], uid=uid, cwd=directory)
 
 
+#: Prefix an unparsable inbox file is renamed to: a dot name, so no `*.json`
+#: read (migration paging included) returns it again.
+UNPARSABLE_PREFIX = ".unparsable-"
+
+
+def set_aside_inbox_files(
+    incus: Incus, full: str, directory: str, names: Sequence[str], *, uid: int | None
+) -> None:
+    """Rename plain-named inbox files to ``UNPARSABLE_PREFIX + name`` in one exec."""
+    for name in names:
+        _validate_outbox_name(name)
+    if not names:
+        return
+    incus.exec(
+        full,
+        ["sh", "-c", f'for n; do mv -f -- "$n" "{UNPARSABLE_PREFIX}$n"; done', "sh", *names],
+        uid=uid,
+        cwd=directory,
+    )
+
+
 def _atomic_write(
     incus: Incus, full: str, directory: str, name: str, text: str, mode: str, *, uid: int | None
 ) -> None:

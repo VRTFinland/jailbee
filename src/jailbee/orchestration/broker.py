@@ -58,6 +58,7 @@ from jailbee.orchestration.outbox import (
     has_pending,
     read_inbox_dir,
     read_outbox,
+    set_aside_inbox_files,
     write_grant_json,
 )
 from jailbee.orchestration.protocol import (
@@ -833,13 +834,15 @@ def _migrate_dir(
         seen.update(page)
         now = time.time()
         done: list[str] = []
+        unparsable: list[str] = []
         for name in page:
             try:
                 item = json.loads(files[name])
                 if not isinstance(item, dict) or not isinstance(item.get("id"), str):
                     raise ValueError("not an inbox item")
             except ValueError:
-                log.warning("broker: %s: skipped unparsable %s/%s", full, directory, name)
+                log.warning("broker: %s: set aside unparsable %s/%s", full, directory, name)
+                unparsable.append(name)
                 continue
             store.insert_item(
                 uuid,
@@ -848,9 +851,14 @@ def _migrate_dir(
                 now=_stamp_time(name, now),
                 acked_at=now if acked else None,
             )
+            if acked:
+                # Inserted unread by an earlier pass, then moved to read/.
+                store.ack(uuid, item["id"], now=now)
             done.append(name)
         # Only after every insert of the page succeeded (an error raised above).
         delete_inbox_files(ctx.incus, full, directory, done, uid=uid)
+        # Renamed out of the `*.json` paging, so a page of them hides nothing.
+        set_aside_inbox_files(ctx.incus, full, directory, unparsable, uid=uid)
         if len(files) < MIGRATE_PAGE:
             return
 
@@ -859,8 +867,9 @@ def _migrate_inbox(ctx: ActionContext, memory: BrokerMemory, uuid: str) -> bool:
     """Move a container's file inbox into the store before it becomes a recipient.
 
     Read history (`inbox/read/`) goes in acked, then unread `inbox/` items
-    unacked, in file-name order, ids kept (duplicates are ignored). Files are
-    removed only after their inserts. True when the recipient row may be
+    unacked, in file-name order, ids kept (duplicates are ignored), then
+    `inbox/read/` again for files moved there meanwhile (acked). Files are
+    removed only after their inserts; unparsable ones are renamed aside. True when the recipient row may be
     written: already migrated, or done now. False means retry next round.
     """
     store = memory.store
@@ -873,6 +882,9 @@ def _migrate_inbox(ctx: ActionContext, memory: BrokerMemory, uuid: str) -> bool:
     try:
         _migrate_dir(ctx, store, uuid, INBOX_READ_DIR, acked=True)
         _migrate_dir(ctx, store, uuid, INBOX_DIR, acked=False)
+        # A file moved to read/ while the inbox/ pass ran was inserted unread:
+        # this pass acks it.
+        _migrate_dir(ctx, store, uuid, INBOX_READ_DIR, acked=True)
     except (IncusError, OSError, StoreError, OutboxReadError) as exc:
         memory.warn_once(
             f"migrate:{full}", "broker: %s: could not migrate the file inbox: %s", full, exc

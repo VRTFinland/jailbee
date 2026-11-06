@@ -32,8 +32,16 @@ class Dirs:
         self.fail_read = False
         self.fail_delete = False
         self.deleted: list[tuple[str, list[str]]] = []
+        self.after_read: dict[str, Any] = {}
         env.rig.read_inbox_dir.side_effect = self._read
         env.rig.delete_inbox_files.side_effect = self._delete
+        env.rig.set_aside_inbox_files.side_effect = self._set_aside
+
+    def _set_aside(
+        self, incus: object, full: str, directory: str, names: list[str], *, uid: int | None
+    ) -> None:
+        for n in names:
+            self.files[directory][f".unparsable-{n}"] = self.files[directory].pop(n)
 
     def _read(
         self, incus: object, full: str, directory: str, *, uid: int | None, limit: int
@@ -42,7 +50,11 @@ class Dirs:
             raise IncusError("container is stopped")
         files = self.files[directory]
         names = sorted(n for n in files if not n.startswith("."))  # like the real helper
-        return {n: files[n] for n in names[:limit]}
+        got = {n: files[n] for n in names[:limit]}
+        hook = self.after_read.pop(directory, None)
+        if hook is not None:
+            hook()
+        return got
 
     def _delete(
         self, incus: object, full: str, directory: str, names: list[str], *, uid: int | None
@@ -83,9 +95,10 @@ def test_unread_unacked_read_acked_in_name_order_ids_kept(env: Env, dirs: Dirs) 
     assert [r.acked_at is not None for r in hist] == [True, True, False, False]
     assert hist[0].created_at == 1793437200.0  # parsed from the file name
     assert st.recipients()[FULL] == UUID
-    # migrated files are gone; unparsable and dot files are left alone
+    # migrated files are gone; an unparsable one is set aside, dot files are left alone
     assert dirs.files[INBOX_READ_DIR] == {}
-    assert set(dirs.files[INBOX_DIR]) == {".tmp-x.json", name("20261101T100000Z", 3, "bad")}
+    bad = name("20261101T100000Z", 3, "bad")
+    assert set(dirs.files[INBOX_DIR]) == {".tmp-x.json", f".unparsable-{bad}"}
 
 
 def test_second_serve_does_not_migrate_again(env: Env, dirs: Dirs) -> None:
@@ -205,3 +218,51 @@ def test_inbox_helpers(tmp_path: Path) -> None:
     incus.exec_capped.return_value = ""
     assert outbox.read_inbox_dir(incus, FULL, INBOX_DIR, uid=1, limit=5) == {}
     assert incus.exec_capped.call_args.args[1][4] == INBOX_DIR
+
+
+def test_a_file_read_while_it_moves_to_read_is_not_left_unread(env: Env, dirs: Dirs) -> None:
+    """`mv inbox/x inbox/read/` between the page read and the rm."""
+    moved = name("20261101T100000Z", 1, "a")
+    dirs.files[INBOX_DIR] = {moved: item("a")}
+
+    def user_marks_it_read() -> None:
+        dirs.files[INBOX_READ_DIR][moved] = dirs.files[INBOX_DIR].pop(moved)
+
+    dirs.after_read[INBOX_DIR] = user_marks_it_read
+    env.set(orch())
+    env.tick()
+    assert env.store.unacked(UUID) == []
+    assert [r.id for r in env.store.history(UUID)] == ["a"]
+    assert dirs.files[INBOX_READ_DIR] == {}
+
+
+def test_a_page_of_unparsable_files_does_not_hide_the_rest(
+    env: Env, dirs: Dirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(broker, "MIGRATE_PAGE", 2)
+    dirs.files[INBOX_DIR] = {name("20261101T100000Z", i, f"bad{i}"): "{not json" for i in range(3)}
+    dirs.files[INBOX_DIR][name("20261101T110000Z", 1, "good")] = item("good")
+    env.set(orch())
+    env.tick()
+    assert [r.id for r in env.store.unacked(UUID)] == ["good"]
+    assert all(n.startswith(".unparsable-") for n in dirs.files[INBOX_DIR])
+
+
+def test_set_aside_renames_to_a_dot_name(tmp_path: Path) -> None:
+    import subprocess
+    from unittest.mock import MagicMock
+
+    (tmp_path / "a b.json").write_text("{bad")
+    (tmp_path / "-c.json").write_text("{bad")
+    incus = MagicMock()
+    incus.exec.side_effect = lambda full, argv, *, uid, cwd: subprocess.run(
+        argv, cwd=tmp_path, check=True
+    )
+    outbox.set_aside_inbox_files(incus, FULL, INBOX_DIR, ["a b.json", "-c.json"], uid=1000)
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        ".unparsable--c.json",
+        ".unparsable-a b.json",
+    ]
+    assert incus.exec.call_args.kwargs == {"uid": 1000, "cwd": INBOX_DIR}
+    with pytest.raises(ValueError):
+        outbox.set_aside_inbox_files(incus, FULL, INBOX_DIR, ["../x"], uid=None)
