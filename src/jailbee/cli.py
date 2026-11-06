@@ -11535,46 +11535,23 @@ def base_build_cmd(
     from jailbee.golden import build_golden_image
     from jailbee.incus import Incus, IncusError
 
-    if docker_from is not None and no_docker_seed:
-        error("--docker-from and --no-docker-seed are mutually exclusive")
-        raise typer.Exit(2)
     cfg = _load_or_exit(config)
     incus = Incus()
     from jailbee import docker_seed
 
-    explicit = docker_from is not None
-    requested = not no_docker_seed and (
-        explicit or (cfg.golden.docker_seed is not None and cfg.golden.docker_seed.enabled)
-    )
-    req = docker_seed.SeedRequest(docker_from, keep_seed, explicit)
-    skipped: docker_seed.SeedOutcome | None = None
-    if requested:
-        if docker_from is not None:
-            from jailbee.lifecycle import resolve_container_for_interactive
-
-            try:
-                req = docker_seed.SeedRequest(
-                    resolve_container_for_interactive(cfg, incus, docker_from), keep_seed, True
-                )
-            except ValueError as exc:
-                error(str(exc))
-                raise typer.Exit(2) from exc
-        try:
-            docker_seed.preflight(cfg, incus, req)
-        except docker_seed.SeedPreflightError as exc:
-            if explicit:
-                error(str(exc))
-                raise typer.Exit(2) from exc
-            skipped = docker_seed.SeedOutcome("skipped", "seed-container", detail=str(exc))
-            warn(f"Docker seeding skipped: {exc}")
-            requested = False
-        except Exception as exc:
-            if explicit:
-                error(str(exc))
-                raise typer.Exit(2) from exc
-            skipped = docker_seed.SeedOutcome("failed", "seed-container", detail=str(exc))
-            warn(f"Docker seeding failed: {exc}")
-            requested = False
+    try:
+        plan = docker_seed.plan_request(
+            cfg, incus, docker_from=docker_from,
+            no_docker_seed=no_docker_seed, keep_seed=keep_seed,
+        )
+    except docker_seed.SeedPreflightError as exc:
+        error(str(exc))
+        raise typer.Exit(2) from exc
+    for message in plan.warnings:
+        warn(message)
+    req = plan.request
+    requested = plan.requested
+    skipped = plan.skipped
 
     try:
         build_golden_image(cfg, incus)
@@ -11616,36 +11593,20 @@ def base_seed_cmd(
 ) -> None:
     """Seed the existing golden image with Docker images."""
     from jailbee import docker_seed
-    from jailbee.golden import golden_exists
     from jailbee.incus import Incus
 
     cfg = _load_or_exit(config)
     incus = Incus()
-    if not golden_exists(cfg, incus):
-        error(f"No golden image '{cfg.golden.alias}' exists; run jailbee base build first")
-        raise typer.Exit(2)
-    if docker_from is None and (
-        cfg.golden.docker_seed is None or not cfg.golden.docker_seed.enabled
-    ):
-        error("golden.docker_seed is not configured")
-        raise typer.Exit(2)
-
-    explicit = docker_from is not None
-    source = docker_from
-    if source is not None:
-        from jailbee.lifecycle import resolve_container_for_interactive
-
-        try:
-            source = resolve_container_for_interactive(cfg, incus, source)
-        except ValueError as exc:
-            error(str(exc))
-            raise typer.Exit(2) from exc
-    req = docker_seed.SeedRequest(source, keep_seed, explicit)
     try:
-        docker_seed.preflight(cfg, incus, req)
+        plan = docker_seed.plan_request(
+            cfg, incus, docker_from=docker_from, keep_seed=keep_seed, standalone=True
+        )
     except docker_seed.SeedPreflightError as exc:
         error(str(exc))
         raise typer.Exit(2) from exc
+    for message in plan.warnings:
+        warn(message)
+    req = plan.request
     outcome = docker_seed.run_seed(cfg, incus, _load_global(), req)
     _print_docker_seed_outcome(outcome)
     if outcome.outcome == "failed":

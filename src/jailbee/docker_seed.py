@@ -44,6 +44,56 @@ class SeedPreflightError(Exception):
     """The requested seed cannot safely be started."""
 
 
+@dataclass(frozen=True)
+class SeedPlan:
+    request: SeedRequest
+    requested: bool
+    skipped: SeedOutcome | None = None
+    warnings: tuple[str, ...] = ()
+
+
+def plan_request(
+    cfg: Config, incus: Incus, *, docker_from: str | None = None,
+    no_docker_seed: bool = False, keep_seed: bool = False, standalone: bool = False,
+) -> SeedPlan:
+    """Resolve and validate a CLI request without changing the golden or its state."""
+    from jailbee.lifecycle import resolve_container_for_interactive
+
+    if docker_from is not None and no_docker_seed:
+        raise SeedPreflightError("--docker-from and --no-docker-seed are mutually exclusive")
+    configured = cfg.golden.docker_seed is not None and cfg.golden.docker_seed.enabled
+    if standalone:
+        if not golden.golden_exists(cfg, incus):
+            raise SeedPreflightError(
+                f"No golden image '{cfg.golden.alias}' exists; run jailbee base build first"
+            )
+        if docker_from is None and not configured:
+            raise SeedPreflightError("golden.docker_seed is not configured")
+    requested = not no_docker_seed and (docker_from is not None or configured)
+    warnings: list[str] = []
+    if keep_seed and (docker_from is not None or not requested):
+        warnings.append("--keep-seed has no effect without a temporary seed container")
+    source = docker_from
+    if source is not None:
+        try:
+            source = resolve_container_for_interactive(cfg, incus, source)
+        except ValueError as exc:
+            raise SeedPreflightError(str(exc)) from exc
+    req = SeedRequest(source, keep_seed, docker_from is not None)
+    skipped = None
+    if requested:
+        try:
+            preflight(cfg, incus, req)
+        except Exception as exc:
+            if standalone or req.explicit:
+                raise SeedPreflightError(str(exc)) from exc
+            outcome = "skipped" if isinstance(exc, SeedPreflightError) else "failed"
+            skipped = SeedOutcome(outcome, "seed-container", detail=str(exc))
+            warnings.append(f"Docker seeding {outcome}: {exc}")
+            requested = False
+    return SeedPlan(req, requested, skipped, tuple(warnings))
+
+
 def preflight(cfg: Config, incus: Incus, req: SeedRequest) -> None:
     if not golden.repo_uses_docker(cfg):
         raise SeedPreflightError("Docker is not installed in the golden")
