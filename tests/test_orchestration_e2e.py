@@ -246,7 +246,9 @@ def test_spawn_queues_then_starts_after_a_stop(world: dict[str, Any]) -> None:
     rms = [e for e in events if e[0] == "rm"]
     assert [e[3] for e in rms] == [{"a-spawn"}, {"a-spawn", "b-stop"}]
     with sqlite3.connect(root / "broker.db") as con:
-        rows = con.execute("SELECT manifest_id, container_key FROM journal ORDER BY manifest_id").fetchall()
+        rows = con.execute(
+            "SELECT manifest_id, container_key FROM journal ORDER BY manifest_id"
+        ).fetchall()
     assert rows == [("a-spawn", "uuid-proj-orch"), ("b-stop", "uuid-proj-orch")]
 
 
