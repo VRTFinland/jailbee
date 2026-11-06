@@ -17,6 +17,8 @@ import pytest
 from jailbee.orchestration import wire
 from jailbee.orchestration.listener import (
     MAX_CONNECTIONS_PER_CONTAINER,
+    MAX_INFLIGHT_PER_CONTAINER,
+    MAX_INFLIGHT_PER_CONTAINER,
     DisconnectEvent,
     Event,
     Listener,
@@ -201,8 +203,9 @@ def test_oversize_line_closes(env: tuple[Listener, queue.Queue[Event], Path]) ->
     c = connect(root / "u")
     c.sendall(b"x" * (wire.MAX_LINE_BYTES + 10))
     assert wire.decode_response(recv_line(c)).error_code == wire.BAD_REQUEST
-    ev = q.get(timeout=2)
-    assert isinstance(ev, DisconnectEvent)
+    assert c.recv(1) == b""
+    with pytest.raises(queue.Empty):  # no request was in flight: nothing to tell
+        q.get(timeout=0.3)
 
 
 def test_client_disconnect(env: tuple[Listener, queue.Queue[Event], Path]) -> None:
@@ -304,7 +307,9 @@ def test_connection_cap_answers_busy(env: tuple[Listener, queue.Queue[Event], Pa
     assert wire.decode_response(recv_line(extra)).error_code == wire.BUSY
     assert extra.recv(10) == b""
     held[0].close()
-    assert isinstance(q.get(timeout=2), DisconnectEvent)
+    gone = q.get(timeout=2)
+    assert isinstance(gone, DisconnectEvent)
+    lis.release(gone.conn_id)  # the executor frees the dropped request's slot
     again = connect(d)
     again.sendall(req("ok"))
     ev = q.get(timeout=2)
@@ -484,4 +489,73 @@ def test_a_run_of_invalid_lines_is_answered_without_recursion(
     c.sendall(req("after"))
     ev = q.get(timeout=2)
     assert isinstance(ev, RequestEvent) and ev.request.op == "after"
+
+
+def test_open_send_close_loops_cannot_flood_the_queue(
+    env: tuple[Listener, queue.Queue[Event], Path],
+) -> None:
+    """A request's budget is released by its answer, never by a disconnect."""
+    lis, q, root = env
+    lis.open_container("bad", root / "bad")
+    lis.open_container("good", root / "good")
+    for _ in range(100):
+        c = connect(root / "bad")
+        c.sendall(req("list"))
+        c.close()
+    good = connect(root / "good")
+    good.sendall(req("list"))
+    ahead: list[Event] = []
+    while True:
+        ev = q.get(timeout=5)
+        if isinstance(ev, RequestEvent) and ev.uuid == "good":
+            break
+        ahead.append(ev)
+    # At most one request (plus its disconnect) per budget slot gets ahead.
+    assert len(ahead) <= 2 * MAX_INFLIGHT_PER_CONTAINER
+    time.sleep(0.3)
+    while not q.empty():
+        ahead.append(q.get_nowait())
+    assert len([e for e in ahead if isinstance(e, RequestEvent)]) <= MAX_INFLIGHT_PER_CONTAINER
+    assert all(not lis.is_connected(e.conn_id) for e in ahead)
+
+
+def test_the_budget_frees_when_the_request_is_answered_or_released(
+    env: tuple[Listener, queue.Queue[Event], Path],
+) -> None:
+    lis, q, root = env
+    lis.open_container("u", root / "u")
+    events: list[RequestEvent] = []
+    for _ in range(MAX_INFLIGHT_PER_CONTAINER):
+        c = connect(root / "u")
+        c.sendall(req("list"))
+        c.close()
+    while len(events) < MAX_INFLIGHT_PER_CONTAINER:
+        ev = q.get(timeout=2)
+        if isinstance(ev, RequestEvent):
+            events.append(ev)
+    held = connect(root / "u")
+    held.sendall(req("list"))
+    with pytest.raises(queue.Empty):
+        while True:
+            ev = q.get(timeout=0.3)
+            assert not isinstance(ev, RequestEvent), "budget exceeded"
+    lis.release(events[0].conn_id)  # a dropped connection's request, skipped
+    ev = q.get(timeout=2)
+    assert isinstance(ev, RequestEvent) and lis.is_connected(ev.conn_id)
+    lis.release(events[0].conn_id)  # idempotent: frees nothing twice
+    lis.respond(ev.conn_id, wire.ok([]))
+    assert wire.decode_response(recv_line(held)).ok
+
+
+def test_a_disconnect_without_a_request_in_flight_queues_nothing(
+    env: tuple[Listener, queue.Queue[Event], Path],
+) -> None:
+    lis, q, root = env
+    lis.open_container("u", root / "u")
+    for _ in range(20):
+        connect(root / "u").close()
+    c = connect(root / "u")
+    c.sendall(req("list"))
+    ev = q.get(timeout=2)
+    assert isinstance(ev, RequestEvent)
 

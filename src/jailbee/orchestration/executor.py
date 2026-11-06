@@ -57,6 +57,12 @@ def handle_event(
     assert store is not None and memory.listener is not None
     if isinstance(event, DisconnectEvent):
         memory.waiters.drop(event.uuid, event.conn_id)
+        memory.listener.release(event.conn_id)
+        return
+    if not memory.listener.is_connected(event.conn_id):
+        # Sent and gone (open, send, close): nobody waits for the answer, and
+        # running it would let such loops cost others; free its slot instead.
+        memory.listener.release(event.conn_id)
         return
     try:
         result = _dispatch(memory, store, event, clock)

@@ -18,9 +18,17 @@ if TYPE_CHECKING:
 class FakeListener:
     def __init__(self) -> None:
         self.responses: list[tuple[int, wire.Response]] = []
+        self.dropped: set[int] = set()
+        self.released: list[int] = []
 
     def respond(self, conn_id: int, response: wire.Response) -> None:
         self.responses.append((conn_id, response))
+
+    def is_connected(self, conn_id: int) -> bool:
+        return conn_id not in self.dropped
+
+    def release(self, conn_id: int) -> None:
+        self.released.append(conn_id)
 
 
 class Env:
@@ -118,6 +126,24 @@ def test_disconnect_drops_waiter(env: Env) -> None:
     env.ask(env.orch, "next", conn=1)
     executor.handle_event(env.memory, DisconnectEvent(env.orch, 1))
     assert len(env.memory.waiters) == 0
+
+
+def test_disconnect_releases_the_parked_request_s_budget(env: Env) -> None:
+    env.ask(env.orch, "next", conn=1)
+    env.listener.dropped.add(1)
+    executor.handle_event(env.memory, DisconnectEvent(env.orch, 1))
+    assert env.listener.released == [1]
+
+
+def test_a_dropped_connection_s_request_is_skipped_and_released(env: Env) -> None:
+    """Open, send, close: the request must not run, and its budget must come back."""
+    env.listener.dropped.add(5)
+    env.ask(env.kid, "send", conn=5, manifest=_manifest(), body=None, wait=False)
+    env.ask(env.orch, "next", conn=5)
+    env.rig.dispatch.assert_not_called()
+    assert len(env.memory.waiters) == 0
+    assert env.listener.responses == []
+    assert env.listener.released == [5, 5]
 
 
 def test_next_timeout(env: Env) -> None:

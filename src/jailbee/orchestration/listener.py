@@ -13,7 +13,11 @@ response has arrived.
 Each connection has at most one request in flight: the next line is parsed
 only after :meth:`Listener.respond` answered the previous one (a parked
 long-poll counts as in flight), and only while the unsent replies stay under
-``OUTBUF_CAP``. While a connection is held back its socket is still read, so a
+``OUTBUF_CAP``. Each container also has at most ``MAX_INFLIGHT_PER_CONTAINER``
+requests queued or in flight across its connections; a slot comes back only
+when the request is answered or :meth:`Listener.release`\ d, never on a
+disconnect, so open/send/close loops cannot grow the executor's queue. A
+disconnect is queued only for a connection with a request in flight. While a connection is held back its socket is still read, so a
 disconnect is noticed, until ``wire.MAX_LINE_BYTES`` are buffered; then
 reading pauses too. A pipelining client therefore costs bounded memory and
 never has more than one event ahead of another container's request.
@@ -50,6 +54,7 @@ log = logging.getLogger(__name__)
 
 SOCKET_NAME = "broker.sock"
 MAX_CONNECTIONS_PER_CONTAINER = 8
+MAX_INFLIGHT_PER_CONTAINER = MAX_CONNECTIONS_PER_CONTAINER  # queued, unanswered requests
 _ACCEPT_PAUSE = 1.0  # seconds a listening socket rests after EMFILE/ENFILE
 _RECV_BYTES = 65536
 OUTBUF_CAP = 4 * 1024 * 1024  # unsent reply bytes above which intake stops
@@ -119,6 +124,11 @@ class Listener:
         self._known: set[str] = set()
         self._dirs: dict[str, Path] = {}  # uuid -> socket directory (under _lock)
         self._paused: dict[str, float] = {}  # uuid -> monotonic resume time
+        # Requests queued and not yet answered or released: conn id -> uuid,
+        # and their count per uuid. A disconnect frees nothing (H2).
+        self._pending: dict[int, str] = {}
+        self._inflight: dict[str, int] = {}
+        self._live: set[int] = set()  # open connection ids (under _lock)
         self._thread: threading.Thread | None = None
         self._running = False
 
@@ -185,6 +195,19 @@ class Listener:
             self._open(uuid, sock_dir / SOCKET_NAME)
 
         self._call(rotate)
+
+    def is_connected(self, conn_id: int) -> bool:
+        """Whether the connection is still open (its answer can still arrive)."""
+        with self._lock:
+            return conn_id in self._live
+
+    def release(self, conn_id: int) -> None:
+        """Free the request budget of ``conn_id`` without answering (idempotent).
+
+        For a request the executor skips (its connection dropped) or a parked
+        long-poll whose connection dropped.
+        """
+        self._post(lambda: self._finish(conn_id))
 
     def respond(self, conn_id: int, response: wire.Response) -> None:
         try:
@@ -357,6 +380,8 @@ class Listener:
                 continue
             conn_id = next(self._ids)
             self._conns[conn_id] = _Conn(conn_id, uuid, sock)
+            with self._lock:
+                self._live.add(conn_id)
             server.conns.add(conn_id)
             self._sel.register(sock, selectors.EVENT_READ, ("conn", conn_id))
 
@@ -393,7 +418,12 @@ class Listener:
 
     def _held(self, conn: _Conn) -> bool:
         """Whether no further request may be taken from this connection yet."""
-        return conn.in_flight or conn.close_after_flush or len(conn.outbuf) > OUTBUF_CAP
+        return (
+            conn.in_flight
+            or conn.close_after_flush
+            or len(conn.outbuf) > OUTBUF_CAP
+            or self._inflight.get(conn.uuid, 0) >= MAX_INFLIGHT_PER_CONTAINER
+        )
 
     def _parse(self, conn: _Conn) -> None:
         """Queue the next complete request line unless the connection is held."""
@@ -416,6 +446,8 @@ class Listener:
                     return  # dropped while replying (e.g. EPIPE)
                 continue
             conn.in_flight = True
+            self._pending[conn.conn_id] = conn.uuid
+            self._inflight[conn.uuid] = self._inflight.get(conn.uuid, 0) + 1
             self._requests.put(RequestEvent(conn.uuid, conn.conn_id, request))
         self._update_interest(conn)
 
@@ -429,12 +461,32 @@ class Listener:
     def _reply(self, conn_id: int, data: bytes) -> None:
         """Send the answer to the request in flight, then take the next one."""
         conn = self._conns.get(conn_id)
-        if conn is None:
-            return
-        conn.in_flight = False
-        self._send(conn_id, data)
-        if conn_id in self._conns:
+        if conn is not None:
+            conn.in_flight = False
+            self._send(conn_id, data)
+        self._finish(conn_id)
+        if conn is not None and conn_id in self._conns:
             self._parse(conn)
+
+    def _finish(self, conn_id: int) -> None:
+        """Return the request budget of ``conn_id``; resume connections it held."""
+        uuid = self._pending.pop(conn_id, None)
+        if uuid is None:
+            return
+        left = self._inflight.get(uuid, 0) - 1
+        if left > 0:
+            self._inflight[uuid] = left
+        else:
+            self._inflight.pop(uuid, None)
+        server = self._servers.get(uuid)
+        if server is None:
+            return
+        for other_id in sorted(server.conns):
+            if self._inflight.get(uuid, 0) >= MAX_INFLIGHT_PER_CONTAINER:
+                return
+            other = self._conns.get(other_id)
+            if other is not None and other.inbuf and not self._held(other):
+                self._parse(other)
 
     def _send(self, conn_id: int, data: bytes, close: bool = False) -> None:
         conn = self._conns.get(conn_id)
@@ -490,5 +542,10 @@ class Listener:
             self._sel.unregister(conn.sock)
         with contextlib.suppress(OSError):
             conn.sock.close()
-        if event:
+        with self._lock:
+            self._live.discard(conn_id)
+        # Only a request still in flight (perhaps a parked long-poll) needs the
+        # executor to hear of the disconnect; its budget stays taken until the
+        # executor answers or releases it.
+        if event and conn_id in self._pending:
             self._requests.put(DisconnectEvent(conn.uuid, conn_id))
