@@ -1419,7 +1419,11 @@ this golden includes Docker. A configured, enabled block seeds tagged images
 from a temporary container created from the freshly built golden after
 `jailbee base build`; `jailbee base seed` repeats the operation without
 rebuilding. Shared goldens are never seeded. Use this for repos whose Docker
-workflows repeatedly pull the same images.
+workflows repeatedly pull the same images. Before its autostart runs, the
+temporary source discards all inherited Docker images, so reseeding exports
+only images produced or pulled by the current autostart. An explicit
+`--docker-from` source is taken as-is (subject to `images` filters); JailBee
+never removes images from that user-owned container.
 
 ```yaml
 golden:

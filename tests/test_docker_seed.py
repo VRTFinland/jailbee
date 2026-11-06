@@ -178,6 +178,40 @@ def test_create_seed_options_and_fallback(rig, monkeypatch):
     assert create.call_args.args[2].clone_commit == "local-sha"
 
 
+def test_ephemeral_source_clears_inherited_images_before_autostart(rig, monkeypatch):
+    from jailbee import create_flow, git, lifecycle
+
+    cfg, incus = rig
+    name = f"{cfg.container_prefix}-docker-seed"
+    images = {"stale:v1"}
+    events = []
+    monkeypatch.setattr(git, "rev_parse_remote", Mock(return_value="upstream-sha"))
+    monkeypatch.setattr(create_flow, "host_extras", Mock(
+        return_value=create_flow.HostExtras(None, None, None, ())
+    ))
+    monkeypatch.setattr(create_flow, "prepare_host", Mock())
+
+    def execute(container, cmd, **kwargs):
+        if cmd[:3] == ["docker", "image", "ls"]:
+            return "\n".join(images)
+        if cmd[:4] == ["docker", "image", "rm", "-f"]:
+            images.difference_update(cmd[4:])
+            events.append("clear")
+        return ""
+
+    def create(_cfg, _incus, opts, **kwargs):
+        kwargs.get("on_phase", lambda phase: None)("autostart")
+        events.append("autostart")
+        images.add("current:v2")
+        return name
+
+    incus.exec.side_effect = execute
+    monkeypatch.setattr(lifecycle, "new_container", create)
+    assert docker_seed.create_seed_container(cfg, incus, Mock()) == name
+    assert images == {"current:v2"}
+    assert events == ["clear", "autostart"]
+
+
 @pytest.mark.parametrize("keep,fail", [(False, False), (False, True), (True, False)])
 def test_run_seed_cleanup(rig, monkeypatch, keep, fail):
     from jailbee import lifecycle

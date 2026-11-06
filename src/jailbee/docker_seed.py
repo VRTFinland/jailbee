@@ -291,7 +291,28 @@ def create_seed_container(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> str:
         litellm_payload=extras.litellm_payload,
         storage_pool=cfg.defaults.storage_pool,
     )
-    return lifecycle.new_container(cfg, incus, opts, confirm_fn=lambda _message: False)
+    name = f"{cfg.container_prefix}-docker-seed"
+
+    def before_autostart(phase: str) -> None:
+        if phase != "autostart":
+            return
+        # Reseeding starts from the previous golden, but only this run's
+        # autostart output belongs in the new image set.
+        for _attempt in range(30):
+            try:
+                incus.exec(name, ["docker", "info"], timeout=5)
+                break
+            except IncusError:
+                if _attempt == 29:
+                    raise
+                time.sleep(1)
+        inherited = incus.exec(name, ["docker", "image", "ls", "-aq"]).split()
+        if inherited:
+            incus.exec(name, ["docker", "image", "rm", "-f", *dict.fromkeys(inherited)])
+
+    return lifecycle.new_container(
+        cfg, incus, opts, confirm_fn=lambda _message: False, on_phase=before_autostart
+    )
 
 
 def run_seed(cfg: Config, incus: Incus, gcfg: GlobalConfig, req: SeedRequest) -> SeedOutcome:
