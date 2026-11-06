@@ -460,8 +460,10 @@ class Incus:
 
         The copy then has its inherited ``ORCHESTRATION_DEVICE`` removed, if
         it has one (most sources do not), so it cannot start under the
-        source's broker identity. The device is probed first and removed
-        strictly: a failed removal raises rather than leaving the copy behind.
+        source's broker identity. The probe lists the copy's local devices and
+        the removal is strict: when either fails the copy is deleted and the
+        error raised, so a transient error never leaves a copy that may carry
+        the device (fail closed).
         """
         args = ["copy", source, dest]
         if instance_only:
@@ -471,14 +473,15 @@ class Incus:
         for key, value in (config or {}).items():
             args += ["-c", f"{key}={value}"]
         self._run(args)
-        if self.config_device_get(dest, ORCHESTRATION_DEVICE, "type") is not None:
-            try:
+        try:
+            devices = self._run(["config", "device", "list", dest]).stdout.split()
+            if ORCHESTRATION_DEVICE in devices:
                 self.config_device_remove(dest, ORCHESTRATION_DEVICE)
-            except IncusError:
-                # Do not leave a copy that would start as the source.
-                with contextlib.suppress(IncusError):
-                    self.delete(dest, force=True)
-                raise
+        except IncusError:
+            # Do not leave a copy that could start as the source.
+            with contextlib.suppress(IncusError):
+                self.delete(dest, force=True)
+            raise
 
     def rename(self, old: str, new: str) -> None:
         """Rename an instance. Incus refuses while it is running."""

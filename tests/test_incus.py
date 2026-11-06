@@ -139,13 +139,13 @@ def test_copy_strips_orchestration_device_from_dest_after_copy(incus, mocker):
     make a started copy talk to the broker as the source. It must go."""
     run = mocker.patch(
         "jailbee.incus.subprocess.run",
-        side_effect=[_cp(), _cp_out("disk\n"), _cp()],
+        side_effect=[_cp(), _cp_out("eth0\njailbee-orchestration\n"), _cp()],
     )
     incus.copy("g", "c")
     calls = [c[0][0] for c in run.call_args_list]
     assert calls == [
         ["incus", "copy", "g", "c"],
-        ["incus", "config", "device", "get", "c", "jailbee-orchestration", "type"],
+        ["incus", "config", "device", "list", "c"],
         ["incus", "config", "device", "remove", "c", "jailbee-orchestration"],
     ]
 
@@ -154,11 +154,22 @@ def test_copy_without_orchestration_device_removes_nothing(incus, mocker):
     """Most sources have no broker device: only the probe runs, no removal."""
     run = mocker.patch(
         "jailbee.incus.subprocess.run",
-        side_effect=[_cp(), _cp(returncode=1, stderr="Error: Device not found")],
+        side_effect=[_cp(), _cp_out("eth0\n")],
     )
     incus.copy("g", "c")
     calls = [c[0][0] for c in run.call_args_list]
-    assert [c[2:4] for c in calls] == [["g", "c"], ["device", "get"]]
+    assert [c[2:4] for c in calls] == [["g", "c"], ["device", "list"]]
+
+
+def test_copy_fails_closed_when_the_device_probe_fails(incus, mocker):
+    """A transient API error must not leave a copy that may carry the device."""
+    run = mocker.patch(
+        "jailbee.incus.subprocess.run",
+        side_effect=[_cp(), _cp(returncode=1, stderr="Error: connection reset"), _cp()],
+    )
+    with pytest.raises(IncusError, match="connection reset"):
+        incus.copy("g", "c")
+    assert run.call_args_list[-1][0][0] == ["incus", "delete", "c", "--force"]
 
 
 def test_copy_fails_when_the_orchestration_device_cannot_be_removed(incus, mocker):
@@ -168,7 +179,7 @@ def test_copy_fails_when_the_orchestration_device_cannot_be_removed(incus, mocke
         "jailbee.incus.subprocess.run",
         side_effect=[
             _cp(),
-            _cp_out("disk\n"),
+            _cp_out("jailbee-orchestration\n"),
             *[_cp(returncode=1, stderr="Error: permission denied")] * 10,
         ],
     )
