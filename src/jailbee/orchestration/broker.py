@@ -1005,6 +1005,14 @@ def _check_socket_devices(
                 socket_device.detach(incus, name)
             except (IncusError, OSError) as exc:
                 memory.warn_once(f"socket-off:{name}", "broker: %s: %s", name, exc)
+            # The copy may already have connected as the source: after the
+            # detach, drop the source's connections (its client reconnects).
+            source = socket_device.source_uuid(entry)
+            if source and memory.listener.has_container(source):
+                try:
+                    memory.listener.reset_container(source)
+                except OSError as exc:
+                    memory.warn_once(f"socket-reset:{source}", "broker: %s: %s", name, exc)
             memory.attached.pop(name, None)
             continue
         if _labelled(config):

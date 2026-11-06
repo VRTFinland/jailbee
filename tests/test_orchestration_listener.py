@@ -423,3 +423,23 @@ def test_large_response_survives_partial_writes(
     assert lis._conns[ev.conn_id].outbuf
     resp = wire.decode_response(recv_line(c))
     assert resp.result == {"blob": blob}
+
+
+def test_reset_container_drops_connections_and_keeps_listening(
+    env: tuple[Listener, queue.Queue[Event], Path],
+) -> None:
+    lis, q, root = env
+    lis.open_container("u", root / "u")
+    old = connect(root / "u")
+    old.sendall(req("next"))
+    ev = q.get(timeout=2)
+    lis.reset_container("u")
+    gone = q.get(timeout=2)
+    assert isinstance(gone, DisconnectEvent) and gone.conn_id == ev.conn_id
+    assert old.recv(1) == b""
+    assert lis.has_container("u")
+    new = connect(root / "u")
+    new.sendall(req("again"))
+    again = q.get(timeout=2)
+    assert isinstance(again, RequestEvent) and again.uuid == "u"
+    lis.reset_container("unknown")  # no-op

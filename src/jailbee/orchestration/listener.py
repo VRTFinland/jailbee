@@ -151,6 +151,21 @@ class Listener:
     def close_container(self, uuid: str) -> None:
         self._call(lambda: self._close_server(uuid, events=True, unlink=True))
 
+    def reset_container(self, uuid: str) -> None:
+        """Drop every connection of ``uuid`` and listen afresh on the same path.
+
+        Used when another instance may have spoken as ``uuid`` (a raw copy
+        carrying its device): the legitimate client reconnects, and nothing
+        accepted or still in the old backlog survives. No-op when not served.
+        """
+
+        def reset() -> None:
+            server = self._servers.get(uuid)
+            if server is not None:
+                self._open(uuid, server.path)
+
+        self._call(reset)
+
     def respond(self, conn_id: int, response: wire.Response) -> None:
         try:
             data = wire.encode_response(response)

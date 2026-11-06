@@ -26,6 +26,7 @@ class FakeListener:
         self.fail_open_after_mkdir = False
         self.opened: list[str] = []
         self.closed: list[str] = []
+        self.reset: list[str] = []
 
     def has_container(self, uuid: str) -> bool:
         return uuid in self.open
@@ -41,6 +42,9 @@ class FakeListener:
     def close_container(self, uuid: str) -> None:
         self.open.discard(uuid)
         self.closed.append(uuid)
+
+    def reset_container(self, uuid: str) -> None:
+        self.reset.append(uuid)
 
 
 class Env:
@@ -186,6 +190,40 @@ def test_foreign_device_on_a_served_container_is_replaced(env) -> None:
     assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(
         env.rig.root / "sock" / UUID
     )
+
+
+def test_copy_of_a_served_container_loses_its_connections_after_the_detach(env) -> None:
+    """A raw `incus copy` + start may have connected as the source before the round."""
+    env.set(orch())
+    env.tick()
+    order: list[str] = []
+    env.remove.side_effect = lambda *a, **k: (order.append("detach"), env._remove(*a, **k))
+    env.listener.reset_container = lambda uuid: order.append(f"reset:{uuid}")  # type: ignore[method-assign]  # spy
+    src = env.devices["proj-orch"][ORCHESTRATION_DEVICE]
+    env.set(orch(), _c("proj-copy", **{"volatile.uuid": "uuid-copy"}))
+    env.devices["proj-copy"] = {ORCHESTRATION_DEVICE: dict(src)}
+    env.tick()
+    assert ORCHESTRATION_DEVICE not in env.devices["proj-copy"]
+    assert order[:2] == ["detach", f"reset:{UUID}"]
+    assert env.memory.attached == {"proj-orch": UUID}
+
+
+def test_copy_still_loses_connections_when_the_detach_fails(env) -> None:
+    env.set(orch())
+    env.tick()
+    env.remove.side_effect = IncusError("boom")
+    src = env.devices["proj-orch"][ORCHESTRATION_DEVICE]
+    env.set(orch(), _c("proj-copy", **{"volatile.uuid": "uuid-copy"}))
+    env.devices["proj-copy"] = {ORCHESTRATION_DEVICE: dict(src)}
+    env.tick()
+    assert env.listener.reset == [UUID]
+
+
+def test_mismatched_device_of_an_unserved_uuid_resets_nothing(env) -> None:
+    env.set(_c("proj-copy", **{"volatile.uuid": "new"}))
+    env.devices["proj-copy"] = {ORCHESTRATION_DEVICE: {"source": "/x/sock/old"}}
+    env.tick()
+    assert env.listener.reset == []
 
 
 def test_mismatched_on_unlabelled_container_is_removed(env) -> None:

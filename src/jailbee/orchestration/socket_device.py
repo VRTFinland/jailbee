@@ -52,15 +52,22 @@ def has_device(entry: Mapping[str, object]) -> bool:
     return isinstance(devices, dict) and ORCHESTRATION_DEVICE in devices
 
 
-def mismatched(entry: Mapping[str, object]) -> bool:
-    """Whether the entry carries a device that points at another instance's socket."""
+def source_uuid(entry: Mapping[str, object]) -> str | None:
+    """The uuid whose socket directory the entry's device mounts, if it has one."""
     devices = entry.get("devices")
     if not isinstance(devices, dict):
-        return False
+        return None
     device = devices.get(ORCHESTRATION_DEVICE)
     if not isinstance(device, dict):
+        return None
+    return PurePosixPath(str(device.get("source") or "")).name
+
+
+def mismatched(entry: Mapping[str, object]) -> bool:
+    """Whether the entry carries a device that points at another instance's socket."""
+    source = source_uuid(entry)
+    if source is None:
         return False
     config = entry.get("config")
     uuid = config.get("volatile.uuid") if isinstance(config, dict) else None
-    source = device.get("source")
-    return PurePosixPath(str(source or "")).name != uuid
+    return source != uuid
