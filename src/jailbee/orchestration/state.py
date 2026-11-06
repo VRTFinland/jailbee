@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import contextlib
-import json
 import logging
 import os
 import shutil
 import tempfile
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from jailbee.db import state_dir
+from jailbee.orchestration.store import import_json_document
 
 if TYPE_CHECKING:
     from collections.abc import Collection
@@ -64,17 +64,12 @@ class Reservation:
 
 def load_reservations(root: Path) -> dict[str, list[Reservation]]:
     """Load create reservations; missing/corrupt files yield an empty store."""
-    path = root / RESERVATIONS_FILE
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        groups = raw["reservations"]
-        if not isinstance(groups, dict):
-            return {}
-    except FileNotFoundError:
+    raw = import_json_document(root, RESERVATIONS_FILE, _validate_reservations).kv_get(
+        RESERVATIONS_FILE
+    )
+    if raw is None:
         return {}
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        log.warning("ignoring unreadable orchestration reservations %s: %s", path, exc)
-        return {}
+    groups = cast(dict[str, Any], raw)["reservations"]
     result: dict[str, list[Reservation]] = {}
     for recipient, items in groups.items():
         if not isinstance(items, list):
@@ -102,7 +97,9 @@ def save_reservations(root: Path, reservations: dict[str, list[Reservation]]) ->
         "version": 1,
         "reservations": {k: [asdict(r) for r in v] for k, v in reservations.items() if v},
     }
-    atomic_write_text(root / RESERVATIONS_FILE, json.dumps(payload, indent=2) + "\n")
+    import_json_document(root, RESERVATIONS_FILE, _validate_reservations).kv_put(
+        RESERVATIONS_FILE, payload
+    )
 
 
 def reservation_alive(pid: int) -> bool:
@@ -167,23 +164,36 @@ def atomic_write_text(path: Path, text: str) -> None:
 
 def load_queue(root: Path) -> dict[str, list[QueuedRequest]]:
     """Load the queue; a missing or corrupt file yields an empty queue."""
-    path = root / QUEUE_FILE
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {}
-    except (OSError, ValueError) as exc:
-        log.warning("ignoring unreadable orchestration queue %s: %s", path, exc)
+    raw = import_json_document(root, QUEUE_FILE, _validate_queue).kv_get(QUEUE_FILE)
+    if raw is None:
         return {}
     try:
         return {
             recipient: [QueuedRequest(**item) for item in items]
-            for recipient, items in raw["queues"].items()
+            for recipient, items in cast(dict[str, Any], raw)["queues"].items()
             if items
         }
     except (KeyError, TypeError, AttributeError) as exc:
-        log.warning("ignoring corrupt orchestration queue %s: %s", path, exc)
+        log.warning("ignoring corrupt orchestration queue: %s", exc)
         return {}
+
+
+def _validate_reservations(raw: object) -> None:
+    if not isinstance(raw, dict) or not isinstance(raw.get("reservations"), dict):
+        raise ValueError("invalid reservations document")
+
+
+def _validate_queue(raw: object) -> None:
+    if not isinstance(raw, dict) or not isinstance(raw.get("queues"), dict):
+        raise ValueError("invalid queue document")
+    try:
+        for items in raw["queues"].values():
+            if not isinstance(items, list):
+                raise ValueError("invalid queue entries")
+            for item in items:
+                QueuedRequest(**item)
+    except TypeError as exc:
+        raise ValueError("invalid queue entry") from exc
 
 
 def save_queue(root: Path, queues: dict[str, list[QueuedRequest]]) -> None:
@@ -192,4 +202,4 @@ def save_queue(root: Path, queues: dict[str, list[QueuedRequest]]) -> None:
         "version": _QUEUE_VERSION,
         "queues": {k: [asdict(r) for r in v] for k, v in queues.items() if v},
     }
-    atomic_write_text(root / QUEUE_FILE, json.dumps(payload, indent=2) + "\n")
+    import_json_document(root, QUEUE_FILE, _validate_queue).kv_put(QUEUE_FILE, payload)

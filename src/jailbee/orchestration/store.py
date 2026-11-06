@@ -510,6 +510,69 @@ def open_state_store(root: Path) -> BrokerStore:
         return _STATE_STORES[path]
 
 
+def import_json_document(
+    root: Path, name: str, validate: Callable[[object], None]
+) -> BrokerStore:
+    """Import a legacy JSON document once; validate raises ValueError on bad shape.
+
+    The document key and marker use the legacy filename. Future document users
+    can reuse this helper before either reading or saving that key.
+    """
+    store = open_state_store(root)
+    path = root / name
+
+    def load(con: sqlite3.Connection) -> None:
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            validate(document)
+        except FileNotFoundError:
+            return
+        except (ValueError, TypeError, UnicodeError) as exc:
+            _log.warning("ignoring corrupt orchestration state %s: %s", path, exc)
+            try:
+                path.replace(path.with_name(path.name + ".corrupt"))
+            except FileNotFoundError:
+                pass
+            return
+        except OSError as exc:
+            _log.warning("ignoring unreadable orchestration state %s: %s", path, exc)
+            raise
+        con.execute(
+            "INSERT INTO state(key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO NOTHING", (name, json.dumps(document)),
+        )
+
+    store.import_once(name, load)
+    # TODO(state-db-cleanup): remove migrated files after the compatibility window.
+    try:
+        path.replace(path.with_name(path.name + ".migrated"))
+    except FileNotFoundError:
+        pass
+    return store
+
+
+def read_state_snapshot(root: Path, key: str) -> tuple[bool, object | None]:
+    """Read a state value and import marker together without creating a store."""
+    path = store_path(root)
+    if not path.exists():
+        return False, None
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=_BUSY_TIMEOUT_MS / 1000)
+        try:
+            con.execute("BEGIN")
+            row = con.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
+            marker = con.execute("SELECT 1 FROM meta WHERE key=?", (f"imported:{key}",)).fetchone()
+            return bool(row or marker), None if row is None else json.loads(row[0])
+        finally:
+            con.close()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc):
+            return False, None
+        raise StoreError(str(exc)) from exc
+    except sqlite3.Error as exc:
+        raise StoreError(str(exc)) from exc
+
+
 def _enable_wal(con: sqlite3.Connection) -> None:
     """Switch to WAL; the switch ignores busy_timeout, so retry while others race it."""
     deadline = time.monotonic() + _BUSY_TIMEOUT_MS / 1000

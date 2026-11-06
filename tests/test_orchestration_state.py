@@ -28,7 +28,7 @@ def test_reservations_round_trip(tmp_path: Path) -> None:
     reservations = {"proj-orch": [state.Reservation("proj-a", 123, "2026-10-26T00:00:00+00:00")]}
     state.save_reservations(tmp_path, reservations)
     assert state.load_reservations(tmp_path) == reservations
-    assert json.loads((tmp_path / state.RESERVATIONS_FILE).read_text())["version"] == 1
+    assert not (tmp_path / state.RESERVATIONS_FILE).exists()
 
 
 def test_save_reservations_omits_empty(tmp_path: Path) -> None:
@@ -120,20 +120,38 @@ def test_queue_roundtrip(tmp_path: Path) -> None:
     queues = {"proj-a": [_req("m1"), _req("m2")], "proj-b": [_req("m3")]}
     save_queue(tmp_path, queues)
     assert load_queue(tmp_path) == queues
-    data = json.loads((tmp_path / "queue.json").read_text())
-    assert data["version"] == 1
+    assert not (tmp_path / "queue.json").exists()
 
 
 def test_queue_warm_paths_and_legacy(tmp_path):
-    from dataclasses import replace
+    from dataclasses import asdict, replace
 
+    legacy = asdict(_req())
+    del legacy["warm_paths"]
+    (tmp_path / "queue.json").write_text(json.dumps({"queues": {"proj-a": [legacy]}}))
+    assert load_queue(tmp_path)["proj-a"][0].warm_paths is None
     save_queue(tmp_path, {"proj-a": [replace(_req(), warm_paths=["*/build"])]})
     assert load_queue(tmp_path)["proj-a"][0].warm_paths == ["*/build"]
+    assert (tmp_path / "queue.json.migrated").exists()
+
+
+def test_save_before_load_never_reimports_legacy(tmp_path):
+    from dataclasses import asdict
+
     path = tmp_path / "queue.json"
-    raw = json.loads(path.read_text())
-    del raw["queues"]["proj-a"][0]["warm_paths"]
-    path.write_text(json.dumps(raw))
-    assert load_queue(tmp_path)["proj-a"][0].warm_paths is None
+    path.write_text(json.dumps({"queues": {"old": [asdict(_req())]}}))
+    save_queue(tmp_path, {"new": [_req()]})
+    path.write_text("not json")
+    assert list(load_queue(tmp_path)) == ["new"]
+    assert not path.exists()
+
+
+def test_invalid_document_is_quarantined(tmp_path, caplog):
+    path = tmp_path / "reservations.json"
+    path.write_text('{"reservations": []}')
+    assert state.load_reservations(tmp_path) == {}
+    assert (tmp_path / "reservations.json.corrupt").exists()
+    assert caplog.records
 
 
 def test_missing_queue_is_empty(tmp_path: Path) -> None:
@@ -149,8 +167,6 @@ def test_corrupt_queue_is_empty_and_warns(tmp_path: Path, caplog: pytest.LogCapt
 
 def test_empty_queue_omitted(tmp_path: Path) -> None:
     save_queue(tmp_path, {"proj-a": [], "proj-b": [_req()]})
-    data = json.loads((tmp_path / "queue.json").read_text())
-    assert list(data["queues"]) == ["proj-b"]
     assert list(load_queue(tmp_path)) == ["proj-b"]
 
 
