@@ -70,6 +70,14 @@ _MIGRATIONS: list[str] = [
     """
     CREATE TABLE state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     """,
+    """
+    CREATE TABLE journal (
+        container_key TEXT NOT NULL, digest TEXT NOT NULL,
+        container_full TEXT NOT NULL, manifest_id TEXT NOT NULL,
+        outcome TEXT NOT NULL, at TEXT NOT NULL,
+        PRIMARY KEY(container_key, digest)
+    );
+    """,
 ]
 
 
@@ -295,6 +303,23 @@ class BrokerStore:
             loader(con)
             con.execute("INSERT INTO meta(key, value) VALUES (?, '1')", (marker,))
         return True
+
+    def journal_seen(self, container_key: str, digest: str) -> bool:
+        with self._tx(write=False) as con:
+            return con.execute(
+                "SELECT 1 FROM journal WHERE container_key=? AND digest=?",
+                (container_key, digest),
+            ).fetchone() is not None
+
+    def journal_record(
+        self, container_key: str, digest: str, container_full: str,
+        manifest_id: str, outcome: str, at: str,
+    ) -> None:
+        with self._tx() as con:
+            con.execute(
+                "INSERT OR IGNORE INTO journal VALUES (?, ?, ?, ?, ?, ?)",
+                (container_key, digest, container_full, manifest_id, outcome, at),
+            )
 
     # -- items ---------------------------------------------------------
 
