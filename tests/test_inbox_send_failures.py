@@ -1,18 +1,13 @@
-"""Failure handling for inbox send publication."""
+"""Validation and body handling for inbox send requests."""
 
-import fcntl
 import io
-import json
-import os
-import sys
-from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from typer._click.exceptions import ClickException
 
-from jailbee.inbox import cli, send
+from jailbee.inbox import send
 from jailbee.inbox.container_cmd import inbox_app
+from jailbee.inbox.errors import InboxBadUsage, InboxUsage
 
 
 def invoke(args):
@@ -25,166 +20,32 @@ def invoke(args):
 
 def test_help_documents_model_suffix(capsys):
     assert invoke(["runners", "--help"]) == 0
-    output = capsys.readouterr().out
-    assert "[1m] suffix" in output
+    assert "[1m] suffix" in capsys.readouterr().out
     assert invoke(["send", "spawn", "--help"]) == 0
     assert "[1m] suffix" in capsys.readouterr().out
 
 
-# The Python implementation intentionally accepts [1m]; the shell reference does not.
-@pytest.mark.parametrize("agent", ["claude", "claude-jb"])
 @pytest.mark.parametrize("model", ["opus[1m]", "sonnet[1m]"])
-def test_send_accepts_suffixed_model(tmp_path, monkeypatch, agent, model):
-    monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
-    assert (
-        invoke(
-            ["send", "spawn", "--branch", "b", "--text", "x", "--agent", agent, "--model", model]
-        )
-        == 0
-    )
-    manifest = next((tmp_path / "outbox").glob("*.json"))
-    assert json.loads(manifest.read_text())["runner"] == {"agent": agent, "model": model}
+def test_valid_model_suffix(model):
+    request = send.SendRequest(type="spawn", branch="feature", new=True, agent="claude", model=model, text="hello")
+    assert send.validate(request).model == model
 
 
 @pytest.mark.parametrize("model", ["OPUS[1m]", "opus[2m]", "opus[1M]", "opus [1m]"])
-def test_send_rejects_invalid_model_suffix(tmp_path, monkeypatch, model):
-    monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
-    assert (
-        invoke(
-            ["send", "spawn", "--branch", "b", "--text", "x", "--agent", "claude", "--model", model]
-        )
-        == 2
-    )
-    assert not list((tmp_path / "outbox").glob("*"))
-
-
-def test_send_id_exhaustion_exits_one_without_traceback(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
-    monkeypatch.setattr(send, "new_id", lambda _: "fixed")
-    outbox = tmp_path / "outbox"
-    outbox.mkdir()
-    (outbox / "fixed.json").write_text("existing")
-
-    assert invoke(["send", "message", "--text", "hello"]) == 1
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert captured.err == "jailbee inbox: could not find a free manifest id\n"
-    assert (outbox / "fixed.json").read_text() == "existing"
-
-
-@pytest.mark.parametrize("stage", ["body", "manifest"])
-def test_send_publish_failure_cleans_files_and_releases_lock(tmp_path, monkeypatch, capsys, stage):
-    monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
-    monkeypatch.setattr(send, "new_id", lambda _: "fixed")
-    original = Path.replace
-
-    def fail_replace(path, target):
-        if path.name == f".fixed.{'md' if stage == 'body' else 'json'}.tmp":
-            raise OSError(13, "Permission denied", str(target))
-        return original(path, target)
-
-    monkeypatch.setattr(Path, "replace", fail_replace)
-    assert invoke(["send", "message", "--text", "hello", "--wait"]) == 1
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "Traceback" not in captured.err
-    assert "Permission denied" in captured.err
-    if stage == "manifest":
-        assert "jailbee inbox: could not write the manifest\n" in captured.err
-    assert list((tmp_path / "outbox").iterdir()) == []
-    fd = os.open(tmp_path / "status-waits" / "fixed.lock", os.O_WRONLY)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    finally:
-        os.close(fd)
-
-
-def test_interrupt_after_manifest_rename_keeps_request_and_releases_lock(
-    tmp_path, monkeypatch, capsys
-):
-    monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
-    monkeypatch.setattr(send, "new_id", lambda _: "fixed")
-    original = Path.replace
-
-    def interrupt_after_rename(path, target):
-        result = original(path, target)
-        if path.name == ".fixed.json.tmp":
-            raise KeyboardInterrupt
-        return result
-
-    monkeypatch.setattr(Path, "replace", interrupt_after_rename)
-    assert invoke(["send", "message", "--text", "hello", "--wait"]) == 130
-    captured = capsys.readouterr()
-    assert "Traceback" not in captured.err
-    outbox = tmp_path / "outbox"
-    assert json.loads((outbox / "fixed.json").read_text())["body_file"] == "fixed.md"
-    assert (outbox / "fixed.md").read_text() == "hello"
-    fd = os.open(tmp_path / "status-waits" / "fixed.lock", os.O_WRONLY)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    finally:
-        os.close(fd)
+def test_invalid_model_suffix(model):
+    request = send.SendRequest(type="spawn", branch="feature", new=True, agent="claude", model=model, text="hello")
+    with pytest.raises(InboxBadUsage):
+        send.validate(request)
 
 
 class BoundedReader(io.BytesIO):
     def read(self, size=-1):
-        assert 0 < size <= 65536, f"unbounded read: {size}"
+        assert 0 < size <= 65536
         return super().read(size)
 
 
-@pytest.mark.parametrize("source", ["stdin", "file"])
-def test_send_reads_large_body_in_bounded_chunks(tmp_path, monkeypatch, capsys, source):
-    monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
-    payload = b"a" * 150001
-    if source == "stdin":
-        monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=BoundedReader(payload)))
-        args = ["-"]
-    else:
-        path = tmp_path / "input"
-        path.write_bytes(payload)
-        original = Path.open
-
-        def bounded_open(p, *args, **kwargs):
-            if p == path:
-                return BoundedReader(payload)
-            return original(p, *args, **kwargs)
-
-        monkeypatch.setattr(Path, "open", bounded_open)
-        args = ["--file", str(path)]
-    assert invoke(["send", "message", *args]) == 2
-    assert "the message text is 150001 bytes; the limit is 65536" in capsys.readouterr().err
-    assert list((tmp_path / "outbox").iterdir()) == []
-
-
-def test_send_reserves_and_publishes_body_before_manifest(tmp_path, monkeypatch):
-    settings = cli.load_settings({"JAILBEE_ORCHESTRATION_DIR": str(tmp_path)})
-    monkeypatch.setattr(send, "new_id", lambda _: "fixed")
-    original = Path.replace
-    observed = []
-
-    def check_order(path, target):
-        if path.name == ".fixed.json.tmp":
-            assert (settings.outbox / "fixed.md").read_bytes() == b"hello"
-            fd = os.open(settings.base / "status-waits" / "fixed.lock", os.O_WRONLY)
-            try:
-                with pytest.raises(BlockingIOError):
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            finally:
-                os.close(fd)
-            observed.append(True)
-        return original(path, target)
-
-    monkeypatch.setattr(Path, "replace", check_order)
-    before = len(send._reservations)
-    try:
-        assert (
-            send.publish(
-                settings, send.validate(send.SendRequest(type="message", text="hello", wait=True))
-            )
-            == "fixed"
-        )
-        assert observed == [True]
-    finally:
-        for fd in send._reservations[before:]:
-            os.close(fd)
-        del send._reservations[before:]
+def test_oversized_body_is_read_in_bounded_chunks(monkeypatch):
+    reader = BoundedReader(b"x" * 65537)
+    monkeypatch.setattr("sys.stdin", type("Input", (), {"buffer": reader})())
+    with pytest.raises(InboxUsage, match="limit is 65536"):
+        send.read_body(send.SendRequest(type="message", stdin=True))

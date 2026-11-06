@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 from jailbee.inbox import cli
-from jailbee.inbox.cli import PROG, Settings
+from jailbee.inbox.cli import PROG
 from jailbee.inbox.errors import InboxUsage
 from jailbee.inbox.render import clean_c0c1, ls_line, pretty, render_status
 from jailbee.inbox.send import SendRequest, prepare_send, validate
@@ -160,7 +160,7 @@ def cmd_send(request: SendRequest) -> int:
     ident, manifest, body = prepare_send(request)
     # Without --wait the broker still answers only between rounds: same deadline.
     timeout = cli.parse_timeout(request.timeout or "30m")
-    # Like the file path: the id is printed before the broker is asked.
+    # Print the id before asking the broker.
     print(ident, flush=True)
     try:
         item = call_send(
@@ -273,12 +273,12 @@ def cmd_grant(*, as_json: bool = False) -> int:
     return cli.render_grant(grant, as_json=as_json)
 
 
-def cmd_runners(settings: Settings, *, as_json: bool = False) -> int:
+def cmd_runners(*, as_json: bool = False) -> int:
     try:
         grant = _grant()
     except BrokerError as exc:
         return _fail(exc)
-    return cli.cmd_runners(settings, as_json=as_json, grant=grant)
+    return cli.cmd_runners(grant, as_json=as_json)
 
 
 Command = Callable[[], int]

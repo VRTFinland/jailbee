@@ -6,8 +6,6 @@ this module is imported by the inbox commands inside a container.
 
 from __future__ import annotations
 
-import os
-import re
 import socket
 import time
 from collections.abc import Callable, Mapping
@@ -58,44 +56,6 @@ class BrokerError(Exception):
 
 def socket_path(environ: Mapping[str, str]) -> Path:
     return Path(environ.get(SOCKET_ENV) or DEFAULT_SOCKET)
-
-
-MOUNTINFO = Path("/proc/self/mountinfo")
-
-
-def _mounted(directory: Path, mountinfo: Path) -> bool:
-    """Whether `directory` is a mount point listed in `mountinfo`.
-
-    `os.path.ismount` cannot tell: Incus bind-mounts the host directory, often
-    from the same filesystem, so device and inode tests say "not a mount".
-    """
-    try:
-        text = mountinfo.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return False
-    target = str(directory)
-    for line in text.splitlines():
-        fields = line.split()
-        if len(fields) > 4:
-            point = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), fields[4])
-            if point == target:
-                return True
-    return False
-
-
-def socket_available(environ: Mapping[str, str], *, mountinfo: Path = MOUNTINFO) -> bool:
-    """True when the container has the orchestration device attached.
-
-    The default socket's parent is the device's mount point. Incus leaves the
-    empty directory behind after the device is removed from a running
-    container, so only a live mount counts; inside it, a missing socket file or
-    a refused connection means "broker down" (exit 4). An explicit
-    `JAILBEE_ORCHESTRATION_SOCKET` (tests, debugging) only needs its directory.
-    """
-    path = socket_path(environ)
-    if environ.get(SOCKET_ENV):
-        return os.path.isdir(path.parent)
-    return _mounted(path.parent, mountinfo)
 
 
 class Client:

@@ -1,6 +1,5 @@
-"""Standard-library orchestration inbox command logic."""
+"""Shared parsing and rendering for orchestration inbox commands."""
 
-import fcntl
 import json
 import os
 import re
@@ -8,54 +7,14 @@ import shutil
 import sys
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from jailbee.inbox.errors import InboxUsage
-from jailbee.inbox.render import (
-    SaturatedNumber,
-    clean_c0c1,
-    clean_c1,
-    jq_tostring,
-    ls_line,
-    pretty,
-    render_status,
-    sanitize_json_value,
-    tsv,
-)
-
-if TYPE_CHECKING:
-    from jailbee.inbox.send import SendRequest
+from jailbee.inbox.render import (SaturatedNumber, clean_c0c1, clean_c1, jq_tostring, pretty, render_status, sanitize_json_value, tsv)
 
 PROG = "jailbee inbox"
-
-
-@dataclass
-class Settings:
-    base: Path
-    inbox: Path
-    outbox: Path
-    poll: float
-    settle: float
-
-
-def load_settings(environ: Mapping[str, str]) -> Settings:
-    base = Path(
-        environ.get("JAILBEE_ORCHESTRATION_DIR")
-        or (environ.get("HOME", "") + "/.jailbee/orchestration")
-    )
-    settle = environ.get("JAILBEE_INBOX_SETTLE") or "1"
-    poll = environ.get("JAILBEE_INBOX_POLL") or "5"
-    pattern = r"(?:[0-9]+\.?[0-9]*|\.[0-9]+)"
-    if not re.fullmatch(pattern, settle):
-        raise InboxUsage(
-            f"JAILBEE_INBOX_SETTLE must be a non-negative number of seconds, got '{settle}'"
-        )
-    if not re.fullmatch(pattern, poll) or not re.search(r"[1-9]", poll):
-        raise InboxUsage(f"JAILBEE_INBOX_POLL must be a positive number of seconds, got '{poll}'")
-    return Settings(base, base / "inbox", base / "outbox", float(poll), float(settle))
 
 
 def parse_duration(text: str) -> int:
@@ -67,14 +26,6 @@ def parse_duration(text: str) -> int:
 
 def parse_timeout(text: str) -> int | None:
     return None if text == "none" else parse_duration(text)
-
-
-def unread_files(inbox: Path) -> list[Path]:
-    return sorted(
-        p
-        for p in inbox.glob("*.json")
-        if not p.name.startswith(".") and not p.is_symlink() and p.is_file()
-    )
 
 
 def _parse_number(text: str) -> Decimal | SaturatedNumber:
@@ -115,34 +66,6 @@ def _load(path: Path) -> object:
     return json.loads(path.read_text(), parse_float=_parse_number, parse_int=_parse_number)
 
 
-def message_id(path: Path) -> str | None:
-    try:
-        doc = _load(path)
-        if isinstance(doc, dict):
-            ident: object = doc.get("id")
-            if isinstance(ident, str):
-                return ident
-    except (OSError, ValueError, UnicodeError):
-        pass
-    return None
-
-
-def _warning(path: Path) -> None:
-    print(f"{PROG}: skipping unreadable message {path}", file=sys.stderr)
-
-
-def cmd_ls(settings: Settings) -> int:
-    for path in unread_files(settings.inbox):
-        try:
-            doc = _load(path)
-            if not isinstance(doc, dict):
-                raise ValueError("not an object")
-            print(ls_line(doc))
-        except (OSError, ValueError, UnicodeError, TypeError):
-            _warning(path)
-    return 0
-
-
 def _clean_json(value: object) -> object:
     if isinstance(value, str):
         return clean_c1(value)
@@ -153,64 +76,8 @@ def _clean_json(value: object) -> object:
     return value
 
 
-def cmd_read(settings: Settings, ident: str, *, keep: bool = False) -> int:
-    for path in unread_files(settings.inbox):
-        fid = message_id(path)
-        if fid is None:
-            _warning(path)
-            continue
-        if fid != ident:
-            continue
-        try:
-            output = pretty(_clean_json(_load(path)))
-            if not keep:
-                dest = settings.inbox / "read"
-                dest.mkdir(parents=True, exist_ok=True)
-                path.rename(dest / path.name)
-        except (OSError, ValueError, UnicodeError):
-            continue
-        print(output)
-        return 0
-    print(f"{PROG}: no unread message with id {ident}", file=sys.stderr)
-    return 1
-
-
-def _load_snapshot(settings: Settings) -> tuple[Path, dict[str, Any]] | None:
-    """Read and validate children.json; print the reason and return None on failure."""
-    path = settings.base / "children.json"
-    if not path.is_file():
-        print(f"{PROG}: children.json is unavailable", file=sys.stderr)
-        return None
-    try:
-        doc = _load(path)
-        if (
-            not isinstance(doc, dict)
-            or isinstance(doc.get("version"), bool)
-            or doc.get("version") != 1
-            or isinstance(doc.get("updated_at"), bool)
-            or not isinstance(doc.get("updated_at"), (int, float, Decimal))
-            or not isinstance(doc.get("children"), list)
-        ):
-            raise ValueError("invalid snapshot")
-    except (OSError, ValueError, UnicodeError):
-        print(f"{PROG}: invalid children.json", file=sys.stderr)
-        return None
-    if int(time.time()) - doc["updated_at"] > 900:
-        print(f"{PROG}: children.json heartbeat is stale (over 15 minutes old)", file=sys.stderr)
-    return path, doc
-
-
-def cmd_children(settings: Settings, *, as_json: bool = False) -> int:
-    loaded = _load_snapshot(settings)
-    if loaded is None:
-        return 1
-    path, doc = loaded
-    line = max(1, len(path.read_text().rstrip().splitlines()))
-    return render_children(doc["children"], where=str(path), line=line, as_json=as_json)
-
-
 def render_children(children: list[Any], *, where: str, line: int, as_json: bool) -> int:
-    """Print the `inbox children` view of a children list (shared by both transports)."""
+    """Print the `inbox children` view of a children list."""
     if as_json:
         print(pretty(children))
     else:
@@ -248,16 +115,6 @@ def render_children(children: list[Any], *, where: str, line: int, as_json: bool
     return 0
 
 
-def cmd_status(settings: Settings, *, child: str | None = None, as_json: bool = False) -> int:
-    from jailbee.inbox.waiting import last_from_child
-
-    loaded = _load_snapshot(settings)
-    if loaded is None:
-        return 1
-    from_child = last_from_child(settings.base)
-    return render_status_view(list(loaded[1]["children"]), from_child, child=child, as_json=as_json)
-
-
 def render_status_view(
     children: list[object],
     from_child: Mapping[str, float],
@@ -265,7 +122,7 @@ def render_status_view(
     child: str | None,
     as_json: bool,
 ) -> int:
-    """Print `inbox status` for a children list (shared by both transports)."""
+    """Print `inbox status` for a children list."""
     if child is not None:
         children = [c for c in children if isinstance(c, dict) and c.get("name") == child]
         if not children:
@@ -301,16 +158,8 @@ class JqError(Exception):
     """A jq-compatible data error."""
 
 
-_UNSET: Any = object()
-
-
-def runners_json(settings: Settings, grant: object = _UNSET) -> list[dict[str, object]]:
+def runners_json(grant: object) -> list[dict[str, object]]:
     config = Path(os.environ.get("JAILBEE_LITELLM_CONFIG") or "/etc/jailbee/litellm.json")
-    if grant is _UNSET:
-        try:
-            grant = _load(settings.base / "grant.json")
-        except (OSError, ValueError, UnicodeError):
-            grant = None
     cfg: object = None
     if os.access(config, os.R_OK):
         try:
@@ -370,37 +219,8 @@ def runners_json(settings: Settings, grant: object = _UNSET) -> list[dict[str, o
     return result
 
 
-def cmd_grant(settings: Settings, *, as_json: bool = False) -> int:
-    path = settings.base / "grant.json"
-
-    def reject_constant(value: str) -> None:
-        raise ValueError(f"invalid JSON constant {value}")
-
-    try:
-        grant = json.loads(
-            path.read_text(),
-            parse_float=_parse_number,
-            parse_int=_parse_number,
-            parse_constant=reject_constant,
-        )
-    except FileNotFoundError:
-        print(
-            f"{PROG}: no orchestration grant here yet (the broker writes it a few seconds "
-            "after the grant; if it stays missing, tell the human)",
-            file=sys.stderr,
-        )
-        return 1
-    except (OSError, ValueError, UnicodeError):
-        print(f"{PROG}: invalid grant.json", file=sys.stderr)
-        return 1
-    if not isinstance(grant, dict):
-        print(f"{PROG}: invalid grant.json", file=sys.stderr)
-        return 1
-    return render_grant(grant, as_json=as_json)
-
-
 def render_grant(grant: dict[str, Any], *, as_json: bool) -> int:
-    """Print the grant summary (shared by both transports)."""
+    """Print the grant summary."""
     safe = sanitize_json_value(grant)
     if as_json:
         print(pretty(safe))
@@ -461,9 +281,9 @@ def render_grant(grant: dict[str, Any], *, as_json: bool) -> int:
     return 0
 
 
-def cmd_runners(settings: Settings, *, as_json: bool = False, grant: object = _UNSET) -> int:
+def cmd_runners(grant: object, *, as_json: bool = False) -> int:
     try:
-        entries = runners_json(settings, grant)
+        entries = runners_json(grant)
     except JqError as exc:
         print(f"jq: error (at <unknown>): {exc}", file=sys.stderr)
         return 5
@@ -528,87 +348,3 @@ def parse_wait_args(
             )
         wake = frozenset(tokens)
     return seconds, quiet, digest_seconds, wake
-
-
-def cmd_wait(
-    settings: Settings,
-    *,
-    timeout: str = "30m",
-    wake_on: str | None = None,
-    quiet_after: str | None = None,
-    digest: str | None = None,
-    path: bool = False,
-) -> int:
-    from jailbee.inbox import socket_cli
-    from jailbee.inbox.waiting import run_wait
-
-    seconds, quiet, digest_seconds, wake = parse_wait_args(timeout, wake_on, quiet_after, digest)
-    settings.inbox.mkdir(parents=True, exist_ok=True)
-    # TODO(socket-phase3): the broker serializes waiters; remove wait.lock.
-    fd = os.open(settings.base / "wait.lock", os.O_WRONLY | os.O_CREAT, 0o644)
-    try:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise InboxUsage("another process is already waiting in this container") from None
-        deadline = None if seconds is None else time.monotonic() + seconds
-        warned: set[Path] = set()
-        while True:
-            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
-            rc, line = run_wait(
-                settings,
-                timeout=remaining,
-                wake=wake,
-                quiet=quiet,
-                digest=digest_seconds,
-                warned=warned,
-                handover=lambda left: socket_cli.wait_once(left, quiet, digest_seconds, wake),
-            )
-            if line == "digest":
-                return _print_digest(settings, warned=warned)
-            if line is None:
-                return rc
-            if path or line.startswith("quiet-child "):
-                print(line)
-            else:
-                ident = message_id(Path(line))
-                if ident is None:
-                    continue
-                print(clean_c0c1(ident))
-            return rc
-    finally:
-        os.close(fd)
-
-
-def _print_digest(settings: Settings, *, warned: set[Path] | None = None) -> int:
-    from jailbee.inbox.waiting import last_from_child, write_digest_stamp
-
-    now = time.time()
-    try:
-        write_digest_stamp(settings.base, now)
-    except OSError as exc:
-        print(f"jailbee inbox: could not record the digest time: {exc}", file=sys.stderr)
-    print("digest")
-    loaded = _load_snapshot(settings)
-    children: list[object] = list(loaded[1]["children"]) if loaded else []
-    print(render_status(children, now=now, from_child=last_from_child(settings.base, warned)))
-    return 0
-
-
-def cmd_send(settings: Settings, request: "SendRequest") -> int:
-    from jailbee.inbox.send import publish, validate
-    from jailbee.inbox.waiting import wait_for_status
-
-    request = validate(request)
-    ident = publish(settings, request)
-    print(ident, flush=True)
-    if request.wait:
-        result = wait_for_status(settings, ident, parse_timeout(request.timeout or "30m"))
-        if result == 3:
-            print(
-                "jailbee inbox: no reply from the host broker; if this repeats, tell the human "
-                "(the broker may not be running)",
-                file=sys.stderr,
-            )
-        return result
-    return 0

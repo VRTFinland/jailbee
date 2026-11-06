@@ -1,6 +1,5 @@
 """Parse and publish orchestration requests without external dependencies."""
 
-import fcntl
 import io
 import os
 import re
@@ -9,14 +8,9 @@ import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, BinaryIO
+from typing import BinaryIO
 
 from jailbee.inbox.errors import InboxBadUsage, InboxUsage
-from jailbee.inbox.render import pretty
-
-if TYPE_CHECKING:
-    from jailbee.inbox.cli import Settings
-
 
 @dataclass(frozen=True)
 class SendRequest:
@@ -290,13 +284,6 @@ def new_id(type_: str) -> str:
     return f"{type_}-{datetime.now(UTC):%Y%m%d%H%M%S}-{secrets.token_hex(2)}"
 
 
-_reservations: list[int] = []
-
-
-class PublishError(Exception):
-    """A send failed after validation, with exit status 1."""
-
-
 def read_body(req: SendRequest) -> bytes:
     """Read the message/spawn/restart text; enforce non-empty and the size limit."""
     source: BinaryIO
@@ -344,58 +331,3 @@ def prepare_send(req: SendRequest) -> tuple[str, dict[str, object], str | None]:
     return id_, build_manifest(req, id_, body_name), body
 
 
-def publish(settings: "Settings", req: SendRequest) -> str:
-    settings.outbox.mkdir(parents=True, exist_ok=True)
-    id_ = ""
-    for _ in range(2):
-        candidate = new_id(req.type)
-        if (
-            not (settings.outbox / f"{candidate}.json").exists()
-            and not (settings.outbox / f"{candidate}.md").exists()
-        ):
-            id_ = candidate
-            break
-    if not id_:
-        raise PublishError("could not find a free manifest id")
-    body_name = f"{id_}.md" if req.type in {"message", "spawn", "restart"} else None
-    body_tmp = settings.outbox / f".{id_}.md.tmp"
-    json_tmp = settings.outbox / f".{id_}.json.tmp"
-    body_path = settings.outbox / f"{id_}.md"
-    fd: int | None = None
-    moved_body = False
-    publishing_manifest = False
-    try:
-        if body_name:
-            with body_tmp.open("wb") as output:
-                output.write(read_body(req))
-        json_tmp.write_text(pretty(build_manifest(req, id_, body_name)) + "\n")
-        if req.wait:
-            lock_dir = settings.base / "status-waits"
-            lock_dir.mkdir(parents=True, exist_ok=True)
-            fd = os.open(lock_dir / f"{id_}.lock", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o666)
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise InboxUsage("status ref is already reserved") from None
-        if body_name:
-            body_tmp.replace(body_path)
-            moved_body = True
-        try:
-            publishing_manifest = True
-            json_tmp.replace(settings.outbox / f"{id_}.json")
-        except OSError as exc:
-            raise PublishError("could not write the manifest") from exc
-        if fd is not None:
-            _reservations.append(fd)
-            fd = None
-        return id_
-    except BaseException:
-        # After rename the broker may already have consumed the manifest.
-        if moved_body and not (publishing_manifest and not json_tmp.exists()):
-            body_path.unlink(missing_ok=True)
-        raise
-    finally:
-        body_tmp.unlink(missing_ok=True)
-        json_tmp.unlink(missing_ok=True)
-        if fd is not None:
-            os.close(fd)

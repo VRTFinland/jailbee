@@ -131,16 +131,18 @@ def test_container_cli_inbox_publishes_request(monkeypatch, mocker, tmp_path, ha
     identity = tmp_path / "VERSION"
     identity.write_text("1.8.1 aaaa\n")
     monkeypatch.setattr(container_cli, "VERSION_FILE", identity)
-    monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
-    target = mocker.patch("jailbee.inbox.cli.cmd_send", return_value=3)
+    sock = tmp_path / "broker.sock"
+    sock.touch()
+    monkeypatch.setenv("JAILBEE_ORCHESTRATION_SOCKET", str(sock))
+    target = mocker.patch("jailbee.inbox.socket_cli.cmd_send", return_value=3)
     prefix = ["--expect-version", "1.8.1 aaaa"] if handshake else []
     result = CliRunner().invoke(
         container_cli.container_app, [*prefix, "inbox", "send", "message", "--text", "x"]
     )
     assert result.exit_code == 3
     target.assert_called_once()
-    assert target.call_args.args[1].type == "message"
-    assert target.call_args.args[1].text == "x"
+    assert target.call_args.args[0].type == "message"
+    assert target.call_args.args[0].text == "x"
 
 
 def test_container_cli_inbox_help_and_version_gate(monkeypatch, tmp_path):
@@ -310,10 +312,10 @@ def test_missing_mount(monkeypatch, tmp_path, capsys):
 
 
 def test_container_cli_inbox_end_to_end(monkeypatch, tmp_path):
-    """The mounted inbox tree runs the real commands, not a mock."""
+    """The container CLI reports a missing broker instead of falling back to files."""
     from jailbee import container_cli
 
-    monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path))
+    monkeypatch.setenv("JAILBEE_ORCHESTRATION_SOCKET", str(tmp_path / "missing.sock"))
     app = container_cli.container_app
     runner = CliRunner()
 
@@ -330,12 +332,7 @@ def test_container_cli_inbox_end_to_end(monkeypatch, tmp_path):
     assert "default 30m" in " ".join(wait_help.output.split())
 
     sent = runner.invoke(app, ["inbox", "send", "message", "--text", "hello"])
-    assert sent.exit_code == 0, sent.output
-    manifests = list((tmp_path / "outbox").glob("*.json"))
-    assert len(manifests) == 1
-    assert manifests[0].stem in sent.output
+    assert sent.exit_code == 4
+    assert "broker socket is missing" in sent.output
+    assert not (tmp_path / "outbox").exists()
 
-    (tmp_path / "inbox").mkdir()
-    listed = runner.invoke(app, ["inbox", "ls"])
-    assert listed.exit_code == 0
-    assert listed.output == ""

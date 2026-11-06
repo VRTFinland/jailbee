@@ -390,7 +390,7 @@ def test_unreachable_exit_4(sockdir: Path, tmp_path: Path) -> None:
     # The directory exists (the device mount point) but nothing listens.
     r = run(sockdir, "ls", tmp=tmp_path)
     assert r.returncode == 4
-    assert "the host broker is not reachable" in r.stderr
+    assert "the host broker socket is missing" in r.stderr
 
 
 def test_version_mismatch_exit_4(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
@@ -517,139 +517,8 @@ def test_store_error_is_exit_4_with_detail(
 # -- handover of running file-mode waits --------------------------------------
 
 
-def _late_broker(
-    monkeypatch: pytest.MonkeyPatch,
-    sockdir: Path,
-    setup: Callable[[FakeBroker], None],
-    delay: float,
-) -> list[FakeBroker]:
-    """Point the socket env at a directory that appears `delay` seconds later."""
-    sub = sockdir / "late"
-    monkeypatch.setenv("JAILBEE_ORCHESTRATION_SOCKET", str(sub / "broker.sock"))
-    made: list[FakeBroker] = []
-
-    def appear() -> None:
-        time.sleep(delay)
-        sub.mkdir()
-        b = FakeBroker(sub / "broker.sock")
-        setup(b)
-        made.append(b)
-
-    threading.Thread(target=appear, daemon=True).start()
-    return made
-
-
-def _file_settings(tmp_path: Path):  # type: ignore[no-untyped-def]
-    from jailbee.inbox import cli
-
-    return cli.load_settings({"JAILBEE_ORCHESTRATION_DIR": str(tmp_path / "files")})
-
-
-def test_running_file_wait_hands_over_to_the_socket(
-    monkeypatch: pytest.MonkeyPatch,
-    sockdir: Path,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from jailbee.inbox import cli
-
-    made = _late_broker(
-        monkeypatch, sockdir, lambda b: b.on("next", {"kind": "message", "id": "m9"}), 0.3
-    )
-    try:
-        rc = cli.cmd_wait(_file_settings(tmp_path), timeout="30")
-    finally:
-        for b in made:
-            b.close()
-    assert rc == 0
-    assert capsys.readouterr().out == "m9\n"
-    sent = made[0].requests[-1]
-    assert sent.op == "next" and 0 < sent.args["timeout"] <= 30
-
-
-def test_handed_over_wait_times_out_with_rc_1_and_no_output(
-    monkeypatch: pytest.MonkeyPatch,
-    sockdir: Path,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from jailbee.inbox import cli
-
-    made = _late_broker(monkeypatch, sockdir, lambda b: b.on("next", {"kind": "timeout"}), 0.2)
-    try:
-        rc = cli.cmd_wait(_file_settings(tmp_path), timeout="30", wake_on="done")
-    finally:
-        for b in made:
-            b.close()
-    assert rc == 1
-    assert capsys.readouterr().out == ""
-    assert made[0].requests[-1].args["wake_on"] == ["done"]
-
-
 def _status_item(ref: str, state: str, ident: str = "s1") -> dict[str, object]:
     return {"id": ident, "type": "status", "ref": ref, "state": state}
-
-
-def test_running_status_wait_hands_over_and_acks_only_its_status(
-    monkeypatch: pytest.MonkeyPatch,
-    sockdir: Path,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from jailbee.inbox import socket_cli, waiting
-
-    monkeypatch.setattr(socket_cli, "STATUS_RECHECK_PAUSE", 0.05)
-    lists = [
-        [{"id": "other", "type": "status", "ref": "zzz", "state": "done"}],
-        [
-            {"id": "other", "type": "status", "ref": "zzz", "state": "done"},
-            _status_item("r1", "refused", "mine"),
-        ],
-    ]
-
-    def setup(b: FakeBroker) -> None:
-        b.handlers["list"] = lambda _r: wire.ok(lists.pop(0) if len(lists) > 1 else lists[0])
-        b.on("next", {"kind": "message", "id": "other"})  # not ours: loop over list
-        b.on("read", _status_item("r1", "refused", "mine"))
-        b.on("ack", {"acked": True})
-
-    made = _late_broker(monkeypatch, sockdir, setup, 0.3)
-    try:
-        rc = waiting.wait_for_status(_file_settings(tmp_path), "r1", 30)
-    finally:
-        for b in made:
-            b.close()
-    assert rc == 1  # refused
-    out = capsys.readouterr().out
-    assert json.loads(out)["id"] == "mine"
-    ops = [(q.op, q.args.get("id")) for q in made[0].requests if q.op in ("read", "ack")]
-    assert ops == [("read", "mine"), ("ack", "mine")]
-    nxt = next(q for q in made[0].requests if q.op == "next")
-    assert set(nxt.args["wake_on"]) == {"queued", "started", "done", "refused", "failed"}
-
-
-def test_running_status_wait_found_at_once_returns_by_state(
-    monkeypatch: pytest.MonkeyPatch,
-    sockdir: Path,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from jailbee.inbox import waiting
-
-    def setup(b: FakeBroker) -> None:
-        b.on("list", [_status_item("r1", "done", "mine")])
-        b.on("read", _status_item("r1", "done", "mine"))
-        b.on("ack", {"acked": True})
-
-    made = _late_broker(monkeypatch, sockdir, setup, 0.2)
-    try:
-        rc = waiting.wait_for_status(_file_settings(tmp_path), "r1", 30)
-    finally:
-        for b in made:
-            b.close()
-    assert rc == 0
-    assert json.loads(capsys.readouterr().out)["state"] == "done"
-    assert not any(q.op == "next" for q in made[0].requests)
 
 
 def _paging_list(items: list[dict[str, object]], size: int) -> Handler:

@@ -30,18 +30,15 @@ inbox_app = typer.Typer(
     context_settings=HELP_SETTINGS,
     help="Wait for, list, read and send orchestration messages.",
     epilog=(
-        "Environment: JAILBEE_ORCHESTRATION_DIR (default ~/.jailbee/orchestration), "
-        "JAILBEE_LITELLM_CONFIG (default /etc/jailbee/litellm.json), JAILBEE_DEFAULT_AGENT, "
-        "JAILBEE_INBOX_POLL (poll seconds without inotify; default 5), "
-        "JAILBEE_INBOX_SETTLE (quiet seconds after an arrival; default 1, 0 disables). "
-        "JAILBEE_INBOX_INOTIFY=0 forces polling."
+        "Environment: JAILBEE_ORCHESTRATION_SOCKET (broker socket path), "
+        "JAILBEE_LITELLM_CONFIG (default /etc/jailbee/litellm.json), JAILBEE_DEFAULT_AGENT."
     ),
 )
 send_app = typer.Typer(
     cls=InboxGroup,
     context_settings=HELP_SETTINGS,
     help=(
-        "Write a manifest into the orchestrator host's outbox/ and print its id. "
+        "Send a request to the host broker and print its id. "
         "Text (body or prompt) comes from --text T, --file PATH or - (stdin); "
         "at most 65536 bytes, not empty. "
         "--wait waits for its status: exit 0 on done/queued/started, "
@@ -52,16 +49,16 @@ send_app = typer.Typer(
 inbox_app.add_typer(send_app, name="send")
 
 
-def _run(
-    command: Callable[[cli.Settings], int],
-    socket_command: Callable[[cli.Settings], int] | None = None,
-) -> None:
+def _run(command: Callable[[], int]) -> None:
     from jailbee.inbox import transport
 
     try:
-        if socket_command is not None and transport.socket_available(os.environ):
-            command = socket_command
-        code = command(cli.load_settings(os.environ))
+        if not transport.socket_path(os.environ).exists():
+            raise transport.BrokerUnreachable(
+                "jailbee inbox: the host broker socket is missing; "
+                "ask the host operator to check orchestration"
+            )
+        code = command()
     except transport.BrokerUnreachable as exc:
         typer.echo(str(exc), err=True)
         code = transport.EXIT_UNREACHABLE
@@ -80,7 +77,7 @@ def _run(
     except InboxUsage as exc:
         typer.echo(f"{cli.PROG}: {exc}", err=True)
         code = 2
-    except (send.PublishError, OSError) as exc:
+    except OSError as exc:
         if exc.__cause__ is not None:
             typer.echo(f"{cli.PROG}: {exc.__cause__}", err=True)
         typer.echo(f"{cli.PROG}: {exc}", err=True)
@@ -158,19 +155,15 @@ Egress = Annotated[
 def _send(request: send.SendRequest, source: str | None = None) -> None:
     if source is not None and source != "-":
         raise typer.BadParameter("the text source argument must be -")
-    _run(
-        lambda settings: cli.cmd_send(settings, request),
-        lambda settings: socket_cli.cmd_send(request),
-    )
+    _run(lambda: socket_cli.cmd_send(request))
 
 
 @inbox_app.command(
     help=(
         "Print the id of the oldest unread message (exit 0); --path prints its path; "
         "exit 1 on timeout, 4 = host broker not reachable. "
-        "After arrival, wait briefly for the burst to settle, then use ls to handle every "
-        "unread message. Nothing is marked read. Only one wait may run; a second exits 2. "
-        "Concurrent send --wait is safe: wait skips its reserved statuses until the sender exits."
+        "Use ls to handle every unread message. Nothing is marked read. "
+        "Only one wait may run; a second exits 2."
     )
 )
 def wait(
@@ -202,13 +195,12 @@ def wait(
             "--quiet-after",
             help=(
                 "Print quiet-child CHILD (exit 0) after a running, not-done child is silent "
-                "for DUR. Its status.activity_at counts as activity. Needs fresh broker "
-                "children.json (<=15m)."
+                "for DUR. Its status.activity_at counts as activity. Needs a fresh broker children view (<=15m)."
             ),
         ),
     ] = None,
     path: Annotated[
-        bool, typer.Option("--path", help="Print the message file path instead of its id.")
+        bool, typer.Option("--path", help="Obsolete; prints the message id.")
     ] = False,
     digest: Annotated[
         str | None,
@@ -216,25 +208,17 @@ def wait(
             "--digest",
             help=(
                 "Print digest and the status table (exit 0) every DUR while a child is running "
-                "and not done. First due DUR after the first wait --digest (stamp: digest-at). "
+                "and not done. First due DUR after the first wait --digest (tracked by the broker). "
                 "Real messages and quiet-child win; --wake-on does not apply. "
-                "Needs fresh broker children.json (<=15m)."
+                "Needs a fresh broker children view (<=15m)."
             ),
         ),
     ] = None,
 ) -> None:
     _run(
-        lambda settings: cli.cmd_wait(
-            settings,
-            timeout=timeout,
-            wake_on=wake_on,
-            quiet_after=quiet_after,
-            digest=digest,
-            path=path,
-        ),
-        lambda settings: socket_cli.cmd_wait(
+        lambda: socket_cli.cmd_wait(
             timeout=timeout, wake_on=wake_on, quiet_after=quiet_after, digest=digest, path=path
-        ),
+        )
     )
 
 
@@ -246,12 +230,12 @@ def wait(
     ),
 )
 def ls() -> None:
-    _run(cli.cmd_ls, lambda settings: socket_cli.cmd_ls())
+    _run(socket_cli.cmd_ls)
 
 
 @inbox_app.command(
     help=(
-        "Pretty-print a message and move it to inbox/read/. "
+        "Pretty-print a message and mark it read. "
         "Exit 1 if no unread message has that id, 4 = host broker not reachable."
     )
 )
@@ -263,10 +247,7 @@ def read(
 ) -> None:
     if not ident:
         raise UsageError("read needs a message id")
-    _run(
-        lambda settings: cli.cmd_read(settings, ident, keep=keep),
-        lambda settings: socket_cli.cmd_read(ident, keep=keep),
-    )
+    _run(lambda: socket_cli.cmd_read(ident, keep=keep))
 
 
 @inbox_app.command(help="Summarise the orchestration grant available to this container.")
@@ -275,10 +256,7 @@ def grant(
         bool, typer.Option("--json", help="Print the sanitised grant document.")
     ] = False,
 ) -> None:
-    _run(
-        lambda settings: cli.cmd_grant(settings, as_json=json_output),
-        lambda settings: socket_cli.cmd_grant(as_json=json_output),
-    )
+    _run(lambda: socket_cli.cmd_grant(as_json=json_output))
 
 
 @inbox_app.command(
@@ -290,32 +268,26 @@ def grant(
 def runners(
     json_output: Annotated[bool, typer.Option("--json", help="Print one array.")] = False,
 ) -> None:
-    _run(
-        lambda settings: cli.cmd_runners(settings, as_json=json_output),
-        lambda settings: socket_cli.cmd_runners(settings, as_json=json_output),
-    )
+    _run(lambda: socket_cli.cmd_runners(as_json=json_output))
 
 
 @inbox_app.command(
     help=(
         "List each child's name, running (container state), latest agent session "
-        "and done (accepted done) from broker children.json."
+        "and done (accepted done) from the broker."
     )
 )
 def children(
     json_output: Annotated[bool, typer.Option("--json", help="Print one array.")] = False,
 ) -> None:
-    _run(
-        lambda settings: cli.cmd_children(settings, as_json=json_output),
-        lambda settings: socket_cli.cmd_children(as_json=json_output),
-    )
+    _run(lambda: socket_cli.cmd_children(as_json=json_output))
 
 
 @inbox_app.command(
     help=(
-        "Show broker children.json: NAME STATE AGENT ACTIVE CPU MEM HEAD DIRTY LONGEST "
+        "Show broker children: NAME STATE AGENT ACTIVE CPU MEM HEAD DIRTY LONGEST "
         "LAST-MSG (ages; unknown values print ?). LAST-MSG: up = last message from the "
-        "child, down = last delivery to it. Exit 1 for unavailable/invalid snapshot or "
+        "child, down = last delivery to it. Exit 1 for unavailable view or "
         "unknown --child, 4 = host broker not reachable. "
         "Use instead of messaging a child to ask how it is doing."
     )
@@ -328,10 +300,7 @@ def status(
 ) -> None:
     if child is not None and child.startswith("--"):
         raise UsageError("--child needs a name")
-    _run(
-        lambda settings: cli.cmd_status(settings, child=child, as_json=json_output),
-        lambda settings: socket_cli.cmd_status(child=child, as_json=json_output),
-    )
+    _run(lambda: socket_cli.cmd_status(child=child, as_json=json_output))
 
 
 @send_app.command("message", help="Send a message to the orchestrator or a named child.")
