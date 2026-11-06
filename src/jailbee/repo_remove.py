@@ -11,7 +11,7 @@ from urllib.parse import unquote, urlsplit
 
 from sqlmodel import select
 
-from jailbee.config import SCRATCH_BASE_ALIAS, load_repo_config
+from jailbee.config import load_repo_config
 from jailbee.config.errors import ConfigError
 from jailbee.config.loader import _default_shared_dir
 from jailbee.config.local_layer import local_config_path
@@ -19,6 +19,7 @@ from jailbee.db.models import (
     BackgroundJob,
     DismissedNotice,
     EgressOverride,
+    GoldenSeedState,
     PoolIP,
     RefreshState,
     RegisteredRepo,
@@ -33,6 +34,7 @@ from jailbee.egress_scope import (
 )
 from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.golden import find_all_archived_images
+from jailbee.golden_sharing import shared_golden_reason
 from jailbee.maintenance import humanize
 from jailbee.paths import repo_config_path
 
@@ -323,6 +325,14 @@ def _execute_removal_locked(
             for row in session.exec(select(PoolIP)).all():
                 if _pool_owned(row.container_prefix, plan.prefix, known, ownership):
                     session.delete(row)
+            alias = plan.cfg.golden.alias if plan.cfg is not None else f"{plan.prefix}-base"
+            golden_delete_approved = plan.golden_kept_reason is None and (
+                alias in plan.golden_images or f"{alias}--golden" in plan.golden_instances
+            )
+            if golden_delete_approved:
+                seed_state = session.get(GoldenSeedState, alias)
+                if seed_state is not None:
+                    session.delete(seed_state)
             for records in (
                 session.exec(select(RefreshState)).all(),
                 session.exec(select(RepoUpgradeState)).all(),
@@ -454,6 +464,7 @@ def plan_removal(
             "sent_record": sum(
                 r.container_prefix == prefix for r in session.exec(select(SentRecord)).all()
             ),
+            "docker_seed_state": int(session.get(GoldenSeedState, alias) is not None),
         }
     profiles = [
         f"{prefix}-{s}"
@@ -499,17 +510,9 @@ def plan_removal(
     other_configs = [
         (row, _load_registered_config(row)) for row in rows if row.container_prefix != prefix
     ]
-    reason = None
-    if alias == SCRATCH_BASE_ALIAS:
-        reason = "shared scratch base"
-    else:
-        for other, other_cfg in other_configs:
-            if other_cfg is None:
-                reason = f"config unavailable for {other.container_prefix}"
-                break
-            if other_cfg.golden.alias == alias:
-                reason = f"shared with {other.container_prefix}"
-                break
+    reason = shared_golden_reason(
+        prefix, alias, rows, load=lambda row: _load_registered_config(row)
+    )
     images: list[str] = []
     golden_instances: list[str] = []
     if reason is None:
@@ -522,7 +525,13 @@ def plan_removal(
         golden_instances = [
             n
             for n in dict.fromkeys(
-                (f"{alias}--golden", f"{alias}--build", f"{alias}--old", f"{prefix}-base-build")
+                (
+                    f"{alias}--golden",
+                    f"{alias}--build",
+                    f"{alias}--old",
+                    f"{alias}--seeding",
+                    f"{prefix}-base-build",
+                )
             )
             if n in instance_names and n not in ownership
         ]

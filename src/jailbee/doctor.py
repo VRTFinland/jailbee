@@ -313,6 +313,43 @@ def _upstream_remote_check(cfg: Config) -> CheckResult:
     )
 
 
+def _check_docker_seed(cfg: Config, incus: Incus) -> CheckResult | None:
+    """Report configured Docker seeding when its golden is stale or missing."""
+    seed = cfg.golden.docker_seed
+    if seed is None or not seed.enabled:
+        return None
+
+    from jailbee.db.models import GoldenSeedState
+    from jailbee.golden import golden_instance_name
+
+    try:
+        with Session(get_engine()) as session:
+            state = session.get(GoldenSeedState, cfg.golden.alias)
+    except Exception as e:  # a bookkeeping read is not a diagnosis
+        return CheckResult("Docker golden seed", True, f"state could not be read ({e})")
+
+    if state is None:
+        try:
+            exists = incus.image_exists(cfg.golden.alias) or incus.exists(
+                golden_instance_name(cfg.golden.alias)
+            )
+        except Exception as e:  # an inventory failure cannot establish a missing row
+            return CheckResult("Docker golden seed", True, f"golden could not be checked ({e})")
+        if not exists:
+            return None
+        detail = "no seed state is recorded"
+    elif state.outcome == "failed":
+        detail = f"last result failed: {state.detail or 'no detail'}"
+    elif state.outcome == "skipped":
+        # Skips include non-retryable causes such as no images or unavailable golden.
+        return CheckResult(
+            "Docker golden seed", True, f"last result skipped: {state.detail or 'no detail'}"
+        )
+    else:
+        return CheckResult("Docker golden seed", True, f"{state.image_count} images seeded")
+    return CheckResult("Docker golden seed", False, f"{detail} — run `jailbee base seed`")
+
+
 def _check_upgrade_advice(cfg: Config) -> CheckResult:
     """Report whether this repo owes a `base build` or an `apply`.
 
@@ -884,6 +921,9 @@ def run_checks(cfg: Config, incus: Incus, *, gcfg: GlobalConfig | None = None) -
     # no Incus (it is a bookkeeping read against the state DB), so it lives
     # here rather than behind the `incus_available` gate below.
     results.append(_check_upgrade_advice(cfg))
+    docker_seed_check = _check_docker_seed(cfg, incus)
+    if docker_seed_check is not None:
+        results.append(docker_seed_check)
     results.append(_check_agent_instructions(cfg))
     results.append(_check_update_available())
     # Same reasoning as the check above: a dismissal hides the hint on the

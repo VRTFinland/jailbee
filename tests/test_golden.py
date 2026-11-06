@@ -110,6 +110,184 @@ def _call_index(incus, name, *args, **kwargs):
     raise AssertionError(f"{name}{args} not called; calls: {incus.mock_calls}")
 
 
+def test_seeding_instance_is_a_golden_family_name():
+    from jailbee.golden import golden_seeding_name, is_golden_instance_name
+
+    assert golden_seeding_name("base") == "base--seeding"
+    assert is_golden_instance_name("base--seeding")
+
+
+def test_recover_leftovers_deletes_a_seeding_instance(make_cfg, tmp_path):
+    from jailbee.golden import _recover_leftovers, golden_seeding_name
+
+    cfg = make_cfg(tmp_path)
+    staging = golden_seeding_name(cfg.golden.alias)
+    incus = _incus(existing=(staging,))
+    _recover_leftovers(cfg, incus)
+    incus.delete.assert_called_once_with(staging, force=True)
+
+
+@pytest.mark.parametrize("driver", ["dir", "btrfs"])
+def test_build_invalidates_seed_state_only_after_promotion(make_cfg, tmp_path, driver):
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee import docker_seed_state
+    from jailbee.db import get_engine
+
+    cfg = make_cfg(tmp_path)
+    with Session(get_engine()) as session:
+        docker_seed_state.record(
+            session,
+            alias=cfg.golden.alias,
+            container_prefix=cfg.container_prefix,
+            seeded_at=datetime.now(UTC),
+            source="seed-container",
+            outcome="seeded",
+            image_count=3,
+            size_bytes=123,
+        )
+    incus = _incus(pools_driver=driver)
+    incus.exec.side_effect = IncusError("build failed")
+    with pytest.raises(IncusError, match="build failed"):
+        build_golden_image(cfg, incus)
+    with Session(get_engine()) as session:
+        assert docker_seed_state.get(session, cfg.golden.alias).image_count == 3
+    incus.exec.side_effect = None
+    build_golden_image(cfg, incus)
+    with Session(get_engine()) as session:
+        assert docker_seed_state.get(session, cfg.golden.alias) is None
+
+
+def test_seed_recovery_restores_old_and_cleans_image_leftovers(make_cfg, tmp_path):
+    from jailbee.golden import recover_seed_leftovers
+
+    cfg = make_cfg(tmp_path)
+    alias = cfg.golden.alias
+    incus = _incus(
+        existing=(f"{alias}--old", f"{alias}--seeding", f"{alias}--build"),
+        images=(alias, f"{alias}--new"),
+    )
+    recover_seed_leftovers(cfg, incus)
+    assert incus.exists(f"{alias}--golden")
+    assert not incus.exists(f"{alias}--seeding")
+    assert incus.exists(f"{alias}--build")
+    assert not incus.image_exists(f"{alias}--new")
+    assert incus.image_exists(alias)
+
+
+def test_promote_instance_restores_previous_golden_when_rename_fails():
+    from jailbee.golden import promote_instance
+
+    incus = _incus(existing=("base--golden", "base--seeding"))
+    original = incus.rename.side_effect
+
+    def rename(src, dst):
+        if src == "base--seeding":
+            raise IncusError("promotion failed")
+        original(src, dst)
+
+    incus.rename.side_effect = rename
+    with pytest.raises(IncusError, match="promotion failed"):
+        promote_instance(incus, "base--seeding", "base")
+    assert incus.exists("base--golden")
+    assert not incus.exists("base--old")
+    incus.delete.assert_not_called()
+
+
+@pytest.mark.parametrize("mode", ["instance", "image"])
+@pytest.mark.parametrize(
+    "failure", ["aside_before", "aside_after", "promote_before", "promote_after"]
+)
+def test_ambiguous_promotion_failure_preserves_golden_with_cleanup_client(mode, failure):
+    from jailbee.golden import promote_image, promote_instance
+
+    incus = _incus(existing=("base--golden", "base--seeding"), images=("base",))
+    cleanup = MagicMock()
+    method = "rename" if mode == "instance" else "image_alias_rename"
+    exists = "exists" if mode == "instance" else "image_exists"
+    golden = "base--golden" if mode == "instance" else "base"
+    original = getattr(incus, method).side_effect
+    getattr(cleanup, method).side_effect = original
+    getattr(cleanup, exists).side_effect = getattr(incus, exists).side_effect
+
+    def rename(src, dst):
+        step = "aside" if src == golden else "promote"
+        if failure == f"{step}_before":
+            raise IncusError("timeout")
+        original(src, dst)
+        if failure == f"{step}_after":
+            raise IncusError("timeout")
+
+    getattr(incus, method).side_effect = rename
+    promote = promote_instance if mode == "instance" else promote_image
+    with pytest.raises(IncusError, match="timeout"):
+        promote(incus, "base--seeding", "base", cleanup_incus=cleanup)
+    assert getattr(cleanup, exists)(golden)
+    if failure == "promote_after":
+        assert getattr(cleanup, exists)("base--old")
+        getattr(cleanup, method).assert_not_called()
+    elif failure == "aside_before":
+        getattr(cleanup, method).assert_not_called()
+    else:
+        getattr(cleanup, method).assert_called_once_with("base--old", golden)
+    cleanup.delete.assert_not_called()
+    cleanup.image_delete.assert_not_called()
+
+
+@pytest.mark.parametrize("mode", ["instance", "image"])
+def test_promotion_preserves_original_error_when_recovery_probe_fails(mode):
+    from jailbee.golden import promote_image, promote_instance
+
+    incus = _incus(existing=("base--golden",), images=("base",))
+    cleanup = MagicMock()
+    method = "rename" if mode == "instance" else "image_alias_rename"
+    exists = "exists" if mode == "instance" else "image_exists"
+    getattr(incus, method).side_effect = IncusError("promotion timeout")
+    getattr(cleanup, exists).side_effect = IncusError("cleanup unavailable")
+    promote = promote_instance if mode == "instance" else promote_image
+    with pytest.raises(IncusError, match="promotion timeout"):
+        promote(incus, "base--seeding", "base", cleanup_incus=cleanup)
+    getattr(cleanup, method).assert_not_called()
+    cleanup.delete.assert_not_called()
+    cleanup.image_delete.assert_not_called()
+
+
+@pytest.mark.parametrize("mode", ["instance", "image"])
+def test_promotion_rollback_uses_cleanup_client(mode):
+    from jailbee.golden import promote_image, promote_instance
+
+    incus = _incus(existing=("base--golden",), images=("base",))
+    cleanup = _incus()
+    cleanup.exists.side_effect = incus.exists.side_effect
+    cleanup.image_exists.side_effect = incus.image_exists.side_effect
+    if mode == "instance":
+        original = incus.rename.side_effect
+
+        def rename(src, dst):
+            if src == "base--seeding":
+                raise IncusError("timeout")
+            original(src, dst)
+
+        incus.rename.side_effect = rename
+        with pytest.raises(IncusError, match="timeout"):
+            promote_instance(incus, "base--seeding", "base", cleanup_incus=cleanup)
+        cleanup.rename.assert_called_once_with("base--old", "base--golden")
+    else:
+        original = incus.image_alias_rename.side_effect
+
+        def rename_alias(src, dst):
+            if src == "base--new":
+                raise IncusError("timeout")
+            original(src, dst)
+
+        incus.image_alias_rename.side_effect = rename_alias
+        with pytest.raises(IncusError, match="timeout"):
+            promote_image(incus, "base--seeding", "base", cleanup_incus=cleanup)
+        cleanup.image_alias_rename.assert_called_once_with("base--old", "base")
+
+
 def test_build_calls_launch_exec_publish_delete():
     cfg = load_config(FIXTURES / "full_config.yaml")
     incus = _incus()

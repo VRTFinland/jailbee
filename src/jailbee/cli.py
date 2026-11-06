@@ -1774,6 +1774,9 @@ def upgrade_cmd(
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Show what would run, change nothing")
     ] = False,
+    no_docker_seed: Annotated[
+        bool, typer.Option("--no-docker-seed", help="Skip Docker image seeding in every repo.")
+    ] = False,
 ) -> None:
     """Run `base build` and `apply` in every registered repo, restarting nothing.
 
@@ -1798,6 +1801,7 @@ def upgrade_cmd(
         dry_run=dry_run,
         version=__version__,
         now=_now(),
+        docker_seed=not no_docker_seed,
     )
     if not all(r.ok for r in results):
         raise typer.Exit(1)
@@ -4163,6 +4167,7 @@ if TYPE_CHECKING:
     from jailbee.config.models_remote import RemoteSSHConfig
     from jailbee.dashboard.columns import TableWindow
     from jailbee.db.models import BackgroundJob
+    from jailbee.docker_seed import SeedOutcome
     from jailbee.doctor import CheckResult
     from jailbee.doctor_scroll import ScrollState
     from jailbee.forking import ForkSource
@@ -11509,14 +11514,50 @@ app.add_typer(base_app)
 
 
 @base_app.command("build")
-def base_build_cmd(config: ConfigOption = None) -> None:
+def base_build_cmd(
+    docker_from: Annotated[
+        str | None,
+        typer.Option(
+            "--docker-from",
+            help="Seed from a running container.",
+            autocompletion=completion.complete_container,
+        ),
+    ] = None,
+    no_docker_seed: Annotated[
+        bool, typer.Option("--no-docker-seed", help="Skip configured Docker image seeding once.")
+    ] = False,
+    keep_seed: Annotated[
+        bool, typer.Option("--keep-seed", help="Keep the temporary docker-seed container.")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
     """Build the golden image (long operation, takes several minutes)."""
     from jailbee.golden import build_golden_image
     from jailbee.incus import Incus, IncusError
 
     cfg = _load_or_exit(config)
+    incus = Incus()
+    from jailbee import docker_seed
+
     try:
-        build_golden_image(cfg, Incus())
+        plan = docker_seed.plan_request(
+            cfg,
+            incus,
+            docker_from=docker_from,
+            no_docker_seed=no_docker_seed,
+            keep_seed=keep_seed,
+        )
+    except docker_seed.SeedPreflightError as exc:
+        error(str(exc))
+        raise typer.Exit(2) from exc
+    for message in plan.warnings:
+        warn(message)
+    req = plan.request
+    requested = plan.requested
+    skipped = plan.skipped
+
+    try:
+        build_golden_image(cfg, incus)
     except (IncusError, ValueError) as e:
         # A provisioning failure carries apt's own stdout and stderr, which
         # is the diagnosis. Typer installs no global handler, so without this
@@ -11527,6 +11568,66 @@ def base_build_cmd(config: ConfigOption = None) -> None:
         raise typer.Exit(1) from e
 
     _record_upgrade_action(cfg, "base_build")
+    if skipped is not None:
+        docker_seed.record_outcome(cfg, skipped)
+    if requested:
+        try:
+            outcome = docker_seed.run_seed(cfg, incus, _load_global(), req)
+        except Exception as exc:
+            outcome = docker_seed.SeedOutcome("failed", "seed-container", detail=str(exc))
+            docker_seed.record_outcome(cfg, outcome)
+        _print_docker_seed_outcome(outcome)
+
+
+@base_app.command("seed")
+def base_seed_cmd(
+    docker_from: Annotated[
+        str | None,
+        typer.Option(
+            "--docker-from",
+            help="Seed from a running container.",
+            autocompletion=completion.complete_container,
+        ),
+    ] = None,
+    keep_seed: Annotated[
+        bool, typer.Option("--keep-seed", help="Keep the temporary docker-seed container.")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Seed the existing golden image with Docker images."""
+    from jailbee import docker_seed
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    incus = Incus()
+    try:
+        plan = docker_seed.plan_request(
+            cfg, incus, docker_from=docker_from, keep_seed=keep_seed, standalone=True
+        )
+    except docker_seed.SeedPreflightError as exc:
+        error(str(exc))
+        raise typer.Exit(2) from exc
+    for message in plan.warnings:
+        warn(message)
+    req = plan.request
+    outcome = docker_seed.run_seed(cfg, incus, _load_global(), req)
+    _print_docker_seed_outcome(outcome)
+    if outcome.outcome == "failed":
+        raise typer.Exit(1)
+
+
+def _print_docker_seed_outcome(outcome: "SeedOutcome") -> None:
+    from jailbee.maintenance import humanize
+
+    if outcome.outcome == "seeded":
+        success(
+            f"Seeded {outcome.image_count} Docker images ({humanize(outcome.size_bytes)}) "
+            f"from {outcome.source}"
+        )
+    elif outcome.outcome == "skipped":
+        warn(f"Docker seeding skipped: {outcome.detail}")
+    else:
+        warn(f"Docker seeding failed: {outcome.detail}")
 
 
 @base_app.command("prune")
@@ -11650,10 +11751,32 @@ def base_usage_cmd(
         info("No golden images found.")
         return
 
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.docker_seed_state import get as get_seed_state
+
+    seed_status: dict[str, str] = {}
+    try:
+        with Session(get_engine()) as session:
+            for usage in usages:
+                state = get_seed_state(session, usage.base_alias)
+                if state is None:
+                    continue
+                date = state.seeded_at.date().isoformat()
+                seed_status[usage.base_alias] = (
+                    f"{state.image_count} images, {humanize(state.size_bytes)} ({date})"
+                    if state.outcome == "seeded"
+                    else f"{state.outcome} {date}"
+                )
+    except Exception as exc:
+        warn(f"Could not read Docker seed state: {exc}")
+
     table = Table(title="Golden image disk usage")
     table.add_column("IMAGE")
     table.add_column("DATE")
     table.add_column("SIZE", justify="right")
+    table.add_column("DOCKER")
 
     grand_total = 0
     grand_prunable = 0
@@ -11661,11 +11784,19 @@ def base_usage_cmd(
         subtotal = 0
         prunable = 0
         if u.live_size_bytes is not None:
-            table.add_row(u.base_alias, "[dim]live[/dim]", humanize(u.live_size_bytes))
+            table.add_row(
+                u.base_alias,
+                "[dim]live[/dim]",
+                humanize(u.live_size_bytes),
+                seed_status.get(u.base_alias, ""),
+            )
             subtotal += u.live_size_bytes
         if u.instance_name is not None:
             table.add_row(
-                u.instance_name, "[dim]live (instance)[/dim]", humanize(u.instance_size_bytes)
+                u.instance_name,
+                "[dim]live (instance)[/dim]",
+                humanize(u.instance_size_bytes),
+                seed_status.get(u.base_alias, "") if u.live_size_bytes is None else "",
             )
             subtotal += u.instance_size_bytes or 0
         for a in u.archives:

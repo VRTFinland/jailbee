@@ -1909,6 +1909,40 @@ def _select_work_generation(mocker, db_session):
     db_session.commit()
 
 
+@pytest.mark.parametrize(
+    "work,creation_fails", [(False, False), (True, False), (False, True), (True, True)]
+)
+def test_new_container_reports_only_successful_instance_creation(
+    tmp_path, mocker, db_session, work, creation_fails
+):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.list_containers.return_value = []
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    if work:
+        _select_work_generation(mocker, db_session)
+        mocker.patch("jailbee.network_generation.ensure_work_bridge")
+        mocker.patch("jailbee.work_acl.ensure_work_repo_acl")
+        mocker.patch("jailbee.work_network.reserve_work_ipv4", return_value="10.10.0.2")
+    if creation_fails:
+        incus.init.side_effect = RuntimeError("name taken")
+    else:
+        incus.profile_assign.side_effect = RuntimeError("configuration failed")
+    created = MagicMock()
+    with pytest.raises(RuntimeError):
+        new_container(
+            cfg,
+            incus,
+            NewContainerOptions("feat/x", None, "strict", "8GiB", 4, "base", True, autostart=False),
+            on_created=created,
+        )
+    if creation_fails:
+        created.assert_not_called()
+    else:
+        created.assert_called_once_with("repo-feat-x")
+
+
 def test_new_work_generation_assigns_stable_filtered_nic(tmp_path, mocker, db_session):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()
@@ -4403,10 +4437,8 @@ def test_new_container_skips_mirror_registries_when_no_endpoint(tmp_path, mocker
     sync_env.assert_not_called()
 
 
-def test_new_container_forwards_mirror_endpoint_to_run_autostart(tmp_path, mocker):
-    """`new_container` must forward `opts.mirror_endpoint` to `run_autostart`
-    so transient `strict → loose → strict` switches inside autostart steps
-    keep the mirror pinned in /etc/hosts."""
+def test_new_container_skip_agents_reaches_run_autostart(tmp_path, mocker):
+    """Both autostart triggers receive skip_agents and mirror endpoint."""
     cfg = _cfg_for_new(tmp_path)
     captured_kwargs: list[dict] = []
 
@@ -4434,6 +4466,7 @@ def test_new_container_forwards_mirror_endpoint_to_run_autostart(tmp_path, mocke
         from_base="gisgro-base",
         clone=False,
         autostart=True,
+        skip_agents=True,
         mirror_endpoint=("10.234.216.1", 3128),
         mirror_ca_path=ca_path,
     )
@@ -4442,6 +4475,7 @@ def test_new_container_forwards_mirror_endpoint_to_run_autostart(tmp_path, mocke
     assert len(captured_kwargs) == 2  # on_create + on_start
     for kw in captured_kwargs:
         assert kw.get("mirror_endpoint") == ("10.234.216.1", 3128)
+        assert kw.get("skip_agents") is True
 
 
 def test_new_container_allocates_pools_in_mount_mode_before_autostart(tmp_path, mocker):

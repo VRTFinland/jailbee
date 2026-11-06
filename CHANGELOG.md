@@ -8,6 +8,10 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- Optional Docker image seeding for Docker-enabled golden images, with `jailbee base seed` and upgrade integration.
+
 ## 1.8.3 - 2026-11-05
 
 ### Added

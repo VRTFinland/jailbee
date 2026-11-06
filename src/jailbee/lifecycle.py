@@ -1205,6 +1205,9 @@ class NewContainerOptions:
     autostart_profile: str | None = None
     # MUST be mirrored in background.op_to_job/job_to_opts.
     autostart_services: list[str] | None = None
+    # Suppress agent stages during autostart (used by Docker seed containers).
+    # MUST be mirrored in background.op_to_job/job_to_opts.
+    skip_agents: bool = False
     # Task text for the primary agent's first launch (`jailbee new --prompt`),
     # written into the container after start and before autostart. MUST be
     # mirrored in `background.op_to_job`/`job_to_opts` — see `assume_yes`.
@@ -1622,6 +1625,7 @@ def new_container(
     opts: NewContainerOptions,
     *,
     on_phase: Callable[[str], None] | None = None,
+    on_created: Callable[[str], None] | None = None,
     confirm_fn: ConfirmFn | None = None,
     on_detach: Callable[[Autostart, str, str, bool, AutostartPlan | None], None] | None = None,
 ) -> str:
@@ -1642,6 +1646,7 @@ def new_container(
             opts,
             progress=progress,
             on_phase=on_phase,
+            on_created=on_created,
             confirm_fn=confirm_fn,
             on_detach=on_detach,
         )
@@ -1664,6 +1669,7 @@ def _new_container(
     *,
     progress: _CreateProgress,
     on_phase: Callable[[str], None] | None = None,
+    on_created: Callable[[str], None] | None = None,
     confirm_fn: ConfirmFn | None = None,
     on_detach: Callable[[Autostart, str, str, bool, AutostartPlan | None], None] | None = None,
 ) -> str:
@@ -1947,9 +1953,11 @@ def _new_container(
                 ensure_work_repo_acl(cfg, incus)
                 ip = reserve_work_ipv4(incus, name)
                 _create_instance(cfg, incus, opts, name)
-                remove_old_outcomes(name)
                 fresh = True
                 progress.instance = name
+                if on_created is not None:
+                    on_created(name)
+                remove_old_outcomes(name)
                 incus.profile_assign(
                     name,
                     [
@@ -1975,8 +1983,10 @@ def _new_container(
                 raise
     else:
         _create_instance(cfg, incus, opts, name)
-        remove_old_outcomes(name)
         progress.instance = name
+        if on_created is not None:
+            on_created(name)
+        remove_old_outcomes(name)
     try:
         if generation == "legacy":
             incus.profile_assign(
@@ -2428,6 +2438,7 @@ def _new_container(
             repo_dir=repo_dir,
             mirror_endpoint=opts.mirror_endpoint,
             override=opts.autostart_override,
+            skip_agents=opts.skip_agents,
         )
         # A stage deferred in `on_create` moves the boundary for the whole
         # run: everything after it — the entire `on_start` trigger included —
@@ -2447,6 +2458,7 @@ def _new_container(
                 repo_dir=repo_dir,
                 mirror_endpoint=opts.mirror_endpoint,
                 override=opts.autostart_override,
+                skip_agents=opts.skip_agents,
             )
             if start_plan.detached:
                 detached_from = AutostartTrigger.ON_START.value

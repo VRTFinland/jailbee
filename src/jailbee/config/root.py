@@ -1175,6 +1175,23 @@ class Config(BaseModel):
                     )
                 seen_subpaths[shared_mount.subpath] = signature
 
+        docker_seed = self.golden.docker_seed
+        if docker_seed is not None and docker_seed.enabled:
+            from jailbee.golden import repo_uses_docker
+
+            if not repo_uses_docker(self):
+                issues.append(
+                    "golden.docker_seed is enabled but the golden does not include Docker; "
+                    "enable golden.stacks.docker or disable golden.docker_seed"
+                )
+            if docker_seed.autostart_profile is not None:
+                from jailbee.autostart_profiles import validate_profile_name
+
+                try:
+                    validate_profile_name(self.autostart, docker_seed.autostart_profile)
+                except ValueError as e:
+                    issues.append(f"golden.docker_seed.autostart_profile: {e}")
+
         if self.golden.python:
             issues.append(
                 "golden.python is deprecated and ignored; the container "

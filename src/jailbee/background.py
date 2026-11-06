@@ -433,6 +433,7 @@ def op_to_job(
             "autostart_override": opts.autostart_override,
             "autostart_profile": opts.autostart_profile,
             "autostart_services": opts.autostart_services,
+            "skip_agents": opts.skip_agents,
             "storage_pool": opts.storage_pool,
             "initial_prompt": opts.initial_prompt,
             "spawned_by": opts.spawned_by,
@@ -492,6 +493,7 @@ def job_to_opts(job: dict[str, Any]) -> tuple[NewContainerOptions, str, str]:
         autostart_override=o.get("autostart_override"),
         autostart_profile=o.get("autostart_profile"),
         autostart_services=o.get("autostart_services"),
+        skip_agents=o.get("skip_agents", False),
         # Dropped here (or in `op_to_job`) the worker would create the container
         # on the profile's pool, not the one the operator chose.
         storage_pool=o.get("storage_pool"),

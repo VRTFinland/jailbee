@@ -188,8 +188,44 @@ class Stacks(BaseModel):
         return caches
 
 
+class DockerSeed(BaseModel):
+    """Optional Docker image seeding performed after building the golden."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Whether to seed tagged Docker images into the golden; defaults to true "
+            "when configured."
+        ),
+    )
+    autostart_profile: str | None = Field(
+        default=None,
+        description="Optional autostart profile used to prepare the temporary seed container.",
+    )
+    timeout: int = Field(
+        default=60,
+        ge=1,
+        description="Maximum number of minutes allowed for the whole Docker seeding phase.",
+    )
+    images: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional fnmatch globs restricting seeded Docker image names (repository:tag)."
+        ),
+    )
+
+
 class Golden(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    docker_seed: DockerSeed | None = Field(
+        default=None,
+        description=(
+            "Optional Docker image seeding configuration. Absent disables seeding; "
+            "the host-local config layer may set enabled to false."
+        ),
+    )
     alias: str = Field(
         default="",
         description=(

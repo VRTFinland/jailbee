@@ -1932,6 +1932,148 @@ def test_doctor_skips_the_port_check_without_incus_too(tmp_path):
     assert "port forwards" in skipped[0].detail
 
 
+# ---- Docker seed state: configured seed health ----
+
+
+def test_docker_seed_doctor_ignores_unconfigured_seed(make_cfg, tmp_path, mocker):
+    from jailbee.doctor import _check_docker_seed
+
+    cfg = make_cfg(tmp_path)
+    get_engine = mocker.patch("jailbee.doctor.get_engine")
+
+    assert _check_docker_seed(cfg, _baseline_incus()) is None
+    get_engine.assert_not_called()
+
+
+def test_docker_seed_doctor_disabled_does_not_read_database(make_cfg, tmp_path, mocker):
+    from jailbee.config.models_golden import DockerSeed
+    from jailbee.doctor import _check_docker_seed
+
+    original = make_cfg(tmp_path)
+    cfg = original.model_copy(
+        update={
+            "golden": original.golden.model_copy(update={"docker_seed": DockerSeed(enabled=False)})
+        }
+    )
+    get_engine = mocker.patch("jailbee.doctor.get_engine")
+
+    assert _check_docker_seed(cfg, _baseline_incus()) is None
+    get_engine.assert_not_called()
+
+
+def test_docker_seed_doctor_warns_when_golden_exists_without_state(make_cfg, tmp_path, mocker):
+    from jailbee.config.models_golden import DockerSeed
+    from jailbee.doctor import _check_docker_seed
+
+    original = make_cfg(tmp_path)
+    cfg = original.model_copy(
+        update={"golden": original.golden.model_copy(update={"docker_seed": DockerSeed()})}
+    )
+    incus = _baseline_incus()
+    incus.image_exists.return_value = True
+    session = mocker.MagicMock()
+    session.__enter__.return_value = session
+    session.get.return_value = None
+    mocker.patch("jailbee.doctor.Session", return_value=session)
+    mocker.patch("jailbee.doctor.get_engine")
+
+    row = _check_docker_seed(cfg, incus)
+
+    assert row is not None and not row.ok
+    assert "jailbee base seed" in row.detail
+
+
+def test_docker_seed_doctor_does_not_warn_without_a_golden(make_cfg, tmp_path, mocker):
+    from jailbee.config.models_golden import DockerSeed
+    from jailbee.doctor import _check_docker_seed
+
+    original = make_cfg(tmp_path)
+    cfg = original.model_copy(
+        update={"golden": original.golden.model_copy(update={"docker_seed": DockerSeed()})}
+    )
+    incus = _baseline_incus()
+    incus.image_exists.return_value = False
+    incus.exists.return_value = False
+    session = mocker.MagicMock()
+    session.__enter__.return_value = session
+    session.get.return_value = None
+    mocker.patch("jailbee.doctor.Session", return_value=session)
+    mocker.patch("jailbee.doctor.get_engine")
+
+    assert _check_docker_seed(cfg, incus) is None
+
+
+@pytest.mark.parametrize(
+    "outcome,expected_ok,recommends_seed",
+    [("failed", False, True), ("skipped", True, False), ("seeded", True, False)],
+)
+def test_docker_seed_doctor_reports_stored_outcome(
+    make_cfg, tmp_path, mocker, outcome, expected_ok, recommends_seed
+):
+    from datetime import UTC, datetime
+
+    from jailbee.config.models_golden import DockerSeed
+    from jailbee.db.models import GoldenSeedState
+    from jailbee.doctor import _check_docker_seed
+
+    original = make_cfg(tmp_path)
+    cfg = original.model_copy(
+        update={"golden": original.golden.model_copy(update={"docker_seed": DockerSeed()})}
+    )
+    session = mocker.MagicMock()
+    session.__enter__.return_value = session
+    session.get.return_value = GoldenSeedState(
+        alias=cfg.golden.alias,
+        container_prefix=cfg.container_prefix,
+        seeded_at=datetime.now(UTC),
+        source="seed-container",
+        outcome=outcome,
+        image_count=0,
+        size_bytes=0,
+        detail="no images",
+    )
+    mocker.patch("jailbee.doctor.Session", return_value=session)
+    mocker.patch("jailbee.doctor.get_engine")
+
+    row = _check_docker_seed(cfg, _baseline_incus())
+
+    assert row is not None and row.ok is expected_ok
+    if outcome != "seeded":
+        assert "no images" in row.detail
+    assert ("jailbee base seed" in row.detail) is recommends_seed
+
+
+def test_run_checks_includes_docker_seed_check(make_cfg, tmp_path, mocker):
+    from jailbee.doctor import CheckResult, run_checks
+
+    check = mocker.patch(
+        "jailbee.doctor._check_docker_seed",
+        return_value=CheckResult("Docker golden seed", True, "seeded"),
+    )
+
+    results = run_checks(make_cfg(tmp_path), _baseline_incus())
+
+    assert any(row.name == "Docker golden seed" for row in results)
+    check.assert_called_once()
+
+
+def test_docker_seed_doctor_database_failure_is_informational(make_cfg, tmp_path, mocker):
+    from jailbee.config.models_golden import DockerSeed
+    from jailbee.doctor import _check_docker_seed
+
+    original = make_cfg(tmp_path)
+    cfg = original.model_copy(
+        update={"golden": original.golden.model_copy(update={"docker_seed": DockerSeed()})}
+    )
+    mocker.patch("jailbee.doctor.Session", side_effect=RuntimeError("db locked"))
+    mocker.patch("jailbee.doctor.get_engine")
+
+    row = _check_docker_seed(cfg, _baseline_incus())
+
+    assert row is not None and row.ok
+    assert "could not be read" in row.detail
+
+
 # ---- upgrade advice: `jb doctor` surfaces an owed base build / apply ----
 
 

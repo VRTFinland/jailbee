@@ -53,6 +53,69 @@ def test_usage_default_lists_live_and_archives(mocker):
     assert "800" in result.stdout.replace(",", "")
 
 
+def test_usage_live_rows_show_seed_status(mocker):
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.docker_seed_state import record
+
+    cfg = _cfg()
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    incus = mocker.patch("jailbee.incus.Incus").return_value
+    incus.exists.return_value = True
+    mocker.patch("jailbee.maintenance.golden_instance_bytes", return_value=4096)
+    incus.list_images.return_value = [
+        {"aliases": [{"name": cfg.golden.alias}], "size": 2000},
+        {"aliases": [{"name": f"{cfg.golden.alias}-2026-07-20"}], "size": 500},
+    ]
+    with Session(get_engine()) as session:
+        record(
+            session,
+            alias=cfg.golden.alias,
+            container_prefix=cfg.container_prefix,
+            seeded_at=datetime(2026, 11, 6, tzinfo=UTC),
+            source="seed-container",
+            outcome="seeded",
+            image_count=14,
+            size_bytes=3_200_000_000,
+        )
+    result = CliRunner().invoke(app, ["base", "usage"], terminal_width=140)
+    assert result.exit_code == 0, result.output
+    assert "DOCKER" in result.output
+    assert result.output.count("14 images") == 1
+    assert "2026-11-06" in result.output
+    assert "3.0 GB" in result.output
+
+
+def test_usage_instance_shows_failed_seed(mocker):
+    from sqlmodel import Session
+
+    from jailbee.db import get_engine
+    from jailbee.docker_seed_state import record
+
+    cfg = _cfg()
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    incus = mocker.patch("jailbee.incus.Incus").return_value
+    incus.exists.return_value = True
+    incus.list_images.return_value = []
+    mocker.patch("jailbee.maintenance.golden_instance_bytes", return_value=4096)
+    with Session(get_engine()) as session:
+        record(
+            session,
+            alias=cfg.golden.alias,
+            container_prefix=cfg.container_prefix,
+            seeded_at=datetime(2026, 11, 6, tzinfo=UTC),
+            source="seed-container",
+            outcome="failed",
+            image_count=0,
+            size_bytes=0,
+            detail="load failed",
+        )
+    result = CliRunner().invoke(app, ["base", "usage"], terminal_width=140)
+    assert result.exit_code == 0, result.output
+    assert "failed 2026-11-06" in result.output
+
+
 def test_usage_no_images(mocker):
     cfg = _cfg()
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)

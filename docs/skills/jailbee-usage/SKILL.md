@@ -1181,6 +1181,26 @@ import, stop and destroy children, within the grant and the repo's caps.
   `jailbee-orchestration-child`. Guide:
   [orchestration](../../orchestration.md).
 
+## Golden Docker image seeding
+
+For a repo that uses Docker and repeatedly pulls the same tagged images, check
+whether its golden enables `golden.docker_seed`. The feature is opt-in by
+config block; see the repo-setup skill for configuration, image filters and
+host-local disable. A seeded golden contains the images' contents, which may
+include private code or data. Confirm that this is acceptable before recommending
+it. Shared goldens are skipped, and non-btrfs pools store full copies per
+container.
+
+On the host, `jailbee base seed` refreshes the current golden without rebuilding;
+`jailbee base build` automatically seeds after building when configured, unless
+`--no-docker-seed` is given. `--docker-from CONTAINER` uses a named running
+container as a one-off source; otherwise JailBee makes a temporary source and
+deletes it unless `--keep-seed` is used. Build success is independent of seed
+success (warning only); explicit `base seed` exits 2 on preflight failure and 1
+on seed failure. `jailbee upgrade` seeds only goldens built in that sweep, and
+`--no-docker-seed` skips all automatic seeding. `jailbee base usage` shows the
+latest outcome in `DOCKER`.
+
 ## Other day-to-day commands
 
 - **Shell / run:** `jailbee shell [<name>]` (interactive, lands in the clone),

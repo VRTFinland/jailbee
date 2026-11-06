@@ -34,6 +34,42 @@ def _make_config(tmp_path, content: str = "{}\n") -> Path:
 # ---------- New schema: defaults, computed attrs, rejection of removed blocks
 
 
+def test_docker_seed_defaults(tmp_path, mocker):
+    from jailbee.config import load_config_from_text
+
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    cfg = load_config_from_text("golden:\n  docker_seed: {}\n", tmp_path / "config.yaml")
+
+    assert cfg.golden.docker_seed is not None
+    assert cfg.golden.docker_seed.enabled is True
+    assert cfg.golden.docker_seed.timeout == 60
+    assert cfg.golden.docker_seed.images == []
+    assert cfg.golden.docker_seed.autostart_profile is None
+
+
+def test_docker_seed_rejects_unknown_key_and_zero_timeout():
+    with pytest.raises(ValidationError):
+        Config.model_validate({"golden": {"docker_seed": {"unknown": True}}})
+    with pytest.raises(ValidationError):
+        Config.model_validate({"golden": {"docker_seed": {"timeout": 0}}})
+
+
+def test_docker_seed_without_docker_is_a_runtime_issue(tmp_path):
+    cfg = make_cfg(tmp_path, golden={"docker_seed": {}, "stacks": {"docker": False}})
+
+    assert any("golden.docker_seed" in issue for issue in cfg.validate_runtime())
+    cfg = make_cfg(tmp_path, golden={"docker_seed": {}, "stacks": {"docker": True}})
+    assert not any("golden.docker_seed" in issue for issue in cfg.validate_runtime())
+
+
+def test_docker_seed_unknown_autostart_profile_is_a_runtime_issue(tmp_path):
+    cfg = make_cfg(tmp_path, golden={"docker_seed": {"autostart_profile": "missing"}})
+
+    assert any(
+        "autostart profile `missing` is not defined" in issue for issue in cfg.validate_runtime()
+    )
+
+
 def test_load_empty_config_uses_all_defaults(tmp_path, mocker):
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     cfg_path = _make_config(tmp_path, "{}\n")

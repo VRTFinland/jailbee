@@ -292,6 +292,99 @@ def test_scratch_golden_is_kept_and_not_counted_as_container(db_engine, tmp_path
     assert plan.golden_kept_reason == "shared scratch base"
 
 
+def test_plan_lists_temporary_seeding_golden_instance_for_removal(
+    db_engine, tmp_path, mocker, make_cfg
+):
+    from jailbee.global_config import GlobalConfig
+    from jailbee.repo_remove import plan_removal
+
+    cfg = make_cfg(tmp_path, container_prefix="foo", golden={"alias": "foo-base"})
+    mocker.patch("jailbee.repo_remove.load_repo_config", return_value=cfg)
+    mocker.patch("jailbee.repo_remove.load_global_config", return_value=(GlobalConfig(), []))
+    incus = MagicMock()
+    incus.profile_list.return_value = ["foo-base"]
+    incus.list_containers.return_value = [
+        {"name": "foo-base--seeding", "profiles": []},
+    ]
+    incus.network_acl_list.return_value = []
+    incus.list_images.return_value = []
+
+    plan = plan_removal("foo", incus, lambda: Session(db_engine), cfg=cfg)
+
+    assert "foo-base--seeding" in plan.golden_instances
+
+
+def test_execute_deletes_seed_state_only_after_approved_golden_deletion(
+    db_engine, tmp_path, mocker
+):
+    from jailbee.db.models import GoldenSeedState
+    from jailbee.incus import Incus
+    from jailbee.repo_remove import RemovalPlan, execute_removal
+
+    now = datetime.now(UTC)
+    with Session(db_engine) as session:
+        session.add(
+            GoldenSeedState(
+                alias="foo-base",
+                container_prefix="foo",
+                seeded_at=now,
+                source="seed-container",
+                outcome="seeded",
+                image_count=2,
+                size_bytes=1024,
+            )
+        )
+        session.commit()
+    plan = RemovalPlan("foo", None, [], [], [], ["foo-base"], [], None, {}, [], [], [])
+    incus = MagicMock(spec=Incus)
+    incus.profile_list.return_value = []
+    incus.list_containers.return_value = []
+    mocker.patch("jailbee.egress_proxy.drop_fragment", return_value=False)
+
+    results = execute_removal(plan, incus, lambda: Session(db_engine))
+
+    assert all(result.ok for result in results)
+    with Session(db_engine) as session:
+        assert session.get(GoldenSeedState, "foo-base") is None
+
+
+def test_execute_retains_seed_state_when_golden_is_kept_or_delete_fails(
+    db_engine, tmp_path, mocker
+):
+    from jailbee.db.models import GoldenSeedState
+    from jailbee.incus import Incus
+    from jailbee.repo_remove import RemovalPlan, execute_removal
+
+    now = datetime.now(UTC)
+    with Session(db_engine) as session:
+        session.add(
+            GoldenSeedState(
+                alias="foo-base",
+                container_prefix="foo",
+                seeded_at=now,
+                source="seed-container",
+                outcome="seeded",
+                image_count=2,
+                size_bytes=1024,
+            )
+        )
+        session.commit()
+    incus = MagicMock(spec=Incus)
+    incus.profile_list.return_value = []
+    incus.list_containers.return_value = []
+    mocker.patch("jailbee.egress_proxy.drop_fragment", return_value=False)
+    kept = RemovalPlan("foo", None, [], [], [], [], [], "shared with other", {}, [], [], [])
+    execute_removal(kept, incus, lambda: Session(db_engine))
+    with Session(db_engine) as session:
+        assert session.get(GoldenSeedState, "foo-base") is not None
+
+    failing = RemovalPlan("foo", None, [], [], [], ["foo-base"], [], None, {}, [], [], [])
+    incus.image_delete.side_effect = RuntimeError("image busy")
+    execute_removal(failing, incus, lambda: Session(db_engine))
+    with Session(db_engine) as session:
+        assert session.get(GoldenSeedState, "foo-base") is not None
+
+
 def test_execute_orders_resources_and_removes_registry_last(db_engine, tmp_path, mocker):
     from jailbee.incus import Incus
     from jailbee.repo_remove import RemovalPlan, execute_removal

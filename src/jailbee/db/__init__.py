@@ -26,7 +26,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 20
+CURRENT_SCHEMA_VERSION = 21
 
 
 def state_dir() -> Path:
@@ -286,6 +286,11 @@ def _migrate_to_v20(conn: Connection) -> None:
     return None
 
 
+def _migrate_to_v21(conn: Connection) -> None:
+    """v20 -> v21 adds `golden_seed_state` via create_all."""
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -307,6 +312,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     18: _migrate_to_v18,
     19: _migrate_to_v19,
     20: _migrate_to_v20,
+    21: _migrate_to_v21,
 }
 
 
