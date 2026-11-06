@@ -193,19 +193,7 @@ class Incus:
         timeout: int | None = None,
         input_text: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        target = (
-            args[1]
-            if len(args) > 1 and args[0] == "exec"
-            else args[2]
-            if len(args) > 2 and args[:2] in (["config", "set"], ["config", "unset"])
-            else None
-        )
-        if target is not None and target in self._guarded_instances:
-            current = self.config_get_checked(target, "volatile.uuid")
-            if current != self._guarded_instances[target]:
-                raise IncusError(
-                    "container identity changed during publication; refusing worker write"
-                )
+        self._check_guard(args)
         cmd = [self.binary, *args]
         if self.dry_run:
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
@@ -266,6 +254,20 @@ class Incus:
             )
         return result
 
+    def _check_guard(self, args: list[str]) -> None:
+        target = (
+            args[1]
+            if len(args) > 1 and args[0] == "exec"
+            else args[2]
+            if len(args) > 2 and args[:2] in (["config", "set"], ["config", "unset"])
+            else None
+        )
+        if target is not None and target in self._guarded_instances:
+            current = self.config_get_checked(target, "volatile.uuid")
+            if current != self._guarded_instances[target]:
+                raise IncusError(
+                    "container identity changed during publication; refusing worker write"
+                )
     # Optimistic-concurrency retry tuning for instance-config read-modify-writes.
     _ETAG_RETRIES = 5
     _ETAG_BACKOFF = 0.2  # seconds; linear backoff (attempt+1) * _ETAG_BACKOFF
@@ -565,6 +567,75 @@ class Incus:
         )
         result = self._run(args, timeout=timeout if timeout is not None else self.exec_timeout)
         return result.stdout
+
+    def exec_pipe(
+        self,
+        src: str,
+        src_cmd: list[str],
+        dst: str,
+        dst_cmd: list[str],
+        *,
+        timeout: int | None = None,
+    ) -> str:
+        """Stream source stdout directly to destination stdin and return its output."""
+        src_args = self._exec_args(src, src_cmd, uid=None, gid=None, cwd=None, env=None, init_groups=False)
+        dst_args = self._exec_args(dst, dst_cmd, uid=None, gid=None, cwd=None, env=None, init_groups=False)
+        self._check_guard(src_args)
+        self._check_guard(dst_args)
+        if self.dry_run:
+            return ""
+        timeout = timeout if timeout is not None else self.exec_timeout
+        deadline = None if timeout is None else time.monotonic() + timeout
+
+        def remaining() -> float | None:
+            return None if deadline is None else max(0.0, deadline - time.monotonic())
+
+        processes: list[subprocess.Popen[bytes]] = []
+        with tempfile.TemporaryFile() as src_err, tempfile.TemporaryFile() as dst_err:
+            try:
+                source = subprocess.Popen(
+                    [self.binary, *src_args], stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE, stderr=src_err,
+                )
+                processes.append(source)
+                assert source.stdout is not None
+                destination = subprocess.Popen(
+                    [self.binary, *dst_args], stdin=source.stdout,
+                    stdout=subprocess.PIPE, stderr=dst_err,
+                )
+                processes.append(destination)
+                source.stdout.close()
+                output, _ = destination.communicate(timeout=remaining())
+                source.wait(timeout=remaining())
+            except FileNotFoundError as e:
+                raise _missing_binary_error(self.binary) from e
+            except subprocess.TimeoutExpired as e:
+                raise IncusTimeoutError(
+                    f"`incus exec` pipe {src} -> {dst} timed out after {timeout}s"
+                ) from e
+            finally:
+                for proc in processes:
+                    if proc.poll() is None:
+                        proc.kill()
+                for proc in processes:
+                    proc.wait()
+                    if proc.stdout is not None:
+                        proc.stdout.close()
+            failures = []
+            for side, args, proc, stderr in (
+                ("source", src_args, source, src_err),
+                ("destination", dst_args, destination, dst_err),
+            ):
+                if proc.returncode:
+                    stderr.seek(0)
+                    detail = stderr.read().decode(errors="replace").strip()
+                    failures.append(
+                        f"{side} `incus {_render_args(args)}` failed "
+                        f"(exit {proc.returncode}): {detail}"
+                    )
+            if failures:
+                raise IncusError("\n".join(failures))
+            return output.decode(errors="replace")
 
     def running_instance(
         self, name: str, lock_glob: str, exe_names: Collection[str], *, uid: int, gid: int
