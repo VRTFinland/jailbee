@@ -66,9 +66,16 @@ def _reserved(base: Path, ref: Any) -> bool:
         os.close(fd)
 
 
-def _records(base: Path) -> list[tuple[Path, dict[str, Any], int]]:
-    records: list[tuple[Path, dict[str, Any], int]] = []
+def _warn_once(path: Path, warned: set[Path]) -> None:
     from jailbee.inbox.cli import _warning
+
+    if path not in warned:
+        warned.add(path)
+        _warning(path)
+
+
+def _records(base: Path, warned: set[Path]) -> list[tuple[Path, dict[str, Any], int]]:
+    records: list[tuple[Path, dict[str, Any], int]] = []
 
     for directory in (base / "inbox", base / "inbox/read"):
         for path in directory.glob("*.json"):
@@ -77,7 +84,7 @@ def _records(base: Path) -> list[tuple[Path, dict[str, Any], int]]:
             data = _load(path)
             if data is None:
                 if directory == base / "inbox":
-                    _warning(path)
+                    _warn_once(path, warned)
                 continue
             try:
                 stamp = path.stat().st_mtime_ns
@@ -96,9 +103,9 @@ def _newest_from_child(records: list[tuple[Path, dict[str, Any], int]]) -> dict[
     return newest
 
 
-def last_from_child(base: Path) -> dict[str, float]:
+def last_from_child(base: Path, warned: set[Path] | None = None) -> dict[str, float]:
     """Newest mtime of each sender's `message` files in `inbox/` and `inbox/read/`."""
-    return _newest_from_child(_records(base))
+    return _newest_from_child(_records(base, warned if warned is not None else set()))
 
 
 def _read_digest_stamp(base: Path, now: float) -> float | None:
@@ -138,8 +145,15 @@ def _activity_at(child: dict[str, Any], now: float) -> float:
 
 
 def select_wakeup(
-    base: Path, wake: frozenset[str] | None, quiet: int, now: float, digest: int = 0
+    base: Path,
+    wake: frozenset[str] | None,
+    quiet: int,
+    now: float,
+    digest: int = 0,
+    warned: set[Path] | None = None,
 ) -> str | None:
+    if warned is None:
+        warned = set()
     snapshot = _load(base / "children.json")
     children: dict[str, float] = {}
     activity: dict[str, float] = {}
@@ -171,9 +185,9 @@ def select_wakeup(
         children = {}
         running.clear()
 
-    from jailbee.inbox.cli import _warning, message_id
+    from jailbee.inbox.cli import message_id
 
-    records = _records(base)
+    records = _records(base, warned)
 
     first: dict[str, Path] = {}
     latest = {name: children[name] for name in running}
@@ -190,7 +204,7 @@ def select_wakeup(
         if path.parent != base / "inbox":
             continue
         if message_id(path) is None:
-            _warning(path)
+            _warn_once(path, warned)
             continue
         is_status = data.get("type") == "status"
         if is_status and _reserved(base, data.get("ref")):
@@ -273,28 +287,31 @@ def settle(
 def run_wait(
     settings: Settings,
     *,
-    timeout: int | None,
+    timeout: float | None,
     wake: frozenset[str] | None,
     quiet: int,
     status_ref: str | None = None,
     digest: int = 0,
+    warned: set[Path] | None = None,
     watcher_factory: Callable[..., InboxWatcher] = InboxWatcher,
     clock: Callable[[], float] = time.monotonic,
 ) -> tuple[int, str | None]:
     deadline = None if timeout is None else clock() + timeout
     watcher = watcher_factory(settings.inbox, poll=settings.poll)
     waited = False
+    if warned is None:
+        warned = set()
     try:
         while True:
             if status_ref is not None:
                 path = find_status(settings.inbox, status_ref)
                 first = str(path) if path is not None else None
             else:
-                first = select_wakeup(settings.base, wake, quiet, time.time(), digest)
+                first = select_wakeup(settings.base, wake, quiet, time.time(), digest, warned)
             if first is not None:
                 if waited and status_ref is None:
                     settle(settings, deadline if deadline is not None else clock() + 5, clock=clock)
-                    first = select_wakeup(settings.base, wake, quiet, time.time(), digest)
+                    first = select_wakeup(settings.base, wake, quiet, time.time(), digest, warned)
                     if first is None:
                         continue
                 return 0, first

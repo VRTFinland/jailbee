@@ -1627,6 +1627,13 @@ def test_wait_idless_message_is_skipped_and_warned(script, base, tmp_path):
     assert f"skipping unreadable message {path}" in result.stderr
 
 
+def test_wait_neutralises_control_characters_in_message_id(script, base, tmp_path):
+    write_inbox(base, FIRST, message("msg\x1b[31m\n\t\x7f\x9bid"))
+    result = run(script, "wait", "--timeout", "0", env=env_for(base, tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "msg?[31m????id\n"
+
+
 def test_wait_path_option_preserves_path_output(script, base, tmp_path):
     path = write_inbox(base, FIRST, message("readable"))
     result = run(script, "wait", "--path", "--timeout", "0", env=env_for(base, tmp_path))

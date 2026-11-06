@@ -517,24 +517,35 @@ def cmd_wait(
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise InboxUsage("another process is already waiting in this container") from None
-        rc, line = run_wait(
-            settings, timeout=seconds, wake=wake, quiet=quiet, digest=digest_seconds
-        )
-        if line == "digest":
-            return _print_digest(settings)
-        if line is not None:
-            if path or line == "digest" or line.startswith("quiet-child "):
+        deadline = None if seconds is None else time.monotonic() + seconds
+        warned: set[Path] = set()
+        while True:
+            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+            rc, line = run_wait(
+                settings,
+                timeout=remaining,
+                wake=wake,
+                quiet=quiet,
+                digest=digest_seconds,
+                warned=warned,
+            )
+            if line == "digest":
+                return _print_digest(settings, warned=warned)
+            if line is None:
+                return rc
+            if path or line.startswith("quiet-child "):
                 print(line)
             else:
                 ident = message_id(Path(line))
-                if ident is not None:
-                    print(ident)
-        return rc
+                if ident is None:
+                    continue
+                print(clean_c0c1(ident))
+            return rc
     finally:
         os.close(fd)
 
 
-def _print_digest(settings: Settings) -> int:
+def _print_digest(settings: Settings, *, warned: set[Path] | None = None) -> int:
     from jailbee.inbox.waiting import last_from_child, write_digest_stamp
 
     now = time.time()
@@ -545,7 +556,7 @@ def _print_digest(settings: Settings) -> int:
     print("digest")
     loaded = _load_snapshot(settings)
     children: list[object] = list(loaded[1]["children"]) if loaded else []
-    print(render_status(children, now=now, from_child=last_from_child(settings.base)))
+    print(render_status(children, now=now, from_child=last_from_child(settings.base, warned)))
     return 0
 
 

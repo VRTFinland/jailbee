@@ -92,6 +92,44 @@ def test_wait_slices_capped_at_watch_slice(tmp_path, monkeypatch):
         assert slices == expected
 
 
+def test_wait_warns_once_per_bad_file_across_poll_iterations(tmp_path, capsys):
+    settings = cli.load_settings({"JAILBEE_ORCHESTRATION_DIR": str(tmp_path)})
+    settings.inbox.mkdir()
+    corrupt = settings.inbox / "corrupt.json"
+    corrupt.write_text("not json{")
+    idless = settings.inbox / "idless.json"
+    idless.write_text('{"type":"message","kind":"note"}')
+    (tmp_path / "children.json").write_text(
+        '{"version":1,"updated_at":' + str(time.time()) + ',"children":[]}'
+    )
+    now = [0.0]
+    slices = []
+
+    class Watcher:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def wait(self, duration):
+            slices.append(duration)
+            now[0] += duration
+
+        def close(self):
+            pass
+
+    assert waiting.run_wait(
+        settings,
+        timeout=3,
+        wake=None,
+        quiet=60,
+        watcher_factory=Watcher,
+        clock=lambda: now[0],
+    ) == (1, None)
+    assert slices == [1, 1, 1]
+    assert sorted(capsys.readouterr().err.splitlines()) == sorted(
+        f"jailbee inbox: skipping unreadable message {path}" for path in (corrupt, idless)
+    )
+
+
 def test_wait_settles_only_after_waiting(tmp_path, monkeypatch):
     settings = cli.load_settings({"JAILBEE_ORCHESTRATION_DIR": str(tmp_path)})
     calls = []
@@ -236,6 +274,35 @@ def test_settle_stops_at_deadline(tmp_path):
 
     waiting.settle(settings, 0.7, clock=lambda: now[0], sleep=sleep)
     assert now[0] == pytest.approx(0.7)
+
+
+@pytest.mark.parametrize("race", ["vanished", "unreadable"])
+@pytest.mark.parametrize("replacement", [False, True])
+def test_cmd_wait_reselects_when_selected_message_becomes_unreadable(
+    tmp_path, monkeypatch, capsys, race, replacement
+):
+    settings = cli.load_settings({"JAILBEE_ORCHESTRATION_DIR": str(tmp_path)})
+    settings.inbox.mkdir()
+    first = settings.inbox / "a.json"
+    first.write_text('{"id":"first","type":"message","kind":"note"}')
+    if replacement:
+        (settings.inbox / "b.json").write_text(
+            '{"id":"replacement","type":"message","kind":"note"}'
+        )
+    select = waiting.select_wakeup
+
+    def select_then_race(*args):
+        selected = select(*args)
+        if selected == str(first):
+            if race == "vanished":
+                first.unlink()
+            else:
+                first.write_text("not json{")
+        return selected
+
+    monkeypatch.setattr(waiting, "select_wakeup", select_then_race)
+    assert cli.cmd_wait(settings, timeout="0") == (0 if replacement else 1)
+    assert capsys.readouterr().out == ("replacement\n" if replacement else "")
 
 
 def test_read_vanished_during_move(tmp_path, monkeypatch, capsys):
