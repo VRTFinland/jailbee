@@ -205,8 +205,12 @@ def cmd_children(settings: Settings, *, as_json: bool = False) -> int:
     if loaded is None:
         return 1
     path, doc = loaded
-    children = doc["children"]
     line = max(1, len(path.read_text().rstrip().splitlines()))
+    return render_children(doc["children"], where=str(path), line=line, as_json=as_json)
+
+
+def render_children(children: list[Any], *, where: str, line: int, as_json: bool) -> int:
+    """Print the `inbox children` view of a children list (shared by both transports)."""
     if as_json:
         print(pretty(children))
     else:
@@ -215,7 +219,7 @@ def cmd_children(settings: Settings, *, as_json: bool = False) -> int:
                 child = {}
             if not isinstance(child, dict):
                 print(
-                    f"jq: error (at {path}:{line}): Cannot index {_jq_type(child)} "
+                    f"jq: error (at {where}:{line}): Cannot index {_jq_type(child)} "
                     'with string "name"',
                     file=sys.stderr,
                 )
@@ -226,7 +230,7 @@ def cmd_children(settings: Settings, *, as_json: bool = False) -> int:
             for value in (name, session):
                 if isinstance(value, (dict, list)):
                     print(
-                        f"jq: error (at {path}:{line}): {_jq_type(value)} ({jq_tostring(value)}) "
+                        f"jq: error (at {where}:{line}): {_jq_type(value)} ({jq_tostring(value)}) "
                         "is not valid in a csv row",
                         file=sys.stderr,
                     )
@@ -250,13 +254,23 @@ def cmd_status(settings: Settings, *, child: str | None = None, as_json: bool = 
     loaded = _load_snapshot(settings)
     if loaded is None:
         return 1
-    children: list[object] = list(loaded[1]["children"])
+    from_child = last_from_child(settings.base)
+    return render_status_view(list(loaded[1]["children"]), from_child, child=child, as_json=as_json)
+
+
+def render_status_view(
+    children: list[object],
+    from_child: Mapping[str, float],
+    *,
+    child: str | None,
+    as_json: bool,
+) -> int:
+    """Print `inbox status` for a children list (shared by both transports)."""
     if child is not None:
         children = [c for c in children if isinstance(c, dict) and c.get("name") == child]
         if not children:
             print(f"{PROG}: unknown child '{clean_c0c1(child)}'", file=sys.stderr)
             return 1
-    from_child = last_from_child(settings.base)
     if as_json:
         items: list[object] = []
         for item in children:
@@ -287,12 +301,16 @@ class JqError(Exception):
     """A jq-compatible data error."""
 
 
-def runners_json(settings: Settings) -> list[dict[str, object]]:
+_UNSET: Any = object()
+
+
+def runners_json(settings: Settings, grant: object = _UNSET) -> list[dict[str, object]]:
     config = Path(os.environ.get("JAILBEE_LITELLM_CONFIG") or "/etc/jailbee/litellm.json")
-    try:
-        grant = _load(settings.base / "grant.json")
-    except (OSError, ValueError, UnicodeError):
-        grant = None
+    if grant is _UNSET:
+        try:
+            grant = _load(settings.base / "grant.json")
+        except (OSError, ValueError, UnicodeError):
+            grant = None
     cfg: object = None
     if os.access(config, os.R_OK):
         try:
@@ -378,6 +396,11 @@ def cmd_grant(settings: Settings, *, as_json: bool = False) -> int:
     if not isinstance(grant, dict):
         print(f"{PROG}: invalid grant.json", file=sys.stderr)
         return 1
+    return render_grant(grant, as_json=as_json)
+
+
+def render_grant(grant: dict[str, Any], *, as_json: bool) -> int:
+    """Print the grant summary (shared by both transports)."""
     safe = sanitize_json_value(grant)
     if as_json:
         print(pretty(safe))
@@ -438,9 +461,9 @@ def cmd_grant(settings: Settings, *, as_json: bool = False) -> int:
     return 0
 
 
-def cmd_runners(settings: Settings, *, as_json: bool = False) -> int:
+def cmd_runners(settings: Settings, *, as_json: bool = False, grant: object = _UNSET) -> int:
     try:
-        entries = runners_json(settings)
+        entries = runners_json(settings, grant)
     except JqError as exc:
         print(f"jq: error (at <unknown>): {exc}", file=sys.stderr)
         return 5
@@ -483,16 +506,10 @@ def cmd_runners(settings: Settings, *, as_json: bool = False) -> int:
     return 0
 
 
-def cmd_wait(
-    settings: Settings,
-    *,
-    timeout: str = "30m",
-    wake_on: str | None = None,
-    quiet_after: str | None = None,
-    digest: str | None = None,
-    path: bool = False,
-) -> int:
-    from jailbee.inbox.waiting import run_wait, valid_wake_token
+def parse_wait_args(
+    timeout: str, wake_on: str | None, quiet_after: str | None, digest: str | None
+) -> tuple[int | None, int, int, frozenset[str] | None]:
+    from jailbee.inbox.waiting import valid_wake_token
 
     seconds = parse_timeout(timeout)
     quiet = parse_duration(quiet_after) if quiet_after is not None else 0
@@ -510,6 +527,21 @@ def cmd_wait(
                 "(optionally msg:<kind> or status:<state>)"
             )
         wake = frozenset(tokens)
+    return seconds, quiet, digest_seconds, wake
+
+
+def cmd_wait(
+    settings: Settings,
+    *,
+    timeout: str = "30m",
+    wake_on: str | None = None,
+    quiet_after: str | None = None,
+    digest: str | None = None,
+    path: bool = False,
+) -> int:
+    from jailbee.inbox.waiting import run_wait
+
+    seconds, quiet, digest_seconds, wake = parse_wait_args(timeout, wake_on, quiet_after, digest)
     settings.inbox.mkdir(parents=True, exist_ok=True)
     fd = os.open(settings.base / "wait.lock", os.O_WRONLY | os.O_CREAT, 0o644)
     try:

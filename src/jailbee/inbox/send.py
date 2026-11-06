@@ -297,6 +297,53 @@ class PublishError(Exception):
     """A send failed after validation, with exit status 1."""
 
 
+def read_body(req: SendRequest) -> bytes:
+    """Read the message/spawn/restart text; enforce non-empty and the size limit."""
+    source: BinaryIO
+    if req.text is not None:
+        source = io.BytesIO(req.text.encode())
+    elif req.file is not None:
+        from pathlib import Path
+
+        path = Path(req.file)
+        try:
+            if not path.is_file() or not os.access(path, os.R_OK):
+                raise OSError()
+            source = path.open("rb")
+        except OSError:
+            raise InboxUsage(f"cannot read file '{req.file}'") from None
+    else:
+        source = sys.stdin.buffer
+    data = b""
+    size = 0
+    try:
+        while chunk := source.read(65536):
+            size += len(chunk)
+            if size <= 65536:
+                data += chunk
+    finally:
+        if not req.stdin:
+            source.close()
+    if not size:
+        raise InboxUsage(f"the {req.type} text is empty")
+    if size > 65536:
+        raise InboxUsage(f"the {req.type} text is {size} bytes; the limit is 65536")
+    return data
+
+
+def prepare_send(req: SendRequest) -> tuple[str, dict[str, object], str | None]:
+    """The manifest id, manifest dict and body text for a request (socket transport)."""
+    id_ = new_id(req.type)
+    body_name = f"{id_}.md" if req.type in {"message", "spawn", "restart"} else None
+    body: str | None = None
+    if body_name:
+        try:
+            body = read_body(req).decode()
+        except UnicodeDecodeError:
+            raise InboxUsage(f"the {req.type} text is not valid UTF-8") from None
+    return id_, build_manifest(req, id_, body_name), body
+
+
 def publish(settings: "Settings", req: SendRequest) -> str:
     settings.outbox.mkdir(parents=True, exist_ok=True)
     id_ = ""
@@ -319,34 +366,8 @@ def publish(settings: "Settings", req: SendRequest) -> str:
     publishing_manifest = False
     try:
         if body_name:
-            source: BinaryIO
-            if req.text is not None:
-                source = io.BytesIO(req.text.encode())
-            elif req.file is not None:
-                from pathlib import Path
-
-                path = Path(req.file)
-                try:
-                    if not path.is_file() or not os.access(path, os.R_OK):
-                        raise OSError()
-                    source = path.open("rb")
-                except OSError:
-                    raise InboxUsage(f"cannot read file '{req.file}'") from None
-            else:
-                source = sys.stdin.buffer
-            size = 0
-            try:
-                with body_tmp.open("wb") as output:
-                    while chunk := source.read(65536):
-                        size += len(chunk)
-                        output.write(chunk)
-            finally:
-                if not req.stdin:
-                    source.close()
-            if not size:
-                raise InboxUsage(f"the {req.type} text is empty")
-            if size > 65536:
-                raise InboxUsage(f"the {req.type} text is {size} bytes; the limit is 65536")
+            with body_tmp.open("wb") as output:
+                output.write(read_body(req))
         json_tmp.write_text(pretty(build_manifest(req, id_, body_name)) + "\n")
         if req.wait:
             lock_dir = settings.base / "status-waits"
