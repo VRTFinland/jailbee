@@ -725,11 +725,15 @@ deduplication journal. This lets the broker resume safely after a restart.
 publication outcomes; neither is part of the database migration. Socket,
 lock, and transitional file-transport state likewise remains file-based.
 
-On first use, existing state is imported automatically into `broker.db`.
-Imported files or directories are renamed with a `.migrated` suffix and kept
-for one compatibility release; unreadable or corrupt legacy state is warned
-about and quarantined with a `.corrupt` suffix. The import marker is stored
-transactionally, so restarting does not import migrated state a second time.
+On first use of each state area, existing data is imported automatically into
+`broker.db`. Successfully imported files or directories are renamed with a
+`.migrated` suffix and kept for one compatibility release. Invalid/corrupt
+legacy data is warned about and quarantined with a `.corrupt` suffix. An
+unreadable file that cannot be read or renamed is warned about and retained for
+a retry; a database write failure fails closed rather than proceeding without
+saved state. Journal imports preserve valid records before a torn final line
+and quarantine wholly malformed journals. Import markers are transactional, so
+a restart does not import successfully migrated state a second time.
 
 Messages and statuses are retained unread and read alike, so `jailbee inbox
 ls` shows unread messages and a broker or container restart loses nothing.

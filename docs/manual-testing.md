@@ -6120,30 +6120,36 @@ broker over a per-container socket mounted at `/run/jailbee/orchestration/`
 
 ### Broker state database migration (real host)
 
-Run on a disposable host state directory with the broker stopped and legacy
-orchestration state present. Do not simulate corruption in valuable live state.
-The first new broker start imports legacy state into `broker.db`; this recipe
-checks the preserved queue, watch/supervision and publication state across that
-migration.
+Run on a disposable host with legacy orchestration state present. Do not
+simulate corruption in valuable live state. Back up state before upgrading; the
+first use of each state area lazily imports it into `broker.db`, so starting the
+broker alone may not migrate every area.
 
 ```bash
-state="$HOME/.local/state/jailbee/orchestration"
+state="${XDG_STATE_HOME:-$HOME/.local/state}/jailbee/orchestration"
+backup="$(mktemp -d "${TMPDIR:-/tmp}/jailbee-state-backup.XXXXXX")"
 systemctl --user stop jailbee-broker
-cp -a "$state" "$state.before-db-migration"
-# Record representative queued work, watched children, and publication state
-# using the host's existing test setup, then upgrade/install the new code.
+mkdir -p "$backup"
+tar -C "$state" --exclude='./sock' -cf "$backup/orchestration.tar" .
+# Upgrade/install the new code, then start the broker.
 systemctl --user start jailbee-broker
 ```
+
+Exercise inbox message delivery and the queue, watch/supervision, and
+publication paths that have legacy inputs, so each state area is accessed.
+Then check the migrated state:
 
 - Check the queue still contains the same spawn/restart requests and
   reservations; watched children remain supervised; and publication in-flight
   recovery, known/accepted request deduplication, hourly budget and results are
   unchanged. Use the normal orchestration status/messages and broker logs, plus
   inspect `broker.db` with SQLite read-only if needed.
-- For each imported legacy state file or directory, confirm its `.migrated`
-  counterpart remains. If a pre-existing legacy input is unreadable or corrupt,
-  confirm the broker logs a warning and retains it as `.corrupt`; do not expect
-  that suffix when no corrupt input existed.
+- For each accessed legacy state area, confirm successfully imported inputs
+  have a `.migrated` counterpart. Corrupt inputs are warned about and retained
+  as `.corrupt`; unreadable inputs that cannot be read or renamed are warned
+  about and retained for retry. Database write failures must fail closed.
+  For the journal, valid entries before a torn final line are imported and the
+  source is migrated with a warning; a wholly malformed journal is quarantined.
 - Restart the broker again and repeat the checks. The `.migrated` inputs must
   not be imported a second time; no duplicate queued requests, watches,
   publication results or journal decisions should appear. `publish-log.jsonl`
