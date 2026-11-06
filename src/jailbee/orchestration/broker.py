@@ -6,6 +6,7 @@ import fcntl
 import itertools
 import json
 import logging
+import queue
 import signal
 import threading
 import time
@@ -15,13 +16,20 @@ from functools import partial
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _metadata_version
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from jailbee import __version__
 from jailbee.config import load_repo_config
 from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.incus import IncusError
-from jailbee.orchestration import finishing, inbox_state, labels, publishing, watch
+from jailbee.orchestration import (
+    finishing,
+    inbox_state,
+    labels,
+    publishing,
+    socket_device,
+    watch,
+)
 from jailbee.orchestration.actions import (
     GRANT_REVOKED,
     NOT_ALLOWED,
@@ -36,6 +44,7 @@ from jailbee.orchestration.actions import (
 )
 from jailbee.orchestration.child_status import StatusCache
 from jailbee.orchestration.journal import Journal, manifest_digest
+from jailbee.orchestration.listener import Listener
 from jailbee.orchestration.outbox import (
     delete_outbox_files,
     deliver,
@@ -67,6 +76,7 @@ from jailbee.orchestration.state import (
     save_queue,
     state_root,
 )
+from jailbee.orchestration.store import BrokerStore, StoreError, store_path
 from jailbee.outbox_io import _validate_outbox_name
 
 if TYPE_CHECKING:
@@ -75,6 +85,7 @@ if TYPE_CHECKING:
 
     from jailbee.config import Config
     from jailbee.incus import Incus
+    from jailbee.orchestration.listener import Event
     from jailbee.orchestration.outbox import RawManifest
     from jailbee.orchestration.protocol import Manifest
     from jailbee.orchestration.state import QueuedRequest
@@ -118,6 +129,12 @@ class BrokerMemory:
     children: dict[str, ChildrenView] = field(default_factory=dict)
     # Container key (volatile.uuid) -> the context built for it in the last round.
     contexts: dict[str, ActionContext] = field(default_factory=dict)
+    # Socket transport (None in tests that do not exercise it).
+    listener: Listener | None = None
+    store: BrokerStore | None = None
+    requests: queue.Queue[Event] = field(default_factory=queue.Queue)
+    # Container full name -> volatile.uuid whose socket device we attached.
+    attached: dict[str, str] = field(default_factory=dict)
 
     def warn_once(self, key: str, msg: str, *args: object) -> None:
         if key not in self.warned:
@@ -676,14 +693,17 @@ def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
             if role == "none":
                 memory.env_ensured.discard(full)
                 memory.env_roles.pop(full, None)
+                _teardown_socket(ctx.incus, memory, full, ctx.sender.config.get("volatile.uuid"))
                 return
             if full in memory.env_ensured and memory.env_roles.get(full) == role:
+                _ensure_socket(ctx, memory)
                 return
             ensure_orchestration_env(ctx.incus, full, uid=ctx.cfg.container_user.uid)
             if role == "child":
                 labels.write_child_role(ctx.incus, full, uid=ctx.cfg.container_user.uid)
             memory.env_ensured.add(full)
             memory.env_roles[full] = role
+            _ensure_socket(ctx, memory)
     except (IncusError, OSError) as exc:
         memory.env_ensured.discard(full)
         memory.env_roles.pop(full, None)
@@ -693,6 +713,77 @@ def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
             full,
             exc,
         )
+
+
+def _migrate_inbox(ctx: ActionContext, memory: BrokerMemory) -> None:
+    """Move parked file-protocol items into the store."""
+    # Phase 4.1: nothing to migrate yet.
+
+
+def _ensure_socket(ctx: ActionContext, memory: BrokerMemory) -> None:
+    """Open the listener, attach the device and record the recipient (idempotent)."""
+    listener, store = memory.listener, memory.store
+    uuid = ctx.sender.config.get("volatile.uuid")
+    if listener is None or store is None or not uuid:
+        return
+    full = ctx.sender.full
+    if listener.has_container(uuid) and memory.attached.get(full) == uuid:
+        return
+    try:
+        created = False
+        if not listener.has_container(uuid):
+            created = listener.open_container(uuid, socket_device.sock_dir(ctx.root, uuid))
+        socket_device.attach(ctx.incus, full, ctx.root, uuid, reassert=created)
+        _migrate_inbox(ctx, memory)
+        store.set_recipient(full, uuid, now=time.time())
+        memory.attached[full] = uuid
+    except (IncusError, OSError, StoreError) as exc:
+        memory.attached.pop(full, None)
+        memory.warn_once(
+            f"socket:{full}", "broker: %s: could not set up the broker socket: %s", full, exc
+        )
+
+
+def _teardown_socket(incus: Incus, memory: BrokerMemory, full: str, uuid: str | None) -> None:
+    """Remove the device, close the listener and drop the recipient row."""
+    listener, store = memory.listener, memory.store
+    if listener is None or store is None:
+        return
+    uuid = uuid or memory.attached.get(full)
+    try:
+        socket_device.detach(incus, full)
+        if uuid:
+            listener.close_container(uuid)
+        store.remove_recipient(full)
+        memory.attached.pop(full, None)
+    except (IncusError, OSError, StoreError) as exc:
+        memory.warn_once(
+            f"socket-off:{full}", "broker: %s: could not remove the broker socket: %s", full, exc
+        )
+
+
+def _check_socket_devices(incus: Incus, raw: list[dict[str, Any]], memory: BrokerMemory) -> None:
+    """Strip foreign devices, tear down lost roles and notice vanished devices."""
+    if memory.listener is None or memory.store is None:
+        return
+    for entry in raw:
+        name = entry.get("name")
+        config = entry.get("config")
+        if not isinstance(name, str) or not isinstance(config, dict):
+            continue
+        if socket_device.mismatched(entry):
+            log.warning("broker: %s carries another instance's socket device; removing", name)
+            try:
+                socket_device.detach(incus, name)
+            except (IncusError, OSError) as exc:
+                memory.warn_once(f"socket-off:{name}", "broker: %s: %s", name, exc)
+            memory.attached.pop(name, None)
+            continue
+        if _labelled(config):
+            if name in memory.attached and not socket_device.has_device(entry):
+                memory.attached.pop(name, None)
+        elif name in memory.attached or socket_device.has_device(entry):
+            _teardown_socket(incus, memory, name, config.get("volatile.uuid"))
 
 
 def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
@@ -787,6 +878,7 @@ def tick(
     prune_reservations(root)
     memory.publish_threads[:] = [worker for worker in memory.publish_threads if worker.is_alive()]
     raw = incus.list_containers()
+    _check_socket_devices(incus, raw, memory)
     candidates = [
         e
         for e in raw
@@ -1109,6 +1201,9 @@ def run_broker(incus: Incus) -> int:
     stop = StopFlag()
     previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT)}
     memory = BrokerMemory()
+    memory.store = BrokerStore(store_path(root))
+    memory.listener = Listener(memory.requests)
+    memory.listener.start()
     try:
         journal = Journal(root)
         publishing.recover(root)
@@ -1134,6 +1229,8 @@ def run_broker(incus: Incus) -> int:
         for worker in memory.publish_threads:
             if worker.is_alive():
                 worker.join(timeout=max(0.0, deadline - time.monotonic()))
+        if memory.listener is not None:
+            memory.listener.stop()
         for sig, handler in previous.items():
             signal.signal(sig, handler)
         lock.close()
