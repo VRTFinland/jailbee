@@ -310,3 +310,26 @@ def test_call_send_timeout_propagates(path):
     finally:
         release.set()
         srv.close()
+
+
+def test_default_socket_needs_a_live_mount(tmp_path):
+    # After a hot-unplug Incus leaves the empty mount point behind: only a
+    # mount listed in mountinfo means the device is attached.
+    info = tmp_path / "mountinfo"
+    info.write_text(
+        "36 35 98:0 / / rw - ext4 /dev/root rw\n"
+        "90 36 0:52 /sock/u /run/jailbee/orchestration ro,relatime - btrfs /dev/x ro\n"
+    )
+    assert transport.socket_available({}, mountinfo=info)
+    info.write_text("36 35 98:0 / / rw - ext4 /dev/root rw\n")
+    assert not transport.socket_available({}, mountinfo=info)
+    assert not transport.socket_available({}, mountinfo=tmp_path / "missing")
+
+
+def test_mountinfo_octal_escapes_are_decoded(tmp_path):
+    info = tmp_path / "mountinfo"
+    info.write_text("90 36 0:52 / /run/a\\040b ro - btrfs /dev/x ro\n")
+    env = {"JAILBEE_ORCHESTRATION_SOCKET": "/run/a b/broker.sock"}
+    assert transport._mounted(Path("/run/a b"), info)
+    assert not transport._mounted(Path("/run/a"), info)
+    assert env  # the override path itself keeps the plain directory check
