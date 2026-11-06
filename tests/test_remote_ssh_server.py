@@ -696,10 +696,21 @@ def test_default_dashboard_preserves_orchestration_policy_through_cli(
     from jailbee.state_service.protocol import Snapshot, decode, encode
     from tests.test_dashboard_session import _orchestration_session
 
-    config = GlobalConfig.model_validate({"remote": {"ssh": {
-        "gpg": True, "files": True, "mounts": True, "waypipe": True,
-        "rdp": False, "network": True, "default_entrypoint": "dashboard",
-    }}})
+    config = GlobalConfig.model_validate(
+        {
+            "remote": {
+                "ssh": {
+                    "gpg": True,
+                    "files": True,
+                    "mounts": True,
+                    "waypipe": True,
+                    "rdp": False,
+                    "network": True,
+                    "default_entrypoint": "dashboard",
+                }
+            }
+        }
+    )
     mocker.patch.object(server, "load_global_config", return_value=(config, []))
     _, channel = session(command, term="xterm")
     channel.exit.assert_called_once_with(7)
@@ -713,6 +724,7 @@ def test_default_dashboard_preserves_orchestration_policy_through_cli(
     assert isinstance(snapshot, Snapshot)
     dashboard.client.groups = snapshot.groups
     dashboard.tick()
+
     def run_dashboard(incus, **kwargs):
         dashboard.remote = kwargs["remote"]
         dashboard.over_ssh = kwargs["over_ssh"]
@@ -723,6 +735,7 @@ def test_default_dashboard_preserves_orchestration_policy_through_cli(
         values = {e.value for e in dashboard.open_orchestration("alpha-one").entries}
         assert {"limit", "op:destroy", "egress", "revoke"} <= values
         return 0
+
     mocker.patch.object(dashboard_app, "run", side_effect=run_dashboard)
     result = CliRunner().invoke(cli.app, list(spec.argv[3:]))
     assert result.exit_code == 0, result.output

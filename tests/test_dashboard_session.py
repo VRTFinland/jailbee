@@ -629,9 +629,9 @@ def test_save_profile_over_ssh_without_grant_or_revoke_permission(mocker, tmp_pa
     from jailbee.config.models_remote import RemoteSSHConfig
 
     session = _ssh_orchestration_session(mocker, tmp_path, level="ssh")
-    session.ssh_policy = RemoteSSHConfig.model_validate({
-        "commands": {"mode": "allowlist", "allow": ["orchestrate profile save"]}
-    })
+    session.ssh_policy = RemoteSSHConfig.model_validate(
+        {"commands": {"mode": "allowlist", "allow": ["orchestrate profile save"]}}
+    )
     quiet = mocker.patch.object(session, "run_quiet_cli", return_value=True)
     menu = session.open_orchestration("alpha-one")
     assert menu is not None
@@ -644,8 +644,13 @@ def test_save_profile_over_ssh_without_grant_or_revoke_permission(mocker, tmp_pa
         result = session.submit_picker(result, result.entries[1])
     assert result.purpose == "container-orchestration"
     assert quiet.call_args.args[1] == [
-        "orchestrate", "profile", "save", *(["--force"] if existing else []),
-        "--", "alpha-one", name,
+        "orchestrate",
+        "profile",
+        "save",
+        *(["--force"] if existing else []),
+        "--",
+        "alpha-one",
+        name,
     ]
 
 
@@ -741,9 +746,11 @@ def test_save_profile_over_ssh_follows_unlock_and_allowlist(mocker, tmp_path, le
     )
     assert "save-profile" not in [e.value for e in session.open_orchestration("alpha-one").entries]
     session.ssh_policy = session.ssh_policy.model_copy(
-        update={"commands": RemoteCommandPolicy(
-            mode="allowlist", allow=["orchestrate grant", "orchestrate profile save"]
-        )}
+        update={
+            "commands": RemoteCommandPolicy(
+                mode="allowlist", allow=["orchestrate grant", "orchestrate profile save"]
+            )
+        }
     )
     prompt = _save_profile_prompt(session)
     assert prompt.purpose == "container-orchestration-save-profile"
@@ -1478,8 +1485,10 @@ def _ssh_orchestration_session(mocker, tmp_path, *, level, grant_kw=None, kinds=
     ("policy", "reason"),
     [
         ({"orchestration": "off"}, "remote.ssh.orchestration is off"),
-        ({"commands": {"mode": "allowlist", "allow": ["orchestrate revoke"]}},
-         "Jailbee command is not allowed: orchestrate grant"),
+        (
+            {"commands": {"mode": "allowlist", "allow": ["orchestrate revoke"]}},
+            "Jailbee command is not allowed: orchestrate grant",
+        ),
     ],
 )
 def test_menu_over_ssh_explains_why_grant_edits_are_unavailable(mocker, tmp_path, policy, reason):

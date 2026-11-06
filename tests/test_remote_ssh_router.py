@@ -1772,7 +1772,15 @@ def test_remote_unlocks_orchestration_unlocks_grant_adopt_and_profile_save() -> 
 @pytest.mark.parametrize("level", ["ssh", "orchestrator", True])
 @pytest.mark.parametrize("force", [False, True])
 def test_orchestrate_profile_save_needs_unlock_and_allowlist(level, force) -> None:
-    argv = ["orchestrate", "profile", "save", *(["--force"] if force else []), "--", "box", "reviewer"]
+    argv = [
+        "orchestrate",
+        "profile",
+        "save",
+        *(["--force"] if force else []),
+        "--",
+        "box",
+        "reviewer",
+    ]
     unlocks = RemoteUnlocks.of(RemoteSSHConfig(orchestration=level))
     with pytest.raises(RouteError, match="manages the host itself"):
         policy_allows(argv, FULL)
@@ -1783,9 +1791,7 @@ def test_orchestrate_profile_save_needs_unlock_and_allowlist(level, force) -> No
     with pytest.raises(RouteError, match="not allowed"):
         policy_allows(argv, denied, unlocks=unlocks)
     with pytest.raises(RouteError, match="config"):
-        policy_allows(
-            [*argv[:3], "--config", "/tmp/host.yaml", *argv[3:]], FULL, unlocks=unlocks
-        )
+        policy_allows([*argv[:3], "--config", "/tmp/host.yaml", *argv[3:]], FULL, unlocks=unlocks)
 
 
 def test_orchestrate_grant_is_a_host_command_unless_the_feature_is_on(monkeypatch) -> None:
