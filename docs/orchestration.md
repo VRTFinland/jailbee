@@ -869,12 +869,13 @@ inbox commands; the schema page is for protocol development and review.
 
 ## Skills
 
-Two skills teach the agents the protocol, so they cooperate without help:
+Two skills teach the agents the inbox workflow, so they cooperate without help:
 
-- `jailbee-orchestration` for the orchestrator: reading `grant.json`, writing
-  a good child prompt, choosing child rights, the inbox loop, importing,
+- `jailbee-orchestration` for the orchestrator: using `jailbee inbox grant`,
+  writing a good child prompt, choosing child rights, the inbox loop, importing,
   merging and destroying children, and finishing with a PR.
-- `jailbee-orchestration-child` for the child: that it is a worker, how to send
+- `jailbee-orchestration-child` for the child: that it is a worker, how to use
+  inbox commands to send
   `note`, `question`, `blocked` and `done`, and that everything must be
   committed before `done`.
 

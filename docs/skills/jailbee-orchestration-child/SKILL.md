@@ -14,12 +14,10 @@ need a result. Do not write GitHub outbox files or directories by hand.
 ## You are a worker
 
 An orchestrator (`$JAILBEE_ORCHESTRATOR`, with `JAILBEE_ROLE=child` set) gave
-you one task in your first prompt. Do it on your branch. Toward the host you
-can message your orchestrator or give up your own orchestration rights, by writing manifests
-into `~/.jailbee/orchestration/outbox/`. Never merge into other branches,
-push, open PRs, spawn, stop or destroy containers. Those manifests are
-refused, and that work belongs to the orchestrator. Schemas are in
-[`references/protocol.md`](references/protocol.md).
+you one task in your first prompt. Work on your branch and use `jailbee inbox`
+for all orchestration actions. You must never read, write or move files under `~/.jailbee/orchestration/`.
+Never merge into other branches, push, open PRs,
+spawn, stop or destroy containers; those actions belong to the orchestrator.
 
 An `adopted` inbox message can make you a child mid-session; from then on,
 follow this skill. `JAILBEE_ROLE=child` is set only on the next agent launch,
@@ -67,8 +65,7 @@ The broker already reports idle and quiet children, and your final `done`
 carries the summary. Answer a status request from the orchestrator with one
 short note.
 
-Use a new id every time; ids are never reused. Prefer the helper, which writes the manifest atomically and
-prints the id:
+Use a new id every time; ids are never reused. Send messages through the helper. The wire format includes `"kind": "done"`:
 
 ```bash
 jailbee inbox send message --kind question --text "Which parser do you mean?"
@@ -81,15 +78,8 @@ EOF
 Pass long text on stdin (`-`) or with `--text`. Never write a summary or
 any other scratch file inside the repo work tree: an untracked file makes
 the tree dirty and your `done` is refused. Use an absolute path under
-`/tmp` if you need a file. Note the id the helper prints
-(`<type>-<UTC time>-<hex>`): it is the `ref` of the status reply.
-
-Without the helper, write `.<id>.json.tmp` and `mv` it to `<id>.json`:
-
-```json
-{"version": 1, "id": "msg-0003", "type": "message", "kind": "question",
- "body": "Which parser do you mean?", "in_reply_to": null}
-```
+`/tmp` if you need a file. The helper prints the id (`<type>-<UTC time>-<hex>`)
+used as the status reply's `ref`.
 
 ## Done means committed
 
@@ -100,13 +90,7 @@ Before `done`, everything is committed on a branch (not a detached HEAD) and
 - `detached HEAD: check out your branch before reporting done`
 
 Fix it and send a new `done` under a new id. Put a summary in the `done`
-body: what changed, tests run, open points:
-
-```json
-{"version": 1, "id": "msg-0004", "type": "message", "kind": "done",
- "body": "Fixed the parser; tests pass. Everything is committed.",
- "in_reply_to": null}
-```
+body: what changed, tests run, open points.
 
 If your prompted agent ends without an accepted `done`, Jailbee reports it
 for you: startup failure is `failed`, later death is `blocked`, including
@@ -155,7 +139,7 @@ base branch. Explicit sources arrive at
 ## Waiting for a reply
 
 After a `question` or `blocked`, keep the background waiter armed as described
-in **Stay reachable**. It prints the oldest unread message's path on exit 0;
+in **Stay reachable**. It prints the oldest unread message's id on exit 0;
 `wait` returns at once while any message is unread, so read every message
 before re-arming it. Never poll tighter than every 5 min. Treat the next message from
 your orchestrator as the answer. Its `in_reply_to` is informational only: the
@@ -175,8 +159,8 @@ it is not needed by a child waiting for its parent.
 ## Checking the inbox while working
 
 At natural checkpoints (a finished step), run `jailbee inbox ls`. The
-orchestrator may refine the task. `jailbee inbox read <id>` prints a message
-and moves it to `inbox/read/`; or `mv` the file there yourself.
+orchestrator may refine the task. Read messages with `jailbee inbox read <id>`;
+the command marks the message read.
 
 ## Status messages for you
 
@@ -186,7 +170,7 @@ it is final, so fix the cause and send a new message under a new id.
 `queued` is not a failure: your orchestrator is stopped or has older parked
 items; the report is imported before delivery when it can receive it. Do not
 resend it. `send --wait [--timeout DUR|none]` (default 30m) prints the matching
-status and moves only that status to `inbox/read/`: 0 for done/queued/started,
+status and marks only that status read: 0 for done/queued/started,
 1 for refused/failed, 2 for usage error, 3 for timeout. `none` waits without a
 deadline and never exits 3.
 

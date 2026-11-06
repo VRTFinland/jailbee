@@ -320,18 +320,27 @@ def test_bundled_skills_include_orchestration() -> None:
     assert ORCH in agent_skills.bundled_skill_names()
 
 
-def test_orchestration_skill_names_the_protocol_paths() -> None:
+def test_orchestration_skill_uses_the_inbox_cli_only() -> None:
     text = _skill_text(ORCH)
-    for needle in (
-        "~/.jailbee/orchestration/outbox",
-        "~/.jailbee/orchestration/inbox",
-        "grant.json",
-        "jailbee inbox wait",
-        "refs/jailbee/from/",
-        "jailbee-pr-review",
-        "5 min",
+    assert "jailbee inbox grant" in text
+    assert "holds an orchestration grant (`jailbee inbox grant`)" in text
+    assert "jailbee inbox wait" in text
+    assert "jailbee-pr-review" in text
+    assert "5 min" in text
+    for forbidden in (
+        ".json.tmp",
+        "references/protocol.md",
+        "cat ~/.jailbee",
+        "the file there yourself",
+        "children.json",
+        "digest-at",
+        "inbox/read/",
+        "write the JSON",
+        "mv`",
     ):
-        assert needle in text, needle
+        assert forbidden not in text, forbidden
+    assert "never read, write or move files under `~/.jailbee/orchestration/`" in text
+    assert "prints the message id" in text
 
 
 def test_orchestration_skill_keeps_the_orchestrator_role() -> None:
@@ -375,13 +384,10 @@ def test_orchestration_skill_never_blocks_on_the_user() -> None:
     assert "ask before spawning" not in " ".join(text.split())
 
 
-def test_orchestration_skill_explains_missing_inbox_recovery() -> None:
+def test_orchestration_skill_routes_missing_cli_to_the_human() -> None:
     text = _skill_text(ORCH)
-    assert "broker creates the directories" in text
-    assert "broker never installs the command" in text
-    assert "`jb base build`" in text
-    assert "recreate the container" in text
-    assert "old images retain" in text
+    assert "command is missing or reports the broker unavailable" in text
+    assert "tell the human" in text
 
 
 def test_orchestration_skill_covers_review_focus() -> None:
@@ -438,7 +444,6 @@ def test_bundled_skills_include_orchestration_child() -> None:
 def test_child_skill_limits_the_child() -> None:
     text = _skill_text(CHILD)
     for needle in (
-        "~/.jailbee/orchestration/outbox",
         "jailbee inbox wait",
         '"kind": "done"',
         "question",
@@ -449,6 +454,9 @@ def test_child_skill_limits_the_child() -> None:
         "JAILBEE_ROLE",
     ):
         assert needle in text, needle
+    assert "never read, write or move files under `~/.jailbee/orchestration/`" in text
+    for forbidden in (".json.tmp", "references/protocol.md", "~/.jailbee/orchestration/outbox", "inbox/read/", "mv`", "{\"version\": 1"):
+        assert forbidden not in text, forbidden
     assert "Never" in text
     for forbidden_act in ("merge", "push", "spawn", "destroy"):
         assert forbidden_act in text, forbidden_act

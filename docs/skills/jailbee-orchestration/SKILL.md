@@ -1,19 +1,15 @@
 ---
 name: jailbee-orchestration
-description: Use only when the user explicitly asks for JailBee child containers and this container holds an orchestration grant (`~/.jailbee/orchestration/grant.json`) — spawning children, briefing them, answering their questions, importing and merging their commits, and cleaning them up. The grant alone is no reason to orchestrate; once invoked, keep the orchestrator role for the session, using subagents for investigation, review and light work, and children for work needing its own development environment. Trigger on "orchestrate child containers", "spawn a child container", "dispatch to containers", "merge the children", "orkestroi kontteja", "jaa tehtävät kontteihin", "käynnistä lapsikontti".
+description: Use only when the user explicitly asks for JailBee child containers and this container holds an orchestration grant (`jailbee inbox grant`) — spawning children, briefing them, answering their questions, importing and merging their commits, and cleaning them up. The grant alone is no reason to orchestrate; once invoked, keep the orchestrator role for the session, using subagents for investigation, review and light work, and children for work needing its own development environment. Trigger on "orchestrate child containers", "spawn a child container", "dispatch to containers", "merge the children", "orkestroi kontteja", "jaa tehtävät kontteihin", "käynnistä lapsikontti".
 ---
 
 # Orchestrating child containers
 
 ## What you are
 
-You are an orchestrator inside a sandbox. You act only by writing manifests
-into `~/.jailbee/orchestration/outbox/`; the host broker validates each one
-against your grant and answers in `~/.jailbee/orchestration/inbox/`. Nothing
-reaches GitHub, and there is no `jb` in here. Children cannot spawn further
-children, and there are no partial grants: a request is accepted or
-`refused` as a whole. The exact schemas are in
-[`references/protocol.md`](references/protocol.md).
+You are an orchestrator inside a sandbox. Use `jailbee inbox` for every orchestration action. You must never read, write or move files under `~/.jailbee/orchestration/`. The host broker validates requests against your
+grant and delivers replies. Nothing reaches GitHub, and children cannot spawn
+further children. Requests are accepted or refused as a whole.
 
 ## Containers are not subagents
 
@@ -51,7 +47,7 @@ work needs:
   long-running agent session. Use one when work benefits from its own
   development environment: code changes with test suites, services, long
   multi-step implementation or whole plans. Brief it with your findings and
-  acceptance tests. The child implements, tests and commits; on `done`,
+  acceptance tests. The child implements, tests and commits the plan itself; on `done`,
   merge or stage its work.
 
 Beyond tiny light edits, do the work yourself only when it needs this
@@ -82,9 +78,7 @@ When the answer arrives, resume the parked work.
 
 ## Read your grant first
 
-```bash
-cat ~/.jailbee/orchestration/grant.json
-```
+Run `jailbee inbox grant` to inspect your grant before planning requests.
 
 - `max_running_children` is the limit on children **running** at once.
   Stopped children do not count. A spawn over the limit waits as `queued`.
@@ -95,11 +89,9 @@ cat ~/.jailbee/orchestration/grant.json
 - `grantable` is the most you may give a child: mounts by name, whether
   `loose` networking is allowed, and egress hosts.
 
-If the file is missing, tell the human. The broker writes `grant.json` only
-after its first round over your container (a few seconds after the grant),
-so look again once before concluding anything. The file can also outlive a
-revoked grant; a request made after revocation is `refused` with
-"orchestration grant revoked".
+If `jailbee inbox grant` reports no grant yet, wait briefly and retry once;
+if it remains unavailable, tell the human. A grant may be revoked while the
+skill is loaded; a later request is refused with "orchestration grant revoked".
 
 An `adopted` inbox message means the host user attached an existing container
 as your child. It has no import baseline and its agent is not supervised or
@@ -109,8 +101,8 @@ supervision; otherwise you may start a second agent.
 
 ## Publishing your own staged manifests
 
-If `grant.json.publish` covers every pending action, stage normally, then ask
-the host broker to publish your own outbox file:
+If the grant's `publish` rights cover every pending action, stage normally,
+then ask the host broker to publish your own outbox file:
 
 ```bash
 jailbee inbox send publish --issue a.json --wait
@@ -198,9 +190,6 @@ EOF
   outside `[a-z0-9-]` becomes `-`, runs of `-` collapse (`fix/Issue_12`
   becomes `fix-issue-12`). A name that is already taken is refused ("already
   exists"), so pick a distinct branch.
-
-  Without the helper, write the JSON yourself (see `references/protocol.md`):
-  write `.<id>.json.tmp`, then `mv` it to `<id>.json`.
 - Use a new id every time and keep a scheme (`spawn-fix-12`, `import-fix-12`).
   Ids are never reused, not even after a refusal.
 
@@ -272,14 +261,14 @@ Do not combine with `--agent-only`.
 After `update --merge` changes dependencies or migrations, or the child asks, use
 `jailbee inbox send refresh --child C --services db,web --wait`. The `refresh`
 operation is required; on the host add it to an old grant with
-`jb orchestrate grant ORCHESTRATOR --allow refresh`; a bare grant preserves old operations.
-Final status gives per-service outcomes. Accepted child-edited commands run only
+`jb orchestrate grant ORCHESTRATOR --allow refresh`; a bare grant preserves old
+operations. Final status gives per-service outcomes. Accepted child-edited commands run only
 within the grant and repository cap. Elevated refresh pauses an idle agent and
 resumes the same session after restoration, even on ordinary prepare failure.
 Unknown session or agent state, insufficient rights, a busy child, or foreign
 live agents cause refusal. Use `--force` only after the child says its work is
 paused or stopped; never interrupt a working child. Host `--yes` only consents
-to foreign agents, not force. Restricted SSH cannot run host refresh.
+ to foreign agents, not force. Restricted SSH cannot run host refresh.
 If the final status is missing and execution is uncertain, inspect manually before
 retrying; prepare may have run. If restoration is unconfirmed, resume is withheld;
 follow the network and mount recovery commands. If supervision registration fails, resume is also
@@ -337,39 +326,32 @@ Fix the request or tell the human; do not retry with another model.
 
 ## The inbox loop
 
-If `inbox/` or `outbox/` is missing just after a grant, wait briefly: the
-broker creates the directories on its next round. If they stay missing, tell
-the human; the broker may not be running (`jailbee doctor` on the host reports
-it, and `journalctl --user -u jailbee-broker` shows its log). If `jailbee inbox` is missing, the broker never installs the command:
-ask the human to run `jb base build` on the host and recreate the container.
-The broker leaves the stale standalone helper that old images retain in place.
-Do not hand-roll the protocol.
+If a `jailbee inbox` command is missing or reports the broker unavailable,
+tell the human; never hand-roll the protocol.
 
 ```bash
 jailbee inbox wait --wake-on msg:done,question,blocked,idle,status:failed,status:refused --quiet-after 60m --timeout 30m
 ```
 
-It exits 0 with a path when a message arrived, 1 on timeout and 2 on a usage
-error. Run it in the background if your agent supports it (for example
-Claude's background Bash), or use a /loop-style cycle. If you must poll, never poll
-more often than every 5 min. Handle each message (`jailbee inbox read <id>`
-prints it and moves it to `inbox/read/`; or `mv` the file there yourself).
-After `wait` returns, run `jailbee inbox ls` and handle **every** unread
-message before waiting again: replies to several manifests arrive as a burst.
-For a background orchestrator waiter, use `--timeout none` only together with
-`--quiet-after` so silent children still wake it, and add `--digest 55m` so you
-see the `inbox status` table at least hourly even if the heuristic misses a
-stalled child.
+It prints the message id and exits 0 when a message arrived, 1 on timeout and 2 on a
+usage error. `jailbee inbox read <id>` prints the message and marks it read.
+Run the waiter in the background if your agent supports it (for example
+Claude's background Bash), or use a /loop-style cycle. If you must poll, never
+poll more often than every 5 min. After `wait` returns, run `jailbee inbox ls`
+and handle **every** unread message before waiting again: replies to several
+manifests arrive as a burst. For a background orchestrator waiter, use
+`--timeout none` only together with `--quiet-after` so silent children still
+wake it, and add `--digest 55m` for a periodic `inbox status` table.
 
-Use `--wake-on`, not home-made wrappers that read/log notes or statuses:
-**wait never consumes anything**, including nonmatches. It returns the oldest
-matching unread path; without a filter any unread message matches. A bare
-word matches a message kind or a status state (`done` is both, so a bare `done`
+Use `--wake-on`, not wrappers that read or discard messages: **wait never
+consumes anything**, including nonmatches. It returns the oldest matching
+unread message; without a filter any unread message matches. A bare word
+matches a message kind or a status state (`done` is both, so a bare `done`
 wakes on `delivered to` acks); `msg:<kind>` matches only messages and
-`status:<state>` only status replies. A child's first message
-after spawn/restart overrides the filter even if it is a note; read history
-prevents later notes from overriding again. Explicitly read messages by id,
-not filename, or a matching unread message keeps waking you.
+`status:<state>` only status replies. A child's first message after
+spawn/restart overrides the filter even if it is a note; read history prevents
+later notes from overriding again. Explicitly read messages by id, not filename,
+or a matching unread message keeps waking you.
 
 `--quiet-after 60m` also returns exit 0 with `quiet-child CHILD` (not a path)
 when a running child that has not reported done shows no activity for an hour.
@@ -378,21 +360,18 @@ commit; CPU use is not activity, because a hung process keeps using some. A
 child with none is timed from its start. A long silent build or test run also
 wakes you: check `LONGEST` before concluding the child is stuck. Check that child (see
 "Checking on children"); the watchdog repeats until activity, stop or restart.
-The broker refreshes `children.json`; missing, corrupt or more than
-15-minute-old state makes this watchdog exit 2, so check the host broker
+Stale child state makes `--quiet-after` exit 2, so check the host broker
 instead of assuming all is well.
 
 `--digest 60m` is an optional extra: when an hour has passed since the last
 digest and a child is running, `wait` exits 0 printing `digest` on the first
 line, then the `jailbee inbox status` table. That is one wakeup per period for
-all running children (the time is kept in `~/.jailbee/orchestration/digest-at`;
-the first digest is due one period after the first `wait --digest`). A real
-message due at the same time, or a `quiet-child` wakeup, wins; the digest comes
-at the next wait. It needs fresh `children.json` like `--quiet-after`. A
-`blocked` or `idle` report from the broker counts as a message from the child.
+all running children. A real message due at the same time, or a `quiet-child`
+wakeup, wins; the digest comes at the next wait. A `blocked` or `idle` report
+from the broker counts as a message from the child.
 
 `jailbee inbox children` (`--json` for the raw entries) shows each child's
-state from that file. `running` is the **container** state: a child that sent
+state. `running` is the **container** state: a child that sent
 `done` with `on_done: keep` stays `running: true` until it is stopped or
 destroyed, and its services stay available. `done: true` means its `done` was
 accepted (its agent has usually exited). Never report a child as stopped
@@ -453,8 +432,9 @@ Use `send --wait` for `spawn`, `update` and `destroy`. It prints and marks
 only the matching status read: exit 0 for done/queued/started, 1 for
 refused/failed, 2 for usage errors, 3 for timeout (`--timeout`, default 30m;
 `none` waits without a deadline and never exits 3).
-A timeout is not a refusal: read the eventual reply instead of resending.
-The broker is not instant; expect seconds, not milliseconds.
+A timeout is not a refusal: read the eventual reply instead of resending. If
+`send --wait` repeatedly times out without a reply, tell the human; the host
+broker may be unavailable. The broker is not instant; expect seconds, not milliseconds.
 
 Spawn and restart get `queued` or `started`, then final `done`
 (``child `<short>` is ready; agent is alive``) or `failed`. `started` is not
