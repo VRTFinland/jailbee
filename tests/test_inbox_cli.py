@@ -1073,8 +1073,13 @@ def _grant_document() -> dict[str, object]:
         "grantable": {"mounts": ["data"], "loose": True, "egress": ["pypi.org"]},
         "publish": {
             "issues": ["create", "comment"],
+            "foreign_issues": {
+                "repos": ["owner/project"],
+                "actions": ["assign_self", "comment"],
+            },
             "pull_requests": True,
             "pr_reviews": False,
+            "max_actions_per_hour": 12,
         },
         "default_runner": {"agent": "claude-jb", "profile": "team", "model": "haiku"},
     }
@@ -1105,7 +1110,9 @@ def test_grant_human_output_summarises_rights_and_sanitises_controls(script, bas
     assert "loose: yes" in result.stdout
     assert "egress: pypi.org" in result.stdout
     assert "issues: create, comment" in result.stdout
+    assert "foreign issues: owner/project (assign_self, comment)" in result.stdout
     assert "pull_requests: yes" in result.stdout
+    assert "max_actions_per_hour: 12" in result.stdout
     assert "default runner: claude? -P team? haiku?" in result.stdout
     assert _raw_controls(result.stdout) == []
 
@@ -1120,6 +1127,22 @@ def test_grant_json_is_sanitised_and_pretty_printed(script, base, tmp_path):
     expected["default_runner"] = {"agent": "claude?", "profile": "team", "model": "haiku"}
     assert json.loads(result.stdout) == expected
     assert '\n  "version"' in result.stdout
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_grant_rejects_non_finite_json_constants(script, base, tmp_path, constant):
+    (base / "grant.json").write_text('{"max_running_children": ' + constant + "}")
+    result = run(script, "grant", env=env_for(base, tmp_path))
+    assert result.returncode == 1
+    assert "invalid grant.json" in result.stderr
+
+
+def test_grant_json_preserves_large_exponents(script, base, tmp_path):
+    (base / "grant.json").write_text('{"value": 1e400}')
+    result = run(script, "grant", "--json", env=env_for(base, tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"value": 1e400}
+    assert "Infinity" not in result.stdout
 
 
 def test_grant_help_is_wired_in_container_cli():

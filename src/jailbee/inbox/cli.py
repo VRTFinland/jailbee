@@ -354,8 +354,17 @@ def runners_json(settings: Settings) -> list[dict[str, object]]:
 
 def cmd_grant(settings: Settings, *, as_json: bool = False) -> int:
     path = settings.base / "grant.json"
+
+    def reject_constant(value: str) -> None:
+        raise ValueError(f"invalid JSON constant {value}")
+
     try:
-        grant = _load(path)
+        grant = json.loads(
+            path.read_text(),
+            parse_float=_parse_number,
+            parse_int=_parse_number,
+            parse_constant=reject_constant,
+        )
     except FileNotFoundError:
         print(
             f"{PROG}: no orchestration grant here yet (the broker writes it a few seconds "
@@ -395,6 +404,18 @@ def cmd_grant(settings: Settings, *, as_json: bool = False) -> int:
     publish = publish if isinstance(publish, dict) else {}
     issues = publish.get("issues")
     issue_text = ", ".join(text(item) for item in issues) if isinstance(issues, list) else "-"
+    foreign_issues = publish.get("foreign_issues")
+    foreign_issues = foreign_issues if isinstance(foreign_issues, dict) else {}
+    repos = foreign_issues.get("repos")
+    actions = foreign_issues.get("actions")
+    foreign_text = (
+        "; ".join(
+            f"{text(repo)} ({', '.join(text(action) for action in actions)})"
+            for repo in repos
+        )
+        if isinstance(repos, list) and isinstance(actions, list)
+        else "-"
+    )
     default_runner = grant.get("default_runner")
     runner_text = "none"
     if isinstance(default_runner, dict):
@@ -410,8 +431,10 @@ def cmd_grant(settings: Settings, *, as_json: bool = False) -> int:
     print("grantable loose: " + ("yes" if grantable.get("loose") is True else "no"))
     print("grantable egress: " + egress_text)
     print("publish issues: " + issue_text)
+    print("publish foreign issues: " + foreign_text)
     print("publish pull_requests: " + ("yes" if publish.get("pull_requests") is True else "no"))
     print("publish pr_reviews: " + ("yes" if publish.get("pr_reviews") is True else "no"))
+    print("publish max_actions_per_hour: " + text(publish.get("max_actions_per_hour")))
     print("default runner: " + runner_text)
     return 0
 
