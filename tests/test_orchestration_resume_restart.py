@@ -56,6 +56,32 @@ def test_restart_resume_last_resolves_latest(tmp_path, seams, adapter):
     adapter.session_exists.assert_called_once_with(rig.cfg, rig.child.full, B)
 
 
+@pytest.mark.parametrize("operation", ["load", "save"])
+def test_restarted_child_remains_watched_when_reservation_store_fails(
+    tmp_path, seams, monkeypatch, caplog, operation
+):
+    from jailbee.orchestration.store import StoreError
+    from jailbee.orchestration.watch import load_watch
+
+    rig = Rig(tmp_path)
+    original_load = actions.load_reservations
+
+    def load(root):
+        if operation == "load" and seams["boot"].called:
+            raise StoreError("disk full")
+        return original_load(root)
+
+    monkeypatch.setattr(actions, "load_reservations", load)
+    if operation == "save":
+        monkeypatch.setattr(
+            actions, "save_reservations", MagicMock(side_effect=StoreError("disk full"))
+        )
+    assert actions.handle_restart(rig.ctx(), manifest()).state == "started"
+    seams["boot"].assert_called_once()
+    assert "could not reserve booting child" in caplog.text
+    assert load_watch(tmp_path)[rig.sender.full][0].child_full == rig.child.full
+
+
 def test_restart_without_resume_unsets_label(tmp_path, seams):
     rig = Rig(tmp_path)
     assert actions.handle_restart(rig.ctx(), manifest()).state == "started"

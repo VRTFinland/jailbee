@@ -190,8 +190,9 @@ def test_start_child_records_reservation(tmp_path: Path, monkeypatch: pytest.Mon
     }
 
 
+@pytest.mark.parametrize("operation", ["load", "save"])
 def test_started_child_remains_watched_when_reservation_store_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, operation: str
 ) -> None:
     from jailbee.create_flow import CreateStarted
     from jailbee.orchestration.store import StoreError
@@ -201,9 +202,18 @@ def test_started_child_remains_watched_when_reservation_store_fails(
     monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
     launch = MagicMock(return_value=CreateStarted("proj-fix-1", 777, tmp_path / "log"))
     monkeypatch.setattr(actions, "start_create", launch)
-    monkeypatch.setattr(
-        actions, "save_reservations", MagicMock(side_effect=StoreError("disk full"))
-    )
+    original_load = actions.load_reservations
+
+    def load(root: Path) -> dict[str, list[state.Reservation]]:
+        if operation == "load" and launch.called:
+            raise StoreError("disk full")
+        return original_load(root)
+
+    monkeypatch.setattr(actions, "load_reservations", load)
+    if operation == "save":
+        monkeypatch.setattr(
+            actions, "save_reservations", MagicMock(side_effect=StoreError("disk full"))
+        )
 
     assert actions.handle_spawn(rig.ctx(), _m(kind="new")).state == "started"
     launch.assert_called_once()
