@@ -540,30 +540,23 @@ def _refund(root: Path, full: str, entry: dict[str, Any]) -> None:
     """Commit the refund and its idempotency marker together."""
     for name in (_BUDGET, _INFLIGHT):
         import_json_document(root, name, _validate_document, for_write=True)
-    store = open_state_store(root)
-    with store._tx() as con:
 
-        def read(name: str) -> dict[str, Any]:
-            row = con.execute("SELECT value FROM state WHERE key=?", (name,)).fetchone()
-            return json.loads(row[0]) if row else {}
-
-        current = read(_INFLIGHT)
+    def apply(docs: dict[str, dict[str, Any]]) -> bool:
+        current = docs[_INFLIGHT]
         saved = current.get(full)
         if saved is None or saved.get("ref") != entry["ref"] or saved.get("refunded"):
-            return
-        budget = read(_BUDGET)
+            return False
+        budget = docs[_BUDGET]
         stamps = list(budget.get(full, []))
         for _ in saved["actions"]:
             if saved["started_at"] in stamps:
                 stamps.remove(saved["started_at"])
         budget[full] = stamps
         saved["refunded"] = True
-        for name, value in ((_BUDGET, budget), (_INFLIGHT, current)):
-            con.execute(
-                "INSERT INTO state(key, value) VALUES (?, ?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (name, json.dumps(value)),
-            )
+        return True
+
+    if not open_state_store(root).update_documents((_BUDGET, _INFLIGHT), apply):
+        return
     entry["refunded"] = True
 
 

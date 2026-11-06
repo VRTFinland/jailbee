@@ -14,7 +14,7 @@ import os
 import sqlite3
 import threading
 import time
-from collections.abc import Callable, Collection, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -306,6 +306,30 @@ class BrokerStore:
                 return False
             loader(con)
             con.execute("INSERT INTO meta(key, value) VALUES (?, '1')", (marker,))
+        return True
+
+    def update_documents(
+        self, names: Sequence[str], mutate: Callable[[dict[str, dict[str, Any]]], bool]
+    ) -> bool:
+        """Read the named state documents, let `mutate` edit them, commit all together.
+
+        Missing documents start as {}. `mutate` returns False to leave every
+        document untouched; the result is whether anything was written.
+        """
+        with self._tx() as con:
+            docs: dict[str, dict[str, Any]] = {}
+            for name in names:
+                row = con.execute("SELECT value FROM state WHERE key=?", (name,)).fetchone()
+                loaded = json.loads(row[0]) if row else {}
+                docs[name] = loaded if isinstance(loaded, dict) else {}
+            if not mutate(docs):
+                return False
+            for name in names:
+                con.execute(
+                    "INSERT INTO state(key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (name, json.dumps(docs[name])),
+                )
         return True
 
     def journal_seen(self, container_key: str, digest: str) -> bool:

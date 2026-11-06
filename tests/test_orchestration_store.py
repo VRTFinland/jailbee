@@ -445,3 +445,40 @@ def test_has_recipient_uuid(st: BrokerStore) -> None:
     st.set_recipient("p", "u1", now=1.0)
     assert st.has_recipient_uuid("u1")
     assert not st.has_recipient_uuid("u2")
+
+
+def test_update_documents_commits_all_documents_together(st: BrokerStore) -> None:
+    st.kv_put("a", {"n": 1})
+
+    def bump(docs: dict[str, dict[str, object]]) -> bool:
+        docs["a"]["n"] = 2
+        docs["b"]["made"] = True
+        return True
+
+    assert st.update_documents(["a", "b"], bump) is True
+    assert st.kv_get("a") == {"n": 2}
+    assert st.kv_get("b") == {"made": True}
+
+
+def test_update_documents_writes_nothing_when_mutate_declines(st: BrokerStore) -> None:
+    st.kv_put("a", {"n": 1})
+
+    def decline(docs: dict[str, dict[str, object]]) -> bool:
+        docs["a"]["n"] = 9
+        return False
+
+    assert st.update_documents(["a", "b"], decline) is False
+    assert st.kv_get("a") == {"n": 1}
+    assert st.kv_get("b") is None
+
+
+def test_update_documents_rolls_back_when_mutate_raises(st: BrokerStore) -> None:
+    st.kv_put("a", {"n": 1})
+
+    def boom(docs: dict[str, dict[str, object]]) -> bool:
+        docs["a"]["n"] = 9
+        raise RuntimeError("x")
+
+    with pytest.raises(RuntimeError):
+        st.update_documents(["a"], boom)
+    assert st.kv_get("a") == {"n": 1}
