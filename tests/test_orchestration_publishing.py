@@ -131,6 +131,21 @@ def test_known_senders_imports_once_and_quarantines_corrupt_state(rig, caplog):
     assert "corrupt" in caplog.text
 
 
+def test_legacy_results_import_and_quarantine(rig, caplog):
+    ctx, m, *_ = rig
+    assert publishing.handle_publish(ctx, m).state == "started"
+    path = publishing._result(ctx.root, ctx.sender.key, m.id)
+    path.parent.mkdir()
+    path.write_text(json.dumps({"state": "done", "detail": "legacy"}))
+    (path.parent / "bad.json").write_text("broken")
+    replies = []
+    publishing.settle(ctx, lambda ref, out: replies.append(out.detail))
+    assert replies == ["legacy"]
+    assert (ctx.root / "publish-results.migrated" / "bad.json.corrupt").exists()
+    assert "corrupt" in caplog.text
+    assert not path.parent.exists()
+
+
 def test_handle_publish_rereads_revoked_label(rig):
     ctx, m, *_ = rig
     ctx.incus.config_get.side_effect = None

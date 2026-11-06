@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import re
+import sqlite3
 import threading
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -20,7 +21,7 @@ from jailbee.orchestration.actions import HANDLERS, ActionContext, Outcome, done
 from jailbee.orchestration.grant import Grant, PublishRights, effective_grant
 from jailbee.orchestration.protocol import Manifest, PublishManifest
 from jailbee.orchestration.state import atomic_write_text
-from jailbee.orchestration.store import import_json_document
+from jailbee.orchestration.store import BrokerStore, import_json_document, open_state_store
 from jailbee.outbox.models import ProposalId
 from jailbee.outbox.publish import PublishOptions, publish_selected
 from jailbee.outbox_io import JournalStore, container_identity
@@ -42,11 +43,59 @@ def _load(root: Path, name: str) -> dict[str, Any]:
 
 
 def _save(root: Path, name: str, data: dict[str, Any]) -> None:
-    import_json_document(root, name, _validate_document).kv_put(name, data)
+    import_json_document(root, name, _validate_document, for_write=True).kv_put(name, data)
 
 
 def _result(root: Path, full: str, ref: str) -> Path:
     return root / "publish-results" / f"{hashlib.sha256(full.encode()).hexdigest()}-{ref}.json"
+
+
+_RESULT_PREFIX = "publish-result:"
+
+
+def _result_key(full: str, ref: str) -> str:
+    return _RESULT_PREFIX + f"{hashlib.sha256(full.encode()).hexdigest()}-{ref}"
+
+
+def _results_store(root: Path) -> BrokerStore:
+    store = open_state_store(root)
+    directory = root / "publish-results"
+
+    def load(con: sqlite3.Connection) -> None:
+        if not directory.exists():
+            return
+        for path in directory.glob("*.json"):
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(value, dict):
+                    raise ValueError("expected an object")
+            except (ValueError, UnicodeError) as exc:
+                log.warning("ignoring corrupt publish result %s: %s", path, exc)
+                path.replace(path.with_name(path.name + ".corrupt"))
+                continue
+            con.execute(
+                "INSERT OR IGNORE INTO state(key, value) VALUES (?, ?)",
+                (_RESULT_PREFIX + path.stem, json.dumps(value)),
+            )
+
+    store.import_once("publish-results", load)
+    # TODO(state-db-cleanup): retain imported results for one release.
+    try:
+        directory.replace(directory.with_name(directory.name + ".migrated"))
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        log.warning("cannot rename migrated publish results %s: %s", directory, exc)
+    return store
+
+
+def _get_result(root: Path, full: str, ref: str) -> dict[str, Any] | None:
+    value = _results_store(root).kv_get(_result_key(full, ref))
+    return value if isinstance(value, dict) else None
+
+
+def _put_result(root: Path, full: str, ref: str, value: dict[str, Any]) -> None:
+    _results_store(root).kv_put(_result_key(full, ref), value)
 
 
 def inflight(root: Path) -> dict[str, Any]:
@@ -222,12 +271,12 @@ def was_accepted(ctx: ActionContext, ref: str) -> bool:
 def abort_before_start(ctx: ActionContext, ref: str, detail: str) -> None:
     entry = inflight(ctx.root).get(ctx.sender.full)
     if entry is not None and entry["ref"] == ref:
-        atomic_write_text(
-            _result(ctx.root, entry.get("container_key", ctx.sender.full), ref),
-            json.dumps({"ref": ref, "state": "failed", "detail": detail}),
-        )
+        _put_result(ctx.root, entry.get("container_key", ctx.sender.full), ref,
+                    {"ref": ref, "state": "failed", "detail": detail})
 
 
+# The audit log is append-only, and uncertain reviews require human resolution.
+# Both remain human-facing files rather than broker state documents.
 def _audit(root: Path, row: dict[str, Any]) -> None:
     with (root / "publish-log.jsonl").open("a") as stream:
         stream.write(json.dumps(row, sort_keys=True) + "\n")
@@ -240,8 +289,8 @@ def prune(root: Path, identities: dict[str, str], now: datetime) -> None:
     for full, entry in list(current.items()):
         if identities.get(full) == entry.get("container_key", full):
             continue
-        path = _result(root, entry.get("container_key", full), entry["ref"])
-        result = json.loads(path.read_text()) if path.exists() else {}
+        key = _result_key(entry.get("container_key", full), entry["ref"])
+        result = _get_result(root, entry.get("container_key", full), entry["ref"]) or {}
         _audit(
             root,
             {
@@ -256,16 +305,18 @@ def prune(root: Path, identities: dict[str, str], now: datetime) -> None:
             },
         )
         del current[full]
-        path.unlink(missing_ok=True)
+        _results_store(root).kv_delete(key)
     _save(root, "publish-inflight.json", current)
     active_results = {
-        _result(root, entry.get("container_key", full), entry["ref"])
+        _result_key(entry.get("container_key", full), entry["ref"])
         for full, entry in current.items()
     }
-    for path in (root / "publish-results").glob("*.json"):
-        if path in active_results:
+    store = _results_store(root)
+    for key in store.kv_keys(_RESULT_PREFIX):
+        if key in active_results:
             continue
-        result = json.loads(path.read_text())
+        value = store.kv_get(key)
+        result = value if isinstance(value, dict) else {}
         _audit(
             root,
             {
@@ -277,7 +328,7 @@ def prune(root: Path, identities: dict[str, str], now: datetime) -> None:
                 "outcome": "abandoned-result",
             },
         )
-        path.unlink(missing_ok=True)
+        store.kv_delete(key)
     known = _load(root, "publish-known.json")
     _save(
         root,
@@ -448,20 +499,15 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
         if "uncertain" in detail.lower():
             detail += "; resolve with `jb outbox` on the host"
     try:
-        atomic_write_text(
-            _result(root, entry.get("container_key", full), entry["ref"]),
-            json.dumps(
-                {
-                    "ref": entry["ref"],
-                    "orchestrator": full,
-                    "state": state,
-                    "detail": detail[:4000],
-                    "urls": [u for line in lines for u in re.findall(r"https?://[^\s)]+", line)],
-                    "actions": actual,
-                    "policy_refused": refused_by_policy,
-                }
-            ),
-        )
+        _put_result(root, entry.get("container_key", full), entry["ref"], {
+            "ref": entry["ref"],
+            "orchestrator": full,
+            "state": state,
+            "detail": detail[:4000],
+            "urls": [u for line in lines for u in re.findall(r"https?://[^\s)]+", line)],
+            "actions": actual,
+            "policy_refused": refused_by_policy,
+        })
     except Exception:
         log.exception("broker: could not save publish result for %s %s", full, entry["ref"])
 
@@ -482,10 +528,9 @@ def settle(ctx: ActionContext, reply: Callable[[str, Outcome], None]) -> None:
     entry = current.get(ctx.sender.full)
     if entry is None or entry.get("container_key", ctx.sender.key) != ctx.sender.key:
         return
-    path = _result(ctx.root, entry.get("container_key", ctx.sender.full), entry["ref"])
-    if not path.exists():
+    result = _get_result(ctx.root, entry.get("container_key", ctx.sender.full), entry["ref"])
+    if result is None:
         return
-    result = json.loads(path.read_text())
     accepted = _load(ctx.root, "publish-accepted.json")
     key = entry.get("container_key", ctx.sender.key)
     refs = accepted.setdefault(key, [])
@@ -513,29 +558,24 @@ def settle(ctx: ActionContext, reply: Callable[[str, Outcome], None]) -> None:
     reply(entry["ref"], Outcome(result["state"], result["detail"]))
     del current[ctx.sender.full]
     _save(ctx.root, "publish-inflight.json", current)
-    path.unlink(missing_ok=True)
+    _results_store(ctx.root).kv_delete(_result_key(entry.get("container_key", ctx.sender.full), entry["ref"]))
 
 
 def recover(root: Path) -> None:
     for full, entry in inflight(root).items():
-        path = _result(root, entry.get("container_key", full), entry["ref"])
-        if not path.exists():
+        key = entry.get("container_key", full)
+        if _get_result(root, key, entry["ref"]) is None:
             if entry.get("kind") == "review":
                 atomic_write_text(
                     _review_marker(root, entry.get("container_key", full), entry["manifest"]),
                     json.dumps({"ref": entry["ref"]}),
                 )
-            atomic_write_text(
-                path,
-                json.dumps(
-                    {
-                        "ref": entry["ref"],
-                        "state": "failed",
-                        "detail": "outcome uncertain: the broker restarted during publish; "
-                        "check `jb outbox` on the host",
-                    }
-                ),
-            )
+            _put_result(root, key, entry["ref"], {
+                "ref": entry["ref"],
+                "state": "failed",
+                "detail": "outcome uncertain: the broker restarted during publish; "
+                "check `jb outbox` on the host",
+            })
 
 
 HANDLERS["publish"] = handle_publish
