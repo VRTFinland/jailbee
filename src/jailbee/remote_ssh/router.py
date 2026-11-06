@@ -441,6 +441,7 @@ _CONTAINER_COMMANDS = _DEPRECATED_HIDDEN_COMMANDS | frozenset(
         "orchestrate revoke",
         "orchestrate release",
         "orchestrate show",
+        "orchestrate messages",
         "apps ls",
         "autostart cancel",
         "autostart run",
