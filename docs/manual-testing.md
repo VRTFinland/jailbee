@@ -6135,6 +6135,19 @@ broker over a per-container socket mounted at `/run/jailbee/orchestration/`
 8. Long state path. On a host whose `$HOME` is long (the socket path exceeds
    107 bytes), confirm the socket still comes up (`jailbee inbox ls` works in
    `<o>`) and `incus config device show <o>` names the long directory.
+9. Snapshot restore to an old generation. Use a disposable orchestrator `<o>`.
+   Record `incus config device get <o> jailbee-orchestration source` as G, then
+   `incus snapshot create <o> socket-generation`. Revoke its grant with
+   `jb orchestrate revoke <o>`, wait for the broker to remove its socket, and
+   re-grant it with `jb orchestrate grant <o>`. Wait until its device names a
+   fresh generation H and `jailbee inbox ls` works inside it; confirm G is
+   deleted on the host. Keep the broker running throughout the rest of this
+   check. Run `incus snapshot restore <o> socket-generation` (stop/start the
+   disposable container if Incus requires it). The restored snapshot carries
+   the same uuid and grant but names G again. After the next active broker
+   round (5 seconds plus the round's work), its device must name H again and
+   `jailbee inbox ls` must work without restarting the broker. Confirm H did
+   not rotate unnecessarily, then delete the test snapshot.
 
 ### Broker state database migration (real host)
 

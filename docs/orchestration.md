@@ -716,11 +716,23 @@ caught too. When idle that is up to a minute. If the copy's device names the sou
 live socket directory, the broker also moves the source's socket to a new
 directory, deletes the old one and re-attaches the source's device: the source's
 client reconnects on its own, and the copy keeps at most a mount of a deleted
-directory, even when Incus could not remove its device. Until that round a
-started copy can reach the source's socket, so do not start a hand-made copy
-before the device is gone. The broker attaches a fresh device if the copy
-becomes an orchestrator or child. Each new socket gets a directory name no
-device has used before, so a stale mount never finds a later socket.
+directory, even when Incus could not remove its device.
+
+**Residual identity window:** a started raw copy can act as the source owner
+until detection and rotation: up to `ACTIVE_INTERVAL` (5 seconds) plus one
+broker round while an orchestration container is running. This is not an
+instantaneous identity boundary. Do not run raw `incus copy` on orchestration
+containers; use JailBee's copy paths, which strip the device before starting
+the copy. In particular, do not start a hand-made copy before its device is
+gone. If the broker cannot inventory every project, it cannot detect new
+copies; a broker restart still refuses to reuse an unverified directory and
+attaches the owner to a fresh generation instead.
+
+The broker attaches a fresh device if the copy becomes an orchestrator or
+child. A retired generation is never reused, including when deleting it
+failed. A snapshot restore that puts the owner's device back on an old
+generation is repaired from the next round's device listing, without a broker
+restart.
 
 The broker keeps its durable host-side state in `broker.db` in the state
 directory (`~/.local/state/jailbee/orchestration/`, or `$XDG_STATE_HOME`). It
