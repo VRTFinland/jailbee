@@ -540,12 +540,13 @@ class _LegacyImportRetry(Exception):
 
 
 def import_json_document(
-    root: Path, name: str, validate: Callable[[object], None]
+    root: Path, name: str, validate: Callable[[object], None], *, for_write: bool = False
 ) -> BrokerStore:
     """Import a legacy JSON document once; validate raises ValueError on bad shape.
 
     The document key and marker use the legacy filename. Future document users
-    can reuse this helper before either reading or saving that key.
+    can reuse this helper before either reading or saving that key. Set
+    for_write to prevent overwriting state when the legacy import must retry.
     """
     store = open_state_store(root)
     path = root / name
@@ -576,7 +577,9 @@ def import_json_document(
 
     try:
         store.import_once(name, load)
-    except _LegacyImportRetry:
+    except _LegacyImportRetry as exc:
+        if for_write:
+            raise StoreError(f"cannot save state while legacy import is pending: {path}") from exc
         return store
     # TODO(state-db-cleanup): remove migrated files after the compatibility window.
     try:

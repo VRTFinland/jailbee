@@ -213,6 +213,34 @@ def test_unreadable_legacy_reservations_warns_and_starts_empty(tmp_path, monkeyp
     assert (tmp_path / "reservations.json.migrated").exists()
 
 
+def test_unreadable_legacy_blocks_save_until_import_succeeds(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    import pytest
+
+    from jailbee.orchestration.store import StoreError
+
+    path = tmp_path / state.RESERVATIONS_FILE
+    path.write_text(json.dumps({"reservations": {"orch": [
+        {"child_full": "a", "pid": 1, "started_at": "t"}
+    ]}}))
+    original = Path.read_text
+
+    def unreadable(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError("denied")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+    assert state.load_reservations(tmp_path) == {}
+    with pytest.raises(StoreError, match="legacy"):
+        state.save_reservations(tmp_path, {})
+    assert path.exists()
+    monkeypatch.setattr(Path, "read_text", original)
+    assert state.load_reservations(tmp_path) == {"orch": [state.Reservation("a", 1, "t")]}
+    assert (tmp_path / "reservations.json.migrated").exists()
+
+
 def test_reservations_import_once_and_ignore_recreated_source(tmp_path):
     path = tmp_path / state.RESERVATIONS_FILE
     path.write_text(json.dumps({"reservations": {"orch": [{"child_full": "a", "pid": 1, "started_at": "t"}]}}))
