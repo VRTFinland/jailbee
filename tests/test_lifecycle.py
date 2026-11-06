@@ -4403,10 +4403,8 @@ def test_new_container_skips_mirror_registries_when_no_endpoint(tmp_path, mocker
     sync_env.assert_not_called()
 
 
-def test_new_container_forwards_mirror_endpoint_to_run_autostart(tmp_path, mocker):
-    """`new_container` must forward `opts.mirror_endpoint` to `run_autostart`
-    so transient `strict → loose → strict` switches inside autostart steps
-    keep the mirror pinned in /etc/hosts."""
+def test_new_container_skip_agents_reaches_run_autostart(tmp_path, mocker):
+    """Both autostart triggers receive skip_agents and mirror endpoint."""
     cfg = _cfg_for_new(tmp_path)
     captured_kwargs: list[dict] = []
 
@@ -4434,6 +4432,7 @@ def test_new_container_forwards_mirror_endpoint_to_run_autostart(tmp_path, mocke
         from_base="gisgro-base",
         clone=False,
         autostart=True,
+        skip_agents=True,
         mirror_endpoint=("10.234.216.1", 3128),
         mirror_ca_path=ca_path,
     )
@@ -4442,6 +4441,7 @@ def test_new_container_forwards_mirror_endpoint_to_run_autostart(tmp_path, mocke
     assert len(captured_kwargs) == 2  # on_create + on_start
     for kw in captured_kwargs:
         assert kw.get("mirror_endpoint") == ("10.234.216.1", 3128)
+        assert kw.get("skip_agents") is True
 
 
 def test_new_container_allocates_pools_in_mount_mode_before_autostart(tmp_path, mocker):

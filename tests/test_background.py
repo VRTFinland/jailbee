@@ -195,7 +195,7 @@ def test_start_job_records_op_kind_destroy() -> None:
     assert (background.JOB_CREATE, background.JOB_DESTROY) == ("create", "destroy")
 
 
-def test_job_roundtrip_preserves_options() -> None:
+def test_job_roundtrip_keeps_skip_agents() -> None:
     from pathlib import Path
 
     from jailbee import background
@@ -217,6 +217,7 @@ def test_job_roundtrip_preserves_options() -> None:
         base_branch_label="develop",
         pr=7,
         clone_commit="beefcafe1234",
+        skip_agents=True,
     )
     job = background.op_to_job(opts, container_name="sampleapp-feat-foo", log_path="/l")
     loaded, container_name, log_path = background.job_to_opts(job)
@@ -225,7 +226,29 @@ def test_job_roundtrip_preserves_options() -> None:
     assert log_path == "/l"
     assert loaded.pr == 7
     assert loaded.clone_commit == "beefcafe1234"
+    assert loaded.skip_agents is True
     assert loaded == opts
+
+
+def test_job_without_skip_agents_defaults_false() -> None:
+    from jailbee import background
+    from jailbee.lifecycle import NewContainerOptions
+
+    opts = NewContainerOptions(
+        container_branch="feat/foo",
+        name=None,
+        network="strict",
+        memory="4GB",
+        cpu=4,
+        from_base="gie-golden",
+        clone=True,
+    )
+    job = background.op_to_job(opts, container_name="sampleapp-feat-foo", log_path="/l")
+    job["opts"].pop("skip_agents")
+
+    loaded, _, _ = background.job_to_opts(job)
+
+    assert loaded.skip_agents is False
 
 
 def test_clearable_true_for_failed_phase_even_with_live_worker(mocker) -> None:

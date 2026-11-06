@@ -1205,6 +1205,9 @@ class NewContainerOptions:
     autostart_profile: str | None = None
     # MUST be mirrored in background.op_to_job/job_to_opts.
     autostart_services: list[str] | None = None
+    # Suppress agent stages during autostart (used by Docker seed containers).
+    # MUST be mirrored in background.op_to_job/job_to_opts.
+    skip_agents: bool = False
     # Task text for the primary agent's first launch (`jailbee new --prompt`),
     # written into the container after start and before autostart. MUST be
     # mirrored in `background.op_to_job`/`job_to_opts` — see `assume_yes`.
@@ -2428,6 +2431,7 @@ def _new_container(
             repo_dir=repo_dir,
             mirror_endpoint=opts.mirror_endpoint,
             override=opts.autostart_override,
+            skip_agents=opts.skip_agents,
         )
         # A stage deferred in `on_create` moves the boundary for the whole
         # run: everything after it — the entire `on_start` trigger included —
@@ -2447,6 +2451,7 @@ def _new_container(
                 repo_dir=repo_dir,
                 mirror_endpoint=opts.mirror_endpoint,
                 override=opts.autostart_override,
+                skip_agents=opts.skip_agents,
             )
             if start_plan.detached:
                 detached_from = AutostartTrigger.ON_START.value
