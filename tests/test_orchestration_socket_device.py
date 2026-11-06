@@ -305,9 +305,7 @@ def test_a_copy_found_after_a_broker_restart_kills_the_directory_it_mounts(env) 
     assert ORCHESTRATION_DEVICE not in env.devices["proj-copy"]
     assert not old.exists()
     assert env.listener.dirs[UUID] != old
-    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(
-        env.listener.dirs[UUID]
-    )
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(env.listener.dirs[UUID])
 
 
 def test_a_restart_reuses_no_legacy_directory(env) -> None:
@@ -319,9 +317,7 @@ def test_a_restart_reuses_no_legacy_directory(env) -> None:
     env.tick()
     assert env.listener.dirs[UUID] != legacy
     assert not legacy.exists()  # and it is cleaned up
-    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(
-        env.listener.dirs[UUID]
-    )
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(env.listener.dirs[UUID])
 
 
 def test_a_failed_teardown_detach_still_closes_the_socket(env) -> None:
