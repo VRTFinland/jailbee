@@ -3104,6 +3104,11 @@ def _destroy_container_locked(
     except Exception as exc:
         warn(f"Could not prune transfer refs for '{name}' (continuing): {exc}")
 
+    # Read while the instance and its job row still exist; see `host_teardown`.
+    from jailbee import host_teardown
+
+    teardown = host_teardown.snapshot(incus, name)
+
     _phase("deleting")
     incus.delete(name, force=force)
 
@@ -3184,6 +3189,13 @@ def _destroy_container_locked(
             background.delete_job(session, name)
     except Exception:
         pass
+
+    # Job logs, orchestration queue entries and outbox journals of exactly this
+    # incarnation. Best-effort: never masks the successful deletion.
+    try:
+        host_teardown.cleanup(teardown)
+    except Exception as exc:
+        warn(f"Could not clean up host-side leftovers of '{name}' (continuing): {exc}")
 
 
 def current_network_mode(

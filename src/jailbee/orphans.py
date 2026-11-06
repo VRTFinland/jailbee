@@ -178,17 +178,19 @@ def _delete_job_row(name: str) -> None:
 def destroy_orphan(incus: Incus, name: str, *, force: bool) -> None:
     """Stop (bounded), delete, and do the cleanup that needs no repo.
 
-    Done: the per-container egress ACL, autostart outcomes and background-job row. Left on
+    Done: the per-container egress ACL, autostart outcomes, background-job row and
+    its logs, and the other host leftovers of `host_teardown`. Left on
     purpose, since each needs the lost repo: pooled cache slots (reclaimed by
     the pool's own reconcile once the container is gone), private agent
     subpaths, ``refs/jailbee/*`` transfer refs, and the repo's bridge-extras
     union (`jailbee apply` sweeps orphan ACLs).
     """
-    from jailbee import autostart_outcomes, egress_scope
+    from jailbee import autostart_outcomes, egress_scope, host_teardown
     from jailbee.stopping import stop_container
 
     if _state(incus, name) == "Running":
         stop_container(incus, name, force=force, force_fallback=True, show_progress=False)
+    teardown = host_teardown.snapshot(incus, name)
     incus.delete(name, force=force)
     autostart_outcomes.remove(name)
     try:
@@ -196,3 +198,7 @@ def destroy_orphan(incus: Incus, name: str, *, force: bool) -> None:
     except IncusError as e:
         warn(f"Could not remove egress ACL for '{name}' (continuing): {e}")
     _delete_job_row(name)
+    try:
+        host_teardown.cleanup(teardown)
+    except Exception as exc:
+        warn(f"Could not clean up host-side leftovers of '{name}' (continuing): {exc}")
