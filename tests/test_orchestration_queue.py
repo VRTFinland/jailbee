@@ -201,7 +201,9 @@ def test_started_child_remains_watched_when_reservation_store_fails(
     monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
     launch = MagicMock(return_value=CreateStarted("proj-fix-1", 777, tmp_path / "log"))
     monkeypatch.setattr(actions, "start_create", launch)
-    monkeypatch.setattr(actions, "save_reservations", MagicMock(side_effect=StoreError("disk full")))
+    monkeypatch.setattr(
+        actions, "save_reservations", MagicMock(side_effect=StoreError("disk full"))
+    )
 
     assert actions.handle_spawn(rig.ctx(), _m(kind="new")).state == "started"
     launch.assert_called_once()
