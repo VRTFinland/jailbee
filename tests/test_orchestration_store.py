@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import stat
+import threading
 from pathlib import Path
 
 import pytest
@@ -111,7 +113,7 @@ def test_purge_vanished(st: BrokerStore) -> None:
         st.record_request(u, "r", digest=None, state="s", detail="", item=None, now=1.0)
         st.set_digest_at(u, 1.0)
         st.set_recipient("f" + u, u, now=1.0)
-    assert st.purge_vanished({"a"}) >= 1
+    assert st.purge_vanished({"a"}) == 4
     assert st.history("b") == [] and st.lookup_request("b", "r") is None
     assert st.get_digest_at("b") is None and st.recipients() == {"fa": "a"}
     assert len(st.history("a")) == 1 and st.get_digest_at("a") == 1.0
@@ -157,3 +159,87 @@ def test_corrupt_file(tmp_path: Path) -> None:
     p.write_bytes(b"this is not a sqlite database" * 100)
     with pytest.raises(StoreError):
         BrokerStore(p).recipients()
+
+
+def test_purge_vanished_empty_collection_is_a_noop(st: BrokerStore) -> None:
+    st.insert_item("a", "fa", msg("1"), now=1.0)
+    st.set_recipient("fa", "a", now=1.0)
+    assert st.purge_vanished(set()) == 0
+    assert len(st.history("a")) == 1 and st.recipients() == {"fa": "a"}
+
+
+def test_purge_acked_boundary_is_exclusive(st: BrokerStore) -> None:
+    st.insert_item("u", "p", msg("edge"), now=1.0)
+    st.ack("u", "edge", now=50.0)
+    st.record_request("u", "r", digest=None, state="s", detail="", item=None, now=50.0)
+    assert st.purge_acked_older_than("u", 50.0) == 0
+    assert st.get("u", "edge") is not None and st.lookup_request("u", "r") is not None
+    assert st.purge_acked_older_than("u", 50.1) == 1
+    assert st.lookup_request("u", "r") is None
+
+
+def test_wal_enabled(st: BrokerStore) -> None:
+    st.recipients()
+    con = sqlite3.connect(st.path)
+    mode = con.execute("PRAGMA journal_mode").fetchone()[0]
+    con.close()
+    assert mode == "wal"
+
+
+def test_migrations_extendable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = store_path(tmp_path)
+    BrokerStore(path).insert_item("u", "p", msg("1"), now=1.0)
+    extended = [
+        *store_mod._MIGRATIONS,
+        "ALTER TABLE digest ADD COLUMN note TEXT;\nCREATE TABLE extra(x);",
+    ]
+    monkeypatch.setattr(store_mod, "_MIGRATIONS", extended)
+    assert [r.id for r in BrokerStore(path).history("u")] == ["1"]
+    con = sqlite3.connect(path)
+    row = con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+    con.execute("SELECT x FROM extra")
+    con.close()
+    assert row[0] == "2"
+
+
+def test_newer_schema_is_refused(tmp_path: Path) -> None:
+    path = store_path(tmp_path)
+    BrokerStore(path).recipients()
+    con = sqlite3.connect(path)
+    con.execute(
+        "UPDATE meta SET value=? WHERE key='schema_version'", (str(len(store_mod._MIGRATIONS) + 1),)
+    )
+    con.commit()
+    con.close()
+    with pytest.raises(StoreError, match="newer"):
+        BrokerStore(path).recipients()
+
+
+def test_concurrent_inserts(tmp_path: Path) -> None:
+    path = store_path(tmp_path)
+    errors: list[Exception] = []
+
+    def work(t: int) -> None:
+        s = BrokerStore(path)
+        try:
+            for i in range(50):
+                s.insert_item("u", "p", msg(f"{t}-{i}"), now=1.0)
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=work, args=(t,)) for t in range(4)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    assert errors == []
+    assert len(BrokerStore(path).history("u")) == 200
+
+
+def test_module_recipient_uuid_never_writes(tmp_path: Path) -> None:
+    path = store_path(tmp_path)
+    path.write_bytes(b"")
+    assert store_mod.recipient_uuid(tmp_path, "p") is None
+    assert path.stat().st_size == 0
+    path.write_bytes(b"garbage" * 100)
+    assert store_mod.recipient_uuid(tmp_path, "p") is None

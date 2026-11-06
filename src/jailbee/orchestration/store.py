@@ -9,13 +9,17 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import sqlite3
+import time
 from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 _BUSY_TIMEOUT_MS = 5000
+_log = logging.getLogger(__name__)
 
 # Ordered schema migrations. Append new scripts; never edit an applied one.
 _MIGRATIONS: list[str] = [
@@ -95,21 +99,33 @@ def store_path(root: Path) -> Path:
 
 
 def recipient_uuid(root: Path, full: str) -> str | None:
-    """Cheap lookup that never creates the database."""
+    """Cheap read-only lookup: never creates, migrates or writes the database.
+
+    Returns None when the file or table is missing or on any SQLite error.
+    """
     path = store_path(root)
     if not path.exists():
         return None
-    return BrokerStore(path).recipient_uuid(full)
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=_BUSY_TIMEOUT_MS / 1000)
+        try:
+            row = con.execute("SELECT uuid FROM recipients WHERE full=?", (full,)).fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error as exc:
+        _log.debug("recipient lookup in %s failed: %s", path, exc)
+        return None
+    return None if row is None else str(row[0])
 
 
 def _opt_str(value: object) -> str | None:
     return None if value is None else str(value)
 
 
-def _row_item(row: tuple[object, ...]) -> StoredItem:
-    loaded = json.loads(str(row[9]))
+def _row_item(row: tuple[Any, ...]) -> StoredItem:
+    loaded = json.loads(row[9])
     return StoredItem(
-        seq=int(str(row[0])),
+        seq=int(row[0]),
         recipient_uuid=str(row[1]),
         recipient_full=str(row[2]),
         id=str(row[3]),
@@ -117,9 +133,9 @@ def _row_item(row: tuple[object, ...]) -> StoredItem:
         kind_or_state=_opt_str(row[5]),
         ref=_opt_str(row[6]),
         from_name=_opt_str(row[7]),
-        created_at=float(str(row[8])),
+        created_at=float(row[8]),
         item=loaded if isinstance(loaded, dict) else {},
-        acked_at=None if row[10] is None else float(str(row[10])),
+        acked_at=None if row[10] is None else float(row[10]),
     )
 
 
@@ -129,7 +145,7 @@ class BrokerStore:
         self._ready = False
 
     @contextlib.contextmanager
-    def _tx(self) -> Iterator[sqlite3.Connection]:
+    def _tx(self, write: bool = True) -> Iterator[sqlite3.Connection]:
         try:
             if not self.path.exists():
                 self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,15 +154,16 @@ class BrokerStore:
             con = sqlite3.connect(self.path, timeout=_BUSY_TIMEOUT_MS / 1000, isolation_level=None)
             try:
                 con.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
-                con.execute("PRAGMA journal_mode=WAL")
+                _enable_wal(con)
                 if not self._ready:
                     self._migrate(con)
                     self._ready = True
-                con.execute("BEGIN IMMEDIATE")
+                con.execute("BEGIN IMMEDIATE" if write else "BEGIN")
                 try:
                     yield con
                 except BaseException:
-                    con.execute("ROLLBACK")
+                    with contextlib.suppress(sqlite3.Error):
+                        con.execute("ROLLBACK")
                     raise
                 con.execute("COMMIT")
             finally:
@@ -161,6 +178,8 @@ class BrokerStore:
             con.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
             row = con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
             current = int(row[0]) if row else 0
+            if current > len(_MIGRATIONS):
+                raise StoreError("broker.db is newer than this jailbee")
             for n, script in enumerate(_MIGRATIONS[current:], start=current + 1):
                 _run_script(con, script)
                 con.execute(
@@ -169,7 +188,8 @@ class BrokerStore:
                     (str(n),),
                 )
         except BaseException:
-            con.execute("ROLLBACK")
+            with contextlib.suppress(sqlite3.Error):
+                con.execute("ROLLBACK")
             raise
         con.execute("COMMIT")
 
@@ -207,7 +227,7 @@ class BrokerStore:
             return cur.rowcount > 0
 
     def _items(self, sql: str, params: tuple[object, ...]) -> list[StoredItem]:
-        with self._tx() as con:
+        with self._tx(write=False) as con:
             return [_row_item(r) for r in con.execute(sql, params).fetchall()]
 
     def unacked(self, uuid: str) -> list[StoredItem]:
@@ -260,7 +280,7 @@ class BrokerStore:
             )
 
     def lookup_request(self, uuid: str, id: str) -> RecordedRequest | None:
-        with self._tx() as con:
+        with self._tx(write=False) as con:
             row = con.execute(
                 "SELECT state, detail, item_json FROM requests WHERE sender_uuid=? AND id=?",
                 (uuid, id),
@@ -288,18 +308,18 @@ class BrokerStore:
             con.execute("DELETE FROM recipients WHERE full=?", (full,))
 
     def recipient_uuid(self, full: str) -> str | None:
-        with self._tx() as con:
+        with self._tx(write=False) as con:
             row = con.execute("SELECT uuid FROM recipients WHERE full=?", (full,)).fetchone()
         return None if row is None else str(row[0])
 
     def recipients(self) -> dict[str, str]:
-        with self._tx() as con:
+        with self._tx(write=False) as con:
             return {str(f): str(u) for f, u in con.execute("SELECT full, uuid FROM recipients")}
 
     # -- digest --------------------------------------------------------
 
     def get_digest_at(self, uuid: str) -> float | None:
-        with self._tx() as con:
+        with self._tx(write=False) as con:
             row = con.execute("SELECT at FROM digest WHERE uuid=?", (uuid,)).fetchone()
         return None if row is None else float(row[0])
 
@@ -311,6 +331,8 @@ class BrokerStore:
 
     def purge_vanished(self, live_uuids: Collection[str]) -> int:
         live = list(live_uuids)
+        if not live:  # an empty or failed listing must never wipe the store
+            return 0
         removed = 0
         with self._tx() as con:
             con.execute("CREATE TEMP TABLE live(uuid TEXT PRIMARY KEY)")
@@ -327,6 +349,10 @@ class BrokerStore:
         return removed
 
     def purge_acked_older_than(self, uuid: str, cutoff: float) -> int:
+        """Delete acked items acked before ``cutoff``; return the item count.
+
+        ``requests`` rows are aged out by their ``at`` regardless of ack.
+        """
         with self._tx() as con:
             cur = con.execute(
                 "DELETE FROM items WHERE recipient_uuid=? AND acked_at IS NOT NULL AND acked_at<?",
@@ -334,6 +360,22 @@ class BrokerStore:
             )
             con.execute("DELETE FROM requests WHERE sender_uuid=? AND at<?", (uuid, cutoff))
             return max(cur.rowcount, 0)
+
+
+def _enable_wal(con: sqlite3.Connection) -> None:
+    """Switch to WAL; the switch ignores busy_timeout, so retry while others race it."""
+    deadline = time.monotonic() + _BUSY_TIMEOUT_MS / 1000
+    while True:
+        try:
+            mode = con.execute("PRAGMA journal_mode").fetchone()[0]
+            if str(mode).lower() == "wal":
+                return
+            con.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
 
 
 def _run_script(con: sqlite3.Connection, script: str) -> None:

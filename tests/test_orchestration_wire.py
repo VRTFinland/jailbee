@@ -186,6 +186,35 @@ def test_read_line_rejects_missing_newline_at_cap():
     assert exc.value.code == BAD_REQUEST
 
 
+def test_read_line_rejects_exactly_cap_without_newline_at_eof():
+    with pytest.raises(WireError) as exc:
+        read_line(io.BytesIO(b"x" * MAX_LINE_BYTES))
+    assert exc.value.code == BAD_REQUEST
+    assert "without newline" in exc.value.detail
+
+
+@pytest.mark.parametrize("v", ["true", "1.0", '"1"', "null"])
+def test_decode_rejects_non_int_versions(v):
+    with pytest.raises(WireError) as exc:
+        wire.decode_request(f'{{"v":{v},"op":"x"}}'.encode())
+    assert exc.value.code == wire.VERSION_ERROR
+
+
+def test_encode_rejects_non_serialisable_result():
+    with pytest.raises(WireError) as exc:
+        encode_response(ok({"x": object()}))
+    assert exc.value.code == BAD_REQUEST
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+def test_encode_rejects_nan(bad):
+    with pytest.raises(WireError) as exc:
+        encode_response(ok({"x": bad}))
+    assert exc.value.code == BAD_REQUEST
+    with pytest.raises(WireError):
+        wire.encode_request(wire.Request(op="x", args={"x": bad}))
+
+
 def test_wire_is_stdlib_only():
     code = (
         "import jailbee.orchestration.wire; import sys;"

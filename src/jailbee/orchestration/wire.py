@@ -66,7 +66,10 @@ def fail(code: str, detail: str = "") -> Response:
 
 
 def _dump(obj: dict[str, Any]) -> bytes:
-    line = json.dumps(obj, separators=(",", ":")).encode("utf-8") + b"\n"
+    try:
+        line = json.dumps(obj, separators=(",", ":"), allow_nan=False).encode("utf-8") + b"\n"
+    except (TypeError, ValueError) as exc:
+        raise WireError(BAD_REQUEST, f"message is not JSON-serialisable: {exc}") from exc
     if len(line) > MAX_LINE_BYTES:
         raise WireError(BAD_REQUEST, f"message exceeds {MAX_LINE_BYTES} bytes")
     return line
@@ -98,8 +101,9 @@ def _parse(line: bytes) -> dict[str, Any]:
     if not isinstance(obj, dict):
         raise WireError(BAD_REQUEST, "message must be a JSON object")
     obj = cast(dict[str, Any], obj)
-    if obj.get("v") != VERSION:
-        raise WireError(VERSION_ERROR, f"expected protocol version {VERSION}, got {obj.get('v')!r}")
+    version = obj.get("v")
+    if type(version) is not int or version != VERSION:
+        raise WireError(VERSION_ERROR, f"expected protocol version {VERSION}, got {version!r}")
     return obj
 
 
@@ -135,7 +139,9 @@ def read_line(fileobj: IO[bytes]) -> bytes | None:
     """Read one newline-terminated line, capped at MAX_LINE_BYTES.
 
     Returns None on EOF. Raises WireError(BAD_REQUEST) when the line is over
-    the cap, or when it reaches the cap without a trailing newline.
+    the cap, or when it reaches the cap without a trailing newline. After such
+    an error the stream is mid-line and unusable: the caller must close the
+    connection rather than read on.
     """
     line = fileobj.readline(MAX_LINE_BYTES + 1)
     if not line:

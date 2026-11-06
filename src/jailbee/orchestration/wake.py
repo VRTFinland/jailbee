@@ -116,8 +116,9 @@ def select_wakeup(
             done = child.get("done", False)
             assert isinstance(done, bool)
             start = child["started_at"]
-            assert _number(start) and start <= now + 5  # type: ignore[operator]
-            started[name] = float(start)  # type: ignore[arg-type]
+            assert isinstance(start, (int, float)) and not isinstance(start, bool)
+            assert math.isfinite(start) and start <= now + 5
+            started[name] = float(start)
             activity[name] = _activity_at(child, now)
             if child["running"] and not done:
                 running.add(name)
