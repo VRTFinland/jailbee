@@ -1462,7 +1462,7 @@ status reflects the build only. `jailbee base seed` is explicit: preflight
 errors exit 2 and a seeding failure exits 1. `jailbee upgrade` seeds only
 goldens built by that run; seeding failures do not make the upgrade sweep
 fail, and `--no-docker-seed` disables seeding for the whole sweep. See
-[Docker seeding commands](commands.md#global-repository-option).
+`jailbee base seed` in the [command reference](commands.md#global-repository-option).
 
 | Field | Type | Default | Description |
 |---|---|---|---|
