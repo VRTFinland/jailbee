@@ -10,7 +10,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from jailbee import golden
 from jailbee.golden_sharing import shared_golden_reason_for
@@ -258,7 +258,9 @@ def seed_golden(
     return result
 
 
-def create_seed_container(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> str:
+def create_seed_container(
+    cfg: Config, incus: Incus, gcfg: GlobalConfig, *, on_created: Callable[[str], None] | None = None
+) -> str:
     from jailbee import create_flow, git, lifecycle
 
     sha = git.rev_parse_remote(cfg.repo_root, cfg.upstream_remote, cfg.default_branch)
@@ -311,7 +313,8 @@ def create_seed_container(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> str:
             incus.exec(name, ["docker", "image", "rm", "-f", *dict.fromkeys(inherited)])
 
     return lifecycle.new_container(
-        cfg, incus, opts, confirm_fn=lambda _message: False, on_phase=before_autostart
+        cfg, incus, opts, confirm_fn=lambda _message: False, on_phase=before_autostart,
+        on_created=on_created,
     )
 
 
@@ -328,14 +331,18 @@ def run_seed(cfg: Config, incus: Incus, gcfg: GlobalConfig, req: SeedRequest) ->
     try:
         if incus.exists(name):
             raise ValueError(f"The docker-seed container {name} already exists")
-        owned = True
+
+        def mark_created(created_name: str) -> None:
+            nonlocal name, owned
+            name = created_name
+            owned = True
 
         def stop_on_timeout() -> None:
             try:
                 # The work deadline has expired; give the watchdog its own
                 # short budget so joining it cannot hang on an unresponsive daemon.
                 watchdog = incus.with_deadline(time.monotonic() + 30)
-                if watchdog.exists(name):
+                if owned and watchdog.exists(name):
                     watchdog.stop(name, force=True)
             except IncusError as exc:
                 warn(f"Could not stop timed-out seed container {name}: {exc}")
@@ -343,7 +350,9 @@ def run_seed(cfg: Config, incus: Incus, gcfg: GlobalConfig, req: SeedRequest) ->
         timer = threading.Timer(max(0, deadline - time.monotonic()), stop_on_timeout)
         timer.start()
         try:
-            name = create_seed_container(cfg, incus.with_deadline(deadline), gcfg)
+            name = create_seed_container(
+                cfg, incus.with_deadline(deadline), gcfg, on_created=mark_created
+            )
         finally:
             timer.cancel()
             timer.join()

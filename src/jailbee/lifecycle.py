@@ -1625,6 +1625,7 @@ def new_container(
     opts: NewContainerOptions,
     *,
     on_phase: Callable[[str], None] | None = None,
+    on_created: Callable[[str], None] | None = None,
     confirm_fn: ConfirmFn | None = None,
     on_detach: Callable[[Autostart, str, str, bool, AutostartPlan | None], None] | None = None,
 ) -> str:
@@ -1645,6 +1646,7 @@ def new_container(
             opts,
             progress=progress,
             on_phase=on_phase,
+            on_created=on_created,
             confirm_fn=confirm_fn,
             on_detach=on_detach,
         )
@@ -1667,6 +1669,7 @@ def _new_container(
     *,
     progress: _CreateProgress,
     on_phase: Callable[[str], None] | None = None,
+    on_created: Callable[[str], None] | None = None,
     confirm_fn: ConfirmFn | None = None,
     on_detach: Callable[[Autostart, str, str, bool, AutostartPlan | None], None] | None = None,
 ) -> str:
@@ -1950,9 +1953,11 @@ def _new_container(
                 ensure_work_repo_acl(cfg, incus)
                 ip = reserve_work_ipv4(incus, name)
                 _create_instance(cfg, incus, opts, name)
-                remove_old_outcomes(name)
                 fresh = True
                 progress.instance = name
+                if on_created is not None:
+                    on_created(name)
+                remove_old_outcomes(name)
                 incus.profile_assign(
                     name,
                     [
@@ -1978,8 +1983,10 @@ def _new_container(
                 raise
     else:
         _create_instance(cfg, incus, opts, name)
-        remove_old_outcomes(name)
         progress.instance = name
+        if on_created is not None:
+            on_created(name)
+        remove_old_outcomes(name)
     try:
         if generation == "legacy":
             incus.profile_assign(

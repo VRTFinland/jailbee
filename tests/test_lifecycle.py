@@ -1909,6 +1909,37 @@ def _select_work_generation(mocker, db_session):
     db_session.commit()
 
 
+@pytest.mark.parametrize("work,creation_fails", [(False, False), (True, False), (False, True), (True, True)])
+def test_new_container_reports_only_successful_instance_creation(
+    tmp_path, mocker, db_session, work, creation_fails
+):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    incus.list_containers.return_value = []
+    mocker.patch("jailbee.lifecycle.branch_exists_locally", return_value=True)
+    if work:
+        _select_work_generation(mocker, db_session)
+        mocker.patch("jailbee.network_generation.ensure_work_bridge")
+        mocker.patch("jailbee.work_acl.ensure_work_repo_acl")
+        mocker.patch("jailbee.work_network.reserve_work_ipv4", return_value="10.10.0.2")
+    if creation_fails:
+        incus.init.side_effect = RuntimeError("name taken")
+    else:
+        incus.profile_assign.side_effect = RuntimeError("configuration failed")
+    created = MagicMock()
+    with pytest.raises(RuntimeError):
+        new_container(
+            cfg, incus,
+            NewContainerOptions("feat/x", None, "strict", "8GiB", 4, "base", True, autostart=False),
+            on_created=created,
+        )
+    if creation_fails:
+        created.assert_not_called()
+    else:
+        created.assert_called_once_with("repo-feat-x")
+
+
 def test_new_work_generation_assigns_stable_filtered_nic(tmp_path, mocker, db_session):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()

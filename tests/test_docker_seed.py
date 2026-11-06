@@ -219,7 +219,12 @@ def test_run_seed_cleanup(rig, monkeypatch, keep, fail):
     cfg, incus = rig
     name = f"{cfg.container_prefix}-docker-seed"
     incus.exists.side_effect = [False, True]
-    create = Mock(side_effect=RuntimeError("create failed") if fail else None, return_value=name)
+    def create(_cfg, _incus, _gcfg, *, on_created):
+        on_created(name)
+        if fail:
+            raise RuntimeError("create failed")
+        return name
+
     monkeypatch.setattr(docker_seed, "create_seed_container", create)
     monkeypatch.setattr(
         docker_seed,
@@ -234,6 +239,40 @@ def test_run_seed_cleanup(rig, monkeypatch, keep, fail):
         destroy.assert_not_called()
     else:
         destroy.assert_called_once_with(cfg, incus, name, force=True)
+
+
+def test_seed_creation_race_does_not_destroy_other_container(rig, monkeypatch):
+    from jailbee import lifecycle
+
+    cfg, incus = rig
+    incus.exists.side_effect = [False, True]
+    monkeypatch.setattr(
+        docker_seed, "create_seed_container", Mock(side_effect=RuntimeError("name taken"))
+    )
+    destroy = Mock()
+    monkeypatch.setattr(lifecycle, "destroy_container", destroy)
+    result = docker_seed.run_seed(cfg, incus, Mock(), docker_seed.SeedRequest(None, False, True))
+    assert result.outcome == "failed"
+    destroy.assert_not_called()
+
+
+def test_seed_creation_failure_after_create_is_cleaned_up(rig, monkeypatch):
+    from jailbee import lifecycle
+
+    cfg, incus = rig
+    name = f"{cfg.container_prefix}-docker-seed"
+    incus.exists.side_effect = [False, True]
+
+    def create(_cfg, _incus, _gcfg, *, on_created):
+        on_created(name)
+        raise RuntimeError("configuration failed")
+
+    monkeypatch.setattr(docker_seed, "create_seed_container", create)
+    destroy = Mock()
+    monkeypatch.setattr(lifecycle, "destroy_container", destroy)
+    result = docker_seed.run_seed(cfg, incus, Mock(), docker_seed.SeedRequest(None, False, True))
+    assert result.outcome == "failed"
+    destroy.assert_called_once_with(cfg, incus, name, force=True)
 
 
 def test_existing_seed_is_never_destroyed(rig, monkeypatch):
@@ -256,7 +295,7 @@ def test_timer_stops_and_joins_before_cleanup(rig, monkeypatch):
     incus.exists.side_effect = [False, True]
     watchdog = Mock()
     watchdog.exists.return_value = True
-    incus.with_deadline.side_effect = [watchdog, incus]
+    incus.with_deadline.side_effect = [incus, watchdog]
     clock = iter([0, 0, 3601, 3601, 3601])
     monkeypatch.setattr(docker_seed.time, "monotonic", lambda: next(clock))
     events = []
@@ -266,7 +305,7 @@ def test_timer_stops_and_joins_before_cleanup(rig, monkeypatch):
             self.callback = callback
 
         def start(self):
-            self.callback()
+            pass
 
         def cancel(self):
             events.append("cancel")
@@ -275,13 +314,25 @@ def test_timer_stops_and_joins_before_cleanup(rig, monkeypatch):
             events.append("join")
 
     monkeypatch.setattr(docker_seed.threading, "Timer", Timer)
-    monkeypatch.setattr(docker_seed, "create_seed_container", Mock(return_value=name))
+    def create(_cfg, _incus, _gcfg, *, on_created):
+        on_created(name)
+        timer.callback()
+        return name
+
+    timer = None
+    def make_timer(delay, callback):
+        nonlocal timer
+        timer = Timer(delay, callback)
+        return timer
+
+    monkeypatch.setattr(docker_seed.threading, "Timer", make_timer)
+    monkeypatch.setattr(docker_seed, "create_seed_container", create)
     monkeypatch.setattr(lifecycle, "destroy_container", lambda *a, **kw: events.append("destroy"))
     result = docker_seed.run_seed(cfg, incus, Mock(), docker_seed.SeedRequest(None, False, True))
     assert result.outcome == "failed" and "timed out" in result.detail
     watchdog.stop.assert_called_once_with(name, force=True)
     incus.stop.assert_not_called()
-    assert incus.with_deadline.call_args_list[0].args == (3631,)
+    assert incus.with_deadline.call_args_list[1].args == (3631,)
     assert events == ["cancel", "join", "destroy"]
 
 
