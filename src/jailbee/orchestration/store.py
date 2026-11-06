@@ -270,27 +270,22 @@ class BrokerStore:
         imported with an older `created_at`.
         """
         ack_time = acked_at if acked_at is not None else (now if acked else None)
-        item_type = str(item.get("type", ""))
-        detail = item.get("state") if item_type == "status" else item.get("kind")
         with self._tx() as con:
-            cur = con.execute(
-                "INSERT OR IGNORE INTO items(recipient_uuid, recipient_full, id, type, "
-                "kind_or_state, ref, from_name, created_at, item_json, acked_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (
-                    recipient_uuid,
-                    recipient_full,
-                    str(item["id"]),
-                    item_type,
-                    _opt_str(detail),
-                    _opt_str(item.get("ref")),
-                    _opt_str(item.get("from")),
-                    now,
-                    json.dumps(item),
-                    ack_time,
-                ),
-            )
-            return cur.rowcount > 0
+            return _insert(con, recipient_uuid, recipient_full, item, now, ack_time)
+
+    def insert_for_recipient(self, full: str, item: Mapping[str, object], *, now: float) -> bool:
+        """Insert `item` unacked for `full`'s recorded uuid, in one transaction.
+
+        False (nothing inserted) when `full` is not a store recipient, so a
+        teardown that removes the recipient row can never strand an item that
+        was inserted after its last export.
+        """
+        with self._tx() as con:
+            row = con.execute("SELECT uuid FROM recipients WHERE full=?", (full,)).fetchone()
+            if row is None:
+                return False
+            _insert(con, str(row[0]), full, item, now, None)
+            return True
 
     def _items(self, sql: str, params: tuple[object, ...]) -> list[StoredItem]:
         with self._tx(write=False) as con:
@@ -472,6 +467,36 @@ class BrokerStore:
             )
             con.execute("DELETE FROM requests WHERE sender_uuid=? AND at<?", (uuid, cutoff))
             return max(cur.rowcount, 0)
+
+
+def _insert(
+    con: sqlite3.Connection,
+    recipient_uuid: str,
+    recipient_full: str,
+    item: Mapping[str, object],
+    now: float,
+    ack_time: float | None,
+) -> bool:
+    item_type = str(item.get("type", ""))
+    detail = item.get("state") if item_type == "status" else item.get("kind")
+    cur = con.execute(
+        "INSERT OR IGNORE INTO items(recipient_uuid, recipient_full, id, type, "
+        "kind_or_state, ref, from_name, created_at, item_json, acked_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (
+            recipient_uuid,
+            recipient_full,
+            str(item["id"]),
+            item_type,
+            _opt_str(detail),
+            _opt_str(item.get("ref")),
+            _opt_str(item.get("from")),
+            now,
+            json.dumps(item),
+            ack_time,
+        ),
+    )
+    return cur.rowcount > 0
 
 
 def _enable_wal(con: sqlite3.Connection) -> None:

@@ -474,7 +474,7 @@ def test_flush_store_recipient_stops_at_store_error_and_keeps_files(
     def boom(self, *a, **k):
         raise store_mod.StoreError("locked")
 
-    monkeypatch.setattr(store_mod.BrokerStore, "insert_item", boom)
+    monkeypatch.setattr(store_mod.BrokerStore, "insert_for_recipient", boom)
     assert outbox.flush_pending(_incus(), tmp_path, FULL, uid=1000) == 0
     assert sorted(p.name for p in directory.iterdir()) == ["a.json", "b.json"]
 
@@ -511,7 +511,7 @@ def test_quarantine_note_falls_back_to_pending_when_store_fails(
     def boom(self, *a, **k):
         raise store_mod.StoreError("locked")
 
-    monkeypatch.setattr(store_mod.BrokerStore, "insert_item", boom)
+    monkeypatch.setattr(store_mod.BrokerStore, "insert_for_recipient", boom)
     outbox.flush_pending(_incus(), tmp_path, FULL, uid=1000, finish=MagicMock())
     parked = [p for p in directory.iterdir() if p.name.endswith(".json")]
     assert len(parked) == 1
@@ -557,7 +557,7 @@ def test_write_inbox_store_error_becomes_incus_error(tmp_path: Path, mocker) -> 
     from jailbee.orchestration.store import BrokerStore, StoreError
 
     _store_recipient(tmp_path)
-    mocker.patch.object(BrokerStore, "insert_item", side_effect=StoreError("boom"))
+    mocker.patch.object(BrokerStore, "insert_for_recipient", side_effect=StoreError("boom"))
     with pytest.raises(IncusError, match="boom"):
         outbox.write_inbox(_incus(), FULL, _item("1"), uid=1000, now=AT, root=tmp_path)
 
@@ -566,7 +566,26 @@ def test_deliver_store_error_parks_item(tmp_path: Path, mocker) -> None:
     from jailbee.orchestration.store import BrokerStore, StoreError
 
     _store_recipient(tmp_path)
-    mocker.patch.object(BrokerStore, "insert_item", side_effect=StoreError("boom"))
+    mocker.patch.object(BrokerStore, "insert_for_recipient", side_effect=StoreError("boom"))
     result = outbox.deliver(_incus(), tmp_path, FULL, _item("1"), running=True, uid=1000, now=AT)
     assert result == "parked"
     assert (pending_dir(tmp_path, FULL) / inbox_file_name(_item("1"), AT)).exists()
+
+
+def test_store_insert_rechecks_the_recipient_in_its_own_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A teardown that drops the recipient between lookup and insert strands nothing."""
+    from jailbee.orchestration import store as store_mod
+
+    store = _store_recipient(tmp_path)
+    real = store_mod.recipient_uuid
+
+    def lookup_then_teardown(root: Path, full: str) -> str | None:
+        found = real(root, full)
+        store.remove_recipient(full)  # the broker's teardown runs now
+        return found
+
+    monkeypatch.setattr(store_mod, "recipient_uuid", lookup_then_teardown)
+    assert outbox._insert_into_store(tmp_path, FULL, _item("1")) is False
+    assert store.unacked("uuid-1") == []

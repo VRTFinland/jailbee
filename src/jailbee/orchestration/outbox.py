@@ -165,16 +165,18 @@ def _item_json(item: InboxItem) -> str:
 def _insert_into_store(root: Path, full: str, item: InboxItem | dict[str, object]) -> bool:
     """Insert `item` unacked when `full`'s inbox lives in the store; else False.
 
-    The stored object is the same JSON `_item_json` writes to a file.
+    The stored object is the same JSON `_item_json` writes to a file. The
+    read-only lookup keeps a file-inbox host from creating the database; the
+    insert re-checks the recipient in its own transaction.
     """
     from jailbee.orchestration import store
 
-    uuid = store.recipient_uuid(root, full)
-    if uuid is None:
+    if store.recipient_uuid(root, full) is None:
         return False
     data = item if isinstance(item, dict) else json.loads(item.model_dump_json(by_alias=True))
-    store.BrokerStore(store.store_path(root)).insert_item(uuid, full, data, now=time.time())
-    return True
+    return store.BrokerStore(store.store_path(root)).insert_for_recipient(
+        full, data, now=time.time()
+    )
 
 
 def write_inbox(
