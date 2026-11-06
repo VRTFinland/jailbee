@@ -69,12 +69,23 @@ def save_pending(
 ) -> None:
     """Atomically retain identity and a stable completed result at the same causal gate."""
     data = item if isinstance(item, dict) else json.loads(item.model_dump_json(by_alias=True))
-    result = completed if isinstance(completed, dict) or completed is None else json.loads(
-        completed.model_dump_json(by_alias=True)
+    result = (
+        completed
+        if isinstance(completed, dict) or completed is None
+        else json.loads(completed.model_dump_json(by_alias=True))
     )
-    atomic_write_text(path, json.dumps({
-        "version": 1, "recipient_uuid": recipient_uuid, "item": data, "completed": result,
-    }) + "\n")
+    atomic_write_text(
+        path,
+        json.dumps(
+            {
+                "version": 1,
+                "recipient_uuid": recipient_uuid,
+                "item": data,
+                "completed": result,
+            }
+        )
+        + "\n",
+    )
 
 
 def load_pending(path: Path) -> PendingDelivery:
@@ -132,7 +143,8 @@ def deliver(
     except StoreError:
         logging.getLogger(__name__).exception("broker store unavailable; parking item")
     save_pending(
-        pending_dir(root, recipient_full) / inbox_file_name(item, now, seq=seq), item,
+        pending_dir(root, recipient_full) / inbox_file_name(item, now, seq=seq),
+        item,
         recipient_uuid=recipient_uuid,
     )
     return "parked"
@@ -207,7 +219,9 @@ def flush_pending(
         try:
             pending = load_pending(path)
         except ValueError:
-            logging.getLogger(__name__).warning("quarantining unbound or invalid pending item %s", path)
+            logging.getLogger(__name__).warning(
+                "quarantining unbound or invalid pending item %s", path
+            )
             path.rename(path.with_name(path.name + ".bad"))
             continue
         if not pending.recipient_uuid or pending.recipient_uuid != recipient_uuid:

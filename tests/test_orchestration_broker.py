@@ -1219,7 +1219,9 @@ def test_tick_completes_parked_finish_when_orchestrator_starts(
     from jailbee.orchestration.actions import ActionContext, Node
     from jailbee.orchestration.protocol import PendingFinish
 
-    orch = Node("proj-orch", "orch", True, {labels.GRANT: Grant().to_label(), "volatile.uuid": "uuid-orch"})
+    orch = Node(
+        "proj-orch", "orch", True, {labels.GRANT: Grant().to_label(), "volatile.uuid": "uuid-orch"}
+    )
     child = Node("proj-kid", "kid", True, {labels.SPAWNED_BY: orch.full})
     ctx = ActionContext(
         rig.cfg,
@@ -2155,7 +2157,7 @@ def test_tick_destroys_marked_child_despite_quarantined_finish_file(
 
 def _orphan_finish(root: Path, orch_full: str, child_full: str) -> Path:
     from jailbee.orchestration.protocol import PendingFinish, finish_file_name
-    from jailbee.orchestration.state import atomic_write_text, pending_dir
+    from jailbee.orchestration.state import pending_dir
 
     item = PendingFinish(
         version=1,
@@ -2502,7 +2504,9 @@ def test_pending_without_inventory_uuid_never_uses_stale_socket_identity(
 
 @pytest.mark.parametrize("restart", [False, True])
 @pytest.mark.parametrize("finish_item", [False, True])
-def test_recreated_namesake_never_receives_old_spool_or_executes_finish(rig, monkeypatch, restart, finish_item):
+def test_recreated_namesake_never_receives_old_spool_or_executes_finish(
+    rig, monkeypatch, restart, finish_item
+):
     from jailbee.orchestration import finishing
     from jailbee.orchestration.protocol import InboxStatus, PendingFinish
     from jailbee.orchestration.store import BrokerStore, StoreError
@@ -2513,15 +2517,38 @@ def test_recreated_namesake_never_receives_old_spool_or_executes_finish(rig, mon
     rig.tick()
     ctx = rig.memory.contexts["uuid-old"]
     if finish_item:
-        item = PendingFinish(version=1, type="finish", id="done-old", child_full="proj-kid",
-                             child_short="kid", branch="b", done_sha="a" * 40, body="old", uid=None, in_reply_to=None)
+        item = PendingFinish(
+            version=1,
+            type="finish",
+            id="done-old",
+            child_full="proj-kid",
+            child_short="kid",
+            branch="b",
+            done_sha="a" * 40,
+            body="old",
+            uid=None,
+            in_reply_to=None,
+        )
         path = finishing.park(ctx, ctx.sender, item)
     else:
-        item = InboxStatus(version=1, type="status", id="h-old", ref="old", state="done", detail="private")
+        item = InboxStatus(
+            version=1, type="status", id="h-old", ref="old", state="done", detail="private"
+        )
         with monkeypatch.context() as fail:
             fail.setattr(BrokerStore, "insert_item", MagicMock(side_effect=StoreError("offline")))
-            assert outbox.deliver(rig.incus, rig.root, "proj-orch", item, running=False, uid=None,
-                                  now=NOW, recipient_uuid="uuid-old") == "parked"
+            assert (
+                outbox.deliver(
+                    rig.incus,
+                    rig.root,
+                    "proj-orch",
+                    item,
+                    running=False,
+                    uid=None,
+                    now=NOW,
+                    recipient_uuid="uuid-old",
+                )
+                == "parked"
+            )
         path = next((rig.root / "pending" / "proj-orch").glob("*.json"))
     assert outbox.load_pending(path).recipient_uuid == "uuid-old"
     new = _orch()  # No intermediate listing ever observes the name absent.

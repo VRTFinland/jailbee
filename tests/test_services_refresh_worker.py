@@ -546,8 +546,8 @@ def test_stale_pending_destroy_after_worker_resume(rig, mocker):
 
 @pytest.mark.parametrize("running", [True, False])
 def test_refresh_notification_delivers_to_verified_store_instance(rig, tmp_path, mocker, running):
-    from jailbee.orchestration.store import BrokerStore, store_path
     from jailbee.orchestration.state import pending_dir
+    from jailbee.orchestration.store import BrokerStore, store_path
     from jailbee.services import refresh_worker
 
     cfg, engine, delivery, incus, path = rig
@@ -559,7 +559,10 @@ def test_refresh_notification_delivers_to_verified_store_instance(rig, tmp_path,
     store.set_recipient("proj-o", "uuid-stale", now=1)
     path.write_text("{}")
     try:
-        assert refresh_worker._deliver(cfg, incus, path, "proj-o", "ref", ok=True, detail="finished") == 0
+        assert (
+            refresh_worker._deliver(cfg, incus, path, "proj-o", "ref", ok=True, detail="finished")
+            == 0
+        )
         rows = store.unacked("uuid-current")
         assert len(rows) == 1 and rows[0].item["detail"] == "finished"
         assert store.unacked("uuid-stale") == []

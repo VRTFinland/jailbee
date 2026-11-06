@@ -13,7 +13,7 @@ from jailbee.orchestration.protocol import (
     finish_file_name,
     new_host_id,
 )
-from jailbee.orchestration.state import atomic_write_text, pending_dir
+from jailbee.orchestration.state import pending_dir
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Iterator

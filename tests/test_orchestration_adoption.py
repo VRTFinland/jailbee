@@ -573,6 +573,7 @@ def test_transferred_child_ignores_old_pending_finish(cfg, rig, tmp_path, mocker
         uid=None,
     )
     from dataclasses import replace
+
     ctx.sender = replace(ctx.sender, config={**ctx.sender.config, "volatile.uuid": "old-uuid"})
     path = finishing.park(ctx, ctx.sender, item)
     adoption.release(cfg, incus, "myrepo-a", root=tmp_path)

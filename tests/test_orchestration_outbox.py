@@ -121,7 +121,9 @@ def test_deliver_store_parks_behind_existing_pending(tmp_path: Path) -> None:
     store = _store_recipient(tmp_path)
     directory = pending_dir(tmp_path, FULL)
     directory.mkdir(parents=True)
-    outbox.save_pending(directory / inbox_file_name(_item("0"), AT), _item("0"), recipient_uuid="uuid-1")
+    outbox.save_pending(
+        directory / inbox_file_name(_item("0"), AT), _item("0"), recipient_uuid="uuid-1"
+    )
     later = datetime(2026, 10, 25, 11, 0, tzinfo=UTC)
     result = deliver(_incus(), tmp_path, FULL, _item("1"), running=True, uid=1000, now=later)
     assert result == "parked"
@@ -322,7 +324,11 @@ def test_sequence_orders_spooled_items_not_random_ids(tmp_path):
     store = _store_recipient(tmp_path)
     first, second = _item("ffff"), _item("0000")
     for seq, item in enumerate((first, second)):
-        outbox.save_pending(pending_dir(tmp_path, FULL) / inbox_file_name(item, AT, seq=seq), item, recipient_uuid="uuid-1")
+        outbox.save_pending(
+            pending_dir(tmp_path, FULL) / inbox_file_name(item, AT, seq=seq),
+            item,
+            recipient_uuid="uuid-1",
+        )
     assert flush(_incus(), tmp_path, FULL, uid=None) == 2
     assert [row.id for row in store.unacked("uuid-1")] == [first.id, second.id]
 
@@ -342,8 +348,10 @@ def test_transport_era_identity_free_spool_is_quarantined_not_guessed(tmp_path, 
 
 def test_missing_identity_at_park_is_not_filled_from_later_inventory(tmp_path):
     store = _store_recipient(tmp_path)
-    assert outbox.deliver(_incus(), tmp_path, FULL, _item("unknown"), running=False,
-                          uid=None, now=AT) == "parked"
+    assert (
+        outbox.deliver(_incus(), tmp_path, FULL, _item("unknown"), running=False, uid=None, now=AT)
+        == "parked"
+    )
     assert flush(_incus(), tmp_path, FULL, uid=None) == 0
     assert store.unacked("uuid-1") == []
     assert not outbox.has_pending(tmp_path, FULL)
