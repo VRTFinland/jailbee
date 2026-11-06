@@ -420,23 +420,43 @@ class BrokerStore:
 
     # -- purging -------------------------------------------------------
 
-    def purge_vanished(self, live_uuids: Collection[str]) -> int:
-        live = list(live_uuids)
-        if not live:  # an empty or failed listing must never wipe the store
+    def known_uuids(self) -> set[str]:
+        """Every container uuid any table holds a row for."""
+        with self._tx(write=False) as con:
+            rows = con.execute(
+                "SELECT recipient_uuid FROM items UNION SELECT sender_uuid FROM requests "
+                "UNION SELECT uuid FROM digest UNION SELECT uuid FROM recipients"
+            ).fetchall()
+        return {str(r[0]) for r in rows}
+
+    def purge_uuids(self, gone: Collection[str], *, keep_unacked_after: float) -> int:
+        """Delete the rows of containers known to be gone; return the row count.
+
+        Unacked items created at or after ``keep_unacked_after`` stay: an unread
+        message is not dropped before its retention ran out, however sure the
+        caller is that its recipient is gone.
+        """
+        uuids = list(gone)
+        if not uuids:
             return 0
         removed = 0
         with self._tx() as con:
-            con.execute("CREATE TEMP TABLE live(uuid TEXT PRIMARY KEY)")
-            con.executemany("INSERT OR IGNORE INTO live VALUES(?)", [(u,) for u in live])
+            con.execute("CREATE TEMP TABLE gone(uuid TEXT PRIMARY KEY)")
+            con.executemany("INSERT OR IGNORE INTO gone VALUES(?)", [(u,) for u in uuids])
+            cur = con.execute(
+                "DELETE FROM items WHERE recipient_uuid IN (SELECT uuid FROM gone) "
+                "AND (acked_at IS NOT NULL OR created_at<?)",
+                (keep_unacked_after,),
+            )
+            removed += max(cur.rowcount, 0)
             for table, col in (
-                ("items", "recipient_uuid"),
                 ("requests", "sender_uuid"),
                 ("digest", "uuid"),
                 ("recipients", "uuid"),
             ):
-                cur = con.execute(f"DELETE FROM {table} WHERE {col} NOT IN (SELECT uuid FROM live)")
+                cur = con.execute(f"DELETE FROM {table} WHERE {col} IN (SELECT uuid FROM gone)")
                 removed += max(cur.rowcount, 0)
-            con.execute("DROP TABLE live")
+            con.execute("DROP TABLE gone")
         return removed
 
     def purge_acked_older_than(self, uuid: str, cutoff: float) -> int:

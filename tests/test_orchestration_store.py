@@ -107,16 +107,26 @@ def test_digest(st: BrokerStore) -> None:
     assert st.get_digest_at("u") == 4.0
 
 
-def test_purge_vanished(st: BrokerStore) -> None:
+def test_purge_uuids(st: BrokerStore) -> None:
     for u in ("a", "b"):
         st.insert_item(u, "f" + u, msg("1"), now=1.0)
+        st.ack(u, "1", now=1.0)
         st.record_request(u, "r", digest=None, state="s", detail="", item=None, now=1.0)
         st.set_digest_at(u, 1.0)
         st.set_recipient("f" + u, u, now=1.0)
-    assert st.purge_vanished({"a"}) == 4
+    assert st.known_uuids() == {"a", "b"}
+    assert st.purge_uuids({"b"}, keep_unacked_after=0.0) == 4
     assert st.history("b") == [] and st.lookup_request("b", "r") is None
     assert st.get_digest_at("b") is None and st.recipients() == {"fa": "a"}
     assert len(st.history("a")) == 1 and st.get_digest_at("a") == 1.0
+
+
+def test_purge_uuids_keeps_young_unacked_items(st: BrokerStore) -> None:
+    st.insert_item("b", "fb", msg("old"), now=1.0)
+    st.insert_item("b", "fb", msg("young"), now=100.0)
+    st.insert_item("b", "fb", msg("read"), now=100.0, acked=True)
+    assert st.purge_uuids({"b"}, keep_unacked_after=50.0) == 2
+    assert [r.id for r in st.history("b")] == ["young"]
 
 
 def test_purge_acked_older_than(st: BrokerStore) -> None:
@@ -161,10 +171,10 @@ def test_corrupt_file(tmp_path: Path) -> None:
         BrokerStore(p).recipients()
 
 
-def test_purge_vanished_empty_collection_is_a_noop(st: BrokerStore) -> None:
+def test_purge_uuids_empty_collection_is_a_noop(st: BrokerStore) -> None:
     st.insert_item("a", "fa", msg("1"), now=1.0)
     st.set_recipient("fa", "a", now=1.0)
-    assert st.purge_vanished(set()) == 0
+    assert st.purge_uuids(set(), keep_unacked_after=0.0) == 0
     assert len(st.history("a")) == 1 and st.recipients() == {"fa": "a"}
 
 

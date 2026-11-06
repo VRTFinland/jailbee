@@ -150,6 +150,8 @@ class BrokerMemory:
     waiters: Waiters = field(default_factory=lambda: _new_waiters())
     # `_monotonic()` of the last retention purge; None until the first round.
     last_purge: float | None = None
+    # Store uuids the previous purge did not find in the listing.
+    absent_uuids: set[str] = field(default_factory=set)
 
     def warn_once(self, key: str, msg: str, *args: object) -> None:
         if key not in self.warned:
@@ -184,11 +186,21 @@ def _purge_messages(memory: BrokerMemory, raw: list[dict[str, object]], now: dat
             if isinstance(e.get("name"), str) and isinstance(conf, dict):
                 entry_config[str(e["name"])] = conf
         live = {c["volatile.uuid"] for c in entry_config.values() if c.get("volatile.uuid")}
-        # An empty listing must never wipe the store (the store guards too).
+        # The listing covers the current project only (`incus project switch`
+        # hides every container), so a uuid is purged only when two
+        # consecutive purges (an hour apart) missed it, and unread items
+        # younger than the default retention survive even that.
+        # An empty listing never counts as an absence.
         if live:
-            removed = store.purge_vanished(live)
-            if removed:
-                log.info("broker: purged %d message rows of vanished containers", removed)
+            absent = store.known_uuids() - live
+            gone = absent & memory.absent_uuids
+            memory.absent_uuids = absent
+            if gone:
+                removed = store.purge_uuids(
+                    gone, keep_unacked_after=now.timestamp() - DEFAULT_RETENTION_DAYS * 86400
+                )
+                if removed:
+                    log.info("broker: purged %d message rows of vanished containers", removed)
         recipients = store.recipients()
         if not recipients:
             return

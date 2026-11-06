@@ -80,13 +80,44 @@ def test_default_days_without_config(env: Env, clock: Clock) -> None:
     assert _ids(env, "u-a") == ["mid"]
 
 
-def test_vanished_container_rows_are_purged(env: Env, clock: Clock) -> None:
+def test_vanished_container_rows_are_purged_after_two_absent_passes(env: Env, clock: Clock) -> None:
     env.set(_orch("proj-orch", "u-a"))
-    _put(env, "u-gone", "proj-gone", "g", 0, acked=False)
+    _put(env, "u-gone", "proj-gone", "acked", 0)
+    _put(env, "u-gone", "proj-gone", "unread-old", 31, acked=False)
+    _put(env, "u-gone", "proj-gone", "unread-young", 0, acked=False)
     _put(env, "u-a", "proj-orch", "keep", 0, acked=False)
-    env.tick()
-    assert _ids(env, "u-gone") == []
+    env.tick()  # first absent pass: nothing is purged yet
+    assert _ids(env, "u-gone") == ["acked", "unread-old", "unread-young"]
+    clock.t += 3601
+    env.tick()  # second absent pass: gone, but young unread items stay
+    assert _ids(env, "u-gone") == ["unread-young"]
     assert _ids(env, "u-a") == ["keep"]
+
+
+def test_project_switch_loses_nothing(env: Env, clock: Clock) -> None:
+    """`incus project switch` makes every container vanish from the listing."""
+    env.set(_orch("proj-orch", "u-a"))
+    env.tick()
+    _put(env, "u-a", "proj-orch", "read", 0)
+    _put(env, "u-a", "proj-orch", "unread", 0, acked=False)
+    clock.t += 3601
+    env.set(_orch("elsewhere", "u-x"))  # another project's listing
+    env.tick()
+    clock.t += 3601
+    env.set(_orch("proj-orch", "u-a"))  # switched back
+    env.tick()
+    clock.t += 3601
+    env.tick()
+    assert _ids(env, "u-a") == ["read", "unread"]
+
+
+def test_unread_items_survive_a_long_absence(env: Env, clock: Clock) -> None:
+    env.set(_orch("elsewhere", "u-x"))
+    _put(env, "u-a", "proj-orch", "unread", 0, acked=False)
+    for _ in range(3):
+        env.tick()
+        clock.t += 3601
+    assert _ids(env, "u-a") == ["unread"]
 
 
 def test_empty_listing_never_purges_vanished(env: Env, clock: Clock) -> None:
@@ -102,7 +133,7 @@ def test_failure_is_logged_and_does_not_crash(
     def boom(self: object, *a: object) -> int:
         raise RuntimeError("db locked")
 
-    monkeypatch.setattr(type(env.store), "purge_vanished", boom)
+    monkeypatch.setattr(type(env.store), "known_uuids", boom)
     env.set(_orch("proj-orch", "u-a"))
     env.tick()
     assert "message purge failed" in caplog.text
