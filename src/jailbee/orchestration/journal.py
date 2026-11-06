@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
+import logging
+import sqlite3
 from typing import TYPE_CHECKING
+
+from jailbee.orchestration.store import StoreError, open_state_store
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -28,39 +31,91 @@ def manifest_digest(file_name: str, text: str, files: Mapping[str, str]) -> str:
     return h.hexdigest()
 
 
-class Journal:
-    """JSON-lines journal of `(container key, digest)` pairs already processed.
+_log = logging.getLogger(__name__)
 
-    The container key is the Incus instance's `volatile.uuid` (the name when
-    absent, see `actions.Node.key`), so a container recreated under a reused
-    name starts with a clean slate. Entries written before the key existed
-    fall back to `container_full`.
-    """
+
+class _RetryImportError(Exception):
+    pass
+
+
+class Journal:
+    """Durable processed manifests, keyed by container identity and digest."""
 
     def __init__(self, root: Path) -> None:
         self._path = root / JOURNAL_FILE
-        self._seen: set[tuple[str, str]] | None = None
+        self._store = open_state_store(root)
 
-    def _load(self) -> set[tuple[str, str]]:
-        if self._seen is None:
-            seen: set[tuple[str, str]] = set()
+    def _import(self) -> None:
+        path = self._path
+        corrupt = False
+
+        def load(con: sqlite3.Connection) -> None:
+            nonlocal corrupt
             try:
-                lines = self._path.read_text(encoding="utf-8").splitlines()
+                text = path.read_bytes()
             except FileNotFoundError:
-                lines = []
-            for line in lines:
+                return
+            except OSError as exc:
+                _log.warning("cannot read journal %s: %s", path, exc)
+                raise _RetryImportError from exc
+            valid = 0
+            bad = 0
+            for number, line in enumerate(text.splitlines(), 1):
                 try:
-                    entry = json.loads(line)
+                    entry = json.loads(line.decode("utf-8"))
+                    if not isinstance(entry, dict):
+                        raise ValueError("entry is not an object")
                     key = entry.get("container_key") or entry["container_full"]
-                    seen.add((key, entry["digest"]))
-                except (ValueError, KeyError, TypeError):
-                    continue
-            self._seen = seen
-        return self._seen
+                    digest = entry["digest"]
+                    if not isinstance(key, str) or not isinstance(digest, str):
+                        raise ValueError("invalid key or digest")
+
+                    def field(
+                        name: str, default: str = "", *, row: dict[str, object] = entry
+                    ) -> str:
+                        value = row.get(name)
+                        return default if value is None else str(value)
+
+                    values = (
+                        key,
+                        digest,
+                        field("container_full", key) or key,
+                        field("manifest_id"),
+                        field("outcome"),
+                        field("at"),
+                    )
+                    con.execute("INSERT OR IGNORE INTO journal VALUES (?, ?, ?, ?, ?, ?)", values)
+                    valid += 1
+                except (ValueError, KeyError, TypeError, UnicodeError) as exc:
+                    bad += 1
+                    _log.warning("malformed journal %s line %d: %s", path, number, exc)
+            corrupt = bool(bad and not valid)
+            if corrupt:
+                try:
+                    path.replace(path.with_name(path.name + ".corrupt"))
+                except FileNotFoundError:
+                    pass
+                except OSError as exc:
+                    _log.warning("cannot quarantine journal %s: %s", path, exc)
+                    raise _RetryImportError from exc
+
+        try:
+            self._store.import_once(JOURNAL_FILE, load)
+        except _RetryImportError as exc:
+            raise StoreError(f"cannot import journal {path}") from exc
+        # TODO(state-db-cleanup): remove migrated files after the compatibility window.
+        if not corrupt:
+            try:
+                path.replace(path.with_name(path.name + ".migrated"))
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                _log.warning("cannot rename migrated journal %s: %s", path, exc)
 
     def seen(self, container_key: str, digest: str) -> bool:
-        """Return whether this manifest content was already processed for the container."""
-        return (container_key, digest) in self._load()
+        """Return whether this manifest content was already processed."""
+        self._import()
+        return self._store.journal_seen(container_key, digest)
 
     def record(
         self,
@@ -72,32 +127,13 @@ class Journal:
         *,
         container_full: str | None = None,
     ) -> None:
-        """Append one entry and fsync it; `container_full` is for people reading it."""
-        seen = self._load()
-        line = json.dumps(
-            {
-                "container_key": container_key,
-                "container_full": container_full or container_key,
-                "digest": digest,
-                "manifest_id": manifest_id,
-                "outcome": outcome,
-                "at": at.isoformat(),
-            }
+        """Commit the entry before returning to the caller."""
+        self._import()
+        self._store.journal_record(
+            container_key,
+            digest,
+            container_full or container_key,
+            manifest_id,
+            outcome,
+            at.isoformat(),
         )
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        # A crash may have left a truncated last line; start on a fresh line.
-        prefix = ""
-        try:
-            with self._path.open("rb") as fh:
-                fh.seek(0, os.SEEK_END)
-                if fh.tell() > 0:
-                    fh.seek(-1, os.SEEK_END)
-                    if fh.read(1) != b"\n":
-                        prefix = "\n"
-        except FileNotFoundError:
-            pass
-        with self._path.open("a", encoding="utf-8") as fh:
-            fh.write(prefix + line + "\n")
-            fh.flush()
-            os.fsync(fh.fileno())
-        seen.add((container_key, digest))

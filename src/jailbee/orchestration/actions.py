@@ -459,11 +459,13 @@ def start_child(ctx: ActionContext, plan: SpawnPlan, *, fork: ForkSource | None)
     except (ForkError, ValueError) as e:
         _drop_watch(ctx, plan.child_full)
         return refused(str(e))
-    reservations = load_reservations(ctx.root)
-    entries = [r for r in reservations.get(ctx.sender.full, []) if r.child_full != plan.child_full]
-    entries.append(Reservation(plan.child_full, started.pid, ctx.now.isoformat()))
-    reservations[ctx.sender.full] = entries
     try:
+        reservations = load_reservations(ctx.root)
+        entries = [
+            r for r in reservations.get(ctx.sender.full, []) if r.child_full != plan.child_full
+        ]
+        entries.append(Reservation(plan.child_full, started.pid, ctx.now.isoformat()))
+        reservations[ctx.sender.full] = entries
         save_reservations(ctx.root, reservations)
     except OSError as exc:
         log.warning(
@@ -742,11 +744,13 @@ def _boot(
         worker = launch_boot_background(
             ctx.cfg, container_name=child.full, initial_prompt=prompt, config_path=None
         )
-        reservations = load_reservations(ctx.root)
-        entries = [r for r in reservations.get(ctx.sender.full, []) if r.child_full != child.full]
-        entries.append(Reservation(child.full, worker.pid, ctx.now.isoformat()))
-        reservations[ctx.sender.full] = entries
         try:
+            reservations = load_reservations(ctx.root)
+            entries = [
+                r for r in reservations.get(ctx.sender.full, []) if r.child_full != child.full
+            ]
+            entries.append(Reservation(child.full, worker.pid, ctx.now.isoformat()))
+            reservations[ctx.sender.full] = entries
             save_reservations(ctx.root, reservations)
         except OSError as exc:
             log.warning("could not reserve booting child %s: %s", child.full, exc)

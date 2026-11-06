@@ -6,6 +6,7 @@ import os
 import sqlite3
 import stat
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -202,14 +203,129 @@ def test_migrations_extendable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     extended = [
         *store_mod._MIGRATIONS,
         "ALTER TABLE digest ADD COLUMN note TEXT;\nCREATE TABLE extra(x);",
+        "INSERT INTO extra VALUES (42);",
     ]
     monkeypatch.setattr(store_mod, "_MIGRATIONS", extended)
     assert [r.id for r in BrokerStore(path).history("u")] == ["1"]
     con = sqlite3.connect(path)
     row = con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-    con.execute("SELECT x FROM extra")
+    assert con.execute("SELECT x FROM extra").fetchone() == (42,)
     con.close()
-    assert row[0] == "2"
+    assert row[0] == str(len(extended))
+
+
+def test_failed_migration_rolls_back_and_can_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = store_path(tmp_path)
+    st = BrokerStore(path)
+    st.recipients()
+    original = list(store_mod._MIGRATIONS)
+    script = "CREATE TABLE migration_probe(x);\nINSERT INTO migration_probe VALUES (42);"
+    monkeypatch.setattr(
+        store_mod, "_MIGRATIONS", [*original, script + "\nINSERT INTO missing VALUES (1);"]
+    )
+    with pytest.raises(StoreError):
+        st.recipients()
+    with sqlite3.connect(path) as con:
+        assert con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() == (
+            str(len(original)),
+        )
+        assert (
+            con.execute("SELECT name FROM sqlite_master WHERE name='migration_probe'").fetchone()
+            is None
+        )
+    monkeypatch.setattr(store_mod, "_MIGRATIONS", [*original, script])
+    st.recipients()
+    with sqlite3.connect(path) as con:
+        assert con.execute("SELECT x FROM migration_probe").fetchall() == [(42,)]
+        assert con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() == (
+            str(len(original) + 1),
+        )
+
+
+def test_state_roundtrip_and_literal_prefix(st: BrokerStore) -> None:
+    assert st.kv_get("missing") is None
+    st.kv_put("a%_one", {"items": [1, True]})
+    st.kv_put("aXXone", [2])
+    assert st.kv_get("a%_one") == {"items": [1, True]}
+    assert st.kv_keys("a%_") == ["a%_one"]
+    st.kv_delete("a%_one")
+    assert st.kv_get("a%_one") is None
+
+
+def test_import_once_atomic_and_shared(tmp_path: Path) -> None:
+    first = BrokerStore(store_path(tmp_path))
+    second = BrokerStore(store_path(tmp_path))
+    calls: list[int] = []
+
+    def failing(con: sqlite3.Connection) -> None:
+        con.execute("INSERT INTO state VALUES ('key', '1')")
+        raise ValueError("interrupted")
+
+    with pytest.raises(ValueError, match="interrupted"):
+        first.import_once("legacy", failing)
+    assert second.kv_get("key") is None
+
+    entered = threading.Event()
+    release = threading.Event()
+    competing = threading.Event()
+
+    def load(con: sqlite3.Connection) -> None:
+        calls.append(1)
+        con.execute("INSERT INTO state VALUES ('key', '2')")
+        entered.set()
+        assert release.wait(5)
+
+    def compete() -> bool:
+        competing.set()
+        return second.import_once("legacy", load)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        winner = pool.submit(first.import_once, "legacy", load)
+        try:
+            assert entered.wait(5)
+            contender = pool.submit(compete)
+            assert competing.wait(5)
+        finally:
+            release.set()
+        assert winner.result(timeout=10) is True
+        assert contender.result(timeout=10) is False
+    assert calls == [1]
+    assert second.kv_get("key") == 2
+    first.kv_put("key", 3)
+    assert second.kv_get("key") == 3
+
+
+def test_open_state_store_cache_thread_safe(tmp_path: Path) -> None:
+    stores: list[BrokerStore] = []
+    threads = [
+        threading.Thread(target=lambda: stores.append(store_mod.open_state_store(tmp_path)))
+        for _ in range(20)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len(stores) == 20
+    assert all(store is stores[0] for store in stores)
+    assert store_mod.open_state_store(tmp_path / "other") is not stores[0]
+
+
+def test_migrations_apply_from_version_zero(tmp_path: Path) -> None:
+    path = store_path(tmp_path)
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)")
+    con.execute("INSERT INTO meta VALUES('schema_version', '0')")
+    con.commit()
+    con.close()
+    st = BrokerStore(path)
+    st.kv_put("x", {"ok": True})
+    assert st.kv_get("x") == {"ok": True}
+    with sqlite3.connect(path) as con:
+        version = con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+        assert version[0] == str(len(store_mod._MIGRATIONS))
+        assert con.execute("SELECT count(*) FROM items").fetchone()[0] == 0
 
 
 def test_newer_schema_is_refused(tmp_path: Path) -> None:

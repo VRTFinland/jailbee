@@ -14,7 +14,7 @@ import os
 import sqlite3
 import threading
 import time
-from collections.abc import Collection, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -67,10 +67,21 @@ _MIGRATIONS: list[str] = [
         at REAL NOT NULL
     );
     """,
+    """
+    CREATE TABLE state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    """,
+    """
+    CREATE TABLE journal (
+        container_key TEXT NOT NULL, digest TEXT NOT NULL,
+        container_full TEXT NOT NULL, manifest_id TEXT NOT NULL,
+        outcome TEXT NOT NULL, at TEXT NOT NULL,
+        PRIMARY KEY(container_key, digest)
+    );
+    """,
 ]
 
 
-class StoreError(Exception):
+class StoreError(OSError):
     """The broker store failed (corrupt file, locked too long, ...)."""
 
 
@@ -251,6 +262,72 @@ class BrokerStore:
                 con.execute("ROLLBACK")
             raise
         con.execute("COMMIT")
+
+    # -- state ---------------------------------------------------------
+
+    def kv_get(self, key: str) -> object | None:
+        with self._tx(write=False) as con:
+            row = con.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
+        return None if row is None else json.loads(row[0])
+
+    def kv_put(self, key: str, value: object) -> None:
+        with self._tx() as con:
+            con.execute(
+                "INSERT INTO state(key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, json.dumps(value)),
+            )
+
+    def kv_delete(self, key: str) -> None:
+        with self._tx() as con:
+            con.execute("DELETE FROM state WHERE key=?", (key,))
+
+    def kv_keys(self, prefix: str) -> list[str]:
+        with self._tx(write=False) as con:
+            rows = con.execute(
+                "SELECT key FROM state WHERE substr(key, 1, ?) = ? ORDER BY key",
+                (len(prefix), prefix),
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def import_once(self, name: str, loader: Callable[[sqlite3.Connection], None]) -> bool:
+        """Run loader and record its marker in the same write transaction.
+
+        The loader must use the supplied connection, not methods opening another
+        transaction. Return whether the loader ran.
+        """
+        marker = f"imported:{name}"
+        with self._tx() as con:
+            if con.execute("SELECT 1 FROM meta WHERE key=?", (marker,)).fetchone():
+                return False
+            loader(con)
+            con.execute("INSERT INTO meta(key, value) VALUES (?, '1')", (marker,))
+        return True
+
+    def journal_seen(self, container_key: str, digest: str) -> bool:
+        with self._tx(write=False) as con:
+            return (
+                con.execute(
+                    "SELECT 1 FROM journal WHERE container_key=? AND digest=?",
+                    (container_key, digest),
+                ).fetchone()
+                is not None
+            )
+
+    def journal_record(
+        self,
+        container_key: str,
+        digest: str,
+        container_full: str,
+        manifest_id: str,
+        outcome: str,
+        at: str,
+    ) -> None:
+        with self._tx() as con:
+            con.execute(
+                "INSERT OR IGNORE INTO journal VALUES (?, ?, ?, ?, ?, ?)",
+                (container_key, digest, container_full, manifest_id, outcome, at),
+            )
 
     # -- items ---------------------------------------------------------
 
@@ -497,6 +574,111 @@ def _insert(
         ),
     )
     return cur.rowcount > 0
+
+
+_STATE_STORES: dict[Path, BrokerStore] = {}
+_STATE_STORES_LOCK = threading.Lock()
+
+
+def open_state_store(root: Path) -> BrokerStore:
+    """Return a shared stateless handle; connections remain per operation."""
+    path = store_path(root).absolute()
+    with _STATE_STORES_LOCK:
+        if path not in _STATE_STORES:
+            _STATE_STORES[path] = BrokerStore(path)
+        return _STATE_STORES[path]
+
+
+class _LegacyImportRetryError(Exception):
+    """A legacy source could not be read or safely quarantined yet."""
+
+
+def import_json_document(
+    root: Path, name: str, validate: Callable[[object], None], *, for_write: bool = False
+) -> BrokerStore:
+    """Import a legacy JSON document once; validate raises ValueError on bad shape.
+
+    The document key and marker use the legacy filename. Future document users
+    can reuse this helper before either reading or saving that key. Set
+    for_write to prevent overwriting state when the legacy import must retry.
+    """
+    store = open_state_store(root)
+    path = root / name
+
+    def load(con: sqlite3.Connection) -> None:
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            validate(document)
+        except FileNotFoundError:
+            return
+        except (ValueError, TypeError, UnicodeError) as exc:
+            _log.warning("ignoring corrupt orchestration state %s: %s", path, exc)
+            try:
+                path.replace(path.with_name(path.name + ".corrupt"))
+            except FileNotFoundError:
+                pass
+            except OSError as rename_exc:
+                _log.warning("cannot quarantine orchestration state %s: %s", path, rename_exc)
+                raise _LegacyImportRetryError from rename_exc
+            return
+        except OSError as exc:
+            _log.warning("ignoring unreadable orchestration state %s: %s", path, exc)
+            raise _LegacyImportRetryError from exc
+        con.execute(
+            "INSERT INTO state(key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING",
+            (name, json.dumps(document)),
+        )
+
+    marker = f"imported:{name}"
+    pending = f"pending:{name}"
+    blocked = False
+    with store._tx() as con:
+        has_pending = con.execute("SELECT 1 FROM meta WHERE key=?", (pending,)).fetchone()
+        if for_write and has_pending:
+            blocked = True
+        elif not con.execute("SELECT 1 FROM meta WHERE key=?", (marker,)).fetchone():
+            try:
+                load(con)
+            except _LegacyImportRetryError:
+                con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, '1')", (pending,))
+                blocked = True
+            else:
+                con.execute("INSERT INTO meta(key, value) VALUES (?, '1')", (marker,))
+                con.execute("DELETE FROM meta WHERE key=?", (pending,))
+    if blocked:
+        if for_write:
+            raise StoreError(f"cannot save state while legacy import is pending: {path}")
+        return store
+    # TODO(state-db-cleanup): remove migrated files after the compatibility window.
+    try:
+        path.replace(path.with_name(path.name + ".migrated"))
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        _log.warning("cannot rename migrated orchestration state %s: %s", path, exc)
+    return store
+
+
+def read_state_snapshot(root: Path, key: str) -> tuple[bool, object | None]:
+    """Read a state value and import marker together without creating a store."""
+    path = store_path(root)
+    if not path.exists():
+        return False, None
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=_BUSY_TIMEOUT_MS / 1000)
+        try:
+            con.execute("BEGIN")
+            row = con.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
+            marker = con.execute("SELECT 1 FROM meta WHERE key=?", (f"imported:{key}",)).fetchone()
+            return bool(row or marker), None if row is None else json.loads(row[0])
+        finally:
+            con.close()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc):
+            return False, None
+        raise StoreError(str(exc)) from exc
+    except sqlite3.Error as exc:
+        raise StoreError(str(exc)) from exc
 
 
 def _enable_wal(con: sqlite3.Connection) -> None:

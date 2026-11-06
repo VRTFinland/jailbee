@@ -10,19 +10,19 @@ best effort and never raises.
 from __future__ import annotations
 
 import fcntl
-import json
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from jailbee import background
 from jailbee.db.models import JOB_AUTOSTART, JOB_BOOT, JOB_CREATE
 from jailbee.orchestration import labels
 from jailbee.orchestration.actions import Node, Outcome, done, failed
-from jailbee.orchestration.state import WATCH_FILE, atomic_write_text
+from jailbee.orchestration.state import WATCH_FILE
+from jailbee.orchestration.store import import_json_document
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -71,16 +71,11 @@ class JobSnapshot:
 
 def load_watch(root: Path) -> dict[str, list[WatchEntry]]:
     """Load the watch list; a missing or corrupt file yields an empty one."""
-    path = root / WATCH_FILE
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {}
-    except (OSError, ValueError) as exc:
-        log.warning("ignoring unreadable orchestration watch list %s: %s", path, exc)
+    raw = import_json_document(root, WATCH_FILE, _validate_watch).kv_get(WATCH_FILE)
+    if raw is None:
         return {}
     try:
-        items_by_orch = raw["watches"].items()
+        items_by_orch = cast(dict[str, Any], raw)["watches"].items()
         result: dict[str, list[WatchEntry]] = {}
         for orchestrator, items in items_by_orch:
             entries = [e for e in (_parse_entry(item) for item in items) if e is not None]
@@ -88,8 +83,13 @@ def load_watch(root: Path) -> dict[str, list[WatchEntry]]:
                 result[orchestrator] = entries
         return result
     except (KeyError, TypeError, AttributeError) as exc:
-        log.warning("ignoring corrupt orchestration watch list %s: %s", path, exc)
+        log.warning("ignoring corrupt orchestration watch list: %s", exc)
         return {}
+
+
+def _validate_watch(raw: object) -> None:
+    if not isinstance(raw, dict) or not isinstance(raw.get("watches"), dict):
+        raise ValueError("invalid watch document")
 
 
 def _parse_entry(item: object) -> WatchEntry | None:
@@ -111,12 +111,14 @@ def _parse_entry(item: object) -> WatchEntry | None:
 
 
 def save_watch(root: Path, watches: dict[str, list[WatchEntry]]) -> None:
-    """Atomically persist the watch list, omitting empty lists."""
+    """Persist the watch list, omitting empty lists."""
     payload = {
         "version": _WATCH_VERSION,
         "watches": {k: [asdict(e) for e in v] for k, v in watches.items() if v},
     }
-    atomic_write_text(root / WATCH_FILE, json.dumps(payload, indent=2) + "\n")
+    import_json_document(root, WATCH_FILE, _validate_watch, for_write=True).kv_put(
+        WATCH_FILE, payload
+    )
 
 
 @contextmanager

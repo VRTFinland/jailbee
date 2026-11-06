@@ -90,6 +90,30 @@ def test_queued_counts_missing_or_garbage_is_empty(tmp_path, text):
     assert queued_counts(p) == {}
 
 
+def test_queued_counts_reads_saved_db_and_ignores_stale_file(tmp_path):
+    from jailbee.orchestration.state import QueuedRequest, save_queue
+
+    request = QueuedRequest("m", "child", "fork", None, "t", "b", None, "", {})
+    save_queue(tmp_path, {"orch": [request]})
+    path = tmp_path / "queue.json"
+    path.write_text('{"queues":{"stale":[{},{}]}}')
+    assert queued_counts(path) == {"orch": 1}
+    assert path.exists()
+
+
+def test_queued_counts_legacy_is_read_only_and_marker_blocks_fallback(tmp_path):
+    from jailbee.orchestration.state import load_queue
+
+    path = tmp_path / "queue.json"
+    path.write_text('{"queues":{"orch":[]}}')
+    assert queued_counts(path) == {"orch": 0}
+    assert not (tmp_path / "broker.db").exists()
+    assert load_queue(tmp_path) == {}
+    path.write_text('{"queues":{"stale":[{}]}}')
+    assert queued_counts(path) == {"orch": 0}
+    assert path.exists()
+
+
 def test_annotate_counts_running_children_and_orphans():
     orch = replace(ci("alpha-orch", "alpha"), grant=parse_grant_view(GRANT))
     kid1 = replace(ci("alpha-k1", "alpha"), child=ChildView("alpha-orch", "working", (), False, ()))

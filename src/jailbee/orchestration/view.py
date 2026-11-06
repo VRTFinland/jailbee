@@ -9,14 +9,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from jailbee.db import state_dir
 from jailbee.orchestration import labels
 from jailbee.orchestration.grant import ChildRights, Grant, GrantError
 from jailbee.orchestration.runner import parse_runner_label
 from jailbee.orchestration.state import QUEUE_FILE
-from jailbee.orchestration.store import read_items
+from jailbee.orchestration.store import StoreError, read_items, read_state_snapshot
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -117,9 +117,12 @@ def queued_counts(path: Path | None = None) -> dict[str, int]:
     """Return queued spawn requests per orchestrator; unreadable file gives {}."""
     p = path if path is not None else state_dir() / "orchestration" / QUEUE_FILE
     try:
-        queues = json.loads(p.read_text(encoding="utf-8"))["queues"]
+        present, document = read_state_snapshot(p.parent, QUEUE_FILE)
+        if not present:
+            document = json.loads(p.read_text(encoding="utf-8"))
+        queues = cast(dict[str, Any], document)["queues"]
         return {str(k): len(v) for k, v in queues.items()}
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, StoreError):
         return {}
 
 

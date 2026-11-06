@@ -190,6 +190,40 @@ def test_start_child_records_reservation(tmp_path: Path, monkeypatch: pytest.Mon
     }
 
 
+@pytest.mark.parametrize("operation", ["load", "save"])
+def test_started_child_remains_watched_when_reservation_store_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    operation: str,
+) -> None:
+    from jailbee.create_flow import CreateStarted
+    from jailbee.orchestration.store import StoreError
+    from jailbee.orchestration.watch import load_watch
+
+    rig = Rig(tmp_path, limit=2)
+    monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
+    launch = MagicMock(return_value=CreateStarted("proj-fix-1", 777, tmp_path / "log"))
+    monkeypatch.setattr(actions, "start_create", launch)
+    original_load = actions.load_reservations
+
+    def load(root: Path) -> dict[str, list[state.Reservation]]:
+        if operation == "load" and launch.called:
+            raise StoreError("disk full")
+        return original_load(root)
+
+    monkeypatch.setattr(actions, "load_reservations", load)
+    if operation == "save":
+        monkeypatch.setattr(
+            actions, "save_reservations", MagicMock(side_effect=StoreError("disk full"))
+        )
+
+    assert actions.handle_spawn(rig.ctx(), _m(kind="new")).state == "started"
+    launch.assert_called_once()
+    assert "could not reserve creating child" in caplog.text
+    assert load_watch(tmp_path)["proj-orch"][0].child_full == "proj-fix-1"
+
+
 def test_dead_reservation_does_not_count(
     tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -229,9 +263,9 @@ def test_prune_drops_dead_keeps_live(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(actions, "reservation_alive", lambda pid: pid == 2)
     actions.prune_reservations(tmp_path)
     assert state.load_reservations(tmp_path) == {"proj-other": [live]}
-    before = (tmp_path / state.RESERVATIONS_FILE).stat().st_mtime_ns
+    monkeypatch.setattr(state, "save_reservations", MagicMock())
     actions.prune_reservations(tmp_path)
-    assert (tmp_path / state.RESERVATIONS_FILE).stat().st_mtime_ns == before
+    state.save_reservations.assert_not_called()
 
 
 def test_failed_create_frees_slot_on_next_drain(

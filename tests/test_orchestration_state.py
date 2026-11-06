@@ -28,7 +28,7 @@ def test_reservations_round_trip(tmp_path: Path) -> None:
     reservations = {"proj-orch": [state.Reservation("proj-a", 123, "2026-10-26T00:00:00+00:00")]}
     state.save_reservations(tmp_path, reservations)
     assert state.load_reservations(tmp_path) == reservations
-    assert json.loads((tmp_path / state.RESERVATIONS_FILE).read_text())["version"] == 1
+    assert not (tmp_path / state.RESERVATIONS_FILE).exists()
 
 
 def test_save_reservations_omits_empty(tmp_path: Path) -> None:
@@ -120,20 +120,38 @@ def test_queue_roundtrip(tmp_path: Path) -> None:
     queues = {"proj-a": [_req("m1"), _req("m2")], "proj-b": [_req("m3")]}
     save_queue(tmp_path, queues)
     assert load_queue(tmp_path) == queues
-    data = json.loads((tmp_path / "queue.json").read_text())
-    assert data["version"] == 1
+    assert not (tmp_path / "queue.json").exists()
 
 
 def test_queue_warm_paths_and_legacy(tmp_path):
-    from dataclasses import replace
+    from dataclasses import asdict, replace
 
+    legacy = asdict(_req())
+    del legacy["warm_paths"]
+    (tmp_path / "queue.json").write_text(json.dumps({"queues": {"proj-a": [legacy]}}))
+    assert load_queue(tmp_path)["proj-a"][0].warm_paths is None
     save_queue(tmp_path, {"proj-a": [replace(_req(), warm_paths=["*/build"])]})
     assert load_queue(tmp_path)["proj-a"][0].warm_paths == ["*/build"]
+    assert (tmp_path / "queue.json.migrated").exists()
+
+
+def test_save_before_load_never_reimports_legacy(tmp_path):
+    from dataclasses import asdict
+
     path = tmp_path / "queue.json"
-    raw = json.loads(path.read_text())
-    del raw["queues"]["proj-a"][0]["warm_paths"]
-    path.write_text(json.dumps(raw))
-    assert load_queue(tmp_path)["proj-a"][0].warm_paths is None
+    path.write_text(json.dumps({"queues": {"old": [asdict(_req())]}}))
+    save_queue(tmp_path, {"new": [_req()]})
+    path.write_text("not json")
+    assert list(load_queue(tmp_path)) == ["new"]
+    assert not path.exists()
+
+
+def test_invalid_document_is_quarantined(tmp_path, caplog):
+    path = tmp_path / "reservations.json"
+    path.write_text('{"reservations": []}')
+    assert state.load_reservations(tmp_path) == {}
+    assert (tmp_path / "reservations.json.corrupt").exists()
+    assert caplog.records
 
 
 def test_missing_queue_is_empty(tmp_path: Path) -> None:
@@ -149,8 +167,6 @@ def test_corrupt_queue_is_empty_and_warns(tmp_path: Path, caplog: pytest.LogCapt
 
 def test_empty_queue_omitted(tmp_path: Path) -> None:
     save_queue(tmp_path, {"proj-a": [], "proj-b": [_req()]})
-    data = json.loads((tmp_path / "queue.json").read_text())
-    assert list(data["queues"]) == ["proj-b"]
     assert list(load_queue(tmp_path)) == ["proj-b"]
 
 
@@ -172,3 +188,147 @@ def test_state_root_created_under_state_dir(
     root = state_root()
     assert root == tmp_path / "jailbee" / "orchestration"
     assert root.is_dir()
+
+
+def test_unreadable_legacy_reservations_warns_and_starts_empty(tmp_path, monkeypatch, caplog):
+    from pathlib import Path
+
+    path = tmp_path / state.RESERVATIONS_FILE
+    path.write_text(
+        json.dumps({"reservations": {"orch": [{"child_full": "a", "pid": 1, "started_at": "t"}]}})
+    )
+    original = Path.read_text
+
+    def unreadable(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError("denied")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+    assert state.load_reservations(tmp_path) == {}
+    assert "denied" in caplog.text
+    assert path.exists()
+    monkeypatch.setattr(Path, "read_text", original)
+    assert state.load_reservations(tmp_path) == {"orch": [state.Reservation("a", 1, "t")]}
+    assert (tmp_path / "reservations.json.migrated").exists()
+
+
+def test_unreadable_legacy_blocks_save_until_import_succeeds(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    import pytest
+
+    from jailbee.orchestration.store import StoreError
+
+    path = tmp_path / state.RESERVATIONS_FILE
+    path.write_text(
+        json.dumps({"reservations": {"orch": [{"child_full": "a", "pid": 1, "started_at": "t"}]}})
+    )
+    original = Path.read_text
+
+    def unreadable(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError("denied")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+    assert state.load_reservations(tmp_path) == {}
+    with pytest.raises(StoreError, match="legacy"):
+        state.save_reservations(tmp_path, {})
+    assert path.exists()
+    monkeypatch.setattr(Path, "read_text", original)
+    assert state.load_reservations(tmp_path) == {"orch": [state.Reservation("a", 1, "t")]}
+    assert (tmp_path / "reservations.json.migrated").exists()
+
+
+def test_failed_read_requires_reload_before_saving_even_after_recovery(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    import pytest
+
+    from jailbee.orchestration.store import StoreError
+
+    path = tmp_path / state.RESERVATIONS_FILE
+    path.write_text(
+        json.dumps({"reservations": {"orch": [{"child_full": "a", "pid": 1, "started_at": "t"}]}})
+    )
+    original = Path.read_text
+
+    def unreadable(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError("denied")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+    assert state.load_reservations(tmp_path) == {}
+    monkeypatch.setattr(Path, "read_text", original)
+    with pytest.raises(StoreError, match="legacy"):
+        state.save_reservations(tmp_path, {})
+    assert state.load_reservations(tmp_path) == {"orch": [state.Reservation("a", 1, "t")]}
+    state.save_reservations(tmp_path, {})
+    assert state.load_reservations(tmp_path) == {}
+
+
+def test_reservations_import_once_and_ignore_recreated_source(tmp_path):
+    path = tmp_path / state.RESERVATIONS_FILE
+    path.write_text(
+        json.dumps({"reservations": {"orch": [{"child_full": "a", "pid": 1, "started_at": "t"}]}})
+    )
+    expected = {"orch": [state.Reservation("a", 1, "t")]}
+    assert state.load_reservations(tmp_path) == expected
+    assert (tmp_path / "reservations.json.migrated").exists()
+    path.write_text("bad")
+    assert state.load_reservations(tmp_path) == expected
+
+
+def test_missing_source_marks_import_complete(tmp_path):
+    assert load_queue(tmp_path) == {}
+    (tmp_path / "queue.json").write_text("bad")
+    assert load_queue(tmp_path) == {}
+    assert (tmp_path / "queue.json.migrated").exists()
+
+
+def test_corrupt_syntax_quarantined(tmp_path):
+    (tmp_path / "queue.json").write_text("{")
+    assert load_queue(tmp_path) == {}
+    assert (tmp_path / "queue.json.corrupt").read_text() == "{"
+
+
+def test_failed_rename_after_commit_retried_without_reimport(tmp_path, monkeypatch):
+    from dataclasses import asdict
+    from pathlib import Path
+
+    path = tmp_path / "queue.json"
+    path.write_text(json.dumps({"queues": {"orch": [asdict(_req())]}}))
+    original = Path.replace
+    calls = []
+
+    def fail_once(self, target):
+        if self == path and not calls:
+            calls.append(1)
+            raise PermissionError("denied")
+        return original(self, target)
+
+    monkeypatch.setattr(Path, "replace", fail_once)
+    assert load_queue(tmp_path) == {"orch": [_req()]}
+    path.write_text("invalid")
+    assert load_queue(tmp_path) == {"orch": [_req()]}
+    assert (tmp_path / "queue.json.migrated").read_text() == "invalid"
+
+
+def test_quarantine_failure_does_not_abort(tmp_path, monkeypatch, caplog):
+    from pathlib import Path
+
+    path = tmp_path / "queue.json"
+    path.write_text("{")
+    original = Path.replace
+
+    def denied(self, target):
+        if self == path:
+            raise PermissionError("denied")
+        return original(self, target)
+
+    monkeypatch.setattr(Path, "replace", denied)
+    assert load_queue(tmp_path) == {}
+    assert path.exists()
+    assert "denied" in caplog.text

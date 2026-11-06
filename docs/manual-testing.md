@@ -6118,6 +6118,45 @@ broker over a per-container socket mounted at `/run/jailbee/orchestration/`
    started copy with the device still attached would reach `<k>`'s socket. Do
    not start it in this test. Delete the copy.
 
+### Broker state database migration (real host)
+
+Run on a disposable host with legacy orchestration state present. Do not
+simulate corruption in valuable live state. Back up state before upgrading; the
+first use of each state area lazily imports it into `broker.db`, so starting the
+broker alone may not migrate every area.
+
+```bash
+state="${XDG_STATE_HOME:-$HOME/.local/state}/jailbee/orchestration"
+backup="$(mktemp -d "${TMPDIR:-/tmp}/jailbee-state-backup.XXXXXX")"
+systemctl --user stop jailbee-broker
+mkdir -p "$backup"
+tar -C "$state" --exclude='./sock' -cf "$backup/orchestration.tar" .
+# Upgrade/install the new code, then start the broker.
+systemctl --user start jailbee-broker
+```
+
+Exercise inbox message delivery and the queue, watch/supervision, and
+publication paths that have legacy inputs, so each state area is accessed.
+Then check the migrated state:
+
+- Check the queue still contains the same spawn/restart requests and
+  reservations; watched children remain supervised; and publication in-flight
+  recovery, known/accepted request deduplication, hourly budget and results are
+  unchanged. Use the normal orchestration status/messages and broker logs, plus
+  inspect `broker.db` with SQLite read-only if needed.
+- For each accessed legacy state area, confirm successfully imported inputs
+  have a `.migrated` counterpart. Corrupt inputs are warned about and retained
+  as `.corrupt`; unreadable inputs that cannot be read or renamed are warned
+  about and retained for retry. Database write failures must fail closed.
+  For the journal, valid entries before a torn final line are imported and the
+  source is migrated with a warning; a wholly malformed journal is quarantined.
+- Restart the broker again and repeat the checks. The `.migrated` inputs must
+  not be imported a second time; no duplicate queued requests, watches,
+  publication results or journal decisions should appear. `publish-log.jsonl`
+  remains the audit log, and uncertain-publication review files remain available
+  for human resolution.
+- The socket, lock and transitional file-transport files are not migrated.
+
 Host-confirmation items from the design spike (only a real host settles these):
 
 - Permissions under the real `raw.idmap`: the `sock/<uuid>` directory is 0700

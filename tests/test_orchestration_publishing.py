@@ -12,6 +12,7 @@ from jailbee.orchestration import labels, publishing
 from jailbee.orchestration.actions import dispatch
 from jailbee.orchestration.grant import Grant, PublishRights
 from jailbee.orchestration.protocol import PublishManifest
+from jailbee.orchestration.store import open_state_store
 from jailbee.outbox_io import ContainerIdentity, JournalStore
 from tests.test_orchestration_actions import _ctx, _node
 
@@ -79,6 +80,84 @@ def accept(rig):
     publishing.start(ctx, m)
     assert len(threads) == 1
     threads[0].target(*threads[0].args)
+
+
+@pytest.mark.parametrize(
+    "name,document",
+    [
+        ("publish-inflight.json", {"proj-o": {"ref": "old"}}),
+        ("publish-known.json", {"proj-o": "key"}),
+        ("publish-accepted.json", {"key": ["old"]}),
+        ("publish-budget.json", {"proj-o": ["2026-11-06T12:00:00+00:00"]}),
+    ],
+)
+def test_documents_import_once_and_quarantine_corrupt_state(rig, caplog, name, document):
+    ctx = rig[0]
+    legacy = ctx.root / name
+    legacy.write_text(json.dumps(document))
+    assert publishing._load(ctx.root, name) == document
+    assert legacy.with_name(name + ".migrated").exists()
+    legacy.write_text(json.dumps({"unexpected": "value"}))
+    assert publishing._load(ctx.root, name) == document
+    publishing._save(ctx.root, name, {"new": "value"})
+    assert publishing._load(ctx.root, name) == {"new": "value"}
+    assert not legacy.exists()
+
+    other = ctx.root / "other"
+    other.mkdir()
+    (other / name).write_text("broken")
+    assert publishing._load(other, name) == {}
+    assert (other / (name + ".corrupt")).exists()
+    assert "corrupt" in caplog.text
+
+
+def test_known_senders_imports_once_and_quarantines_corrupt_state(rig, caplog):
+    ctx = rig[0]
+    legacy = ctx.root / "publish-known.json"
+    legacy.write_text(json.dumps({"proj-old": "old-key"}))
+    assert publishing.known_senders(ctx.root) == {"proj-old"}
+    assert legacy.with_name(legacy.name + ".migrated").exists()
+    legacy.write_text(json.dumps({"unexpected": "key"}))
+    assert publishing.known_senders(ctx.root) == {"proj-old"}
+    publishing.remember(ctx)
+    assert publishing.known_senders(ctx.root) == {"proj-old", ctx.sender.full}
+    assert not legacy.exists()
+
+    other = ctx.root / "other"
+    other.mkdir()
+    (other / "publish-known.json").write_text("broken")
+    assert publishing.known_senders(other) == set()
+    assert (other / "publish-known.json.corrupt").exists()
+    assert "corrupt" in caplog.text
+
+
+def test_legacy_results_import_and_quarantine(rig, caplog):
+    ctx, m, *_ = rig
+    assert publishing.handle_publish(ctx, m).state == "started"
+    path = publishing._result(ctx.root, ctx.sender.key, m.id)
+    path.parent.mkdir()
+    path.write_text(json.dumps({"state": "done", "detail": "legacy"}))
+    (path.parent / "bad.json").write_text("broken")
+    replies = []
+    publishing.settle(ctx, lambda ref, out: replies.append(out.detail))
+    assert replies == ["legacy"]
+    assert (ctx.root / "publish-results.migrated" / "bad.json.corrupt").exists()
+    assert "corrupt" in caplog.text
+    assert not path.parent.exists()
+
+
+def test_malformed_legacy_result_recovers_as_uncertain(rig, caplog):
+    ctx, m, *_ = rig
+    assert publishing.handle_publish(ctx, m).state == "started"
+    path = publishing._result(ctx.root, ctx.sender.key, m.id)
+    path.parent.mkdir()
+    path.write_text("{}")
+    publishing.recover(ctx.root)
+    replies = []
+    publishing.settle(ctx, lambda ref, out: replies.append(out))
+    assert len(replies) == 1 and "uncertain" in replies[0].detail
+    assert (ctx.root / "publish-results.migrated" / (path.name + ".corrupt")).exists()
+    assert "corrupt" in caplog.text
 
 
 def test_handle_publish_rereads_revoked_label(rig):
@@ -315,10 +394,10 @@ def test_in_lock_policy_refusal_reported_failed(rig):
 def test_second_publish_while_inflight_refused(rig):
     ctx, m, *_ = rig
     publishing.handle_publish(ctx, m)
-    before = (ctx.root / "publish-budget.json").read_text()
+    before = json.dumps(open_state_store(ctx.root).kv_get("publish-budget.json"))
     out = publishing.handle_publish(ctx, m.model_copy(update={"id": "pub-2"}))
     assert out.state == "refused" and "already running" in out.detail
-    assert (ctx.root / "publish-budget.json").read_text() == before
+    assert json.dumps(open_state_store(ctx.root).kv_get("publish-budget.json")) == before
 
 
 def test_rate_cap_refuses_and_reserves_nothing(rig):
@@ -326,16 +405,16 @@ def test_rate_cap_refuses_and_reserves_nothing(rig):
     (ctx.root / "publish-budget.json").write_text(
         json.dumps({ctx.sender.full: [ctx.now.isoformat()] * 30})
     )
-    before = (ctx.root / "publish-budget.json").read_text()
+    before = {ctx.sender.full: [ctx.now.isoformat()] * 30}
     assert publishing.handle_publish(ctx, m).state == "refused"
-    assert (ctx.root / "publish-budget.json").read_text() == before
+    assert open_state_store(ctx.root).kv_get("publish-budget.json") == before
 
 
 def test_rate_budget_reserved_and_not_refunded_on_failure(rig):
     rig[4].side_effect = RuntimeError("network failed")
     accept(rig)
     publishing.settle(rig[0], lambda *a: None)
-    assert len(json.loads((rig[0].root / "publish-budget.json").read_text())["proj-o"]) == 1
+    assert len(open_state_store(rig[0].root).kv_get("publish-budget.json")["proj-o"]) == 1
 
 
 def test_recover_turns_inflight_into_uncertain_failure_once(rig):
@@ -425,7 +504,7 @@ def test_rate_budget_prunes_expired_reservations(rig):
         json.dumps({ctx.sender.full: [(ctx.now - timedelta(hours=2)).isoformat()] * 30})
     )
     assert publishing.handle_publish(ctx, m).state == "started"
-    assert json.loads((ctx.root / "publish-budget.json").read_text())[ctx.sender.full] == [
+    assert open_state_store(ctx.root).kv_get("publish-budget.json")[ctx.sender.full] == [
         ctx.now.isoformat()
     ]
 
@@ -726,6 +805,36 @@ def _assign_manifest(files, add):
     )
 
 
+def test_refund_is_not_repeated_after_delivery_failure(rig):
+    ctx, _m, files, _, publish = rig
+    _assign_manifest(files, ["bob"])
+    ctx.sender.config[labels.GRANT] = Grant(
+        publish=PublishRights(issues=("assign_self",))
+    ).to_label()
+    publish.side_effect = lambda *a, **kw: kw["policy"](_assign_batch(rig, add=("bob",)))
+    accept(rig)
+    store = open_state_store(ctx.root)
+    stamp = ctx.now.isoformat()
+    store.kv_put("publish-budget.json", {ctx.sender.full: [stamp, stamp]})
+    import sqlite3
+
+    with sqlite3.connect(store.path) as con:
+        con.execute(
+            "CREATE TRIGGER fail_refund BEFORE UPDATE ON state "
+            "WHEN NEW.key='publish-inflight.json' AND NEW.value LIKE '%refunded%' "
+            "BEGIN SELECT RAISE(ABORT, 'interrupted'); END"
+        )
+    with pytest.raises(Exception, match="interrupted"):
+        publishing.settle(ctx, lambda *args: None)
+    assert store.kv_get("publish-budget.json") == {ctx.sender.full: [stamp, stamp]}
+    with sqlite3.connect(store.path) as con:
+        con.execute("DROP TRIGGER fail_refund")
+    with pytest.raises(RuntimeError):
+        publishing.settle(ctx, lambda *args: (_ for _ in ()).throw(RuntimeError("delivery")))
+    publishing.settle(ctx, lambda *args: None)
+    assert store.kv_get("publish-budget.json") == {ctx.sender.full: [stamp]}
+
+
 def test_assign_self_refusal_in_the_lock_leaves_the_budget_unchanged(rig):
     ctx, _m, files, _, publish = rig
     _assign_manifest(files, ["bob"])
@@ -737,7 +846,7 @@ def test_assign_self_refusal_in_the_lock_leaves_the_budget_unchanged(rig):
     replies = []
     publishing.settle(ctx, lambda ref, out: replies.append(out))
     assert replies[0].state == "failed" and "assign" in replies[0].detail
-    budget = json.loads((ctx.root / "publish-budget.json").read_text())
+    budget = open_state_store(ctx.root).kv_get("publish-budget.json")
     assert budget.get(ctx.sender.full, []) == []
 
 
@@ -757,4 +866,4 @@ def test_publish_failure_after_the_policy_passed_keeps_the_reservation(rig):
     replies = []
     publishing.settle(ctx, lambda ref, out: replies.append(out))
     assert replies[0].state == "failed" and "GitHub failed" in replies[0].detail
-    assert len(json.loads((ctx.root / "publish-budget.json").read_text())[ctx.sender.full]) == 1
+    assert len(open_state_store(ctx.root).kv_get("publish-budget.json")[ctx.sender.full]) == 1

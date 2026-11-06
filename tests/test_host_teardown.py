@@ -255,7 +255,7 @@ def test_corrupt_queue_file_left_alone() -> None:
     root = ostate.state_root()
     (root / "queue.json").write_text("{not json")
     host_teardown.cleanup(host_teardown.snapshot(_incus("foo"), "foo"))
-    assert (root / "queue.json").read_text() == "{not json"
+    assert (root / "queue.json.corrupt").read_text() == "{not json"
 
 
 # --- wiring through the two destroy paths ---------------------------------

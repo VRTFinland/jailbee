@@ -58,20 +58,170 @@ def alive(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(background, "worker_alive", lambda pid: pid == 4242)
 
 
-def test_concurrent_registers_preserve_both(tmp_path, monkeypatch):
+def test_register_and_cancel_wait_for_watch_lock(tmp_path, monkeypatch: pytest.MonkeyPatch):
     from concurrent.futures import ThreadPoolExecutor
-    from threading import Barrier
+    from threading import Event
 
-    barrier = Barrier(2)
-    original = watch.load_watch
+    save_watch(
+        tmp_path,
+        {
+            ORCH: [
+                WatchEntry("keep", "keep", "restart", NOW.isoformat()),
+                WatchEntry("remove", "remove", "restart", NOW.isoformat()),
+            ]
+        },
+    )
+    reached_load = Event()
+    original_load = watch.load_watch
 
-    def before_register(name):
-        barrier.wait()
-        watch.register(tmp_path, ORCH, WatchEntry(name, name, "restart", NOW.isoformat()))
+    def tracked_load(root):
+        reached_load.set()
+        return original_load(root)
+
+    register_started = Event()
+    cancel_started = Event()
+    message_started = Event()
+
+    def register():
+        register_started.set()
+        watch.register(tmp_path, ORCH, WatchEntry("new", "new", "restart", NOW.isoformat()))
+
+    def cancel():
+        cancel_started.set()
+        watch.cancel(tmp_path, ORCH, "remove")
+
+    def record_message():
+        message_started.set()
+        watch.record_message(tmp_path, ORCH, "keep", "progress", "working")
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        with watch.locked(tmp_path):
+            monkeypatch.setattr(watch, "load_watch", tracked_load)
+            load_watch(tmp_path)
+            reached_load.clear()
+            first = pool.submit(register)
+            second = pool.submit(cancel)
+            third = pool.submit(record_message)
+            try:
+                assert register_started.wait(timeout=2)
+                assert cancel_started.wait(timeout=2)
+                assert message_started.wait(timeout=2)
+                assert not reached_load.wait(timeout=0.1)
+            finally:
+                monkeypatch.setattr(watch, "load_watch", original_load)
+        first.result(timeout=2)
+        second.result(timeout=2)
+        third.result(timeout=2)
+    final = load_watch(tmp_path)[ORCH]
+    assert {item.child_full for item in final} == {"keep", "new"}
+    assert next(item for item in final if item.child_full == "keep").last_message_line == "working"
+
+
+def test_mutation_locked_serializes_threads(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    entered = Event()
+    attempted = Event()
+    second_entered = Event()
+    release = Event()
+
+    def first():
+        with watch.mutation_locked(tmp_path):
+            entered.set()
+            assert release.wait(timeout=2)
+
+    def second():
+        attempted.set()
+        with watch.mutation_locked(tmp_path):
+            second_entered.set()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        list(pool.map(before_register, ["child-a", "child-b"]))
-    assert {item.child_full for item in original(tmp_path)[ORCH]} == {"child-a", "child-b"}
+        one = pool.submit(first)
+        assert entered.wait(timeout=2)
+        two = pool.submit(second)
+        try:
+            assert attempted.wait(timeout=2)
+            assert not second_entered.wait(timeout=0.1)
+        finally:
+            release.set()
+        one.result(timeout=2)
+        two.result(timeout=2)
+        assert second_entered.is_set()
+
+
+def test_watch_migrates_legacy_document_once_and_never_writes_file(tmp_path: Path) -> None:
+    import json
+    from dataclasses import asdict
+
+    legacy = {"version": 1, "watches": {ORCH: [asdict(entry())]}}
+    (tmp_path / "watch.json").write_text(json.dumps(legacy))
+
+    assert load_watch(tmp_path) == {ORCH: [entry()]}
+    assert (tmp_path / "watch.json.migrated").exists()
+    (tmp_path / "watch.json").write_text(json.dumps({"version": 1, "watches": {}}))
+    assert load_watch(tmp_path) == {ORCH: [entry()]}
+
+    watch.record_message(tmp_path, ORCH, "proj-kid", "progress", "working\nsecond line")
+    updated = load_watch(tmp_path)[ORCH][0]
+    assert updated.last_message_kind == "progress"
+    assert updated.last_message_line == "working"
+    save_watch(tmp_path, {ORCH: [updated]})
+    assert load_watch(tmp_path) == {ORCH: [updated]}
+    assert not (tmp_path / "watch.json").exists()
+
+
+def test_save_before_legacy_file_prevents_import_overwrite(tmp_path: Path) -> None:
+    import json
+    from dataclasses import asdict
+
+    saved = {ORCH: [entry()]}
+    save_watch(tmp_path, saved)
+    legacy = {"version": 1, "watches": {"legacy-orch": [asdict(entry("restart"))]}}
+    (tmp_path / "watch.json").write_text(json.dumps(legacy))
+
+    assert load_watch(tmp_path) == saved
+    assert (tmp_path / "watch.json.migrated").exists()
+
+
+def test_save_fails_closed_while_legacy_watch_is_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+    from dataclasses import asdict
+    from pathlib import Path
+
+    from jailbee.orchestration.store import StoreError
+
+    legacy = {"version": 1, "watches": {ORCH: [asdict(entry())]}}
+    path = tmp_path / "watch.json"
+    path.write_text(json.dumps(legacy))
+    original_read_text = Path.read_text
+
+    def unreadable(self: Path, *args, **kwargs):
+        if self == path:
+            raise PermissionError("temporarily unreadable")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+    assert load_watch(tmp_path) == {}
+    with pytest.raises(StoreError):
+        save_watch(tmp_path, {})
+
+    monkeypatch.setattr(Path, "read_text", original_read_text)
+    assert load_watch(tmp_path) == {ORCH: [entry()]}
+
+
+def test_watch_migration_quarantines_syntax_and_top_level_corruption(tmp_path: Path) -> None:
+    (tmp_path / "watch.json").write_text("{not json")
+    assert load_watch(tmp_path) == {}
+    assert (tmp_path / "watch.json.corrupt").exists()
+
+    other = tmp_path / "wrong-shape"
+    other.mkdir()
+    (other / "watch.json").write_text('{"version": 1, "watches": []}')
+    assert load_watch(other) == {}
+    assert (other / "watch.json.corrupt").exists()
 
 
 def test_live_worker_waits(alive: None) -> None:
@@ -226,15 +376,11 @@ def test_read_jobs_snapshots_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     engine.dispose()
 
 
-def test_watch_roundtrip_and_corrupt_file(tmp_path: Path) -> None:
+def test_watch_roundtrip_and_invalid_entries(tmp_path: Path) -> None:
     assert load_watch(tmp_path) == {}
     w = {ORCH: [entry(), entry("restart")], "empty": []}
     save_watch(tmp_path, w)
     assert load_watch(tmp_path) == {ORCH: w[ORCH]}
-    (tmp_path / "watch.json").write_text("{not json")
-    assert load_watch(tmp_path) == {}
-    (tmp_path / "watch.json").write_text('{"watches": {"a": [{"bogus": 1}]}}')
-    assert load_watch(tmp_path) == {}
 
 
 def test_load_watch_drops_only_invalid_entries(tmp_path: Path) -> None:

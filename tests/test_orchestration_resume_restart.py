@@ -56,6 +56,32 @@ def test_restart_resume_last_resolves_latest(tmp_path, seams, adapter):
     adapter.session_exists.assert_called_once_with(rig.cfg, rig.child.full, B)
 
 
+@pytest.mark.parametrize("operation", ["load", "save"])
+def test_restarted_child_remains_watched_when_reservation_store_fails(
+    tmp_path, seams, monkeypatch, caplog, operation
+):
+    from jailbee.orchestration.store import StoreError
+    from jailbee.orchestration.watch import load_watch
+
+    rig = Rig(tmp_path)
+    original_load = actions.load_reservations
+
+    def load(root):
+        if operation == "load" and seams["boot"].called:
+            raise StoreError("disk full")
+        return original_load(root)
+
+    monkeypatch.setattr(actions, "load_reservations", load)
+    if operation == "save":
+        monkeypatch.setattr(
+            actions, "save_reservations", MagicMock(side_effect=StoreError("disk full"))
+        )
+    assert actions.handle_restart(rig.ctx(), manifest()).state == "started"
+    seams["boot"].assert_called_once()
+    assert "could not reserve booting child" in caplog.text
+    assert load_watch(tmp_path)[rig.sender.full][0].child_full == rig.child.full
+
+
 def test_restart_without_resume_unsets_label(tmp_path, seams):
     rig = Rig(tmp_path)
     assert actions.handle_restart(rig.ctx(), manifest()).state == "started"
@@ -176,10 +202,10 @@ def test_queued_restart_keeps_pin_after_history_eviction(tmp_path, seams, adapte
 
 def test_queue_file_without_resume_key_loads(tmp_path):
     req = state.QueuedRequest("r", "child", "restart", None, "now", "", None, "go", {})
-    state.save_queue(tmp_path, {"orch": [req]})
+    from dataclasses import asdict
+
+    entry = asdict(req)
+    entry.pop("resume")
     path = tmp_path / state.QUEUE_FILE
-    data = json.loads(path.read_text())
-    for entry in data["queues"]["orch"]:
-        entry.pop("resume", None)
-    path.write_text(json.dumps(data))
+    path.write_text(json.dumps({"version": 1, "queues": {"orch": [entry]}}))
     assert state.load_queue(tmp_path)["orch"][0].resume is None
