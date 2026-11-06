@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import json
+import math
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from jailbee.orchestration import broker, publishing, wire
+from jailbee.orchestration import broker, publishing, wake, wire
 from jailbee.orchestration.actions import Outcome, refused
+from jailbee.orchestration.outbox import grant_json_text
 from jailbee.orchestration.protocol import ManifestError, body_file_of, parse_manifest
 from jailbee.outbox_io import _validate_outbox_name
 
 if TYPE_CHECKING:
     from jailbee.orchestration.actions import ActionContext
     from jailbee.orchestration.protocol import Manifest
-    from jailbee.orchestration.store import BrokerStore
+    from jailbee.orchestration.store import BrokerStore, StoredItem
 
 
 def handle_send(
@@ -111,3 +114,233 @@ def _item(ref: str, outcome: Outcome) -> dict[str, object]:
     loaded = json.loads(status.model_dump_json(by_alias=True))
     assert isinstance(loaded, dict)
     return loaded
+
+
+def handle_list(store: BrokerStore, uuid: str) -> list[dict[str, object]]:
+    """The unacked items of a container's inbox, oldest first."""
+    return [row.item for row in store.unacked(uuid)]
+
+
+def handle_read(
+    store: BrokerStore, uuid: str, *, id: object, keep: object, now: float
+) -> dict[str, object]:
+    """Return one unacked item, acking it unless `keep`."""
+    if not isinstance(id, str) or not id:
+        raise wire.WireError(wire.BAD_REQUEST, "id must be a non-empty string")
+    if not isinstance(keep, bool):
+        raise wire.WireError(wire.BAD_REQUEST, "keep must be a boolean")
+    row = store.get(uuid, id)
+    if row is None or row.acked_at is not None:
+        raise wire.WireError(wire.NOT_FOUND, f"no unread item '{id}'")
+    if not keep:
+        store.ack(uuid, id, now=now)
+    return row.item
+
+
+def _orchestrator(memory: broker.BrokerMemory, uuid: str) -> ActionContext:
+    ctx = memory.contexts.get(uuid)
+    if ctx is None or ctx.role() != "orchestrator":
+        raise wire.WireError(wire.NOT_ORCHESTRATED, "this container is not an orchestrator")
+    return ctx
+
+
+def _children_result(
+    memory: broker.BrokerMemory, store: BrokerStore, uuid: str, ctx: ActionContext
+) -> dict[str, object]:
+    view = memory.children.get(ctx.sender.full)
+    return {
+        "observed_at": view.observed_at if view is not None else None,
+        "children": list(view.children) if view is not None else [],
+        "last_from_child": wake.newest_from_child(store.history(uuid)),
+    }
+
+
+def handle_children(
+    memory: broker.BrokerMemory, store: BrokerStore, uuid: str
+) -> dict[str, object]:
+    """The orchestrator's published children list and when each child last wrote."""
+    return _children_result(memory, store, uuid, _orchestrator(memory, uuid))
+
+
+def handle_status(
+    memory: broker.BrokerMemory, store: BrokerStore, uuid: str, *, child: object
+) -> dict[str, object]:
+    """Like `handle_children`, optionally narrowed to one child by name."""
+    if child is not None and not isinstance(child, str):
+        raise wire.WireError(wire.BAD_REQUEST, "child must be a string or null")
+    result = _children_result(memory, store, uuid, _orchestrator(memory, uuid))
+    if child is not None:
+        children = result["children"]
+        assert isinstance(children, list)
+        picked = [c for c in children if c.get("name") == child]
+        if not picked:
+            raise wire.WireError(wire.NOT_FOUND, f"unknown child '{child}'")
+        result["children"] = picked
+    return result
+
+
+def handle_grant(memory: broker.BrokerMemory, uuid: str) -> dict[str, object]:
+    ctx = memory.contexts.get(uuid)
+    grant = ctx.grant() if ctx is not None else None
+    if ctx is None or grant is None:
+        raise wire.WireError(wire.NOT_ORCHESTRATED, "this container holds no orchestration grant")
+    loaded = json.loads(grant_json_text(grant, *ctx.default_runner()))
+    assert isinstance(loaded, dict)
+    return loaded
+
+
+# -- long-poll ---------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class NextArgs:
+    wake: frozenset[str] | None
+    quiet: int
+    digest: int
+    timeout: float | None
+
+
+def _positive_int(args: dict[str, object], key: str) -> int:
+    value = args.get(key)
+    if value is None:
+        return 0
+    if type(value) is not int or value <= 0:
+        raise wire.WireError(wire.BAD_REQUEST, f"{key} must be a positive integer")
+    return value
+
+
+def handle_next_args(args: dict[str, object]) -> NextArgs:
+    """Validate the `next` arguments (BAD_REQUEST on anything malformed)."""
+    tokens = args.get("wake_on")
+    wake_set: frozenset[str] | None = None
+    if tokens is not None:
+        if not isinstance(tokens, list) or not all(
+            isinstance(t, str) and wake.valid_wake_token(t) for t in tokens
+        ):
+            raise wire.WireError(wire.BAD_REQUEST, "wake_on must be a list of valid wake tokens")
+        wake_set = frozenset(tokens)
+    raw_timeout = args.get("timeout")
+    timeout: float | None = None
+    if raw_timeout is not None:
+        if (
+            type(raw_timeout) not in (int, float)
+            or not math.isfinite(raw_timeout)  # type: ignore[arg-type]  # type() test above
+            or raw_timeout < 0  # type: ignore[operator]  # type() test above
+        ):
+            raise wire.WireError(wire.BAD_REQUEST, "timeout must be a non-negative number")
+        timeout = float(raw_timeout)  # type: ignore[arg-type]  # validated above
+    return NextArgs(
+        wake=wake_set,
+        quiet=_positive_int(args, "quiet_after"),
+        digest=_positive_int(args, "digest"),
+        timeout=timeout,
+    )
+
+
+SETTLE_SECONDS = 1.0
+
+
+@dataclass
+class Waiter:
+    uuid: str
+    conn_id: int
+    wake: frozenset[str] | None
+    quiet: int
+    digest: int
+    deadline: float | None  # time.monotonic()
+    waited: bool = False
+    settle_until: float | None = None
+
+
+class Waiters:
+    """Parked `next` long-polls: at most one per container."""
+
+    def __init__(self) -> None:
+        self._by_uuid: dict[str, Waiter] = {}
+
+    def __len__(self) -> int:
+        return len(self._by_uuid)
+
+    def add(self, waiter: Waiter) -> None:
+        if waiter.uuid in self._by_uuid:
+            raise wire.WireError(wire.BUSY, "another process is already waiting in this container")
+        self._by_uuid[waiter.uuid] = waiter
+
+    def drop(self, uuid: str, conn_id: int) -> None:
+        current = self._by_uuid.get(uuid)
+        if current is not None and current.conn_id == conn_id:
+            del self._by_uuid[uuid]
+
+    def evaluate(
+        self, memory: broker.BrokerMemory, store: BrokerStore, *, now: float, mono: float
+    ) -> list[tuple[Waiter, dict[str, object] | wire.WireError]]:
+        """Answer every waiter that is ready; the answered ones are removed."""
+        answered: list[tuple[Waiter, dict[str, object] | wire.WireError]] = []
+        for uuid, waiter in list(self._by_uuid.items()):
+            outcome = _evaluate_one(waiter, memory, store, now=now, mono=mono)
+            if outcome is not None:
+                del self._by_uuid[uuid]
+                answered.append((waiter, outcome))
+        return answered
+
+
+def _evaluate_one(
+    waiter: Waiter, memory: broker.BrokerMemory, store: BrokerStore, *, now: float, mono: float
+) -> dict[str, object] | wire.WireError | None:
+    if waiter.settle_until is not None and mono < waiter.settle_until:
+        return None
+    uuid = waiter.uuid
+    ctx = memory.contexts.get(uuid)
+    view = (
+        memory.children.get(ctx.sender.full)
+        if ctx is not None and ctx.role() == "orchestrator"
+        else None
+    )
+    history = store.history(uuid)
+    try:
+        found, stamp = wake.select_wakeup(
+            store.unacked(uuid),
+            history,
+            view.children if view is not None else None,
+            wake=waiter.wake,
+            quiet=waiter.quiet,
+            digest=waiter.digest,
+            digest_at=store.get_digest_at(uuid),
+            now=now,
+        )
+    except wake.WakeUsage as e:
+        return wire.WireError(wire.BAD_REQUEST, str(e))
+    settled = waiter.settle_until is not None
+    if found is None:
+        if stamp is not None:
+            store.set_digest_at(uuid, stamp)
+        waiter.settle_until = None
+        waiter.waited = True
+        if waiter.deadline is not None and mono >= waiter.deadline:
+            return {"kind": "timeout"}
+        return None
+    if waiter.waited and not settled:
+        # Let a burst of related messages land before answering (run_wait's settle).
+        waiter.settle_until = mono + SETTLE_SECONDS
+        return None
+    if stamp is not None:
+        store.set_digest_at(uuid, stamp)
+    return _wake_result(found, view, history, now)
+
+
+def _wake_result(
+    found: wake.Wake,
+    view: broker.ChildrenView | None,
+    history: list[StoredItem],
+    now: float,
+) -> dict[str, object]:
+    if isinstance(found, wake.MessageWake):
+        return {"kind": "message", "id": found.id}
+    if isinstance(found, wake.QuietChildWake):
+        return {"kind": "quiet-child", "child": found.child}
+    return {
+        "kind": "digest",
+        "children": list(view.children) if view is not None else [],
+        "last_from_child": wake.newest_from_child(history),
+        "observed_at": view.observed_at if view is not None else now,
+    }
