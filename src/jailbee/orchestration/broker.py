@@ -156,8 +156,8 @@ class BrokerMemory:
     absent_uuids: set[str] = field(default_factory=set)
     # volatile.uuid values two or more listed instances share (no socket for them).
     shared_uuids: set[str] = field(default_factory=set)
-    # Directory reuse requires a complete device inventory in the current round.
-    socket_devices_verified: bool = False
+    # Generations exclusively claimed by their owner in this round's full inventory.
+    reusable_socket_dirs: set[str] = field(default_factory=set)
     # Never serve a directory a foreign device named, even if cleanup failed.
     unsafe_socket_dirs: set[str] = field(default_factory=set)
 
@@ -942,19 +942,20 @@ def _ensure_socket(ctx: ActionContext, memory: BrokerMemory) -> None:
     try:
         if not listener.has_container(uuid):
             recorded = ctx.incus.config_device_get(full, ORCHESTRATION_DEVICE, "source")
+            directory_key = str(Path(recorded).resolve()) if recorded else ""
             reused = (
                 socket_device.reusable_dir(ctx.root, uuid, recorded)
                 if (
-                    memory.socket_devices_verified
-                    and recorded not in memory.unsafe_socket_dirs
-                    and not store.kv_get(f"socket-retired:{recorded}")
+                    directory_key in memory.reusable_socket_dirs
+                    and directory_key not in memory.unsafe_socket_dirs
+                    and not store.kv_get(f"socket-retired:{directory_key}")
                 )
                 else None
             )
             if reused is None and recorded and socket_device.dir_uuid(recorded) == uuid:
                 # Persist retirement before cleanup: an invisible or lazily
                 # detached copy may hold it across another broker restart.
-                store.kv_put(f"socket-retired:{recorded}", True)
+                store.kv_put(f"socket-retired:{directory_key}", True)
                 with contextlib.suppress(OSError):
                     socket_device.remove_dir(ctx.root, recorded)
             sdir = reused or socket_device.fresh_sock_dir(ctx.root, uuid)
@@ -1124,6 +1125,8 @@ def _strip_copy(
     listener, store = memory.listener, memory.store
     assert listener is not None and store is not None
     if source and path:
+        path = str(Path(path).resolve())
+        source = socket_device.dir_uuid(path)
         memory.unsafe_socket_dirs.add(path)
         try:
             # Keep the foreign device visible until its directory is durably
@@ -1162,6 +1165,7 @@ def _other_projects(incus: Incus, memory: BrokerMemory) -> list[dict[str, Any]] 
     A raw `incus copy --target-project` (or an import there) is invisible to
     the plain listing, yet may mount a served socket.
     """
+    memory.reusable_socket_dirs.clear()
     try:
         current = incus.current_project()
         everything = incus.list_containers(fast=True, all_projects=True)
@@ -1170,6 +1174,18 @@ def _other_projects(incus: Incus, memory: BrokerMemory) -> list[dict[str, Any]] 
         return None
     if not isinstance(current, str) or not current:
         return None
+    claims: dict[str, list[dict[str, Any]]] = {}
+    for entry in everything:
+        path = socket_device.source(entry)
+        if path:
+            claims.setdefault(str(Path(path).resolve()), []).append(entry)
+    memory.reusable_socket_dirs.update(
+        path
+        for path, entries in claims.items()
+        if len(entries) == 1
+        and entries[0].get("project") == current
+        and not socket_device.mismatched(entries[0])
+    )
     return [
         e for e in everything if isinstance(e.get("project"), str) and e.get("project") != current
     ]
@@ -1189,7 +1205,6 @@ def _check_socket_devices(
     """
     if memory.listener is None or memory.store is None:
         return
-    memory.socket_devices_verified = others is not None
     others = others or []
     _forget_vanished(raw, memory)
     memory.shared_uuids = _shared_uuids(raw + others)

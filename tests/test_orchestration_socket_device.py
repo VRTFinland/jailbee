@@ -367,6 +367,49 @@ def test_a_failed_directory_removal_stays_retired_after_another_restart(env, mon
     assert env.listener.dirs[UUID] != old
 
 
+def test_a_copy_seen_only_in_the_later_inventory_prevents_reuse(env) -> None:
+    env.set(orch())
+    env.tick()
+    old = env.listener.dirs[UUID]
+    _restart_broker(env)
+    first = env._list()
+    _copy_of_the_source(env)
+
+    def listing(*, fast=False, all_projects=False):
+        return env._list(fast=fast, all_projects=True) if all_projects else first
+
+    env.rig.incus.list_containers.side_effect = listing
+    env.tick()
+    assert env.listener.dirs[UUID] != old
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(env.listener.dirs[UUID])
+
+
+@pytest.mark.parametrize("alias", ["dot", "parent", "symlink"])
+def test_a_foreign_directory_alias_cannot_bypass_retirement(env, monkeypatch, alias) -> None:
+    env.set(orch())
+    env.tick()
+    old = env.listener.dirs[UUID]
+    _restart_broker(env)
+    _copy_of_the_source(env)
+    if alias == "dot":
+        source = f"{old.parent}/./{old.name}"
+    elif alias == "parent":
+        source = f"{old}/../{old.name}"
+    else:
+        link = old.parent / "alias"
+        link.symlink_to(old, target_is_directory=True)
+        source = str(link)
+    env.devices["proj-copy"][ORCHESTRATION_DEVICE]["source"] = source
+    monkeypatch.setattr(socket_device, "remove_dir", MagicMock(side_effect=OSError("EBUSY")))
+    env.tick()
+    assert env.listener.dirs[UUID] != old
+    # The canonical path must stay retired once the foreign device is gone.
+    env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] = str(old)
+    _restart_broker(env)
+    env.tick()
+    assert env.listener.dirs[UUID] != old
+
+
 def test_a_restart_reuses_no_legacy_directory(env) -> None:
     """The old broker reset the socket in place: a copy may hold `sock/<uuid>`."""
     legacy = env.rig.root / "sock" / UUID
