@@ -1,4 +1,4 @@
-"""Host-side socket listener for the broker: one thread, pure I/O.
+r"""Host-side socket listener for the broker: one thread, pure I/O.
 
 Every container gets a listening AF_UNIX socket at ``<sock_dir>/broker.sock``.
 Requests are decoded with :mod:`jailbee.orchestration.wire` and put on a queue
@@ -15,9 +15,11 @@ only after :meth:`Listener.respond` answered the previous one (a parked
 long-poll counts as in flight), and only while the unsent replies stay under
 ``OUTBUF_CAP``. Each container also has at most ``MAX_INFLIGHT_PER_CONTAINER``
 requests queued or in flight across its connections; a slot comes back only
-when the request is answered or :meth:`Listener.release`\ d, never on a
-disconnect, so open/send/close loops cannot grow the executor's queue. A
-disconnect is queued only for a connection with a request in flight. While a connection is held back its socket is still read, so a
+when the request is answered or released (:meth:`Listener.release`), never
+on a disconnect, so open/send/close loops cannot grow the executor's queue. A
+disconnect is queued only for a connection with a request in flight.
+
+While a connection is held back its socket is still read, so a
 disconnect is noticed, until ``wire.MAX_LINE_BYTES`` are buffered; then
 reading pauses too. A pipelining client therefore costs bounded memory and
 never has more than one event ahead of another container's request.

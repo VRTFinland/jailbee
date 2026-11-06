@@ -18,7 +18,6 @@ from jailbee.orchestration import wire
 from jailbee.orchestration.listener import (
     MAX_CONNECTIONS_PER_CONTAINER,
     MAX_INFLIGHT_PER_CONTAINER,
-    MAX_INFLIGHT_PER_CONTAINER,
     DisconnectEvent,
     Event,
     Listener,
