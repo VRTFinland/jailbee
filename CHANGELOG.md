@@ -12,10 +12,13 @@ before editing `## Unreleased`.
 
 - `jailbee inbox grant` summarizes the orchestration grant available to the container.
 - Optional Docker image seeding for Docker-enabled golden images, with `jailbee base seed` and upgrade integration.
+- `jailbee orchestrate messages` lists the messages the broker stores for a container, unread or with `--all` also read ones.
+- `orchestration.message_retention_days` (default 30) sets how long the broker keeps read messages.
 
 ### Changed
 
 - `jailbee inbox wait` prints the woken message's id; `--path` gives the old path output.
+- Orchestrators and children talk to the host broker over a per-container socket, and the broker's messages live in `broker.db` instead of inbox files; `jailbee inbox` exits 4 when the host broker is not reachable.
 
 ## 1.8.3 - 2026-11-05
 

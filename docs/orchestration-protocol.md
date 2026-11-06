@@ -5,6 +5,101 @@ This page documents the wire format behind `jailbee inbox`. Agents use the
 The host broker validates manifests and answers invalid requests with `refused`.
 All names are **short names** (the branch-level name, never repo-prefixed).
 
+A container reaches the broker over one of two transports. A container that
+has the `jailbee-orchestration` device uses the [socket protocol](#socket-transport);
+any other orchestrated container still uses the [file transport](#file-transport-fallback).
+The manifests, inbox items and `grant` shapes below are the same on both.
+
+## Socket transport
+
+The broker listens on one Unix socket per container. The host keeps it under
+the broker state dir (`<state>/sock/<instance uuid>/broker.sock`, directory mode
+0700, socket mode 0600) and the broker attaches that directory to the container
+as a read-only disk device named `jailbee-orchestration`, mounted at
+`/run/jailbee/orchestration/`. The client connects to
+`/run/jailbee/orchestration/broker.sock` (override with
+`JAILBEE_ORCHESTRATION_SOCKET`). The broker identifies the caller by which
+socket accepted the connection, never by anything in the request. Only
+orchestrators and children get the device; a container that copies one has it
+stripped, so a copy cannot reach the original's socket.
+
+Messages and statuses that the broker delivers live in `broker.db` (unread and
+read), not in files. `jailbee inbox ls`, `read` and `wait` read them through the
+socket.
+
+### Framing
+
+Messages are one JSON object per line (UTF-8, newline-terminated), at most
+1 MiB including the newline. A longer line gets a `bad_request` response and
+the connection is closed. A client keeps its write side open until the reply has
+arrived: a half-close is treated as a disconnect. A container may hold at most
+8 connections; a ninth is answered with `busy` and closed.
+
+### Envelopes
+
+A request carries the protocol version, an op and its arguments:
+
+```text
+{"v":1,"op":"read","args":{"id":"h-3fa9c012","keep":false}}
+```
+
+A success response carries the op's result:
+
+```text
+{"v":1,"ok":true,"result":{"version":1,"id":"h-3fa9c012","type":"message"}}
+```
+
+A failure carries an error code and a human-readable detail:
+
+```text
+{"v":1,"ok":false,"error":{"code":"not_found","detail":"no unread item 'h-3fa9c012'"}}
+```
+
+A request with another `v` is answered with error code `version` and the
+client exits 4 (`jb apply` / restart the broker to align versions).
+
+### Ops
+
+| Op | Args | Result |
+| --- | --- | --- |
+| `send` | `manifest` (an object, as in the file transport), `body` (string or null; the body file's text), `wait` (bool) | The status item for the manifest (an `InboxStatus` object). Delivered already read when `wait` is true, unread otherwise. |
+| `list` | none | The unread items, oldest first, in the shape `jailbee inbox ls` prints (long texts cut). |
+| `read` | `id`, `keep` (bool) | The unread item. Marks it read unless `keep`. |
+| `next` | `wake_on` (list of wake tokens or null), `quiet_after` and `digest` (positive seconds or null), `timeout` (seconds or null for none) | A long-poll: `{"kind":"message","id":...}`, `{"kind":"quiet-child","child":...}`, `{"kind":"digest","children":[...],"last_from_child":{...},"observed_at":...}` or `{"kind":"timeout"}`. Nothing is marked read. |
+| `children` | none | Orchestrators only: `{"observed_at", "children", "last_from_child"}`. |
+| `status` | `child` (string or null) | Like `children`, narrowed to one child. |
+| `grant` | none | The container's grant, as in [`grant.json`](#grantjson), with `default_runner_source`. |
+
+At most one `next` is parked per container; a second gets `busy`. A `send`
+whose manifest id was already handled is answered with `duplicate`, and the
+status is in the inbox (or was already reported). Resending the same `send` is
+safe: the broker journals each id.
+
+### Error codes and exit statuses
+
+| Code | Meaning | `jailbee inbox` result |
+| --- | --- | --- |
+| `version` | protocol version differs | exit 4 |
+| `bad_request` | malformed request, unknown op or invalid argument | exit 2 |
+| `not_orchestrated` | the container has no orchestration role (or is not an orchestrator, for `children`/`status`/`next` with `quiet_after`/`digest`) | exit 1 with a message |
+| `not_found` | no unread item with that id, or an unknown child | exit 1 |
+| `refused` | the broker declined the request | exit 1 |
+| `store` | the broker's message store failed | exit 1 |
+| `busy` | another waiter, or too many connections | `wait`: exit 2 |
+| `duplicate` | a `send` id that was already handled | exit 0, note on stderr |
+
+Exit 4 is also used when the broker cannot be reached at all: the socket is
+missing, refuses connections (broker stopped), or the connection drops without
+an answer and does not come back. `jailbee inbox wait` retries a dropped
+connection with backoff until its timeout, but a first connect that fails exits
+4 at once. A `send --wait` with no reply before its timeout exits 3.
+
+## File transport (fallback)
+
+Containers without the `jailbee-orchestration` device use files, as described
+in the rest of this page. This transport remains for the dual-window period in
+which both exist.
+
 ## Directories
 
 | Path | Direction | Purpose |

@@ -334,7 +334,7 @@ jailbee inbox wait --wake-on msg:done,question,blocked,idle,status:failed,status
 ```
 
 It prints the message id and exits 0 when a message arrived, 1 on timeout and 2 on a
-usage error. `jailbee inbox read <id>` prints the message and marks it read.
+usage error. Exit 4 means the host broker is not reachable: tell the human. `jailbee inbox read <id>` prints the message and marks it read.
 Run the waiter in the background if your agent supports it (for example
 Claude's background Bash), or use a /loop-style cycle. If you must poll, never
 poll more often than every 5 min. After `wait` returns, run `jailbee inbox ls`

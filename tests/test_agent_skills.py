@@ -1282,3 +1282,9 @@ def test_protocol_block_tag_check_rejects_an_untagged_block(monkeypatch) -> None
     )
     with pytest.raises(AssertionError, match="without a valid kind tag"):
         _tagged_blocks()
+
+
+def test_orchestration_skills_mention_unreachable_broker_exit_4() -> None:
+    for name in ("jailbee-orchestration", "jailbee-orchestration-child"):
+        text = (agent_skills._skills_root() / name / "SKILL.md").read_text()
+        assert "Exit 4 means the host broker is not reachable" in text, name

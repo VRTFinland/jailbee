@@ -6085,3 +6085,48 @@ journalctl --user -u jailbee-broker --since "-15 min"   # expect: no tracebacks
 jb orchestrate revoke <c>
 jb destroy <c>   # and any remaining children; then stop the rig
 ```
+
+## Orchestration over the broker socket (real host)
+
+Needs a real host with the broker running (`systemctl --user status
+jailbee-broker`) and a container `<o>` holding a grant (`jb orchestrate grant
+<o>`) with one child `<k>` spawned from it. Containers talk to the
+broker over a per-container socket mounted at `/run/jailbee/orchestration/`
+(see [the transport](orchestration.md#transport-a-per-container-socket)).
+
+1. Device. On the host: `incus config device show <o>` and `... <k>`. Expect a
+   `jailbee-orchestration` disk device in each: `source` under
+   `~/.local/state/jailbee/orchestration/sock/<uuid>`, `path:
+   /run/jailbee/orchestration`, `readonly: "true"`, `required: "false"`.
+   A container with no orchestration role has none.
+2. Traffic. In `<k>`: `jailbee inbox send message --kind note --text hi --wait`
+   (exit 0, a `done` status), then in `<o>`: `jailbee inbox ls`, `wait`, `read
+   <id>`. Expect the message, and no files under `~/.jailbee/orchestration/inbox/`.
+   On the host, `jb orchestrate messages <o>` lists it (unread), and with
+   `--all` after `read` it shows as read.
+3. Broker restart. `systemctl --user restart jailbee-broker` while `<o>` runs
+   `jailbee inbox wait --timeout 10m`. Expect the wait to survive: it
+   reconnects and still wakes on a message sent afterwards. `jailbee inbox ls`
+   works again once the broker is back.
+4. Broker stopped. `systemctl --user stop jailbee-broker`; in `<o>` run
+   `jailbee inbox ls`. Expect "the host broker is not reachable" and exit 4
+   (`echo $?`), not a hang. Start the broker again.
+5. Copies. `incus copy <k> probe` (and `incus copy <k>/<snapshot> probe2`).
+   Expect no `jailbee-orchestration` device in `incus config device show probe`.
+   Delete the copies.
+
+Host-confirmation items from the design spike (only a real host settles these):
+
+- Permissions under the real `raw.idmap`: the `sock/<uuid>` directory is 0700
+  and `broker.sock` 0600, owned by your user, and the container's dev user can
+  still connect.
+- Another host user cannot connect to the socket or list the directory.
+- Hot-plug: with `<o>` already running, grant it a role (or run `jb apply`) and
+  confirm the device appears without a restart and `jailbee inbox ls` works.
+- `required=false` with a missing source: remove `sock/<uuid>` on the host,
+  `incus restart <o>` must still succeed; the broker recreates the directory
+  and re-asserts the device.
+- Long poll: a `jailbee inbox wait --timeout none` held for over 30 minutes in
+  an idle container still wakes on a later message.
+- AppArmor: no denials in `journalctl -k | grep -i apparmor` for the socket
+  during the steps above, with the default Incus profile.

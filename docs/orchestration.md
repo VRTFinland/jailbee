@@ -691,6 +691,40 @@ stale stamp the digest is due as soon as a child next runs, and with no running
 child an existing stamp is left unchanged. Like `--quiet-after`, it needs a
 fresh `children.json` (exit 2 otherwise).
 
+### Transport: a per-container socket
+
+An orchestrator or child talks to the broker over a Unix socket that the host
+keeps for that container only. The broker creates
+`~/.local/state/jailbee/orchestration/sock/<instance uuid>/` (directory mode
+0700, socket `broker.sock` mode 0600, owned by your user) and attaches it to
+the container as a read-only disk device named `jailbee-orchestration`,
+mounted at `/run/jailbee/orchestration/`. The device is created per instance
+and only for containers that hold an orchestration role, so the broker knows who
+is calling from which socket was used; nothing in a request names the sender.
+The device is `required=false`, so a container still starts when the host
+directory is missing. A container that is copied (`incus copy`, also from a
+snapshot, and so a fork) has the device removed, because the copy would
+otherwise reach the original's socket; the broker attaches a fresh one if the
+copy becomes an orchestrator or child.
+
+Messages and statuses the broker delivers are kept in `broker.db` in the
+broker's state directory, unread and read ones alike, so `jailbee inbox ls`
+shows the unread ones and a restart of the broker or the container loses
+nothing. Read messages are kept for `orchestration.message_retention_days`
+(default 30, see [config](config.md#orchestration)); unread messages are never
+purged. `jb orchestrate messages [CONTAINER] [--all] [--json]` lists them on
+the host (read-only; `--all` includes read ones).
+
+If the broker is stopped or the socket is missing, every `jailbee inbox`
+command that needs it exits 4 with "the host broker is not reachable"; tell the
+human, who starts it (`systemctl --user start jailbee-broker`, or `jb doctor`).
+`jailbee inbox wait` reconnects on its own if the broker restarts while it
+waits. Containers without the device (for example one created before the
+upgrade and not yet seen by the broker) still use the file transport. The
+state directory now holds `broker.db` and `sock/` next to the older
+`children.json`, queue and journal files. The message schema is in the
+[protocol reference](orchestration-protocol.md#socket-transport).
+
 ### Child status
 
 `jailbee inbox status [--child C] [--json]` shows how each child is doing

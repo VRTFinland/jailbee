@@ -44,7 +44,7 @@ runs: do not start another, and never run a foreground ordinary `wait` alongside
 it. `send --wait` is safe alongside the waiter. After an accepted `done` in a
 kept child, keep the waiter armed between tasks. If background commands are not
 available, run `jailbee inbox wait --timeout 30m` in a loop and re-run it on
-exit 1.
+exit 1. Exit 4 means the host broker is not reachable: tell the human.
 
 ## Give up access
 
