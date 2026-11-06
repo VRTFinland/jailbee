@@ -66,8 +66,15 @@ def _run(
         typer.echo(str(exc), err=True)
         code = transport.EXIT_UNREACHABLE
     except transport.BrokerError as exc:
-        typer.echo(f"{cli.PROG}: {exc.detail or exc.code}", err=True)
-        code = 1
+        if exc.code == "store":
+            typer.echo(f"{transport.UNREACHABLE_MESSAGE} ({exc.detail or exc.code})", err=True)
+            code = transport.EXIT_UNREACHABLE
+        else:
+            typer.echo(f"{cli.PROG}: {exc.detail or exc.code}", err=True)
+            code = 1
+    except TimeoutError:
+        typer.echo(transport.UNREACHABLE_MESSAGE, err=True)
+        code = transport.EXIT_UNREACHABLE
     except InboxBadUsage as exc:
         raise UsageError(str(exc)) from exc
     except InboxUsage as exc:

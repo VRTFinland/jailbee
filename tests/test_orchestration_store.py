@@ -299,3 +299,23 @@ def test_unopenable_db_path_is_a_store_error(tmp_path: Path) -> None:
     blocker.write_text("not a directory")
     with pytest.raises(StoreError):
         BrokerStore(blocker / "broker.db").recipients()
+
+
+def test_history_meta_has_messages_only_without_item_json(st: BrokerStore) -> None:
+    st.insert_item("u", "p", msg("m1", body="x" * 50), now=1.0)
+    st.insert_item("u", "p", {"id": "s1", "type": "status", "state": "done", "ref": "m1"}, now=2.0)
+    st.insert_item("u", "p", msg("m2"), now=3.0, acked=True)
+    st.insert_item("other", "q", msg("m3"), now=4.0)
+    rows = st.history_meta("u")
+    assert [r.id for r in rows] == ["m1", "m2"]
+    assert rows[0].from_name == "alice" and rows[0].kind_or_state == "note"
+    assert rows[0].created_at == 1.0 and rows[0].acked_at is None
+    assert rows[1].acked_at == 3.0
+    assert not hasattr(rows[0], "item")
+
+
+def test_has_recipient_uuid(st: BrokerStore) -> None:
+    assert not st.has_recipient_uuid("u1")
+    st.set_recipient("p", "u1", now=1.0)
+    assert st.has_recipient_uuid("u1")
+    assert not st.has_recipient_uuid("u2")

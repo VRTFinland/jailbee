@@ -83,6 +83,10 @@ def _dispatch(
     uuid = event.uuid
     op = event.request.op
     args = event.request.args
+    if not store.has_recipient_uuid(uuid):
+        # The device is attached but the inbox migration has not finished: every
+        # answer (and a send's status reply) would miss the files still to come.
+        raise wire.WireError(wire.STORE, "inbox migration pending; retry shortly")
     if op == "send":
         ctx = memory.contexts.get(uuid)
         if ctx is None:
@@ -101,6 +105,8 @@ def _dispatch(
         return socket_ops.handle_read(
             store, uuid, id=args.get("id"), keep=args.get("keep", False), now=time.time()
         )
+    if op == "ack":
+        return socket_ops.handle_ack(store, uuid, id=args.get("id"), now=time.time())
     if op == "children":
         return socket_ops.handle_children(memory, store, uuid)
     if op == "status":

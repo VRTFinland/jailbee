@@ -1,5 +1,6 @@
 """`jailbee inbox` commands against an in-process fake broker socket."""
 
+import contextlib
 import json
 import os
 import shutil
@@ -44,11 +45,13 @@ class FakeBroker:
             try:
                 req = wire.decode_request(line)
             except wire.WireError as exc:
-                conn.sendall(wire.encode_response(wire.fail(exc.code, exc.detail)))
+                with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                    conn.sendall(wire.encode_response(wire.fail(exc.code, exc.detail)))
                 return
             self.requests.append(req)
             resp = self.handlers[req.op](req)
-            conn.sendall(wire.encode_response(resp))
+            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                conn.sendall(wire.encode_response(resp))
 
     def on(self, op: str, result: object = None, *, error: tuple[str, str] | None = None) -> None:
         self.handlers[op] = (
@@ -116,6 +119,59 @@ def test_read_prints_pretty_and_passes_keep(
     assert r.returncode == 0
     assert json.loads(r.stdout)["body"] == "hi"
     assert broker.requests[-1].args == {"id": "m1", "keep": True}
+
+
+def test_read_without_keep_reads_with_keep_then_acks(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path
+) -> None:
+    broker.on("read", {"id": "m1", "type": "message", "body": "hi"})
+    broker.on("ack", {"acked": True})
+    r = run(sockdir, "read", "m1", tmp=tmp_path)
+    assert r.returncode == 0
+    assert json.loads(r.stdout)["body"] == "hi"
+    assert [(q.op, q.args) for q in broker.requests] == [
+        ("read", {"id": "m1", "keep": True}),
+        ("ack", {"id": "m1"}),
+    ]
+
+
+def test_read_with_keep_does_not_ack(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
+    broker.on("read", {"id": "m1", "type": "message", "body": "hi"})
+    r = run(sockdir, "read", "m1", "--keep", tmp=tmp_path)
+    assert r.returncode == 0
+    assert [q.op for q in broker.requests] == ["read"]
+
+
+def test_read_ack_failure_still_prints_and_exits_0(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path
+) -> None:
+    broker.on("read", {"id": "m1", "type": "message", "body": "hi"})
+    broker.on("ack", error=(wire.STORE, "locked"))
+    r = run(sockdir, "read", "m1", tmp=tmp_path)
+    assert r.returncode == 0
+    assert json.loads(r.stdout)["body"] == "hi"
+    assert "stays unread" in r.stderr
+
+
+@pytest.mark.parametrize("failure", [TimeoutError("t"), ConnectionResetError("r")])
+def test_read_ack_transport_failure_still_exits_0(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: Exception,
+) -> None:
+    from jailbee.inbox import socket_cli
+    from jailbee.inbox.transport import BrokerUnreachable
+
+    def call(op: str, args: dict[str, object] | None = None) -> object:
+        if op == "ack":
+            raise BrokerUnreachable() if isinstance(failure, ConnectionResetError) else failure
+        return {"id": "m1", "type": "message", "body": "hi"}
+
+    monkeypatch.setattr(socket_cli, "_call", call)
+    assert socket_cli.cmd_read("m1") == 0
+    out = capsys.readouterr()
+    assert json.loads(out.out)["body"] == "hi"
+    assert "stays unread" in out.err
 
 
 def test_read_not_found(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
@@ -359,7 +415,7 @@ def test_send_wait_no_reply_exit_3(broker: FakeBroker, sockdir: Path, tmp_path: 
 def test_send_prints_the_id_before_the_broker_answers(
     broker: FakeBroker, sockdir: Path, tmp_path: Path
 ) -> None:
-    broker.on("send", error=(wire.STORE, "disk full"))
+    broker.on("send", error=(wire.REFUSED, "disk full"))
     r = run(sockdir, "send", "stop", "--child", "kid", tmp=tmp_path)
     assert r.returncode == 1
     assert r.stdout.startswith("stop-")
@@ -378,3 +434,219 @@ def test_send_duplicate_is_exit_0_with_a_note(
     assert r.returncode == 0
     assert r.stdout.strip().startswith("stop-") and len(r.stdout.split()) == 1
     assert "already handled" in r.stderr
+
+
+def test_call_timeout_is_two_minutes() -> None:
+    from jailbee.inbox import socket_cli
+
+    assert socket_cli.CALL_TIMEOUT == 120.0
+
+
+def test_send_without_wait_uses_the_request_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jailbee.inbox import socket_cli
+    from jailbee.inbox.send import SendRequest
+
+    seen: list[float | None] = []
+
+    def fake(_factory: object, _args: object, *, timeout: float | None) -> dict[str, object]:
+        seen.append(timeout)
+        return send_status("done")
+
+    monkeypatch.setattr(socket_cli, "call_send", fake)
+    for request, expected in (
+        (SendRequest(type="stop", child="kid"), 1800),
+        (SendRequest(type="stop", child="kid", wait=True, timeout="5m"), 300),
+    ):
+        assert socket_cli.cmd_send(request) == 0
+        assert seen[-1] == expected
+
+
+def test_send_timeout_message_and_exit_3(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from jailbee.inbox import socket_cli
+    from jailbee.inbox.send import SendRequest
+
+    def fake(*_a: object, **_k: object) -> object:
+        raise TimeoutError
+
+    monkeypatch.setattr(socket_cli, "call_send", fake)
+    assert socket_cli.cmd_send(SendRequest(type="stop", child="kid")) == 3
+    err = capsys.readouterr().err
+    assert (
+        "jailbee inbox: no reply from the host broker yet; the request (id printed above) "
+        "may still be processed and its status will arrive in the inbox"
+    ) in err
+
+
+def test_timeout_from_a_socket_command_is_exit_4(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import typer
+
+    from jailbee.inbox import container_cmd, socket_cli
+
+    def boom() -> int:
+        raise TimeoutError("timed out")
+
+    monkeypatch.setenv("JAILBEE_ORCHESTRATION_SOCKET", str(sockdir / "broker.sock"))
+    monkeypatch.setenv("JAILBEE_ORCHESTRATION_DIR", str(tmp_path / "nofiles"))
+    monkeypatch.setattr(socket_cli, "cmd_ls", boom)
+    with pytest.raises(typer.Exit) as exc:
+        container_cmd.ls()
+    assert exc.value.exit_code == 4
+
+
+def test_store_error_is_exit_4_with_detail(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path
+) -> None:
+    broker.on("list", error=(wire.STORE, "inbox migration pending; retry shortly"))
+    r = run(sockdir, "ls", tmp=tmp_path)
+    assert r.returncode == 4
+    assert "the host broker is not reachable" in r.stderr
+    assert "inbox migration pending; retry shortly" in r.stderr
+    broker.on("read", error=(wire.STORE, "inbox migration pending; retry shortly"))
+    r = run(sockdir, "read", "m1", tmp=tmp_path)
+    assert r.returncode == 4
+    assert "inbox migration pending" in r.stderr
+    broker.on("children", error=(wire.STORE, "inbox migration pending; retry shortly"))
+    r = run(sockdir, "children", tmp=tmp_path)
+    assert r.returncode == 4
+
+
+# -- handover of running file-mode waits --------------------------------------
+
+
+def _late_broker(
+    monkeypatch: pytest.MonkeyPatch,
+    sockdir: Path,
+    setup: Callable[[FakeBroker], None],
+    delay: float,
+) -> list[FakeBroker]:
+    """Point the socket env at a directory that appears `delay` seconds later."""
+    sub = sockdir / "late"
+    monkeypatch.setenv("JAILBEE_ORCHESTRATION_SOCKET", str(sub / "broker.sock"))
+    made: list[FakeBroker] = []
+
+    def appear() -> None:
+        time.sleep(delay)
+        sub.mkdir()
+        b = FakeBroker(sub / "broker.sock")
+        setup(b)
+        made.append(b)
+
+    threading.Thread(target=appear, daemon=True).start()
+    return made
+
+
+def _file_settings(tmp_path: Path):  # type: ignore[no-untyped-def]
+    from jailbee.inbox import cli
+
+    return cli.load_settings({"JAILBEE_ORCHESTRATION_DIR": str(tmp_path / "files")})
+
+
+def test_running_file_wait_hands_over_to_the_socket(
+    monkeypatch: pytest.MonkeyPatch,
+    sockdir: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from jailbee.inbox import cli
+
+    made = _late_broker(
+        monkeypatch, sockdir, lambda b: b.on("next", {"kind": "message", "id": "m9"}), 0.3
+    )
+    try:
+        rc = cli.cmd_wait(_file_settings(tmp_path), timeout="30")
+    finally:
+        for b in made:
+            b.close()
+    assert rc == 0
+    assert capsys.readouterr().out == "m9\n"
+    sent = made[0].requests[-1]
+    assert sent.op == "next" and 0 < sent.args["timeout"] <= 30
+
+
+def test_handed_over_wait_times_out_with_rc_1_and_no_output(
+    monkeypatch: pytest.MonkeyPatch,
+    sockdir: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from jailbee.inbox import cli
+
+    made = _late_broker(monkeypatch, sockdir, lambda b: b.on("next", {"kind": "timeout"}), 0.2)
+    try:
+        rc = cli.cmd_wait(_file_settings(tmp_path), timeout="30", wake_on="done")
+    finally:
+        for b in made:
+            b.close()
+    assert rc == 1
+    assert capsys.readouterr().out == ""
+    assert made[0].requests[-1].args["wake_on"] == ["done"]
+
+
+def _status_item(ref: str, state: str, ident: str = "s1") -> dict[str, object]:
+    return {"id": ident, "type": "status", "ref": ref, "state": state}
+
+
+def test_running_status_wait_hands_over_and_acks_only_its_status(
+    monkeypatch: pytest.MonkeyPatch,
+    sockdir: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from jailbee.inbox import socket_cli, waiting
+
+    monkeypatch.setattr(socket_cli, "STATUS_RECHECK_PAUSE", 0.05)
+    lists = [
+        [{"id": "other", "type": "status", "ref": "zzz", "state": "done"}],
+        [
+            {"id": "other", "type": "status", "ref": "zzz", "state": "done"},
+            _status_item("r1", "refused", "mine"),
+        ],
+    ]
+
+    def setup(b: FakeBroker) -> None:
+        b.handlers["list"] = lambda _r: wire.ok(lists.pop(0) if len(lists) > 1 else lists[0])
+        b.on("next", {"kind": "message", "id": "other"})  # not ours: loop over list
+        b.on("read", _status_item("r1", "refused", "mine"))
+        b.on("ack", {"acked": True})
+
+    made = _late_broker(monkeypatch, sockdir, setup, 0.3)
+    try:
+        rc = waiting.wait_for_status(_file_settings(tmp_path), "r1", 30)
+    finally:
+        for b in made:
+            b.close()
+    assert rc == 1  # refused
+    out = capsys.readouterr().out
+    assert json.loads(out)["id"] == "mine"
+    ops = [(q.op, q.args.get("id")) for q in made[0].requests if q.op in ("read", "ack")]
+    assert ops == [("read", "mine"), ("ack", "mine")]
+    nxt = next(q for q in made[0].requests if q.op == "next")
+    assert set(nxt.args["wake_on"]) == {"queued", "started", "done", "refused", "failed"}
+
+
+def test_running_status_wait_found_at_once_returns_by_state(
+    monkeypatch: pytest.MonkeyPatch,
+    sockdir: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from jailbee.inbox import waiting
+
+    def setup(b: FakeBroker) -> None:
+        b.on("list", [_status_item("r1", "done", "mine")])
+        b.on("read", _status_item("r1", "done", "mine"))
+        b.on("ack", {"acked": True})
+
+    made = _late_broker(monkeypatch, sockdir, setup, 0.2)
+    try:
+        rc = waiting.wait_for_status(_file_settings(tmp_path), "r1", 30)
+    finally:
+        for b in made:
+            b.close()
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["state"] == "done"
+    assert not any(q.op == "next" for q in made[0].requests)

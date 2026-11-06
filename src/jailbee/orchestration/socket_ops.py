@@ -22,7 +22,7 @@ from jailbee.outbox_io import _validate_outbox_name
 if TYPE_CHECKING:
     from jailbee.orchestration.actions import ActionContext
     from jailbee.orchestration.protocol import Manifest
-    from jailbee.orchestration.store import BrokerStore, StoredItem
+    from jailbee.orchestration.store import BrokerStore, ItemMeta
 
 log = logging.getLogger(__name__)
 
@@ -197,6 +197,15 @@ def handle_read(
     return row.item
 
 
+def handle_ack(store: BrokerStore, uuid: str, *, id: object, now: float) -> dict[str, object]:
+    """Mark one item read (idempotent); an unknown id is `not_found`."""
+    if not isinstance(id, str) or not id:
+        raise wire.WireError(wire.BAD_REQUEST, "id must be a non-empty string")
+    if not store.ack(uuid, id, now=now):
+        raise wire.WireError(wire.NOT_FOUND, f"no item '{id}'")
+    return {"acked": True}
+
+
 def _orchestrator(memory: broker.BrokerMemory, uuid: str) -> ActionContext:
     ctx = memory.contexts.get(uuid)
     if ctx is None or ctx.role() != "orchestrator":
@@ -211,7 +220,7 @@ def _children_result(
     return {
         "observed_at": view.observed_at if view is not None else None,
         "children": list(view.children) if view is not None else [],
-        "last_from_child": wake.newest_from_child(store.history(uuid)),
+        "last_from_child": wake.newest_from_child(store.history_meta(uuid)),
     }
 
 
@@ -361,7 +370,7 @@ def _evaluate_one(
         if ctx is not None and ctx.role() == "orchestrator"
         else None
     )
-    history = store.history(uuid)
+    history = store.history_meta(uuid)
     try:
         found, stamp = wake.select_wakeup(
             store.unacked(uuid),
@@ -397,7 +406,7 @@ def _evaluate_one(
 def _wake_result(
     found: wake.Wake,
     view: broker.ChildrenView | None,
-    history: list[StoredItem],
+    history: list[ItemMeta],
     now: float,
 ) -> dict[str, object]:
     if isinstance(found, wake.MessageWake):

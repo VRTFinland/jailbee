@@ -307,3 +307,33 @@ def test_a_plain_waiter_without_context_keeps_waiting(env: Env) -> None:
     del env.memory.contexts[env.orch]
     assert env.evaluate(ws) == []
     assert len(ws) == 1
+
+
+def test_ack_marks_read_and_unknown_is_not_found(env: Env) -> None:
+    env.put("m1")
+    assert socket_ops.handle_ack(env.store, env.orch, id="m1", now=5.0) == {"acked": True}
+    assert socket_ops.handle_list(env.store, env.orch) == []
+    # acking twice is harmless
+    assert socket_ops.handle_ack(env.store, env.orch, id="m1", now=6.0) == {"acked": True}
+    with pytest.raises(wire.WireError) as e:
+        socket_ops.handle_ack(env.store, env.orch, id="nope", now=6.0)
+    assert e.value.code == wire.NOT_FOUND
+    with pytest.raises(wire.WireError) as e2:
+        socket_ops.handle_ack(env.store, env.orch, id=None, now=6.0)
+    assert e2.value.code == wire.BAD_REQUEST
+
+
+def test_waiter_evaluation_and_children_do_not_load_item_json(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(uuid: str):  # type: ignore[no-untyped-def]
+        raise AssertionError("history() loads every item_json")
+
+    monkeypatch.setattr(env.store, "history", boom)
+    env.put("a", frm="kid", at=900.0)
+    ws = Waiters()
+    ws.add(env.waiter(quiet=60))
+    assert env.evaluate(ws, now=1000.0)  # answered without history()
+    assert socket_ops.handle_children(env.memory, env.store, env.orch)["last_from_child"] == {
+        "kid": 900.0
+    }

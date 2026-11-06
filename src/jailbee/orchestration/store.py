@@ -90,6 +90,18 @@ class StoredItem:
 
 
 @dataclass(frozen=True)
+class ItemMeta:
+    """A message row without its JSON body (all the wake rules read)."""
+
+    id: str
+    type: str
+    kind_or_state: str | None
+    from_name: str | None
+    created_at: float
+    acked_at: float | None
+
+
+@dataclass(frozen=True)
 class RecordedRequest:
     state: str
     detail: str
@@ -296,6 +308,26 @@ class BrokerStore:
             f"SELECT {_ITEM_COLS} FROM items WHERE recipient_uuid=? ORDER BY seq", (uuid,)
         )
 
+    def history_meta(self, uuid: str) -> list[ItemMeta]:
+        """Every message row's metadata, oldest first, without `item_json`."""
+        with self._tx(write=False) as con:
+            rows = con.execute(
+                "SELECT id, type, kind_or_state, from_name, created_at, acked_at FROM items "
+                "WHERE recipient_uuid=? AND type='message' ORDER BY seq",
+                (uuid,),
+            ).fetchall()
+        return [
+            ItemMeta(
+                id=str(r[0]),
+                type=str(r[1]),
+                kind_or_state=_opt_str(r[2]),
+                from_name=_opt_str(r[3]),
+                created_at=float(r[4]),
+                acked_at=None if r[5] is None else float(r[5]),
+            )
+            for r in rows
+        ]
+
     def get(self, uuid: str, id: str) -> StoredItem | None:
         rows = self._items(
             f"SELECT {_ITEM_COLS} FROM items WHERE recipient_uuid=? AND id=?", (uuid, id)
@@ -365,6 +397,11 @@ class BrokerStore:
         with self._tx(write=False) as con:
             row = con.execute("SELECT uuid FROM recipients WHERE full=?", (full,)).fetchone()
         return None if row is None else str(row[0])
+
+    def has_recipient_uuid(self, uuid: str) -> bool:
+        with self._tx(write=False) as con:
+            row = con.execute("SELECT 1 FROM recipients WHERE uuid=? LIMIT 1", (uuid,)).fetchone()
+        return row is not None
 
     def recipients(self) -> dict[str, str]:
         with self._tx(write=False) as con:

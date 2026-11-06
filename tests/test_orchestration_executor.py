@@ -36,6 +36,9 @@ class Env:
         self.memory.listener = self.listener  # type: ignore[assignment]
         self.orch = self._key("proj-orch")
         self.kid = self._key("proj-kid")
+        for full, uuid in (("proj-orch", self.orch), ("proj-kid", self.kid)):
+            self.store.set_recipient(full, uuid, now=1.0)
+        self.store.set_recipient("proj-unknown", "unknown-uuid", now=1.0)
 
     def _key(self, full: str) -> str:
         return next(k for k, c in self.memory.contexts.items() if c.sender.full == full)
@@ -164,3 +167,25 @@ def test_serve_returns_on_stop(env: Env) -> None:
     stop = broker.StopFlag()
     stop.requested = True
     executor.serve_requests(env.memory, until=1e12, stop=stop)
+
+
+def test_ack_op_acks_and_unknown_is_not_found(env: Env) -> None:
+    env.put("a")
+    env.ask(env.orch, "ack", id="a")
+    assert env.last().ok and env.last().result == {"acked": True}
+    assert [r.id for r in env.store.unacked(env.orch)] == []
+    env.ask(env.orch, "ack", id="zz")
+    assert env.last().error_code == wire.NOT_FOUND
+
+
+@pytest.mark.parametrize(
+    "op", ["list", "read", "ack", "next", "children", "status", "grant", "send"]
+)
+def test_every_op_waits_for_the_inbox_migration(env: Env, op: str) -> None:
+    env.store.remove_recipient("proj-kid")
+    env.ask(env.kid, op, id="a", manifest=_manifest(), body=None, wait=True)
+    resp = env.last()
+    assert resp.error_code == wire.STORE
+    assert "migration pending" in resp.error_detail
+    assert len(env.memory.waiters) == 0
+    env.rig.dispatch.assert_not_called()

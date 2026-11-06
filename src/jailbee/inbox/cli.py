@@ -539,6 +539,7 @@ def cmd_wait(
     digest: str | None = None,
     path: bool = False,
 ) -> int:
+    from jailbee.inbox import socket_cli
     from jailbee.inbox.waiting import run_wait
 
     seconds, quiet, digest_seconds, wake = parse_wait_args(timeout, wake_on, quiet_after, digest)
@@ -561,6 +562,7 @@ def cmd_wait(
                 quiet=quiet,
                 digest=digest_seconds,
                 warned=warned,
+                handover=lambda left: socket_cli.wait_once(left, quiet, digest_seconds, wake),
             )
             if line == "digest":
                 return _print_digest(settings, warned=warned)

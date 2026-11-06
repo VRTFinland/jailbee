@@ -247,9 +247,20 @@ def find_status(inbox: Path, ref: str) -> Path | None:
 
 
 def wait_for_status(settings: Settings, ref: str, timeout: int | None) -> int:
+    from jailbee.inbox import socket_cli
     from jailbee.inbox.cli import cmd_read, message_id
 
-    rc, selected = run_wait(settings, timeout=timeout, wake=None, quiet=0, status_ref=ref)
+    handed: list[int] = []
+
+    def handover(remaining: float | None) -> int:
+        handed.append(socket_cli.wait_status(ref, remaining))
+        return handed[0]
+
+    rc, selected = run_wait(
+        settings, timeout=timeout, wake=None, quiet=0, status_ref=ref, handover=handover
+    )
+    if handed:
+        return handed[0]
     if rc or selected is None:
         return 3
     path = Path(selected)
@@ -296,7 +307,17 @@ def run_wait(
     warned: set[Path] | None = None,
     watcher_factory: Callable[..., InboxWatcher] = InboxWatcher,
     clock: Callable[[], float] = time.monotonic,
+    handover: Callable[[float | None], int] | None = None,
 ) -> tuple[int, str | None]:
+    """Wait for a wakeup in the file inbox.
+
+    With `handover`, a socket that appears mid-wait (the container got the
+    broker device after this client started) ends the file wait: `handover`
+    is called with the remaining seconds, does the whole wait over the socket
+    (printing its own result) and its exit code is returned with no line.
+    """
+    from jailbee.inbox import transport
+
     deadline = None if timeout is None else clock() + timeout
     watcher = watcher_factory(settings.inbox, poll=settings.poll)
     waited = False
@@ -304,6 +325,9 @@ def run_wait(
         warned = set()
     try:
         while True:
+            if handover is not None and transport.socket_available(os.environ):
+                left = None if deadline is None else max(deadline - clock(), 0.0)
+                return handover(left), None
             if status_ref is not None:
                 path = find_status(settings.inbox, status_ref)
                 first = str(path) if path is not None else None
@@ -319,7 +343,7 @@ def run_wait(
             remaining = 10.0 if deadline is None else deadline - clock()
             if remaining <= 0:
                 return 1, None
-            watcher.wait(min(remaining, 1 if quiet or digest else 10))
+            watcher.wait(min(remaining, 1 if quiet or digest or handover else 10))
             waited = True
     finally:
         watcher.close()
