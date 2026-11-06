@@ -58,29 +58,91 @@ def alive(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(background, "worker_alive", lambda pid: pid == 4242)
 
 
-def test_interleaved_register_cancel_preserves_unrelated_entries(tmp_path):
+def test_register_and_cancel_wait_for_watch_lock(tmp_path, monkeypatch: pytest.MonkeyPatch):
     from concurrent.futures import ThreadPoolExecutor
-    from threading import Barrier
+    from threading import Event
 
     save_watch(tmp_path, {ORCH: [
         WatchEntry("keep", "keep", "restart", NOW.isoformat()),
         WatchEntry("remove", "remove", "restart", NOW.isoformat()),
     ]})
-    barrier = Barrier(2)
+    reached_load = Event()
+    original_load = watch.load_watch
+
+    def tracked_load(root):
+        reached_load.set()
+        return original_load(root)
+
+    register_started = Event()
+    cancel_started = Event()
+    message_started = Event()
 
     def register():
-        barrier.wait()
+        register_started.set()
         watch.register(tmp_path, ORCH, WatchEntry("new", "new", "restart", NOW.isoformat()))
 
     def cancel():
-        barrier.wait()
+        cancel_started.set()
         watch.cancel(tmp_path, ORCH, "remove")
 
+    def record_message():
+        message_started.set()
+        watch.record_message(tmp_path, ORCH, "keep", "progress", "working")
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        with watch.locked(tmp_path):
+            monkeypatch.setattr(watch, "load_watch", tracked_load)
+            load_watch(tmp_path)
+            reached_load.clear()
+            first = pool.submit(register)
+            second = pool.submit(cancel)
+            third = pool.submit(record_message)
+            try:
+                assert register_started.wait(timeout=2)
+                assert cancel_started.wait(timeout=2)
+                assert message_started.wait(timeout=2)
+                assert not reached_load.wait(timeout=0.1)
+            finally:
+                monkeypatch.setattr(watch, "load_watch", original_load)
+        first.result(timeout=2)
+        second.result(timeout=2)
+        third.result(timeout=2)
+    final = load_watch(tmp_path)[ORCH]
+    assert {item.child_full for item in final} == {"keep", "new"}
+    assert next(item for item in final if item.child_full == "keep").last_message_line == "working"
+
+
+def test_mutation_locked_serializes_threads(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    entered = Event()
+    attempted = Event()
+    second_entered = Event()
+    release = Event()
+
+    def first():
+        with watch.mutation_locked(tmp_path):
+            entered.set()
+            assert release.wait(timeout=2)
+
+    def second():
+        attempted.set()
+        with watch.mutation_locked(tmp_path):
+            second_entered.set()
+
     with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(register), pool.submit(cancel)]
-        for future in futures:
-            future.result()
-    assert {item.child_full for item in load_watch(tmp_path)[ORCH]} == {"keep", "new"}
+        one = pool.submit(first)
+        assert entered.wait(timeout=2)
+        two = pool.submit(second)
+        try:
+            assert attempted.wait(timeout=2)
+            assert not second_entered.wait(timeout=0.1)
+        finally:
+            release.set()
+        one.result(timeout=2)
+        two.result(timeout=2)
+        assert second_entered.is_set()
 
 
 def test_watch_migrates_legacy_document_once_and_never_writes_file(tmp_path: Path) -> None:
@@ -102,6 +164,19 @@ def test_watch_migrates_legacy_document_once_and_never_writes_file(tmp_path: Pat
     save_watch(tmp_path, {ORCH: [updated]})
     assert load_watch(tmp_path) == {ORCH: [updated]}
     assert not (tmp_path / "watch.json").exists()
+
+
+def test_save_before_legacy_file_prevents_import_overwrite(tmp_path: Path) -> None:
+    import json
+    from dataclasses import asdict
+
+    saved = {ORCH: [entry()]}
+    save_watch(tmp_path, saved)
+    legacy = {"version": 1, "watches": {"legacy-orch": [asdict(entry("restart"))]}}
+    (tmp_path / "watch.json").write_text(json.dumps(legacy))
+
+    assert load_watch(tmp_path) == saved
+    assert (tmp_path / "watch.json.migrated").exists()
 
 
 def test_watch_migration_quarantines_syntax_and_top_level_corruption(tmp_path: Path) -> None:
