@@ -59,8 +59,6 @@ def _finished_message():
     return InboxMessage(version=1, id="h-f", type="message", from_="c", body="done")
 
 
-
-
 def test_flush_stops_at_finish_item_without_callback(tmp_path: Path) -> None:
     directory = pending_dir(tmp_path, FULL)
     directory.mkdir(parents=True)
@@ -70,12 +68,6 @@ def test_flush_stops_at_finish_item_without_callback(tmp_path: Path) -> None:
     assert flush(incus, tmp_path, FULL, uid=1000) == 0
     assert path.exists()
     incus.exec_with_input.assert_not_called()
-
-
-
-
-
-
 
 
 def test_ensure_env_missing_launcher_raises() -> None:
@@ -91,52 +83,8 @@ def test_ensure_env_missing_launcher_raises() -> None:
     assert len(incus.exec.call_args_list) == 1
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def test_flush_without_pending_dir(tmp_path: Path) -> None:
     assert flush(_incus(), tmp_path, FULL, uid=None) == 0
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def test_has_pending_ignores_quarantined_bad_files(tmp_path: Path) -> None:
@@ -146,10 +94,6 @@ def test_has_pending_ignores_quarantined_bad_files(tmp_path: Path) -> None:
     assert outbox.has_pending(tmp_path, FULL) is False
     (directory / "b.json").write_text("{}")
     assert outbox.has_pending(tmp_path, FULL) is True
-
-
-
-
 
 
 def _store_recipient(root: Path):
@@ -287,14 +231,6 @@ def test_deliver_parks_when_the_store_lookup_is_unreadable(tmp_path: Path) -> No
     incus.exec_with_input.assert_not_called()
 
 
-
-
-
-
-
-
-
-
 def test_deliver_store_error_parks_item(tmp_path: Path, mocker) -> None:
     from jailbee.orchestration.store import BrokerStore, StoreError
 
@@ -303,8 +239,6 @@ def test_deliver_store_error_parks_item(tmp_path: Path, mocker) -> None:
     result = deliver(_incus(), tmp_path, FULL, _item("1"), running=True, uid=1000, now=AT)
     assert result == "parked"
     assert (pending_dir(tmp_path, FULL) / inbox_file_name(_item("1"), AT)).exists()
-
-
 
 
 def deliver(incus, root, full, item, **kw):
@@ -325,9 +259,12 @@ def test_launcher_check_never_creates_transport_directories():
 @pytest.mark.parametrize("running", [True, False])
 def test_no_socket_row_needed_for_verified_delivery(tmp_path, running):
     from jailbee.orchestration.store import BrokerStore, store_path
+
     store = BrokerStore(store_path(tmp_path))
     incus = _incus()
-    assert deliver(incus, tmp_path, FULL, _item("1"), running=running, uid=None, now=AT) == "delivered"
+    assert (
+        deliver(incus, tmp_path, FULL, _item("1"), running=running, uid=None, now=AT) == "delivered"
+    )
     assert [row.id for row in store.unacked("uuid-1")] == ["h-1"]
     assert store.recipients() == {}  # Delivery never grants socket access.
     incus.exec.assert_not_called()
@@ -337,7 +274,10 @@ def test_no_socket_row_needed_for_verified_delivery(tmp_path, running):
 def test_missing_identity_parks_never_uses_namesakes_socket_row(tmp_path):
     store = _store_recipient(tmp_path)
     incus = _incus()
-    assert outbox.deliver(incus, tmp_path, FULL, _item("1"), running=True, uid=None, now=AT) == "parked"
+    assert (
+        outbox.deliver(incus, tmp_path, FULL, _item("1"), running=True, uid=None, now=AT)
+        == "parked"
+    )
     assert store.unacked("uuid-1") == []
     assert outbox.flush_pending(incus, tmp_path, FULL, uid=None) == 0
     assert outbox.has_pending(tmp_path, FULL)
@@ -347,8 +287,19 @@ def test_missing_identity_parks_never_uses_namesakes_socket_row(tmp_path):
 
 def test_verified_identity_ignores_namesakes_stale_socket_row(tmp_path):
     store = _store_recipient(tmp_path)
-    assert outbox.deliver(_incus(), tmp_path, FULL, _item("1"), running=False,
-                         uid=None, now=AT, recipient_uuid="uuid-new") == "delivered"
+    assert (
+        outbox.deliver(
+            _incus(),
+            tmp_path,
+            FULL,
+            _item("1"),
+            running=False,
+            uid=None,
+            now=AT,
+            recipient_uuid="uuid-new",
+        )
+        == "delivered"
+    )
     assert store.unacked("uuid-1") == []
     assert [row.id for row in store.unacked("uuid-new")] == ["h-1"]
     assert store.recipients() == {FULL: "uuid-1"}

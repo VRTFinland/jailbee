@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import queue
 from typing import TYPE_CHECKING, Any
@@ -651,7 +650,7 @@ def test_teardown_keeps_items_without_export(env, monkeypatch) -> None:
         UUID, "proj-orch", {"type": "message", "id": "m1", "kind": "note"}, now=1.0
     )
     export = MagicMock(side_effect=AssertionError("teardown must not export store items"))
-    monkeypatch.setattr(broker, "atomic_write_text", export)
+    monkeypatch.setattr(state, "atomic_write_text", export)
     env.set(_c("proj-orch", **{labels.GRANT: "{not json", "volatile.uuid": UUID}))
     env.tick()
     assert [i.id for i in env.store.unacked(UUID)] == ["m1"]

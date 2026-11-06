@@ -67,7 +67,9 @@ def _insert_into_store(
     if not recipient_uuid:
         return False
     data = item if isinstance(item, dict) else json.loads(item.model_dump_json(by_alias=True))
-    store.BrokerStore(store.store_path(root)).insert_item(recipient_uuid, full, data, now=time.time())
+    store.BrokerStore(store.store_path(root)).insert_item(
+        recipient_uuid, full, data, now=time.time()
+    )
     return True  # An already-inserted id is delivered too (crash-safe retry).
 
 
@@ -173,7 +175,9 @@ def flush_pending(
             except ValidationError:
                 logging.getLogger(__name__).exception("invalid pending finish %s", path)
                 path.rename(path.with_name(path.name + ".bad"))
-                _note_quarantined(incus, root, recipient_full, path.name + ".bad", recipient_uuid=recipient_uuid)
+                _note_quarantined(
+                    incus, root, recipient_full, path.name + ".bad", recipient_uuid=recipient_uuid
+                )
                 continue
             if finish is None:
                 break
@@ -184,10 +188,14 @@ def flush_pending(
         except (ValueError, AssertionError):
             logging.getLogger(__name__).error("invalid pending item %s", path)
             path.rename(path.with_name(path.name + ".bad"))
-            _note_quarantined(incus, root, recipient_full, path.name + ".bad", recipient_uuid=recipient_uuid)
+            _note_quarantined(
+                incus, root, recipient_full, path.name + ".bad", recipient_uuid=recipient_uuid
+            )
             continue
         try:
-            inserted = _insert_into_store(root, recipient_full, loaded, recipient_uuid=recipient_uuid)
+            inserted = _insert_into_store(
+                root, recipient_full, loaded, recipient_uuid=recipient_uuid
+            )
         except StoreError:
             logging.getLogger(__name__).exception("broker store insert failed; keeping files")
             break
@@ -204,4 +212,3 @@ def grant_json_text(grant: Grant, runner: Runner | None, source: DefaultRunnerSo
     data["default_runner"] = runner.model_dump(mode="json", exclude_none=True) if runner else None
     data["default_runner_source"] = source
     return json.dumps(data, sort_keys=True, separators=(",", ":")) + "\n"
-

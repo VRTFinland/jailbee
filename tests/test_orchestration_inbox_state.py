@@ -25,8 +25,6 @@ def context(tmp_path):
     )
 
 
-
-
 def test_snapshot_persists_start_across_broker_restart(tmp_path):
     ctx = context(tmp_path)
     snapshot = inbox_state.sync_children(ctx)
@@ -44,8 +42,6 @@ def test_snapshot_persists_start_across_broker_restart(tmp_path):
     snapshot = inbox_state.sync_children(ctx)
     assert {"children": snapshot}["children"] == first["children"]
     assert {"children": snapshot}["children"][0]["started_at"] == first["children"][0]["started_at"]
-
-
 
 
 def test_snapshot_stop_restart_and_removal(tmp_path):
@@ -90,8 +86,6 @@ def test_snapshot_uses_incus_boot_timestamp_and_new_instance(tmp_path):
     }
     snapshot = inbox_state.sync_children(ctx)
     assert {"children": snapshot}["children"][0]["started_at"] == ctx.now.timestamp()
-
-
 
 
 def _kid_with(ctx, config):
@@ -321,20 +315,20 @@ def test_sync_children_memory_none_without_usage(tmp_path, probes):
 def test_sync_children_rate_limits_exec_probes(tmp_path, probes):
     ctx = context(tmp_path)
     cache = _cache()
-    snapshot = inbox_state.sync_children(ctx, cache)
+    inbox_state.sync_children(ctx, cache)
     ctx.now += timedelta(seconds=10)
-    snapshot = inbox_state.sync_children(ctx, cache)
+    inbox_state.sync_children(ctx, cache)
     assert probes.head_calls == 1
     assert probes.agent_calls == 1
     assert len(cache.samplers["p-orch"].calls) == 1
     ctx.now += timedelta(seconds=60)
-    snapshot = inbox_state.sync_children(ctx, cache)
+    inbox_state.sync_children(ctx, cache)
     assert probes.head_calls == 2
 
 
 def test_sync_children_exec_goes_through_bounded_incus(tmp_path, probes):
     ctx = context(tmp_path)
-    snapshot = inbox_state.sync_children(ctx, _cache())
+    inbox_state.sync_children(ctx, _cache())
     ctx.incus.with_exec_timeout.assert_called_with(inbox_state.STATUS_EXEC_TIMEOUT_S)
     assert probes.incus_used
     assert all(i is ctx.incus.with_exec_timeout.return_value for i in probes.incus_used)
@@ -425,8 +419,8 @@ def test_sync_children_without_cache_has_no_status(tmp_path, probes):
 
 def test_sync_children_without_cache_preserves_durable_status(tmp_path, probes):
     ctx = context(tmp_path)
-    snapshot = inbox_state.sync_children(ctx, _cache(cpu=30.0))
-    snapshot = inbox_state.sync_children(ctx)
+    inbox_state.sync_children(ctx, _cache(cpu=30.0))
+    inbox_state.sync_children(ctx)
     saved = json.loads((tmp_path / "inbox-state" / "p-orch.json").read_text())
     assert saved["children"][0]["status"]["head"] == HEAD
 
@@ -564,7 +558,7 @@ def test_repo_dir_comes_from_node_config_without_an_incus_call(tmp_path, probes,
         "probe_head",
         lambda incus, full, repo, *, uid: seen.append(repo) or (HEAD, False),
     )
-    snapshot = inbox_state.sync_children(ctx, _cache())
+    inbox_state.sync_children(ctx, _cache())
     assert seen == ["/r/x"] and calls == []
 
 
@@ -574,7 +568,7 @@ def test_repo_dir_falls_back_to_bounded_incus_when_label_missing(tmp_path, probe
     monkeypatch.setattr(
         inbox_state.lifecycle, "container_repo_dir", lambda *a: calls.append(a) or "/fallback"
     )
-    snapshot = inbox_state.sync_children(ctx, _cache())
+    inbox_state.sync_children(ctx, _cache())
     assert len(calls) == 1 and calls[0][1] is ctx.incus.with_exec_timeout.return_value
 
 

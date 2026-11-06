@@ -53,9 +53,7 @@ def _relay(ctx: ActionContext, target: Node, manifest: MessageManifest) -> Outco
     )
     if result == "delivered":
         return done(f"delivered to {target.short}")
-    return Outcome(
-        "queued", f"delivery to {target.short} is queued; the broker will retry"
-    )
+    return Outcome("queued", f"delivery to {target.short} is queued; the broker will retry")
 
 
 def _orchestrator_of(ctx: ActionContext) -> Node:
@@ -161,8 +159,15 @@ def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
             inserted = False
         if not inserted:
             outbox.deliver(
-                ctx.incus, ctx.root, target.full, msg, running=target.running,
-                uid=uid, now=ctx.now, seq=seq, recipient_uuid=target.config.get("volatile.uuid")
+                ctx.incus,
+                ctx.root,
+                target.full,
+                msg,
+                running=target.running,
+                uid=uid,
+                now=ctx.now,
+                seq=seq,
+                recipient_uuid=target.config.get("volatile.uuid"),
             )
         pending.unlink(missing_ok=True)
         return done(summary)

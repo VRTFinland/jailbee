@@ -65,7 +65,6 @@ from jailbee.orchestration.protocol import (
     new_host_id,
 )
 from jailbee.orchestration.state import (
-    atomic_write_text,
     load_queue,
     purge_vanished_pending,
     save_queue,
@@ -536,7 +535,7 @@ def _settle_agent_watch(
                 uid=ctx.cfg.container_user.uid,
                 now=ctx.now,
                 seq=next(memory.seq),
-        recipient_uuid=ctx.sender.config.get("volatile.uuid"),
+                recipient_uuid=ctx.sender.config.get("volatile.uuid"),
             )
         else:
             _reply(ctx, entry.ref, outcome, memory)
@@ -578,7 +577,7 @@ def _settle_agent_watch(
                 uid=ctx.cfg.container_user.uid,
                 now=ctx.now,
                 seq=next(memory.seq),
-        recipient_uuid=ctx.sender.config.get("volatile.uuid"),
+                recipient_uuid=ctx.sender.config.get("volatile.uuid"),
             )
     index = entries.index(entry)
     if updated is None:
@@ -1056,8 +1055,12 @@ def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
     uid = ctx.cfg.container_user.uid
     # Parked messages first, so a new status never overtakes them.
     flush_pending(
-        ctx.incus, ctx.root, ctx.sender.full, uid=uid, finish=finishing.flush_callback(ctx) if ctx.sender.running else None,
-        recipient_uuid=ctx.sender.config.get("volatile.uuid")
+        ctx.incus,
+        ctx.root,
+        ctx.sender.full,
+        uid=uid,
+        finish=finishing.flush_callback(ctx) if ctx.sender.running else None,
+        recipient_uuid=ctx.sender.config.get("volatile.uuid"),
     )
     path = finishing.reply_path(ctx, ctx.sender)
     if path.exists():
@@ -1162,8 +1165,11 @@ def tick(
         {str(e["name"]) for e in raw if e.get("status") == "Running"},
         now=now,
         seq=memory.seq,
-        identities={str(e["name"]): str(e["config"]["volatile.uuid"]) for e in raw
-                    if isinstance(e.get("config"), dict) and e["config"].get("volatile.uuid")},
+        identities={
+            str(e["name"]): str(e["config"]["volatile.uuid"])
+            for e in raw
+            if isinstance(e.get("config"), dict) and e["config"].get("volatile.uuid")
+        },
     )
     # Parked messages of a vanished container must never reach a namesake.
     # A directory still holding a report whose notice failed is kept for a retry.
@@ -1254,7 +1260,9 @@ def tick(
                         if node.running:
                             _serve(former_ctx, journal, memory)
                         else:
-                            publishing.settle(former_ctx, partial(_reply, former_ctx, memory=memory))
+                            publishing.settle(
+                                former_ctx, partial(_reply, former_ctx, memory=memory)
+                            )
                             _flush_unlabelled(node, context, root, incus)
                     continue
                 if node.full in publishes:
@@ -1294,9 +1302,14 @@ def tick(
             if node.running:
                 _serve(ctx, journal, memory)
             else:
-                flush_pending(incus, root, node.full, uid=ctx.cfg.container_user.uid,
-                              finish=finishing.flush_callback(ctx) if ctx.sender.running else None,
-                              recipient_uuid=node.config.get("volatile.uuid"))
+                flush_pending(
+                    incus,
+                    root,
+                    node.full,
+                    uid=ctx.cfg.container_user.uid,
+                    finish=finishing.flush_callback(ctx) if ctx.sender.running else None,
+                    recipient_uuid=node.config.get("volatile.uuid"),
+                )
         except Exception:
             log.exception("broker: serving %s failed", node.full)
 

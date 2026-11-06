@@ -71,7 +71,9 @@ class Rig:
             return_value=importing.Imported("refs/jailbee/from/fix-1/fix-1", SHA),
         )
         self.head = mocker.patch("jailbee.orchestration.actions._child_head", return_value=SHA)
-        self.insert_store = mocker.patch("jailbee.orchestration.outbox._insert_into_store", return_value=True)
+        self.insert_store = mocker.patch(
+            "jailbee.orchestration.outbox._insert_into_store", return_value=True
+        )
         self.deliver = mocker.patch(
             "jailbee.orchestration.messages.deliver", return_value="delivered"
         )
@@ -578,11 +580,17 @@ def test_flush_stale_finish_after_parent_transfer_keeps_child(tmp_path, mocker):
     rig.ctx.nodes = {CHILD: child, old.full: old}
     rig.ctx.sender = old
     from jailbee.orchestration.store import BrokerStore, store_path
+
     store = BrokerStore(store_path(tmp_path))
     mocker.stop(rig.insert_store)
     assert (
         outbox.flush_pending(
-            rig.incus, tmp_path, old.full, uid=None, finish=finishing.flush_callback(rig.ctx), recipient_uuid="old-uuid"
+            rig.incus,
+            tmp_path,
+            old.full,
+            uid=None,
+            finish=finishing.flush_callback(rig.ctx),
+            recipient_uuid="old-uuid",
         )
         == 1
     )

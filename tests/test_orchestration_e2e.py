@@ -17,13 +17,12 @@ from jailbee import background
 from jailbee.db.models import JOB_CREATE
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
-from jailbee.orchestration import actions, broker, labels, watch
+from jailbee.orchestration import actions, broker, labels, socket_ops, watch
 from jailbee.orchestration.grant import Grant
 from jailbee.orchestration.journal import Journal
 from jailbee.orchestration.outbox import CONTAINER_JAILBEE
-from jailbee.orchestration import socket_ops
-from jailbee.orchestration.store import BrokerStore, store_path
 from jailbee.orchestration.state import load_queue, pending_dir
+from jailbee.orchestration.store import BrokerStore, store_path
 from jailbee.sync import FetchResult, MergeInContainerResult, PushResult
 from tests.conftest import make_config
 
@@ -87,6 +86,7 @@ class FakeIncus:
             return json.dumps({"issue": [], "pr": []})
         if argv[4] in ("/home/dev/.jailbee/issue-outbox", "/home/dev/.jailbee/pr-outbox"):
             import base64
+
             return base64.b64encode(bytes(1024)).decode()
         raise AssertionError(f"unexpected capped exec {argv}")
 
@@ -208,7 +208,9 @@ def test_spawn_queues_then_starts_after_a_stop(world: dict[str, Any]) -> None:
     store = BrokerStore(store_path(root))
     old = store.lookup_request(ctx.sender.key, "a-spawn")
     assert old is not None and old.state == "queued"
-    result = socket_ops.handle_send(ctx, memory, store, manifest={"id": "a-spawn"}, body=None, wait=False)
+    result = socket_ops.handle_send(
+        ctx, memory, store, manifest={"id": "a-spawn"}, body=None, wait=False
+    )
     assert result["state"] == "queued"
     world["start_create"].assert_called_once()
 

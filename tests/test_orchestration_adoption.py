@@ -283,8 +283,20 @@ def test_adopt_notifies_both_without_watching(cfg, rig, tmp_path, mocker):
     assert parent.body == adoption.ADOPTED_ORCHESTRATOR_BODY.format(child="a")
     assert "close" in parent.body and "send restart --child a --agent-only" in parent.body
     assert [c.kwargs for c in deliver.call_args_list] == [
-        {"running": True, "uid": cfg.container_user.uid, "now": now, "seq": 0, "recipient_uuid": None},
-        {"running": True, "uid": cfg.container_user.uid, "now": now, "seq": 1, "recipient_uuid": None},
+        {
+            "running": True,
+            "uid": cfg.container_user.uid,
+            "now": now,
+            "seq": 0,
+            "recipient_uuid": None,
+        },
+        {
+            "running": True,
+            "uid": cfg.container_user.uid,
+            "now": now,
+            "seq": 1,
+            "recipient_uuid": None,
+        },
     ]
     assert watch.load_watch(tmp_path) == {}
 
@@ -500,7 +512,6 @@ def test_adopt_reservation_counts_toward_capacity(cfg, rig, tmp_path, mocker):
 
 
 def test_transferred_child_ignores_old_pending_finish(cfg, rig, tmp_path, mocker):
-    import json
 
     from jailbee.global_config import GlobalConfig
     from jailbee.orchestration import finishing, outbox
@@ -529,6 +540,7 @@ def test_transferred_child_ignores_old_pending_finish(cfg, rig, tmp_path, mocker
     transport.return_value.push.container_ref = "refs/jailbee/from/a/branch"
     transport.return_value.push.new_oid = "a" * 40
     from jailbee.orchestration.store import BrokerStore, store_path
+
     store = BrokerStore(store_path(tmp_path))
 
     def node(row):
@@ -567,7 +579,12 @@ def test_transferred_child_ignores_old_pending_finish(cfg, rig, tmp_path, mocker
     ctx.nodes = {r["name"]: node(r) for r in rows}
     ctx.sender = node(old)
     outbox.flush_pending(
-        incus, tmp_path, "myrepo-o", uid=None, finish=finishing.flush_callback(ctx), recipient_uuid="old-uuid"
+        incus,
+        tmp_path,
+        "myrepo-o",
+        uid=None,
+        finish=finishing.flush_callback(ctx),
+        recipient_uuid="old-uuid",
     )
     messages = [row.item for row in store.unacked("old-uuid")]
     report = next(m for m in messages if m.get("kind") == "done")
