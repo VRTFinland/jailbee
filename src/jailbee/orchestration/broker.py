@@ -1212,7 +1212,12 @@ def _check_socket_devices(
             memory.attached.pop(name, None)
             continue
         if _labelled(config):
-            if name in memory.attached and not socket_device.has_device(entry):
+            # A snapshot restore can keep the uuid and role but rewind the
+            # device to an old generation. Invalidate _ensure_socket's cache
+            # using this round's listing, without another per-container call.
+            if name in memory.attached and socket_device.source(entry) != str(
+                memory.listener.socket_dir(memory.attached[name])
+            ):
                 memory.attached.pop(name, None)
         elif name in memory.attached or socket_device.has_device(entry):
             _teardown_socket(incus, memory, name, config.get("volatile.uuid"), root)

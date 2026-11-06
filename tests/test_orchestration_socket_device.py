@@ -440,6 +440,31 @@ def test_vanished_device_is_reattached(env) -> None:
     assert adds(env) == ["proj-orch", "proj-orch"]
 
 
+def test_snapshot_restore_reattaches_the_live_generation_without_broker_restart(env) -> None:
+    env.set(orch())
+    env.tick()
+    snapshot_device = dict(env.devices["proj-orch"][ORCHESTRATION_DEVICE])
+    old = env.listener.dirs[UUID]
+    env.set(_c("proj-orch", **{"volatile.uuid": UUID}))  # revoke the role
+    env.tick()
+    env.set(orch())  # re-grant it: the snapshot's generation no longer exists
+    env.tick()
+    live = env.listener.dirs[UUID]
+    assert live != old and not old.exists()
+    env.add.reset_mock()
+    env.rig.incus.config_device_get.reset_mock()
+    env.devices["proj-orch"][ORCHESTRATION_DEVICE] = snapshot_device
+    env.tick()  # incus snapshot restore kept the uuid and role, but rewound the device
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(live)
+    assert adds(env) == ["proj-orch"]
+    assert env.listener.dirs[UUID] == live  # no unnecessary listener rotation
+    assert env.memory.attached == {"proj-orch": UUID}
+    env.rig.incus.config_device_get.reset_mock()
+    env.tick()
+    assert adds(env) == ["proj-orch"]
+    env.rig.incus.config_device_get.assert_not_called()
+
+
 def test_add_failure_warns_once_and_retries(env, caplog: pytest.LogCaptureFixture) -> None:
     env.add.side_effect = IncusError("boom")
     env.set(orch())
