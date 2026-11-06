@@ -6118,6 +6118,39 @@ broker over a per-container socket mounted at `/run/jailbee/orchestration/`
    started copy with the device still attached would reach `<k>`'s socket. Do
    not start it in this test. Delete the copy.
 
+### Broker state database migration (real host)
+
+Run on a disposable host state directory with the broker stopped and legacy
+orchestration state present. Do not simulate corruption in valuable live state.
+The first new broker start imports legacy state into `broker.db`; this recipe
+checks the preserved queue, watch/supervision and publication state across that
+migration.
+
+```bash
+state="$HOME/.local/state/jailbee/orchestration"
+systemctl --user stop jailbee-broker
+cp -a "$state" "$state.before-db-migration"
+# Record representative queued work, watched children, and publication state
+# using the host's existing test setup, then upgrade/install the new code.
+systemctl --user start jailbee-broker
+```
+
+- Check the queue still contains the same spawn/restart requests and
+  reservations; watched children remain supervised; and publication in-flight
+  recovery, known/accepted request deduplication, hourly budget and results are
+  unchanged. Use the normal orchestration status/messages and broker logs, plus
+  inspect `broker.db` with SQLite read-only if needed.
+- For each imported legacy state file or directory, confirm its `.migrated`
+  counterpart remains. If a pre-existing legacy input is unreadable or corrupt,
+  confirm the broker logs a warning and retains it as `.corrupt`; do not expect
+  that suffix when no corrupt input existed.
+- Restart the broker again and repeat the checks. The `.migrated` inputs must
+  not be imported a second time; no duplicate queued requests, watches,
+  publication results or journal decisions should appear. `publish-log.jsonl`
+  remains the audit log, and uncertain-publication review files remain available
+  for human resolution.
+- The socket, lock and transitional file-transport files are not migrated.
+
 Host-confirmation items from the design spike (only a real host settles these):
 
 - Permissions under the real `raw.idmap`: the `sock/<uuid>` directory is 0700

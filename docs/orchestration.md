@@ -714,13 +714,29 @@ not. When idle that is up to a minute. Do not start a hand-made copy before the
 device is gone: until then it can reach the source's socket. The broker attaches
 a fresh device if the copy becomes an orchestrator or child.
 
-Messages and statuses the broker delivers are kept in `broker.db` in the
-broker's state directory, unread and read ones alike, so `jailbee inbox ls`
-shows the unread ones and a restart of the broker or the container loses
-nothing. Read messages are kept for `orchestration.message_retention_days`
-(default 30, see [config](config.md#orchestration)); unread messages are never
-purged. `jb orchestrate messages [CONTAINER] [--all] [--json]` lists them on
-the host (read-only; `--all` includes read ones).
+The broker keeps its durable host-side state in `broker.db` in the state
+directory (`~/.local/state/jailbee/orchestration/`, or `$XDG_STATE_HOME`). It
+stores delivered messages and statuses (read and unread), the spawn/restart
+queue and reservations, watch/supervision state, publication in-flight state,
+known and accepted requests, the hourly budget and results, and the manifest
+deduplication journal. This lets the broker resume safely after a restart.
+`publish-log.jsonl` remains the append-only publication audit log, and
+`publish-review-uncertain/` remains the human-resolution block for uncertain
+publication outcomes; neither is part of the database migration. Socket,
+lock, and transitional file-transport state likewise remains file-based.
+
+On first use, existing state is imported automatically into `broker.db`.
+Imported files or directories are renamed with a `.migrated` suffix and kept
+for one compatibility release; unreadable or corrupt legacy state is warned
+about and quarantined with a `.corrupt` suffix. The import marker is stored
+transactionally, so restarting does not import migrated state a second time.
+
+Messages and statuses are retained unread and read alike, so `jailbee inbox
+ls` shows unread messages and a broker or container restart loses nothing.
+Read messages are kept for `orchestration.message_retention_days` (default 30,
+see [config](config.md#orchestration)); unread messages are never purged.
+`jb orchestrate messages [CONTAINER] [--all] [--json]` lists them on the host
+(read-only; `--all` includes read ones).
 
 If the broker is stopped or the socket is missing, every `jailbee inbox`
 command that needs it exits 4 with "the host broker is not reachable"; tell the
@@ -728,8 +744,9 @@ human, who starts it (`systemctl --user start jailbee-broker`, or `jb doctor`).
 `jailbee inbox wait` reconnects on its own if the broker restarts while it
 waits. Containers without the device (for example one created before the
 upgrade and not yet seen by the broker) still use the file transport. The
-state directory now holds `broker.db` and `sock/` next to the older
-`children.json`, queue and journal files. The message schema is in the
+state directory holds `broker.db` and `sock/`; `children.json` remains a
+published snapshot. Queue, watch, publication state and journal are stored in
+the database, as described above. The message schema is in the
 [protocol reference](orchestration-protocol.md#socket-transport).
 
 ### Child status
