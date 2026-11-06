@@ -300,7 +300,10 @@ def test_send_validation_unchanged(broker: FakeBroker, sockdir: Path, tmp_path: 
         (["restart", "--child", "kid", "--text", "go", "--resume", "BAD"], "--resume"),
         (["rights", "--child", "kid", "--mount", "repo"], "grants need --for"),
         (["rights", "--for", "1h"], "at least one grant or revoke"),
-        (["restart", "--child", "kid", "--text", "go", "--agent-only", "--services", "api"], "--agent-only"),
+        (
+            ["restart", "--child", "kid", "--text", "go", "--agent-only", "--services", "api"],
+            "--agent-only",
+        ),
     ],
 )
 def test_send_invalid_options_never_reach_broker(
@@ -316,25 +319,126 @@ def test_send_invalid_options_never_reach_broker(
 @pytest.mark.parametrize(
     ("args", "expected", "body"),
     [
-        (["update", "--child", "kid", "--ref", "abc", "--merge"],
-         {"version": 1, "type": "update", "child": "kid", "ref": "abc", "merge": True}, None),
-        (["update", "--child", "kid", "--base", "main"],
-         {"version": 1, "type": "update", "child": "kid", "base": "main"}, None),
-        (["rights", "--child", "kid", "--loose", "--mount", "repo", "--egress", "example.com", "--for", "1h"],
-         {"version": 1, "type": "rights", "child": "kid", "grant": {"loose": True, "mounts": ["repo"], "egress": ["example.com"], "for": "1h"}}, None),
-        (["spawn", "--branch", "feature", "--new", "--text", "go", "--services", " api, worker "],
-         {"version": 2, "type": "spawn", "kind": "new", "branch": "feature", "rights": {"version": 1, "mounts": [], "loose": False, "egress": []}, "services": ["api", "worker"]}, "go"),
-        (["spawn", "--branch", "feature", "--text", "go", "--services", ""],
-         {"version": 2, "type": "spawn", "kind": "fork", "branch": "feature", "rights": {"version": 1, "mounts": [], "loose": False, "egress": []}, "services": []}, "go"),
-        (["restart", "--child", "kid", "--text", "go", "--resume", "last", "--services", "api,worker"],
-         {"version": 1, "type": "restart", "child": "kid", "resume": "last", "services": ["api", "worker"]}, "go"),
-        (["restart", "--child", "kid", "--text", "go", "--resume", "12345678-1234-1234-1234-123456789abc", "--services", ""],
-         {"version": 1, "type": "restart", "child": "kid", "resume": "12345678-1234-1234-1234-123456789abc", "services": []}, "go"),
+        (
+            ["update", "--child", "kid", "--ref", "abc", "--merge"],
+            {"version": 1, "type": "update", "child": "kid", "ref": "abc", "merge": True},
+            None,
+        ),
+        (
+            ["update", "--child", "kid", "--base", "main"],
+            {"version": 1, "type": "update", "child": "kid", "base": "main"},
+            None,
+        ),
+        (
+            [
+                "rights",
+                "--child",
+                "kid",
+                "--loose",
+                "--mount",
+                "repo",
+                "--egress",
+                "example.com",
+                "--for",
+                "1h",
+            ],
+            {
+                "version": 1,
+                "type": "rights",
+                "child": "kid",
+                "grant": {
+                    "loose": True,
+                    "mounts": ["repo"],
+                    "egress": ["example.com"],
+                    "for": "1h",
+                },
+            },
+            None,
+        ),
+        (
+            [
+                "spawn",
+                "--branch",
+                "feature",
+                "--new",
+                "--text",
+                "go",
+                "--services",
+                " api, worker ",
+            ],
+            {
+                "version": 2,
+                "type": "spawn",
+                "kind": "new",
+                "branch": "feature",
+                "rights": {"version": 1, "mounts": [], "loose": False, "egress": []},
+                "services": ["api", "worker"],
+            },
+            "go",
+        ),
+        (
+            ["spawn", "--branch", "feature", "--text", "go", "--services", ""],
+            {
+                "version": 2,
+                "type": "spawn",
+                "kind": "fork",
+                "branch": "feature",
+                "rights": {"version": 1, "mounts": [], "loose": False, "egress": []},
+                "services": [],
+            },
+            "go",
+        ),
+        (
+            [
+                "restart",
+                "--child",
+                "kid",
+                "--text",
+                "go",
+                "--resume",
+                "last",
+                "--services",
+                "api,worker",
+            ],
+            {
+                "version": 1,
+                "type": "restart",
+                "child": "kid",
+                "resume": "last",
+                "services": ["api", "worker"],
+            },
+            "go",
+        ),
+        (
+            [
+                "restart",
+                "--child",
+                "kid",
+                "--text",
+                "go",
+                "--resume",
+                "12345678-1234-1234-1234-123456789abc",
+                "--services",
+                "",
+            ],
+            {
+                "version": 1,
+                "type": "restart",
+                "child": "kid",
+                "resume": "12345678-1234-1234-1234-123456789abc",
+                "services": [],
+            },
+            "go",
+        ),
     ],
 )
 def test_send_cli_manifest_fields(
-    broker: FakeBroker, sockdir: Path, tmp_path: Path,
-    args: list[str], expected: dict[str, object], body: str | None,
+    broker: FakeBroker,
+    sockdir: Path,
+    tmp_path: Path,
+    args: list[str],
+    expected: dict[str, object],
+    body: str | None,
 ) -> None:
     broker.on("send", send_status("queued"))
     result = run(sockdir, "send", *args, tmp=tmp_path)
@@ -359,11 +463,18 @@ def test_wait_invalid_durations_never_reach_broker(
     assert broker.requests == []
 
 
-@pytest.mark.parametrize(("option", "key"), [("--quiet-after", "quiet_after"), ("--digest", "digest")])
+@pytest.mark.parametrize(
+    ("option", "key"), [("--quiet-after", "quiet_after"), ("--digest", "digest")]
+)
 @pytest.mark.parametrize(("value", "seconds"), [("2s", 2), ("3m", 180), ("1h", 3600)])
 def test_wait_duration_conversion(
-    broker: FakeBroker, sockdir: Path, tmp_path: Path, option: str, key: str,
-    value: str, seconds: int,
+    broker: FakeBroker,
+    sockdir: Path,
+    tmp_path: Path,
+    option: str,
+    key: str,
+    value: str,
+    seconds: int,
 ) -> None:
     broker.on("next", {"kind": "timeout"})
     result = run(sockdir, "wait", option, value, "--timeout", "0", tmp=tmp_path)
