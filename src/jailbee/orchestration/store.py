@@ -14,7 +14,7 @@ import os
 import sqlite3
 import threading
 import time
-from collections.abc import Collection, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -66,6 +66,9 @@ _MIGRATIONS: list[str] = [
         uuid TEXT PRIMARY KEY,
         at REAL NOT NULL
     );
+    """,
+    """
+    CREATE TABLE state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     """,
 ]
 
@@ -251,6 +254,47 @@ class BrokerStore:
                 con.execute("ROLLBACK")
             raise
         con.execute("COMMIT")
+
+    # -- state ---------------------------------------------------------
+
+    def kv_get(self, key: str) -> object | None:
+        with self._tx(write=False) as con:
+            row = con.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
+        return None if row is None else json.loads(row[0])
+
+    def kv_put(self, key: str, value: object) -> None:
+        with self._tx() as con:
+            con.execute(
+                "INSERT INTO state(key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, json.dumps(value)),
+            )
+
+    def kv_delete(self, key: str) -> None:
+        with self._tx() as con:
+            con.execute("DELETE FROM state WHERE key=?", (key,))
+
+    def kv_keys(self, prefix: str) -> list[str]:
+        with self._tx(write=False) as con:
+            rows = con.execute(
+                "SELECT key FROM state WHERE substr(key, 1, ?) = ? ORDER BY key",
+                (len(prefix), prefix),
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def import_once(self, name: str, loader: Callable[[sqlite3.Connection], None]) -> bool:
+        """Run loader and record its marker in the same write transaction.
+
+        The loader must use the supplied connection, not methods opening another
+        transaction. Return whether the loader ran.
+        """
+        marker = f"imported:{name}"
+        with self._tx() as con:
+            if con.execute("SELECT 1 FROM meta WHERE key=?", (marker,)).fetchone():
+                return False
+            loader(con)
+            con.execute("INSERT INTO meta(key, value) VALUES (?, '1')", (marker,))
+        return True
 
     # -- items ---------------------------------------------------------
 
@@ -451,6 +495,19 @@ class BrokerStore:
             )
             con.execute("DELETE FROM requests WHERE sender_uuid=? AND at<?", (uuid, cutoff))
             return max(cur.rowcount, 0)
+
+
+_STATE_STORES: dict[Path, BrokerStore] = {}
+_STATE_STORES_LOCK = threading.Lock()
+
+
+def open_state_store(root: Path) -> BrokerStore:
+    """Return a shared stateless handle; connections remain per operation."""
+    path = store_path(root).absolute()
+    with _STATE_STORES_LOCK:
+        if path not in _STATE_STORES:
+            _STATE_STORES[path] = BrokerStore(path)
+        return _STATE_STORES[path]
 
 
 def _enable_wal(con: sqlite3.Connection) -> None:
