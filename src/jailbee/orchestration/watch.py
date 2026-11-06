@@ -116,7 +116,9 @@ def save_watch(root: Path, watches: dict[str, list[WatchEntry]]) -> None:
         "version": _WATCH_VERSION,
         "watches": {k: [asdict(e) for e in v] for k, v in watches.items() if v},
     }
-    import_json_document(root, WATCH_FILE, _validate_watch).kv_put(WATCH_FILE, payload)
+    import_json_document(root, WATCH_FILE, _validate_watch, for_write=True).kv_put(
+        WATCH_FILE, payload
+    )
 
 
 @contextmanager

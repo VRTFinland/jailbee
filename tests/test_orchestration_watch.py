@@ -179,6 +179,34 @@ def test_save_before_legacy_file_prevents_import_overwrite(tmp_path: Path) -> No
     assert (tmp_path / "watch.json.migrated").exists()
 
 
+def test_save_fails_closed_while_legacy_watch_is_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+    from dataclasses import asdict
+    from pathlib import Path
+
+    from jailbee.orchestration.store import StoreError
+
+    legacy = {"version": 1, "watches": {ORCH: [asdict(entry())]}}
+    path = tmp_path / "watch.json"
+    path.write_text(json.dumps(legacy))
+    original_read_text = Path.read_text
+
+    def unreadable(self: Path, *args, **kwargs):
+        if self == path:
+            raise PermissionError("temporarily unreadable")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+    assert load_watch(tmp_path) == {}
+    with pytest.raises(StoreError):
+        save_watch(tmp_path, {})
+
+    monkeypatch.setattr(Path, "read_text", original_read_text)
+    assert load_watch(tmp_path) == {ORCH: [entry()]}
+
+
 def test_watch_migration_quarantines_syntax_and_top_level_corruption(tmp_path: Path) -> None:
     (tmp_path / "watch.json").write_text("{not json")
     assert load_watch(tmp_path) == {}
