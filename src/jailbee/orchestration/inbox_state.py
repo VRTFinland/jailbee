@@ -224,7 +224,6 @@ def _activity(started: float, work: dict[str, object], now: float, previous: flo
         started_at=started,
         agent_last_event_at=seen(agent.get("last_event_at")) if isinstance(agent, dict) else None,
         head_time=seen(head.get("time")) if isinstance(head, dict) else None,
-        last_busy_at=seen(work.get("last_busy_at")),
     )
     return computed if previous is None else max(previous, computed)
 

@@ -332,7 +332,9 @@ prints it and moves it to `inbox/read/`; or `mv` the file there yourself).
 After `wait` returns, run `jailbee inbox ls` and handle **every** unread
 message before waiting again: replies to several manifests arrive as a burst.
 For a background orchestrator waiter, use `--timeout none` only together with
-`--quiet-after` so silent children still wake it.
+`--quiet-after` so silent children still wake it, and add `--digest 55m` so you
+see the `inbox status` table at least hourly even if the heuristic misses a
+stalled child.
 
 Use `--wake-on`, not home-made wrappers that read/log notes or statuses:
 **wait never consumes anything**, including nonmatches. It returns the oldest
@@ -346,8 +348,10 @@ not filename, or a matching unread message keeps waking you.
 
 `--quiet-after 60m` also returns exit 0 with `quiet-child CHILD` (not a path)
 when a running child that has not reported done shows no activity for an hour.
-Activity is a message from the child (read or unread), an agent event, a commit
-or CPU use; a child with none is timed from its start. Check that child (see
+Activity is a message from the child (read or unread), an agent event or a
+commit; CPU use is not activity, because a hung process keeps using some. A
+child with none is timed from its start. A long silent build or test run also
+wakes you: check `LONGEST` before concluding the child is stuck. Check that child (see
 "Checking on children"); the watchdog repeats until activity, stop or restart.
 The broker refreshes `children.json`; missing, corrupt or more than
 15-minute-old state makes this watchdog exit 2, so check the host broker
@@ -386,17 +390,18 @@ means unknown, and a stopped child shows little more than `HEAD`. A stale
 snapshot only warns on stderr there and still prints (exit 0), unlike
 `wait --quiet-after/--digest`, which exit 2.
 
-- Fine: a recent `ACTIVE` (agent events or CPU), recent commits, agent
+- Fine: a recent `ACTIVE` (agent events or commits), recent commits, agent
   `alive:busy`.
-- Look at it: agent alive but no activity and no CPU for about 30 minutes; one
+- Look at it: agent alive but no `ACTIVE` change for about 30 minutes, even
+  with some CPU (a hung process still burns CPU); one
   process in `LONGEST` (the longest-running tool process of the agent, by
   process name) running for hours; agent `dead` without done (also reported as
   `blocked`; `starting` means the agent is not launched yet, not dead); `waiting` (also reported as `idle`).
 - Only then message the child.
 
-CPU is measured container-wide, so background services the container starts
-(a JVM, a database, a file watcher, dockerd) can keep `--quiet-after` from ever
-firing for that child; judge such a child by `ACTIVE` agent events and commits.
+CPU is measured container-wide and is shown for information only: it never
+counts as activity, so `--quiet-after` fires for a child whose agent is stuck on
+a busy process. Judge such a child by `ACTIVE`, commits and `LONGEST`.
 
 ## Status messages
 

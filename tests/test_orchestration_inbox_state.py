@@ -294,9 +294,23 @@ def test_sync_children_publishes_status_for_running_child(tmp_path, probes):
     assert st["agent"] == AGENT
     assert st["head"] == HEAD and st["dirty"] is False
     assert st["memory_bytes"] == 5_000
-    assert st["activity_at"] == max(now, 5_000.0, 1_000.0)
+    assert st["activity_at"] == max(now, 5_000.0, 1_000.0)  # the start time is newest here
     assert st["last_to_child_at"] is None
     assert cache.samplers["p-orch"].calls[0][0].init_pid == 77
+
+
+def test_sync_children_busy_cpu_alone_is_not_progress(tmp_path, probes):
+    """#76: a hung process that keeps using CPU must not keep the child looking active."""
+    ctx = context(tmp_path)
+    started = ctx.now.timestamp() - 3600
+    ctx.nodes["p-kid"] = Node("p-kid", "kid", True, {labels.SPAWNED_BY: "p-orch"}, started)
+    for _ in range(3):
+        inbox_state.sync_children(ctx, _cache(cpu=80.0))
+        ctx.now += timedelta(seconds=300)
+    st = published_status(ctx)
+    assert st["cpu_percent"] == 80.0
+    assert st["last_busy_at"] > started  # still published for display
+    assert st["activity_at"] == started  # agent event and commit predate the start
 
 
 def test_sync_children_memory_subtracts_cache_and_clamps(tmp_path, probes, monkeypatch):
@@ -359,8 +373,8 @@ def test_sync_children_status_survives_broker_restart(tmp_path, probes):
     inbox_state.sync_children(ctx, _cache(cpu=None))  # fresh cache, cold sampler
     st = published_status(ctx)
     assert st["last_busy_at"] == busy_at
-    # started_at (an hour earlier), agent and head are all older than busy_at.
-    assert st["activity_at"] == busy_at
+    # Busyness is kept for display but is not progress: activity_at stays below it.
+    assert st["activity_at"] < busy_at
     assert st["head"] == HEAD
     assert st["cpu_percent"] is None
 

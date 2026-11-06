@@ -146,14 +146,15 @@ def activity_at(
     started_at: float,
     agent_last_event_at: float | None,
     head_time: float | None,
-    last_busy_at: float | None,
 ) -> float:
-    """The latest moment the child showed any sign of life.
+    """The latest moment the child showed progress.
 
+    Progress is an agent event or a commit. CPU use is not: a hung build or
+    test JVM keeps burning a little CPU and would hide a stalled child (#76).
     Unknown (None) signals are ignored; `started_at` is always known.
     """
     times = [started_at]
-    for value in (agent_last_event_at, head_time, last_busy_at):
+    for value in (agent_last_event_at, head_time):
         if value is not None:
             times.append(value)
     return max(times)

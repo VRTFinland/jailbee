@@ -127,10 +127,12 @@ def test_status_cache_prune_drops_vanished():
 
 
 def test_activity_at_ignores_unknown():
-    assert (
-        activity_at(started_at=10.0, agent_last_event_at=None, head_time=50.0, last_busy_at=None)
-        == 50.0
-    )
+    assert activity_at(started_at=10.0, agent_last_event_at=None, head_time=50.0) == 50.0
+
+
+def test_activity_at_is_the_latest_of_start_agent_event_and_commit():
+    assert activity_at(started_at=10.0, agent_last_event_at=70.0, head_time=50.0) == 70.0
+    assert activity_at(started_at=100.0, agent_last_event_at=70.0, head_time=50.0) == 100.0
 
 
 def test_status_cache_intervals():

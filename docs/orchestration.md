@@ -659,8 +659,8 @@ After waking, list and handle all unread messages, including filtered notes.
 `--quiet-after` returns exit 0 with `quiet-child CHILD` instead of a path when
 a running child that has not reported done shows no activity for that duration.
 Activity is the latest of a message from the child (read or unread), an agent
-event, a commit on the child's branch and CPU use at or above 5% of one core,
-taken from the `status` object below (the broker's own `idle`/`blocked` reports
+event and a commit on the child's branch (CPU use is not activity: a hung
+process keeps using some), taken from the `status` object below (the broker's own `idle`/`blocked` reports
 from `child.short` count as messages from the child, for `LAST-MSG` too); with
 no activity, time is measured from the child's start. A child whose `status` is missing (an older broker) is timed by
 messages alone. Stop or restart resets monitoring, and an overdue child keeps
@@ -720,9 +720,9 @@ readers and brokers interoperate):
 | `longest_command` | `{"command", "seconds"}`: the process name (not the command line) of the longest-running non-shell process a shell started below the agent, excluding the agent and any `jailbee inbox wait` or `inbox send --wait` waiter (recognised by its command line, e.g. `python -m jailbee.container_main inbox wait`); `null` if none or the agent is unknown. |
 | `head` | `{"sha", "time", "subject"}` of the newest commit on the child's branch (committer time), or `null` without commits. |
 | `dirty` | Uncommitted changes in the work tree, or `null` if unknown. |
-| `last_busy_at` | Last time `cpu_percent` was at least 5. Kept across broker restarts. |
+| `last_busy_at` | Last time `cpu_percent` was at least 5. Kept across broker restarts. Informational only: it does not feed `activity_at`. |
 | `last_to_child_at` | Last time the broker accepted a message, update or restart for the child. |
-| `activity_at` | Latest of `agent.last_event_at`, `head.time`, `last_busy_at` and the start time; never decreases for one child instance. Child-supplied times later than now + 5 s are ignored by the broker, and `wait` ignores an `activity_at` later than now + 5 s. |
+| `activity_at` | Latest of `agent.last_event_at`, `head.time` and the start time (CPU use does not count); never decreases for one child instance. Child-supplied times later than now + 5 s are ignored by the broker, and `wait` ignores an `activity_at` later than now + 5 s. |
 
 Host-side fields, including the agent session fields, refresh at most every 30
 seconds per child; the liveness probe (`agent_watch.probe`) and the git probe
@@ -734,9 +734,11 @@ observed running or messaged). Commit subjects and process names come from the
 child and are untrusted: they are cut to 120 and 160 characters and control
 characters are replaced, in the broker and again when printed.
 
-`cpu_percent` and `last_busy_at` are container-wide, so autostarted background
-services (a JVM, a database, a file watcher, dockerd) can keep
-`--quiet-after` from ever firing for that child.
+`cpu_percent` and `last_busy_at` are container-wide and shown for information
+only. CPU use never counts as activity, so a hung build or test JVM cannot
+keep `--quiet-after` from firing. The converse holds too: a child in one long
+silent build or test run wakes the waiter after the quiet period; `LONGEST`
+shows what it is running.
 
 One ordinary waiter per container is enforced with a process lock (a second
 exits 2). It may overlap `send --wait`: the sender reserves its status ref
