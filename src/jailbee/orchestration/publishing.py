@@ -20,6 +20,7 @@ from jailbee.orchestration.actions import HANDLERS, ActionContext, Outcome, done
 from jailbee.orchestration.grant import Grant, PublishRights, effective_grant
 from jailbee.orchestration.protocol import Manifest, PublishManifest
 from jailbee.orchestration.state import atomic_write_text
+from jailbee.orchestration.store import import_json_document
 from jailbee.outbox.models import ProposalId
 from jailbee.outbox.publish import PublishOptions, publish_selected
 from jailbee.outbox_io import JournalStore, container_identity
@@ -30,13 +31,24 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def _validate_document(document: object) -> None:
+    if not isinstance(document, dict):
+        raise ValueError("expected an object")
+
+
 def _load(root: Path, name: str) -> dict[str, Any]:
-    path = root / name
-    return json.loads(path.read_text()) if path.exists() else {}
+    if name != "publish-known.json":
+        path = root / name
+        return json.loads(path.read_text()) if path.exists() else {}
+    value = import_json_document(root, name, _validate_document).kv_get(name)
+    return value if isinstance(value, dict) else {}
 
 
 def _save(root: Path, name: str, data: dict[str, Any]) -> None:
-    atomic_write_text(root / name, json.dumps(data, sort_keys=True))
+    if name == "publish-known.json":
+        import_json_document(root, name, _validate_document).kv_put(name, data)
+    else:
+        atomic_write_text(root / name, json.dumps(data, sort_keys=True))
 
 
 def _result(root: Path, full: str, ref: str) -> Path:

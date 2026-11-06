@@ -81,6 +81,26 @@ def accept(rig):
     threads[0].target(*threads[0].args)
 
 
+def test_known_senders_imports_once_and_quarantines_corrupt_state(rig, caplog):
+    ctx = rig[0]
+    legacy = ctx.root / "publish-known.json"
+    legacy.write_text(json.dumps({"proj-old": "old-key"}))
+    assert publishing.known_senders(ctx.root) == {"proj-old"}
+    assert legacy.with_name(legacy.name + ".migrated").exists()
+    legacy.write_text(json.dumps({"unexpected": "key"}))
+    assert publishing.known_senders(ctx.root) == {"proj-old"}
+    publishing.remember(ctx)
+    assert publishing.known_senders(ctx.root) == {"proj-old", ctx.sender.full}
+    assert not legacy.exists()
+
+    other = ctx.root / "other"
+    other.mkdir()
+    (other / "publish-known.json").write_text("broken")
+    assert publishing.known_senders(other) == set()
+    assert (other / "publish-known.json.corrupt").exists()
+    assert "corrupt" in caplog.text
+
+
 def test_handle_publish_rereads_revoked_label(rig):
     ctx, m, *_ = rig
     ctx.incus.config_get.side_effect = None
