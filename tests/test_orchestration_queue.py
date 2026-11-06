@@ -229,8 +229,9 @@ def test_prune_drops_dead_keeps_live(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(actions, "reservation_alive", lambda pid: pid == 2)
     actions.prune_reservations(tmp_path)
     assert state.load_reservations(tmp_path) == {"proj-other": [live]}
+    monkeypatch.setattr(state, "save_reservations", MagicMock())
     actions.prune_reservations(tmp_path)
-    assert state.load_reservations(tmp_path) == {"proj-other": [live]}
+    state.save_reservations.assert_not_called()
 
 
 def test_failed_create_frees_slot_on_next_drain(

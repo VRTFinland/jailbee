@@ -188,3 +188,84 @@ def test_state_root_created_under_state_dir(
     root = state_root()
     assert root == tmp_path / "jailbee" / "orchestration"
     assert root.is_dir()
+
+
+def test_unreadable_legacy_reservations_warns_and_starts_empty(tmp_path, monkeypatch, caplog):
+    from pathlib import Path
+
+    path = tmp_path / state.RESERVATIONS_FILE
+    path.write_text("{}")
+    original = Path.read_text
+
+    def unreadable(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError("denied")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+    assert state.load_reservations(tmp_path) == {}
+    assert "denied" in caplog.text
+    assert path.exists()
+
+
+def test_reservations_import_once_and_ignore_recreated_source(tmp_path):
+    path = tmp_path / state.RESERVATIONS_FILE
+    path.write_text(json.dumps({"reservations": {"orch": [{"child_full": "a", "pid": 1, "started_at": "t"}]}}))
+    expected = {"orch": [state.Reservation("a", 1, "t")]}
+    assert state.load_reservations(tmp_path) == expected
+    assert (tmp_path / "reservations.json.migrated").exists()
+    path.write_text("bad")
+    assert state.load_reservations(tmp_path) == expected
+
+
+def test_missing_source_marks_import_complete(tmp_path):
+    assert load_queue(tmp_path) == {}
+    (tmp_path / "queue.json").write_text("bad")
+    assert load_queue(tmp_path) == {}
+    assert (tmp_path / "queue.json.migrated").exists()
+
+
+def test_corrupt_syntax_quarantined(tmp_path):
+    (tmp_path / "queue.json").write_text("{")
+    assert load_queue(tmp_path) == {}
+    assert (tmp_path / "queue.json.corrupt").read_text() == "{"
+
+
+def test_failed_rename_after_commit_retried_without_reimport(tmp_path, monkeypatch):
+    from pathlib import Path
+    from dataclasses import asdict
+
+    path = tmp_path / "queue.json"
+    path.write_text(json.dumps({"queues": {"orch": [asdict(_req())]}}))
+    original = Path.replace
+    calls = []
+
+    def fail_once(self, target):
+        if self == path and not calls:
+            calls.append(1)
+            raise PermissionError("denied")
+        return original(self, target)
+
+    monkeypatch.setattr(Path, "replace", fail_once)
+    assert load_queue(tmp_path) == {"orch": [_req()]}
+    path.write_text("invalid")
+    assert load_queue(tmp_path) == {"orch": [_req()]}
+    assert (tmp_path / "queue.json.migrated").read_text() == "invalid"
+
+
+def test_quarantine_failure_does_not_abort(tmp_path, monkeypatch, caplog):
+    from pathlib import Path
+
+    path = tmp_path / "queue.json"
+    path.write_text("{")
+    original = Path.replace
+
+    def denied(self, target):
+        if self == path:
+            raise PermissionError("denied")
+        return original(self, target)
+
+    monkeypatch.setattr(Path, "replace", denied)
+    assert load_queue(tmp_path) == {}
+    assert path.exists()
+    assert "denied" in caplog.text

@@ -520,8 +520,10 @@ def import_json_document(
     """
     store = open_state_store(root)
     path = root / name
+    skip_rename = False
 
     def load(con: sqlite3.Connection) -> None:
+        nonlocal skip_rename
         try:
             document = json.loads(path.read_text(encoding="utf-8"))
             validate(document)
@@ -533,10 +535,14 @@ def import_json_document(
                 path.replace(path.with_name(path.name + ".corrupt"))
             except FileNotFoundError:
                 pass
+            except OSError as rename_exc:
+                _log.warning("cannot quarantine orchestration state %s: %s", path, rename_exc)
+                skip_rename = True
             return
         except OSError as exc:
             _log.warning("ignoring unreadable orchestration state %s: %s", path, exc)
-            raise
+            skip_rename = True
+            return
         con.execute(
             "INSERT INTO state(key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO NOTHING", (name, json.dumps(document)),
@@ -544,10 +550,13 @@ def import_json_document(
 
     store.import_once(name, load)
     # TODO(state-db-cleanup): remove migrated files after the compatibility window.
-    try:
-        path.replace(path.with_name(path.name + ".migrated"))
-    except FileNotFoundError:
-        pass
+    if not skip_rename:
+        try:
+            path.replace(path.with_name(path.name + ".migrated"))
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            _log.warning("cannot rename migrated orchestration state %s: %s", path, exc)
     return store
 
 
