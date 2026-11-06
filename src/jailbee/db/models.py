@@ -372,6 +372,21 @@ class UpdateCheckState(SQLModel, table=True):
     hint_shown_version: str | None = None
 
 
+class GoldenSeedState(SQLModel, table=True):
+    """Latest Docker seed result for one golden alias."""
+
+    __tablename__ = "golden_seed_state"
+
+    alias: str = Field(primary_key=True)
+    container_prefix: str = Field(index=True)
+    seeded_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+    source: str
+    outcome: str
+    image_count: int = Field(sa_column=Column(Integer, nullable=False))
+    size_bytes: int = Field(sa_column=Column(Integer, nullable=False))
+    detail: str = Field(default="", nullable=False)
+
+
 class SentRecord(SQLModel, table=True):
     """One outbox action GitHub accepted (or may have accepted): the Sent log.
 

@@ -1100,7 +1100,7 @@ def test_v15_db_gains_columns_version_defaulting_zero() -> None:
     assert row is not None
     assert row.columns_version == 0
     assert row.columns == '["name", "mem"]' and row.show_details is False
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 20
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 21
 
 
 def test_migrate_to_v16_is_idempotent() -> None:
@@ -1134,7 +1134,7 @@ def test_v16_db_gains_the_sort_columns() -> None:
     assert row is not None
     assert row.sort_field is None and row.sort_desc is False
     assert row.columns == '["name", "state"]' and row.columns_version == 1
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 20
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 21
 
 
 def test_migrate_to_v17_is_idempotent() -> None:
@@ -1167,7 +1167,7 @@ def test_v17_db_gains_show_system_defaulting_true() -> None:
     assert row is not None
     assert row.show_system is True
     assert row.columns == '["name"]' and row.show_details is False
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 20
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 21
 
 
 def test_migrate_to_v18_is_idempotent() -> None:
@@ -1200,7 +1200,7 @@ def test_v18_db_gains_details_rows_unset() -> None:
     assert row is not None
     assert row.details_rows is None
     assert row.columns == '["name"]' and row.show_details is False
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 20
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 21
 
 
 def test_migrate_to_v19_is_idempotent() -> None:
@@ -1223,6 +1223,41 @@ def test_migrate_to_v20_is_idempotent() -> None:
         _migrate_to_v20(conn)
 
 
+def test_v20_database_migrates_to_v21_with_seed_table() -> None:
+    from jailbee.db import _ensure_schema
+    from jailbee.db.models import GoldenSeedState, SchemaMeta
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(SchemaMeta(id=1, version=20))
+        session.commit()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE golden_seed_state")
+
+    _ensure_schema(engine)
+
+    with Session(engine) as session:
+        meta = session.get(SchemaMeta, 1)
+        state = GoldenSeedState(
+            alias="sampleapp--golden",
+            container_prefix="sampleapp",
+            seeded_at=datetime(2026, 11, 6, tzinfo=UTC),
+            source="seed-container",
+            outcome="seeded",
+            image_count=3,
+            size_bytes=4096,
+        )
+        session.add(state)
+        session.commit()
+        loaded = session.get(GoldenSeedState, "sampleapp--golden")
+        version = meta.version if meta is not None else None
+
+    assert version == CURRENT_SCHEMA_VERSION == 21
+    assert loaded is not None
+    assert loaded.seeded_at == datetime(2026, 11, 6, tzinfo=UTC)
+
+
 def test_v19_db_gains_sent_record_and_keeps_other_rows() -> None:
     from jailbee.db import _ensure_schema
     from jailbee.db.models import SchemaMeta, SentRecord, ViewPrefs
@@ -1241,5 +1276,5 @@ def test_v19_db_gains_sent_record_and_keeps_other_rows() -> None:
         meta = session.get(SchemaMeta, 1)
         prefs = session.get(ViewPrefs, "tui")
         assert session.exec(select(SentRecord)).all() == []
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 20
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 21
     assert prefs is not None and prefs.columns == '["name"]'
