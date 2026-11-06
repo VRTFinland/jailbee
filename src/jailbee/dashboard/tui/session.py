@@ -1125,9 +1125,15 @@ class DashboardSession:
             dact.orchestrate_revoke_argv(container), self.ssh_policy, over_ssh=self.over_ssh
         )
         if not dact.orchestration_grant_permitted(info, self.ssh_policy, over_ssh=self.over_ssh):
+            try:
+                check_dashboard_command(
+                    dact.orchestrate_grant_argv(container),
+                    self.ssh_policy,
+                    over_ssh=self.over_ssh,
+                )
+            except RouteError as exc:
+                entries.append(PickerEntry(f"Grant edits unavailable: {exc}", "grant-unavailable"))
             # Grant edits are unavailable; independently permitted actions follow below.
-            if info.grant is not None and revoke_ok:
-                entries.append(PickerEntry("Revoke…", "revoke"))
         elif info.grant is not None:
             grant = info.grant
             kinds = info.configured_mounts or group.optional_mounts
@@ -1160,6 +1166,13 @@ class DashboardSession:
             entries.extend(self._publish_entries(container, grant))
             for p in group.orchestration_profiles:
                 entries.append(PickerEntry(f"Re-apply profile '{p}'", f"profile:{p}"))
+        elif self._grant_pending.get(container, 0.0) > time.monotonic():
+            entries.append(PickerEntry("Granted — waiting for refresh…", "pending"))
+        else:
+            for p in group.orchestration_profiles:
+                entries.append(PickerEntry(f"Grant profile '{p}'", f"profile:{p}"))
+            entries.append(PickerEntry("Grant with defaults", "defaults"))
+        if info.grant is not None:
             if permitted(
                 dact.orchestrate_profile_save_argv(container, "x"),
                 self.ssh_policy,
@@ -1168,13 +1181,6 @@ class DashboardSession:
                 entries.append(PickerEntry("Save as profile…", "save-profile"))
             if revoke_ok:
                 entries.append(PickerEntry("Revoke…", "revoke"))
-        elif self._grant_pending.get(container, 0.0) > time.monotonic():
-            entries.append(PickerEntry("Granted — waiting for refresh…", "pending"))
-        else:
-            for p in group.orchestration_profiles:
-                entries.append(PickerEntry(f"Grant profile '{p}'", f"profile:{p}"))
-            entries.append(PickerEntry("Grant with defaults", "defaults"))
-        if info.grant is not None:
             candidates = dact.adoptable_rows(group.containers, container)
             children = [
                 r for r in group.containers if r.child and r.child.orchestrator == container
@@ -1205,6 +1211,8 @@ class DashboardSession:
     ) -> Picker | TextPrompt | None:
         """Run the chosen grant, or ask before a revoke."""
         container = picker.target
+        if entry.value == "grant-unavailable":
+            return self.open_orchestration(container)
         if picker.purpose == "container-orchestration-revoke":
             if entry.value != "yes":
                 self.set_notice("Cancelled")
@@ -1269,16 +1277,17 @@ class DashboardSession:
                 target=container,
                 back=self.open_orchestration(container),
             )
-        if not self._orchestration_editable(info):
-            self.set_notice("Orchestration is not available for this container")
-            return None
         if picker.purpose == "container-orchestration-overwrite-profile":
             if not entry.value.startswith("yes:"):
                 self.set_notice("Cancelled")
                 return self._reopen_orchestration(container, "save-profile")
             return self._save_orchestration_profile(container, entry.value[4:], force=True)
         if entry.value == "save-profile":
-            if found[1].grant is None:
+            if found[1].grant is None or not permitted(
+                dact.orchestrate_profile_save_argv(container, "x"),
+                self.ssh_policy,
+                over_ssh=self.over_ssh,
+            ):
                 self.set_notice("Orchestration is not available for this container")
                 return None
             return TextPrompt(
@@ -1288,6 +1297,9 @@ class DashboardSession:
                 target=container,
                 back=self.open_orchestration(container),
             )
+        if not self._orchestration_editable(info):
+            self.set_notice("Orchestration is not available for this container")
+            return None
         if entry.value == "pending":
             return self._reopen_orchestration(container, "pending")
         if picker.purpose == "container-orchestration-runner":
@@ -1611,7 +1623,7 @@ class DashboardSession:
             self.set_notice(f"'{container}' is gone")
             return None
         grant = found[1].grant
-        if grant is None or not self._orchestration_editable(found[1]):
+        if grant is None:
             self.set_notice("Orchestration is not available for this container")
             return None
         if prompt.purpose == "container-orchestration-save-profile":
@@ -1635,6 +1647,9 @@ class DashboardSession:
                     back=self.open_orchestration(container),
                 )
             return self._save_orchestration_profile(container, answer)
+        if not self._orchestration_editable(found[1]):
+            self.set_notice("Orchestration is not available for this container")
+            return None
         if prompt.purpose == "container-orchestration-limit":
             limit = int(answer)
             argv = dact.orchestrate_grant_argv(container, children=limit)

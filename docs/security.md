@@ -162,9 +162,14 @@ With `remote.ssh.network` on, `net loose`, `new --net loose` and container-scope
 `net egress rm` only narrow a container and are always permitted; `--repo` on
 `net egress add`/`rm` is refused regardless, because it writes the host-local
 repo layer.
-`orchestrate grant` is refused in a restricted session while
-`remote.ssh.orchestration` is `off`; `revoke`, `show` and `ls`
-are not affected. With `ssh` (the default), a grant may give children only what the session
+`orchestrate grant`, `orchestrate adopt` and `orchestrate profile save` are
+refused in a restricted session while `remote.ssh.orchestration` is `off`;
+`revoke`, `show` and `ls` are not affected. With `ssh` or `orchestrator`, profile
+saving writes only `orchestration.profiles` in the host's `global.yaml`, not
+arbitrary host configuration. Every unlocked command still needs its exact
+leaf in `commands.allow` when `commands.mode` is `allowlist`. The dashboard's
+Orchestration menu shows the policy's refusal reason when grant edits are
+unavailable, rather than offering only Revoke without an explanation. With `ssh` (the default), a grant may give children only what the session
 could do itself: loose network and egress hosts need `remote.ssh.network`,
 optional-mount kinds need `remote.ssh.mounts`, and `mount_roots` never
 qualifies. With `orchestrator`, it may give only what the orchestrator
