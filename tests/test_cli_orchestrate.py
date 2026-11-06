@@ -567,3 +567,44 @@ def test_adoption_errors(patched, mocker, command, args, exception):
     result = runner.invoke(app, ["orchestrate", command, *args])
     assert result.exit_code == 1
     assert str(exception) in result.output
+
+
+def _store(tmp_path, mocker, prefix="myrepo"):
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    mocker.patch("jailbee.orchestration.state.state_root", return_value=tmp_path)
+    st = BrokerStore(store_path(tmp_path))
+    m = {"type": "message", "kind": "note", "ref": "r", "from": "bob"}
+    st.insert_item("u1", f"{prefix}-a", {**m, "id": "m1"}, now=100.0)
+    st.insert_item("u1", f"{prefix}-a", {**m, "id": "m2"}, now=110.0)
+    st.ack("u1", "m2", now=200.0)
+
+
+def test_messages_table_and_never_prompts(patched, tmp_path, mocker):
+    _store(tmp_path, mocker)
+    res = runner.invoke(app, ["orchestrate", "messages"])
+    assert res.exit_code == 0, res.output
+    assert "CONTAINER" in res.output and "m1" in res.output and "m2" not in res.output
+    patched.resolve.assert_not_called()
+
+
+def test_messages_all_json_filters_container(patched, tmp_path, mocker):
+    _store(tmp_path, mocker, patched.cfg.container_prefix)
+    mocker.patch(
+        "jailbee.lifecycle.resolve_container_name",
+        return_value=f"{patched.cfg.container_prefix}-a",
+    )
+    mocker.patch("jailbee.incus.Incus")
+    res = runner.invoke(app, ["orchestrate", "messages", "a", "--all", "--json"])
+    assert res.exit_code == 0, res.output
+    rows = json.loads(res.stdout)
+    assert [r["id"] for r in rows] == ["m1", "m2"]
+    assert rows[0]["container"] == "a" and rows[1]["acked_at"] is not None
+
+
+def test_messages_missing_store_notes_on_stderr(patched, tmp_path, mocker):
+    mocker.patch("jailbee.orchestration.state.state_root", return_value=tmp_path)
+    res = runner.invoke(app, ["orchestrate", "messages", "--json"])
+    assert res.exit_code == 0
+    assert "no broker message store yet" in res.output
+    assert not (tmp_path / "broker.db").exists()

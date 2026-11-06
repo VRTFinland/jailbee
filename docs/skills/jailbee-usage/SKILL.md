@@ -1165,7 +1165,8 @@ import, stop and destroy children, within the grant and the repo's caps.
   `loose`) is refused and each excess is named.
 - `jailbee orchestrate show [NAME]` — the grant, what the repo's caps leave of
   it, and the running children. `jailbee orchestrate ls [--json]` — every
-  grant in the repo.
+  grant in the repo. `jailbee orchestrate messages [NAME] [--all] [--json]` —
+  the broker's stored messages (read-only; unread, or all with `--all`).
 - `jailbee new` applies `orchestration.default_profile` to the new container
   when one is configured (not for mount-mode containers or children, nor when the repo's caps would refuse the grant).
 - Profiles (`orchestration.profiles`, `default_profile`) live only in

@@ -13693,6 +13693,77 @@ def orchestrate_ls_cmd(
     console.print(table)
 
 
+@orchestrate_app.command("messages")
+def orchestrate_messages_cmd(
+    name: ContainerArg = None,
+    all_: Annotated[
+        bool,
+        typer.Option("--all", help="Include acknowledged messages, newest last."),
+    ] = False,
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Print the messages as a JSON list."),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """List the broker's stored messages (read-only); omit the container for all."""
+    import sys
+
+    from rich.table import Table
+
+    from jailbee.incus import Incus
+    from jailbee.lifecycle import resolve_container_name, short_name
+    from jailbee.orchestration.state import state_root
+    from jailbee.orchestration.store import StoreError, store_path
+    from jailbee.orchestration.view import messages_view
+    from jailbee.tui import console
+
+    cfg = _load_or_exit(config)
+    full: str | None = None
+    if name is not None:
+        try:
+            full = resolve_container_name(cfg, Incus(), name)
+        except ValueError:
+            prefix = f"{cfg.container_prefix}-"
+            full = name if name.startswith(prefix) else prefix + name
+    root = state_root()
+    if not store_path(root).exists():
+        print("no broker message store yet", file=sys.stderr)
+    try:
+        rows = messages_view(
+            root, full=full, include_acked=all_, short=lambda f: short_name(cfg, f)
+        )
+    except StoreError as exc:
+        error(str(exc))
+        raise typer.Exit(1) from exc
+    if as_json:
+        typer.echo(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        info("No messages.")
+        return
+    table = Table(show_edge=False, pad_edge=False)
+    for header in ("CONTAINER", "ID", "TYPE", "KIND", "FROM", "REF", "CREATED", "ACKED"):
+        table.add_column(header)
+    for r in rows:
+        table.add_row(
+            *(
+                str(r[k]) if r[k] is not None else "-"
+                for k in (
+                    "container",
+                    "id",
+                    "type",
+                    "kind",
+                    "from",
+                    "ref",
+                    "created_at",
+                    "acked_at",
+                )
+            )
+        )
+    console.print(table)
+
+
 # ---- Port forwarding commands ----
 
 port_app = typer.Typer(

@@ -1907,6 +1907,7 @@ the grants only: storing, limiting and inspecting them.
 | `jailbee orchestrate revoke [NAME]` | Remove the grant. Always asks which container (exit 2 off a terminal). |
 | `jailbee orchestrate show [NAME]` | The grant, the effective grant when the repo's caps narrow it, and the running-children count. A malformed stored grant exits 1. |
 | `jailbee orchestrate ls [--json]` | Every container of the repo holding a grant. `--json` prints name, grant, problem and running_children. |
+| `jailbee orchestrate messages [NAME] [--all] [--json]` | The broker message store, read-only: unread messages, plus acknowledged ones with `--all` (newest last). Omit NAME for every container; never asks. |
 | `jailbee orchestrate profile save [CONTAINER] [PROFILE] [--force]` | Save a container's grant in global.yaml's `orchestration.profiles` only; `--force` replaces a global profile. A host-local profile of the same name blocks saving. Restricted remote SSH requires `remote.ssh.orchestration: ssh` (the default, also `true`) or `orchestrator`; allowlist mode also needs the exact `orchestrate profile save` leaf in `commands.allow`. The dashboard's Orchestration menu offers Save as profile when permitted and explains policy refusals that hide grant edits. |
 
 `jailbee new` applies the configured `default_profile` to the new container

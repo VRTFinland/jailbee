@@ -132,6 +132,34 @@ def recipient_uuid(root: Path, full: str) -> str | None:
     return None if row is None else str(row[0])
 
 
+def read_items(root: Path, full: str | None = None) -> list[StoredItem]:
+    """Every stored item (optionally one recipient's), read-only, in ``seq`` order.
+
+    Never creates, migrates or writes the database. A missing file or table
+    reads as no items; any other SQLite error raises `StoreError`.
+    """
+    path = store_path(root)
+    if not path.exists():
+        return []
+    sql = f"SELECT {_ITEM_COLS} FROM items"
+    params: tuple[object, ...] = ()
+    if full is not None:
+        sql += " WHERE recipient_full=?"
+        params = (full,)
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=_BUSY_TIMEOUT_MS / 1000)
+        try:
+            return [_row_item(r) for r in con.execute(sql + " ORDER BY seq", params).fetchall()]
+        finally:
+            con.close()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc):
+            return []
+        raise StoreError(str(exc)) from exc
+    except sqlite3.Error as exc:
+        raise StoreError(str(exc)) from exc
+
+
 def _opt_str(value: object) -> str | None:
     return None if value is None else str(value)
 

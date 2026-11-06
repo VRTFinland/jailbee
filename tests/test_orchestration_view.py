@@ -145,3 +145,66 @@ def test_parse_grant_view_default_runner():
     data = json.loads(GRANT)
     data["default_runner"] = {"agent": "claude", "model": "opus"}
     assert parse_grant_view(json.dumps(data)).default_runner == "claude opus"
+
+
+def _populated(tmp_path):
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    st = BrokerStore(store_path(tmp_path))
+    m = {"type": "message", "kind": "note", "ref": "r", "from": "bob"}
+    st.insert_item("u1", "app-a", {**m, "id": "m1"}, now=100.0)
+    st.insert_item("u1", "app-a", {**m, "id": "m2"}, now=110.0)
+    st.insert_item("u2", "app-b", {**m, "id": "m3"}, now=120.0)
+    st.ack("u1", "m2", now=200.0)
+    st.ack("u1", "m1", now=210.0)
+    return st
+
+
+def test_messages_view_default_is_unread_only(tmp_path):
+    from jailbee.orchestration.view import messages_view
+
+    _populated(tmp_path)
+    rows = messages_view(tmp_path, full=None, include_acked=False)
+    assert [r["id"] for r in rows] == ["m3"]
+    assert rows[0]["acked_at"] is None and rows[0]["from"] == "bob"
+    assert str(rows[0]["created_at"]).startswith("1970-01-01T00:02:00")
+
+
+def test_messages_view_all_puts_acked_last_newest_last(tmp_path):
+    from jailbee.orchestration.view import messages_view
+
+    _populated(tmp_path)
+    rows = messages_view(tmp_path, full=None, include_acked=True)
+    assert [r["id"] for r in rows] == ["m3", "m2", "m1"]
+    assert rows[-1]["acked_at"] is not None
+
+
+def test_messages_view_filters_by_container_and_shortens(tmp_path):
+    from jailbee.orchestration.view import messages_view
+
+    _populated(tmp_path)
+    rows = messages_view(
+        tmp_path, full="app-a", include_acked=True, short=lambda f: f.removeprefix("app-")
+    )
+    assert {r["container"] for r in rows} == {"a"}
+    assert len(rows) == 2
+
+
+def test_messages_view_missing_db_is_empty_and_creates_nothing(tmp_path):
+    from jailbee.orchestration.view import messages_view
+
+    assert messages_view(tmp_path, full=None, include_acked=True) == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_messages_view_does_not_migrate_an_empty_db(tmp_path):
+    import sqlite3
+
+    from jailbee.orchestration.store import store_path
+    from jailbee.orchestration.view import messages_view
+
+    sqlite3.connect(store_path(tmp_path)).close()
+    assert messages_view(tmp_path, full=None, include_acked=True) == []
+    con = sqlite3.connect(store_path(tmp_path))
+    assert con.execute("SELECT count(*) FROM sqlite_master").fetchone()[0] == 0
+    con.close()

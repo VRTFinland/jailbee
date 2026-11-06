@@ -90,6 +90,7 @@ jb orchestrate grant bugs --children 4 --mount data --egress pypi.org
 jb orchestrate grant bugs --profile bugfixer     # start from a configured profile
 jb orchestrate show bugs      # the grant, what this repo leaves of it, running children
 jb orchestrate ls             # every container of this repo with a grant (--json)
+jb orchestrate messages [bugs] [--all]  # the broker's stored messages, read-only (--json)
 jb orchestrate revoke bugs
 jb orchestrate adopt bugs worker1 worker2
 jb orchestrate release worker1

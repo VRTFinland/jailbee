@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from jailbee.db import state_dir
@@ -15,9 +16,10 @@ from jailbee.orchestration import labels
 from jailbee.orchestration.grant import ChildRights, Grant, GrantError
 from jailbee.orchestration.runner import parse_runner_label
 from jailbee.orchestration.state import QUEUE_FILE
+from jailbee.orchestration.store import read_items
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
 
     from jailbee.lifecycle import ContainerInfo
@@ -135,3 +137,39 @@ def annotate(containers: Sequence[ContainerInfo], queued: Mapping[str, int]) -> 
             c.queued_children = queued.get(c.name, 0)
         if c.child is not None:
             c.orchestrator_running = c.child.orchestrator in running
+
+
+def _iso(ts: float | None) -> str | None:
+    return None if ts is None else datetime.fromtimestamp(ts, UTC).isoformat(timespec="seconds")
+
+
+def messages_view(
+    root: Path,
+    *,
+    full: str | None,
+    include_acked: bool,
+    short: Callable[[str], str] | None = None,
+) -> list[dict[str, object]]:
+    """Rows of the broker message store, read-only: unread first, then acked history.
+
+    Unread rows come in ``seq`` order; with ``include_acked`` the acked rows
+    follow, oldest acknowledgement first (newest last). A missing store is no rows.
+    """
+    items = read_items(root, full)
+    unread = [i for i in items if i.acked_at is None]
+    acked = sorted((i for i in items if i.acked_at is not None), key=lambda i: (i.acked_at, i.seq))
+    rows: list[dict[str, object]] = []
+    for i in unread + (acked if include_acked else []):
+        rows.append(
+            {
+                "container": short(i.recipient_full) if short else i.recipient_full,
+                "id": i.id,
+                "type": i.type,
+                "kind": i.kind_or_state,
+                "from": i.from_name,
+                "ref": i.ref,
+                "created_at": _iso(i.created_at),
+                "acked_at": _iso(i.acked_at),
+            }
+        )
+    return rows
