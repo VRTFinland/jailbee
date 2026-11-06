@@ -190,8 +190,14 @@ def test_state_root_created_under_state_dir(
     assert root.is_dir()
 
 
-def test_unreadable_legacy_reservations_warns_and_starts_empty(tmp_path, monkeypatch, caplog):
+def test_unreadable_legacy_reservations_fail_closed_until_import_succeeds(
+    tmp_path, monkeypatch, caplog
+):
     from pathlib import Path
+
+    import pytest
+
+    from jailbee.orchestration.store import PendingImportError, StoreError
 
     path = tmp_path / state.RESERVATIONS_FILE
     path.write_text(
@@ -205,7 +211,9 @@ def test_unreadable_legacy_reservations_warns_and_starts_empty(tmp_path, monkeyp
         return original(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", unreadable)
-    assert state.load_reservations(tmp_path) == {}
+    with pytest.raises(PendingImportError):
+        state.load_reservations(tmp_path)
+    assert issubclass(PendingImportError, StoreError)
     assert "denied" in caplog.text
     assert path.exists()
     monkeypatch.setattr(Path, "read_text", original)
@@ -232,7 +240,8 @@ def test_unreadable_legacy_blocks_save_until_import_succeeds(tmp_path, monkeypat
         return original(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", unreadable)
-    assert state.load_reservations(tmp_path) == {}
+    with pytest.raises(StoreError, match="legacy"):
+        state.load_reservations(tmp_path)
     with pytest.raises(StoreError, match="legacy"):
         state.save_reservations(tmp_path, {})
     assert path.exists()
@@ -260,10 +269,9 @@ def test_failed_read_requires_reload_before_saving_even_after_recovery(tmp_path,
         return original(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", unreadable)
-    assert state.load_reservations(tmp_path) == {}
+    with pytest.raises(StoreError):
+        state.load_reservations(tmp_path)
     monkeypatch.setattr(Path, "read_text", original)
-    with pytest.raises(StoreError, match="legacy"):
-        state.save_reservations(tmp_path, {})
     assert state.load_reservations(tmp_path) == {"orch": [state.Reservation("a", 1, "t")]}
     state.save_reservations(tmp_path, {})
     assert state.load_reservations(tmp_path) == {}

@@ -14,6 +14,7 @@ from jailbee.lifecycle import short_name
 from jailbee.orchestration import commands, labels, outbox, rights, state, watch
 from jailbee.orchestration.grant import GrantError, effective_grant
 from jailbee.orchestration.profiles import repo_cap
+from jailbee.orchestration.store import PendingImportError
 from jailbee.orchestration.protocol import InboxMessage, new_host_id
 
 if TYPE_CHECKING:
@@ -240,14 +241,18 @@ def _adopt_locked(
             for name in mine | set(pending)
             if name in rows and rows[name].get("status") == "Running"
         }
-        running = slot_breakdown(
-            cfg.container_prefix, root, orchestrator_full, mine, running_names, set(rows)
-        )[3]
-        if running > effective.max_running_children:
-            problems.append(
-                f"limit of {effective.max_running_children} running children exceeded; "
-                "use `jb orchestrate grant --children`"
-            )
+        try:
+            total = slot_breakdown(
+                cfg.container_prefix, root, orchestrator_full, mine, running_names, set(rows)
+            )[3]
+        except PendingImportError:
+            problems.append("broker state is still being migrated; try again shortly")
+        else:
+            if total > effective.max_running_children:
+                problems.append(
+                    f"limit of {effective.max_running_children} running children exceeded; "
+                    "use `jb orchestrate grant --children`"
+                )
     elif grant is not None and not problems:
         problems.append("orchestration grant is not effective")
     if problems:

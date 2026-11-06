@@ -859,3 +859,55 @@ def test_queued_null_restart_pins_default(tmp_path, seams, monkeypatch, initial)
     actions.drain_queue(rig.ctx())
     assert boot.call_args.kwargs["runner"] == runner
     assert boot.call_args.kwargs["set_runner"] is True
+
+
+def _block_reservations_import(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from pathlib import Path as _Path
+
+    source = tmp_path / state.RESERVATIONS_FILE
+    source.write_text('{"reservations": {}}')
+    original = _Path.read_text
+
+    def unreadable(self: _Path, *args: object, **kwargs: object) -> str:
+        if self == source:
+            raise PermissionError("denied")
+        return original(self, *args, **kwargs)  # type: ignore[arg-type]  # pass-through wrapper
+
+    monkeypatch.setattr(_Path, "read_text", unreadable)
+
+
+def test_spawn_is_refused_retryably_while_reservations_import_is_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, seams: dict[str, MagicMock]
+) -> None:
+    rig = Rig(tmp_path, limit=1)
+    _block_reservations_import(tmp_path, monkeypatch)
+    outcome = actions.dispatch(rig.ctx(), _m())
+    assert outcome is not None and outcome.state == "refused"
+    assert "try again" in outcome.detail
+    seams["start"].assert_not_called()
+
+
+def test_drain_and_prune_leave_queue_alone_while_reservations_import_is_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, seams: dict[str, MagicMock]
+) -> None:
+    rig = Rig(tmp_path, limit=3)
+    entry = QueuedRequest(
+        manifest_id="q1",
+        child_full="proj-q1",
+        kind="fork",
+        commit="c0ffee",
+        queued_at="t",
+        branch="fix/q1",
+        base=None,
+        prompt="p",
+        rights={},
+        runner=None,
+        runner_set=False,
+        on_done="report",
+    )
+    save_queue(tmp_path, {"proj-orch": [entry]})
+    _block_reservations_import(tmp_path, monkeypatch)
+    assert actions.drain_queue(rig.ctx()) == []
+    actions.prune_reservations(tmp_path)
+    assert load_queue(tmp_path) == {"proj-orch": [entry]}
+    seams["start"].assert_not_called()

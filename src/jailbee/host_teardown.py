@@ -95,6 +95,7 @@ def _remove_job_logs(snap: TeardownSnapshot) -> None:
 
 def _drop_orchestration(snap: TeardownSnapshot) -> None:
     from jailbee.orchestration import state
+    from jailbee.orchestration.store import PendingImportError
 
     name = snap.name
     root = state.state_root()
@@ -114,7 +115,10 @@ def _drop_orchestration(snap: TeardownSnapshot) -> None:
         state.save_queue(root, kept)
 
     # A reservation whose create worker is alive is a live broker request.
-    reservations = state.load_reservations(root)
+    try:
+        reservations = state.load_reservations(root)
+    except PendingImportError:
+        return  # unknown until the legacy import finishes; keep every reservation
     pruned = {
         key: [r for r in items if not (r.child_full == name and not state.reservation_alive(r.pid))]
         for key, items in reservations.items()

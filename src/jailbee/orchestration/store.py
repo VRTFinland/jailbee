@@ -85,6 +85,10 @@ class StoreError(OSError):
     """The broker store failed (corrupt file, locked too long, ...)."""
 
 
+class PendingImportError(StoreError):
+    """A legacy document import is still pending; the stored value is not authoritative."""
+
+
 @dataclass(frozen=True)
 class StoredItem:
     seq: int
@@ -594,13 +598,20 @@ class _LegacyImportRetryError(Exception):
 
 
 def import_json_document(
-    root: Path, name: str, validate: Callable[[object], None], *, for_write: bool = False
+    root: Path,
+    name: str,
+    validate: Callable[[object], None],
+    *,
+    for_write: bool = False,
+    strict: bool = False,
 ) -> BrokerStore:
     """Import a legacy JSON document once; validate raises ValueError on bad shape.
 
     The document key and marker use the legacy filename. Future document users
     can reuse this helper before either reading or saving that key. Set
     for_write to prevent overwriting state when the legacy import must retry.
+    Set strict to raise PendingImportError instead of returning a store whose
+    document may be missing only because the legacy import is still pending.
     """
     store = open_state_store(root)
     path = root / name
@@ -648,6 +659,8 @@ def import_json_document(
     if blocked:
         if for_write:
             raise StoreError(f"cannot save state while legacy import is pending: {path}")
+        if strict:
+            raise PendingImportError(f"legacy import is pending: {path}")
         return store
     # TODO(state-db-cleanup): remove migrated files after the compatibility window.
     try:

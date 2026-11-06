@@ -43,6 +43,7 @@ from jailbee.orchestration.state import (
     save_queue,
     save_reservations,
 )
+from jailbee.orchestration.store import PendingImportError
 
 log = logging.getLogger(__name__)
 
@@ -222,7 +223,13 @@ def dispatch(ctx: ActionContext, manifest: Manifest) -> Outcome | None:
     handler = HANDLERS.get(manifest.type)
     if handler is None:
         return refused(f"`{manifest.type}` is not supported by this broker version")
-    outcome = handler(ctx, manifest)
+    try:
+        outcome = handler(ctx, manifest)
+    except PendingImportError as exc:
+        # Slot accounting is unknown while the reservations import is pending:
+        # fail closed instead of letting spawns exceed the cap.
+        log.warning("refusing %s manifest %s: %s", manifest.type, manifest.id, exc)
+        return refused(RESERVATIONS_PENDING)
     _note_delivery(ctx, manifest, outcome, role)
     return outcome
 
@@ -478,6 +485,7 @@ def start_child(ctx: ActionContext, plan: SpawnPlan, *, fork: ForkSource | None)
 
 
 GRANT_REVOKED = "orchestration grant revoked"
+RESERVATIONS_PENDING = "broker state is still being migrated; try again shortly"
 
 
 def live_create_jobs(prefix: str) -> set[str]:
@@ -530,7 +538,11 @@ def refresh_guard(child: Node) -> Outcome | None:
 
 def prune_reservations(root: Path) -> None:
     """Drop finished create workers across orchestrators, reaping our exited children."""
-    reservations = load_reservations(root)
+    try:
+        reservations = load_reservations(root)
+    except PendingImportError as exc:
+        log.warning("not pruning reservations: %s", exc)
+        return
     live = {
         sender: kept
         for sender, entries in reservations.items()
@@ -902,7 +914,11 @@ def drain_queue(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome]]:
     queued = _queued(ctx)
     if grant is None or not queued:
         return []
-    counts = count_breakdown(ctx)
+    try:
+        counts = count_breakdown(ctx)
+    except PendingImportError as exc:
+        log.warning("queue not drained, slot accounting unavailable: %s", exc)
+        return []
     free = grant.max_running_children - counts[-1]
     results: list[tuple[QueuedRequest, Outcome]] = []
     while queued and free > 0:
@@ -919,7 +935,11 @@ def drain_queue(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome]]:
             free -= 1
         results.append((req, outcome))
         # The nodes snapshot is unchanged this round; keep the drain's slot accounting.
-        fresh = count_breakdown(ctx)
+        try:
+            fresh = count_breakdown(ctx)
+        except PendingImportError as exc:
+            log.warning("queue drain stopped, slot accounting unavailable: %s", exc)
+            break
         counts = (*fresh[:3], grant.max_running_children - free)
     if queued:
         _log_spawn_decision(ctx, queued[0].child_full, counts, grant.max_running_children, "queued")
