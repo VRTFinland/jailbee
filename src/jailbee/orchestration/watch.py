@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from jailbee import background
 from jailbee.db.models import JOB_AUTOSTART, JOB_BOOT, JOB_CREATE
@@ -75,7 +75,7 @@ def load_watch(root: Path) -> dict[str, list[WatchEntry]]:
     if raw is None:
         return {}
     try:
-        items_by_orch = raw["watches"].items()
+        items_by_orch = cast(dict[str, Any], raw)["watches"].items()
         result: dict[str, list[WatchEntry]] = {}
         for orchestrator, items in items_by_orch:
             entries = [e for e in (_parse_entry(item) for item in items) if e is not None]
