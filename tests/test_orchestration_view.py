@@ -208,3 +208,30 @@ def test_messages_view_does_not_migrate_an_empty_db(tmp_path):
     con = sqlite3.connect(store_path(tmp_path))
     assert con.execute("SELECT count(*) FROM sqlite_master").fetchone()[0] == 0
     con.close()
+
+
+def test_messages_target_resolves_or_takes_the_name_as_written(tmp_path, mocker) -> None:
+    from unittest.mock import MagicMock
+
+    from jailbee.orchestration.view import messages_target
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path)
+    prefix = cfg.container_prefix
+    factory = MagicMock()
+    assert messages_target(cfg, factory, None) is None
+    factory.assert_not_called()
+    resolve = mocker.patch("jailbee.lifecycle.resolve_container_name", return_value=f"{prefix}-a")
+    assert messages_target(cfg, factory, "a") == f"{prefix}-a"
+    resolve.side_effect = ValueError("gone")
+    assert messages_target(cfg, factory, "gone") == f"{prefix}-gone"
+    assert messages_target(cfg, factory, f"{prefix}-gone") == f"{prefix}-gone"
+
+
+def test_messages_table_shows_missing_values_as_dashes() -> None:
+    from jailbee.orchestration.view import messages_table
+
+    row = {k: None for k in ("container", "id", "type", "kind", "from", "ref", "acked_at")}
+    table = messages_table([{**row, "container": "a", "id": "m1", "created_at": "t"}])
+    cells = [c._cells[0] for c in table.columns]
+    assert cells == ["a", "m1", "-", "-", "-", "-", "t", "-"]

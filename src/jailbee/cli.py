@@ -13709,23 +13709,15 @@ def orchestrate_messages_cmd(
     """List the broker's stored messages (read-only); omit the container for all."""
     import sys
 
-    from rich.table import Table
-
     from jailbee.incus import Incus
-    from jailbee.lifecycle import resolve_container_name, short_name
+    from jailbee.lifecycle import short_name
     from jailbee.orchestration.state import state_root
     from jailbee.orchestration.store import StoreError, store_path
-    from jailbee.orchestration.view import messages_view
+    from jailbee.orchestration.view import messages_table, messages_target, messages_view
     from jailbee.tui import console
 
     cfg = _load_or_exit(config)
-    full: str | None = None
-    if name is not None:
-        try:
-            full = resolve_container_name(cfg, Incus(), name)
-        except ValueError:
-            prefix = f"{cfg.container_prefix}-"
-            full = name if name.startswith(prefix) else prefix + name
+    full = messages_target(cfg, Incus, name)
     root = state_root()
     if not store_path(root).exists():
         print("no broker message store yet", file=sys.stderr)
@@ -13738,30 +13730,10 @@ def orchestrate_messages_cmd(
         raise typer.Exit(1) from exc
     if as_json:
         typer.echo(json.dumps(rows, indent=2))
-        return
-    if not rows:
+    elif rows:
+        console.print(messages_table(rows))
+    else:
         info("No messages.")
-        return
-    table = Table(show_edge=False, pad_edge=False)
-    for header in ("CONTAINER", "ID", "TYPE", "KIND", "FROM", "REF", "CREATED", "ACKED"):
-        table.add_column(header)
-    for r in rows:
-        table.add_row(
-            *(
-                str(r[k]) if r[k] is not None else "-"
-                for k in (
-                    "container",
-                    "id",
-                    "type",
-                    "kind",
-                    "from",
-                    "ref",
-                    "created_at",
-                    "acked_at",
-                )
-            )
-        )
-    console.print(table)
 
 
 # ---- Port forwarding commands ----

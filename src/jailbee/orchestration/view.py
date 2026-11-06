@@ -22,6 +22,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
 
+    from rich.table import Table
+
+    from jailbee.config import Config
+    from jailbee.incus import Incus
     from jailbee.lifecycle import ContainerInfo
 
 _STATES = frozenset({labels.STATE_WORKING, labels.STATE_DONE, labels.STATE_IMPORTED})
@@ -173,3 +177,44 @@ def messages_view(
             }
         )
     return rows
+
+
+_MESSAGE_COLUMNS = (
+    ("CONTAINER", "container"),
+    ("ID", "id"),
+    ("TYPE", "type"),
+    ("KIND", "kind"),
+    ("FROM", "from"),
+    ("REF", "ref"),
+    ("CREATED", "created_at"),
+    ("ACKED", "acked_at"),
+)
+
+
+def messages_target(cfg: Config, incus: Callable[[], Incus], name: str | None) -> str | None:
+    """The full name `jb orchestrate messages NAME` filters on; None for all.
+
+    Never prompts: a name that resolves to no live container (the store keeps
+    a gone container's rows) is taken as written, prefixed when it is short.
+    """
+    from jailbee.lifecycle import resolve_container_name
+
+    if name is None:
+        return None
+    try:
+        return resolve_container_name(cfg, incus(), name)
+    except ValueError:
+        prefix = f"{cfg.container_prefix}-"
+        return name if name.startswith(prefix) else prefix + name
+
+
+def messages_table(rows: Sequence[Mapping[str, object]]) -> Table:
+    """`messages_view` rows as the table `jb orchestrate messages` prints."""
+    from rich.table import Table
+
+    table = Table(show_edge=False, pad_edge=False)
+    for header, _ in _MESSAGE_COLUMNS:
+        table.add_column(header)
+    for r in rows:
+        table.add_row(*(str(r[k]) if r[k] is not None else "-" for _, k in _MESSAGE_COLUMNS))
+    return table
