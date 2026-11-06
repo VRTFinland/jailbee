@@ -37,18 +37,12 @@ def _validate_document(document: object) -> None:
 
 
 def _load(root: Path, name: str) -> dict[str, Any]:
-    if name != "publish-known.json":
-        path = root / name
-        return json.loads(path.read_text()) if path.exists() else {}
     value = import_json_document(root, name, _validate_document).kv_get(name)
     return value if isinstance(value, dict) else {}
 
 
 def _save(root: Path, name: str, data: dict[str, Any]) -> None:
-    if name == "publish-known.json":
-        import_json_document(root, name, _validate_document).kv_put(name, data)
-    else:
-        atomic_write_text(root / name, json.dumps(data, sort_keys=True))
+    import_json_document(root, name, _validate_document).kv_put(name, data)
 
 
 def _result(root: Path, full: str, ref: str) -> Path:
