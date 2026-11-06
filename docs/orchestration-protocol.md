@@ -191,7 +191,7 @@ Spawn `--new --base main` from the upstream base, not the orchestrator's
 HEAD. On done, stage a source manifest with `source` = `imported_ref`
 and `source_sha` = `imported_sha`, without merging. For rework use `--ref`
 or `--pr N`, then import and stage `pr: N` with the new source. See the
-[source examples](../../jailbee-pr-review/references/manifest-schema.md#source-publication-examples).
+[source examples](https://github.com/VRTFinland/jailbee/blob/main/docs/skills/jailbee-pr-review/references/manifest-schema.md#source-publication-examples).
 
 ### `message`
 
@@ -401,11 +401,17 @@ orchestrator), and revoke-only `rights` for itself.
  "in_reply_to": null}
 ```
 
-A `kind: "done"` message records HEAD, imports before delivery, then schedules
-cleanup according to `on_done`. A stopped or busy orchestrator gets an
-ordered pending finish; a vanished orchestrator refuses the report and
-keeps the child. Import failure still delivers done with `import_error` and
-keeps the child. Report with `send message --kind done --wait`.
+A `kind: "done"` message is accepted only when the worktree is clean and HEAD
+is on a branch. Refusals include `uncommitted changes: commit everything before
+reporting done` and `detached HEAD: check out your branch before reporting done`;
+fix the cause and resend under a new id. Always use `send message --kind done
+--wait`. A timeout needs the original reply, not another report; the container
+may be destroyed after accepted done, so commit first.
+
+An accepted done records HEAD, imports before delivery, then schedules cleanup
+according to `on_done`. A stopped or busy orchestrator gets an ordered pending
+finish; a vanished orchestrator refuses the report and keeps the child. Import
+failure still delivers done with `import_error` and keeps the child.
 
 ## Inbox
 
@@ -594,9 +600,10 @@ An `update` message carries optional `imported_ref` and `imported_sha`
 that is its current branch at `refs/jailbee/from/<orchestrator>/<branch>`.
 An explicit ref, commit or host base arrives instead at
 `refs/jailbee/update/<orchestrator>/<manifest-id>`, isolated from branch
-updates and imported child refs. Always use the message's ref. Commit or stash,
-`git merge <imported_ref>`, resolve conflicts, commit, then continue. The
-broker never merges into your worktree. Other import fields on messages are
+updates and imported child refs. Always use the message's ref. If the message
+has `merged_head`, re-read the affected files and continue without merging the
+ref again. Otherwise commit or stash, merge `imported_ref`, resolve conflicts,
+commit, then continue. Other import fields on messages are
 `import_error`, `on_done` (`destroy` or `keep`) and `on_done_reason` (why a
 successfully imported child is kept).
 

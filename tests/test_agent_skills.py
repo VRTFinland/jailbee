@@ -415,6 +415,19 @@ def test_orchestration_protocol_examples_use_short_names() -> None:
     assert "<repo>-" not in _skill_text(ORCH)
 
 
+def test_protocol_documents_child_update_and_done_rules() -> None:
+    proto = _protocol_text()
+    assert "If the message\nhas `merged_head`, re-read" in proto
+    assert "Otherwise commit or stash, merge `imported_ref`" in proto
+    assert "uncommitted changes: commit everything before\nreporting done" in proto
+    assert "detached HEAD: check out your branch before reporting done" in proto
+    assert "A timeout needs the original reply, not another report" in proto
+    assert (
+        "https://github.com/VRTFinland/jailbee/blob/main/docs/skills/"
+        "jailbee-pr-review/references/manifest-schema.md#source-publication-examples"
+    ) in proto
+
+
 CHILD = "jailbee-orchestration-child"
 
 
