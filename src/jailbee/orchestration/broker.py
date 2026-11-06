@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import itertools
 import json
@@ -21,7 +22,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from jailbee import __version__
 from jailbee.config import load_repo_config
 from jailbee.global_config import default_global_config_path, load_global_config
-from jailbee.incus import IncusError
+from jailbee.incus import ORCHESTRATION_DEVICE, IncusError
 from jailbee.orchestration import (
     finishing,
     inbox_state,
@@ -907,7 +908,10 @@ def _ensure_socket(ctx: ActionContext, memory: BrokerMemory) -> None:
         return
     try:
         if not listener.has_container(uuid):
-            sdir = socket_device.sock_dir(ctx.root, uuid)
+            recorded = ctx.incus.config_device_get(full, ORCHESTRATION_DEVICE, "source")
+            sdir = socket_device.reusable_dir(
+                ctx.root, uuid, recorded
+            ) or socket_device.fresh_sock_dir(ctx.root, uuid)
             existed = sdir.exists()
             try:
                 created = listener.open_container(uuid, sdir)
@@ -918,7 +922,10 @@ def _ensure_socket(ctx: ActionContext, memory: BrokerMemory) -> None:
                 raise
             if created:
                 memory.reassert.add(uuid)
-        socket_device.attach(ctx.incus, full, ctx.root, uuid, reassert=uuid in memory.reassert)
+        live = listener.socket_dir(uuid)
+        if live is None:
+            raise OSError(f"no socket directory for {uuid}")
+        socket_device.attach(ctx.incus, full, live, reassert=uuid in memory.reassert)
         memory.reassert.discard(uuid)
         if not _migrate_inbox(ctx, memory, uuid):
             return
@@ -1025,6 +1032,37 @@ def _shared_uuids(raw: list[dict[str, Any]]) -> set[str]:
     return shared
 
 
+def _rotate_socket(incus: Incus, memory: BrokerMemory, root: Path, uuid: str, copy: str) -> None:
+    """Move ``uuid``'s socket away from the directory ``copy`` mounts.
+
+    Every connection drops and the old directory is removed, so the copy's
+    mount (stale or lazily detached) leads nowhere; the owner's device is
+    re-attached to the fresh directory. When the move fails the socket is
+    closed instead (fail closed): the owner is set up afresh next round.
+    """
+    listener = memory.listener
+    assert listener is not None
+    owner = next((full for full, u in memory.attached.items() if u == uuid), None)
+    fresh = socket_device.fresh_sock_dir(root, uuid)
+    try:
+        listener.rotate_container(uuid, fresh)
+    except OSError as exc:
+        memory.warn_once(f"socket-rotate:{uuid}", "broker: %s: %s", copy, exc)
+        with contextlib.suppress(OSError):
+            listener.close_container(uuid)
+        if owner is not None:
+            memory.attached.pop(owner, None)
+        return
+    log.warning("broker: %s mounted the socket of %s; moved it to %s", copy, uuid, fresh)
+    if owner is None:
+        return
+    try:
+        socket_device.attach(incus, owner, fresh, reassert=True)
+    except (IncusError, OSError) as exc:
+        memory.attached.pop(owner, None)  # _ensure_socket retries
+        memory.warn_once(f"socket:{owner}", "broker: %s: %s", owner, exc)
+
+
 def _check_socket_devices(
     incus: Incus, raw: list[dict[str, Any]], memory: BrokerMemory, root: Path
 ) -> None:
@@ -1061,14 +1099,12 @@ def _check_socket_devices(
                 socket_device.detach(incus, name)
             except (IncusError, OSError) as exc:
                 memory.warn_once(f"socket-off:{name}", "broker: %s: %s", name, exc)
-            # The copy may already have connected as the source: after the
-            # detach, drop the source's connections (its client reconnects).
+            # Whether or not the detach worked (it may fail, or be lazy while
+            # the copy holds the directory), a copy that mounts the source's
+            # live directory moves the source to a fresh one.
             source = socket_device.source_uuid(entry)
-            if source and memory.listener.has_container(source):
-                try:
-                    memory.listener.reset_container(source)
-                except OSError as exc:
-                    memory.warn_once(f"socket-reset:{source}", "broker: %s: %s", name, exc)
+            if source and str(memory.listener.socket_dir(source)) == socket_device.source(entry):
+                _rotate_socket(incus, memory, root, source, name)
             memory.attached.pop(name, None)
             continue
         if _labelled(config):

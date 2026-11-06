@@ -20,7 +20,8 @@ never has more than one event ahead of another container's request.
 
 Stopping the listener leaves the socket files in place, so clients get
 ECONNREFUSED while the broker is down; only :meth:`Listener.close_container`
-(the role ended) removes a socket file.
+(the role ended) and :meth:`Listener.rotate_container` (a copy may hold the
+directory) remove a socket file, together with its directory.
 
 Standard library only.
 """
@@ -89,6 +90,19 @@ class _Conn:
     in_flight: bool = False
 
 
+def _prepare_dir(sock_dir: Path) -> bool:
+    """Create (0700, ours, no symlink) ``sock_dir``; return True when it was created."""
+    if sock_dir.is_symlink():
+        raise OSError(f"{sock_dir} is a symlink")
+    created = not sock_dir.exists()
+    sock_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    st = os.lstat(sock_dir)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+        raise OSError(f"{sock_dir} is not a directory owned by the current user")
+    os.chmod(sock_dir, 0o700)
+    return created
+
+
 class Listener:
     def __init__(self, requests: queue.Queue[Event]) -> None:
         self._requests = requests
@@ -103,6 +117,7 @@ class Listener:
         self._ids = itertools.count(1)
         self._lock = threading.Lock()
         self._known: set[str] = set()
+        self._dirs: dict[str, Path] = {}  # uuid -> socket directory (under _lock)
         self._paused: dict[str, float] = {}  # uuid -> monotonic resume time
         self._thread: threading.Thread | None = None
         self._running = False
@@ -136,35 +151,40 @@ class Listener:
 
     def open_container(self, uuid: str, sock_dir: Path) -> bool:
         """Start listening for ``uuid``; return True when ``sock_dir`` was created."""
-        if sock_dir.is_symlink():
-            raise OSError(f"{sock_dir} is a symlink")
-        created = not sock_dir.exists()
-        sock_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        st = os.lstat(sock_dir)
-        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
-            raise OSError(f"{sock_dir} is not a directory owned by the current user")
-        os.chmod(sock_dir, 0o700)
+        created = _prepare_dir(sock_dir)
         path = sock_dir / SOCKET_NAME
         self._call(lambda: self._open(uuid, path))
         return created
 
+    def socket_dir(self, uuid: str) -> Path | None:
+        """The directory ``uuid``'s socket lives in, or None when not served."""
+        with self._lock:
+            return self._dirs.get(uuid)
+
     def close_container(self, uuid: str) -> None:
         self._call(lambda: self._close_server(uuid, events=True, unlink=True))
 
-    def reset_container(self, uuid: str) -> None:
-        """Drop every connection of ``uuid`` and listen afresh on the same path.
+    def rotate_container(self, uuid: str, sock_dir: Path) -> None:
+        """Move ``uuid``'s socket to the fresh ``sock_dir`` and remove the old directory.
 
-        Used when another instance may have spoken as ``uuid`` (a raw copy
-        carrying its device): the legitimate client reconnects, and nothing
-        accepted or still in the old backlog survives. No-op when not served.
+        Used when another instance may hold the old directory (a raw copy
+        carrying ``uuid``'s device, whose detach failed or was lazy): every
+        connection drops, and the old path stays dead, so the copy can never
+        reach the socket again; only a device re-attached to ``sock_dir``
+        can. Raises OSError when ``uuid`` is not served.
         """
+        if not self.has_container(uuid):
+            raise OSError(f"no socket for {uuid}")
+        _prepare_dir(sock_dir)
 
-        def reset() -> None:
+        def rotate() -> None:
             server = self._servers.get(uuid)
-            if server is not None:
-                self._open(uuid, server.path)
+            if server is None:
+                raise OSError(f"no socket for {uuid}")
+            self._close_server(uuid, events=True, unlink=True)
+            self._open(uuid, sock_dir / SOCKET_NAME)
 
-        self._call(reset)
+        self._call(rotate)
 
     def respond(self, conn_id: int, response: wire.Response) -> None:
         try:
@@ -284,12 +304,14 @@ class Listener:
         self._sel.register(sock, selectors.EVENT_READ, ("listen", uuid))
         with self._lock:
             self._known.add(uuid)
+            self._dirs[uuid] = path.parent
 
     def _close_server(self, uuid: str, events: bool, unlink: bool = False) -> None:
         server = self._servers.pop(uuid, None)
         self._paused.pop(uuid, None)
         with self._lock:
             self._known.discard(uuid)
+            self._dirs.pop(uuid, None)
         if server is None:
             return
         for conn_id in list(server.conns):
@@ -298,8 +320,12 @@ class Listener:
             self._sel.unregister(server.sock)
         server.sock.close()
         if unlink:
+            # The directory goes too: a stale mount of it (a copy's device
+            # whose detach failed or was lazy) must never see a socket again.
             with contextlib.suppress(OSError):
                 server.path.unlink()
+            with contextlib.suppress(OSError):
+                server.path.parent.rmdir()
 
     def _shutdown_all(self) -> None:
         for uuid in list(self._servers):

@@ -225,10 +225,9 @@ def test_close_container(env: tuple[Listener, queue.Queue[Event], Path]) -> None
     first = q.get(timeout=2)
     lis.close_container("u")
     assert q.get(timeout=2) == DisconnectEvent("u", first.conn_id)
-    assert not (d / "broker.sock").exists()
-    assert d.is_dir()
+    assert not d.exists()
     assert not lis.has_container("u")
-    assert lis.open_container("u", d) is False
+    assert lis.open_container("u", d) is True
     c2 = connect(d)
     c2.sendall(req("again"))
     ev = q.get(timeout=2)
@@ -425,24 +424,49 @@ def test_large_response_survives_partial_writes(
     assert resp.result == {"blob": blob}
 
 
-def test_reset_container_drops_connections_and_keeps_listening(
+def test_rotate_container_moves_the_socket_to_a_fresh_directory(
     env: tuple[Listener, queue.Queue[Event], Path],
 ) -> None:
+    """A copy holding the old directory (a stale or lazily detached mount) finds no socket."""
     lis, q, root = env
     lis.open_container("u", root / "u")
     old = connect(root / "u")
     old.sendall(req("next"))
     ev = q.get(timeout=2)
-    lis.reset_container("u")
+    lis.rotate_container("u", root / "u.g1")
     gone = q.get(timeout=2)
     assert isinstance(gone, DisconnectEvent) and gone.conn_id == ev.conn_id
     assert old.recv(1) == b""
+    assert not (root / "u").exists()  # the old directory is gone, not merely emptied
+    with pytest.raises(OSError):
+        connect(root / "u")
     assert lis.has_container("u")
-    new = connect(root / "u")
+    assert lis.socket_dir("u") == root / "u.g1"
+    assert stat.S_IMODE((root / "u.g1").stat().st_mode) == 0o700
+    new = connect(root / "u.g1")
     new.sendall(req("again"))
     again = q.get(timeout=2)
     assert isinstance(again, RequestEvent) and again.uuid == "u"
-    lis.reset_container("unknown")  # no-op
+    assert lis.socket_dir("unknown") is None
+
+
+def test_rotate_container_of_an_unserved_uuid_is_refused(
+    env: tuple[Listener, queue.Queue[Event], Path],
+) -> None:
+    lis, _, root = env
+    with pytest.raises(OSError):
+        lis.rotate_container("unknown", root / "x")
+    assert not lis.has_container("unknown")
+
+
+def test_close_container_removes_the_socket_directory(
+    env: tuple[Listener, queue.Queue[Event], Path],
+) -> None:
+    """A later open must never reuse a directory a stale mount may still hold."""
+    lis, _, root = env
+    lis.open_container("u", root / "u")
+    lis.close_container("u")
+    assert not (root / "u").exists()
 
 
 def test_a_run_of_invalid_lines_is_answered_without_recursion(
@@ -460,3 +484,4 @@ def test_a_run_of_invalid_lines_is_answered_without_recursion(
     c.sendall(req("after"))
     ev = q.get(timeout=2)
     assert isinstance(ev, RequestEvent) and ev.request.op == "after"
+

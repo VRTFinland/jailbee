@@ -13,7 +13,8 @@ The manifests, inbox items and `grant` shapes below are the same on both.
 ## Socket transport
 
 The broker listens on one Unix socket per container. The host keeps it under
-the broker state dir (`<state>/sock/<instance uuid>/broker.sock`, directory mode
+the broker state dir (`<state>/sock/<instance uuid>.<random>/broker.sock`; containers
+set up by an older broker keep `<state>/sock/<instance uuid>/`; directory mode
 0700, socket mode 0600) and the broker attaches that directory to the container
 as a read-only disk device named `jailbee-orchestration`, mounted at
 `/run/jailbee/orchestration/`. The client connects to
@@ -21,9 +22,12 @@ as a read-only disk device named `jailbee-orchestration`, mounted at
 `JAILBEE_ORCHESTRATION_SOCKET`). The broker identifies the caller by which
 socket accepted the connection, never by anything in the request. Only
 orchestrators and children get the device. Jailbee's own copies strip it at
-once; a raw `incus copy` keeps it until the broker's next round removes it and
-drops every connection made through it, so the copy cannot keep speaking as the
-original. Two instances that share one instance uuid (an `incus import` beside
+once; a raw `incus copy` keeps it until the broker's next round removes it. In
+that round the broker also moves the original's socket to a fresh directory,
+removes the old one and re-attaches the original's device there, whether or not
+the copy's device could be removed: every connection drops (the original's
+client reconnects), and the copy's mount, however long it lingers, leads to a
+deleted directory, so the copy cannot keep speaking as the original. Two instances that share one instance uuid (an `incus import` beside
 the original) get no socket at all while both exist: the broker logs it and
 both use the file transport.
 

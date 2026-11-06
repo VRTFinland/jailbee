@@ -695,7 +695,7 @@ fresh `children.json` (exit 2 otherwise).
 
 An orchestrator or child talks to the broker over a Unix socket that the host
 keeps for that container only. The broker creates
-`~/.local/state/jailbee/orchestration/sock/<instance uuid>/` (directory mode
+`~/.local/state/jailbee/orchestration/sock/<instance uuid>.<random>/` (directory mode
 0700, socket `broker.sock` mode 0600, owned by your user) and attaches it to
 the container as a read-only disk device named `jailbee-orchestration`,
 mounted at `/run/jailbee/orchestration/`. The device is created per instance
@@ -710,9 +710,15 @@ golden instance and by the Docker seed) strip it immediately. A raw `incus copy`
 done by hand, including a copy from a snapshot, keeps the device until the
 broker's next round. Every round the broker checks that the device's source
 names the container's own `volatile.uuid`, and removes the device if it does
-not. When idle that is up to a minute. Do not start a hand-made copy before the
-device is gone: until then it can reach the source's socket. The broker attaches
-a fresh device if the copy becomes an orchestrator or child.
+not. When idle that is up to a minute. If the copy's device names the source's
+live socket directory, the broker also moves the source's socket to a new
+directory, deletes the old one and re-attaches the source's device: the source's
+client reconnects on its own, and the copy keeps at most a mount of a deleted
+directory, even when Incus could not remove its device. Until that round a
+started copy can reach the source's socket, so do not start a hand-made copy
+before the device is gone. The broker attaches a fresh device if the copy
+becomes an orchestrator or child. Each new socket gets a directory name no
+device has used before, so a stale mount never finds a later socket.
 
 The broker keeps its durable host-side state in `broker.db` in the state
 directory (`~/.local/state/jailbee/orchestration/`, or `$XDG_STATE_HOME`). It

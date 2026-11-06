@@ -2,39 +2,67 @@
 
 from __future__ import annotations
 
-from pathlib import PurePosixPath
+import secrets
+from pathlib import Path, PurePath, PurePosixPath
 from typing import TYPE_CHECKING
 
 from jailbee.incus import ORCHESTRATION_DEVICE
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from pathlib import Path
 
     from jailbee.incus import Incus
 
 CONTAINER_PATH = "/run/jailbee/orchestration"
+_GENERATION_SEP = "."
 
 
-def sock_dir(root: Path, uuid: str) -> Path:
-    return root / "sock" / uuid
+def fresh_sock_dir(root: Path, uuid: str) -> Path:
+    """A socket directory for ``uuid`` no device has ever named.
+
+    Every new listener gets one (``<uuid>.<random>``, a sibling, never a child,
+    of earlier ones), so a stale mount of an earlier directory, held by a
+    copy whose detach failed or was lazy, can never reach the socket again.
+    """
+    return root / "sock" / f"{uuid}{_GENERATION_SEP}{secrets.token_hex(8)}"
 
 
-def device_config(root: Path, uuid: str) -> dict[str, str]:
+def dir_uuid(path: PurePath | str) -> str:
+    """The uuid a socket directory belongs to (legacy or generation name)."""
+    return PurePosixPath(str(path)).name.split(_GENERATION_SEP, 1)[0]
+
+
+def reusable_dir(root: Path, uuid: str, source: str | None) -> Path | None:
+    """The device's recorded directory when it is ``uuid``'s and still exists.
+
+    A broker restart keeps serving there (no device churn); a closed or
+    rotated directory is removed, so it is never reused.
+    """
+    if not source:
+        return None
+    path = Path(source)
+    if path.parent != root / "sock" or dir_uuid(path) != uuid:
+        return None
+    if path.is_symlink() or not path.is_dir():
+        return None
+    return path
+
+
+def device_config(directory: Path) -> dict[str, str]:
     return {
         "type": "disk",
-        "source": str(sock_dir(root, uuid)),
+        "source": str(directory),
         "path": CONTAINER_PATH,
         "readonly": "true",
         "required": "false",
     }
 
 
-def attach(incus: Incus, full: str, root: Path, uuid: str, *, reassert: bool) -> None:
-    """Make ``full`` carry the device for ``uuid``; no-op when it already does."""
-    config = device_config(root, uuid)
+def attach(incus: Incus, full: str, directory: Path, *, reassert: bool) -> None:
+    """Make ``full`` carry the device for ``directory``; no-op when it already does."""
+    config = device_config(directory)
     if not reassert and incus.config_device_get(full, ORCHESTRATION_DEVICE, "source") == str(
-        sock_dir(root, uuid)
+        directory
     ):
         return
     incus.config_device_remove(full, ORCHESTRATION_DEVICE, missing_ok=True)
@@ -52,15 +80,21 @@ def has_device(entry: Mapping[str, object]) -> bool:
     return isinstance(devices, dict) and ORCHESTRATION_DEVICE in devices
 
 
-def source_uuid(entry: Mapping[str, object]) -> str | None:
-    """The uuid whose socket directory the entry's device mounts, if it has one."""
+def source(entry: Mapping[str, object]) -> str | None:
+    """The directory the entry's device mounts, if it has one."""
     devices = entry.get("devices")
     if not isinstance(devices, dict):
         return None
     device = devices.get(ORCHESTRATION_DEVICE)
     if not isinstance(device, dict):
         return None
-    return PurePosixPath(str(device.get("source") or "")).name
+    return str(device.get("source") or "")
+
+
+def source_uuid(entry: Mapping[str, object]) -> str | None:
+    """The uuid whose socket directory the entry's device mounts, if it has one."""
+    path = source(entry)
+    return None if path is None else dir_uuid(path)
 
 
 def mismatched(entry: Mapping[str, object]) -> bool:

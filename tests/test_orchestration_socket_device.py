@@ -22,29 +22,39 @@ UUID = "uuid-orch"
 class FakeListener:
     def __init__(self) -> None:
         self.open: set[str] = set()
+        self.dirs: dict[str, Path] = {}
         self.created = True
         self.fail_open_after_mkdir = False
+        self.fail_rotate = False
         self.opened: list[str] = []
         self.closed: list[str] = []
-        self.reset: list[str] = []
+        self.rotated: list[tuple[str, Path]] = []
 
     def has_container(self, uuid: str) -> bool:
         return uuid in self.open
+
+    def socket_dir(self, uuid: str) -> Path | None:
+        return self.dirs.get(uuid)
 
     def open_container(self, uuid: str, sock_dir: Path) -> bool:
         if self.fail_open_after_mkdir:
             sock_dir.mkdir(parents=True, exist_ok=True)
             raise OSError("bind failed")
         self.open.add(uuid)
+        self.dirs[uuid] = sock_dir
         self.opened.append(uuid)
         return self.created
 
     def close_container(self, uuid: str) -> None:
         self.open.discard(uuid)
+        self.dirs.pop(uuid, None)
         self.closed.append(uuid)
 
-    def reset_container(self, uuid: str) -> None:
-        self.reset.append(uuid)
+    def rotate_container(self, uuid: str, sock_dir: Path) -> None:
+        if self.fail_rotate or uuid not in self.open:
+            raise OSError("rotate failed")
+        self.dirs[uuid] = sock_dir
+        self.rotated.append((uuid, sock_dir))
 
 
 class Env:
@@ -110,8 +120,8 @@ def adds(env: Env) -> list[str]:
 
 
 def test_unit_helpers(tmp_path: Path) -> None:
-    cfg = socket_device.device_config(tmp_path, "u1")
-    assert cfg["source"] == str(tmp_path / "sock" / "u1")
+    cfg = socket_device.device_config(tmp_path / "sock" / "u1.ab12")
+    assert cfg["source"] == str(tmp_path / "sock" / "u1.ab12")
     assert cfg["path"] == "/run/jailbee/orchestration"
     assert cfg["readonly"] == "true" and cfg["required"] == "false"
     entry = {"config": {"volatile.uuid": "u1"}, "devices": {ORCHESTRATION_DEVICE: cfg}}
@@ -119,6 +129,16 @@ def test_unit_helpers(tmp_path: Path) -> None:
     entry["config"] = {"volatile.uuid": "u2"}
     assert socket_device.mismatched(entry)
     assert not socket_device.mismatched({"config": {"volatile.uuid": "u2"}, "devices": {}})
+    # the legacy, generation-less directory name still names its uuid
+    legacy = {"config": {"volatile.uuid": "u1"}, "devices": {ORCHESTRATION_DEVICE: {"source": str(tmp_path / "sock" / "u1")}}}
+    assert socket_device.source_uuid(legacy) == "u1" and not socket_device.mismatched(legacy)
+
+
+def test_fresh_directories_never_repeat(tmp_path: Path) -> None:
+    a = socket_device.fresh_sock_dir(tmp_path, "u1")
+    b = socket_device.fresh_sock_dir(tmp_path, "u1")
+    assert a != b and a.parent == b.parent == tmp_path / "sock"
+    assert socket_device.dir_uuid(a) == "u1"
 
 
 @pytest.mark.parametrize(
@@ -129,7 +149,9 @@ def test_role_opens_listener_attaches_device_and_records_recipient(env, make, na
     env.tick()
     assert uuid in env.listener.opened
     dev = env.devices[name][ORCHESTRATION_DEVICE]
-    assert dev["source"] == str(env.rig.root / "sock" / uuid)
+    assert dev["source"] == str(env.listener.dirs[uuid])
+    assert env.listener.dirs[uuid].parent == env.rig.root / "sock"
+    assert socket_device.dir_uuid(env.listener.dirs[uuid]) == uuid
     assert env.store.recipients()[name] == uuid
 
 
@@ -153,11 +175,15 @@ def test_created_dir_reasserts_device(env) -> None:
 
 
 def test_existing_dir_with_correct_device_is_left_alone(env) -> None:
+    """A broker restart keeps the directory the device records: no device churn."""
     env.listener.created = False
     env.set(orch())
-    env.devices["proj-orch"] = {ORCHESTRATION_DEVICE: {"source": str(env.rig.root / "sock" / UUID)}}
+    recorded = env.rig.root / "sock" / f"{UUID}.0f0f"
+    recorded.mkdir(parents=True)
+    env.devices["proj-orch"] = {ORCHESTRATION_DEVICE: {"source": str(recorded)}}
     env.tick()
     assert adds(env) == []
+    assert env.listener.dirs[UUID] == recorded
     assert env.store.recipients() == {"proj-orch": UUID}
 
 
@@ -176,7 +202,9 @@ def test_mismatched_source_is_removed_and_reattached(env) -> None:
     env.set(orch())
     env.devices["proj-orch"] = {ORCHESTRATION_DEVICE: {"source": "/x/sock/other"}}
     env.tick()
-    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"].endswith(UUID)
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(
+        env.listener.dirs[UUID]
+    )
 
 
 def test_foreign_device_on_a_served_container_is_replaced(env) -> None:
@@ -188,42 +216,80 @@ def test_foreign_device_on_a_served_container_is_replaced(env) -> None:
     env.tick()
     assert adds(env) == ["proj-orch", "proj-orch"]
     assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(
-        env.rig.root / "sock" / UUID
+        env.listener.dirs[UUID]
     )
 
 
-def test_copy_of_a_served_container_loses_its_connections_after_the_detach(env) -> None:
-    """A raw `incus copy` + start may have connected as the source before the round."""
-    env.set(orch())
-    env.tick()
-    order: list[str] = []
-    env.remove.side_effect = lambda *a, **k: (order.append("detach"), env._remove(*a, **k))
-    env.listener.reset_container = lambda uuid: order.append(f"reset:{uuid}")  # type: ignore[method-assign]  # spy
+def _copy_of_the_source(env: Env) -> str:
+    """A raw `incus copy` of the served orchestrator, carrying its device."""
     src = env.devices["proj-orch"][ORCHESTRATION_DEVICE]
     env.set(orch(), _c("proj-copy", **{"volatile.uuid": "uuid-copy"}))
     env.devices["proj-copy"] = {ORCHESTRATION_DEVICE: dict(src)}
+    return str(src["source"])
+
+
+def test_copy_moves_the_source_to_a_fresh_directory_even_after_a_clean_detach(env) -> None:
+    """Incus may detach lazily (the copy holds the directory): never trust the detach."""
+    env.set(orch())
+    env.tick()
+    old = _copy_of_the_source(env)
     env.tick()
     assert ORCHESTRATION_DEVICE not in env.devices["proj-copy"]
-    assert order[:2] == ["detach", f"reset:{UUID}"]
+    assert [u for u, _ in env.listener.rotated] == [UUID]
+    new = env.listener.dirs[UUID]
+    assert str(new) != old and socket_device.dir_uuid(new) == UUID
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(new)
     assert env.memory.attached == {"proj-orch": UUID}
 
 
-def test_copy_still_loses_connections_when_the_detach_fails(env) -> None:
+def test_copy_cannot_reach_the_source_when_the_detach_fails(env) -> None:
     env.set(orch())
     env.tick()
-    env.remove.side_effect = IncusError("boom")
-    src = env.devices["proj-orch"][ORCHESTRATION_DEVICE]
-    env.set(orch(), _c("proj-copy", **{"volatile.uuid": "uuid-copy"}))
-    env.devices["proj-copy"] = {ORCHESTRATION_DEVICE: dict(src)}
+
+    def remove(name: str, dev: str, *, missing_ok: bool = False) -> None:
+        if name == "proj-copy":
+            raise IncusError("EBUSY")
+        env._remove(name, dev, missing_ok=missing_ok)
+
+    env.remove.side_effect = remove
+    old = _copy_of_the_source(env)
     env.tick()
-    assert env.listener.reset == [UUID]
+    assert env.devices["proj-copy"][ORCHESTRATION_DEVICE]["source"] == old  # still there
+    assert str(env.listener.dirs[UUID]) != old  # but it points at a dead directory
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(
+        env.listener.dirs[UUID]
+    )
+    env.tick()  # the stale device is no threat: no second rotation
+    assert len(env.listener.rotated) == 1
 
 
-def test_mismatched_device_of_an_unserved_uuid_resets_nothing(env) -> None:
+def test_a_failed_rotation_closes_the_source_s_socket(env) -> None:
+    env.set(orch())
+    env.tick()
+    env.listener.fail_rotate = True
+    _copy_of_the_source(env)
+    env.tick()
+    assert UUID in env.listener.closed
+    assert env.listener.rotated == []
+
+
+def test_a_reopened_socket_never_reuses_a_closed_directory(env) -> None:
+    """A copy's lazily held mount of the old directory must stay dead after a teardown."""
+    env.set(orch())
+    env.tick()
+    first = env.listener.dirs[UUID]
+    env.set(_c("proj-orch", **{"volatile.uuid": UUID}))  # role ends
+    env.tick()
+    env.set(orch())  # and comes back
+    env.tick()
+    assert env.listener.dirs[UUID] != first
+
+
+def test_mismatched_device_of_an_unserved_uuid_rotates_nothing(env) -> None:
     env.set(_c("proj-copy", **{"volatile.uuid": "new"}))
     env.devices["proj-copy"] = {ORCHESTRATION_DEVICE: {"source": "/x/sock/old"}}
     env.tick()
-    assert env.listener.reset == []
+    assert env.listener.rotated == []
 
 
 def test_mismatched_on_unlabelled_container_is_removed(env) -> None:
