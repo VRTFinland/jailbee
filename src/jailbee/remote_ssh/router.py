@@ -251,8 +251,7 @@ def command_path(argv: Sequence[str]) -> str:
 # says — `full` included. An entry names a leaf or a whole group. Each one
 # reaches past the containers and the git bridge into the host itself:
 #   - host configuration and the SSH service itself: `config edit`/`init`
-#     (a config decides host mounts and this very policy), `remote ...`, and
-#     `orchestrate profile save` (writes the global host configuration);
+#     (a config decides host mounts and this very policy), `remote ...`;
 #   - host installation and host-level infrastructure: `setup`, `init`,
 #     `apply`, `upgrade`, `base build`/`prune`, `net install`/`refresh`/`unregister`,
 #     `net migrate`, `net egress proxy up`/`down`, `registry up`/`down`,
@@ -261,9 +260,10 @@ def command_path(argv: Sequence[str]) -> str:
 #   - widening a container's network: `net loose` and `net egress add`
 #     can open the host's own and its LAN's addresses to it, so both are
 #     host commands unless `remote.ssh.network` is on (`RemoteUnlocks`);
-#   - widening what a container may do: `orchestrate grant` and `orchestrate adopt` let it start
-#     and manage child containers, so it is a host command like `net loose`
-#     unless `remote.ssh.orchestration` unlocks it (`RemoteUnlocks`);
+#   - widening what a container may do: `orchestrate grant` and `orchestrate adopt`
+#     let it start and manage child containers; `orchestrate profile save` stores
+#     its grant under global.yaml's orchestration.profiles only. All are host
+#     commands unless `remote.ssh.orchestration` unlocks them (`RemoteUnlocks`);
 #   - host credentials shared by every container: `account` writes;
 #   - a host path or service brought into a container: `mount` (an
 #     `optional_mounts` entry) unless `remote.ssh.mount_roots` or
@@ -367,7 +367,9 @@ _MOUNT_COMMANDS: frozenset[str] = frozenset({"mount"})
 
 # The orchestration commands that `remote.ssh.orchestration` turns from a host
 # command into a container command. `revoke` and `release` are already container commands.
-_ORCHESTRATION_COMMANDS: frozenset[str] = frozenset({"orchestrate grant", "orchestrate adopt"})
+_ORCHESTRATION_COMMANDS: frozenset[str] = frozenset(
+    {"orchestrate grant", "orchestrate adopt", "orchestrate profile save"}
+)
 
 
 @dataclass(frozen=True)
@@ -884,6 +886,10 @@ def policy_allows(
                 )
                 raise RouteError(
                     f"`{path}` opens a window, which this session has no display for: {advice}"
+                )
+            if path in _ORCHESTRATION_COMMANDS and not unlocks.orchestration:
+                raise RouteError(
+                    f"remote.ssh.orchestration is off: `{path}` manages the host itself"
                 )
             raise RouteError(
                 f"`{path}` manages the host itself, which a restricted remote session never does"

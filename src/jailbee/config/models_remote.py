@@ -246,7 +246,8 @@ class RemoteSSHConfig(BaseModel):
     orchestration: Literal["off", "ssh", "orchestrator"] = Field(
         default="ssh",
         description=(
-            "Let remote sessions run `orchestrate grant`: `ssh` (the default; also `true`) "
+            "Let remote sessions run `orchestrate grant`, `adopt` and `profile save`: "
+            "`ssh` (the default; also `true`) "
             "bounds what children may be given to what the session could do itself, "
             "`orchestrator` to the orchestrator's own permanent rights, `off` (also `false`) "
             "refuses it. `revoke` never needs this."

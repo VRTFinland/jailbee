@@ -684,6 +684,63 @@ def test_dashboard_child_receives_effective_serve_policy_not_global_policy(child
     assert raw.commands.mode == "allowlist"
 
 
+@pytest.mark.parametrize("command", [None, "dashboard"])
+def test_default_dashboard_preserves_orchestration_policy_through_cli(
+    child, mocker, monkeypatch, tmp_path, command
+):
+    from typer.testing import CliRunner
+
+    from jailbee import cli
+    from jailbee.dashboard.tui import app as dashboard_app
+    from jailbee.remote_ssh.session import child_environment
+    from jailbee.state_service.protocol import Snapshot, decode, encode
+    from tests.test_dashboard_session import _orchestration_session
+
+    config = GlobalConfig.model_validate(
+        {
+            "remote": {
+                "ssh": {
+                    "gpg": True,
+                    "files": True,
+                    "mounts": True,
+                    "waypipe": True,
+                    "rdp": False,
+                    "network": True,
+                    "default_entrypoint": "dashboard",
+                }
+            }
+        }
+    )
+    mocker.patch.object(server, "load_global_config", return_value=(config, []))
+    _, channel = session(command, term="xterm")
+    channel.exit.assert_called_once_with(7)
+    spec = child.await_args.args[1]
+    assert spec.argv[3:5] == ("dashboard", "--remote-policy-json")
+    for key, value in child_environment({}, restricted=spec.restrict_host).items():
+        monkeypatch.setenv(key, value)
+
+    dashboard, _ = _orchestration_session(mocker, tmp_path, grant=True)
+    snapshot = decode(encode(Snapshot(1, datetime.now(UTC), False, dashboard.groups)))
+    assert isinstance(snapshot, Snapshot)
+    dashboard.client.groups = snapshot.groups
+    dashboard.tick()
+
+    def run_dashboard(incus, **kwargs):
+        dashboard.remote = kwargs["remote"]
+        dashboard.over_ssh = kwargs["over_ssh"]
+        dashboard.ssh_policy = kwargs["ssh_policy"]
+        assert dashboard.remote and dashboard.over_ssh
+        assert dashboard.ssh_policy.orchestration == "ssh"
+        assert dashboard.ssh_policy.commands.mode == "full"
+        values = {e.value for e in dashboard.open_orchestration("alpha-one").entries}
+        assert {"limit", "op:destroy", "egress", "revoke"} <= values
+        return 0
+
+    mocker.patch.object(dashboard_app, "run", side_effect=run_dashboard)
+    result = CliRunner().invoke(cli.app, list(spec.argv[3:]))
+    assert result.exit_code == 0, result.output
+
+
 def test_without_overrides_a_reloaded_config_change_takes_effect_immediately(child, mocker):
     """The `overrides=None` default must not change today's reload behaviour."""
     first_raw = RemoteSSHConfig(

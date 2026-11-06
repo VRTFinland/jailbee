@@ -624,6 +624,36 @@ def _save_profile_prompt(session):
     )
 
 
+@pytest.mark.parametrize("existing", [False, True])
+def test_save_profile_over_ssh_without_grant_or_revoke_permission(mocker, tmp_path, existing):
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    session = _ssh_orchestration_session(mocker, tmp_path, level="ssh")
+    session.ssh_policy = RemoteSSHConfig.model_validate(
+        {"commands": {"mode": "allowlist", "allow": ["orchestrate profile save"]}}
+    )
+    quiet = mocker.patch.object(session, "run_quiet_cli", return_value=True)
+    menu = session.open_orchestration("alpha-one")
+    assert menu is not None
+    assert [e.value for e in menu.entries] == ["grant-unavailable", "save-profile"]
+    prompt = session.submit_picker(menu, menu.entries[1])
+    name = "bugfixer" if existing else "reviewer"
+    result = session.submit_prompt(prompt, name)
+    if existing:
+        assert result.purpose == "container-orchestration-overwrite-profile"
+        result = session.submit_picker(result, result.entries[1])
+    assert result.purpose == "container-orchestration"
+    assert quiet.call_args.args[1] == [
+        "orchestrate",
+        "profile",
+        "save",
+        *(["--force"] if existing else []),
+        "--",
+        "alpha-one",
+        name,
+    ]
+
+
 def test_save_profile_prompt_cancel_returns_to_menu(mocker, tmp_path):
     session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
     session.overlay = _save_profile_prompt(session)
@@ -705,9 +735,25 @@ def test_save_profile_failure_closes_menu(mocker, tmp_path, existing):
     assert session.overlay is None
 
 
-def test_save_profile_hidden_when_ssh_policy_forbids(mocker, tmp_path):
-    session = _ssh_orchestration_session(mocker, tmp_path, level="ssh")
+@pytest.mark.parametrize("level", ["ssh", "orchestrator", True])
+def test_save_profile_over_ssh_follows_unlock_and_allowlist(mocker, tmp_path, level):
+    from jailbee.config.models_remote import RemoteCommandPolicy
+
+    session = _ssh_orchestration_session(mocker, tmp_path, level=level)
+    assert "save-profile" in [e.value for e in session.open_orchestration("alpha-one").entries]
+    session.ssh_policy = session.ssh_policy.model_copy(
+        update={"commands": RemoteCommandPolicy(mode="allowlist", allow=["orchestrate grant"])}
+    )
     assert "save-profile" not in [e.value for e in session.open_orchestration("alpha-one").entries]
+    session.ssh_policy = session.ssh_policy.model_copy(
+        update={
+            "commands": RemoteCommandPolicy(
+                mode="allowlist", allow=["orchestrate grant", "orchestrate profile save"]
+            )
+        }
+    )
+    prompt = _save_profile_prompt(session)
+    assert prompt.purpose == "container-orchestration-save-profile"
 
 
 @pytest.mark.parametrize(
@@ -761,8 +807,8 @@ def test_ssh_topology_only_opens_container_menu_and_picker(mocker, tmp_path, act
     assert outer is not None
     assert any(verb == "orchestration" for _, verb in outer.actions)
     menu = session.open_orchestration("alpha-one")
-    assert [e.value for e in menu.entries] == [action]
-    picker = session.submit_picker(menu, menu.entries[0])
+    assert [e.value for e in menu.entries] == ["grant-unavailable", action]
+    picker = session.submit_picker(menu, menu.entries[1])
     assert [e.value for e in picker.entries] == ["alpha-two"]
     assert session.submit_picker(picker, picker.entries[0]).purpose == "container-orchestration"
     expected = ["orchestrate", action, "--"]
@@ -1435,9 +1481,38 @@ def _ssh_orchestration_session(mocker, tmp_path, *, level, grant_kw=None, kinds=
     return session
 
 
-def test_menu_over_ssh_setting_off_shows_only_revoke(mocker, tmp_path):
-    session = _ssh_orchestration_session(mocker, tmp_path, level="off")
-    assert [e.value for e in session.open_orchestration("alpha-one").entries] == ["revoke"]
+@pytest.mark.parametrize(
+    ("policy", "reason"),
+    [
+        ({"orchestration": "off"}, "remote.ssh.orchestration is off"),
+        (
+            {"commands": {"mode": "allowlist", "allow": ["orchestrate revoke"]}},
+            "Jailbee command is not allowed: orchestrate grant",
+        ),
+    ],
+)
+def test_menu_over_ssh_explains_why_grant_edits_are_unavailable(mocker, tmp_path, policy, reason):
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    session = _ssh_orchestration_session(mocker, tmp_path, level="ssh")
+    session.ssh_policy = RemoteSSHConfig.model_validate(policy)
+    menu = session.open_orchestration("alpha-one")
+    assert [e.value for e in menu.entries] == ["grant-unavailable", "revoke"]
+    assert reason in menu.entries[0].label
+    quiet = mocker.patch.object(session, "run_quiet_cli")
+    reopened = session.submit_picker(menu, menu.entries[0])
+    assert reopened.purpose == "container-orchestration"
+    assert reason in reopened.entries[0].label
+    quiet.assert_not_called()
+
+
+def test_menu_over_ssh_default_snapshot_allows_grant_edits(mocker, tmp_path):
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    session = _ssh_orchestration_session(mocker, tmp_path, level="ssh")
+    session.ssh_policy = RemoteSSHConfig.model_validate_json(RemoteSSHConfig().model_dump_json())
+    values = {e.value for e in session.open_orchestration("alpha-one").entries}
+    assert {"limit", "op:destroy", "egress", "save-profile", "revoke"} <= values
 
 
 def test_menu_over_ssh_ssh_level_hides_widening_toggles(mocker, tmp_path):

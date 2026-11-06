@@ -662,6 +662,8 @@ def orchestration_offered(
         return False
     if permitted(orchestrate_revoke_argv(container.name), ssh_policy, over_ssh=over_ssh):
         return True
+    if permitted(orchestrate_profile_save_argv(container.name, "x"), ssh_policy, over_ssh=over_ssh):
+        return True
     return any(
         permitted(orchestrate_adopt_argv(container.name, row.name), ssh_policy, over_ssh=over_ssh)
         for row in adoptable_rows(rows, container.name)
