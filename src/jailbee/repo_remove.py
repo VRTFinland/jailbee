@@ -11,7 +11,7 @@ from urllib.parse import unquote, urlsplit
 
 from sqlmodel import select
 
-from jailbee.config import SCRATCH_BASE_ALIAS, load_repo_config
+from jailbee.config import load_repo_config
 from jailbee.config.errors import ConfigError
 from jailbee.config.loader import _default_shared_dir
 from jailbee.config.local_layer import local_config_path
@@ -33,6 +33,7 @@ from jailbee.egress_scope import (
 )
 from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.golden import find_all_archived_images
+from jailbee.golden_sharing import shared_golden_reason
 from jailbee.maintenance import humanize
 from jailbee.paths import repo_config_path
 
@@ -499,17 +500,9 @@ def plan_removal(
     other_configs = [
         (row, _load_registered_config(row)) for row in rows if row.container_prefix != prefix
     ]
-    reason = None
-    if alias == SCRATCH_BASE_ALIAS:
-        reason = "shared scratch base"
-    else:
-        for other, other_cfg in other_configs:
-            if other_cfg is None:
-                reason = f"config unavailable for {other.container_prefix}"
-                break
-            if other_cfg.golden.alias == alias:
-                reason = f"shared with {other.container_prefix}"
-                break
+    reason = shared_golden_reason(
+        prefix, alias, rows, load=lambda row: _load_registered_config(row)
+    )
     images: list[str] = []
     golden_instances: list[str] = []
     if reason is None:
