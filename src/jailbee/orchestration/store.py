@@ -575,11 +575,25 @@ def import_json_document(
             "ON CONFLICT(key) DO NOTHING", (name, json.dumps(document)),
         )
 
-    try:
-        store.import_once(name, load)
-    except _LegacyImportRetry as exc:
+    marker = f"imported:{name}"
+    pending = f"pending:{name}"
+    blocked = False
+    with store._tx() as con:
+        has_pending = con.execute("SELECT 1 FROM meta WHERE key=?", (pending,)).fetchone()
+        if for_write and has_pending:
+            blocked = True
+        elif not con.execute("SELECT 1 FROM meta WHERE key=?", (marker,)).fetchone():
+            try:
+                load(con)
+            except _LegacyImportRetry:
+                con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, '1')", (pending,))
+                blocked = True
+            else:
+                con.execute("INSERT INTO meta(key, value) VALUES (?, '1')", (marker,))
+                con.execute("DELETE FROM meta WHERE key=?", (pending,))
+    if blocked:
         if for_write:
-            raise StoreError(f"cannot save state while legacy import is pending: {path}") from exc
+            raise StoreError(f"cannot save state while legacy import is pending: {path}")
         return store
     # TODO(state-db-cleanup): remove migrated files after the compatibility window.
     try:
