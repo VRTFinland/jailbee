@@ -702,10 +702,17 @@ mounted at `/run/jailbee/orchestration/`. The device is created per instance
 and only for containers that hold an orchestration role, so the broker knows who
 is calling from which socket was used; nothing in a request names the sender.
 The device is `required=false`, so a container still starts when the host
-directory is missing. A container that is copied (`incus copy`, also from a
-snapshot, and so a fork) has the device removed, because the copy would
-otherwise reach the original's socket; the broker attaches a fresh one if the
-copy becomes an orchestrator or child.
+directory is missing.
+
+A copy would otherwise reach the original's socket, so the device is stripped
+from copies. Only Jailbee's own copies (`Incus.copy`, used by `jb new` from the
+golden instance and by the Docker seed) strip it immediately. A raw `incus copy`
+done by hand, including a copy from a snapshot, keeps the device until the
+broker's next round. Every round the broker checks that the device's source
+names the container's own `volatile.uuid`, and removes the device if it does
+not. When idle that is up to a minute. Do not start a hand-made copy before the
+device is gone: until then it can reach the source's socket. The broker attaches
+a fresh device if the copy becomes an orchestrator or child.
 
 Messages and statuses the broker delivers are kept in `broker.db` in the
 broker's state directory, unread and read ones alike, so `jailbee inbox ls`

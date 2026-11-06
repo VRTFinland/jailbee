@@ -6111,9 +6111,12 @@ broker over a per-container socket mounted at `/run/jailbee/orchestration/`
 4. Broker stopped. `systemctl --user stop jailbee-broker`; in `<o>` run
    `jailbee inbox ls`. Expect "the host broker is not reachable" and exit 4
    (`echo $?`), not a hang. Start the broker again.
-5. Copies. `incus copy <k> probe` (and `incus copy <k>/<snapshot> probe2`).
-   Expect no `jailbee-orchestration` device in `incus config device show probe`.
-   Delete the copies.
+5. Copies. A raw `incus copy <k> probe` is not one of Jailbee's own copies, so
+   it keeps the device until the broker's next round (about 60 s when idle).
+   Wait about 60 s after the copy, then `incus config device show probe` should
+   show no `jailbee-orchestration` device. Do not start `probe` before that: a
+   started copy with the device still attached would reach `<k>`'s socket. Do
+   not start it in this test. Delete the copy.
 
 Host-confirmation items from the design spike (only a real host settles these):
 

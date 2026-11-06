@@ -20,8 +20,9 @@ as a read-only disk device named `jailbee-orchestration`, mounted at
 `/run/jailbee/orchestration/broker.sock` (override with
 `JAILBEE_ORCHESTRATION_SOCKET`). The broker identifies the caller by which
 socket accepted the connection, never by anything in the request. Only
-orchestrators and children get the device; a container that copies one has it
-stripped, so a copy cannot reach the original's socket.
+orchestrators and children get the device. Jailbee's own copies strip it at
+once; a raw `incus copy` keeps it until the broker's next round removes it, so
+the copy cannot reach the original's socket.
 
 Messages and statuses that the broker delivers live in `broker.db` (unread and
 read), not in files. `jailbee inbox ls`, `read` and `wait` read them through the
@@ -64,29 +65,34 @@ client exits 4 (`jb apply` / restart the broker to align versions).
 | --- | --- | --- |
 | `send` | `manifest` (an object, as in the file transport), `body` (string or null; the body file's text), `wait` (bool) | The status item for the manifest (an `InboxStatus` object). Delivered already read when `wait` is true, unread otherwise. |
 | `list` | none | The unread items, oldest first, in the shape `jailbee inbox ls` prints (long texts cut). |
-| `read` | `id`, `keep` (bool) | The unread item. Marks it read unless `keep`. |
+| `read` | `id`, `keep` (bool) | The unread item. Marks it read unless `keep`. `jailbee inbox read` calls it with `keep: true`, prints the item, then calls `ack`. |
+| `ack` | `id` | `{"acked": bool}`. Marks the item read. `jailbee inbox read` uses it after printing; if the ack fails the message stays unread. |
 | `next` | `wake_on` (list of wake tokens or null), `quiet_after` and `digest` (positive seconds or null), `timeout` (seconds or null for none) | A long-poll: `{"kind":"message","id":...}`, `{"kind":"quiet-child","child":...}`, `{"kind":"digest","children":[...],"last_from_child":{...},"observed_at":...}` or `{"kind":"timeout"}`. Nothing is marked read. |
 | `children` | none | Orchestrators only: `{"observed_at", "children", "last_from_child"}`. |
 | `status` | `child` (string or null) | Like `children`, narrowed to one child. |
 | `grant` | none | The container's grant, as in [`grant.json`](#grantjson), with `default_runner_source`. |
 
 At most one `next` is parked per container; a second gets `busy`. A `send`
-whose manifest id was already handled is answered with `duplicate`, and the
-status is in the inbox (or was already reported). Resending the same `send` is
-safe: the broker journals each id.
+whose manifest id already has a recorded status gets that status back again,
+with no new delivery. `duplicate` is returned only when no status was recorded
+for the id. Resending the same `send` is safe: the broker journals each id.
 
 ### Error codes and exit statuses
 
 | Code | Meaning | `jailbee inbox` result |
 | --- | --- | --- |
 | `version` | protocol version differs | exit 4 |
-| `bad_request` | malformed request, unknown op or invalid argument | exit 2 |
+| `bad_request` | malformed request, unknown op or invalid argument | `wait` and `send` (commands that parse arguments): exit 2; elsewhere exit 1 |
 | `not_orchestrated` | the container has no orchestration role (or is not an orchestrator, for `children`/`status`/`next` with `quiet_after`/`digest`) | exit 1 with a message |
 | `not_found` | no unread item with that id, or an unknown child | exit 1 |
 | `refused` | the broker declined the request | exit 1 |
-| `store` | the broker's message store failed | exit 1 |
-| `busy` | another waiter, or too many connections | `wait`: exit 2 |
-| `duplicate` | a `send` id that was already handled | exit 0, note on stderr |
+| `store` | the broker's message store failed, or "inbox migration pending" while the broker moves a container's file inbox into the store | exit 4 |
+| `busy` | another `next` waiter on the container, or the per-container connection cap | `wait`: exit 2; the cap can also surface as exit 4 |
+| `duplicate` | a `send` id with no recorded status | exit 0, note on stderr |
+
+The connection cap is 8 connections per container. A ninth connection gets
+`busy` and is closed right after that reply, so a client may see the reply as
+a dropped connection and exit 4.
 
 Exit 4 is also used when the broker cannot be reached at all: the socket is
 missing, refuses connections (broker stopped), or the connection drops without
