@@ -461,7 +461,9 @@ def start_child(ctx: ActionContext, plan: SpawnPlan, *, fork: ForkSource | None)
         return refused(str(e))
     try:
         reservations = load_reservations(ctx.root)
-        entries = [r for r in reservations.get(ctx.sender.full, []) if r.child_full != plan.child_full]
+        entries = [
+            r for r in reservations.get(ctx.sender.full, []) if r.child_full != plan.child_full
+        ]
         entries.append(Reservation(plan.child_full, started.pid, ctx.now.isoformat()))
         reservations[ctx.sender.full] = entries
         save_reservations(ctx.root, reservations)
@@ -744,7 +746,9 @@ def _boot(
         )
         try:
             reservations = load_reservations(ctx.root)
-            entries = [r for r in reservations.get(ctx.sender.full, []) if r.child_full != child.full]
+            entries = [
+                r for r in reservations.get(ctx.sender.full, []) if r.child_full != child.full
+            ]
             entries.append(Reservation(child.full, worker.pid, ctx.now.isoformat()))
             reservations[ctx.sender.full] = entries
             save_reservations(ctx.root, reservations)

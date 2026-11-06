@@ -192,7 +192,10 @@ def test_start_child_records_reservation(tmp_path: Path, monkeypatch: pytest.Mon
 
 @pytest.mark.parametrize("operation", ["load", "save"])
 def test_started_child_remains_watched_when_reservation_store_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, operation: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    operation: str,
 ) -> None:
     from jailbee.create_flow import CreateStarted
     from jailbee.orchestration.store import StoreError
