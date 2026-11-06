@@ -559,3 +559,26 @@ def test_a_disconnect_without_a_request_in_flight_queues_nothing(
     ev = q.get(timeout=2)
     assert isinstance(ev, RequestEvent)
 
+
+def test_a_held_connection_stops_reading_once_a_line_s_worth_is_buffered(
+    env: tuple[Listener, queue.Queue[Event], Path],
+) -> None:
+    """A pipelining client behind a parked request costs at most about one line of memory."""
+    lis, q, root = env
+    lis.open_container("u", root / "u")
+    c = connect(root / "u")
+    c.sendall(req("next"))
+    ev = q.get(timeout=2)
+    c.setblocking(False)
+    blob = b"y" * (4 * wire.MAX_LINE_BYTES)
+    sent = 0
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and sent < len(blob):
+        try:
+            sent += c.send(blob[sent:])
+        except BlockingIOError:
+            time.sleep(0.05)
+    time.sleep(0.3)
+    buffered = len(lis._conns[ev.conn_id].inbuf)
+    assert wire.MAX_LINE_BYTES <= buffered < wire.MAX_LINE_BYTES + 65536
+    assert sent < len(blob)  # the rest waits in the kernel: reading paused
