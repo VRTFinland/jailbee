@@ -807,10 +807,8 @@ def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
 
 #: Files read per `incus exec` while migrating one inbox directory. The read
 #: helper returns the first N files by name (each at most `MAX_FILE_BYTES`), so
-#: the directory is paged by deleting each page once it is in the store. A
-#: standing unparsable file stays put and shows up on every page; a page with
-#: nothing new ends the directory (unparsable files beyond a page of them are
-#: left alone).
+#: the directory is paged by deleting each page once it is in the store and
+#: renaming its unparsable files aside, so every page brings new files.
 MIGRATE_PAGE = 64
 
 
@@ -1053,7 +1051,9 @@ def _check_socket_devices(
                 uuid,
             )
             if name in memory.attached or socket_device.has_device(entry):
-                _teardown_socket(incus, memory, name, uuid, root)
+                # No uuid: only the recorded recipient's unread items are
+                # exported, to it, never to a twin listed first.
+                _teardown_socket(incus, memory, name, None, root)
             continue
         if socket_device.mismatched(entry):
             log.warning("broker: %s carries another instance's socket device; removing", name)

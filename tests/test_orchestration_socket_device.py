@@ -400,3 +400,21 @@ def test_a_twin_appearing_beside_a_served_container_tears_its_socket_down(env) -
     env.set(orch())  # the twin is gone again: served as before
     env.tick()
     assert env.store.recipients() == {"proj-orch": UUID}
+
+
+def test_a_twin_does_not_take_the_original_s_unread_messages(env) -> None:
+    env.set(orch())
+    env.tick()
+    env.store.insert_item(
+        UUID, "proj-orch", {"type": "message", "id": "m1", "kind": "note"}, now=1.0
+    )
+    src = env.devices["proj-orch"][ORCHESTRATION_DEVICE]
+    twin = _c("proj-a-twin", **{labels.GRANT: GRANT.to_label(), "volatile.uuid": UUID})
+    env.devices["proj-a-twin"] = {ORCHESTRATION_DEVICE: dict(src)}
+    env.set(twin, orch())  # the twin is listed (and handled) first
+    env.tick()
+    assert not state.pending_dir(env.rig.root, "proj-a-twin").exists() or not list(
+        state.pending_dir(env.rig.root, "proj-a-twin").iterdir()
+    )
+    files = list(state.pending_dir(env.rig.root, "proj-orch").iterdir())
+    assert [f.name.rsplit("-", 1)[-1] for f in files] == ["m1.json"]
