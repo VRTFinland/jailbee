@@ -68,12 +68,16 @@ def _reserved(base: Path, ref: Any) -> bool:
 
 def _records(base: Path) -> list[tuple[Path, dict[str, Any], int]]:
     records: list[tuple[Path, dict[str, Any], int]] = []
+    from jailbee.inbox.cli import _warning
+
     for directory in (base / "inbox", base / "inbox/read"):
         for path in directory.glob("*.json"):
             if path.name.startswith("."):
                 continue
             data = _load(path)
             if data is None:
+                if directory == base / "inbox":
+                    _warning(path)
                 continue
             try:
                 stamp = path.stat().st_mtime_ns
@@ -171,15 +175,6 @@ def select_wakeup(
 
     records = _records(base)
 
-    readable_records: list[tuple[Path, dict[str, Any], int]] = []
-    for record in records:
-        path, _, _ = record
-        if path.parent == base / "inbox" and message_id(path) is None:
-            _warning(path)
-            continue
-        readable_records.append(record)
-    records = readable_records
-
     first: dict[str, Path] = {}
     latest = {name: children[name] for name in running}
     newest = _newest_from_child(records)
@@ -193,6 +188,9 @@ def select_wakeup(
 
     for path, data, _ in sorted(records, key=lambda r: r[0].name):
         if path.parent != base / "inbox":
+            continue
+        if message_id(path) is None:
+            _warning(path)
             continue
         is_status = data.get("type") == "status"
         if is_status and _reserved(base, data.get("ref")):

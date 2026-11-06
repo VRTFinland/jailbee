@@ -62,6 +62,62 @@ def test_select_skips_message_without_readable_id(tmp_path, capsys):
     assert f"skipping unreadable message {missing_id}" in capsys.readouterr().err
 
 
+def test_idless_recent_child_message_counts_as_quiet_activity(tmp_path):
+    from jailbee.inbox.waiting import select_wakeup
+
+    put(
+        tmp_path / "children.json",
+        {
+            "version": 1,
+            "updated_at": 1000,
+            "children": [{"name": "kid", "running": True, "started_at": 900}],
+        },
+    )
+    put(
+        tmp_path / "inbox/a.json",
+        {"type": "message", "from": "kid", "kind": "note"},
+        999,
+    )
+
+    assert select_wakeup(tmp_path, frozenset(), 30, 1000) is None
+
+
+def test_idless_first_report_still_prevents_later_unmatched_first_override(tmp_path):
+    from jailbee.inbox.waiting import select_wakeup
+
+    put(
+        tmp_path / "children.json",
+        {
+            "version": 1,
+            "updated_at": 1000,
+            "children": [{"name": "kid", "running": True, "started_at": 900}],
+        },
+    )
+    put(
+        tmp_path / "inbox/a.json",
+        {"type": "message", "from": "kid", "kind": "note"},
+        950,
+    )
+    put(
+        tmp_path / "inbox/b.json",
+        {"id": "later", "type": "message", "from": "kid", "kind": "note"},
+        1000,
+    )
+
+    assert select_wakeup(tmp_path, frozenset({"question"}), 0, 1000) is None
+
+
+def test_malformed_unread_message_warns_and_does_not_wake(tmp_path, capsys):
+    from jailbee.inbox.waiting import select_wakeup
+
+    malformed = tmp_path / "inbox/a.json"
+    malformed.parent.mkdir(parents=True)
+    malformed.write_text("not json{")
+
+    assert select_wakeup(tmp_path, None, 0, 1000) is None
+    assert f"skipping unreadable message {malformed}" in capsys.readouterr().err
+
+
 def test_select_skips_live_reserved_status(tmp_path):
     from jailbee.inbox.waiting import find_status, select_wakeup
 
