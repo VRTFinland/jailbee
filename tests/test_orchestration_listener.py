@@ -558,6 +558,10 @@ def test_the_budget_frees_when_the_request_is_answered_or_released(
     lis.release(events[0].conn_id)  # idempotent: frees nothing twice
     lis.respond(ev.conn_id, wire.ok([]))
     assert wire.decode_response(recv_line(held)).ok
+    deadline = time.monotonic() + 2
+    while lis._inflight.get("u") != MAX_INFLIGHT_PER_CONTAINER - 1:
+        assert time.monotonic() < deadline, lis._inflight  # the double release freed one
+        time.sleep(0.01)
 
 
 def test_a_disconnect_without_a_request_in_flight_queues_nothing(

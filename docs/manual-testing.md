@@ -6096,8 +6096,8 @@ broker over a per-container socket mounted at `/run/jailbee/orchestration/`
 
 1. Device. On the host: `incus config device show <o>` and `... <k>`. Expect a
    `jailbee-orchestration` disk device in each: `source` under
-   `~/.local/state/jailbee/orchestration/sock/<uuid>.<random>` (or
-   `sock/<uuid>` for a container set up by an older broker), `path:
+   `~/.local/state/jailbee/orchestration/sock/<uuid>.<random>` (a container
+   set up by an older broker moves off `sock/<uuid>`, which is removed), `path:
    /run/jailbee/orchestration`, `readonly: "true"`, `required: "false"`.
    A container with no orchestration role has none.
 2. Traffic. In `<k>`: `jailbee inbox send message --kind note --text hi --wait`
@@ -6127,6 +6127,14 @@ broker over a per-container socket mounted at `/run/jailbee/orchestration/`
    `jailbee inbox ls` in `probe` fails (no reachable broker) even if the device
    is still listed or the mount lingers; the wait in `<k>` reconnects and still
    wakes on a message sent afterwards. Delete `probe`.
+7. Copy found after a broker restart. Repeat step 6, but stop the broker
+   (`systemctl --user stop jailbee-broker`) before the copy and start it once
+   `probe` holds the directory. Expect the broker to log "removed the socket
+   directory ... a copy mounted", `<k>` to be served from a new directory, and
+   `jailbee inbox ls` in `probe` to fail.
+8. Long state path. On a host whose `$HOME` is long (the socket path exceeds
+   107 bytes), confirm the socket still comes up (`jailbee inbox ls` works in
+   `<o>`) and `incus config device show <o>` names the long directory.
 
 ### Broker state database migration (real host)
 

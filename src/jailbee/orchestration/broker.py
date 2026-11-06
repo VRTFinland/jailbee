@@ -938,9 +938,12 @@ def _ensure_socket(ctx: ActionContext, memory: BrokerMemory) -> None:
     try:
         if not listener.has_container(uuid):
             recorded = ctx.incus.config_device_get(full, ORCHESTRATION_DEVICE, "source")
-            sdir = socket_device.reusable_dir(
-                ctx.root, uuid, recorded
-            ) or socket_device.fresh_sock_dir(ctx.root, uuid)
+            reused = socket_device.reusable_dir(ctx.root, uuid, recorded)
+            if reused is None and recorded and socket_device.dir_uuid(recorded) == uuid:
+                # e.g. a legacy `sock/<uuid>`: never served again, so remove it.
+                with contextlib.suppress(OSError):
+                    socket_device.remove_dir(ctx.root, recorded)
+            sdir = reused or socket_device.fresh_sock_dir(ctx.root, uuid)
             existed = sdir.exists()
             try:
                 created = listener.open_container(uuid, sdir)
@@ -997,9 +1000,9 @@ def _teardown_socket(
         uuid = uuid or memory.attached.get(full) or store.recipient_uuid(full)
         if uuid:
             _export_unacked(store, memory, root, full, uuid)
-        socket_device.detach(incus, full)
-        if uuid:
+            # Closed before the detach, so a failed detach still fails closed.
             listener.close_container(uuid)
+        socket_device.detach(incus, full)
         store.remove_recipient(full)
         if uuid:  # an insert that raced the row's removal
             _export_unacked(store, memory, root, full, uuid)
@@ -1111,10 +1114,21 @@ def _strip_copy(
     # copy holds the directory), a copy that mounts the source's live
     # directory moves the source to a fresh one.
     source = socket_device.source_uuid(entry)
+    path = socket_device.source(entry)
     listener = memory.listener
     assert listener is not None
-    if source and str(listener.socket_dir(source)) == socket_device.source(entry):
+    if not source or not path:
+        return
+    if str(listener.socket_dir(source)) == path:
         _rotate_socket(incus, memory, root, source, where)
+        return
+    # Not served right now (e.g. the first round after a broker restart): the
+    # source must never be served from this directory again.
+    try:
+        if socket_device.remove_dir(root, path):
+            log.warning("broker: removed the socket directory %s a copy mounted", path)
+    except OSError as exc:
+        memory.warn_once(f"socket-dir:{path}", "broker: %s: %s", path, exc)
 
 
 def _other_projects(incus: Incus, memory: BrokerMemory) -> list[dict[str, Any]] | None:
@@ -1125,7 +1139,7 @@ def _other_projects(incus: Incus, memory: BrokerMemory) -> list[dict[str, Any]] 
     """
     try:
         current = incus.current_project()
-        everything = incus.list_containers(all_projects=True)
+        everything = incus.list_containers(fast=True, all_projects=True)
     except (IncusError, OSError, ValueError) as exc:
         memory.warn_once("socket-projects", "broker: cannot list all Incus projects: %s", exc)
         return None

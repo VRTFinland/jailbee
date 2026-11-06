@@ -36,16 +36,37 @@ def reusable_dir(root: Path, uuid: str, source: str | None) -> Path | None:
     """The device's recorded directory when it is ``uuid``'s and still exists.
 
     A broker restart keeps serving there (no device churn); a closed or
-    rotated directory is removed, so it is never reused.
+    rotated directory is removed, so it is never reused. A legacy
+    ``sock/<uuid>`` directory is never reused either: the broker before
+    generations reset a copy's socket in place, so a copy may hold it.
     """
     if not source:
         return None
     path = Path(source)
     if path.parent != root / "sock" or dir_uuid(path) != uuid:
         return None
+    if path.name == uuid:
+        return None
     if path.is_symlink() or not path.is_dir():
         return None
     return path
+
+
+def remove_dir(root: Path, source: str) -> bool:
+    """Delete an unserved socket directory a foreign device names; True when removed.
+
+    Only a directory directly under ``<root>/sock`` is touched, never through
+    a symlink: a copy holding it then holds a deleted directory that no later
+    socket can appear in.
+    """
+    path = Path(source)
+    if path.parent != root / "sock" or path.is_symlink() or not path.is_dir():
+        return False
+    for child in path.iterdir():
+        if child.is_symlink() or not child.is_dir():
+            child.unlink()
+    path.rmdir()
+    return True
 
 
 def device_config(directory: Path) -> dict[str, str]:

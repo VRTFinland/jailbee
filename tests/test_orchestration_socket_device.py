@@ -40,6 +40,7 @@ class FakeListener:
         if self.fail_open_after_mkdir:
             sock_dir.mkdir(parents=True, exist_ok=True)
             raise OSError("bind failed")
+        sock_dir.mkdir(parents=True, exist_ok=True)  # like the real one
         self.open.add(uuid)
         self.dirs[uuid] = sock_dir
         self.opened.append(uuid)
@@ -47,7 +48,9 @@ class FakeListener:
 
     def close_container(self, uuid: str) -> None:
         self.open.discard(uuid)
-        self.dirs.pop(uuid, None)
+        old = self.dirs.pop(uuid, None)
+        if old is not None and old.exists():
+            old.rmdir()
         self.closed.append(uuid)
 
     def rotate_container(self, uuid: str, sock_dir: Path) -> None:
@@ -83,7 +86,7 @@ class Env:
             store=self.store,
         )
 
-    def _list(self, *, all_projects: bool = False) -> list[dict[str, Any]]:
+    def _list(self, *, fast: bool = False, all_projects: bool = False) -> list[dict[str, Any]]:
         out = []
         for e in self.entries:
             out.append(
@@ -280,6 +283,54 @@ def test_a_failed_rotation_closes_the_source_s_socket(env) -> None:
     env.tick()
     assert UUID in env.listener.closed
     assert env.listener.rotated == []
+
+
+def _restart_broker(env: Env) -> None:
+    """A new broker process: empty memory and listener, directories left on disk."""
+    env.listener = FakeListener()
+    env.memory = broker.BrokerMemory(
+        listener=env.listener,  # type: ignore[arg-type]  # fake
+        store=env.store,
+    )
+
+
+def test_a_copy_found_after_a_broker_restart_kills_the_directory_it_mounts(env) -> None:
+    """The copy may hold the directory (lazy detach): it must never be served again."""
+    env.set(orch())
+    env.tick()
+    old = env.listener.dirs[UUID]
+    _restart_broker(env)
+    _copy_of_the_source(env)
+    env.tick()
+    assert ORCHESTRATION_DEVICE not in env.devices["proj-copy"]
+    assert not old.exists()
+    assert env.listener.dirs[UUID] != old
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(
+        env.listener.dirs[UUID]
+    )
+
+
+def test_a_restart_reuses_no_legacy_directory(env) -> None:
+    """The old broker reset the socket in place: a copy may hold `sock/<uuid>`."""
+    legacy = env.rig.root / "sock" / UUID
+    legacy.mkdir(parents=True)
+    env.devices["proj-orch"] = {ORCHESTRATION_DEVICE: {"source": str(legacy)}}
+    env.set(orch())
+    env.tick()
+    assert env.listener.dirs[UUID] != legacy
+    assert not legacy.exists()  # and it is cleaned up
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(
+        env.listener.dirs[UUID]
+    )
+
+
+def test_a_failed_teardown_detach_still_closes_the_socket(env) -> None:
+    env.set(orch())
+    env.tick()
+    env.remove.side_effect = IncusError("EBUSY")
+    env.set(_c("proj-orch", **{"volatile.uuid": UUID}))  # role ends
+    env.tick()
+    assert UUID in env.listener.closed
 
 
 def test_a_reopened_socket_never_reuses_a_closed_directory(env) -> None:

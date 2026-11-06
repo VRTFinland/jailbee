@@ -13,9 +13,10 @@ The manifests, inbox items and `grant` shapes below are the same on both.
 ## Socket transport
 
 The broker listens on one Unix socket per container. The host keeps it under
-the broker state dir (`<state>/sock/<instance uuid>.<random>/broker.sock`; containers
-set up by an older broker keep `<state>/sock/<instance uuid>/`; directory mode
-0700, socket mode 0600) and the broker attaches that directory to the container
+the broker state dir (`<state>/sock/<instance uuid>.<random>/broker.sock`, a
+directory name no device has used before; a legacy `<state>/sock/<instance
+uuid>/` is replaced by a fresh one and removed the first time the broker serves
+the container; directory mode 0700, socket mode 0600) and the broker attaches that directory to the container
 as a read-only disk device named `jailbee-orchestration`, mounted at
 `/run/jailbee/orchestration/`. The client connects to
 `/run/jailbee/orchestration/broker.sock` (override with
