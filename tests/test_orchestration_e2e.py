@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import sqlite3
 import tarfile
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -24,7 +25,7 @@ from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
 from jailbee.orchestration import actions, broker, labels, watch
 from jailbee.orchestration.grant import Grant
-from jailbee.orchestration.journal import JOURNAL_FILE, Journal
+from jailbee.orchestration.journal import Journal
 from jailbee.orchestration.outbox import (
     CONTAINER_JAILBEE,
     INBOX_DIR,
@@ -115,8 +116,14 @@ class FakeIncus:
         if argv in (["test", "-x", CONTAINER_JAILBEE], ["rm", "-f", LEGACY_INBOX_HELPER]):
             return ""
         if argv[:3] == ["rm", "-f", "--"]:
-            journal = (self.root / JOURNAL_FILE).read_text()
-            self.events.append(("rm", name, tuple(argv[3:]), journal.count("\n")))
+            with sqlite3.connect(self.root / "broker.db") as con:
+                ids = {
+                    row[0]
+                    for row in con.execute(
+                        "SELECT manifest_id FROM journal WHERE container_key=?", (f"uuid-{name}",)
+                    )
+                }
+            self.events.append(("rm", name, tuple(argv[3:]), ids))
             for file_name in argv[3:]:
                 self.outbox[name].pop(file_name, None)
             return ""
@@ -237,10 +244,10 @@ def test_spawn_queues_then_starts_after_a_stop(world: dict[str, Any]) -> None:
         ("rm", ("b-stop.json",)),
     ]
     rms = [e for e in events if e[0] == "rm"]
-    assert [e[3] for e in rms] == [1, 2]  # each delete saw its journal line on disk
-    lines = (root / JOURNAL_FILE).read_text().splitlines()
-    assert [json.loads(line)["manifest_id"] for line in lines] == ["a-spawn", "b-stop"]
-    assert {json.loads(line)["container_key"] for line in lines} == {"uuid-proj-orch"}
+    assert [e[3] for e in rms] == [{"a-spawn"}, {"a-spawn", "b-stop"}]
+    with sqlite3.connect(root / "broker.db") as con:
+        rows = con.execute("SELECT manifest_id, container_key FROM journal ORDER BY manifest_id").fetchall()
+    assert rows == [("a-spawn", "uuid-proj-orch"), ("b-stop", "uuid-proj-orch")]
 
 
 DONE_SHA = "d" * 40
