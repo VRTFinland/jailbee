@@ -11568,6 +11568,13 @@ def base_build_cmd(
             skipped = docker_seed.SeedOutcome("skipped", "seed-container", detail=str(exc))
             warn(f"Docker seeding skipped: {exc}")
             requested = False
+        except Exception as exc:
+            if explicit:
+                error(str(exc))
+                raise typer.Exit(2) from exc
+            skipped = docker_seed.SeedOutcome("failed", "seed-container", detail=str(exc))
+            warn(f"Docker seeding failed: {exc}")
+            requested = False
 
     try:
         build_golden_image(cfg, incus)
@@ -11584,7 +11591,11 @@ def base_build_cmd(
     if skipped is not None:
         docker_seed.record_outcome(cfg, skipped)
     if requested:
-        outcome = docker_seed.run_seed(cfg, incus, _load_global(), req)
+        try:
+            outcome = docker_seed.run_seed(cfg, incus, _load_global(), req)
+        except Exception as exc:
+            outcome = docker_seed.SeedOutcome("failed", "seed-container", detail=str(exc))
+            docker_seed.record_outcome(cfg, outcome)
         _print_docker_seed_outcome(outcome)
 
 

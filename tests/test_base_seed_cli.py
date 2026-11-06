@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+from sqlalchemy.exc import SQLAlchemyError
 from typer.testing import CliRunner
+
+from jailbee.autostart import AutostartCancelledError
 
 runner = CliRunner()
 
@@ -250,6 +254,47 @@ def test_base_build_failed_seed_outcome_does_not_fail_build(mocker, make_cfg, tm
 
     assert result.exit_code == 0, result.output
     assert "load failed" in result.output
+
+
+@pytest.mark.parametrize("stage", ["preflight", "global", "seed"])
+@pytest.mark.parametrize("exc", [OSError("disk error"), SQLAlchemyError("database error"),
+    AutostartCancelledError(container="seed", signum=15)])
+def test_base_build_seed_exception_warns_and_records_failure(mocker, make_cfg, tmp_path, stage, exc):
+    from jailbee.cli import app
+    from jailbee.config.models_golden import DockerSeed
+
+    cfg = make_cfg(tmp_path, golden={"docker_seed": DockerSeed()})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.incus.Incus")
+    build = mocker.patch("jailbee.golden.build_golden_image")
+    mocker.patch("jailbee.docker_seed.preflight", side_effect=exc if stage == "preflight" else None)
+    mocker.patch("jailbee.cli._load_global", side_effect=exc if stage == "global" else None)
+    mocker.patch("jailbee.docker_seed.run_seed", side_effect=exc if stage == "seed" else None)
+    record = mocker.patch("jailbee.docker_seed.record_outcome")
+
+    result = runner.invoke(app, ["base", "build"])
+
+    assert result.exit_code == 0, result.exception
+    build.assert_called_once()
+    outcome = record.call_args.args[1]
+    assert outcome.outcome == "failed"
+    assert str(exc) in outcome.detail
+    assert "Docker seeding failed" in result.output
+
+
+def test_base_build_seed_keyboard_interrupt_propagates(mocker, make_cfg, tmp_path) -> None:
+    from jailbee.cli import base_build_cmd
+    from jailbee.config.models_golden import DockerSeed
+
+    cfg = make_cfg(tmp_path, golden={"docker_seed": DockerSeed()})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.golden.build_golden_image")
+    mocker.patch("jailbee.docker_seed.preflight")
+    mocker.patch("jailbee.cli._load_global")
+    mocker.patch("jailbee.docker_seed.run_seed", side_effect=KeyboardInterrupt)
+    with pytest.raises(KeyboardInterrupt):
+        base_build_cmd()
 
 
 def test_base_build_no_seed_option_skips_seeding(mocker, make_cfg, tmp_path) -> None:

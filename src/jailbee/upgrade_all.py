@@ -199,30 +199,33 @@ def run_upgrade_all(
             and result.build == "built"
             and result.apply not in {"failed", "blocked"}
         ):
-            from jailbee.docker_seed import SeedOutcome, SeedPreflightError, SeedRequest, preflight
+            from jailbee.docker_seed import (
+                SeedOutcome, SeedPreflightError, SeedRequest, preflight, record_outcome, run_seed,
+            )
             from jailbee.tui import warn
 
             request = SeedRequest(None, False, False)
             try:
-                preflight(cfg, incus, request)
-            except SeedPreflightError as e:
-                result.seed = "skipped"
-                warn(f"Docker seeding skipped for {cfg.container_prefix}: {e}")
-                from jailbee.docker_seed import record_outcome
-
-                record_outcome(cfg, SeedOutcome("skipped", "seed-container", detail=str(e)))
-            else:
-                from jailbee.docker_seed import run_seed
-
-                outcome = run_seed(cfg, incus, gcfg, request)
-                if outcome.outcome == "seeded":
-                    result.seed = "seeded"
-                elif outcome.outcome == "skipped":
+                try:
+                    preflight(cfg, incus, request)
+                except SeedPreflightError as e:
                     result.seed = "skipped"
-                elif outcome.outcome == "failed":
-                    result.seed = "failed"
-                if result.seed == "failed":
-                    warn(f"Docker seeding failed for {cfg.container_prefix}: {outcome.detail}")
+                    warn(f"Docker seeding skipped for {cfg.container_prefix}: {e}")
+                    record_outcome(cfg, SeedOutcome("skipped", "seed-container", detail=str(e)))
+                else:
+                    outcome = run_seed(cfg, incus, gcfg, request)
+                    if outcome.outcome == "seeded":
+                        result.seed = "seeded"
+                    elif outcome.outcome == "skipped":
+                        result.seed = "skipped"
+                    elif outcome.outcome == "failed":
+                        result.seed = "failed"
+                    if result.seed == "failed":
+                        warn(f"Docker seeding failed for {cfg.container_prefix}: {outcome.detail}")
+            except Exception as e:
+                result.seed = "failed"
+                warn(f"Docker seeding failed for {cfg.container_prefix}: {e}")
+                record_outcome(cfg, SeedOutcome("failed", "seed-container", detail=str(e)))
 
     _print_summary(results, dry_run=dry_run)
     if all(r.ok for r in results):
