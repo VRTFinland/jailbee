@@ -200,7 +200,12 @@ def run_upgrade_all(
             and result.apply not in {"failed", "blocked"}
         ):
             from jailbee.docker_seed import (
-                SeedOutcome, SeedPreflightError, SeedRequest, preflight, record_outcome, run_seed,
+                SeedOutcome,
+                SeedPreflightError,
+                SeedRequest,
+                preflight,
+                record_outcome,
+                run_seed,
             )
             from jailbee.tui import warn
 

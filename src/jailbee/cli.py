@@ -11541,8 +11541,11 @@ def base_build_cmd(
 
     try:
         plan = docker_seed.plan_request(
-            cfg, incus, docker_from=docker_from,
-            no_docker_seed=no_docker_seed, keep_seed=keep_seed,
+            cfg,
+            incus,
+            docker_from=docker_from,
+            no_docker_seed=no_docker_seed,
+            keep_seed=keep_seed,
         )
     except docker_seed.SeedPreflightError as exc:
         error(str(exc))

@@ -559,6 +559,7 @@ def promote_instance(
         info(f"Promoting {staging} to {golden}")
         incus.rename(staging, golden)
     except BaseException:
+
         def restore() -> None:
             if cleanup.exists(aside) and not cleanup.exists(golden):
                 cleanup.rename(aside, golden)
@@ -587,6 +588,7 @@ def promote_image(
             incus.image_alias_rename(alias, old_alias)
         incus.image_alias_rename(new_alias, alias)
     except BaseException:
+
         def restore() -> None:
             if cleanup.image_exists(old_alias) and not cleanup.image_exists(alias):
                 cleanup.image_alias_rename(old_alias, alias)

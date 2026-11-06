@@ -186,9 +186,9 @@ def test_ephemeral_source_clears_inherited_images_before_autostart(rig, monkeypa
     images = {"stale:v1"}
     events = []
     monkeypatch.setattr(git, "rev_parse_remote", Mock(return_value="upstream-sha"))
-    monkeypatch.setattr(create_flow, "host_extras", Mock(
-        return_value=create_flow.HostExtras(None, None, None, ())
-    ))
+    monkeypatch.setattr(
+        create_flow, "host_extras", Mock(return_value=create_flow.HostExtras(None, None, None, ()))
+    )
     monkeypatch.setattr(create_flow, "prepare_host", Mock())
 
     def execute(container, cmd, **kwargs):
@@ -219,6 +219,7 @@ def test_run_seed_cleanup(rig, monkeypatch, keep, fail):
     cfg, incus = rig
     name = f"{cfg.container_prefix}-docker-seed"
     incus.exists.side_effect = [False, True]
+
     def create(_cfg, _incus, _gcfg, *, on_created):
         on_created(name)
         if fail:
@@ -314,12 +315,14 @@ def test_timer_stops_and_joins_before_cleanup(rig, monkeypatch):
             events.append("join")
 
     monkeypatch.setattr(docker_seed.threading, "Timer", Timer)
+
     def create(_cfg, _incus, _gcfg, *, on_created):
         on_created(name)
         timer.callback()
         return name
 
     timer = None
+
     def make_timer(delay, callback):
         nonlocal timer
         timer = Timer(delay, callback)

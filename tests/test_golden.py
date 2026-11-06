@@ -197,7 +197,9 @@ def test_promote_instance_restores_previous_golden_when_rename_fails():
 
 
 @pytest.mark.parametrize("mode", ["instance", "image"])
-@pytest.mark.parametrize("failure", ["aside_before", "aside_after", "promote_before", "promote_after"])
+@pytest.mark.parametrize(
+    "failure", ["aside_before", "aside_after", "promote_before", "promote_after"]
+)
 def test_ambiguous_promotion_failure_preserves_golden_with_cleanup_client(mode, failure):
     from jailbee.golden import promote_image, promote_instance
 

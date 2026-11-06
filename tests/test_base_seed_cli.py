@@ -257,9 +257,17 @@ def test_base_build_failed_seed_outcome_does_not_fail_build(mocker, make_cfg, tm
 
 
 @pytest.mark.parametrize("stage", ["preflight", "global", "seed"])
-@pytest.mark.parametrize("exc", [OSError("disk error"), SQLAlchemyError("database error"),
-    AutostartCancelledError(container="seed", signum=15)])
-def test_base_build_seed_exception_warns_and_records_failure(mocker, make_cfg, tmp_path, stage, exc):
+@pytest.mark.parametrize(
+    "exc",
+    [
+        OSError("disk error"),
+        SQLAlchemyError("database error"),
+        AutostartCancelledError(container="seed", signum=15),
+    ],
+)
+def test_base_build_seed_exception_warns_and_records_failure(
+    mocker, make_cfg, tmp_path, stage, exc
+):
     from jailbee.cli import app
     from jailbee.config.models_golden import DockerSeed
 

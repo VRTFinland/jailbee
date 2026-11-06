@@ -9,7 +9,9 @@ from jailbee.config.models_golden import DockerSeed
 def test_plan_request_resolves_source_and_preflights(mocker, make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
     incus = mocker.Mock()
-    resolve = mocker.patch("jailbee.lifecycle.resolve_container_for_interactive", return_value="repo-src")
+    resolve = mocker.patch(
+        "jailbee.lifecycle.resolve_container_for_interactive", return_value="repo-src"
+    )
     preflight = mocker.patch("jailbee.docker_seed.preflight")
 
     plan = docker_seed.plan_request(cfg, incus, docker_from="src", keep_seed=True)
@@ -32,7 +34,9 @@ def test_disabled_request_warns_about_ineffective_keep(mocker, make_cfg, tmp_pat
 
 def test_config_preflight_skip_is_returned_not_recorded(mocker, make_cfg, tmp_path):
     cfg = make_cfg(tmp_path, golden={"docker_seed": DockerSeed()})
-    mocker.patch("jailbee.docker_seed.preflight", side_effect=docker_seed.SeedPreflightError("shared"))
+    mocker.patch(
+        "jailbee.docker_seed.preflight", side_effect=docker_seed.SeedPreflightError("shared")
+    )
     record = mocker.patch("jailbee.docker_seed.record_outcome")
     plan = docker_seed.plan_request(cfg, mocker.Mock())
     assert not plan.requested and plan.skipped.outcome == "skipped"

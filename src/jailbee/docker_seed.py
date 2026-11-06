@@ -8,9 +8,10 @@ import math
 import re
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from jailbee import golden
 from jailbee.golden_sharing import shared_golden_reason_for
@@ -53,8 +54,13 @@ class SeedPlan:
 
 
 def plan_request(
-    cfg: Config, incus: Incus, *, docker_from: str | None = None,
-    no_docker_seed: bool = False, keep_seed: bool = False, standalone: bool = False,
+    cfg: Config,
+    incus: Incus,
+    *,
+    docker_from: str | None = None,
+    no_docker_seed: bool = False,
+    keep_seed: bool = False,
+    standalone: bool = False,
 ) -> SeedPlan:
     """Resolve and validate a CLI request without changing the golden or its state."""
     from jailbee.lifecycle import resolve_container_for_interactive
@@ -309,7 +315,11 @@ def seed_golden(
 
 
 def create_seed_container(
-    cfg: Config, incus: Incus, gcfg: GlobalConfig, *, on_created: Callable[[str], None] | None = None
+    cfg: Config,
+    incus: Incus,
+    gcfg: GlobalConfig,
+    *,
+    on_created: Callable[[str], None] | None = None,
 ) -> str:
     from jailbee import create_flow, git, lifecycle
 
@@ -363,7 +373,11 @@ def create_seed_container(
             incus.exec(name, ["docker", "image", "rm", "-f", *dict.fromkeys(inherited)])
 
     return lifecycle.new_container(
-        cfg, incus, opts, confirm_fn=lambda _message: False, on_phase=before_autostart,
+        cfg,
+        incus,
+        opts,
+        confirm_fn=lambda _message: False,
+        on_phase=before_autostart,
         on_created=on_created,
     )
 

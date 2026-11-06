@@ -1909,7 +1909,9 @@ def _select_work_generation(mocker, db_session):
     db_session.commit()
 
 
-@pytest.mark.parametrize("work,creation_fails", [(False, False), (True, False), (False, True), (True, True)])
+@pytest.mark.parametrize(
+    "work,creation_fails", [(False, False), (True, False), (False, True), (True, True)]
+)
 def test_new_container_reports_only_successful_instance_creation(
     tmp_path, mocker, db_session, work, creation_fails
 ):
@@ -1930,7 +1932,8 @@ def test_new_container_reports_only_successful_instance_creation(
     created = MagicMock()
     with pytest.raises(RuntimeError):
         new_container(
-            cfg, incus,
+            cfg,
+            incus,
             NewContainerOptions("feat/x", None, "strict", "8GiB", 4, "base", True, autostart=False),
             on_created=created,
         )

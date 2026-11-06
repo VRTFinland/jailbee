@@ -195,9 +195,15 @@ def test_seed_exception_does_not_stop_sweep(make_cfg, tmp_path, mocker, fakes, s
     for cfg in (a, b):
         object.__setattr__(cfg.golden, "docker_seed", type("SeedConfig", (), {"enabled": True})())
     _load(mocker, {a.repo_root: a, b.repo_root: b})
-    mocker.patch("jailbee.docker_seed.preflight", side_effect=[OSError("seed broke"), None] if stage == "preflight" else None)
+    mocker.patch(
+        "jailbee.docker_seed.preflight",
+        side_effect=[OSError("seed broke"), None] if stage == "preflight" else None,
+    )
     seeded = type("Outcome", (), {"outcome": "seeded", "detail": ""})()
-    mocker.patch("jailbee.docker_seed.run_seed", side_effect=[OSError("seed broke"), seeded] if stage == "seed" else [seeded])
+    mocker.patch(
+        "jailbee.docker_seed.run_seed",
+        side_effect=[OSError("seed broke"), seeded] if stage == "seed" else [seeded],
+    )
     record = mocker.patch("jailbee.docker_seed.record_outcome")
     warn = mocker.patch("jailbee.tui.warn")
 
@@ -215,8 +221,13 @@ def test_seed_keyboard_interrupt_propagates(make_cfg, tmp_path, mocker, fakes, s
     a = _cfg(make_cfg, tmp_path, "aa")
     object.__setattr__(a.golden, "docker_seed", type("SeedConfig", (), {"enabled": True})())
     _load(mocker, {a.repo_root: a})
-    mocker.patch("jailbee.docker_seed.preflight", side_effect=KeyboardInterrupt if stage == "preflight" else None)
-    mocker.patch("jailbee.docker_seed.run_seed", side_effect=KeyboardInterrupt if stage == "seed" else None)
+    mocker.patch(
+        "jailbee.docker_seed.preflight",
+        side_effect=KeyboardInterrupt if stage == "preflight" else None,
+    )
+    mocker.patch(
+        "jailbee.docker_seed.run_seed", side_effect=KeyboardInterrupt if stage == "seed" else None
+    )
     with pytest.raises(KeyboardInterrupt):
         _run([a.repo_root], force=True)
 
