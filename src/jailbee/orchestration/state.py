@@ -202,4 +202,6 @@ def save_queue(root: Path, queues: dict[str, list[QueuedRequest]]) -> None:
         "version": _QUEUE_VERSION,
         "queues": {k: [asdict(r) for r in v] for k, v in queues.items() if v},
     }
-    import_json_document(root, QUEUE_FILE, _validate_queue, for_write=True).kv_put(QUEUE_FILE, payload)
+    import_json_document(root, QUEUE_FILE, _validate_queue, for_write=True).kv_put(
+        QUEUE_FILE, payload
+    )

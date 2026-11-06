@@ -74,9 +74,11 @@ def _results_store(root: Path) -> BrokerStore:
         for path in directory.glob("*.json"):
             try:
                 value = json.loads(path.read_text(encoding="utf-8"))
-                if (not isinstance(value, dict)
-                        or value.get("state") not in ("done", "failed")
-                        or not isinstance(value.get("detail"), str)):
+                if (
+                    not isinstance(value, dict)
+                    or value.get("state") not in ("done", "failed")
+                    or not isinstance(value.get("detail"), str)
+                ):
                     raise ValueError("invalid result state or detail")
             except (ValueError, UnicodeError) as exc:
                 log.warning("ignoring corrupt publish result %s: %s", path, exc)
@@ -284,8 +286,12 @@ def was_accepted(ctx: ActionContext, ref: str) -> bool:
 def abort_before_start(ctx: ActionContext, ref: str, detail: str) -> None:
     entry = inflight(ctx.root).get(ctx.sender.full)
     if entry is not None and entry["ref"] == ref:
-        _put_result(ctx.root, entry.get("container_key", ctx.sender.full), ref,
-                    {"ref": ref, "state": "failed", "detail": detail})
+        _put_result(
+            ctx.root,
+            entry.get("container_key", ctx.sender.full),
+            ref,
+            {"ref": ref, "state": "failed", "detail": detail},
+        )
 
 
 # The audit log is append-only, and uncertain reviews require human resolution.
@@ -512,15 +518,20 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
         if "uncertain" in detail.lower():
             detail += "; resolve with `jb outbox` on the host"
     try:
-        _put_result(root, entry.get("container_key", full), entry["ref"], {
-            "ref": entry["ref"],
-            "orchestrator": full,
-            "state": state,
-            "detail": detail[:4000],
-            "urls": [u for line in lines for u in re.findall(r"https?://[^\s)]+", line)],
-            "actions": actual,
-            "policy_refused": refused_by_policy,
-        })
+        _put_result(
+            root,
+            entry.get("container_key", full),
+            entry["ref"],
+            {
+                "ref": entry["ref"],
+                "orchestrator": full,
+                "state": state,
+                "detail": detail[:4000],
+                "urls": [u for line in lines for u in re.findall(r"https?://[^\s)]+", line)],
+                "actions": actual,
+                "policy_refused": refused_by_policy,
+            },
+        )
     except Exception:
         log.exception("broker: could not save publish result for %s %s", full, entry["ref"])
 
@@ -531,6 +542,7 @@ def _refund(root: Path, full: str, entry: dict[str, Any]) -> None:
         import_json_document(root, name, _validate_document, for_write=True)
     store = open_state_store(root)
     with store._tx() as con:
+
         def read(name: str) -> dict[str, Any]:
             row = con.execute("SELECT value FROM state WHERE key=?", (name,)).fetchone()
             return json.loads(row[0]) if row else {}
@@ -588,7 +600,9 @@ def settle(ctx: ActionContext, reply: Callable[[str, Outcome], None]) -> None:
     reply(entry["ref"], Outcome(result["state"], result["detail"]))
     del current[ctx.sender.full]
     _save(ctx.root, _INFLIGHT, current)
-    _results_store(ctx.root).kv_delete(_result_key(entry.get("container_key", ctx.sender.full), entry["ref"]))
+    _results_store(ctx.root).kv_delete(
+        _result_key(entry.get("container_key", ctx.sender.full), entry["ref"])
+    )
 
 
 def recover(root: Path) -> None:
@@ -600,12 +614,17 @@ def recover(root: Path) -> None:
                     _review_marker(root, entry.get("container_key", full), entry["manifest"]),
                     json.dumps({"ref": entry["ref"]}),
                 )
-            _put_result(root, key, entry["ref"], {
-                "ref": entry["ref"],
-                "state": "failed",
-                "detail": "outcome uncertain: the broker restarted during publish; "
-                "check `jb outbox` on the host",
-            })
+            _put_result(
+                root,
+                key,
+                entry["ref"],
+                {
+                    "ref": entry["ref"],
+                    "state": "failed",
+                    "detail": "outcome uncertain: the broker restarted during publish; "
+                    "check `jb outbox` on the host",
+                },
+            )
 
 
 HANDLERS["publish"] = handle_publish

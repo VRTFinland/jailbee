@@ -62,10 +62,15 @@ def test_register_and_cancel_wait_for_watch_lock(tmp_path, monkeypatch: pytest.M
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
 
-    save_watch(tmp_path, {ORCH: [
-        WatchEntry("keep", "keep", "restart", NOW.isoformat()),
-        WatchEntry("remove", "remove", "restart", NOW.isoformat()),
-    ]})
+    save_watch(
+        tmp_path,
+        {
+            ORCH: [
+                WatchEntry("keep", "keep", "restart", NOW.isoformat()),
+                WatchEntry("remove", "remove", "restart", NOW.isoformat()),
+            ]
+        },
+    )
     reached_load = Event()
     original_load = watch.load_watch
 

@@ -306,14 +306,22 @@ class BrokerStore:
 
     def journal_seen(self, container_key: str, digest: str) -> bool:
         with self._tx(write=False) as con:
-            return con.execute(
-                "SELECT 1 FROM journal WHERE container_key=? AND digest=?",
-                (container_key, digest),
-            ).fetchone() is not None
+            return (
+                con.execute(
+                    "SELECT 1 FROM journal WHERE container_key=? AND digest=?",
+                    (container_key, digest),
+                ).fetchone()
+                is not None
+            )
 
     def journal_record(
-        self, container_key: str, digest: str, container_full: str,
-        manifest_id: str, outcome: str, at: str,
+        self,
+        container_key: str,
+        digest: str,
+        container_full: str,
+        manifest_id: str,
+        outcome: str,
+        at: str,
     ) -> None:
         with self._tx() as con:
             con.execute(
@@ -535,7 +543,7 @@ def open_state_store(root: Path) -> BrokerStore:
         return _STATE_STORES[path]
 
 
-class _LegacyImportRetry(Exception):
+class _LegacyImportRetryError(Exception):
     """A legacy source could not be read or safely quarantined yet."""
 
 
@@ -565,14 +573,14 @@ def import_json_document(
                 pass
             except OSError as rename_exc:
                 _log.warning("cannot quarantine orchestration state %s: %s", path, rename_exc)
-                raise _LegacyImportRetry from rename_exc
+                raise _LegacyImportRetryError from rename_exc
             return
         except OSError as exc:
             _log.warning("ignoring unreadable orchestration state %s: %s", path, exc)
-            raise _LegacyImportRetry from exc
+            raise _LegacyImportRetryError from exc
         con.execute(
-            "INSERT INTO state(key, value) VALUES (?, ?) "
-            "ON CONFLICT(key) DO NOTHING", (name, json.dumps(document)),
+            "INSERT INTO state(key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING",
+            (name, json.dumps(document)),
         )
 
     marker = f"imported:{name}"
@@ -585,7 +593,7 @@ def import_json_document(
         elif not con.execute("SELECT 1 FROM meta WHERE key=?", (marker,)).fetchone():
             try:
                 load(con)
-            except _LegacyImportRetry:
+            except _LegacyImportRetryError:
                 con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, '1')", (pending,))
                 blocked = True
             else:

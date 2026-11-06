@@ -194,9 +194,9 @@ def test_unreadable_legacy_reservations_warns_and_starts_empty(tmp_path, monkeyp
     from pathlib import Path
 
     path = tmp_path / state.RESERVATIONS_FILE
-    path.write_text(json.dumps({"reservations": {"orch": [
-        {"child_full": "a", "pid": 1, "started_at": "t"}
-    ]}}))
+    path.write_text(
+        json.dumps({"reservations": {"orch": [{"child_full": "a", "pid": 1, "started_at": "t"}]}})
+    )
     original = Path.read_text
 
     def unreadable(self, *args, **kwargs):
@@ -221,9 +221,9 @@ def test_unreadable_legacy_blocks_save_until_import_succeeds(tmp_path, monkeypat
     from jailbee.orchestration.store import StoreError
 
     path = tmp_path / state.RESERVATIONS_FILE
-    path.write_text(json.dumps({"reservations": {"orch": [
-        {"child_full": "a", "pid": 1, "started_at": "t"}
-    ]}}))
+    path.write_text(
+        json.dumps({"reservations": {"orch": [{"child_full": "a", "pid": 1, "started_at": "t"}]}})
+    )
     original = Path.read_text
 
     def unreadable(self, *args, **kwargs):
@@ -249,9 +249,9 @@ def test_failed_read_requires_reload_before_saving_even_after_recovery(tmp_path,
     from jailbee.orchestration.store import StoreError
 
     path = tmp_path / state.RESERVATIONS_FILE
-    path.write_text(json.dumps({"reservations": {"orch": [
-        {"child_full": "a", "pid": 1, "started_at": "t"}
-    ]}}))
+    path.write_text(
+        json.dumps({"reservations": {"orch": [{"child_full": "a", "pid": 1, "started_at": "t"}]}})
+    )
     original = Path.read_text
 
     def unreadable(self, *args, **kwargs):
@@ -271,7 +271,9 @@ def test_failed_read_requires_reload_before_saving_even_after_recovery(tmp_path,
 
 def test_reservations_import_once_and_ignore_recreated_source(tmp_path):
     path = tmp_path / state.RESERVATIONS_FILE
-    path.write_text(json.dumps({"reservations": {"orch": [{"child_full": "a", "pid": 1, "started_at": "t"}]}}))
+    path.write_text(
+        json.dumps({"reservations": {"orch": [{"child_full": "a", "pid": 1, "started_at": "t"}]}})
+    )
     expected = {"orch": [state.Reservation("a", 1, "t")]}
     assert state.load_reservations(tmp_path) == expected
     assert (tmp_path / "reservations.json.migrated").exists()
@@ -293,8 +295,8 @@ def test_corrupt_syntax_quarantined(tmp_path):
 
 
 def test_failed_rename_after_commit_retried_without_reimport(tmp_path, monkeypatch):
-    from pathlib import Path
     from dataclasses import asdict
+    from pathlib import Path
 
     path = tmp_path / "queue.json"
     path.write_text(json.dumps({"queues": {"orch": [asdict(_req())]}}))

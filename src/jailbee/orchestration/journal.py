@@ -6,9 +6,9 @@ import hashlib
 import json
 import logging
 import sqlite3
+from typing import TYPE_CHECKING
 
 from jailbee.orchestration.store import StoreError, open_state_store
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -34,7 +34,7 @@ def manifest_digest(file_name: str, text: str, files: Mapping[str, str]) -> str:
 _log = logging.getLogger(__name__)
 
 
-class _RetryImport(Exception):
+class _RetryImportError(Exception):
     pass
 
 
@@ -57,7 +57,7 @@ class Journal:
                 return
             except OSError as exc:
                 _log.warning("cannot read journal %s: %s", path, exc)
-                raise _RetryImport from exc
+                raise _RetryImportError from exc
             valid = 0
             bad = 0
             for number, line in enumerate(text.splitlines(), 1):
@@ -69,12 +69,21 @@ class Journal:
                     digest = entry["digest"]
                     if not isinstance(key, str) or not isinstance(digest, str):
                         raise ValueError("invalid key or digest")
-                    def field(name: str, default: str = "") -> str:
-                        value = entry.get(name)
+
+                    def field(
+                        name: str, default: str = "", *, row: dict[str, object] = entry
+                    ) -> str:
+                        value = row.get(name)
                         return default if value is None else str(value)
 
-                    values = (key, digest, field("container_full", key) or key,
-                              field("manifest_id"), field("outcome"), field("at"))
+                    values = (
+                        key,
+                        digest,
+                        field("container_full", key) or key,
+                        field("manifest_id"),
+                        field("outcome"),
+                        field("at"),
+                    )
                     con.execute("INSERT OR IGNORE INTO journal VALUES (?, ?, ?, ?, ?, ?)", values)
                     valid += 1
                 except (ValueError, KeyError, TypeError, UnicodeError) as exc:
@@ -88,11 +97,11 @@ class Journal:
                     pass
                 except OSError as exc:
                     _log.warning("cannot quarantine journal %s: %s", path, exc)
-                    raise _RetryImport from exc
+                    raise _RetryImportError from exc
 
         try:
             self._store.import_once(JOURNAL_FILE, load)
-        except _RetryImport as exc:
+        except _RetryImportError as exc:
             raise StoreError(f"cannot import journal {path}") from exc
         # TODO(state-db-cleanup): remove migrated files after the compatibility window.
         if not corrupt:
@@ -109,12 +118,22 @@ class Journal:
         return self._store.journal_seen(container_key, digest)
 
     def record(
-        self, container_key: str, digest: str, manifest_id: str, outcome: str,
-        at: datetime, *, container_full: str | None = None,
+        self,
+        container_key: str,
+        digest: str,
+        manifest_id: str,
+        outcome: str,
+        at: datetime,
+        *,
+        container_full: str | None = None,
     ) -> None:
         """Commit the entry before returning to the caller."""
         self._import()
         self._store.journal_record(
-            container_key, digest, container_full or container_key, manifest_id,
-            outcome, at.isoformat(),
+            container_key,
+            digest,
+            container_full or container_key,
+            manifest_id,
+            outcome,
+            at.isoformat(),
         )

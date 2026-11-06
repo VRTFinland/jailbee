@@ -819,9 +819,11 @@ def test_refund_is_not_repeated_after_delivery_failure(rig):
     import sqlite3
 
     with sqlite3.connect(store.path) as con:
-        con.execute("CREATE TRIGGER fail_refund BEFORE UPDATE ON state "
-                    "WHEN NEW.key='publish-inflight.json' AND NEW.value LIKE '%refunded%' "
-                    "BEGIN SELECT RAISE(ABORT, 'interrupted'); END")
+        con.execute(
+            "CREATE TRIGGER fail_refund BEFORE UPDATE ON state "
+            "WHEN NEW.key='publish-inflight.json' AND NEW.value LIKE '%refunded%' "
+            "BEGIN SELECT RAISE(ABORT, 'interrupted'); END"
+        )
     with pytest.raises(Exception, match="interrupted"):
         publishing.settle(ctx, lambda *args: None)
     assert store.kv_get("publish-budget.json") == {ctx.sender.full: [stamp, stamp]}

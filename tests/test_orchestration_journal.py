@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import pytest
-from typing import TYPE_CHECKING
 
 from jailbee.orchestration.journal import Journal, manifest_digest
 
@@ -71,7 +71,9 @@ def test_existing_instance_sees_new_record_and_duplicate(tmp_path: Path) -> None
     assert first.seen("c", "d")
 
 
-def test_legacy_import_once_and_corrupt_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_legacy_import_once_and_corrupt_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     path = tmp_path / "journal.jsonl"
     path.write_text('{"container_full":"c","digest":"d"}\nnot json\n')
     assert Journal(tmp_path).seen("c", "d")
@@ -81,9 +83,11 @@ def test_legacy_import_once_and_corrupt_warning(tmp_path: Path, caplog: pytest.L
     assert not Journal(tmp_path).seen("other", "d")
 
 
-def test_entirely_corrupt_legacy_is_quarantined(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_entirely_corrupt_legacy_is_quarantined(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     path = tmp_path / "journal.jsonl"
-    path.write_text('broken\n')
+    path.write_text("broken\n")
     assert not Journal(tmp_path).seen("c", "d")
     assert path.with_name("journal.jsonl.corrupt").exists()
     assert "malformed" in caplog.text
@@ -97,8 +101,10 @@ def test_failed_record_rolls_back_without_false_seen(tmp_path: Path) -> None:
     journal = Journal(tmp_path)
     assert not journal.seen("c", "d")
     with sqlite3.connect(tmp_path / "broker.db") as con:
-        con.execute("CREATE TRIGGER fail_journal BEFORE INSERT ON journal "
-                    "BEGIN SELECT RAISE(ABORT, 'disk failure'); END")
+        con.execute(
+            "CREATE TRIGGER fail_journal BEFORE INSERT ON journal "
+            "BEGIN SELECT RAISE(ABORT, 'disk failure'); END"
+        )
     with pytest.raises(StoreError):
         journal.record("c", "d", "m", "ok", AT)
     assert not Journal(tmp_path).seen("c", "d")
@@ -108,7 +114,9 @@ def test_failed_record_rolls_back_without_false_seen(tmp_path: Path) -> None:
     assert Journal(tmp_path).seen("c", "d")
 
 
-def test_import_rename_gap_does_not_reimport(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_import_rename_gap_does_not_reimport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from pathlib import Path
 
     path = tmp_path / "journal.jsonl"
@@ -130,7 +138,9 @@ def test_import_rename_gap_does_not_reimport(tmp_path: Path, monkeypatch: pytest
     assert path.with_name("journal.jsonl.migrated").exists()
 
 
-def test_unreadable_import_retries_before_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unreadable_import_retries_before_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from pathlib import Path
 
     from jailbee.orchestration.store import StoreError
@@ -170,8 +180,10 @@ def test_legacy_fields_preserved(tmp_path: Path) -> None:
     import sqlite3
 
     path = tmp_path / "journal.jsonl"
-    path.write_text('{"container_key":"uuid","container_full":"name","digest":"d",'
-                    '"manifest_id":"m","outcome":"ok","at":"then"}\n')
+    path.write_text(
+        '{"container_key":"uuid","container_full":"name","digest":"d",'
+        '"manifest_id":"m","outcome":"ok","at":"then"}\n'
+    )
     assert Journal(tmp_path).seen("uuid", "d")
     with sqlite3.connect(tmp_path / "broker.db") as con:
         row = con.execute("SELECT container_full, manifest_id, outcome, at FROM journal").fetchone()

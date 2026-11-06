@@ -212,16 +212,19 @@ def test_failed_migration_rolls_back_and_can_retry(
     st.recipients()
     original = list(store_mod._MIGRATIONS)
     script = "CREATE TABLE migration_probe(x);\nINSERT INTO migration_probe VALUES (42);"
-    monkeypatch.setattr(store_mod, "_MIGRATIONS", [*original, script + "\nINSERT INTO missing VALUES (1);"])
+    monkeypatch.setattr(
+        store_mod, "_MIGRATIONS", [*original, script + "\nINSERT INTO missing VALUES (1);"]
+    )
     with pytest.raises(StoreError):
         st.recipients()
     with sqlite3.connect(path) as con:
         assert con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() == (
             str(len(original)),
         )
-        assert con.execute(
-            "SELECT name FROM sqlite_master WHERE name='migration_probe'"
-        ).fetchone() is None
+        assert (
+            con.execute("SELECT name FROM sqlite_master WHERE name='migration_probe'").fetchone()
+            is None
+        )
     monkeypatch.setattr(store_mod, "_MIGRATIONS", [*original, script])
     st.recipients()
     with sqlite3.connect(path) as con:
