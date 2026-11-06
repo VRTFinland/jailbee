@@ -32,6 +32,14 @@ Then choose the implementation vehicle by what the work needs:
   subagent, or a forked copy of your own agent session where your agent has
   one (not a `fork` child container), when saving your context matters;
   tiny edits can be done inline.
+  Delegation is the default for any reading or writing task larger than a few
+  lookups: code surveys across many files, spec drafts, implementation plans,
+  long write-ups and code reviews. Reading many files to anchor a plan burns
+  the context that keeps children, merges and the final gate moving. After a
+  brainstorm with the user, hand plan and spec writing to a fork of your own
+  agent session (it inherits the conversation, so the decisions travel); use a
+  fresh subagent for surveys and reviews. Keep in your own context the live
+  conversation with the user, decisions, merges, manifests and short lookups.
 - **Child containers** have their own checkout, branch, environment and
   long-running agent session. Use one when work benefits from its own
   development environment: code changes with test suites, services, long
