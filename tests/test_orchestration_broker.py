@@ -15,7 +15,7 @@ from jailbee import background
 from jailbee.db.models import JOB_BOOT, JOB_CREATE
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
-from jailbee.orchestration import actions, broker, labels, watch
+from jailbee.orchestration import actions, broker, labels, outbox, watch
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.grant import Grant, RepoCap
 from jailbee.orchestration.journal import Journal
@@ -1219,7 +1219,7 @@ def test_tick_completes_parked_finish_when_orchestrator_starts(
     from jailbee.orchestration.actions import ActionContext, Node
     from jailbee.orchestration.protocol import PendingFinish
 
-    orch = Node("proj-orch", "orch", True, {labels.GRANT: Grant().to_label()})
+    orch = Node("proj-orch", "orch", True, {labels.GRANT: Grant().to_label(), "volatile.uuid": "uuid-orch"})
     child = Node("proj-kid", "kid", True, {labels.SPAWNED_BY: orch.full})
     ctx = ActionContext(
         rig.cfg,
@@ -1522,7 +1522,7 @@ def test_vanished_orchestrator_finish_notifies_child(
         in_reply_to=None,
         uid=1000,
     )
-    (directory / "a.finish.json").write_text(item.model_dump_json())
+    outbox.save_pending(directory / "a.finish.json", item, recipient_uuid="uuid-orch")
     notice = MagicMock()
     monkeypatch.setattr(outbox, "deliver", notice)
     rig.incus.list_containers.return_value = [_child()]
@@ -2170,7 +2170,7 @@ def _orphan_finish(root: Path, orch_full: str, child_full: str) -> Path:
         uid=1000,
     )
     path = pending_dir(root, orch_full) / finish_file_name(item, datetime.now(UTC), seq=0)
-    atomic_write_text(path, item.model_dump_json() + "\n")
+    outbox.save_pending(path, item, recipient_uuid="uuid-orch")
     return path
 
 
@@ -2469,7 +2469,7 @@ def test_pending_reaches_store_without_socket_registration(rig, monkeypatch, kin
         version=1, id="h-queued", type="status", ref="queued", state="done", detail="ok"
     )
     path = pending_dir(rig.root, "proj-orch") / "a.json"
-    atomic_write_text(path, item.model_dump_json())
+    outbox.save_pending(path, item, recipient_uuid="uuid-current")
     monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
     rig.tick()
     assert [row.id for row in rig.store.unacked("uuid-current")] == [item.id]
@@ -2498,3 +2498,44 @@ def test_pending_without_inventory_uuid_never_uses_stale_socket_identity(
     assert path.exists()
     assert rig.store.unacked("uuid-stale") == []
     rig.incus.exec_with_input.assert_not_called()
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("finish_item", [False, True])
+def test_recreated_namesake_never_receives_old_spool_or_executes_finish(rig, monkeypatch, restart, finish_item):
+    from jailbee.orchestration import finishing
+    from jailbee.orchestration.protocol import InboxStatus, PendingFinish
+    from jailbee.orchestration.store import BrokerStore, StoreError
+
+    old = _orch(running=False)
+    old["config"]["volatile.uuid"] = "uuid-old"
+    rig.incus.list_containers.return_value = [old]
+    rig.tick()
+    ctx = rig.memory.contexts["uuid-old"]
+    if finish_item:
+        item = PendingFinish(version=1, type="finish", id="done-old", child_full="proj-kid",
+                             child_short="kid", branch="b", done_sha="a" * 40, body="old", uid=None, in_reply_to=None)
+        path = finishing.park(ctx, ctx.sender, item)
+    else:
+        item = InboxStatus(version=1, type="status", id="h-old", ref="old", state="done", detail="private")
+        with monkeypatch.context() as fail:
+            fail.setattr(BrokerStore, "insert_item", MagicMock(side_effect=StoreError("offline")))
+            assert outbox.deliver(rig.incus, rig.root, "proj-orch", item, running=False, uid=None,
+                                  now=NOW, recipient_uuid="uuid-old") == "parked"
+        path = next((rig.root / "pending" / "proj-orch").glob("*.json"))
+    assert outbox.load_pending(path).recipient_uuid == "uuid-old"
+    new = _orch()  # No intermediate listing ever observes the name absent.
+    new["config"]["volatile.uuid"] = "uuid-new"
+    rig.incus.list_containers.return_value = [new]
+    complete = MagicMock(side_effect=AssertionError("old work must not run for a new parent"))
+    monkeypatch.setattr(finishing, "complete", complete)
+    monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
+    memory = broker.BrokerMemory() if restart else rig.memory
+    rig.tick(memory)
+    assert rig.store.unacked("uuid-new") == []
+    assert rig.store.unacked("uuid-old") == []
+    complete.assert_not_called()
+    assert not path.exists() and path.with_name(path.name + ".bad").exists()
+    rig.tick(broker.BrokerMemory())
+    assert rig.store.unacked("uuid-new") == []
+    complete.assert_not_called()

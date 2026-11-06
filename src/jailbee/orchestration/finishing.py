@@ -165,7 +165,9 @@ def park(ctx: ActionContext, orchestrator: Node, item: PendingFinish) -> Path:
     path = pending_dir(ctx.root, orchestrator.full) / finish_file_name(
         item, ctx.now, seq=next(ctx.seq)
     )
-    atomic_write_text(path, item.model_dump_json() + "\n")
+    from jailbee.orchestration.outbox import save_pending
+
+    save_pending(path, item, recipient_uuid=orchestrator.config.get("volatile.uuid"))
     return path
 
 
@@ -261,8 +263,6 @@ def notify_orphaned_finishes(
     """
     import logging
 
-    from pydantic import ValidationError
-
     from jailbee.orchestration import outbox
 
     retry: set[str] = set()
@@ -274,8 +274,9 @@ def notify_orphaned_finishes(
             continue
         for path in sorted(directory.glob("*.finish.json")):
             try:
-                item = PendingFinish.model_validate_json(path.read_text())
-            except (OSError, ValidationError):
+                pending = outbox.load_pending(path)
+                item = PendingFinish.model_validate(pending.item)
+            except (OSError, ValueError):
                 continue
             if item.child_full not in present:
                 continue

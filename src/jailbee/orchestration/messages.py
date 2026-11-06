@@ -148,7 +148,9 @@ def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
         # before the store insert must leave a retryable delivery gate.
         pending = finishing.park(ctx, target, item)
         msg, summary = finishing.complete(ctx, ctx.sender, target, item)
-        seq = next(ctx.seq)
+        outbox.save_pending(
+            pending, item, recipient_uuid=target.config.get("volatile.uuid"), completed=msg
+        )
         from jailbee.orchestration.store import StoreError
 
         try:
@@ -157,19 +159,8 @@ def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
             )
         except StoreError:
             inserted = False
-        if not inserted:
-            outbox.deliver(
-                ctx.incus,
-                ctx.root,
-                target.full,
-                msg,
-                running=target.running,
-                uid=uid,
-                now=ctx.now,
-                seq=seq,
-                recipient_uuid=target.config.get("volatile.uuid"),
-            )
-        pending.unlink(missing_ok=True)
+        if inserted:
+            pending.unlink(missing_ok=True)
         return done(summary)
     finishing.park(ctx, target, item)
     return Outcome(

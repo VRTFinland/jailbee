@@ -37,12 +37,11 @@ def _deliver(
 ) -> int:
     try:
         try:
-            running = any(
-                r.get("name") == owner and r.get("status") == "Running"
-                for r in incus.list_containers()
-            )
+            recipient = next((r for r in incus.list_containers() if r.get("name") == owner), {})
         except Exception:
-            running = False
+            recipient = {}
+        config = recipient.get("config")
+        uuid = config.get("volatile.uuid") if isinstance(config, dict) else None
         item = item or InboxStatus(
             version=1,
             id=new_host_id(),
@@ -56,9 +55,10 @@ def _deliver(
             state.state_root(),
             owner,
             item,
-            running=running,
+            running=recipient.get("status") == "Running",
             uid=cfg.container_user.uid,
             now=datetime.now(UTC),
+            recipient_uuid=uuid if isinstance(uuid, str) and uuid else None,
         )
         path.unlink(missing_ok=True)
     except Exception as exc:

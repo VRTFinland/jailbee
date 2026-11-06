@@ -9,7 +9,7 @@ import pytest
 from jailbee.git import GitError
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
-from jailbee.orchestration import importing, labels, messages
+from jailbee.orchestration import importing, labels, messages, outbox
 from jailbee.orchestration.actions import (
     CHILD_EXEC_TIMEOUT_S,
     CHILD_TRANSPORT_TIMEOUT_S,
@@ -80,7 +80,7 @@ class Rig:
 
 
 def _make(tmp_path: Path, mocker: MockerFixture, orch_running: bool = True) -> Rig:
-    orch = Node("myrepo-orch", "orch", orch_running, {labels.GRANT: Grant().to_label()})
+    orch = Node("myrepo-orch", "orch", orch_running, {labels.GRANT: Grant().to_label(), "volatile.uuid": "uuid-orch"})
     sender = Node(CHILD, "fix-1", True, {labels.SPAWNED_BY: "myrepo-orch"})
     ctx = ActionContext(
         cfg=make_config(tmp_path, container_prefix="myrepo"),
@@ -361,7 +361,7 @@ def test_parked_done_keeps_child_changed_since_report(
     _policy(rig, "destroy")
     messages.handle_message(rig.ctx, _done())
     path = next(pending_dir(tmp_path, "myrepo-orch").glob("*.finish.json"))
-    item = PendingFinish.model_validate_json(path.read_text())
+    item = PendingFinish.model_validate(outbox.load_pending(path).item)
     orch = rig.ctx.nodes["myrepo-orch"]
     if change == "head":
         rig.head.return_value = "b" * 40
@@ -469,7 +469,7 @@ def test_done_fetches_sets_labels_and_relays(tmp_path: Path, mocker: MockerFixtu
     assert calls == [(CHILD, labels.DONE_SHA, SHA), (CHILD, labels.STATE, labels.STATE_DONE)]
     msg = rig.insert_store.call_args.args[2]
     assert (msg.kind, msg.body, msg.from_) == ("done", "all finished", "fix-1")
-    assert rig.insert_store.call_args.kwargs["recipient_uuid"] is None
+    assert rig.insert_store.call_args.kwargs["recipient_uuid"] == "uuid-orch"
     assert out == done(f"imported into orch at {'a' * 12}; this container is kept")
 
 
@@ -590,11 +590,11 @@ def test_flush_stale_finish_after_parent_transfer_keeps_child(tmp_path, mocker):
             old.full,
             uid=None,
             finish=finishing.flush_callback(rig.ctx),
-            recipient_uuid="old-uuid",
+            recipient_uuid="uuid-orch",
         )
         == 1
     )
-    message = store.unacked("old-uuid")[0].item
+    message = store.unacked("uuid-orch")[0].item
     assert message["import_error"] and message["on_done"] == "keep"
     assert not list(pending_dir(tmp_path, old.full).glob("*.finish.json"))
     rig.import_child.assert_not_called()
@@ -605,3 +605,75 @@ def test_flush_stale_finish_after_parent_transfer_keeps_child(tmp_path, mocker):
         c.args[1] in (labels.LAST_IMPORT, labels.PENDING_DESTROY)
         for c in rig.incus.config_set.call_args_list
     )
+
+
+@pytest.mark.parametrize("immediate", [False, True])
+def test_production_finish_retry_after_insert_keeps_stable_envelope_and_causal_gate(tmp_path, mocker, monkeypatch, immediate):
+    from dataclasses import replace
+    from jailbee.orchestration import finishing
+    from jailbee.orchestration.protocol import InboxStatus
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    rig = _make(tmp_path, mocker, orch_running=immediate)
+    mocker.stop(rig.insert_store)  # Real sqlite insert, production complete and flush_callback.
+    store = BrokerStore(store_path(tmp_path))
+    original_unlink = type(tmp_path).unlink
+    def interrupt_unlink(path, *args, **kw):
+        if path.name.endswith(".finish.json"):
+            raise OSError("crash after committed insert")
+        return original_unlink(path, *args, **kw)
+
+    with monkeypatch.context() as crash:
+        crash.setattr(type(tmp_path), "unlink", interrupt_unlink)
+        if immediate:
+            with pytest.raises(OSError, match="committed insert"):
+                messages.handle_message(rig.ctx, _done())
+        else:
+            assert messages.handle_message(rig.ctx, _done()).state == "queued"
+            parent = replace(rig.ctx.nodes["myrepo-orch"], running=True)
+            parent_ctx = replace(rig.ctx, sender=parent)
+            with pytest.raises(OSError, match="committed insert"):
+                outbox.flush_pending(rig.incus, tmp_path, parent.full, uid=None,
+                    recipient_uuid="uuid-orch", finish=finishing.flush_callback(parent_ctx))
+    path = next(pending_dir(tmp_path, "myrepo-orch").glob("*.finish.json"))
+    saved = outbox.load_pending(path)
+    assert saved.recipient_uuid == "uuid-orch" and saved.completed is not None
+    rows = store.unacked("uuid-orch")
+    assert len(rows) == 1 and rows[0].id == saved.completed["id"]
+    assert rows[0].item["kind"] == "done" and rows[0].item["imported_sha"] == SHA
+    later = InboxStatus(version=1, type="status", id="h-later", ref="later", state="done", detail="later")
+    assert outbox.deliver(rig.incus, tmp_path, "myrepo-orch", later, running=True, uid=None,
+                         now=rig.ctx.now, seq=99, recipient_uuid="uuid-orch") == "parked"
+    assert [row.id for row in store.unacked("uuid-orch")] == [saved.completed["id"]]
+    # A new context/store object represents a restarted broker. No callback is needed
+    # for the completed finish; rerunning production complete would mint a second id.
+    parent = replace(rig.ctx.nodes["myrepo-orch"], running=True)
+    parent_ctx = replace(rig.ctx, sender=parent)
+    complete = mocker.spy(finishing, "complete")
+    assert outbox.flush_pending(rig.incus, tmp_path, parent.full, uid=None,
+        recipient_uuid="uuid-orch", finish=finishing.flush_callback(parent_ctx)) == 2
+    complete.assert_not_called()
+    assert [row.id for row in BrokerStore(store_path(tmp_path)).unacked("uuid-orch")] == [saved.completed["id"], later.id]
+    assert rig.import_child.call_count == 1
+    assert not outbox.has_pending(tmp_path, parent.full)
+
+
+def test_immediate_finish_store_failure_keeps_completed_causal_gate(tmp_path, mocker):
+    from jailbee.orchestration.store import BrokerStore, StoreError, store_path
+    from jailbee.orchestration import finishing
+    from dataclasses import replace
+
+    rig = _make(tmp_path, mocker)
+    mocker.stop(rig.insert_store)
+    failing = mocker.patch.object(BrokerStore, "insert_item", side_effect=StoreError("offline"))
+    assert messages.handle_message(rig.ctx, _done()).state == "done"
+    path = next(pending_dir(tmp_path, "myrepo-orch").glob("*.finish.json"))
+    completed = outbox.load_pending(path).completed
+    assert completed is not None
+    mocker.stop(failing)
+    parent_ctx = replace(rig.ctx, sender=rig.ctx.nodes["myrepo-orch"])
+    complete = mocker.spy(finishing, "complete")
+    assert outbox.flush_pending(rig.incus, tmp_path, parent_ctx.sender.full, uid=None,
+        recipient_uuid="uuid-orch", finish=finishing.flush_callback(parent_ctx)) == 1
+    complete.assert_not_called()
+    assert [row.id for row in BrokerStore(store_path(tmp_path)).unacked("uuid-orch")] == [completed["id"]]

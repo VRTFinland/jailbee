@@ -542,3 +542,29 @@ def test_stale_pending_destroy_after_worker_resume(rig, mocker):
     assert elevated.run_job(cfg, incus, path) == 0
     finishing.settle_destroys(ctx)
     destroy.assert_not_called()
+
+
+@pytest.mark.parametrize("running", [True, False])
+def test_refresh_notification_delivers_to_verified_store_instance(rig, tmp_path, mocker, running):
+    from jailbee.orchestration.store import BrokerStore, store_path
+    from jailbee.orchestration.state import pending_dir
+    from jailbee.services import refresh_worker
+
+    cfg, engine, delivery, incus, path = rig
+    mocker.stop(delivery)
+    owner = incus.list_containers.return_value[0]
+    owner["config"]["volatile.uuid"] = "uuid-current"
+    owner["status"] = "Running" if running else "Stopped"
+    store = BrokerStore(store_path(tmp_path))
+    store.set_recipient("proj-o", "uuid-stale", now=1)
+    path.write_text("{}")
+    try:
+        assert refresh_worker._deliver(cfg, incus, path, "proj-o", "ref", ok=True, detail="finished") == 0
+        rows = store.unacked("uuid-current")
+        assert len(rows) == 1 and rows[0].item["detail"] == "finished"
+        assert store.unacked("uuid-stale") == []
+        assert store.recipients() == {"proj-o": "uuid-stale"}
+        assert not pending_dir(tmp_path, "proj-o").exists()
+        assert not path.exists()
+    finally:
+        engine.dispose()

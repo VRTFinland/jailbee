@@ -63,7 +63,7 @@ def test_flush_stops_at_finish_item_without_callback(tmp_path: Path) -> None:
     directory = pending_dir(tmp_path, FULL)
     directory.mkdir(parents=True)
     path = directory / "a.finish.json"
-    path.write_text(_finish_item().model_dump_json())
+    outbox.save_pending(path, _finish_item(), recipient_uuid="uuid-1")
     incus = _incus()
     assert flush(incus, tmp_path, FULL, uid=1000) == 0
     assert path.exists()
@@ -121,9 +121,7 @@ def test_deliver_store_parks_behind_existing_pending(tmp_path: Path) -> None:
     store = _store_recipient(tmp_path)
     directory = pending_dir(tmp_path, FULL)
     directory.mkdir(parents=True)
-    (directory / inbox_file_name(_item("0"), AT)).write_text(
-        _item("0").model_dump_json(by_alias=True)
-    )
+    outbox.save_pending(directory / inbox_file_name(_item("0"), AT), _item("0"), recipient_uuid="uuid-1")
     later = datetime(2026, 10, 25, 11, 0, tzinfo=UTC)
     result = deliver(_incus(), tmp_path, FULL, _item("1"), running=True, uid=1000, now=later)
     assert result == "parked"
@@ -139,9 +137,9 @@ def test_flush_store_recipient_moves_plain_and_finish_in_name_order(tmp_path: Pa
     store = _store_recipient(tmp_path)
     directory = pending_dir(tmp_path, FULL)
     directory.mkdir(parents=True)
-    (directory / "a.json").write_text(_item("a").model_dump_json(by_alias=True))
-    (directory / "b.finish.json").write_text(_finish_item().model_dump_json())
-    (directory / "c.json").write_text(_item("c").model_dump_json(by_alias=True))
+    outbox.save_pending(directory / "a.json", _item("a"), recipient_uuid="uuid-1")
+    outbox.save_pending(directory / "b.finish.json", _finish_item(), recipient_uuid="uuid-1")
+    outbox.save_pending(directory / "c.json", _item("c"), recipient_uuid="uuid-1")
     finish = MagicMock(return_value=_finished_message())
     incus = _incus()
     assert flush(incus, tmp_path, FULL, uid=1000, finish=finish) == 3
@@ -154,9 +152,9 @@ def test_flush_store_recipient_without_finish_stops_at_finish(tmp_path: Path) ->
     store = _store_recipient(tmp_path)
     directory = pending_dir(tmp_path, FULL)
     directory.mkdir(parents=True)
-    (directory / "a.json").write_text(_item("a").model_dump_json(by_alias=True))
-    (directory / "b.finish.json").write_text(_finish_item().model_dump_json())
-    (directory / "c.json").write_text(_item("c").model_dump_json(by_alias=True))
+    outbox.save_pending(directory / "a.json", _item("a"), recipient_uuid="uuid-1")
+    outbox.save_pending(directory / "b.finish.json", _finish_item(), recipient_uuid="uuid-1")
+    outbox.save_pending(directory / "c.json", _item("c"), recipient_uuid="uuid-1")
     assert flush(_incus(), tmp_path, FULL, uid=1000) == 1
     assert [s.id for s in store.unacked("uuid-1")] == ["h-a"]
     assert (directory / "b.finish.json").is_file()
@@ -171,8 +169,8 @@ def test_flush_store_recipient_stops_at_store_error_and_keeps_files(
     _store_recipient(tmp_path)
     directory = pending_dir(tmp_path, FULL)
     directory.mkdir(parents=True)
-    (directory / "a.json").write_text(_item("a").model_dump_json(by_alias=True))
-    (directory / "b.json").write_text(_item("b").model_dump_json(by_alias=True))
+    outbox.save_pending(directory / "a.json", _item("a"), recipient_uuid="uuid-1")
+    outbox.save_pending(directory / "b.json", _item("b"), recipient_uuid="uuid-1")
 
     def boom(self, *a, **k):
         raise store_mod.StoreError("locked")
@@ -186,9 +184,9 @@ def test_flush_store_recipient_quarantines_invalid_and_notes_in_store(tmp_path: 
     store = _store_recipient(tmp_path)
     directory = pending_dir(tmp_path, FULL)
     directory.mkdir(parents=True)
-    (directory / "a.finish.json").write_text("invalid")
-    (directory / "b.json").write_text("not json")
-    (directory / "c.json").write_text(_item("c").model_dump_json(by_alias=True))
+    outbox.save_pending(directory / "a.finish.json", {"type": "finish"}, recipient_uuid="uuid-1")
+    outbox.save_pending(directory / "b.json", {}, recipient_uuid="uuid-1")
+    outbox.save_pending(directory / "c.json", _item("c"), recipient_uuid="uuid-1")
     incus = _incus()
     assert flush(incus, tmp_path, FULL, uid=1000, finish=MagicMock()) == 1
     incus.exec_with_input.assert_not_called()
@@ -209,7 +207,7 @@ def test_quarantine_note_falls_back_to_pending_when_store_fails(
     _store_recipient(tmp_path)
     directory = pending_dir(tmp_path, FULL)
     directory.mkdir(parents=True)
-    (directory / "a.finish.json").write_text("invalid")
+    outbox.save_pending(directory / "a.finish.json", {"type": "finish"}, recipient_uuid="uuid-1")
 
     def boom(self, *a, **k):
         raise store_mod.StoreError("locked")
@@ -218,7 +216,7 @@ def test_quarantine_note_falls_back_to_pending_when_store_fails(
     flush(_incus(), tmp_path, FULL, uid=1000, finish=MagicMock())
     parked = [p for p in directory.iterdir() if p.name.endswith(".json")]
     assert len(parked) == 1
-    assert json.loads(parked[0].read_text())["kind"] == "note"
+    assert outbox.load_pending(parked[0]).item["kind"] == "note"
 
 
 def test_deliver_parks_when_the_store_lookup_is_unreadable(tmp_path: Path) -> None:
@@ -310,7 +308,7 @@ def test_flush_retry_after_insert_before_unlink_does_not_duplicate(tmp_path, mon
     directory = pending_dir(tmp_path, FULL)
     directory.mkdir(parents=True)
     path = directory / "a.json"
-    path.write_text(_item("a").model_dump_json())
+    outbox.save_pending(path, _item("a"), recipient_uuid="uuid-1")
     with monkeypatch.context() as patch:
         patch.setattr(type(path), "unlink", lambda *a, **kw: (_ for _ in ()).throw(OSError("disk")))
         with pytest.raises(OSError):
@@ -324,6 +322,29 @@ def test_sequence_orders_spooled_items_not_random_ids(tmp_path):
     store = _store_recipient(tmp_path)
     first, second = _item("ffff"), _item("0000")
     for seq, item in enumerate((first, second)):
-        outbox.deliver(_incus(), tmp_path, FULL, item, running=False, uid=None, now=AT, seq=seq)
+        outbox.save_pending(pending_dir(tmp_path, FULL) / inbox_file_name(item, AT, seq=seq), item, recipient_uuid="uuid-1")
     assert flush(_incus(), tmp_path, FULL, uid=None) == 2
     assert [row.id for row in store.unacked("uuid-1")] == [first.id, second.id]
+
+
+@pytest.mark.parametrize("finish_item", [False, True])
+def test_transport_era_identity_free_spool_is_quarantined_not_guessed(tmp_path, finish_item):
+    store = _store_recipient(tmp_path)
+    path = pending_dir(tmp_path, FULL) / ("a.finish.json" if finish_item else "a.json")
+    path.parent.mkdir(parents=True)
+    path.write_text((_finish_item() if finish_item else _item("old")).model_dump_json())
+    callback = MagicMock(side_effect=AssertionError("legacy work must not execute"))
+    assert flush(_incus(), tmp_path, FULL, uid=None, finish=callback) == 0
+    assert store.unacked("uuid-1") == []
+    assert path.with_name(path.name + ".bad").exists()
+    callback.assert_not_called()
+
+
+def test_missing_identity_at_park_is_not_filled_from_later_inventory(tmp_path):
+    store = _store_recipient(tmp_path)
+    assert outbox.deliver(_incus(), tmp_path, FULL, _item("unknown"), running=False,
+                          uid=None, now=AT) == "parked"
+    assert flush(_incus(), tmp_path, FULL, uid=None) == 0
+    assert store.unacked("uuid-1") == []
+    assert not outbox.has_pending(tmp_path, FULL)
+    assert len(list(pending_dir(tmp_path, FULL).glob("*.bad"))) == 1

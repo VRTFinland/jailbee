@@ -6,6 +6,7 @@ import contextlib
 import json
 import logging
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
@@ -50,8 +51,43 @@ def ensure_orchestration_env(incus: Incus, full: str, *, uid: int | None) -> Non
         raise ContainerJailbeeMissing(MISSING_JAILBEE_MESSAGE)
 
 
-def _item_json(item: InboxItem) -> str:
-    return item.model_dump_json(by_alias=True) + "\n"
+@dataclass(frozen=True)
+class PendingDelivery:
+    """Host-only envelope binding both deferred work and its result to an instance."""
+
+    recipient_uuid: str | None
+    item: dict[str, object]
+    completed: dict[str, object] | None = None
+
+
+def save_pending(
+    path: Path,
+    item: InboxItem | PendingFinish | dict[str, object],
+    *,
+    recipient_uuid: str | None,
+    completed: InboxMessage | dict[str, object] | None = None,
+) -> None:
+    """Atomically retain identity and a stable completed result at the same causal gate."""
+    data = item if isinstance(item, dict) else json.loads(item.model_dump_json(by_alias=True))
+    result = completed if isinstance(completed, dict) or completed is None else json.loads(
+        completed.model_dump_json(by_alias=True)
+    )
+    atomic_write_text(path, json.dumps({
+        "version": 1, "recipient_uuid": recipient_uuid, "item": data, "completed": result,
+    }) + "\n")
+
+
+def load_pending(path: Path) -> PendingDelivery:
+    """Read only the instance-bound spool format; transport-era files are not migrated."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or data.get("version") != 1:
+        raise ValueError("not a host spool envelope")
+    uuid, item, completed = data.get("recipient_uuid"), data.get("item"), data.get("completed")
+    if uuid is not None and (not isinstance(uuid, str) or not uuid):
+        raise ValueError("invalid recipient identity")
+    if not isinstance(item, dict) or (completed is not None and not isinstance(completed, dict)):
+        raise ValueError("invalid host spool payload")
+    return PendingDelivery(uuid, item, completed)
 
 
 def _insert_into_store(
@@ -95,8 +131,9 @@ def deliver(
             return "delivered"
     except StoreError:
         logging.getLogger(__name__).exception("broker store unavailable; parking item")
-    atomic_write_text(
-        pending_dir(root, recipient_full) / inbox_file_name(item, now, seq=seq), _item_json(item)
+    save_pending(
+        pending_dir(root, recipient_full) / inbox_file_name(item, now, seq=seq), item,
+        recipient_uuid=recipient_uuid,
     )
     return "parked"
 
@@ -141,7 +178,7 @@ def _note_quarantined(
             return
     except StoreError:
         logging.getLogger(__name__).exception("broker store unavailable; parking quarantine note")
-    atomic_write_text(pending_dir(root, recipient_full) / name, _item_json(note))
+    save_pending(pending_dir(root, recipient_full) / name, note, recipient_uuid=recipient_uuid)
 
 
 def flush_pending(
@@ -167,11 +204,21 @@ def flush_pending(
         return 0
     delivered = 0
     for path in sorted(p for p in directory.iterdir() if _deliverable(p)):
-        name = path.name
-        text = path.read_text(encoding="utf-8")
-        if name.endswith(FINISH_SUFFIX):
+        try:
+            pending = load_pending(path)
+        except ValueError:
+            logging.getLogger(__name__).warning("quarantining unbound or invalid pending item %s", path)
+            path.rename(path.with_name(path.name + ".bad"))
+            continue
+        if not pending.recipient_uuid or pending.recipient_uuid != recipient_uuid:
+            # Never guess the owner of a legacy file or leak U1's data to its namesake U2.
+            logging.getLogger(__name__).warning("quarantining obsolete pending identity %s", path)
+            path.rename(path.with_name(path.name + ".bad"))
+            continue
+        loaded = pending.item if pending.completed is None else pending.completed
+        if path.name.endswith(FINISH_SUFFIX) and pending.completed is None:
             try:
-                item = PendingFinish.model_validate_json(text)
+                item = PendingFinish.model_validate(pending.item)
             except ValidationError:
                 logging.getLogger(__name__).exception("invalid pending finish %s", path)
                 path.rename(path.with_name(path.name + ".bad"))
@@ -181,11 +228,11 @@ def flush_pending(
                 continue
             if finish is None:
                 break
-            text = _item_json(finish(item))
-        try:
-            loaded = json.loads(text)
-            assert isinstance(loaded, dict) and isinstance(loaded.get("id"), str)
-        except (ValueError, AssertionError):
+            message = finish(item)
+            # Persist the generated id before insertion: retries must never rerun complete.
+            save_pending(path, pending.item, recipient_uuid=recipient_uuid, completed=message)
+            loaded = json.loads(message.model_dump_json(by_alias=True))
+        if not isinstance(loaded.get("id"), str):
             logging.getLogger(__name__).error("invalid pending item %s", path)
             path.rename(path.with_name(path.name + ".bad"))
             _note_quarantined(
