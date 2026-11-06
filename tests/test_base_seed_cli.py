@@ -137,6 +137,25 @@ def test_base_build_preflight_config_failure_warns_and_still_builds(
     assert "shared base" in result.output
 
 
+def test_failed_plain_build_does_not_overwrite_previous_seed_result(mocker, make_cfg, tmp_path):
+    from jailbee.cli import app
+    from jailbee.config.models_golden import DockerSeed
+    from jailbee.docker_seed import SeedPreflightError
+    from jailbee.incus import IncusError
+
+    cfg = make_cfg(tmp_path, golden={"docker_seed": DockerSeed()})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.incus.Incus")
+    mocker.patch("jailbee.golden.build_golden_image", side_effect=IncusError("build failed"))
+    mocker.patch("jailbee.docker_seed.preflight", side_effect=SeedPreflightError("shared base"))
+    record = mocker.patch("jailbee.docker_seed.record_outcome")
+
+    result = runner.invoke(app, ["base", "build"])
+
+    assert result.exit_code == 1, result.output
+    record.assert_not_called()
+
+
 def test_base_build_seeds_when_configured(mocker, make_cfg, tmp_path) -> None:
     from jailbee.cli import app
     from jailbee.config.models_golden import DockerSeed

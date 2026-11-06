@@ -11547,6 +11547,7 @@ def base_build_cmd(
         explicit or (cfg.golden.docker_seed is not None and cfg.golden.docker_seed.enabled)
     )
     req = docker_seed.SeedRequest(docker_from, keep_seed, explicit)
+    skipped: docker_seed.SeedOutcome | None = None
     if requested:
         if docker_from is not None:
             from jailbee.lifecycle import resolve_container_for_interactive
@@ -11565,7 +11566,6 @@ def base_build_cmd(
                 error(str(exc))
                 raise typer.Exit(2) from exc
             skipped = docker_seed.SeedOutcome("skipped", "seed-container", detail=str(exc))
-            docker_seed.record_outcome(cfg, skipped)
             warn(f"Docker seeding skipped: {exc}")
             requested = False
 
@@ -11581,6 +11581,8 @@ def base_build_cmd(
         raise typer.Exit(1) from e
 
     _record_upgrade_action(cfg, "base_build")
+    if skipped is not None:
+        docker_seed.record_outcome(cfg, skipped)
     if requested:
         outcome = docker_seed.run_seed(cfg, incus, _load_global(), req)
         _print_docker_seed_outcome(outcome)
