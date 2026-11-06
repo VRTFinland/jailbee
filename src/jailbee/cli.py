@@ -11832,7 +11832,7 @@ def base_usage_cmd(
                 u.instance_name,
                 "[dim]live (instance)[/dim]",
                 humanize(u.instance_size_bytes),
-                seed_status.get(u.base_alias, ""),
+                seed_status.get(u.base_alias, "") if u.live_size_bytes is None else "",
             )
             subtotal += u.instance_size_bytes or 0
         for a in u.archives:

@@ -62,7 +62,8 @@ def test_usage_live_rows_show_seed_status(mocker):
     cfg = _cfg()
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.patch("jailbee.incus.Incus").return_value
-    incus.exists.return_value = False
+    incus.exists.return_value = True
+    mocker.patch("jailbee.maintenance.golden_instance_bytes", return_value=4096)
     incus.list_images.return_value = [
         {"aliases": [{"name": cfg.golden.alias}], "size": 2000},
         {"aliases": [{"name": f"{cfg.golden.alias}-2026-07-20"}], "size": 500},
