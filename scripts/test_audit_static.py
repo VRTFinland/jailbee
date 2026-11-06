@@ -681,6 +681,10 @@ def main(argv: list[str] | None = None) -> int:
         "files": res["files"],
         "counts": dict(res["by_cat"]),
         "tests": [asdict(i) | {"id": i.id} for i in res["tests"] if i.flags],
+        "stats": {
+            i.id: [i.asserts + i.raises + i.mock_asserts + len(i.helper_calls), i.lines]
+            for i in res["tests"]
+        },
         "clusters": res["clusters"],
         "helpers_whitelisted": dict(res["helper_hits"]),
         "helpers_discovered": res["helpers"],
