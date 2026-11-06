@@ -194,7 +194,9 @@ def test_unreadable_legacy_reservations_warns_and_starts_empty(tmp_path, monkeyp
     from pathlib import Path
 
     path = tmp_path / state.RESERVATIONS_FILE
-    path.write_text("{}")
+    path.write_text(json.dumps({"reservations": {"orch": [
+        {"child_full": "a", "pid": 1, "started_at": "t"}
+    ]}}))
     original = Path.read_text
 
     def unreadable(self, *args, **kwargs):
@@ -206,6 +208,9 @@ def test_unreadable_legacy_reservations_warns_and_starts_empty(tmp_path, monkeyp
     assert state.load_reservations(tmp_path) == {}
     assert "denied" in caplog.text
     assert path.exists()
+    monkeypatch.setattr(Path, "read_text", original)
+    assert state.load_reservations(tmp_path) == {"orch": [state.Reservation("a", 1, "t")]}
+    assert (tmp_path / "reservations.json.migrated").exists()
 
 
 def test_reservations_import_once_and_ignore_recreated_source(tmp_path):
