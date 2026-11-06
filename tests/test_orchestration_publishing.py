@@ -146,6 +146,20 @@ def test_legacy_results_import_and_quarantine(rig, caplog):
     assert not path.parent.exists()
 
 
+def test_malformed_legacy_result_recovers_as_uncertain(rig, caplog):
+    ctx, m, *_ = rig
+    assert publishing.handle_publish(ctx, m).state == "started"
+    path = publishing._result(ctx.root, ctx.sender.key, m.id)
+    path.parent.mkdir()
+    path.write_text("{}")
+    publishing.recover(ctx.root)
+    replies = []
+    publishing.settle(ctx, lambda ref, out: replies.append(out))
+    assert len(replies) == 1 and "uncertain" in replies[0].detail
+    assert (ctx.root / "publish-results.migrated" / (path.name + ".corrupt")).exists()
+    assert "corrupt" in caplog.text
+
+
 def test_handle_publish_rereads_revoked_label(rig):
     ctx, m, *_ = rig
     ctx.incus.config_get.side_effect = None

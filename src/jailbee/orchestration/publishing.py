@@ -31,6 +31,12 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# Legacy filenames also serve as store keys and import markers.
+_INFLIGHT = "publish-inflight.json"
+_KNOWN = "publish-known.json"
+_ACCEPTED = "publish-accepted.json"
+_BUDGET = "publish-budget.json"
+
 
 def _validate_document(document: object) -> None:
     if not isinstance(document, dict):
@@ -47,6 +53,7 @@ def _save(root: Path, name: str, data: dict[str, Any]) -> None:
 
 
 def _result(root: Path, full: str, ref: str) -> Path:
+    """Legacy result location for migration fixtures only."""
     return root / "publish-results" / f"{hashlib.sha256(full.encode()).hexdigest()}-{ref}.json"
 
 
@@ -67,11 +74,17 @@ def _results_store(root: Path) -> BrokerStore:
         for path in directory.glob("*.json"):
             try:
                 value = json.loads(path.read_text(encoding="utf-8"))
-                if not isinstance(value, dict):
-                    raise ValueError("expected an object")
+                if (not isinstance(value, dict)
+                        or value.get("state") not in ("done", "failed")
+                        or not isinstance(value.get("detail"), str)):
+                    raise ValueError("invalid result state or detail")
             except (ValueError, UnicodeError) as exc:
                 log.warning("ignoring corrupt publish result %s: %s", path, exc)
-                path.replace(path.with_name(path.name + ".corrupt"))
+                try:
+                    path.replace(path.with_name(path.name + ".corrupt"))
+                except OSError:
+                    log.exception("cannot quarantine publish result %s", path)
+                    raise
                 continue
             con.execute(
                 "INSERT OR IGNORE INTO state(key, value) VALUES (?, ?)",
@@ -99,7 +112,7 @@ def _put_result(root: Path, full: str, ref: str, value: dict[str, Any]) -> None:
 
 
 def inflight(root: Path) -> dict[str, Any]:
-    return _load(root, "publish-inflight.json")
+    return _load(root, _INFLIGHT)
 
 
 def _kind(action: issue_manifest.IssueAction) -> str:
@@ -254,18 +267,18 @@ def _precheck(
 
 def known_senders(root: Path) -> set[str]:
     """Instances previously served, so revocation still gets a refusal reply."""
-    return set(_load(root, "publish-known.json"))
+    return set(_load(root, _KNOWN))
 
 
 def remember(ctx: ActionContext) -> None:
-    known = _load(ctx.root, "publish-known.json")
+    known = _load(ctx.root, _KNOWN)
     if known.get(ctx.sender.full) != ctx.sender.key:
         known[ctx.sender.full] = ctx.sender.key
-        _save(ctx.root, "publish-known.json", known)
+        _save(ctx.root, _KNOWN, known)
 
 
 def was_accepted(ctx: ActionContext, ref: str) -> bool:
-    return ref in _load(ctx.root, "publish-accepted.json").get(ctx.sender.key, [])
+    return ref in _load(ctx.root, _ACCEPTED).get(ctx.sender.key, [])
 
 
 def abort_before_start(ctx: ActionContext, ref: str, detail: str) -> None:
@@ -306,7 +319,7 @@ def prune(root: Path, identities: dict[str, str], now: datetime) -> None:
         )
         del current[full]
         _results_store(root).kv_delete(key)
-    _save(root, "publish-inflight.json", current)
+    _save(root, _INFLIGHT, current)
     active_results = {
         _result_key(entry.get("container_key", full), entry["ref"])
         for full, entry in current.items()
@@ -329,10 +342,10 @@ def prune(root: Path, identities: dict[str, str], now: datetime) -> None:
             },
         )
         store.kv_delete(key)
-    known = _load(root, "publish-known.json")
+    known = _load(root, _KNOWN)
     _save(
         root,
-        "publish-known.json",
+        _KNOWN,
         {full: key for full, key in known.items() if identities.get(full) == key},
     )
 
@@ -384,13 +397,13 @@ def _handle_publish(ctx: ActionContext, m: Manifest) -> Outcome:
         kind, actions, foreign = _precheck(ctx, m, grant.publish)
         if not actions:
             return done("nothing pending")
-        budget = _load(ctx.root, "publish-budget.json")
+        budget = _load(ctx.root, _BUDGET)
         cutoff = ctx.now - timedelta(hours=1)
         recent = [t for t in budget.get(ctx.sender.full, []) if datetime.fromisoformat(t) > cutoff]
         if len(recent) + len(actions) > grant.publish.max_actions_per_hour:
             return refused("publish rate cap exhausted; request refused whole")
         budget[ctx.sender.full] = recent + [ctx.now.isoformat()] * len(actions)
-        _save(ctx.root, "publish-budget.json", budget)
+        _save(ctx.root, _BUDGET, budget)
         current[ctx.sender.full] = {
             "ref": m.id,
             "container_key": ctx.sender.key,
@@ -402,7 +415,7 @@ def _handle_publish(ctx: ActionContext, m: Manifest) -> Outcome:
             "foreign": foreign,
             "rights": grant.publish.model_dump(mode="json"),
         }
-        _save(ctx.root, "publish-inflight.json", current)
+        _save(ctx.root, _INFLIGHT, current)
         remember(ctx)
     except Exception as e:
         return refused(str(e))
@@ -514,7 +527,7 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
 
 def _refund(root: Path, full: str, entry: dict[str, Any]) -> None:
     """Commit the refund and its idempotency marker together."""
-    for name in ("publish-budget.json", "publish-inflight.json"):
+    for name in (_BUDGET, _INFLIGHT):
         import_json_document(root, name, _validate_document, for_write=True)
     store = open_state_store(root)
     with store._tx() as con:
@@ -522,18 +535,18 @@ def _refund(root: Path, full: str, entry: dict[str, Any]) -> None:
             row = con.execute("SELECT value FROM state WHERE key=?", (name,)).fetchone()
             return json.loads(row[0]) if row else {}
 
-        current = read("publish-inflight.json")
+        current = read(_INFLIGHT)
         saved = current.get(full)
         if saved is None or saved.get("ref") != entry["ref"] or saved.get("refunded"):
             return
-        budget = read("publish-budget.json")
+        budget = read(_BUDGET)
         stamps = list(budget.get(full, []))
         for _ in saved["actions"]:
             if saved["started_at"] in stamps:
                 stamps.remove(saved["started_at"])
         budget[full] = stamps
         saved["refunded"] = True
-        for name, value in (("publish-budget.json", budget), ("publish-inflight.json", current)):
+        for name, value in ((_BUDGET, budget), (_INFLIGHT, current)):
             con.execute(
                 "INSERT INTO state(key, value) VALUES (?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -550,12 +563,12 @@ def settle(ctx: ActionContext, reply: Callable[[str, Outcome], None]) -> None:
     result = _get_result(ctx.root, entry.get("container_key", ctx.sender.full), entry["ref"])
     if result is None:
         return
-    accepted = _load(ctx.root, "publish-accepted.json")
+    accepted = _load(ctx.root, _ACCEPTED)
     key = entry.get("container_key", ctx.sender.key)
     refs = accepted.setdefault(key, [])
     if entry["ref"] not in refs:
         refs.append(entry["ref"])
-        _save(ctx.root, "publish-accepted.json", accepted)
+        _save(ctx.root, _ACCEPTED, accepted)
     audit = {
         "time": ctx.now.isoformat(),
         "orchestrator": ctx.sender.full,
@@ -569,12 +582,12 @@ def settle(ctx: ActionContext, reply: Callable[[str, Outcome], None]) -> None:
     if not entry.get("audited"):
         _audit(ctx.root, audit)
         entry["audited"] = True
-        _save(ctx.root, "publish-inflight.json", current)
+        _save(ctx.root, _INFLIGHT, current)
     if result.get("policy_refused") and not entry.get("refunded"):
         _refund(ctx.root, ctx.sender.full, entry)
     reply(entry["ref"], Outcome(result["state"], result["detail"]))
     del current[ctx.sender.full]
-    _save(ctx.root, "publish-inflight.json", current)
+    _save(ctx.root, _INFLIGHT, current)
     _results_store(ctx.root).kv_delete(_result_key(entry.get("container_key", ctx.sender.full), entry["ref"]))
 
 
