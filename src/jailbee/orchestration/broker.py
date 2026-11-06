@@ -1286,7 +1286,7 @@ def tick(
     prune_reservations(root)
     memory.publish_threads[:] = [worker for worker in memory.publish_threads if worker.is_alive()]
     raw = incus.list_containers()
-    others = _other_projects(incus, memory) if memory.listener is not None else None
+    others = _other_projects(incus, memory) if memory.store is not None else None
     _check_socket_devices(incus, raw, memory, root, others)
     _purge_messages(memory, raw, now, None if others is None else raw + others)
     candidates = [
