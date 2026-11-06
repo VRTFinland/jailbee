@@ -1410,7 +1410,7 @@ Stack-derived Java/Node values override `golden.java`/`golden.node`, including
 | `disable_snippets` | list[string] | `[]` | Names of bundled snippets to drop from the effective set at `jailbee base build`. Matches the logical name (`"registry-mirror-ca"`), the numbered name (`"90-registry-mirror-ca"`), or the full filename (`"90-registry-mirror-ca.sh"`) — same name forms `enable_snippets` accepts. Also drops snippets auto-added by `golden.stacks`. See [Disabling bundled snippets](#disabling-bundled-snippets). |
 | `enable_snippets` | list[string] | `[]` | Names of opt-in `install.d.available/` snippets to stage into the effective set (by logical name, e.g. `"nodejs"`, or full filename, e.g. `"30-nodejs"`/`"30-nodejs.sh"`). Unioned with the snippets `golden.stacks` implies. See [Opt-in snippets](#opt-in-snippets-installdavailable). Unknown names are ignored with a warning. |
 | `stacks` | object | all fields off | High-level `java`/`node`/`python`/`docker`/`ecr` toggles — the recommended way to enable a runtime. See [Stacks](#stacks-goldenstacks). |
-| `docker_seed` | object \| null | `null` (off) | Seed tagged Docker images into this repo's golden so new containers start warm. See [Docker image seeding](#docker-image-seeding). |
+| `docker_seed` | object \| null | `null` (off) | Seed tagged Docker images into this repo's golden so new containers start warm. See [Docker image seeding](#docker-image-seeding-goldendocker_seed). |
 
 ### Docker image seeding (`golden.docker_seed`)
 
@@ -1462,7 +1462,7 @@ status reflects the build only. `jailbee base seed` is explicit: preflight
 errors exit 2 and a seeding failure exits 1. `jailbee upgrade` seeds only
 goldens built by that run; seeding failures do not make the upgrade sweep
 fail, and `--no-docker-seed` disables seeding for the whole sweep. See
-[Docker seeding commands](commands.md#docker-seeding).
+[Docker seeding commands](commands.md#global-repository-option).
 
 | Field | Type | Default | Description |
 |---|---|---|---|
