@@ -3089,6 +3089,7 @@ may set `default_runner` and the idle-report threshold freely.
 | Key | Default | Effect |
 |---|---|---|
 | `idle_after_seconds` | `900` | Positive seconds a live prompted child must await input before a broker `idle` message; also the repeat interval. Requires an adapter session signal (currently Claude); see [idle monitoring](orchestration.md#the-broker). |
+| `message_retention_days` | `30` | Minimum `1`. Days the broker keeps a container's read (acked) orchestration messages in its message store before deleting them. Unread messages are never purged by this setting. |
 | `allowed` | `true` | `false`: containers of this repo cannot be granted and existing grants have no effect |
 | `max_running_children` | none | Lowers the grant's limit |
 | `mounts` | none | Mounts children may be given; others are dropped |

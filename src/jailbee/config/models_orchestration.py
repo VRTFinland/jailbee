@@ -225,6 +225,15 @@ class RepoOrchestration(BaseModel):
         description="Seconds awaiting input before a broker idle report; also its repeat interval.",
     )
 
+    message_retention_days: int = Field(
+        default=30,
+        ge=1,
+        description=(
+            "Days the broker keeps a container's read (acked) orchestration messages "
+            "before deleting them."
+        ),
+    )
+
     allowed: bool = Field(
         default=True, description="Whether containers of this repo may orchestrate."
     )

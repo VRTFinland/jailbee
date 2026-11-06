@@ -27,6 +27,14 @@ def test_idle_threshold_is_positive_and_configurable():
             RepoOrchestration(idle_after_seconds=value)
 
 
+def test_message_retention_defaults_to_thirty_days_and_is_positive():
+    assert RepoOrchestration().message_retention_days == 30
+    assert RepoOrchestration(message_retention_days=7).message_retention_days == 7
+    for value in (0, -1):
+        with pytest.raises(ValidationError):
+            RepoOrchestration(message_retention_days=value)
+
+
 def test_publish_config_blocks():
     profile = OrchestrationProfile.model_validate({"publish": {"issues": ["comment"]}})
     assert profile.publish.issues == ["comment"]
