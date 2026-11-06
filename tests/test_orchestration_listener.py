@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import errno
 import queue
 import shutil
@@ -92,9 +93,73 @@ def test_several_requests_on_one_connection(env: tuple[Listener, queue.Queue[Eve
     lis.open_container("u", root / "u")
     c = connect(root / "u")
     c.sendall(req("one") + req("two"))
-    evs = [q.get(timeout=2), q.get(timeout=2)]
-    assert [e.request.op for e in evs if isinstance(e, RequestEvent)] == ["one", "two"]
-    assert evs[0].conn_id == evs[1].conn_id
+    first = q.get(timeout=2)
+    assert isinstance(first, RequestEvent) and first.request.op == "one"
+    # One request in flight per connection: "two" waits for the reply to "one".
+    with pytest.raises(queue.Empty):
+        q.get(timeout=0.3)
+    lis.respond(first.conn_id, wire.ok())
+    second = q.get(timeout=2)
+    assert isinstance(second, RequestEvent) and second.request.op == "two"
+    assert first.conn_id == second.conn_id
+    assert recv_line(c) == wire.encode_response(wire.ok())
+
+
+def test_flooding_connection_cannot_starve_another_container(
+    env: tuple[Listener, queue.Queue[Event], Path],
+) -> None:
+    lis, q, root = env
+    lis.open_container("flood", root / "flood")
+    lis.open_container("calm", root / "calm")
+    flood = connect(root / "flood")
+    flood.sendall(b"".join(req("spam", n=i) for i in range(500)))
+    time.sleep(0.3)
+    calm = connect(root / "calm")
+    calm.sendall(req("mine"))
+    ahead = 0
+    while True:
+        ev = q.get(timeout=2)
+        assert isinstance(ev, RequestEvent)
+        if ev.uuid == "calm":
+            break
+        ahead += 1
+    assert ahead <= 1
+
+
+def test_unread_replies_stop_request_intake(
+    env: tuple[Listener, queue.Queue[Event], Path],
+) -> None:
+    """A client that never reads its replies cannot grow the reply buffer or the queue."""
+    lis, q, root = env
+    lis.open_container("u", root / "u")
+    c = connect(root / "u")
+    c.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+    big = wire.ok({"pad": "x" * 200_000})
+    stop = threading.Event()
+
+    def flood() -> None:
+        with contextlib.suppress(OSError):
+            while not stop.is_set():
+                c.sendall(req("spam"))
+
+    sender = threading.Thread(target=flood, daemon=True)
+    sender.start()
+    answered = 0
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        try:
+            ev = q.get(timeout=0.3)
+        except queue.Empty:
+            break
+        assert isinstance(ev, RequestEvent)
+        lis.respond(ev.conn_id, big)
+        answered += 1
+    stop.set()
+    # The intake stalls once the unread replies exceed the cap.
+    assert answered < 40
+    buffered = [len(conn.outbuf) for conn in lis._conns.values()]
+    assert buffered and max(buffered) < 8 * 1024 * 1024
+    c.close()
 
 
 def test_respond_delivers(env: tuple[Listener, queue.Queue[Event], Path]) -> None:

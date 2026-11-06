@@ -10,6 +10,14 @@ A client that half-closes (``SHUT_WR``) before its reply is dropped: EOF is
 treated as a disconnect, so clients must keep the write side open until the
 response has arrived.
 
+Each connection has at most one request in flight: the next line is parsed
+only after :meth:`Listener.respond` answered the previous one (a parked
+long-poll counts as in flight), and only while the unsent replies stay under
+``OUTBUF_CAP``. While a connection is held back its socket is still read, so a
+disconnect is noticed, until ``wire.MAX_LINE_BYTES`` are buffered; then
+reading pauses too. A pipelining client therefore costs bounded memory and
+never has more than one event ahead of another container's request.
+
 Stopping the listener leaves the socket files in place, so clients get
 ECONNREFUSED while the broker is down; only :meth:`Listener.close_container`
 (the role ended) removes a socket file.
@@ -43,6 +51,7 @@ SOCKET_NAME = "broker.sock"
 MAX_CONNECTIONS_PER_CONTAINER = 8
 _ACCEPT_PAUSE = 1.0  # seconds a listening socket rests after EMFILE/ENFILE
 _RECV_BYTES = 65536
+OUTBUF_CAP = 4 * 1024 * 1024  # unsent reply bytes above which intake stops
 
 
 @dataclass(frozen=True)
@@ -77,6 +86,7 @@ class _Conn:
     inbuf: bytearray = field(default_factory=bytearray)
     outbuf: bytearray = field(default_factory=bytearray)
     close_after_flush: bool = False
+    in_flight: bool = False
 
 
 class Listener:
@@ -146,7 +156,7 @@ class Listener:
             data = wire.encode_response(response)
         except wire.WireError as exc:
             data = wire.encode_response(wire.fail(exc.code, exc.detail))
-        self._post(lambda: self._send(conn_id, data, close=False))
+        self._post(lambda: self._reply(conn_id, data))
 
     # -- cross-thread plumbing -------------------------------------------
 
@@ -334,7 +344,15 @@ class Listener:
         if conn.close_after_flush:
             return
         conn.inbuf += data
-        while True:
+        self._parse(conn)
+
+    def _held(self, conn: _Conn) -> bool:
+        """Whether no further request may be taken from this connection yet."""
+        return conn.in_flight or conn.close_after_flush or len(conn.outbuf) > OUTBUF_CAP
+
+    def _parse(self, conn: _Conn) -> None:
+        """Queue the next complete request line unless the connection is held."""
+        while not self._held(conn):
             nl = conn.inbuf.find(b"\n")
             if nl < 0:
                 if len(conn.inbuf) >= wire.MAX_LINE_BYTES:
@@ -352,7 +370,9 @@ class Listener:
                 if conn.conn_id not in self._conns:
                     return  # dropped while replying (e.g. EPIPE)
                 continue
+            conn.in_flight = True
             self._requests.put(RequestEvent(conn.uuid, conn.conn_id, request))
+        self._update_interest(conn)
 
     def _oversize(self, conn: _Conn) -> None:
         conn.inbuf.clear()
@@ -360,6 +380,16 @@ class Listener:
         self._send(
             conn.conn_id, wire.encode_response(wire.fail(wire.BAD_REQUEST, detail)), close=True
         )
+
+    def _reply(self, conn_id: int, data: bytes) -> None:
+        """Send the answer to the request in flight, then take the next one."""
+        conn = self._conns.get(conn_id)
+        if conn is None:
+            return
+        conn.in_flight = False
+        self._send(conn_id, data)
+        if conn_id in self._conns:
+            self._parse(conn)
 
     def _send(self, conn_id: int, data: bytes, close: bool = False) -> None:
         conn = self._conns.get(conn_id)
@@ -380,15 +410,30 @@ class Listener:
                 self._drop_conn(conn.conn_id, event=True)
                 return
             del conn.outbuf[:sent]
-        if conn.outbuf:
-            events = selectors.EVENT_READ | selectors.EVENT_WRITE
-        elif conn.close_after_flush:
+        if not conn.outbuf and conn.close_after_flush:
             self._drop_conn(conn.conn_id, event=True)
             return
-        else:
-            events = selectors.EVENT_READ
-        with contextlib.suppress(KeyError, ValueError):
-            self._sel.modify(conn.sock, events, ("conn", conn.conn_id))
+        if conn.inbuf and not self._held(conn):
+            self._parse(conn)  # the reply backlog drained below the cap
+            return
+        self._update_interest(conn)
+
+    def _update_interest(self, conn: _Conn) -> None:
+        """Watch for writes while replies are unsent; stop reading a full, held buffer."""
+        events = 0
+        if conn.outbuf:
+            events |= selectors.EVENT_WRITE
+        if not (self._held(conn) and len(conn.inbuf) >= wire.MAX_LINE_BYTES):
+            events |= selectors.EVENT_READ
+        registered = conn.sock in self._sel.get_map() if conn.sock.fileno() >= 0 else False
+        with contextlib.suppress(KeyError, ValueError, OSError):
+            if not events:
+                if registered:
+                    self._sel.unregister(conn.sock)
+            elif registered:
+                self._sel.modify(conn.sock, events, ("conn", conn.conn_id))
+            else:
+                self._sel.register(conn.sock, events, ("conn", conn.conn_id))
 
     def _drop_conn(self, conn_id: int, event: bool) -> None:
         conn = self._conns.pop(conn_id, None)
