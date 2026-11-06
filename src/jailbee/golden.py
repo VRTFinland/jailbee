@@ -553,17 +553,17 @@ def promote_instance(
     _strip_local_nics(incus, staging)
     incus.config_unset(staging, "security.nesting")
     set_aside = incus.exists(golden)
-    if set_aside:
-        incus.rename(golden, aside)
-    info(f"Promoting {staging} to {golden}")
     try:
+        if set_aside:
+            incus.rename(golden, aside)
+        info(f"Promoting {staging} to {golden}")
         incus.rename(staging, golden)
     except BaseException:
-        if set_aside:
-            _best_effort(
-                f"restore the previous golden {golden} from {aside}",
-                lambda: cleanup.rename(aside, golden),
-            )
+        def restore() -> None:
+            if cleanup.exists(aside) and not cleanup.exists(golden):
+                cleanup.rename(aside, golden)
+
+        _best_effort(f"restore the previous golden {golden} from {aside}", restore)
         raise
     if set_aside:
         _best_effort(
@@ -582,16 +582,16 @@ def promote_image(
     info(f"Publishing as {alias}")
     incus.publish(staging, new_alias)
     had_old = incus.image_exists(alias)
-    if had_old:
-        incus.image_alias_rename(alias, old_alias)
     try:
+        if had_old:
+            incus.image_alias_rename(alias, old_alias)
         incus.image_alias_rename(new_alias, alias)
     except BaseException:
-        if had_old:
-            _best_effort(
-                f"restore the previous golden image {alias} from {old_alias}",
-                lambda: cleanup.image_alias_rename(old_alias, alias),
-            )
+        def restore() -> None:
+            if cleanup.image_exists(old_alias) and not cleanup.image_exists(alias):
+                cleanup.image_alias_rename(old_alias, alias)
+
+        _best_effort(f"restore the previous golden image {alias} from {old_alias}", restore)
         raise
     if had_old:
         _best_effort(

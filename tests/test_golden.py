@@ -197,11 +197,69 @@ def test_promote_instance_restores_previous_golden_when_rename_fails():
 
 
 @pytest.mark.parametrize("mode", ["instance", "image"])
+@pytest.mark.parametrize("failure", ["aside_before", "aside_after", "promote_before", "promote_after"])
+def test_ambiguous_promotion_failure_preserves_golden_with_cleanup_client(mode, failure):
+    from jailbee.golden import promote_image, promote_instance
+
+    incus = _incus(existing=("base--golden", "base--seeding"), images=("base",))
+    cleanup = MagicMock()
+    method = "rename" if mode == "instance" else "image_alias_rename"
+    exists = "exists" if mode == "instance" else "image_exists"
+    golden = "base--golden" if mode == "instance" else "base"
+    original = getattr(incus, method).side_effect
+    getattr(cleanup, method).side_effect = original
+    getattr(cleanup, exists).side_effect = getattr(incus, exists).side_effect
+
+    def rename(src, dst):
+        step = "aside" if src == golden else "promote"
+        if failure == f"{step}_before":
+            raise IncusError("timeout")
+        original(src, dst)
+        if failure == f"{step}_after":
+            raise IncusError("timeout")
+
+    getattr(incus, method).side_effect = rename
+    promote = promote_instance if mode == "instance" else promote_image
+    with pytest.raises(IncusError, match="timeout"):
+        promote(incus, "base--seeding", "base", cleanup_incus=cleanup)
+    assert getattr(cleanup, exists)(golden)
+    if failure == "promote_after":
+        assert getattr(cleanup, exists)("base--old")
+        getattr(cleanup, method).assert_not_called()
+    elif failure == "aside_before":
+        getattr(cleanup, method).assert_not_called()
+    else:
+        getattr(cleanup, method).assert_called_once_with("base--old", golden)
+    cleanup.delete.assert_not_called()
+    cleanup.image_delete.assert_not_called()
+
+
+@pytest.mark.parametrize("mode", ["instance", "image"])
+def test_promotion_preserves_original_error_when_recovery_probe_fails(mode):
+    from jailbee.golden import promote_image, promote_instance
+
+    incus = _incus(existing=("base--golden",), images=("base",))
+    cleanup = MagicMock()
+    method = "rename" if mode == "instance" else "image_alias_rename"
+    exists = "exists" if mode == "instance" else "image_exists"
+    getattr(incus, method).side_effect = IncusError("promotion timeout")
+    getattr(cleanup, exists).side_effect = IncusError("cleanup unavailable")
+    promote = promote_instance if mode == "instance" else promote_image
+    with pytest.raises(IncusError, match="promotion timeout"):
+        promote(incus, "base--seeding", "base", cleanup_incus=cleanup)
+    getattr(cleanup, method).assert_not_called()
+    cleanup.delete.assert_not_called()
+    cleanup.image_delete.assert_not_called()
+
+
+@pytest.mark.parametrize("mode", ["instance", "image"])
 def test_promotion_rollback_uses_cleanup_client(mode):
     from jailbee.golden import promote_image, promote_instance
 
     incus = _incus(existing=("base--golden",), images=("base",))
     cleanup = _incus()
+    cleanup.exists.side_effect = incus.exists.side_effect
+    cleanup.image_exists.side_effect = incus.image_exists.side_effect
     if mode == "instance":
         original = incus.rename.side_effect
 
