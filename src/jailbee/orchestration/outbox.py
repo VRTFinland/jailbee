@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
@@ -126,10 +127,45 @@ def _item_json(item: InboxItem) -> str:
     return item.model_dump_json(by_alias=True) + "\n"
 
 
+def _insert_into_store(root: Path, full: str, item: InboxItem) -> bool:
+    """Insert `item` unacked when `full`'s inbox lives in the store; else False.
+
+    The stored object is the same JSON `_item_json` writes to a file.
+    """
+    from jailbee.orchestration import store
+
+    uuid = store.recipient_uuid(root, full)
+    if uuid is None:
+        return False
+    store.BrokerStore(store.store_path(root)).insert_item(
+        uuid, full, json.loads(item.model_dump_json(by_alias=True)), now=time.time()
+    )
+    return True
+
+
 def write_inbox(
-    incus: Incus, full: str, item: InboxItem, *, uid: int | None, now: datetime, seq: int = 0
+    incus: Incus,
+    full: str,
+    item: InboxItem,
+    *,
+    uid: int | None,
+    now: datetime,
+    seq: int = 0,
+    root: Path | None = None,
 ) -> None:
-    """Atomically write `item` into `full`'s inbox (temp file, then rename)."""
+    """Atomically write `item` into `full`'s inbox (temp file, then rename).
+
+    With `root`, a recipient whose inbox lives in the broker store gets the
+    item inserted there instead; a store failure surfaces as `IncusError`.
+    """
+    if root is not None:
+        from jailbee.orchestration.store import StoreError
+
+        try:
+            if _insert_into_store(root, full, item):
+                return
+        except StoreError as e:
+            raise IncusError(str(e)) from e
     name = inbox_file_name(item, now, seq=seq)
     _atomic_write(incus, full, INBOX_DIR, name, _item_json(item), "0644", uid=uid)
 
@@ -150,6 +186,18 @@ def deliver(
     An item is also parked behind any already-parked one, so order is kept.
     `seq` orders items emitted within one second (see `inbox_file_name`).
     """
+    from jailbee.orchestration.store import StoreError
+
+    try:
+        if _insert_into_store(root, recipient_full, item):
+            return "delivered"
+    except StoreError:
+        logging.getLogger(__name__).exception("broker store insert failed; parking item")
+        atomic_write_text(
+            pending_dir(root, recipient_full) / inbox_file_name(item, now, seq=seq),
+            _item_json(item),
+        )
+        return "parked"
     if running and not has_pending(root, recipient_full):
         try:
             write_inbox(incus, recipient_full, item, uid=uid, now=now, seq=seq)

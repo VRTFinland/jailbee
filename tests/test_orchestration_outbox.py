@@ -391,3 +391,77 @@ def test_flush_quarantine_note_is_parked_when_the_write_fails(tmp_path: Path) ->
     parked = [p for p in directory.iterdir() if p.name.endswith(".json")]
     assert len(parked) == 1
     assert json.loads(parked[0].read_text())["kind"] == "note"
+
+
+def _store_recipient(root: Path):
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    store = BrokerStore(store_path(root))
+    store.set_recipient(FULL, "uuid-1", now=1.0)
+    return store
+
+
+@pytest.mark.parametrize("running", [True, False])
+def test_deliver_inserts_into_store_for_store_recipient(tmp_path: Path, running: bool) -> None:
+    store = _store_recipient(tmp_path)
+    incus = _incus()
+    result = outbox.deliver(incus, tmp_path, FULL, _item("1"), running=running, uid=1000, now=AT)
+    assert result == "delivered"
+    assert [s.id for s in store.unacked("uuid-1")] == ["h-1"]
+    assert store.unacked("uuid-1")[0].item == json.loads(_item("1").model_dump_json(by_alias=True))
+    incus.exec.assert_not_called()
+    incus.exec_with_input.assert_not_called()
+    assert not outbox.has_pending(tmp_path, FULL)
+
+
+def test_deliver_store_ignores_existing_pending(tmp_path: Path) -> None:
+    store = _store_recipient(tmp_path)
+    directory = pending_dir(tmp_path, FULL)
+    directory.mkdir(parents=True)
+    (directory / inbox_file_name(_item("0"), AT)).write_text("{}")
+    outbox.deliver(_incus(), tmp_path, FULL, _item("1"), running=True, uid=1000, now=AT)
+    assert [s.id for s in store.unacked("uuid-1")] == ["h-1"]
+
+
+def test_deliver_without_row_uses_files(tmp_path: Path) -> None:
+    _store_recipient(tmp_path)
+    incus = _incus()
+    result = outbox.deliver(
+        incus, tmp_path, "other-full", _item("1"), running=True, uid=1000, now=AT
+    )
+    assert result == "delivered"
+    incus.exec_with_input.assert_called_once()
+
+
+def test_write_inbox_with_root_inserts_into_store(tmp_path: Path) -> None:
+    store = _store_recipient(tmp_path)
+    incus = _incus()
+    outbox.write_inbox(incus, FULL, _item("1"), uid=1000, now=AT, root=tmp_path)
+    assert [s.id for s in store.unacked("uuid-1")] == ["h-1"]
+    incus.exec_with_input.assert_not_called()
+
+
+def test_write_inbox_without_root_writes_file(tmp_path: Path) -> None:
+    _store_recipient(tmp_path)
+    incus = _incus()
+    outbox.write_inbox(incus, FULL, _item("1"), uid=1000, now=AT)
+    incus.exec_with_input.assert_called_once()
+
+
+def test_write_inbox_store_error_becomes_incus_error(tmp_path: Path, mocker) -> None:
+    from jailbee.orchestration.store import BrokerStore, StoreError
+
+    _store_recipient(tmp_path)
+    mocker.patch.object(BrokerStore, "insert_item", side_effect=StoreError("boom"))
+    with pytest.raises(IncusError, match="boom"):
+        outbox.write_inbox(_incus(), FULL, _item("1"), uid=1000, now=AT, root=tmp_path)
+
+
+def test_deliver_store_error_parks_item(tmp_path: Path, mocker) -> None:
+    from jailbee.orchestration.store import BrokerStore, StoreError
+
+    _store_recipient(tmp_path)
+    mocker.patch.object(BrokerStore, "insert_item", side_effect=StoreError("boom"))
+    result = outbox.deliver(_incus(), tmp_path, FULL, _item("1"), running=True, uid=1000, now=AT)
+    assert result == "parked"
+    assert (pending_dir(tmp_path, FULL) / inbox_file_name(_item("1"), AT)).exists()

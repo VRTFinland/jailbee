@@ -151,7 +151,9 @@ def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
         msg, summary = finishing.complete(ctx, ctx.sender, target, item)
         seq = next(ctx.seq)
         try:
-            outbox.write_inbox(ctx.incus, target.full, msg, uid=uid, now=ctx.now, seq=seq)
+            outbox.write_inbox(
+                ctx.incus, target.full, msg, uid=uid, now=ctx.now, seq=seq, root=ctx.root
+            )
         except IncusError:
             outbox.deliver(
                 ctx.incus, ctx.root, target.full, msg, running=False, uid=uid, now=ctx.now, seq=seq
