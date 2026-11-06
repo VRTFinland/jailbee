@@ -154,14 +154,14 @@ def seed_golden(
     provenance = f"container:{short_name(cfg, req.source_container)}" if req.source_container else "seed-container"
     alias = cfg.golden.alias
     staging = golden.golden_seeding_name(alias)
+    cleanup_incus = incus
+    incus = incus.with_deadline(deadline)
     created = False
     result = SeedOutcome("failed", provenance, detail="No source container")
     try:
         if source is None:
             raise ValueError("No source container")
-        if incus.exists(staging):
-            warn(f"Removing leftover {staging} from a previous seed")
-            incus.delete(staging, force=True)
+        golden.recover_seed_leftovers(cfg, incus)
         globs = cfg.golden.docker_seed.images if cfg.golden.docker_seed else []
         refs = list_tagged_images(incus, source, globs, deadline=deadline)
         if not refs:
@@ -188,19 +188,19 @@ def seed_golden(
             stop_container(incus, staging, force_fallback=True, budget=min(30, _remaining(deadline)))
             _remaining(deadline)
             if placement.instance_mode:
-                golden.promote_instance(incus, staging, alias)
+                golden.promote_instance(incus, staging, alias, cleanup_incus=cleanup_incus)
                 created = False
             else:
                 golden._strip_local_nics(incus, staging)
                 incus.config_unset(staging, "security.nesting")
-                golden.promote_image(incus, staging, alias)
+                golden.promote_image(incus, staging, alias, cleanup_incus=cleanup_incus)
             result = SeedOutcome("seeded", provenance, len(refs), size)
     except (IncusError, TimeoutError, ValueError) as exc:
         result = SeedOutcome("failed", provenance, detail=str(exc))
     finally:
         if created:
             try:
-                incus.delete(staging, force=True)
+                cleanup_incus.delete(staging, force=True)
             except IncusError as exc:
                 warn(f"Could not delete seed staging instance {staging}: {exc}")
     record_outcome(cfg, result)
@@ -255,7 +255,7 @@ def run_seed(cfg: Config, incus: Incus, gcfg: GlobalConfig, req: SeedRequest) ->
         timer = threading.Timer(max(0, deadline - time.monotonic()), stop_on_timeout)
         timer.start()
         try:
-            name = create_seed_container(cfg, incus, gcfg)
+            name = create_seed_container(cfg, incus.with_deadline(deadline), gcfg)
         finally:
             timer.cancel()
             timer.join()

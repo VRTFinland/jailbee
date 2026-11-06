@@ -10,7 +10,9 @@ from jailbee.incus import IncusError
 def rig(make_cfg, tmp_path, monkeypatch):
     cfg = make_cfg(tmp_path)
     incus = Mock()
+    incus.with_deadline.return_value = incus
     incus.exists.return_value = False
+    monkeypatch.setattr(golden, "recover_seed_leftovers", Mock())
     monkeypatch.setattr(docker_seed, "record_outcome", Mock())
     monkeypatch.setattr(docker_seed, "stop_container", Mock())
     monkeypatch.setattr(golden, "promote_instance", Mock())
@@ -35,7 +37,9 @@ def test_instance_seeds_and_promotes(rig):
     staging = golden.golden_seeding_name(cfg.golden.alias)
     incus.copy.assert_called_once_with(golden.golden_instance_name(cfg.golden.alias), staging, instance_only=True, config={"security.nesting": "true"})
     incus.exec_pipe.assert_called_once()
-    golden.promote_instance.assert_called_once_with(incus, staging, cfg.golden.alias)
+    golden.promote_instance.assert_called_once_with(
+        incus, staging, cfg.golden.alias, cleanup_incus=incus
+    )
     docker_seed.record_outcome.assert_called_once_with(cfg, result)
 
 
@@ -46,6 +50,27 @@ def test_image_mode_and_cleanup(rig, monkeypatch):
     assert result.outcome == "seeded" and result.source == "seed-container"
     incus.init.assert_called_once()
     golden.promote_image.assert_called_once()
+    incus.delete.assert_called_once_with(golden.golden_seeding_name(cfg.golden.alias), force=True)
+
+
+def test_seed_uses_deadline_client_but_cleans_up_with_original(rig):
+    cfg, incus = rig
+    bounded = Mock()
+    bounded.exists.return_value = False
+    bounded.exec.side_effect = incus.exec.side_effect
+    bounded.exec_pipe.side_effect = IncusError("deadline expired")
+    incus.with_deadline.return_value = bounded
+    deadline = docker_seed.time.monotonic() + 60
+
+    result = docker_seed.seed_golden(
+        cfg, incus, docker_seed.SeedRequest("source", False, True), deadline=deadline
+    )
+
+    assert result.outcome == "failed"
+    incus.with_deadline.assert_called_once_with(deadline)
+    golden.recover_seed_leftovers.assert_called_once_with(cfg, bounded)
+    bounded.copy.assert_called_once()
+    bounded.delete.assert_not_called()
     incus.delete.assert_called_once_with(golden.golden_seeding_name(cfg.golden.alias), force=True)
 
 
