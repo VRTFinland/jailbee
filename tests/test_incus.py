@@ -1068,6 +1068,28 @@ def test_list_containers_default_is_unchanged(incus, mocker):
     assert mock_run.call_args.kwargs["timeout"] is None
 
 
+def test_list_containers_all_projects_adds_flag(incus, mocker):
+    """The broker's copy/twin check must see raw copies in every project."""
+    mock_run = _mock_run(mocker, stdout="[]")
+    incus.list_containers(all_projects=True)
+    assert mock_run.call_args.args[0] == ["incus", "list", "--format", "json", "--all-projects"]
+
+
+def test_config_device_remove_in_another_project(incus, mocker):
+    run = mocker.patch("jailbee.incus.subprocess.run", return_value=_cp(returncode=0))
+    incus.config_device_remove("copy", "dev", missing_ok=True, project="other")
+    assert run.call_args.args[0] == [
+        "incus",
+        "config",
+        "device",
+        "remove",
+        "copy",
+        "dev",
+        "--project",
+        "other",
+    ]
+
+
 def test_snapshot_list_accepts_timeout(incus, mocker):
     mock_run = _mock_run(mocker, stdout="[]")
     incus.snapshot_list("myrepo-feat-foo", timeout=2)

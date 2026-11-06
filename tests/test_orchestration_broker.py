@@ -1112,7 +1112,8 @@ def test_sigterm_during_dispatch_finishes_the_round_then_exits(
     rig.delete.assert_called_once()
     [(_, status)] = rig.statuses()
     assert status.state == "started"
-    assert rig.incus.list_containers.call_count == 5  # incl. action and watch refresh
+    # incl. action and watch refresh, and the socket check's all-projects listing
+    assert rig.incus.list_containers.call_count == 6
     pause.assert_called_once()  # returns at once: the flag is already set
     assert signal.getsignal(signal.SIGTERM) == before
 

@@ -64,10 +64,13 @@ class Env:
         self.rig = rig
         self.devices: dict[str, dict[str, dict[str, str]]] = {}
         self.entries: list[dict[str, Any]] = []
+        # Instances of other Incus projects: only `list --all-projects` shows them.
+        self.elsewhere: list[dict[str, Any]] = []
         self.add = MagicMock(side_effect=self._add)
         self.remove = MagicMock(side_effect=self._remove)
         inc = rig.incus
         inc.list_containers.side_effect = self._list
+        inc.current_project.return_value = "default"
         inc.config_device_get.side_effect = lambda n, d, k: (
             self.devices.get(n, {}).get(d, {}).get(k)
         )
@@ -80,17 +83,26 @@ class Env:
             store=self.store,
         )
 
-    def _list(self) -> list[dict[str, Any]]:
+    def _list(self, *, all_projects: bool = False) -> list[dict[str, Any]]:
         out = []
         for e in self.entries:
-            out.append({**e, "devices": dict(self.devices.get(e["name"], {}))})
+            out.append(
+                {**e, "project": "default", "devices": dict(self.devices.get(e["name"], {}))}
+            )
+        if all_projects:
+            for e in self.elsewhere:
+                key = f"{e['project']}/{e['name']}"
+                out.append({**e, "devices": dict(self.devices.get(key, {}))})
         return out
 
     def _add(self, name: str, dev: str, typ: str, props: dict[str, str]) -> None:
         self.devices.setdefault(name, {})[dev] = {"type": typ, **props}
 
-    def _remove(self, name: str, dev: str, *, missing_ok: bool = False) -> None:
-        self.devices.get(name, {}).pop(dev, None)
+    def _remove(
+        self, name: str, dev: str, *, missing_ok: bool = False, project: str | None = None
+    ) -> None:
+        key = f"{project}/{name}" if project else name
+        self.devices.get(key, {}).pop(dev, None)
 
     def set(self, *entries: dict[str, Any]) -> None:
         self.entries = list(entries)
@@ -130,7 +142,10 @@ def test_unit_helpers(tmp_path: Path) -> None:
     assert socket_device.mismatched(entry)
     assert not socket_device.mismatched({"config": {"volatile.uuid": "u2"}, "devices": {}})
     # the legacy, generation-less directory name still names its uuid
-    legacy = {"config": {"volatile.uuid": "u1"}, "devices": {ORCHESTRATION_DEVICE: {"source": str(tmp_path / "sock" / "u1")}}}
+    legacy = {
+        "config": {"volatile.uuid": "u1"},
+        "devices": {ORCHESTRATION_DEVICE: {"source": str(tmp_path / "sock" / "u1")}},
+    }
     assert socket_device.source_uuid(legacy) == "u1" and not socket_device.mismatched(legacy)
 
 
@@ -202,9 +217,7 @@ def test_mismatched_source_is_removed_and_reattached(env) -> None:
     env.set(orch())
     env.devices["proj-orch"] = {ORCHESTRATION_DEVICE: {"source": "/x/sock/other"}}
     env.tick()
-    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(
-        env.listener.dirs[UUID]
-    )
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(env.listener.dirs[UUID])
 
 
 def test_foreign_device_on_a_served_container_is_replaced(env) -> None:
@@ -215,9 +228,7 @@ def test_foreign_device_on_a_served_container_is_replaced(env) -> None:
     env.devices["proj-orch"] = {ORCHESTRATION_DEVICE: {"source": "/x/sock/other"}}
     env.tick()
     assert adds(env) == ["proj-orch", "proj-orch"]
-    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(
-        env.listener.dirs[UUID]
-    )
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(env.listener.dirs[UUID])
 
 
 def _copy_of_the_source(env: Env) -> str:
@@ -256,9 +267,7 @@ def test_copy_cannot_reach_the_source_when_the_detach_fails(env) -> None:
     env.tick()
     assert env.devices["proj-copy"][ORCHESTRATION_DEVICE]["source"] == old  # still there
     assert str(env.listener.dirs[UUID]) != old  # but it points at a dead directory
-    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(
-        env.listener.dirs[UUID]
-    )
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(env.listener.dirs[UUID])
     env.tick()  # the stale device is no threat: no second rotation
     assert len(env.listener.rotated) == 1
 
@@ -283,6 +292,44 @@ def test_a_reopened_socket_never_reuses_a_closed_directory(env) -> None:
     env.set(orch())  # and comes back
     env.tick()
     assert env.listener.dirs[UUID] != first
+
+
+def test_a_copy_in_another_project_is_stripped_and_the_source_moves(env) -> None:
+    """`incus copy --target-project`: invisible to a plain `incus list`."""
+    env.set(orch())
+    env.tick()
+    src = env.devices["proj-orch"][ORCHESTRATION_DEVICE]
+    env.elsewhere = [{**_c("proj-orch", **{"volatile.uuid": "uuid-copy"}), "project": "other"}]
+    env.devices["other/proj-orch"] = {ORCHESTRATION_DEVICE: dict(src)}
+    env.tick()
+    assert ORCHESTRATION_DEVICE not in env.devices["other/proj-orch"]
+    assert [u for u, _ in env.listener.rotated] == [UUID]
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(env.listener.dirs[UUID])
+    assert env.memory.attached == {"proj-orch": UUID}  # the source is still served
+
+
+def test_a_same_uuid_twin_in_another_project_tears_the_socket_down(env) -> None:
+    env.set(orch())
+    env.tick()
+    src = env.devices["proj-orch"][ORCHESTRATION_DEVICE]
+    env.elsewhere = [{**orch(), "project": "other"}]
+    env.devices["other/proj-orch"] = {ORCHESTRATION_DEVICE: dict(src)}
+    env.tick()
+    assert ORCHESTRATION_DEVICE not in env.devices["other/proj-orch"]
+    assert ORCHESTRATION_DEVICE not in env.devices["proj-orch"]
+    assert UUID in env.listener.closed
+    assert env.store.recipients() == {}
+
+
+def test_an_unrelated_container_in_another_project_is_left_alone(env) -> None:
+    env.set(orch())
+    env.tick()
+    env.elsewhere = [{**_c("proj-x", **{"volatile.uuid": "uuid-x"}), "project": "other"}]
+    env.devices["other/proj-x"] = {"eth0": {"type": "nic"}}
+    env.remove.reset_mock()
+    env.tick()
+    env.remove.assert_not_called()
+    assert env.listener.rotated == []
 
 
 def test_mismatched_device_of_an_unserved_uuid_rotates_nothing(env) -> None:

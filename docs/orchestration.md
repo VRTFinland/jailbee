@@ -710,7 +710,9 @@ golden instance and by the Docker seed) strip it immediately. A raw `incus copy`
 done by hand, including a copy from a snapshot, keeps the device until the
 broker's next round. Every round the broker checks that the device's source
 names the container's own `volatile.uuid`, and removes the device if it does
-not. When idle that is up to a minute. If the copy's device names the source's
+not; this check covers every Incus project, so a copy made with
+`--target-project`, or an instance with the same uuid in another project, is
+caught too. When idle that is up to a minute. If the copy's device names the source's
 live socket directory, the broker also moves the source's socket to a new
 directory, deletes the old one and re-attaches the source's device: the source's
 client reconnects on its own, and the copy keeps at most a mount of a deleted
@@ -744,7 +746,11 @@ a restart does not import successfully migrated state a second time.
 Messages and statuses are retained unread and read alike, so `jailbee inbox
 ls` shows unread messages and a broker or container restart loses nothing.
 Read messages are kept for `orchestration.message_retention_days` (default 30,
-see [config](config.md#orchestration)); unread messages are never purged.
+see [config](config.md#orchestration)); unread messages are never purged
+while their container exists. When a container is gone from every Incus
+project (`incus list --all-projects`, so a project switch hides nothing) for
+two hourly checks, its read messages and send records are removed, and its
+unread messages once they are older than its repo's retention.
 `jb orchestrate messages [CONTAINER] [--all] [--json]` lists them on the host
 (read-only; `--all` includes read ones).
 

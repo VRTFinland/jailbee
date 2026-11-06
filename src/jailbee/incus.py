@@ -384,6 +384,7 @@ class Incus:
         *,
         fast: bool = False,
         timeout: int | None = None,
+        all_projects: bool = False,
     ) -> list[dict[str, Any]]:
         """Return all containers as a list of dicts.
 
@@ -397,10 +398,15 @@ class Incus:
         ``timeout`` bounds the call; `_run` normalises an expiry into
         ``IncusError``. Completion sets it so a wedged daemon cannot hang the
         user's shell.
+
+        ``all_projects=True`` adds ``--all-projects``: every entry then carries
+        its ``project``, and names may repeat across projects.
         """
         args = ["list", "--format", "json"]
         if fast:
             args.append("--fast")
+        if all_projects:
+            args.append("--all-projects")
         result = self._run(args, timeout=timeout)
         return json.loads(result.stdout) if result.stdout else []
 
@@ -1155,14 +1161,17 @@ class Incus:
         device_name: str,
         *,
         missing_ok: bool = False,
+        project: str | None = None,
     ) -> None:
-        """Remove an instance-local device.
+        """Remove an instance-local device (of ``project``, default the current one).
 
         ``missing_ok=True`` swallows the failure when there is no such local
         device, mirroring `config_unset`. Callers that re-materialise derived
         state want removal to be idempotent.
         """
         args = ["config", "device", "remove", name, device_name]
+        if project is not None:
+            args += ["--project", project]
         if missing_ok:
             # `_run_retrying_on_etag(args)`, not `_run(args, check=False)`: a
             # container that just booted churns `volatile.*` keys, which can

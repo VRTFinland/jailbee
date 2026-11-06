@@ -171,9 +171,25 @@ def _monotonic() -> float:
     return time.monotonic()
 
 
-def _purge_messages(memory: BrokerMemory, raw: list[dict[str, object]], now: datetime) -> None:
+def _retention_days(
+    full: str, config: Mapping[str, str], configs: Mapping[str, Config | None]
+) -> int:
+    cfg = owner_config(full, config, configs)
+    if cfg is None:
+        return DEFAULT_RETENTION_DAYS
+    return cfg.orchestration_view().repo.message_retention_days
+
+
+def _purge_messages(
+    memory: BrokerMemory,
+    raw: list[dict[str, object]],
+    now: datetime,
+    everywhere: list[dict[str, object]] | None = None,
+) -> None:
     """Once per hour: age out acked messages per repo and drop vanished containers' rows.
 
+    ``raw`` is the current project's listing, ``everywhere`` every project's
+    (None when it could not be listed: then no container counts as vanished).
     Never raises: a failed purge is logged and tried again next hour.
     """
     store = memory.store
@@ -183,32 +199,47 @@ def _purge_messages(memory: BrokerMemory, raw: list[dict[str, object]], now: dat
     if memory.last_purge is not None and mono - memory.last_purge < PURGE_INTERVAL:
         return
     memory.last_purge = mono
+    configs: dict[str, Config | None] | None = None
     try:
         entry_config: dict[str, dict[str, str]] = {}
         for e in raw:
             conf = e.get("config")
             if isinstance(e.get("name"), str) and isinstance(conf, dict):
                 entry_config[str(e["name"])] = conf
-        live = {c["volatile.uuid"] for c in entry_config.values() if c.get("volatile.uuid")}
-        # The listing covers the current project only (`incus project switch`
-        # hides every container), so a uuid is purged only when two
-        # consecutive purges (an hour apart) missed it, and unread items
-        # younger than the default retention survive even that.
-        # An empty listing never counts as an absence.
+        live = {
+            str(conf["volatile.uuid"])
+            for e in everywhere or []
+            if isinstance(conf := e.get("config"), dict) and conf.get("volatile.uuid")
+        }
+        # A uuid is gone only when it is in no project at all (an `incus
+        # project switch` hides nothing from `--all-projects`), and only when
+        # two consecutive purges (an hour apart) missed it. Its unread items
+        # still stay for the retention of the repo it belonged to. An empty
+        # or failed listing never counts as an absence.
         if live:
             absent = store.known_uuids() - live
             gone = absent & memory.absent_uuids
             memory.absent_uuids = absent
             if gone:
-                removed = store.purge_uuids(
-                    gone, keep_unacked_after=now.timestamp() - DEFAULT_RETENTION_DAYS * 86400
-                )
+                configs = repo_configs(memory)
+                names = store.recipient_names(gone)
+                by_days: dict[int, set[str]] = {}
+                for uuid in gone:
+                    full = names.get(uuid)
+                    days = _retention_days(full, {}, configs) if full else DEFAULT_RETENTION_DAYS
+                    by_days.setdefault(days, set()).add(uuid)
+                removed = 0
+                for days, uuids in by_days.items():
+                    removed += store.purge_uuids(
+                        uuids, keep_unacked_after=now.timestamp() - days * 86400
+                    )
                 if removed:
                     log.info("broker: purged %d message rows of vanished containers", removed)
         recipients = store.recipients()
         if not recipients:
             return
-        configs = repo_configs(memory)
+        if configs is None:
+            configs = repo_configs(memory)
     except Exception:
         log.exception("broker: message purge failed")
         return
@@ -216,9 +247,7 @@ def _purge_messages(memory: BrokerMemory, raw: list[dict[str, object]], now: dat
         try:
             days = DEFAULT_RETENTION_DAYS
             if full in entry_config:
-                cfg = owner_config(full, entry_config[full], configs)
-                if cfg is not None:
-                    days = cfg.orchestration_view().repo.message_retention_days
+                days = _retention_days(full, entry_config[full], configs)
             store.purge_acked_older_than(uuid, now.timestamp() - days * 86400)
         except Exception:
             log.exception("broker: message purge of %s failed", full)
@@ -1063,14 +1092,75 @@ def _rotate_socket(incus: Incus, memory: BrokerMemory, root: Path, uuid: str, co
         memory.warn_once(f"socket:{owner}", "broker: %s: %s", owner, exc)
 
 
-def _check_socket_devices(
-    incus: Incus, raw: list[dict[str, Any]], memory: BrokerMemory, root: Path
+def _strip_copy(
+    incus: Incus,
+    memory: BrokerMemory,
+    root: Path,
+    entry: dict[str, Any],
+    name: str,
+    project: str | None,
 ) -> None:
-    """Strip foreign devices, tear down lost roles and notice vanished devices."""
+    """Remove a foreign socket device; move the socket if it named the live directory."""
+    where = name if project is None else f"{project}/{name}"
+    log.warning("broker: %s carries another instance's socket device; removing", where)
+    try:
+        socket_device.detach(incus, name, project=project)
+    except (IncusError, OSError) as exc:
+        memory.warn_once(f"socket-off:{where}", "broker: %s: %s", where, exc)
+    # Whether or not the detach worked (it may fail, or be lazy while the
+    # copy holds the directory), a copy that mounts the source's live
+    # directory moves the source to a fresh one.
+    source = socket_device.source_uuid(entry)
+    listener = memory.listener
+    assert listener is not None
+    if source and str(listener.socket_dir(source)) == socket_device.source(entry):
+        _rotate_socket(incus, memory, root, source, where)
+
+
+def _other_projects(incus: Incus, memory: BrokerMemory) -> list[dict[str, Any]] | None:
+    """The instances of every other Incus project, or None when they cannot be listed.
+
+    A raw `incus copy --target-project` (or an import there) is invisible to
+    the plain listing, yet may mount a served socket.
+    """
+    try:
+        current = incus.current_project()
+        everything = incus.list_containers(all_projects=True)
+    except (IncusError, OSError, ValueError) as exc:
+        memory.warn_once("socket-projects", "broker: cannot list all Incus projects: %s", exc)
+        return None
+    if not isinstance(current, str) or not current:
+        return None
+    return [
+        e for e in everything if isinstance(e.get("project"), str) and e.get("project") != current
+    ]
+
+
+def _check_socket_devices(
+    incus: Incus,
+    raw: list[dict[str, Any]],
+    memory: BrokerMemory,
+    root: Path,
+    others: list[dict[str, Any]] | None = None,
+) -> None:
+    """Strip foreign devices, tear down lost roles and notice vanished devices.
+
+    ``others`` (other projects' instances) are only checked for copies and
+    twins of served containers; nothing else of theirs is touched.
+    """
     if memory.listener is None or memory.store is None:
         return
+    others = others or []
     _forget_vanished(raw, memory)
-    memory.shared_uuids = _shared_uuids(raw)
+    memory.shared_uuids = _shared_uuids(raw + others)
+    for entry in others:
+        name, config = entry.get("name"), entry.get("config")
+        if not isinstance(name, str) or not isinstance(config, dict):
+            continue
+        if not socket_device.has_device(entry):
+            continue
+        if socket_device.mismatched(entry) or config.get("volatile.uuid") in memory.shared_uuids:
+            _strip_copy(incus, memory, root, entry, name, str(entry["project"]))
     for entry in raw:
         name = entry.get("name")
         config = entry.get("config")
@@ -1094,17 +1184,7 @@ def _check_socket_devices(
                 _teardown_socket(incus, memory, name, None, root)
             continue
         if socket_device.mismatched(entry):
-            log.warning("broker: %s carries another instance's socket device; removing", name)
-            try:
-                socket_device.detach(incus, name)
-            except (IncusError, OSError) as exc:
-                memory.warn_once(f"socket-off:{name}", "broker: %s: %s", name, exc)
-            # Whether or not the detach worked (it may fail, or be lazy while
-            # the copy holds the directory), a copy that mounts the source's
-            # live directory moves the source to a fresh one.
-            source = socket_device.source_uuid(entry)
-            if source and str(memory.listener.socket_dir(source)) == socket_device.source(entry):
-                _rotate_socket(incus, memory, root, source, name)
+            _strip_copy(incus, memory, root, entry, name, None)
             memory.attached.pop(name, None)
             continue
         if _labelled(config):
@@ -1206,8 +1286,9 @@ def tick(
     prune_reservations(root)
     memory.publish_threads[:] = [worker for worker in memory.publish_threads if worker.is_alive()]
     raw = incus.list_containers()
-    _check_socket_devices(incus, raw, memory, root)
-    _purge_messages(memory, raw, now)
+    others = _other_projects(incus, memory) if memory.listener is not None else None
+    _check_socket_devices(incus, raw, memory, root, others)
+    _purge_messages(memory, raw, now, None if others is None else raw + others)
     candidates = [
         e
         for e in raw

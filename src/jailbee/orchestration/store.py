@@ -530,6 +530,20 @@ class BrokerStore:
             ).fetchall()
         return {str(r[0]) for r in rows}
 
+    def recipient_names(self, uuids: Collection[str]) -> dict[str, str]:
+        """uuid -> the container name its newest item was addressed to (items only)."""
+        out: dict[str, str] = {}
+        with self._tx(write=False) as con:
+            for uuid in uuids:
+                row = con.execute(
+                    "SELECT recipient_full FROM items WHERE recipient_uuid=? "
+                    "ORDER BY seq DESC LIMIT 1",
+                    (uuid,),
+                ).fetchone()
+                if row is not None:
+                    out[uuid] = str(row[0])
+        return out
+
     def purge_uuids(self, gone: Collection[str], *, keep_unacked_after: float) -> int:
         """Delete the rows of containers known to be gone; return the row count.
 

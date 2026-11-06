@@ -95,20 +95,27 @@ def test_vanished_container_rows_are_purged_after_two_absent_passes(env: Env, cl
 
 
 def test_project_switch_loses_nothing(env: Env, clock: Clock) -> None:
-    """`incus project switch` makes every container vanish from the listing."""
+    """`incus project switch` hides every container from a plain `incus list`."""
     env.set(_orch("proj-orch", "u-a"))
     env.tick()
     _put(env, "u-a", "proj-orch", "read", 0)
-    _put(env, "u-a", "proj-orch", "unread", 0, acked=False)
-    clock.t += 3601
-    env.set(_orch("elsewhere", "u-x"))  # another project's listing
-    env.tick()
-    clock.t += 3601
-    env.set(_orch("proj-orch", "u-a"))  # switched back
-    env.tick()
-    clock.t += 3601
-    env.tick()
+    _put(env, "u-a", "proj-orch", "unread", 40, acked=False)
+    env.set(_orch("elsewhere", "u-x"))  # the current project's listing now
+    env.elsewhere = [{**_orch("proj-orch", "u-a"), "project": "default-old"}]
+    for _ in range(4):  # far more than two hourly purges
+        clock.t += 3601
+        env.tick()
     assert _ids(env, "u-a") == ["read", "unread"]
+
+
+def test_no_uuid_purge_without_an_all_projects_listing(env: Env, clock: Clock) -> None:
+    env.rig.incus.current_project.side_effect = broker.IncusError("boom")
+    env.set(_orch("proj-orch", "u-a"))
+    _put(env, "u-gone", "proj-gone", "acked", 0)
+    for _ in range(3):
+        env.tick()
+        clock.t += 3601
+    assert _ids(env, "u-gone") == ["acked"]
 
 
 def test_unread_items_survive_a_long_absence(env: Env, clock: Clock) -> None:
@@ -118,6 +125,21 @@ def test_unread_items_survive_a_long_absence(env: Env, clock: Clock) -> None:
         env.tick()
         clock.t += 3601
     assert _ids(env, "u-a") == ["unread"]
+
+
+def test_a_vanished_recipient_s_unread_items_keep_its_repo_retention(
+    env: Env, clock: Clock
+) -> None:
+    cfg = env.rig.cfg
+    cfg._orchestration_view = OrchestrationView(repo=RepoOrchestration(message_retention_days=60))
+    env.rig.configs.return_value = {"proj": cfg}
+    env.set(_orch("other-orch", "u-a"))
+    _put(env, "u-gone", "proj-gone", "unread-40", 40, acked=False)
+    _put(env, "u-gone", "proj-gone", "unread-70", 70, acked=False)
+    for _ in range(3):
+        env.tick()
+        clock.t += 3601
+    assert _ids(env, "u-gone") == ["unread-40"]
 
 
 def test_empty_listing_never_purges_vanished(env: Env, clock: Clock) -> None:

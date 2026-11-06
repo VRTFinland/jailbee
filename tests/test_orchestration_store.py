@@ -122,6 +122,13 @@ def test_purge_uuids(st: BrokerStore) -> None:
     assert len(st.history("a")) == 1 and st.get_digest_at("a") == 1.0
 
 
+def test_recipient_names_takes_the_newest_item(st: BrokerStore) -> None:
+    st.insert_item("a", "old-name", msg("1"), now=1.0)
+    st.insert_item("a", "new-name", msg("2"), now=2.0)
+    st.record_request("b", "r", digest=None, state="s", detail="", item=None, now=1.0)
+    assert st.recipient_names({"a", "b", "c"}) == {"a": "new-name"}
+
+
 def test_purge_uuids_keeps_young_unacked_items(st: BrokerStore) -> None:
     st.insert_item("b", "fb", msg("old"), now=1.0)
     st.insert_item("b", "fb", msg("young"), now=100.0)

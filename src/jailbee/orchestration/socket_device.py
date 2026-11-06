@@ -71,8 +71,11 @@ def attach(incus: Incus, full: str, directory: Path, *, reassert: bool) -> None:
     )
 
 
-def detach(incus: Incus, full: str) -> None:
-    incus.config_device_remove(full, ORCHESTRATION_DEVICE, missing_ok=True)
+def detach(incus: Incus, full: str, *, project: str | None = None) -> None:
+    if project is None:
+        incus.config_device_remove(full, ORCHESTRATION_DEVICE, missing_ok=True)
+    else:
+        incus.config_device_remove(full, ORCHESTRATION_DEVICE, missing_ok=True, project=project)
 
 
 def has_device(entry: Mapping[str, object]) -> bool:
