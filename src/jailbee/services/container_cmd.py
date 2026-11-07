@@ -20,7 +20,10 @@ from jailbee.services.cli_launch import LaunchCommand, request
 if TYPE_CHECKING:
     from jailbee.services.runtime import RunReport, ServiceRuntime
 
-service_app = typer.Typer(invoke_without_command=True)
+service_app = typer.Typer(
+    invoke_without_command=True,
+    help="Manage this repository's configured services; bare `service` lists them.",
+)
 
 
 def _runtime(repo: Path | None) -> ServiceRuntime:
@@ -44,9 +47,13 @@ def _runtime(repo: Path | None) -> ServiceRuntime:
 @service_app.callback()
 def group(
     ctx: Context,
-    repo: Annotated[Path | None, typer.Option("--repo")] = None,
-    json_output: Annotated[bool, typer.Option("--json")] = False,
+    repo: Annotated[
+        Path | None,
+        typer.Option("--repo", help="Repository whose services to use (default: this one)."),
+    ] = None,
+    json_output: Annotated[bool, typer.Option("--json", help="Print JSON.")] = False,
 ) -> None:
+    """Manage this repository's configured services; bare `service` lists them."""
     ctx.obj = repo
     if ctx.invoked_subcommand is None:
         _list(_runtime(repo), json_output)
@@ -63,7 +70,10 @@ def _list(rt: ServiceRuntime, json_output: bool) -> None:
 
 
 @service_app.command("ls")
-def ls(ctx: Context, json_output: Annotated[bool, typer.Option("--json")] = False) -> None:
+def ls(
+    ctx: Context, json_output: Annotated[bool, typer.Option("--json", help="Print JSON.")] = False
+) -> None:
+    """List services with state, tmux window and detail."""
     _list(_runtime(ctx.obj), json_output)
 
 
@@ -100,15 +110,22 @@ def _report(report: RunReport) -> None:
 @service_app.command()
 def wait(
     ctx: Context,
-    names: Annotated[list[str] | None, typer.Argument()] = None,
+    names: Annotated[
+        list[str] | None, typer.Argument(help="Service names; prompted for when omitted.")
+    ] = None,
     until: Annotated[
         Literal["stopped", "starting", "ready", "failed", "exited", "unhealthy"],
-        typer.Option("--until"),
+        typer.Option("--until", help="State to wait for."),
     ] = "ready",
-    timeout: Annotated[float, typer.Option("--timeout", min=0)] = 0,
-    interval: Annotated[float, typer.Option("--interval", min=1)] = 10,
-    json_output: Annotated[bool, typer.Option("--json")] = False,
+    timeout: Annotated[
+        float, typer.Option("--timeout", min=0, help="Give up after this many seconds; 0 waits.")
+    ] = 0,
+    interval: Annotated[
+        float, typer.Option("--interval", min=1, help="Seconds between status checks.")
+    ] = 10,
+    json_output: Annotated[bool, typer.Option("--json", help="Print the result as JSON.")] = False,
 ) -> None:
+    """Wait until services reach a state (default ready); exit nonzero on timeout."""
     rt = _runtime(ctx.obj)
     selected = _names(rt, names)
     code, item = rt.wait(selected, until, timeout=timeout, interval=interval)
@@ -124,11 +141,21 @@ def wait(
 @service_app.command(cls=LaunchCommand)
 def start(
     ctx: Context,
-    names: Annotated[list[str] | None, typer.Argument()] = None,
-    env: Annotated[list[str] | None, typer.Option("--env")] = None,
-    persist: Annotated[bool, typer.Option("--persist")] = False,
-    reset: Annotated[bool, typer.Option("--reset-args")] = False,
+    names: Annotated[
+        list[str] | None, typer.Argument(help="Service names; prompted for when omitted.")
+    ] = None,
+    env: Annotated[
+        list[str] | None,
+        typer.Option("--env", help="Environment KEY=VALUE for this run; repeatable."),
+    ] = None,
+    persist: Annotated[
+        bool, typer.Option("--persist", help="Keep the --env and -- args for later runs.")
+    ] = False,
+    reset: Annotated[
+        bool, typer.Option("--reset-args", help="Clear persisted args and env first.")
+    ] = False,
 ) -> None:
+    """Start services and their dependencies; args after -- go to a single service."""
     launch = request(ctx, names, env, persist, reset)
     rt = _runtime(ctx.obj)
     try:
@@ -139,7 +166,13 @@ def start(
 
 
 @service_app.command()
-def stop(ctx: Context, names: Annotated[list[str] | None, typer.Argument()] = None) -> None:
+def stop(
+    ctx: Context,
+    names: Annotated[
+        list[str] | None, typer.Argument(help="Service names; prompted for when omitted.")
+    ] = None,
+) -> None:
+    """Stop services."""
     rt = _runtime(ctx.obj)
     _report(rt.stop(_names(rt, names, destructive=True)))
 
@@ -147,11 +180,21 @@ def stop(ctx: Context, names: Annotated[list[str] | None, typer.Argument()] = No
 @service_app.command(cls=LaunchCommand)
 def restart(
     ctx: Context,
-    names: Annotated[list[str] | None, typer.Argument()] = None,
-    env: Annotated[list[str] | None, typer.Option("--env")] = None,
-    persist: Annotated[bool, typer.Option("--persist")] = False,
-    reset: Annotated[bool, typer.Option("--reset-args")] = False,
+    names: Annotated[
+        list[str] | None, typer.Argument(help="Service names; prompted for when omitted.")
+    ] = None,
+    env: Annotated[
+        list[str] | None,
+        typer.Option("--env", help="Environment KEY=VALUE for this run; repeatable."),
+    ] = None,
+    persist: Annotated[
+        bool, typer.Option("--persist", help="Keep the --env and -- args for later runs.")
+    ] = False,
+    reset: Annotated[
+        bool, typer.Option("--reset-args", help="Clear persisted args and env first.")
+    ] = False,
 ) -> None:
+    """Restart services; args after -- go to a single service."""
     launch = request(ctx, names, env, persist, reset)
     rt = _runtime(ctx.obj)
     try:
@@ -162,7 +205,13 @@ def restart(
 
 
 @service_app.command("refresh")
-def refresh_cmd(ctx: Context, names: Annotated[list[str] | None, typer.Argument()] = None) -> None:
+def refresh_cmd(
+    ctx: Context,
+    names: Annotated[
+        list[str] | None, typer.Argument(help="Service names; prompted for when omitted.")
+    ] = None,
+) -> None:
+    """Run preparation steps and restart services; refuses if elevated access is needed."""
     from jailbee.services import refresh
 
     rt = _runtime(ctx.obj)
@@ -177,10 +226,15 @@ def refresh_cmd(ctx: Context, names: Annotated[list[str] | None, typer.Argument(
 @service_app.command()
 def plan(
     ctx: Context,
-    names: Annotated[list[str] | None, typer.Argument()] = None,
-    op: Annotated[Literal["start", "restart", "refresh"], typer.Option("--op")] = "start",
-    json_output: Annotated[bool, typer.Option("--json")] = False,
+    names: Annotated[
+        list[str] | None, typer.Argument(help="Service names; prompted for when omitted.")
+    ] = None,
+    op: Annotated[
+        Literal["start", "restart", "refresh"], typer.Option("--op", help="Operation to plan.")
+    ] = "start",
+    json_output: Annotated[bool, typer.Option("--json", help="Print compact JSON.")] = False,
 ) -> None:
+    """Show the ordered steps an operation would run, without running them."""
     from jailbee.services import graph
 
     rt = _runtime(ctx.obj)
@@ -200,9 +254,15 @@ def plan(
 @service_app.command()
 def logs(
     ctx: Context,
-    name: Annotated[str | None, typer.Argument()] = None,
-    lines: Annotated[int, typer.Option("-n", min=1)] = 30,
-    follow: Annotated[bool, typer.Option("--follow")] = False,
+    name: Annotated[
+        str | None, typer.Argument(help="Service name; prompted for when omitted.")
+    ] = None,
+    lines: Annotated[
+        int, typer.Option("-n", min=1, help="Number of lines (matches with --grep).")
+    ] = 30,
+    follow: Annotated[
+        bool, typer.Option("--follow", help="Stream new output until interrupted.")
+    ] = False,
     grep: Annotated[
         list[str] | None,
         typer.Option("--grep", help="Select log lines matching this regex; repeat to combine."),
@@ -227,6 +287,7 @@ def logs(
         float | None, typer.Option("--timeout", help="Wait timeout in seconds; 0 is unlimited.")
     ] = None,
 ) -> None:
+    """Show a service's tmux scrollback; filter, wait for a pattern or follow."""
     if timeout is not None and (wait_pattern is None or not math.isfinite(timeout) or timeout < 0):
         typer.echo("--timeout requires --wait and a finite nonnegative value", err=True)
         raise typer.Exit(2)

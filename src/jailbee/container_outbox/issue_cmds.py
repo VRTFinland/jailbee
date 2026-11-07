@@ -12,7 +12,28 @@ import typer
 from jailbee.container_outbox import gh
 from jailbee.container_outbox.store import OutboxCommandError, Store
 
-issue_app = typer.Typer(no_args_is_help=True)
+issue_app = typer.Typer(
+    no_args_is_help=True,
+    help=(
+        "Stage GitHub issue changes in the outbox; the host operator publishes them "
+        "(the container's gh is read-only)."
+    ),
+)
+
+IssueArg = Annotated[
+    str | None,
+    typer.Argument(help="Issue number, or @REF for a create staged earlier in the same batch."),
+]
+RepoOpt = Annotated[
+    str,
+    typer.Option(help="Repository: a checkout path, github:OWNER/NAME, or . for this one."),
+]
+BatchOpt = Annotated[
+    str | None,
+    typer.Option(help="Append to the draft batch NAME instead of staging now; see outbox submit."),
+]
+BodyOpt = Annotated[str | None, typer.Option(help="Text, inline.")]
+BodyFileOpt = Annotated[Path | None, typer.Option(help="Read the text from this file.")]
 
 
 def _target(target: int | str) -> dict[str, object]:
@@ -261,14 +282,19 @@ def _run(fn: Callable[[], None]) -> None:
 
 @issue_app.command("create")
 def create(
-    title: Annotated[str | None, typer.Option()] = None,
-    body: Annotated[str | None, typer.Option()] = None,
-    body_file: Annotated[Path | None, typer.Option()] = None,
-    label: Annotated[list[str] | None, typer.Option()] = None,
-    repo: str = ".",
-    ref: str | None = None,
-    batch: str | None = None,
+    title: Annotated[str | None, typer.Option(help="Issue title (required).")] = None,
+    body: BodyOpt = None,
+    body_file: BodyFileOpt = None,
+    label: Annotated[list[str] | None, typer.Option(help="Label to add; repeatable.")] = None,
+    repo: RepoOpt = ".",
+    ref: Annotated[
+        str | None,
+        typer.Option(help="Name for later batch actions to target as @REF (default: issue)."),
+    ] = None,
+    batch: BatchOpt = None,
 ) -> None:
+    """Stage a new issue; give the body with --body or --body-file."""
+
     def run() -> None:
         store = _guard()
         if not title:
@@ -287,13 +313,15 @@ def create(
 
 @issue_app.command("edit")
 def edit(
-    issue: Annotated[str | None, typer.Argument()] = None,
-    title: Annotated[str | None, typer.Option()] = None,
-    body: Annotated[str | None, typer.Option()] = None,
-    body_file: Annotated[Path | None, typer.Option()] = None,
-    repo: str = ".",
-    batch: str | None = None,
+    issue: IssueArg = None,
+    title: Annotated[str | None, typer.Option(help="New title.")] = None,
+    body: BodyOpt = None,
+    body_file: BodyFileOpt = None,
+    repo: RepoOpt = ".",
+    batch: BatchOpt = None,
 ) -> None:
+    """Stage a title and/or body replacement for an issue."""
+
     def run() -> None:
         store = _guard()
         target = _parse_target(issue)
@@ -312,12 +340,14 @@ def edit(
 
 @issue_app.command("comment")
 def comment(
-    issue: Annotated[str | None, typer.Argument()] = None,
-    body: Annotated[str | None, typer.Option()] = None,
-    body_file: Annotated[Path | None, typer.Option()] = None,
-    repo: str = ".",
-    batch: str | None = None,
+    issue: IssueArg = None,
+    body: BodyOpt = None,
+    body_file: BodyFileOpt = None,
+    repo: RepoOpt = ".",
+    batch: BatchOpt = None,
 ) -> None:
+    """Stage a comment on an issue."""
+
     def run() -> None:
         store = _guard()
         target = _parse_target(issue)
@@ -330,12 +360,14 @@ def comment(
 
 @issue_app.command("labels")
 def labels(
-    issue: Annotated[str | None, typer.Argument()] = None,
-    add: Annotated[list[str] | None, typer.Option()] = None,
-    remove: Annotated[list[str] | None, typer.Option()] = None,
-    repo: str = ".",
-    batch: str | None = None,
+    issue: IssueArg = None,
+    add: Annotated[list[str] | None, typer.Option(help="Label to add; repeatable.")] = None,
+    remove: Annotated[list[str] | None, typer.Option(help="Label to remove; repeatable.")] = None,
+    repo: RepoOpt = ".",
+    batch: BatchOpt = None,
 ) -> None:
+    """Stage label additions and removals for an issue."""
+
     def run() -> None:
         store = _guard()
         target = _parse_target(issue)
@@ -349,14 +381,24 @@ def labels(
 
 @issue_app.command("assign")
 def assign(
-    issue: Annotated[str | None, typer.Argument()] = None,
-    me: Annotated[bool, typer.Option("--me")] = False,
-    add: Annotated[list[str] | None, typer.Option()] = None,
-    remove: Annotated[list[str] | None, typer.Option()] = None,
-    unassign_me: Annotated[bool, typer.Option("--unassign-me")] = False,
-    repo: str = ".",
-    batch: str | None = None,
+    issue: IssueArg = None,
+    me: Annotated[
+        bool, typer.Option("--me", help="Assign the publishing account (resolved on the host).")
+    ] = False,
+    add: Annotated[
+        list[str] | None, typer.Option(help="GitHub login to assign; repeatable.")
+    ] = None,
+    remove: Annotated[
+        list[str] | None, typer.Option(help="GitHub login to unassign; repeatable.")
+    ] = None,
+    unassign_me: Annotated[
+        bool, typer.Option("--unassign-me", help="Unassign the publishing account.")
+    ] = False,
+    repo: RepoOpt = ".",
+    batch: BatchOpt = None,
 ) -> None:
+    """Stage assignee changes for an issue; give at least one of the flags."""
+
     def run() -> None:
         store = _guard()
         target = _parse_target(issue)
@@ -373,12 +415,17 @@ def assign(
 
 @issue_app.command("state")
 def state(
-    issue: Annotated[str | None, typer.Argument()] = None,
-    state: Annotated[str | None, typer.Argument()] = None,
-    reason: str | None = None,
-    repo: str = ".",
-    batch: str | None = None,
+    issue: IssueArg = None,
+    state: Annotated[str | None, typer.Argument(help="New state: open or closed.")] = None,
+    reason: Annotated[
+        str | None,
+        typer.Option(help="Close reason, e.g. completed or not_planned; reopened for open."),
+    ] = None,
+    repo: RepoOpt = ".",
+    batch: BatchOpt = None,
 ) -> None:
+    """Stage closing or reopening an issue."""
+
     def run() -> None:
         store = _guard()
         target = _parse_target(issue)

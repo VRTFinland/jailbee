@@ -8,11 +8,25 @@ from uuid import uuid4
 import typer
 
 from jailbee.container_outbox import bindings, gh
-from jailbee.container_outbox.issue_cmds import _body, _guard, _run
+from jailbee.container_outbox.issue_cmds import BatchOpt, BodyFileOpt, BodyOpt, _body, _guard, _run
 from jailbee.container_outbox.store import OutboxCommandError, Store
 
-pr_app = typer.Typer(no_args_is_help=True)
-review_app = typer.Typer(no_args_is_help=True)
+pr_app = typer.Typer(
+    no_args_is_help=True,
+    help=(
+        "Stage pull request comments, replies and descriptions in the outbox; the host "
+        "operator publishes them (the container's gh is read-only)."
+    ),
+)
+review_app = typer.Typer(
+    no_args_is_help=True,
+    help="Build an inline review draft (comments plus a verdict body) and stage it.",
+)
+PrArg = Annotated[
+    str | None,
+    typer.Argument(help="PR number; omit to use the PR bound to this container."),
+]
+RepoOpt = Annotated[str | None, typer.Option(help="Repository as OWNER/NAME.")]
 pr_app.add_typer(review_app, name="review")
 
 
@@ -127,12 +141,16 @@ def _stage(
 
 @pr_app.command("comment")
 def comment(
-    pr: Annotated[str | None, typer.Argument()] = None,
-    body: str | None = None,
-    body_file: Path | None = None,
-    reply_to: int | None = None,
-    batch: str | None = None,
+    pr: PrArg = None,
+    body: BodyOpt = None,
+    body_file: BodyFileOpt = None,
+    reply_to: Annotated[
+        int | None, typer.Option(help="Reply to this review comment ID instead of commenting.")
+    ] = None,
+    batch: BatchOpt = None,
 ) -> None:
+    """Stage a general PR comment."""
+
     def run() -> None:
         store = _guard()
         text = _body(body, body_file, True)
@@ -148,12 +166,14 @@ def comment(
 
 @pr_app.command("reply")
 def reply(
-    pr: Annotated[str | None, typer.Argument()] = None,
-    to: int | None = None,
-    body: str | None = None,
-    body_file: Path | None = None,
-    batch: str | None = None,
+    pr: PrArg = None,
+    to: Annotated[int | None, typer.Option(help="ID of the review comment to reply to.")] = None,
+    body: BodyOpt = None,
+    body_file: BodyFileOpt = None,
+    batch: BatchOpt = None,
 ) -> None:
+    """Stage a reply to a review comment."""
+
     def run() -> None:
         store = _guard()
         if to is None:
@@ -183,17 +203,21 @@ def _description(title: str | None, text: str, branch: str | None) -> dict[str, 
 
 @pr_app.command("description")
 def description(
-    pr: Annotated[str | None, typer.Argument()] = None,
-    title: str | None = None,
-    body: str | None = None,
-    body_file: Path | None = None,
-    branch: str | None = None,
-    repo: str | None = None,
-    batch: str | None = None,
+    pr: PrArg = None,
+    title: Annotated[str | None, typer.Option(help="New PR title.")] = None,
+    body: Annotated[str | None, typer.Option(help="Replacement body, inline.")] = None,
+    body_file: Annotated[
+        Path | None, typer.Option(help="Read the replacement body from a file.")
+    ] = None,
+    branch: Annotated[str | None, typer.Option(help="Branch the description applies to.")] = None,
+    repo: RepoOpt = None,
+    batch: BatchOpt = None,
     new: Annotated[
         bool, typer.Option(help="Stage for an unbound container, not force-create a PR.")
     ] = False,
 ) -> None:
+    """Stage a PR title and body replacement (a body is required)."""
+
     def run() -> None:
         store = _guard()
         if new and pr is not None:
@@ -230,14 +254,18 @@ def description(
 
 @review_app.command("add")
 def review_add(
-    pr: Annotated[str | None, typer.Argument()] = None,
-    file: str | None = None,
-    line: int | None = None,
-    start_line: int | None = None,
-    side: str = "RIGHT",
-    body: str | None = None,
-    body_file: Path | None = None,
+    pr: PrArg = None,
+    file: Annotated[str | None, typer.Option(help="Path of the file in the diff.")] = None,
+    line: Annotated[int | None, typer.Option(help="Line to comment on.")] = None,
+    start_line: Annotated[
+        int | None, typer.Option(help="First line of a multi-line comment; before --line.")
+    ] = None,
+    side: Annotated[str, typer.Option(help="Diff side: RIGHT (new) or LEFT (old).")] = "RIGHT",
+    body: BodyOpt = None,
+    body_file: BodyFileOpt = None,
 ) -> None:
+    """Add an inline comment to the review draft for a PR."""
+
     def run() -> None:
         store = _guard()
         if not file:
@@ -285,10 +313,14 @@ def review_add(
 
 @review_app.command("submit")
 def review_submit(
-    pr: Annotated[str | None, typer.Argument()] = None,
-    body: str | None = None,
-    body_file: Path | None = None,
+    pr: PrArg = None,
+    body: Annotated[str | None, typer.Option(help="Review summary, inline.")] = None,
+    body_file: Annotated[
+        Path | None, typer.Option(help="Read the review summary from a file.")
+    ] = None,
 ) -> None:
+    """Stage the review draft with an optional summary body."""
+
     def run() -> None:
         store = _guard()
         text = _body(body, body_file, False)
@@ -315,7 +347,9 @@ def review_submit(
 
 
 @review_app.command("discard")
-def review_discard(pr: Annotated[str | None, typer.Argument()] = None) -> None:
+def review_discard(pr: PrArg = None) -> None:
+    """Discard the review draft for a PR."""
+
     def run() -> None:
         store = _guard()
         view = _view(pr)
@@ -333,16 +367,20 @@ def review_discard(pr: Annotated[str | None, typer.Argument()] = None) -> None:
 
 @pr_app.command("source")
 def source(
-    ref: Annotated[str | None, typer.Option("--ref", "--head")] = None,
-    sha: str | None = None,
-    base: str | None = None,
-    pr: str | None = None,
-    title: str | None = None,
-    body: str | None = None,
-    body_file: Path | None = None,
-    branch: str | None = None,
-    repo: str | None = None,
+    ref: Annotated[
+        str | None, typer.Option("--ref", "--head", help="Branch or ref to open the PR from.")
+    ] = None,
+    sha: Annotated[str | None, typer.Option(help="Commit the source ref must point at.")] = None,
+    base: Annotated[str | None, typer.Option(help="Base branch of the PR.")] = None,
+    pr: Annotated[str | None, typer.Option(help="Existing PR number to update.")] = None,
+    title: Annotated[str | None, typer.Option(help="PR title.")] = None,
+    body: Annotated[str | None, typer.Option(help="PR body, inline.")] = None,
+    body_file: Annotated[Path | None, typer.Option(help="Read the PR body from a file.")] = None,
+    branch: Annotated[str | None, typer.Option(help="Branch the description applies to.")] = None,
+    repo: RepoOpt = None,
 ) -> None:
+    """Stage a PR source manifest; the host pushes the ref and opens or updates the PR."""
+
     def run() -> None:
         store = _guard()
         if not ref:

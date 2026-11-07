@@ -9,7 +9,15 @@ import typer
 from jailbee.container_outbox.issue_cmds import _guard, _run
 from jailbee.container_outbox.store import Kind, OutboxCommandError, Store
 
-outbox_app = typer.Typer(no_args_is_help=True)
+outbox_app = typer.Typer(
+    no_args_is_help=True,
+    help="Inspect and manage staged issue/PR proposals; the host operator publishes them.",
+)
+TargetArg = Annotated[str | None, typer.Argument(help="Staged item as issue/NAME or pr/NAME.")]
+DraftArg = Annotated[str | None, typer.Argument(help="Draft batch name.")]
+KindOpt = Annotated[
+    str | None, typer.Option(help="issue or pr; needed if both have a draft of that name.")
+]
 
 
 def _target(value: str | None) -> tuple[Kind, str]:
@@ -36,7 +44,11 @@ def _resolve(store: Store, name: str | None, kind: str | None) -> tuple[Kind, st
 
 
 @outbox_app.command("ls")
-def ls(as_json: Annotated[bool, typer.Option("--json")] = False) -> None:
+def ls(
+    as_json: Annotated[bool, typer.Option("--json", help="Print one JSON document.")] = False,
+) -> None:
+    """List staged proposals and open draft batches."""
+
     def run() -> None:
         store = Store(Path.home())
         data: dict[str, list[dict[str, object]]] = {"issue": [], "pr": [], "drafts": []}
@@ -56,7 +68,9 @@ def ls(as_json: Annotated[bool, typer.Option("--json")] = False) -> None:
 
 
 @outbox_app.command("show")
-def show(target: Annotated[str | None, typer.Argument()] = None) -> None:
+def show(target: TargetArg = None) -> None:
+    """Print a staged proposal."""
+
     def run() -> None:
         kind, name = _target(target)
         typer.echo(Store(Path.home()).show(kind, name))
@@ -65,7 +79,9 @@ def show(target: Annotated[str | None, typer.Argument()] = None) -> None:
 
 
 @outbox_app.command("drop")
-def drop(target: Annotated[str | None, typer.Argument()] = None) -> None:
+def drop(target: TargetArg = None) -> None:
+    """Remove a staged proposal that is not yet published."""
+
     def run() -> None:
         store = _guard()
         kind, name = _target(target)
@@ -89,8 +105,8 @@ def _not_review(
 
 
 @outbox_app.command("submit")
-def submit(name: Annotated[str | None, typer.Argument()] = None, kind: str | None = None) -> None:
-    """Submit a batch; review drafts require jailbee pr review submit."""
+def submit(name: DraftArg = None, kind: KindOpt = None) -> None:
+    """Stage a draft batch for publishing; review drafts need pr review submit."""
 
     def run() -> None:
         store = _guard()
@@ -104,7 +120,9 @@ def submit(name: Annotated[str | None, typer.Argument()] = None, kind: str | Non
 
 
 @outbox_app.command("discard")
-def discard(name: Annotated[str | None, typer.Argument()] = None, kind: str | None = None) -> None:
+def discard(name: DraftArg = None, kind: KindOpt = None) -> None:
+    """Discard a draft batch without staging it."""
+
     def run() -> None:
         store = _guard()
         domain, draft = _resolve(store, name, kind)
