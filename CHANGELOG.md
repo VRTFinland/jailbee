@@ -23,6 +23,11 @@ before editing `## Unreleased`.
 ### Fixed
 
 - A child's own subagents no longer message the orchestrator: the `jailbee-orchestration-child` skill and the child spawn prompt say subagents report only to the child's agent, and that the child's agent runs long builds and tests itself as its container's controller.
+- A broker `stop` whose clean shutdown runs out of its 120s budget now forces the child off and reports `done`, saying the stop was forced, instead of refusing and leaving a child only the host could stop.
+- A `spawn --new --base` whose base does not resolve is refused at once instead of being queued and failing at creation.
+- A reply to a relayed message now carries the id the recipient gave its own message in `in_reply_to`, whether the replier names the host item id or the original one; relayed items show that original id as `origin_id`.
+- The broker no longer logs a traceback every round for a child Incus reports as busy; repeated per-child failures are logged once until they clear.
+- `jailbee orchestrate show` prints the publish grant once, and container usage lines name `jailbee` instead of `python -m jailbee.container_main`.
 
 ## 1.8.3 - 2026-11-05
 
