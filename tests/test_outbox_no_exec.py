@@ -310,9 +310,9 @@ def _host_teardown(cfg: Any, incus: Any) -> object:
 def _repo_remove(cfg: Any, incus: Any) -> object:
     from sqlmodel import Session
 
-    from tests.conftest import memory_engine
     from jailbee.outbox import sent
     from jailbee.repo_remove import RemovalPlan, execute_removal
+    from tests.conftest import memory_engine
 
     _seed_sent(cfg)
     plan = RemovalPlan(cfg.container_prefix, None, [], [], [], [], [], None, {}, [], [], [])
