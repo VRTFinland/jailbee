@@ -123,8 +123,8 @@ class Client:
         while True:
             newline = buffer.find(b"\n")
             if newline >= 0:
-                line = bytes(buffer[:newline + 1])
-                del buffer[:newline + 1]
+                line = bytes(buffer[: newline + 1])
+                del buffer[: newline + 1]
                 if len(line) > wire.MAX_LINE_BYTES:
                     raise wire.WireError(wire.BAD_REQUEST, "keepalive frame too large")
                 return line

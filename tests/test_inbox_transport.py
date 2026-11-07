@@ -289,13 +289,15 @@ def test_keepalive_resets_outage_only_after_broker_progress():
         now[0] += seconds
 
     assert call_next(Stub, {}, timeout=None, clock=lambda: now[0], sleep=sleep) == {
-        "kind": "message", "id": "ready"
+        "kind": "message",
+        "id": "ready",
     }
     assert len(attempts) == 3
 
 
 def test_client_ignores_keepalive_until_final_wake(monkeypatch):
     monkeypatch.setattr(transport.time, "monotonic", lambda: 0.0)
+
     class Socket:
         def __init__(self):
             self.timeouts = []
@@ -312,11 +314,13 @@ def test_client_ignores_keepalive_until_final_wake(monkeypatch):
         def close(self):
             pass
 
-    frames = iter([
-        wire.encode_response(wire.ok({"kind": "keepalive"})),
-        wire.encode_response(wire.ok({"kind": "keepalive"})),
-        wire.encode_response(wire.ok({"kind": "message", "id": "ready"})),
-    ])
+    frames = iter(
+        [
+            wire.encode_response(wire.ok({"kind": "keepalive"})),
+            wire.encode_response(wire.ok({"kind": "keepalive"})),
+            wire.encode_response(wire.ok({"kind": "message", "id": "ready"})),
+        ]
+    )
     sock = Socket()
     client = Client("unused")
     client._sock = sock
@@ -325,7 +329,8 @@ def test_client_ignores_keepalive_until_final_wake(monkeypatch):
     client.on_keepalive = lambda: next(budgets)
     try:
         assert client.call("next", {"keepalive": True}, timeout=40) == {
-            "kind": "message", "id": "ready"
+            "kind": "message",
+            "id": "ready",
         }
         assert sock.timeouts == [40, 40, 35, 35, 25, 25]
     finally:
@@ -399,6 +404,7 @@ def test_reconnect_connect_timeout_respects_remaining_budget(monkeypatch, deadli
             pass
 
     count = [0]
+
     def factory():
         count[0] += 1
         return Dropped() if count[0] == 1 else Client("unused")
@@ -477,7 +483,8 @@ def test_reconnect_resolves_socket_path_again(path, sockdir, monkeypatch):
 
     try:
         assert call_next(socket_cli._factory, {}, timeout=None, sleep=sleep) == {
-            "kind": "message", "id": "moved"
+            "kind": "message",
+            "id": "moved",
         }
         assert len(old_server.requests) == len(new_server.requests) == 1
     finally:
