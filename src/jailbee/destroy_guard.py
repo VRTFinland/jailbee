@@ -121,6 +121,15 @@ def _nothing_measurable(status: GitStatus) -> bool:
     )
 
 
+def _outbox_reasons(pr: int | None, issue: int | None) -> list[str]:
+    reasons: list[str] = []
+    if pr:
+        reasons.append(f"{pr} unapplied PR action{'s' if pr != 1 else ''}")
+    if issue:
+        reasons.append(f"{issue} unapplied issue action{'s' if issue != 1 else ''}")
+    return reasons
+
+
 @dataclass(frozen=True)
 class RiskSummary:
     """What a destroy would discard, and how to say it in one line."""
@@ -149,7 +158,10 @@ def assess(cfg: Config, ci: ContainerInfo) -> RiskSummary | None:
     """
     status = ci.git_status
     if status is None:
-        return None
+        # Git state unmeasured, but the outbox lives in the host store and is
+        # counted for every container, whatever its state or mount mode.
+        only = _outbox_reasons(ci.outbox_pr, ci.outbox_issue)
+        return RiskSummary(container=ci.display_name, reasons=tuple(only)) if only else None
 
     if _nothing_measurable(status):
         return RiskSummary(container=ci.display_name, reasons=(_NOTHING_MEASURABLE_REASON,))
@@ -161,21 +173,10 @@ def assess(cfg: Config, ci: ContainerInfo) -> RiskSummary | None:
 
     reasons.extend(_submodule_reason(sub) for sub in status.submodules)
 
-    # The outbox lives in the container's own filesystem, so a destroy takes
-    # any written-but-unpublished review with it. Deliberately generic: the
-    # count is manifests, which may hold comments, a description for
-    # `jailbee pr`, or both — the guard's job is to say something would be
-    # lost, not to itemise it.
-    pending = status.pending_pr_actions
-    if pending:
-        reasons.append(f"{pending} unapplied PR action{'s' if pending != 1 else ''}")
-
-    # Same rationale, for staged issue proposals in the host outbox store.
-    pending_issues = status.pending_issue_actions
-    if pending_issues:
-        reasons.append(
-            f"{pending_issues} unapplied issue action{'s' if pending_issues != 1 else ''}"
-        )
+    # Staged proposals live in the host outbox store, and a destroy deletes
+    # them. Deliberately generic: the count is manifests, which may hold
+    # comments, a description for `jailbee pr`, or both.
+    reasons.extend(_outbox_reasons(status.pending_pr_actions, status.pending_issue_actions))
 
     # Commits are only at risk when they exist nowhere else: not on the
     # host (any earlier `jailbee git pull` put them there) and not behind a

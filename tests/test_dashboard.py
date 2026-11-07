@@ -1049,6 +1049,7 @@ def test_menu_actions_stopped():
     actions = dmenus.menu_actions(_ctx(state="Stopped"))
     assert [a for _, a in actions] == [
         "start",
+        "outbox browse",
         "pr bind",
         "rename",
         "mem",
@@ -1299,6 +1300,7 @@ def test_menu_actions_stopped_includes_open_pr_when_pr_known():
     actions = dmenus.menu_actions(_ctx(state="Stopped", pr_number=7))
     assert actions == [
         ("Start", "start"),
+        ("Outbox", "outbox browse"),
         ("Open PR", "pr open"),
         ("Bind to PR…", "pr bind"),
         ("Unbind PR #7", "pr unbind"),
@@ -1309,6 +1311,7 @@ def test_menu_actions_stopped_includes_open_pr_when_pr_known():
     ]
     assert dmenus.group_menu_actions(actions, include_network=True) == [
         ("Start", "start"),
+        ("Outbox", "outbox browse"),
         dmenus.MenuGroup(
             "PR →",
             (
@@ -1557,8 +1560,27 @@ def test_menu_has_one_outbox_unless_both_outboxes_are_empty(count, mode):
     )
     assert [v for _, v in actions].count("outbox browse") == 1
     assert not {"review apply", "issue apply"} & {v for _, v in actions}
-    for ctx in (_ctx(state="Stopped", mode=mode), _ctx(has_repo=False, mode=mode)):
-        assert "outbox browse" not in {v for _, v in dmenus.menu_actions(ctx)}
+    stopped = dmenus.menu_actions(_ctx(state="Stopped", mode=mode))
+    assert "outbox browse" in {v for _, v in stopped}
+    orphan = dmenus.menu_actions(_ctx(has_repo=False, mode=mode))
+    assert "outbox browse" not in {v for _, v in orphan}
+
+
+def test_a_stopped_container_offers_its_outbox_with_the_store_count():
+    actions = dmenus.menu_actions(_ctx(state="Stopped", outbox_pr=1, outbox_issue=2))
+    assert actions[:3] == [
+        ("Start", "start"),
+        ("Outbox (3 pending)", "outbox browse"),
+        ("Clear outbox\u2026", "outbox clear"),
+    ]
+
+
+def test_a_stopped_container_with_an_empty_outbox_does_not_offer_it():
+    empty = {"outbox_pr": 0, "outbox_issue": 0}
+    verbs = [v for _, v in dmenus.menu_actions(_ctx(state="Stopped", **empty))]
+    assert "outbox browse" not in verbs
+    sent = dmenus.menu_actions(_ctx(state="Stopped", sent_count=2, **empty))
+    assert ("Outbox", "outbox browse") in sent
 
 
 @pytest.mark.parametrize("mode", ["clone", "mount"])
@@ -1692,7 +1714,15 @@ def test_menu_actions_mount_mode_has_no_workflow_verbs():
 
 def test_menu_actions_stopped_has_no_workflow_verbs():
     verbs = [v for _, v in dmenus.menu_actions(_ctx(state="Stopped"))]
-    assert verbs == ["start", "pr bind", "rename", "mem", "net egress ls", "destroy"]
+    assert verbs == [
+        "start",
+        "outbox browse",
+        "pr bind",
+        "rename",
+        "mem",
+        "net egress ls",
+        "destroy",
+    ]
 
 
 def test_menu_actions_hides_git_pull_when_nothing_is_ahead():
@@ -1888,6 +1918,7 @@ def test_menu_hotkeys_on_a_stopped_row_keep_destroy_capital():
 
     assert _hotkeys(menu) == {
         "Start": "s",
+        "Outbox": "o",
         "PR →": "p",
         "Rename…": "R",
         "Memory: unknown…": "z",

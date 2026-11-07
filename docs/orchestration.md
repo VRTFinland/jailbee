@@ -31,7 +31,7 @@ it offers the combined work as a pull request through the existing
 [PR outbox](commands.md), which a human publishes.
 
 The container never gets host access. Every action is a manifest the agent
-writes into an outbox directory in the container; a host-side
+sends through the container's broker socket; a host-side
 [broker](#the-broker) validates it against the grant and acts. Manifests are
 narrow, validated schemas, never shell strings.
 

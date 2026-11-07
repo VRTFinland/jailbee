@@ -49,6 +49,14 @@ one request in flight: the broker reads the next line only after answering the
 previous one (a parked `next` counts), and stops reading a connection whose
 replies the client is not collecting.
 
+An `outbox.put` line (and an `outbox.show` / `outbox.draft.show` reply) may be
+up to 8 MiB. The broker buffers or runs at most one such put per container at a
+time; another put from the same container waits, unread past 1 MiB, until the
+first is answered. A put from a container that may not stage (a child, or one
+whose role the broker could not establish) is answered with `refused` as soon
+as the line's head arrives; the rest of the line is read and discarded, never
+buffered or parsed.
+
 ### Envelopes
 
 A request carries the protocol version, an op and its arguments:
@@ -134,7 +142,9 @@ missing, refuses connections (broker stopped), or the connection drops without
 an answer and does not come back. `jailbee inbox wait` retries a dropped
 connection with backoff until its timeout. Every container command retries a
 refused or missing socket for 10 seconds (`JAILBEE_BROKER_RETRY_SECONDS`
-overrides it) before exiting 4. Any `send` with no reply before its timeout exits 3. The request may
+overrides it) before exiting 4; `jailbee inbox wait --timeout` shortens that
+window to its own timeout, and a reconnect's window also ends with the
+120-second outage bound. Any `send` with no reply before its timeout exits 3. The request may
 or may not have run: a disconnected request still queued for execution is
 dropped as flood defense. Inspect `jailbee inbox ls` and `jailbee inbox status`
 before resending with a new ID. A disconnect after handling began leaves the

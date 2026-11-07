@@ -72,6 +72,10 @@ class MenuContext:
     memory_limit: str | None = None
     memory_override: bool = False
     sent_count: int = 0
+    # Store counts (`ContainerInfo.outbox_pr` / `outbox_issue`); known for
+    # stopped and mount rows too, unlike `git_status`.
+    outbox_pr: int | None = None
+    outbox_issue: int | None = None
 
 
 @dataclass(frozen=True)
@@ -243,19 +247,35 @@ def _has_diff_to_show(git: GitStatus | None) -> bool:
     return not (git.wt == _NO_CHANGES and git.ahead_count == _NO_COMMITS)
 
 
-def _outbox_pending(git: GitStatus | None) -> int | None:
-    """Manifests waiting in the PR and issue outboxes, or None when unprobed."""
-    if git is None:
-        return None
-    counts = (git.pending_pr_actions, git.pending_issue_actions)
+def _outbox_counts(ctx: MenuContext) -> tuple[int | None, int | None]:
+    """(PR, issue) manifests waiting in the host store; None = unknown.
+
+    The row's own store counts win: they exist for stopped and mount rows,
+    whose ``git_status`` is None. The probe's copy is the fallback.
+    """
+    git = ctx.git_status
+    pr = ctx.outbox_pr if ctx.outbox_pr is not None else git.pending_pr_actions if git else None
+    issue = (
+        ctx.outbox_issue
+        if ctx.outbox_issue is not None
+        else git.pending_issue_actions
+        if git
+        else None
+    )
+    return pr, issue
+
+
+def _outbox_pending(ctx: MenuContext) -> int | None:
+    """Manifests waiting in the PR and issue outboxes, or None when unknown."""
+    counts = _outbox_counts(ctx)
     if all(n is None for n in counts):
         return None
     return sum(n or 0 for n in counts)
 
 
-def _outbox_empty(git: GitStatus | None) -> bool:
-    """Whether the probe counted no manifest in *both* outboxes; unknown is not empty."""
-    return git is not None and git.pending_pr_actions == 0 and git.pending_issue_actions == 0
+def _outbox_empty(ctx: MenuContext) -> bool:
+    """Whether both outboxes are known to be empty; unknown is not empty."""
+    return _outbox_counts(ctx) == (0, 0)
 
 
 def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
@@ -279,7 +299,7 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     job diagnostics, PR leaves (including submodule PR when changes are probed),
     Git leaves, network modes and lifecycle actions.
     Git pull and diff are hidden when status proves they would do nothing;
-    unknown status still offers them. Stopped rows lead with Start, followed
+    unknown status still offers them. Stopped rows lead with Start and Outbox, followed
     by eligible diagnostics and Open PR, then Destroy.
 
     A review container — one carrying a PR that jailbee did not open from its
@@ -289,15 +309,16 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     the container's branch is upstream of, so the refresh could only be a
     no-op.
 
-    "Outbox" (``outbox browse``) is offered on addressable running containers,
-    including mount mode, unless the probe counted no manifest in both
-    outboxes and the container has no Sent records (``ctx.sent_count``); an
+    "Outbox" (``outbox browse``) is offered on addressable running and stopped
+    containers (its data is host-side), including mount mode, unless the probe
+    counted no manifest in both outboxes and the container has no Sent records
+    (``ctx.sent_count``); an
     unknown count still offers it. Its fixed stores do not require
     a clone or an existing PR. The Qt dashboard opens its own
     window for it; the terminal dashboard its Outbox box
     (`jailbee.dashboard.tui.outbox_box`).
     With manifests pending in the PR or issue outbox (read from
-    ``ctx.git_status``) it leads the menu and
+    the store counts, else ``ctx.git_status``) it leads the menu and
     carries the count; with an unknown count it follows "Open shell".
 
     Verbs may carry flags (``"pr open"``, ``"job log --follow"``,
@@ -310,7 +331,7 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     actions: list[tuple[str, str]] = []
     if ctx.state == "Running":
         session = [("Attach tmux", "tmux"), ("Open shell", "shell")]
-        pending = _outbox_pending(ctx.git_status)
+        pending = _outbox_pending(ctx)
         if pending:
             actions.extend(
                 [
@@ -319,14 +340,26 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
                     *session,
                 ]
             )
-        elif _outbox_empty(ctx.git_status) and not ctx.sent_count:
+        elif _outbox_empty(ctx) and not ctx.sent_count:
             actions.extend(session)
         else:
             actions.extend([*session, ("Outbox", "outbox browse")])
         for app in [] if (ctx.remote and not ctx.gui_remote) else ctx.apps:
             actions.append((f"Launch {app.label}", app.verb))
     elif ctx.state == "Stopped":
+        # The outbox is host-side data: a stopped container's proposals are
+        # as browsable as a running one's.
         actions.append(("Start", "start"))
+        pending = _outbox_pending(ctx)
+        if pending:
+            actions.extend(
+                [
+                    (f"Outbox ({pending} pending)", "outbox browse"),
+                    ("Clear outbox…", "outbox clear"),
+                ]
+            )
+        elif not (_outbox_empty(ctx) and not ctx.sent_count):
+            actions.append(("Outbox", "outbox browse"))
     if ctx.job_clearable:
         actions.append(("Clear failed job", "job clear"))
     if ctx.has_job:
@@ -489,6 +522,8 @@ def actions_for_container(
             memory_limit=container.memory_limit,
             memory_override=container.memory_override,
             sent_count=container.sent_count,
+            outbox_pr=container.outbox_pr,
+            outbox_issue=container.outbox_issue,
         )
     )
     if over_ssh:
