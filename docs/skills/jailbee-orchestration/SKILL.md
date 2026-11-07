@@ -475,8 +475,9 @@ unknown signals rely on the separate quiet-child watchdog.
 
 A `question` from a child arrives as a `message` with its `from`. The host
 gives every relayed message a fresh id (`h-<hex>`), so the id you read in the
-inbox is the one to use. Answer with a `message` to that child, setting
-`in_reply_to` to it:
+inbox is the one to use; `origin_id` shows the id the child gave it. Answer
+with a `message` to that child, setting `in_reply_to` to it — the child
+receives its own `origin_id` back, so it can tell which question you answered:
 
 ```bash
 jailbee inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use the existing parser."

@@ -30,6 +30,34 @@ def _recipient_uuid(target: Node) -> str | None:
     return target.config.get("volatile.uuid")
 
 
+def original_reply_ref(ctx: ActionContext, recipient: Node, ref: str | None) -> str | None:
+    """Map `in_reply_to` naming a relayed item back to the id its author gave it.
+
+    The broker relays every message under a fresh host id, so a reply to an
+    item read from the inbox names an id the reply's recipient never saw. When
+    `ref` is a message in the replier's (`ctx.sender`'s) stored inbox that came
+    from `recipient` and carries an `origin_id`, that original id is returned.
+    Anything else — an original id, an unknown id, a store that cannot be
+    read — passes through unchanged.
+    """
+    uuid = ctx.sender.config.get("volatile.uuid")
+    if ref is None or not uuid:
+        return ref
+    from jailbee.orchestration.store import BrokerStore, StoreError, store_path
+
+    path = store_path(ctx.root)
+    if not path.exists():
+        return ref
+    try:
+        stored = BrokerStore(path).get(uuid, ref)
+    except StoreError:
+        return ref
+    if stored is None or stored.type != "message" or stored.from_name != recipient.short:
+        return ref
+    origin = stored.item.get("origin_id")
+    return origin if isinstance(origin, str) and origin else ref
+
+
 def _relay(ctx: ActionContext, target: Node, manifest: MessageManifest) -> Outcome:
     """Deliver to the target instance, parking only when store delivery is unavailable."""
     if not _recipient_uuid(target):
@@ -43,7 +71,8 @@ def _relay(ctx: ActionContext, target: Node, manifest: MessageManifest) -> Outco
             "from": ctx.sender.short,
             "body": manifest.body,
             "kind": manifest.kind or "note",
-            "in_reply_to": manifest.in_reply_to,
+            "in_reply_to": original_reply_ref(ctx, target, manifest.in_reply_to),
+            "origin_id": manifest.id,
         }
     )
     result = deliver(
@@ -132,7 +161,7 @@ def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
         branch=branch,
         done_sha=oid,
         body=manifest.body,
-        in_reply_to=manifest.in_reply_to,
+        in_reply_to=original_reply_ref(ctx, target, manifest.in_reply_to),
         uid=uid,
     )
     # Before any cleanup marker: a crash before the broker journals/replies

@@ -402,6 +402,9 @@ class InboxMessage(BaseModel):
     body: str
     kind: str | None = None
     in_reply_to: str | None = None
+    # The id the sender gave the manifest this item relays (`h-…` ids are the
+    # host's own). Lets the recipient's reply be mapped back to it.
+    origin_id: str | None = None
     imported_ref: str | None = None
     imported_sha: str | None = None
     merged_head: str | None = None
@@ -414,8 +417,10 @@ class InboxMessage(BaseModel):
     @model_serializer(mode="wrap")
     def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         result: dict[str, Any] = handler(self)
-        if self.merged_head is None:
-            result.pop("merged_head", None)
+        # Absent rather than null when unset, so older readers see no new key.
+        for key in ("merged_head", "origin_id"):
+            if getattr(self, key) is None:
+                result.pop(key, None)
         return result
 
     @field_validator("merged_head")

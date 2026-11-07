@@ -130,6 +130,7 @@ def complete(
             "body": body,
             "kind": "done",
             "in_reply_to": item.in_reply_to,
+            "origin_id": item.id,
             "imported_ref": ref,
             "imported_sha": oid,
             "import_error": error,

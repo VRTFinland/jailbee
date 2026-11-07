@@ -304,7 +304,12 @@ or `--pr N`, then import and stage `pr: N` with the new source. See the
 Send a message to a child. `to` is the child's short name; `body` or
 `body_file`; `kind` is optional (`note`, `question`, `done`, `blocked`);
 `in_reply_to` is the `h-<hex>` id of the inbox message you answer (the
-host re-ids every relayed message, so use the id you read in the inbox).
+host re-ids every relayed message, so use the id you read in the inbox). The
+broker maps a reply back for its recipient: when `in_reply_to` names a message
+in your inbox that this child sent, the child receives that message's
+`origin_id` — the id it gave its own manifest — so it can match the answer to
+its question. The original id itself is also accepted and passes through, as
+does any other id.
 Ordinary messages are delivered to the broker store even while the child is
 stopped, normally with a `done` acknowledgement (`delivered to <child>`).
 A `queued` acknowledgement means store delivery is pending, for example behind
@@ -531,8 +536,16 @@ A `message` from a child:
 <!-- kind: inbox -->
 ```json
 {"version": 1, "id": "h-3fa9c012", "type": "message", "from": "fix-issue-12",
- "kind": "question", "body": "Which parser do you mean?", "in_reply_to": null}
+ "kind": "question", "body": "Which parser do you mean?", "in_reply_to": null,
+ "origin_id": "msg-0002"}
 ```
+
+A message relayed from another container carries `origin_id`, the id its
+sender gave the manifest; host-generated messages (status-like notes, `idle`,
+adoption notices) have no `origin_id` key. Reply with the `h-<hex>` `id` (or
+the `origin_id`): the recipient's copy of your reply has `in_reply_to` set to
+its own original id. The same holds in the other direction, including a
+child's `done` report that names one of your messages.
 
 Messages may carry optional `imported_ref`, `imported_sha`, `import_error`,
 `on_done` (`destroy` or `keep`) and `on_done_reason`. Successful done reports
@@ -706,8 +719,15 @@ A `message` from your orchestrator (`from` is its short name):
 <!-- kind: inbox -->
 ```json
 {"version": 1, "id": "h-3fa9c012", "type": "message", "from": "main-orch",
- "kind": "note", "body": "Use the existing parser.", "in_reply_to": "h-77aa01bc"}
+ "kind": "note", "body": "Use the existing parser.", "in_reply_to": "msg-0002",
+ "origin_id": "reply-0004"}
 ```
+
+When your orchestrator answers a message you sent, `in_reply_to` is the id you
+gave that message (the one `jailbee inbox send` printed), even though the
+orchestrator saw it under a host id. `origin_id` is the id the orchestrator gave
+its own manifest; to answer, set `in_reply_to` to this message's `id` or
+`origin_id`, and the orchestrator receives its own id back.
 
 An `update` message carries optional `imported_ref` and `imported_sha`
 (full commit ID), plus a body naming the parent's source. With no selector,

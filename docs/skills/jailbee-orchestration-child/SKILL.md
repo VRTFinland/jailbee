@@ -162,9 +162,10 @@ After a `question` or `blocked`, keep the background waiter armed as described
 in **Stay reachable**. It prints the oldest unread message's id on exit 0;
 `wait` returns at once while any message is unread, so read every message
 before re-arming it. Never poll tighter than every 5 min. Treat the next message from
-your orchestrator as the answer. Its `in_reply_to` is informational only: the
-host gives relayed messages new ids, so it need not equal the id of your
-message.
+your orchestrator as the answer. When it is a reply, its `in_reply_to` is the
+id `jailbee inbox send` printed for your message: the host gives relayed
+messages new ids, but maps a reply back to the id you chose. To answer one of
+your orchestrator's messages, use the id you read in your inbox.
 
 `wait` never marks anything read. Optional `--wake-on` filters message kinds
 and status states, leaving nonmatches unread; children normally omit it so

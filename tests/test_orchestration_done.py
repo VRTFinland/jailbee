@@ -740,3 +740,31 @@ def test_immediate_finish_store_failure_keeps_completed_causal_gate(tmp_path, mo
     assert [row.id for row in BrokerStore(store_path(tmp_path)).unacked("uuid-orch")] == [
         completed["id"]
     ]
+
+
+def test_done_replying_by_host_id_reaches_orchestrator_as_its_own_id(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    from dataclasses import replace
+
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    rig = _make(tmp_path, mocker)
+    sender = replace(rig.ctx.sender, config={**rig.ctx.sender.config, "volatile.uuid": "uuid-c"})
+    ctx = replace(rig.ctx, sender=sender, nodes={**rig.ctx.nodes, CHILD: sender})
+    BrokerStore(store_path(tmp_path)).insert_item(
+        "uuid-c",
+        CHILD,
+        {
+            "version": 1,
+            "id": "h-1234abcd",
+            "type": "message",
+            "from": "orch",
+            "body": "finish up",
+            "origin_id": "orch-task-1",
+        },
+        now=1.0,
+    )
+    messages.handle_message(ctx, _done(in_reply_to="h-1234abcd"))
+    msg = rig.insert_store.call_args.args[2]
+    assert (msg.in_reply_to, msg.origin_id) == ("orch-task-1", "d1")

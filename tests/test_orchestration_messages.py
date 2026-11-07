@@ -201,3 +201,100 @@ def test_child_done_naming_another_container_refused(
     out = messages.handle_message(_child_ctx(tmp_path), _msg(kind="done", to="other"))
     assert out == refused("a child can only message its orchestrator")
     handler.assert_not_called()
+
+
+# -- reply correlation across the relay ------------------------------------
+
+
+def _inbox(tmp_path: Path, short: str) -> list[dict[str, object]]:
+    from jailbee.orchestration.store import read_items
+
+    return [s.item for s in read_items(tmp_path, f"myrepo-{short}")]
+
+
+def _pair(tmp_path: Path) -> tuple[ActionContext, ActionContext]:
+    """(child ctx, orchestrator ctx) sharing one real broker store."""
+    orch = _node("orch", **{labels.GRANT: Grant().to_label()})
+    child = _child_of_orch()
+    return _ctx(tmp_path, child, [orch]), _ctx(tmp_path, orch, [child])
+
+
+def test_relayed_item_carries_the_senders_manifest_id(tmp_path: Path) -> None:
+    child, _ = _pair(tmp_path)
+    messages.handle_message(child, _msg(kind="question", id="message-q-37b9"))
+    [item] = _inbox(tmp_path, "orch")
+    assert str(item["id"]).startswith("h-")
+    assert item["origin_id"] == "message-q-37b9"
+
+
+def test_orchestrator_reply_by_host_id_reaches_child_as_its_own_id(tmp_path: Path) -> None:
+    child, orch = _pair(tmp_path)
+    messages.handle_message(child, _msg(kind="question", id="message-q-37b9"))
+    [question] = _inbox(tmp_path, "orch")
+    messages.handle_message(orch, _msg(to="fix-1", id="a1", in_reply_to=str(question["id"])))
+    [answer] = _inbox(tmp_path, "fix-1")
+    assert answer["in_reply_to"] == "message-q-37b9"
+
+
+def test_child_reply_by_host_id_reaches_orchestrator_as_its_own_id(tmp_path: Path) -> None:
+    child, orch = _pair(tmp_path)
+    messages.handle_message(orch, _msg(to="fix-1", kind="question", id="orch-q-1"))
+    [question] = _inbox(tmp_path, "fix-1")
+    assert question["origin_id"] == "orch-q-1"
+    messages.handle_message(child, _msg(id="c-answer", in_reply_to=str(question["id"])))
+    [answer] = _inbox(tmp_path, "orch")
+    assert answer["in_reply_to"] == "orch-q-1"
+
+
+def test_reply_by_original_id_passes_through(tmp_path: Path) -> None:
+    child, orch = _pair(tmp_path)
+    messages.handle_message(child, _msg(kind="question", id="message-q-37b9"))
+    messages.handle_message(orch, _msg(to="fix-1", id="a1", in_reply_to="message-q-37b9"))
+    [answer] = _inbox(tmp_path, "fix-1")
+    assert answer["in_reply_to"] == "message-q-37b9"
+
+
+def test_unknown_reply_ref_passes_through(tmp_path: Path) -> None:
+    _, orch = _pair(tmp_path)
+    messages.handle_message(orch, _msg(to="fix-1", id="a1", in_reply_to="h-deadbeef"))
+    [answer] = _inbox(tmp_path, "fix-1")
+    assert answer["in_reply_to"] == "h-deadbeef"
+
+
+def test_reply_ref_naming_an_item_from_someone_else_passes_through(tmp_path: Path) -> None:
+    """Only an item the recipient itself sent is mapped back to its author's id."""
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    _, orch = _pair(tmp_path)
+    BrokerStore(store_path(tmp_path)).insert_item(
+        "uuid-orch",
+        "myrepo-orch",
+        {
+            "version": 1,
+            "id": "h-other",
+            "type": "message",
+            "from": "fix-2",
+            "body": "x",
+            "origin_id": "fix2-q",
+        },
+        now=1.0,
+    )
+    messages.handle_message(orch, _msg(to="fix-1", id="a1", in_reply_to="h-other"))
+    [answer] = _inbox(tmp_path, "fix-1")
+    assert answer["in_reply_to"] == "h-other"
+
+
+def test_message_without_reply_ref_still_carries_its_origin(tmp_path: Path) -> None:
+    _, orch = _pair(tmp_path)
+    messages.handle_message(orch, _msg(to="fix-1", id="a1"))
+    [answer] = _inbox(tmp_path, "fix-1")
+    assert answer["in_reply_to"] is None and answer["origin_id"] == "a1"
+
+
+def test_host_items_without_origin_omit_the_key() -> None:
+    from jailbee.orchestration.protocol import InboxMessage
+
+    msg = InboxMessage.model_validate(
+        {"version": 1, "id": "h-1", "type": "message", "from": "broker", "body": "x"}
+    )
+    assert "origin_id" not in msg.model_dump(by_alias=True)
