@@ -16,7 +16,7 @@ from jailbee import background
 from jailbee.db.models import JOB_BOOT, JOB_CREATE
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
-from jailbee.orchestration import actions, broker, broker_replies, broker_state, labels, outbox, socket_lifecycle, watch
+from jailbee.orchestration import actions, broker, broker_replies, broker_state, labels, manifests, outbox, socket_lifecycle, watch
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.grant import Grant, RepoCap
 from jailbee.orchestration.journal import Journal
@@ -96,7 +96,7 @@ def test_corrupt_publish_pruning_does_not_stop_tick(tmp_path, monkeypatch):
     rig.incus.list_containers.return_value = [_orch()]
     (rig.root / "publish-known.json").write_text("broken json")
     seen = []
-    monkeypatch.setattr(broker, "_serve", lambda ctx, *args: seen.append(ctx.sender.full))
+    monkeypatch.setattr(manifests, "serve", lambda ctx, *args: seen.append(ctx.sender.full))
     rig.tick()
     assert seen == ["proj-orch"]
 
@@ -114,7 +114,7 @@ def test_former_publisher_failure_does_not_starve_later_node(tmp_path, monkeypat
         if ctx.sender.full == "proj-old":
             raise IncusError("read-only outbox")
 
-    monkeypatch.setattr(broker, "_serve", serve)
+    monkeypatch.setattr(manifests, "serve", serve)
     rig.tick()
     assert seen == ["proj-old", "proj-orch"]
 
@@ -271,18 +271,28 @@ class Rig:
             ("repo_configs", self.configs),
             ("load_global_config", self.gcfg),
         ]:
-            monkeypatch.setattr(
-                broker_replies if name == "deliver" else broker_state if name == "repo_configs" else socket_lifecycle if name == "ensure_orchestration_env" else broker, name, mock
-            )
+            target = {
+                "deliver": broker_replies,
+                "flush_pending": broker,
+                "ensure_orchestration_env": socket_lifecycle,
+                "dispatch": manifests,
+                "drain_queue": manifests,
+                "drop_queue": manifests,
+                "repo_configs": broker_state,
+                "load_global_config": broker,
+            }[name]
+            monkeypatch.setattr(target, name, mock)
+            if name == "flush_pending":
+                monkeypatch.setattr(manifests, name, mock)
             self.seq.attach_mock(mock, name)
 
-        real_serve = broker._serve
+        real_serve = manifests.serve
 
         def serve(ctx, journal, memory):
             real_serve(ctx, journal, memory)
             self.serve_requests(ctx, memory)
 
-        monkeypatch.setattr(broker, "_serve", serve)
+        monkeypatch.setattr(manifests, "serve", serve)
         self.seq.attach_mock(self.serve_requests, "serve_requests")
 
     def _read(self, ctx, memory):
@@ -313,7 +323,7 @@ class Rig:
                     now=NOW.timestamp(),
                 )
 
-            broker._handle_manifest(
+            manifests.handle_manifest(
                 ctx,
                 memory,
                 ref=ref,
@@ -618,7 +628,7 @@ def test_spawn_ref_refused_by_broker_without_creation(rig: Rig, mocker, monkeypa
     text = json.dumps(data)
     rig.requests["proj-orch"] = [Request(raw.file_name, text, raw.files | {raw.file_name: text})]
     rig.incus.list_containers.return_value = [_orch()]
-    monkeypatch.setattr(broker, "dispatch", actions.dispatch)
+    monkeypatch.setattr(manifests, "dispatch", actions.dispatch)
     mocker.patch(
         "jailbee.orchestration.actions.profiles.repo_cap", return_value=RepoCap(allowed=True)
     )
@@ -1252,6 +1262,7 @@ def test_tick_completes_parked_finish_when_orchestrator_starts(
     monkeypatch.setattr(actions, "_child_head", MagicMock(return_value="a" * 40))
     monkeypatch.setattr(actions.sync, "_container_current_branch", MagicMock(return_value="b"))
     monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
+    monkeypatch.setattr(manifests, "flush_pending", outbox.flush_pending)
     orch_row = _orch(grant=Grant())
     orch_row["config"]["volatile.uuid"] = "uuid-orch"
     rig.incus.list_containers.return_value = [orch_row, _child()]
@@ -1286,6 +1297,7 @@ def test_stale_completed_finish_keeps_child_in_same_tick(rig: Rig, monkeypatch) 
 
     rig.incus.config_unset_checked.side_effect = unset
     monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
+    monkeypatch.setattr(manifests, "flush_pending", outbox.flush_pending)
     item = PendingFinish(
         version=1,
         type="finish",
@@ -1463,7 +1475,7 @@ def test_destroy_step_runs_after_done_reply(rig: Rig, monkeypatch: pytest.Monkey
     kid["config"].pop(labels.PENDING_DESTROY)
     kid["config"].pop(labels.LAST_IMPORT)
     destroy = _destroy_seams(monkeypatch)
-    monkeypatch.setattr(broker, "dispatch", actions.dispatch)
+    monkeypatch.setattr(manifests, "dispatch", actions.dispatch)
     monkeypatch.setattr(messages.sync, "_container_current_branch", MagicMock(return_value="b"))
     monkeypatch.setattr(
         messages.sync,
@@ -1504,7 +1516,7 @@ def test_done_cleanup_waits_for_durable_reply(
     kid["config"].pop(labels.PENDING_DESTROY)
     kid["config"].pop(labels.LAST_IMPORT)
     destroy = _destroy_seams(monkeypatch)
-    monkeypatch.setattr(broker, "dispatch", actions.dispatch)
+    monkeypatch.setattr(manifests, "dispatch", actions.dispatch)
     monkeypatch.setattr(messages.sync, "_container_current_branch", MagicMock(return_value="b"))
     monkeypatch.setattr(
         messages.sync,
@@ -1540,6 +1552,7 @@ def test_done_cleanup_waits_for_durable_reply(
     rig.deliver.return_value = "delivered"
     monkeypatch.setattr(outbox, "insert_into_store", lambda *a, **k: True)
     monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
+    monkeypatch.setattr(manifests, "flush_pending", outbox.flush_pending)
     rig.tick()
     assert not broker.has_pending(rig.root, "proj-orch")
     assert not broker.has_pending(rig.root, "proj-kid")
@@ -2517,6 +2530,7 @@ def test_pending_reaches_store_without_socket_registration(rig, monkeypatch, kin
     path = pending_dir(rig.root, "proj-orch") / "a.json"
     outbox.save_pending(path, item, recipient_uuid="uuid-current")
     monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
+    monkeypatch.setattr(manifests, "flush_pending", outbox.flush_pending)
     rig.tick()
     assert [row.id for row in rig.store.unacked("uuid-current")] == [item.id]
     assert rig.store.unacked("uuid-stale") == []
@@ -2540,6 +2554,7 @@ def test_pending_without_inventory_uuid_never_uses_stale_socket_identity(
     path = pending_dir(rig.root, "proj-orch") / "a.json"
     atomic_write_text(path, '{"id":"h-queued","type":"status"}')
     monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
+    monkeypatch.setattr(manifests, "flush_pending", outbox.flush_pending)
     rig.tick()
     assert path.exists()
     assert rig.store.unacked("uuid-stale") == []
@@ -2601,6 +2616,7 @@ def test_recreated_namesake_never_receives_old_spool_or_executes_finish(
     complete = MagicMock(side_effect=AssertionError("old work must not run for a new parent"))
     monkeypatch.setattr(finishing, "complete", complete)
     monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
+    monkeypatch.setattr(manifests, "flush_pending", outbox.flush_pending)
     memory = broker_state.BrokerMemory() if restart else rig.memory
     rig.tick(memory)
     assert rig.store.unacked("uuid-new") == []

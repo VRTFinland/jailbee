@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from jailbee.inbox.render import jq_tostring
-from jailbee.orchestration import broker, broker_replies, broker_state, publishing, wake, wire
+from jailbee.orchestration import broker_replies, broker_state, manifests, publishing, wake, wire
 from jailbee.orchestration.actions import Outcome, refused
 from jailbee.orchestration.outbox import acknowledge_delivery, deliver, grant_json_text
 from jailbee.orchestration.protocol import ManifestError, body_file_of, parse_manifest
@@ -142,7 +142,7 @@ def handle_send(
             # Only a stale gate remains; the status itself is delivered.
             log.warning("broker: %s: could not clear the reply gate of %s", ctx.sender.full, ref)
 
-    outcome = broker._handle_manifest(
+    outcome = manifests.handle_manifest(
         ctx,
         memory,
         ref=request_id,

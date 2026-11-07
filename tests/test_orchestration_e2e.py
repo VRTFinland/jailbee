@@ -17,7 +17,7 @@ from jailbee import background
 from jailbee.db.models import JOB_CREATE
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
-from jailbee.orchestration import actions, broker, broker_state, labels, socket_ops, watch
+from jailbee.orchestration import actions, broker, broker_state, labels, manifests, socket_ops, watch
 from jailbee.orchestration.grant import Grant
 from jailbee.orchestration.journal import Journal
 from jailbee.orchestration.outbox import CONTAINER_JAILBEE
@@ -139,7 +139,7 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
     monkeypatch.setattr(broker_state, "repo_configs", lambda memory=None: {"proj": cfg})
     monkeypatch.setattr(broker, "load_global_config", lambda path: (GlobalConfig(), []))
-    real_serve = broker._serve
+    real_serve = manifests.serve
     store = BrokerStore(store_path(root))
 
     def serve(ctx, journal, memory):
@@ -156,7 +156,7 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             )
             incus.requests[ctx.sender.full].remove(manifest)
 
-    monkeypatch.setattr(broker, "_serve", serve)
+    monkeypatch.setattr(manifests, "serve", serve)
     return {"root": root, "cfg": cfg, "incus": incus, "start_create": start_create}
 
 
