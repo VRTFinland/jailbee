@@ -1000,13 +1000,28 @@ def _handle_stop_locked(ctx: ActionContext, m: Manifest) -> Outcome:
                 ctx.incus.config_set(child.full, labels.STOPPED_OUTBOX, str(pending.count))
         except Exception as e:
             return refused(f"child `{child.short}` could not be stopped: {e}")
+        # A clean shutdown that outlives its budget escalates once to a forced
+        # stop: the orchestrator has no other way to recover a wedged child.
         try:
-            stopping.stop_container(ctx.incus, child.full, show_progress=False)
+            forced = stopping.stop_container(
+                ctx.incus,
+                child.full,
+                show_progress=False,
+                force_fallback=True,
+                disposable=False,
+            )
         except Exception as e:
             return refused(f"child `{child.short}` could not be stopped: {e}")
+    else:
+        forced = False
     from jailbee.orchestration.watch import cancel
 
     cancel(ctx.root, ctx.sender.full, child.full)
+    if forced:
+        return done(
+            f"child `{child.short}` stopped (clean shutdown timed out after "
+            f"{stopping.CLEAN_STOP_BUDGET}s; the stop was forced)"
+        )
     return done(f"child `{child.short}` stopped")
 
 

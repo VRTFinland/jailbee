@@ -125,6 +125,7 @@ def stop_container(
     force_fallback: bool = False,
     label: str | None = None,
     show_progress: bool = True,
+    disposable: bool = True,
 ) -> bool:
     """Stop ``name`` within ``budget`` seconds. Returns True if force was used.
 
@@ -136,6 +137,10 @@ def stop_container(
     ``show_progress`` draws the elapsed-time spinner; callers that already own
     a Rich Live display (the dashboard, the registry's ``on_step`` reporting)
     must pass False, since Rich allows only one live display at a time.
+
+    ``disposable`` only words the force-fallback notice: False (a headless
+    caller stopping a container that may hold work, e.g. the orchestration
+    broker) drops the "nothing is lost" claim.
     """
     what = label or name
 
@@ -164,7 +169,10 @@ def stop_container(
                 f"so anything unsaved inside the container is lost. "
                 f"Incus reported: {exc}"
             ) from exc
-        warn(f"Pulling the plug on {what} — it is disposable, so nothing is lost")
+        if disposable:
+            warn(f"Pulling the plug on {what} — it is disposable, so nothing is lost")
+        else:
+            warn(f"Forcing {what} off after the {budget}s clean shutdown timed out")
         incus.stop(name, force=True)
         return True
     return False

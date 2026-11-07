@@ -887,7 +887,9 @@ merged state.
   parent's current-branch ref or a child's imported ref. Without `--merge`,
   no worktree, index, local branch or base anchor is moved by the broker. Detached parent HEAD
   is refused only when neither selector is supplied.
-- **Stop** a child; **restart** a stopped child with a new prompt (it counts
+- **Stop** a child (a clean shutdown that outlives the 120s budget escalates
+  once to a forced stop, and the outcome says so; if the forced stop fails
+  too, the stop is refused); **restart** a stopped child with a new prompt (it counts
   against the limit and is queued if the limit is full). A running child is
   refused ("stop it first").
 - **Destroy** (needs `destroy` in the grant) works on a running or stopped

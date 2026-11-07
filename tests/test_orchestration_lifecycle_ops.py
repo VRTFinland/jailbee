@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from jailbee.global_config import GlobalConfig
+from jailbee.incus import IncusError
 from jailbee.orchestration import actions, labels
 from jailbee.orchestration.actions import ActionContext, Node, Outcome
 from jailbee.orchestration.grant import Grant
@@ -310,7 +311,28 @@ def test_stop_running_child(tmp_path: Path, seams: dict[str, MagicMock]) -> None
     m = StopManifest.model_validate({"version": 1, "id": "s1", "type": "stop", "child": "c1"})
     out = actions.handle_stop(rig.ctx(), m)
     assert out == Outcome("done", "child `c1` stopped")
-    seams["stop"].assert_called_once_with(rig.incus, "proj-c1", show_progress=False)
+    seams["stop"].assert_called_once_with(
+        rig.incus, "proj-c1", show_progress=False, force_fallback=True, disposable=False
+    )
+
+
+def test_stop_reports_a_forced_stop(tmp_path: Path, seams: dict[str, MagicMock]) -> None:
+    seams["stop"].return_value = True
+    rig = Rig(tmp_path, running=True)
+    out = actions.handle_stop(rig.ctx(), _stop())
+    assert out.state == "done"
+    assert "stop was forced" in out.detail
+    assert "120s" in out.detail
+
+
+def test_stop_refused_when_the_forced_stop_fails(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    rig = Rig(tmp_path, running=True)
+    seams["stop"].side_effect = IncusError("force failed")
+    out = actions.handle_stop(rig.ctx(), _stop())
+    assert out.state == "refused"
+    assert "could not be stopped" in out.detail
 
 
 def test_stop_stopped_child_and_stranger(tmp_path: Path, seams: dict[str, MagicMock]) -> None:

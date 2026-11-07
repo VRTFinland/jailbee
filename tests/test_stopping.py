@@ -42,6 +42,23 @@ def test_stuck_shutdown_falls_back_to_force_when_allowed(mocker):
     assert incus.stop.call_args_list[-1] == mocker.call("foo", force=True)
 
 
+def test_force_fallback_notice_drops_the_disposable_claim_when_not_disposable(mocker):
+    incus = mocker.MagicMock()
+    incus.stop.side_effect = [STUCK, None]
+    warn = mocker.patch("jailbee.stopping.warn")
+    assert stop_container(incus, "foo", force_fallback=True, disposable=False) is True
+    text = " ".join(str(c.args[0]) for c in warn.call_args_list)
+    assert "nothing is lost" not in text
+    assert "Forcing foo off" in text
+
+
+def test_force_fallback_failure_propagates(mocker):
+    incus = mocker.MagicMock()
+    incus.stop.side_effect = [STUCK, IncusError("force failed")]
+    with pytest.raises(IncusError, match="force failed"):
+        stop_container(incus, "foo", force_fallback=True, disposable=False)
+
+
 def test_stuck_shutdown_without_fallback_raises_an_actionable_error(mocker):
     incus = mocker.MagicMock()
     incus.stop.side_effect = STUCK
