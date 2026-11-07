@@ -235,6 +235,17 @@ def _precheck(
                 actions.append({"kind": _kind(action), "repo": target.slug})
                 foreign |= target.foreign
         return "issue", actions, foreign
+    # PR source proposals live in the host outbox store, keyed by the sender's
+    # uuid: no `incus exec` into the orchestrator.
+    source = branch_pr.stored_source(ctx.sender.key, m.manifest)
+    if source is not None:
+        if not rights.pull_requests:
+            raise pr_outbox.GateError("pull_requests is not granted")
+        recorded = branch_pr.source_journal(ctx.sender.key, m.manifest)
+        if recorded is not None and recorded.uncertain:
+            raise pr_outbox.GateError("outcome uncertain; resolve with `jb pr push` on the host")
+        pending = recorded is None or recorded.digest != source.digest or not recorded.complete
+        return "source", [{"kind": "source", "repo": source.manifest.repo}] if pending else [], False
     snapshot_pr = pr_outbox.read_outbox(ctx.incus, ctx.sender.full, uid=uid, strict=True)
     if m.manifest not in snapshot_pr.files or snapshot_pr.rejected:
         raise pr_outbox.GateError("manifest unavailable or outbox snapshot incomplete")
@@ -242,10 +253,10 @@ def _precheck(
         m.manifest, snapshot_pr.files[m.manifest], snapshot_pr.files
     )
     if pr_outbox.is_source_manifest(manifest_pr):
-        if not rights.pull_requests:
-            raise pr_outbox.GateError("pull_requests is not granted")
-        pending = pr_outbox.source_publication_receipt(snapshot_pr, m.manifest) is None
-        return "source", [{"kind": "source", "repo": manifest_pr.repo}] if pending else [], False
+        # A file-based source predates the store: neither imported nor read (D9).
+        raise pr_outbox.GateError(
+            "source manifests are staged through the broker now; stage it again"
+        )
     if not rights.pr_reviews:
         raise pr_outbox.GateError("pr_reviews is not granted")
     _own_review_repo(ctx.cfg, manifest_pr)

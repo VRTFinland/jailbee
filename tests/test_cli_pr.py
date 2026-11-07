@@ -3143,12 +3143,17 @@ def test_no_outbox_suppresses_the_offer(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
     read = _mock_store(mocker, {})
     apply = mocker.patch("jailbee.pr_outbox.offer_pending_comments")
+    from jailbee import branch_pr
+
+    sources = mocker.spy(branch_pr, "pending_source_manifests")
 
     assert CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-outbox"]).exit_code == 0
 
-    # Source proposals are counted even with an own-branch-only option, but
-    # --no-outbox still suppresses the post-push offer and its publication.
-    read.assert_called_once()
+    # Source proposals are counted (from the host store, no container read) even
+    # with an own-branch-only option, but --no-outbox still suppresses the
+    # post-push offer and its publication.
+    sources.assert_called_once()
+    read.assert_not_called()
     apply.assert_not_called()
 
 
