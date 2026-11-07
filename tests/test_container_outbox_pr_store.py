@@ -6,7 +6,6 @@ import pytest
 from typer.testing import CliRunner
 
 from jailbee.container_cli import container_app
-from jailbee.container_outbox.store import Store
 from tests import container_broker_support
 
 
@@ -45,26 +44,27 @@ def stage_source():
     return "001-source.json"
 
 
-def stage_file_comment(home):
-    manifest = {
-        "version": 1,
-        "repo": "acme/widgets",
-        "pr": 7,
-        "head_sha": "b" * 40,
-        "actions": [{"type": "comment", "body": "hi"}],
-    }
-    return Store(home).write_manifest("pr", "comment", manifest, {})
+def stage_comment(monkeypatch, broker):
+    """A staged (not source) PR comment proposal; returns its name."""
+    from jailbee.container_outbox import gh
+
+    monkeypatch.setattr(gh, "pr_view", lambda n: gh.PrView(n or 7, "b" * 40, "acme/widgets"))
+    result = run("pr", "comment", "7", "--body", "hi")
+    assert result.exit_code == 0, result.output
+    return broker.proposals("pr")[-1].name
 
 
-def test_ls_lists_store_sources_and_file_proposals(home, broker):
+def test_ls_lists_store_sources_and_comment_proposals(home, broker, monkeypatch):
     name = stage_source()
-    comment = stage_file_comment(home)
+    comment = stage_comment(monkeypatch, broker)
     result = run("outbox", "ls", "--json")
     assert result.exit_code == 0, result.output
     names = [item["name"] for item in json.loads(result.stdout)["pr"]]
-    assert sorted(names) == sorted([name, comment])
+    assert sorted(names) == ["001-source.json", "002-comment.json"]
+    assert (name, comment) == ("001-source.json", "002-comment.json")
     plain = run("outbox", "ls")
     assert f"pr/{name}  description" in plain.stdout
+    assert f"pr/{comment}  comment" in plain.stdout
 
 
 def test_show_and_drop_route_a_store_source_to_the_broker(home, broker):
@@ -77,13 +77,14 @@ def test_show_and_drop_route_a_store_source_to_the_broker(home, broker):
     assert broker.proposals("pr") == []
 
 
-def test_show_and_drop_still_reach_file_proposals(home, broker):
-    comment = stage_file_comment(home)
+def test_show_and_drop_reach_a_staged_comment(home, broker, monkeypatch):
+    comment = stage_comment(monkeypatch, broker)
     shown = run("outbox", "show", f"pr/{comment}")
     assert shown.exit_code == 0, shown.output
+    assert json.loads(shown.stdout)["actions"] == [{"type": "comment", "body": "hi"}]
     dropped = run("outbox", "drop", f"pr/{comment}")
     assert dropped.exit_code == 0, dropped.output
-    assert list(Store(home).outbox("pr").glob("*.json")) == []
+    assert broker.proposals("pr") == []
 
 
 def test_a_child_cannot_drop_a_store_source(home, broker, monkeypatch):

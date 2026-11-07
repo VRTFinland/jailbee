@@ -36,9 +36,17 @@ def test_empty_list_and_child_guard(home, monkeypatch):
     assert not (home / ".jailbee").exists()
 
 
-def test_ambiguous_draft(home, broker):
-    store = Store(home)
-    store.draft_save("pr", "same", {"version": 1, "actions": []}, {})
+def test_ambiguous_draft(home, broker, monkeypatch):
+    from jailbee.container_outbox import gh
+
+    monkeypatch.setattr(gh, "pr_view", lambda n: gh.PrView(n or 7, "old", "acme/repo"))
+    runner = CliRunner()
+    assert (
+        runner.invoke(
+            container_app, ["pr", "comment", "7", "--body", "x", "--batch", "same"]
+        ).exit_code
+        == 0
+    )
     assert (
         CliRunner()
         .invoke(container_app, ["issue", "comment", "7", "--body", "x", "--batch", "same"])
@@ -108,7 +116,7 @@ def test_a_refused_issue_draft_submit_keeps_the_draft(home, broker):
     assert broker.draft_state("b") is not None
 
 
-def test_pr_batch_and_review_protection(home, monkeypatch):
+def test_pr_batch_and_review_protection(home, monkeypatch, broker):
     from jailbee.container_outbox import gh
     from jailbee.pr_outbox import parse_manifest
 
@@ -123,11 +131,13 @@ def test_pr_batch_and_review_protection(home, monkeypatch):
     refused = invoke("submit", "review-12")
     assert refused.exit_code == 2
     assert "jailbee pr review submit" in refused.output
-    assert Store(home).draft_load("pr", "review-12") is not None
+    assert broker.draft("review-12", "pr") is not None
     assert invoke("submit", "b", "--kind", "pr").exit_code == 0
-    path = next(Store(home).outbox("pr").glob("*.json"))
-    parse_manifest(path.name, path.read_text(), {})
+    (row,) = broker.proposals("pr")
+    assert row.name == "001-b.json"
+    parse_manifest(row.name, row.manifest, dict(row.bodies))
     assert invoke("discard", "review-12", "--kind", "pr").exit_code == 0
+    assert broker.draft("review-12", "pr") is None
 
 
 def test_child_reads_and_refuses_mutation(home, monkeypatch, broker):

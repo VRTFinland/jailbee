@@ -42,9 +42,11 @@ class FakeBroker:
     def draft(self, name: str, kind: store_db.Kind = "issue") -> store_db.Draft | None:
         return store_db.OutboxStore(self.queries._store).get_draft(UUID, kind, name)
 
-    def draft_state(self, name: str) -> tuple[dict[str, Any], dict[str, str]] | None:
-        """The issue draft's decoded manifest and bodies, or None."""
-        found = self.draft(name)
+    def draft_state(
+        self, name: str, kind: store_db.Kind = "issue"
+    ) -> tuple[dict[str, Any], dict[str, str]] | None:
+        """The draft's decoded manifest and bodies (issue unless KIND is given), or None."""
+        found = self.draft(name, kind)
         return None if found is None else (json.loads(found.manifest), dict(found.bodies))
 
     def client(self, *args: object, **kwargs: object) -> _Client:

@@ -116,25 +116,19 @@ def _body_refs(value: object) -> set[str]:
     return found
 
 
-def _parse_pr_source(name: str, manifest: object, bodies: Mapping[str, str]) -> str:
-    """Validate one PR source manifest against its bodies; return its JSON text.
-
-    Only source manifests (an imported ref to push and open or update a PR from)
-    are staged through the broker so far; review, comment, reply and
-    description proposals are still container files.
-    """
-    from jailbee.pr_manifest import ManifestError, is_source_manifest
+def _parse_pr(name: str, manifest: object, bodies: Mapping[str, str]) -> str:
+    """Validate one PR manifest (any kind: review, reply, comment, description or
+    source) against its bodies with `pr_manifest.parse_manifest`; return its JSON text."""
+    from jailbee.pr_manifest import ManifestError
     from jailbee.pr_manifest import parse_manifest as parse_pr
 
     if not isinstance(manifest, dict):
         raise _bad("manifest must be a JSON object")
     try:
         text = json.dumps(manifest, ensure_ascii=False)
-        parsed = parse_pr(name, text, bodies)
+        parse_pr(name, text, bodies)
     except (ManifestError, TypeError, ValueError, RecursionError) as exc:
         raise _bad(str(exc)) from exc
-    if not is_source_manifest(parsed):
-        raise _bad("only PR source proposals are staged through the broker so far")
     unused = sorted(set(bodies) - _body_refs(manifest))
     if unused:
         raise _bad(f"bodies not referenced by the manifest: {', '.join(unused)}")
@@ -149,7 +143,7 @@ def handle_put(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now: f
         raise _bad("slug must match [a-z0-9-]{1,80}")
     manifest = args.get("manifest")
     bodies = _bodies(args.get("bodies"))
-    parse = _parse_issue if kind == "issue" else _parse_pr_source
+    parse = _parse_issue if kind == "issue" else _parse_pr
     parse(f"{slug}.json", manifest, bodies)
 
     def build(stem: str) -> tuple[str, dict[str, str]]:

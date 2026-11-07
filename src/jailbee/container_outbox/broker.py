@@ -103,16 +103,21 @@ def drop(kind: Kind, name: str) -> None:
 
 
 def draft_append(
-    kind: Kind, name: str, action: dict[str, object], bodies: dict[str, str]
+    kind: Kind,
+    name: str,
+    action: dict[str, object],
+    bodies: dict[str, str],
+    *,
+    envelope: dict[str, object] | None = None,
 ) -> dict[str, Any]:
-    """Append one action to the draft batch NAME; the host derives @REF expectations."""
-    return cast(
-        dict[str, Any],
-        call(
-            wire.OUTBOX_DRAFT_APPEND,
-            {"kind": kind, "name": name, "action": action, "bodies": bodies},
-        ),
-    )
+    """Append one action to the draft batch NAME; the host derives @REF expectations.
+
+    A PR draft carries the PR ``envelope`` (repo, pr, head_sha) read with ``gh``:
+    the first append fixes it, later ones must match it."""
+    args: dict[str, Any] = {"kind": kind, "name": name, "action": action, "bodies": bodies}
+    if envelope is not None:
+        args["envelope"] = envelope
+    return cast(dict[str, Any], call(wire.OUTBOX_DRAFT_APPEND, args))
 
 
 def draft_list(kind: Kind) -> list[dict[str, Any]]:
@@ -124,9 +129,23 @@ def draft_show(kind: Kind, name: str) -> dict[str, Any]:
     return cast(dict[str, Any], call(wire.OUTBOX_DRAFT_SHOW, {"kind": kind, "name": name}))
 
 
-def draft_submit(kind: Kind, name: str) -> str:
-    """Stage the draft as a proposal and remove it; return the proposal name."""
-    result = call(wire.OUTBOX_DRAFT_SUBMIT, {"kind": kind, "name": name})
+def draft_submit(
+    kind: Kind,
+    name: str,
+    *,
+    review: dict[str, object] | None = None,
+    bodies: dict[str, str] | None = None,
+) -> str:
+    """Stage the draft as a proposal and remove it; return the proposal name.
+
+    A PR review draft is submitted with ``review``: the head it was written
+    against and its summary (``body``, or ``body_file`` named in ``bodies``)."""
+    args: dict[str, Any] = {"kind": kind, "name": name}
+    if review is not None:
+        args["review"] = review
+    if bodies:
+        args["bodies"] = bodies
+    result = call(wire.OUTBOX_DRAFT_SUBMIT, args)
     return str(cast(dict[str, Any], result)["name"])
 
 

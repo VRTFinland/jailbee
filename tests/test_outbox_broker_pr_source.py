@@ -97,19 +97,6 @@ def test_a_pushed_pr_update_without_description_is_accepted(env: Env) -> None:
 @pytest.mark.parametrize(
     ("change", "message"),
     [
-        (
-            {
-                "manifest": {
-                    "version": 1,
-                    "repo": "acme/widgets",
-                    "pr": 12,
-                    "head_sha": "a" * 40,
-                    "actions": [{"type": "comment", "body": "x"}],
-                },
-                "bodies": {},
-            },
-            "source",
-        ),
         ({"manifest": source(source_sha="A" * 40)}, "source_sha"),
         ({"manifest": source(source="topic")}, "refs/"),
         ({"manifest": "not an object"}, "manifest"),
