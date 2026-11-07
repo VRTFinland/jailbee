@@ -82,6 +82,13 @@ client exits 4 (`jb apply` / restart the broker to align versions).
 | `status` | `child` (string or null) | Like `children`, narrowed to one child. |
 | `grant` | none | The container's [grant document](#grantjson), with `default_runner_source`. |
 
+The broker serves `list`, `read` and `ack` outside the executor, including
+while a long-running handler is executing. `children`, `status` and `grant`
+read an immutable snapshot from the last completed broker round without calling
+Incus. `jailbee inbox runners` obtains that grant before rendering local runners.
+In contrast, `send` and `next` use the executor and may wait for a handler to
+finish.
+
 At most one `next` is parked per container; a second gets `busy`. A `send`
 whose manifest id already has a recorded status gets that status back again,
 with no new delivery. `duplicate` is returned only when no status was recorded
