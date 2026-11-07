@@ -395,7 +395,12 @@ def destroy_risk_lines(groups: Sequence[RepoGroup], names: Sequence[str]) -> tup
     config degrades to "no risk shown", as in the Qt dialog.
     """
     from jailbee.config import load_repo_config
-    from jailbee.destroy_guard import assess, status_is_unknown, unknown_status_warning
+    from jailbee.destroy_guard import (
+        assess,
+        outbox_risk,
+        status_is_unknown,
+        unknown_status_warning,
+    )
 
     lines: list[str] = []
     unknown: list[str] = []
@@ -407,8 +412,12 @@ def destroy_risk_lines(groups: Sequence[RepoGroup], names: Sequence[str]) -> tup
             continue
         if status_is_unknown(container):
             unknown.append(container.name)
-            continue
         if container.git_status is None:
+            # Unprobed (stopped, mount mode): its outbox proposals still live
+            # in the host store and are counted whatever its state or mode.
+            outbox = outbox_risk(container)
+            if outbox is not None:
+                lines.append(f"⚠ {outbox.line}")
             continue
         if group.prefix not in configs:
             try:
