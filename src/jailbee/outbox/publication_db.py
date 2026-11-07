@@ -177,6 +177,42 @@ def _claim_key(uuid: str, kind: str, name: str) -> str:
     return f"{_CLAIM_PREFIX}{uuid}:{kind}:{name}"
 
 
+def _live_owner(con: sqlite3.Connection, key: str) -> dict[str, object] | None:
+    """The claim row's owner when it is a live claim, else None (absent or stale)."""
+    row = con.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
+    if row is None:
+        return None
+    try:
+        owner = json.loads(row[0])
+    except ValueError:
+        return None
+    if not isinstance(owner, dict):
+        return None
+    if owner.get("pid") == os.getpid():
+        # A claim of this very process whose token no live claim holds was leaked
+        # (its release failed): stale, like a dead process's.
+        return owner if owner.get("token") in _LIVE_TOKENS else None
+    return owner if _alive(owner.get("pid"), owner.get("start")) else None
+
+
+def claim_is_live(con: sqlite3.Connection, uuid: str, kind: str, name: str) -> bool:
+    """Whether a live publication holds the proposal (for writers in another module,
+    inside their own transaction)."""
+    return _live_owner(con, _claim_key(uuid, kind, name)) is not None
+
+
+def active_journal(con: sqlite3.Connection, uuid: str, kind: str, name: str) -> Journal | None:
+    """The proposal's active journal, ``prepared`` read as ``uncertain``."""
+    return _active(con, uuid, kind, name)
+
+
+def archive_active(
+    con: sqlite3.Connection, uuid: str, kind: str, name: str, digest: str, now: float
+) -> None:
+    """Archive the active journal of ``digest``; the caller has ruled out uncertainty."""
+    _archive(con, uuid, kind, name, digest, now)
+
+
 # -- sent-record kind mapping ----------------------------------------------
 #
 # ``outbox_sent.outbox`` is issue or pr. The PR family keeps its sub-outbox
@@ -460,27 +496,12 @@ class PublicationStore:
         pid = os.getpid()  # per claim, not per import: a forked child is its own owner
         value = json.dumps({"token": token, "pid": pid, "start": _start_time(pid)})
         with self._store.transaction() as con:
-            row = con.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
-            if row is not None:
-                try:
-                    owner = json.loads(row[0])
-                except ValueError:
-                    owner = {}
-                if not isinstance(owner, dict):
-                    owner = {}
-                mine = owner.get("pid") == os.getpid()
-                # A claim of this very process whose token no live claim holds was
-                # leaked (its release failed): stale, like a dead process's.
-                live = (
-                    owner.get("token") in _LIVE_TOKENS
-                    if mine
-                    else _alive(owner.get("pid"), owner.get("start"))
+            owner = _live_owner(con, key)
+            if owner is not None:
+                raise ClaimBusyError(
+                    f"{name}: another run (pid {owner.get('pid')}) is publishing this "
+                    "proposal; retry after it finishes"
                 )
-                if live:
-                    raise ClaimBusyError(
-                        f"{name}: another run (pid {owner.get('pid')}) is publishing this "
-                        "proposal; retry after it finishes"
-                    )
             con.execute(
                 "INSERT INTO state(key, value) VALUES(?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",

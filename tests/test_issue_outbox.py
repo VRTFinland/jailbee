@@ -1827,40 +1827,6 @@ def test_uncertain_reuse_does_not_touch_the_earlier_applied_row(execution):
     assert [(r.content, r.state) for r in rows] == [("First", "applied"), ("Second", "uncertain")]
 
 
-def test_container_ref_edits_prepare_with_create_snapshot(preflight, tmp_path, monkeypatch):
-    from typer.testing import CliRunner
-
-    from jailbee.container_cli import container_app
-    from jailbee.container_outbox.store import Store
-
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("JAILBEE_ROLE", raising=False)
-    body_file = tmp_path / "original.md"
-    body_file.write_text("Original")
-    runner = CliRunner()
-
-    def invoke(*args):
-        result = runner.invoke(container_app, ["issue", *args, "--batch", "b"])
-        assert result.exit_code == 0, result.output
-
-    invoke(
-        "create", "--title", "Bug", "--body-file", str(body_file), "--label", "bug", "--ref", "bug"
-    )
-    invoke("edit", "@bug", "--title", "New", "--body", "Updated")
-    invoke("labels", "@bug", "--add", "feature")
-    invoke("state", "@bug", "closed", "--reason", "completed")
-    store = Store(tmp_path)
-    name = store.draft_submit("issue", "b", "bug")
-    path = store.outbox("issue")
-    manifest = json.loads((path / name).read_text())
-    assert manifest["actions"][1]["expected"] == {"title": "Bug", "body": "Original"}
-    assert manifest["actions"][2]["expected"] == {"labels": ["bug"]}
-    assert manifest["actions"][3]["expected"] == {"state": "open"}
-    extras = {p.name: p.read_text() for p in path.glob("*.md")}
-    batch = preflight["prepare"]({name: manifest["actions"]}, extras=extras)
-    assert len(batch.manifests[0].actions) == 4
-
-
 # --- assignees action ------------------------------------------------------
 
 

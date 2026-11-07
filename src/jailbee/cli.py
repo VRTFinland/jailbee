@@ -5520,6 +5520,7 @@ def destroy(
         resolve_container_name,
         short_name,
         snapshot_targets_for,
+        stamp_issue_outbox,
     )
 
     cfg = _load_or_exit(config)
@@ -5598,6 +5599,7 @@ def destroy(
                             (cfg.container_prefix, info_.base_branch or cfg.default_branch)
                         ],
                     )
+                    stamp_issue_outbox(info_)
                 if not _warn_before_destroy(cfg, [info_], question=question):
                     raise typer.Abort()
         if run_in_background:

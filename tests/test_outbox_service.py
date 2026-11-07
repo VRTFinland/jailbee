@@ -187,22 +187,6 @@ def test_prepared_recovery_cannot_be_archived(mocker, make_cfg, tmp_path):
         preview(env, DeleteSelection(archive_journal=True))
 
 
-def test_settled_archive_only_after_success_under_same_lock(mocker, make_cfg, tmp_path):
-    env = setup_service(mocker, make_cfg, tmp_path)
-    key = journal(env, "applied")
-    plan = preview(env, DeleteSelection(archive_journal=True))
-
-    def mutation(*args, **kwargs):
-        assert env[7]._lock_path(key) in env[7]._held_lock_paths()
-        assert env[7]._path(key).exists()
-        return plan.delete_names
-
-    env[6].side_effect = mutation
-    assert execute(env, plan) == plan.delete_names
-    assert env[7].load(key) is None
-    assert list((env[7]._path(key).parent / "archive").glob("*.json"))
-
-
 def test_failed_deletion_never_archives(mocker, make_cfg, tmp_path):
     env = setup_service(mocker, make_cfg, tmp_path)
     key = journal(env, "applied")

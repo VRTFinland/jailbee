@@ -338,8 +338,13 @@ def publish_selected(
             batch = issue_outbox.prepare_batch(cfg, incus, container, (proposal.name,))
             # Prepare reads independently: do not approve a newer domain proposal
             # merely because its own digest will pass apply_batch's later check.
+            # Row versions come from the checked view: the content must match it.
             prepared_store = StoreSnapshot(
-                "issue", tuple(sorted(batch.outbox.files.items())), snapshot.rejected, ()
+                "issue",
+                tuple(sorted(batch.outbox.files.items())),
+                snapshot.rejected,
+                (),
+                snapshot.versions,
             )
             prepared = next(
                 (

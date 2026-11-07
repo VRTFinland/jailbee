@@ -14,7 +14,7 @@ from jailbee.outbox.models import ContainerView, ProposalId
 from jailbee.outbox.service import issue_snapshot as real_issue_snapshot
 from tests.conftest import panel_text
 from tests.issue_store_support import UUID, StoreJournals, StoreSnapshots
-from tests.outbox_support import IDENTITY, issue_files, pr_files, store
+from tests.outbox_support import IDENTITY, issue_files, pr_files, route_issue_snapshot, store
 
 
 @pytest.fixture
@@ -43,6 +43,11 @@ def env(mocker, make_cfg, tmp_path):
     mutation = mocker.patch.object(
         service, "mutate_store", side_effect=lambda *a, **kw: kw["delete_names"]
     )
+    # Issue drops observed through `mutate_store` (the deletion scope); the real
+    # store path is tested in tests/test_outbox_service_issue_store.py.
+    issue_snapshot = service.issue_snapshot
+    route_issue_snapshot(mocker, service)
+    mocker.patch.object(service, "issue_snapshot", side_effect=issue_snapshot)
     journals = StoreJournals(IDENTITY)
     mocker.patch("jailbee.outbox_io.JournalStore", return_value=journals)
     return cfg, incus, snapshots, reader, mutation, journals, raw

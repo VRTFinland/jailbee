@@ -148,6 +148,7 @@ class Queries:
             wire.OUTBOX_LIST,
             wire.OUTBOX_SHOW,
             wire.OUTBOX_SENT,
+            *wire.OUTBOX_DRAFT_READ_OPS,
         ):
             raise wire.WireError(wire.REFUSED, CHILD_REFUSAL)
         if op == wire.OUTBOX_SENT:

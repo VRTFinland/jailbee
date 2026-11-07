@@ -5,7 +5,6 @@ from typer.testing import CliRunner
 
 from jailbee.container_cli import container_app
 from jailbee.container_outbox import gh
-from jailbee.container_outbox.store import Store
 from jailbee.issue_manifest import parse_manifest
 from tests import container_broker_support
 
@@ -25,6 +24,12 @@ def invoke(*args):
     return CliRunner().invoke(container_app, ["issue", *args])
 
 
+def submit(name):
+    result = CliRunner().invoke(container_app, ["outbox", "submit", name])
+    assert result.exit_code == 0, result.output
+    return result
+
+
 def test_create_json_outputs_only_manifest_name(tmp_path, broker):
     result = invoke("create", "--title", "Bug", "--body", "body", "--json")
     assert result.exit_code == 0, result.output
@@ -41,18 +46,17 @@ def test_create_json_rejects_unpublished_batch(tmp_path):
     assert not (tmp_path / ".jailbee/issue-outbox").exists()
 
 
-def test_create_and_batch_roundtrip(tmp_path):
+def test_create_and_batch_roundtrip(tmp_path, broker):
     result = invoke(
         "create", "--title", "Bug", "--body", "x" * 5000, "--ref", "bug", "--batch", "b"
     )
     assert result.exit_code == 0, result.output
     result = invoke("comment", "@bug", "--body", "comment", "--batch", "b")
     assert result.exit_code == 0, result.output
-    store = Store(tmp_path)
-    name = store.draft_submit("issue", "b", "bug")
-    path = store.outbox("issue")
-    data = json.loads((path / name).read_text())
-    bodies = {p.name: p.read_text() for p in path.glob("*.md")}
+    assert broker.draft_state("b") is not None
+    submit("b")
+    name, data, bodies = broker.only()
+    assert broker.draft_state("b") is None
     parse_manifest(name, json.dumps(data), bodies)
     assert len(data["actions"]) == 2
     assert list(bodies.values()) == ["x" * 5000]
@@ -102,19 +106,18 @@ def test_ref_actions_roundtrip(action, args):
     parse_manifest("test.json", json.dumps({"version": 1, "actions": [create, built]}), {})
 
 
-def test_unknown_batch_ref_does_not_change_draft(tmp_path):
+def test_unknown_batch_ref_does_not_change_draft(tmp_path, broker):
     assert (
         invoke(
             "create", "--title", "Bug", "--body", "body", "--ref", "bug", "--batch", "b"
         ).exit_code
         == 0
     )
-    store = Store(tmp_path)
-    before = store.draft_load_state("issue", "b")
+    before = broker.draft_state("b")
     result = invoke("comment", "@nope", "--body", "hello", "--batch", "b")
     assert result.exit_code == 2
     assert "nope" in result.output
-    assert store.draft_load_state("issue", "b") == before
+    assert broker.draft_state("b") == before
 
 
 def test_same_state_rejected(monkeypatch, tmp_path):
@@ -138,46 +141,6 @@ def test_entry_dispatches_issue(monkeypatch, tmp_path, capsys):
         container_main.main()
     assert exc.value.code == 0
     assert "staged issue/" in capsys.readouterr().out
-
-
-def test_concurrent_draft_appends_preserve_both(tmp_path, monkeypatch):
-    from concurrent.futures import ThreadPoolExecutor
-    from threading import Event
-
-    store = Store(tmp_path)
-    entered, release, second_started = Event(), Event(), Event()
-    original = store.draft_load_state
-    calls = 0
-
-    def paused_load(kind, name):
-        nonlocal calls
-        state = original(kind, name)
-        calls += 1
-        if calls == 1:
-            entered.set()
-            assert release.wait(5)
-        return state
-
-    monkeypatch.setattr(store, "draft_load_state", paused_load)
-
-    def append(index):
-        if index == 2:
-            second_started.set()
-        store.draft_append(
-            "issue", "b", {"type": "comment", "repo": ".", "issue": index, "body": str(index)}, {}
-        )
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        first = executor.submit(append, 1)
-        assert entered.wait(5)
-        second = executor.submit(append, 2)
-        assert second_started.wait(5)
-        release.set()
-        first.result(timeout=5)
-        second.result(timeout=5)
-    manifest, bodies = store.draft_load_state("issue", "b")
-    assert {a["issue"] for a in manifest["actions"]} == {1, 2}
-    parse_manifest("b.json", json.dumps(manifest), bodies)
 
 
 @pytest.mark.parametrize(
@@ -230,22 +193,21 @@ def test_gh_failure_is_refused(monkeypatch, tmp_path):
     assert not (tmp_path / ".jailbee").exists()
 
 
-def test_cross_repo_ref_and_body_cap_rejected_without_draft_change(tmp_path):
+def test_cross_repo_ref_and_body_cap_rejected_without_draft_change(tmp_path, broker):
     assert (
         invoke(
             "create", "--title", "Bug", "--body", "body", "--ref", "bug", "--batch", "b"
         ).exit_code
         == 0
     )
-    store = Store(tmp_path)
-    before = store.draft_load_state("issue", "b")
+    before = broker.draft_state("b")
     for args in [
         ("comment", "@bug", "--body", "comment", "--repo", "github:other/repo"),
         ("comment", "@bug", "--body", "x" * 65537),
     ]:
         result = invoke(*args, "--batch", "b")
         assert result.exit_code == 2, result.output
-        assert store.draft_load_state("issue", "b") == before
+        assert broker.draft_state("b") == before
 
 
 def test_child_marker_refuses_before_body_file_access(tmp_path):
@@ -307,7 +269,7 @@ def test_reopened_reason_normalized_for_host_schema(monkeypatch, tmp_path, broke
         ("state", "@bug", "closed", "--reason", "completed"),
     ],
 )
-def test_ref_cli_roundtrip(tmp_path, args):
+def test_ref_cli_roundtrip(tmp_path, broker, args):
     assert (
         invoke(
             "create", "--title", "Bug", "--body", "body", "--ref", "bug", "--batch", "b"
@@ -316,11 +278,9 @@ def test_ref_cli_roundtrip(tmp_path, args):
     )
     result = invoke(*args, "--batch", "b")
     assert result.exit_code == 0, result.output
-    store = Store(tmp_path)
-    name = store.draft_submit("issue", "b", "bug")
-    manifest = store.outbox("issue") / name
-    actions = parse_manifest(name, manifest.read_text(), {}).actions
-    assert len(actions) == 2
+    submit("b")
+    name, data, bodies = broker.only()
+    assert len(parse_manifest(name, json.dumps(data), bodies).actions) == 2
 
 
 @pytest.mark.parametrize(
@@ -334,7 +294,7 @@ def test_ref_cli_roundtrip(tmp_path, args):
         ("state", "@bug", "closed", "--reason", "completed", "--repo", "github:other/repo"),
     ],
 )
-def test_ref_lookup_rejected_without_changes_or_gh(monkeypatch, tmp_path, args):
+def test_ref_lookup_rejected_without_changes_or_gh(monkeypatch, tmp_path, broker, args):
     monkeypatch.setattr(gh, "issue_view", lambda *a: pytest.fail("unexpected gh lookup"))
     assert (
         invoke(
@@ -342,11 +302,10 @@ def test_ref_lookup_rejected_without_changes_or_gh(monkeypatch, tmp_path, args):
         ).exit_code
         == 0
     )
-    store = Store(tmp_path)
-    before = store.draft_load_state("issue", "b")
+    before = broker.draft_state("b")
     result = invoke(*args, "--batch", "b")
     assert result.exit_code == 2, result.output
-    assert store.draft_load_state("issue", "b") == before
+    assert broker.draft_state("b") == before
 
 
 def test_assign_staged_json_exact(monkeypatch, tmp_path, broker):
@@ -401,7 +360,7 @@ def test_assign_conflicts_rejected_without_draft(monkeypatch, tmp_path, args, me
     assert not (tmp_path / ".jailbee/issue-outbox").exists()
 
 
-def test_assign_ref_roundtrip_and_created_check(tmp_path):
+def test_assign_ref_roundtrip_and_created_check(tmp_path, broker):
     assert (
         invoke(
             "create", "--title", "Bug", "--body", "body", "--ref", "bug", "--batch", "b"
@@ -410,9 +369,8 @@ def test_assign_ref_roundtrip_and_created_check(tmp_path):
     )
     result = invoke("assign", "@bug", "--me", "--add", "bob", "--batch", "b")
     assert result.exit_code == 0, result.output
-    store = Store(tmp_path)
-    name = store.draft_submit("issue", "b", "bug")
-    data = json.loads((store.outbox("issue") / name).read_text())
+    submit("b")
+    name, data, _ = broker.only()
     assert data["actions"][1] == {
         "type": "assignees",
         "repo": ".",
@@ -424,22 +382,21 @@ def test_assign_ref_roundtrip_and_created_check(tmp_path):
     parse_manifest(name, json.dumps(data), {})
 
 
-def test_assign_ref_remove_of_unassigned_login_rejected(tmp_path):
+def test_assign_ref_remove_of_unassigned_login_rejected(tmp_path, broker):
     assert (
         invoke(
             "create", "--title", "Bug", "--body", "body", "--ref", "bug", "--batch", "b"
         ).exit_code
         == 0
     )
-    store = Store(tmp_path)
-    before = store.draft_load_state("issue", "b")
+    before = broker.draft_state("b")
     result = invoke("assign", "@bug", "--remove", "bob", "--batch", "b")
     assert result.exit_code == 2, result.output
     assert "is not assigned" in result.output
-    assert store.draft_load_state("issue", "b") == before
+    assert broker.draft_state("b") == before
 
 
-def test_ref_label_check_uses_created_labels(tmp_path):
+def test_ref_label_check_uses_created_labels(tmp_path, broker):
     assert (
         invoke(
             "create",
@@ -456,11 +413,10 @@ def test_ref_label_check_uses_created_labels(tmp_path):
         ).exit_code
         == 0
     )
-    store = Store(tmp_path)
-    before = store.draft_load_state("issue", "b")
+    before = broker.draft_state("b")
     result = invoke("labels", "@bug", "--add", "BUG", "--batch", "b")
     assert result.exit_code == 2
-    assert store.draft_load_state("issue", "b") == before
+    assert broker.draft_state("b") == before
 
 
 def test_assign_accepts_underscore_logins(monkeypatch, tmp_path, broker):
@@ -468,32 +424,3 @@ def test_assign_accepts_underscore_logins(monkeypatch, tmp_path, broker):
     result = invoke("assign", "42", "--add", "jdoe_acme")
     assert result.exit_code == 0, result.output
     assert broker.only()[1]["actions"][0]["add"] == ["jdoe_acme"]
-
-
-@pytest.mark.parametrize(
-    "fields,message",
-    [
-        ({"add": [1]}, "add"),
-        ({"remove": [None]}, "remove"),
-        ({"add": "bob"}, "add"),
-        ({"remove": {"bob": 1}}, "remove"),
-        ({"add": ["bob"], "expected": {"assignees": [1]}}, "expected"),
-        ({"add": ["bob"], "expected": {"assignees": "alice"}}, "expected"),
-    ],
-)
-def test_assign_ref_with_malformed_raw_action_exits_2_without_traceback(tmp_path, fields, message):
-    from jailbee.container_outbox import issue_cmds
-
-    assert (
-        invoke(
-            "create", "--title", "Bug", "--body", "body", "--ref", "bug", "--batch", "b"
-        ).exit_code
-        == 0
-    )
-    store = Store(tmp_path)
-    before = store.draft_load_state("issue", "b")
-    action = {"type": "assignees", "repo": ".", "issue_ref": "bug", **fields}
-    with pytest.raises(issue_cmds.OutboxCommandError, match=message) as exc:
-        store.draft_append("issue", "b", action, {}, prepare=issue_cmds._prepare_ref)
-    assert exc.value.exit_code == 2
-    assert store.draft_load_state("issue", "b") == before

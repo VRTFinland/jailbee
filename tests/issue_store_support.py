@@ -161,9 +161,10 @@ class StoreSnapshots(dict[str, Any]):
 
     def __getitem__(self, kind: str) -> Any:
         if kind == "issue":
-            from jailbee.outbox.models import StoreSnapshot
+            from jailbee.outbox import service
 
-            return StoreSnapshot("issue", tuple(sorted(LiveFiles().items())), (), ())
+            # The host's own view of the store, row versions included.
+            return service.issue_snapshot("test", UUID)
         return super().__getitem__(kind)
 
 

@@ -21,7 +21,15 @@ from jailbee.issue_manifest import (
     parse_manifest,
 )
 from jailbee.orchestration import wire
-from jailbee.outbox.store_db import KINDS, Kind, OutboxStore, Proposal, ProposalCapError
+from jailbee.outbox.store_db import (
+    KINDS,
+    Kind,
+    OutboxStore,
+    Proposal,
+    ProposalCapError,
+    ProposalChangedError,
+    ProposalLockedError,
+)
 
 if TYPE_CHECKING:
     from jailbee.outbox.publication_db import PublicationStore
@@ -195,13 +203,37 @@ def handle_sent(store: PublicationStore, uuid: str, args: Mapping[str, Any]) -> 
     return {"records": rows}
 
 
+def handle_drop(store: OutboxStore, uuid: str, args: Mapping[str, Any]) -> object:
+    kind = _kind(args.get("kind"))
+    assert kind is not None
+    name = args.get("name")
+    if not isinstance(name, str) or not _PROPOSAL_NAME_RE.fullmatch(name):
+        raise _bad("name must name a staged proposal (NNN-slug.json)")
+    revision = args.get("revision")
+    if revision is not None and (type(revision) is not int or revision < 1):
+        raise _bad("revision must be a positive integer")
+    try:
+        store.drop_proposal(uuid, kind, name, revision)
+    except ProposalChangedError as exc:
+        raise wire.WireError(wire.NOT_FOUND, f"no staged {kind} proposal {name}") from exc
+    except ProposalLockedError as exc:
+        raise _bad(str(exc)) from exc
+    return {"dropped": name}
+
+
 def handle(
     store: OutboxStore, uuid: str, op: str, args: Mapping[str, Any], *, now: float
 ) -> object:
+    if op in wire.OUTBOX_DRAFT_OPS:
+        from jailbee.outbox import draft_ops
+
+        return draft_ops.handle(store, uuid, op, args, now=now)
     if op == wire.OUTBOX_PUT:
         return handle_put(store, uuid, args, now=now)
     if op == wire.OUTBOX_LIST:
         return handle_list(store, uuid, args)
     if op == wire.OUTBOX_SHOW:
         return handle_show(store, uuid, args)
+    if op == wire.OUTBOX_DROP:
+        return handle_drop(store, uuid, args)
     raise _bad(f"unknown op '{op}'")

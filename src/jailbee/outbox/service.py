@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 from jailbee.incus import IncusError
@@ -76,7 +77,8 @@ def issue_snapshot(container: str, uuid: str | None) -> StoreSnapshot:
     for row in rows:
         files.append((row.name, row.manifest))
         files.extend(row.bodies.items())
-    return StoreSnapshot("issue", tuple(sorted(files)), (), ())
+    versions = tuple((row.name, row.revision) for row in rows)
+    return StoreSnapshot("issue", tuple(sorted(files)), (), (), versions)
 
 
 def issue_journals(
@@ -150,7 +152,7 @@ def execute_delete(
 ) -> tuple[str, ...]:
     """Recheck deletion under its lock, optionally bounding the lock wait only."""
     try:
-        identity = _identity(incus, container)
+        identity, uuid = _instance(incus, container)
         key = journal_key(identity, plan.proposal.name)
         # Preserve the legacy no-keyword call for blocking callers and adapters.
         if plan.proposal.kind == "issue":
@@ -181,6 +183,9 @@ def execute_delete(
             snapshot = next(s for s in fresh.stores if s.kind == plan.proposal.kind)
             if _identity(incus, container) != identity:
                 raise OutboxChanged("container changed before mutation; refresh required")
+            if plan.proposal.kind == "issue":
+                # The store archives the issue journal in the deleting transaction.
+                return _delete_issue_rows(container, uuid, plan, snapshot)
             removed = mutate_store(
                 incus,
                 container,
@@ -205,3 +210,33 @@ def execute_delete(
             return removed
     except (IncusError, JournalError) as exc:
         raise OutboxExecutionError(str(exc)) from exc
+
+
+def _delete_issue_rows(
+    container: str, uuid: str | None, plan: DeletePlan, snapshot: StoreSnapshot
+) -> tuple[str, ...]:
+    """Delete or edit an issue proposal in the host store, guarded by its row version."""
+    from jailbee.db import state_dir
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox import store_db
+
+    if uuid is None:
+        raise OutboxExecutionError(f"{container}: instance uuid is unavailable")
+    version = dict(snapshot.versions).get(plan.proposal.name)
+    if version is None:
+        raise OutboxChanged("proposal changed; refresh required")
+    try:
+        store_db.host_store(state_dir() / "orchestration").edit_proposal(
+            uuid,
+            "issue",
+            plan.proposal.name,
+            version,
+            plan.new_text,
+            archive_journal=plan.selection.archive_journal,
+            now=time.time(),
+        )
+    except store_db.ProposalChangedError as exc:
+        raise OutboxChanged("proposal changed; refresh required") from exc
+    except (store_db.ProposalLockedError, StoreError) as exc:
+        raise OutboxExecutionError(str(exc)) from exc
+    return plan.delete_names
