@@ -34,12 +34,8 @@ def test_a_stopped_container_with_staged_proposals_warns_in_the_terminal_dashboa
     assert any("git status unknown" in line for line in lines)
 
 
-def test_a_mount_container_with_staged_proposals_warns_in_the_terminal_dashboard(
-    tmp_path, mocker
-):
-    mount = replace(
-        ci("alpha-a", "alpha", mode="mount"), uuid="u1", outbox_pr=0, outbox_issue=1
-    )
+def test_a_mount_container_with_staged_proposals_warns_in_the_terminal_dashboard(tmp_path, mocker):
+    mount = replace(ci("alpha-a", "alpha", mode="mount"), uuid="u1", outbox_pr=0, outbox_issue=1)
     mocker.patch("jailbee.config.load_repo_config", return_value=mocker.Mock())
 
     lines = bulk.destroy_risk_lines([_group(tmp_path, mount)], ["alpha-a"])

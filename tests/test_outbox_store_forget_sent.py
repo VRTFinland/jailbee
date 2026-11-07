@@ -63,9 +63,7 @@ def _retried(tmp_path: Path) -> tuple[OutboxStore, str]:
         )
         ps.resolve(claim, digest, 0, applied=None, sent_outbox="issue", now=2.0)
     # Another container's row must survive both operations.
-    ps.record_sent(
-        replace(_entry("other.json", digest), uuid="u2"), "uncertain", now=2.0
-    )
+    ps.record_sent(replace(_entry("other.json", digest), uuid="u2"), "uncertain", now=2.0)
     assert sorted(r.manifest for r in pdb.read_sent(tmp_path)) == [put.name, "other.json"]
     return proposals, put.name
 
