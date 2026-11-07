@@ -737,9 +737,7 @@ def test_persisted_declared_count_never_allocates_inspection_or_preparation(
     assert views[0].error and views[0].edit_block
     cfg = make_cfg(tmp_path)
     incus = mocker.Mock()
-    incus.list_containers.return_value = [
-        instance(key.identity.full_name, key.identity.created_at)
-    ]
+    incus.list_containers.return_value = [instance(key.identity.full_name, key.identity.created_at)]
     # Preparation reads the host outbox store; its journal declares the wrong count
     # (an SQLite integer cannot hold the huge one, so it stands in as 3).
     seed(files)

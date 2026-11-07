@@ -82,9 +82,7 @@ def _setup(mocker, tmp_path, *, files=None):
     # read proposals and journals from the host outbox store by instance uuid.
     mocker.patch("jailbee.issue_outbox.read_issue_outbox", return_value=snapshot)
     mocker.patch("jailbee.issue_outbox.store_outbox", return_value=snapshot)
-    mocker.patch(
-        "jailbee.outbox.service.instance_identity", return_value=(_IDENTITY, _UUID)
-    )
+    mocker.patch("jailbee.outbox.service.instance_identity", return_value=(_IDENTITY, _UUID))
 
     def journals(identity, uuid):
         # Bridges the tests' `JournalStore.load` patches to the store reader.

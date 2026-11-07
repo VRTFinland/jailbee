@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 # Captured before fixtures replace it, so one test can drive the real reader.
-from jailbee.outbox.io import read_store as _strict_read_store
 
 
 def _write_gitdir(path: Path) -> None:
@@ -239,9 +238,8 @@ def _state():
 @pytest.fixture
 def preflight(tmp_path, mocker, make_cfg):
     from jailbee import issue_github, issue_outbox
-    from tests.issue_store_support import instance, seed
-
     from jailbee.outbox_io import ContainerIdentity
+    from tests.issue_store_support import instance, seed
 
     cfg = make_cfg(tmp_path)
     incus = mocker.Mock()
@@ -381,9 +379,7 @@ def test_domain_transport_has_execution_type_and_original_cause(preflight, bound
     from jailbee.orchestration.store import StoreError
 
     failure = (
-        StoreError("read failed")
-        if boundary == "reader"
-        else IssueGithubReadError("read failed")
+        StoreError("read failed") if boundary == "reader" else IssueGithubReadError("read failed")
     )
     preflight[boundary].side_effect = failure
     with pytest.raises(IssueExecutionError) as caught:
@@ -1273,7 +1269,6 @@ def test_apply_failure_to_record_remote_failure_still_blocks_replay(
 
 @pytest.mark.parametrize("change", ["digest", "repo", "count", "identity", "missing", "body"])
 def test_apply_rechecks_every_proposal_before_any_remote_mutation(execution, change):
-    from jailbee.outbox_io import journal_key
 
     batch = execution["batch"]({"a.json": [_comment()], "b.json": [_comment()]})
     store = execution["store"]
@@ -1436,7 +1431,10 @@ def test_reconcile_comment_url_and_restored_ref(execution):
         index=1,
     )
     _journals, actions = execution["store"].rows()
-    assert [(row[4], row[5], row[8]) for row in actions] == [(0, "applied", 901), (1, "applied", None)]
+    assert [(row[4], row[5], row[8]) for row in actions] == [
+        (0, "applied", 901),
+        (1, "applied", None),
+    ]
 
 
 def test_preflight_allows_empty_journal_with_old_digest_and_action_count(preflight):
@@ -1705,9 +1703,7 @@ def test_apply_does_not_record_certain_failure(execution):
     assert _sent_rows() == []
 
 
-def test_outcome_that_cannot_be_recorded_leaves_neither_sent_record_nor_receipt(
-    execution, mocker
-):
+def test_outcome_that_cannot_be_recorded_leaves_neither_sent_record_nor_receipt(execution, mocker):
     """Journal entry and sent record commit together: a failed commit records neither,
     and the prepared action reads back as uncertain."""
     from jailbee.orchestration.store import StoreError
@@ -1905,9 +1901,7 @@ def test_assign_retry_is_idempotent(preflight):
     action = _assign(add=["bob"], remove=["carol"])
     batch = preflight["prepare"]({"a.json": [action]})
     prepared = batch.manifests[0]
-    preflight["store"].record(
-        "a.json", prepared.digest, 1, 0, state="uncertain", repo="acme/app"
-    )
+    preflight["store"].record("a.json", prepared.digest, 1, 0, state="uncertain", repo="acme/app")
     issue_outbox.reconcile_action(
         uuid=batch.uuid,
         index=0,
@@ -2158,9 +2152,7 @@ def test_assign_retry_after_a_partly_landed_add_is_not_stale(preflight):
     action = _assign(add=["a", "b"], remove=[], expected={"assignees": ["x"]})
     batch = preflight["prepare"]({"a.json": [action]})
     prepared = batch.manifests[0]
-    preflight["store"].record(
-        "a.json", prepared.digest, 1, 0, state="uncertain", repo="acme/app"
-    )
+    preflight["store"].record("a.json", prepared.digest, 1, 0, state="uncertain", repo="acme/app")
     issue_outbox.reconcile_action(
         uuid=batch.uuid,
         index=0,

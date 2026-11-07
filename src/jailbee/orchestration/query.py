@@ -144,7 +144,11 @@ class Queries:
             raise wire.WireError(
                 wire.STORE, "the broker does not know this container yet; retry shortly"
             )
-        if view.role == "child" and op not in (wire.OUTBOX_LIST, wire.OUTBOX_SHOW, wire.OUTBOX_SENT):
+        if view.role == "child" and op not in (
+            wire.OUTBOX_LIST,
+            wire.OUTBOX_SHOW,
+            wire.OUTBOX_SENT,
+        ):
             raise wire.WireError(wire.REFUSED, CHILD_REFUSAL)
         if op == wire.OUTBOX_SENT:
             from jailbee.outbox.publication_db import PublicationStore

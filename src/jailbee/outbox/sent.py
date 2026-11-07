@@ -272,7 +272,9 @@ def list_records(
     limit: int | None = None,
 ) -> list[SentRow]:
     """Records newest first, optionally narrowed to a repo or one container incarnation."""
-    rows = pdb.read_sent(pdb.default_root(), container_prefix=container_prefix, uuid=uuid, limit=limit)
+    rows = pdb.read_sent(
+        pdb.default_root(), container_prefix=container_prefix, uuid=uuid, limit=limit
+    )
     return [_to_row(rec) for rec in rows]
 
 

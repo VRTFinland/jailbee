@@ -507,9 +507,7 @@ def prepare_batch(
     except ValueError as exc:
         refusals.append(str(exc))
         targets = {}
-    proposals = _load_proposals(
-        outbox, selected_names, targets, cfg.repo_root, journals, refusals
-    )
+    proposals = _load_proposals(outbox, selected_names, targets, cfg.repo_root, journals, refusals)
     if refusals:
         raise IssueGateError("\n".join(refusals))
 
@@ -1423,8 +1421,10 @@ def _sent_entry(
         action = _sent_action(
             name, prepared.digest, resolved, target=target, url=url, login=batch.login
         )
-    except Exception as exc:  # noqa: BLE001 - a display record never blocks the receipt
-        _log.warning("could not build the sent record of %s action %d: %s", name, resolved.index, exc)
+    except Exception as exc:
+        _log.warning(
+            "could not build the sent record of %s action %d: %s", name, resolved.index, exc
+        )
         return None
     return sent.entry(
         action,

@@ -10,7 +10,7 @@ from jailbee.outbox import io, service
 from jailbee.outbox.inspect import build_views
 from jailbee.outbox.io import PrManagement
 from jailbee.outbox.models import ProposalId
-from jailbee.outbox_io import JournalStore, journal_key, proposal_digest
+from jailbee.outbox_io import journal_key, proposal_digest
 from tests.issue_store_support import UUID, StoreJournals, StoreSnapshots, instance
 from tests.outbox_support import IDENTITY, issue_files, pr_files, store
 
@@ -19,9 +19,7 @@ from tests.outbox_support import IDENTITY, issue_files, pr_files, store
 def env(mocker, make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
     incus = mocker.Mock()
-    incus.list_containers.return_value = [
-        instance(IDENTITY.full_name, IDENTITY.created_at)
-    ]
+    incus.list_containers.return_value = [instance(IDENTITY.full_name, IDENTITY.created_at)]
     incus.exec.return_value = ""
     labels = {"user.jailbee.pr": "42"}
     incus.config_get.side_effect = lambda c, key: labels.get(key)
@@ -35,13 +33,13 @@ def env(mocker, make_cfg, tmp_path):
     snapshots = StoreSnapshots()
     snapshots["issue"] = store("issue", issue_files() | {"002.json": issue_files()["001.json"]})
     snapshots["pr"] = store(
-            "pr",
-            {
-                "001.json": json.dumps(payload),
-                "002.json": json.dumps(payload),
-                "body.md": "[red]Original[/red]\nLast line " + "x" * 100,
-            },
-        )
+        "pr",
+        {
+            "001.json": json.dumps(payload),
+            "002.json": json.dumps(payload),
+            "body.md": "[red]Original[/red]\nLast line " + "x" * 100,
+        },
+    )
 
     import subprocess
 
@@ -574,9 +572,7 @@ def test_broker_rewrite_after_precheck_is_refused_by_real_issue_policy(env, tmp_
     stores["issue"] = store("issue", files)
     grant = Grant(publish=PublishRights(issues=("comment",)))
     env[5][labels.GRANT] = grant.to_label()
-    sender = _node(
-        IDENTITY.full_name, **{labels.GRANT: grant.to_label(), "volatile.uuid": UUID}
-    )
+    sender = _node(IDENTITY.full_name, **{labels.GRANT: grant.to_label(), "volatile.uuid": UUID})
     ctx = _ctx(tmp_path / "broker", sender)
     ctx.cfg, ctx.incus = cfg, incus
     ctx.root.mkdir(parents=True, exist_ok=True)
@@ -868,9 +864,9 @@ def test_typed_mutation_failure_retains_receipts_and_execution_type(env, kind):
 
 def revision(env, kind):
     journals = issue_outbox.store_journals(IDENTITY, UUID) if kind == "issue" else None
-    return build_views(
-        IDENTITY, (env[2][kind],), journal_store=env[3], issue_journals=journals
-    )[0].revision
+    return build_views(IDENTITY, (env[2][kind],), journal_store=env[3], issue_journals=journals)[
+        0
+    ].revision
 
 
 def assert_no_mutation(env):
@@ -1574,7 +1570,7 @@ def _sink_publish(env, kind, sink, *, options=None, raise_errors=False, expected
 def test_issue_plan_json_foreign_and_states(env):
     from jailbee.outbox.publish import issue_plan_json
 
-    cfg, incus, _, journals, *_ = env
+    cfg, incus, *_ = env
     files = {
         "001.json": json.dumps(
             {
@@ -1818,7 +1814,7 @@ def test_publish_survives_sent_record_failure_selected(env, mocker, caplog):
 def test_issue_plan_json_names_the_assignees_kind(env):
     from jailbee.outbox.publish import issue_plan_json
 
-    cfg, incus, _, journals, *_ = env
+    cfg, incus, *_ = env
     files = {
         "001.json": json.dumps(
             {

@@ -13,7 +13,6 @@ from typer import _click as click
 from typer.core import TyperGroup
 
 if TYPE_CHECKING:
-
     from jailbee.config import Config
     from jailbee.incus import Incus
     from jailbee.outbox.models import ProposalId

@@ -56,7 +56,8 @@ def seed(files: Mapping[str, str], *, uuid: str = UUID) -> None:
             ).fetchone()
             if exists:
                 con.execute(
-                    "UPDATE outbox_proposal SET manifest=? WHERE uuid=? AND kind='issue' AND name=?",
+                    "UPDATE outbox_proposal SET manifest=? "
+                    "WHERE uuid=? AND kind='issue' AND name=?",
                     (text, uuid, name),
                 )
             else:
@@ -79,7 +80,9 @@ def seed(files: Mapping[str, str], *, uuid: str = UUID) -> None:
                     )
 
 
-def instance(name: str = "test-box", created: str = "2026-09-18", uuid: str = UUID) -> dict[str, Any]:
+def instance(
+    name: str = "test-box", created: str = "2026-09-18", uuid: str = UUID
+) -> dict[str, Any]:
     """A raw `incus list` entry carrying the instance uuid."""
     return {"name": name, "created_at": created, "config": {"volatile.uuid": uuid}}
 
@@ -125,9 +128,7 @@ class LiveFiles(MutableMapping[str, str]):
     def __delitem__(self, key: str) -> None:
         with broker().transaction() as con:
             if key.endswith(".json"):
-                con.execute(
-                    "DELETE FROM outbox_proposal WHERE uuid=? AND name=?", (self.uuid, key)
-                )
+                con.execute("DELETE FROM outbox_proposal WHERE uuid=? AND name=?", (self.uuid, key))
                 con.execute(
                     "DELETE FROM outbox_body WHERE uuid=? AND proposal_name=?", (self.uuid, key)
                 )

@@ -12,7 +12,6 @@ from jailbee.incus import Incus
 from jailbee.outbox import service
 from jailbee.outbox.models import ContainerView, ProposalId
 from jailbee.outbox.service import issue_snapshot as real_issue_snapshot
-from jailbee.outbox_io import JournalStore
 from tests.conftest import panel_text
 from tests.issue_store_support import UUID, StoreJournals, StoreSnapshots
 from tests.outbox_support import IDENTITY, issue_files, pr_files, store
@@ -330,7 +329,7 @@ def test_typo_is_missing_container_not_silent_overview(env):
 def publication_env(env, mocker, tmp_path):
     import subprocess
 
-    from jailbee import issue_github, issue_outbox, pr
+    from jailbee import issue_github, pr
     from jailbee.outbox import io
     from jailbee.outbox.io import PrManagement
 
