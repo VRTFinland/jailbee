@@ -38,6 +38,17 @@ def _stored_outbox(mocker, files, *, container="c", seed=True):
     return incus, read_outbox(incus, container, uid=1000)
 
 
+def _staged_digest(manifest, *, uuid="uuid-feat"):
+    """Stage a stand-in proposal named like `manifest` and return its stored digest.
+
+    `apply_manifest` publishes only a proposal still stored with the digest it
+    was planned with; tests that build the parsed manifest by hand stage one.
+    """
+    from tests.pr_store_support import seed_pr_store
+
+    return seed_pr_store({manifest.name: _manifest_text()}, uuid=uuid)[manifest.name]
+
+
 def _record_applied_before_store(files, name, indices, *, container="c"):
     """Journal `indices` of `name` as applied while its proposal is not in the store yet.
 
@@ -730,7 +741,7 @@ def test_outbox_mutations_pin_validated_repo_despite_another_gh_default(
         uid=1000,
         publisher="user",
         uuid="uuid-feat",
-        digest="digest-1",
+        digest=_staged_digest(manifest),
     )
 
     assert outcome.failure is None
@@ -842,7 +853,7 @@ def test_recorded_transported_submodule_description_then_comments_are_publishabl
         uid=1000,
         publisher="user",
         uuid="uuid-feat",
-        digest="digest-1",
+        digest=_staged_digest(target.manifest),
     )
     assert outcome.applied == (1,)
     assert outcome.urls == ("https://x/comment",)
@@ -1393,7 +1404,7 @@ def test_apply_manifest_draft_routes_review_and_reply_to_session(mocker, make_cf
         draft=True,
         publisher="user",
         uuid="uuid-feat",
-        digest="digest-1",
+        digest=_staged_digest(manifest),
     )
     factory.assert_called_once_with(target)
     assert outcome.applied == (0, 1, 3)
@@ -1506,7 +1517,7 @@ def test_apply_manifest_draft_rejects_general_comment(mocker, make_cfg, tmp_path
             draft=True,
             publisher="user",
             uuid="uuid-feat",
-            digest="digest-1",
+            digest=_staged_digest(manifest),
         )
     calls["comment"].assert_not_called()
 
@@ -1624,7 +1635,7 @@ def test_apply_manifest_dispatches_every_operation_in_target_submodule_scope(
         uid=1000,
         publisher="user",
         uuid="uuid-feat",
-        digest="digest-1",
+        digest=_staged_digest(manifest),
     )
 
     assert outcome.failure is None
@@ -1694,7 +1705,7 @@ def test_apply_runs_review_then_comments_then_description(mocker, make_cfg, tmp_
         uid=1000,
         publisher="user",
         uuid="uuid-feat",
-        digest="digest-1",
+        digest=_staged_digest(manifest),
     )
 
     assert outcome.failure is None
@@ -1728,7 +1739,7 @@ def test_apply_prefixes_a_general_reply_with_a_permalink(mocker, make_cfg, tmp_p
         uid=1000,
         publisher="user",
         uuid="uuid-feat",
-        digest="digest-1",
+        digest=_staged_digest(manifest),
     )
 
     body = calls["comment"].call_args.args[2]
@@ -1765,7 +1776,7 @@ def test_apply_skips_indices_already_applied(mocker, make_cfg, tmp_path):
         uid=1000,
         publisher="user",
         uuid="uuid-feat",
-        digest="digest-1",
+        digest=_staged_digest(manifest),
     )
 
     assert outcome.applied == (1,)
@@ -1800,7 +1811,7 @@ def test_apply_manifest_calls_before_action_once_per_attempt(mocker, make_cfg, t
         before_action=lambda: events.append("hook"),
         publisher="user",
         uuid="uuid-feat",
-        digest="digest-1",
+        digest=_staged_digest(manifest),
     )
     assert outcome.applied == (1, 2)
     assert events == ["hook", "post", "hook", "post"]
@@ -1834,7 +1845,7 @@ def test_apply_manifest_hook_stops_with_the_failure(mocker, make_cfg, tmp_path):
         before_action=lambda: events.append("hook"),
         publisher="user",
         uuid="uuid-feat",
-        digest="digest-1",
+        digest=_staged_digest(manifest),
     )
     assert outcome.failure is not None
     assert events == ["hook", "hook"]
@@ -1886,7 +1897,7 @@ def test_apply_stops_at_the_first_failure_and_records_progress(mocker, make_cfg,
         uid=1000,
         publisher="user",
         uuid="uuid-feat",
-        digest="digest-1",
+        digest=_staged_digest(manifest),
     )
 
     assert outcome.applied == (0,)
@@ -1920,6 +1931,77 @@ def _stored_apply(mocker, make_cfg, tmp_path, text, *, files=None, **kwargs):
         **kwargs,
     )
     return outcome, incus
+
+
+def _staged_then(mocker, make_cfg, tmp_path, change):
+    """Read a two-proposal outbox, let `change` edit the store, then apply ``002-y.json``.
+
+    The publication runs with the digest read before `change`, the way a
+    multi-manifest publish holds the digests it planned with while it works
+    through the earlier proposals.
+    """
+    from jailbee.pr_outbox import Progress, apply_manifest, parse_manifest, proposal_files_digest
+    from tests.pr_store_support import UUID
+
+    calls = _apply_mocks(mocker)
+    files = {"001-x.json": _manifest_text(), "002-y.json": _manifest_text()}
+    incus, outbox = _stored_outbox(mocker, files)
+    planned = proposal_files_digest(outbox.files, "002-y.json")
+    change(outbox)
+    outcome = apply_manifest(
+        make_cfg(tmp_path),
+        incus,
+        "c",
+        _target(parse_manifest("002-y.json", files["002-y.json"], {})),
+        Progress(applied=frozenset(), urls={}),
+        uid=1000,
+        publisher="user",
+        uuid=UUID,
+        digest=planned,
+    )
+    return outcome, calls
+
+
+def test_apply_refuses_a_proposal_dropped_after_it_was_planned(mocker, make_cfg, tmp_path):
+    """A proposal the container dropped mid-run must not be published from the plan."""
+    from jailbee.outbox import publication_db, store_db
+    from tests.pr_store_support import UUID
+
+    def drop(outbox):
+        version = dict(outbox.versions)["002-y.json"]
+        store_db.host_store(publication_db.default_root()).drop_proposal(
+            UUID, "pr", "002-y.json", version
+        )
+
+    outcome, calls = _staged_then(mocker, make_cfg, tmp_path, drop)
+
+    assert outcome.applied == ()
+    assert outcome.failure is not None and "no longer" in outcome.failure
+    calls["comment"].assert_not_called()
+
+
+def test_apply_refuses_a_proposal_replaced_after_it_was_planned(mocker, make_cfg, tmp_path):
+    """A proposal re-staged under the same name with other content is not the one planned."""
+    from jailbee.outbox import publication_db
+    from tests.pr_store_support import UUID
+
+    def replace_text(outbox):
+        store = publication_db.open_publications()._store
+        with store.transaction() as con:
+            con.execute(
+                "UPDATE outbox_proposal SET manifest=? WHERE uuid=? AND kind='pr' AND name=?",
+                (
+                    _manifest_text(actions=[{"type": "comment", "body": "other"}]),
+                    UUID,
+                    "002-y.json",
+                ),
+            )
+
+    outcome, calls = _staged_then(mocker, make_cfg, tmp_path, replace_text)
+
+    assert outcome.applied == ()
+    assert outcome.failure is not None and "changed" in outcome.failure
+    calls["comment"].assert_not_called()
 
 
 def test_apply_restricted_to_indices_leaves_the_rest_pending(mocker, make_cfg, tmp_path):

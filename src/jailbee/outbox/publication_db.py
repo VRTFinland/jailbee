@@ -13,10 +13,12 @@ which every read reports as ``uncertain`` (`load`); a human resolves it. An
 active journal holding an uncertain or prepared action is never archived.
 
 Single flight. A publication claim is one row in the broker's ``state`` table
-(``outbox.claim:<uuid>:<kind>:<name>``) naming the owning process. Claiming a
-proposal another live process holds raises `ClaimBusyError`; a claim whose
-owner is gone is taken over. Every write below re-checks its claim inside its
-own transaction, so a taken-over claim can never interleave writes.
+(``outbox.claim:<uuid>:<kind>:<name>``) naming the owning process and a token
+whose lock file the owner holds (flock) while it holds the claim. Claiming a
+proposal whose lock is held raises `ClaimBusyError`; a claim whose lock nobody
+holds — its owner exited, crashed, or failed to delete the row — is taken over.
+Every write below re-checks its claim inside its own transaction, so a
+taken-over claim can never interleave writes.
 
 Host side only (broker and host commands); no Incus call.
 """
@@ -24,8 +26,10 @@ Host side only (broker and host commands); no Incus call.
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import json
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -177,6 +181,68 @@ def _claim_key(uuid: str, kind: str, name: str) -> str:
     return f"{_CLAIM_PREFIX}{uuid}:{kind}:{name}"
 
 
+# -- claim locks ---------------------------------------------------------------
+#
+# A claim row names a token; its owner holds an exclusive flock on
+# ``claims/<token>.lock`` next to broker.db for exactly as long as it holds the
+# claim. The kernel drops that lock when the owner releases, exits or crashes,
+# so a row whose lock nobody holds is stale for every process — including a
+# row left behind by a live process whose release (the row DELETE) failed.
+
+_TOKEN_RE = re.compile(r"[0-9a-f]{32}")
+
+
+def _claims_dir(store_file: Path) -> Path:
+    return store_file.parent / "claims"
+
+
+def _lock_file(store_file: Path, token: str) -> Path:
+    return _claims_dir(store_file) / f"{token}.lock"
+
+
+def _hold_lock(path: Path) -> int:
+    """Create and exclusively lock a fresh token's lock file; returns its fd."""
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _drop_lock(path: Path, fd: int) -> None:
+    with contextlib.suppress(OSError):
+        path.unlink()
+    with contextlib.suppress(OSError):
+        os.close(fd)
+
+
+def _lock_held(path: Path) -> bool:
+    """Whether some open file description (any process or thread) holds `path`'s lock."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True  # cannot tell: never take over what may be live
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+    return False
+
+
+def _store_file(con: sqlite3.Connection) -> Path | None:
+    row = con.execute("PRAGMA database_list").fetchone()
+    return Path(row[2]) if row is not None and row[2] else None
+
+
 def _live_owner(con: sqlite3.Connection, key: str) -> dict[str, object] | None:
     """The claim row's owner when it is a live claim, else None (absent or stale)."""
     row = con.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
@@ -188,11 +254,30 @@ def _live_owner(con: sqlite3.Connection, key: str) -> dict[str, object] | None:
         return None
     if not isinstance(owner, dict):
         return None
+    if owner.get("lock") is True:
+        token, store_file = owner.get("token"), _store_file(con)
+        if not isinstance(token, str) or not _TOKEN_RE.fullmatch(token):
+            return None
+        if store_file is None:
+            return owner  # cannot locate the lock: treat as live
+        return owner if _lock_held(_lock_file(store_file, token)) else None
+    # A row without a lock (an older writer): judged by its owner's pid.
     if owner.get("pid") == os.getpid():
         # A claim of this very process whose token no live claim holds was leaked
         # (its release failed): stale, like a dead process's.
         return owner if owner.get("token") in _LIVE_TOKENS else None
     return owner if _alive(owner.get("pid"), owner.get("start")) else None
+
+
+def _forget_stale_lock(store_file: Path, value: object) -> None:
+    """Remove a taken-over claim's leftover lock file (its owner crashed)."""
+    try:
+        token = json.loads(str(value)).get("token")
+    except (ValueError, AttributeError):
+        return
+    if isinstance(token, str) and _TOKEN_RE.fullmatch(token):
+        with contextlib.suppress(OSError):
+            _lock_file(store_file, token).unlink()
 
 
 def claim_is_live(con: sqlite3.Connection, uuid: str, kind: str, name: str) -> bool:
@@ -341,6 +426,25 @@ def forget_sent(
     """Delete an `uncertain` record of a dropped action; applied records stay."""
     key = sent_dedup_key(uuid, outbox, manifest, digest, index)
     con.execute("DELETE FROM outbox_sent WHERE dedup_key=? AND state='uncertain'", (key,))
+
+
+def forget_dropped_sent(con: sqlite3.Connection, uuid: str, kind: str, name: str) -> None:
+    """Delete the `uncertain` sent records of the stored proposal about to be dropped.
+
+    An uncertain action resolved for retry loses its journal record but keeps its
+    `uncertain` row; dropped unpublished, nothing would ever settle it. Applied
+    records stay. Call inside the dropping transaction, before the proposal goes.
+    """
+    digest = _stored_digest(con, uuid, kind, name)
+    if digest is None:
+        return
+    for outbox in ("issue",) if kind == "issue" else ("review", "source"):
+        prefix = f"{uuid}|{outbox}|{name}|{digest}|"
+        con.execute(
+            "DELETE FROM outbox_sent WHERE uuid=? AND state='uncertain' "
+            "AND substr(dedup_key, 1, ?)=?",
+            (uuid, len(prefix), prefix),
+        )
 
 
 # -- journal rows ------------------------------------------------------------
@@ -494,19 +598,33 @@ class PublicationStore:
         token = secrets.token_hex(16)
         key = _claim_key(uuid, kind, name)
         pid = os.getpid()  # per claim, not per import: a forked child is its own owner
-        value = json.dumps({"token": token, "pid": pid, "start": _start_time(pid)})
-        with self._store.transaction() as con:
-            owner = _live_owner(con, key)
-            if owner is not None:
-                raise ClaimBusyError(
-                    f"{name}: another run (pid {owner.get('pid')}) is publishing this "
-                    "proposal; retry after it finishes"
+        value = json.dumps({"token": token, "pid": pid, "start": _start_time(pid), "lock": True})
+        lock_path = _lock_file(Path(self._store.path), token)
+        try:
+            # Held before the row exists, so a row naming this token is never
+            # mistaken for stale; dropped by the kernel however this run ends.
+            lock_fd = _hold_lock(lock_path)
+        except OSError as exc:
+            raise StoreError(f"cannot create the publication claim lock: {exc}") from exc
+        try:
+            with self._store.transaction() as con:
+                owner = _live_owner(con, key)
+                if owner is not None:
+                    raise ClaimBusyError(
+                        f"{name}: another run (pid {owner.get('pid')}) is publishing this "
+                        "proposal; retry after it finishes"
+                    )
+                previous = con.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
+                con.execute(
+                    "INSERT INTO state(key, value) VALUES(?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (key, value),
                 )
-            con.execute(
-                "INSERT INTO state(key, value) VALUES(?, ?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (key, value),
-            )
+        except BaseException:
+            _drop_lock(lock_path, lock_fd)
+            raise
+        if previous is not None:
+            _forget_stale_lock(Path(self._store.path), previous[0])
         claim = Claim(uuid, kind, name, token)
         held[slot] = claim
         _LIVE_TOKENS.add(token)
@@ -515,12 +633,16 @@ class PublicationStore:
         finally:
             del held[slot]
             _LIVE_TOKENS.discard(token)
-            with contextlib.suppress(StoreError):
-                with self._store.transaction() as con:
-                    con.execute(
-                        "DELETE FROM state WHERE key=? AND json_extract(value, '$.token')=?",
-                        (key, token),
-                    )
+            try:
+                with contextlib.suppress(StoreError):
+                    with self._store.transaction() as con:
+                        con.execute(
+                            "DELETE FROM state WHERE key=? AND json_extract(value, '$.token')=?",
+                            (key, token),
+                        )
+            finally:
+                # Even when the DELETE failed: the leaked row is stale for everyone.
+                _drop_lock(lock_path, lock_fd)
 
     @staticmethod
     def _check(con: sqlite3.Connection, claim: Claim) -> None:
@@ -536,6 +658,15 @@ class PublicationStore:
     def load(self, uuid: str, kind: Kind, name: str) -> Journal | None:
         with self._store.transaction(write=False) as con:
             return _active(con, uuid, kind, name)
+
+    def stored_digest(self, uuid: str, kind: Kind, name: str) -> str | None:
+        """The stored proposal's content digest, None when it is no longer stored.
+
+        A publisher checks it under the claim: a proposal dropped or re-staged
+        after it was planned must not be published from the plan.
+        """
+        with self._store.transaction(write=False) as con:
+            return _stored_digest(con, uuid, kind, name)
 
     # journal writes
 

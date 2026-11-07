@@ -14603,7 +14603,7 @@ def review_resolve_cmd(
     Check the PR on GitHub first. `--applied URL` records that it landed;
     `--retry` forgets the outcome so `jailbee review apply` attempts it again.
     """
-    from jailbee import pr_outbox, prompting
+    from jailbee import branch_pr, pr_outbox, prompting
     from jailbee.lifecycle import short_name
     from jailbee.outbox.models import OutboxError
 
@@ -14636,7 +14636,9 @@ def review_resolve_cmd(
             empty_reason=f"{manifest} has no uncertain action",
         )
     try:
-        removed = pr_outbox.resolve_uncertain(incus, container, manifest, action, landed_url=url)
+        removed = branch_pr.resolve_uncertain_source(
+            cfg, incus, container, manifest, action, landed_url=url
+        )
     except OutboxError as e:
         error_plain(str(e))
         raise typer.Exit(1) from e

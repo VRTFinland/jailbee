@@ -554,6 +554,68 @@ def publish_source_manifest(
         return 1
 
 
+def resolve_uncertain_source(
+    cfg: Config,
+    incus: Incus,
+    full: str,
+    name: str,
+    index: int,
+    *,
+    landed_url: str | None,
+) -> bool:
+    """`jailbee review resolve` for any PR proposal, source manifests included.
+
+    Settles the uncertain action through `pr_outbox.resolve_uncertain` (which
+    files a source's sent record under ``source``). When a source publication
+    is resolved as landed, also records the branch -> PR binding its successful
+    publication would have written, from the PR the landed URL names. The
+    binding is a best effort after the journal is settled: a failure warns.
+    Returns whether the proposal was removed. Raises `OutboxError`.
+    """
+    from jailbee import pr, pr_outbox
+    from jailbee.incus import IncusError
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox.service import instance_identity
+    from jailbee.outbox_io import JournalError
+    from jailbee.tui import warn_plain
+
+    source: StoredSource | None = None
+    if landed_url is not None:
+        try:
+            _, uuid = instance_identity(incus, full)
+            source = stored_source(uuid, name)
+        except (pr_outbox.ManifestError, IncusError, JournalError, StoreError):
+            source = None
+    removed = pr_outbox.resolve_uncertain(incus, full, name, index, landed_url=landed_url)
+    if source is None or landed_url is None:
+        return removed
+    manifest = source.manifest
+    number = pr_outbox.landed_pr_number(landed_url) or manifest.pr
+    if number is None or manifest.source is None or manifest.source_sha is None:
+        warn_plain(f"{name}: no PR number in {landed_url}; its branch binding was not recorded")
+        return removed
+    try:
+        target = pr.resolve_pr(
+            cfg.repo_root, number, remote=cfg.upstream_remote, repo=manifest.repo
+        )
+        # Whether the run that landed created the PR is unknown: record it as
+        # adopted, which grants an orchestrator no authorship of it.
+        BranchPrMap(incus, full).put(
+            BranchPr(
+                target.head_ref,
+                number,
+                target.base_ref,
+                manifest.source,
+                manifest.source_sha,
+                False,
+                True,
+            )
+        )
+    except (pr.PrError, IncusError) as exc:
+        warn_plain(f"{name}: PR #{number}'s branch binding was not recorded ({exc})")
+    return removed
+
+
 def unbind_head(
     incus: Incus, full: str, head: str, *, yes: bool, confirm: Callable[[str], bool]
 ) -> int:
