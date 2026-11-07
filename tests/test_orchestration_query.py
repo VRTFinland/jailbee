@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from jailbee.orchestration import broker, executor, socket_ops, wire
-from jailbee.orchestration.outbox import deliver
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.listener import Listener, RequestEvent
+from jailbee.orchestration.outbox import deliver
 from jailbee.orchestration.query import ContainerSnapshot, Queries
 from jailbee.orchestration.store import BrokerStore, StoreError
 from tests.test_orchestration_broker import Rig, _child, _orch
@@ -153,13 +153,22 @@ def test_lifecycle_queries_are_current_before_success_reply(
         manifest["prompt"] = "continue"
     elif kind == "spawn":
         manifest = {
-            "version": 1, "id": "action", "type": "spawn", "kind": "new",
-            "branch": "kid", "prompt": "start",
+            "version": 1,
+            "id": "action",
+            "type": "spawn",
+            "kind": "new",
+            "branch": "kid",
+            "prompt": "start",
             "rights": {"version": 1, "mounts": [], "loose": False, "egress": []},
         }
     result = socket_ops.handle_send(
-        env.memory.contexts["proj-orch"], env.memory, env.store,
-        manifest=manifest, body=None, wait=True, is_connected=lambda: True,
+        env.memory.contexts["proj-orch"],
+        env.memory,
+        env.store,
+        manifest=manifest,
+        body=None,
+        wait=True,
+        is_connected=lambda: True,
     )
     assert result["state"] in ("done", "started")
     assert len(seen) == 1
@@ -180,16 +189,25 @@ def test_child_message_queries_match_live_next_history_before_another_tick(
     env.rig.dispatch.side_effect = actions.dispatch
     if kind == "done":
         # The import/cleanup work is outside this query regression's scope.
-        monkeypatch.setattr(messages, "handle_done", lambda ctx, m: messages._relay(
-            ctx, ctx.nodes["proj-orch"], m
-        ))
+        monkeypatch.setattr(
+            messages, "handle_done", lambda ctx, m: messages._relay(ctx, ctx.nodes["proj-orch"], m)
+        )
     before = env.call("status", child="kid").result
     assert before["last_from_child"] == {}
     result = socket_ops.handle_send(
-        env.memory.contexts["proj-kid"], env.memory, env.store,
-        manifest={"version": 1, "id": "child-msg", "type": "message", "kind": kind,
-                  "body": "latest child update"},
-        body=None, wait=True, is_connected=lambda: True,
+        env.memory.contexts["proj-kid"],
+        env.memory,
+        env.store,
+        manifest={
+            "version": 1,
+            "id": "child-msg",
+            "type": "message",
+            "kind": kind,
+            "body": "latest child update",
+        },
+        body=None,
+        wait=True,
+        is_connected=lambda: True,
     )
     assert result["state"] == "done"
     for row in env.store.unacked("proj-orch"):
@@ -197,8 +215,7 @@ def test_child_message_queries_match_live_next_history_before_another_tick(
     env.store.set_digest_at("proj-orch", env.memory.children["proj-orch"].observed_at - 2)
     waiter = socket_ops.Waiter("proj-orch", 1, frozenset(), 0, 1, None)
     digest = socket_ops._evaluate_one(
-        waiter, env.memory, env.store,
-        now=env.memory.children["proj-orch"].observed_at, mono=1.0
+        waiter, env.memory, env.store, now=env.memory.children["proj-orch"].observed_at, mono=1.0
     )
     assert isinstance(digest, dict) and digest["kind"] == "digest"
     assert set(digest["last_from_child"]) == {"kid"}
