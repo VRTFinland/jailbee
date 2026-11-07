@@ -444,9 +444,15 @@ least two seconds apart, after setup. A never-started agent fails after a
 that reports done before readiness is confirmed still gets a final `done`
 (``child `<short>` is ready; it already reported done``).
 On `failed`, read the detail and tell the human; respawn under a new id only
-when the cause is fixed. Still do not wait forever: if a `wait` times out
-and a started child has not reported, send it a `message`. A `message` to a
-stopped child is answered `queued` and delivered when it runs again.
+when the cause is fixed. Wait for the spawn's final readiness `done` before
+sending follow-up messages. While startup is unconfirmed, `send message`
+is refused with ``child `<short>` is still being created; message was not queued``
+and exits 1; the reason is on stderr, not a JSON status on stdout, even with
+`--wait`. Read the spawn's final status through the inbox waiter, then retry
+with a new message id. This also applies before the child appears in Incus;
+`started` only acknowledges the creation worker, not message readiness.
+A `message` to an already-ready but stopped child is answered `queued` and
+delivered when it runs again.
 
 After readiness the broker reports any prompted-agent exit without accepted
 `done` as `blocked`: exit 0, errors and signals alike. It includes the exit

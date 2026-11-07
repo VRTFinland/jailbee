@@ -843,11 +843,21 @@ def test_ls_pages_through_a_long_inbox(broker: FakeBroker, sockdir: Path, tmp_pa
 
 
 @pytest.mark.parametrize("wait", [False, True])
+@pytest.mark.parametrize("creating", [False, True])
 def test_send_refusal_always_prints_detail_not_status(
-    broker: FakeBroker, sockdir: Path, tmp_path: Path, wait: bool
+    broker: FakeBroker, sockdir: Path, tmp_path: Path, wait: bool, creating: bool
 ) -> None:
-    broker.on("send", {**send_status("refused"), "detail": "operation not granted"})
-    r = run(sockdir, "send", "stop", "--child", "kid", *(["--wait"] if wait else []), tmp=tmp_path)
+    detail = (
+        "child `kid` is still being created; message was not queued; "
+        "retry after creation finishes"
+        if creating else "operation not granted"
+    )
+    broker.on("send", {**send_status("refused"), "detail": detail})
+    args = (
+        ["message", "--to", "kid", "--text", "hi"]
+        if creating else ["stop", "--child", "kid"]
+    )
+    r = run(sockdir, "send", *args, *(["--wait"] if wait else []), tmp=tmp_path)
     assert r.returncode == 1
-    assert len(r.stdout.splitlines()) == 1 and r.stdout.startswith("stop-")
-    assert "operation not granted" in r.stderr
+    assert len(r.stdout.splitlines()) == 1 and r.stdout.startswith(f"{args[0]}-")
+    assert detail in r.stderr
