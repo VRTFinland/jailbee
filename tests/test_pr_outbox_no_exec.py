@@ -15,7 +15,7 @@ from jailbee.outbox import service
 from jailbee.outbox.delete import DeleteSelection, plan_delete
 from jailbee.outbox.models import ProposalId
 from jailbee.outbox.publish import PublishOptions, publish_selected
-from jailbee.outbox_io import JournalStore, proposal_digest
+from jailbee.outbox_io import proposal_digest
 from jailbee.pr_flow import PrScope
 from tests.test_pr_outbox_store import (
     COMMENT,
@@ -90,7 +90,6 @@ def _outbox_publish(cfg: Any, incus: Any) -> object:
         incus,
         FULL,
         ProposalId("pr", name),
-        journal_store=JournalStore(cfg.repo_root / "journals"),
         options=PublishOptions(publisher="user"),
         confirm=lambda _n: True,
     )
@@ -104,10 +103,9 @@ def _drop(cfg: Any, incus: Any) -> object:
 
 def _outbox_view_and_delete(cfg: Any, incus: Any) -> object:
     name = stage(manifest(COMMENT))
-    journals = JournalStore(cfg.repo_root / "journals")
-    view = service.load_container(cfg, incus, FULL, journal_store=journals)
+    view = service.load_container(cfg, incus, FULL)
     plan = plan_delete(view, ProposalId("pr", name), DeleteSelection())
-    return service.execute_delete(cfg, incus, FULL, plan, journal_store=journals)
+    return service.execute_delete(cfg, incus, FULL, plan)
 
 
 def _record_consumed(cfg: Any, incus: Any) -> object:

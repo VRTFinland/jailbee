@@ -259,8 +259,20 @@ def test_issue_management_skill_routes_writes_through_host() -> None:
     text = (Path(agent_skills._skills_root()) / "jailbee-issue-management" / "SKILL.md").read_text()
     assert "gh issue create" in text
     assert "Never" in text
-    assert "~/.jailbee/issue-outbox" in text
     assert "jb issue apply" in text
+    # Issue proposals live in the host store; the record of what landed is the sent log.
+    assert "jailbee outbox sent" in text
+    assert "issue-outbox" not in text
+    assert "applied.log" not in text
+
+
+def test_issue_skills_do_not_point_at_container_issue_files() -> None:
+    root = Path(agent_skills._skills_root())
+    for path in (root / "jailbee-issue-management", root / "jailbee-orchestration"):
+        for md in path.rglob("*.md"):
+            text = md.read_text()
+            assert "issue-outbox" not in text, md
+            assert "applied.log" not in text, md
 
 
 @pytest.mark.parametrize(
@@ -296,11 +308,11 @@ def test_orchestration_source_example_stages_new_pr(tmp_path: Path, monkeypatch)
     from typer.testing import CliRunner
 
     from jailbee.container_cli import container_app
+    from tests import container_broker_support
 
     text = (Path(agent_skills._skills_root()) / "jailbee-orchestration" / "SKILL.md").read_text()
     match = re.search(r"```bash\n(jailbee pr source [^\n]+)\n```", text)
     assert match, "missing runnable source example"
-    from tests import container_broker_support
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("JAILBEE_ROLE", raising=False)

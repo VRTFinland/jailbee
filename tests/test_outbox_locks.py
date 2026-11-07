@@ -11,12 +11,12 @@ import pytest
 
 from jailbee.outbox.io import PrManagement
 from jailbee.outbox.models import OutboxExecutionError
-from jailbee.outbox_io import ContainerIdentity, JournalError, JournalStore, journal_key
+from jailbee.outbox_io import ContainerIdentity
 
 
 def _hold_lock(kind, root, identity, pipe, release_after):
-    manager = JournalStore(root) if kind == "issue" else PrManagement(root)
-    key = journal_key(identity, "001.json") if kind == "issue" else identity
+    manager = PrManagement(root)
+    key = identity
     with manager.lock(key):
         pipe.send("held")
         if pipe.poll(release_after):
@@ -53,13 +53,13 @@ def held_by_process(kind, root, identity, *, release_after=3):
 def lock_case(kind, tmp_path):
     identity = ContainerIdentity("repo-feature", "2026-09-30T12:00:00Z")
     root = tmp_path / kind
-    manager = JournalStore(root) if kind == "issue" else PrManagement(root)
-    key = journal_key(identity, "001.json") if kind == "issue" else identity
-    error = JournalError if kind == "issue" else OutboxExecutionError
+    manager = PrManagement(root)
+    key = identity
+    error = OutboxExecutionError
     return manager, key, error, root, identity
 
 
-@pytest.mark.parametrize("kind", ["issue", "pr"])
+@pytest.mark.parametrize("kind", ["pr"])
 def test_finite_lock_wait_times_out_closes_fd_and_can_be_reused(kind, tmp_path, mocker):
     manager, key, error, root, identity = lock_case(kind, tmp_path)
     opened = mocker.spy(os, "open")
@@ -83,7 +83,7 @@ def test_finite_lock_wait_times_out_closes_fd_and_can_be_reused(kind, tmp_path, 
         pass
 
 
-@pytest.mark.parametrize("kind", ["issue", "pr"])
+@pytest.mark.parametrize("kind", ["pr"])
 def test_default_lock_still_waits_for_other_process(kind, tmp_path):
     manager, key, _, root, identity = lock_case(kind, tmp_path)
     with held_by_process(kind, root, identity, release_after=0.25):
@@ -92,7 +92,7 @@ def test_default_lock_still_waits_for_other_process(kind, tmp_path):
             assert time.monotonic() - started >= 0.15
 
 
-@pytest.mark.parametrize("kind", ["issue", "pr"])
+@pytest.mark.parametrize("kind", ["pr"])
 def test_finite_lock_acquires_when_holder_releases_before_deadline(kind, tmp_path):
     manager, key, _, root, identity = lock_case(kind, tmp_path)
     with held_by_process(kind, root, identity, release_after=0.2):
@@ -101,7 +101,7 @@ def test_finite_lock_acquires_when_holder_releases_before_deadline(kind, tmp_pat
             assert 0.1 <= time.monotonic() - started < 0.8
 
 
-@pytest.mark.parametrize("kind", ["issue", "pr"])
+@pytest.mark.parametrize("kind", ["pr"])
 def test_finite_lock_reentry_keeps_outer_lock_without_extra_acquisition(kind, tmp_path, mocker):
     manager, key, error, root, _ = lock_case(kind, tmp_path)
     with manager.lock(key, timeout=0):
@@ -109,7 +109,7 @@ def test_finite_lock_reentry_keeps_outer_lock_without_extra_acquisition(kind, tm
         with manager.lock(key, timeout=0):
             pass
         flock.assert_not_called()
-        other = JournalStore(root) if kind == "issue" else PrManagement(root)
+        other = PrManagement(root)
         with pytest.raises(error):
             with other.lock(key, timeout=0):
                 pytest.fail("inner context released outer lock")
@@ -117,7 +117,7 @@ def test_finite_lock_reentry_keeps_outer_lock_without_extra_acquisition(kind, tm
         pass
 
 
-@pytest.mark.parametrize("kind", ["issue", "pr"])
+@pytest.mark.parametrize("kind", ["pr"])
 def test_lock_oserror_closes_fd_and_keeps_state_reusable(kind, tmp_path, mocker):
     manager, key, error, _, _ = lock_case(kind, tmp_path)
     opened = mocker.spy(os, "open")
@@ -134,7 +134,7 @@ def test_lock_oserror_closes_fd_and_keeps_state_reusable(kind, tmp_path, mocker)
         pass
 
 
-@pytest.mark.parametrize("kind", ["issue", "pr"])
+@pytest.mark.parametrize("kind", ["pr"])
 @pytest.mark.parametrize("timeout", [-1, float("nan"), float("inf"), float("-inf")])
 def test_lock_refuses_nonfinite_or_negative_timeout(kind, timeout, tmp_path):
     manager, key, error, _, _ = lock_case(kind, tmp_path)

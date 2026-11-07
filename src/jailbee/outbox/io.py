@@ -114,8 +114,12 @@ cat "$tmp/encoded"
 
 
 def store_directory(kind: Kind) -> str:
-    """Return the existing store location; inspection never creates it."""
-    if kind not in ("pr", "issue"):
+    """Return the existing store location; inspection never creates it.
+
+    Only PR proposals are still files in the container; issue proposals live in
+    the host outbox store.
+    """
+    if kind != "pr":
         raise OutboxExecutionError("unknown outbox kind")
     return f"/home/dev/.jailbee/{kind}-outbox"
 
@@ -151,7 +155,7 @@ def ensure_directories(cfg: Config, incus: Incus, container: str) -> None:
     try:
         incus.exec(
             container,
-            ["python3", "-c", _CREATE_SCRIPT, store_directory("pr"), store_directory("issue")],
+            ["python3", "-c", _CREATE_SCRIPT, store_directory("pr")],
             uid=cfg.container_user.uid,
             timeout=30,
         )

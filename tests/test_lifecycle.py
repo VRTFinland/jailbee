@@ -11278,10 +11278,8 @@ def test_outbox_bootstrap_failure_blocks_agents_and_autostart(tmp_path, mocker, 
         "home-link",
         "parent-link",
         "pr-link",
-        "issue-link",
         "parent-file",
         "pr-file",
-        "issue-file",
     ],
 )
 def test_outbox_bootstrap_script_safe_and_idempotent(tmp_path, mocker, make_cfg, blocked):
@@ -11302,7 +11300,6 @@ def test_outbox_bootstrap_script_safe_and_idempotent(tmp_path, mocker, make_cfg,
         "home": home,
         "parent": parent,
         "pr": parent / "pr-outbox",
-        "issue": parent / "issue-outbox",
     }
     if blocked:
         name, kind = blocked.split("-")
@@ -11321,7 +11318,7 @@ def test_outbox_bootstrap_script_safe_and_idempotent(tmp_path, mocker, make_cfg,
         assert container == "repo-x"
         assert uid == cfg.container_user.uid
         assert 0 < timeout <= 60
-        assert argv[-2:] == ["/home/dev/.jailbee/pr-outbox", "/home/dev/.jailbee/issue-outbox"]
+        assert argv[-1:] == ["/home/dev/.jailbee/pr-outbox"]
         local = [
             arg.replace("/home/dev", str(home)) if arg.startswith("/home/dev") else arg
             for arg in argv
@@ -11344,7 +11341,7 @@ def test_outbox_bootstrap_script_safe_and_idempotent(tmp_path, mocker, make_cfg,
         manifest.write_text("existing")
         outbox_io.ensure_directories(cfg, incus, "repo-x")
         assert manifest.read_text() == "existing"
-        assert (parent / "issue-outbox").is_dir()
+        assert not (parent / "issue-outbox").exists()
 
 
 def _ci(name):

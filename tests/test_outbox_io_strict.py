@@ -183,4 +183,5 @@ def test_warning_metadata(mocker):
 
 def test_store_paths():
     assert store_directory("pr") == "/home/dev/.jailbee/pr-outbox"
-    assert store_directory("issue") == "/home/dev/.jailbee/issue-outbox"
+    with pytest.raises(OutboxExecutionError):
+        store_directory("issue")  # issue proposals live in the host store

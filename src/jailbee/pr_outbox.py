@@ -48,7 +48,6 @@ from jailbee.outbox.models import (
 from jailbee.outbox_io import (
     ContainerIdentity,
     JournalError,
-    JournalStore,
     container_identity,
 )
 from jailbee.outbox_io import OutboxReadError as OutboxReadError
@@ -2502,7 +2501,6 @@ def _views(identity: ContainerIdentity, outbox: Outbox) -> dict[str, str]:
         for v in build_views(
             identity,
             (outbox.snapshot(),),
-            journal_store=JournalStore(),
             pr_journals=outbox.journals if outbox.uuid is not None else None,
         )
     }

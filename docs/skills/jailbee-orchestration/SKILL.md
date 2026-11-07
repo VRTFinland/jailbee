@@ -136,7 +136,9 @@ order: `index`, `kind`, `repo`, `issue` and `url`. Select `kind == "create"`
 for newly created issue numbers; failed publication can still include receipts
 for actions already applied. PR publications currently return an empty array.
 `jailbee issue create --json` returns `{"name": "001-....json"}` for the
-staged manifest, suitable for `send publish --issue`.
+staged manifest, suitable for `send publish --issue`. To see what was
+actually published from your container (including `uncertain` outcomes), run
+`jailbee outbox sent`.
 
 Plain `--wait` remains compatible and may return at `started`; then read the
 later final status for the printed ref. Staging or `started` is not success.

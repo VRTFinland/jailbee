@@ -92,7 +92,12 @@ def complete(
     if child is not None and child.running:
         bounded = ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S)
         try:
-            pending = child_outbox.probe(bounded, child.full, uid=ctx.cfg.container_user.uid)
+            pending = child_outbox.probe(
+                bounded,
+                child.full,
+                uid=ctx.cfg.container_user.uid,
+                uuid=child.config.get("volatile.uuid"),
+            )
         except child_outbox.ChildOutboxError:
             kept_reason = child_outbox.unchecked(child.short)
         else:

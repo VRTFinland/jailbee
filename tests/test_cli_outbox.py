@@ -75,7 +75,6 @@ def env(mocker, make_cfg, tmp_path):
     mocker.patch.object(service, "pr_snapshot", side_effect=real_pr_snapshot)
     mocker.patch.object(service, "pr_journals", side_effect=real_pr_journals)
     journals = StoreJournals(IDENTITY)
-    mocker.patch("jailbee.outbox_io.JournalStore", return_value=journals)
     return cfg, incus, snapshots, reader, mutation, journals, raw
 
 
@@ -441,7 +440,6 @@ def test_apply_real_domain_orchestration(publication_env, mocker, kind, mode):
         comment.assert_not_called()
         review.assert_not_called()
         env[1].exec.assert_not_called()
-        assert not list(env[5].root.rglob("*.json"))
     elif kind == "issue":
         create.assert_called_once()
         assert [call.args[2] for call in comment.call_args_list] == [73, 42]
@@ -680,7 +678,6 @@ def assert_publication_refused(publication_env):
     env = publication_env[0]
     env[1].exec.assert_not_called()
     env[4].assert_not_called()
-    assert not list(env[5].root.rglob("*.json"))
 
 
 def issue_edit(env):
@@ -860,7 +857,7 @@ def test_apply_transport_failure_has_safe_execution_diagnostic(
 @pytest.mark.parametrize("kind", ["issue", "pr"])
 def test_apply_mutation_failure_is_execution_and_retains_progress(publication_env, kind):
     from jailbee import issue_github, pr
-    from jailbee.outbox_io import journal_key
+    from tests.outbox_journal_fake import journal_key
 
     env, create, comment, review = publication_env
     if kind == "issue":
@@ -1029,7 +1026,7 @@ def test_apply_retry_preserves_recorded_receipt_and_only_confirms_pending(
     publication_env, mocker, kind
 ):
     from jailbee import issue_github, pr
-    from jailbee.outbox_io import journal_key
+    from tests.outbox_journal_fake import journal_key
 
     env, create, comment, review = publication_env
     if kind == "issue":
@@ -1392,19 +1389,3 @@ def test_apply_source_exits_two_with_push_hint(env):
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/source.json", "-y"])
     assert result.exit_code == 2, result.output
     assert "jailbee pr push acme-feature --source-manifest source.json" in panel_text(result.output)
-
-
-def test_issue_action_summary_counts_assignees_in_its_own_kind():
-    from jailbee.cli import _issue_action_summary
-    from jailbee.issue_manifest import parse_manifest
-
-    action = {
-        "type": "assignees",
-        "repo": ".",
-        "issue": 1,
-        "add": ["@me"],
-        "expected": {"assignees": []},
-    }
-    labels = {"type": "labels", "repo": ".", "issue": 2, "add": ["bug"], "expected": {"labels": []}}
-    text = json.dumps({"version": 1, "actions": [action, labels]})
-    assert _issue_action_summary(parse_manifest("a.json", text, {})) == "labels:1 assignees:1"

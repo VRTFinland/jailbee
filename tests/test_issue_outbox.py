@@ -458,7 +458,8 @@ def _StoreJournals(identity):  # noqa: N802 - kept as the fixture's constructor 
 
 
 def _record(preflight, actions, *, state="applied", digest=None, issue=42, repo="acme/app"):
-    from jailbee.outbox_io import journal_key, proposal_digest
+    from jailbee.outbox_io import proposal_digest
+    from tests.outbox_journal_fake import journal_key
 
     text = json.dumps({"version": 1, "actions": actions})
     preflight["store"].record(
@@ -867,8 +868,9 @@ def execution(tmp_path, mocker):
     """Store-backed apply rig: proposals and journals in the isolated broker.db."""
     from jailbee import issue_github, issue_outbox
     from jailbee.issue_manifest import CreateAction, ExistingIssue, LabelsAction, parse_manifest
-    from jailbee.outbox_io import ContainerIdentity, journal_key, proposal_digest
+    from jailbee.outbox_io import ContainerIdentity, proposal_digest
     from tests.issue_store_support import LiveFiles, instance, seed
+    from tests.outbox_journal_fake import journal_key
 
     identity = ContainerIdentity("test-box", "2026-09-18")
     store = _StoreJournals(identity)
@@ -982,7 +984,7 @@ def _apply(execution, batch, **kwargs):
 
 
 def _seed_execution(execution, batch, *, index=0, state="applied", issue=901, repo=None):
-    from jailbee.outbox_io import journal_key
+    from tests.outbox_journal_fake import journal_key
 
     prepared = batch.manifests[0]
     repo = repo or prepared.actions[index].repo.slug
@@ -1176,7 +1178,7 @@ def test_apply_dispatches_exact_single_patch(execution, mocker, action, payload)
 @pytest.mark.parametrize("uncertain", [False, True])
 def test_apply_stops_first_failure_and_preserves_only_known_progress(execution, uncertain):
     from jailbee.issue_github import IssueGithubMutationError
-    from jailbee.outbox_io import journal_key
+    from tests.outbox_journal_fake import journal_key
 
     batch = execution["batch"]({"a.json": [_comment(), _comment()], "b.json": [_comment()]})
     mutation = execution["mutations"]["add_comment"]
@@ -1236,7 +1238,7 @@ def test_apply_journal_failure_before_dispatch_makes_no_remote_call(execution, m
 
 def test_apply_receipt_failure_reports_uncertainty_and_blocks_next_process(execution, mocker):
     from jailbee.orchestration.store import StoreError
-    from jailbee.outbox_io import journal_key
+    from tests.outbox_journal_fake import journal_key
 
     batch = execution["batch"]({"a.json": [_comment(), _comment()]})
     mocker.patch.object(execution["pubs"], "settle", side_effect=StoreError("disk failed"))
@@ -1438,7 +1440,7 @@ def test_reconcile_comment_url_and_restored_ref(execution):
 
 
 def test_preflight_allows_empty_journal_with_old_digest_and_action_count(preflight):
-    from jailbee.outbox_io import journal_key
+    from tests.outbox_journal_fake import journal_key
 
     key = journal_key(preflight["identity"], "a.json")
     preflight["store"].create("a.json", "0" * 64, 2)
@@ -1707,7 +1709,7 @@ def test_outcome_that_cannot_be_recorded_leaves_neither_sent_record_nor_receipt(
     """Journal entry and sent record commit together: a failed commit records neither,
     and the prepared action reads back as uncertain."""
     from jailbee.orchestration.store import StoreError
-    from jailbee.outbox_io import journal_key
+    from tests.outbox_journal_fake import journal_key
 
     batch = execution["batch"]({"a.json": [_comment()]})
     mocker.patch.object(execution["pubs"], "settle", side_effect=StoreError("full"))
@@ -1721,7 +1723,6 @@ def test_outcome_that_cannot_be_recorded_leaves_neither_sent_record_nor_receipt(
 
 @pytest.mark.parametrize("uncertain", [False, True])
 def test_issue_publish_survives_sent_construction_failure(execution, mocker, uncertain):
-    from jailbee import issue_outbox
     from jailbee.issue_github import IssueGithubMutationError
 
     batch = execution["batch"]({"a.json": [_comment()]})
@@ -1733,7 +1734,9 @@ def test_issue_publish_survives_sent_construction_failure(execution, mocker, unc
     report = _apply(execution, batch)
     if uncertain:
         assert report.failure.uncertain
-        key = issue_outbox.journal_key(batch.identity, "a.json")
+        from tests.outbox_journal_fake import journal_key
+
+        key = journal_key(batch.identity, "a.json")
         assert execution["store"].load(key).actions[0].state == "uncertain"
     else:
         assert report.failure is None and report.cleaned == ("a.json",)
@@ -2164,38 +2167,3 @@ def test_assign_retry_after_a_partly_landed_add_applies_through_the_real_path(ex
     assert execution["mutations"]["add_assignees"].call_count == 2
     assert [r.index for _, r in report.applied] == [0]
     assert [r.state for _, r in report.applied] == ["applied"]
-
-
-def test_read_issue_outbox_empty_ordering_and_sidecars(mocker):
-    from jailbee.config import CONTAINER_USERNAME
-    from jailbee.issue_outbox import read_issue_outbox
-
-    incus = mocker.Mock()
-    reader = mocker.patch("jailbee.issue_outbox.read_text_outbox", return_value={})
-    assert read_issue_outbox(incus, "box", uid=42).manifest_names == ()
-    reader.return_value = {
-        "z.json": "{}",
-        "a.json": "{}",
-        "a.progress.json": "{}",
-        "body.md": "body",
-    }
-    snapshot = read_issue_outbox(incus, "box", uid=42)
-    assert snapshot.manifest_names == ("a.json", "z.json")
-    assert snapshot.files["body.md"] == "body"
-    assert reader.call_args.args == (
-        incus,
-        "box",
-        f"/home/{CONTAINER_USERNAME}/.jailbee/issue-outbox",
-    )
-    assert reader.call_args.kwargs["uid"] == 42
-
-
-def test_outbox_read_wraps_incus_errors(mocker):
-    from jailbee.incus import IncusError
-    from jailbee.issue_outbox import read_issue_outbox
-    from jailbee.outbox_io import OutboxReadError
-
-    incus = mocker.Mock()
-    incus.exec.side_effect = IncusError("offline")
-    with pytest.raises(OutboxReadError, match=r"box.*offline"):
-        read_issue_outbox(incus, "box", uid=None)

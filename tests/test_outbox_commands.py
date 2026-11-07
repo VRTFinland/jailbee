@@ -10,7 +10,6 @@ from jailbee.db import get_engine
 from jailbee.db.models import RegisteredRepo
 from jailbee.outbox import service
 from jailbee.outbox.models import OutboxError
-from jailbee.outbox_io import JournalStore
 from tests.outbox_support import IDENTITY, issue_files, route_issue_snapshot, store
 
 
@@ -42,8 +41,7 @@ def env(mocker, make_cfg, tmp_path):
     mutation = mocker.patch.object(
         service, "mutate_store", side_effect=lambda *a, **kw: kw["delete_names"]
     )
-    journals = JournalStore(tmp_path / "journals")
-    return cfg, incus, loader, reader, mutation, journals
+    return cfg, incus, loader, reader, mutation, None
 
 
 def test_issue_draft_is_rejected(env):
@@ -51,7 +49,7 @@ def test_issue_draft_is_rejected(env):
     from jailbee.outbox.models import ProposalId
     from jailbee.outbox.publish import PublishOptions
 
-    cfg, incus, _, reader, _, journals = env
+    cfg, incus, _, reader, _, _journals = env
     with pytest.raises(OutboxError, match="draft is only valid for PR publication"):
         apply_selected(
             cfg,
@@ -59,7 +57,6 @@ def test_issue_draft_is_rejected(env):
             IDENTITY.full_name,
             ProposalId("issue", "001.json"),
             options=PublishOptions(publisher="user", draft=True),
-            journal_store=journals,
             confirm=lambda n: True,
         )
     reader.assert_not_called()
@@ -71,7 +68,7 @@ def test_pr_draft_and_choose_mode_reach_offer(env, mocker):
     from jailbee.outbox.publish import PublishOptions
     from tests.outbox_support import pr_files
 
-    cfg, incus, _, reader, _, journals = env
+    cfg, incus, _, reader, _, _journals = env
     reader.side_effect = lambda i, c, k, **kw: store(k, pr_files() if k == "pr" else {})
     publish = mocker.patch("jailbee.outbox.commands.publish_selected", return_value=0)
     callback = mocker.Mock(return_value="draft")
@@ -82,7 +79,6 @@ def test_pr_draft_and_choose_mode_reach_offer(env, mocker):
             IDENTITY.full_name,
             ProposalId("pr", "001.json"),
             options=PublishOptions(publisher="user", draft=True),
-            journal_store=journals,
             confirm=lambda n: False,
             choose_mode=callback,
         )
@@ -104,7 +100,7 @@ def test_choose_mode_rechecks_target_config_only_after_approval(env, mocker, mod
     from jailbee.pr_outbox import DraftPreview
     from tests.outbox_support import pr_files
 
-    cfg, incus, loader, reader, _, journals = env
+    cfg, incus, loader, reader, _, _journals = env
     reader.side_effect = lambda i, c, k, **kw: store(k, pr_files() if k == "pr" else {})
     changed = cfg.model_copy(
         update={"container_user": cfg.container_user.model_copy(update={"uid": 2345})}
@@ -131,7 +127,6 @@ def test_choose_mode_rechecks_target_config_only_after_approval(env, mocker, mod
             IDENTITY.full_name,
             ProposalId("pr", "001.json"),
             options=PublishOptions(publisher="user"),
-            journal_store=journals,
             confirm=confirm,
             choose_mode=choose,
         )
@@ -164,14 +159,14 @@ def test_existing_registry_is_read_only_and_preserves_registration(env, tmp_path
     from jailbee.db import state_dir
     from jailbee.outbox.commands import discover
 
-    cfg, incus, _, _, _, journals = env
+    cfg, incus, _, _, _, _journals = env
     register("other", tmp_path / "missing-root")
     database = state_dir() / "state.sqlite"
     with sqlite3.connect(database) as connection:
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     before = database.read_bytes()
     mocker.patch("jailbee.db.get_engine", side_effect=AssertionError("inspection bootstrapped DB"))
-    discover(cfg, incus, None, all_repos=True, journal_store=journals)
+    discover(cfg, incus, None, all_repos=True)
     assert database.read_bytes() == before
     with sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True) as connection:
         assert connection.execute(
@@ -182,8 +177,8 @@ def test_existing_registry_is_read_only_and_preserves_registration(env, tmp_path
 def test_zero_probe_count_does_not_filter(env):
     from jailbee.outbox.commands import discover
 
-    cfg, incus, _, reader, _, journals = env
-    result = discover(cfg, incus, None, all_repos=False, journal_store=journals)
+    cfg, incus, _, reader, _, _journals = env
+    result = discover(cfg, incus, None, all_repos=False)
     assert len(result) == 1 and result[0].available
     assert str(result[0].proposals[0].id) == "issue/001.json"
     assert reader.call_count == 2
@@ -192,7 +187,7 @@ def test_zero_probe_count_does_not_filter(env):
 def test_all_repos_each_own_uid_and_missing_root(env, make_cfg, tmp_path):
     from jailbee.outbox.commands import discover
 
-    cfg, incus, loader, reader, _, journals = env
+    cfg, incus, loader, reader, _, _journals = env
     foreign = tmp_path / "foreign"
     foreign.mkdir()
     other = make_cfg(foreign, container_prefix="other", container_user={"uid": 2345})
@@ -213,7 +208,7 @@ def test_all_repos_each_own_uid_and_missing_root(env, make_cfg, tmp_path):
             "created_at": IDENTITY.created_at,
         },
     ]
-    result = discover(cfg, incus, None, all_repos=True, journal_store=journals)
+    result = discover(cfg, incus, None, all_repos=True)
     assert [v.available for v in result] == [True, True, False]
     assert "root" in result[2].error
     # Every proposal comes from the host store: no read reaches a container.
@@ -242,7 +237,7 @@ def test_config_load_error_never_falls_back(env, tmp_path):
     from jailbee.config import ConfigError
     from jailbee.outbox.commands import discover, resolve_target
 
-    cfg, incus, loader, reader, _, journals = env
+    cfg, incus, loader, reader, _, _journals = env
     root = tmp_path / "bad"
     root.mkdir()
     register("bad", root)
@@ -250,7 +245,7 @@ def test_config_load_error_never_falls_back(env, tmp_path):
         {"name": "bad-feature", "profiles": ["bad-base"], "status": "Running"}
     ]
     loader.side_effect = ConfigError("invalid config")
-    result = discover(cfg, incus, None, all_repos=True, journal_store=journals)
+    result = discover(cfg, incus, None, all_repos=True)
     assert not result[0].available and "invalid config" in result[0].error
     with pytest.raises(OutboxError, match="invalid config"):
         resolve_target(cfg, incus, "bad-feature")
@@ -261,12 +256,12 @@ def test_scope_filters_before_any_read(env, mocker):
     from jailbee.outbox.commands import discover, resolve_target
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
-    cfg, incus, _, reader, _, journals = env
+    cfg, incus, _, reader, _, _journals = env
     mocker.patch(
         "jailbee.remote_ssh.repo_scope.scope_for_session",
         return_value=RemoteRepoScope(frozenset({"acme"})),
     )
-    assert discover(cfg, incus, None, all_repos=True, journal_store=journals) == ()
+    assert discover(cfg, incus, None, all_repos=True) == ()
     with pytest.raises(OutboxError):
         resolve_target(cfg, incus, "feature")
     reader.assert_not_called()
@@ -278,7 +273,7 @@ def test_mutation_callback_rechecks_scope_after_confirmation(env, mocker):
     from jailbee.outbox.models import ProposalId
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
-    cfg, incus, _, _, mutation, journals = env
+    cfg, incus, _, _, mutation, _journals = env
     scope = mocker.patch(
         "jailbee.remote_ssh.repo_scope.scope_for_session", return_value=RemoteRepoScope(frozenset())
     )
@@ -294,7 +289,6 @@ def test_mutation_callback_rechecks_scope_after_confirmation(env, mocker):
             "feature",
             ProposalId("issue", "001.json"),
             selection=DeleteSelection(),
-            journal_store=journals,
             confirm=confirm,
         )
     mutation.assert_not_called()
@@ -305,16 +299,16 @@ def test_explicit_first_read_preserves_type_and_cause_but_overview_reports_unava
     from jailbee.outbox.commands import _selected, discover
     from jailbee.outbox.models import OutboxExecutionError, ProposalId
 
-    cfg, incus, _, reader, mutation, journals = env
+    cfg, incus, _, reader, mutation, _journals = env
     transport = IncusTimeoutError("read expired")
     failure = OutboxExecutionError("outbox read failed")
     failure.__cause__ = transport
     reader.side_effect = failure
     with pytest.raises(OutboxExecutionError) as caught:
-        _selected(cfg, incus, "feature", ProposalId("issue", "001.json"), journal_store=journals)
+        _selected(cfg, incus, "feature", ProposalId("issue", "001.json"))
     assert caught.value is failure
     assert caught.value.__cause__ is transport
-    (unavailable,) = discover(cfg, incus, "feature", all_repos=False, journal_store=journals)
+    (unavailable,) = discover(cfg, incus, "feature", all_repos=False)
     assert not unavailable.available
     assert unavailable.error == "outbox read failed"
     mutation.assert_not_called()
@@ -385,13 +379,13 @@ def test_exact_visible_name_wins_over_prefixed_candidate(env):
 def test_target_identity_drift_prevents_reads(env, tmp_path, drift):
     from jailbee.outbox.commands import discover, resolve_target
 
-    cfg, incus, loader, reader, _, journals = env
+    cfg, incus, loader, reader, _, _journals = env
     loader.return_value = cfg.model_copy(
         update={"container_prefix": "other"} if drift == "prefix" else {"repo_root": tmp_path}
     )
     with pytest.raises(OutboxError, match="identity changed"):
         resolve_target(cfg, incus, "feature")
-    views = discover(cfg, incus, None, all_repos=False, journal_store=journals)
+    views = discover(cfg, incus, None, all_repos=False)
     assert not views[0].available and "identity changed" in views[0].error
     reader.assert_not_called()
 
@@ -401,7 +395,7 @@ def test_stale_inventory_cannot_authorize_deletion(env):
     from jailbee.outbox.delete import DeleteSelection
     from jailbee.outbox.models import ProposalId
 
-    cfg, incus, _, _, mutation, journals = env
+    cfg, incus, _, _, mutation, _journals = env
     original = incus.list_containers.return_value
     changed = [{**original[0], "created_at": "2026-10-01T12:00:00Z"}]
     incus.list_containers.side_effect = [original] * 4 + [changed] * 4
@@ -412,7 +406,6 @@ def test_stale_inventory_cannot_authorize_deletion(env):
             "feature",
             ProposalId("issue", "001.json"),
             selection=DeleteSelection(),
-            journal_store=journals,
             confirm=lambda plan: True,
         )
     mutation.assert_not_called()
@@ -423,7 +416,7 @@ def test_mutation_callback_reloads_target_config(env):
     from jailbee.outbox.delete import DeleteSelection
     from jailbee.outbox.models import ProposalId
 
-    cfg, incus, loader, _, mutation, journals = env
+    cfg, incus, loader, _, mutation, _journals = env
     changed = cfg.model_copy(
         update={"container_user": cfg.container_user.model_copy(update={"uid": 2345})}
     )
@@ -439,7 +432,6 @@ def test_mutation_callback_reloads_target_config(env):
             "feature",
             ProposalId("issue", "001.json"),
             selection=DeleteSelection(),
-            journal_store=journals,
             confirm=confirm,
         )
     mutation.assert_not_called()
@@ -453,7 +445,7 @@ def test_pr_creation_scope_requires_unique_matching_repo_with_body_file(
     from jailbee.outbox.commands import show_overview
     from jailbee.pr_flow import PrScope
 
-    cfg, incus, _, reader, _, journals = env
+    cfg, incus, _, reader, _, _journals = env
     files = {
         "002.json": json.dumps(
             {
@@ -492,9 +484,7 @@ def test_pr_creation_scope_requires_unique_matching_repo_with_body_file(
         return_value=mocker.Mock(number=42 if mode == "bound" else None),
     )
     incus.config_get.return_value = None
-    assert (
-        show_overview(cfg, incus, None, all_repos=False, output="json", journal_store=journals) == 0
-    )
+    assert show_overview(cfg, incus, None, all_repos=False, output="json") == 0
     proposal = json.loads(capsys.readouterr().out)["containers"][0]["proposals"][0]
     if len(scope_paths) == 1 and mode == "description":
         assert proposal.get("create_scope") == {"kind": "submodule", "path": "libs/core"}
@@ -509,8 +499,8 @@ def test_listing_never_fetches_instance_state(env):
     # instance on the host is what made opening the outbox slow.
     from jailbee.outbox.commands import discover
 
-    cfg, incus, _, _, _, journals = env
-    discover(cfg, incus, None, all_repos=False, journal_store=journals)
+    cfg, incus, _, _, _, _journals = env
+    discover(cfg, incus, None, all_repos=False)
     calls = incus.list_containers.call_args_list
     assert calls and all(call.kwargs.get("fast") is True for call in calls)
 
@@ -520,7 +510,7 @@ def test_source_listing_scope_and_apply_refusal(env, mocker, capsys):
     from jailbee.outbox.models import OutboxError, ProposalId
     from jailbee.outbox.publish import PublishOptions
 
-    cfg, incus, _, reader, _, journals = env
+    cfg, incus, _, reader, _, _journals = env
     raw = json.dumps(
         {
             "version": 1,
@@ -534,9 +524,7 @@ def test_source_listing_scope_and_apply_refusal(env, mocker, capsys):
     )
     reader.side_effect = lambda i, c, k, **kw: store(k, {"002.json": raw} if k == "pr" else {})
     scopes = mocker.patch("jailbee.pr_flow.candidate_scopes")
-    assert (
-        show_overview(cfg, incus, None, all_repos=False, output="json", journal_store=journals) == 0
-    )
+    assert show_overview(cfg, incus, None, all_repos=False, output="json") == 0
     row = json.loads(capsys.readouterr().out)["containers"][0]["proposals"][0]
     assert row["create_scope"] == {"kind": "source", "manifest": "002.json"}
     scopes.assert_not_called()
@@ -549,7 +537,6 @@ def test_source_listing_scope_and_apply_refusal(env, mocker, capsys):
             "feature",
             ProposalId("pr", "002.json"),
             options=PublishOptions(publisher="user"),
-            journal_store=journals,
             confirm=lambda _: True,
         )
     publisher.assert_not_called()

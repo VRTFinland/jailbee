@@ -8,7 +8,7 @@ from jailbee.db import state_dir
 from jailbee.outbox import publication_db, service, store_db
 from jailbee.outbox.delete import DeleteSelection, plan_delete
 from jailbee.outbox.models import ProposalId
-from jailbee.outbox_io import JournalStore, proposal_digest
+from jailbee.outbox_io import proposal_digest
 from tests.outbox_support import IDENTITY
 
 UUID = "uuid-1"
@@ -33,7 +33,7 @@ def _env(mocker, make_cfg, tmp_path):
             "config": {"volatile.uuid": UUID},
         }
     ]
-    return make_cfg(tmp_path), incus, JournalStore(tmp_path / "j")
+    return make_cfg(tmp_path), incus
 
 
 def _stage() -> store_db.Proposal:
@@ -46,8 +46,8 @@ def _stage() -> store_db.Proposal:
     return store_db.host_store(root).put_proposal(UUID, "pr", "batch", build, now=1.0)
 
 
-def _view(cfg, incus, journals):
-    return service.load_container(cfg, incus, IDENTITY.full_name, journal_store=journals)
+def _view(cfg, incus):
+    return service.load_container(cfg, incus, IDENTITY.full_name)
 
 
 def _journal(row: store_db.Proposal, *, applied: bool) -> None:
@@ -61,9 +61,9 @@ def _journal(row: store_db.Proposal, *, applied: bool) -> None:
 
 
 def test_a_store_held_pr_comment_proposal_is_pending(mocker, make_cfg, tmp_path):
-    cfg, incus, journals = _env(mocker, make_cfg, tmp_path)
+    cfg, incus = _env(mocker, make_cfg, tmp_path)
     row = _stage()
-    view = _view(cfg, incus, journals)
+    view = _view(cfg, incus)
     assert view.available, view.error
     (proposal,) = view.proposals
     assert (str(proposal.id), proposal.state) == ("pr/001-batch.json", "pending")
@@ -74,9 +74,9 @@ def test_a_store_held_pr_comment_proposal_is_pending(mocker, make_cfg, tmp_path)
 
 
 def test_journaled_progress_shows_partial_with_its_receipt(mocker, make_cfg, tmp_path):
-    cfg, incus, journals = _env(mocker, make_cfg, tmp_path)
+    cfg, incus = _env(mocker, make_cfg, tmp_path)
     _journal(_stage(), applied=True)
-    (proposal,) = _view(cfg, incus, journals).proposals
+    (proposal,) = _view(cfg, incus).proposals
     assert proposal.state == "partial"
     assert [(a.state, a.receipt) for a in proposal.actions] == [
         ("applied", "https://x/1"),
@@ -86,17 +86,17 @@ def test_journaled_progress_shows_partial_with_its_receipt(mocker, make_cfg, tmp
 
 
 def test_a_prepared_action_reads_as_uncertain(mocker, make_cfg, tmp_path):
-    cfg, incus, journals = _env(mocker, make_cfg, tmp_path)
+    cfg, incus = _env(mocker, make_cfg, tmp_path)
     _journal(_stage(), applied=False)
-    (proposal,) = _view(cfg, incus, journals).proposals
+    (proposal,) = _view(cfg, incus).proposals
     assert proposal.state == "uncertain"
 
 
 def test_deleting_a_store_pr_proposal_removes_its_row(mocker, make_cfg, tmp_path):
-    cfg, incus, journals = _env(mocker, make_cfg, tmp_path)
+    cfg, incus = _env(mocker, make_cfg, tmp_path)
     row = _stage()
-    view = _view(cfg, incus, journals)
+    view = _view(cfg, incus)
     plan = plan_delete(view, ProposalId("pr", row.name), DeleteSelection())
-    service.execute_delete(cfg, incus, IDENTITY.full_name, plan, journal_store=journals)
+    service.execute_delete(cfg, incus, IDENTITY.full_name, plan)
     assert store_db.read_proposals(state_dir() / "orchestration", UUID, "pr") == []
     incus.exec.assert_not_called()

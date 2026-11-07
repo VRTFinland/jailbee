@@ -8,7 +8,7 @@ import re
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
-from typing import TYPE_CHECKING, Literal, Union, cast
+from typing import TYPE_CHECKING, Literal, Union
 
 from jailbee import issue_manifest as issues
 from jailbee import pr_outbox as prs
@@ -27,9 +27,6 @@ from jailbee.outbox_io import (
     ContainerIdentity,
     IssueJournal,
     JournalError,
-    JournalStore,
-    issue_proposal_digest,
-    journal_key,
     proposal_digest,
 )
 
@@ -247,7 +244,6 @@ def _build_view(
     identity: ContainerIdentity,
     store: StoreSnapshot,
     name: str,
-    journal_store: JournalStore,
     recorded_pr: int | None,
     issue_journals: Mapping[str, IssueJournal] | None = None,
     pr_journals: Mapping[str, StoreJournal] | None = None,
@@ -323,33 +319,17 @@ def _build_view(
             elif progress.applied:
                 state = _state(actions)
     else:
-        key = journal_key(identity, name)
-        journal_evidence: dict[str, object]
-        if journals is not None:
-            # Store-backed journals (prepared already recovered as uncertain).
-            journal_evidence = {"store": True}
-        else:
-            # Retain exact bytes as well as validated/recovered semantics, even on corruption.
-            try:
-                journal_bytes = journal_store._path(key).read_bytes()
-            except FileNotFoundError:
-                journal_bytes = None
-            except OSError as exc:
-                journal_bytes = str(exc).encode()
-            journal_evidence = {"raw": None if journal_bytes is None else journal_bytes.hex()}
+        # Store-backed journals (prepared already recovered as uncertain).
+        journal_evidence: dict[str, object] = {"store": True}
         evidence = journal_evidence
         try:
-            journal = journals.get(name) if journals is not None else journal_store.load(key)
+            journal = journals.get(name) if journals is not None else None
             if journal is not None:
                 journal_evidence["journal"] = asdict(journal)
                 if journal.actions:
                     block = "recorded publication progress prevents editing"
                     bodies = {n: files[n] for n in body_names if n in files}
-                    digest = (
-                        proposal_digest(name, raw, bodies)
-                        if journals is not None
-                        else issue_proposal_digest(key, raw, bodies, cast(IssueJournal, journal))
-                    )
+                    digest = proposal_digest(name, raw, bodies)
                     if journal.digest != digest or journal.action_count != len(actions):
                         raise JournalError("proposal differs from recorded journal history")
                     issue_receipts = {r.index: r for r in journal.actions}
@@ -395,17 +375,15 @@ def build_views(
     identity: ContainerIdentity,
     stores: Sequence[StoreSnapshot],
     *,
-    journal_store: JournalStore,
     recorded_pr: int | None = None,
     issue_journals: Mapping[str, IssueJournal] | None = None,
     pr_journals: Mapping[str, StoreJournal] | None = None,
 ) -> tuple[ProposalView, ...]:
     """Inspect supplied snapshots without target resolution or directory creation.
 
-    issue_journals, when given, are the store's issue journals by manifest name
-    and replace the host journal files for issue proposals. pr_journals, when
-    given, are the store's PR journals: a store-held PR proposal's progress
-    comes from them instead of the container's progress sidecar.
+    issue_journals, when given, are the store's issue journals by manifest name.
+    pr_journals, when given, are the store's PR journals: a store-held PR
+    proposal's progress comes from them instead of the container's sidecar.
 
     recorded_pr is display context only and never contributes to revision:
     publication must resolve and authorize its actual target through fresh gates.
@@ -428,9 +406,7 @@ def build_views(
                 # Non-addressable rejected entries remain visible in store evidence.
                 continue
             views.append(
-                _build_view(
-                    identity, store, name, journal_store, recorded_pr, issue_journals, pr_journals
-                )
+                _build_view(identity, store, name, recorded_pr, issue_journals, pr_journals)
             )
     return tuple(views)
 

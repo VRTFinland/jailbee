@@ -16,9 +16,6 @@ history and published Sent history.
 
 from __future__ import annotations
 
-import base64
-import binascii
-import contextlib
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -93,7 +90,6 @@ def cleanup(snap: TeardownSnapshot) -> None:
         ("background job logs", _remove_job_logs),
         ("orchestration state", _drop_orchestration),
         ("outbox proposals and drafts", _delete_outbox_rows),
-        ("issue outbox journals", _archive_issue_journals),
         ("PR outbox lock", _remove_pr_lock),
     )
     for label, step in steps:
@@ -156,37 +152,6 @@ def _delete_outbox_rows(snap: TeardownSnapshot) -> None:
     if not store_path_exists(root):
         return  # nothing was ever staged; do not create the database
     host_store(root).delete_container(snap.uuid)
-
-
-def _archive_issue_journals(snap: TeardownSnapshot) -> None:
-    """Archive certain journals; keep any with an unknown publication outcome."""
-    identity = snap.identity
-    if identity is None:
-        return
-    from jailbee.outbox_io import ContainerIdentity, JournalError, JournalKey, JournalStore
-
-    assert isinstance(identity, ContainerIdentity)
-    store = JournalStore()
-    directory = store.root / JournalStore._container_directory(identity)
-    if not directory.is_dir():
-        return
-    retained: list[str] = []
-    for path in sorted(directory.glob("*.json")):
-        try:
-            encoded = path.stem
-            manifest = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).decode()
-            key = JournalKey(identity=identity, manifest_name=manifest)
-            store.archive(key)
-        except (JournalError, ValueError, binascii.Error):
-            retained.append(path.name)
-            continue
-        with contextlib.suppress(OSError):
-            path.with_name(f"{path.name}.lock").unlink(missing_ok=True)
-    if retained:
-        warn(
-            f"Kept {len(retained)} issue outbox journal(s) of '{snap.name}': "
-            "publication outcome unknown or unreadable"
-        )
 
 
 def _remove_pr_lock(snap: TeardownSnapshot) -> None:
