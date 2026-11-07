@@ -969,9 +969,10 @@ def test_listing_reads_broker_counts_for_stopped_and_failed_probes(make_cfg, tmp
         _container(name="myrepo-a", user_config={"user.jailbee.repo_dir": "/repo"}),
         _container(name="myrepo-b", state="Stopped"),
     ]
-    mocker.patch("jailbee.lifecycle.probe_many_parallel", return_value={
-        "myrepo-a": GitStatus("?", "?", "?", "?")
-    })
+    mocker.patch(
+        "jailbee.lifecycle.probe_many_parallel",
+        return_value={"myrepo-a": GitStatus("?", "?", "?", "?")},
+    )
     before = store_path(root).read_bytes()
     rows = {c.name: c for c in list_containers(cfg, incus, with_git_status=True)}
     assert rows["myrepo-a"].git_status.unread_inbox == 1
