@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from jailbee.orchestration import broker, finishing, socket_ops, wire
+from jailbee.orchestration import broker, finishing, outbox, socket_ops, wire
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.store import BrokerStore
 from tests.test_orchestration_broker import Rig, _child, _orch
@@ -43,7 +43,8 @@ class Env:
 
     def send(self, manifest: object, body: object = None, wait: bool = False) -> dict[str, object]:
         return socket_ops.handle_send(
-            self.ctx, self.memory, self.store, manifest=manifest, body=body, wait=wait
+            self.ctx, self.memory, self.store, manifest=manifest, body=body, wait=wait,
+            is_connected=lambda: True,
         )
 
 
@@ -138,13 +139,13 @@ def test_done_message_writes_reply_path_then_clears_it(env: Env) -> None:
 
 def test_done_reply_path_is_written_before_the_reply(env: Env, monkeypatch) -> None:
     seen: list[dict[str, object]] = []
-    real = env.store.insert_item
+    real = socket_ops.deliver
 
-    def insert(*args, **kwargs):
+    def deliver(*args, **kwargs):
         seen.append(json.loads(finishing.reply_path(env.ctx, env.ctx.sender).read_text()))
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(env.store, "insert_item", insert)
+    monkeypatch.setattr(socket_ops, "deliver", deliver)
     env.send(_message("d2", kind="done"))
     assert seen == [{"ref": "d2", "state": "done", "detail": "delivered"}]
 
@@ -206,3 +207,36 @@ def test_a_waiting_resend_marks_the_earlier_unread_status_read(env: Env) -> None
     assert [i.id for i in env.store.unacked(key)] == [item["id"]]
     assert env.send(_message(), wait=True) == item
     assert env.store.unacked(key) == []
+
+@pytest.mark.parametrize("wait", [False, True])
+def test_synchronous_refusal_is_read_history(env: Env, wait: bool) -> None:
+    item = env.send({"version": 1, "id": "bad1", "type": "message"}, wait=wait)
+    row = env.store.get(env.ctx.sender.key, str(item["id"]))
+    assert row is not None and row.acked_at is not None
+    assert env.store.unacked(env.ctx.sender.key) == []
+
+
+@pytest.mark.parametrize("wait", [False, True])
+def test_status_stays_behind_older_pending_delivery(env: Env, wait: bool) -> None:
+    from jailbee.orchestration.protocol import inbox_file_name_for
+    from jailbee.orchestration.state import pending_dir
+
+    ctx = env.ctx
+    directory = pending_dir(ctx.root, ctx.sender.full)
+    older = {"version": 1, "id": "older", "type": "message", "kind": "note", "body": "first"}
+    outbox.save_pending(
+        directory / inbox_file_name_for("older", ctx.now),
+        older, recipient_uuid=ctx.sender.key,
+    )
+    item = env.send(_message(), wait=wait)
+    assert env.store.history(ctx.sender.key) == []
+    assert len(list(directory.iterdir())) == 2
+    assert env.send(_message(), wait=True) == item
+    assert len(list(directory.iterdir())) == 2
+    assert outbox.flush_pending(
+        ctx.incus, ctx.root, ctx.sender.full, uid=None, recipient_uuid=ctx.sender.key,
+    ) == 2
+    history = env.store.history(ctx.sender.key)
+    assert [r.id for r in history] == ["older", item["id"]]
+    assert history[0].acked_at is None and history[1].acked_at is not None
+    env.rig.dispatch.assert_called_once()

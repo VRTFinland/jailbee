@@ -14,12 +14,14 @@ from typing import TYPE_CHECKING
 from jailbee.inbox.render import jq_tostring
 from jailbee.orchestration import broker, publishing, wake, wire
 from jailbee.orchestration.actions import Outcome, refused
-from jailbee.orchestration.outbox import grant_json_text
+from jailbee.orchestration.outbox import deliver, grant_json_text
 from jailbee.orchestration.protocol import ManifestError, body_file_of, parse_manifest
 from jailbee.orchestration.store import StoreError
 from jailbee.outbox_io import _validate_outbox_name
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from jailbee.orchestration.actions import ActionContext
     from jailbee.orchestration.protocol import Manifest
     from jailbee.orchestration.store import BrokerStore, ItemMeta
@@ -35,13 +37,14 @@ def handle_send(
     manifest: object,
     body: object,
     wait: bool,
+    is_connected: Callable[[], bool],
 ) -> dict[str, object]:
     """Run one `send` request and return its status item (an `InboxStatus` object).
 
     The status is journalled in `requests` before it is delivered, so a re-sent
     id gets the recorded status back without acting again. It is inserted into
-    the sender's store inbox acked when `wait` (the client prints it now) and
-    unacked otherwise (it shows up in the inbox like today's status file).
+    the sender's inbox through the ordinary pending gate. A live client consumes
+    a refusal or a `wait` response; a client gone during handling leaves it unread.
     """
     if not isinstance(manifest, dict):
         raise wire.WireError(wire.BAD_REQUEST, "manifest must be an object")
@@ -59,16 +62,26 @@ def handle_send(
         raise wire.WireError(wire.NOT_ORCHESTRATED, "this container has no orchestration role")
 
     ctx = dataclasses.replace(ctx, now=datetime.now(UTC))
+
+    def deliver_status(status: dict[str, object]) -> None:
+        deliver(
+            ctx.incus,
+            ctx.root,
+            ctx.sender.full,
+            status,
+            running=ctx.sender.running,
+            uid=ctx.cfg.container_user.uid,
+            now=ctx.now,
+            seq=next(ctx.seq),
+            recipient_uuid=ctx.sender.key,
+            acked=is_connected() and (wait or status.get("state") == "refused"),
+        )
+
     recorded = store.lookup_request(ctx.sender.key, request_id)
     if recorded is not None and recorded.item is not None:
         # A crash between the journal and the insert may have lost the item;
         # the insert ignores a duplicate.
-        store.insert_item(
-            ctx.sender.key, ctx.sender.full, recorded.item, now=time.time(), acked=wait
-        )
-        if wait and isinstance(recorded.item.get("id"), str):
-            # An earlier send without --wait left it unread; the client prints it now.
-            store.ack(ctx.sender.key, str(recorded.item["id"]), now=time.time())
+        deliver_status(recorded.item)
         return recorded.item
     if recorded is not None or publishing.was_accepted(ctx, request_id):
         # Requests without a recorded status need a stable duplicate answer,
@@ -110,7 +123,7 @@ def handle_send(
 
     def reply(ref: str, outcome: Outcome) -> None:
         assert item is not None
-        store.insert_item(ctx.sender.key, ctx.sender.full, item, now=time.time(), acked=wait)
+        deliver_status(item)
         try:
             broker.clear_reply_path(ctx, ref)
         except OSError:
@@ -183,9 +196,6 @@ def _list_view(item: dict[str, object]) -> dict[str, object]:
 LIST_PAGE_BYTES = wire.MAX_LINE_BYTES // 2
 _LIST_FETCH = 256  # rows read per store query while filling a page
 
-_NO_CURSOR = object()
-
-
 def _list_page(
     store: BrokerStore, uuid: str, after: int
 ) -> tuple[list[dict[str, object]], int | None]:
@@ -207,23 +217,12 @@ def _list_page(
             return views, None
 
 
-def handle_list(store: BrokerStore, uuid: str, *, after: object = _NO_CURSOR) -> object:
+def handle_list(store: BrokerStore, uuid: str, *, after: object) -> object:
     """The unacked items of a container's inbox, oldest first, in `ls` shape.
 
-    With `after` (0 for the first page, then the previous page's `next`) the
-    answer is one page, ``{"items": [...], "next": cursor | None}``. Without it
-    it is a plain list of the oldest items that fit one page: truncated rather
-    than an oversized reply that could never be sent.
-
-    The truncation is silent, and only the plain form could make an `ls` or
-    a `send --wait` miss a later item. No released client sends it: the socket
-    transport first shipped with paging, and every client before that used
-    the file transport, so the plain form only answers unreleased development
-    builds. Broker and in-container client come from the same jailbee
-    release, so a released client always pages.
+    `after` is 0 for the first page, then the previous page's `next` cursor.
+    The answer is ``{"items": [...], "next": cursor | None}``.
     """
-    if after is _NO_CURSOR:
-        return _list_page(store, uuid, 0)[0]
     if type(after) is not int or after < 0:
         raise wire.WireError(wire.BAD_REQUEST, "after must be a non-negative integer")
     items, cursor = _list_page(store, uuid, after)

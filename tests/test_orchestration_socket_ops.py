@@ -65,7 +65,7 @@ def test_list_in_seq_order_and_unacked_only(env: Env) -> None:
     env.put("a")
     env.put("c")
     env.store.ack(env.orch, "a", now=1.0)
-    assert [i["id"] for i in socket_ops.handle_list(env.store, env.orch)] == ["b", "c"]
+    assert [i["id"] for i in socket_ops.handle_list(env.store, env.orch, after=0)["items"]] == ["b", "c"]
 
 
 def test_read_acks_keep_does_not_and_unknown(env: Env) -> None:
@@ -73,9 +73,9 @@ def test_read_acks_keep_does_not_and_unknown(env: Env) -> None:
     env.put("m2")
     item = socket_ops.handle_read(env.store, env.orch, id="m1", keep=True, now=5.0)
     assert item["id"] == "m1"
-    assert len(socket_ops.handle_list(env.store, env.orch)) == 2
+    assert len(socket_ops.handle_list(env.store, env.orch, after=0)["items"]) == 2
     socket_ops.handle_read(env.store, env.orch, id="m1", keep=False, now=5.0)
-    assert [i["id"] for i in socket_ops.handle_list(env.store, env.orch)] == ["m2"]
+    assert [i["id"] for i in socket_ops.handle_list(env.store, env.orch, after=0)["items"]] == ["m2"]
     for bad in ("m1", "nope"):
         with pytest.raises(wire.WireError) as e:
             socket_ops.handle_read(env.store, env.orch, id=bad, keep=False, now=6.0)
@@ -257,7 +257,7 @@ def test_list_stays_under_wire_cap_and_keeps_ls_line(env: Env) -> None:
         }
         env.store.insert_item(env.orch, "proj-orch", item, now=100.0 + n)
     full = [r.item for r in env.store.unacked(env.orch)]
-    got = socket_ops.handle_list(env.store, env.orch)
+    got = socket_ops.handle_list(env.store, env.orch, after=0)["items"]
     resp = wire.encode_response(wire.Response(ok=True, result=got))
     assert len(resp) < wire.MAX_LINE_BYTES
     assert [ls_line(i) for i in got] == [ls_line(i) for i in full]
@@ -313,7 +313,7 @@ def test_a_plain_waiter_without_context_keeps_waiting(env: Env) -> None:
 def test_ack_marks_read_and_unknown_is_not_found(env: Env) -> None:
     env.put("m1")
     assert socket_ops.handle_ack(env.store, env.orch, id="m1", now=5.0) == {"acked": True}
-    assert socket_ops.handle_list(env.store, env.orch) == []
+    assert socket_ops.handle_list(env.store, env.orch, after=0)["items"] == []
     # acking twice is harmless
     assert socket_ops.handle_ack(env.store, env.orch, id="m1", now=6.0) == {"acked": True}
     with pytest.raises(wire.WireError) as e:
@@ -378,17 +378,8 @@ def test_paged_list_walks_more_than_a_line_of_unread(env: Env) -> None:
     assert pages > 1
 
 
-def test_unpaged_list_of_more_than_a_line_still_fits(env: Env) -> None:
-    """An older client's plain `list` gets the oldest items that fit, not an error."""
-    ids = _fill_over_a_mebibyte(env)
-    got = socket_ops.handle_list(env.store, env.orch)
-    assert isinstance(got, list)
-    assert len(wire.encode_response(wire.ok(got))) < wire.MAX_LINE_BYTES
-    assert [i["id"] for i in got] == ids[: len(got)]
-
-
 def test_paged_list_rejects_a_bad_cursor(env: Env) -> None:
-    for bad in (-1, "x", 1.5, True):
+    for bad in (None, -1, "x", 1.5, True):
         with pytest.raises(wire.WireError) as exc:
             socket_ops.handle_list(env.store, env.orch, after=bad)
         assert exc.value.code == wire.BAD_REQUEST

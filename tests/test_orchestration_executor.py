@@ -74,10 +74,10 @@ def _manifest() -> dict[str, object]:
 
 def test_list_is_answered(env: Env) -> None:
     env.put("a")
-    env.ask(env.orch, "list", conn=7)
+    env.ask(env.orch, "list", conn=7, after=0)
     conn, resp = env.listener.responses[-1]
     assert conn == 7 and resp.ok
-    assert [i["id"] for i in resp.result] == ["a"]
+    assert [i["id"] for i in resp.result["items"]] == ["a"]
 
 
 def test_send_without_context(env: Env) -> None:
@@ -207,11 +207,23 @@ def test_ack_op_acks_and_unknown_is_not_found(env: Env) -> None:
 @pytest.mark.parametrize(
     "op", ["list", "read", "ack", "next", "children", "status", "grant", "send"]
 )
-def test_every_op_waits_for_the_inbox_migration(env: Env, op: str) -> None:
+def test_every_op_requires_a_ready_store_recipient(env: Env, op: str) -> None:
     env.store.remove_recipient("proj-kid")
     env.ask(env.kid, op, id="a", manifest=_manifest(), body=None, wait=True)
     resp = env.last()
     assert resp.error_code == wire.STORE
-    assert "migration pending" in resp.error_detail
+    assert "recipient is not ready" in resp.error_detail
     assert len(env.memory.waiters) == 0
     env.rig.dispatch.assert_not_called()
+
+@pytest.mark.parametrize("state", ["done", "refused"])
+def test_send_disconnected_during_handler_leaves_unread_status(env: Env, state: str) -> None:
+    def dispatch(*args: object, **kwargs: object) -> Outcome:
+        env.listener.dropped.add(7)
+        return Outcome(state, "late outcome")
+
+    env.rig.dispatch.side_effect = dispatch
+    env.ask(env.kid, "send", conn=7, manifest=_manifest(), body=None, wait=True)
+    rows = env.store.unacked(env.kid)
+    assert len(rows) == 1 and rows[0].item["state"] == state
+    assert env.store.lookup_request(env.kid, "m1").item == rows[0].item
