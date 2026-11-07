@@ -2,8 +2,10 @@
 
 The database lives at `${XDG_STATE_HOME:-~/.local/state}/jailbee/state.sqlite`.
 Schema is bootstrapped on first connection. Forward migrations are applied in
-place (non-destructive). A *newer* database than this version knows about is
-used as-is — migrations are additive, so it is a superset — because the
+place (non-destructive, bar v22's drop of the retired `sent_record` table). A
+*newer* database than this version knows about is used as-is — migrations are
+additive, so it is a superset (an older version recreates a dropped table
+empty) — because the
 alternative, resetting it, silently destroys state that cannot be rebuilt (see
 `_ensure_schema`). Only a version no migration chain can reach still falls back
 to a drop-and-recreate, and that one keeps a copy of the database first.
@@ -26,7 +28,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 21
+CURRENT_SCHEMA_VERSION = 22
 
 
 def state_dir() -> Path:
@@ -291,6 +293,17 @@ def _migrate_to_v21(conn: Connection) -> None:
     return None
 
 
+def _migrate_to_v22(conn: Connection) -> None:
+    """v21 -> v22 drops `sent_record`: the Sent log moved to the host outbox store.
+
+    The one destructive step: its rows are not carried over (the upgrade note
+    says so). An older jailbee on this database recreates the table empty via
+    create_all and never reads what this one writes, so the drop stays safe
+    across a downgrade.
+    """
+    conn.exec_driver_sql("DROP TABLE IF EXISTS sent_record")
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -313,6 +326,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     19: _migrate_to_v19,
     20: _migrate_to_v20,
     21: _migrate_to_v21,
+    22: _migrate_to_v22,
 }
 
 
@@ -355,22 +369,23 @@ def _ensure_schema(engine: Engine) -> None:
 
     Fresh DBs get every table (with all current columns) from
     ``create_all``. An existing DB at an older version is migrated in place
-    via ``_MIGRATIONS`` (non-destructive).
+    via ``_MIGRATIONS`` (non-destructive, except that v22 drops the retired
+    `sent_record` table, whose Sent log moved to the host outbox store).
 
-    A **newer** database is used exactly as it is. Every migration is
-    additive, so a newer schema is a superset this version can read and
-    write, and the version is deliberately left alone — walking it back
-    would make the next newer jailbee re-run migrations over data that has
-    already seen them. Resetting here used to be the behaviour, on the
-    grounds that "pool data is regenerable from DNS"; that reasoning does
-    not survive contact with the rest of the tables. `registered_repo` in
-    particular is the dashboard's only way to map a container back to its
-    repo and the refresh timer's only work list, and nothing rebuilds it:
-    the loss shows up as every repo but the current directory's rendering
-    as a view-only "(orphan)" group and as pools that quietly stop being
-    refreshed, with no error anywhere. Downgrades are routine — a rollback,
-    or a maintainer moving between branches — so this path must not be
-    destructive.
+    A **newer** database is used exactly as it is. Every other migration is
+    additive, and `create_all` recreates a dropped table, so a newer schema
+    is a superset this version can read and write, and the version is
+    deliberately left alone — walking it back would make the next newer
+    jailbee re-run migrations over data that has already seen them.
+    Resetting here used to be the behaviour, on the grounds that "pool data
+    is regenerable from DNS"; that reasoning does not survive contact with
+    the rest of the tables. `registered_repo` in particular is the
+    dashboard's only way to map a container back to its repo and the
+    refresh timer's only work list, and nothing rebuilds it: the loss shows
+    up as every repo but the current directory's rendering as a view-only
+    "(orphan)" group and as pools that quietly stop being refreshed, with
+    no error anywhere. Downgrades are routine — a rollback, or a maintainer
+    moving between branches — so this path must not be destructive.
 
     A version no chain of registered steps can reach (a gap) still falls
     back to the historical drop-and-recreate, but keeps a copy of the

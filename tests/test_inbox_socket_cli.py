@@ -85,6 +85,7 @@ def run(
         "JAILBEE_ORCHESTRATION_DIR": str(tmp / "nofiles"),
         "JAILBEE_LITELLM_CONFIG": str(tmp / "none.json"),
         "JAILBEE_NO_UPDATE_CHECK": "1",
+        "JAILBEE_BROKER_RETRY_SECONDS": "0.3",  # the real default is 10
     }
     return subprocess.run(
         [sys.executable, "-m", "jailbee.inbox", *args],

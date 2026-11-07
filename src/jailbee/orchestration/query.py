@@ -23,7 +23,10 @@ log = logging.getLogger(__name__)
 
 SNAPSHOT_OPS = frozenset({"children", "status", "grant"})
 STORE_OPS = frozenset({"list", "read", "ack"})
-QUERY_OPS = SNAPSHOT_OPS | STORE_OPS
+# Outbox ops are SQLite queries too: query workers, never the round loop.
+QUERY_OPS = SNAPSHOT_OPS | STORE_OPS | wire.OUTBOX_OPS
+# The roles whose outbox writes (stage, drop, drafts) the broker accepts.
+WRITER_ROLES = frozenset({"plain", "orchestrator"})
 
 
 @dataclass(frozen=True)
@@ -72,6 +75,8 @@ class Queries:
 
     def _dispatch(self, uuid: str, request: wire.Request) -> object:
         op, args = request.op, request.args
+        if op in wire.OUTBOX_OPS:
+            return self._outbox(uuid, op, args)
         if op in STORE_OPS:
             from jailbee.orchestration import socket_ops
 
@@ -79,6 +84,9 @@ class Queries:
                 raise wire.WireError(
                     wire.STORE, "inbox store recipient is not ready; retry shortly"
                 )
+            known = self._snapshot.get(uuid)
+            if known is not None and known.role == "plain":
+                raise wire.WireError(wire.NOT_ORCHESTRATED, "this container is not an orchestrator")
             if op == "list":
                 return socket_ops.handle_list(self._store, uuid, after=args.get("after"))
             if op == "read":
@@ -125,6 +133,41 @@ class Queries:
             result["children"] = picked
         return result
 
+    def _outbox(self, uuid: str, op: str, args: dict[str, object]) -> object:
+        """Outbox ops for any container; a child may read but never stage. The
+        role comes from the completed-round view, so the broker, not the
+        container CLI, decides."""
+        from jailbee.container_outbox.role import CHILD_REFUSAL
+        from jailbee.outbox import broker_ops
+        from jailbee.outbox.store_db import OutboxStore
+
+        view = self._snapshot.get(uuid)
+        if view is None or not view.ready:
+            raise wire.WireError(
+                wire.STORE, "the broker does not know this container yet; retry shortly"
+            )
+        reading = op in (
+            wire.OUTBOX_LIST,
+            wire.OUTBOX_SHOW,
+            wire.OUTBOX_SENT,
+            *wire.OUTBOX_DRAFT_READ_OPS,
+        )
+        # Fail closed: only the roles allowed to stage are named; a child, an
+        # unknown role or an invalid grant ("none") may read but never change.
+        if not reading and view.role not in WRITER_ROLES:
+            if view.role == "child":
+                raise wire.WireError(wire.REFUSED, CHILD_REFUSAL)
+            raise wire.WireError(
+                wire.REFUSED,
+                "the broker could not establish this container's role; "
+                "outbox changes are refused until it can (retry after the next broker round)",
+            )
+        if op == wire.OUTBOX_SENT:
+            from jailbee.outbox.publication_db import PublicationStore
+
+            return broker_ops.handle_sent(PublicationStore(self._store), uuid, args)
+        return broker_ops.handle(OutboxStore(self._store), uuid, op, args, now=time.time())
+
 
 def _context_snapshot(memory: broker_state.BrokerMemory, ctx: ActionContext) -> ContainerSnapshot:
     """Serialize on the executor so query readers never reach mutable contexts."""
@@ -166,6 +209,21 @@ def publish_context(memory: broker_state.BrokerMemory, ctx: ActionContext) -> No
             log.exception("broker: publishing query view for %s failed", ctx.sender.key)
 
 
+def _fallback_role(memory: broker_state.BrokerMemory, uuid: str, full: str | None) -> str:
+    """The role of a container without a context this round, failing closed.
+
+    Its labels in the round's listing decide: a child (or one the broker last
+    prepared as a child) stays ``child`` whatever happened to its context; an
+    unlabelled container is ``plain``. Anything else — an orchestrator label
+    without a valid context, or an instance absent from the listing — is
+    ``none``, which may read its outbox but not change it.
+    """
+    listed = memory.listed_roles.get(uuid)
+    if listed == "child" or (full is not None and memory.env_roles.get(full) == "child"):
+        return "child"
+    return "plain" if listed == "plain" else "none"
+
+
 def publish_queries(memory: broker_state.BrokerMemory) -> None:
     """Build on the broker thread, then atomically replace the completed-round view.
 
@@ -176,14 +234,19 @@ def publish_queries(memory: broker_state.BrokerMemory) -> None:
         return
     empty_children = json.dumps({"children": [], "observed_at": None, "last_from_child": {}})
     try:
-        recipients = set(memory.store.recipients().values())
         snapshot = {
-            uuid: ContainerSnapshot("none", True, empty_children, None) for uuid in recipients
+            uuid: ContainerSnapshot(_fallback_role(memory, uuid, full), True, empty_children, None)
+            for full, uuid in memory.store.recipients().items()
         }
     except Exception:
         log.exception("broker: publishing query recipients failed")
         snapshot = {
-            uuid: ContainerSnapshot("none", view.ready, empty_children, None)
+            uuid: ContainerSnapshot(
+                "none" if view.role == "none" else _fallback_role(memory, uuid, None),
+                view.ready,
+                empty_children,
+                None,
+            )
             for uuid, view in memory.queries.snapshot().items()
         }
     for uuid, ctx in memory.contexts.items():

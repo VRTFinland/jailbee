@@ -6,6 +6,7 @@ this module is imported by the inbox commands inside a container.
 
 from __future__ import annotations
 
+import os
 import socket
 import time
 from collections.abc import Callable, Mapping
@@ -33,9 +34,21 @@ NO_REPLY_MESSAGE = (
 
 _BACKOFF_START = 0.5
 _BACKOFF_CAP = 5.0
+_RETRY_PAUSE = 0.25
+_RETRY_PAUSE_CAP = 1.0
+CONNECT_RETRY_SECONDS = 10.0  # covers a broker restart
+RETRY_ENV = "JAILBEE_BROKER_RETRY_SECONDS"  # overrides it, for tests and operators
 _READ_GRACE = 5.0  # socket read slack beyond the server-side long-poll timeout
 _UNREACHABLE_LIMIT = 120.0
 _KEEPALIVE_TIMEOUT = wire.KEEPALIVE_INTERVAL + 10.0
+
+
+def retry_seconds() -> float:
+    """The connect retry window: `CONNECT_RETRY_SECONDS`, or `RETRY_ENV` when set."""
+    try:
+        return max(0.0, float(os.environ.get(RETRY_ENV, CONNECT_RETRY_SECONDS)))
+    except ValueError:
+        return CONNECT_RETRY_SECONDS
 
 
 class BrokerUnreachable(Exception):  # noqa: N818 - name fixed by the spec
@@ -66,9 +79,25 @@ def socket_path(environ: Mapping[str, str]) -> Path:
 
 
 class Client:
-    def __init__(self, path: Path | str, *, connect_timeout: float = 5.0) -> None:
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        connect_timeout: float = 5.0,
+        retry_for: float = 0.0,
+        missing_message: str | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        """``retry_for`` keeps retrying a refused or missing socket that long
+        (a broker restart is routine); ``missing_message`` replaces the generic
+        text when the socket file is still absent at the end."""
         self._path = str(path)
         self._connect_timeout = connect_timeout
+        self.retry_for = retry_for
+        self._missing_message = missing_message
+        self._clock = clock
+        self._sleep = sleep
         self._sock: socket.socket | None = None
         self._reader: IO[bytes] | None = None
         self.connected = False  # a connect has succeeded at least once
@@ -102,16 +131,26 @@ class Client:
     def _connect(self) -> socket.socket:
         if self._sock is not None:
             return self._sock
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            budget = self._connect_timeout
-            if self.connect_budget is not None:
-                budget = min(budget, self.connect_budget)
-            sock.settimeout(budget)
-            sock.connect(self._path)
-        except OSError as exc:  # includes connect timeout, refused, ENOENT
-            sock.close()
-            raise BrokerUnreachable() from exc
+        deadline = self._clock() + self.retry_for
+        pause = _RETRY_PAUSE
+        while True:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                budget = self._connect_timeout
+                if self.connect_budget is not None:
+                    budget = min(budget, self.connect_budget)
+                sock.settimeout(budget)
+                sock.connect(self._path)
+                break
+            except OSError as exc:  # includes connect timeout, refused, ENOENT
+                sock.close()
+                left = deadline - self._clock()
+                if left <= 0:
+                    if isinstance(exc, FileNotFoundError) and self._missing_message:
+                        raise BrokerUnreachable(self._missing_message) from exc
+                    raise BrokerUnreachable() from exc
+                self._sleep(min(pause, left))
+                pause = min(pause * 2, _RETRY_PAUSE_CAP)
         self._sock = sock
         self._reader = sock.makefile("rb")
         self.connected = True
@@ -152,16 +191,17 @@ class Client:
             sock.sendall(payload)
             self.request_written = True
             assert self._reader is not None
+            limit = wire.response_line_limit(op)
             buffer = bytearray()
             while True:
                 if op == "next" and args.get("keepalive") is True and timeout is not None:
                     line = self._next_line(sock, buffer, timeout)
                 else:
-                    line = wire.read_line(self._reader)
+                    line = wire.read_line(self._reader, max_bytes=limit)
                 if line is None:
                     self.close()
                     raise BrokerUnreachable()
-                resp = wire.decode_response(line)
+                resp = wire.decode_response(line, max_bytes=limit)
                 if not (
                     op == "next"
                     and args.get("keepalive") is True

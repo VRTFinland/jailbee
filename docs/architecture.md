@@ -428,8 +428,8 @@ terminal UI. This split keeps status collection separate from rendering.
 
 Container orchestration (a container starting and managing child containers)
 is carried out on the host by a separate long-lived user service,
-`jailbee-broker.service`, which polls the containers' outboxes and answers in
-their inboxes. It is neither the dashboard state service nor the net-refresh
+`jailbee-broker.service`, which serves a per-container broker socket and keeps
+the inbox queue in `broker.db`. It is neither the dashboard state service nor the net-refresh
 timer, for three reasons. The state service exits after its last dashboard
 disconnects and is scoped to gather-and-render, while orchestration must run
 unattended. The net-refresh timer is a one-minute `Type=oneshot`, so every
@@ -442,6 +442,18 @@ help and usage errors. Inbox command logic, waiting, rendering and manifest
 validation remain standard-library modules and run no subprocess. The container
 command tree loads repository configuration only when a command needs it, so
 inbox and version do not pay the config-model startup cost.
+
+### The outbox store
+
+Every container, orchestrator or not, has a broker socket. In-container
+`jailbee issue`, `jailbee pr` and `jailbee outbox` commands stage GitHub
+proposals and draft batches over it (exit 4 when the broker is unreachable),
+and the broker writes them to `broker.db`, keyed by the Incus instance uuid.
+Proposals, drafts, publication journals and sent records all live there. Host
+commands (`jb outbox`, `jb review`, `jb issue`, `jb pr`) read and write the
+store directly and never run `incus exec` for the outbox, so stopped
+containers are inspectable too. See
+[ADR 0001](adr/0001-outbox-through-the-broker.md).
 
 ## Security model
 

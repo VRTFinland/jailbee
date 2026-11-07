@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import unicodedata
-from collections.abc import Sequence
-from dataclasses import asdict, dataclass, replace
-from typing import Literal
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, replace
+from typing import TYPE_CHECKING, Literal, Union
 
 from jailbee import issue_manifest as issues
 from jailbee import pr_outbox as prs
@@ -25,113 +24,16 @@ from jailbee.outbox.models import (
 )
 from jailbee.outbox_io import (
     ContainerIdentity,
+    IssueJournal,
     JournalError,
-    JournalStore,
-    issue_proposal_digest,
-    journal_key,
+    proposal_digest,
 )
 
+if TYPE_CHECKING:
+    from jailbee.outbox.publication_db import Journal
 
-@dataclass(frozen=True)
-class ProgressEvidence:
-    """Strict PR evidence, reusable without discarding rejected snapshot entries."""
-
-    applied: frozenset[int] = frozenset()
-    receipts: tuple[tuple[int, str], ...] = ()
-    edit_block: str | None = None
-    error: str | None = None
-    inputs: tuple[tuple[str, str | None], ...] = ()
-    rejected: tuple[str, ...] = ()
-    source_published: bool = False
-
-
-def pr_progress_evidence(
-    store: StoreSnapshot,
-    name: str,
-    action_count: int | None,
-    *,
-    identity: ContainerIdentity | None = None,
-) -> ProgressEvidence:
-    """Never coerce malformed/skipped sidecars or logs to empty progress."""
-    files = store.as_dict()
-    sidecar = f"{name}.progress.json"
-    try:
-        value = json.loads(files.get(sidecar, "null"))
-        if isinstance(value, dict) and "source" in value:
-            source = prs.source_publication_receipt(
-                prs.Outbox(files, store.rejected, identity), name
-            )
-            if store.rejected:
-                raise OutboxError("source publication evidence was rejected")
-            assert source is not None
-            indices = frozenset(value["applied"])
-            return ProgressEvidence(
-                indices,
-                tuple((i, source["url"]) for i in sorted(indices)),
-                "recorded publication evidence prevents editing",
-                None,
-                ((sidecar, files[sidecar]), ("applied.log", files.get("applied.log"))),
-                tuple(store.rejected),
-                True,
-            )
-    except (ValueError, TypeError, RecursionError, OutboxError) as exc:
-        if isinstance(exc, OutboxError):
-            return ProgressEvidence(
-                error=str(exc), edit_block="unusable source publication evidence"
-            )
-    rejected = tuple(sorted(n for n in store.rejected if n in (sidecar, "applied.log")))
-    inputs: list[tuple[str, str | None]] = [(sidecar, files.get(sidecar))]
-    error = "publication evidence was rejected" if rejected else None
-    block = (
-        "recorded publication evidence prevents editing" if rejected or sidecar in files else None
-    )
-    applied: frozenset[int] = frozenset()
-    receipts: tuple[tuple[int, str], ...] = ()
-    if sidecar in files:
-        try:
-            value = json.loads(files[sidecar])
-            if not isinstance(value, dict) or set(value) != {"applied", "urls"}:
-                raise ValueError
-            indices, urls = value["applied"], value["urls"]
-            if not isinstance(indices, list) or not isinstance(urls, dict):
-                raise ValueError
-            if any(
-                type(i) is not int or i < 0 or (action_count is not None and i >= action_count)
-                for i in indices
-            ) or len(set(indices)) != len(indices):
-                raise ValueError
-            if any(
-                not isinstance(k, str)
-                or not k.isascii()
-                or not k.isdecimal()
-                or str(int(k)) != k
-                or int(k) not in indices
-                or not isinstance(v, str)
-                for k, v in urls.items()
-            ):
-                raise ValueError
-            applied = frozenset(indices)
-            receipts = tuple(sorted((int(k), v) for k, v in urls.items()))
-        except (ValueError, TypeError, RecursionError):
-            error = "invalid PR progress sidecar"
-    # The writer separates timestamp/name/suffix with one literal space. Never
-    # split the name: existing histories can include leading or embedded spaces.
-    for line in files.get("applied.log", "").splitlines():
-        _, separator, remainder = line.partition(" ")
-        prefix = name + " "
-        matching_name = remainder == name or remainder.startswith(prefix)
-        suffix = remainder[len(prefix) :] if remainder.startswith(prefix) else ""
-        exact = re.fullmatch(r"pr=([^ ]+) actions=([0-9]+) urls=(.+)", suffix) is not None
-        # Legacy records do not escape filenames. Even an existing longer name
-        # cannot prove this is not malformed history for the selected proposal.
-        if separator and matching_name:
-            inputs.append(("applied.log", line))
-            block = "recorded publication evidence prevents editing"
-            if not exact:
-                error = "invalid PR receipt log record"
-            elif not applied:
-                error = "receipt log records publication without usable action progress"
-    return ProgressEvidence(applied, receipts, block, error, tuple(inputs), rejected)
+# A store-held publication journal of either kind (``prepared`` read as uncertain).
+StoreJournal = Union[IssueJournal, "Journal"]
 
 
 def safe_text(value: str) -> str:
@@ -239,8 +141,9 @@ def _build_view(
     identity: ContainerIdentity,
     store: StoreSnapshot,
     name: str,
-    journal_store: JournalStore,
     recorded_pr: int | None,
+    issue_journals: Mapping[str, IssueJournal] | None = None,
+    pr_journals: Mapping[str, StoreJournal] | None = None,
 ) -> ProposalView:
     files = store.as_dict()
     raw = files.get(name, "")
@@ -249,7 +152,7 @@ def _build_view(
     actions: tuple[ActionView, ...] = ()
     state: State = "pending"
     body_names: set[str] = set()
-    evidence: object = None
+    is_source = False
     try:
         try:
             body_names = _body_names(json.loads(raw))
@@ -258,17 +161,9 @@ def _build_view(
         if name in store.rejected:
             raise OutboxError("manifest was rejected by the bounded text reader")
         if store.kind == "pr":
-            source_progress = pr_progress_evidence(store, name, None, identity=identity)
-            parse_files = files
-            if source_progress.source_published:
-                source = prs.source_publication_receipt(
-                    prs.Outbox(files, store.rejected, identity), name
-                )
-                assert source is not None
-                parse_files = files | source["inputs"]
-            raw = parse_files.get(name, raw)
-            manifest = prs.parse_manifest(name, raw, parse_files)
+            manifest = prs.parse_manifest(name, raw, files)
             actions = _pr_actions(manifest, None if manifest.source else recorded_pr)
+            is_source = manifest.source is not None
             if manifest.source is not None:
                 state = "awaiting-push"
             elif manifest.pr is None and recorded_pr is None:
@@ -281,81 +176,44 @@ def _build_view(
         error, state = "manifest JSON nesting exceeds the supported depth", "invalid"
     except (prs.ManifestError, issues.IssueManifestError, OutboxError) as exc:
         error, state = str(exc), "invalid"
-    if store.kind == "pr":
-        progress = pr_progress_evidence(
-            store, name, len(actions) if state != "invalid" else None, identity=identity
-        )
-        evidence = asdict(progress) | {"applied": sorted(progress.applied)}
-        block = progress.edit_block
-        if progress.error:
-            error = "; ".join(v for v in (error, progress.error) if v)
-            if state != "invalid":
-                state = "uncertain"
-        elif state != "invalid":
-            receipts = dict(progress.receipts)
-            actions = tuple(
-                replace(
-                    a,
-                    state="applied" if a.index in progress.applied else "pending",
-                    receipt=receipts.get(a.index),
-                )
-                for a in actions
-            )
-            if progress.source_published:
-                state = "applied"
-            elif progress.applied:
-                state = _state(actions)
-    else:
-        key = journal_key(identity, name)
-        # Retain exact bytes as well as validated/recovered semantics, even on corruption.
-        try:
-            journal_bytes = journal_store._path(key).read_bytes()
-        except FileNotFoundError:
-            journal_bytes = None
-        except OSError as exc:
-            journal_bytes = str(exc).encode()
-        journal_evidence: dict[str, object] = {
-            "raw": None if journal_bytes is None else journal_bytes.hex()
-        }
-        evidence = journal_evidence
-        try:
-            journal = journal_store.load(key)
-            if journal is not None:
-                journal_evidence["journal"] = asdict(journal)
-                if journal.actions:
-                    block = "recorded publication progress prevents editing"
-                    digest = issue_proposal_digest(
-                        key,
-                        raw,
-                        {n: files[n] for n in body_names if n in files},
-                        journal,
-                    )
-                    if journal.digest != digest or journal.action_count != len(actions):
-                        raise JournalError("proposal differs from recorded journal history")
-                    issue_receipts = {r.index: r for r in journal.actions}
-                    updated = []
-                    for a in actions:
-                        receipt = issue_receipts.get(a.index)
-                        local_state: Literal["pending", "applied", "uncertain"] = "pending"
-                        if receipt is not None:
-                            local_state = "applied" if receipt.state == "applied" else "uncertain"
-                        updated.append(
-                            replace(a, state=local_state, receipt=receipt.url if receipt else None)
-                        )
-                    actions = tuple(updated)
-                    if state != "invalid":
-                        state = _state(actions)
-        except JournalError as exc:
-            block = "unusable publication journal prevents editing"
-            error = "; ".join(v for v in (error, str(exc)) if v)
-            if state != "invalid":
-                state = "uncertain"
-    relevant_rejected = sorted(
-        n
-        for n in store.rejected
-        if n in body_names or n == name or n == f"{name}.progress.json" or n == "applied.log"
+    # Store-held proposals carry their journals; a PR source's one journaled
+    # action (the push and PR create/update) is not one of its manifest actions.
+    journals: Mapping[str, StoreJournal] | None = (
+        issue_journals if store.kind == "issue" else None if is_source else pr_journals
     )
-    inputs = {
+    # Store journals (a leftover prepared already reads as uncertain).
+    journal_evidence: dict[str, object] = {"store": True}
+    evidence = journal_evidence
+    try:
+        journal = journals.get(name) if journals is not None else None
+        if journal is not None:
+            journal_evidence["journal"] = asdict(journal)
+            if journal.actions:
+                block = "recorded publication progress prevents editing"
+                bodies = {n: files[n] for n in body_names if n in files}
+                digest = proposal_digest(name, raw, bodies)
+                if journal.digest != digest or journal.action_count != len(actions):
+                    raise JournalError("proposal differs from recorded journal history")
+                issue_receipts = {r.index: r for r in journal.actions}
+                updated = []
+                for a in actions:
+                    receipt = issue_receipts.get(a.index)
+                    local_state: Literal["pending", "applied", "uncertain"] = "pending"
+                    if receipt is not None:
+                        local_state = "applied" if receipt.state == "applied" else "uncertain"
+                    updated.append(
+                        replace(a, state=local_state, receipt=receipt.url if receipt else None)
+                    )
+                actions = tuple(updated)
+                if state != "invalid":
+                    state = _state(actions)
+    except JournalError as exc:
+        block = "unusable publication journal prevents editing"
+        error = "; ".join(v for v in (error, str(exc)) if v)
+        if state != "invalid":
+            state = "uncertain"
+    relevant_rejected = sorted(n for n in store.rejected if n in body_names or n == name)
+    inputs: dict[str, object] = {
         "identity": asdict(identity),
         "kind": store.kind,
         "name": name,
@@ -364,6 +222,9 @@ def _build_view(
         "progress": evidence,
         "rejected": relevant_rejected,
     }
+    if store.versions:
+        # Host-store proposals: the row version is part of what the view was built from.
+        inputs["row_version"] = dict(store.versions).get(name)
     revision = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
     return ProposalView(ProposalId(store.kind, name), revision, raw, actions, state, error, block)
 
@@ -372,10 +233,14 @@ def build_views(
     identity: ContainerIdentity,
     stores: Sequence[StoreSnapshot],
     *,
-    journal_store: JournalStore,
     recorded_pr: int | None = None,
+    issue_journals: Mapping[str, IssueJournal] | None = None,
+    pr_journals: Mapping[str, StoreJournal] | None = None,
 ) -> tuple[ProposalView, ...]:
     """Inspect supplied snapshots without target resolution or directory creation.
+
+    issue_journals and pr_journals, when given, are the store's publication
+    journals by proposal name; a proposal without one has no progress.
 
     recorded_pr is display context only and never contributes to revision:
     publication must resolve and authorize its actual target through fresh gates.
@@ -383,21 +248,15 @@ def build_views(
     views = []
     for store in stores:
         names = set(store.as_dict()) | set(store.rejected)
-        if store.kind == "pr":
-            for member in store.as_dict():
-                if member.endswith(".progress.json"):
-                    name = member.removesuffix(".progress.json")
-                    if pr_progress_evidence(store, name, None, identity=identity).source_published:
-                        names.add(name)
-        for name in sorted(
-            n for n in names if n.endswith(".json") and not n.endswith(".progress.json")
-        ):
+        for name in sorted(n for n in names if n.endswith(".json")):
             try:
                 ProposalId(store.kind, name)
             except OutboxError:
                 # Non-addressable rejected entries remain visible in store evidence.
                 continue
-            views.append(_build_view(identity, store, name, journal_store, recorded_pr))
+            views.append(
+                _build_view(identity, store, name, recorded_pr, issue_journals, pr_journals)
+            )
     return tuple(views)
 
 
@@ -497,6 +356,7 @@ def _container_json(container: ContainerView) -> dict[str, object]:
         "name": container.name,
         "identity": asdict(container.identity) if container.identity else None,
         "available": container.available,
+        "destroyed": container.destroyed,
         "error": container.error,
         "counts": counts,
         "stores": [

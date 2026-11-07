@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import re
+import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from functools import partial
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, assert_never
 
 from jailbee import git, issue_github, submodules
-from jailbee.config import CONTAINER_USERNAME
 from jailbee.github_repo import github_slug, resolve_submodule_url
 from jailbee.incus import Incus, IncusError
 from jailbee.issue_github import (
@@ -23,7 +22,6 @@ from jailbee.issue_github import (
     MutationReceipt,
 )
 from jailbee.issue_manifest import (
-    MAX_MANIFEST_BYTES,
     MAX_MANIFESTS,
     MAX_OFFER_ACTIONS,
     ME_LOGIN,
@@ -41,11 +39,8 @@ from jailbee.issue_manifest import (
     foreign_slug,
     parse_manifest,
 )
-from jailbee.outbox import io as store_io
-from jailbee.outbox import sent
-from jailbee.outbox.cleanup import exclusive_body_names
+from jailbee.outbox import publication_db, sent
 from jailbee.outbox.markdown_view import render_markdown
-from jailbee.outbox.models import OutboxExecutionError, StoreSnapshot
 from jailbee.outbox_io import (
     ASSIGN_NOT_APPLIED_DETAIL,
     UNASSIGN_NOT_APPLIED_DETAIL,
@@ -53,22 +48,15 @@ from jailbee.outbox_io import (
     IssueJournal,
     JournalAction,
     JournalError,
-    JournalKey,
-    JournalStore,
-    OutboxReadError,
-    append_applied_log,
-    container_identity,
-    issue_proposal_digest,
-    issue_receipt_line,
-    journal_has_uncertainty,
-    journal_key,
     proposal_digest,
-    read_text_outbox,
     safe_mutation_detail,
 )
 
 if TYPE_CHECKING:
     from jailbee.config import Config
+    from jailbee.outbox.publication_db import PublicationStore
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -169,13 +157,7 @@ class OutboxSnapshot:
 
     @property
     def manifest_names(self) -> tuple[str, ...]:
-        return tuple(
-            sorted(
-                name
-                for name in self.files
-                if name.endswith(".json") and not name.endswith(".progress.json")
-            )
-        )
+        return tuple(sorted(name for name in self.files if name.endswith(".json")))
 
 
 @dataclass(frozen=True)
@@ -213,6 +195,8 @@ class PreparedBatch:
     outbox: OutboxSnapshot
     manifests: tuple[PreparedManifest, ...]
     initial_issues: Mapping[tuple[str, int], IssueSnapshot]
+    # The instance's Incus volatile.uuid: the outbox store's key for its proposals.
+    uuid: str = ""
 
     def _foreign_actions(self) -> list[ResolvedAction]:
         # A receipt in any state means the action was already dispatched.
@@ -248,24 +232,41 @@ class PreparedBatch:
         return len(self._foreign_actions())
 
 
-ISSUE_OUTBOX_SUBPATH = ".jailbee/issue-outbox"
+def store_outbox(uuid: str) -> OutboxSnapshot:
+    """The instance's staged issue proposals from the host outbox store.
 
+    Read-only on ``broker.db`` (no Incus call); manifests and their bodies are
+    keyed by name as in the old file layout. Raises `StoreError`.
+    """
+    from jailbee.outbox import publication_db, store_db
 
-def _outbox_directory() -> str:
-    """Absolute issue outbox path inside a container."""
-    return f"/home/{CONTAINER_USERNAME}/{ISSUE_OUTBOX_SUBPATH}"
-
-
-def read_issue_outbox(incus: Incus, container: str, *, uid: int | None) -> OutboxSnapshot:
-    """Read proposal text without accepting container-owned progress."""
-    files = read_text_outbox(
-        incus,
-        container,
-        _outbox_directory(),
-        uid=uid,
-        max_file_bytes=MAX_MANIFEST_BYTES,
-    )
+    files: dict[str, str] = {}
+    for row in store_db.read_proposals(publication_db.default_root(), uuid, "issue"):
+        files[row.name] = row.manifest
+        files.update(row.bodies)
     return OutboxSnapshot(MappingProxyType(files))
+
+
+def store_journals(identity: ContainerIdentity, uuid: str) -> dict[str, IssueJournal]:
+    """Active issue journals of the instance by manifest name (prepared read as uncertain)."""
+    from jailbee.outbox import publication_db
+
+    return {
+        name: _issue_journal(identity, journal)
+        for (_, name), journal in publication_db.read_journals(
+            publication_db.default_root(), uuid, "issue"
+        ).items()
+    }
+
+
+def _issue_journal(identity: ContainerIdentity, journal: publication_db.Journal) -> IssueJournal:
+    return IssueJournal(
+        identity=identity,
+        manifest_name=journal.name,
+        digest=journal.digest,
+        action_count=journal.action_count,
+        actions=journal.actions,
+    )
 
 
 def _status(receipt: JournalAction | None) -> Literal["pending", "applied", "uncertain"]:
@@ -349,8 +350,7 @@ def _load_proposals(
     names: Sequence[str],
     targets: Mapping[str, RepoTarget],
     host_repo_root: Path,
-    identity: ContainerIdentity,
-    store: JournalStore,
+    journals: Mapping[str, IssueJournal],
     refusals: list[str],
 ) -> list[tuple[IssueManifest, str, IssueJournal | None]]:
     proposals = []
@@ -377,13 +377,9 @@ def _load_proposals(
                     f"known paths: {known}, or github:<owner>/<name>"
                 )
         try:
-            key = journal_key(identity, name)
-            journal = store.load(key)
-            digest = issue_proposal_digest(
-                key,
-                outbox.files[name],
-                {body: outbox.files[body] for body in manifest.body_files},
-                journal,
+            journal = journals.get(name)
+            digest = proposal_digest(
+                name, outbox.files[name], {body: outbox.files[body] for body in manifest.body_files}
             )
             if journal is not None:
                 if journal.digest != digest:
@@ -450,15 +446,20 @@ def prepare_batch(
     incus: Incus,
     container: str,
     selected_names: Sequence[str],
-    *,
-    uid: int | None,
-    journal_store: JournalStore,
 ) -> PreparedBatch:
-    """Resolve and validate an offer using only host-authorized, read-only inputs."""
+    """Resolve and validate an offer using only host-authorized, read-only inputs.
+
+    Proposals and journals come from the host outbox store; the only Incus call
+    resolves the instance's identity and uuid.
+    """
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox.service import instance_identity
+
     try:
-        outbox = read_issue_outbox(incus, container, uid=uid)
-        identity = container_identity(incus, container)
-    except (OutboxReadError, JournalError, IncusError) as exc:
+        identity, uuid = instance_identity(incus, container)
+        outbox = store_outbox(uuid)
+        journals = store_journals(identity, uuid)
+    except (StoreError, JournalError, IncusError) as exc:
         raise IssueExecutionError(str(exc)) from exc
     refusals: list[str] = []
     execution_errors: list[IssueGithubReadError] = []
@@ -467,9 +468,7 @@ def prepare_batch(
     except ValueError as exc:
         refusals.append(str(exc))
         targets = {}
-    proposals = _load_proposals(
-        outbox, selected_names, targets, cfg.repo_root, identity, journal_store, refusals
-    )
+    proposals = _load_proposals(outbox, selected_names, targets, cfg.repo_root, journals, refusals)
     if refusals:
         raise IssueGateError("\n".join(refusals))
 
@@ -589,7 +588,14 @@ def prepare_batch(
     if refusals:
         raise IssueGateError("\n".join(refusals))
     return PreparedBatch(
-        container, cfg.repo_root, identity, login, outbox, tuple(prepared), MappingProxyType(issues)
+        container,
+        cfg.repo_root,
+        identity,
+        login,
+        outbox,
+        tuple(prepared),
+        MappingProxyType(issues),
+        uuid,
     )
 
 
@@ -923,36 +929,6 @@ def _apply_failure_detail(message: str, *, uncertain: bool) -> str:
     return message if message in _SAFE_DEFINITE_DETAILS else _DEFAULT_DEFINITE_DETAIL
 
 
-def _now_iso() -> str:
-    """Current UTC time as `2026-09-18T12:34:56Z`, for `applied.log` lines."""
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _referenced_elsewhere(outbox: StoreSnapshot, exclude_name: str) -> frozenset[str] | None:
-    """Body files other manifests in `outbox` still reference, or None if unknown.
-
-    Returns `None` — "cannot tell, so keep everything" — the instant any
-    *other* manifest in the outbox fails to parse, rather than risk deleting
-    a file a broken manifest still names. The container is untrusted input;
-    an unparseable manifest is exactly the hostile-or-corrupt case that must
-    fail safe, not silently drop what might be someone else's still-pending
-    proposal text.
-    """
-    if outbox.rejected:
-        return None
-    files = outbox.as_dict()
-    referenced: set[str] = set()
-    for name in OutboxSnapshot(files).manifest_names:
-        if name == exclude_name:
-            continue
-        try:
-            other = parse_manifest(name, files[name], files)
-        except (IssueManifestError, RecursionError):
-            return None
-        referenced.update(other.body_files)
-    return frozenset(referenced)
-
-
 def _resolved_number(issue: ResolvedIssue, created: Mapping[str, int]) -> int:
     """The issue number `issue` targets: its own, or a ref created this run."""
     if issue.number is not None:
@@ -1037,134 +1013,6 @@ def _execute_one(
     assert_never(action)
 
 
-def _create_or_replace_journal(
-    journal_store: JournalStore, key: JournalKey, digest: str, action_count: int
-) -> IssueJournal:
-    """Create this proposal's journal, replacing a stale, untouched old one.
-
-    A changed proposal digest is only ever allowed to displace an old
-    journal that recorded no progress at all (Task 7 decision 4) — anything
-    else is a real conflict, left for `journal_store.create` itself to
-    reject. Archiving the stale journal and creating the new one happen
-    under one lock, so a concurrent reader never observes the old digest's
-    journal gone with the new one not yet in place.
-    """
-    with journal_store.lock(key):
-        existing = journal_store.load(key)
-        if existing is not None and existing.digest != digest and not existing.actions:
-            journal_store.archive(key)
-        return journal_store.create(key, digest, action_count)
-
-
-def _log_line(manifest_name: str, action: JournalAction) -> str:
-    """One `applied.log` entry: identifiers and a receipt URL, never body text."""
-    return issue_receipt_line(manifest_name, action, _now_iso())
-
-
-def _cleanup_manifest(
-    incus: Incus,
-    container: str,
-    prepared: PreparedManifest,
-    *,
-    uid: int | None,
-    journal_store: JournalStore,
-    identity: ContainerIdentity,
-) -> str | None:
-    """Log, delete, and archive a manifest that just became fully applied.
-
-    Returns `None` on success, or a human-readable failure detail otherwise.
-    Each step is attempted only if the previous one succeeded, and the host
-    journal is left exactly as it was — still active, still showing every
-    action applied — the instant a container write fails, so a re-run
-    repeats only the cleanup, never a GitHub mutation. Deletes the manifest
-    itself unconditionally, but only the body files no *other* manifest
-    still in the (freshly re-read) outbox references; a shared Markdown
-    file is kept. Archiving the journal is the last step, after both the
-    log and the delete succeed, so the same manifest filename can safely
-    carry a new proposal afterward.
-    """
-    name = prepared.manifest.name
-    key = journal_key(identity, name)
-    journal = journal_store.load(key)
-    if journal is None:
-        return f"{name}: applied, but its journal disappeared before cleanup could run"
-    directory = _outbox_directory()
-
-    try:
-        before_store = store_io.read_store(incus, container, "issue", uid=uid)
-    except OutboxExecutionError as exc:
-        return f"{name}: applied, but the outbox could not be read before cleanup ({exc})"
-    before = before_store.as_dict()
-    if (
-        container_identity(incus, container) != identity
-        or any(body not in before for body in prepared.manifest.body_files)
-        or issue_proposal_digest(
-            key,
-            before.get(name, ""),
-            {body: before.get(body, "") for body in prepared.manifest.body_files},
-            journal,
-        )
-        != prepared.digest
-    ):
-        return f"{name}: proposal changed after publication; cleanup refused, journal retained"
-    lines = [_log_line(name, action) for action in sorted(journal.actions, key=lambda a: a.index)]
-    expected_log = before.get("applied.log", "") + "\n".join(lines) + "\n"
-    try:
-        append_applied_log(incus, container, directory, lines, uid=uid)
-    except IncusError as exc:
-        return (
-            f"{name}: applied to GitHub, but the applied.log entry could not be "
-            f"recorded ({exc}); a re-run will retry safely"
-        )
-
-    try:
-        fresh_outbox = store_io.read_store(incus, container, "issue", uid=uid)
-    except OutboxExecutionError as exc:
-        return f"{name}: logged, but the outbox could not be re-read to clean it up ({exc})"
-    files = fresh_outbox.as_dict()
-    if (
-        container_identity(incus, container) != identity
-        or files.get(name) != before.get(name)
-        or files.get("applied.log") != expected_log
-        or any(
-            files.get(body) != before.get(body)
-            for body in prepared.manifest.body_files
-            if body != "applied.log"
-        )
-    ):
-        return f"{name}: proposal changed after publication; cleanup refused, journal retained"
-    referenced = _referenced_elsewhere(fresh_outbox, name)
-    names = [name]
-    if referenced is not None:
-        names.extend(exclusive_body_names(prepared.manifest.body_files, files, referenced))
-    try:
-        store_io.mutate_store(
-            incus,
-            container,
-            "issue",
-            uid=uid,
-            expected=files,
-            new_manifest=None,
-            delete_names=tuple(names),
-            forbidden_progress=None,
-            rejected_names=fresh_outbox.rejected,
-        )
-    except (IncusError, OutboxExecutionError) as exc:
-        return (
-            f"{name}: applied and logged, but its outbox files could not be "
-            f"deleted ({exc}); a re-run will retry safely"
-        )
-
-    try:
-        with journal_store.lock(key):
-            journal_store.archive(key)
-    except JournalError as exc:
-        return (
-            f"{name}: applied, logged, and deleted, but its journal could not be archived ({exc})"
-        )
-    return None
-
-
 def pending_action_count(batch: PreparedBatch) -> int:
     """Count pending actions in the prepared batch."""
     return sum(a.status == "pending" for m in batch.manifests for a in m.actions)
@@ -1223,40 +1071,41 @@ def apply_batch(
     batch: PreparedBatch,
     *,
     incus: Incus,
-    uid: int | None,
-    journal_store: JournalStore,
+    publications: PublicationStore | None = None,
     before_action: Callable[[], None] | None = None,
     container_prefix: str,
     publisher: sent.Publisher,
+    clock: Callable[[], float] = time.time,
 ) -> ApplyReport:
     """Apply every pending action of `batch`, in the exact order it was shown.
 
     Call `before_action` immediately before each attempted action, if provided.
 
-    Every action GitHub may have accepted is recorded in the outbox Sent log
-    (best effort) as soon as `_execute_one` returns or fails uncertainly,
-    before the journal is written: `applied` on success, `uncertain` when the
-    outcome is unknown. `publisher` says who published it.
+    Proposals, journals and sent records live in the host outbox store. The
+    publication claim of every selected manifest is taken first (single flight:
+    another live run publishing one of them refuses the whole batch) and held
+    to the end. Two passes. The first re-verifies every manifest — the
+    instance's identity and uuid, each manifest's exact stored text (by
+    recomputed digest), and its journal's recorded progress — *before* a single
+    GitHub mutation is dispatched, so a change discovered in the last manifest
+    still aborts the first one's untouched. A recorded `uncertain` action (a
+    leftover `prepared` reads as one) aborts the whole batch, and so does an
+    already-`applied` record whose repo no longer matches the resolved one.
 
-    Two passes. The first re-verifies every manifest — the container's
-    identity, each manifest's exact text (by recomputed digest), and its
-    journal's recorded progress — *before* a single GitHub mutation is
-    dispatched, so a change discovered in the last manifest still aborts the
-    first one's untouched. A freshly-discovered `uncertain` record aborts
-    the whole batch, and so does an already-`applied` record whose recorded
-    repo no longer matches the freshly resolved one. The second pass then
-    walks each manifest's actions in display order, skipping ones already
-    `applied` (restoring a create's issue number into `created_issue_numbers`
-    for any later `issue_ref`), and for a pending action: durably marks it
-    `prepared`, dispatches its exact mutation, and durably marks the
-    outcome. All selected manifest locks are acquired in sorted order before
-    fresh identity, text, and progress checks, and held through cleanup; the
-    per-action locks reenter those same locks. A cooperating edit, reconciliation,
-    or drop therefore cannot invalidate a checked proposal or lose a receipt. The run stops at the
-    first action it cannot durably resolve one way or the other; nothing
-    later is ever attempted. A manifest that becomes fully applied is
-    logged, deleted, and archived before the next manifest starts.
+    The second pass walks each manifest's actions in display order, skipping
+    ones already `applied` (restoring a create's issue number for any later
+    `issue_ref`). For a pending action it commits `prepared`, dispatches the
+    exact mutation, then commits the outcome together with its sent record —
+    and, when that outcome completes the manifest, the proposal's removal and
+    the journal's archiving — in one transaction. A crash between the two
+    commits leaves `prepared`, read back as `uncertain`. The run stops at the
+    first action it cannot durably resolve one way or the other.
     """
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox import publication_db
+    from jailbee.outbox.service import instance_identity
+
+    store = publications if publications is not None else publication_db.open_publications()
     applied: list[tuple[str, JournalAction]] = []
     skipped: list[tuple[str, JournalAction]] = []
     cleaned: list[str] = []
@@ -1276,18 +1125,21 @@ def apply_batch(
             ApplyFailure(manifest, index, uncertain, detail, kind),
         )
 
-    with ExitStack() as locks:
+    with ExitStack() as held:
+        claims: dict[str, publication_db.Claim] = {}
         try:
             for name in sorted({prepared.manifest.name for prepared in batch.manifests}):
-                locks.enter_context(journal_store.lock(journal_key(batch.identity, name)))
-        except JournalError as exc:
+                claims[name] = held.enter_context(store.claim(batch.uuid, "issue", name))
+        except publication_db.ClaimBusyError as exc:
+            return failed(None, None, False, str(exc), kind="validation")
+        except (JournalError, StoreError) as exc:
             return failed(None, None, False, str(exc))
 
         try:
-            fresh_identity = container_identity(incus, batch.container)
+            fresh_identity, fresh_uuid = instance_identity(incus, batch.container)
         except (JournalError, IncusError) as exc:
             return failed(None, None, False, f"could not verify the container's identity: {exc}")
-        if fresh_identity != batch.identity:
+        if fresh_identity != batch.identity or fresh_uuid != batch.uuid:
             return failed(
                 None,
                 None,
@@ -1297,9 +1149,9 @@ def apply_batch(
             )
 
         try:
-            outbox = read_issue_outbox(incus, batch.container, uid=uid)
-        except OutboxReadError as exc:
-            return failed(None, None, False, str(exc))
+            outbox = store_outbox(batch.uuid)
+        except StoreError as exc:
+            return failed(None, None, False, f"outbox store is unreadable: {exc}")
 
         journals: dict[str, IssueJournal] = {}
         for prepared in batch.manifests:
@@ -1313,17 +1165,8 @@ def apply_batch(
                     f"{name}: manifest is no longer in the outbox",
                     kind="validation",
                 )
-            key = journal_key(batch.identity, name)
-            try:
-                recorded_journal = journal_store.load(key)
-            except JournalError as exc:
-                return failed(name, None, False, str(exc))
-            digest = issue_proposal_digest(
-                key,
-                text,
-                {body: outbox.files.get(body, "") for body in prepared.manifest.body_files},
-                recorded_journal,
-            )
+            bodies = {body: outbox.files.get(body, "") for body in prepared.manifest.body_files}
+            digest = proposal_digest(name, text, bodies)
             if digest != prepared.digest:
                 return failed(
                     name,
@@ -1332,13 +1175,17 @@ def apply_batch(
                     f"{name}: proposal changed since it was approved",
                     kind="validation",
                 )
-            key = journal_key(batch.identity, name)
             try:
-                journal = _create_or_replace_journal(
-                    journal_store, key, digest, len(prepared.manifest.actions)
+                stored = store.begin(
+                    claims[name],
+                    digest=digest,
+                    action_count=len(prepared.manifest.actions),
+                    container_full=batch.container,
+                    now=clock(),
                 )
-            except JournalError as exc:
+            except (JournalError, StoreError) as exc:
                 return failed(name, None, False, str(exc))
+            journal = _issue_journal(batch.identity, stored)
             receipts = {a.index: a for a in journal.actions}
             for resolved in prepared.actions:
                 current = receipts.get(resolved.index)
@@ -1366,11 +1213,11 @@ def apply_batch(
 
         for prepared in batch.manifests:
             name = prepared.manifest.name
-            key = journal_key(batch.identity, name)
-            journal = journals[name]
-            receipts = {a.index: a for a in journal.actions}
+            claim = claims[name]
+            digest = prepared.digest
+            receipts = {a.index: a for a in journals[name].actions}
             created_issue_numbers: dict[str, int] = {}
-            created_at = sent.parse_created(batch.identity.created_at)
+            finalized = changed = False
             for resolved in prepared.actions:
                 current = receipts.get(resolved.index)
                 if current is not None:
@@ -1379,112 +1226,144 @@ def apply_batch(
                         created_issue_numbers[resolved.action.ref] = current.issue
                     continue
 
-                with journal_store.lock(key):
-                    try:
-                        journal_store.mark_prepared(key, resolved.index, repo=resolved.repo.slug)
-                    except JournalError as exc:
-                        return failed(name, resolved.index, False, str(exc))
-                    if before_action is not None:
-                        try:
-                            before_action()
-                        except BaseException as exc:
-                            try:
-                                journal_store.clear_prepared(key, resolved.index)
-                            except JournalError as cleanup_error:
-                                exc.add_note(
-                                    f"Could not clear prepared journal marker: {cleanup_error}"
-                                )
-                            raise
-                    try:
-                        receipt = _execute_one(
-                            batch.host_repo_root, resolved, created_issue_numbers, batch.login
-                        )
-                    except IssueGithubMutationError as exc:
-                        recorded = True
-                        if exc.uncertain:
-                            sent.record(
-                                instance=batch.container,
-                                container_prefix=container_prefix,
-                                container_created=created_at,
-                                publisher=publisher,
-                                action=partial(
-                                    _sent_action,
-                                    name,
-                                    prepared.digest,
-                                    resolved,
-                                    target=resolved.issue.number
-                                    or created_issue_numbers.get(resolved.issue.ref or ""),
-                                    url=None,
-                                    login=batch.login,
-                                ),
-                                state="uncertain",
-                            )
-                        try:
-                            if exc.uncertain:
-                                journal_store.mark_uncertain(
-                                    key, resolved.index, repo=resolved.repo.slug, detail=str(exc)
-                                )
-                            else:
-                                journal_store.clear_prepared(key, resolved.index)
-                        except JournalError:
-                            recorded = False
-                        return failed(
-                            name,
-                            resolved.index,
-                            exc.uncertain or not recorded,
-                            _apply_failure_detail(str(exc), uncertain=exc.uncertain),
-                        )
-                    sent.record(
-                        instance=batch.container,
-                        container_prefix=container_prefix,
-                        container_created=created_at,
-                        publisher=publisher,
-                        action=partial(
-                            _sent_action,
-                            name,
-                            prepared.digest,
-                            resolved,
-                            target=receipt.issue,
-                            url=receipt.url,
-                            login=batch.login,
-                        ),
-                        state="applied",
+                try:
+                    store.mark_prepared(
+                        claim, digest, resolved.index, repo=resolved.repo.slug, now=clock()
                     )
+                except (JournalError, StoreError) as exc:
+                    return failed(name, resolved.index, False, str(exc))
+                if before_action is not None:
                     try:
-                        updated = journal_store.mark_applied(
-                            key,
-                            resolved.index,
-                            repo=resolved.repo.slug,
-                            url=receipt.url,
-                            issue=receipt.issue,
-                        )
-                    except JournalError as exc:
-                        return failed(
-                            name,
-                            resolved.index,
-                            True,
-                            f"GitHub mutation succeeded but its receipt could not be recorded "
-                            f"({exc}); a re-run will treat it as uncertain",
-                        )
+                        before_action()
+                    except BaseException as exc:
+                        try:
+                            store.clear_prepared(claim, digest, resolved.index)
+                        except (JournalError, StoreError) as cleanup_error:
+                            exc.add_note(
+                                f"Could not clear prepared journal marker: {cleanup_error}"
+                            )
+                        raise
 
-                applied_action = next(a for a in updated.actions if a.index == resolved.index)
+                try:
+                    receipt = _execute_one(
+                        batch.host_repo_root, resolved, created_issue_numbers, batch.login
+                    )
+                except IssueGithubMutationError as exc:
+                    recorded = True
+                    try:
+                        if exc.uncertain:
+                            target = resolved.issue.number or created_issue_numbers.get(
+                                resolved.issue.ref or ""
+                            )
+                            store.settle(
+                                claim,
+                                digest,
+                                resolved.index,
+                                outcome="uncertain",
+                                detail=str(exc),
+                                sent=_sent_entry(
+                                    batch, name, resolved, target, None, container_prefix, publisher
+                                ),
+                                now=clock(),
+                            )
+                        else:
+                            store.clear_prepared(claim, digest, resolved.index)
+                    except (JournalError, StoreError):
+                        recorded = False
+                    return failed(
+                        name,
+                        resolved.index,
+                        exc.uncertain or not recorded,
+                        _apply_failure_detail(str(exc), uncertain=exc.uncertain),
+                    )
+                try:
+                    settled = store.settle(
+                        claim,
+                        digest,
+                        resolved.index,
+                        outcome="applied",
+                        url=receipt.url,
+                        issue=receipt.issue,
+                        sent=_sent_entry(
+                            batch,
+                            name,
+                            resolved,
+                            receipt.issue,
+                            receipt.url,
+                            container_prefix,
+                            publisher,
+                        ),
+                        now=clock(),
+                    )
+                except (JournalError, StoreError) as exc:
+                    return failed(
+                        name,
+                        resolved.index,
+                        True,
+                        f"GitHub mutation succeeded but its receipt could not be recorded "
+                        f"({exc}); a re-run will treat it as uncertain",
+                    )
+                finalized, changed = settled.finalized, settled.changed
+                applied_action = next(
+                    a for a in settled.journal.actions if a.index == resolved.index
+                )
                 applied.append((name, applied_action))
                 if isinstance(resolved.action, CreateAction):
                     created_issue_numbers[resolved.action.ref] = receipt.issue
 
-            failure_detail = _cleanup_manifest(
-                incus,
-                batch.container,
-                prepared,
-                uid=uid,
-                journal_store=journal_store,
-                identity=batch.identity,
-            )
-            if failure_detail is not None:
-                return failed(name, None, False, failure_detail)
+            if not finalized and not changed:
+                # Every action was applied by an earlier run: only the removal is left.
+                try:
+                    settled = store.finalize(claim, digest, now=clock())
+                except (JournalError, StoreError) as exc:
+                    return failed(
+                        name, None, False, f"{name}: applied, but it could not be removed ({exc})"
+                    )
+                finalized, changed = settled.finalized, settled.changed
+            if not finalized:
+                return failed(
+                    name,
+                    None,
+                    False,
+                    f"{name}: proposal changed after publication; cleanup refused, "
+                    "journal retained",
+                )
             cleaned.append(name)
 
         return ApplyReport(tuple(applied), tuple(skipped), tuple(cleaned), None)
+
+
+def _sent_entry(
+    batch: PreparedBatch,
+    name: str,
+    resolved: ResolvedAction,
+    target: int | None,
+    url: str | None,
+    container_prefix: str,
+    publisher: sent.Publisher,
+) -> publication_db.SentEntry | None:
+    """The sent record of one dispatched action, from the prepared snapshot.
+
+    None when it cannot be built: the outcome is recorded without it rather
+    than lost after GitHub already acted.
+    """
+    prepared = next(m for m in batch.manifests if m.manifest.name == name)
+    try:
+        action = _sent_action(
+            name, prepared.digest, resolved, target=target, url=url, login=batch.login
+        )
+    except Exception as exc:
+        _log.warning(
+            "could not build the sent record of %s action %d: %s", name, resolved.index, exc
+        )
+        return None
+    return sent.entry(
+        action,
+        instance=batch.container,
+        uuid=batch.uuid,
+        container_prefix=container_prefix,
+        publisher=publisher,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -1539,216 +1418,85 @@ def _expected_issue_number(
 
 def reconcile_action(
     *,
-    key: JournalKey,
+    uuid: str,
     index: int,
     resolution: Resolution,
     repo: RepoTarget,
     manifest: IssueManifest,
     digest: str,
-    journal_store: JournalStore,
-) -> None:
+    publications: PublicationStore | None = None,
+    clock: Callable[[], float] = time.time,
+) -> bool:
     """Apply a human's explicit resolution to one uncertain action.
 
-    `manifest` and `digest` pin this call to the exact proposal the human
-    is looking at: `JournalKey`/`JournalAction` encode neither the action
-    kind nor the caller's current proposal digest, so without them a stale
-    or wrong-proposal resolution could not be rejected. Only an action
-    currently `uncertain` (never `pending` or `applied`) may be resolved,
-    and `repo` must match what was actually journaled for it — a defense
-    against reconciling the right index against the wrong repository.
+    `manifest` and `digest` pin this call to the exact proposal the human is
+    looking at; the stored journal must match both. Only an action currently
+    `uncertain` (a leftover `prepared` reads as one; never `pending` or
+    `applied`) may be resolved, and `repo` must match what was journaled for it.
+    The proposal's publication claim is held throughout, so an in-flight
+    publication is never resolved under it.
 
-    `RetryResolution` simply forgets the uncertain record, leaving the
-    action to be re-attempted as `pending`. `AppliedResolution` requires a
+    `RetryResolution` forgets the uncertain record, leaving the action to be
+    re-attempted as `pending`. `AppliedResolution` requires a
     `https://github.com/<repo>/issues/<n>` receipt matching `repo`; for a
     create, `issue` must be supplied and agree with that URL's number; for
     every other action kind, `issue` is forbidden and, when the action's own
-    target issue is already known (an explicit number, or an earlier
-    create's own applied receipt), the URL's number must agree with it too.
+    target issue is already known, the URL's number must agree with it too. The
+    journal entry, the sent record and — when this completes the proposal — the
+    proposal's removal are written in one transaction. Returns whether the
+    proposal was removed.
     """
+    from jailbee.outbox import publication_db
+
     if not 0 <= index < len(manifest.actions):
         raise JournalError("reconciliation index is out of bounds for this manifest")
-    journal = journal_store.load(key)
-    if journal is None:
-        raise JournalError(f"no journal exists for {key.manifest_name}")
-    if journal.manifest_name != manifest.name:
-        raise JournalError("journal manifest name does not match this proposal")
-    if journal.digest != digest:
-        raise JournalError("journal digest does not match this proposal")
-    if journal.action_count != len(manifest.actions):
-        raise JournalError("journal action count does not match this proposal")
-    current = next((a for a in journal.actions if a.index == index), None)
-    if current is None or current.state != "uncertain":
-        raise JournalError("only an uncertain action can be reconciled")
-    if current.repo.casefold() != repo.identity:
-        raise JournalError("journal action repo does not match the resolved repo")
+    store = publications if publications is not None else publication_db.open_publications()
+    with store.claim(uuid, "issue", manifest.name) as claim:
+        stored = store.load(uuid, "issue", manifest.name)
+        if stored is None:
+            raise JournalError(f"no journal exists for {manifest.name}")
+        if stored.digest != digest:
+            raise JournalError("journal digest does not match this proposal")
+        if stored.action_count != len(manifest.actions):
+            raise JournalError("journal action count does not match this proposal")
+        current = next((a for a in stored.actions if a.index == index), None)
+        if current is None or current.state != "uncertain":
+            raise JournalError("only an uncertain action can be reconciled")
+        if current.repo.casefold() != repo.identity:
+            raise JournalError("journal action repo does not match the resolved repo")
 
-    if isinstance(resolution, RetryResolution):
-        journal_store.resolve_retry(key, index)
-        return
+        if isinstance(resolution, RetryResolution):
+            store.resolve(claim, digest, index, applied=None, sent_outbox="issue", now=clock())
+            return False
 
-    action = manifest.actions[index]
-    url_number = _validated_receipt(resolution.url, repo)
-    if isinstance(action, CreateAction):
-        if type(resolution.issue) is not int:
-            raise JournalError("a create's resolution requires its GitHub issue number")
-        if resolution.issue != url_number:
-            raise JournalError("resolution issue number does not match the receipt URL")
-    else:
-        if resolution.issue is not None:
-            raise JournalError("only a create's resolution may carry an issue number")
-        expected = _expected_issue_number(action, manifest, journal)
-        if expected is not None and expected != url_number:
-            raise JournalError("receipt URL does not match this action's issue")
-
-    journal_store.resolve_applied(key, index, url=resolution.url, issue=resolution.issue)
-    sent.mark_applied(
-        instance=key.identity.full_name,
-        container_created=sent.parse_created(key.identity.created_at),
-        outbox="issue",
-        manifest=key.manifest_name,
-        digest=digest,
-        index=index,
-        url=resolution.url,
-        target=url_number,
-    )
-
-
-# --------------------------------------------------------------------------
-# Manual cleanup
-#
-# Discarding a proposal the human never wants applied. The default refuses
-# any recorded progress at all — even settled, all-`applied` progress —
-# because silently deleting a manifest that already changed GitHub without
-# a trace would erase the only record of it; `archive_journal=True` is the
-# explicit opt-in to keep that record while abandoning the rest.
-# --------------------------------------------------------------------------
-
-
-def drop_manifest(
-    incus: Incus,
-    container: str,
-    outbox: OutboxSnapshot,
-    manifest_name: str,
-    *,
-    uid: int | None,
-    journal_store: JournalStore,
-    identity: ContainerIdentity,
-    archive_journal: bool = False,
-) -> tuple[str, ...]:
-    """Delete `manifest_name` from the container's outbox without applying it.
-
-    Refuses to touch a manifest whose text no longer matches `outbox` — the
-    snapshot the caller read and is asking to drop — a fresh read must
-    still agree with it. By default, any recorded journal progress at all
-    refuses the drop outright. With `archive_journal=True`, uncertainty
-    still refuses it, but settled progress (applied actions, pending ones
-    left untouched) is allowed: the container files are deleted *first*,
-    and only once that succeeds is the journal archived — so a delete
-    failure leaves the active journal exactly as it was, still the replay
-    barrier for whatever was already applied.
-
-    Deletes the manifest itself unconditionally, but only the body files no
-    *other* manifest in a freshly re-read outbox still references — not
-    `outbox` itself, which may predate a manifest written after the caller's
-    own read. A shared Markdown file is kept either way. Returns the
-    outbox-relative names actually deleted.
-    """
-    key = journal_key(identity, manifest_name)
-    with journal_store.lock(key):
-        if container_identity(incus, container) != identity:
-            raise JournalError(
-                f"{manifest_name}: the container's identity changed; re-read it before dropping"
+        action = manifest.actions[index]
+        url_number = _validated_receipt(resolution.url, repo)
+        if isinstance(action, CreateAction):
+            if type(resolution.issue) is not int:
+                raise JournalError("a create's resolution requires its GitHub issue number")
+            if resolution.issue != url_number:
+                raise JournalError("resolution issue number does not match the receipt URL")
+        else:
+            if resolution.issue is not None:
+                raise JournalError("only a create's resolution may carry an issue number")
+            journal = IssueJournal(
+                ContainerIdentity(stored.container_full, ""),
+                stored.name,
+                stored.digest,
+                stored.action_count,
+                stored.actions,
             )
-        strict = store_io.read_store(incus, container, "issue", uid=uid)
-        fresh = OutboxSnapshot(strict.as_dict())
-        if fresh.files.get(manifest_name) != outbox.files.get(manifest_name):
-            raise JournalError(
-                f"{manifest_name}: the outbox changed since it was read; re-read it before dropping"
-            )
-        text = outbox.files.get(manifest_name)
-        if text is None:
-            raise JournalError(f"{manifest_name}: manifest is not in the outbox")
+            expected = _expected_issue_number(action, manifest, journal)
+            if expected is not None and expected != url_number:
+                raise JournalError("receipt URL does not match this action's issue")
 
-        try:
-            parsed = parse_manifest(manifest_name, text, outbox.files)
-            body_files: frozenset[str] = parsed.body_files
-        except IssueManifestError:
-            body_files = frozenset()
-            parsed = None
-        digest = proposal_digest(
-            manifest_name, text, {body: outbox.files[body] for body in body_files}
+        settled = store.resolve(
+            claim,
+            digest,
+            index,
+            applied=(resolution.url, resolution.issue),
+            sent_outbox="issue",
+            sent_target=url_number,
+            now=clock(),
         )
-        fresh_digest = proposal_digest(
-            manifest_name,
-            fresh.files[manifest_name],
-            {body: fresh.files.get(body, "") for body in body_files},
-        )
-        if fresh_digest != digest or any(body not in fresh.files for body in body_files):
-            raise JournalError(
-                f"{manifest_name}: the outbox changed since it was read; re-read it before dropping"
-            )
-        journal = journal_store.load(key)
-        recorded_digest = issue_proposal_digest(
-            key,
-            text,
-            {body: outbox.files[body] for body in body_files},
-            journal,
-        )
-        if (
-            journal is not None
-            and journal.actions
-            and (
-                parsed is None
-                or journal.digest != recorded_digest
-                or journal.action_count != len(parsed.actions)
-            )
-        ):
-            raise JournalError(f"{manifest_name}: proposal changed after recorded progress")
-        has_uncertainty = journal is not None and journal_has_uncertainty(journal)
-        if archive_journal:
-            if has_uncertainty:
-                raise JournalError(
-                    f"{manifest_name}: cannot archive a journal containing uncertain progress"
-                )
-        elif journal is not None and journal.actions:
-            raise JournalError(
-                f"{manifest_name}: cannot drop a manifest with recorded progress; pass "
-                "archive_journal=True to archive its settled progress instead"
-            )
-
-        referenced = _referenced_elsewhere(strict, manifest_name)
-        names = [manifest_name]
-        if referenced is not None:
-            names.extend(exclusive_body_names(body_files, fresh.files, referenced))
-
-        store_io.mutate_store(
-            incus,
-            container,
-            "issue",
-            uid=uid,
-            expected=fresh.files,
-            new_manifest=None,
-            delete_names=tuple(names),
-            forbidden_progress=None,
-            rejected_names=strict.rejected,
-        )
-
-        if archive_journal and journal is not None and journal.actions:
-            journal_store.archive(key)
-
-        if parsed is not None:
-            # An action without a journal record was never settled: a retried
-            # uncertain one still has its `uncertain` Sent-log row, which goes.
-            recorded = {a.index for a in journal.actions} if journal is not None else set()
-            for index in range(len(parsed.actions)):
-                if index not in recorded:
-                    sent.forget(
-                        instance=identity.full_name,
-                        container_created=sent.parse_created(identity.created_at),
-                        outbox="issue",
-                        manifest=manifest_name,
-                        digest=recorded_digest,
-                        index=index,
-                    )
-
-        return tuple(names)
+        return settled.finalized

@@ -496,12 +496,12 @@ def sent_key(item: SentItem) -> RowKey:
 
 
 def sent_items(
-    rows: Sequence[SentRow], live: Mapping[str, datetime | None] | None = None
+    rows: Sequence[SentRow], live: Mapping[str, str | None] | None = None
 ) -> tuple[SentItem, ...]:
-    """``rows`` as items; with ``live`` (instance -> creation time), mark stale incarnations.
+    """``rows`` as items; with ``live`` (instance -> its uuid), mark stale incarnations.
 
-    A row is current when its instance is in ``live`` with the same creation
-    time. Without ``live`` every row is current (the per-container tab already
+    A row is current when its instance is in ``live`` with the same uuid.
+    Without ``live`` every row is current (the per-container tab already
     filtered to the live incarnation).
     """
     items: list[SentItem] = []
@@ -510,7 +510,7 @@ def sent_items(
         if live is not None:
             if row.instance not in live:
                 gone = "container destroyed"
-            elif live[row.instance] != row.container_created:
+            elif live[row.instance] != row.uuid:
                 gone = "earlier incarnation (container recreated)"
         items.append(SentItem(row, gone))
     return tuple(items)
@@ -520,19 +520,21 @@ def read_sent(
     prefix: str,
     *,
     instance: str | None = None,
-    created: datetime | None = None,
-    live: Mapping[str, datetime | None] | None = None,
+    uuid: str | None = None,
+    live: Mapping[str, str | None] | None = None,
     scope: RemoteRepoScope | None = None,
 ) -> tuple[SentItem, ...]:
     """Read the Sent records on demand: one container's current incarnation, or a repo's all.
 
-    With ``instance`` the rows are that container's incarnation created at
-    ``created``; otherwise every row of ``prefix``, marked against ``live``
-    (instance -> creation time of the containers that exist now).
+    With ``instance`` the rows are that container's incarnation ``uuid`` (none
+    when its uuid is unknown); otherwise every row of ``prefix``, marked against
+    ``live`` (instance -> uuid of the containers that exist now).
     """
     from jailbee.outbox import sent, sent_view
 
-    rows = sent.list_records(container_prefix=prefix, instance=instance, container_created=created)
+    if instance is not None and uuid is None:
+        return ()
+    rows = sent.list_records(container_prefix=prefix, uuid=uuid if instance is not None else None)
     return sent_items(sent_view.in_scope(rows, scope), live)
 
 

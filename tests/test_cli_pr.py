@@ -5,8 +5,10 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
+from jailbee import pr_outbox
 from jailbee.cli import app
 from tests.conftest import mock_pr_agent
+from tests.pr_store_support import instance
 
 
 @pytest.fixture(autouse=True)
@@ -45,13 +47,13 @@ def _pr_created(already: bool = False):
     )
 
 
-def _mock_store(mocker, files, *, rejected=(), warnings=()):
-    from jailbee.outbox.models import StoreSnapshot
-    from jailbee.pr_outbox import Outbox
+def _mock_store(mocker, files):
+    """Seed the instance's host outbox store; returns `read_outbox`, spied by `_setup`."""
+    from tests.pr_store_support import seed_pr_store
 
-    snapshot = StoreSnapshot("pr", tuple(sorted(files.items())), tuple(rejected), tuple(warnings))
-    mocker.patch("jailbee.outbox.io.read_store", return_value=snapshot)
-    return mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files=files))
+    if files:
+        seed_pr_store(files, container="sampleapp-feat-foo")
+    return pr_outbox.read_outbox
 
 
 def _setup(mocker, tmp_path, labels=None):
@@ -62,7 +64,7 @@ def _setup(mocker, tmp_path, labels=None):
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg_mock)
     incus_mock = mocker.MagicMock()
     incus_mock.list_containers.return_value = [
-        {"name": "sampleapp-feat-foo", "created_at": "2026-09-30T12:00:00Z"}
+        instance("sampleapp-feat-foo", "2026-09-30T12:00:00Z")
     ]
     cfg_mock.container_user.uid = 1000
     # Legacy flow tests synthesize text, not a revision-bearing store. Strict
@@ -92,14 +94,13 @@ def _setup(mocker, tmp_path, labels=None):
     mocker.patch("jailbee.pr_flow.offer_outbox_binding", return_value=None)
     # Likewise for the container's PR outbox: "nothing pending" for every test,
     # so `jailbee pr` takes its normal Claude/placeholder path. The outbox tests
-    # below re-patch it. Without this the real `read_outbox` would run against
-    # `incus_mock` and choke on a MagicMock where `incus exec` returns text.
+    # below re-patch it.
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
     mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/acme/widgets")
-    # And an empty outbox for the offer `jailbee pr` makes once the PR is up,
-    # for the same reason: every test that does not opt in below takes the
-    # "nothing to offer" path instead of reading a MagicMock.
-    _mock_store(mocker, {})
+    # And an empty outbox store for the offer `jailbee pr` makes once the PR is
+    # up: every test that does not opt in below takes the "nothing to offer" path.
+    if not hasattr(pr_outbox.read_outbox, "spy_return"):  # `_setup` may run twice per test
+        mocker.spy(pr_outbox, "read_outbox")
     mock_pr_agent(cfg_mock, False)
     cfg_mock.pr.ai_description = True
     cfg_mock.upstream_remote = "origin"
@@ -294,26 +295,23 @@ def test_pr_ls_delegates(mocker, tmp_path):
 
 
 def test_pr_offer_fixture_has_identity_and_strict_snapshot(mocker, tmp_path):
-    from jailbee.outbox import io as outbox_io
-    from jailbee.outbox.inspect import pr_progress_evidence
     from jailbee.outbox_io import ContainerIdentity, container_identity
+    from jailbee.pr_outbox import parse_manifest, read_outbox
+    from tests.pr_store_support import UUID
 
     _, incus = _setup(mocker, tmp_path)
-    empty = outbox_io.read_store(incus, "sampleapp-feat-foo", "pr", uid=1000)
-    assert (empty.files, empty.rejected, empty.warnings) == ((), (), ())
+    empty = read_outbox(incus, "sampleapp-feat-foo", uid=1000)
+    assert (empty.files, empty.rejected) == ({}, ())
     target = _pending_comment_manifest(mocker, tmp_path)
-    assert container_identity(incus, "sampleapp-feat-foo") == ContainerIdentity(
-        "sampleapp-feat-foo", "2026-09-30T12:00:00Z"
-    )
-    store = outbox_io.read_store(incus, "sampleapp-feat-foo", "pr", uid=1000)
-    from jailbee.pr_outbox import parse_manifest
-
+    identity = ContainerIdentity("sampleapp-feat-foo", "2026-09-30T12:00:00Z")
+    assert container_identity(incus, "sampleapp-feat-foo") == identity
+    outbox = read_outbox(incus, "sampleapp-feat-foo", uid=1000)
+    store = outbox.snapshot()
+    assert (outbox.identity, outbox.uuid) == (identity, UUID)
     assert tuple(store.as_dict()) == ("001-x.json",)
     assert parse_manifest("001-x.json", store.as_dict()["001-x.json"], {}) == target.manifest
     assert (store.rejected, store.warnings) == ((), ())
-    evidence = pr_progress_evidence(store, "001-x.json", 1)
-    assert evidence.error is None
-    assert evidence.applied == frozenset()
+    assert outbox.journals == {}  # nothing published yet
     incus.exec.assert_not_called()
 
 
@@ -1112,9 +1110,30 @@ def test_pr_names_the_description_an_explicit_title_outranked(mocker, tmp_path):
     assert "003-desc.json still holds a description" in result.output
 
 
+def _journal_applied(name: str, text: str, index: int) -> None:
+    """Record action `index` of the stored proposal `name` as applied in its journal."""
+    import json
+
+    from jailbee.outbox import publication_db
+    from jailbee.outbox_io import proposal_digest
+    from tests.pr_store_support import UUID
+
+    digest = proposal_digest(name, text, {})
+    count = len(json.loads(text)["actions"])
+    store = publication_db.open_publications()
+    with store.claim(UUID, "pr", name) as claim:
+        store.begin(
+            claim, digest=digest, action_count=count, container_full="sampleapp-feat-foo", now=1.0
+        )
+        store.mark_prepared(claim, digest, index, repo="acme/widgets", now=1.0)
+        store.settle(
+            claim, digest, index, outcome="applied", url="https://x/pull/1", issue=None, now=1.0
+        )
+
+
 def test_pr_says_nothing_about_a_description_it_consumed(mocker, tmp_path):
-    """The note must not fire for the ordinary path: the description landed, the
-    sidecar records it, and the offer re-reads the outbox after that record."""
+    """The note must not fire for the ordinary path: the description landed, its
+    journal records it, and the offer re-reads the outbox after that record."""
     import json
 
     _update_setup(mocker, tmp_path)
@@ -1130,9 +1149,8 @@ def test_pr_says_nothing_about_a_description_it_consumed(mocker, tmp_path):
             "actions": [{"type": "description", "body": "Body."}],
         }
     )
-    _mock_store(
-        mocker, {"004-d.json": text, "004-d.json.progress.json": '{"applied": [0], "urls": {}}'}
-    )
+    _mock_store(mocker, {"004-d.json": text})
+    _journal_applied("004-d.json", text, 0)
 
     result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
 
@@ -2946,15 +2964,15 @@ def _tty(mocker):
 def _pending_comment_manifest(mocker, tmp_path, actions=None):
     """One pending manifest in the container's outbox, already gated.
 
-    Supplies strict snapshots alongside legacy `read_outbox`, `resolve_target`
-    and `read_progress` — plus `pr.gh_login`, which the plan's identity line
-    would otherwise really shell out for.
+    Seeds the host outbox store and fakes `resolve_target` — plus
+    `pr.gh_login`, which the plan's identity line would otherwise really
+    shell out for.
     """
     import json
 
     from jailbee.pr import PrInfo
     from jailbee.pr_flow import PrScope
-    from jailbee.pr_outbox import Progress, Target, parse_manifest
+    from jailbee.pr_outbox import Target, parse_manifest
 
     text = json.dumps(
         {
@@ -2979,9 +2997,6 @@ def _pending_comment_manifest(mocker, tmp_path, actions=None):
         scope=PrScope(tmp_path, "origin", "", None),
     )
     mocker.patch("jailbee.pr_outbox.resolve_target", return_value=target)
-    mocker.patch(
-        "jailbee.pr_outbox.read_progress", return_value=Progress(applied=frozenset(), urls={})
-    )
     mocker.patch("jailbee.pr.gh_login", return_value="octocat")
     return target
 
@@ -3143,12 +3158,17 @@ def test_no_outbox_suppresses_the_offer(mocker, tmp_path):
     mocker.patch("jailbee.git.commit_subject", return_value="feat: do thing")
     read = _mock_store(mocker, {})
     apply = mocker.patch("jailbee.pr_outbox.offer_pending_comments")
+    from jailbee import branch_pr
+
+    sources = mocker.spy(branch_pr, "pending_source_manifests")
 
     assert CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-outbox"]).exit_code == 0
 
-    # Source proposals are counted even with an own-branch-only option, but
-    # --no-outbox still suppresses the post-push offer and its publication.
-    read.assert_called_once()
+    # Source proposals are counted (from the host store, no container read) even
+    # with an own-branch-only option, but --no-outbox still suppresses the
+    # post-push offer and its publication.
+    sources.assert_called_once()
+    read.assert_not_called()
     apply.assert_not_called()
 
 
@@ -3395,8 +3415,20 @@ def test_pr_changed_source_after_prompt_never_publishes(mocker, tmp_path, make_c
         elif change == "body":
             fresh["body.md"] = "Changed"
         elif change == "progress":
-            fresh["d.json.progress.json"] = '{"applied":[0],"urls":{"0":"https://x/pull/123"}}'
+            published.append(True)
         return proposed
+
+    published: list[bool] = []
+
+    def journals() -> dict:
+        from jailbee.outbox.publication_db import Journal
+        from jailbee.outbox_io import JournalAction
+
+        if not published:
+            return {}
+        digest = pr_outbox.proposal_files_digest(fresh, "d.json")
+        action = JournalAction(0, "applied", "acme/widgets", url="https://x/pull/123")
+        return {"d.json": Journal("u", "pr", "d.json", digest, "c", 1, (action,))}
 
     mocker.patch.object(pr_flow, "confirm_pr_branch_name", side_effect=prompt)
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=source)
@@ -3407,6 +3439,8 @@ def test_pr_changed_source_after_prompt_never_publishes(mocker, tmp_path, make_c
             identity=ContainerIdentity(identity.full_name, "new")
             if change == "identity"
             else identity,
+            uuid="u",
+            journals=journals(),
         ),
     )
     create = mocker.patch("jailbee.pr.create_pr")
@@ -3421,17 +3455,29 @@ def test_pr_changed_source_after_prompt_never_publishes(mocker, tmp_path, make_c
 
 
 def _individual_delete_after_publication(root, identity, connection):
+    import json
+
     from jailbee.outbox.delete import DeleteSelection, plan_delete
     from jailbee.outbox.inspect import build_views
     from jailbee.outbox.io import PrManagement
     from jailbee.outbox.models import ContainerView, OutboxError, ProposalId, StoreSnapshot
-    from jailbee.outbox_io import JournalStore
+    from jailbee.outbox.publication_db import Journal
+    from jailbee.outbox_io import JournalAction, proposal_digest
 
     connection.send("waiting")
     with PrManagement(root / "locks").lock(identity):
         files = {p.name: p.read_text() for p in (root / "store").iterdir()}
         snapshot = StoreSnapshot("pr", tuple(sorted(files.items())), (), ())
-        views = build_views(identity, (snapshot,), journal_store=JournalStore(root / "journals"))
+        journals = {}
+        recorded = root / "journal.json"
+        if recorded.exists():
+            entry = json.loads(recorded.read_text())
+            action = JournalAction(entry["index"], "applied", "acme/widgets", url=entry["url"])
+            digest = proposal_digest("d.json", files["d.json"], {})
+            journals["d.json"] = Journal(
+                "u", "pr", "d.json", digest, identity.full_name, 2, (action,)
+            )
+        views = build_views(identity, (snapshot,), pr_journals=journals)
         container = ContainerView(identity, identity.full_name, True, None, (snapshot,), views)
         try:
             plan = plan_delete(container, ProposalId("pr", "d.json"), DeleteSelection(action=0))
@@ -3517,9 +3563,8 @@ def test_pr_real_lock_keeps_individual_delete_outside_receipt_window(
     def consume(*args, **kwargs):
         assert args[2:4] == ("d.json", 1)
         assert not parent.poll(0.2), "delete entered before receipt recording"
-        (root / "store" / "d.json.progress.json").write_text(
-            json.dumps({"applied": [1], "urls": {"1": args[4]}})
-        )
+        # The store journal of the consumed description (read by the delete process).
+        (root / "journal.json").write_text(json.dumps({"index": 1, "url": args[4]}))
 
     mocker.patch("jailbee.pr_outbox.pending_pr_text", side_effect=select)
     mocker.patch("jailbee.pr.create_pr", side_effect=create)

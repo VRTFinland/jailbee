@@ -58,7 +58,9 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus
     from jailbee.orchestration.runner_model import DefaultRunnerSource
 
-Role = Literal["orchestrator", "child", "none"]
+#: ``plain``: a container with no orchestration label. It keeps a broker
+#: socket (outbox ops only); ``none``: a grant label that does not parse.
+Role = Literal["orchestrator", "child", "plain", "none"]
 
 _SHORT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 NOT_ALLOWED = "orchestration is not allowed in this repo"
@@ -131,9 +133,9 @@ class ActionContext:
     def role(self) -> Role:
         if self.sender.config.get(labels.SPAWNED_BY):
             return "child"
-        if self.raw_grant() is not None:
-            return "orchestrator"
-        return "none"
+        if self.sender.config.get(labels.GRANT):
+            return "orchestrator" if self.raw_grant() is not None else "none"
+        return "plain"
 
     def raw_grant(self) -> Grant | None:
         raw = self.sender.config.get(labels.GRANT)
@@ -189,7 +191,7 @@ def dispatch(ctx: ActionContext, manifest: Manifest) -> Outcome | None:
     None means the sender has no role and the manifest is to be ignored.
     """
     role = ctx.role()
-    if role == "none":
+    if role in ("none", "plain"):
         return refused(NOT_ALLOWED) if manifest.type == "publish" else None
     if role == "child":
         if isinstance(manifest, RightsManifest):
@@ -985,8 +987,6 @@ def handle_stop(ctx: ActionContext, m: Manifest) -> Outcome:
 
 
 def _handle_stop_locked(ctx: ActionContext, m: Manifest) -> Outcome:
-    from jailbee.orchestration import child_outbox
-
     if not isinstance(m, StopManifest):
         return refused("not a stop manifest")
     child = ctx.child(m.child)
@@ -1014,12 +1014,6 @@ def _handle_stop_locked(ctx: ActionContext, m: Manifest) -> Outcome:
                 ctx.incus.config_unset_checked(child.full, labels.STOPPED_DIRTY)
             else:
                 ctx.incus.config_set(child.full, labels.STOPPED_DIRTY, "1")
-            try:
-                pending = child_outbox.probe(bounded, child.full, uid=ctx.cfg.container_user.uid)
-            except child_outbox.ChildOutboxError:
-                ctx.incus.config_unset_checked(child.full, labels.STOPPED_OUTBOX)
-            else:
-                ctx.incus.config_set(child.full, labels.STOPPED_OUTBOX, str(pending.count))
         except Exception as e:
             return refused(f"child `{child.short}` could not be stopped: {e}")
         # A clean shutdown that outlives its budget escalates once to a forced
@@ -1331,19 +1325,13 @@ def destroy_guard(ctx: ActionContext, child: Node) -> str | None:
         dirty = child.config.get(labels.STOPPED_DIRTY) == "1"
     if dirty:
         return f"child `{child.short}` has uncommitted changes (use force: true to destroy anyway)"
-    if child.running:
-        try:
-            pending = child_outbox.probe(bounded, child.full, uid=ctx.cfg.container_user.uid)
-        except child_outbox.ChildOutboxError:
-            return child_outbox.unchecked(child.short)
-        if pending.count:
-            return child_outbox.describe(child.short, pending)
-    else:
-        record = child.config.get(labels.STOPPED_OUTBOX, "")
-        if not record or not record.isascii() or not record.isdecimal() or len(record) > 10:
-            return child_outbox.unchecked(child.short)
-        if int(record):
-            return child_outbox.describe_count(child.short, int(record))
+    # The host outbox store holds a stopped child's proposals too.
+    try:
+        pending = child_outbox.probe(child.config.get("volatile.uuid"))
+    except child_outbox.ChildOutboxError:
+        return child_outbox.unchecked(child.short)
+    if pending.count:
+        return child_outbox.describe(child.short, pending)
     return None
 
 

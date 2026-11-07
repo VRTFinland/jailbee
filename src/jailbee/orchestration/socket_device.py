@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import secrets
 from pathlib import Path, PurePath, PurePosixPath
 from typing import TYPE_CHECKING
@@ -93,6 +94,29 @@ def attach(incus: Incus, full: str, directory: Path, *, reassert: bool) -> None:
     incus.config_device_add(
         full, ORCHESTRATION_DEVICE, "disk", {k: v for k, v in config.items() if k != "type"}
     )
+
+
+def attach_new(incus: Incus, full: str, root: Path) -> Path | None:
+    """Attach the socket device of a just-created container, without the broker.
+
+    The broker listener binds in this directory on its next round (a restart
+    reuses a device's recorded directory), so the container carries the
+    device before its first agent starts. None when the instance has no uuid
+    yet. On a failed attach the directory is removed again and the error
+    propagates; the broker repairs the drift.
+    """
+    uuid = incus.config_get(full, "volatile.uuid")
+    if not isinstance(uuid, str) or not uuid:
+        return None
+    directory = fresh_sock_dir(root, uuid)
+    directory.mkdir(mode=0o700, parents=True)
+    try:
+        attach(incus, full, directory, reassert=True)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            directory.rmdir()
+        raise
+    return directory
 
 
 def detach(incus: Incus, full: str, *, project: str | None = None) -> None:

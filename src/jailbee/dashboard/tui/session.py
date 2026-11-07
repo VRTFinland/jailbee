@@ -17,7 +17,7 @@ import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import datetime
 from functools import partial
 from itertools import pairwise
 from pathlib import Path
@@ -2017,12 +2017,10 @@ class DashboardSession:
 
         def read() -> tuple[dob.SentItem, ...]:
             # Read on demand (the snapshot only counts), each time from the current
-            # container: its creation time as the gatherer keys it.
+            # container: its incarnation uuid, as the gatherer keys it.
             info = next((c for g in self.groups for c in g.containers if c.name == container), None)
-            created = (
-                info.created_at.astimezone(UTC) if info and info.created_at is not None else None
-            )
-            return dob.read_sent(prefix, instance=container, created=created, scope=self.scope)
+            uuid = info.uuid if info is not None else None
+            return dob.read_sent(prefix, instance=container, uuid=uuid, scope=self.scope)
 
         controller.sent_loader = read
         controller.load_sent()
@@ -2041,10 +2039,7 @@ class DashboardSession:
         def read() -> tuple[dob.SentItem, ...]:
             # The containers that exist now, re-read with the rows (`r` follows a recreate).
             now = target_group(self.groups, prefix, "repo")
-            live = {
-                c.name: c.created_at.astimezone(UTC) if c.created_at is not None else None
-                for c in (now.containers if now is not None else ())
-            }
+            live = {c.name: c.uuid for c in (now.containers if now is not None else ())}
             return dob.read_sent(prefix, live=live, scope=self.scope)
 
         controller = OutboxController(

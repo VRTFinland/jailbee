@@ -1,5 +1,6 @@
-"""Stage PR comments, descriptions, reviews and imported sources locally."""
+"""Stage PR comments, descriptions, reviews and imported sources in the host outbox store."""
 
+import json
 import socket
 from pathlib import Path
 from typing import Annotated, cast
@@ -7,9 +8,9 @@ from uuid import uuid4
 
 import typer
 
-from jailbee.container_outbox import bindings, gh
-from jailbee.container_outbox.issue_cmds import BatchOpt, BodyFileOpt, BodyOpt, _body, _guard, _run
-from jailbee.container_outbox.store import OutboxCommandError, Store
+from jailbee.container_outbox import bindings, broker, gh
+from jailbee.container_outbox.common import OutboxCommandError, require_role
+from jailbee.container_outbox.issue_cmds import BatchOpt, BodyFileOpt, BodyOpt, _body, _run
 
 pr_app = typer.Typer(
     no_args_is_help=True,
@@ -77,14 +78,6 @@ def _same_target(manifest: dict[str, object], envelope: dict[str, object]) -> No
         raise OutboxCommandError("draft targets a different repo or PR", 2)
 
 
-def _same_review_head(manifest: dict[str, object], envelope: dict[str, object]) -> None:
-    _same_target(manifest, envelope)
-    if manifest.get("head_sha") != envelope.get("head_sha"):
-        raise OutboxCommandError(
-            "PR head moved; discard the review draft and re-read the diff before re-anchoring", 2
-        )
-
-
 def _review_actions(manifest: dict[str, object]) -> list[dict[str, object]]:
     actions = manifest.get("actions")
     if not isinstance(actions, list) or (
@@ -107,36 +100,21 @@ def _announce(name: str) -> None:
 
 
 def _stage(
-    store: Store,
     envelope: dict[str, object],
     action: dict[str, object],
     batch: str | None,
     file_body: bool = False,
 ) -> None:
+    """Stage one action through the host broker: alone, or into the draft BATCH.
+
+    The broker re-validates the manifest and keeps the draft; it refuses a
+    batch action for another PR and one appended to a review draft."""
     bodies = _file_body(action, file_body)
     if batch is not None:
-
-        def prepare(
-            manifest: dict[str, object], existing: dict[str, str], item: dict[str, object]
-        ) -> dict[str, object]:
-            if not manifest.get("actions"):
-                manifest.update(envelope)
-            _same_target(manifest, envelope)
-            actions = manifest.get("actions")
-            if isinstance(actions, list) and any(
-                isinstance(existing_action, dict) and existing_action.get("type") == "review"
-                for existing_action in actions
-            ):
-                raise OutboxCommandError("cannot append a batch action to a review draft", 2)
-            return item
-
-        store.draft_append("pr", batch, action, bodies, prepare=prepare)
+        broker.draft_append("pr", batch, action, bodies, envelope=envelope)
         typer.echo(f"staged pr draft {batch}")
     else:
-        name = store.write_manifest(
-            "pr", str(action["type"]), {**envelope, "actions": [action]}, bodies
-        )
-        _announce(name)
+        _announce(broker.put("pr", str(action["type"]), {**envelope, "actions": [action]}, bodies))
 
 
 @pr_app.command("comment")
@@ -152,14 +130,14 @@ def comment(
     """Stage a general PR comment."""
 
     def run() -> None:
-        store = _guard()
+        require_role()
         text = _body(body, body_file, True)
         action: dict[str, object] = {"type": "comment", "body": text}
         if reply_to is not None:
             if reply_to < 1:
                 raise OutboxCommandError("--reply-to must be positive", 2)
             action["reply_to"] = reply_to
-        _stage(store, _envelope(_view(pr)), action, batch, body_file is not None)
+        _stage(_envelope(_view(pr)), action, batch, body_file is not None)
 
     _run(run)
 
@@ -175,14 +153,13 @@ def reply(
     """Stage a reply to a review comment."""
 
     def run() -> None:
-        store = _guard()
+        require_role()
         if to is None:
             raise OutboxCommandError("missing --to comment ID", 2)
         if to < 1:
             raise OutboxCommandError("--to must be positive", 2)
         text = _body(body, body_file, True)
         _stage(
-            store,
             _envelope(_view(pr)),
             {"type": "reply", "comment_id": to, "body": text},
             batch,
@@ -219,7 +196,7 @@ def description(
     """Stage a PR title and body replacement (a body is required)."""
 
     def run() -> None:
-        store = _guard()
+        require_role()
         if new and pr is not None:
             raise OutboxCommandError("--new cannot be combined with a PR number", 2)
         text = _body(body, body_file, False)
@@ -242,7 +219,6 @@ def description(
         if view is not None and repo is not None and repo != view.repo:
             raise OutboxCommandError("--repo does not match the existing PR repository", 2)
         _stage(
-            store,
             _envelope(view, repo),
             _description(title, text, branch),
             batch,
@@ -267,7 +243,7 @@ def review_add(
     """Add an inline comment to the review draft for a PR."""
 
     def run() -> None:
-        store = _guard()
+        require_role()
         if not file:
             raise OutboxCommandError("missing --file path", 2)
         if line is None:
@@ -283,29 +259,15 @@ def review_add(
         if start_line is not None:
             item["start_line"] = start_line
         bodies = _file_body(item, body_file is not None)
-
-        def update(
-            manifest: dict[str, object], existing: dict[str, str]
-        ) -> tuple[dict[str, object], dict[str, str]]:
-            _same_review_head(manifest, envelope)
-            actions = _review_actions(manifest)
-            comments = cast(list[dict[str, object]], actions[0]["comments"]) if actions else []
-            return (
-                {
-                    **manifest,
-                    "actions": [
-                        {
-                            "type": "review",
-                            "event": "COMMENT",
-                            "body": "",
-                            "comments": [*comments, item],
-                        }
-                    ],
-                },
-                {**existing, **bodies},
-            )
-
-        store.draft_update("pr", f"review-{view.number}", update, initial=envelope)
+        review: dict[str, object] = {
+            "type": "review",
+            "event": "COMMENT",
+            "body": "",
+            "comments": [item],
+        }
+        # The broker merges the comment into the draft's one review action and
+        # refuses it when the PR head moved since the draft was started.
+        broker.draft_append("pr", f"review-{view.number}", review, bodies, envelope=envelope)
         typer.echo(f"staged pr review-{view.number}")
 
     _run(run)
@@ -322,25 +284,18 @@ def review_submit(
     """Stage the review draft with an optional summary body."""
 
     def run() -> None:
-        store = _guard()
+        require_role()
         text = _body(body, body_file, False)
         view = _view(pr)
-        envelope = _envelope(view)
-
-        def prepare(
-            manifest: dict[str, object], existing: dict[str, str]
-        ) -> tuple[dict[str, object], dict[str, str]]:
-            _same_review_head(manifest, envelope)
-            actions = _review_actions(manifest)
-            review = {**actions[0], "body": text if text is not None else ""}
-            review.pop("body_file", None)
-            bodies = _file_body(review, body_file is not None)
-            return {**manifest, "actions": [review]}, {
-                **existing,
-                **bodies,
-            }
-
-        name = store.draft_submit("pr", f"review-{view.number}", "review", prepare=prepare)
+        summary: dict[str, object] = {"body": text if text is not None else ""}
+        bodies = _file_body(summary, body_file is not None)
+        review: dict[str, object] = {
+            "repo": view.repo,
+            "pr": view.number,
+            "head_sha": view.head_sha,
+            **summary,
+        }
+        name = broker.draft_submit("pr", f"review-{view.number}", review=review, bodies=bodies)
         _announce(name)
 
     _run(run)
@@ -351,16 +306,15 @@ def review_discard(pr: PrArg = None) -> None:
     """Discard the review draft for a PR."""
 
     def run() -> None:
-        store = _guard()
+        require_role()
         view = _view(pr)
         envelope = _envelope(view)
-
-        def validate(manifest: dict[str, object], bodies: dict[str, str]) -> None:
-            _same_target(manifest, envelope)
-            _review_actions(manifest)
-
-        store.draft_discard("pr", f"review-{view.number}", validate=validate)
-        typer.echo(f"discarded pr review-{view.number}")
+        name = f"review-{view.number}"
+        manifest = json.loads(broker.draft_show("pr", name)["manifest"])
+        _same_target(manifest, envelope)
+        _review_actions(manifest)
+        broker.draft_discard("pr", name)
+        typer.echo(f"discarded pr {name}")
 
     _run(run)
 
@@ -382,7 +336,7 @@ def source(
     """Stage a PR source manifest; the host pushes the ref and opens or updates the PR."""
 
     def run() -> None:
-        store = _guard()
+        require_role()
         if not ref:
             raise OutboxCommandError("missing --ref (--head)", 2)
         if not sha:
@@ -401,7 +355,9 @@ def source(
             action = _description(title, text, branch)
             bodies = _file_body(action, body_file is not None)
             manifest["actions"] = [action]
-        name = store.write_manifest("pr", "source", manifest, bodies)
+        # PR source proposals live in the host outbox store (broker socket);
+        # the broker re-validates them and refuses a child container.
+        name = broker.put("pr", "source", manifest, bodies)
         typer.echo(
             f"staged pr/{name} - publish on the host: "
             f"jb pr push {socket.gethostname()} --source-manifest {name}"

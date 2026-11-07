@@ -9,12 +9,15 @@ from typer.testing import CliRunner
 
 from jailbee import pr_flow, pr_outbox, submodules
 from jailbee.cli import app
-from jailbee.outbox.models import OutboxChanged, StoreSnapshot
+from jailbee.orchestration.store import BrokerStore, store_path
+from jailbee.outbox.models import OutboxChanged
 from jailbee.outbox_io import ContainerIdentity
 from jailbee.pr_ai import PrText
 from jailbee.submodule_pr import SubCandidate, SubPublishResult
 from jailbee.sync import FetchResult, PublishResult
 from tests.conftest import make_cfg
+from tests.pr_store_support import UUID, instance, seed_pr_store
+from tests.pr_store_support import root as store_root
 
 IDENTITY = ContainerIdentity("sampleapp-feat-foo", "2026-09-30T12:00:00Z")
 
@@ -25,10 +28,9 @@ def _no_submodule_step(mocker):
     mocker.patch("jailbee.pr_submodule_flow.publish_submodule_prs_first", return_value=[])
 
 
-def _mock_store(mocker, files, *, rejected=()):
-    snapshot = StoreSnapshot("pr", tuple(sorted(files.items())), tuple(rejected), ())
-    mocker.patch("jailbee.pr_outbox.read_text_outbox", return_value=files)
-    return mocker.patch("jailbee.outbox.io.read_store", return_value=snapshot)
+def _seed(files):
+    """Put the proposals in the host outbox store of the instance's uuid."""
+    seed_pr_store(files, container=IDENTITY.full_name)
 
 
 def _setup_command(mocker, tmp_path, *, submodule, authored=False):
@@ -49,9 +51,7 @@ def _setup_command(mocker, tmp_path, *, submodule, authored=False):
             }
         )
     incus = mocker.MagicMock()
-    incus.list_containers.return_value = [
-        {"name": IDENTITY.full_name, "created_at": IDENTITY.created_at}
-    ]
+    incus.list_containers.return_value = [instance(IDENTITY.full_name, IDENTITY.created_at)]
     incus.config_get.side_effect = lambda name, key: labels.get(key)
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "sampleapp-feat-foo"))
@@ -121,7 +121,7 @@ def _setup_command(mocker, tmp_path, *, submodule, authored=False):
 
 
 @pytest.mark.parametrize("submodule", [False, True], ids=["pr", "submodule-pr"])
-@pytest.mark.parametrize("change", ["text", "rejected", "identity"])
+@pytest.mark.parametrize("change", ["text", "deleted", "identity"])
 def test_pinning_fixture_retains_strict_source_evidence(mocker, tmp_path, submodule, change):
     cfg, incus, _args, root, slug = _setup_command(mocker, tmp_path, submodule=submodule)
     name = "42-description.json"
@@ -136,12 +136,15 @@ def test_pinning_fixture_retains_strict_source_evidence(mocker, tmp_path, submod
             }
         )
     }
-    store = _mock_store(mocker, files)
+    _seed(files)
     preview = pr_outbox.read_outbox(incus, IDENTITY.full_name, uid=cfg.container_user.uid)
     strict = pr_outbox.read_outbox(
         incus, IDENTITY.full_name, uid=cfg.container_user.uid, strict=True
     )
-    assert preview == strict == pr_outbox.Outbox(files=files, identity=IDENTITY)
+    assert preview == strict
+    assert preview.files == files
+    assert preview.identity == IDENTITY
+    assert preview.uuid == UUID
     source = pr_outbox.pending_pr_text(
         cfg,
         incus,
@@ -157,17 +160,19 @@ def test_pinning_fixture_retains_strict_source_evidence(mocker, tmp_path, submod
     assert source.digest == pr_outbox.description_source_digest(strict, name, 0, source.text)
     pr_flow.validate_outbox_source(cfg, incus, IDENTITY.full_name, source)
 
-    fresh = dict(files)
-    rejected = ()
     if change == "text":
-        fresh[name] = files[name].replace('"Body"', '"Changed body"')
-    elif change == "rejected":
-        rejected = (name,)
+        with BrokerStore(store_path(store_root())).transaction() as con:
+            con.execute(
+                "UPDATE outbox_proposal SET manifest=? WHERE uuid=? AND kind='pr' AND name=?",
+                (files[name].replace('"Body"', '"Changed body"'), UUID, name),
+            )
+    elif change == "deleted":
+        with BrokerStore(store_path(store_root())).transaction() as con:
+            con.execute(
+                "DELETE FROM outbox_proposal WHERE uuid=? AND kind='pr' AND name=?", (UUID, name)
+            )
     else:
-        incus.list_containers.return_value = [
-            {"name": IDENTITY.full_name, "created_at": "2026-10-01T12:00:00Z"}
-        ]
-    store.return_value = StoreSnapshot("pr", tuple(sorted(fresh.items())), rejected, ())
+        incus.list_containers.return_value = [instance(IDENTITY.full_name, "2026-10-01T12:00:00Z")]
     with pytest.raises(OutboxChanged):
         pr_flow.validate_outbox_source(cfg, incus, IDENTITY.full_name, source)
 
@@ -196,7 +201,7 @@ def test_already_exists_without_outbox_hint_uses_scoped_number(
         )
         for number in (42, 99)
     }
-    _mock_store(mocker, files)
+    _seed(files)
     selected = mocker.spy(pr_outbox, "pending_pr_text")
     validated = mocker.spy(pr_flow, "validate_outbox_source")
     plan = mocker.spy(pr_flow, "resolve_pr_text_and_head")
@@ -235,7 +240,10 @@ def test_already_exists_without_outbox_hint_uses_scoped_number(
     assert source.identity == IDENTITY
     assert source.manifest_text == files["42-description.json"]
     assert source.digest == pr_outbox.description_source_digest(
-        pr_outbox.Outbox(files=files, identity=IDENTITY), source.manifest, source.index, source.text
+        pr_outbox.read_outbox(incus, IDENTITY.full_name, uid=cfg.container_user.uid),
+        source.manifest,
+        source.index,
+        source.text,
     )
     assert any(call.args[-1] == source for call in validated.call_args_list)
     assert edits == [(slug, "42", "Title for 42", "Body for 42")]
@@ -248,6 +256,7 @@ def test_already_exists_without_outbox_hint_uses_scoped_number(
         0,
         f"https://github.com/{slug}/pull/42",
         uid=cfg.container_user.uid,
+        container_prefix="sampleapp",
     )
     assert "PR #42 updated" in result.output
 
@@ -276,7 +285,6 @@ def test_update_mutations_keep_lookup_repository(
     _cfg, _incus, args, root, slug = _setup_command(
         mocker, tmp_path, submodule=submodule, authored=True
     )
-    _mock_store(mocker, {})
     mocker.patch(
         "jailbee.pr_ai.generate_pr_text",
         return_value=PrText(title="Generated title", body="Generated body", branch="feat/foo"),

@@ -89,10 +89,10 @@ def complete(
             else:
                 ref, oid = imported.ref, imported.oid
     body = item.body
-    if child is not None and child.running:
-        bounded = ctx.incus.with_exec_timeout(CHILD_EXEC_TIMEOUT_S)
+    if child is not None:
+        # The host outbox store answers for a running and a stopped child alike.
         try:
-            pending = child_outbox.probe(bounded, child.full, uid=ctx.cfg.container_user.uid)
+            pending = child_outbox.probe(child.config.get("volatile.uuid"))
         except child_outbox.ChildOutboxError:
             kept_reason = child_outbox.unchecked(child.short)
         else:
@@ -100,12 +100,6 @@ def complete(
                 kept_reason = child_outbox.describe(child.short, pending)
                 if pending.summaries:
                     body += "\n\n" + "\n".join(pending.summaries)
-    elif child is not None:
-        record = child.config.get(labels.STOPPED_OUTBOX, "")
-        if not record or not record.isascii() or not record.isdecimal() or len(record) > 10:
-            kept_reason = child_outbox.unchecked(child.short)
-        elif int(record):
-            kept_reason = child_outbox.describe_count(child.short, int(record))
     if kept_reason is not None:
         body += "\n\n" + kept_reason
         policy = "keep"

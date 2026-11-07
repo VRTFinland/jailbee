@@ -23,17 +23,22 @@ from jailbee.outbox.models import (
     ProposalView,
 )
 from jailbee.outbox.publish import PublishOptions, publish_selected
-from jailbee.outbox.service import execute_delete, load_container
+from jailbee.outbox.service import (
+    execute_delete,
+    load_container,
+    parse_retained_ref,
+    retained_ref,
+)
 from jailbee.remote_ssh import repo_scope
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from jailbee.config import Config
     from jailbee.incus import Incus
     from jailbee.lifecycle import ContainerInfo
     from jailbee.outbox.delete import ContainerClearPlan
-    from jailbee.outbox_io import JournalStore
     from jailbee.pr_outbox import ChooseMode, DraftPreview, PlanSink, PublishMode
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
@@ -67,7 +72,7 @@ def _repo_roots(cfg: Config, scope: RemoteRepoScope) -> dict[str, Path]:
     return roots
 
 
-def _own_config(prefix: str | None, roots: dict[str, Path]) -> Config:
+def _own_config(prefix: str | None, roots: Mapping[str, Path]) -> Config:
     if prefix is None or prefix not in roots:
         raise OutboxError("target repository is not registered; config is unavailable")
     root = roots[prefix]
@@ -96,11 +101,6 @@ def _inventory(
     return containers, _repo_roots(cfg, scope)
 
 
-def _running(item: ContainerInfo) -> None:
-    if item.state != "Running":
-        raise OutboxError(f"{item.name}: container is {item.state.lower()}; outbox is unavailable")
-
-
 def resolve_target(cfg: Config, incus: Incus, name: str) -> tuple[Config, str]:
     """Resolve public full/short names and fresh target-owned config before I/O.
 
@@ -108,11 +108,77 @@ def resolve_target(cfg: Config, incus: Incus, name: str) -> tuple[Config, str]:
     an immutable view. A missing config file can be a valid synthesized config;
     a missing root, failed load or changed prefix cannot fall back to the caller.
     """
+    if parse_retained_ref(name) is not None:
+        return _resolve_retained(cfg, incus, name)
     containers, roots = _inventory(cfg, incus, all_repos=True)
     item = _resolve_visible(cfg, name, containers)
-    target = _own_config(item.repo, roots)
-    _running(item)
-    return target, item.name
+    # The proposals live in the host outbox store: a stopped container is served too.
+    return _own_config(item.repo, roots), item.name
+
+
+def _live_uuids(incus: Incus) -> set[str]:
+    """The ``volatile.uuid`` of every listed instance, whatever its repository."""
+    try:
+        raw = incus.list_containers(fast=True, timeout=READ_TIMEOUT)
+    except IncusError as exc:
+        raise OutboxExecutionError(str(exc)) from exc
+    uuids = set()
+    for item in raw:
+        config = item.get("config")
+        uuid = config.get("volatile.uuid") if isinstance(config, dict) else None
+        if isinstance(uuid, str) and uuid:
+            uuids.add(uuid)
+    return uuids
+
+
+def _owner_prefix(full: str, roots: Mapping[str, Path]) -> str | None:
+    """The registered prefix a container name belongs to (the longest that fits)."""
+    fits = [prefix for prefix in roots if full.startswith(f"{prefix}-")]
+    return max(fits, key=len) if fits else None
+
+
+def _retained(incus: Incus) -> dict[str, str]:
+    """uuid -> full name of destroyed instances whose uncertain proposals were kept."""
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox import publication_db, store_db
+
+    try:
+        retained = store_db.read_retained(publication_db.default_root())
+    except StoreError as exc:
+        raise OutboxExecutionError(f"outbox store is unreadable: {exc}") from exc
+    if not retained:
+        return {}  # the common case: no Incus listing needed
+    live = _live_uuids(incus)
+    return {uuid: full for uuid, full in retained.items() if uuid not in live}
+
+
+def _resolve_retained(cfg: Config, incus: Incus, name: str) -> tuple[Config, str]:
+    ref = parse_retained_ref(name)
+    assert ref is not None
+    full, uuid = ref
+    if _retained(incus).get(uuid) != full:
+        raise OutboxError(f"no destroyed container's retained outbox is named {name}")
+    roots = _repo_roots(cfg, repo_scope.scope_for_session())
+    return _own_config(_owner_prefix(full, roots), roots), name
+
+
+def _retained_views(
+    cfg: Config, incus: Incus, roots: Mapping[str, Path], *, all_repos: bool
+) -> list[ContainerView]:
+    """Views of destroyed instances' retained proposals in the listed scope."""
+    result = []
+    for uuid, full in sorted(_retained(incus).items(), key=lambda item: (item[1], item[0])):
+        prefix = _owner_prefix(full, roots)
+        if prefix is None or (not all_repos and prefix != cfg.container_prefix):
+            continue
+        ref = retained_ref(full, uuid)
+        try:
+            target = _own_config(prefix, roots)
+        except OutboxError as exc:
+            result.append(ContainerView(None, ref, False, str(exc), (), (), destroyed=True))
+            continue
+        result.append(load_container(target, incus, ref))
+    return result
 
 
 def _resolve_visible(cfg: Config, name: str, containers: Sequence[ContainerInfo]) -> ContainerInfo:
@@ -125,10 +191,10 @@ def _resolve_visible(cfg: Config, name: str, containers: Sequence[ContainerInfo]
 
 
 def resolve_incarnation(cfg: Config, incus: Incus, name: str) -> tuple[str, str | None]:
-    """The visible container `name` names: its full name and raw Incus creation time.
+    """The visible container `name` names: its full name and Incus ``volatile.uuid``.
 
-    The time is None when Incus does not report a usable one. Stopped containers
-    resolve too; only the scoped inventory supplies candidates.
+    The uuid (which names this incarnation) is None when Incus reports none.
+    Stopped containers resolve too; only the scoped inventory supplies candidates.
     """
     containers, _ = _inventory(cfg, incus, all_repos=True)
     item = _resolve_visible(cfg, name, containers)
@@ -143,16 +209,20 @@ def resolve_incarnation(cfg: Config, incus: Incus, name: str) -> tuple[str, str 
         )
     except IncusError as exc:
         raise OutboxExecutionError(str(exc)) from exc
-    created = raw.get("created_at") if raw is not None else None
-    return item.name, created if isinstance(created, str) else None
+    config = raw.get("config") if raw is not None else None
+    uuid = config.get("volatile.uuid") if isinstance(config, dict) else None
+    return item.name, uuid if isinstance(uuid, str) and uuid else None
 
 
 def discover(
-    cfg: Config, incus: Incus, name: str | None, *, all_repos: bool, journal_store: JournalStore
+    cfg: Config, incus: Incus, name: str | None, *, all_repos: bool
 ) -> tuple[ContainerView, ...]:
     """Inspect all visible candidates, regardless of advisory probe counts."""
     if name is not None and all_repos:
         raise OutboxError("pass a container or --all-repos, not both")
+    if name is not None and parse_retained_ref(name) is not None:
+        target, ref = _resolve_retained(cfg, incus, name)
+        return (load_container(target, incus, ref),)
     containers, roots = _inventory(cfg, incus, all_repos=all_repos or name is not None)
     if name is not None:
         containers = [_resolve_visible(cfg, name, containers)]
@@ -160,11 +230,12 @@ def discover(
     for item in containers:
         try:
             target = _own_config(item.repo, roots)
-            _running(item)
         except OutboxError as exc:
             result.append(ContainerView(None, item.name, False, str(exc), (), ()))
             continue
-        result.append(load_container(target, incus, item.name, journal_store=journal_store))
+        result.append(load_container(target, incus, item.name))
+    if name is None:
+        result.extend(_retained_views(cfg, incus, roots, all_repos=all_repos))
     return tuple(result)
 
 
@@ -174,11 +245,10 @@ def _selected(
     name: str,
     proposal: ProposalId,
     *,
-    journal_store: JournalStore,
     revision: str | None = None,
 ) -> tuple[Config, ContainerView, ProposalView]:
     target, full = resolve_target(cfg, incus, name)
-    container = load_container(target, incus, full, journal_store=journal_store, raise_errors=True)
+    container = load_container(target, incus, full, raise_errors=True)
     if not container.available:
         raise OutboxError(container.error or "container is unavailable")
     view = next((p for p in container.proposals if p.id == proposal), None)
@@ -202,18 +272,15 @@ def drop_selected(
     proposal: ProposalId,
     *,
     selection: DeleteSelection,
-    journal_store: JournalStore,
     confirm: Callable[[DeletePlan], bool],
     expected_revision: str | None = None,
 ) -> int:
-    target, container, _ = _selected(
-        cfg, incus, name, proposal, journal_store=journal_store, revision=expected_revision
-    )
+    target, container, _ = _selected(cfg, incus, name, proposal, revision=expected_revision)
     plan = plan_delete(container, proposal, selection)
     if not confirm(plan):
         return 0
     _recheck_target(cfg, incus, container.name, target)
-    execute_delete(target, incus, container.name, plan, journal_store=journal_store)
+    execute_delete(target, incus, container.name, plan)
     return 0
 
 
@@ -224,7 +291,6 @@ def apply_selected(
     proposal: ProposalId,
     *,
     options: PublishOptions,
-    journal_store: JournalStore,
     confirm: Callable[[int], bool],
     confirm_foreign: Callable[[str], bool] | None = None,
     expected_revision: str | None = None,
@@ -235,9 +301,12 @@ def apply_selected(
         raise OutboxError("draft is only valid for PR publication")
     if proposal.kind == "issue" and options.force:
         raise OutboxError("force is only valid for PR publication")
-    target, container, view = _selected(
-        cfg, incus, name, proposal, journal_store=journal_store, revision=expected_revision
-    )
+    if parse_retained_ref(name) is not None:
+        raise OutboxError(
+            f"{name}: the container was destroyed; resolve its uncertain actions "
+            "(jailbee issue resolve / jailbee review resolve) or drop the proposal"
+        )
+    target, container, view = _selected(cfg, incus, name, proposal, revision=expected_revision)
     if view.error:
         raise OutboxError(f"{proposal}: {view.error}")
 
@@ -269,7 +338,6 @@ def apply_selected(
         incus,
         container.name,
         proposal,
-        journal_store=journal_store,
         options=options,
         confirm=checked_confirm,
         choose_mode=checked_mode,
@@ -281,7 +349,7 @@ def apply_selected(
 
 
 def prepare_clear(
-    cfg: Config, incus: Incus, names: Sequence[str], *, journal_store: JournalStore
+    cfg: Config, incus: Incus, names: Sequence[str]
 ) -> tuple[ContainerClearPlan, ...]:
     """Isolate unavailable targets while fixing the exact pre-question revisions."""
     from jailbee.outbox.delete import plan_clear
@@ -289,7 +357,7 @@ def prepare_clear(
     plans: list[ContainerClearPlan] = []
     for name in dict.fromkeys(names):
         try:
-            views = discover(cfg, incus, name, all_repos=False, journal_store=journal_store)
+            views = discover(cfg, incus, name, all_repos=False)
         except (OutboxError, OutboxExecutionError, IncusError, OSError) as exc:
             views = (ContainerView(None, name, False, str(exc), (), ()),)
         plans.extend(plan_clear(view) for view in views)
@@ -301,7 +369,6 @@ def clear_selected(
     incus: Incus,
     names: Sequence[str],
     *,
-    journal_store: JournalStore,
     confirm: Callable[[Sequence[ContainerClearPlan]], bool],
     dry_run: bool = False,
     approved: Sequence[ContainerClearPlan] | None = None,
@@ -312,11 +379,7 @@ def clear_selected(
 
     if approved is not None and tuple(names) != tuple(p.name for p in approved):
         raise OutboxError("approved snapshot containers must match the explicit full names")
-    plans = (
-        approved
-        if approved is not None
-        else prepare_clear(cfg, incus, names, journal_store=journal_store)
-    )
+    plans = approved if approved is not None else prepare_clear(cfg, incus, names)
     print_lines(clear_plan_lines(plans))
     kept = sum(len(plan.keep) for plan in plans)
     failed = sum(not plan.available for plan in plans)
@@ -334,9 +397,7 @@ def clear_selected(
             for item in plan.delete:
                 try:
                     target, full = resolve_target(cfg, incus, plan.name)
-                    fresh = load_container(
-                        target, incus, full, journal_store=journal_store, raise_errors=True
-                    )
+                    fresh = load_container(target, incus, full, raise_errors=True)
                     view = next((v for v in fresh.proposals if v.id == item.proposal), None)
                     if view is None or view.revision != item.revision:
                         kept += 1
@@ -351,7 +412,6 @@ def clear_selected(
                         incus,
                         full,
                         plan_delete(fresh, item.proposal, item.selection),
-                        journal_store=journal_store,
                     )
                 except (OutboxError, OutboxExecutionError, IncusError, OSError) as exc:
                     failed += 1
@@ -396,8 +456,8 @@ def _attach_create_scopes(
             continue
         container = by_name.get(row["name"])
         proposals = row.get("proposals")
-        if container is None or not isinstance(proposals, list):
-            continue
+        if container is None or container.destroyed or not isinstance(proposals, list):
+            continue  # a destroyed instance can neither push nor create a PR
         for proposal_row in proposals:
             if isinstance(proposal_row, dict) and proposal_row.get("state") == "awaiting-push":
                 view = next(
@@ -466,9 +526,8 @@ def show_overview(
     *,
     all_repos: bool,
     output: str,
-    journal_store: JournalStore,
 ) -> int:
-    containers = discover(cfg, incus, name, all_repos=all_repos, journal_store=journal_store)
+    containers = discover(cfg, incus, name, all_repos=all_repos)
     if output == "json":
         payload = overview_json(containers)
         _attach_create_scopes(cfg, incus, containers, payload)
@@ -481,16 +540,17 @@ def show_overview(
 
         table = Table("Container", "Proposal", "State", "Actions / Note")
         for container in containers:
+            label = container.name + (" (destroyed)" if container.destroyed else "")
             if not container.available or not container.proposals:
                 table.add_row(
-                    Text(safe_text(container.name)),
+                    Text(safe_text(label)),
                     "",
                     "unavailable" if not container.available else "empty",
                     Text(safe_text(container.error or "No proposals")),
                 )
             for proposal in container.proposals:
                 table.add_row(
-                    Text(safe_text(container.name)),
+                    Text(safe_text(label)),
                     Text(str(proposal.id)),
                     proposal.state,
                     Text(safe_text(proposal.error or str(len(proposal.actions)))),
@@ -498,14 +558,14 @@ def show_overview(
             for snapshot in container.stores:
                 for warning in snapshot.warnings:
                     table.add_row(
-                        Text(safe_text(container.name)),
+                        Text(safe_text(label)),
                         snapshot.kind,
                         "warning",
                         Text(safe_text(warning)),
                     )
                 for rejected in snapshot.rejected:
                     table.add_row(
-                        Text(safe_text(container.name)),
+                        Text(safe_text(label)),
                         snapshot.kind,
                         "rejected",
                         Text(safe_text(rejected)),
@@ -521,7 +581,6 @@ def show_selected(
     proposal: ProposalId,
     *,
     output: str,
-    journal_store: JournalStore,
     color: bool | None = None,
 ) -> int:
     """Print one proposal; its Markdown bodies are laid out unless `render_width` says verbatim.
@@ -529,7 +588,7 @@ def show_selected(
     The raw manifest that closes the table is always verbatim: it is the exact
     input, the thing to compare the rendered bodies against.
     """
-    _, container, view = _selected(cfg, incus, name, proposal, journal_store=journal_store)
+    _, container, view = _selected(cfg, incus, name, proposal)
     if output == "json":
         print_lines((json.dumps(detail_json(container, view), ensure_ascii=True),))
         return 0

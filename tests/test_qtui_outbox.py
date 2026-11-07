@@ -14,8 +14,7 @@ from PySide6.QtWidgets import QMessageBox
 from jailbee.dashboard.model import RepoTarget
 from jailbee.outbox.inspect import build_views
 from jailbee.outbox.models import ContainerView
-from jailbee.outbox_io import JournalStore
-from tests.outbox_support import IDENTITY, issue_files, pr_files, store
+from tests.outbox_support import IDENTITY, issue_files, pr_files, route_issue_snapshot, store
 
 
 def views(tmp_path, *, files=None):
@@ -29,7 +28,7 @@ def views(tmp_path, *, files=None):
         True,
         None,
         snapshots,
-        build_views(IDENTITY, snapshots, journal_store=JournalStore(tmp_path / "journal")),
+        build_views(IDENTITY, snapshots),
     )
 
 
@@ -41,7 +40,6 @@ def env(qtbot, mocker, make_cfg, tmp_path):
     target = RepoTarget(cfg.repo_root, None)
     incus = mocker.Mock()
     mocker.patch.object(outbox, "Incus", return_value=incus)
-    mocker.patch.object(outbox, "JournalStore", return_value=JournalStore(tmp_path / "journal"))
     loader = mocker.patch.object(outbox.config_api, "load_repo_config", return_value=cfg)
     resolver = mocker.patch.object(
         outbox.commands, "resolve_target", return_value=(cfg, IDENTITY.full_name)
@@ -352,8 +350,12 @@ def test_real_shared_deletion_changes_only_selected_comment(env, qtbot, mocker):
         {"name": IDENTITY.full_name, "created_at": IDENTITY.created_at}
     ]
     mocker.patch.object(
-        outbox.service, "read_store", side_effect=lambda i, c, kind, **kw: snapshots[kind]
+        outbox.service,
+        "read_store",
+        create=True,
+        side_effect=lambda i, c, kind, **kw: snapshots[kind],
     )
+    route_issue_snapshot(mocker, outbox.service)
     management = mocker.patch.object(outbox.service, "PrManagement")
     from jailbee.outbox.io import PrManagement
 
@@ -368,7 +370,7 @@ def test_real_shared_deletion_changes_only_selected_comment(env, qtbot, mocker):
         snapshots[kind] = store(kind, files)
         return kwargs["delete_names"]
 
-    mocker.patch.object(outbox.service, "mutate_store", side_effect=mutation)
+    mocker.patch.object(outbox.service, "mutate_store", create=True, side_effect=mutation)
     select(dialog, action=0, comment=0)
     mocker.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes)
     with qtbot.waitSignal(dialog.changed):

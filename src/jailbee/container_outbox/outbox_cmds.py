@@ -1,13 +1,14 @@
 """Browse and manage container outbox proposals and batches."""
 
 import json
-from pathlib import Path
+from datetime import UTC, datetime
 from typing import Annotated, cast
 
 import typer
 
-from jailbee.container_outbox.issue_cmds import _guard, _run
-from jailbee.container_outbox.store import Kind, OutboxCommandError, Store
+from jailbee.container_outbox import broker
+from jailbee.container_outbox.common import Kind, OutboxCommandError, require_role
+from jailbee.container_outbox.issue_cmds import _run
 
 outbox_app = typer.Typer(
     no_args_is_help=True,
@@ -29,13 +30,18 @@ def _target(value: str | None) -> tuple[Kind, str]:
     return cast(Kind, kind), name
 
 
-def _resolve(store: Store, name: str | None, kind: str | None) -> tuple[Kind, str]:
+def _draft_exists(kind: Kind, name: str) -> bool:
+    # Issue and PR drafts live in the host store.
+    return any(row["name"] == name for row in broker.draft_list(kind))
+
+
+def _resolve(name: str | None, kind: str | None) -> tuple[Kind, str]:
     if not name:
         raise OutboxCommandError("missing NAME", 2)
     if kind is not None and kind not in ("issue", "pr"):
         raise OutboxCommandError("kind must be issue or pr", 2)
     kinds: tuple[Kind, ...] = (cast(Kind, kind),) if kind else ("issue", "pr")
-    found = [item for item in kinds if store.draft_load_state(item, name) is not None]
+    found = [item for item in kinds if _draft_exists(item, name)]
     if len(found) > 1:
         raise OutboxCommandError("draft exists in both kinds; specify --kind", 2)
     if not found:
@@ -50,11 +56,20 @@ def ls(
     """List staged proposals and open draft batches."""
 
     def run() -> None:
-        store = Store(Path.home())
         data: dict[str, list[dict[str, object]]] = {"issue": [], "pr": [], "drafts": []}
-        for entry in store.list():
-            data[entry.kind].append({"name": entry.name, "summary": entry.summary})
-        data["drafts"] = store.list_drafts()
+        # Every proposal and draft lives in the host outbox store.
+        data["issue"] = [
+            {"name": row["name"], "summary": row["summary"]}
+            for row in broker.list_proposals("issue")
+        ]
+        data["pr"] = [
+            {"name": row["name"], "summary": row["summary"]} for row in broker.list_proposals("pr")
+        ]
+        data["drafts"] = [
+            {"kind": kind, "name": row["name"], "actions": row["actions"]}
+            for kind in ("issue", "pr")
+            for row in broker.draft_list(kind)
+        ]
         if as_json:
             typer.echo(json.dumps(data))
         else:
@@ -67,13 +82,46 @@ def ls(
     _run(run)
 
 
+@outbox_app.command("sent")
+def sent(
+    as_json: Annotated[bool, typer.Option("--json", help="Print one JSON document.")] = False,
+    limit: Annotated[
+        int | None, typer.Option("--limit", min=1, max=200, help="At most this many (default 50).")
+    ] = None,
+    kind: Annotated[str | None, typer.Option(help="Only issue or pr publications.")] = None,
+) -> None:
+    """List what the host published from this container, newest first."""
+
+    def run() -> None:
+        if kind is not None and kind not in ("issue", "pr"):
+            raise OutboxCommandError("kind must be issue or pr", 2)
+        records = broker.sent(limit=limit, kind=cast(Kind | None, kind))
+        if as_json:
+            typer.echo(json.dumps({"records": records}))
+            return
+        if not records:
+            typer.echo("Nothing published from this container yet.")
+            return
+        for record in records:
+            when = datetime.fromtimestamp(float(record["sent_at"]), UTC).strftime("%Y-%m-%d %H:%M")
+            target = record["repo"] + (f"#{record['target']}" if record["target"] else "")
+            state = "uncertain?" if record["state"] == "uncertain" else record["state"]
+            line = (
+                f"{when}  {record['outbox']}/{record['kind']}  {target}  {state}  "
+                f"{record['manifest']}#{record['index']}  {record['url'] or '-'}"
+            )
+            typer.echo(line)
+
+    _run(run)
+
+
 @outbox_app.command("show")
 def show(target: TargetArg = None) -> None:
     """Print a staged proposal."""
 
     def run() -> None:
         kind, name = _target(target)
-        typer.echo(Store(Path.home()).show(kind, name))
+        typer.echo(broker.show(kind, name)["manifest"])
 
     _run(run)
 
@@ -83,25 +131,12 @@ def drop(target: TargetArg = None) -> None:
     """Remove a staged proposal that is not yet published."""
 
     def run() -> None:
-        store = _guard()
+        require_role()
         kind, name = _target(target)
-        store.drop(kind, name)
+        broker.drop(kind, name)
         typer.echo(f"dropped {kind}/{name}")
 
     _run(run)
-
-
-def _not_review(
-    manifest: dict[str, object], bodies: dict[str, str]
-) -> tuple[dict[str, object], dict[str, str]]:
-    actions = manifest.get("actions")
-    if isinstance(actions, list) and any(
-        isinstance(action, dict) and action.get("type") == "review" for action in actions
-    ):
-        raise OutboxCommandError(
-            "review drafts require fresh PR metadata; use jailbee pr review submit PR", 2
-        )
-    return manifest, bodies
 
 
 @outbox_app.command("submit")
@@ -109,11 +144,10 @@ def submit(name: DraftArg = None, kind: KindOpt = None) -> None:
     """Stage a draft batch for publishing; review drafts need pr review submit."""
 
     def run() -> None:
-        store = _guard()
-        domain, draft = _resolve(store, name, kind)
-        result = store.draft_submit(
-            domain, draft, draft, prepare=_not_review if domain == "pr" else None
-        )
+        require_role()
+        domain, draft = _resolve(name, kind)
+        # The broker refuses a review draft here: it needs `jailbee pr review submit`.
+        result = broker.draft_submit(domain, draft)
         typer.echo(f"staged {domain}/{result}")
 
     _run(run)
@@ -124,9 +158,9 @@ def discard(name: DraftArg = None, kind: KindOpt = None) -> None:
     """Discard a draft batch without staging it."""
 
     def run() -> None:
-        store = _guard()
-        domain, draft = _resolve(store, name, kind)
-        store.draft_discard(domain, draft)
+        require_role()
+        domain, draft = _resolve(name, kind)
+        broker.draft_discard(domain, draft)
         typer.echo(f"discarded {domain} draft {draft}")
 
     _run(run)

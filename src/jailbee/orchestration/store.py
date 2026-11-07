@@ -78,6 +78,95 @@ _MIGRATIONS: list[str] = [
         PRIMARY KEY(container_key, digest)
     );
     """,
+    # The GitHub outbox (#89): every table the outbox store module
+    # (`jailbee.outbox.store_db`) owns, created together so its later users add
+    # queries, not migrations. Rows are keyed by the container's volatile.uuid;
+    # `revision` is a row version bumped on every change.
+    """
+    CREATE TABLE outbox_proposal (
+        uuid TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('issue', 'pr')),
+        name TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        manifest TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY(uuid, kind, name),
+        UNIQUE(uuid, kind, seq)
+    );
+    CREATE TABLE outbox_body (
+        uuid TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('issue', 'pr')),
+        proposal_name TEXT NOT NULL,
+        body_name TEXT NOT NULL,
+        text TEXT NOT NULL,
+        PRIMARY KEY(uuid, kind, proposal_name, body_name)
+    );
+    CREATE TABLE outbox_counter (
+        uuid TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('issue', 'pr')),
+        last_seq INTEGER NOT NULL,
+        PRIMARY KEY(uuid, kind)
+    );
+    CREATE TABLE outbox_draft (
+        uuid TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('issue', 'pr')),
+        name TEXT NOT NULL,
+        manifest TEXT NOT NULL,
+        bodies TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY(uuid, kind, name)
+    );
+    CREATE TABLE outbox_journal (
+        uuid TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('issue', 'pr')),
+        proposal_name TEXT NOT NULL,
+        digest TEXT NOT NULL,
+        container_full TEXT NOT NULL,
+        action_count INTEGER NOT NULL,
+        created_at REAL NOT NULL,
+        archived_at REAL,
+        revision INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY(uuid, kind, proposal_name, digest)
+    );
+    CREATE TABLE outbox_journal_action (
+        uuid TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('issue', 'pr')),
+        proposal_name TEXT NOT NULL,
+        digest TEXT NOT NULL,
+        idx INTEGER NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('prepared', 'applied', 'uncertain')),
+        repo TEXT NOT NULL,
+        url TEXT,
+        issue INTEGER,
+        detail TEXT,
+        at REAL NOT NULL,
+        PRIMARY KEY(uuid, kind, proposal_name, digest, idx)
+    );
+    CREATE TABLE outbox_sent (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dedup_key TEXT NOT NULL UNIQUE,
+        sent_at REAL NOT NULL,
+        uuid TEXT NOT NULL,
+        container_prefix TEXT NOT NULL,
+        container TEXT NOT NULL,
+        publisher TEXT NOT NULL,
+        state TEXT NOT NULL,
+        outbox TEXT NOT NULL CHECK(outbox IN ('issue', 'pr')),
+        manifest TEXT NOT NULL,
+        action_index INTEGER NOT NULL,
+        action_kind TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        target INTEGER,
+        url TEXT,
+        title TEXT,
+        content TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX outbox_sent_by_time ON outbox_sent(sent_at);
+    CREATE INDEX outbox_sent_by_uuid ON outbox_sent(uuid, sent_at);
+    """,
 ]
 
 
@@ -272,6 +361,13 @@ class BrokerStore:
                 con.close()
         except (sqlite3.DatabaseError, OSError) as exc:
             raise StoreError(str(exc)) from exc
+
+    @contextlib.contextmanager
+    def transaction(self, *, write: bool = True) -> Iterator[sqlite3.Connection]:
+        """One migrated transaction (``BEGIN IMMEDIATE`` when ``write``) for sibling
+        store modules that own their own tables, such as the outbox store."""
+        with self._tx(write) as con:
+            yield con
 
     @staticmethod
     def _migrate(con: sqlite3.Connection) -> None:

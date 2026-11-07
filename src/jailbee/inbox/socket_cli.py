@@ -20,6 +20,7 @@ from jailbee.inbox.transport import (
     Client,
     call_next,
     call_send,
+    retry_seconds,
     socket_path,
 )
 from jailbee.inbox.waiting import matches_wake_filter, parse_wake_filter
@@ -31,13 +32,14 @@ CALL_TIMEOUT = 120.0
 
 
 def _factory() -> Client:
-    path = socket_path(os.environ)
-    if not path.exists():
-        raise BrokerUnreachable(
+    return Client(
+        socket_path(os.environ),
+        retry_for=retry_seconds(),
+        missing_message=(
             "jailbee inbox: the host broker socket is missing; "
             "ask the host operator to check orchestration"
-        )
-    return Client(path)
+        ),
+    )
 
 
 def _call(op: str, args: dict[str, Any] | None = None) -> Any:

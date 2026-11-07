@@ -11,9 +11,33 @@ from jailbee.cli import app
 from jailbee.incus import Incus
 from jailbee.outbox import service
 from jailbee.outbox.models import ContainerView, ProposalId
-from jailbee.outbox_io import JournalStore
+from jailbee.outbox.service import issue_snapshot as real_issue_snapshot
+from jailbee.outbox.service import pr_journals as real_pr_journals
+from jailbee.outbox.service import pr_snapshot as real_pr_snapshot
 from tests.conftest import panel_text
-from tests.outbox_support import IDENTITY, issue_files, pr_files, store
+from tests.issue_store_support import UUID, StoreJournals, StoreSnapshots, broker
+from tests.outbox_support import IDENTITY, issue_files, pr_files, route_issue_snapshot, store
+from tests.pr_store_support import seed_pr_store
+
+
+class OutboxSnapshots(StoreSnapshots):
+    """``snapshots["pr"]`` is the host outbox store too: assigning stages exactly
+    those proposals (a ``<manifest>.progress.json`` becomes an applied journal),
+    reading it back is the host's own view of what publication left there."""
+
+    def __setitem__(self, kind, snapshot):
+        if kind != "pr":
+            return super().__setitem__(kind, snapshot)
+        with broker().transaction() as con:
+            for table in ("outbox_body", "outbox_proposal", "outbox_journal_action"):
+                con.execute(f"DELETE FROM {table} WHERE uuid=? AND kind='pr'", (UUID,))
+            con.execute("DELETE FROM outbox_journal WHERE uuid=? AND kind='pr'", (UUID,))
+        seed_pr_store(snapshot.as_dict(), uuid=UUID, container=IDENTITY.full_name)
+
+    def __getitem__(self, kind):
+        if kind != "pr":
+            return super().__getitem__(kind)
+        return service.pr_snapshot(IDENTITY.full_name, UUID)
 
 
 @pytest.fixture
@@ -27,28 +51,46 @@ def env(mocker, make_cfg, tmp_path):
         "created_at": IDENTITY.created_at,
         "profiles": ["acme-base"],
         "status": "Running",
+        "config": {"volatile.uuid": UUID},
     }
     incus.list_containers.return_value = [raw]
     incus.exists.side_effect = lambda name: name == IDENTITY.full_name
     mocker.patch("jailbee.incus.Incus", return_value=incus)
-    snapshots = {"pr": store("pr", pr_files()), "issue": store("issue", issue_files())}
+    # Issue and PR proposals both live in the host outbox store (broker.db).
+    snapshots = OutboxSnapshots()
+    snapshots["pr"] = store("pr", pr_files())
+    snapshots["issue"] = store("issue", issue_files())
     reader = mocker.patch.object(
-        service, "read_store", side_effect=lambda i, c, k, **kw: snapshots[k]
+        service, "read_store", create=True, side_effect=lambda i, c, k, **kw: snapshots[k]
     )
     mutation = mocker.patch.object(
-        service, "mutate_store", side_effect=lambda *a, **kw: kw["delete_names"]
+        service, "mutate_store", create=True, side_effect=lambda *a, **kw: kw["delete_names"]
     )
-    journals = JournalStore(tmp_path / "journals")
-    mocker.patch("jailbee.outbox_io.JournalStore", return_value=journals)
+    # Issue drops observed through `mutate_store` (the deletion scope); the real
+    # store path is tested in tests/test_outbox_service_issue_store.py.
+    issue_snapshot = service.issue_snapshot
+    route_issue_snapshot(mocker, service)
+    mocker.patch.object(service, "issue_snapshot", side_effect=issue_snapshot)
+    # ...but PR proposals and journals are read from the real store, not routed.
+    mocker.patch.object(service, "pr_snapshot", side_effect=real_pr_snapshot)
+    mocker.patch.object(service, "pr_journals", side_effect=real_pr_journals)
+    journals = StoreJournals(IDENTITY)
     return cfg, incus, snapshots, reader, mutation, journals, raw
 
 
-@pytest.mark.parametrize("args", [["ls"], ["show", "feature", "issue/001.json"], ["browse"]])
-def test_inspection_missing_registry_does_not_bootstrap_state(env, monkeypatch, tmp_path, args):
+@pytest.mark.parametrize(
+    ("args", "code"),
+    [(["ls"], 0), (["show", "feature", "pr/001.json"], 2), (["browse"], 0)],
+)
+def test_inspection_missing_registry_does_not_bootstrap_state(
+    env, monkeypatch, tmp_path, args, code
+):
+    # A fresh state directory holds no outbox store: inspection reports nothing
+    # pending (`show` of a named proposal is a validation error) and creates nothing.
     state = tmp_path / "fresh-state"
     monkeypatch.setenv("XDG_STATE_HOME", str(state))
     result = CliRunner().invoke(app, ["outbox", *args])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == code, result.output
     assert not state.exists()
 
 
@@ -269,13 +311,14 @@ def test_drop_execution_error_maps_to_one(env):
 
 
 @pytest.mark.parametrize("name", [[], ["feature"]])
-def test_stopped_is_structured_unavailable(env, name):
+def test_a_stopped_container_is_inspected_from_the_store(env, name):
     env[6]["status"] = "Stopped"
     result = CliRunner().invoke(app, ["outbox", "ls", *name, "-o", "json"])
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 0, result.output
     row = json.loads(result.stdout)["containers"][0]
-    assert row["available"] is False and "stopped" in row["error"].lower()
-    env[3].assert_not_called()
+    assert row["available"] is True and row["error"] is None
+    assert {p["id"] for p in row["proposals"]} == {"pr/001.json", "issue/001.json"}
+    env[1].exec.assert_not_called()
 
 
 def test_literal_untrusted_detail(env):
@@ -288,6 +331,31 @@ def test_literal_untrusted_detail(env):
     assert "\x1b" not in result.output and "‮" not in result.output
 
 
+def test_jb_outbox_lists_and_shows_a_proposal_staged_through_the_broker(env, mocker):
+    from jailbee.outbox import service as service_module
+    from jailbee.outbox import store_db as outbox_store
+    from tests.test_outbox_service import _stage_in_host_store
+
+    name = _stage_in_host_store("uuid-1")
+    env[6]["config"] = {"volatile.uuid": "uuid-1"}
+    env[2]["pr"] = store("pr", {})
+    mocker.patch.object(
+        service_module,
+        "issue_snapshot",
+        side_effect=lambda c, u: real_issue_snapshot(c, u),
+    )
+    reads = mocker.spy(outbox_store, "read_proposals")
+    listed = CliRunner().invoke(app, ["outbox", "ls", "feature", "-o", "json"])
+    assert listed.exit_code == 0, listed.output
+    (row,) = json.loads(listed.stdout)["containers"]
+    assert [p["id"] for p in row["proposals"]] == [f"issue/{name}"]
+    shown = CliRunner().invoke(app, ["outbox", "show", "feature", f"issue/{name}"])
+    assert shown.exit_code == 0, shown.output
+    assert "Original body" in shown.output
+    assert reads.call_count >= 2
+    assert not [c for c in env[1].mock_calls if c[0].startswith("exec")]
+
+
 def test_typo_is_missing_container_not_silent_overview(env):
     result = CliRunner().invoke(app, ["outbox", "lss"])
     assert result.exit_code == 2
@@ -297,69 +365,10 @@ def test_typo_is_missing_container_not_silent_overview(env):
 
 @pytest.fixture
 def publication_env(env, mocker, tmp_path):
-    import subprocess
-
-    from jailbee import issue_github, issue_outbox, pr
-    from jailbee.outbox import io
+    from jailbee import issue_github, pr
     from jailbee.outbox.io import PrManagement
 
-    run_shell = subprocess.run
-    directory = tmp_path / "mutation-outbox"
-    directory.mkdir()
-
-    def sync(kind):
-        snapshot = env[2][kind]
-        for path in directory.iterdir():
-            path.unlink()
-        for name, content in snapshot.files:
-            (directory / name).write_bytes(content.encode("utf-8"))
-        for name in snapshot.rejected:
-            (directory / name).write_bytes(b"\xff")
-
-    def save(kind):
-        snapshot = env[2][kind]
-        files = {
-            p.name: p.read_bytes().decode("utf-8")
-            for p in directory.iterdir()
-            if p.name not in snapshot.rejected
-        }
-        env[2][kind] = store(kind, files, rejected=snapshot.rejected)
-
-    def mutate(container, command, text, **kwargs):
-        assert command[:4] == ["bash", "-c", io._MUTATE_SCRIPT, "bash"]
-        kind = "issue" if command[4].endswith("issue-outbox") else "pr"
-        sync(kind)
-        command = list(command)
-        command[4] = str(directory)
-        result = run_shell(command, input=text, text=True, capture_output=True, check=True).stdout
-        save(kind)
-        return result
-
-    env[1].exec_with_input.side_effect = mutate
-
-    def execute(container, command, **kwargs):
-        # Run the production container scripts; only the fixed paths are remapped.
-        assert command[:2] == ["bash", "-c"], command
-        command = list(command)
-        if command[4] == io.store_directory("issue"):
-            # Issue receipts pass the directory and a base64 payload, not a log path.
-            kind = "issue"
-            command[4] = str(directory)
-        elif command[-1].endswith(("progress.json", "applied.log")):
-            kind = "pr"
-            command[-1] = str(directory / command[-1].rsplit("/", 1)[-1])
-        else:
-            raise AssertionError(command)
-        sync(kind)
-        result = run_shell(command, text=True, capture_output=True, check=True).stdout
-        save(kind)
-        return result
-
-    env[1].exec.side_effect = execute
-    mocker.patch.object(io, "read_store", side_effect=lambda i, c, k, **kw: env[2][k])
-    mocker.patch.object(
-        issue_outbox, "read_text_outbox", side_effect=lambda *a, **kw: env[2]["issue"].as_dict()
-    )
+    # Neither kind reads or writes through `incus exec`: both are host store rows.
     mocker.patch("subprocess.run", side_effect=AssertionError("unexpected subprocess"))
     mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/acme/repo.git")
     mocker.patch("jailbee.submodules.declared_submodule_remotes", return_value=())
@@ -432,20 +441,19 @@ def test_apply_real_domain_orchestration(publication_env, mocker, kind, mode):
         comment.assert_not_called()
         review.assert_not_called()
         env[1].exec.assert_not_called()
-        assert not list(env[5].root.rglob("*.json"))
     elif kind == "issue":
         create.assert_called_once()
         assert [call.args[2] for call in comment.call_args_list] == [73, 42]
         assert "fully applied" in result.output
-        receipts = [
-            json.loads(line) for line in env[2]["issue"].as_dict()["applied.log"].splitlines()
-        ]
-        assert [(r["manifest"], r["index"], r["issue"]) for r in receipts] == [
+        from jailbee.outbox import sent
+
+        receipts = sorted(sent.list_records(), key=lambda r: r.index)
+        assert [(r.manifest, r.index, r.target) for r in receipts] == [
             ("001.json", 0, 73),
             ("001.json", 1, 42),
             ("001.json", 2, 42),
         ]
-        assert all(r["repo"] == "acme/repo" and r["url"] for r in receipts)
+        assert all(r.repo == "acme/repo" and r.url for r in receipts)
     else:
         review.assert_called_once()
     if mode == "yes":
@@ -648,7 +656,7 @@ def test_apply_first_store_read_timeout_is_execution(publication_env, mocker, ki
     original = IncusTimeoutError("first reader timeout")
     failure = OutboxExecutionError("reader transport failed")
     failure.__cause__ = original
-    mocker.patch.object(service, "read_store", side_effect=failure)
+    mocker.patch.object(service, f"{kind}_snapshot", side_effect=failure)
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", f"{kind}/001.json", "-y"])
     assert result.exit_code == 1, result.output
     assert "reader transport failed" in result.output
@@ -671,7 +679,6 @@ def assert_publication_refused(publication_env):
     env = publication_env[0]
     env[1].exec.assert_not_called()
     env[4].assert_not_called()
-    assert not list(env[5].root.rglob("*.json"))
 
 
 def issue_edit(env):
@@ -757,8 +764,10 @@ def test_apply_final_domain_validation_is_two(publication_env, mocker, change):
     env = publication_env[0]
     armed = False
     reached = []
-    read = issue_outbox.read_issue_outbox
-    identify = issue_outbox.container_identity
+    from jailbee.outbox import service
+
+    read = issue_outbox.store_outbox
+    identify = service.instance_identity
 
     def final_read(*args, **kwargs):
         if armed and change != "identity":
@@ -772,19 +781,19 @@ def test_apply_final_domain_validation_is_two(publication_env, mocker, change):
         return read(*args, **kwargs)
 
     def final_identity(*args, **kwargs):
-        value = identify(*args, **kwargs)
+        value, uuid = identify(*args, **kwargs)
         if armed and change == "identity":
             reached.append(change)
-            return replace(value, created_at="replacement")
-        return value
+            return replace(value, created_at="replacement"), uuid
+        return value, uuid
 
     def confirm(*args, **kwargs):
         nonlocal armed
         armed = True
         return True
 
-    mocker.patch.object(issue_outbox, "read_issue_outbox", side_effect=final_read)
-    mocker.patch.object(issue_outbox, "container_identity", side_effect=final_identity)
+    mocker.patch.object(issue_outbox, "store_outbox", side_effect=final_read)
+    mocker.patch.object(service, "instance_identity", side_effect=final_identity)
     mocker.patch("typer.confirm", side_effect=confirm)
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", "issue/001.json"])
     assert result.exit_code == 2, result.output
@@ -811,7 +820,7 @@ def test_apply_transport_failure_has_safe_execution_diagnostic(
     publication_env, mocker, boundary, late
 ):
     from jailbee import issue_github, issue_outbox, pr
-    from jailbee.outbox_io import OutboxReadError
+    from jailbee.orchestration.store import StoreError
 
     env = publication_env[0]
     kind = "pr" if boundary.startswith("pr-") else "issue"
@@ -822,7 +831,7 @@ def test_apply_transport_failure_has_safe_execution_diagnostic(
         "login": (issue_github, "current_login", issue_github.IssueGithubReadError),
         "issue": (issue_github, "get_issue", issue_github.IssueGithubReadError),
         "labels": (issue_github, "list_labels", issue_github.IssueGithubReadError),
-        "outbox": (issue_outbox, "read_text_outbox", OutboxReadError),
+        "outbox": (issue_outbox, "store_outbox", StoreError),
         "pr-read": (pr, "resolve_pr", pr.PrError),
         "pr-login": (pr, "gh_login", pr.PrError),
     }[boundary]
@@ -849,7 +858,7 @@ def test_apply_transport_failure_has_safe_execution_diagnostic(
 @pytest.mark.parametrize("kind", ["issue", "pr"])
 def test_apply_mutation_failure_is_execution_and_retains_progress(publication_env, kind):
     from jailbee import issue_github, pr
-    from jailbee.outbox_io import journal_key
+    from tests.outbox_journal_fake import journal_key
 
     env, create, comment, review = publication_env
     if kind == "issue":
@@ -869,6 +878,13 @@ def test_apply_mutation_failure_is_execution_and_retains_progress(publication_en
     else:
         assert "write [bold]failed[/bold]" in result.stderr
         assert "re-running skips what landed" in result.output
+        # A PrError leaves the action pending (nothing prepared or applied) and
+        # the proposal in the store, so a rerun retries it.
+        from tests.pr_store_support import journal
+
+        assert "001.json" in env[2]["pr"].as_dict()
+        current = journal("001.json", uuid=UUID)
+        assert current is None or [a for a in current.actions if a.state != "pending"] == []
         create.assert_not_called()
         comment.assert_not_called()
 
@@ -974,7 +990,6 @@ def test_apply_uses_target_owned_config_before_local_reads(
     publication_env, mocker, make_cfg, tmp_path, kind
 ):
     from jailbee import git
-    from jailbee.outbox import io
     from tests.test_outbox_commands import register
 
     env = publication_env[0]
@@ -990,16 +1005,6 @@ def test_apply_uses_target_owned_config_before_local_reads(
         side_effect=lambda root: caller if root == caller_root else target,
     )
     mocker.patch("jailbee.config.load_config", return_value=caller)
-    reads = []
-
-    def read(i, c, k, **kwargs):
-        assert kwargs["uid"] == 2345
-        assert c == "acme-feature"
-        reads.append(k)
-        return env[2][k]
-
-    mocker.patch.object(service, "read_store", side_effect=read)
-    mocker.patch.object(io, "read_store", side_effect=read)
     result = CliRunner().invoke(
         app,
         [
@@ -1013,7 +1018,6 @@ def test_apply_uses_target_owned_config_before_local_reads(
         ],
     )
     assert result.exit_code == 0, result.output
-    assert set(reads) == {"issue", "pr"}
     assert {call.args[0] for call in git.get_remote_url.call_args_list} == {target.repo_root}
     assert_publication_refused(publication_env)
 
@@ -1023,7 +1027,7 @@ def test_apply_retry_preserves_recorded_receipt_and_only_confirms_pending(
     publication_env, mocker, kind
 ):
     from jailbee import issue_github, pr
-    from jailbee.outbox_io import journal_key
+    from tests.outbox_journal_fake import journal_key
 
     env, create, comment, review = publication_env
     if kind == "issue":
@@ -1386,19 +1390,3 @@ def test_apply_source_exits_two_with_push_hint(env):
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/source.json", "-y"])
     assert result.exit_code == 2, result.output
     assert "jailbee pr push acme-feature --source-manifest source.json" in panel_text(result.output)
-
-
-def test_issue_action_summary_counts_assignees_in_its_own_kind():
-    from jailbee.cli import _issue_action_summary
-    from jailbee.issue_manifest import parse_manifest
-
-    action = {
-        "type": "assignees",
-        "repo": ".",
-        "issue": 1,
-        "add": ["@me"],
-        "expected": {"assignees": []},
-    }
-    labels = {"type": "labels", "repo": ".", "issue": 2, "add": ["bug"], "expected": {"labels": []}}
-    text = json.dumps({"version": 1, "actions": [action, labels]})
-    assert _issue_action_summary(parse_manifest("a.json", text, {})) == "labels:1 assignees:1"

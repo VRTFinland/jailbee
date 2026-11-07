@@ -4,7 +4,7 @@ import pytest
 from typer.testing import CliRunner
 
 from jailbee.container_cli import container_app
-from jailbee.container_outbox.store import Store
+from tests import container_broker_support
 
 
 @pytest.fixture
@@ -12,6 +12,11 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("JAILBEE_ROLE", raising=False)
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def broker(monkeypatch, tmp_path):
+    return container_broker_support.install(monkeypatch, tmp_path / "broker")
 
 
 def invoke(*args):
@@ -30,16 +35,29 @@ def test_empty_list_and_child_guard(home, monkeypatch):
     assert not (home / ".jailbee").exists()
 
 
-def test_ambiguous_draft(home):
-    store = Store(home)
-    for kind in ("issue", "pr"):
-        store.draft_save(kind, "same", {"version": 1, "actions": []}, {})
+def test_ambiguous_draft(home, broker, monkeypatch):
+    from jailbee.container_outbox import gh
+
+    monkeypatch.setattr(gh, "pr_view", lambda n: gh.PrView(n or 7, "old", "acme/repo"))
+    runner = CliRunner()
+    assert (
+        runner.invoke(
+            container_app, ["pr", "comment", "7", "--body", "x", "--batch", "same"]
+        ).exit_code
+        == 0
+    )
+    assert (
+        CliRunner()
+        .invoke(container_app, ["issue", "comment", "7", "--body", "x", "--batch", "same"])
+        .exit_code
+        == 0
+    )
     result = invoke("submit", "same")
     assert result.exit_code == 2
     assert "--kind" in result.output
 
 
-def test_issue_batch_cli_roundtrip_and_drop(home):
+def test_issue_batch_cli_roundtrip(home, broker):
     from jailbee.issue_manifest import parse_manifest
 
     runner = CliRunner()
@@ -65,19 +83,39 @@ def test_issue_batch_cli_roundtrip_and_drop(home):
     listing = json.loads(invoke("ls", "--json").stdout)
     assert listing["drafts"] == [{"kind": "issue", "name": "batch", "actions": 2}]
     run("outbox", "submit", "batch")
-    directory = Store(home).outbox("issue")
-    manifest = next(directory.glob("*.json"))
-    bodies = {p.name: p.read_text() for p in directory.glob("*.md")}
-    parse_manifest(manifest.name, manifest.read_text(), bodies)
-    assert len(json.loads(manifest.read_text())["actions"]) == 2
-    result = invoke("show", "issue/" + manifest.name)
+    name, data, bodies = broker.only()
+    assert name == "001-batch.json"
+    parse_manifest(name, json.dumps(data), bodies)
+    assert len(data["actions"]) == 2
+    assert list(bodies.values()) == ["x" * 5000]
+    assert broker.draft_state("batch") is None
+    assert not (home / ".jailbee" / "issue-outbox").exists()
+    listing = json.loads(invoke("ls", "--json").stdout)
+    assert listing["issue"] == [{"name": name, "summary": "create, comment"}]
+    assert listing["drafts"] == []
+    result = invoke("show", "issue/" + name)
     assert json.loads(result.stdout)["version"] == 1
-    assert invoke("drop", "issue/" + manifest.name).exit_code == 0
-    assert not list(directory.glob("*.md"))
-    assert not manifest.exists()
 
 
-def test_pr_batch_and_review_protection(home, monkeypatch):
+def test_a_refused_issue_draft_submit_keeps_the_draft(home, broker):
+    for _ in range(20):
+        assert (
+            CliRunner().invoke(container_app, ["issue", "comment", "7", "--body", "x"]).exit_code
+            == 0
+        )
+    assert (
+        CliRunner()
+        .invoke(container_app, ["issue", "comment", "7", "--body", "y", "--batch", "b"])
+        .exit_code
+        == 0
+    )
+    result = invoke("submit", "b")
+    assert result.exit_code == 2
+    assert "cap of 20" in result.output
+    assert broker.draft_state("b") is not None
+
+
+def test_pr_batch_and_review_protection(home, monkeypatch, broker):
     from jailbee.container_outbox import gh
     from jailbee.pr_outbox import parse_manifest
 
@@ -92,19 +130,20 @@ def test_pr_batch_and_review_protection(home, monkeypatch):
     refused = invoke("submit", "review-12")
     assert refused.exit_code == 2
     assert "jailbee pr review submit" in refused.output
-    assert Store(home).draft_load("pr", "review-12") is not None
+    assert broker.draft("review-12", "pr") is not None
     assert invoke("submit", "b", "--kind", "pr").exit_code == 0
-    path = next(Store(home).outbox("pr").glob("*.json"))
-    parse_manifest(path.name, path.read_text(), {})
+    (row,) = broker.proposals("pr")
+    assert row.name == "001-b.json"
+    parse_manifest(row.name, row.manifest, dict(row.bodies))
     assert invoke("discard", "review-12", "--kind", "pr").exit_code == 0
+    assert broker.draft("review-12", "pr") is None
 
 
-def test_child_reads_and_refuses_mutation(home, monkeypatch):
+def test_child_reads_and_refuses_mutation(home, monkeypatch, broker):
     runner = CliRunner()
     result = runner.invoke(container_app, ["issue", "create", "--title", "Bug", "--body", "body"])
     assert result.exit_code == 0, result.output
-    store = Store(home)
-    name = store.list()[0].name
+    name = broker.only()[0]
     monkeypatch.setenv("JAILBEE_ROLE", "child")
     assert invoke("ls", "--json").exit_code == 0
     assert invoke("show", "issue/" + name).exit_code == 0
@@ -112,7 +151,7 @@ def test_child_reads_and_refuses_mutation(home, monkeypatch):
         result = invoke(*args)
         assert result.exit_code == 1
         assert "jailbee inbox send message --text" in result.output
-    assert (store.outbox("issue") / name).exists()
+    assert broker.only()[0] == name
 
 
 def test_real_container_entry(home, monkeypatch, capsys):
@@ -127,3 +166,27 @@ def test_real_container_entry(home, monkeypatch, capsys):
         container_main.main()
     assert exc.value.code == 0
     assert json.loads(capsys.readouterr().out)["drafts"] == []
+
+
+def test_issue_draft_discard_goes_over_the_socket(home, broker):
+    assert (
+        CliRunner()
+        .invoke(container_app, ["issue", "comment", "7", "--body", "x", "--batch", "b"])
+        .exit_code
+        == 0
+    )
+    assert broker.draft_state("b") is not None
+    result = invoke("discard", "b", "--kind", "issue")
+    assert result.exit_code == 0, result.output
+    assert broker.draft_state("b") is None
+    assert not (home / ".jailbee").exists()
+    assert invoke("discard", "b", "--kind", "issue").exit_code == 2  # nothing left to discard
+    assert broker.proposals() == []
+
+
+def test_issue_drafts_never_touch_the_container_file_store(home, broker):
+    runner = CliRunner()
+    runner.invoke(container_app, ["issue", "comment", "7", "--body", "x", "--batch", "b"])
+    assert invoke("submit", "b", "--kind", "issue").exit_code == 0
+    assert not (home / ".jailbee/outbox-drafts").exists()
+    assert not (home / ".jailbee/issue-outbox").exists()

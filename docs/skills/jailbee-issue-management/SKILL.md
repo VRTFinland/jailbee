@@ -93,8 +93,8 @@ same `repo` value.
 
 Use `jailbee issue create --title "Title" --body "Details"`, or `edit`,
 `comment`, `labels`, `assign` and `state` with an issue number. Use `--body-file PATH`
-for long text and `--repo PATH` to select a repository. Commands create
-`~/.jailbee/issue-outbox/` as needed; never write it manually. See the
+for long text and `--repo PATH` to select a repository. Commands stage the
+proposal in the host outbox store; never write outbox files by hand. See the
 normative [output schema](references/manifest-schema.md).
 
 Assignment: `jailbee issue assign 42 --me` assigns the publishing account
@@ -138,7 +138,8 @@ If there is no final result yet, say publication is pending. For manifests
 not sent through a granted orchestrator publish request, tell the user to
 run `jb issue apply <container>` on the host: **nothing has been published
 yet.** Everything still queued is a proposal
-sitting in the container's filesystem until then. The host also sees the
+sitting in the host outbox store until then. `jailbee outbox sent` lists what
+was published. The host also sees the
 pending count without being told: `jb ls`'s ISSUES column shows `✉N` for
 this container, and the dashboards' OUTBOX column counts it together with any staged PR actions.
 
@@ -148,7 +149,10 @@ The outbox is not a log of what happened — it is a queue of what you'd
 *like* to happen. A human may edit the issue's real state out from under a
 pending manifest (the `expected` gate exists exactly for this), reject a
 proposal outright, or ask you to fix it before it's applied. The only
-record of what actually landed on GitHub is
-`~/.jailbee/issue-outbox/applied.log`, written by the host after a
-successful `jb issue apply`. Never assume a manifest you wrote has been
-published; check that log (or ask) instead.
+record of what actually landed on GitHub is the host's sent log:
+`jailbee outbox sent` (add `--json`, `--limit N` or `--kind issue`) lists
+what the host published from this container, newest first, with each
+action's state (`applied`, or `uncertain` while a human resolves it) and
+GitHub URL. A published proposal also disappears from `jailbee outbox ls`.
+Never assume a manifest you wrote has been published; check `jailbee outbox
+sent` (or ask) instead.

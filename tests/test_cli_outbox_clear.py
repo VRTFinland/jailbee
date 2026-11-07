@@ -7,8 +7,14 @@ from jailbee.cli import app
 from jailbee.cli_outbox import normalize_outbox_argv
 from jailbee.incus import Incus
 from jailbee.outbox import service
-from jailbee.outbox_io import JournalStore
-from tests.outbox_support import IDENTITY, issue_files, pr_files, store
+from tests.outbox_support import (
+    IDENTITY,
+    issue_files,
+    pr_files,
+    pr_journal,
+    route_issue_snapshot,
+    store,
+)
 
 
 @pytest.fixture
@@ -27,11 +33,13 @@ def env(mocker, make_cfg, tmp_path):
     incus.exists.side_effect = lambda name: name in {IDENTITY.full_name, "acme-other"}
     mocker.patch("jailbee.incus.Incus", return_value=incus)
     snapshots = {"pr": store("pr", pr_files()), "issue": store("issue", issue_files())}
-    mocker.patch.object(service, "read_store", side_effect=lambda i, c, k, **kw: snapshots[k])
-    mutation = mocker.patch.object(
-        service, "mutate_store", side_effect=lambda *a, **kw: kw["delete_names"]
+    mocker.patch.object(
+        service, "read_store", create=True, side_effect=lambda i, c, k, **kw: snapshots[k]
     )
-    mocker.patch("jailbee.outbox_io.JournalStore", return_value=JournalStore(tmp_path / "journals"))
+    route_issue_snapshot(mocker, service)
+    mutation = mocker.patch.object(
+        service, "mutate_store", create=True, side_effect=lambda *a, **kw: kw["delete_names"]
+    )
     return incus, mutation, raw, snapshots
 
 
@@ -119,17 +127,26 @@ def test_clear_dry_run_never_confirms_or_deletes(env, mocker):
 
 def test_clear_question_counts_only_delete_containers(env, mocker):
     incus, mutation, raw, snapshots = env
-    incus.list_containers.return_value = [raw, {**raw, "name": "acme-other"}]
+    other = {**raw, "name": "acme-other", "config": {"volatile.uuid": "uuid-other"}}
+    incus.list_containers.return_value = [raw, other]
     mocker.patch.object(
         service,
         "read_store",
+        create=True,
         side_effect=lambda i, c, k, **kw: (
-            store(k, pr_files() | {"applied.log": "now 001.json pr=42 actions=1 urls=x"})
+            store(k, pr_files())
             if c == "acme-other" and k == "pr"
             else store(k, {})
             if c == "acme-other"
             else snapshots[k]
         ),
+    )
+    # acme-other's PR proposal is partly published: kept, so its container is not asked about.
+    journal = pr_journal(pr_files(), applied=(0,))
+    mocker.patch.object(
+        service,
+        "pr_journals",
+        side_effect=lambda uuid: {"001.json": journal} if uuid == "uuid-other" else {},
     )
     confirm = mocker.patch("typer.confirm", return_value=False)
     result = CliRunner().invoke(app, ["outbox", "clear", "feature", "other", "missing"])

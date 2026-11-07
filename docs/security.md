@@ -502,6 +502,13 @@ review gate entirely — the same trust boundary the read-only recommendation
 in [`config.md`](config.md#github) and [`git-bridge.md`](git-bridge.md#github-cli-gh-inside-containers)
 exists to hold.
 
+Proposals, draft batches and the publication journals (what was prepared,
+applied or left uncertain) live host-side in the outbox store (`broker.db`),
+outside the container's filesystem. The agent can only stage proposals through
+its broker socket; nothing in the container can read or edit publication
+progress or sent records, and the host never executes anything from the
+container to read them.
+
 An issue manifest may target a repository outside this project
 (`github:<owner>/<name>`); the host marks it as foreign in every plan and
 dashboard and publishes to it only after a separate confirmation or an

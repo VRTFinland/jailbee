@@ -85,11 +85,17 @@ def seams(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
     return m
 
 
+@pytest.mark.parametrize("running", [True, False])
 @pytest.mark.parametrize("count", [0, 1])
-def test_destroy_guard_checks_running_child_outbox(tmp_path, seams, monkeypatch, count):
+def test_destroy_guard_counts_the_child_outbox_in_the_store(
+    tmp_path, seams, monkeypatch, count, running
+):
     from jailbee.orchestration import child_outbox
 
-    rig = Rig(tmp_path, running=True, config={labels.LAST_IMPORT: "aaa"})
+    config = {labels.LAST_IMPORT: "aaa", "volatile.uuid": "uuid-c1"}
+    if not running:
+        config[labels.STOPPED_HEAD] = "aaa"
+    rig = Rig(tmp_path, running=running, config=config)
     pending = child_outbox.PendingGithub(("a.json",) if count else (), (), ())
     probe = MagicMock(return_value=pending)
     monkeypatch.setattr(child_outbox, "probe", probe)
@@ -98,13 +104,10 @@ def test_destroy_guard_checks_running_child_outbox(tmp_path, seams, monkeypatch,
         assert reason == child_outbox.describe("c1", pending)
     else:
         assert reason is None
-    probe.assert_called_once_with(
-        rig.incus.with_exec_timeout.return_value, rig.child.full, uid=rig.cfg.container_user.uid
-    )
-    rig.incus.with_exec_timeout.assert_called_with(actions.CHILD_EXEC_TIMEOUT_S)
+    probe.assert_called_once_with("uuid-c1")
 
 
-def test_destroy_guard_keeps_unknown_running_outbox(tmp_path, seams, monkeypatch):
+def test_destroy_guard_keeps_unknown_outbox(tmp_path, seams, monkeypatch):
     from jailbee.orchestration import child_outbox
 
     rig = Rig(tmp_path, running=True, config={labels.LAST_IMPORT: "aaa"})
@@ -115,50 +118,28 @@ def test_destroy_guard_keeps_unknown_running_outbox(tmp_path, seams, monkeypatch
     assert reason and "outbox could not be checked" in reason and "force: true" in reason
 
 
-@pytest.mark.parametrize("record", ["2", "0", "bad", "-1"])
-def test_destroy_guard_checks_stopped_outbox_record(tmp_path, seams, record):
+def test_destroy_guard_ignores_a_legacy_stopped_outbox_record(tmp_path, seams):
     rig = Rig(
         tmp_path,
         config={
             labels.LAST_IMPORT: "aaa",
             labels.STOPPED_HEAD: "aaa",
-            labels.STOPPED_OUTBOX: record,
+            labels.STOPPED_OUTBOX: "2",
         },
     )
-    reason = actions.destroy_guard(rig.ctx(), rig.child)
-    if record == "0":
-        assert reason is None
-    elif record == "2":
-        assert reason and "2 staged GitHub action(s)" in reason and "force: true" in reason
-    else:
-        assert reason and "outbox could not be checked" in reason
+    assert actions.destroy_guard(rig.ctx(), rig.child) is None
 
 
-def test_stopped_child_without_record_is_kept(tmp_path, seams):
-    rig = Rig(tmp_path, config={labels.LAST_IMPORT: "aaa", labels.STOPPED_HEAD: "aaa"})
-    reason = actions.destroy_guard(rig.ctx(), rig.child)
-    assert reason and "outbox could not be checked" in reason and "force: true" in reason
-
-
-@pytest.mark.parametrize("count", [0, 2, None])
-def test_stop_records_outbox_count_or_unsets_unknown(tmp_path, seams, monkeypatch, count):
+def test_stop_no_longer_records_an_outbox_count(tmp_path, seams, monkeypatch):
     from jailbee.orchestration import child_outbox
 
-    rig = Rig(tmp_path, running=True, config={labels.STOPPED_OUTBOX: "0"})
+    rig = Rig(tmp_path, running=True)
     store = Labels(rig)
     probe = MagicMock()
-    if count is None:
-        probe.side_effect = child_outbox.ChildOutboxError("unreadable")
-    else:
-        probe.return_value = child_outbox.PendingGithub(
-            tuple(f"{i}.json" for i in range(count)), (), ()
-        )
     monkeypatch.setattr(child_outbox, "probe", probe)
     assert actions.handle_stop(rig.ctx(), _stop()).state == "done"
-    if count is None:
-        assert labels.STOPPED_OUTBOX not in store.store
-    else:
-        assert store.store[labels.STOPPED_OUTBOX] == str(count)
+    assert labels.STOPPED_OUTBOX not in store.store
+    probe.assert_not_called()
     seams["stop"].assert_called_once()
 
 

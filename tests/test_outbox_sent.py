@@ -1,4 +1,4 @@
-"""Tests for the outbox Sent log module (state DB under the isolated XDG_STATE_HOME)."""
+"""Tests for the outbox Sent log module (broker.db under the isolated XDG_STATE_HOME)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from jailbee.outbox import sent
 from jailbee.outbox.sent import SentAction
 
 T0 = datetime(2026, 11, 4, 10, 0, tzinfo=UTC)
-CREATED = datetime(2026, 11, 1, 8, 0, tzinfo=UTC)
+UUID = "uuid-feat"
 
 
 def _action(manifest: str = "m1", index: int = 0, **kw: object) -> SentAction:
@@ -38,14 +38,14 @@ def _rec(
     *,
     instance: str = "app-feat",
     prefix: str = "app",
-    created: datetime | None = CREATED,
+    uuid: str = UUID,
     now: datetime = T0,
     publisher: str = "user",
 ) -> None:
     sent.record(
         instance=instance,
         container_prefix=prefix,
-        container_created=created,
+        uuid=uuid,
         publisher=publisher,  # type: ignore[arg-type]
         action=action,
         state=state,  # type: ignore[arg-type]
@@ -64,8 +64,7 @@ def test_record_twice_same_key_is_one_row() -> None:
 def test_uncertain_then_mark_applied_sets_state_and_url() -> None:
     _rec(_action(target=None), "uncertain", publisher="orchestrator")
     sent.mark_applied(
-        instance="app-feat",
-        container_created=CREATED,
+        uuid=UUID,
         outbox="issue",
         manifest="m1",
         digest="d1",
@@ -97,8 +96,7 @@ def test_forget_removes_only_that_row() -> None:
     _rec(_action("m1"), "uncertain")
     _rec(_action("m2"), "uncertain")
     sent.forget(
-        instance="app-feat",
-        container_created=CREATED,
+        uuid=UUID,
         outbox="issue",
         manifest="m1",
         digest="d1",
@@ -107,10 +105,10 @@ def test_forget_removes_only_that_row() -> None:
     assert [r.manifest for r in sent.list_records()] == ["m2"]
 
 
-def test_none_created_still_dedups_per_instance() -> None:
-    _rec(_action(), created=None)
-    _rec(_action(), created=None)
-    _rec(_action(), created=None, instance="app-other")
+def test_records_dedup_per_instance_uuid() -> None:
+    _rec(_action())
+    _rec(_action())
+    _rec(_action(), uuid="uuid-other", instance="app-other")
     assert len(sent.list_records()) == 2
 
 
@@ -120,13 +118,13 @@ def test_list_filters_and_orders_newest_first() -> None:
     _rec(
         _action("c"),
         instance="app-feat",
-        created=CREATED + timedelta(days=1),
+        uuid="uuid-recreated",
         now=T0 + timedelta(hours=1),
     )
-    _rec(_action("d"), instance="zz-x", prefix="zz", now=T0 + timedelta(hours=3))
+    _rec(_action("d"), instance="zz-x", prefix="zz", uuid="uuid-zz", now=T0 + timedelta(hours=3))
     assert [r.manifest for r in sent.list_records()] == ["d", "b", "c", "a"]
     assert [r.manifest for r in sent.list_records(container_prefix="app")] == ["b", "c", "a"]
-    got = sent.list_records(instance="app-feat", container_created=CREATED)
+    got = sent.list_records(uuid=UUID)
     assert [r.manifest for r in got] == ["b", "a"]
     assert [r.manifest for r in sent.list_records(limit=1)] == ["d"]
 
@@ -151,10 +149,10 @@ def test_clear_by_prefix_and_before() -> None:
 def test_counts() -> None:
     _rec(_action("a"))
     _rec(_action("b"))
-    _rec(_action("c"), created=None)
-    _rec(_action("d"), instance="zz-x", prefix="zz")
+    _rec(_action("c"), uuid="uuid-recreated")
+    _rec(_action("d"), instance="zz-x", prefix="zz", uuid="uuid-zz")
     c = sent.counts()
-    assert c.by_instance == {("app-feat", CREATED): 2, ("app-feat", None): 1, ("zz-x", CREATED): 1}
+    assert c.by_uuid == {UUID: 2, "uuid-recreated": 1, "uuid-zz": 1}
     assert c.by_prefix == {"app": 3, "zz": 1}
 
 
@@ -167,8 +165,7 @@ def test_record_with_broken_db_warns_and_returns(
     with caplog.at_level(logging.WARNING, logger="jailbee.outbox.sent"):
         _rec(_action())
         sent.mark_applied(
-            instance="i",
-            container_created=None,
+            uuid="i",
             outbox="issue",
             manifest="m",
             digest="d",
@@ -177,8 +174,7 @@ def test_record_with_broken_db_warns_and_returns(
             target=None,
         )
         sent.forget(
-            instance="i",
-            container_created=None,
+            uuid="i",
             outbox="issue",
             manifest="m",
             digest="d",
@@ -200,8 +196,7 @@ def test_reused_manifest_name_with_new_digest_is_a_new_row() -> None:
 def test_forget_never_deletes_an_applied_row() -> None:
     _rec(_action(), "applied")
     sent.forget(
-        instance="app-feat",
-        container_created=CREATED,
+        uuid=UUID,
         outbox="issue",
         manifest="m1",
         digest="d1",
@@ -213,8 +208,7 @@ def test_forget_never_deletes_an_applied_row() -> None:
 def test_forget_with_other_digest_keeps_the_uncertain_row() -> None:
     _rec(_action(), "uncertain")
     sent.forget(
-        instance="app-feat",
-        container_created=CREATED,
+        uuid=UUID,
         outbox="issue",
         manifest="m1",
         digest="other",

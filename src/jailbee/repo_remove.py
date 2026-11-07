@@ -24,7 +24,6 @@ from jailbee.db.models import (
     RefreshState,
     RegisteredRepo,
     RepoUpgradeState,
-    SentRecord,
 )
 from jailbee.egress_scope import (
     ACL_NAME_MAX,
@@ -338,7 +337,6 @@ def _execute_removal_locked(
                 session.exec(select(RepoUpgradeState)).all(),
                 session.exec(select(EgressOverride)).all(),
                 session.exec(select(BackgroundJob)).all(),
-                session.exec(select(SentRecord)).all(),
             ):
                 for record in records:
                     if record.container_prefix == plan.prefix:
@@ -347,6 +345,10 @@ def _execute_removal_locked(
                 if notice.scope == plan.prefix:
                     session.delete(notice)
             session.commit()
+            # Sent records live in the host outbox store (broker.db).
+            from jailbee.outbox import sent as sent_log
+
+            sent_log.clear(container_prefix=plan.prefix, before=None)
             # Never purge recoverable user data after an incomplete removal.
             if all(result.ok for result in results):
                 for path in plan.purge_files:
@@ -439,9 +441,6 @@ def plan_removal(
         known_container_names.update(
             row.container_name for row in session.exec(select(BackgroundJob)).all()
         )
-        known_container_names.update(
-            row.container for row in session.exec(select(SentRecord)).all()
-        )
         state_counts = {
             "pool_ip": sum(
                 _pool_owned(r.container_prefix, prefix, known, ownership) for r in pool_rows
@@ -460,9 +459,6 @@ def plan_removal(
             ),
             "dismissed_notice": sum(
                 r.scope == prefix for r in session.exec(select(DismissedNotice)).all()
-            ),
-            "sent_record": sum(
-                r.container_prefix == prefix for r in session.exec(select(SentRecord)).all()
             ),
             "docker_seed_state": int(session.get(GoldenSeedState, alias) is not None),
         }

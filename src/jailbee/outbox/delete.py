@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from jailbee import issue_manifest as issues
 from jailbee import pr_outbox as prs
-from jailbee.outbox.cleanup import exclusive_body_names
 from jailbee.outbox.models import (
     ContainerView,
     Kind,
@@ -65,13 +64,28 @@ def _whole_names(store: StoreSnapshot, name: str, raw: dict[str, Any] | None) ->
     files = store.as_dict()
     referenced: set[str] = set()
     for other, text in files.items():
-        if other == name or not other.endswith(".json") or other.endswith(".progress.json"):
+        if other == name or not other.endswith(".json"):
             continue
         try:
             referenced.update(_body_names(store.kind, _parse(store.kind, other, text, files)))
         except OutboxError:
             return (name,)
     return (name, *exclusive_body_names(_body_names(store.kind, raw), files, referenced))
+
+
+def exclusive_body_names(
+    candidates: Iterable[str], present: Iterable[str], referenced: Iterable[str]
+) -> tuple[str, ...]:
+    """The present bodies only these candidates reference; never a manifest."""
+    return tuple(
+        sorted(
+            name
+            for name in set(candidates) & set(present) - set(referenced)
+            if not name.endswith(".json")
+            and name not in ("", ".", "..")
+            and not any(c in name for c in ("/", "\\", "\0"))
+        )
+    )
 
 
 def _index(value: int, count: int, label: str) -> None:

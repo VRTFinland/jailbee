@@ -667,7 +667,7 @@ def validate_outbox_source(
         ):
             raise OutboxChanged("description source changed; refresh required")
         bodies = tuple(
-            sorted((n, fresh.files[n]) for n in pr_outbox._body_references(source.manifest_text))
+            sorted((n, fresh.files[n]) for n in pr_outbox.body_references(source.manifest_text))
         )
         digest = pr_outbox.description_source_digest(
             fresh, source.manifest, source.index, source.text
@@ -719,7 +719,13 @@ def record_outbox_consumption(
         info(f"description from {source.manifest} (written in the container)")
     try:
         pr_outbox.record_consumed(
-            incus, full, source.manifest, source.index, url, uid=cfg.container_user.uid
+            incus,
+            full,
+            source.manifest,
+            source.index,
+            url,
+            uid=cfg.container_user.uid,
+            container_prefix=cfg.container_prefix,
         )
     except pr_outbox.FinalizeError as exc:
         # No claim about what the manifest now looks like: `record_consumed`

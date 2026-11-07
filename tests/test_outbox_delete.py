@@ -8,14 +8,18 @@ import pytest
 from jailbee.outbox.delete import DeleteSelection, plan_delete
 from jailbee.outbox.inspect import build_views
 from jailbee.outbox.models import ContainerView, OutboxError, ProposalId
-from jailbee.outbox_io import JournalStore, journal_key, proposal_digest
+from jailbee.outbox_io import proposal_digest
+from tests.outbox_journal_fake import MemoryJournals, journal_key
 from tests.outbox_support import IDENTITY, issue_files, pr_files, store
 
 
-def inspected(tmp_path, kind, files, *, rejected=(), journals=None):
+def inspected(tmp_path, kind, files, *, rejected=(), journals=None, pr_journals=None):
     snapshot = store(kind, files, rejected=rejected)
     views = build_views(
-        IDENTITY, (snapshot,), journal_store=journals or JournalStore(tmp_path / "journals")
+        IDENTITY,
+        (snapshot,),
+        issue_journals=journals.snapshot() if journals is not None else None,
+        pr_journals=pr_journals,
     )
     return ContainerView(IDENTITY, IDENTITY.full_name, True, None, (snapshot,), views)
 
@@ -172,7 +176,6 @@ def test_whole_deletes_only_referenced_exclusive_bodies(tmp_path, last_action):
             "001.json": json.dumps(raw),
             "body.md": "Body",
             "orphan.md": "Keep",
-            "applied.log": "Unrelated receipt",
         }
     )
     plan = plan_delete(
@@ -186,9 +189,9 @@ def test_whole_deletes_only_referenced_exclusive_bodies(tmp_path, last_action):
 
 
 @pytest.mark.parametrize("kind", ["issue", "pr"])
-@pytest.mark.parametrize("body", ["002.json", "other.json.progress.json", "applied.log"])
+@pytest.mark.parametrize("body", ["002.json", "other.json.progress.json"])
 @pytest.mark.parametrize("last_action", [False, True])
-def test_body_cleanup_never_removes_manifest_or_history(tmp_path, kind, body, last_action):
+def test_body_cleanup_never_removes_a_manifest(tmp_path, kind, body, last_action):
     files = issue_files() if kind == "issue" else pr_files()
     raw = json.loads(files["001.json"])
     raw["actions"] = raw["actions"][:1]
@@ -259,31 +262,33 @@ def test_invalid_manifest_cannot_be_repaired_by_partial_delete(tmp_path, raw):
         )
 
 
-@pytest.mark.parametrize("progress", ["sidecar", "rejected", "log"])
-def test_pr_progress_blocks_deletion_even_for_invalid_manifest(tmp_path, progress):
+@pytest.mark.parametrize("state", ["applied", "uncertain"])
+def test_pr_journal_blocks_deletion_even_for_invalid_manifest(tmp_path, state):
+    from jailbee.outbox.publication_db import Journal
+    from jailbee.outbox_io import JournalAction
+
     files = {"001.json": "{bad"}
-    rejected = ()
-    if progress == "sidecar":
-        files["001.json.progress.json"] = '{"applied":[],"urls":{}}'
-    elif progress == "rejected":
-        rejected = ("applied.log",)
-    else:
-        files["applied.log"] = "now 001.json pr=42 actions=1 urls=x"
+    journal = Journal(
+        "uuid",
+        "pr",
+        "001.json",
+        "d" * 64,
+        IDENTITY.full_name,
+        1,
+        (JournalAction(0, state, "acme/repo"),),
+    )
+    view = inspected(tmp_path, "pr", files, pr_journals={"001.json": journal})
     with pytest.raises(OutboxError):
-        plan_delete(
-            inspected(tmp_path, "pr", files, rejected=rejected),
-            ProposalId("pr", "001.json"),
-            DeleteSelection(),
-        )
+        plan_delete(view, ProposalId("pr", "001.json"), DeleteSelection())
 
 
 @pytest.mark.parametrize("uncertain", [False, True])
 def test_issue_progress_requires_settled_explicit_archive(tmp_path, uncertain):
+    journals = MemoryJournals()
     files = issue_files()
-    journals = JournalStore(tmp_path / "journals")
     key = journal_key(IDENTITY, "001.json")
     journals.create(
-        key, proposal_digest("001.json", files["001.json"], {"body.md": "Original body"}), 3
+        key, proposal_digest("001.json", files["001.json"], {"body.md": files["body.md"]}), 3
     )
     journals.mark_prepared(key, 0, repo="acme/repo")
     if not uncertain:

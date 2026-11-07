@@ -111,19 +111,26 @@ def _done(**kw: Any) -> MessageManifest:
     return MessageManifest.model_validate(base)
 
 
-@pytest.mark.parametrize("count", ["3", "0", "", "invalid"])
-def test_queued_done_reports_stopped_outbox(tmp_path, mocker, count):
+@pytest.mark.parametrize("count", [3, 0, None])
+def test_queued_done_of_a_stopped_child_reads_its_outbox_from_the_store(tmp_path, mocker, count):
     from dataclasses import replace
 
-    from jailbee.orchestration import finishing
+    from jailbee.orchestration import child_outbox, finishing
     from jailbee.orchestration.protocol import PendingFinish
 
     rig = _make(tmp_path, mocker)
+    # A legacy stop-time record is ignored: the store answers for a stopped child.
     child = replace(
         rig.ctx.sender,
         running=False,
-        config={**rig.ctx.sender.config, labels.STOPPED_OUTBOX: count},
+        config={**rig.ctx.sender.config, labels.STOPPED_OUTBOX: "0", "volatile.uuid": "u1"},
     )
+    if count is None:
+        rig.outbox_probe.side_effect = child_outbox.ChildOutboxError("unreadable")
+    else:
+        rig.outbox_probe.return_value = child_outbox.PendingGithub(
+            tuple(f"{i}.json" for i in range(count)), (), ()
+        )
     orch = rig.ctx.nodes["myrepo-orch"]
     item = PendingFinish(
         version=1,
@@ -138,14 +145,14 @@ def test_queued_done_reports_stopped_outbox(tmp_path, mocker, count):
         uid=None,
     )
     msg, _ = finishing.complete(rig.ctx, child, orch, item)
-    rig.outbox_probe.assert_not_called()
+    rig.outbox_probe.assert_called_once_with("u1")
     assert msg.on_done == "keep"
-    if count == "0":
+    if count == 0:
         assert msg.on_done_reason is None
     else:
         assert "outbox" in msg.on_done_reason
         assert msg.on_done_reason in msg.body
-        assert ("3 staged GitHub" if count == "3" else "could not be checked") in msg.on_done_reason
+        assert ("3 staged GitHub" if count == 3 else "could not be checked") in msg.on_done_reason
 
 
 def _untouched(rig: Rig) -> None:
@@ -159,12 +166,10 @@ def _policy(rig: Rig, policy: str) -> None:
 
 @pytest.mark.parametrize("unsafe_part", ["filename", "verb"])
 def test_done_with_surrogate_outbox_text_is_retained_and_serializable(
-    tmp_path, mocker, monkeypatch, unsafe_part
+    tmp_path, mocker, unsafe_part
 ):
-    import contextlib
-    import io
     import json
-    import os
+    from types import SimpleNamespace
 
     from jailbee.orchestration import child_outbox
     from jailbee.orchestration.protocol import InboxMessage
@@ -172,30 +177,15 @@ def test_done_with_surrogate_outbox_text_is_retained_and_serializable(
     real_probe = child_outbox.probe
     rig = _make(tmp_path, mocker)
     _policy(rig, "destroy")
-    issue = tmp_path / "issue-outbox"
-    issue.mkdir()
-    raw_name = b"bad\xff.json" if unsafe_part == "filename" else b"action.json"
-    name = os.fsdecode(raw_name)
+    name = "bad\udcff.json" if unsafe_part == "filename" else "action.json"
     verb = "comment" if unsafe_part == "filename" else "bad\udcffverb"
-    text = json.dumps({"actions": [{"type": verb}]})
-    fd = os.open(os.fsencode(issue) + b"/" + raw_name, os.O_WRONLY | os.O_CREAT, 0o600)
-    with os.fdopen(fd, "w") as stream:
-        stream.write(text)
-
-    def discover(*args, **kwargs):
-        output = io.StringIO()
-        with monkeypatch.context() as scoped:
-            scoped.setattr("sys.argv", ["probe", str(issue), str(tmp_path / "pr-outbox"), "128"])
-            with contextlib.redirect_stdout(output):
-                exec(compile(child_outbox._NAMES_SCRIPT, "<child outbox probe>", "exec"), {})
-        return output.getvalue()
-
-    rig.incus.with_exec_timeout.return_value.exec_capped.side_effect = discover
-    mocker.patch("jailbee.outbox_io.read_text_outbox", side_effect=[{name: text}, {}])
-    pending = real_probe(
-        rig.incus.with_exec_timeout.return_value, CHILD, uid=rig.ctx.cfg.container_user.uid
+    text = json.dumps({"actions": [{"type": verb}]}, ensure_ascii=False)
+    rows = {"pr": [SimpleNamespace(name=name, manifest=text)], "issue": []}
+    mocker.patch(
+        "jailbee.outbox.store_db.read_proposals", side_effect=lambda _r, _u, kind: rows[kind]
     )
-    assert pending.count == 1 and pending.issue == (name,)
+    pending = real_probe("u1")
+    assert pending.count == 1 and pending.pr == (name,)
     rig.outbox_probe.return_value = pending
     messages.handle_message(rig.ctx, _done())
     msg = rig.insert_store.call_args.args[2]
@@ -231,9 +221,7 @@ def test_every_done_reports_staged_github_actions(tmp_path, mocker, policy, impo
     assert 'issue/003-x.json: create "Title"' in msg.body
     assert "staged GitHub" in out.detail
     assert labels.PENDING_DESTROY not in [c.args[1] for c in rig.incus.config_set.call_args_list]
-    probe.assert_called_once_with(
-        rig.incus.with_exec_timeout.return_value, CHILD, uid=rig.ctx.cfg.container_user.uid
-    )
+    probe.assert_called_once_with(None)
 
 
 @pytest.mark.parametrize("policy", ["keep", "destroy"])
@@ -552,7 +540,8 @@ def test_done_bounds_every_child_probe_and_the_fetch(tmp_path: Path, mocker: Moc
     and the ext:: fetch from it run with a timeout."""
     rig = _make(tmp_path, mocker)
     messages.handle_message(rig.ctx, _done())
-    assert rig.incus.with_exec_timeout.call_count == 3
+    # The repo/dirty/branch probe and the import; the outbox is read from the host store.
+    assert rig.incus.with_exec_timeout.call_count == 2
     assert all(
         c.args == (CHILD_EXEC_TIMEOUT_S,) for c in rig.incus.with_exec_timeout.call_args_list
     )

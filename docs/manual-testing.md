@@ -1799,9 +1799,11 @@ jailbee destroy dev-7 --force
 > Host-only. Requires `gh auth login` on the host, push access to origin, and
 > a real PR — nothing about the outbox parser or the gates has ever run
 > against a real GitHub API. Replace `<owner>/<repo>` and `<N>` throughout.
-> The manifest below is worked example 1 from the `jailbee-pr-review` skill's
+> The proposal below is worked example 1 from the `jailbee-pr-review` skill's
 > `references/manifest-schema.md` — read that file first if anything here is
-> unclear about the JSON shape.
+> unclear about the JSON shape. It is staged with the in-container
+> `jailbee pr` commands into the host outbox store (`broker.db`); the broker
+> must be running.
 
 ```bash
 # 1. A container and a real PR to review against.
@@ -1815,28 +1817,12 @@ jailbee pr push feat-outboxsmoke
 # expect: "Draft PR #<N> created for 'feat/outboxsmoke': https://github.com/..."
 gh pr view <N> --json headRefOid   # copy the sha — this is the manifest's head_sha
 
-# 2. Write a manifest BY HAND — no agent involved, this is exactly what
-#    `jailbee review ls`/`show`/`apply` must parse and gate correctly.
+# 2. Stage a review through the container commands — no agent involved, this
+#    is exactly what `jailbee review ls`/`show`/`apply` must parse and gate.
 jailbee shell feat-outboxsmoke
-mkdir -p ~/.jailbee/pr-outbox
-cat > ~/.jailbee/pr-outbox/001-review.json <<'JSON'
-{
-  "version": 1,
-  "repo": "<owner>/<repo>",
-  "pr": <N>,
-  "head_sha": "<the sha from gh pr view above>",
-  "actions": [
-    {
-      "type": "review",
-      "event": "COMMENT",
-      "body": "Smoke-testing the outbox.",
-      "comments": [
-        {"path": "outbox.txt", "line": 1, "side": "RIGHT", "body": "manual outbox smoke comment"}
-      ]
-    }
-  ]
-}
-JSON
+jailbee pr review add <N> --file outbox.txt --line 1 --body "manual outbox smoke comment"
+jailbee pr review submit <N> --body "Smoke-testing the outbox."
+# expect: "staged pr/<name> - publish on the host: jb review apply ..."
 exit
 
 # 3. Inspect without publishing.
@@ -1863,12 +1849,9 @@ gh api repos/<owner>/<repo>/pulls/<N>/reviews
 #         outbox.txt line 1 reading "manual outbox smoke comment"
 
 # 5. Cleanup happened, and a re-run does not double-post.
-jailbee shell feat-outboxsmoke
-ls ~/.jailbee/pr-outbox/                    # expect: 001-review.json is GONE
-cat ~/.jailbee/pr-outbox/applied.log
-# expect exactly one line, shaped like:
-#   2026-09-10T12:34:56Z 001-review.json pr=<N> actions=1 urls=https://github.com/...
-exit
+jailbee outbox ls feat-outboxsmoke          # expect: the review manifest is GONE
+jailbee outbox sent ls feat-outboxsmoke
+# expect exactly one applied record for PR #<N> with the review URL
 jailbee review apply feat-outboxsmoke -y
 # expect: "Nothing pending: no container in this repo has PR actions waiting."
 #         — confirms the re-run found nothing left to post.
@@ -1877,24 +1860,9 @@ gh api repos/<owner>/<repo>/pulls/<N>/reviews
 
 # 6. Stale-head refusal, and --force.
 jailbee shell feat-outboxsmoke
-cat > ~/.jailbee/pr-outbox/002-review.json <<'JSON'
-{
-  "version": 1,
-  "repo": "<owner>/<repo>",
-  "pr": <N>,
-  "head_sha": "<the SAME sha used in step 2 — now stale>",
-  "actions": [
-    {
-      "type": "review",
-      "event": "COMMENT",
-      "body": "This should be refused as stale, then forced.",
-      "comments": [
-        {"path": "outbox.txt", "line": 2, "side": "RIGHT", "body": "stale comment"}
-      ]
-    }
-  ]
-}
-JSON
+# Stage against the CURRENT head (the one from step 2, soon stale):
+jailbee pr review add <N> --file outbox.txt --line 2 --body "stale comment"
+jailbee pr review submit <N> --body "This should be refused as stale, then forced."
 echo "moved the head" >> outbox.txt && git add . && git commit -m "move the PR head"
 exit
 jailbee pr push feat-outboxsmoke   # pushes the new commit; the PR head moves
@@ -1983,7 +1951,7 @@ REST comment database ID via `GET repos/{owner}/{repo}/pulls/comments/{id}` to
 obtain that node ID. This mutation remains documented in GitHub's current
 schema but is deprecated; live verification on a real host PR is still owed.
 
-## `jailbee issue ls/show/apply/drop/resolve` smoke test
+## `jailbee issue show/apply/resolve` smoke test
 
 > Host-only. Requires `gh auth login` on the host with write access to a
 > real, disposable test repository (Issues enabled) and a declared test
@@ -1993,7 +1961,11 @@ schema but is deprecated; live verification on a real host PR is still owed.
 > below are the worked examples from the `jailbee-issue-management` skill's
 > `references/manifest-schema.md` — read that file first if the JSON shape
 > is unclear. Replace `<owner>/<repo>`, `<submodule-path>`/`<sub-owner>/<sub-repo>`,
-> and every `<N>` throughout.
+> and every `<N>` throughout. Issue proposals live in the host outbox store,
+> not in a container directory: each manifest below is staged from inside the
+> container through the broker with the helper defined in step 0 (the broker
+> numbers the proposals itself, so `001-`, `002-` ... below are only
+> indicative; read the real names from `jailbee outbox ls`).
 
 ```bash
 # 0. A container, and one pre-existing superproject issue to edit/label/close.
@@ -2003,14 +1975,16 @@ gh issue create --repo <owner>/<repo> \
   --title "Dashboard CPU column is wrong for frozen containers" \
   --body "Placeholder for the smoke test."
 # note the number -> <N>
+# Stage helper, used inside the container shell below (reads the manifest
+# JSON on stdin, prints the staged proposal name):
+#   stage_issue() { python3 -c 'import json,sys; from jailbee.container_outbox import broker; print(broker.put("issue", sys.argv[1], json.load(sys.stdin), {}))' "$1"; }
 ```
 
 ### 1. Decline leaves GitHub and the host journal unchanged
 
 ```bash
 jailbee shell feat-issuesmoke
-mkdir -p ~/.jailbee/issue-outbox
-cat > ~/.jailbee/issue-outbox/001-decline.json <<'JSON'
+stage_issue decline <<'JSON'
 {
   "version": 1,
   "actions": [
@@ -2027,11 +2001,11 @@ jailbee issue apply feat-issuesmoke
 # expect: "Nothing applied." — exit 0
 gh issue list --repo <owner>/<repo> --search "Should never exist in:title"
 # expect: empty — nothing was created
-jailbee issue ls feat-issuesmoke
+jailbee outbox ls feat-issuesmoke
 # expect: 001-decline.json STATE=pending (unchanged — nothing was journaled)
 jailbee shell feat-issuesmoke
-ls ~/.jailbee/issue-outbox/     # 001-decline.json is still there — declining consumed nothing
-rm ~/.jailbee/issue-outbox/001-decline.json
+jailbee outbox ls               # the decline proposal is still there — declining consumed nothing
+jailbee outbox drop issue/<decline-name>   # name as printed by `outbox ls`
 exit
 ```
 
@@ -2039,7 +2013,7 @@ exit
 
 ```bash
 jailbee shell feat-issuesmoke
-cat > ~/.jailbee/issue-outbox/002-batch.json <<'JSON'
+stage_issue batch <<'JSON'
 {
   "version": 1,
   "actions": [
@@ -2064,7 +2038,7 @@ gh issue list --repo <owner>/<repo> --search "smoke-test issue in:title" --json 
 gh issue view <bug-a-number> --repo <owner>/<repo> --json comments -q '.comments[].body'
 # expect: "Following up on the first one — resolved via issue_ref, not a number."
 jailbee shell feat-issuesmoke
-cat ~/.jailbee/issue-outbox/applied.log   # 3 lines, one per action
+jailbee outbox sent --kind issue          # 3 records, one per action
 exit
 ```
 
@@ -2074,7 +2048,7 @@ exit
 gh issue view <N> --repo <owner>/<repo> --json title,body,labels,state
 # copy the exact title/labels/state into `expected` below
 jailbee shell feat-issuesmoke
-cat > ~/.jailbee/issue-outbox/003-triage.json <<'JSON'
+stage_issue triage <<'JSON'
 {
   "version": 1,
   "actions": [
@@ -2099,7 +2073,7 @@ gh issue view <N> --repo <owner>/<repo> --json title,labels,state
 
 ```bash
 jailbee shell feat-issuesmoke
-cat > ~/.jailbee/issue-outbox/004-submodule.json <<'JSON'
+stage_issue submodule <<'JSON'
 {
   "version": 1,
   "actions": [
@@ -2130,7 +2104,7 @@ gh issue list --repo <owner>/<repo> --search "Submodule smoke-test issue in:titl
 gh issue view <N> --repo <owner>/<repo> --json title
 # note the CURRENT title -> <old-title>
 jailbee shell feat-issuesmoke
-cat > ~/.jailbee/issue-outbox/005-stale.json <<'JSON'
+stage_issue stale <<'JSON'
 {
   "version": 1,
   "actions": [
@@ -2151,9 +2125,9 @@ jailbee issue apply feat-issuesmoke
 #   — exit 1, no "Proceed?" prompt at all
 gh issue view <N> --repo <owner>/<repo> --json title
 # expect: "<old-title> (retitled by hand)" — the manifest's title was NEVER written
-jailbee issue ls feat-issuesmoke
+jailbee outbox ls feat-issuesmoke
 # expect: 005-stale.json STATE=pending — nothing was journaled either
-jailbee shell feat-issuesmoke && rm ~/.jailbee/issue-outbox/005-stale.json && exit
+jailbee shell feat-issuesmoke && jailbee outbox drop issue/<stale-name> && exit
 ```
 
 ### 6. An injected failure stops later actions; retrying skips already-applied receipts
@@ -2169,7 +2143,7 @@ and would not fail for the repo's own owner or a collaborator token):
 gh api -X PATCH repos/<sub-owner>/<sub-repo> -f archived=true
 
 jailbee shell feat-issuesmoke
-cat > ~/.jailbee/issue-outbox/006-stops.json <<'JSON'
+stage_issue stops <<'JSON'
 {
   "version": 1,
   "actions": [
@@ -2215,7 +2189,7 @@ after the command returns):
 
 ```bash
 jailbee shell feat-issuesmoke
-cat > ~/.jailbee/issue-outbox/007-uncertain.json <<'JSON'
+stage_issue uncertain <<'JSON'
 {
   "version": 1,
   "actions": [
@@ -2235,7 +2209,7 @@ jailbee issue apply feat-issuesmoke -y
 #   "007-uncertain.json action 0: uncertain — GitHub mutation transport failed after dispatch"
 #   "007-uncertain.json action 0: uncertain — GitHub mutation outcome is uncertain"
 # restore connectivity
-jailbee issue ls feat-issuesmoke
+jailbee outbox ls feat-issuesmoke
 # expect: 007-uncertain.json STATE=uncertain
 jailbee issue apply feat-issuesmoke -y
 # expect: refused — "a previous run's outcome is uncertain ... must be
@@ -2247,7 +2221,7 @@ gh issue list --repo <owner>/<repo> --search "Uncertain outcome smoke test in:ti
 # 7a. It did NOT land — forget it and let the next apply create it for real.
 jailbee issue resolve feat-issuesmoke 007-uncertain.json 0 --retry -y
 # expect: "007-uncertain.json action 0: retried"
-jailbee issue ls feat-issuesmoke   # STATE=pending again
+jailbee outbox ls feat-issuesmoke   # STATE=pending again
 jailbee issue apply feat-issuesmoke -y   # now actually creates it
 gh issue list --repo <owner>/<repo> --search "Uncertain outcome smoke test in:title"
 # expect: exactly one issue
@@ -2295,32 +2269,23 @@ jailbee destroy feat-issuesmoke --force
 > `claude.enabled: true` (to prove the manifest wins over the Claude run, the
 > spinner for it must never appear). Replace `<owner>/<repo>`, `<N>` and
 > `<id>` throughout. The description manifest is worked example 2 from the
-> `jailbee-pr-review` skill's `references/manifest-schema.md`.
+> `jailbee-pr-review` skill's `references/manifest-schema.md`. Descriptions
+> and replies are staged with the in-container `jailbee pr` commands into the
+> host outbox store; the broker must be running.
 
 ```bash
-# 1. A container with commits, and a description manifest written before any
+# 1. A container with commits, and a description proposal staged before any
 #    PR exists — `pr: null` — proposing a title, body AND head branch name.
 git checkout main
 jailbee new feat/descoutbox
 jailbee shell feat-descoutbox
 cd ~/SampleApp && echo "desc outbox" > desc.txt && git add . && git commit -m "wip"
-mkdir -p ~/.jailbee/pr-outbox
-cat > ~/.jailbee/pr-outbox/001-description.json <<'JSON'
-{
-  "version": 1,
-  "repo": "<owner>/<repo>",
-  "pr": null,
-  "head_sha": null,
-  "actions": [
-    {
-      "type": "description",
-      "title": "feat: outbox description smoke",
-      "body": "## Summary\n\nSmoke-tests a pr: null description manifest consumed by jailbee pr push.",
-      "branch": "feat/outbox-desc-smoke"
-    }
-  ]
-}
-JSON
+jailbee pr description --repo <owner>/<repo> --branch feat/outbox-desc-smoke \
+  --title "feat: outbox description smoke" \
+  --body "## Summary
+
+Smoke-tests a pr: null description proposal consumed by jailbee pr push."
+# expect: "staged pr/<name> - publish on the host: ..."
 exit
 
 jailbee pr push feat-descoutbox
@@ -2328,18 +2293,16 @@ jailbee pr push feat-descoutbox
 #         'feat-descoutbox'…" spinner — the pending manifest wins over Claude
 #         even with claude.enabled on. A branch-name confirmation appears for
 #         "feat/outbox-desc-smoke" exactly as an AI proposal would; accept
-#         it. Then: "description from 001-description.json (written in the
-#         container)" and "Draft PR #<N> created for
+#         it. Then: "description from <name> (staged in the container)" and "Draft PR #<N> created for
 #         'feat/outbox-desc-smoke': https://github.com/...".
 gh pr view <N> --json title,body,headRefName
 # expect: title "feat: outbox description smoke", body containing "Smoke-tests
 #         a pr: null description manifest", headRefName
 #         "feat/outbox-desc-smoke"
 jailbee shell feat-descoutbox
-ls ~/.jailbee/pr-outbox/          # expect: 001-description.json is gone
-cat ~/.jailbee/pr-outbox/applied.log
-# expect: one line naming 001-description.json, actions=1
-exit
+jailbee outbox ls feat-descoutbox    # expect: the description proposal is gone
+jailbee outbox sent ls feat-descoutbox
+# expect: one applied description record
 
 # 2. Post-update offer with one reply pending. Post one real line comment on
 #    the PR through the GitHub UI first (or `gh api ... -X POST`, from the
@@ -2348,17 +2311,7 @@ gh api repos/<owner>/<repo>/pulls/<N>/comments
 # copy the id of the comment to reply to → <id>
 
 jailbee shell feat-descoutbox
-cat > ~/.jailbee/pr-outbox/002-reply.json <<'JSON'
-{
-  "version": 1,
-  "repo": "<owner>/<repo>",
-  "pr": <N>,
-  "head_sha": null,
-  "actions": [
-    {"type": "reply", "comment_id": <id>, "body": "Fixed, thanks."}
-  ]
-}
-JSON
+jailbee pr reply <N> --to <id> --body "Fixed, thanks."
 cd ~/SampleApp && echo more >> desc.txt && git add . && git commit -m "address feedback"
 exit
 jailbee pr push feat-descoutbox
@@ -2375,10 +2328,8 @@ jailbee review ls
 jailbee review apply feat-descoutbox -y
 gh api repos/<owner>/<repo>/pulls/<N>/comments/<id>/replies
 # expect: a reply reading "Fixed, thanks." now on GitHub
-jailbee shell feat-descoutbox
-ls ~/.jailbee/pr-outbox/            # expect: 002-reply.json is gone
-cat ~/.jailbee/pr-outbox/applied.log   # expect: a second line, naming it
-exit
+jailbee outbox ls feat-descoutbox      # expect: the reply proposal is gone
+jailbee outbox sent ls feat-descoutbox # expect: a second record, the reply
 
 jailbee destroy feat-descoutbox --force
 
@@ -2404,22 +2355,10 @@ git checkout main
 # 2. A container on that branch, with a description naming that PR.
 jailbee new feat/adoptdesc
 jailbee shell feat-adoptdesc
-mkdir -p ~/.jailbee/pr-outbox
-cat > ~/.jailbee/pr-outbox/001-description.json <<'JSON'
-{
-  "version": 1,
-  "repo": "<owner>/<repo>",
-  "pr": <N>,
-  "head_sha": null,
-  "actions": [
-    {
-      "type": "description",
-      "title": "feat: adopted description smoke",
-      "body": "## Summary\n\nWritten in a container for a PR jailbee did not open."
-    }
-  ]
-}
-JSON
+jailbee pr description <N> --title "feat: adopted description smoke" \
+  --body "## Summary
+
+Written in a container for a PR jailbee did not open."
 cd ~/SampleApp && echo more >> adopted.txt && git add . && git commit -m "more"
 exit
 
@@ -2428,45 +2367,18 @@ jailbee pr push feat-adoptdesc --pr <N>
 # expect: "PR #<N> by @<you> (OPEN); head 'feat/adoptdesc' → base 'main'.",
 #         the bind confirmation, the push, then — because jailbee did not open
 #         this PR —
-#           "Replace PR #<N>'s description with the one 001-description.json
+#           "Replace PR #<N>'s description with the one <name>
 #            proposes? [y/N]"
 # Answer n:
 # expect: "…description unchanged." and, after it,
-#           "001-description.json still holds a description this run did not use.
+#           "<name> still holds a description this run did not use.
 #             `jailbee review apply feat-adoptdesc` publishes it."
 gh pr view <N> --json title      # expect: unchanged — declining consumed nothing
 
 jailbee pr push feat-adoptdesc        # nothing new to push; answer y this time
 gh pr view <N> --json title,body
 # expect: "feat: adopted description smoke" and the manifest's body, and the
-#         success line ends "(description from 001-description.json)"
-
-# 4. A `pr: null` description on the same container is withheld by `jailbee
-#    pr` — and `jailbee review apply` publishes it anyway.
-jailbee shell feat-adoptdesc
-cat > ~/.jailbee/pr-outbox/002-description.json <<'JSON'
-{
-  "version": 1,
-  "repo": "<owner>/<repo>",
-  "pr": null,
-  "head_sha": null,
-  "actions": [
-    {"type": "description", "title": "feat: second description", "body": "Second body."}
-  ]
-}
-JSON
-exit
-jailbee pr push feat-adoptdesc
-# expect: "002-description.json proposes a description for the PR this container
-#          would open (`pr: null`), and PR #<N> was not opened by jailbee; not
-#          putting an agent's text on a PR it was not written for."
-#         then "…description unchanged." and the "still holds a description"
-#         note. No prompt about the description at all.
-jailbee review ls
-# expect: one row, PR #<N> — a `pr: null` manifest resolves to the container's
-#         own bound PR rather than being deferred to `jailbee pr push` for ever
-jailbee review apply feat-adoptdesc -y
-gh pr view <N> --json title,body   # expect: "feat: second description"
+#         success line ends "(description from <name>)"
 
 jailbee destroy feat-adoptdesc --force
 
@@ -3511,7 +3423,7 @@ jailbee dashboard 2>/dev/null
 ### Column content: LOOSE, USED / MEM%, OUTBOX, recently idle AI
 
 1. Have one loose container (`jb net loose <c>`), one with a staged outbox
-   manifest (write any valid manifest into `~/.jailbee/issue-outbox/` in it),
+   proposal (stage one with `jailbee issue create` in it),
    and one where a Claude session finished a turn a few minutes ago.
 2. `jb dashboard`: the loose row shows a red `●` and its remaining time under
    LOOSE (`● ∞` after `jb net loose --no-revert`); strict rows are blank there.
@@ -5396,42 +5308,44 @@ for local inspection, not publication.
 
 ```bash
 # Inside the disposable container, as its normal dev user only:
-mkdir -p ~/.jailbee/pr-outbox ~/.jailbee/issue-outbox
-printf 'Shared proposal body.\n' > ~/.jailbee/issue-outbox/shared.md
-cat > ~/.jailbee/issue-outbox/901-shared-a.json <<'JSON'
-{"version":1,"actions":[{"type":"create","repo":".","ref":"a","title":"Disposable A","body_file":"shared.md"}]}
-JSON
-cat > ~/.jailbee/issue-outbox/902-shared-b.json <<'JSON'
-{"version":1,"actions":[{"type":"create","repo":".","ref":"b","title":"Disposable B","body_file":"shared.md"}]}
-JSON
-cat > ~/.jailbee/issue-outbox/903-dependent.json <<'JSON'
-{"version":1,"actions":[
-  {"type":"create","repo":".","ref":"new","title":"Disposable dependency","body":"Do not publish."},
-  {"type":"comment","repo":".","issue_ref":"new","body":"Dependent comment."}
+# Proposals are staged through the broker into the host store (not as
+# files): two sharing one body, and one with a dependent comment.
+python3 - <<'PY'
+from jailbee.container_outbox import broker
+
+shared = {"shared.md": "Shared proposal body.\n"}
+for slug, ref, title in (("shared-a", "a", "Disposable A"), ("shared-b", "b", "Disposable B")):
+    action = {"type": "create", "repo": ".", "ref": ref, "title": title, "body_file": "shared.md"}
+    broker.put("issue", slug, {"version": 1, "actions": [action]}, shared)
+broker.put("issue", "dependent", {"version": 1, "actions": [
+    {"type": "create", "repo": ".", "ref": "new", "title": "Disposable dependency", "body": "Do not publish."},
+    {"type": "comment", "repo": ".", "issue_ref": "new", "body": "Dependent comment."},
+]}, {})
+PY
+# And one PR review proposal with two inline comments, staged the same way.
+python3 - <<'PY'
+from jailbee.container_outbox import broker
+
+review = {"type": "review", "event": "COMMENT", "body": "Do not publish.", "comments": [
+    {"path": "sample.txt", "line": 1, "side": "RIGHT", "body": "First disposable comment."},
+    {"path": "sample.txt", "line": 2, "side": "RIGHT", "body": "Second disposable comment."},
 ]}
-JSON
-cat > ~/.jailbee/pr-outbox/904-review.json <<'JSON'
-{"version":1,"repo":"example/disposable","pr":1,
- "head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","actions":[
-  {"type":"review","event":"COMMENT","body":"Do not publish.","comments":[
-    {"path":"sample.txt","line":1,"side":"RIGHT","body":"First disposable comment."},
-    {"path":"sample.txt","line":2,"side":"RIGHT","body":"Second disposable comment."}
-  ]}
-]}
-JSON
+broker.put("pr", "review", {"version": 1, "repo": "example/disposable", "pr": 1,
+    "head_sha": "a" * 40, "actions": [review]}, {})
+PY
 ```
 
 From the fixture CLI or the host controlling only that approved rig:
 
 ```bash
 jb outbox ls smoke -o json
-jb outbox show smoke pr/904-review.json
-jb outbox drop smoke pr/904-review.json --action 0 --comment 1
-jb outbox show smoke pr/904-review.json -o json
-jb outbox drop smoke issue/901-shared-a.json
-jb outbox drop smoke issue/902-shared-b.json
-jb outbox drop smoke issue/903-dependent.json --action 0
-jb outbox drop smoke issue/903-dependent.json --action 0 --with-dependents
+jb outbox show smoke pr/<review-proposal>.json
+jb outbox drop smoke pr/<review-proposal>.json --action 0 --comment 1
+jb outbox show smoke pr/<review-proposal>.json -o json
+jb outbox drop smoke issue/001-shared-a.json
+jb outbox drop smoke issue/002-shared-b.json
+jb outbox drop smoke issue/<dependent-proposal>.json --action 0
+jb outbox drop smoke issue/<dependent-proposal>.json --action 0 --with-dependents
 ```
 
 Confirm each exact deletion scope. After the comment deletion, action 0
@@ -5444,25 +5358,24 @@ mutation; indices are not stable across edits.
 
 ### Blocked progress and changed-body refusal (injected fixture only)
 
-Re-seed `904-review.json` in the temporary fixture, then add
-`904-review.json.progress.json` beside it with:
-
-```json
-{"applied":[0],"urls":{"0":"https://github.com/example/disposable/pull/1#pullrequestreview-1"}}
-```
-
+Re-seed the review proposal in the temporary fixture, then inject a
+publication journal for it into the host outbox store (`publication_db`): action 0
+applied with its receipt URL
+(`https://github.com/example/disposable/pull/1#pullrequestreview-1`).
 `show` must display applied action 0 and its receipt; selective deletion must
 refuse. For a genuinely **partial** example, first append a second PR
 `comment` action (`{"type":"comment","body":"Still pending."}`) to the
-fixture manifest before adding that sidecar. Action 0 is applied, action 1
+fixture proposal before injecting the journal. Action 0 is applied, action 1
 pending, and neither child nor whole PR deletion may discard that evidence.
-Malformed sidecars must block, not silently reset progress. For issues,
-inject a settled journal via the existing `JournalStore` fixture API: a
+An injected **uncertain** entry for action 1 must keep `outbox clear` from
+deleting the proposal until
+`jb review resolve smoke <review-proposal>.json 1 --retry` settles it. For issues,
+inject a settled journal into the same store: a
 create applied with its number/receipt and its dependent comment pending.
 Selective deletion refuses. First run `jb outbox show smoke
-issue/903-dependent.json` in the injected fixture and inspect the applied
+issue/<dependent-proposal>.json` in the injected fixture and inspect the applied
 create's receipt and pending comment. Only then approve whole-manifest
-`outbox drop smoke issue/903-dependent.json --archive-journal`: direct drop
+`outbox drop smoke issue/<dependent-proposal>.json --archive-journal`: direct drop
 previews deletion scope, not receipts or pending content. Injecting an
 uncertain record must refuse that escape.
 Never fabricate journals or progress in real stores, and never call a real
@@ -5839,20 +5752,19 @@ the dashboard's input routing does not read the application-mode form.
 
 ### Seed two containers
 
-Stage manifests with the `jailbee-pr-review` and `jailbee-issue-management`
-skills (formats: `docs/skills/*/references/manifest-schema.md`), or write them
-by hand with `jailbee exec <container> -- sh`. Both stores are
-`~/.jailbee/pr-outbox/` and `~/.jailbee/issue-outbox/` of the container user.
+Stage proposals with the `jailbee-pr-review` and `jailbee-issue-management`
+skills' commands (formats: `docs/skills/*/references/manifest-schema.md`),
+run inside each container with `jailbee exec <container> -- sh`. Both kinds are
+staged over the broker socket into the host outbox store.
 
-1. In container `a`, `pr-outbox/001-review.json`: `repo` the origin's
-   `owner/name`, a real open `pr`, its `head_sha`, and one `review` action
-   with two inline `comments` (`path`, `line`, `body`). Add
-   `pr-outbox/002-reply.json` (one `reply` action with a real `comment_id`)
-   and `pr-outbox/003-general.json` (one `comment` action).
-2. In container `b`, `issue-outbox/001-triage.json` with a `create` action
-   (`"ref": "new-bug"`, `title`, `body`, `labels`) and a `comment` action with
-   `"issue_ref": "new-bug"` (the dependent comment). Add a second, independent
-   `pr-outbox/001-general.json` so `b` shows both kinds.
+1. In container `a`, stage a review with `jailbee pr review add <N> --file P
+   --line L --body ...` twice, then `jailbee pr review submit <N>`: `<N>` is a
+   real open PR of the origin. Add a reply with `jailbee pr reply <N> --to
+   <comment_id> --body ...` (a real `comment_id`) and a general comment with
+   `jailbee pr comment <N> --body ...`.
+2. In container `b`, stage an issue proposal with `jailbee issue create` (`--title`,
+   `--body`, `--label`) and a dependent comment on it. Add a second, independent
+   `jailbee pr comment <N> --body ...` so `b` shows both kinds.
 3. `jailbee outbox ls`. Expected: both containers, `a` with three PR
    proposals, `b` with one issue and one PR proposal.
 
@@ -5885,7 +5797,7 @@ Run `jb dashboard` (terminal at 140 columns).
 5. `Space` on `002-reply.json` and on `003-general.json` (a mark shows on the
    row; the cursor moves down), press `d`. Expected: one question covering
    both proposals. Choose `Yes, delete`. Expected: both vanish from the tree
-   and from `~/.jailbee/pr-outbox/`.
+   and from `jailbee outbox ls a`.
 6. Put the cursor on the remaining review and press `p`. Expected: a
    `Publish 001-review.json?` question whose lines are the plan (target PR,
    the action list), with choices `Publish`, `Publish as draft review — only

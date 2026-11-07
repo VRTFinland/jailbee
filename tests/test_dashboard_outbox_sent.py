@@ -17,7 +17,7 @@ from tests.dashboard_pilot import bare_session
 from tests.test_dashboard_session import _PLAN, _HeldJobs, _open_box, _quiet, _settle
 
 T0 = datetime(2026, 11, 4, 10, 0, tzinfo=UTC)
-CREATED = datetime(2026, 11, 1, 8, 0, tzinfo=UTC)
+CREATED = "uuid-alpha-x"  # the instance uuid names the incarnation
 URL = "https://github.com/o/r/issues/5#issuecomment-1"
 
 
@@ -43,7 +43,7 @@ def _rec(
     *,
     minutes: int = 0,
     instance: str = "alpha-x",
-    created: datetime | None = CREATED,
+    created: str = CREATED,
     state: str = "applied",
     publisher: str = "user",
     **kw: object,
@@ -51,7 +51,7 @@ def _rec(
     sent.record(
         instance=instance,
         container_prefix="alpha",
-        container_created=created,
+        uuid=created,
         publisher=publisher,  # type: ignore[arg-type]
         action=_action(manifest, **kw),
         state=state,  # type: ignore[arg-type]
@@ -59,8 +59,8 @@ def _rec(
     )
 
 
-def _group(tmp_path, *, created: datetime | None = CREATED, count: int = 2):  # type: ignore[no-untyped-def]
-    info = replace(ci("alpha-x", "alpha"), created_at=created, sent_count=count)
+def _group(tmp_path, *, created: str = CREATED, count: int = 2):  # type: ignore[no-untyped-def]
+    info = replace(ci("alpha-x", "alpha"), uuid=created, sent_count=count)
     group = cfg_group(tmp_path, (info,))
     group.sent_count = count
     return group
@@ -181,7 +181,7 @@ def test_timeline_refresh_follows_the_live_containers(mocker, tmp_path):
     assert "†" not in _texts(_state(session))[0]
 
     live = session.groups[0].containers  # the container was recreated since
-    live[0] = replace(live[0], created_at=CREATED + timedelta(days=1))
+    live[0] = replace(live[0], uuid=CREATED + "-plus-1")
     session.outbox_intent("refresh", None)
 
     assert "†" in _texts(_state(session))[0]
@@ -244,7 +244,7 @@ def test_open_only_shows_the_url_over_remote_ssh(mocker, tmp_path, monkeypatch):
 def test_incarnations_split_views(mocker, tmp_path):
     """A container destroyed and recreated under one name: tab = new, timeline = both."""
     old = CREATED
-    new = CREATED + timedelta(days=2)
+    new = CREATED + "-plus-2"
     _rec("m-old", minutes=0, created=old, content="from the old container")
     _rec("m-new", minutes=9, created=new, content="from the new container")
     _quiet(mocker)
@@ -357,7 +357,7 @@ def _item(**kw: object) -> dob.SentItem:
         "container_prefix": "alpha",
         "container": "x",
         "instance": "alpha-x",
-        "container_created": CREATED,
+        "uuid": CREATED,
         "publisher": "user",
         "state": "applied",
         "outbox": "issue",

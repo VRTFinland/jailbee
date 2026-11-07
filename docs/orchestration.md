@@ -568,6 +568,17 @@ and exits with status 75, and systemd starts it again on the new code;
 version. A unit written by an older `jb setup` restarts it too, but logs the
 exit as a failure until `jb setup` rewrites the unit.
 
+Every container gets its broker socket device when `jb new` creates it, but
+the socket itself appears only when a broker round binds a listener in that
+directory. While such a fresh directory (under two minutes old) is not yet
+served, the broker starts its next round about 5 seconds after the last one
+instead of waiting out the 60-second idle interval; a round only serves a
+running container. Container commands (`jailbee issue`, `jailbee pr`,
+`jailbee outbox`, `jailbee inbox`) retry a missing or refused socket for 10
+seconds (`JAILBEE_BROKER_RETRY_SECONDS` overrides it) before exiting 4, so
+staging right after a container boots normally waits for that round rather
+than failing. With the broker stopped they exit 4 after the retry.
+
 The broker logs to the user journal (`journalctl --user -u jailbee-broker`).
 Each creation or restart worker it starts writes its own output to
 `~/.local/state/jailbee/logs/<container>-<timestamp>.log` (`$XDG_STATE_HOME`
@@ -720,19 +731,25 @@ digest time across waits and restarts.
 
 ### Transport: a per-container socket
 
-An orchestrator or child talks to the broker over a Unix socket that the host
-keeps for that container only. The broker creates
+Every container talks to the broker over a Unix socket that the host
+keeps for that container only. A container with no orchestration role is
+*plain*: it connects, but every inbox and orchestration operation answers
+`not_orchestrated`; the socket exists so later features (the GitHub outbox)
+can use it. Gaining or losing a grant or a parent changes only which
+operations are allowed, never the socket. The broker creates
 `~/.local/state/jailbee/orchestration/sock/<instance uuid>.<random>/` (directory mode
 0700, socket `broker.sock` mode 0600, owned by your user) and attaches it to
 the container as a read-only disk device named `jailbee-orchestration`,
 mounted at `/opt/jailbee/orchestration/`. This stays outside `/run`, whose
 boot-time tmpfs would hide a device Incus mounts before init. The broker
 re-attaches devices with an older mount path on its next round after an
-upgrade; no image rebuild or profile re-apply is needed. The device is created per instance
-and only for containers that hold an orchestration role, so the broker knows who
-is calling from which socket was used; nothing in a request names the sender.
-The device is `required=false`, so a container still starts when the host
-directory is missing.
+upgrade; no image rebuild or profile re-apply is needed. The device is created
+per instance, so the broker knows who is calling from which socket was used;
+nothing in a request names the sender. `jb new` attaches the device (with a
+fresh directory the broker then binds in) before the container's first agent
+starts; the broker's rounds only repair drift, and serve running containers of
+registered repos. The device is `required=false`, so a container still starts
+when the host directory is missing.
 
 A copy would otherwise reach the original's socket, so the device is stripped
 from copies. Only Jailbee's own copies (`Incus.copy`, used by `jb new` from the
@@ -808,8 +825,9 @@ no compatibility window: its waiters and unread messages are not carried over.
 Durable host-state imports into `broker.db` remain available.
 
 If the broker is stopped or the socket is missing, every `jailbee inbox`
-command that needs it exits 4 with "the host broker is not reachable"; tell the
-human, who starts it (`systemctl --user start jailbee-broker`, or `jb doctor`).
+command that needs it retries the connection for 10 seconds (a broker restart
+on upgrade takes a few) and then exits 4 with "the host broker is not
+reachable"; tell the human, who starts it (`systemctl --user start jailbee-broker`, or `jb doctor`).
 When the socket is absent, `jailbee inbox runners` instead lists local runners
 without a grant-derived default or grant filtering. A stale socket still requires
 a reachable broker. Invalid command arguments exit 2 before connecting.
@@ -835,6 +853,20 @@ Exit 4 from a background waiter means **broker unavailable**, not a normal
 timeout. Tell the human and re-arm it after the broker recovers. `--quiet-after`
 and `--digest` run in the broker and cannot replace this liveness check.
 See the [protocol reference](orchestration-protocol.md#socket-transport).
+
+#### Cost with many containers
+
+One selector thread and four query workers serve every socket, so threads do
+not grow with the number of containers. A container costs one listening file
+descriptor, plus one per open connection (at most 8). Measured with the real
+`Listener` (200 containers, unit-style script, not a benchmark): opening a
+listener takes about 0.1 ms, 1 fd and a few KiB each; 50 containers each
+holding 8 connections used 850 fds in total. Even 50 containers with every
+connection in use stay under the common 1024-fd soft limit (the broker's own
+limit applies; `jailbee-broker.service` inherits systemd's default). A
+settled container costs no per-round Incus call. Each round also reads the
+registered repos' configs (previously only while an orchestrator or child
+existed), so an idle broker does that once a minute.
 
 ### Child status
 

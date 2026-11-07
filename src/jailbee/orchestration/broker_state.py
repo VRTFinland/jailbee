@@ -46,6 +46,9 @@ class BrokerMemory:
     publish_threads: list[threading.Thread] = field(default_factory=list)
     env_ensured: set[str] = field(default_factory=set)
     env_roles: dict[str, str | None] = field(default_factory=dict)
+    # volatile.uuid -> the role its labels gave in the round's listing
+    # (`listed_roles`); the fail-closed source for containers without a context.
+    listed_roles: dict[str, str] = field(default_factory=dict)
     # Keys of warnings already logged, so a standing problem is logged once.
     warned: set[str] = field(default_factory=set)
     # Host spool sequence: orders the items emitted within one second.
@@ -180,6 +183,11 @@ def config_for(full: str, configs: Mapping[str, Config | None]) -> Config | None
     return None if best is None else configs[best]
 
 
+def is_managed(full: str, configs: Mapping[str, Config | None]) -> bool:
+    """Whether ``full`` belongs to a registered repo, even one whose config fails to load."""
+    return any(full.startswith(prefix + "-") for prefix in configs)
+
+
 def owner_config(
     full: str, config: Mapping[str, str], configs: Mapping[str, Config | None]
 ) -> Config | None:
@@ -191,6 +199,25 @@ def owner_config(
 def labelled(config: Mapping[str, str]) -> bool:
     """Whether the labels make this container an orchestrator or a child candidate."""
     return bool(config.get(labels.SPAWNED_BY) or config.get(labels.GRANT))
+
+
+def listed_roles(raw: list[dict[str, object]]) -> dict[str, str]:
+    """volatile.uuid -> child, orchestrator or plain, from each listed instance's labels."""
+    roles: dict[str, str] = {}
+    for entry in raw:
+        config = entry.get("config")
+        if not isinstance(config, dict):
+            continue
+        uuid = config.get("volatile.uuid")
+        if not isinstance(uuid, str) or not uuid:
+            continue
+        if config.get(labels.SPAWNED_BY):
+            roles[uuid] = "child"
+        elif config.get(labels.GRANT):
+            roles[uuid] = "orchestrator"
+        else:
+            roles[uuid] = "plain"
+    return roles
 
 
 def nodes(raw: list[dict[str, object]], configs: Mapping[str, Config | None]) -> dict[str, Node]:

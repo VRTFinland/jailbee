@@ -50,6 +50,7 @@ from jailbee.orchestration.store import BrokerStore, store_path
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from jailbee.config import Config
     from jailbee.incus import Incus
 
 log = logging.getLogger(__name__)
@@ -77,8 +78,27 @@ def tick(
     prune_reservations(root)
     memory.publish_threads[:] = [worker for worker in memory.publish_threads if worker.is_alive()]
     raw = incus.list_containers()
+    memory.listed_roles = broker_state.listed_roles(raw)
     others = socket_lifecycle.other_projects(incus, memory) if memory.store is not None else None
-    socket_lifecycle.check_socket_devices(incus, raw, memory, root, others)
+    early_configs: dict[str, Config | None] | None = None
+    if memory.listener is not None and memory.store is not None:
+        try:
+            early_configs = broker_state.repo_configs(memory)
+        except Exception:
+            log.exception("broker: repo configs failed; plain container sockets left as they are")
+    managed: Callable[[str], bool] | None = None
+    if early_configs is not None:
+        known = early_configs
+
+        def managed(name: str) -> bool:
+            return broker_state.is_managed(name, known)
+
+    socket_lifecycle.check_socket_devices(incus, raw, memory, root, others, managed)
+    if early_configs is not None:
+        try:
+            socket_lifecycle.serve_plain(incus, raw, memory, root, early_configs)
+        except Exception:
+            log.exception("broker: serving plain container sockets failed")
     retention.purge_messages(memory, raw, now, None if others is None else raw + others)
     candidates = [
         e
@@ -151,7 +171,7 @@ def tick(
     except Exception:
         log.exception("broker: global config failed to load; skipping this round")
         return True
-    configs = broker_state.repo_configs(memory)
+    configs = early_configs if early_configs is not None else broker_state.repo_configs(memory)
     nodes = broker_state.nodes(raw, configs)
 
     def context(node: Node) -> ActionContext | None:
@@ -381,6 +401,31 @@ def _flush_unlabelled(
         memory.report_failure(f"flush:{node.full}", exc, "broker: flushing %s failed", node.full)
 
 
+def new_socket_wake(
+    root: Path,
+    memory: broker_state.BrokerMemory,
+    started: float,
+    *,
+    clock: Callable[[], float] = time.monotonic,
+    wall: Callable[[], float] = time.time,
+) -> Callable[[], bool]:
+    """A `serve_requests` wake: the next round is due once `ACTIVE_INTERVAL` has passed
+    since ``started`` and a fresh socket directory (a `jb new`) is still unserved.
+
+    The socket directory is scanned at most once per `SLEEP_SLICE`.
+    """
+    scanned = [float("-inf")]
+
+    def wake() -> bool:
+        current = clock()
+        if current - started < ACTIVE_INTERVAL or current - scanned[0] < SLEEP_SLICE:
+            return False
+        scanned[0] = current
+        return socket_lifecycle.unserved_new_dir(root, memory, now=wall())
+
+    return wake
+
+
 def _pause(seconds: float, stop: broker_state.StopFlag) -> None:
     """Sleep `seconds` in short slices, returning early once a stop is requested."""
     deadline = time.monotonic() + seconds
@@ -457,6 +502,7 @@ def run_broker(incus: Incus) -> int:
         from jailbee.orchestration import executor
 
         while not stop.requested:
+            started = time.monotonic()
             try:
                 active = tick(
                     incus, root=root, journal=journal, now=datetime.now(UTC), memory=memory
@@ -471,7 +517,12 @@ def run_broker(incus: Incus) -> int:
             interval = ACTIVE_INTERVAL if active else IDLE_INTERVAL
             if memory.listener is not None:
                 executor.evaluate_waiters(memory)
-                executor.serve_requests(memory, until=time.monotonic() + interval, stop=stop)
+                executor.serve_requests(
+                    memory,
+                    until=time.monotonic() + interval,
+                    stop=stop,
+                    wake=new_socket_wake(root, memory, started),
+                )
             else:
                 _pause(interval, stop)
         log.info("orchestration broker stopping")

@@ -105,6 +105,8 @@ class ContainerInfo:
     # `annotate_agent_status`; never by `list_containers`.
     agent_status: tuple[AgentSummary, ...] = ()
     git_status: GitStatus | None = None
+    # Incus volatile.uuid, the key of the host outbox store; set by `list_containers`.
+    uuid: str | None = None
     job_live: bool = False
     # Outbox "Sent" log records of this container's current incarnation; set by
     # the state service's gatherer (never by `list_containers`), 0 = none.
@@ -646,6 +648,7 @@ def list_containers(
                 credential_group=credential_group_raw or None,
                 autostart_profile=config.get("user.jailbee.autostart_profile") or None,
                 created_at=_parse_incus_timestamp(raw.get("created_at")),
+                uuid=config.get("volatile.uuid") or None,
                 memory_usage=memory_usage,
                 init_pid=init_pid,
                 cpu_usage_ns=cpu_usage_ns,
@@ -720,9 +723,12 @@ def list_containers(
         uuids = {
             raw.get("name"): (raw.get("config") or {}).get("volatile.uuid") for raw in instances
         }
+        issue_counts = issue_outbox_counts()
+        pr_counts = pr_outbox_counts()
         for c in out:
             status = statuses.get(c.name)
             uuid = uuids.get(c.name)
+            c.uuid = uuid if isinstance(uuid, str) and uuid else None
             unread = (
                 (unread_counts.get(uuid, 0) if isinstance(uuid, str) else 0)
                 if unread_counts is not None
@@ -732,6 +738,8 @@ def list_containers(
                 status = GitStatus("?", "?", "?", "?")
             if status is not None:
                 status = replace(status, unread_inbox=unread)
+                status = replace(status, pending_issue_actions=_issue_count(issue_counts, uuid))
+                status = replace(status, pending_pr_actions=_issue_count(pr_counts, uuid))
             c.git_status = (
                 None
                 if status is None
@@ -799,6 +807,58 @@ def list_containers(
     # background rows, legacy containers) sort ahead of dated ones.
     out.sort(key=lambda c: c.created_at or _NEWEST_FIRST, reverse=True)
     return out
+
+
+def issue_outbox_counts() -> dict[str, int] | None:
+    """Pending issue proposals per container uuid from the host store, or None when
+    the store cannot be read (the count is then unknown, never zero)."""
+    from jailbee.db import state_dir
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox.store_db import read_pending_counts
+
+    try:
+        return read_pending_counts(state_dir() / "orchestration", "issue")
+    except (StoreError, ValueError, OSError):
+        return None
+
+
+def _issue_count(counts: dict[str, int] | None, uuid: object) -> int | None:
+    if counts is None or not isinstance(uuid, str) or not uuid:
+        return None
+    return counts.get(uuid, 0)
+
+
+def stamp_issue_outbox(ci: ContainerInfo) -> None:
+    """Set the issue count of ``ci.git_status`` from the host outbox store.
+
+    For callers that probe one container themselves (the destroy guard). A
+    container never probed keeps ``git_status`` None.
+    """
+    if ci.git_status is not None:
+        ci.git_status = replace(
+            ci.git_status, pending_issue_actions=_issue_count(issue_outbox_counts(), ci.uuid)
+        )
+
+
+def pr_outbox_counts() -> dict[str, int] | None:
+    """Pending PR proposals per container uuid from the host store (journal-aware),
+    or None when the store cannot be read (the count is then unknown, never zero)."""
+    from jailbee.db import state_dir
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox.store_db import read_pending_counts
+
+    try:
+        return read_pending_counts(state_dir() / "orchestration", "pr")
+    except (StoreError, ValueError, OSError):
+        return None
+
+
+def stamp_pr_outbox(ci: ContainerInfo) -> None:
+    """Replace the probed PR proposal count of ``ci.git_status`` with the store's."""
+    if ci.git_status is not None:
+        ci.git_status = replace(
+            ci.git_status, pending_pr_actions=_issue_count(pr_outbox_counts(), ci.uuid)
+        )
 
 
 def annotate_activity(containers: Sequence[ContainerInfo], sampler: ActivitySampler) -> None:
@@ -2350,16 +2410,22 @@ def _new_container(
 
     agent_private.attach(cfg, incus, name)
 
-    # Infrastructure must exist even without cloning or autostart; a failed
-    # bootstrap must not let agents write into an unsafe store.
+    # Every container gets its broker socket device now, not on the broker's
+    # next round (5-60 s): the first agent may already want the socket. A
+    # failure is only a warning; the broker repairs the device.
+    from jailbee.orchestration import socket_device
+    from jailbee.orchestration.state import state_root
+
+    try:
+        socket_device.attach_new(incus, name, state_root())
+    except (IncusError, OSError) as e:
+        warn(f"Container created, but its broker socket was not attached (the broker will): {e}")
+
+    # Before cloning or autostart: a child must know its role from the start.
     if opts.spawned_by is not None:
         from jailbee.orchestration.labels import ensure_child_role
 
         ensure_child_role(incus, name, uid=cfg.container_user.uid)
-    else:
-        from jailbee.outbox.io import ensure_directories
-
-        ensure_directories(cfg, incus, name)
 
     # Before agents, autostart and `on_create`, any of which may commit. Both
     # modes: the XDG file never touches the host repo's own config.

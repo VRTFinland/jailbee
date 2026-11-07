@@ -35,8 +35,12 @@ def serve_requests(
     until: float,
     stop: StopFlag,
     clock: Callable[[], float] = time.monotonic,
+    wake: Callable[[], bool] | None = None,
 ) -> None:
-    """Serve queued requests until `clock()` reaches `until` or a stop is requested."""
+    """Serve queued requests until `clock()` reaches `until` or a stop is requested.
+
+    ``wake``, checked after every poll, ends the wait early (the next round is due).
+    """
     while not stop.requested:
         remaining = until - clock()
         if remaining <= 0:
@@ -48,6 +52,8 @@ def serve_requests(
         if event is not None:
             handle_event(memory, event, clock=clock)
         evaluate_waiters(memory, clock=clock)
+        if wake is not None and wake():
+            return
 
 
 def handle_event(
@@ -81,6 +87,7 @@ def handle_event(
 
 
 _PARKED = object()
+_INBOX_OPS = frozenset({"send", "list", "read", "ack", "children", "status", "grant", "next"})
 
 
 def _dispatch(
@@ -91,6 +98,9 @@ def _dispatch(
     args = event.request.args
     if not store.has_recipient_uuid(uuid):
         raise wire.WireError(wire.STORE, "inbox store recipient is not ready; retry shortly")
+    if op in _INBOX_OPS and uuid not in memory.contexts:
+        # A plain container has a socket (outbox ops only) but no inbox.
+        raise wire.WireError(wire.NOT_ORCHESTRATED, "this container has no orchestration role")
     if op == "send":
         ctx = memory.contexts.get(uuid)
         if ctx is None:

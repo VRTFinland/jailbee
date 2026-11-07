@@ -1,6 +1,6 @@
 ---
 name: jailbee-usage
-description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), egress overrides (`jailbee net egress ls|add|rm|export`, short alias `jailbee egress`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), the optional remote SSH service (`jailbee remote ssh`), `jailbee dashboard`, `jailbee console` (the interactive `jb>` prompt), bare `jailbee` and the `default_command` setting, `jailbee config edit`, `jailbee litellm up|down|status|login|logout|logs` and in-container `claude-jb`, snapshots, mounts, `jailbee ide`/`jailbee chrome`/`jailbee firefox`/`jailbee browser`/`jailbee apps ls`/`jailbee apps run`/`jailbee exec --detach`, background ops, reviewing PRs with `jailbee new --pr`, opening/updating PRs with `jailbee pr push`/`jailbee submodule pr push`, publishing an in-container agent's staged review comments with `jailbee review apply|ls|show|drop` and issue actions with `jailbee issue ls|show|apply|drop|resolve`, browsing both with `jailbee outbox` and discarding proposals with `jailbee outbox clear`, listing published actions with `jailbee outbox sent ls`, stored agent logins and credential groups (`jailbee account`, `jailbee account group`), the shared RDP display (`jailbee display up|down|status`) and attaching the host display (`jailbee display attach`), native windows over `waypipe ssh`, the optional work network (`jailbee net migrate`), host-local config (`jailbee config edit --local`, `jailbee config migrate`) and silencing advisories (`jailbee dismiss`). Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard/config edit", "jailbee litellm", "claude-jb", "jailbee remote ssh", "connect to Jailbee over SSH", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), "edit jailbee config interactively", "jailbee config edit keys", "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "allow this container to reach X", "add a host to the allowlist", "why can't the container reach X", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "open a PR for a submodule", "publish this submodule's commits as a PR", "post my review comments", "apply the review", "jailbee review ls/show/drop", "what's pending in the PR outbox", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin", "salli kontille pääsy hostiin", "lisää host sallittujen listalle", "avaa PR alimoduulille", "vie alimoduulin muutokset PR:ksi", "postaa katselmointikommentit", "julkaise katselmointi", "jailbee account ls/use/park", "jailbee account group", "jailbee claude ls/use/park" (deprecated alias of `jailbee account`), "jailbee issue apply", "apply the staged issues", "jailbee outbox", "what has the agent staged", "jailbee net migrate", "jailbee config migrate", "julkaise issuet", "switch which account the container uses", "switch the Claude account", "change which Claude login the container uses", "store this login", "store this Claude login", "vaihda tili", "vaihda Claude-tili", "mikä tili kontissa on käytössä", "mikä Claude-tili kontissa on käytössä", "jailbee display attach", "GUI app from the shell does not open a window", "jailbee apps", "jailbee browser", "jailbee firefox", "launch a GUI app in the container", "run a command in the background in the container", "käynnistä selain kontissa", "avaa gui-sovellus kontissa". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
+description: Use when running or explaining day-to-day `jailbee` (`jb`) commands against an already-set-up repo — creating/entering/destroying branch containers, the host↔container git bridge (`jailbee git push`/`pull`/`fetch`/`checkout`/`diff`), network modes (`jailbee net strict|loose`), egress overrides (`jailbee net egress ls|add|rm|export`, short alias `jailbee egress`), port forwarding (`jailbee port ls`/`to-container`/`to-host`/`rm`), the optional remote SSH service (`jailbee remote ssh`), `jailbee dashboard`, `jailbee console` (the interactive `jb>` prompt), bare `jailbee` and the `default_command` setting, `jailbee config edit`, `jailbee litellm up|down|status|login|logout|logs` and in-container `claude-jb`, snapshots, mounts, `jailbee ide`/`jailbee chrome`/`jailbee firefox`/`jailbee browser`/`jailbee apps ls`/`jailbee apps run`/`jailbee exec --detach`, background ops, reviewing PRs with `jailbee new --pr`, opening/updating PRs with `jailbee pr push`/`jailbee submodule pr push`, publishing an in-container agent's staged review comments with `jailbee review apply|ls|show|drop` and issue actions with `jailbee issue show|apply|resolve`, browsing both with `jailbee outbox` and discarding proposals with `jailbee outbox clear`, listing published actions with `jailbee outbox sent ls`, stored agent logins and credential groups (`jailbee account`, `jailbee account group`), the shared RDP display (`jailbee display up|down|status`) and attaching the host display (`jailbee display attach`), native windows over `waypipe ssh`, the optional work network (`jailbee net migrate`), host-local config (`jailbee config edit --local`, `jailbee config migrate`) and silencing advisories (`jailbee dismiss`). Trigger on "how do I use jailbee", "jailbee new/shell/git/net/port/dashboard/config edit", "jailbee litellm", "claude-jb", "jailbee remote ssh", "connect to Jailbee over SSH", "how do I use gie", "gie new/shell/git/net/port/dashboard" (`gie` was jailbee's pre-1.0 command name, removed in 1.1.0 — users may still say it out of habit), "edit jailbee config interactively", "jailbee config edit keys", "spin up a container for this branch", "push/pull/merge the container branch", "switch the container to loose/strict", "allow this container to reach X", "add a host to the allowlist", "why can't the container reach X", "forward a port into/out of the container", "expose adb inside the container", "review this PR in a container", "open a PR for a submodule", "publish this submodule's commits as a PR", "post my review comments", "apply the review", "jailbee review ls/show/drop", "what's pending in the PR outbox", "luo kontti tälle branchille", "vie/tuo muutokset kontista", "välitä portti konttiin", "salli kontille pääsy hostiin", "lisää host sallittujen listalle", "avaa PR alimoduulille", "vie alimoduulin muutokset PR:ksi", "postaa katselmointikommentit", "julkaise katselmointi", "jailbee account ls/use/park", "jailbee account group", "jailbee claude ls/use/park" (deprecated alias of `jailbee account`), "jailbee issue apply", "apply the staged issues", "jailbee outbox", "what has the agent staged", "jailbee net migrate", "jailbee config migrate", "julkaise issuet", "switch which account the container uses", "switch the Claude account", "change which Claude login the container uses", "store this login", "store this Claude login", "vaihda tili", "vaihda Claude-tili", "mikä tili kontissa on käytössä", "mikä Claude-tili kontissa on käytössä", "jailbee display attach", "GUI app from the shell does not open a window", "jailbee apps", "jailbee browser", "jailbee firefox", "launch a GUI app in the container", "run a command in the background in the container", "käynnistä selain kontissa", "avaa gui-sovellus kontissa". For first-time repo configuration instead (writing `.jailbee/config.yaml`, `install.d/` snippets, golden-image tailoring) use the jailbee-repo-setup skill.
 ---
 
 # Using JailBee day-to-day
@@ -1556,9 +1556,11 @@ No pending sources means no extra question. An unreadable outbox never blocks th
 own branch. `jailbee submodule pr push` is unchanged.
 
 For an imported branch, publish its pinned source manifest explicitly:
-`jailbee pr push <container> --source-manifest <file.json>`. Pending source
-proposals show `awaiting-push`; `outbox apply` refuses them with a push hint,
-while the outbox `c` action invokes PR push. `jailbee pr ls` includes source
+`jailbee pr push <container> --source-manifest <file.json>`. Source proposals
+live in the host outbox store (no `incus exec`); pending ones show
+`awaiting-push`; `outbox apply` refuses them with a push hint, while the outbox
+`c` action invokes PR push. One interrupted during the PR call shows `uncertain`:
+check GitHub, then rerun the same push (it asks before publishing again). `jailbee pr ls` includes source
 branch binding rows; `jailbee pr unbind <container> --head <branch>` removes
 one such row without removing the ordinary binding. See the
 [source schema](../jailbee-pr-review/references/manifest-schema.md#source-publication-examples).
@@ -1669,12 +1671,13 @@ large tree, or when `pr.prompt` asks for slower work.
 A container's own `gh` is read-only by design (see "Reviewing a pull
 request" above): an agent inside it that wants to post review comments,
 reply to one, or rewrite a PR's description cannot call the GitHub API
-directly. Instead it writes a JSON manifest into `~/.jailbee/pr-outbox/` —
+directly. Instead it stages a JSON manifest in the host outbox store over the
+broker socket —
 the **container-side** contract, exact schema and worked examples live in
 the **jailbee-pr-review** skill, not here. What matters on the host:
 
 ```bash
-jailbee review ls                    # (deprecated: use `jailbee outbox ...`) every running container's pending manifests
+jailbee review ls                    # (deprecated: use `jailbee outbox ...`) every container's pending manifests
 jailbee review show <name>           # (deprecated: use `jailbee outbox ...`) print every pending body in full (rendered on a terminal)
 jailbee review apply <name> --dry-run   # print the plan, publish nothing
 jailbee review apply <name>          # ask once, then publish to GitHub
@@ -1686,9 +1689,10 @@ prompts when several do. `apply` shows the whole plan — every comment, reply
 and description body — before one confirmation (`-y` skips it; refused off a
 TTY without `-y`). A manifest whose PR head moved since it was written is
 held back (`--force` posts its line comments anyway, which GitHub then shows
-as outdated). Applying deletes the manifest and appends a line to
-`~/.jailbee/pr-outbox/applied.log`; re-running `apply` is a no-op for
-anything already published, so nothing double-posts.
+as outdated). Each action is journaled in the host outbox store and recorded
+in `jb outbox sent`; the manifest goes once every action landed. Re-running
+`apply` skips anything already published, so nothing double-posts; an action
+interrupted mid-call reads as uncertain and blocks a re-run until checked.
 
 When a PR manifest has a pending review comment or reply, `apply` offers
 **Publish**, **Publish as draft review**, and **Cancel** (Esc cancels too).
@@ -1751,7 +1755,10 @@ opening one). The ISSUES column right after PR shows the same
 `✉N` for the container's issue outbox (see **jailbee-issue-management**). The dashboards fold both into one OUTBOX column (`✉N` = PR plus issue manifests; their PR cell shows only the number), the Qt cards show the same `✉N`, and the container menu offers "Apply N PR action(s)" and "Apply N issue action(s)" entries. `jailbee destroy`
 warns about unapplied PR actions the same way it warns about an unpushed
 commit, since destroying the container takes the outbox with it — and about
-unapplied issue actions the same way.
+unapplied issue actions the same way. Only a proposal whose publication outcome
+is uncertain survives the destroy: `jailbee outbox` lists it as
+`<container>@<uuid>` (destroyed) for `jailbee issue resolve` / `jailbee review
+resolve` and `jailbee outbox drop`.
 
 See the **jailbee-pr-review** skill for the manifest format and how the
 in-container agent is expected to use it — this section only covers
@@ -1760,16 +1767,16 @@ publishing what it already wrote.
 ## The issue outbox — `jailbee issue`
 
 The same pattern for GitHub issues. An in-container agent stages issue
-creates, edits, comments, label changes, closes and reopens as JSON manifests
-in `~/.jailbee/issue-outbox/` — across the superproject and any declared
+creates, edits, comments, label changes, closes and reopens as proposals
+in the host outbox store — across the superproject and any declared
 submodule, since each action names its own `repo` — and a human publishes
 them from the host:
 
 ```bash
-jailbee issue ls                  # (deprecated: use `jailbee outbox ...`) pending manifests across this repo's containers
+jailbee outbox ls                 # pending proposals across this repo's containers
 jailbee issue show feat-foo       # (deprecated: use `jailbee outbox ...`) (omit the name on a terminal to pick) every pending proposal in full, never truncated
 jailbee issue apply feat-foo      # one plan across all of them, one confirmation
-jailbee issue drop feat-foo 001-triage.json   # deprecated: use `jailbee outbox drop`
+jailbee outbox drop feat-foo issue/001-triage.json   # discard unpublished
 ```
 
 `apply` refuses the whole batch if any action's `expected` block (the issue

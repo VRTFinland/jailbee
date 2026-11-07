@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
 from jailbee import issue_manifest, issue_outbox, pr, pr_outbox, prompting
 from jailbee.incus import IncusError
+from jailbee.orchestration.store import StoreError
 from jailbee.outbox import sent
 from jailbee.outbox.inspect import build_views, safe_text
 from jailbee.outbox.io import PrManagement
@@ -20,13 +22,12 @@ from jailbee.outbox.models import (
     ProposalId,
     StoreSnapshot,
 )
-from jailbee.outbox.service import _identity, load_container
+from jailbee.outbox.publication_db import open_publications
+from jailbee.outbox.service import _identity, instance_identity, load_container
 from jailbee.outbox_io import (
     ContainerIdentity,
     JournalError,
-    JournalStore,
     OutboxReadError,
-    journal_key,
 )
 from jailbee.tui import error_plain, info_plain, success_plain
 
@@ -75,14 +76,11 @@ def _checked(
     container: str,
     proposal: ProposalId,
     identity: ContainerIdentity,
-    journal_store: JournalStore,
     expected_revision: str | None,
     *,
     raise_errors: bool = False,
 ) -> tuple[ContainerView, str]:
-    fresh = load_container(
-        cfg, incus, container, journal_store=journal_store, raise_errors=raise_errors
-    )
+    fresh = load_container(cfg, incus, container, raise_errors=raise_errors)
     if not fresh.available or fresh.identity != identity:
         raise OutboxChanged(fresh.error or "container changed; refresh required")
     view = next((v for v in fresh.proposals if v.id == proposal), None)
@@ -244,7 +242,6 @@ def publish_selected(
     container: str,
     proposal: ProposalId,
     *,
-    journal_store: JournalStore,
     options: PublishOptions,
     confirm: Callable[[int], bool],
     confirm_foreign: Callable[[str], bool] | None = None,
@@ -279,13 +276,18 @@ def publish_selected(
             raise OutboxError("draft is only valid for PR publication")
         if proposal.kind == "issue" and options.force:
             raise OutboxError("force is only valid for PR publication")
-        identity = _identity(incus, container)
         manager = PrManagement() if proposal.kind == "pr" else None
-        lock = (
-            manager.lock(identity)
-            if manager is not None
-            else journal_store.lock(journal_key(identity, proposal.name))
-        )
+        publications = None
+        lock: AbstractContextManager[object]
+        if manager is not None:
+            identity = _identity(incus, container)
+            lock = manager.lock(identity)
+        else:
+            # Issue publication is single-flight per proposal through its claim
+            # in the host outbox store, held from the first freshness check on.
+            identity, uuid = instance_identity(incus, container)
+            publications = open_publications()
+            lock = publications.claim(uuid, "issue", proposal.name)
         with lock:
             fresh, revision = _checked(
                 cfg,
@@ -293,7 +295,6 @@ def publish_selected(
                 container,
                 proposal,
                 identity,
-                journal_store,
                 expected_revision,
                 raise_errors=raise_errors,
             )
@@ -307,7 +308,9 @@ def publish_selected(
                     container,
                     pr_number=None,
                     confirm=confirm,
-                    outbox=pr_outbox.Outbox(snapshot.as_dict(), snapshot.rejected, identity),
+                    # The store-backed fresh read inside is checked against the
+                    # shared revision (`expected_revision`), not a second preview.
+                    outbox=None,
                     force=options.force,
                     draft=options.draft,
                     choose_mode=choose_mode,
@@ -328,24 +331,24 @@ def publish_selected(
                     publisher=options.publisher,
                 )
 
-            batch = issue_outbox.prepare_batch(
-                cfg,
-                incus,
-                container,
-                (proposal.name,),
-                uid=cfg.container_user.uid,
-                journal_store=journal_store,
-            )
+            batch = issue_outbox.prepare_batch(cfg, incus, container, (proposal.name,))
             # Prepare reads independently: do not approve a newer domain proposal
             # merely because its own digest will pass apply_batch's later check.
+            # Row versions come from the checked view: the content must match it.
             prepared_store = StoreSnapshot(
-                "issue", tuple(sorted(batch.outbox.files.items())), snapshot.rejected, ()
+                "issue",
+                tuple(sorted(batch.outbox.files.items())),
+                snapshot.rejected,
+                (),
+                snapshot.versions,
             )
             prepared = next(
                 (
                     v
                     for v in build_views(
-                        batch.identity, (prepared_store,), journal_store=journal_store
+                        batch.identity,
+                        (prepared_store,),
+                        issue_journals=issue_outbox.store_journals(batch.identity, batch.uuid),
                     )
                     if v.id == proposal
                 ),
@@ -359,7 +362,6 @@ def publish_selected(
                 container,
                 proposal,
                 identity,
-                journal_store,
                 revision,
                 raise_errors=raise_errors,
             )
@@ -400,7 +402,6 @@ def publish_selected(
                 container,
                 proposal,
                 identity,
-                journal_store,
                 revision,
                 raise_errors=raise_errors,
             )
@@ -411,7 +412,6 @@ def publish_selected(
                 container,
                 proposal,
                 identity,
-                journal_store,
                 revision,
                 raise_errors=raise_errors,
             )
@@ -423,8 +423,7 @@ def publish_selected(
                 report = issue_outbox.apply_batch(
                     batch,
                     incus=incus,
-                    uid=cfg.container_user.uid,
-                    journal_store=journal_store,
+                    publications=publications,
                     before_action=tick,
                     container_prefix=cfg.container_prefix,
                     publisher=options.publisher,
@@ -481,6 +480,7 @@ def publish_selected(
         JournalError,
         OutboxReadError,
         IncusError,
+        StoreError,
         issue_outbox.IssueGateError,
         pr.PrError,
         pr_outbox.GateError,
@@ -504,6 +504,7 @@ def publish_selected(
                     JournalError,
                     OutboxReadError,
                     IncusError,
+                    StoreError,
                     pr.PrError,
                 ),
             ):

@@ -1120,8 +1120,8 @@ token. Revoke an exposed token at GitHub and remove stale container copies.
 
 **Two identities, on purpose.** Supply a read-only token for the container
 and keep the host's publishing credentials separate. The intended workflow
-stages issue and PR mutations as JSON manifests in `~/.jailbee/issue-outbox`
-or `~/.jailbee/pr-outbox`; a human reviews and publishes them on the host
+stages issue and PR mutations as proposals in the host outbox store
+(`broker.db`); a human reviews and publishes them on the host
 with `jailbee issue apply`, `jailbee review apply` or `jailbee outbox apply`,
 using the host's independently authenticated `gh`.
 
@@ -1141,15 +1141,16 @@ full field reference, the `0600` permission requirement, and the
 ## Unified proposal management
 
 `jb outbox` brings PR and issue proposals into one view without moving files
-or changing manifest schemas. Physical stores remain
-`/home/dev/.jailbee/pr-outbox/` and `/home/dev/.jailbee/issue-outbox/` inside
-the container (`~/.jailbee/pr-outbox/` and `~/.jailbee/issue-outbox/` for its
-user). New non-child containers bootstrap both directories as the container
-user before agents run, including with `--no-clone` or `--no-autostart`.
-Spawned children do not bootstrap them and cannot stage GitHub proposals.
-Staging commands create missing stores as needed; do not write files or
-directories by hand. Inspection never creates missing directories and makes no
-`gh` or network calls.
+or changing manifest schemas. Issue and PR proposals (review, comment, reply,
+description and source) and their draft batches live in the host outbox store
+(`broker.db`), staged over the broker socket; publication journals each PR
+action there (prepared before the GitHub call, applied with its sent record
+after it). Spawned children cannot stage GitHub proposals. Nothing is read
+from or written to the container, so the host never runs `incus exec` for the
+outbox, and `jb outbox`, `jb review ls` and `jb review apply` also work on
+stopped containers. Proposals staged by earlier versions as files in the
+container are ignored, not imported: publish or drop them before upgrading.
+Inspection reads the store only and makes no `gh` or network calls.
 
 ```bash
 jb outbox                          # the outbox manager: this repo's containers
@@ -1174,8 +1175,8 @@ files are retained while another pending manifest in the same store still
 uses them. Surviving JSON fields are preserved, not rebuilt from defaults.
 
 Selective deletion is an edit, allowed only before any recorded publication
-progress. PR progress sidecars/receipts and issue journals block edits;
-malformed or unreadable evidence is not treated as empty. For a whole issue
+progress. Publication journal entries (of both kinds) block edits; an
+unreadable journal is not treated as empty. For a whole issue
 manifest with settled progress only, `--archive-journal` permits local
 deletion. First run `jb outbox show <container> issue/<manifest>.json` and
 inspect its receipts and pending actions before approving whole-manifest
@@ -1207,9 +1208,8 @@ issue journal progress is archived automatically before deletion. It keeps
 issue manifests with any **uncertain** action: reconcile the outcome with
 `jb issue resolve` first. PR manifests with publication evidence (including
 partial publication) are also kept; inspect them with `jb outbox` or
-finish with `jb outbox apply`. Malformed or unreadable progress evidence is
-not treated as permission to delete. Unsafe rejected files are reported as
-warnings, not deleted.
+finish with `jb outbox apply`. An unreadable journal is
+not treated as permission to delete.
 
 The plan lists what will be deleted or kept and why. Before each deletion,
 JailBee rereads the proposal and its neighbors: proposals whose revision
@@ -1225,9 +1225,8 @@ same kept/unavailable status rules despite deleting nothing.
 
 `show` includes the revision token, raw JSON, full proposed text and available
 receipts. `ls`/`show` support `-o json` (also `--format`/`--output`) for
-structured inspection. A stopped or inaccessible container is
-**unavailable**, not empty; missing stores and rejected unsafe files are
-reported separately. Overview exits 2 if any container is unavailable,
+structured inspection. A stopped container is listed like a running one; an
+inaccessible store or instance is **unavailable**, not empty. Overview exits 2 if any container is unavailable,
 while still emitting its structured result.
 
 A human on the host can approve exactly one manifest:
@@ -1276,15 +1275,20 @@ host-only recipe in [Manual testing](https://github.com/VRTFinland/jailbee/blob/
 #### The Sent log
 
 Every action JailBee publishes from an outbox is recorded locally in the host
-state database (`sent_record`): `review apply`, `issue apply`/`resolve`,
+outbox store (`broker.db`, table `outbox_sent`), keyed by the container's Incus
+instance uuid, which names one incarnation: `review apply`, `issue apply`/`resolve`,
 `pr push` (including source publications), the dashboard Outbox `p` and the
 orchestrator broker's [publish grants](orchestration.md#publish-the-orchestrators-own-outboxes).
 A record carries the publisher (`user` or `orchestrator`), the state
 (`applied`, or `uncertain` when GitHub may have accepted it; resolving it as
 applied updates the record, dropping it deletes the record), the content and the
-GitHub URL. Records outlive the container. Recording is best effort: a database
-error warns and never fails a publish that GitHub accepted, and a retry never
-duplicates a row.
+GitHub URL. Records outlive the container. An issue action's record is written
+in the same transaction as its journal entry, so the two never disagree; for PR
+reviews and sources recording is best effort: a database error warns and never
+fails a publish that GitHub accepted. A retry never duplicates a row. Inside the
+container, `jailbee outbox sent` lists that container's own records. Records
+written to `state.sqlite` by earlier versions are not carried over; the JSON
+output (`-o json`, schema 2) names the incarnation by `uuid`.
 
 ```bash
 jb outbox sent ls [CONTAINER] [--repo PREFIX] [-o table|json] [--limit N]
@@ -1410,8 +1414,8 @@ agents stage proposals; humans inspect and approve on the host.
 With the recommended read-only token, a container's `gh` can inspect issues
 but cannot mutate them through that credential (see [GitHub CLI (`gh`)
 inside containers](#github-cli-gh-inside-containers)). Stage proposed issue
-creates, edits, comments, labels, assignee and state changes as JSON manifests in
-`~/.jailbee/issue-outbox/`; a human reviews and applies them from the host
+creates, edits, comments, labels, assignee and state changes as proposals in
+the host outbox store (`jailbee issue ...` in the container); a human reviews and applies them from the host
 with `jailbee issue apply`. The manifest schema itself is normative in the
 **jailbee-issue-management** skill
 (`docs/skills/jailbee-issue-management/references/manifest-schema.md`); this
@@ -1464,33 +1468,25 @@ broader target, not extra GitHub permissions: publication still uses the
 host's account and remains subject to GitHub's permissions and the normal
 proposal checks. Unknown local paths are refused.
 
-### `jailbee issue ls / show / apply / drop / resolve`
+### `jailbee issue show / apply / resolve`
 
-`issue ls`, `issue show` and `issue drop` are deprecated aliases of
-`jailbee outbox ls|show|drop` (hidden, hint on stderr); prefer `jailbee outbox`.
+`issue show` is a deprecated alias of `jailbee outbox show` (hidden, hint on
+stderr); prefer `jailbee outbox`. Listing and dropping issue proposals is
+`jailbee outbox ls` and `jailbee outbox drop`.
 
 ```bash
-jailbee issue ls [<name>] [-o table|json] [--fields …]    # deprecated
 jailbee issue show [<name>] [<manifest>]                  # deprecated
 jailbee issue apply [<name>] [--manifest <name>] [--yes] [--foreign] [--dry-run]
-jailbee issue drop [<name>] [<manifest>] [--archive-journal] [--yes]   # deprecated
 jailbee issue resolve [<name>] [<manifest>] [<action>] (--applied --url <url> [--issue <n>] | --retry) [--yes]
 ```
 
-`jailbee issue ls` lists every pending manifest across this repo's
-containers — CONTAINER, MANIFEST, ACTIONS (counts by kind), REPOS, STATE
-(`pending`, `in progress`, `uncertain`, or `error`) — read from each
-container's own outbox and host journal, **never a GitHub read**. Naming a
-container narrows the listing to it; omitting it does **not** open a
-picker the way most `jailbee` commands do — it lists everything at once. A
-stopped container's outbox cannot be read at all, so it is named in a note
-under the table rather than shown as empty. `jailbee issue show` prints a
+`jailbee issue show` prints a
 manifest's full proposed text and journal state, never truncated, for
 actually reading a body before deciding. On a terminal the Markdown bodies are
 wrapped to the window and coloured; HTML tags and image URLs are shown as text
 rather than hidden, and piped output is the raw text.
 
-Pending manifests are also visible without running `issue ls`:
+Pending manifests are also visible without running `outbox ls`:
 `jailbee ls`'s ISSUES column shows `✉N`. The dashboards use a combined
 OUTBOX column by default and an **Outbox** menu for inspecting proposals and
 publishing one manifest at a time. `jailbee destroy`'s guard names unapplied
@@ -1569,31 +1565,54 @@ Either way, the manifest's current proposal and journal state is printed
 first, then — absent `--yes` — a confirmation naming the exact action
 (`Mark applied …` / `Retry …`).
 
-### Automatic journal archival, and `jailbee issue drop --archive-journal`
+### Automatic journal archival, and `jailbee outbox drop --archive-journal`
 
-Each fully applied manifest is cleaned up before the next manifest starts:
-its actions are logged to `~/.jailbee/issue-outbox/applied.log` (identifiers
-and receipt URLs, never body text), its outbox files are deleted (a shared
-`body_file` only when no other pending manifest references it), and its host
-journal is archived, in that order. A cleanup failure stops the batch.
+Issue proposals, their publication journals and the Sent log all live in the
+host outbox store (`broker.db`). Publishing one action is two commits around
+the GitHub call: `prepared` first, then the outcome together with its Sent log
+record and — when that outcome completes the proposal — the proposal's removal
+and the journal's archiving, all in one transaction. So a fully applied
+proposal is gone from the outbox the moment its last receipt is recorded; there
+is no separate cleanup step that can half-fail. A run that dies between the two
+commits leaves the action `prepared`, which every reader shows as `uncertain`
+until it is resolved with `jailbee issue resolve`; a journal is never archived
+while an outcome is uncertain. Publication is single-flight per proposal: a
+claim in the store refuses a second run (or a resolution) while another live
+one holds it, and a claim whose process is gone is taken over. The container
+reads what was published from it with `jailbee outbox sent`.
 
-If logging or deletion fails while the manifest remains, retrying `apply`
-uses the journal to skip already-applied actions and retry cleanup. If
-archival fails **after deletion**, the proposal is already gone and the
-active journal remains; ordinary `apply` cannot rediscover that deleted
-manifest. Inspect the reported error and retained receipts rather than
-recreating the proposal and risking duplicate publication.
+PR source proposals (`jailbee pr source`) follow the same store rules. Their
+publication (`jb pr push <c> --source-manifest <name>`, or an orchestrator's
+granted publish request) is journaled as one action, the PR create or update;
+pushing the pinned SHA before it is repeatable and not journaled. A run that
+dies during the PR call leaves the proposal `uncertain`; check the PR on
+GitHub and rerun the same push, which asks before publishing again. An
+orchestrator's request is refused until a human has done so.
 
 For abandoning a manifest by hand instead — one a human decided not to
-publish — `jailbee issue drop` refuses by default the instant the manifest
+publish — `jailbee outbox drop` refuses by default the instant the manifest
 has *any* recorded journal progress at all, even fully settled progress, so
 a proposal that already changed GitHub is never silently forgotten.
 `--archive-journal` opts into dropping it anyway: it still refuses outright
 if any of its actions is `uncertain` (resolve that first), but for settled
 progress it prints every applied receipt and every action still pending,
-deletes the container's outbox files, and only then archives the journal —
+removes the proposal, and archives the journal in the same transaction —
 keeping the record of what happened while discarding the rest of the
 proposal.
+
+### Uncertain publications of a destroyed container
+
+Destroying a container deletes its pending proposals and drafts, except a
+proposal whose publication outcome is uncertain: that one is kept, with its
+bodies and journal, so the outcome can still be settled. `jailbee outbox`
+lists such proposals under `<container>@<instance-uuid>`, marked
+`(destroyed)` (`"destroyed": true` in `-o json`). Use that name with
+`jailbee issue resolve` or `jailbee review resolve` to settle the uncertain
+action, and with `jailbee outbox show` / `drop` (`--archive-journal` for
+settled progress) to inspect or discard what is left. A destroyed
+container's proposals cannot be published (`jailbee outbox apply` refuses);
+a PR source proposal cannot be pushed again either, so settle it with
+`jailbee review resolve` and drop it.
 
 ### What enforces read-only container access
 
