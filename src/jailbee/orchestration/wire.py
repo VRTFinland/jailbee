@@ -20,6 +20,20 @@ OUTBOX_PUT = "outbox.put"
 OUTBOX_LIST = "outbox.list"
 OUTBOX_SHOW = "outbox.show"
 OUTBOX_OPS: frozenset[str] = frozenset({OUTBOX_PUT, OUTBOX_LIST, OUTBOX_SHOW})
+# Draft batches (`--batch`): appends are small requests; showing one can return up
+# to its whole manifest plus bodies, so that reply gets the outbox cap.
+OUTBOX_DRAFT_APPEND = "outbox.draft.append"
+OUTBOX_DRAFT_SHOW = "outbox.draft.show"
+OUTBOX_DRAFT_LIST = "outbox.draft.list"
+OUTBOX_DRAFT_SUBMIT = "outbox.draft.submit"
+OUTBOX_DRAFT_DISCARD = "outbox.draft.discard"
+OUTBOX_DRAFT_READ_OPS: frozenset[str] = frozenset({OUTBOX_DRAFT_SHOW, OUTBOX_DRAFT_LIST})
+OUTBOX_DRAFT_OPS: frozenset[str] = OUTBOX_DRAFT_READ_OPS | {
+    OUTBOX_DRAFT_APPEND,
+    OUTBOX_DRAFT_SUBMIT,
+    OUTBOX_DRAFT_DISCARD,
+}
+OUTBOX_OPS = OUTBOX_OPS | OUTBOX_DRAFT_OPS
 # The exact prefix `encode_request` writes for an outbox put: the listener reads
 # it before the whole line is in, to know which cap the line gets.
 _OUTBOX_PUT_PREFIX = b'{"v":%d,"op":"%s",' % (VERSION, OUTBOX_PUT.encode())
@@ -91,7 +105,7 @@ def request_line_limit(prefix: bytes) -> int:
 
 def response_line_limit(op: str) -> int:
     """The line cap for the reply to ``op``."""
-    return OUTBOX_MAX_LINE_BYTES if op == OUTBOX_SHOW else MAX_LINE_BYTES
+    return OUTBOX_MAX_LINE_BYTES if op in (OUTBOX_SHOW, OUTBOX_DRAFT_SHOW) else MAX_LINE_BYTES
 
 
 def _dump(obj: dict[str, Any], max_bytes: int = MAX_LINE_BYTES) -> bytes:
