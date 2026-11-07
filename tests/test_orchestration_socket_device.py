@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import logging
 import queue
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
-from pathlib import PurePosixPath
 
 import pytest
 
-from jailbee.incus import ORCHESTRATION_DEVICE, IncusError
 from jailbee.inbox import transport
+from jailbee.incus import ORCHESTRATION_DEVICE, IncusError
 from jailbee.orchestration import broker_state, labels, socket_device, socket_lifecycle, state
 from jailbee.orchestration.store import BrokerStore, store_path
 from tests.test_orchestration_broker import GRANT, Rig, _c
@@ -524,9 +524,7 @@ def test_legacy_mount_path_invalidates_the_cache_and_is_migrated(env) -> None:
     env.tick()
     live = env.listener.dirs[UUID]
     env.devices["proj-orch"][ORCHESTRATION_DEVICE]["path"] = "/run/jailbee/orchestration"
-    socket_lifecycle.check_socket_devices(
-        env.rig.incus, env._list(), env.memory, env.rig.root
-    )
+    socket_lifecycle.check_socket_devices(env.rig.incus, env._list(), env.memory, env.rig.root)
     assert "proj-orch" not in env.memory.attached
     env.tick()
     assert adds(env) == ["proj-orch", "proj-orch"]
