@@ -295,6 +295,19 @@ class Listener:
             data = wire.encode_response(wire.fail(exc.code, exc.detail))
         self._post(lambda: self._reply(conn_id, data))
 
+    def keepalive(self, conn_id: int) -> None:
+        """Send a non-final frame without finishing the parked request."""
+        data = wire.encode_response(wire.ok({"kind": "keepalive"}))
+
+        def send() -> None:
+            conn = self._conns.get(conn_id)
+            if conn is not None and len(conn.outbuf) + len(data) > OUTBUF_CAP:
+                self._drop_conn(conn_id, event=True)
+            else:
+                self._send(conn_id, data)
+
+        self._post(send)
+
     def _query_worker(self) -> None:
         queries = self._queries
         assert queries is not None

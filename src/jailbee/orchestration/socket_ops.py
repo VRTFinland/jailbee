@@ -367,6 +367,7 @@ class NextArgs:
     digest: int
     timeout: float | None
     replace: bool = False
+    keepalive: bool = False
     info: WaiterInfo | None = None
     ref: str | None = None
 
@@ -385,6 +386,9 @@ def handle_next_args(args: dict[str, object]) -> NextArgs:
     replace = args.get("replace", False)
     if not isinstance(replace, bool):
         raise wire.WireError(wire.BAD_REQUEST, "replace must be a boolean")
+    keepalive = args.get("keepalive", False)
+    if not isinstance(keepalive, bool):
+        raise wire.WireError(wire.BAD_REQUEST, "keepalive must be a boolean")
     info = _waiter_info(args.get("waiter"))
     tokens = args.get("wake_on")
     wake_set: frozenset[str] | None = None
@@ -417,6 +421,7 @@ def handle_next_args(args: dict[str, object]) -> NextArgs:
         digest=_positive_int(args, "digest"),
         timeout=timeout,
         replace=replace,
+        keepalive=keepalive,
         info=info,
     )
 
@@ -460,6 +465,8 @@ class Waiter:
     waited: bool = False
     settle_until: float | None = None
     info: WaiterInfo | None = None
+    keepalive: bool = False
+    next_keepalive: float | None = None
 
 
 class Waiters:
@@ -489,6 +496,19 @@ class Waiters:
         for key, current in list(self._by_uuid.items()):
             if current.uuid == uuid and current.conn_id == conn_id:
                 del self._by_uuid[key]
+
+    def due_keepalives(self, mono: float) -> list[int]:
+        """Return due parked connections and advance their next keepalive time."""
+        due: list[int] = []
+        for waiter in self._by_uuid.values():
+            if (
+                waiter.keepalive
+                and waiter.next_keepalive is not None
+                and mono >= waiter.next_keepalive
+            ):
+                due.append(waiter.conn_id)
+                waiter.next_keepalive = mono + wire.KEEPALIVE_INTERVAL
+        return due
 
     def evaluate(
         self, memory: broker_state.BrokerMemory, store: BrokerStore, *, now: float, mono: float

@@ -203,6 +203,295 @@ def test_call_next_version_mismatch_not_retried(path):
         srv.close()
 
 
+def test_unbounded_wait_stops_after_continuous_outage():
+    now = [0.0]
+    attempts = []
+
+    class Dropped:
+        connected = True
+
+        def call(self, op, args, *, timeout):
+            raise BrokerUnreachable()
+
+        def close(self):
+            pass
+
+    def factory():
+        attempts.append(now[0])
+        if len(attempts) == 1:
+            return Dropped()
+        if now[0] > 120:
+            pytest.fail("wait retried beyond the outage limit")
+        raise BrokerUnreachable()
+
+    def sleep(seconds):
+        now[0] += seconds
+
+    with pytest.raises(BrokerUnreachable):
+        call_next(factory, {}, timeout=None, clock=lambda: now[0], sleep=sleep)
+    assert now[0] == 120
+    assert 0 < attempts[-1] < 120
+
+
+def test_missed_keepalives_reconnect_but_do_not_reset_outage():
+    now = [0.0]
+    timeouts = []
+    closed = []
+
+    class Hung:
+        connected = True
+
+        def call(self, op, args, *, timeout):
+            assert args["keepalive"] is True
+            assert timeout is not None
+            timeouts.append(timeout)
+            now[0] += timeout
+            if now[0] > 120:
+                pytest.fail("connected but hung broker reset the outage bound")
+            raise TimeoutError
+
+        def close(self):
+            closed.append(True)
+
+    def sleep(seconds):
+        now[0] += seconds
+
+    with pytest.raises(BrokerUnreachable):
+        call_next(Hung, {}, timeout=None, clock=lambda: now[0], sleep=sleep)
+    assert timeouts[0] == 40
+    assert len(timeouts) > 1
+    assert len(closed) == len(timeouts)
+    assert now[0] == 120
+
+
+def test_keepalive_resets_outage_only_after_broker_progress():
+    now = [0.0]
+    attempts = []
+
+    class Stub:
+        connected = True
+
+        def call(self, op, args, *, timeout):
+            attempts.append(now[0])
+            if len(attempts) == 1:
+                raise BrokerUnreachable()
+            if len(attempts) == 2:
+                now[0] = 100
+                self.on_keepalive()
+                now[0] = 200
+                raise BrokerUnreachable()
+            return {"kind": "message", "id": "ready"}
+
+        def close(self):
+            pass
+
+    def sleep(seconds):
+        now[0] += seconds
+
+    assert call_next(Stub, {}, timeout=None, clock=lambda: now[0], sleep=sleep) == {
+        "kind": "message",
+        "id": "ready",
+    }
+    assert len(attempts) == 3
+
+
+def test_client_ignores_keepalive_until_final_wake(monkeypatch):
+    monkeypatch.setattr(transport.time, "monotonic", lambda: 0.0)
+
+    class Socket:
+        def __init__(self):
+            self.timeouts = []
+
+        def settimeout(self, value):
+            self.timeouts.append(value)
+
+        def sendall(self, payload):
+            pass
+
+        def recv(self, size):
+            return next(frames)
+
+        def close(self):
+            pass
+
+    frames = iter(
+        [
+            wire.encode_response(wire.ok({"kind": "keepalive"})),
+            wire.encode_response(wire.ok({"kind": "keepalive"})),
+            wire.encode_response(wire.ok({"kind": "message", "id": "ready"})),
+        ]
+    )
+    sock = Socket()
+    client = Client("unused")
+    client._sock = sock
+    client._reader = sock
+    budgets = iter([35, 25])
+    client.on_keepalive = lambda: next(budgets)
+    try:
+        assert client.call("next", {"keepalive": True}, timeout=40) == {
+            "kind": "message",
+            "id": "ready",
+        }
+        assert sock.timeouts == [40, 40, 35, 35, 25, 25]
+    finally:
+        client.close()
+
+
+def test_partial_keepalive_cannot_extend_frame_watchdog(monkeypatch):
+    now = [0.0]
+    reads = []
+    monkeypatch.setattr(transport.time, "monotonic", lambda: now[0])
+
+    class Socket:
+        def settimeout(self, timeout):
+            self.timeout = timeout
+
+        def connect(self, path):
+            pass
+
+        def makefile(self, mode):
+            return self
+
+        def sendall(self, payload):
+            pass
+
+        def recv(self, size):
+            reads.append(self.timeout)
+            if self.timeout < 15:
+                now[0] += self.timeout
+                raise TimeoutError
+            now[0] += 15
+            return b" "
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(transport.socket, "socket", lambda *a: Socket())
+    with Client("unused") as client, pytest.raises(TimeoutError):
+        client.call("next", {"keepalive": True}, timeout=40)
+    assert now[0] == 40
+    assert reads == [40, 25, 10]
+
+
+@pytest.mark.parametrize("deadline", [None, 120.0])
+def test_reconnect_connect_timeout_respects_remaining_budget(monkeypatch, deadline):
+    now = [0.0]
+    connect_timeouts = []
+    monkeypatch.setattr(transport.time, "monotonic", lambda: now[0])
+
+    class Socket:
+        def settimeout(self, timeout):
+            self.timeout = timeout
+
+        def connect(self, path):
+            connect_timeouts.append(self.timeout)
+            if len(connect_timeouts) == 1:
+                now[0] = 118
+                raise ConnectionRefusedError
+            now[0] += self.timeout
+            raise TimeoutError
+
+        def close(self):
+            pass
+
+    class Dropped:
+        connected = True
+
+        def call(self, *args, **kw):
+            raise BrokerUnreachable
+
+        def close(self):
+            pass
+
+    count = [0]
+
+    def factory():
+        count[0] += 1
+        return Dropped() if count[0] == 1 else Client("unused")
+
+    def sleep(seconds):
+        now[0] += seconds
+
+    monkeypatch.setattr(transport.socket, "socket", lambda *a: Socket())
+    if deadline is None:
+        with pytest.raises(BrokerUnreachable):
+            call_next(factory, {}, timeout=None, clock=lambda: now[0], sleep=sleep)
+    else:
+        assert call_next(factory, {}, timeout=deadline, clock=lambda: now[0], sleep=sleep) == {
+            "kind": "timeout"
+        }
+    assert connect_timeouts == [5.0, 1.0]
+    assert now[0] == 120
+
+
+def test_keepalives_do_not_extend_finite_wait_deadline():
+    now = [0.0]
+    calls = []
+
+    class Streaming:
+        connected = True
+
+        def call(self, op, args, *, timeout):
+            calls.append(timeout)
+            assert args["timeout"] == 55
+            now[0] = 30
+            assert self.on_keepalive() == 30
+            now[0] = 60
+            self.on_keepalive()
+            pytest.fail("keepalive extended the caller deadline")
+
+        def close(self):
+            pass
+
+    assert call_next(Streaming, {}, timeout=55, clock=lambda: now[0]) == {"kind": "timeout"}
+    assert calls == [40]
+
+
+def test_old_broker_without_keepalives_is_unavailable():
+    now = [0.0]
+
+    class Legacy:
+        connected = True
+
+        def call(self, op, args, *, timeout):
+            now[0] += timeout
+            if now[0] > 120:
+                pytest.fail("legacy broker silently hung the waiter")
+            raise TimeoutError
+
+        def close(self):
+            pass
+
+    def sleep(seconds):
+        now[0] += seconds
+
+    with pytest.raises(BrokerUnreachable):
+        call_next(Legacy, {}, timeout=None, clock=lambda: now[0], sleep=sleep)
+    assert now[0] == 120
+
+
+def test_reconnect_resolves_socket_path_again(path, sockdir, monkeypatch):
+    from jailbee.inbox import socket_cli
+
+    other = sockdir / "new.sock"
+    old_server = serve(path, lambda r: None)
+    new_server = serve(other, lambda r: wire.ok({"kind": "message", "id": "moved"}))
+    monkeypatch.setenv(transport.SOCKET_ENV, str(path))
+
+    def sleep(seconds):
+        monkeypatch.setenv(transport.SOCKET_ENV, str(other))
+
+    try:
+        assert call_next(socket_cli._factory, {}, timeout=None, sleep=sleep) == {
+            "kind": "message",
+            "id": "moved",
+        }
+        assert len(old_server.requests) == len(new_server.requests) == 1
+    finally:
+        old_server.close()
+        new_server.close()
+
+
 def test_call_send_resends_once(path):
     srv = serve(path, lambda r: None, lambda r: wire.ok({"state": "queued"}))
     try:

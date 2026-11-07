@@ -814,7 +814,27 @@ When the socket is absent, `jailbee inbox runners` instead lists local runners
 without a grant-derived default or grant filtering. A stale socket still requires
 a reachable broker. Invalid command arguments exit 2 before connecting.
 `jailbee inbox wait` reconnects on its own if the broker restarts while it
-waits. See the [protocol reference](orchestration-protocol.md#socket-transport).
+waits, using backoff from 0.5 s up to 5 s and resolving the socket path again
+on each attempt. After an established connection drops, two minutes of
+continuous unavailability ends the waiter with exit 4, even with `--timeout
+none`; a shorter caller timeout still wins. This recovery bound is separate
+from the first-connect retry budget (#92), not an extra two-minute startup wait.
+A successful keepalive resets the outage bound; accepting a socket without
+answering does not.
+
+New waiters opt into no-op keepalive frames, sent when registered and every
+30 s by the broker executor. A 40 s read watchdog treats a missing keepalive
+as a drop and reconnects. Keepalives neither satisfy a wake nor consume an
+inbox message, and cannot extend a finite caller timeout. A broker predating
+keepalives may accept the request but leave it silent: the same watchdog and
+outage bound end that wait with exit 4. Upgrade/restart the broker rather than
+assuming the background waiter is still armed; there is no legacy polling
+fallback. Existing clients do not receive unsolicited keepalive frames.
+
+Exit 4 from a background waiter means **broker unavailable**, not a normal
+timeout. Tell the human and re-arm it after the broker recovers. `--quiet-after`
+and `--digest` run in the broker and cannot replace this liveness check.
+See the [protocol reference](orchestration-protocol.md#socket-transport).
 
 ### Child status
 

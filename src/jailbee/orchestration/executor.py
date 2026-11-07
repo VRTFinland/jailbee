@@ -140,12 +140,17 @@ def _dispatch(
                 digest=parsed.digest,
                 deadline=mono + parsed.timeout if parsed.timeout is not None else None,
                 info=parsed.info,
+                keepalive=parsed.keepalive,
+                next_keepalive=mono + wire.KEEPALIVE_INTERVAL if parsed.keepalive else None,
             ),
             replace=parsed.replace,
         )
         if previous is not None:
             assert memory.listener is not None
             memory.listener.respond(previous.conn_id, wire.ok({"kind": "replaced"}))
+        if parsed.keepalive:
+            assert memory.listener is not None
+            memory.listener.keepalive(event.conn_id)
         return _PARKED
     raise wire.WireError(wire.BAD_REQUEST, f"unknown op '{op}'")
 
@@ -156,8 +161,9 @@ def evaluate_waiters(memory: BrokerMemory, *, clock: Callable[[], float] = time.
     listener = memory.listener
     if store is None or listener is None or not len(memory.waiters):
         return
+    mono = clock()
     try:
-        answered = memory.waiters.evaluate(memory, store, now=time.time(), mono=clock())
+        answered = memory.waiters.evaluate(memory, store, now=time.time(), mono=mono)
     except Exception:
         log.exception("broker: evaluating waiters failed")
         return
@@ -166,3 +172,6 @@ def evaluate_waiters(memory: BrokerMemory, *, clock: Callable[[], float] = time.
             listener.respond(waiter.conn_id, wire.fail(outcome.code, outcome.detail))
         else:
             listener.respond(waiter.conn_id, wire.ok(outcome))
+    for conn_id in memory.waiters.due_keepalives(mono):
+        if listener.is_connected(conn_id):
+            listener.keepalive(conn_id)
