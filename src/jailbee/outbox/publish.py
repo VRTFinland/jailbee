@@ -449,13 +449,17 @@ def publish_selected(
                     applied_action = next(
                         a for a in applied_manifest.actions if a.index == receipt.index
                     )
-                    receipt_sink({
-                        "index": receipt.index,
-                        "kind": type(applied_action.action).__name__.removesuffix("Action").lower(),
-                        "repo": applied_action.repo.slug,
-                        "issue": receipt.issue,
-                        "url": receipt.url,
-                    })
+                    receipt_sink(
+                        {
+                            "index": receipt.index,
+                            "kind": type(applied_action.action)
+                            .__name__.removesuffix("Action")
+                            .lower(),
+                            "repo": applied_action.repo.slug,
+                            "issue": receipt.issue,
+                            "url": receipt.url,
+                        }
+                    )
             print_issue_outcome(batch, report)
             if result_sink is not None:
                 for name, receipt in report.applied:

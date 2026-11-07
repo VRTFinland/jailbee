@@ -177,7 +177,11 @@ def cmd_send(request: SendRequest) -> int:
         try:
             result = call_next(_factory, {"ref": ident}, timeout=remaining)
             if result.get("kind") == "timeout":
-                print(f"{PROG}: timed out waiting for publish {ident}; inspect inbox ls/read before retrying", file=sys.stderr)
+                print(
+                    f"{PROG}: timed out waiting for publish {ident}; "
+                    "inspect inbox ls/read before retrying",
+                    file=sys.stderr,
+                )
                 return 3
             if result.get("kind") != "status":
                 raise BrokerUnreachable(
@@ -190,7 +194,10 @@ def cmd_send(request: SendRequest) -> int:
         except BrokerError as exc:
             return _fail(exc)
     if request.json_output:
-        print(pretty(cli._clean_json(item if request.wait else {"id": ident, "state": state})), flush=True)
+        print(
+            pretty(cli._clean_json(item if request.wait else {"id": ident, "state": state})),
+            flush=True,
+        )
     if state == "refused":
         print(
             f"{PROG}: {clean_c0c1(str(item.get('detail') or 'request refused'))}", file=sys.stderr
@@ -204,7 +211,10 @@ def cmd_send(request: SendRequest) -> int:
         try:
             _call("ack", {"id": final_id})
         except (BrokerError, BrokerUnreachable, OSError) as exc:
-            print(f"{PROG}: printed {final_id} but could not mark it read ({exc}); it stays unread", file=sys.stderr)
+            print(
+                f"{PROG}: printed {final_id} but could not mark it read ({exc}); it stays unread",
+                file=sys.stderr,
+            )
     return 0 if state in ("done", "queued", "started") else 1
 
 

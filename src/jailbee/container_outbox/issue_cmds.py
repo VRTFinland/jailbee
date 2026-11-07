@@ -309,7 +309,9 @@ def create(
     def run() -> None:
         store = _guard()
         if as_json and batch is not None:
-            raise OutboxCommandError("--json cannot be combined with --batch; commit the draft first", 2)
+            raise OutboxCommandError(
+                "--json cannot be combined with --batch; commit the draft first", 2
+            )
         if not title:
             raise OutboxCommandError("missing title", 2)
         text = _body(body, body_file, True)

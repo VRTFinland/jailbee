@@ -346,10 +346,12 @@ def test_vanished_publish_is_abandoned_not_delivered_to_namesake(rig):
 
 def test_publish_started_then_done_with_urls(rig):
     receipts = [{"index": 0, "kind": "create", "issue": 42, "url": "https://example.test/42"}]
+
     def publish(*args, **kwargs):
         kwargs["receipt_sink"](receipts[0])
         kwargs["result_sink"]("https://github.com/org/repo/issues/12#issuecomment-1")
         return 0
+
     rig[4].side_effect = publish
     accept(rig)
     replies = []

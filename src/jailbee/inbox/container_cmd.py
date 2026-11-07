@@ -591,7 +591,12 @@ def publish(
 ) -> None:
     _send(
         send.SendRequest(
-            type="publish", issue=issue, pr=pr, wait=wait, timeout=timeout,
-            until=until, json_output=json_output,
+            type="publish",
+            issue=issue,
+            pr=pr,
+            wait=wait,
+            timeout=timeout,
+            until=until,
+            json_output=json_output,
         )
     )

@@ -740,21 +740,40 @@ def test_send_duplicate_is_exit_0_with_a_note(
 
 @pytest.mark.parametrize("state,code", [("done", 0), ("failed", 1)])
 def test_publish_until_done_json_cli(broker, sockdir, tmp_path, state, code):
-    final = {"id": "h-final", "type": "status", "state": state, "results": [
-        {"index": 0, "kind": "create", "issue": 42, "url": "https://example.test/42"}
-    ]}
+    final = {
+        "id": "h-final",
+        "type": "status",
+        "state": state,
+        "results": [{"index": 0, "kind": "create", "issue": 42, "url": "https://example.test/42"}],
+    }
     request_ids = []
+
     def send_request(request):
         request_ids.append(request.args["manifest"]["id"])
         return wire.ok(send_status("started"))
+
     def next_status(request):
         assert request.args["ref"] == request_ids[0]
         assert 0 < request.args["timeout"] <= 10
         return wire.ok({"kind": "status", "item": final})
+
     broker.handlers["send"] = send_request
     broker.handlers["next"] = next_status
     broker.on("ack", {"acked": True})
-    result = run(sockdir, "send", "publish", "--issue", "a.json", "--wait", "--until", "done", "--timeout", "10s", "--json", tmp=tmp_path)
+    result = run(
+        sockdir,
+        "send",
+        "publish",
+        "--issue",
+        "a.json",
+        "--wait",
+        "--until",
+        "done",
+        "--timeout",
+        "10s",
+        "--json",
+        tmp=tmp_path,
+    )
     assert result.returncode == code, result.stderr
     assert json.loads(result.stdout) == final
     assert [r.op for r in broker.requests] == ["send", "next", "ack"]
