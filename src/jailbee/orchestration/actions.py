@@ -552,11 +552,6 @@ def prune_reservations(root: Path) -> None:
         save_reservations(root, live)
 
 
-def live_reservations(ctx: ActionContext) -> set[str]:
-    """Names held until the next pre-snapshot prune, even if a worker just exited."""
-    return {r.child_full for r in load_reservations(ctx.root).get(ctx.sender.full, [])}
-
-
 def creating_children(ctx: ActionContext) -> set[str]:
     """Names already being created, including reservations with missing job rows."""
     reserved = {r.child_full for entries in load_reservations(ctx.root).values() for r in entries}

@@ -1,5 +1,6 @@
 """Grant-controlled publication: durable acceptance, final policy and settlement."""
 
+import hashlib
 import json
 from dataclasses import replace
 from datetime import timedelta
@@ -134,7 +135,8 @@ def test_known_senders_imports_once_and_quarantines_corrupt_state(rig, caplog):
 def test_legacy_results_import_and_quarantine(rig, caplog):
     ctx, m, *_ = rig
     assert publishing.handle_publish(ctx, m).state == "started"
-    path = publishing._result(ctx.root, ctx.sender.key, m.id)
+    digest = hashlib.sha256(ctx.sender.key.encode()).hexdigest()
+    path = ctx.root / "publish-results" / f"{digest}-{m.id}.json"
     path.parent.mkdir()
     path.write_text(json.dumps({"state": "done", "detail": "legacy"}))
     (path.parent / "bad.json").write_text("broken")
@@ -149,7 +151,8 @@ def test_legacy_results_import_and_quarantine(rig, caplog):
 def test_malformed_legacy_result_recovers_as_uncertain(rig, caplog):
     ctx, m, *_ = rig
     assert publishing.handle_publish(ctx, m).state == "started"
-    path = publishing._result(ctx.root, ctx.sender.key, m.id)
+    digest = hashlib.sha256(ctx.sender.key.encode()).hexdigest()
+    path = ctx.root / "publish-results" / f"{digest}-{m.id}.json"
     path.parent.mkdir()
     path.write_text("{}")
     publishing.recover(ctx.root)

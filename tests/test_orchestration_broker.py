@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import signal
@@ -70,7 +71,6 @@ def _child(
 
 @pytest.mark.parametrize("revoked", [False, True])
 def test_tick_delivers_publish_result(tmp_path, monkeypatch, revoked):
-    from jailbee.orchestration import publishing
     from jailbee.orchestration.state import atomic_write_text
 
     rig = Rig(tmp_path, monkeypatch)
@@ -82,7 +82,7 @@ def test_tick_delivers_publish_result(tmp_path, monkeypatch, revoked):
         ),
     )
     atomic_write_text(
-        publishing._result(rig.root, "proj-orch", "pub-1"),
+        rig.root / "publish-results" / f"{hashlib.sha256(b'proj-orch').hexdigest()}-pub-1.json",
         json.dumps({"state": "done", "detail": "https://github.com/org/repo/issues/1"}),
     )
     rig.tick()

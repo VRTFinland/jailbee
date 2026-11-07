@@ -52,11 +52,6 @@ def _save(root: Path, name: str, data: dict[str, Any]) -> None:
     import_json_document(root, name, _validate_document, for_write=True).kv_put(name, data)
 
 
-def _result(root: Path, full: str, ref: str) -> Path:
-    """Legacy result location for migration fixtures only."""
-    return root / "publish-results" / f"{hashlib.sha256(full.encode()).hexdigest()}-{ref}.json"
-
-
 _RESULT_PREFIX = "publish-result:"
 
 
