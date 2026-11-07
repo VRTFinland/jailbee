@@ -272,6 +272,78 @@ def test_call_next_backoff_resets_after_reconnect():
     assert sleeps == [0.5, 1.0, 2.0, 0.5, 1.0]
 
 
+def test_call_next_retries_missing_factory_after_connect():
+    closed = []
+    steps = iter(["connected", "missing", "missing", "connected", "missing", "success"])
+    sleeps = []
+
+    class Stub:
+        connected = True
+
+        def __init__(self, step):
+            self.step = step
+
+        def call(self, op, args, *, timeout):
+            if self.step == "success":
+                return {"kind": "message"}
+            raise BrokerUnreachable()
+
+        def close(self):
+            closed.append(self.step)
+
+    def factory():
+        step = next(steps)
+        if step == "missing":
+            raise BrokerUnreachable("socket missing")
+        return Stub(step)
+
+    assert call_next(factory, {}, timeout=None, sleep=sleeps.append) == {"kind": "message"}
+    assert sleeps == [0.5, 1.0, 2.0, 0.5, 1.0]
+    assert closed == ["connected", "connected", "success"]
+
+
+def test_call_next_factory_failures_honor_cap_and_deadline():
+    now = [0.0]
+    sleeps = []
+    calls = [0]
+
+    class Stub:
+        connected = True
+
+        def call(self, op, args, *, timeout):
+            raise BrokerUnreachable()
+
+        def close(self):
+            pass
+
+    def factory():
+        calls[0] += 1
+        if calls[0] == 1:
+            return Stub()
+        raise BrokerUnreachable("socket missing")
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    assert call_next(factory, {}, timeout=14, clock=lambda: now[0], sleep=sleep) == {
+        "kind": "timeout"
+    }
+    assert sleeps == [0.5, 1.0, 2.0, 4.0, 5.0, 1.5]
+    assert calls == [6]
+
+
+def test_call_next_first_factory_failure_preserves_detail():
+    error = BrokerUnreachable("socket missing")
+
+    def factory():
+        raise error
+
+    with pytest.raises(BrokerUnreachable) as caught:
+        call_next(factory, {}, timeout=20, sleep=lambda s: pytest.fail("slept"))
+    assert caught.value is error
+
+
 def test_call_send_resends_after_partial_write(path, monkeypatch):
     # the first connection is accepted but the request never reaches it
     srv = serve(path, lambda r: None, lambda r: wire.ok({"state": "queued"}))

@@ -172,21 +172,24 @@ def call_next(
         if remaining is not None:
             attempt["timeout"] = remaining
         read_timeout = None if remaining is None else remaining + _READ_GRACE
-        client = client_factory()
+        client = None
         try:
+            client = client_factory()
             return client.call("next", attempt, timeout=read_timeout)
         except BrokerVersionMismatch:
             raise
         except BrokerUnreachable:
-            ever_connected = ever_connected or client.connected
+            connected = client is not None and client.connected
+            ever_connected = ever_connected or connected
             if not ever_connected:
                 raise
-            if client.connected:
+            if connected:
                 backoff = _BACKOFF_START  # the broker was reachable again
         except TimeoutError:
             return {"kind": "timeout"}
         finally:
-            client.close()
+            if client is not None:
+                client.close()
         pause = backoff
         if deadline is not None:
             pause = min(pause, max(deadline - clock(), 0.0))
