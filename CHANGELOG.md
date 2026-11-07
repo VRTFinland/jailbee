@@ -10,6 +10,11 @@ before editing `## Unreleased`.
 
 ### Added
 
+- `jailbee repo ls` lists registered repositories and leftover Incus profiles, and
+  `jailbee repo rm` removes a repository's containers, profiles, ACLs, state and
+  unshared golden image after one confirmation (`--dry-run`, `--force`, `--purge`).
+  The terminal dashboard offers it as `Remove repo…` (`R`). `jailbee net unregister`
+  is deprecated in its favour.
 - `jailbee inbox grant` summarizes the orchestration grant available to the container.
 - Optional Docker image seeding for Docker-enabled golden images, with `jailbee base seed` and upgrade integration.
 - `jailbee orchestrate messages` lists the messages the broker stores for a container, unread or with `--all` also read ones.
@@ -17,11 +22,25 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- `jailbee destroy` also removes the container's host-side leftovers: its background
+  job logs, orchestration queue and reservation entries, PR lock and published issue
+  journals. Journals whose publication outcome is unknown are kept.
+- The terminal dashboard switches a container's network (`Network: strict|loose`,
+  `Extend loose…`) in the background instead of blanking the screen, and cuts a long
+  BASE column at 20 cells like NAME.
+- A restricted remote SSH session may save orchestration profiles when
+  `remote.ssh.orchestration` allows orchestration, and the dashboard's Orchestration
+  menu shows why grant edits are refused.
 - `jailbee inbox wait` prints the woken message's id; the obsolete `--path` also prints the id.
 - Orchestrators and children talk to the host broker over a per-container socket, and the broker's messages, spawn/restart queue and reservations, watch/supervision state, publication state and results, and manifest deduplication journal live in `broker.db`. Broker-bound inbox commands exit 4 when the broker is unreachable; invalid arguments exit 2, and `runners` lists local runners without grant filtering when the socket is absent. Send refusals are reported synchronously with exit 1, including without `--wait`; wait replies are not reported twice. Queries return the last completed state during long-running handlers. Durable host state is imported automatically on first use, with legacy files retained as `.migrated`. The file transport has no compatibility window: upgrade only when no orchestration is in progress; file waiters and unread messages are not carried over.
 
 ### Fixed
 
+- A child that keeps using CPU while stalled (a hung build or test JVM) now produces a
+  quiet-child wakeup: CPU use no longer counts as activity for `--quiet-after`
+  ([#76](https://github.com/VRTFinland/jailbee/issues/76)).
+- A Claude session resumed after a restart no longer opens beside an empty autostart
+  agent when a client was attached with `jailbee tmux`.
 - A child's own subagents no longer message the orchestrator: the `jailbee-orchestration-child` skill and the child spawn prompt say subagents report only to the child's agent, and that the child's agent runs long builds and tests itself as its container's controller.
 - A broker `stop` whose clean shutdown runs out of its 120s budget now forces the child off and reports `done`, saying the stop was forced, instead of refusing and leaving a child only the host could stop.
 - A `spawn --new --base` whose base does not resolve is refused at once instead of being queued and failing at creation.
