@@ -58,7 +58,9 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus
     from jailbee.orchestration.runner_model import DefaultRunnerSource
 
-Role = Literal["orchestrator", "child", "none"]
+#: ``plain``: a container with no orchestration label. It keeps a broker
+#: socket (outbox ops only); ``none``: a grant label that does not parse.
+Role = Literal["orchestrator", "child", "plain", "none"]
 
 _SHORT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 NOT_ALLOWED = "orchestration is not allowed in this repo"
@@ -131,9 +133,9 @@ class ActionContext:
     def role(self) -> Role:
         if self.sender.config.get(labels.SPAWNED_BY):
             return "child"
-        if self.raw_grant() is not None:
-            return "orchestrator"
-        return "none"
+        if self.sender.config.get(labels.GRANT):
+            return "orchestrator" if self.raw_grant() is not None else "none"
+        return "plain"
 
     def raw_grant(self) -> Grant | None:
         raw = self.sender.config.get(labels.GRANT)
@@ -189,7 +191,7 @@ def dispatch(ctx: ActionContext, manifest: Manifest) -> Outcome | None:
     None means the sender has no role and the manifest is to be ignored.
     """
     role = ctx.role()
-    if role == "none":
+    if role in ("none", "plain"):
         return refused(NOT_ALLOWED) if manifest.type == "publish" else None
     if role == "child":
         if isinstance(manifest, RightsManifest):

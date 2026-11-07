@@ -58,7 +58,7 @@ def handle_send(
         _validate_outbox_name(file_name)
     except ValueError as e:
         raise wire.WireError(wire.BAD_REQUEST, str(e)) from e
-    if ctx.role() == "none":
+    if ctx.role() in ("none", "plain"):
         raise wire.WireError(wire.NOT_ORCHESTRATED, "this container has no orchestration role")
 
     ctx = dataclasses.replace(ctx, now=datetime.now(UTC))

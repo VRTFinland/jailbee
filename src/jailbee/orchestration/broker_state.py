@@ -180,6 +180,11 @@ def config_for(full: str, configs: Mapping[str, Config | None]) -> Config | None
     return None if best is None else configs[best]
 
 
+def is_managed(full: str, configs: Mapping[str, Config | None]) -> bool:
+    """Whether ``full`` belongs to a registered repo, even one whose config fails to load."""
+    return any(full.startswith(prefix + "-") for prefix in configs)
+
+
 def owner_config(
     full: str, config: Mapping[str, str], configs: Mapping[str, Config | None]
 ) -> Config | None:

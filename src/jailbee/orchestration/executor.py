@@ -81,6 +81,7 @@ def handle_event(
 
 
 _PARKED = object()
+_INBOX_OPS = frozenset({"send", "list", "read", "ack", "children", "status", "grant", "next"})
 
 
 def _dispatch(
@@ -91,6 +92,9 @@ def _dispatch(
     args = event.request.args
     if not store.has_recipient_uuid(uuid):
         raise wire.WireError(wire.STORE, "inbox store recipient is not ready; retry shortly")
+    if op in _INBOX_OPS and uuid not in memory.contexts:
+        # A plain container has a socket (outbox ops only) but no inbox.
+        raise wire.WireError(wire.NOT_ORCHESTRATED, "this container has no orchestration role")
     if op == "send":
         ctx = memory.contexts.get(uuid)
         if ctx is None:

@@ -14,8 +14,11 @@ from jailbee.orchestration.outbox import ensure_orchestration_env
 from jailbee.orchestration.store import StoreError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
+    from jailbee.config import Config
     from jailbee.incus import Incus
-    from jailbee.orchestration.actions import ActionContext
+    from jailbee.orchestration.actions import ActionContext, Node
 
 log = logging.getLogger(__name__)
 
@@ -35,13 +38,13 @@ def ensure_env(ctx: ActionContext, memory: broker_state.BrokerMemory) -> None:
             # The tick's nodes may predate a release. Recheck even on a cache hit.
             parent = ctx.incus.config_get_checked(full, labels.SPAWNED_BY)
             grant = ctx.incus.config_get_checked(full, labels.GRANT)
-            role = "child" if parent else "orchestrator" if grant else "none"
-            if role == "none":
+            role = "child" if parent else "orchestrator" if grant else "plain"
+            if role == "plain":
+                # The labels went away: no orchestration inbox any more, but
+                # every container keeps its broker socket.
                 memory.env_ensured.discard(full)
                 memory.env_roles.pop(full, None)
-                teardown_socket(
-                    ctx.incus, memory, full, ctx.sender.config.get("volatile.uuid"), ctx.root
-                )
+                _ensure_socket(ctx, memory)
                 return
             if full in memory.env_ensured and memory.env_roles.get(full) == role:
                 _ensure_socket(ctx, memory)
@@ -64,22 +67,56 @@ def ensure_env(ctx: ActionContext, memory: broker_state.BrokerMemory) -> None:
 
 
 def _ensure_socket(ctx: ActionContext, memory: broker_state.BrokerMemory) -> None:
+    ensure_socket(ctx.incus, ctx.root, memory, ctx.sender)
+
+
+def serve_plain(
+    incus: Incus,
+    raw: list[dict[str, Any]],
+    memory: broker_state.BrokerMemory,
+    root: Path,
+    configs: Mapping[str, Config | None],
+) -> None:
+    """Give every running container of a registered repo without an orchestration
+    label its broker socket; labelled ones are served by ``manifests.serve``."""
+    from jailbee.orchestration.actions import Node
+
+    for entry in raw:
+        name, config = entry.get("name"), entry.get("config")
+        if not isinstance(name, str) or not isinstance(config, dict):
+            continue
+        if entry.get("status") != "Running" or broker_state.labelled(config):
+            continue
+        if not broker_state.is_managed(name, configs):
+            continue
+        node = Node(
+            full=name,
+            short=name,
+            running=True,
+            config={str(k): str(v) for k, v in config.items()},
+        )
+        ensure_socket(incus, root, memory, node)
+
+
+def ensure_socket(
+    incus: Incus, root: Path, memory: broker_state.BrokerMemory, sender: Node
+) -> None:
     """Open the listener, attach the device and record the recipient (idempotent)."""
     listener, store = memory.listener, memory.store
-    uuid = ctx.sender.config.get("volatile.uuid")
+    uuid = sender.config.get("volatile.uuid")
     if listener is None or store is None or not uuid:
         return
-    full = ctx.sender.full
+    full = sender.full
     if uuid in memory.shared_uuids:
         return  # check_socket_devices warned and tore down
     if listener.has_container(uuid) and memory.attached.get(full) == uuid:
         return
     try:
         if not listener.has_container(uuid):
-            recorded = ctx.incus.config_device_get(full, ORCHESTRATION_DEVICE, "source")
+            recorded = incus.config_device_get(full, ORCHESTRATION_DEVICE, "source")
             directory_key = str(Path(recorded).resolve()) if recorded else ""
             reused = (
-                socket_device.reusable_dir(ctx.root, uuid, recorded)
+                socket_device.reusable_dir(root, uuid, recorded)
                 if (
                     directory_key in memory.reusable_socket_dirs
                     and directory_key not in memory.unsafe_socket_dirs
@@ -92,8 +129,8 @@ def _ensure_socket(ctx: ActionContext, memory: broker_state.BrokerMemory) -> Non
                 # detached copy may hold it across another broker restart.
                 store.kv_put(f"socket-retired:{directory_key}", True)
                 with contextlib.suppress(OSError):
-                    socket_device.remove_dir(ctx.root, recorded)
-            sdir = reused or socket_device.fresh_sock_dir(ctx.root, uuid)
+                    socket_device.remove_dir(root, recorded)
+            sdir = reused or socket_device.fresh_sock_dir(root, uuid)
             existed = sdir.exists()
             try:
                 created = listener.open_container(uuid, sdir)
@@ -107,7 +144,7 @@ def _ensure_socket(ctx: ActionContext, memory: broker_state.BrokerMemory) -> Non
         live = listener.socket_dir(uuid)
         if live is None:
             raise OSError(f"no socket directory for {uuid}")
-        socket_device.attach(ctx.incus, full, live, reassert=uuid in memory.reassert)
+        socket_device.attach(incus, full, live, reassert=uuid in memory.reassert)
         memory.reassert.discard(uuid)
         store.set_recipient(full, uuid, now=time.time())
         memory.attached[full] = uuid
@@ -310,8 +347,12 @@ def check_socket_devices(
     memory: broker_state.BrokerMemory,
     root: Path,
     others: list[dict[str, Any]] | None = None,
+    managed: Callable[[str], bool] | None = None,
 ) -> None:
-    """Strip foreign devices, tear down lost roles and notice vanished devices.
+    """Strip foreign devices, tear down unmanaged sockets and notice vanished devices.
+
+    ``managed`` says which unlabelled containers are plain JailBee containers,
+    which keep their socket; None (unknown) tears nothing of theirs down.
 
     ``others`` (other projects' instances) are only checked for copies and
     twins of served containers; nothing else of theirs is touched.
@@ -354,9 +395,12 @@ def check_socket_devices(
             _strip_copy(incus, memory, root, entry, name, None)
             memory.attached.pop(name, None)
             continue
-        if broker_state.labelled(config):
+        plain = not broker_state.labelled(config)
+        if plain and managed is None:
+            continue  # registry unknown: never tear a plain container down
+        if not plain or (managed is not None and managed(name)):
             # A snapshot restore can keep the uuid and role but rewind the
-            # device to an old generation. Invalidate _ensure_socket's cache
+            # device to an old generation. Invalidate ensure_socket's cache
             # using this round's listing, without another per-container call.
             if name in memory.attached and socket_device.source(entry) != str(
                 memory.listener.socket_dir(memory.attached[name])

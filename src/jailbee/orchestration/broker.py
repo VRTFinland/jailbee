@@ -50,6 +50,8 @@ from jailbee.orchestration.store import BrokerStore, store_path
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from jailbee.config import Config
+
     from jailbee.incus import Incus
 
 log = logging.getLogger(__name__)
@@ -78,7 +80,25 @@ def tick(
     memory.publish_threads[:] = [worker for worker in memory.publish_threads if worker.is_alive()]
     raw = incus.list_containers()
     others = socket_lifecycle.other_projects(incus, memory) if memory.store is not None else None
-    socket_lifecycle.check_socket_devices(incus, raw, memory, root, others)
+    early_configs: dict[str, Config | None] | None = None
+    if memory.listener is not None and memory.store is not None:
+        try:
+            early_configs = broker_state.repo_configs(memory)
+        except Exception:
+            log.exception("broker: repo configs failed; plain container sockets left as they are")
+    managed: Callable[[str], bool] | None = None
+    if early_configs is not None:
+        known = early_configs
+
+        def managed(name: str) -> bool:
+            return broker_state.is_managed(name, known)
+
+    socket_lifecycle.check_socket_devices(incus, raw, memory, root, others, managed)
+    if early_configs is not None:
+        try:
+            socket_lifecycle.serve_plain(incus, raw, memory, root, early_configs)
+        except Exception:
+            log.exception("broker: serving plain container sockets failed")
     retention.purge_messages(memory, raw, now, None if others is None else raw + others)
     candidates = [
         e
@@ -151,7 +171,7 @@ def tick(
     except Exception:
         log.exception("broker: global config failed to load; skipping this round")
         return True
-    configs = broker_state.repo_configs(memory)
+    configs = early_configs if early_configs is not None else broker_state.repo_configs(memory)
     nodes = broker_state.nodes(raw, configs)
 
     def context(node: Node) -> ActionContext | None:

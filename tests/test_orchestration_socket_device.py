@@ -204,15 +204,77 @@ def test_existing_dir_with_correct_device_is_left_alone(env) -> None:
     assert env.store.recipients() == {"proj-orch": UUID}
 
 
-def test_role_end_removes_everything(env) -> None:
+def test_losing_the_grant_leaves_a_plain_socket(env) -> None:
     env.set(orch())
     env.tick()
     env.set(_c("proj-orch", **{"volatile.uuid": UUID}))
     env.tick()
-    assert "proj-orch" not in env.devices or ORCHESTRATION_DEVICE not in env.devices["proj-orch"]
-    assert env.listener.closed == [UUID]
+    assert env.listener.closed == []
+    assert ORCHESTRATION_DEVICE in env.devices["proj-orch"]
+    assert env.store.recipients() == {"proj-orch": UUID}
+    assert UUID in env.memory.attached.values()
+
+
+def plain(uuid: str = "uuid-plain", name: str = "proj-plain", **extra: Any) -> dict[str, Any]:
+    return _c(name, **{"volatile.uuid": uuid, **extra})
+
+
+def test_plain_container_gets_listener_device_and_recipient(env) -> None:
+    env.set(plain())
+    env.tick()
+    assert env.listener.opened == ["uuid-plain"]
+    dev = env.devices["proj-plain"][ORCHESTRATION_DEVICE]
+    assert dev["source"] == str(env.listener.dirs["uuid-plain"])
+    assert env.store.recipients() == {"proj-plain": "uuid-plain"}
+
+
+def test_stopped_plain_container_is_not_served(env) -> None:
+    env.set(_c("proj-plain", running=False, **{"volatile.uuid": "uuid-plain"}))
+    env.tick()
+    assert env.listener.opened == []
+
+
+def test_unregistered_container_gets_no_socket(env) -> None:
+    env.set(plain(name="stranger-box"))
+    env.tick()
+    assert env.listener.opened == []
     assert env.store.recipients() == {}
-    assert env.memory.attached == {}
+
+
+def test_unregistered_container_with_a_device_is_torn_down(env) -> None:
+    env.set(plain(name="stranger-box"))
+    env.devices["stranger-box"] = {ORCHESTRATION_DEVICE: {"source": "/x/sock/uuid-plain.1"}}
+    env.tick()
+    assert ORCHESTRATION_DEVICE not in env.devices["stranger-box"]
+
+
+def test_unknown_registry_never_tears_a_plain_socket_down(env) -> None:
+    env.set(plain())
+    env.tick()
+    env.rig.configs.side_effect = RuntimeError("db locked")
+    env.tick()
+    assert env.listener.closed == []
+    assert ORCHESTRATION_DEVICE in env.devices["proj-plain"]
+
+
+@pytest.mark.parametrize("path", ["orchestrator", "child"])
+def test_role_transitions_keep_the_socket(env, path) -> None:
+    """plain -> orchestrator/child -> plain never closes or re-attaches the socket."""
+    labelled = {
+        "orchestrator": {labels.GRANT: GRANT.to_label()},
+        "child": {labels.SPAWNED_BY: "proj-other"},
+    }[path]
+    env.set(plain("u-box", "proj-box"))
+    env.tick()
+    first = env.listener.dirs["u-box"]
+    env.set(plain("u-box", "proj-box", **labelled))
+    env.tick()
+    env.set(plain("u-box", "proj-box"))
+    env.tick()
+    assert env.listener.closed == []
+    assert env.listener.dirs["u-box"] == first
+    assert adds(env) == ["proj-box"]
+    assert env.store.recipients() == {"proj-box": "u-box"}
 
 
 def test_mismatched_source_is_removed_and_reattached(env) -> None:
@@ -236,8 +298,8 @@ def test_foreign_device_on_a_served_container_is_replaced(env) -> None:
 def _copy_of_the_source(env: Env) -> str:
     """A raw `incus copy` of the served orchestrator, carrying its device."""
     src = env.devices["proj-orch"][ORCHESTRATION_DEVICE]
-    env.set(orch(), _c("proj-copy", **{"volatile.uuid": "uuid-copy"}))
-    env.devices["proj-copy"] = {ORCHESTRATION_DEVICE: dict(src)}
+    env.set(orch(), _c("x-copy", **{"volatile.uuid": "uuid-copy"}))
+    env.devices["x-copy"] = {ORCHESTRATION_DEVICE: dict(src)}
     return str(src["source"])
 
 
@@ -247,7 +309,7 @@ def test_copy_moves_the_source_to_a_fresh_directory_even_after_a_clean_detach(en
     env.tick()
     old = _copy_of_the_source(env)
     env.tick()
-    assert ORCHESTRATION_DEVICE not in env.devices["proj-copy"]
+    assert ORCHESTRATION_DEVICE not in env.devices["x-copy"]
     assert [u for u, _ in env.listener.rotated] == [UUID]
     new = env.listener.dirs[UUID]
     assert str(new) != old and socket_device.dir_uuid(new) == UUID
@@ -260,14 +322,14 @@ def test_copy_cannot_reach_the_source_when_the_detach_fails(env) -> None:
     env.tick()
 
     def remove(name: str, dev: str, *, missing_ok: bool = False) -> None:
-        if name == "proj-copy":
+        if name == "x-copy":
             raise IncusError("EBUSY")
         env._remove(name, dev, missing_ok=missing_ok)
 
     env.remove.side_effect = remove
     old = _copy_of_the_source(env)
     env.tick()
-    assert env.devices["proj-copy"][ORCHESTRATION_DEVICE]["source"] == old  # still there
+    assert env.devices["x-copy"][ORCHESTRATION_DEVICE]["source"] == old  # still there
     assert str(env.listener.dirs[UUID]) != old  # but it points at a dead directory
     assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(env.listener.dirs[UUID])
     env.tick()  # the stale device is no threat: no second rotation
@@ -301,7 +363,7 @@ def test_a_copy_found_after_a_broker_restart_kills_the_directory_it_mounts(env) 
     _restart_broker(env)
     _copy_of_the_source(env)
     env.tick()
-    assert ORCHESTRATION_DEVICE not in env.devices["proj-copy"]
+    assert ORCHESTRATION_DEVICE not in env.devices["x-copy"]
     assert not old.exists()
     assert env.listener.dirs[UUID] != old
     assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(env.listener.dirs[UUID])
@@ -313,8 +375,8 @@ def test_a_restart_does_not_reuse_an_unverified_directory(env, failure) -> None:
     env.tick()
     old = env.listener.dirs[UUID]
     src = dict(env.devices["proj-orch"][ORCHESTRATION_DEVICE])
-    env.elsewhere = [{**_c("proj-copy", **{"volatile.uuid": "uuid-copy"}), "project": "other"}]
-    env.devices["other/proj-copy"] = {ORCHESTRATION_DEVICE: src}
+    env.elsewhere = [{**_c("x-copy", **{"volatile.uuid": "uuid-copy"}), "project": "other"}]
+    env.devices["other/x-copy"] = {ORCHESTRATION_DEVICE: src}
     _restart_broker(env)
     if failure == "list":
 
@@ -329,7 +391,7 @@ def test_a_restart_does_not_reuse_an_unverified_directory(env, failure) -> None:
     env.tick()
     assert env.listener.dirs[UUID] != old
     assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["source"] == str(env.listener.dirs[UUID])
-    assert env.devices["other/proj-copy"][ORCHESTRATION_DEVICE]["source"] == str(old)
+    assert env.devices["other/x-copy"][ORCHESTRATION_DEVICE]["source"] == str(old)
     env.tick()
     assert env.listener.opened == [UUID]  # no churn once the fresh listener is live
 
@@ -358,7 +420,7 @@ def test_a_failed_directory_removal_stays_retired_after_another_restart(env, mon
         patch.setattr(socket_device, "remove_dir", MagicMock(side_effect=OSError("EBUSY")))
         env.tick()
     assert old.exists()
-    assert ORCHESTRATION_DEVICE not in env.devices["proj-copy"]
+    assert ORCHESTRATION_DEVICE not in env.devices["x-copy"]
     # A snapshot restore can name the retired directory after its foreign
     # device disappeared; a lazily detached copy may still hold that mount.
     env.devices["proj-orch"][ORCHESTRATION_DEVICE] = snapshot_device
@@ -399,7 +461,7 @@ def test_a_foreign_directory_alias_cannot_bypass_retirement(env, monkeypatch, al
         link = old.parent / "alias"
         link.symlink_to(old, target_is_directory=True)
         source = str(link)
-    env.devices["proj-copy"][ORCHESTRATION_DEVICE]["source"] = source
+    env.devices["x-copy"][ORCHESTRATION_DEVICE]["source"] = source
     monkeypatch.setattr(socket_device, "remove_dir", MagicMock(side_effect=OSError("EBUSY")))
     env.tick()
     assert env.listener.dirs[UUID] != old
@@ -426,7 +488,7 @@ def test_a_failed_teardown_detach_still_closes_the_socket(env) -> None:
     env.set(orch())
     env.tick()
     env.remove.side_effect = IncusError("EBUSY")
-    env.set(_c("proj-orch", **{"volatile.uuid": UUID}))  # role ends
+    env.set(_c("proj-orch", **{labels.GRANT: "{not json", "volatile.uuid": UUID}))  # role ends
     env.tick()
     assert UUID in env.listener.closed
 
@@ -436,7 +498,7 @@ def test_a_reopened_socket_never_reuses_a_closed_directory(env) -> None:
     env.set(orch())
     env.tick()
     first = env.listener.dirs[UUID]
-    env.set(_c("proj-orch", **{"volatile.uuid": UUID}))  # role ends
+    env.set(_c("proj-orch", **{labels.GRANT: "{not json", "volatile.uuid": UUID}))  # role ends
     env.tick()
     env.set(orch())  # and comes back
     env.tick()
@@ -482,17 +544,17 @@ def test_an_unrelated_container_in_another_project_is_left_alone(env) -> None:
 
 
 def test_mismatched_device_of_an_unserved_uuid_rotates_nothing(env) -> None:
-    env.set(_c("proj-copy", **{"volatile.uuid": "new"}))
-    env.devices["proj-copy"] = {ORCHESTRATION_DEVICE: {"source": "/x/sock/old"}}
+    env.set(_c("x-copy", **{"volatile.uuid": "new"}))
+    env.devices["x-copy"] = {ORCHESTRATION_DEVICE: {"source": "/x/sock/old"}}
     env.tick()
     assert env.listener.rotated == []
 
 
 def test_mismatched_on_unlabelled_container_is_removed(env) -> None:
-    env.set(_c("proj-copy", **{"volatile.uuid": "new"}))
-    env.devices["proj-copy"] = {ORCHESTRATION_DEVICE: {"source": "/x/sock/old"}}
+    env.set(_c("x-copy", **{"volatile.uuid": "new"}))
+    env.devices["x-copy"] = {ORCHESTRATION_DEVICE: {"source": "/x/sock/old"}}
     env.tick()
-    assert ORCHESTRATION_DEVICE not in env.devices["proj-copy"]
+    assert ORCHESTRATION_DEVICE not in env.devices["x-copy"]
 
 
 def test_vanished_device_is_reattached(env) -> None:
@@ -508,7 +570,7 @@ def test_snapshot_restore_reattaches_the_live_generation_without_broker_restart(
     env.tick()
     snapshot_device = dict(env.devices["proj-orch"][ORCHESTRATION_DEVICE])
     old = env.listener.dirs[UUID]
-    env.set(_c("proj-orch", **{"volatile.uuid": UUID}))  # revoke the role
+    env.set(_c("proj-orch", **{labels.GRANT: "{not json", "volatile.uuid": UUID}))  # revoke the role
     env.tick()
     env.set(orch())  # re-grant it: the snapshot's generation no longer exists
     env.tick()

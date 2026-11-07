@@ -22,7 +22,7 @@ from jailbee.orchestration.listener import Listener, RequestEvent
 from jailbee.orchestration.outbox import deliver
 from jailbee.orchestration.query import ContainerSnapshot, Queries
 from jailbee.orchestration.store import BrokerStore, StoreError
-from tests.test_orchestration_broker import GRANT, Rig, _child, _orch
+from tests.test_orchestration_broker import GRANT, Rig, _c, _child, _orch
 from tests.test_orchestration_listener import _connect_long, recv_line
 
 if TYPE_CHECKING:
@@ -588,3 +588,38 @@ def test_readiness_failure_preserves_prior_values_and_healthy_sibling(
     assert env.queries.answer("proj-orch", wire.Request("grant")).error_code == wire.STORE
     sibling = env.queries.answer("proj-other", wire.Request("grant"))
     assert sibling.ok and sibling.result["max_running_children"] == 9
+
+
+@pytest.mark.parametrize(
+    "op,args",
+    [
+        ("list", {}),
+        ("read", {"id": "x"}),
+        ("ack", {"id": "x"}),
+        ("grant", {}),
+        ("children", {}),
+        ("status", {}),
+    ],
+)
+def test_a_plain_container_connects_but_every_inbox_op_is_not_orchestrated(
+    env: Env, op: str, args: dict[str, object]
+) -> None:
+    env.store.set_recipient("proj-plain", "proj-plain", now=1.0)
+    env.listener.open_container("proj-plain", env.rig.root / "proj-plain")
+    env.rig.incus.list_containers.return_value.append(
+        _c("proj-plain", **{"volatile.uuid": "proj-plain"})
+    )
+    env.rig.tick(env.memory)  # publishes the recipient view as role "plain"
+    assert env.queries.snapshot()["proj-plain"].role == "plain"
+    assert env.call(op, uuid="proj-plain", **args).error_code == wire.NOT_ORCHESTRATED
+
+
+@pytest.mark.parametrize("op", ["send", "next", "list", "ack", "children"])
+def test_the_executor_refuses_inbox_ops_of_a_container_without_a_context(
+    env: Env, op: str
+) -> None:
+    env.store.set_recipient("proj-plain", "proj-plain", now=1.0)
+    event = RequestEvent(uuid="proj-plain", conn_id=1, request=wire.Request(op, {}))
+    with pytest.raises(wire.WireError) as ei:
+        executor._dispatch(env.memory, env.store, event, lambda: 0.0)
+    assert ei.value.code == wire.NOT_ORCHESTRATED
