@@ -612,6 +612,16 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "skills to query grants through `jailbee inbox grant`"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 5),
+        actions=frozenset({"apply"}),
+        reason=(
+            "every container, not only orchestrators and children, carries the broker "
+            "socket device (the broker attaches it to running containers; re-apply to "
+            "keep profiles and devices in step), and `jailbee doctor` now fails when "
+            "the broker service is not running"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

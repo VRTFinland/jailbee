@@ -120,8 +120,9 @@ a dropped connection and exit 4.
 Exit 4 is also used when the broker cannot be reached at all: the socket is
 missing, refuses connections (broker stopped), or the connection drops without
 an answer and does not come back. `jailbee inbox wait` retries a dropped
-connection with backoff until its timeout, but a first connect that fails exits
-4 at once. Any `send` with no reply before its timeout exits 3. The request may
+connection with backoff until its timeout. Every container command retries a
+refused or missing socket for 10 seconds (`JAILBEE_BROKER_RETRY_SECONDS`
+overrides it) before exiting 4. Any `send` with no reply before its timeout exits 3. The request may
 or may not have run: a disconnected request still queued for execution is
 dropped as flood defense. Inspect `jailbee inbox ls` and `jailbee inbox status`
 before resending with a new ID. A disconnect after handling began leaves the

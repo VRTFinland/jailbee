@@ -114,3 +114,36 @@ def test_status_reports_stdout_or_unknown(mocker: MockerFixture) -> None:
     assert service.status() == "unknown"
     run.side_effect = OSError("no systemctl")
     assert service.status() == "unknown"
+
+
+def test_setup_always_enables_the_broker(mocker, tmp_path) -> None:
+    """The broker is core: `jb setup` enables it with no orchestration grant anywhere."""
+    from jailbee import init_command
+
+    mocker.patch("shutil.which", return_value="/usr/bin/jailbee")
+    mocker.patch("jailbee.init_command.systemd_user_dir", return_value=tmp_path)
+    mocker.patch("subprocess.run")
+    enable = mocker.patch("jailbee.orchestration.service.enable_now")
+
+    init_command.install_systemd_units()
+
+    enable.assert_called_once_with("/usr/bin/jailbee")
+
+
+def test_setup_survives_a_broker_failure_and_says_so(mocker, tmp_path, capsys) -> None:
+    import subprocess
+
+    from jailbee import init_command
+
+    mocker.patch("shutil.which", return_value="/usr/bin/jailbee")
+    mocker.patch("jailbee.init_command.systemd_user_dir", return_value=tmp_path)
+    mocker.patch("subprocess.run")
+    mocker.patch(
+        "jailbee.orchestration.service.enable_now",
+        side_effect=subprocess.CalledProcessError(1, "systemctl"),
+    )
+
+    init_command.install_systemd_units()
+
+    out = capsys.readouterr()
+    assert "Could not enable the broker" in out.out + out.err
