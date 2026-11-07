@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
-from collections.abc import Callable
+import logging
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
+    from jailbee.outbox.publication_db import Journal
     from jailbee.outbox.sent import Publisher
     from jailbee.pr import PrInfo
     from jailbee.pr_outbox import Manifest
 
 BRANCH_PRS_LABEL = "user.jailbee.branch_prs"
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -25,27 +30,93 @@ class PendingSource:
     base: str | None
 
 
-def pending_source_manifests(cfg: Config, incus: Incus, full: str) -> list[PendingSource]:
-    """Read source proposals without letting an unavailable outbox block a push."""
-    from jailbee import pr_outbox
-    from jailbee.outbox_io import OutboxReadError
+@dataclass(frozen=True)
+class StoredSource:
+    """One PR source proposal as the host outbox store holds it."""
 
-    try:
-        snapshot = pr_outbox.read_outbox(incus, full, uid=cfg.container_user.uid, strict=True)
-    except OutboxReadError:
-        return []
-    if snapshot.rejected or snapshot.identity is None:
-        return []
-    pending = []
-    for name in snapshot.manifest_names:
+    uuid: str
+    name: str
+    text: str
+    bodies: Mapping[str, str]
+    digest: str
+    manifest: Manifest
+
+
+# A source publication is journaled as one action: the PR it opens or updates
+# (with the description, when the manifest carries one).
+SOURCE_ACTIONS = 1
+
+
+def stored_sources(uuid: str) -> list[StoredSource]:
+    """The instance's PR source proposals from the host outbox store, by number.
+
+    Read-only on ``broker.db``; no Incus call. A row that no longer parses as a
+    source manifest is skipped. Raises `StoreError`.
+    """
+    from jailbee import pr_outbox
+    from jailbee.outbox import publication_db, store_db
+    from jailbee.outbox_io import proposal_digest
+
+    found = []
+    for row in store_db.read_proposals(publication_db.default_root(), uuid, "pr"):
         try:
-            manifest = pr_outbox.parse_manifest(name, snapshot.files[name], snapshot.files)
-            if not pr_outbox.is_source_manifest(manifest):
-                continue
-            if pr_outbox.source_publication_receipt(snapshot, name) is not None:
-                continue
+            manifest = pr_outbox.parse_manifest(row.name, row.manifest, row.bodies)
         except pr_outbox.ManifestError:
             continue
+        if not pr_outbox.is_source_manifest(manifest):
+            continue
+        digest = proposal_digest(row.name, row.manifest, row.bodies)
+        found.append(StoredSource(uuid, row.name, row.manifest, row.bodies, digest, manifest))
+    return found
+
+
+def stored_source(uuid: str, name: str) -> StoredSource | None:
+    """One PR proposal from the host store; `ManifestError` unless it is a valid source."""
+    from jailbee import pr_outbox
+    from jailbee.outbox import publication_db, store_db
+    from jailbee.outbox_io import proposal_digest
+
+    row = next(
+        (
+            p
+            for p in store_db.read_proposals(publication_db.default_root(), uuid, "pr")
+            if p.name == name
+        ),
+        None,
+    )
+    if row is None:
+        return None
+    manifest = pr_outbox.parse_manifest(row.name, row.manifest, row.bodies)
+    if not pr_outbox.is_source_manifest(manifest):
+        raise pr_outbox.ManifestError(f"{name} is not a source manifest")
+    digest = proposal_digest(row.name, row.manifest, row.bodies)
+    return StoredSource(uuid, row.name, row.manifest, row.bodies, digest, manifest)
+
+
+def source_journal(uuid: str, name: str) -> Journal | None:
+    """The active publication journal of one PR source proposal, read-only."""
+    from jailbee.outbox import publication_db
+
+    journals = publication_db.read_journals(publication_db.default_root(), uuid, "pr")
+    return journals.get(("pr", name))
+
+
+def pending_source_manifests(cfg: Config, incus: Incus, full: str) -> list[PendingSource]:
+    """Source proposals from the host store, never letting an unreadable store block a push."""
+    from jailbee import pr_outbox
+    from jailbee.incus import IncusError
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox.service import instance_identity
+    from jailbee.outbox_io import JournalError
+
+    try:
+        _, uuid = instance_identity(incus, full)
+        sources = stored_sources(uuid)
+    except (IncusError, JournalError, StoreError):
+        return []
+    pending = []
+    for item in sources:
+        manifest = item.manifest
         action = next(
             (a for a in manifest.actions if isinstance(a, pr_outbox.DescriptionAction)), None
         )
@@ -57,7 +128,10 @@ def pending_source_manifests(cfg: Config, incus: Incus, full: str) -> list[Pendi
         )
         pending.append(
             PendingSource(
-                name, action.title if action and action.title else name, head, manifest.base
+                item.name,
+                action.title if action and action.title else item.name,
+                head,
+                manifest.base,
             )
         )
     return pending
@@ -154,48 +228,68 @@ def publish_source_manifest(
     result_sink: Callable[[str], None] | None = None,
     audit_sink: Callable[[dict[str, str]], None] | None = None,
     publisher: Publisher,
+    clock: Callable[[], float] = time.time,
 ) -> int:
     """Publish a pinned container source without changing the container's own PR.
 
-    The accepted PR create/update is recorded in the outbox Sent log (best
-    effort) before the container-side bookkeeping; `publisher` says by whom.
+    The proposal is read from the host outbox store, keyed by the instance's
+    uuid; no ``incus exec`` runs (the source commits still come over the git
+    bridge). Single flight is the store's publication claim. The PR create or
+    update is one journal action: ``prepared`` is committed just before it, and
+    its outcome, sent record and — on success — the proposal's removal in one
+    transaction after it. A crash between the two leaves ``prepared``, which
+    reads back as ``uncertain``: a later run asks before publishing again
+    (an orchestrator run refuses). `publisher` says who published.
     """
     from jailbee import git, lifecycle, pr, pr_flow, pr_outbox, sync
     from jailbee.incus import IncusError
-    from jailbee.outbox.io import PrManagement
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox import publication_db, sent
     from jailbee.outbox.models import OutboxChanged, OutboxError, ProposalId
-    from jailbee.outbox_io import JournalError, OutboxReadError
-    from jailbee.tui import error_plain, info_plain
+    from jailbee.outbox.service import instance_identity
+    from jailbee.outbox_io import JournalError
+    from jailbee.tui import error_plain, info_plain, warn_plain
 
     try:
         if own_branches_only and force:
             raise pr.PrError("force publishing is host-only")
         ProposalId("pr", manifest_name)
         full = lifecycle.resolve_container_name(cfg, incus, short)
-        manager = PrManagement()
-        with pr_flow.outbox_publication_guard(cfg, incus, full, enabled=True, management=manager):
-            snapshot = pr_outbox.read_outbox(incus, full, uid=cfg.container_user.uid, strict=True)
-            if snapshot.rejected or snapshot.identity is None:
-                raise OutboxChanged("outbox snapshot incomplete; refresh required")
-            if manager.identity is not None and snapshot.identity != manager.identity:
-                raise OutboxChanged("container changed; refresh required")
-            receipt = pr_outbox.source_publication_receipt(snapshot, manifest_name)
-            if receipt is not None:
-                pr_outbox.consume_manifest(
-                    incus,
-                    full,
-                    manifest_name,
-                    receipt["url"],
-                    uid=cfg.container_user.uid,
-                    preview=snapshot,
-                    management=manager,
-                )
-                return 0
-            if manifest_name not in snapshot.files:
+        identity, uuid = instance_identity(incus, full)
+        store = publication_db.open_publications()
+        with store.claim(uuid, "pr", manifest_name) as claim:
+            item = stored_source(uuid, manifest_name)
+            if item is None:
                 info_plain(f"{manifest_name}: nothing pending")
                 return 0
-            manifest = pr_outbox.parse_manifest(
-                manifest_name, snapshot.files[manifest_name], snapshot.files
+            manifest, digest = item.manifest, item.digest
+            journal = store.load(uuid, "pr", manifest_name)
+            if journal is not None and journal.digest == digest and journal.complete:
+                # Published by an earlier run whose cleanup did not finish.
+                settled = store.finalize(claim, digest, now=clock())
+                if not settled.finalized:
+                    raise OutboxChanged(f"{manifest_name}: changed after publication")
+                info_plain(f"{manifest_name}: already published")
+                return 0
+            if journal is not None and journal.uncertain:
+                question = (
+                    f"{manifest_name}: an earlier publication's outcome is uncertain. "
+                    "Check the PR on GitHub; publish again?"
+                )
+                if own_branches_only or not confirm(question):
+                    raise OutboxChanged(
+                        f"{manifest_name}: outcome uncertain; resolve on the host with "
+                        f"`jailbee pr push {short} --source-manifest {manifest_name}`"
+                    )
+                store.resolve(
+                    claim, journal.digest, 0, applied=None, sent_outbox="source", now=clock()
+                )
+            store.begin(
+                claim,
+                digest=digest,
+                action_count=SOURCE_ACTIONS,
+                container_full=full,
+                now=clock(),
             )
             if manifest.source is None or manifest.source_sha is None:
                 raise pr_outbox.ManifestError(f"{manifest_name} is not a source manifest")
@@ -270,7 +364,6 @@ def publish_source_manifest(
                 head, base = target.head_ref, target.base_ref
                 if not git.check_ref_format(head) or not git.check_ref_format(base):
                     raise pr.PrError("PR has an invalid head or base")
-            pr_outbox.preflight_source_progress(snapshot, manifest_name)
             host_ref = sync.fetch_ref_from_container(
                 cfg, incus, short, manifest.source, manifest.source_sha
             )
@@ -288,13 +381,15 @@ def publish_source_manifest(
                 return 1
 
             def validate() -> None:
-                fresh = pr_outbox.read_outbox(incus, full, uid=cfg.container_user.uid, strict=True)
-                if (
-                    fresh.identity != snapshot.identity
-                    or fresh.files != snapshot.files
-                    or fresh.rejected
-                ):
-                    raise OutboxChanged("source snapshot changed; refresh required")
+                # The same instance incarnation, and the exact proposal that was shown.
+                if instance_identity(incus, full) != (identity, uuid):
+                    raise OutboxChanged("container changed; refresh required")
+                try:
+                    fresh = stored_source(uuid, manifest_name)
+                except pr_outbox.ManifestError as exc:
+                    raise OutboxChanged("source proposal changed; refresh required") from exc
+                if fresh is None or fresh.digest != digest:
+                    raise OutboxChanged("source proposal changed; refresh required")
 
             validate()
             remote_sha = git.remote_branch_sha_strict(cfg.repo_root, cfg.upstream_remote, head)
@@ -313,6 +408,7 @@ def publish_source_manifest(
                         f"--source-manifest {manifest_name} --force"
                     )
                     return 1
+                # Pushing the pinned SHA is repeatable, so it is not journaled.
                 sync.push_ref_to_remote(
                     cfg,
                     host_ref,
@@ -323,90 +419,120 @@ def publish_source_manifest(
                     **({"require_absent": True} if own_branches_only and target is None else {}),
                 )
             validate()
-            if target is None:
-                title, body = pr_flow.resolve_create_text(
-                    scope,
-                    ai_on=False,
-                    ai_text=None,
-                    title=action.title if action else None,
-                    body=action.body if action else None,
-                    fallback_ref=host_ref,
-                    publish_name=head,
-                    origin_label=f"container '{short}'",
+            source_sha = manifest.source_sha
+            verb = "create" if target is None else "update"
+
+            def sent_entry(
+                url: str | None, number: int | None, title: str | None, body: str | None
+            ) -> publication_db.SentEntry | None:
+                """The sent record, or None: the outcome is recorded without it
+                rather than lost after GitHub already acted."""
+                try:
+                    content = _source_sent_content(verb, title, body, head, source_sha)
+                except Exception as exc:
+                    _log.warning("could not build the sent record of %s: %s", manifest_name, exc)
+                    return None
+                return sent.entry(
+                    sent.SentAction(
+                        outbox="source",
+                        manifest=manifest_name,
+                        index=0,
+                        kind="pr",
+                        repo=repo,
+                        target=number,
+                        url=url,
+                        title=title,
+                        content=content,
+                        digest=digest,
+                    ),
+                    instance=full,
+                    uuid=uuid,
+                    container_prefix=cfg.container_prefix,
+                    publisher=publisher,
                 )
-                created = pr.create_pr(
-                    cfg.repo_root,
-                    head=head,
-                    base=base,
-                    title=title,
-                    body=body,
-                    remote=cfg.upstream_remote,
-                    repo=repo,
+
+            store.mark_prepared(claim, digest, 0, repo=repo, now=clock())
+            title = action.title if action else None
+            body = action.body if action else None
+            cleared = False
+            try:
+                if target is None:
+                    title, body = pr_flow.resolve_create_text(
+                        scope,
+                        ai_on=False,
+                        ai_text=None,
+                        title=title,
+                        body=body,
+                        fallback_ref=host_ref,
+                        publish_name=head,
+                        origin_label=f"container '{short}'",
+                    )
+                    created = pr.create_pr(
+                        cfg.repo_root,
+                        head=head,
+                        base=base,
+                        title=title,
+                        body=body,
+                        remote=cfg.upstream_remote,
+                        repo=repo,
+                    )
+                    if created.already_existed:
+                        store.clear_prepared(claim, digest, 0)
+                        cleared = True
+                        raise pr.PrError(
+                            "A PR appeared during publication; rerun to inspect and confirm it"
+                        )
+                    number, url = created.number, created.url
+                    authored = True
+                else:
+                    number = target.number
+                    url = f"https://github.com/{repo}/pull/{number}"
+                    if action is not None:
+                        pr.edit_pr(
+                            cfg.repo_root, number, title=action.title, body=action.body, repo=repo
+                        )
+                    authored = own_branches_only
+            except Exception as exc:
+                if not cleared:
+                    # Left `prepared` (read as uncertain) when even this cannot be recorded.
+                    with contextlib.suppress(JournalError, StoreError):
+                        store.settle(
+                            claim,
+                            digest,
+                            0,
+                            outcome="uncertain",
+                            detail=str(exc),
+                            sent=sent_entry(None, target.number if target else None, title, body),
+                            now=clock(),
+                        )
+                raise
+            try:
+                settled = store.settle(
+                    claim,
+                    digest,
+                    0,
+                    outcome="applied",
+                    url=url,
+                    issue=number,
+                    sent=sent_entry(url, number, title, body),
+                    now=clock(),
                 )
-                if created.already_existed:
-                    raise pr.PrError(
-                        "A PR appeared during publication; rerun to inspect and confirm it"
-                    )
-                number, url = created.number, created.url
-                authored = True
-            else:
-                number = target.number
-                url = f"https://github.com/{repo}/pull/{number}"
-                if action is not None:
-                    pr.edit_pr(
-                        cfg.repo_root, number, title=action.title, body=action.body, repo=repo
-                    )
-                authored = own_branches_only
+            except (JournalError, StoreError) as exc:
+                raise OutboxError(
+                    f"PR #{number} was published ({url}) but its receipt could not be "
+                    f"recorded ({exc}); a re-run treats it as uncertain"
+                ) from exc
             if audit_sink is not None:
                 audit_sink({"kind": "source", "repo": manifest.repo})
-            from functools import partial
-
-            from jailbee.outbox import sent
-            from jailbee.outbox_io import instance_uuid
-
-            source_sha = manifest.source_sha
-            sent.record(
-                instance=full,
-                uuid=partial(instance_uuid, incus, full),
-                container_prefix=cfg.container_prefix,
-                publisher=publisher,
-                action=lambda: sent.SentAction(
-                    outbox="source",
-                    manifest=manifest_name,
-                    index=0,
-                    kind="pr",
-                    repo=repo,
-                    target=number,
-                    url=url,
-                    title=title if target is None else (action.title if action else None),
-                    content=_source_sent_content(
-                        "create" if target is None else "update",
-                        title if target is None else (action.title if action else None),
-                        body if target is None else (action.body if action else None),
-                        head,
-                        source_sha,
-                    ),
-                    digest=(
-                        pr_outbox.proposal_files_digest(snapshot.files, manifest_name)
-                        + (":create" if target is None else ":update")
-                    ),
-                ),
-                state="applied",
-            )
-            validate()
+            if not settled.finalized:
+                warn_plain(
+                    f"{manifest_name} changed during publication; it stays in the outbox "
+                    "(drop it once checked)"
+                )
             bindings.put(
                 BranchPr(
                     head, number, base, manifest.source, manifest.source_sha, authored, not authored
                 )
-            )
-            pr_outbox.consume_manifest(
-                incus,
-                full,
-                manifest_name,
-                url,
-                uid=cfg.container_user.uid,
-                preview=snapshot,
-                management=manager,
             )
             if result_sink is not None:
                 result_sink(f"{'opened' if target is None else 'updated'} PR #{number}: {url}")
@@ -414,10 +540,9 @@ def publish_source_manifest(
     except (
         IncusError,
         JournalError,
-        OutboxReadError,
+        StoreError,
         OutboxError,
         pr_outbox.ManifestError,
-        pr_outbox.FinalizeError,
         pr.PrError,
         git.GitError,
         git.GitFetchError,

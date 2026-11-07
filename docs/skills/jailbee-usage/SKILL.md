@@ -1556,9 +1556,11 @@ No pending sources means no extra question. An unreadable outbox never blocks th
 own branch. `jailbee submodule pr push` is unchanged.
 
 For an imported branch, publish its pinned source manifest explicitly:
-`jailbee pr push <container> --source-manifest <file.json>`. Pending source
-proposals show `awaiting-push`; `outbox apply` refuses them with a push hint,
-while the outbox `c` action invokes PR push. `jailbee pr ls` includes source
+`jailbee pr push <container> --source-manifest <file.json>`. Source proposals
+live in the host outbox store (no `incus exec`); pending ones show
+`awaiting-push`; `outbox apply` refuses them with a push hint, while the outbox
+`c` action invokes PR push. One interrupted during the PR call shows `uncertain`:
+check GitHub, then rerun the same push (it asks before publishing again). `jailbee pr ls` includes source
 branch binding rows; `jailbee pr unbind <container> --head <branch>` removes
 one such row without removing the ordinary binding. See the
 [source schema](../jailbee-pr-review/references/manifest-schema.md#source-publication-examples).

@@ -1141,15 +1141,17 @@ full field reference, the `0600` permission requirement, and the
 ## Unified proposal management
 
 `jb outbox` brings PR and issue proposals into one view without moving files
-or changing manifest schemas. Issue proposals live in the host outbox store
-(`broker.db`); PR proposals are still files in
+or changing manifest schemas. Issue proposals and PR source proposals live in
+the host outbox store (`broker.db`), staged over the broker socket; PR review,
+comment, reply and description proposals are still files in
 `/home/dev/.jailbee/pr-outbox/` inside the container (`~/.jailbee/pr-outbox/`
 for its user). New non-child containers bootstrap that directory as the
 container user before agents run, including with `--no-clone` or
 `--no-autostart`. Spawned children do not bootstrap it and cannot stage GitHub
 proposals. Old `~/.jailbee/issue-outbox/` directories in existing containers
 are ignored, not imported. Staging commands create missing stores as needed;
-do not write files or directories by hand. Inspection never creates missing directories and makes no
+do not write files or directories by hand. Inspection never creates missing
+directories and makes no
 `gh` or network calls.
 
 ```bash
@@ -1582,6 +1584,14 @@ while an outcome is uncertain. Publication is single-flight per proposal: a
 claim in the store refuses a second run (or a resolution) while another live
 one holds it, and a claim whose process is gone is taken over. The container
 reads what was published from it with `jailbee outbox sent`.
+
+PR source proposals (`jailbee pr source`) follow the same store rules. Their
+publication (`jb pr push <c> --source-manifest <name>`, or an orchestrator's
+granted publish request) is journaled as one action, the PR create or update;
+pushing the pinned SHA before it is repeatable and not journaled. A run that
+dies during the PR call leaves the proposal `uncertain`; check the PR on
+GitHub and rerun the same push, which asks before publishing again. An
+orchestrator's request is refused until a human has done so.
 
 For abandoning a manifest by hand instead — one a human decided not to
 publish — `jailbee outbox drop` refuses by default the instant the manifest

@@ -38,6 +38,14 @@ def _draft_exists(store: Store, kind: Kind, name: str) -> bool:
     return store.draft_load_state(kind, name) is not None
 
 
+def _in_host_store(kind: Kind, name: str) -> bool:
+    """Whether NAME is held by the host store. Issue proposals all are; of the PR
+    kind only source proposals are so far (the rest are still files here)."""
+    if kind == "issue":
+        return True
+    return any(row["name"] == name for row in broker.list_proposals("pr"))
+
+
 def _resolve(store: Store, name: str | None, kind: str | None) -> tuple[Kind, str]:
     if not name:
         raise OutboxCommandError("missing NAME", 2)
@@ -61,10 +69,14 @@ def ls(
     def run() -> None:
         store = Store(Path.home())
         data: dict[str, list[dict[str, object]]] = {"issue": [], "pr": [], "drafts": []}
-        # Issue proposals live in the host store; PR proposals are still files here.
+        # Issue and PR source proposals live in the host store; other PR
+        # proposals are still files here.
         data["issue"] = [
             {"name": row["name"], "summary": row["summary"]}
             for row in broker.list_proposals("issue")
+        ]
+        data["pr"] = [
+            {"name": row["name"], "summary": row["summary"]} for row in broker.list_proposals("pr")
         ]
         for entry in store.list():
             if entry.kind == "pr":
@@ -124,7 +136,7 @@ def show(target: TargetArg = None) -> None:
 
     def run() -> None:
         kind, name = _target(target)
-        if kind == "issue":
+        if _in_host_store(kind, name):
             typer.echo(broker.show(kind, name)["manifest"])
         else:
             typer.echo(Store(Path.home()).show(kind, name))
@@ -139,7 +151,7 @@ def drop(target: TargetArg = None) -> None:
     def run() -> None:
         store = _guard()
         kind, name = _target(target)
-        if kind == "issue":
+        if _in_host_store(kind, name):
             broker.drop(kind, name)
         else:
             store.drop(kind, name)

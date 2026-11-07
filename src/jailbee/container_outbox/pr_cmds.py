@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import typer
 
-from jailbee.container_outbox import bindings, gh
+from jailbee.container_outbox import bindings, broker, gh
 from jailbee.container_outbox.issue_cmds import BatchOpt, BodyFileOpt, BodyOpt, _body, _guard, _run
 from jailbee.container_outbox.store import OutboxCommandError, Store
 
@@ -382,7 +382,7 @@ def source(
     """Stage a PR source manifest; the host pushes the ref and opens or updates the PR."""
 
     def run() -> None:
-        store = _guard()
+        _guard()
         if not ref:
             raise OutboxCommandError("missing --ref (--head)", 2)
         if not sha:
@@ -401,7 +401,9 @@ def source(
             action = _description(title, text, branch)
             bodies = _file_body(action, body_file is not None)
             manifest["actions"] = [action]
-        name = store.write_manifest("pr", "source", manifest, bodies)
+        # PR source proposals live in the host outbox store (broker socket);
+        # the broker re-validates them and refuses a child container.
+        name = broker.put("pr", "source", manifest, bodies)
         typer.echo(
             f"staged pr/{name} - publish on the host: "
             f"jb pr push {socket.gethostname()} --source-manifest {name}"

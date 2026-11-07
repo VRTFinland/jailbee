@@ -1,4 +1,5 @@
 import json
+from collections.abc import MutableMapping
 from unittest.mock import MagicMock
 
 import pytest
@@ -18,13 +19,76 @@ def test_default_head_preserves_imported_branch_path(source, expected):
     assert default_head(source) == expected
 
 
+class StoreFiles(MutableMapping):
+    """The PR proposals of one instance in the host outbox store, by name -> manifest."""
+
+    def __init__(self, uuid):
+        self.uuid = uuid
+
+    def _store(self):
+        from jailbee.orchestration.store import BrokerStore, store_path
+        from jailbee.outbox import publication_db
+
+        return BrokerStore(store_path(publication_db.default_root()))
+
+    def _rows(self):
+        from jailbee.outbox import publication_db, store_db
+
+        return {
+            p.name: p.manifest
+            for p in store_db.read_proposals(publication_db.default_root(), self.uuid, "pr")
+        }
+
+    def __getitem__(self, name):
+        return self._rows()[name]
+
+    def __setitem__(self, name, text):
+        with self._store().transaction() as con:
+            key = (self.uuid, name)
+            if con.execute(
+                "SELECT 1 FROM outbox_proposal WHERE uuid=? AND kind='pr' AND name=?", key
+            ).fetchone():
+                con.execute(
+                    "UPDATE outbox_proposal SET manifest=?, revision=revision+1 "
+                    "WHERE uuid=? AND kind='pr' AND name=?",
+                    (text, *key),
+                )
+                return
+            (seq,) = con.execute(
+                "SELECT COALESCE(MAX(seq), 0) + 1 FROM outbox_proposal WHERE uuid=? AND kind='pr'",
+                (self.uuid,),
+            ).fetchone()
+            con.execute(
+                "INSERT INTO outbox_proposal(uuid, kind, name, seq, manifest, created_at) "
+                "VALUES(?, 'pr', ?, ?, ?, 0)",
+                (self.uuid, name, seq, text),
+            )
+
+    def __delitem__(self, name):
+        with self._store().transaction() as con:
+            con.execute(
+                "DELETE FROM outbox_proposal WHERE uuid=? AND kind='pr' AND name=?",
+                (self.uuid, name),
+            )
+
+    def __iter__(self):
+        return iter(self._rows())
+
+    def __len__(self):
+        return len(self._rows())
+
+
+def journal(uuid="uuid-full", name="m.json"):
+    from jailbee.outbox import publication_db
+
+    return publication_db.open_publications().load(uuid, "pr", name)
+
+
 @pytest.fixture
 def source_publisher(mocker, make_cfg, tmp_path):
-    from contextlib import nullcontext
+    from types import SimpleNamespace
 
-    from jailbee.outbox_io import ContainerIdentity
     from jailbee.pr import PrCreated
-    from jailbee.pr_outbox import Outbox
 
     cfg = make_cfg(tmp_path)
     incus = MagicMock()
@@ -43,10 +107,11 @@ def source_publisher(mocker, make_cfg, tmp_path):
         "base": "main",
         "actions": [{"type": "description", "title": "Title", "body": "Body"}],
     }
-    snapshot = Outbox({"m.json": json.dumps(data)}, identity=ContainerIdentity("full", "created"))
+    # Source proposals live in the host outbox store, keyed by the instance uuid.
+    files = StoreFiles("uuid-full")
+    files["m.json"] = json.dumps(data)
+    snapshot = SimpleNamespace(files=files)
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="full")
-    mocker.patch("jailbee.pr_flow.outbox_publication_guard", return_value=nullcontext())
-    read = mocker.patch("jailbee.pr_outbox.read_outbox", return_value=snapshot)
     mocker.patch("jailbee.pr_outbox.scope_slug", return_value="acme/widgets")
     mocker.patch("jailbee.git.check_ref_format", return_value=True)
     base_fetch = mocker.patch("jailbee.pr.fetch_base_ref", return_value="c" * 40)
@@ -66,10 +131,12 @@ def source_publisher(mocker, make_cfg, tmp_path):
     discover = mocker.patch(
         "jailbee.pr.find_open_pr_for_branch_strict", create=True, return_value=None
     )
-    from jailbee.pr_outbox import consume_manifest as real_consume
+    return locals()
 
-    consume = mocker.patch("jailbee.pr_outbox.consume_manifest", create=True)
-    return locals() | {"real_consume": real_consume}
+
+def consumed(p):
+    """Whether the publication removed the proposal from the store."""
+    return "m.json" not in p["files"]
 
 
 def test_pending_lists_source_manifests_in_order(source_publisher):
@@ -79,14 +146,12 @@ def test_pending_lists_source_manifests_in_order(source_publisher):
     other = dict(p["data"], source="refs/heads/other")
     other.pop("base")
     other["actions"] = [{"type": "description", "title": "Other", "body": "Text"}]
-    p["snapshot"].files["a.json"] = json.dumps(other)
+    p["files"]["a.json"] = json.dumps(other)
     assert pending_source_manifests(p["cfg"], p["incus"], "full") == [
-        PendingSource("a.json", "Other", "refs/heads/other", None),
         PendingSource("m.json", "Title", "refs/jailbee/from/child/feature/a", "main"),
+        PendingSource("a.json", "Other", "refs/heads/other", None),
     ]
-    p["read"].assert_called_once_with(
-        p["incus"], "full", uid=p["cfg"].container_user.uid, strict=True
-    )
+    p["incus"].exec.assert_not_called()
 
 
 def test_pending_skips_own_branch_description(source_publisher):
@@ -96,74 +161,34 @@ def test_pending_skips_own_branch_description(source_publisher):
     data = dict(p["data"])
     for key in ("source", "source_sha", "base"):
         data.pop(key)
-    p["snapshot"].files["m.json"] = json.dumps(data)
+    p["files"]["m.json"] = json.dumps(data)
     assert pending_source_manifests(p["cfg"], p["incus"], "full") == []
 
 
-def test_pending_skips_published_receipt(source_publisher, mocker):
+def test_pending_skips_invalid_manifest(source_publisher):
     from jailbee.branch_pr import pending_source_manifests
 
     p = source_publisher
-    mocker.patch("jailbee.pr_outbox.source_publication_receipt", return_value={"url": "url"})
+    p["files"]["m.json"] = "invalid"
     assert pending_source_manifests(p["cfg"], p["incus"], "full") == []
 
 
-def test_pending_skips_rejected_manifest(source_publisher):
+def test_pending_ignores_another_instance(source_publisher):
     from jailbee.branch_pr import pending_source_manifests
 
     p = source_publisher
-    p["snapshot"].files["m.json"] = "invalid"
+    p["incus"].list_containers.return_value = [
+        {"name": "full", "created_at": "created", "config": {"volatile.uuid": "uuid-new"}}
+    ]
     assert pending_source_manifests(p["cfg"], p["incus"], "full") == []
 
 
-@pytest.mark.parametrize("incomplete", ["identity", "rejected"])
-def test_pending_incomplete_snapshot_is_empty(source_publisher, incomplete):
-    from dataclasses import replace
-
+def test_pending_unreadable_store_is_empty(source_publisher, mocker):
     from jailbee.branch_pr import pending_source_manifests
+    from jailbee.orchestration.store import StoreError
 
     p = source_publisher
-    changes = {"identity": None} if incomplete == "identity" else {"rejected": ("bad.json",)}
-    p["read"].return_value = replace(p["snapshot"], **changes)
-    assert pending_source_manifests(p["cfg"], p["incus"], "full") == []
-
-
-def test_pending_real_reader_skips_snapshot_with_non_utf8_neighbor(mocker, make_cfg, tmp_path):
-    from jailbee.branch_pr import pending_source_manifests
-    from jailbee.outbox_io import ContainerIdentity
-    from tests.test_outbox_io_strict import encoded_snapshot
-
-    cfg = make_cfg(tmp_path)
-    incus = mocker.Mock()
-    data = {
-        "version": 1,
-        "repo": "acme/widgets",
-        "pr": None,
-        "head_sha": None,
-        "source": "refs/heads/topic",
-        "source_sha": "a" * 40,
-        "actions": [{"type": "description", "title": "Title", "body": "Body"}],
-    }
-    incus.exec.return_value = encoded_snapshot(
-        {
-            "m.json": json.dumps(data).encode(),
-            "bad.json": b"\xff",
-        }
-    )
-    mocker.patch(
-        "jailbee.pr_outbox.container_identity", return_value=ContainerIdentity("full", "created")
-    )
-    mocker.patch("jailbee.pr_outbox._same_identity")
-
-    assert pending_source_manifests(cfg, incus, "full") == []
-
-
-def test_pending_unreadable_outbox_is_empty(source_publisher):
-    from jailbee.branch_pr import pending_source_manifests
-    from jailbee.outbox_io import OutboxReadError
-
-    p = source_publisher
-    p["read"].side_effect = OutboxReadError("unreadable")
+    mocker.patch("jailbee.outbox.store_db.read_proposals", side_effect=StoreError("locked"))
     assert pending_source_manifests(p["cfg"], p["incus"], "full") == []
 
 
@@ -445,35 +470,20 @@ def _publish(p, *, yes=True, force=False, confirm=lambda _: True):
     )
 
 
-@pytest.mark.parametrize("existing", [False, True])
-def test_source_large_escaped_progress_refused_before_publication(source_publisher, existing):
-    from jailbee.pr import PrInfo
-    from jailbee.pr_outbox import parse_manifest
+def publish_own(p):
+    from jailbee.branch_pr import publish_source_manifest
 
-    p = source_publisher
-    data = json.loads(p["snapshot"].files["m.json"])
-    data["actions"][0]["body"] = "\\" * 65536
-    p["snapshot"].files["m.json"] = json.dumps(data)
-    assert parse_manifest("m.json", p["snapshot"].files["m.json"], p["snapshot"].files)
-    if existing:
-        p["discover"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
-    assert _publish(p) == 1
-    for key in ("push", "edit", "create", "consume"):
-        p[key].assert_not_called()
-
-
-@pytest.mark.parametrize("existing", [False, True])
-def test_source_near_full_log_refused_before_remote_effects(source_publisher, existing):
-    from jailbee.outbox.io import FILE_LIMIT
-    from jailbee.pr import PrInfo
-
-    p = source_publisher
-    p["snapshot"].files["applied.log"] = "h" * (FILE_LIMIT - 1)
-    if existing:
-        p["discover"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
-    assert _publish(p) == 1
-    for key in ("fetch", "push", "edit", "create", "consume"):
-        p[key].assert_not_called()
+    return publish_source_manifest(
+        p["cfg"],
+        p["incus"],
+        "c",
+        "m.json",
+        force=False,
+        yes=True,
+        confirm=lambda _: True,
+        own_branches_only=True,
+        publisher="orchestrator",
+    )
 
 
 def test_source_create_pins_push_and_records_binding(source_publisher, capsys):
@@ -490,7 +500,8 @@ def test_source_create_pins_push_and_records_binding(source_publisher, capsys):
     assert p["create"].call_args.kwargs["base"] == "main"
     saved = json.loads(p["incus"].config_set.call_args.args[2])
     assert saved["feature/a"]["pr"] == 42
-    p["consume"].assert_called_once()
+    assert consumed(p)
+    p["incus"].exec.assert_not_called()
 
 
 @pytest.mark.parametrize("consent", [False, True])
@@ -509,8 +520,9 @@ def test_source_publish_consent_shows_base_range_count(source_publisher, capsys,
 
     assert _publish(p, yes=False, confirm=confirm) == (0 if consent else 1)
     assert questions == ["Publish?"]
-    for key in ("push", "create", "consume"):
+    for key in ("push", "create"):
         assert p[key].call_count == int(consent)
+    assert consumed(p) is consent
 
 
 def test_null_source_creates_independent_binding_without_own_label_writes(source_publisher):
@@ -642,7 +654,6 @@ def test_unbound_discovered_pr_uses_authoritative_base(source_publisher, capsys)
 
 def test_source_success_then_missing_manifest_does_not_repush(source_publisher):
     p = source_publisher
-    p["consume"].side_effect = lambda *args, **kwargs: p["snapshot"].files.clear()
     assert _publish(p) == 0
     assert _publish(p) == 0
     assert p["push"].call_count == 1
@@ -654,63 +665,57 @@ def test_source_failed_push_can_retry(source_publisher):
     p = source_publisher
     p["push"].side_effect = [SyncError("push failed"), None]
     assert _publish(p) == 1
-    p["consume"].assert_not_called()
+    assert not consumed(p)
+    assert journal().actions == ()  # the push is repeatable: nothing journaled
     assert _publish(p) == 0
     assert p["push"].call_count == 2
 
 
-def test_source_failed_consumption_retry_does_not_repush(source_publisher):
+def test_source_failed_receipt_retry_asks_before_republishing(source_publisher, mocker, capsys):
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox.publication_db import PublicationStore
     from jailbee.pr import PrInfo
-    from jailbee.pr_outbox import FinalizeError
 
     p = source_publisher
-    p["consume"].side_effect = [FinalizeError("failed"), None]
+    broken = mocker.patch.object(
+        PublicationStore, "settle", autospec=True, side_effect=StoreError("disk full")
+    )
     assert _publish(p) == 1
+    assert "could not be recorded" in capsys.readouterr().err
+    assert not consumed(p)
+    (action,) = journal().actions
+    assert action.state == "uncertain"
+    mocker.stop(broken)  # the store works again
     p["discover"].return_value = PrInfo(42, "feature/a", "a" * 40, "OPEN", "main")
     p["remote"].return_value = "a" * 40
-    assert _publish(p) == 0
+    questions = []
+    assert _publish(p, confirm=lambda q: questions.append(q) or True) == 0
+    assert "uncertain" in questions[0]
     assert p["push"].call_count == 1
+    assert consumed(p)
 
 
 @pytest.mark.parametrize("remove_manifest", [False, True])
-@pytest.mark.parametrize("existing", [False, True])
-def test_source_published_retry_only_cleans_up(source_publisher, mocker, remove_manifest, existing):
-    from jailbee.outbox.io import MutationExecutionError
-    from jailbee.pr import PrInfo
+def test_source_published_retry_only_cleans_up(source_publisher, mocker, remove_manifest):
+    from jailbee.outbox.publication_db import PublicationStore
 
     p = source_publisher
-    p["consume"].side_effect = p["real_consume"]
-    if existing:
-        p["discover"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
-    p["incus"].list_containers.return_value = [
-        {"name": "full", "created_at": "created", "config": {"volatile.uuid": "uuid-full"}}
-    ]
-    files = p["snapshot"].files
-    failed = False
-
-    def mutate(*args, expected, new_manifest, delete_names, **kwargs):
-        nonlocal failed
-        assert expected == files
-        if new_manifest:
-            files[new_manifest[0]] = new_manifest[1]
-        if delete_names and not failed:
-            failed = True
-            if remove_manifest:
-                del files["m.json"]
-            raise MutationExecutionError("delete failed")
-        for name in delete_names:
-            del files[name]
-        return delete_names
-
-    mocker.patch("jailbee.outbox.io.mutate_store", side_effect=mutate)
-    assert _publish(p) == 1
-    # A published retry must not even query/fetch the remote, let alone edit it.
+    # The receipt committed, but the proposal's removal did not (a changed row,
+    # then put back): only the cleanup is left for the next run.
+    stuck = mocker.patch.object(
+        PublicationStore, "_finalize", autospec=True, return_value=(False, False)
+    )
+    assert _publish(p) == 0
+    assert not consumed(p)
+    assert journal().complete
+    mocker.stop(stuck)
     for key in ("push", "fetch", "remote", "base_fetch", "create", "edit", "discover"):
         p[key].reset_mock()
     assert _publish(p) == 0
     for key in ("push", "fetch", "remote", "base_fetch", "create", "edit", "discover"):
         p[key].assert_not_called()
-    assert set(files) == {"applied.log"}
+    assert consumed(p)
+    assert journal() is None  # archived with the removal
 
 
 def test_source_missing_manifest_is_idempotent(source_publisher):
@@ -727,7 +732,8 @@ def test_source_unexpected_existing_pr_create_does_not_bind_or_consume(source_pu
     p["create"].return_value = PrCreated(99, "https://github.com/acme/widgets/pull/99", True)
     assert _publish(p) == 1
     p["incus"].config_set.assert_not_called()
-    p["consume"].assert_not_called()
+    assert not consumed(p)
+    assert journal().actions == ()  # definitely not published by this run
 
 
 def test_source_sha_mismatch_stops_before_push(source_publisher, capsys):
@@ -793,30 +799,41 @@ def test_source_force_allows_nonfastforward_with_pin(source_publisher):
 
 
 def test_source_pre_push_callback_refuses_mutated_snapshot(source_publisher):
-    from jailbee.pr_outbox import Outbox
-
     p = source_publisher
-    changed = Outbox({"m.json": "changed"}, identity=p["snapshot"].identity)
 
     def before_push(*args, **kwargs):
-        p["read"].return_value = changed
+        p["files"]["m.json"] = json.dumps(dict(p["data"], base="develop"))
         kwargs["on_before_push"]()
 
     p["push"].side_effect = before_push
     assert _publish(p) == 1
     p["create"].assert_not_called()
-    p["consume"].assert_not_called()
+    assert journal().actions == ()
 
 
 def test_source_changed_after_confirmation_never_pushes(source_publisher):
-    from jailbee.pr_outbox import Outbox
-
     p = source_publisher
-    changed = Outbox({"m.json": "changed"}, identity=p["snapshot"].identity)
-    p["read"].side_effect = [p["snapshot"], changed]
-    assert _publish(p) == 1
+
+    def confirm(question):
+        p["files"]["m.json"] = json.dumps(dict(p["data"], base="develop"))
+        return True
+
+    assert _publish(p, yes=False, confirm=confirm) == 1
     p["push"].assert_not_called()
-    p["consume"].assert_not_called()
+    assert json.loads(p["files"]["m.json"])["base"] == "develop"
+
+
+def test_source_replaced_instance_never_pushes(source_publisher):
+    p = source_publisher
+
+    def confirm(question):
+        p["incus"].list_containers.return_value = [
+            {"name": "full", "created_at": "later", "config": {"volatile.uuid": "uuid-new"}}
+        ]
+        return True
+
+    assert _publish(p, yes=False, confirm=confirm) == 1
+    p["push"].assert_not_called()
 
 
 def test_source_zero_actions_updates_without_edit(source_publisher):
@@ -833,7 +850,7 @@ def test_source_zero_actions_updates_without_edit(source_publisher):
     assert _publish(p) == 0
     p["push"].assert_called_once()
     p["edit"].assert_not_called()
-    p["consume"].assert_called_once()
+    assert consumed(p)
 
 
 def test_source_lookup_failure_never_pushes(source_publisher):
@@ -843,7 +860,7 @@ def test_source_lookup_failure_never_pushes(source_publisher):
     p["remote"].side_effect = GitError("network unavailable")
     assert _publish(p) == 1
     p["push"].assert_not_called()
-    p["consume"].assert_not_called()
+    assert not consumed(p)
 
 
 def test_list_pr_bindings_removes_merged_and_shows_own(mocker, make_cfg, tmp_path, capsys):
@@ -1012,57 +1029,69 @@ def test_source_update_records_sent_row_with_update_header(source_publisher):
     assert row.content.startswith("update pull request")
 
 
-def test_source_record_survives_finalize_error(source_publisher):
+@pytest.mark.parametrize("failure", [RuntimeError("gh crashed"), KeyboardInterrupt()])
+def test_a_crash_during_the_pr_mutation_leaves_it_uncertain(source_publisher, failure):
     from jailbee.outbox import sent
-    from jailbee.pr_outbox import FinalizeError
 
     p = source_publisher
-    p["consume"].side_effect = FinalizeError("container write failed")
-    assert _publish(p) == 1
-    assert len(sent.list_records()) == 1
+    p["create"].side_effect = failure
+    with pytest.raises(type(failure)):
+        _publish(p)
+    # A recorded failure and a hard crash (prepared, never settled) read alike.
+    (action,) = journal().actions
+    assert action.state == "uncertain"
+    assert not consumed(p)
+    records = sent.list_records()
+    assert [r.state for r in records] == (["uncertain"] if failure.args else [])
 
 
-def test_publish_survives_sent_record_failure_source(source_publisher, mocker, caplog):
+def test_an_uncertain_source_is_not_republished_without_consent(source_publisher):
+    from jailbee.pr import PrError
+
     p = source_publisher
-    mocker.patch("jailbee.outbox.sent.pdb.open_publications", side_effect=OSError("disk gone"))
-    with caplog.at_level("WARNING", logger="jailbee.outbox.sent"):
-        assert _publish(p) == 0
-    p["create"].assert_called_once()
-    p["consume"].assert_called_once()
-    assert [r.getMessage() for r in caplog.records].count(
-        "Could not record the action in the outbox Sent log: disk gone"
-    ) == 1
+    p["create"].side_effect = KeyboardInterrupt()
+    with pytest.raises(KeyboardInterrupt):
+        _publish(p)
+    p["create"].side_effect = None
+    assert _publish(p, confirm=lambda q: "uncertain" not in q) == 1
+    with pytest.raises(PrError, match="uncertain"):
+        publish_own(p)
+    assert p["create"].call_count == 1
+    assert journal().uncertain
 
 
-@pytest.mark.parametrize(
-    "builder", ["jailbee.branch_pr._source_sent_content", "jailbee.pr_outbox.proposal_files_digest"]
-)
-def test_source_publish_survives_sent_construction_failure(source_publisher, mocker, builder):
+def test_publish_survives_sent_construction_failure(source_publisher, mocker):
     p = source_publisher
-    mocker.patch(builder, side_effect=OSError("snapshot unavailable"))
+    mocker.patch("jailbee.branch_pr._source_sent_content", side_effect=OSError("unavailable"))
     assert _publish(p) == 0
     p["create"].assert_called_once()
-    p["consume"].assert_called_once()
+    assert consumed(p)
     saved = json.loads(p["incus"].config_set.call_args.args[2])
     assert saved["feature/a"]["pr"] == 42
 
 
-def test_source_create_then_same_manifest_update_keeps_original_sent_row(source_publisher):
+def test_an_archived_publication_is_not_repeated(source_publisher, capsys):
     from jailbee.outbox import sent
-    from jailbee.pr import PrInfo
 
     p = source_publisher
     assert _publish(p) == 0
-    (created,) = sent.list_records()
-    p["discover"].return_value = PrInfo(43, "feature/a", "a" * 40, "OPEN", "main")
+    p["files"]["m.json"] = json.dumps(p["data"])  # the identical proposal again
+    assert _publish(p) == 1
+    assert "already published" in capsys.readouterr().err
+    assert p["create"].call_count == 1
+    assert len(sent.list_records()) == 1
+
+
+def test_sent_source_shows_in_the_containers_outbox_sent(source_publisher):
+    from jailbee.outbox import publication_db
+    from jailbee.outbox.broker_ops import handle_sent
+
+    p = source_publisher
     assert _publish(p) == 0
-    rows = sorted(sent.list_records(), key=lambda r: r.id)
-    assert len(rows) == 2
-    assert rows[0] == created
-    assert rows[0].url == "https://github.com/acme/widgets/pull/42"
-    assert rows[0].content.startswith("create pull request")
-    assert rows[1].url == "https://github.com/acme/widgets/pull/43"
-    assert rows[1].content.startswith("update pull request")
+    result = handle_sent(publication_db.open_publications(), "uuid-full", {"kind": "pr"})
+    (record,) = result["records"]
+    assert (record["outbox"], record["kind"], record["manifest"]) == ("source", "pr", "m.json")
+    assert record["url"] == "https://github.com/acme/widgets/pull/42"
 
 
 def test_orchestrator_source_publish_records_orchestrator(source_publisher):

@@ -71,13 +71,19 @@ For rework of PR 1234, a numbered source can have no description action:
 }
 ```
 
-The host publishes one with `jb pr push <container> --source-manifest
-<filename>`. Pending sources show `awaiting-push` and `create_scope`;
-`jb outbox apply` refuses them with exit 2 and a push hint. The dashboard's
-`c` action hands them to PR push. An existing PR supplies its actual head and
-base; a conflicting description branch is refused. Source manifests are
-isolated from ordinary automatic description publishing. Interrupted cleanup
-can remain `applied` until recovered by retrying the same source push.
+`jailbee pr source` stages a source manifest in the host outbox store over
+the broker socket (not as a file in `~/.jailbee/pr-outbox/`); the broker
+re-validates it and refuses a child container. `jailbee outbox ls|show|drop`
+cover it as `pr/NNN-source.json`, and `jailbee outbox sent` lists it once
+published. The host publishes one with `jb pr push <container>
+--source-manifest <name>`. Pending sources show `awaiting-push` and
+`create_scope`; `jb outbox apply` refuses them with exit 2 and a push hint. The
+dashboard's `c` action hands them to PR push. An existing PR supplies its actual
+head and base; a conflicting description branch is refused. Source manifests are
+isolated from ordinary automatic description publishing. If a publication was
+interrupted while the PR was being created or updated, the proposal shows
+`uncertain`: check the PR on GitHub, then rerun the same push, which asks before
+publishing again.
 
 ## Body fields
 
