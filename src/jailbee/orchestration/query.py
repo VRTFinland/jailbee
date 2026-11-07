@@ -90,7 +90,10 @@ class Queries:
                     now=time.time(),
                 )
             return socket_ops.handle_ack(
-                self._store, uuid, id=args.get("id"), now=time.time(),
+                self._store,
+                uuid,
+                id=args.get("id"),
+                now=time.time(),
                 ok_statuses=args.get("ok_statuses", False),
             )
 

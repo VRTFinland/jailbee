@@ -131,13 +131,23 @@ def test_ls_filters_with_wait_tokens_across_pages(
 ) -> None:
     def page(req: wire.Request) -> wire.Response:
         if req.args["after"] == 0:
-            return wire.ok({"items": [
-                {"id": "child", "type": "message", "kind": "done"},
-                {"id": "ok", "type": "status", "state": "done"},
-            ], "next": 2})
-        return wire.ok({"items": [
-            {"id": "bad", "type": "status", "state": "failed"},
-        ], "next": None})
+            return wire.ok(
+                {
+                    "items": [
+                        {"id": "child", "type": "message", "kind": "done"},
+                        {"id": "ok", "type": "status", "state": "done"},
+                    ],
+                    "next": 2,
+                }
+            )
+        return wire.ok(
+            {
+                "items": [
+                    {"id": "bad", "type": "status", "state": "failed"},
+                ],
+                "next": None,
+            }
+        )
 
     broker.handlers["list"] = page
     result = run(sockdir, "ls", "--wake-on", tokens, tmp=tmp_path)
@@ -156,9 +166,7 @@ def test_ls_rejects_invalid_filter_before_contacting_broker(
     assert not broker.requests
 
 
-def test_read_ok_statuses_calls_bulk_ack(
-    broker: FakeBroker, sockdir: Path, tmp_path: Path
-) -> None:
+def test_read_ok_statuses_calls_bulk_ack(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
     broker.on("ack", {"acked": 17})
     result = run(sockdir, "read", "--ok-statuses", tmp=tmp_path)
     assert result.returncode == 0

@@ -78,9 +78,7 @@ def test_bulk_ack_through_query_socket_is_scoped(env: Env) -> None:
                 uuid, uuid, {"id": state, "type": "status", "state": state}, now=1
             )
     assert env.call("ack", ok_statuses=True).result == {"acked": 3}
-    assert [r.id for r in env.store.unacked("proj-orch")] == [
-        "child-message", "failed", "refused"
-    ]
+    assert [r.id for r in env.store.unacked("proj-orch")] == ["child-message", "failed", "refused"]
     assert len(env.store.unacked("proj-kid")) == 5
     assert env.call("ack", ok_statuses=True).result == {"acked": 0}
     assert env.call("ack", ok_statuses="true").error_code == wire.BAD_REQUEST

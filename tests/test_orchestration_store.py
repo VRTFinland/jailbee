@@ -47,9 +47,7 @@ def test_unread_counts_exclude_success_statuses_without_acknowledging(
     for kind in ("note", "question", "done", "blocked", "idle", "future-kind"):
         st.insert_item("u", "p", msg(kind, kind), now=1)
     for state in ("queued", "started", "done", "failed", "refused"):
-        st.insert_item(
-            "u", "p", {"id": "s-" + state, "type": "status", "state": state}, now=1
-        )
+        st.insert_item("u", "p", {"id": "s-" + state, "type": "status", "state": state}, now=1)
     st.insert_item("u", "p", msg("read"), now=1, acked=True)
     assert store_mod.unread_counts_by_uuid(tmp_path) == {"u": 8}
     assert len(st.unacked("u")) == 11
@@ -58,9 +56,7 @@ def test_unread_counts_exclude_success_statuses_without_acknowledging(
 def test_ack_ok_statuses_is_scoped_and_idempotent(st: BrokerStore) -> None:
     for uuid in ("u", "v"):
         for state in ("queued", "started", "done", "failed", "refused", "unknown"):
-            st.insert_item(
-                uuid, "p", {"id": state, "type": "status", "state": state}, now=1
-            )
+            st.insert_item(uuid, "p", {"id": state, "type": "status", "state": state}, now=1)
         st.insert_item(uuid, "p", msg("child-done", "done"), now=1)
     st.ack("u", "queued", now=2)
     assert st.ack_ok_statuses("u", now=3) == 2

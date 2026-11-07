@@ -31,9 +31,7 @@ def parse_wake_filter(value: str | None) -> frozenset[str] | None:
     return frozenset(tokens)
 
 
-def matches_wake_filter(
-    record_type: str, token: object, wake: frozenset[str] | None
-) -> bool:
+def matches_wake_filter(record_type: str, token: object, wake: frozenset[str] | None) -> bool:
     """Match only record type and kind/state; waiter first-message rules are separate."""
     if wake is None:
         return True
