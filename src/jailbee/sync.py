@@ -3681,8 +3681,9 @@ def _warn_before_container_destroy(
                 (cfg.container_prefix, ci.base_branch or cfg.default_branch)
             ],
         )
-        _lifecycle.stamp_issue_outbox(ci)
-        _lifecycle.stamp_pr_outbox(ci)
+    # The outbox is host-side: counted for every container, probed or not.
+    _lifecycle.stamp_issue_outbox(ci)
+    _lifecycle.stamp_pr_outbox(ci)
 
     unknown = [short] if status_is_unknown(ci) else []
     summary = assess(cfg, ci)

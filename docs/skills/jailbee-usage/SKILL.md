@@ -1754,7 +1754,8 @@ PR exists, since a container can hold a description ahead of `jailbee pr push`
 opening one). The ISSUES column right after PR shows the same
 `✉N` for the container's issue outbox (see **jailbee-issue-management**). The dashboards fold both into one OUTBOX column (`✉N` = PR plus issue manifests; their PR cell shows only the number), the Qt cards show the same `✉N`, and the container menu offers "Apply N PR action(s)" and "Apply N issue action(s)" entries. `jailbee destroy`
 warns about unapplied PR actions the same way it warns about an unpushed
-commit, since destroying the container takes the outbox with it — and about
+commit, since destroying the container deletes its staged proposals from the
+host outbox store (stopped and mount-mode containers included) — and about
 unapplied issue actions the same way. Only a proposal whose publication outcome
 is uncertain survives the destroy: `jailbee outbox` lists it as
 `<container>@<uuid>` (destroyed) for `jailbee issue resolve` / `jailbee review

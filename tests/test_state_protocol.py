@@ -96,6 +96,8 @@ def _full_snapshot() -> Snapshot:
             autostart_rerunnable=True,
             created_at=T0,
             uuid="u-alpha",
+            outbox_pr=2,
+            outbox_issue=1,
             memory_usage=1024,
             init_pid=4242,
             cpu_usage_ns=99,

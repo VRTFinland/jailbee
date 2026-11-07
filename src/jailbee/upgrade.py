@@ -612,26 +612,6 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "skills to query grants through `jailbee inbox grant`"
         ),
     ),
-    UpgradeNote(
-        version=(1, 8, 5),
-        actions=frozenset({"apply"}),
-        reason=(
-            "every container, not only orchestrators and children, carries the broker "
-            "socket device (the broker attaches it to running containers; re-apply to "
-            "keep profiles and devices in step), and `jailbee doctor` now fails when "
-            "the broker service is not running"
-        ),
-    ),
-    UpgradeNote(
-        version=(1, 8, 5),
-        actions=frozenset({"apply"}),
-        reason=(
-            "issue and PR proposals live in the host outbox store, staged over that "
-            "broker socket: the old in-container outbox directories are ignored (publish "
-            "or drop what they held, and resolve uncertain publications, with the "
-            "previous version) and the old Sent history in state.sqlite is not carried over"
-        ),
-    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 
