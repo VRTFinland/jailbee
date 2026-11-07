@@ -147,63 +147,6 @@ def _view(repo: str, target: int | str) -> gh.IssueView | None:
     return gh.issue_view(repo, target) if isinstance(target, int) else None
 
 
-def _prepare_ref(
-    manifest: dict[str, object], bodies: dict[str, str], action: dict[str, object]
-) -> dict[str, object]:
-    ref = action.get("issue_ref")
-    if not isinstance(ref, str):
-        return action
-    actions = manifest.get("actions")
-    assert isinstance(actions, list)
-    for create in actions:
-        if (
-            isinstance(create, dict)
-            and create.get("type") == "create"
-            and create.get("ref") == ref
-            and create.get("repo") == action.get("repo")
-        ):
-            body = create.get("body")
-            if "body_file" in create:
-                body = bodies.get(create["body_file"])
-            title = create.get("title")
-            labels = create.get("labels", [])
-            if (
-                not isinstance(title, str)
-                or not isinstance(body, str)
-                or not isinstance(labels, list)
-                or not all(isinstance(label, str) for label in labels)
-            ):
-                raise OutboxCommandError(f"issue_ref {ref!r} has an invalid create action", 2)
-            view = gh.IssueView(title, body, tuple(labels), "open")
-            result = dict(action)
-            if action["type"] == "edit":
-                expected = {}
-                if "title" in action:
-                    expected["title"] = view.title
-                if "body" in action or "body_file" in action:
-                    expected["body"] = view.body
-                result["expected"] = expected
-            elif action["type"] == "labels":
-                _check_labels(action.get("add", []), action.get("remove", []), view)
-                result["expected"] = {"labels": list(view.labels)}
-            elif action["type"] == "state":
-                result["expected"] = {"state": view.state}
-            elif action["type"] == "assignees":
-                supplied = action.get("expected")
-                if supplied is not None:
-                    names = supplied.get("assignees", []) if isinstance(supplied, dict) else None
-                    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
-                        raise OutboxCommandError(
-                            "assignees expected.assignees must be a list of login strings", 2
-                        )
-                _check_assignees(action.get("add", []), action.get("remove", []), view)
-                result["expected"] = {"assignees": list(view.assignees)}
-            return result
-    raise OutboxCommandError(
-        f"issue_ref {ref!r} does not name an earlier create in the same repo", 2
-    )
-
-
 def _check_labels(add: object, remove: object, view: gh.IssueView | None) -> None:
     assert isinstance(add, list) and isinstance(remove, list)
     current = {x.casefold() for x in view.labels} if view else set()
@@ -247,7 +190,6 @@ def _check_assignees(add: object, remove: object, view: gh.IssueView | None) -> 
 
 
 def _stage(
-    store: Store,
     action: dict[str, object],
     batch: str | None,
     file_body: bool = False,
@@ -261,7 +203,7 @@ def _stage(
         del action["body"]
         action["body_file"] = name
     if batch is not None:
-        store.draft_append("issue", batch, action, bodies, prepare=_prepare_ref)
+        broker.draft_append("issue", batch, action, bodies)
         typer.echo(f"staged issue draft {batch}")
     else:
         slug = (
@@ -307,7 +249,7 @@ def create(
     """Stage a new issue; give the body with --body or --body-file."""
 
     def run() -> None:
-        store = _guard()
+        _guard()
         if as_json and batch is not None:
             raise OutboxCommandError(
                 "--json cannot be combined with --batch; commit the draft first", 2
@@ -317,7 +259,6 @@ def create(
         text = _body(body, body_file, True)
         assert text is not None
         _stage(
-            store,
             create_action(repo, title, text, label or [], ref or "issue"),
             batch,
             body_file is not None,
@@ -339,13 +280,12 @@ def edit(
     """Stage a title and/or body replacement for an issue."""
 
     def run() -> None:
-        store = _guard()
+        _guard()
         target = _parse_target(issue)
         text = _body(body, body_file, False)
         if title is None and text is None:
             raise OutboxCommandError("missing title or body", 2)
         _stage(
-            store,
             edit_action(repo, target, title, text, _view(repo, target)),
             batch,
             body_file is not None,
@@ -365,11 +305,11 @@ def comment(
     """Stage a comment on an issue."""
 
     def run() -> None:
-        store = _guard()
+        _guard()
         target = _parse_target(issue)
         text = _body(body, body_file, True)
         assert text is not None
-        _stage(store, comment_action(repo, target, text), batch, body_file is not None)
+        _stage(comment_action(repo, target, text), batch, body_file is not None)
 
     _run(run)
 
@@ -385,12 +325,12 @@ def labels(
     """Stage label additions and removals for an issue."""
 
     def run() -> None:
-        store = _guard()
+        _guard()
         target = _parse_target(issue)
         view = _view(repo, target)
         if view is not None:
             _check_labels(add or [], remove or [], view)
-        _stage(store, labels_action(repo, target, add or [], remove or [], view), batch)
+        _stage(labels_action(repo, target, add or [], remove or [], view), batch)
 
     _run(run)
 
@@ -416,7 +356,7 @@ def assign(
     """Stage assignee changes for an issue; give at least one of the flags."""
 
     def run() -> None:
-        store = _guard()
+        _guard()
         target = _parse_target(issue)
         if not (me or unassign_me or add or remove):
             raise OutboxCommandError("choose --me, --unassign-me, --add or --remove", 2)
@@ -424,7 +364,7 @@ def assign(
         remove_list = ([ASSIGNEE_ME] if unassign_me else []) + list(remove or [])
         view = _view(repo, target)
         _check_assignees(add_list, remove_list, view)
-        _stage(store, assignees_action(repo, target, add_list, remove_list, view), batch)
+        _stage(assignees_action(repo, target, add_list, remove_list, view), batch)
 
     _run(run)
 
@@ -443,10 +383,10 @@ def state(
     """Stage closing or reopening an issue."""
 
     def run() -> None:
-        store = _guard()
+        _guard()
         target = _parse_target(issue)
         if state is None:
             raise OutboxCommandError("missing state", 2)
-        _stage(store, state_action(repo, target, state, reason, _view(repo, target)), batch)
+        _stage(state_action(repo, target, state, reason, _view(repo, target)), batch)
 
     _run(run)

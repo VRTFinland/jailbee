@@ -33,6 +33,9 @@ _UNCERTAIN = (
     "the connection to the host broker dropped after the request was sent; "
     "check `jailbee outbox ls` before staging again"
 )
+# Ops whose retry after a dropped reply could repeat the effect (a second proposal
+# or draft action); they get the "check before trying again" message.
+_WRITE_OPS = frozenset({wire.OUTBOX_PUT, wire.OUTBOX_DRAFT_APPEND, wire.OUTBOX_DRAFT_SUBMIT})
 _VERSION = "container and broker versions differ; ask the human to run `jb apply` on the host"
 
 
@@ -51,10 +54,10 @@ def call(op: str, args: dict[str, Any]) -> Any:
     except BrokerVersionMismatch as exc:
         raise OutboxCommandError(_VERSION, EXIT_UNREACHABLE) from exc
     except BrokerUnreachable as exc:
-        message = _UNCERTAIN if op == wire.OUTBOX_PUT and client.request_written else _UNREACHABLE
+        message = _UNCERTAIN if op in _WRITE_OPS and client.request_written else _UNREACHABLE
         raise OutboxCommandError(message, EXIT_UNREACHABLE) from exc
     except TimeoutError as exc:
-        message = _UNCERTAIN if op == wire.OUTBOX_PUT else _UNREACHABLE
+        message = _UNCERTAIN if op in _WRITE_OPS else _UNREACHABLE
         raise OutboxCommandError(message, EXIT_UNREACHABLE) from exc
     except BrokerError as exc:
         detail = exc.detail or exc.code
@@ -87,3 +90,35 @@ def show(kind: Kind, name: str) -> dict[str, Any]:
 def drop(kind: Kind, name: str) -> None:
     """Remove one staged, unpublished proposal."""
     call(wire.OUTBOX_DROP, {"kind": kind, "name": name})
+
+
+def draft_append(
+    kind: Kind, name: str, action: dict[str, object], bodies: dict[str, str]
+) -> dict[str, Any]:
+    """Append one action to the draft batch NAME; the host derives @REF expectations."""
+    return cast(
+        dict[str, Any],
+        call(
+            wire.OUTBOX_DRAFT_APPEND,
+            {"kind": kind, "name": name, "action": action, "bodies": bodies},
+        ),
+    )
+
+
+def draft_list(kind: Kind) -> list[dict[str, Any]]:
+    result = call(wire.OUTBOX_DRAFT_LIST, {"kind": kind})
+    return list(cast(dict[str, Any], result)["drafts"])
+
+
+def draft_show(kind: Kind, name: str) -> dict[str, Any]:
+    return cast(dict[str, Any], call(wire.OUTBOX_DRAFT_SHOW, {"kind": kind, "name": name}))
+
+
+def draft_submit(kind: Kind, name: str) -> str:
+    """Stage the draft as a proposal and remove it; return the proposal name."""
+    result = call(wire.OUTBOX_DRAFT_SUBMIT, {"kind": kind, "name": name})
+    return str(cast(dict[str, Any], result)["name"])
+
+
+def draft_discard(kind: Kind, name: str) -> None:
+    call(wire.OUTBOX_DRAFT_DISCARD, {"kind": kind, "name": name})

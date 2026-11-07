@@ -184,6 +184,10 @@ def handle_drop(store: OutboxStore, uuid: str, args: Mapping[str, Any]) -> objec
 def handle(
     store: OutboxStore, uuid: str, op: str, args: Mapping[str, Any], *, now: float
 ) -> object:
+    if op in wire.OUTBOX_DRAFT_OPS:
+        from jailbee.outbox import draft_ops
+
+        return draft_ops.handle(store, uuid, op, args, now=now)
     if op == wire.OUTBOX_PUT:
         return handle_put(store, uuid, args, now=now)
     if op == wire.OUTBOX_LIST:
