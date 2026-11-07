@@ -70,6 +70,19 @@ def rig(tmp_path, mocker):
     return ctx, m, files, threads, publish
 
 
+def seed_source(uuid, manifest, name="a.json"):
+    """Stage a PR source proposal in the host outbox store for ``uuid``."""
+    from jailbee.orchestration.store import BrokerStore, store_path
+    from jailbee.outbox import publication_db
+
+    with BrokerStore(store_path(publication_db.default_root())).transaction() as con:
+        con.execute(
+            "INSERT INTO outbox_proposal(uuid, kind, name, seq, manifest, created_at) "
+            "VALUES(?, 'pr', ?, 1, ?, 0)",
+            (uuid, name, json.dumps(manifest)),
+        )
+
+
 def accept(rig):
     ctx, m, _, threads, _ = rig
     assert publishing.handle_publish(ctx, m).state == "started"
@@ -576,13 +589,16 @@ def test_pr_worker_uses_safe_domain_options(rig, mocker, source):
     }
     if source:
         manifest |= {"source": "refs/heads/topic", "source_sha": "a" * 40, "base": "main"}
-    mocker.patch.object(
-        pr_outbox,
-        "read_outbox",
-        return_value=pr_outbox.Outbox(
-            {"a.json": json.dumps(manifest)}, identity=ContainerIdentity("proj-o", "created")
-        ),
-    )
+        seed_source(ctx.sender.key, manifest)
+        mocker.patch.object(pr_outbox, "read_outbox", side_effect=AssertionError("incus exec"))
+    else:
+        mocker.patch.object(
+            pr_outbox,
+            "read_outbox",
+            return_value=pr_outbox.Outbox(
+                {"a.json": json.dumps(manifest)}, identity=ContainerIdentity("proj-o", "created")
+            ),
+        )
     mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
 
     def publish(*args, **kw):
@@ -620,13 +636,16 @@ def test_pr_manifest_needs_matching_right(rig, mocker, source):
     }
     if source:
         manifest |= {"source": "refs/heads/topic", "source_sha": "a" * 40, "base": "main"}
-    mocker.patch.object(
-        pr_outbox,
-        "read_outbox",
-        return_value=pr_outbox.Outbox(
-            {"a.json": json.dumps(manifest)}, identity=ContainerIdentity("proj-o", "created")
-        ),
-    )
+        seed_source(ctx.sender.key, manifest)
+        mocker.patch.object(pr_outbox, "read_outbox", side_effect=AssertionError("incus exec"))
+    else:
+        mocker.patch.object(
+            pr_outbox,
+            "read_outbox",
+            return_value=pr_outbox.Outbox(
+                {"a.json": json.dumps(manifest)}, identity=ContainerIdentity("proj-o", "created")
+            ),
+        )
     out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
     assert out.state == "refused"
     assert ("pull_requests" if source else "pr_reviews") in out.detail
@@ -654,17 +673,60 @@ def test_broker_source_publish_records_orchestrator(rig, mocker):
         ctx.sender,
         config={labels.GRANT: Grant(publish=PublishRights(pull_requests=True)).to_label()},
     )
-    mocker.patch.object(
-        pr_outbox,
-        "read_outbox",
-        return_value=pr_outbox.Outbox(
-            {"a.json": json.dumps(manifest)}, identity=ContainerIdentity("proj-o", "created")
-        ),
-    )
+    seed_source(ctx.sender.key, manifest)
     mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
     source = mocker.patch.object(publishing.branch_pr, "publish_source_manifest", return_value=0)
     accept((ctx, m.model_copy(update={"outbox": "pr"}), *rig[2:]))
     assert source.call_args.kwargs["publisher"] == "orchestrator"
+    ctx.incus.exec.assert_not_called()
+
+
+SOURCE = {
+    "version": 1,
+    "repo": "org/repo",
+    "pr": None,
+    "head_sha": None,
+    "actions": [{"type": "description", "body": "B"}],
+    "source": "refs/heads/topic",
+    "source_sha": "a" * 40,
+    "base": "main",
+}
+
+
+def test_a_file_based_source_manifest_is_refused(rig, mocker):
+    ctx, m, *_ = rig
+    ctx.sender = replace(
+        ctx.sender,
+        config={labels.GRANT: Grant(publish=PublishRights(pull_requests=True)).to_label()},
+    )
+    mocker.patch.object(
+        pr_outbox,
+        "read_outbox",
+        return_value=pr_outbox.Outbox(
+            {"a.json": json.dumps(SOURCE)}, identity=ContainerIdentity("proj-o", "created")
+        ),
+    )
+    out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
+    assert out.state == "refused" and "stage it again" in out.detail
+
+
+def test_an_uncertain_source_publication_refuses_a_new_request(rig, mocker):
+    from jailbee.outbox import publication_db
+    from jailbee.outbox_io import proposal_digest
+
+    ctx, m, *_ = rig
+    ctx.sender = replace(
+        ctx.sender,
+        config={labels.GRANT: Grant(publish=PublishRights(pull_requests=True)).to_label()},
+    )
+    seed_source(ctx.sender.key, SOURCE)
+    store = publication_db.open_publications()
+    digest = proposal_digest("a.json", json.dumps(SOURCE), {})
+    with store.claim(ctx.sender.key, "pr", "a.json") as claim:
+        store.begin(claim, digest=digest, action_count=1, container_full="proj-o", now=1.0)
+        store.mark_prepared(claim, digest, 0, repo="org/repo", now=1.0)  # then a crash
+    out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
+    assert out.state == "refused" and "uncertain" in out.detail
 
 
 def _assign_action(rig, add=(), remove=()):

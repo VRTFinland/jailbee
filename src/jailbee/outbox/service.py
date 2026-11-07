@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from jailbee.incus import IncusError
@@ -11,8 +12,10 @@ from jailbee.outbox.inspect import build_views
 from jailbee.outbox.io import READ_TIMEOUT, PrManagement, mutate_store, read_store
 from jailbee.outbox.models import (
     ContainerView,
+    Kind,
     OutboxChanged,
     OutboxExecutionError,
+    ProposalView,
     StoreSnapshot,
 )
 from jailbee.outbox_io import (
@@ -100,6 +103,60 @@ def issue_journals(
     }
 
 
+def with_store_sources(pr: StoreSnapshot, uuid: str | None) -> StoreSnapshot:
+    """The PR snapshot with the instance's store-held PR source proposals added.
+
+    PR source proposals live in the host outbox store; the other PR proposals
+    are still container files. A store row wins over a file of the same name.
+    Their row versions mark them as store-held (`execute_delete` routes on it).
+    """
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox import publication_db, store_db
+
+    if uuid is None:
+        return pr
+    try:
+        rows = store_db.read_proposals(publication_db.default_root(), uuid, "pr")
+    except StoreError as exc:
+        raise OutboxExecutionError(f"outbox store is unreadable: {exc}") from exc
+    if not rows:
+        return pr
+    files = dict(pr.files)
+    for row in rows:
+        files[row.name] = row.manifest
+        files.update(row.bodies)
+    versions = (*pr.versions, *((row.name, row.revision) for row in rows))
+    return replace(pr, files=tuple(sorted(files.items())), versions=versions)
+
+
+def _source_uncertainty(
+    proposals: tuple[ProposalView, ...], uuid: str | None
+) -> tuple[ProposalView, ...]:
+    """Show a store-held PR proposal whose publication outcome is unknown as uncertain."""
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox import publication_db
+
+    if uuid is None:
+        return proposals
+    try:
+        journals = publication_db.read_journals(publication_db.default_root(), uuid, "pr")
+    except StoreError as exc:
+        raise OutboxExecutionError(f"outbox store is unreadable: {exc}") from exc
+    result = []
+    for view in proposals:
+        journal = journals.get(("pr", view.id.name)) if view.id.kind == "pr" else None
+        if journal is not None and journal.uncertain:
+            detail = "publication outcome uncertain; check GitHub, then rerun jb pr push"
+            view = replace(
+                view,
+                state="uncertain",
+                error="; ".join(v for v in (view.error, detail) if v),
+                edit_block="recorded publication progress prevents editing",
+            )
+        result.append(view)
+    return tuple(result)
+
+
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
@@ -117,20 +174,25 @@ def load_container(
     identity = None
     try:
         identity, uuid = _instance(incus, container)
-        # PR proposals are still files in the container; issue proposals live
-        # in the host store and are read without any `incus exec`.
+        # PR proposals are still files in the container, but for PR sources;
+        # those and issue proposals live in the host store (no `incus exec`).
         stores = (
-            read_store(incus, container, "pr", uid=cfg.container_user.uid),
+            with_store_sources(
+                read_store(incus, container, "pr", uid=cfg.container_user.uid), uuid
+            ),
             issue_snapshot(container, uuid),
         )
         if _instance(incus, container) != (identity, uuid):
             raise OutboxChanged("container changed while reading; refresh required")
         # Canonical freshness matches publication, not optional PR display labels.
-        proposals = build_views(
-            identity,
-            stores,
-            journal_store=journal_store,
-            issue_journals=issue_journals(container, identity, uuid),
+        proposals = _source_uncertainty(
+            build_views(
+                identity,
+                stores,
+                journal_store=journal_store,
+                issue_journals=issue_journals(container, identity, uuid),
+            ),
+            uuid,
         )
         return ContainerView(identity, container, True, None, stores, proposals)
     except (IncusError, JournalError, OutboxExecutionError, OutboxChanged) as exc:
@@ -186,6 +248,9 @@ def execute_delete(
             if plan.proposal.kind == "issue":
                 # The store archives the issue journal in the deleting transaction.
                 return _delete_issue_rows(container, uuid, plan, snapshot)
+            if plan.proposal.name in dict(snapshot.versions):
+                # A store-held PR source proposal.
+                return _delete_issue_rows(container, uuid, plan, snapshot, kind="pr")
             removed = mutate_store(
                 incus,
                 container,
@@ -213,9 +278,15 @@ def execute_delete(
 
 
 def _delete_issue_rows(
-    container: str, uuid: str | None, plan: DeletePlan, snapshot: StoreSnapshot
+    container: str,
+    uuid: str | None,
+    plan: DeletePlan,
+    snapshot: StoreSnapshot,
+    *,
+    kind: Kind = "issue",
 ) -> tuple[str, ...]:
-    """Delete or edit an issue proposal in the host store, guarded by its row version."""
+    """Delete or edit a store-held proposal (every issue proposal, a PR source),
+    guarded by its row version."""
     from jailbee.db import state_dir
     from jailbee.orchestration.store import StoreError
     from jailbee.outbox import store_db
@@ -228,7 +299,7 @@ def _delete_issue_rows(
     try:
         store_db.host_store(state_dir() / "orchestration").edit_proposal(
             uuid,
-            "issue",
+            kind,
             plan.proposal.name,
             version,
             plan.new_text,

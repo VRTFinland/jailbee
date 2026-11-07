@@ -29,8 +29,25 @@ def isolated(monkeypatch, tmp_path):
     monkeypatch.setattr(gh, "run_json", lambda *a, **kw: pytest.fail("unexpected gh call"))
 
 
+@pytest.fixture(autouse=True)
+def broker(monkeypatch, tmp_path):
+    """Source proposals are staged through the host broker (in process here)."""
+    from tests import container_broker_support
+
+    return container_broker_support.install(monkeypatch, tmp_path / "broker-state")
+
+
 def invoke(*args):
     return CliRunner().invoke(container_app, ["pr", *args])
+
+
+def staged_source(broker):
+    """The single PR source proposal the broker stored: raw, parsed, bodies."""
+    (row,) = broker.proposals("pr")
+    bodies = dict(row.bodies)
+    parsed = parse_manifest(row.name, row.manifest, bodies)
+    assert parse_pure(row.name, row.manifest, bodies) == parsed
+    return json.loads(row.manifest), parsed, bodies
 
 
 def published(tmp_path):
@@ -172,7 +189,7 @@ def test_submitted_review_keeps_original_anchor_for_real_host_gate(
 
 @pytest.mark.parametrize("alias", ["--ref", "--head"])
 @pytest.mark.parametrize("numbered", [False, True])
-def test_source_schema_examples_without_existing_pr(monkeypatch, tmp_path, alias, numbered):
+def test_source_schema_examples_without_existing_pr(monkeypatch, tmp_path, broker, alias, numbered):
     monkeypatch.setattr(
         gh, "pr_view", lambda *a: pytest.fail("source with repo must not need a PR")
     )
@@ -202,7 +219,8 @@ def test_source_schema_examples_without_existing_pr(monkeypatch, tmp_path, alias
         ]
     result = invoke(*args)
     assert result.exit_code == 0, result.output
-    raw, _, _ = published(tmp_path)
+    raw, _, _ = staged_source(broker)
+    assert not (tmp_path / ".jailbee/pr-outbox").exists()
     expected = {
         "version": 1,
         "repo": "acme/widgets",
@@ -442,12 +460,13 @@ def test_discard_removes_only_review_draft(tmp_path):
     "ref",
     ["main", "refs/../bad", "refs/heads/a.lock", "refs/heads/a b", "refs//bad", "refs/heads/a@{1}"],
 )
-def test_source_invalid_refs_leave_no_files(tmp_path, ref):
+def test_source_invalid_refs_leave_no_files(tmp_path, broker, ref):
     result = invoke(
         "source", "--repo", "acme/widgets", "--ref", ref, "--sha", "a" * 40, "--pr", "1234"
     )
     assert result.exit_code == 2, result.output
     assert not (tmp_path / ".jailbee/pr-outbox").exists()
+    assert broker.proposals("pr") == []
 
 
 def test_caps_preserve_review_draft(tmp_path):
@@ -513,13 +532,14 @@ def test_missing_values_name_value(tmp_path, args, missing):
         ),
     ],
 )
-def test_invalid_inputs_no_publication(tmp_path, args):
+def test_invalid_inputs_no_publication(tmp_path, broker, args):
     result = invoke(*args)
     assert result.exit_code == 2, result.output
     assert not (tmp_path / ".jailbee/pr-outbox").exists()
+    assert broker.proposals("pr") == []
 
 
-def test_source_body_file(tmp_path):
+def test_source_body_file(tmp_path, broker):
     body = tmp_path / "source.md"
     body.write_text("## Source change\n")
     result = invoke(
@@ -534,7 +554,7 @@ def test_source_body_file(tmp_path):
         str(body),
     )
     assert result.exit_code == 0, result.output
-    _, parsed, bodies = published(tmp_path)
+    _, parsed, bodies = staged_source(broker)
     assert parsed.actions[0].body == body.read_text()
     assert list(bodies.values()) == [body.read_text()]
 
@@ -706,7 +726,7 @@ def test_twenty_pending_manifests_refuse_submit_without_losing_draft(tmp_path):
     assert len(list(store.outbox("pr").glob("*.json"))) == 20
 
 
-def test_source_repo_inference_uses_explicit_number(monkeypatch, tmp_path):
+def test_source_repo_inference_uses_explicit_number(monkeypatch, tmp_path, broker):
     def view(number):
         assert number == 1234
         return gh.PrView(1234, "head", "acme/widgets")
@@ -714,7 +734,7 @@ def test_source_repo_inference_uses_explicit_number(monkeypatch, tmp_path):
     monkeypatch.setattr(gh, "pr_view", view)
     result = invoke("source", "--ref", "refs/heads/a", "--sha", "a" * 40, "--pr", "1234")
     assert result.exit_code == 0, result.output
-    raw, _, _ = published(tmp_path)
+    raw, _, _ = staged_source(broker)
     assert raw["repo"] == "acme/widgets"
     assert raw["head_sha"] is None
 
@@ -839,7 +859,7 @@ def test_batch_repo_collision_preserves_review_draft(monkeypatch, tmp_path):
     assert store.draft_load_state("pr", "review-1234") == before
 
 
-def test_source_prints_source_push_hint(tmp_path):
+def test_source_prints_source_push_hint(tmp_path, broker):
     result = invoke(
         "source",
         "--repo",
@@ -852,10 +872,11 @@ def test_source_prints_source_push_hint(tmp_path):
         "1234",
     )
     assert result.exit_code == 0, result.output
-    manifest = next((tmp_path / ".jailbee/pr-outbox").glob("*.json"))
+    (row,) = broker.proposals("pr")
+    assert row.name == "001-source.json"
     import socket
 
-    assert f"jb pr push {socket.gethostname()} --source-manifest {manifest.name}" in result.output
+    assert f"jb pr push {socket.gethostname()} --source-manifest {row.name}" in result.output
     assert "jb review apply" not in result.output
 
 
