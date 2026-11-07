@@ -101,6 +101,51 @@ def test_ref_wait_coexists_with_ordinary_wait_and_reads_history(tmp_path, monkey
     assert [i.id for i in env.store.unacked(env.orch)] == ["start", "other"]
 
 
+@pytest.mark.parametrize("action", ["spawn", "restart"])
+@pytest.mark.parametrize("state", ["done", "failed"])
+def test_readiness_ref_wait_ignores_queued_and_started(tmp_path, monkeypatch, action, state):
+    env = Env(Rig(tmp_path, monkeypatch))
+    ref = f"{action}-request"
+    env.ask(env.orch, "next", conn=2, ref=ref, timeout=30)
+    for seq, intermediate in enumerate(["queued", "started"], start=1):
+        env.store.insert_item(
+            env.orch, "proj-orch",
+            {"id": f"s{seq}", "type": "status", "ref": ref, "state": intermediate},
+            now=seq,
+        )
+        executor.evaluate_waiters(env.memory)
+        assert env.listener.responses == []
+    final = {"id": "ready", "type": "status", "ref": ref, "state": state}
+    env.store.insert_item(env.orch, "proj-orch", final, now=3)
+    executor.evaluate_waiters(env.memory)
+    assert env.last().result == {"kind": "status", "item": final}
+
+
+@pytest.mark.parametrize("action", ["spawn", "restart"])
+def test_readiness_wait_shares_send_timeout(monkeypatch, capsys, action):
+    request = SendRequest(
+        type=action, branch="fix/task" if action == "spawn" else "",
+        child="kid" if action == "restart" else "", text="Do the task.",
+        wait=True, until="done", timeout="10s",
+    )
+    monkeypatch.setattr(socket_cli, "prepare_send", lambda r: ("request", {}, None))
+    ticks = iter([100.0, 107.0])
+    monkeypatch.setattr(socket_cli.time, "monotonic", lambda: next(ticks))
+
+    def send(*args, **kwargs):
+        assert kwargs["timeout"] == 10
+        return {"state": "queued"}
+
+    def wait(*args, **kwargs):
+        assert kwargs["timeout"] == 3
+        return {"kind": "timeout"}
+
+    monkeypatch.setattr(socket_cli, "call_send", send)
+    monkeypatch.setattr(socket_cli, "call_next", wait)
+    assert socket_cli.cmd_send(request) == 3
+    assert "timed out waiting for request request" in capsys.readouterr().err
+
+
 def test_ref_wait_timeout_and_disconnect(tmp_path, monkeypatch):
     env = Env(Rig(tmp_path, monkeypatch))
     env.ask(env.orch, "next", conn=2, ref="pub", timeout=0)

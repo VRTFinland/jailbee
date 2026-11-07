@@ -10,6 +10,10 @@ before editing `## Unreleased`.
 
 ### Added
 
+- `jailbee inbox send spawn|restart --wait --until done` waits for child readiness
+  through queued and started statuses within one `--timeout`, so a follow-up message
+  can be sent after exit 0. Both commands also support `--json` status output
+  ([#90](https://github.com/VRTFinland/jailbee/issues/90)).
 - `jailbee inbox send publish --wait --until done` waits for the final publication
   status within `--timeout`. `--json` returns structured issue action receipts,
   including created issue numbers and URLs in manifest order. `jailbee issue

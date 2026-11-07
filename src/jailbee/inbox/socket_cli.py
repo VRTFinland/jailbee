@@ -205,7 +205,7 @@ def cmd_send(request: SendRequest) -> int:
             result = call_next(_factory, {"ref": ident}, timeout=remaining)
             if result.get("kind") == "timeout":
                 print(
-                    f"{PROG}: timed out waiting for publish {ident}; "
+                    f"{PROG}: timed out waiting for request {ident}; "
                     "inspect inbox ls/read before retrying",
                     file=sys.stderr,
                 )
@@ -213,7 +213,7 @@ def cmd_send(request: SendRequest) -> int:
             if result.get("kind") != "status":
                 raise BrokerUnreachable(
                     f"{PROG}: host broker does not support completion waits; "
-                    f"upgrade/restart it and inspect publish {ident} in the inbox"
+                    f"upgrade/restart it and inspect request {ident} in the inbox"
                 )
             item = result["item"]
             state = item.get("state")

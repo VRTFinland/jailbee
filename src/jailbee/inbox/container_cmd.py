@@ -110,6 +110,10 @@ Timeout = Annotated[
         help="Status wait: seconds or <n>s|m|h, or none; needs --wait.",
     ),
 ]
+Until = Annotated[
+    str, typer.Option("--until", help="With --wait, use done to wait for done or failed.")
+]
+SendJson = Annotated[bool, typer.Option("--json", help="Print one JSON status object.")]
 Child = Annotated[str, typer.Option("--child", callback=_nonempty, help="Child container name.")]
 Agent = Annotated[
     str,
@@ -393,6 +397,8 @@ def spawn(
     no_warm: Annotated[bool, typer.Option("--no-warm", help="Do not warm fork paths.")] = False,
     wait: Wait = False,
     timeout: Timeout = "",
+    until: Until = "",
+    json_output: SendJson = False,
 ) -> None:
     _send(
         send.SendRequest(
@@ -419,6 +425,8 @@ def spawn(
             no_warm=no_warm,
             wait=wait,
             timeout=timeout,
+            until=until,
+            json_output=json_output,
         ),
         source,
     )
@@ -487,6 +495,8 @@ def restart(
     ] = False,
     wait: Wait = False,
     timeout: Timeout = "",
+    until: Until = "",
+    json_output: SendJson = False,
 ) -> None:
     _send(
         send.SendRequest(
@@ -506,6 +516,8 @@ def restart(
             default_runner=default_runner,
             wait=wait,
             timeout=timeout,
+            until=until,
+            json_output=json_output,
         ),
         source,
     )
@@ -609,9 +621,7 @@ def publish(
     ] = "",
     wait: Wait = False,
     timeout: Timeout = "",
-    until: Annotated[
-        str, typer.Option("--until", help="With --wait, use done to wait for done or failed.")
-    ] = "",
+    until: Until = "",
     json_output: Annotated[
         bool, typer.Option("--json", help="Print one JSON object, including publication results.")
     ] = False,
