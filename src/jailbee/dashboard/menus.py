@@ -310,8 +310,9 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
     no-op.
 
     "Outbox" (``outbox browse``) is offered on addressable running and stopped
-    containers (its data is host-side), including mount mode, unless the probe counted no manifest in both
-    outboxes and the container has no Sent records (``ctx.sent_count``); an
+    containers (its data is host-side), including mount mode, unless the probe
+    counted no manifest in both outboxes and the container has no Sent records
+    (``ctx.sent_count``); an
     unknown count still offers it. Its fixed stores do not require
     a clone or an existing PR. The Qt dashboard opens its own
     window for it; the terminal dashboard its Outbox box
@@ -352,7 +353,10 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
         pending = _outbox_pending(ctx)
         if pending:
             actions.extend(
-                [(f"Outbox ({pending} pending)", "outbox browse"), ("Clear outbox…", "outbox clear")]
+                [
+                    (f"Outbox ({pending} pending)", "outbox browse"),
+                    ("Clear outbox…", "outbox clear"),
+                ]
             )
         elif not (_outbox_empty(ctx) and not ctx.sent_count):
             actions.append(("Outbox", "outbox browse"))
