@@ -422,6 +422,7 @@ class OutboxStore:
                 )
             key = (uuid, kind, name)
             if manifest is None:
+                publication_db.forget_dropped_sent(con, uuid, kind, name)
                 con.execute(
                     "DELETE FROM outbox_body WHERE uuid=? AND kind=? AND proposal_name=?", key
                 )

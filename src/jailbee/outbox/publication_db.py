@@ -427,6 +427,25 @@ def forget_sent(
     con.execute("DELETE FROM outbox_sent WHERE dedup_key=? AND state='uncertain'", (key,))
 
 
+def forget_dropped_sent(con: sqlite3.Connection, uuid: str, kind: str, name: str) -> None:
+    """Delete the `uncertain` sent records of the stored proposal about to be dropped.
+
+    An uncertain action resolved for retry loses its journal record but keeps its
+    `uncertain` row; dropped unpublished, nothing would ever settle it. Applied
+    records stay. Call inside the dropping transaction, before the proposal goes.
+    """
+    digest = _stored_digest(con, uuid, kind, name)
+    if digest is None:
+        return
+    for outbox in ("issue",) if kind == "issue" else ("review", "source"):
+        prefix = f"{uuid}|{outbox}|{name}|{digest}|"
+        con.execute(
+            "DELETE FROM outbox_sent WHERE uuid=? AND state='uncertain' "
+            "AND substr(dedup_key, 1, ?)=?",
+            (uuid, len(prefix), prefix),
+        )
+
+
 # -- journal rows ------------------------------------------------------------
 
 
