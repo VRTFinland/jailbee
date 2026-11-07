@@ -131,7 +131,7 @@ def test_a_container_without_a_published_view_is_told_to_retry(env: Env) -> None
     [
         ({"manifest": {"version": 1, "actions": [{"type": "bogus"}]}}, "type"),
         ({"manifest": "not an object"}, "manifest"),
-        ({"kind": "pr"}, "issue"),
+        ({"kind": "pr"}, "repo"),  # an issue manifest is no PR source manifest
         ({"kind": "other"}, "issue"),
         ({"slug": "Bad Slug"}, "slug"),
         ({"slug": "a" * 81}, "slug"),

@@ -101,23 +101,64 @@ def _parse_issue(name: str, manifest: object, bodies: Mapping[str, str]) -> str:
     return text
 
 
+def _body_refs(value: object) -> set[str]:
+    found: set[str] = set()
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, dict):
+            ref = item.get("body_file")
+            if isinstance(ref, str):
+                found.add(ref)
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+    return found
+
+
+def _parse_pr_source(name: str, manifest: object, bodies: Mapping[str, str]) -> str:
+    """Validate one PR source manifest against its bodies; return its JSON text.
+
+    Only source manifests (an imported ref to push and open or update a PR from)
+    are staged through the broker so far; review, comment, reply and
+    description proposals are still container files.
+    """
+    from jailbee.pr_manifest import ManifestError, is_source_manifest
+    from jailbee.pr_manifest import parse_manifest as parse_pr
+
+    if not isinstance(manifest, dict):
+        raise _bad("manifest must be a JSON object")
+    try:
+        text = json.dumps(manifest, ensure_ascii=False)
+        parsed = parse_pr(name, text, bodies)
+    except (ManifestError, TypeError, ValueError, RecursionError) as exc:
+        raise _bad(str(exc)) from exc
+    if not is_source_manifest(parsed):
+        raise _bad("only PR source proposals are staged through the broker so far")
+    unused = sorted(set(bodies) - _body_refs(manifest))
+    if unused:
+        raise _bad(f"bodies not referenced by the manifest: {', '.join(unused)}")
+    return text
+
+
 def handle_put(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now: float) -> object:
-    if _kind(args.get("kind")) != "issue":
-        raise _bad("only issue proposals are staged through the broker so far")
+    kind = _kind(args.get("kind"))
+    assert kind is not None
     slug = args.get("slug")
     if not isinstance(slug, str) or not _SLUG_RE.fullmatch(slug):
         raise _bad("slug must match [a-z0-9-]{1,80}")
     manifest = args.get("manifest")
     bodies = _bodies(args.get("bodies"))
-    _parse_issue(f"{slug}.json", manifest, bodies)
+    parse = _parse_issue if kind == "issue" else _parse_pr_source
+    parse(f"{slug}.json", manifest, bodies)
 
     def build(stem: str) -> tuple[str, dict[str, str]]:
         names = {old: f"{stem}-{index}.md" for index, old in enumerate(bodies, 1)}
         final = {names[old]: text for old, text in bodies.items()}
-        return _parse_issue(f"{stem}.json", _rename_refs(manifest, names), final), final
+        return parse(f"{stem}.json", _rename_refs(manifest, names), final), final
 
     try:
-        proposal = store.put_proposal(uuid, "issue", slug, build, now=now, cap=MAX_MANIFESTS)
+        proposal = store.put_proposal(uuid, kind, slug, build, now=now, cap=MAX_MANIFESTS)
     except ProposalCapError as exc:
         raise _bad(str(exc)) from exc
     return {"kind": proposal.kind, "name": proposal.name}
