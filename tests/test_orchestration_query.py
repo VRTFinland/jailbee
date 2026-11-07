@@ -615,9 +615,7 @@ def test_a_plain_container_connects_but_every_inbox_op_is_not_orchestrated(
 
 
 @pytest.mark.parametrize("op", ["send", "next", "list", "ack", "children"])
-def test_the_executor_refuses_inbox_ops_of_a_container_without_a_context(
-    env: Env, op: str
-) -> None:
+def test_the_executor_refuses_inbox_ops_of_a_container_without_a_context(env: Env, op: str) -> None:
     env.store.set_recipient("proj-plain", "proj-plain", now=1.0)
     event = RequestEvent(uuid="proj-plain", conn_id=1, request=wire.Request(op, {}))
     with pytest.raises(wire.WireError) as ei:

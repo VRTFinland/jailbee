@@ -51,7 +51,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from jailbee.config import Config
-
     from jailbee.incus import Incus
 
 log = logging.getLogger(__name__)

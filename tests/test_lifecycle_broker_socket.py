@@ -38,7 +38,9 @@ def _rig(tmp_path: Path, mocker, make_cfg, events: list[str], *, uuid: str | Non
 
 
 def _create(cfg, incus) -> None:
-    new_container(cfg, incus, NewContainerOptions("feat/x", None, "strict", "8GiB", 4, "base", True))
+    new_container(
+        cfg, incus, NewContainerOptions("feat/x", None, "strict", "8GiB", 4, "base", True)
+    )
 
 
 def test_socket_device_is_attached_before_the_first_agent(tmp_path, mocker, make_cfg):
@@ -46,7 +48,7 @@ def test_socket_device_is_attached_before_the_first_agent(tmp_path, mocker, make
     cfg, incus = _rig(tmp_path, mocker, make_cfg, events)
     _create(cfg, incus)
     assert events == ["socket", "agents"]
-    name, device, kind, props = incus.config_device_add.call_args_list[-1].args
+    _name, device, kind, props = incus.config_device_add.call_args_list[-1].args
     assert device == ORCHESTRATION_DEVICE and kind == "disk"
     source = tmp_path / "orch" / "sock"
     assert props["source"].startswith(str(source / UUID))

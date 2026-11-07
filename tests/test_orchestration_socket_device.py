@@ -570,7 +570,9 @@ def test_snapshot_restore_reattaches_the_live_generation_without_broker_restart(
     env.tick()
     snapshot_device = dict(env.devices["proj-orch"][ORCHESTRATION_DEVICE])
     old = env.listener.dirs[UUID]
-    env.set(_c("proj-orch", **{labels.GRANT: "{not json", "volatile.uuid": UUID}))  # revoke the role
+    env.set(
+        _c("proj-orch", **{labels.GRANT: "{not json", "volatile.uuid": UUID})
+    )  # revoke the role
     env.tick()
     env.set(orch())  # re-grant it: the snapshot's generation no longer exists
     env.tick()
