@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.8.4 - 2026-11-07
+
 ### Added
 
 - `jailbee repo ls` lists registered repositories and leftover Incus profiles, and
