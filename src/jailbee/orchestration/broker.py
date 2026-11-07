@@ -78,6 +78,7 @@ def tick(
     prune_reservations(root)
     memory.publish_threads[:] = [worker for worker in memory.publish_threads if worker.is_alive()]
     raw = incus.list_containers()
+    memory.listed_roles = broker_state.listed_roles(raw)
     others = socket_lifecycle.other_projects(incus, memory) if memory.store is not None else None
     early_configs: dict[str, Config | None] | None = None
     if memory.listener is not None and memory.store is not None:
