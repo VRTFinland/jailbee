@@ -275,7 +275,7 @@ def _orchestrator(memory: broker_state.BrokerMemory, uuid: str) -> ActionContext
     return ctx
 
 
-def _children_result(
+def children_result(
     memory: broker_state.BrokerMemory, store: BrokerStore, uuid: str, ctx: ActionContext
 ) -> dict[str, object]:
     view = memory.children.get(ctx.sender.full)
@@ -290,7 +290,7 @@ def handle_children(
     memory: broker_state.BrokerMemory, store: BrokerStore, uuid: str
 ) -> dict[str, object]:
     """The orchestrator's published children list and when each child last wrote."""
-    return _children_result(memory, store, uuid, _orchestrator(memory, uuid))
+    return children_result(memory, store, uuid, _orchestrator(memory, uuid))
 
 
 def handle_status(
@@ -299,7 +299,7 @@ def handle_status(
     """Like `handle_children`, optionally narrowed to one child by name."""
     if child is not None and not isinstance(child, str):
         raise wire.WireError(wire.BAD_REQUEST, "child must be a string or null")
-    result = _children_result(memory, store, uuid, _orchestrator(memory, uuid))
+    result = children_result(memory, store, uuid, _orchestrator(memory, uuid))
     if child is not None:
         children = result["children"]
         assert isinstance(children, list)

@@ -25,6 +25,7 @@ from jailbee.orchestration import (
     inbox_state,
     labels,
     publishing,
+    query,
     retention,
     socket_device,
     watch,
@@ -47,7 +48,6 @@ from jailbee.orchestration.outbox import (
     deliver,
     ensure_orchestration_env,
     flush_pending,
-    grant_json_text,
     has_container_jailbee,
     has_pending,
 )
@@ -62,7 +62,6 @@ from jailbee.orchestration.protocol import (
     StopManifest,
     new_host_id,
 )
-from jailbee.orchestration.query import ContainerSnapshot, Queries
 from jailbee.orchestration.state import (
     load_queue,
     purge_vanished_pending,
@@ -430,7 +429,7 @@ def _handle_manifest(
             if parent is not None:
                 parent_ctx = memory.contexts.get(parent.key)
                 if parent_ctx is not None:
-                    _publish_context(memory, parent_ctx)
+                    query.publish_context(memory, parent_ctx)
         reply(ref, outcome)
     is_publish = (
         isinstance(manifest, PublishManifest) and outcome is not None and outcome.state == "started"
@@ -482,7 +481,7 @@ def _refresh_children_snapshot(
             ctx.incus.list_containers(), broker_state.repo_configs(memory)
         )
         _remember_children(ctx, memory, inbox_state.sync_children(ctx, memory.status))
-        _publish_context(memory, ctx)
+        query.publish_context(memory, ctx)
     except Exception:
         log.exception("broker: child inbox state of %s failed", ctx.sender.full)
 
@@ -968,7 +967,7 @@ def tick(
     ):
         memory.contexts.clear()
         memory.children.clear()
-        _publish_queries(memory)
+        query.publish_queries(memory)
         return False
 
     try:
@@ -1086,7 +1085,7 @@ def tick(
         del memory.children[full]
 
     # Publish role and grant changes before any later inventory refresh can fail.
-    _publish_queries(memory)
+    query.publish_queries(memory)
 
     # Handlers changed labels and may have stopped children after our initial
     # snapshot. Refresh once before cleanup; share deletions with queue drain.
@@ -1137,81 +1136,8 @@ def tick(
             ctx.nodes = nodes
             ctx.sender = nodes.get(ctx.sender.full, ctx.sender)
     _settle_all_watches(root, orchestrators, present, memory)
-    _publish_queries(memory)
+    query.publish_queries(memory)
     return active
-
-
-def _context_snapshot(memory: broker_state.BrokerMemory, ctx: ActionContext) -> ContainerSnapshot:
-    """Serialize on the executor so query readers never reach mutable contexts."""
-    from jailbee.orchestration import socket_ops
-
-    assert memory.store is not None
-    previous = memory.queries.snapshot().get(ctx.sender.key) if memory.queries else None
-    grant = ctx.grant()
-    try:
-        ready = memory.store.has_recipient_uuid(ctx.sender.key)
-    except StoreError:
-        log.exception("broker: recipient readiness for %s failed", ctx.sender.key)
-        ready = previous.ready if previous is not None else False
-    try:
-        children = socket_ops._children_result(memory, memory.store, ctx.sender.key, ctx)
-    except StoreError:
-        log.exception("broker: child history for %s failed", ctx.sender.key)
-        view = memory.children.get(ctx.sender.full)
-        old = json.loads(previous.children_json) if previous is not None else {}
-        children = {
-            "observed_at": view.observed_at if view is not None else None,
-            "children": list(view.children) if view is not None else [],
-            "last_from_child": old.get("last_from_child", {}),
-        }
-    return ContainerSnapshot(
-        role=ctx.role(),
-        ready=ready,
-        children_json=json.dumps(children),
-        grant_json=grant_json_text(grant, *ctx.default_runner()) if grant is not None else None,
-    )
-
-
-def _publish_context(memory: broker_state.BrokerMemory, ctx: ActionContext) -> None:
-    """Commit one action's view without publishing other unfinished round state."""
-    if memory.queries is not None and memory.store is not None:
-        try:
-            memory.queries.publish_container(ctx.sender.key, _context_snapshot(memory, ctx))
-        except Exception:
-            log.exception("broker: publishing query view for %s failed", ctx.sender.key)
-
-
-def _publish_queries(memory: broker_state.BrokerMemory) -> None:
-    """Build on the broker thread, then atomically replace the completed-round view.
-
-    Each component is isolated so failed store reads do not hide other updates.
-    Neither contexts nor their mutable children/grant data cross into the listener.
-    """
-    if memory.queries is None or memory.store is None:
-        return
-    empty_children = json.dumps({"children": [], "observed_at": None, "last_from_child": {}})
-    try:
-        recipients = set(memory.store.recipients().values())
-        snapshot = {
-            uuid: ContainerSnapshot("none", True, empty_children, None) for uuid in recipients
-        }
-    except Exception:
-        log.exception("broker: publishing query recipients failed")
-        snapshot = {
-            uuid: ContainerSnapshot("none", view.ready, empty_children, None)
-            for uuid, view in memory.queries.snapshot().items()
-        }
-    for uuid, ctx in memory.contexts.items():
-        try:
-            snapshot[uuid] = _context_snapshot(memory, ctx)
-        except Exception:
-            log.exception("broker: publishing query view for %s failed", uuid)
-            # Fail closed: never retain a stale grant if serialization fails.
-            snapshot[uuid] = ContainerSnapshot("none", False, empty_children, None)
-    try:
-        memory.queries.publish(snapshot)
-    except Exception:
-        log.exception("broker: publishing query snapshot failed")
 
 
 def _settle_all_watches(
@@ -1339,7 +1265,7 @@ def run_broker(incus: Incus) -> int:
     previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT)}
     memory = broker_state.BrokerMemory()
     memory.store = BrokerStore(store_path(root))
-    memory.queries = Queries(memory.store)
+    memory.queries = query.Queries(memory.store)
     memory.listener = Listener(memory.requests, queries=memory.queries)
     memory.listener.start()
     try:
