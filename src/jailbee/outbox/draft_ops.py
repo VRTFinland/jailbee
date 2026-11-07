@@ -27,10 +27,10 @@ from jailbee.orchestration import wire
 from jailbee.outbox.broker_ops import (
     _bad,
     _bodies,
-    _body_refs,
     _kind,
     _parse_issue,
     _parse_pr,
+    _pr_body_refs,
     _rename_refs,
 )
 from jailbee.outbox.store_db import (
@@ -349,7 +349,8 @@ def _submit_pr(
         if len(manifest["actions"]) > MAX_PR_DRAFT_ACTIONS:
             raise _bad(f"PR manifest exceeds the cap of {MAX_PR_DRAFT_ACTIONS} actions")
         merged = {**bodies, **extra}
-        used = {n: t for n, t in merged.items() if n in _body_refs(manifest)}
+        refs = _pr_body_refs(json.dumps(manifest, ensure_ascii=False))
+        used = {n: t for n, t in merged.items() if n in refs}
         names = {old: f"{stem}-{index}.md" for index, old in enumerate(used, 1)}
         final = {names[old]: text for old, text in used.items()}
         text = _parse_pr(f"{stem}.json", _rename_refs(manifest, names), final)

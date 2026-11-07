@@ -230,3 +230,11 @@ def test_a_pr_draft_is_shown_and_discarded(env: Env) -> None:
     gone = env.call(wire.OUTBOX_DRAFT_DISCARD, uuid=PLAIN, kind="pr", name="review-12")
     assert gone.ok
     assert store_db.OutboxStore(env.store).list_drafts(PLAIN, "pr") == []
+
+
+def test_a_body_referenced_only_by_extension_metadata_is_refused(env: Env) -> None:
+    action = {"type": "comment", "body": "x", "x-tool": {"body_file": "e.md"}}
+    response = put(env, action, {"e.md": "extension"})
+    assert response.error_code == wire.BAD_REQUEST
+    assert "e.md" in response.error_detail
+    assert stored(env) == []

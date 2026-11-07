@@ -129,10 +129,21 @@ def _parse_pr(name: str, manifest: object, bodies: Mapping[str, str]) -> str:
         parse_pr(name, text, bodies)
     except (ManifestError, TypeError, ValueError, RecursionError) as exc:
         raise _bad(str(exc)) from exc
-    unused = sorted(set(bodies) - _body_refs(manifest))
+    unused = sorted(set(bodies) - _pr_body_refs(text))
     if unused:
         raise _bad(f"bodies not referenced by the manifest: {', '.join(unused)}")
     return text
+
+
+def _pr_body_refs(text: str) -> set[str]:
+    """Body names a PR manifest's actions reference (not extension metadata), so the
+    stored bodies are exactly what the host's proposal digest covers."""
+    from jailbee.pr_outbox import _body_references
+
+    try:
+        return _body_references(text)
+    except (ValueError, RecursionError) as exc:
+        raise _bad(str(exc)) from exc
 
 
 def handle_put(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now: float) -> object:

@@ -20,6 +20,7 @@ from jailbee.db import state_dir
 from jailbee.orchestration.store import BrokerStore, store_path
 from jailbee.outbox import publication_db
 from jailbee.outbox_io import proposal_digest
+from jailbee.pr_outbox import _body_references
 
 UUID = "uuid-test"
 
@@ -31,21 +32,6 @@ def root() -> Any:
 def instance(name: str, created_at: str = "2026-01-01T00:00:00Z", uuid: str = UUID) -> dict:
     """One ``incus list`` row with the ``volatile.uuid`` the outbox store is keyed by."""
     return {"name": name, "created_at": created_at, "config": {"volatile.uuid": uuid}}
-
-
-def _refs(value: object) -> set[str]:
-    found: set[str] = set()
-    pending = [value]
-    while pending:
-        item = pending.pop()
-        if isinstance(item, dict):
-            ref = item.get("body_file")
-            if isinstance(ref, str):
-                found.add(ref)
-            pending.extend(item.values())
-        elif isinstance(item, list):
-            pending.extend(item)
-    return found
 
 
 def seed_pr_store(
@@ -69,8 +55,9 @@ def seed_pr_store(
         for seq, name in enumerate(manifests, int(start) + 1):
             text = files[name]
             try:
-                bodies = {n: files[n] for n in _refs(json.loads(text)) if n in files}
-            except ValueError:
+                # Only action bodies, as the broker stores them (not extension keys).
+                bodies = {n: files[n] for n in _body_references(text) if n in files}
+            except (ValueError, RecursionError):
                 bodies = {}
             con.execute(
                 "INSERT INTO outbox_proposal(uuid, kind, name, seq, manifest, created_at, "
