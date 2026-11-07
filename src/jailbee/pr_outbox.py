@@ -21,6 +21,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -1279,6 +1280,15 @@ def uncertain_actions(outbox: Outbox, name: str) -> list[int]:
     return sorted(a.index for a in journal.actions if a.state == "uncertain") if journal else []
 
 
+_PULL_URL = re.compile(r"^https://github\.com/[^/]+/[^/]+/pull/([0-9]{1,9})(?:[/?#].*)?$")
+
+
+def landed_pr_number(url: str) -> int | None:
+    """The PR number a ``https://github.com/<owner>/<repo>/pull/<N>`` URL names."""
+    match = _PULL_URL.match(url)
+    return int(match.group(1)) if match else None
+
+
 def resolve_uncertain(
     incus: Incus,
     container: str,
@@ -1311,13 +1321,19 @@ def resolve_uncertain(
             raise OutboxError(f"{name} has no uncertain action {index}")
         manifest = parse_manifest(name, outbox.files[name], outbox.files)
         digest = proposal_files_digest(outbox.files, name)
+        # A source publication's sent record is filed under "source" (branch_pr),
+        # and the PR it opened is the one the landed URL names.
+        source = is_source_manifest(manifest)
+        number = manifest.pr
+        if source and landed_url is not None:
+            number = landed_pr_number(landed_url) or number
         with store.claim(outbox.uuid, "pr", name) as claim:
             settled = store.resolve(
                 claim,
                 digest,
                 index,
-                applied=None if landed_url is None else (landed_url, manifest.pr),
-                sent_outbox="review",
+                applied=None if landed_url is None else (landed_url, number),
+                sent_outbox="source" if source else "review",
                 now=clock(),
             )
     except (OutboxReadError, ManifestError, JournalError, StoreError) as exc:
