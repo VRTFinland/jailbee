@@ -445,7 +445,13 @@ def test_protocol_documents_child_update_and_done_rules() -> None:
     assert "Otherwise commit or stash, merge `imported_ref`" in proto
     assert "uncommitted changes: commit everything before\nreporting done" in proto
     assert "detached HEAD: check out your branch before reporting done" in proto
-    assert "A timeout needs the original reply, not another report" in proto
+    normalized = " ".join(proto.split())
+    assert "the request may or may not have run" in normalized
+    assert (
+        "inspect inbox messages and status before deciding whether to resend with a new ID"
+        in normalized
+    )
+    assert "A timeout needs the original reply, not another report" not in normalized
     assert (
         "https://github.com/VRTFinland/jailbee/blob/main/docs/skills/"
         "jailbee-pr-review/references/manifest-schema.md#source-publication-examples"
