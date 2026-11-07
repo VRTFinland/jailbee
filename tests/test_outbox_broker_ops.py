@@ -106,7 +106,7 @@ def test_the_broker_refuses_a_child_whatever_its_cli_says(env: Env) -> None:
     assert "child container" in response.error_detail
     assert stored(env, "proj-kid") == []
     listed = env.call(wire.OUTBOX_LIST, uuid="proj-kid", kind="issue")
-    assert listed.error_code == wire.REFUSED
+    assert listed.result == {"proposals": []}  # reading is not staging
 
 
 def test_a_child_without_a_round_context_is_still_refused(env: Env) -> None:

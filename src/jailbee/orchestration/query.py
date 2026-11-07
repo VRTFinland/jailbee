@@ -132,8 +132,9 @@ class Queries:
         return result
 
     def _outbox(self, uuid: str, op: str, args: dict[str, object]) -> object:
-        """Outbox ops for any non-child container; the role comes from the
-        completed-round view, so the broker, not the container CLI, decides."""
+        """Outbox ops for any container; a child may read but never stage. The
+        role comes from the completed-round view, so the broker, not the
+        container CLI, decides."""
         from jailbee.container_outbox.role import CHILD_REFUSAL
         from jailbee.outbox import broker_ops
         from jailbee.outbox.store_db import OutboxStore
@@ -143,7 +144,7 @@ class Queries:
             raise wire.WireError(
                 wire.STORE, "the broker does not know this container yet; retry shortly"
             )
-        if view.role == "child":
+        if view.role == "child" and op not in (wire.OUTBOX_LIST, wire.OUTBOX_SHOW):
             raise wire.WireError(wire.REFUSED, CHILD_REFUSAL)
         return broker_ops.handle(OutboxStore(self._store), uuid, op, args, now=time.time())
 

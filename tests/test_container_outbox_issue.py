@@ -7,6 +7,7 @@ from jailbee.container_cli import container_app
 from jailbee.container_outbox import gh
 from jailbee.container_outbox.store import Store
 from jailbee.issue_manifest import parse_manifest
+from tests import container_broker_support
 
 
 @pytest.fixture(autouse=True)
@@ -15,16 +16,22 @@ def isolated(monkeypatch, tmp_path):
     monkeypatch.delenv("JAILBEE_ROLE", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def broker(monkeypatch, tmp_path):
+    return container_broker_support.install(monkeypatch, tmp_path / "broker")
+
+
 def invoke(*args):
     return CliRunner().invoke(container_app, ["issue", *args])
 
 
-def test_create_json_outputs_only_manifest_name(tmp_path):
+def test_create_json_outputs_only_manifest_name(tmp_path, broker):
     result = invoke("create", "--title", "Bug", "--body", "body", "--json")
     assert result.exit_code == 0, result.output
     output = json.loads(result.output)
     assert output == {"name": "001-bug.json"}
-    assert next((tmp_path / ".jailbee/issue-outbox").glob("*.json")).name == output["name"]
+    assert broker.only()[0] == output["name"]
+    assert not (tmp_path / ".jailbee/issue-outbox").exists()
 
 
 def test_create_json_rejects_unpublished_batch(tmp_path):
@@ -183,16 +190,14 @@ def test_concurrent_draft_appends_preserve_both(tmp_path, monkeypatch):
         ("state", "42", "closed", "--reason", "completed"),
     ],
 )
-def test_existing_issue_roundtrip(monkeypatch, tmp_path, args):
+def test_existing_issue_roundtrip(monkeypatch, tmp_path, broker, args):
     monkeypatch.setattr(
         gh, "issue_view", lambda *a: gh.IssueView("old", "old body", ("bug", "other"), "open")
     )
     result = invoke(*args)
     assert result.exit_code == 0, result.output
-    path = tmp_path / ".jailbee/issue-outbox"
-    manifest = next(path.glob("*.json"))
-    data = json.loads(manifest.read_text())
-    parse_manifest(manifest.name, json.dumps(data), {})
+    name, data, bodies = broker.only()
+    parse_manifest(name, json.dumps(data), bodies)
     action = data["actions"][0]
     if args[0] == "edit":
         assert action["expected"] == (
@@ -202,17 +207,16 @@ def test_existing_issue_roundtrip(monkeypatch, tmp_path, args):
         assert action["expected"] == {"labels": ["bug", "other"]}
 
 
-def test_body_file_is_staged(monkeypatch, tmp_path):
+def test_body_file_is_staged(monkeypatch, tmp_path, broker):
     body = tmp_path / "input.md"
     body.write_text("small body")
     result = invoke("create", "--title", "Bug", "--body-file", str(body))
     assert result.exit_code == 0, result.output
-    path = tmp_path / ".jailbee/issue-outbox"
-    manifest = next(path.glob("*.json"))
-    data = json.loads(manifest.read_text())
+    name, data, bodies = broker.only()
     body_name = data["actions"][0]["body_file"]
-    assert (path / body_name).read_text() == "small body"
-    parse_manifest(manifest.name, json.dumps(data), {body_name: "small body"})
+    assert body_name == "001-bug-1.md"
+    assert bodies == {body_name: "small body"}
+    parse_manifest(name, json.dumps(data), bodies)
 
 
 def test_gh_failure_is_refused(monkeypatch, tmp_path):
@@ -285,14 +289,13 @@ def test_builder_expected_fields():
     assert state_action(".", 42, "closed", "completed", view)["expected"] == {"state": "open"}
 
 
-def test_reopened_reason_normalized_for_host_schema(monkeypatch, tmp_path):
+def test_reopened_reason_normalized_for_host_schema(monkeypatch, tmp_path, broker):
     monkeypatch.setattr(gh, "issue_view", lambda *a: gh.IssueView("t", "b", (), "closed"))
     result = invoke("state", "42", "open", "--reason", "reopened")
     assert result.exit_code == 0, result.output
-    manifest = next((tmp_path / ".jailbee/issue-outbox").glob("*.json"))
-    data = json.loads(manifest.read_text())
+    name, data, _ = broker.only()
     assert "reason" not in data["actions"][0]
-    parse_manifest(manifest.name, json.dumps(data), {})
+    parse_manifest(name, json.dumps(data), {})
 
 
 @pytest.mark.parametrize(
@@ -346,14 +349,13 @@ def test_ref_lookup_rejected_without_changes_or_gh(monkeypatch, tmp_path, args):
     assert store.draft_load_state("issue", "b") == before
 
 
-def test_assign_staged_json_exact(monkeypatch, tmp_path):
+def test_assign_staged_json_exact(monkeypatch, tmp_path, broker):
     monkeypatch.setattr(
         gh, "issue_view", lambda *a: gh.IssueView("t", "b", (), "open", ("alice", "carol"))
     )
     result = invoke("assign", "42", "--me", "--add", "bob", "--add", "dave", "--remove", "carol")
     assert result.exit_code == 0, result.output
-    manifest = next((tmp_path / ".jailbee/issue-outbox").glob("*.json"))
-    data = json.loads(manifest.read_text())
+    name, data, _ = broker.only()
     assert data == {
         "version": 1,
         "actions": [
@@ -367,7 +369,7 @@ def test_assign_staged_json_exact(monkeypatch, tmp_path):
             }
         ],
     }
-    parse_manifest(manifest.name, json.dumps(data), {})
+    parse_manifest(name, json.dumps(data), {})
 
 
 def test_assign_without_flags_is_usage_error(monkeypatch, tmp_path):
@@ -461,12 +463,11 @@ def test_ref_label_check_uses_created_labels(tmp_path):
     assert store.draft_load_state("issue", "b") == before
 
 
-def test_assign_accepts_underscore_logins(monkeypatch, tmp_path):
+def test_assign_accepts_underscore_logins(monkeypatch, tmp_path, broker):
     monkeypatch.setattr(gh, "issue_view", lambda *a: gh.IssueView("t", "b", (), "open", ()))
     result = invoke("assign", "42", "--add", "jdoe_acme")
     assert result.exit_code == 0, result.output
-    manifest = next((tmp_path / ".jailbee/issue-outbox").glob("*.json"))
-    assert json.loads(manifest.read_text())["actions"][0]["add"] == ["jdoe_acme"]
+    assert broker.only()[1]["actions"][0]["add"] == ["jdoe_acme"]
 
 
 @pytest.mark.parametrize(

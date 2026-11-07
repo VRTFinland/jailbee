@@ -149,7 +149,8 @@ class Client:
             sock.sendall(payload)
             self.request_written = True
             assert self._reader is not None
-            line = wire.read_line(self._reader)
+            limit = wire.response_line_limit(op)
+            line = wire.read_line(self._reader, max_bytes=limit)
         except TimeoutError:
             self.close()
             raise
@@ -163,7 +164,7 @@ class Client:
             self.close()
             raise BrokerUnreachable()
         try:
-            resp = wire.decode_response(line)
+            resp = wire.decode_response(line, max_bytes=limit)
         except wire.WireError as exc:
             self.close()
             if exc.code == wire.VERSION_ERROR:

@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import typer
 
-from jailbee.container_outbox import gh
+from jailbee.container_outbox import broker, gh
 from jailbee.container_outbox.store import OutboxCommandError, Store
 
 issue_app = typer.Typer(
@@ -270,7 +270,7 @@ def _stage(
             ]
             or "issue"
         )
-        name = store.write_manifest("issue", slug, {"version": 1, "actions": [action]}, bodies)
+        name = broker.put("issue", slug, {"version": 1, "actions": [action]}, bodies)
         if as_json:
             typer.echo(json.dumps({"name": name}))
         else:
