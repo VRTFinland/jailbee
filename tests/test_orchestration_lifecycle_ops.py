@@ -13,6 +13,7 @@ from jailbee.orchestration.actions import ActionContext, Node, Outcome
 from jailbee.orchestration.grant import Grant
 from jailbee.orchestration.protocol import DestroyManifest, RestartManifest, StopManifest
 from jailbee.orchestration.state import load_queue
+from jailbee.stopping import stop_container as _real_stop_container
 from tests.conftest import make_config
 
 if TYPE_CHECKING:
@@ -862,3 +863,51 @@ def test_restart_null_refuses_invalid_default(tmp_path, seams, monkeypatch):
     assert _runner_calls(rig) == []
     seams["boot"].assert_not_called()
     assert load_queue(tmp_path).get("proj-orch", []) == []
+
+
+_STUCK = IncusError(
+    "`incus stop proj-c1 --timeout 120` failed (exit 1): Error: "
+    'Failed shutting down instance, status is "Running": context deadline exceeded'
+)
+
+
+def _real_stop(rig: Rig, seams: dict[str, MagicMock], side_effect: list[object]) -> None:
+    seams["stop"].side_effect = _real_stop_container
+    rig.incus.stop.side_effect = side_effect
+    # Diagnose probes are best-effort; make them fail quietly.
+    rig.incus.exec.side_effect = IncusError("no exec")
+    rig.incus.console_log.side_effect = IncusError("no console")
+
+
+def test_stop_end_to_end_forces_after_a_stuck_clean_shutdown(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    rig = Rig(tmp_path, running=True)
+    _real_stop(rig, seams, [_STUCK, None])
+    out = actions.handle_stop(rig.ctx(), _stop())
+    assert out.state == "done"
+    assert "stop was forced" in out.detail
+    assert rig.incus.stop.call_count == 2
+    assert rig.incus.stop.call_args_list[-1].kwargs == {"force": True}
+
+
+def test_stop_end_to_end_refused_when_the_forced_stop_fails(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    rig = Rig(tmp_path, running=True)
+    _real_stop(rig, seams, [_STUCK, IncusError("boom")])
+    out = actions.handle_stop(rig.ctx(), _stop())
+    assert out.state == "refused"
+    assert "boom" in out.detail
+    assert rig.incus.stop.call_count == 2
+
+
+def test_stop_end_to_end_does_not_force_other_errors(
+    tmp_path: Path, seams: dict[str, MagicMock]
+) -> None:
+    rig = Rig(tmp_path, running=True)
+    _real_stop(rig, seams, [IncusError("Error: storage failure")])
+    out = actions.handle_stop(rig.ctx(), _stop())
+    assert out.state == "refused"
+    assert "storage failure" in out.detail
+    assert rig.incus.stop.call_count == 1
