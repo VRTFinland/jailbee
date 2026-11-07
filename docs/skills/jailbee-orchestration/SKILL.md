@@ -184,6 +184,11 @@ EOF
   (and so never pass a relative `--file`): an untracked file makes the tree
   dirty, and a dirty tree makes a `fork` spawn refused. If
   you need a file, use an absolute path under `/tmp`.
+- Quote every heredoc that carries prompt text (`<<'EOF'`). Briefs are
+  Markdown full of backticks, and an unquoted `<<EOF` runs them as shell
+  commands. To splice in text such as an issue body, write the pieces to a
+  `/tmp` file (`printf '%s\n' "$body" >> /tmp/brief.txt` between quoted
+  heredocs) and pass it with `--file /tmp/brief.txt`.
 - Note the id the helper prints (`<type>-<UTC time>-<hex>`, for example
   `spawn-20261025101500-a1b2`): it is the `ref` of the status reply.
 - The child's short name comes from the branch: lowercased, every character
