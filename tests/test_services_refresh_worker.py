@@ -24,7 +24,11 @@ def rig(tmp_path, mocker):
     grant = Grant(grantable=Grantable(loose=True)).to_label()
     incus = Mock()
     incus.list_containers.return_value = [
-        {"name": "proj-o", "status": "Running", "config": {labels.GRANT: grant, "volatile.uuid": "uuid-owner"}},
+        {
+            "name": "proj-o",
+            "status": "Running",
+            "config": {labels.GRANT: grant, "volatile.uuid": "uuid-owner"},
+        },
         {"name": "proj-c", "status": "Running", "config": {labels.SPAWNED_BY: "proj-o"}},
     ]
     path = tmp_path / "job.json"
@@ -573,7 +577,9 @@ def test_refresh_notification_delivers_to_verified_store_instance(rig, tmp_path,
         engine.dispose()
 
 
-@pytest.mark.parametrize("unavailable", ["exception", "missing-owner", "missing-uuid", "empty-uuid"])
+@pytest.mark.parametrize(
+    "unavailable", ["exception", "missing-owner", "missing-uuid", "empty-uuid"]
+)
 def test_refresh_notification_retries_inventory_failure_without_reexecution(
     rig, tmp_path, mocker, capsys, unavailable
 ):
