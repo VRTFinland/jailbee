@@ -95,6 +95,7 @@ def _full_snapshot() -> Snapshot:
             autostart_failed=2,
             autostart_rerunnable=True,
             created_at=T0,
+            uuid="u-alpha",
             memory_usage=1024,
             init_pid=4242,
             cpu_usage_ns=99,

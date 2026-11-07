@@ -3681,6 +3681,7 @@ def _warn_before_container_destroy(
                 (cfg.container_prefix, ci.base_branch or cfg.default_branch)
             ],
         )
+        _lifecycle.stamp_issue_outbox(ci)
 
     unknown = [short] if status_is_unknown(ci) else []
     summary = assess(cfg, ci)

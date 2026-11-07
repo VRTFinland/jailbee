@@ -81,9 +81,7 @@ def test_destroy_deletes_proposals_and_drafts_but_keeps_journals(
     assert len(store_db.read_proposals(tmp_path, "u2")) == 1
     with ob._store.transaction(write=False) as con:
         assert con.execute("SELECT COUNT(*) FROM outbox_draft").fetchone() == (0,)
-        assert con.execute("SELECT state FROM outbox_journal_action").fetchall() == [
-            ("uncertain",)
-        ]
+        assert con.execute("SELECT state FROM outbox_journal_action").fetchall() == [("uncertain",)]
 
 
 def test_pending_counts_are_journal_aware(ob: OutboxStore, tmp_path: Path) -> None:

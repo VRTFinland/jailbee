@@ -355,7 +355,7 @@ def _build_view(
         for n in store.rejected
         if n in body_names or n == name or n == f"{name}.progress.json" or n == "applied.log"
     )
-    inputs = {
+    inputs: dict[str, object] = {
         "identity": asdict(identity),
         "kind": store.kind,
         "name": name,

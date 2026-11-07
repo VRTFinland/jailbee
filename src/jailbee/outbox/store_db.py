@@ -209,7 +209,9 @@ class OutboxStore:
                 )
             key = (uuid, kind, name)
             if manifest is None:
-                con.execute("DELETE FROM outbox_body WHERE uuid=? AND kind=? AND proposal_name=?", key)
+                con.execute(
+                    "DELETE FROM outbox_body WHERE uuid=? AND kind=? AND proposal_name=?", key
+                )
                 con.execute("DELETE FROM outbox_proposal WHERE uuid=? AND kind=? AND name=?", key)
             else:
                 con.execute(
@@ -261,6 +263,10 @@ def read_pending_counts(root: Path, kind: Kind = "issue") -> dict[str, int]:
         raise StoreError(str(exc)) from exc
     except sqlite3.Error as exc:
         raise StoreError(str(exc)) from exc
+
+
+def store_path_exists(root: Path) -> bool:
+    return store_path(root).exists()
 
 
 def host_store(root: Path) -> OutboxStore:

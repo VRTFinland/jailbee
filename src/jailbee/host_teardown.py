@@ -33,6 +33,7 @@ class TeardownSnapshot:
     name: str
     identity: object | None  # outbox_io.ContainerIdentity; lazy import keeps this light
     log_paths: tuple[Path, ...]
+    uuid: str | None = None  # Incus volatile.uuid, the outbox store's container key
 
 
 def _job_log_paths(name: str) -> tuple[Path, ...]:
@@ -57,8 +58,21 @@ def _job_log_paths(name: str) -> tuple[Path, ...]:
     return (log, path_for_log(log), log.with_suffix(".job.json"))
 
 
+def _instance_uuid(incus: object, name: str) -> str | None:
+    for item in incus.list_containers():  # type: ignore[attr-defined]
+        if item.get("name") == name:
+            config = item.get("config")
+            value = config.get("volatile.uuid") if isinstance(config, dict) else None
+            return value if isinstance(value, str) and value else None
+    return None
+
+
 def snapshot(incus: object, name: str) -> TeardownSnapshot:
-    """Capture identity and job log paths; never raises."""
+    """Capture identity, uuid and job log paths; never raises."""
+    try:
+        uuid = _instance_uuid(incus, name)
+    except Exception:
+        uuid = None
     identity = None
     try:
         from jailbee.outbox_io import container_identity
@@ -70,7 +84,7 @@ def snapshot(incus: object, name: str) -> TeardownSnapshot:
         logs = _job_log_paths(name)
     except Exception:
         logs = ()
-    return TeardownSnapshot(name=name, identity=identity, log_paths=logs)
+    return TeardownSnapshot(name=name, identity=identity, log_paths=logs, uuid=uuid)
 
 
 def cleanup(snap: TeardownSnapshot) -> None:
@@ -78,6 +92,7 @@ def cleanup(snap: TeardownSnapshot) -> None:
     steps = (
         ("background job logs", _remove_job_logs),
         ("orchestration state", _drop_orchestration),
+        ("outbox proposals and drafts", _delete_outbox_rows),
         ("issue outbox journals", _archive_issue_journals),
         ("PR outbox lock", _remove_pr_lock),
     )
@@ -125,6 +140,22 @@ def _drop_orchestration(snap: TeardownSnapshot) -> None:
     }
     if pruned != reservations:
         state.save_reservations(root, pruned)
+
+
+def _delete_outbox_rows(snap: TeardownSnapshot) -> None:
+    """Delete the destroyed instance's pending proposals and drafts from the store.
+
+    Journals and sent records stay, so an uncertain publication remains resolvable.
+    """
+    if snap.uuid is None:
+        return
+    from jailbee.db import state_dir
+    from jailbee.outbox.store_db import host_store, store_path_exists
+
+    root = state_dir() / "orchestration"
+    if not store_path_exists(root):
+        return  # nothing was ever staged; do not create the database
+    host_store(root).delete_container(snap.uuid)
 
 
 def _archive_issue_journals(snap: TeardownSnapshot) -> None:
