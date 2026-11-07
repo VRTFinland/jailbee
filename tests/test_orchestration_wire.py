@@ -236,3 +236,43 @@ def test_wire_is_stdlib_only():
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "[]"
+
+
+def _big(size: int) -> str:
+    return "x" * size
+
+
+def test_outbox_put_carries_lines_up_to_the_outbox_cap():
+    assert wire.OUTBOX_MAX_LINE_BYTES == 8 * 1024 * 1024
+    req = wire.Request(op=wire.OUTBOX_PUT, args={"bodies": {"a": _big(3 * MAX_LINE_BYTES)}})
+    line = encode_request(req)
+    assert len(line) > MAX_LINE_BYTES
+    limit = wire.request_line_limit(line[:64])
+    assert limit == wire.OUTBOX_MAX_LINE_BYTES
+    assert decode_request(line, max_bytes=limit) == req
+    with pytest.raises(WireError):
+        decode_request(line)  # the ordinary cap still applies by default
+    too_big = wire.Request(op=wire.OUTBOX_PUT, args={"b": _big(wire.OUTBOX_MAX_LINE_BYTES)})
+    with pytest.raises(WireError, match="exceeds"):
+        encode_request(too_big)
+
+
+def test_other_ops_keep_the_ordinary_cap():
+    with pytest.raises(WireError, match="exceeds"):
+        encode_request(wire.Request(op="send", args={"b": _big(MAX_LINE_BYTES)}))
+    assert wire.request_line_limit(b'{"v":1,"op":"send","args":{}}') == MAX_LINE_BYTES
+    assert wire.request_line_limit(b'{"op":"outbox.put","v":1}') == MAX_LINE_BYTES
+    assert wire.request_line_limit(b"") == MAX_LINE_BYTES
+
+
+def test_outbox_show_replies_may_exceed_the_ordinary_cap():
+    assert wire.response_line_limit(wire.OUTBOX_SHOW) == wire.OUTBOX_MAX_LINE_BYTES
+    assert wire.response_line_limit("list") == MAX_LINE_BYTES
+    resp = ok({"manifest": _big(2 * MAX_LINE_BYTES)})
+    line = encode_response(resp, max_bytes=wire.OUTBOX_MAX_LINE_BYTES)
+    assert decode_response(line, max_bytes=wire.OUTBOX_MAX_LINE_BYTES) == resp
+    with pytest.raises(WireError):
+        encode_response(resp)
+    assert read_line(io.BytesIO(line), max_bytes=wire.OUTBOX_MAX_LINE_BYTES) == line
+    with pytest.raises(WireError):
+        read_line(io.BytesIO(line))

@@ -12,6 +12,17 @@ from typing import IO, Any, cast
 
 VERSION = 1
 MAX_LINE_BYTES = 1024 * 1024  # 1 MiB, newline included
+# One outbox proposal (manifest plus bodies) can exceed MAX_LINE_BYTES; its put
+# request and the show reply get a larger cap of their own. No chunking.
+OUTBOX_MAX_LINE_BYTES = 8 * 1024 * 1024
+
+OUTBOX_PUT = "outbox.put"
+OUTBOX_LIST = "outbox.list"
+OUTBOX_SHOW = "outbox.show"
+OUTBOX_OPS: frozenset[str] = frozenset({OUTBOX_PUT, OUTBOX_LIST, OUTBOX_SHOW})
+# The exact prefix `encode_request` writes for an outbox put: the listener reads
+# it before the whole line is in, to know which cap the line gets.
+_OUTBOX_PUT_PREFIX = b'{"v":%d,"op":"%s",' % (VERSION, OUTBOX_PUT.encode())
 
 VERSION_ERROR = "version"
 BAD_REQUEST = "bad_request"
@@ -67,35 +78,53 @@ def fail(code: str, detail: str = "") -> Response:
     return Response(ok=False, error_code=code, error_detail=detail)
 
 
-def _dump(obj: dict[str, Any]) -> bytes:
+def request_line_limit(prefix: bytes) -> int:
+    """The line cap for a request starting with ``prefix`` (as buffered so far).
+
+    Only the canonical encoding of an ``outbox.put`` gets the outbox cap; any
+    other line, or one too short to tell, gets the ordinary cap.
+    """
+    if prefix.startswith(_OUTBOX_PUT_PREFIX):
+        return OUTBOX_MAX_LINE_BYTES
+    return MAX_LINE_BYTES
+
+
+def response_line_limit(op: str) -> int:
+    """The line cap for the reply to ``op``."""
+    return OUTBOX_MAX_LINE_BYTES if op == OUTBOX_SHOW else MAX_LINE_BYTES
+
+
+def _dump(obj: dict[str, Any], max_bytes: int = MAX_LINE_BYTES) -> bytes:
     try:
         line = json.dumps(obj, separators=(",", ":"), allow_nan=False).encode("utf-8") + b"\n"
     except (TypeError, ValueError) as exc:
         raise WireError(BAD_REQUEST, f"message is not JSON-serialisable: {exc}") from exc
-    if len(line) > MAX_LINE_BYTES:
-        raise WireError(BAD_REQUEST, f"message exceeds {MAX_LINE_BYTES} bytes")
+    if len(line) > max_bytes:
+        raise WireError(BAD_REQUEST, f"message exceeds {max_bytes} bytes")
     return line
 
 
 def encode_request(req: Request) -> bytes:
-    return _dump({"v": VERSION, "op": req.op, "args": req.args})
+    limit = OUTBOX_MAX_LINE_BYTES if req.op == OUTBOX_PUT else MAX_LINE_BYTES
+    return _dump({"v": VERSION, "op": req.op, "args": req.args}, limit)
 
 
-def encode_response(resp: Response) -> bytes:
+def encode_response(resp: Response, *, max_bytes: int = MAX_LINE_BYTES) -> bytes:
     if resp.ok:
-        return _dump({"v": VERSION, "ok": True, "result": resp.result})
+        return _dump({"v": VERSION, "ok": True, "result": resp.result}, max_bytes)
     return _dump(
         {
             "v": VERSION,
             "ok": False,
             "error": {"code": resp.error_code, "detail": resp.error_detail},
-        }
+        },
+        max_bytes,
     )
 
 
-def _parse(line: bytes) -> dict[str, Any]:
-    if len(line) > MAX_LINE_BYTES:
-        raise WireError(BAD_REQUEST, f"message exceeds {MAX_LINE_BYTES} bytes")
+def _parse(line: bytes, max_bytes: int) -> dict[str, Any]:
+    if len(line) > max_bytes:
+        raise WireError(BAD_REQUEST, f"message exceeds {max_bytes} bytes")
     try:
         obj: object = json.loads(line.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
@@ -109,19 +138,21 @@ def _parse(line: bytes) -> dict[str, Any]:
     return obj
 
 
-def decode_request(line: bytes) -> Request:
-    obj = _parse(line)
+def decode_request(line: bytes, *, max_bytes: int = MAX_LINE_BYTES) -> Request:
+    obj = _parse(line, max_bytes)
     op = obj.get("op")
     if not isinstance(op, str):
         raise WireError(BAD_REQUEST, "request op must be a string")
     args = obj.get("args", {})
     if not isinstance(args, dict):
         raise WireError(BAD_REQUEST, "request args must be an object")
+    if len(line) > MAX_LINE_BYTES and op != OUTBOX_PUT:
+        raise WireError(BAD_REQUEST, f"message exceeds {MAX_LINE_BYTES} bytes")
     return Request(op=op, args=cast(dict[str, Any], args))
 
 
-def decode_response(line: bytes) -> Response:
-    obj = _parse(line)
+def decode_response(line: bytes, *, max_bytes: int = MAX_LINE_BYTES) -> Response:
+    obj = _parse(line, max_bytes)
     ok_flag = obj.get("ok")
     if not isinstance(ok_flag, bool):
         raise WireError(BAD_REQUEST, "response ok must be a boolean")
@@ -137,19 +168,19 @@ def decode_response(line: bytes) -> Response:
     return Response(ok=False, error_code=code, error_detail=detail)
 
 
-def read_line(fileobj: IO[bytes]) -> bytes | None:
-    """Read one newline-terminated line, capped at MAX_LINE_BYTES.
+def read_line(fileobj: IO[bytes], *, max_bytes: int = MAX_LINE_BYTES) -> bytes | None:
+    """Read one newline-terminated line, capped at ``max_bytes``.
 
     Returns None on EOF. Raises WireError(BAD_REQUEST) when the line is over
     the cap, or when it reaches the cap without a trailing newline. After such
     an error the stream is mid-line and unusable: the caller must close the
     connection rather than read on.
     """
-    line = fileobj.readline(MAX_LINE_BYTES + 1)
+    line = fileobj.readline(max_bytes + 1)
     if not line:
         return None
-    if len(line) > MAX_LINE_BYTES:
-        raise WireError(BAD_REQUEST, f"line exceeds {MAX_LINE_BYTES} bytes")
-    if len(line) == MAX_LINE_BYTES and not line.endswith(b"\n"):
-        raise WireError(BAD_REQUEST, f"line exceeds {MAX_LINE_BYTES} bytes without newline")
+    if len(line) > max_bytes:
+        raise WireError(BAD_REQUEST, f"line exceeds {max_bytes} bytes")
+    if len(line) == max_bytes and not line.endswith(b"\n"):
+        raise WireError(BAD_REQUEST, f"line exceeds {max_bytes} bytes without newline")
     return line

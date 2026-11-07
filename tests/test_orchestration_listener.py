@@ -968,3 +968,61 @@ def test_stop_does_not_wait_for_a_blocked_query_worker(
                 worker.join(timeout=2)
         assert all(not worker.is_alive() for worker in lis._query_threads)
         assert lis._commands.empty()  # no late response into a dead listener
+
+
+def _recv_all_line(s: socket.socket) -> bytes:
+    buf = bytearray()
+    while not buf.endswith(b"\n"):
+        chunk = s.recv(1 << 20)
+        assert chunk
+        buf += chunk
+    return bytes(buf)
+
+
+def test_outbox_ops_run_on_query_workers_with_the_outbox_line_cap(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queries = Queries(BrokerStore(short_dir / "broker.db"))
+    seen: list[tuple[str, str, int]] = []
+    big = "y" * (3 * wire.MAX_LINE_BYTES)
+
+    def answer(uuid: str, request: wire.Request) -> wire.Response:
+        seen.append((request.op, threading.current_thread().name, len(str(request.args))))
+        if request.op == wire.OUTBOX_SHOW:
+            return wire.ok({"manifest": big})
+        return wire.ok({"name": "001-a.json"})
+
+    monkeypatch.setattr(queries, "answer", answer)
+    q: queue.Queue[Event] = queue.Queue()
+    lis = Listener(q, queries=queries)
+    lis.start()
+    lis.open_container("u", short_dir / "u")
+    try:
+        with connect(short_dir / "u") as c:
+            c.settimeout(10)
+            c.sendall(req(wire.OUTBOX_PUT, bodies={"b": big}))
+            assert wire.decode_response(recv_line(c)).result == {"name": "001-a.json"}
+            c.sendall(req(wire.OUTBOX_SHOW, kind="issue", name="001-a.json"))
+            line = _recv_all_line(c)
+            shown = wire.decode_response(line, max_bytes=wire.OUTBOX_MAX_LINE_BYTES)
+            assert shown.result == {"manifest": big}
+        assert [op for op, _, _ in seen] == [wire.OUTBOX_PUT, wire.OUTBOX_SHOW]
+        assert all(name.startswith("broker-query-") for _, name, _ in seen)
+        assert seen[0][2] > wire.MAX_LINE_BYTES
+        assert q.empty()  # never queued to the executor's round loop
+    finally:
+        lis.stop()
+
+
+def test_a_non_outbox_line_over_the_ordinary_cap_is_still_refused(
+    env: tuple[Listener, queue.Queue[Event], Path],
+) -> None:
+    lis, q, root = env
+    lis.open_container("u", root / "u")
+    c = connect(root / "u")
+    c.settimeout(10)
+    c.sendall(b'{"v":1,"op":"send","args":{"body":"' + b"z" * (wire.MAX_LINE_BYTES + 10))
+    assert wire.decode_response(recv_line(c)).error_code == wire.BAD_REQUEST
+    assert c.recv(1) == b""
+    with pytest.raises(queue.Empty):
+        q.get(timeout=0.3)

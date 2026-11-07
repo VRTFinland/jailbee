@@ -23,7 +23,8 @@ log = logging.getLogger(__name__)
 
 SNAPSHOT_OPS = frozenset({"children", "status", "grant"})
 STORE_OPS = frozenset({"list", "read", "ack"})
-QUERY_OPS = SNAPSHOT_OPS | STORE_OPS
+# Outbox ops are SQLite queries too: query workers, never the round loop.
+QUERY_OPS = SNAPSHOT_OPS | STORE_OPS | wire.OUTBOX_OPS
 
 
 @dataclass(frozen=True)
