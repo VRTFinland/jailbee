@@ -30,13 +30,20 @@ def _target(value: str | None) -> tuple[Kind, str]:
     return cast(Kind, kind), name
 
 
+def _draft_exists(store: Store, kind: Kind, name: str) -> bool:
+    # Issue drafts live in the host store; PR drafts are still files here.
+    if kind == "issue":
+        return any(row["name"] == name for row in broker.draft_list("issue"))
+    return store.draft_load_state(kind, name) is not None
+
+
 def _resolve(store: Store, name: str | None, kind: str | None) -> tuple[Kind, str]:
     if not name:
         raise OutboxCommandError("missing NAME", 2)
     if kind is not None and kind not in ("issue", "pr"):
         raise OutboxCommandError("kind must be issue or pr", 2)
     kinds: tuple[Kind, ...] = (cast(Kind, kind),) if kind else ("issue", "pr")
-    found = [item for item in kinds if store.draft_load_state(item, name) is not None]
+    found = [item for item in kinds if _draft_exists(store, item, name)]
     if len(found) > 1:
         raise OutboxCommandError("draft exists in both kinds; specify --kind", 2)
     if not found:
@@ -61,7 +68,10 @@ def ls(
         for entry in store.list():
             if entry.kind == "pr":
                 data["pr"].append({"name": entry.name, "summary": entry.summary})
-        data["drafts"] = store.list_drafts()
+        data["drafts"] = [
+            {"kind": "issue", "name": row["name"], "actions": row["actions"]}
+            for row in broker.draft_list("issue")
+        ] + [draft for draft in store.list_drafts() if draft["kind"] == "pr"]
         if as_json:
             typer.echo(json.dumps(data))
         else:
@@ -121,13 +131,10 @@ def submit(name: DraftArg = None, kind: KindOpt = None) -> None:
     def run() -> None:
         store = _guard()
         domain, draft = _resolve(store, name, kind)
-        result = store.draft_submit(
-            domain,
-            draft,
-            draft,
-            prepare=_not_review if domain == "pr" else None,
-            write=broker.put if domain == "issue" else None,
-        )
+        if domain == "issue":
+            result = broker.draft_submit(domain, draft)
+        else:
+            result = store.draft_submit(domain, draft, draft, prepare=_not_review)
         typer.echo(f"staged {domain}/{result}")
 
     _run(run)
@@ -140,7 +147,10 @@ def discard(name: DraftArg = None, kind: KindOpt = None) -> None:
     def run() -> None:
         store = _guard()
         domain, draft = _resolve(store, name, kind)
-        store.draft_discard(domain, draft)
+        if domain == "issue":
+            broker.draft_discard(domain, draft)
+        else:
+            store.draft_discard(domain, draft)
         typer.echo(f"discarded {domain} draft {draft}")
 
     _run(run)

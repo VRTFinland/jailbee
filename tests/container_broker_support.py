@@ -39,6 +39,14 @@ class FakeBroker:
         (row,) = self.proposals()
         return row.name, json.loads(row.manifest), dict(row.bodies)
 
+    def draft(self, name: str, kind: store_db.Kind = "issue") -> store_db.Draft | None:
+        return store_db.OutboxStore(self.queries._store).get_draft(UUID, kind, name)
+
+    def draft_state(self, name: str) -> tuple[dict[str, Any], dict[str, str]] | None:
+        """The issue draft's decoded manifest and bodies, or None."""
+        found = self.draft(name)
+        return None if found is None else (json.loads(found.manifest), dict(found.bodies))
+
     def client(self, *args: object, **kwargs: object) -> _Client:
         return _Client(self)
 

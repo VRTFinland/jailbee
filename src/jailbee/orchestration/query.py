@@ -144,7 +144,11 @@ class Queries:
             raise wire.WireError(
                 wire.STORE, "the broker does not know this container yet; retry shortly"
             )
-        if view.role == "child" and op not in (wire.OUTBOX_LIST, wire.OUTBOX_SHOW):
+        if view.role == "child" and op not in (
+            wire.OUTBOX_LIST,
+            wire.OUTBOX_SHOW,
+            *wire.OUTBOX_DRAFT_READ_OPS,
+        ):
             raise wire.WireError(wire.REFUSED, CHILD_REFUSAL)
         return broker_ops.handle(OutboxStore(self._store), uuid, op, args, now=time.time())
 
