@@ -151,7 +151,9 @@ def test_child_message_refused_when_orchestrator_gone(tmp_path: Path, deliver: M
     deliver.assert_not_called()
 
 
-def test_missing_recipient_identity_refuses_message_and_done(tmp_path: Path, deliver: MagicMockT) -> None:
+def test_missing_recipient_identity_refuses_message_and_done(
+    tmp_path: Path, deliver: MagicMockT
+) -> None:
     ctx = _child_ctx(tmp_path)
     ctx.nodes["myrepo-orch"].config.pop("volatile.uuid")
     assert messages.handle_message(ctx, _msg()) == refused(

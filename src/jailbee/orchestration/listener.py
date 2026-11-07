@@ -175,7 +175,9 @@ class Listener:
         self._running = True
         if self._queries is not None:
             for i in range(_QUERY_WORKERS):
-                worker = threading.Thread(target=self._query_worker, name=f"broker-query-{i}", daemon=True)
+                worker = threading.Thread(
+                    target=self._query_worker, name=f"broker-query-{i}", daemon=True
+                )
                 self._query_threads.append(worker)
                 worker.start()
         self._thread = threading.Thread(target=self._run, name="broker-listener", daemon=True)

@@ -16,8 +16,6 @@ from pathlib import Path
 import pytest
 
 from jailbee.orchestration import wire
-from jailbee.orchestration.query import Queries
-from jailbee.orchestration.store import BrokerStore
 from jailbee.orchestration.listener import (
     MAX_CONNECTIONS_PER_CONTAINER,
     MAX_INFLIGHT_PER_CONTAINER,
@@ -26,6 +24,8 @@ from jailbee.orchestration.listener import (
     Listener,
     RequestEvent,
 )
+from jailbee.orchestration.query import Queries
+from jailbee.orchestration.store import BrokerStore
 
 
 @pytest.fixture

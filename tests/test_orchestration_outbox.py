@@ -387,6 +387,7 @@ def test_acked_retry_acknowledges_existing_stored_item(tmp_path):
 
 def test_stale_finish_is_quarantined_and_notifies_surviving_child(tmp_path, caplog):
     from itertools import count
+
     from jailbee.orchestration import finishing
     from jailbee.orchestration.store import BrokerStore, store_path
 
@@ -452,6 +453,7 @@ def test_orphan_cleanup_error_retries_without_duplicate(tmp_path, monkeypatch, c
 
 def test_orphan_notice_spool_error_is_logged_and_retried(tmp_path, monkeypatch, caplog):
     from itertools import count
+
     from jailbee.orchestration import finishing
 
     path = pending_dir(tmp_path, FULL) / "a.finish.json"

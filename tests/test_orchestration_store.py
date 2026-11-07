@@ -84,9 +84,7 @@ def test_ack_idempotent_and_unacked(st: BrokerStore) -> None:
 
 
 @pytest.mark.parametrize("already_acked", [False, True])
-def test_conditional_ack_restores_only_its_own_update(
-    st: BrokerStore, already_acked: bool
-) -> None:
+def test_conditional_ack_restores_only_its_own_update(st: BrokerStore, already_acked: bool) -> None:
     st.insert_item("u", "p", msg("target"), now=1.0, acked=already_acked)
     st.insert_item("u", "p", msg("other"), now=1.0, acked=True)
     checks = iter([True, False])

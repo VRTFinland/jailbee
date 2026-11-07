@@ -47,7 +47,10 @@ class Env:
 
     def put(self, mid: str, *, at: float = 100.0) -> None:
         self.store.insert_item(
-            "proj-orch", "proj-orch", {"id": mid, "type": "message", "from": "kid", "body": mid}, now=at
+            "proj-orch",
+            "proj-orch",
+            {"id": mid, "type": "message", "from": "kid", "body": mid},
+            now=at,
         )
 
 
@@ -74,10 +77,17 @@ def test_all_queries_answer_last_round_while_executor_handler_is_blocked(env: En
 
     env.rig.dispatch.side_effect = blocked
     sender = _connect_long(env.rig.root / "proj-kid")
-    sender.sendall(wire.encode_request(wire.Request("send", {
-        "manifest": {"version": 1, "id": "blocking", "type": "message", "body": "hi"},
-        "wait": True,
-    })))
+    sender.sendall(
+        wire.encode_request(
+            wire.Request(
+                "send",
+                {
+                    "manifest": {"version": 1, "id": "blocking", "type": "message", "body": "hi"},
+                    "wait": True,
+                },
+            )
+        )
+    )
     event = env.memory.requests.get(timeout=2)
     assert isinstance(event, RequestEvent)
     worker = threading.Thread(target=executor.handle_event, args=(env.memory, event))
@@ -105,7 +115,9 @@ def test_all_queries_answer_last_round_while_executor_handler_is_blocked(env: En
     assert not worker.is_alive()
 
 
-def test_snapshot_changes_only_at_completed_round(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_snapshot_changes_only_at_completed_round(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
     entered, unblock = threading.Event(), threading.Event()
     before = env.call("children").result
     original = broker._settle_all_watches
@@ -161,7 +173,9 @@ def test_status_validation_and_missing_child(env: Env) -> None:
     assert env.call("status", uuid="proj-kid", child=1).error_code == wire.BAD_REQUEST
 
 
-def test_snapshot_queries_never_touch_store_or_live_contexts(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_snapshot_queries_never_touch_store_or_live_contexts(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def broken(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("live state was read")
 
@@ -174,7 +188,9 @@ def test_snapshot_queries_never_touch_store_or_live_contexts(env: Env, monkeypat
     assert env.call("grant").ok
 
 
-def test_sqlite_queries_use_worker_connections_and_immediate_writes(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sqlite_queries_use_worker_connections_and_immediate_writes(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
     env.put("read-me")
     env.put("ack-me")
     connections: list[int] = []
@@ -238,7 +254,9 @@ def test_concurrent_snapshot_swaps_keep_each_response_in_one_generation(env: Env
         n = 0
         while not done.is_set():
             payload = json.dumps({"children": [{"name": str(n)}], "observed_at": n})
-            env.queries.publish({"proj-orch": ContainerSnapshot("orchestrator", True, payload, "{}")})
+            env.queries.publish(
+                {"proj-orch": ContainerSnapshot("orchestrator", True, payload, "{}")}
+            )
             n += 1
 
     worker = threading.Thread(target=publish)
@@ -254,10 +272,14 @@ def test_concurrent_snapshot_swaps_keep_each_response_in_one_generation(env: Env
 
 
 def test_published_records_and_returned_results_have_no_mutable_aliases(env: Env) -> None:
-    value = ContainerSnapshot("orchestrator", True, json.dumps({"children": [{"name": "one"}]}), "{}")
+    value = ContainerSnapshot(
+        "orchestrator", True, json.dumps({"children": [{"name": "one"}]}), "{}"
+    )
     source = {"proj-orch": value}
     env.queries.publish(source)
     source.clear()
     result = env.queries.answer("proj-orch", wire.Request("children")).result
     result["children"][0]["name"] = "mutated"
-    assert env.queries.answer("proj-orch", wire.Request("children")).result["children"] == [{"name": "one"}]
+    assert env.queries.answer("proj-orch", wire.Request("children")).result["children"] == [
+        {"name": "one"}
+    ]

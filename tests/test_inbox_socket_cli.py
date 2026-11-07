@@ -103,8 +103,12 @@ def child(name: str = "kid") -> dict[str, object]:
 def test_ls_prints_ls_lines(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
     broker.on(
         "list",
-        {"items": [{"id": "m1", "type": "message", "from": "kid", "kind": "note", "body": "hello"}],
-         "next": None},
+        {
+            "items": [
+                {"id": "m1", "type": "message", "from": "kid", "kind": "note", "body": "hello"}
+            ],
+            "next": None,
+        },
     )
     r = run(sockdir, "ls", tmp=tmp_path)
     assert r.returncode == 0
@@ -651,7 +655,10 @@ def test_invalid_arguments_without_socket(
 
 
 def test_runners_without_socket_lists_local_profiles(
-    sockdir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    sockdir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     from jailbee.inbox import cli, socket_cli
 
@@ -833,7 +840,6 @@ def test_ls_pages_through_a_long_inbox(broker: FakeBroker, sockdir: Path, tmp_pa
     r = run(sockdir, "ls", tmp=tmp_path)
     assert r.returncode == 0
     assert [line.split()[0] for line in r.stdout.splitlines()] == [f"m{n}" for n in range(7)]
-
 
 
 @pytest.mark.parametrize("wait", [False, True])

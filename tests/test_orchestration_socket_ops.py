@@ -65,7 +65,10 @@ def test_list_in_seq_order_and_unacked_only(env: Env) -> None:
     env.put("a")
     env.put("c")
     env.store.ack(env.orch, "a", now=1.0)
-    assert [i["id"] for i in socket_ops.handle_list(env.store, env.orch, after=0)["items"]] == ["b", "c"]
+    assert [i["id"] for i in socket_ops.handle_list(env.store, env.orch, after=0)["items"]] == [
+        "b",
+        "c",
+    ]
 
 
 def test_read_acks_keep_does_not_and_unknown(env: Env) -> None:
@@ -75,7 +78,9 @@ def test_read_acks_keep_does_not_and_unknown(env: Env) -> None:
     assert item["id"] == "m1"
     assert len(socket_ops.handle_list(env.store, env.orch, after=0)["items"]) == 2
     socket_ops.handle_read(env.store, env.orch, id="m1", keep=False, now=5.0)
-    assert [i["id"] for i in socket_ops.handle_list(env.store, env.orch, after=0)["items"]] == ["m2"]
+    assert [i["id"] for i in socket_ops.handle_list(env.store, env.orch, after=0)["items"]] == [
+        "m2"
+    ]
     for bad in ("m1", "nope"):
         with pytest.raises(wire.WireError) as e:
             socket_ops.handle_read(env.store, env.orch, id=bad, keep=False, now=6.0)

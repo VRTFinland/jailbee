@@ -65,12 +65,18 @@ class Queries:
             from jailbee.orchestration import socket_ops
 
             if not self._store.has_recipient_uuid(uuid):
-                raise wire.WireError(wire.STORE, "inbox store recipient is not ready; retry shortly")
+                raise wire.WireError(
+                    wire.STORE, "inbox store recipient is not ready; retry shortly"
+                )
             if op == "list":
                 return socket_ops.handle_list(self._store, uuid, after=args.get("after"))
             if op == "read":
                 return socket_ops.handle_read(
-                    self._store, uuid, id=args.get("id"), keep=args.get("keep", False), now=time.time()
+                    self._store,
+                    uuid,
+                    id=args.get("id"),
+                    keep=args.get("keep", False),
+                    now=time.time(),
                 )
             return socket_ops.handle_ack(self._store, uuid, id=args.get("id"), now=time.time())
 

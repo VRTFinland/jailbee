@@ -227,13 +227,19 @@ def acknowledge_delivery(
         if pending.acked or not is_connected():
             return
         save_pending(
-            path, pending.item, recipient_uuid=recipient_uuid,
-            completed=pending.completed, acked=True,
+            path,
+            pending.item,
+            recipient_uuid=recipient_uuid,
+            completed=pending.completed,
+            acked=True,
         )
         if not is_connected():
             save_pending(
-                path, pending.item, recipient_uuid=recipient_uuid,
-                completed=pending.completed, acked=False,
+                path,
+                pending.item,
+                recipient_uuid=recipient_uuid,
+                completed=pending.completed,
+                acked=False,
             )
         return
 

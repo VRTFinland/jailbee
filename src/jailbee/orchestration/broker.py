@@ -46,7 +46,6 @@ from jailbee.orchestration.actions import (
 from jailbee.orchestration.child_status import StatusCache
 from jailbee.orchestration.journal import Journal
 from jailbee.orchestration.listener import Listener
-from jailbee.orchestration.query import ContainerSnapshot, Queries
 from jailbee.orchestration.outbox import (
     deliver,
     ensure_orchestration_env,
@@ -66,6 +65,7 @@ from jailbee.orchestration.protocol import (
     StopManifest,
     new_host_id,
 )
+from jailbee.orchestration.query import ContainerSnapshot, Queries
 from jailbee.orchestration.state import (
     load_queue,
     purge_vanished_pending,

@@ -12,10 +12,10 @@ from jailbee.inbox.errors import InboxUsage
 from jailbee.inbox.render import clean_c0c1, ls_line, pretty, render_status
 from jailbee.inbox.send import SendRequest, prepare_send, validate
 from jailbee.inbox.transport import (
+    NO_REPLY_MESSAGE,
     BrokerError,
     BrokerUnreachable,
     Client,
-    NO_REPLY_MESSAGE,
     call_next,
     call_send,
     socket_path,
@@ -171,7 +171,9 @@ def cmd_send(request: SendRequest) -> int:
         return 3
     state = item.get("state") if isinstance(item, dict) else None
     if state == "refused":
-        print(f"{PROG}: {clean_c0c1(str(item.get('detail') or 'request refused'))}", file=sys.stderr)
+        print(
+            f"{PROG}: {clean_c0c1(str(item.get('detail') or 'request refused'))}", file=sys.stderr
+        )
         return 1
     if not request.wait:
         return 0

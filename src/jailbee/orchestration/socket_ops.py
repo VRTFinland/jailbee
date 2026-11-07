@@ -80,8 +80,11 @@ def handle_send(
     def consume_status(status: dict[str, object]) -> None:
         if wait or status.get("state") == "refused":
             acknowledge_delivery(
-                ctx.root, ctx.sender.full, str(status["id"]),
-                recipient_uuid=ctx.sender.key, is_connected=is_connected,
+                ctx.root,
+                ctx.sender.full,
+                str(status["id"]),
+                recipient_uuid=ctx.sender.key,
+                is_connected=is_connected,
             )
 
     recorded = store.lookup_request(ctx.sender.key, request_id)
@@ -205,6 +208,7 @@ def _list_view(item: dict[str, object]) -> dict[str, object]:
 # A list page's encoded items stay under this, well inside one wire line.
 LIST_PAGE_BYTES = wire.MAX_LINE_BYTES // 2
 _LIST_FETCH = 256  # rows read per store query while filling a page
+
 
 def _list_page(
     store: BrokerStore, uuid: str, after: int

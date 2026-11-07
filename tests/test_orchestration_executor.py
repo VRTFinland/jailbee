@@ -219,6 +219,7 @@ def test_every_op_requires_a_ready_store_recipient(env: Env, op: str) -> None:
     assert len(env.memory.waiters) == 0
     env.rig.dispatch.assert_not_called()
 
+
 @pytest.mark.parametrize("state", ["done", "refused"])
 def test_send_disconnected_during_handler_leaves_unread_status(env: Env, state: str) -> None:
     def dispatch(*args: object, **kwargs: object) -> Outcome:
@@ -246,9 +247,14 @@ def test_real_send_disconnect_during_delivery_stays_unread(
     listener.open_container(env.kid, tmp_path / "sock")
     client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     client.connect(str(tmp_path / "sock" / "broker.sock"))
-    client.sendall(wire.encode_request(wire.Request(
-        "send", {"manifest": _manifest(), "body": None, "wait": True},
-    )))
+    client.sendall(
+        wire.encode_request(
+            wire.Request(
+                "send",
+                {"manifest": _manifest(), "body": None, "wait": True},
+            )
+        )
+    )
     event = env.memory.requests.get(timeout=2)
     assert isinstance(event, RequestEvent)
 
@@ -262,7 +268,8 @@ def test_real_send_disconnect_during_delivery_stays_unread(
     if boundary.startswith("spool"):
         outbox.save_pending(
             pending_dir(ctx.root, ctx.sender.full) / inbox_file_name_for("older", ctx.now),
-            {"id": "older", "type": "message", "kind": "note"}, recipient_uuid=env.kid,
+            {"id": "older", "type": "message", "kind": "note"},
+            recipient_uuid=env.kid,
         )
         real_save = outbox.save_pending
 
@@ -315,7 +322,9 @@ def test_real_send_disconnect_during_delivery_stays_unread(
                 monkeypatch.setattr(sqlite3, "connect", traced_connect)
                 # The trace fires at BEGIN, while our writer still owns the lock.
                 result: list[bool] = []
-                ack_worker = threading.Thread(target=lambda: result.append(real_ack(self, *args, **kwargs)))
+                ack_worker = threading.Thread(
+                    target=lambda: result.append(real_ack(self, *args, **kwargs))
+                )
                 ack_worker.start()
                 assert release.wait(2)
                 con.execute("COMMIT")
@@ -332,10 +341,14 @@ def test_real_send_disconnect_during_delivery_stays_unread(
         executor.handle_event(env.memory, event)
         rows = env.store.history(env.kid)
         if boundary.startswith("spool"):
-            pending = [outbox.load_pending(p) for p in pending_dir(ctx.root, ctx.sender.full).iterdir()]
+            pending = [
+                outbox.load_pending(p) for p in pending_dir(ctx.root, ctx.sender.full).iterdir()
+            ]
             status = [p for p in pending if p.item.get("type") == "status"]
             assert len(status) == 1 and not status[0].acked
-            outbox.flush_pending(ctx.incus, ctx.root, ctx.sender.full, uid=None, recipient_uuid=env.kid)
+            outbox.flush_pending(
+                ctx.incus, ctx.root, ctx.sender.full, uid=None, recipient_uuid=env.kid
+            )
             rows = env.store.history(env.kid)
         status_rows = [r for r in rows if r.item.get("type") == "status"]
         assert len(status_rows) == 1 and status_rows[0].acked_at is None

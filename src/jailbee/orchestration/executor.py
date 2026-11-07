@@ -102,8 +102,9 @@ def _dispatch(
             manifest=args.get("manifest"),
             body=args.get("body"),
             wait=args.get("wait") is True,
-            is_connected=lambda: memory.listener is not None
-            and memory.listener.is_connected(event.conn_id),
+            is_connected=lambda: (
+                memory.listener is not None and memory.listener.is_connected(event.conn_id)
+            ),
         )
     if op == "list":
         return socket_ops.handle_list(store, uuid, after=args.get("after"))

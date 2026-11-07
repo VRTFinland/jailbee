@@ -43,7 +43,12 @@ class Env:
 
     def send(self, manifest: object, body: object = None, wait: bool = False) -> dict[str, object]:
         return socket_ops.handle_send(
-            self.ctx, self.memory, self.store, manifest=manifest, body=body, wait=wait,
+            self.ctx,
+            self.memory,
+            self.store,
+            manifest=manifest,
+            body=body,
+            wait=wait,
             is_connected=lambda: True,
         )
 
@@ -208,6 +213,7 @@ def test_a_waiting_resend_marks_the_earlier_unread_status_read(env: Env) -> None
     assert env.send(_message(), wait=True) == item
     assert env.store.unacked(key) == []
 
+
 @pytest.mark.parametrize("wait", [False, True])
 def test_synchronous_refusal_is_read_history(env: Env, wait: bool) -> None:
     item = env.send({"version": 1, "id": "bad1", "type": "message"}, wait=wait)
@@ -226,16 +232,24 @@ def test_status_stays_behind_older_pending_delivery(env: Env, wait: bool) -> Non
     older = {"version": 1, "id": "older", "type": "message", "kind": "note", "body": "first"}
     outbox.save_pending(
         directory / inbox_file_name_for("older", ctx.now),
-        older, recipient_uuid=ctx.sender.key,
+        older,
+        recipient_uuid=ctx.sender.key,
     )
     item = env.send(_message(), wait=wait)
     assert env.store.history(ctx.sender.key) == []
     assert len(list(directory.iterdir())) == 2
     assert env.send(_message(), wait=True) == item
     assert len(list(directory.iterdir())) == 2
-    assert outbox.flush_pending(
-        ctx.incus, ctx.root, ctx.sender.full, uid=None, recipient_uuid=ctx.sender.key,
-    ) == 2
+    assert (
+        outbox.flush_pending(
+            ctx.incus,
+            ctx.root,
+            ctx.sender.full,
+            uid=None,
+            recipient_uuid=ctx.sender.key,
+        )
+        == 2
+    )
     history = env.store.history(ctx.sender.key)
     assert [r.id for r in history] == ["older", item["id"]]
     assert history[0].acked_at is None and history[1].acked_at is not None
@@ -251,7 +265,8 @@ def test_waiting_retry_acks_stored_status_despite_later_pending_item(env: Env) -
     directory = pending_dir(ctx.root, ctx.sender.full)
     outbox.save_pending(
         directory / inbox_file_name_for("later", ctx.now),
-        {"id": "later", "type": "message", "kind": "note"}, recipient_uuid=ctx.sender.key,
+        {"id": "later", "type": "message", "kind": "note"},
+        recipient_uuid=ctx.sender.key,
     )
     assert env.send(_message(), wait=True) == item
     assert env.store.unacked(ctx.sender.key) == []

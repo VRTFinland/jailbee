@@ -146,7 +146,12 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         real_serve(ctx, journal, memory)
         for manifest in list(incus.requests[ctx.sender.full]):
             socket_ops.handle_send(
-                ctx, memory, store, manifest=manifest, body=None, wait=False,
+                ctx,
+                memory,
+                store,
+                manifest=manifest,
+                body=None,
+                wait=False,
                 is_connected=lambda: True,
             )
             incus.requests[ctx.sender.full].remove(manifest)
@@ -212,7 +217,12 @@ def test_spawn_queues_then_starts_after_a_stop(world: dict[str, Any]) -> None:
     old = store.lookup_request(ctx.sender.key, "a-spawn")
     assert old is not None and old.state == "queued"
     result = socket_ops.handle_send(
-        ctx, memory, store, manifest={"id": "a-spawn"}, body=None, wait=False,
+        ctx,
+        memory,
+        store,
+        manifest={"id": "a-spawn"},
+        body=None,
+        wait=False,
         is_connected=lambda: True,
     )
     assert result["state"] == "queued"
