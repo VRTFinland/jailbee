@@ -121,9 +121,7 @@ def test_a_child_without_a_round_context_is_still_refused(env: Env) -> None:
     assert stored(env, "proj-lost") == []
 
 
-def _without_context(
-    env: Env, monkeypatch: pytest.MonkeyPatch, full: str, **label: str
-) -> None:
+def _without_context(env: Env, monkeypatch: pytest.MonkeyPatch, full: str, **label: str) -> None:
     """List ``full`` with ``label`` but give it no round context (its repo config
     does not load), so the broker never prepares it: no env_roles entry."""
     from jailbee.orchestration import broker_state

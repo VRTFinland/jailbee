@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
+
 from jailbee.container_outbox import role
 from jailbee.orchestration.wire import OutboxKind
 

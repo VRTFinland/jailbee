@@ -25,7 +25,6 @@ from jailbee.outbox_io import (
     JournalError,
 )
 
-
 RETAINED_SEPARATOR = "@"
 
 

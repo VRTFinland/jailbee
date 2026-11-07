@@ -235,9 +235,7 @@ def publish_queries(memory: broker_state.BrokerMemory) -> None:
     empty_children = json.dumps({"children": [], "observed_at": None, "last_from_child": {}})
     try:
         snapshot = {
-            uuid: ContainerSnapshot(
-                _fallback_role(memory, uuid, full), True, empty_children, None
-            )
+            uuid: ContainerSnapshot(_fallback_role(memory, uuid, full), True, empty_children, None)
             for full, uuid in memory.store.recipients().items()
         }
     except Exception:

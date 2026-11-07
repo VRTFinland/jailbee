@@ -316,7 +316,9 @@ def _submit_pr(
     extra = parse_bodies(args.get("bodies"))
     is_review = any(_is_review(a) for a in json.loads(current.manifest).get("actions", []))
     if is_review and review is None:
-        raise bad_request("review drafts require fresh PR metadata; use jailbee pr review submit PR")
+        raise bad_request(
+            "review drafts require fresh PR metadata; use jailbee pr review submit PR"
+        )
     if review is not None and not is_review:
         raise bad_request("not a review draft; choose a different batch name")
 
@@ -342,7 +344,9 @@ def _submit_pr(
                 summary["body"] = review.get("body", "")
             manifest["actions"] = [summary]
         elif any(_is_review(a) for a in actions):
-            raise bad_request("review drafts require fresh PR metadata; use jailbee pr review submit PR")
+            raise bad_request(
+                "review drafts require fresh PR metadata; use jailbee pr review submit PR"
+            )
         if len(manifest["actions"]) > MAX_PR_DRAFT_ACTIONS:
             raise bad_request(f"PR manifest exceeds the cap of {MAX_PR_DRAFT_ACTIONS} actions")
         merged = {**bodies, **extra}
