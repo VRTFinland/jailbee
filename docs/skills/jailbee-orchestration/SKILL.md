@@ -552,6 +552,14 @@ are accepted. Omit `--agent-only` for a stopped child, and optionally select a
 runner using the same flags as above. The prompt becomes a new turn in the
 resumed conversation. Unsupervised children do not record new sessions.
 
+`claude` and `claude-jb` are the same Claude Code harness (`claude-jb` only routes
+through LiteLLM), so sessions are shared across runners and profiles: `jailbee
+inbox send restart --child C --agent-only --resume last --agent claude --model
+opus --text "Continue."` continues a conversation started on `--agent claude-jb
+--profile codex`, for example when a provider quota runs out. If the new runner's
+context window is smaller than the session, Claude Code compacts the conversation
+on resume; it still works but some detail is summarised away.
+
 ## Finishing
 
 When everything is merged, offer the human a pull request through the

@@ -523,6 +523,12 @@ On `restart`, an absent `runner` keeps the child's previous one, while
 if no default is configured. The runner is stored on the child as a label and
 shown on its dashboard card.
 
+`claude` and `claude-jb` are the same Claude Code harness and share one session
+store, so a restart with `--resume` can switch runner, for example from
+`claude-jb --profile codex` to `claude` when a provider quota runs out. If the
+new runner's context window is smaller than the session, Claude Code compacts it
+on resume.
+
 A runner that cannot be honoured (Claude not enabled, no `prompt_args`, a
 command that is not `claude`/`claude-jb`, LiteLLM disabled, an unserved
 profile or a tier the profile lacks) is refused with the reason; it never falls
