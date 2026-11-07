@@ -393,18 +393,13 @@ def plan_spawn(
 def _base_problem(ctx: ActionContext, plan: SpawnPlan) -> str | None:
     """Why a `new` spawn's `--base` can never resolve, or None when it may.
 
-    Uses the resolution `jailbee new` runs at creation. The verdict is only
-    definitive when creation would not fetch: with autofetch on and the
-    upstream remote present, a base that exists only upstream resolves then,
-    so it is accepted here and the late check stays.
+    Orchestrator spawns create with `Interaction.none()`, which sets
+    autofetch off (create_flow), so creation never fetches and
+    `resolve_clone_ref(autofetch=False)` is exactly the creation-time verdict.
     """
     if plan.kind != "new" or plan.base is None:
         return None
-    from jailbee import git
-
     cfg = ctx.cfg
-    if cfg.new.autofetch and cfg.upstream_remote in git.list_remotes(cfg.repo_root):
-        return None
     opts = child_options(cfg, plan, orchestrator_full=ctx.sender.full, fork=None)
     try:
         lifecycle.resolve_clone_ref(cfg, opts, autofetch=False)

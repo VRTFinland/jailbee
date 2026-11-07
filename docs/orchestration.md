@@ -848,8 +848,8 @@ merged state.
 
 - **Spawn.** `kind: fork` (from the orchestrator's committed work) or `kind:
   new` (from a base), plus the prompt and rights. A `new` spawn whose `--base`
-  cannot resolve is refused at once, not queued, unless `new.autofetch` is on
-  and the upstream remote exists (the base may then arrive at creation). Only **running** children
+  does not resolve is refused at once, not queued: orchestrator creation never
+  fetches, so the check is final. Only **running** children
   count against `max_running_children`; a child being created counts as
   running. During creation, a child counts from the `started` reply until
   it is running and its create has finished, or its create has failed.
@@ -905,7 +905,9 @@ merged state.
   `force: true` overrides the guard.
 - **Messages** go both ways with replies (`note`, `question`, `blocked`,
   `done`). A child can only message its orchestrator, and an orchestrator only
-  its own children.
+  its own children. The broker relays each message under a fresh `h-<hex>`
+  id and keeps the sender's own id in `origin_id`; a reply naming the relayed
+  id reaches the other side with `in_reply_to` set to that original id.
 
 If the orchestrator is stopped, `done` waits as an ordered finish item:
 import, delivery and cleanup run when it returns. If it is destroyed, the
