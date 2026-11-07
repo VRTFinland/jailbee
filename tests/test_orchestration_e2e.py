@@ -17,7 +17,15 @@ from jailbee import background
 from jailbee.db.models import JOB_CREATE
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
-from jailbee.orchestration import actions, broker, labels, socket_ops, watch
+from jailbee.orchestration import (
+    actions,
+    broker,
+    broker_state,
+    labels,
+    manifests,
+    socket_ops,
+    watch,
+)
 from jailbee.orchestration.grant import Grant
 from jailbee.orchestration.journal import Journal
 from jailbee.orchestration.outbox import CONTAINER_JAILBEE
@@ -137,9 +145,9 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     start_create = MagicMock(return_value=CreateStarted("proj-child", 4242, tmp_path / "log"))
     monkeypatch.setattr(actions, "start_create", start_create)
     monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
-    monkeypatch.setattr(broker, "repo_configs", lambda memory=None: {"proj": cfg})
+    monkeypatch.setattr(broker_state, "repo_configs", lambda memory=None: {"proj": cfg})
     monkeypatch.setattr(broker, "load_global_config", lambda path: (GlobalConfig(), []))
-    real_serve = broker._serve
+    real_serve = manifests.serve
     store = BrokerStore(store_path(root))
 
     def serve(ctx, journal, memory):
@@ -156,7 +164,7 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             )
             incus.requests[ctx.sender.full].remove(manifest)
 
-    monkeypatch.setattr(broker, "_serve", serve)
+    monkeypatch.setattr(manifests, "serve", serve)
     return {"root": root, "cfg": cfg, "incus": incus, "start_create": start_create}
 
 
@@ -164,7 +172,7 @@ def test_spawn_queues_then_starts_after_a_stop(world: dict[str, Any]) -> None:
     root: Path = world["root"]
     incus: FakeIncus = world["incus"]
     journal = Journal(root)
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     _manifest(
         incus,
         "proj-orch",
@@ -234,7 +242,7 @@ IMPORT_SHA = "e" * 40
 IMPORT_REF = "refs/jailbee/from/c1/c1-branch"
 
 
-def _tick(world: dict[str, Any], memory: broker.BrokerMemory, seconds: int = 0) -> None:
+def _tick(world: dict[str, Any], memory: broker_state.BrokerMemory, seconds: int = 0) -> None:
     broker.tick(
         world["incus"],
         root=world["root"],
@@ -261,7 +269,7 @@ def test_orchestrator_message_reaches_a_running_child(world: dict[str, Any]) -> 
         "proj-orch",
         {"version": 1, "id": "m-1", "type": "message", "to": "c1", "body": "look at X"},
     )
-    _tick(world, broker.BrokerMemory())
+    _tick(world, broker_state.BrokerMemory())
     [msg] = _messages(incus, "proj-c1")
     assert (msg["from"], msg["body"], msg["kind"]) == ("orch", "look at X", "note")
     assert _statuses(incus, "proj-orch") == [("m-1", "done", "delivered to c1")]
@@ -272,7 +280,7 @@ def test_orchestrator_message_to_a_stopped_child_is_stored_without_start(
 ) -> None:
     root: Path = world["root"]
     incus: FakeIncus = world["incus"]
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     incus.set_running("proj-c1", False)
     _manifest(
         incus,
@@ -337,7 +345,7 @@ def _done_manifest(incus: FakeIncus) -> None:
 def test_child_done_while_orchestrator_runs(world: dict[str, Any], git_done: MagicMock) -> None:
     incus: FakeIncus = world["incus"]
     _done_manifest(incus)
-    _tick(world, broker.BrokerMemory())
+    _tick(world, broker_state.BrokerMemory())
     config = incus.containers["proj-c1"]["config"]
     assert (config[labels.DONE_SHA], config[labels.STATE]) == (DONE_SHA, labels.STATE_IMPORTED)
     [msg] = _messages(incus, "proj-orch")
@@ -356,7 +364,7 @@ def test_child_done_while_orchestrator_is_stopped(
     incus: FakeIncus = world["incus"]
     incus.set_running("proj-orch", False)
     _done_manifest(incus)
-    _tick(world, broker.BrokerMemory())
+    _tick(world, broker_state.BrokerMemory())
     config = incus.containers["proj-c1"]["config"]
     assert (config[labels.DONE_SHA], config[labels.STATE]) == (DONE_SHA, labels.STATE_DONE)
     assert _messages(incus, "proj-orch") == []
@@ -386,7 +394,7 @@ def test_orchestrator_import_records_and_reports_the_ref(
     )
     monkeypatch.setattr(sync, "merge_container_into_container", merge)
     _manifest(incus, "proj-orch", {"version": 1, "id": "i-1", "type": "import", "child": "c1"})
-    _tick(world, broker.BrokerMemory())
+    _tick(world, broker_state.BrokerMemory())
     config = incus.containers["proj-c1"]["config"]
     assert (config[labels.LAST_IMPORT], config[labels.STATE]) == (
         IMPORT_SHA,
@@ -407,7 +415,7 @@ def test_spawn_fails_when_alive_child_has_no_launcher(
 
     incus: FakeIncus = world["incus"]
     incus.set_running("proj-c1", False)
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     monkeypatch.setattr(watch, "read_jobs", lambda: {})
     monkeypatch.setattr(
         agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude")
@@ -455,7 +463,7 @@ def test_spawn_reports_ready_after_worker_finishes(
 ) -> None:
     incus: FakeIncus = world["incus"]
     incus.set_running("proj-c1", False)  # frees the only slot
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     jobs: dict[str, watch.JobSnapshot] = {
         "proj-k1": watch.JobSnapshot("clone", 4242, JOB_CREATE, None, T0 + timedelta(seconds=1))
     }

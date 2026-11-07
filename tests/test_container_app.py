@@ -180,22 +180,24 @@ def test_binds_profile_mounts_app_readonly(make_cfg, tmp_path):
 
 
 def test_broker_start_syncs_skills_on_change(monkeypatch, tmp_path):
-    from jailbee.orchestration import broker
+    from jailbee.orchestration import broker, broker_state
 
     cfgs = [Mock(), Mock()]
     sync = Mock()
     monkeypatch.setattr(
         container_app, "stage", Mock(return_value=container_app.StageResult(tmp_path, True))
     )
-    monkeypatch.setattr(broker, "repo_configs", Mock(return_value={"a": cfgs[0], "b": cfgs[1]}))
+    monkeypatch.setattr(
+        broker_state, "repo_configs", Mock(return_value={"a": cfgs[0], "b": cfgs[1]})
+    )
     monkeypatch.setattr("jailbee.agent_skills.sync_agent_skills", sync)
-    broker._stage_container_app(broker.BrokerMemory())
+    broker._stage_container_app(broker_state.BrokerMemory())
     assert sync.call_args_list == [call(cfgs[0]), call(cfgs[1])]
     sync.reset_mock()
     monkeypatch.setattr(
         container_app, "stage", Mock(return_value=container_app.StageResult(tmp_path, False))
     )
-    broker._stage_container_app(broker.BrokerMemory())
+    broker._stage_container_app(broker_state.BrokerMemory())
     assert sync.call_args_list == [call(cfgs[0]), call(cfgs[1])]
 
 

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from jailbee.orchestration import broker, executor, outbox, socket_ops, wire
+from jailbee.orchestration import broker_state, executor, outbox, socket_ops, wire
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.listener import DisconnectEvent, Listener, RequestEvent
 from jailbee.orchestration.store import BrokerStore
@@ -39,7 +39,7 @@ class Env:
         self.rig = rig
         rig.incus.list_containers.return_value = [_orch(), _child()]
         rig.dispatch.return_value = Outcome("done", "delivered")
-        self.memory = broker.BrokerMemory()
+        self.memory = broker_state.BrokerMemory()
         rig.tick(self.memory)
         self.store = BrokerStore(rig.root / "broker.db")
         self.memory.store = self.store
@@ -180,7 +180,7 @@ def test_handler_exception_answers_error_and_loop_survives(
     env.memory.requests.put(RequestEvent(env.orch, 2, wire.Request("grant")))
     ticks = iter([0.0, 0.0, 0.0, 10.0])
     executor.serve_requests(
-        env.memory, until=5.0, stop=broker.StopFlag(), clock=lambda: next(ticks, 10.0)
+        env.memory, until=5.0, stop=broker_state.StopFlag(), clock=lambda: next(ticks, 10.0)
     )
     assert env.listener.responses[0][1].error_code == wire.REFUSED
     assert env.listener.responses[0][1].error_detail == "broker error"
@@ -189,11 +189,11 @@ def test_handler_exception_answers_error_and_loop_survives(
 
 def test_serve_returns_when_until_passes(env: Env) -> None:
     env.memory.requests = queue.Queue()
-    executor.serve_requests(env.memory, until=0.0, stop=broker.StopFlag(), clock=lambda: 1.0)
+    executor.serve_requests(env.memory, until=0.0, stop=broker_state.StopFlag(), clock=lambda: 1.0)
 
 
 def test_serve_returns_on_stop(env: Env) -> None:
-    stop = broker.StopFlag()
+    stop = broker_state.StopFlag()
     stop.requested = True
     executor.serve_requests(env.memory, until=1e12, stop=stop)
 

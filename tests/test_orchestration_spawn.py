@@ -200,7 +200,7 @@ def test_unresolved_ref_refuses_without_starting(
 def test_pr_watch_uses_resolved_name_through_broker_tracking(tmp_path, monkeypatch) -> None:
     from jailbee import pr
     from jailbee.create_flow import CreateStarted
-    from jailbee.orchestration import broker, watch
+    from jailbee.orchestration import broker_replies, watch
 
     ctx = _ctx(tmp_path, {"max_running_children": 2})
     prepared = pr.PreparedPr(pr.PrInfo(12, "real-head", "a" * 40, "OPEN", "target"), "a" * 40)
@@ -215,7 +215,7 @@ def test_pr_watch_uses_resolved_name_through_broker_tracking(tmp_path, monkeypat
     manifest = _m().model_copy(update={"version": 2, "kind": "pr", "pr": 12})
     outcome = actions.handle_spawn(ctx, manifest)
     assert outcome.state == "started"
-    broker._watch_manifest(ctx, manifest, manifest.id, outcome)
+    broker_replies.watch_manifest(ctx, manifest, manifest.id, outcome)
     entries = watch.load_watch(ctx.root)[ctx.sender.full]
     assert [(e.ref, e.child_full) for e in entries] == [(manifest.id, "proj-real-head")]
 

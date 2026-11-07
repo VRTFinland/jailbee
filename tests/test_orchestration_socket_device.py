@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from jailbee.incus import ORCHESTRATION_DEVICE, IncusError
-from jailbee.orchestration import broker, labels, socket_device, state
+from jailbee.orchestration import broker_state, labels, socket_device, state
 from jailbee.orchestration.store import BrokerStore, store_path
 from tests.test_orchestration_broker import GRANT, Rig, _c
 
@@ -80,7 +80,7 @@ class Env:
         inc.config_device_remove = self.remove
         self.listener = FakeListener()
         self.store = BrokerStore(store_path(rig.root))
-        self.memory = broker.BrokerMemory(
+        self.memory = broker_state.BrokerMemory(
             listener=self.listener,  # type: ignore[arg-type]  # fake
             store=self.store,
         )
@@ -287,7 +287,7 @@ def test_a_failed_rotation_closes_the_source_s_socket(env) -> None:
 def _restart_broker(env: Env) -> None:
     """A new broker process: empty memory and listener, directories left on disk."""
     env.listener = FakeListener()
-    env.memory = broker.BrokerMemory(
+    env.memory = broker_state.BrokerMemory(
         listener=env.listener,  # type: ignore[arg-type]  # fake
         store=env.store,
     )
@@ -552,7 +552,7 @@ def test_no_volatile_uuid_skips_socket(env) -> None:
 
 
 def test_memory_has_request_queue() -> None:
-    assert isinstance(broker.BrokerMemory().requests, queue.Queue)
+    assert isinstance(broker_state.BrokerMemory().requests, queue.Queue)
 
 
 def test_reassert_survives_an_attach_failure(env) -> None:

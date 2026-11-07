@@ -4,7 +4,8 @@ from __future__ import annotations
 import pytest
 
 from jailbee.config.models_orchestration import OrchestrationView, RepoOrchestration
-from jailbee.orchestration import broker, labels
+from jailbee.incus import IncusError
+from jailbee.orchestration import broker_state, labels
 from tests.test_orchestration_broker import GRANT, NOW, _c
 from tests.test_orchestration_socket_device import Env, env  # noqa: F401
 
@@ -22,7 +23,7 @@ def _item(i: str) -> dict:
 class Clock:
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.t = 1000.0
-        monkeypatch.setattr(broker, "_monotonic", lambda: self.t)
+        monkeypatch.setattr(broker_state, "monotonic", lambda: self.t)
 
 
 @pytest.fixture
@@ -109,7 +110,7 @@ def test_project_switch_loses_nothing(env: Env, clock: Clock) -> None:
 
 
 def test_no_uuid_purge_without_an_all_projects_listing(env: Env, clock: Clock) -> None:
-    env.rig.incus.current_project.side_effect = broker.IncusError("boom")
+    env.rig.incus.current_project.side_effect = IncusError("boom")
     env.set(_orch("proj-orch", "u-a"))
     _put(env, "u-gone", "proj-gone", "acked", 0)
     for _ in range(3):

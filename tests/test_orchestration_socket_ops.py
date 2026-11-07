@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from jailbee.orchestration import broker, socket_ops, wire
+from jailbee.orchestration import broker_state, socket_ops, wire
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.socket_ops import NextArgs, Waiter, Waiters
 from jailbee.orchestration.store import BrokerStore, StoreError
@@ -19,7 +19,7 @@ class Env:
     def __init__(self, rig: Rig) -> None:
         rig.incus.list_containers.return_value = [_orch(), _child()]
         rig.dispatch.return_value = Outcome("done", "delivered")
-        self.memory = broker.BrokerMemory()
+        self.memory = broker_state.BrokerMemory()
         rig.tick(self.memory)
         self.store = BrokerStore(rig.root / "broker.db")
         self.memory.children["proj-orch"].children[0]["started_at"] = 500.0
@@ -51,7 +51,7 @@ class Env:
     def evaluate(self, ws: Waiters, now: float = 1000.0, mono: float = 0.0):  # type: ignore[no-untyped-def]
         view = self.memory.children.get("proj-orch")
         if view is not None:  # the broker republishes the list every round
-            self.memory.children["proj-orch"] = broker.ChildrenView(now, view.children)
+            self.memory.children["proj-orch"] = broker_state.ChildrenView(now, view.children)
         return ws.evaluate(self.memory, self.store, now=now, mono=mono)
 
 

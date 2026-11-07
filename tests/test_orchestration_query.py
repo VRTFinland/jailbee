@@ -8,7 +8,15 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from jailbee.orchestration import broker, executor, socket_ops, wire
+from jailbee.orchestration import (
+    broker,
+    broker_replies,
+    broker_state,
+    executor,
+    socket_lifecycle,
+    socket_ops,
+    wire,
+)
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.listener import Listener, RequestEvent
 from jailbee.orchestration.outbox import deliver
@@ -24,14 +32,14 @@ if TYPE_CHECKING:
 class Env:
     def __init__(self, rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
         self.rig = rig
-        self.memory = broker.BrokerMemory()
+        self.memory = broker_state.BrokerMemory()
         rig.incus.list_containers.return_value = [_orch(), _child()]
         rig.tick(self.memory)
         self.store = BrokerStore(rig.root / "broker.db")
         self.queries = Queries(self.store)
         self.memory.store = self.store
         self.memory.queries = self.queries
-        monkeypatch.setattr(broker, "_ensure_socket", lambda *a: None)
+        monkeypatch.setattr(socket_lifecycle, "_ensure_socket", lambda *a: None)
         for full in ("proj-orch", "proj-kid", "proj-former"):
             self.store.set_recipient(full, full, now=1.0)
         rig.tick(self.memory)
@@ -231,7 +239,7 @@ def test_snapshot_changes_only_at_completed_round(
 ) -> None:
     entered, unblock = threading.Event(), threading.Event()
     before = env.call("children").result
-    original = broker._settle_all_watches
+    original = broker_replies.settle_all_watches
 
     def blocked(*args: Any) -> None:
         env.memory.children["proj-orch"].children[0]["name"] = "new-kid"
@@ -239,7 +247,7 @@ def test_snapshot_changes_only_at_completed_round(
         assert unblock.wait(5)
         original(*args)
 
-    monkeypatch.setattr(broker, "_settle_all_watches", blocked)
+    monkeypatch.setattr(broker_replies, "settle_all_watches", blocked)
     worker = threading.Thread(target=env.rig.tick, args=(env.memory,))
     worker.start()
     try:
@@ -259,7 +267,7 @@ def test_failed_round_keeps_last_snapshot(env: Env, monkeypatch: pytest.MonkeyPa
         env.memory.children.clear()
         raise RuntimeError("round failed")
 
-    monkeypatch.setattr(broker, "_settle_all_watches", broken)
+    monkeypatch.setattr(broker_replies, "settle_all_watches", broken)
     with pytest.raises(RuntimeError, match="round failed"):
         env.rig.tick(env.memory)
     assert env.call("children").result == before
