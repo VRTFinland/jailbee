@@ -90,7 +90,9 @@ def test_show_prints_publish_rights(patched, enabled):
     patched.show.return_value = GrantRow("a", "myrepo-a", grant, None, 0, grant)
     res = runner.invoke(app, ["orchestrate", "show", "a"])
     assert res.exit_code == 0, res.output
-    assert ("publish: issues: comment" if enabled else "publish: none") in res.output
+    out = " ".join(res.output.split())
+    assert out.count("publish: ") == 1
+    assert ("publish: issues: comment" if enabled else "publish: none") in out
 
 
 def test_publish_flags_reach_commands(patched):

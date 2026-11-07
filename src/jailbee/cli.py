@@ -13579,7 +13579,6 @@ def orchestrate_show_cmd(
         info(f"No grant on '{row.short}'.")
         return
     info_plain(f"Grant on '{row.short}': {_grant_summary(row.grant)}")
-    info_plain(f"publish: {commands.publish_summary(row.grant.publish)}")
     if row.effective is None:
         warn_plain(f"{_ORCH_NOT_ALLOWED}; the grant has no effect.")
     elif row.effective != row.grant:
