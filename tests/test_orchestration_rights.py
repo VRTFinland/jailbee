@@ -25,7 +25,9 @@ def rig(tmp_path, mocker):
     incus.config_unset.side_effect = lambda name, key: store.pop((name, key), None)
     incus.config_unset_checked.side_effect = incus.config_unset.side_effect
     incus.config_device_get.return_value = None
-    sender = Node("orch", "orch", True, {labels.GRANT: grant.to_label()})
+    sender = Node(
+        "orch", "orch", True, {labels.GRANT: grant.to_label(), "volatile.uuid": "uuid-orch"}
+    )
     child = Node("c", "c", True, {labels.SPAWNED_BY: "orch"})
     cfg = cfg.model_copy(update={"optional_mounts": {"aws": object()}})
     ctx = ActionContext(
@@ -161,6 +163,24 @@ def test_child_revoke_notifies_parent(rig, mocker):
     msg = deliver.call_args.args[3]
     assert msg.kind == "note" and msg.body == "c gave up: loose"
     assert deliver.call_args.args[2] == "orch"
+
+
+@pytest.mark.parametrize("missing", ["parent", "uuid"])
+def test_child_revoke_succeeds_when_parent_cannot_be_notified(rig, mocker, caplog, missing):
+    ctx, store, switch, *_ = rig
+    ctx.sender = ctx.nodes["c"]
+    if missing == "parent":
+        del ctx.nodes["orch"]
+    else:
+        ctx.nodes["orch"].config.pop("volatile.uuid")
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
+    store[("c", labels.RIGHTS)] = ChildRights(loose=True).to_label()
+    deliver = mocker.patch("jailbee.orchestration.messages.deliver")
+    result = actions.dispatch(ctx, manifest(child=None, revoke={"loose": True}))
+    assert result.state == "done"
+    switch.assert_called_once()
+    deliver.assert_not_called()
+    assert "rights revocation notice not delivered" in caplog.text
 
 
 def test_second_grant_failure_undoes_first(rig):

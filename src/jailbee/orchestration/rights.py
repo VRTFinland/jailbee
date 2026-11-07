@@ -258,7 +258,7 @@ def _handle_rights_locked(ctx: ActionContext, m: RightsManifest) -> Outcome:
             log.warning("rights provenance rollback %s failed: %s", child.full, rollback)
         return failed(str(exc))
     if ctx.role() == "child" and gave_up:
-        from jailbee.orchestration.messages import _orchestrator_of, _relay
+        from jailbee.orchestration.messages import handle_message
 
         notice = MessageManifest(
             version=1,
@@ -267,5 +267,7 @@ def _handle_rights_locked(ctx: ActionContext, m: RightsManifest) -> Outcome:
             kind="note",
             body=f"{child.short} gave up: {', '.join(gave_up)}",
         )
-        _relay(ctx, _orchestrator_of(ctx), notice)
+        outcome = handle_message(ctx, notice)
+        if outcome.state == "refused":
+            log.warning("rights revocation notice not delivered: %s", outcome.detail)
     return done(f"{child.short}: {'; '.join(changes)}")
