@@ -157,13 +157,7 @@ class OutboxSnapshot:
 
     @property
     def manifest_names(self) -> tuple[str, ...]:
-        return tuple(
-            sorted(
-                name
-                for name in self.files
-                if name.endswith(".json") and not name.endswith(".progress.json")
-            )
-        )
+        return tuple(sorted(name for name in self.files if name.endswith(".json")))
 
 
 @dataclass(frozen=True)

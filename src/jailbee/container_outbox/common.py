@@ -9,11 +9,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal
-
 from jailbee.container_outbox import role
+from jailbee.orchestration.wire import OutboxKind
 
-Kind = Literal["issue", "pr"]
+Kind = OutboxKind  # one definition of the two outboxes, with the wire protocol
 
 
 class OutboxCommandError(Exception):

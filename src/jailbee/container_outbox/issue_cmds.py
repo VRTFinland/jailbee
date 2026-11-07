@@ -114,10 +114,6 @@ def state_action(
     return action
 
 
-def _guard() -> None:
-    require_role()
-
-
 def _body(body: str | None, body_file: Path | None, required: bool) -> str | None:
     if body is not None and body_file is not None:
         raise OutboxCommandError("choose --body or --body-file", 2)
@@ -157,7 +153,7 @@ def _check_labels(add: object, remove: object, view: gh.IssueView | None) -> Non
 
 
 ASSIGNEE_ME = "@me"
-# Syntax only, mirroring issue_manifest._LOGIN_RE (container code imports no host module).
+# Syntax only, mirroring issue_manifest.LOGIN_RE (container code imports no host module).
 _LOGIN_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9_]|-(?=[A-Za-z0-9_])){0,38}")
 
 
@@ -247,7 +243,7 @@ def create(
     """Stage a new issue; give the body with --body or --body-file."""
 
     def run() -> None:
-        _guard()
+        require_role()
         if as_json and batch is not None:
             raise OutboxCommandError(
                 "--json cannot be combined with --batch; commit the draft first", 2
@@ -278,7 +274,7 @@ def edit(
     """Stage a title and/or body replacement for an issue."""
 
     def run() -> None:
-        _guard()
+        require_role()
         target = _parse_target(issue)
         text = _body(body, body_file, False)
         if title is None and text is None:
@@ -303,7 +299,7 @@ def comment(
     """Stage a comment on an issue."""
 
     def run() -> None:
-        _guard()
+        require_role()
         target = _parse_target(issue)
         text = _body(body, body_file, True)
         assert text is not None
@@ -323,7 +319,7 @@ def labels(
     """Stage label additions and removals for an issue."""
 
     def run() -> None:
-        _guard()
+        require_role()
         target = _parse_target(issue)
         view = _view(repo, target)
         if view is not None:
@@ -354,7 +350,7 @@ def assign(
     """Stage assignee changes for an issue; give at least one of the flags."""
 
     def run() -> None:
-        _guard()
+        require_role()
         target = _parse_target(issue)
         if not (me or unassign_me or add or remove):
             raise OutboxCommandError("choose --me, --unassign-me, --add or --remove", 2)
@@ -381,7 +377,7 @@ def state(
     """Stage closing or reopening an issue."""
 
     def run() -> None:
-        _guard()
+        require_role()
         target = _parse_target(issue)
         if state is None:
             raise OutboxCommandError("missing state", 2)

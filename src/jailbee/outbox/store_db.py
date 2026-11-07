@@ -21,15 +21,16 @@ import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from jailbee.orchestration.store import StoreError, store_path
+from jailbee.orchestration.wire import OUTBOX_KINDS, OutboxKind, outbox_kind
 
 if TYPE_CHECKING:
     from jailbee.orchestration.store import BrokerStore
 
-Kind = Literal["issue", "pr"]
-KINDS: tuple[Kind, ...] = ("issue", "pr")
+Kind = OutboxKind
+KINDS = OUTBOX_KINDS
 MAX_PENDING = 20  # pending proposals per container and kind
 _BUSY_TIMEOUT_S = 5.0
 
@@ -129,9 +130,10 @@ def _load_draft(con: sqlite3.Connection, uuid: str, kind: Kind, name: str) -> Dr
 
 
 def _kind(kind: str) -> Kind:
-    if kind not in KINDS:
+    checked = outbox_kind(kind)
+    if checked is None:
         raise ValueError(f"outbox kind must be issue or pr, not {kind!r}")
-    return "issue" if kind == "issue" else "pr"
+    return checked
 
 
 _COLS = "uuid, kind, name, seq, manifest, created_at, revision"
@@ -530,10 +532,6 @@ def read_pending_counts(root: Path, kind: Kind = "issue") -> dict[str, int]:
         raise StoreError(str(exc)) from exc
     except sqlite3.Error as exc:
         raise StoreError(str(exc)) from exc
-
-
-def store_path_exists(root: Path) -> bool:
-    return store_path(root).exists()
 
 
 def host_store(root: Path) -> OutboxStore:

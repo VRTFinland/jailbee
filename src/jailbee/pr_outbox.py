@@ -919,7 +919,7 @@ def proposal_files_digest(files: Mapping[str, str], name: str) -> str:
     from jailbee.outbox_io import proposal_digest
 
     raw = files[name]
-    return proposal_digest(name, raw, {n: files[n] for n in _body_references(raw) if n in files})
+    return proposal_digest(name, raw, {n: files[n] for n in body_references(raw) if n in files})
 
 
 def _sent_action(
@@ -1121,7 +1121,7 @@ def apply_manifest(
     return ApplyOutcome(applied=tuple(applied), urls=tuple(urls), failure=failure, draft=draft)
 
 
-def _body_references(text: str) -> set[str]:
+def body_references(text: str) -> set[str]:
     """Decode references (including JSON escapes) without resolving body contents."""
     raw = json.loads(text)
     if not isinstance(raw, dict) or not isinstance(raw.get("actions"), list):
@@ -1438,7 +1438,7 @@ def description_source_digest(outbox: Outbox, name: str, index: int, text: PrTex
     if outbox.identity is None or name in outbox.rejected:
         raise OutboxChanged("description identity unavailable; refresh required")
     raw = outbox.files[name]
-    bodies = {n: outbox.files[n] for n in _body_references(raw)}
+    bodies = {n: outbox.files[n] for n in body_references(raw)}
     if set(bodies).intersection(outbox.rejected):
         raise OutboxChanged("description body rejected; refresh required")
     manifest = parse_manifest(name, raw, outbox.files)
@@ -1689,7 +1689,7 @@ def pending_pr_text(
     )
     try:
         digest = description_source_digest(outbox, name, index, text) if outbox.identity else None
-        bodies = tuple(sorted((n, outbox.files[n]) for n in _body_references(outbox.files[name])))
+        bodies = tuple(sorted((n, outbox.files[n]) for n in body_references(outbox.files[name])))
     except (OutboxChanged, ManifestError, ValueError, KeyError, RecursionError) as exc:
         warn(f"Ignoring outbox manifest {name}: {exc}; refresh required")
         return None

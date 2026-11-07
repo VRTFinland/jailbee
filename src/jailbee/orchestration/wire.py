@@ -8,13 +8,28 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import IO, Any, cast
+from typing import IO, Any, Literal, cast
 
 VERSION = 1
 MAX_LINE_BYTES = 1024 * 1024  # 1 MiB, newline included
 # One outbox proposal (manifest plus bodies) can exceed MAX_LINE_BYTES; its put
 # request and the show reply get a larger cap of their own. No chunking.
 OUTBOX_MAX_LINE_BYTES = 8 * 1024 * 1024
+
+# The two outboxes every outbox op's ``kind`` names; one definition for the
+# container client, the broker ops and the host store.
+OutboxKind = Literal["issue", "pr"]
+OUTBOX_KINDS: tuple[OutboxKind, ...] = ("issue", "pr")
+
+
+def outbox_kind(value: object) -> OutboxKind | None:
+    """``value`` as an `OutboxKind`, or None when it names neither outbox."""
+    if value == "issue":
+        return "issue"
+    if value == "pr":
+        return "pr"
+    return None
+
 
 OUTBOX_PUT = "outbox.put"
 OUTBOX_LIST = "outbox.list"

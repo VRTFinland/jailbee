@@ -48,7 +48,6 @@ def test_same_filename_is_two_proposals(tmp_path):
         "pr/../x.json",
         "pr/a/b.json",
         "issue/",
-        "pr/a.progress.json",
         "pr/a\\b.json",
     ],
 )

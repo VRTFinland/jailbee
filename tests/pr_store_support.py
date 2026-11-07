@@ -20,7 +20,7 @@ from jailbee.db import state_dir
 from jailbee.orchestration.store import BrokerStore, store_path
 from jailbee.outbox import publication_db
 from jailbee.outbox_io import proposal_digest
-from jailbee.pr_outbox import _body_references
+from jailbee.pr_outbox import body_references
 
 UUID = "uuid-test"
 
@@ -54,7 +54,7 @@ def seed_pr_store(
             text = files[name]
             try:
                 # Only action bodies, as the broker stores them (not extension keys).
-                bodies = {n: files[n] for n in _body_references(text) if n in files}
+                bodies = {n: files[n] for n in body_references(text) if n in files}
             except (ValueError, RecursionError):
                 bodies = {}
             con.execute(

@@ -3741,7 +3741,7 @@ def test_finalization_extraction_failure_retains_receipts_cause_and_retry(
     from tests.pr_store_support import journal, sent_records
 
     cfg, incus, _, _, stored, apply = _selected_setup(mocker, make_cfg, tmp_path)
-    original = pr_outbox._body_references
+    original = pr_outbox.body_references
     failure = failure_type("extraction failed")
     posted = []
     apply.side_effect = lambda *args, **kwargs: posted.append(1) or "https://x/receipt"
@@ -3751,7 +3751,7 @@ def test_finalization_extraction_failure_retains_receipts_cause_and_retry(
             raise failure
         return original(text)
 
-    mocker.patch.object(pr_outbox, "_body_references", side_effect=extract)
+    mocker.patch.object(pr_outbox, "body_references", side_effect=extract)
     with pytest.raises(OutboxExecutionError) as caught:
         _selected_offer(cfg, incus, raise_errors=True, management=PrManagement(tmp_path / "locks"))
     assert isinstance(caught.value.__cause__, pr_outbox.FinalizeError)
@@ -3764,14 +3764,14 @@ def test_finalization_extraction_failure_retains_receipts_cause_and_retry(
     incus.exec.assert_not_called()
 
     # A retry has nothing left to publish and never reposts.
-    mocker.patch.object(pr_outbox, "_body_references", side_effect=original)
+    mocker.patch.object(pr_outbox, "body_references", side_effect=original)
     assert _selected_offer(cfg, incus, management=PrManagement(tmp_path / "fresh-locks")) == 1
     apply.assert_called_once()
 
 
 @pytest.mark.parametrize("action_type", ["comment", "reply", "description", "review"])
 def test_body_references_follow_domain_fields_and_null_compatibility(action_type):
-    from jailbee.pr_outbox import _body_references, parse_manifest
+    from jailbee.pr_outbox import body_references, parse_manifest
 
     action = {
         "type": action_type,
@@ -3794,7 +3794,7 @@ def test_body_references_follow_domain_fields_and_null_compatibility(action_type
     raw = _manifest_text(actions=[action])
     files = {" space pr=7 .md": "Comment"}
     parse_manifest("one.json", raw, files)
-    assert _body_references(raw) == (set(files) if action_type == "review" else set())
+    assert body_references(raw) == (set(files) if action_type == "review" else set())
 
 
 @pytest.mark.parametrize("late_change", [False, True])

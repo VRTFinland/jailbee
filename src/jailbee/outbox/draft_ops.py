@@ -17,8 +17,8 @@ import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from jailbee.issue_manifest import _LOGIN_RE as LOGIN_RE
 from jailbee.issue_manifest import (
+    LOGIN_RE,
     MAX_MANIFESTS,
     MAX_OFFER_ACTIONS,
     ME_LOGIN,
@@ -26,13 +26,14 @@ from jailbee.issue_manifest import (
 from jailbee.orchestration import wire
 from jailbee.outbox.broker_ops import (
     MAX_PR_ACTIONS,
-    _bad,
-    _bodies,
-    _kind,
-    _parse_issue,
-    _parse_pr,
-    _pr_body_refs,
-    _rename_refs,
+    bad_request,
+    kind_arg,
+    optional_kind_arg,
+    parse_bodies,
+    parse_issue,
+    parse_pr,
+    pr_body_refs,
+    rename_refs,
 )
 from jailbee.outbox.store_db import (
     Draft,
@@ -46,21 +47,16 @@ from jailbee.outbox.store_db import (
 _DRAFT_NAME_RE = re.compile(r"[a-z0-9-]{1,40}")
 
 
-def _issue_kind(args: Mapping[str, Any]) -> Any:
-    """The draft's kind: issue or pr (the name is historical)."""
-    return _kind(args.get("kind"))
-
-
 def _name(args: Mapping[str, Any]) -> str:
     name = args.get("name")
     if not isinstance(name, str) or not _DRAFT_NAME_RE.fullmatch(name):
-        raise _bad("draft name must match [a-z0-9-]{1,40}")
+        raise bad_request("draft name must match [a-z0-9-]{1,40}")
     return name
 
 
 def _string_list(value: object, what: str) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise _bad(f"{what} must be a list of strings")
+        raise bad_request(f"{what} must be a list of strings")
     return list(value)
 
 
@@ -68,10 +64,10 @@ def _check_labels(add: object, remove: object, labels: list[str]) -> None:
     current = {x.casefold() for x in labels}
     for item in _string_list(add, "labels add"):
         if item.casefold() in current:
-            raise _bad(f"label {item!r} already present")
+            raise bad_request(f"label {item!r} already present")
     for item in _string_list(remove, "labels remove"):
         if item.casefold() not in current:
-            raise _bad(f"label {item!r} is not present")
+            raise bad_request(f"label {item!r} is not present")
 
 
 def _check_assignees(add: object, remove: object) -> None:
@@ -83,17 +79,17 @@ def _check_assignees(add: object, remove: object) -> None:
         seen: set[str] = set()
         for item in items:
             if item != ME_LOGIN and not LOGIN_RE.fullmatch(item):
-                raise _bad(f"invalid GitHub login {item!r}")
+                raise bad_request(f"invalid GitHub login {item!r}")
             if item.casefold() in seen:
-                raise _bad(f"assignee {item!r} given more than once")
+                raise bad_request(f"assignee {item!r} given more than once")
             seen.add(item.casefold())
     gone = {x.casefold() for x in removed}
     for item in added:
         if item.casefold() in gone:
-            raise _bad(f"login {item!r} cannot be both add and remove")
+            raise bad_request(f"login {item!r} cannot be both add and remove")
     for item in removed:
         if item != ME_LOGIN:
-            raise _bad(f"assignee {item!r} is not assigned")
+            raise bad_request(f"assignee {item!r} is not assigned")
 
 
 def _prepare(
@@ -121,7 +117,7 @@ def _prepare(
                 or not isinstance(labels, list)
                 or not all(isinstance(label, str) for label in labels)
             ):
-                raise _bad(f"issue_ref {ref!r} has an invalid create action")
+                raise bad_request(f"issue_ref {ref!r} has an invalid create action")
             result = dict(action)
             kind = action.get("type")
             if kind == "edit":
@@ -144,25 +140,25 @@ def _prepare(
                 _check_assignees(action.get("add", []), action.get("remove", []))
                 result["expected"] = {"assignees": []}
             return result
-    raise _bad(f"issue_ref {ref!r} does not name an earlier create in the same repo")
+    raise bad_request(f"issue_ref {ref!r} does not name an earlier create in the same repo")
 
 
 def _validate(name: str) -> DraftValidate:
     def check(manifest: dict[str, Any], bodies: Mapping[str, str]) -> None:
         if len(manifest["actions"]) > MAX_OFFER_ACTIONS:
-            raise _bad(f"issue manifest exceeds the cap of {MAX_OFFER_ACTIONS} actions")
-        _parse_issue(f"{name}.json", manifest, bodies)
+            raise bad_request(f"issue manifest exceeds the cap of {MAX_OFFER_ACTIONS} actions")
+        parse_issue(f"{name}.json", manifest, bodies)
 
     return check
 
 
 def handle_append(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now: float) -> object:
-    kind = _issue_kind(args)
+    kind = kind_arg(args.get("kind"))
     name = _name(args)
     action = args.get("action")
     if not isinstance(action, dict):
-        raise _bad("action must be a JSON object")
-    bodies = _bodies(args.get("bodies"))
+        raise bad_request("action must be a JSON object")
+    bodies = parse_bodies(args.get("bodies"))
     if kind == "pr":
         prepare, validate = _pr_prepare(_pr_envelope(args.get("envelope"))), _pr_validate(name)
     else:
@@ -172,7 +168,7 @@ def handle_append(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now
             uuid, kind, name, action, bodies, now=now, prepare=prepare, validate=validate
         )
     except DraftCapError as exc:
-        raise _bad(str(exc)) from exc
+        raise bad_request(str(exc)) from exc
     return _row(draft)
 
 
@@ -186,12 +182,12 @@ def _row(draft: Draft) -> dict[str, object]:
 
 
 def handle_list(store: OutboxStore, uuid: str, args: Mapping[str, Any]) -> object:
-    kind = _kind(args.get("kind"), optional=True)
+    kind = optional_kind_arg(args.get("kind"))
     return {"drafts": [_row(d) for d in store.list_drafts(uuid, kind)]}
 
 
 def handle_show(store: OutboxStore, uuid: str, args: Mapping[str, Any]) -> object:
-    kind = _issue_kind(args)
+    kind = kind_arg(args.get("kind"))
     name = _name(args)
     draft = store.get_draft(uuid, kind, name)
     if draft is None:
@@ -204,7 +200,7 @@ def handle_show(store: OutboxStore, uuid: str, args: Mapping[str, Any]) -> objec
 
 
 def handle_discard(store: OutboxStore, uuid: str, args: Mapping[str, Any]) -> object:
-    kind = _issue_kind(args)
+    kind = kind_arg(args.get("kind"))
     name = _name(args)
     try:
         store.discard_draft(uuid, kind, name)
@@ -214,7 +210,7 @@ def handle_discard(store: OutboxStore, uuid: str, args: Mapping[str, Any]) -> ob
 
 
 def handle_submit(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now: float) -> object:
-    kind = _issue_kind(args)
+    kind = kind_arg(args.get("kind"))
     name = _name(args)
     if kind == "pr":
         return _submit_pr(store, uuid, name, args, now=now)
@@ -224,10 +220,10 @@ def handle_submit(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now
     ) -> tuple[str, dict[str, str]]:
         manifest = json.loads(manifest_text)
         if len(manifest.get("actions", [])) > MAX_OFFER_ACTIONS:
-            raise _bad(f"issue manifest exceeds the cap of {MAX_OFFER_ACTIONS} actions")
+            raise bad_request(f"issue manifest exceeds the cap of {MAX_OFFER_ACTIONS} actions")
         names = {old: f"{stem}-{index}.md" for index, old in enumerate(bodies, 1)}
         final = {names[old]: text for old, text in bodies.items()}
-        text = _parse_issue(f"{stem}.json", _rename_refs(manifest, names), final)
+        text = parse_issue(f"{stem}.json", rename_refs(manifest, names), final)
         return text, final
 
     try:
@@ -235,7 +231,7 @@ def handle_submit(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now
     except DraftNotFoundError as exc:
         raise wire.WireError(wire.NOT_FOUND, f"no {kind} draft {name}") from exc
     except ProposalCapError as exc:
-        raise _bad(str(exc)) from exc
+        raise bad_request(str(exc)) from exc
     return {"kind": proposal.kind, "name": proposal.name}
 
 
@@ -254,7 +250,7 @@ _ENVELOPE_KEYS = ("repo", "pr", "head_sha")
 
 def _pr_envelope(value: object) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise _bad("envelope must be a JSON object with repo, pr and head_sha")
+        raise bad_request("envelope must be a JSON object with repo, pr and head_sha")
     return {key: value.get(key) for key in _ENVELOPE_KEYS}
 
 
@@ -272,15 +268,15 @@ def _pr_prepare(
         if not actions:
             manifest.update(envelope)
         elif any(manifest.get(key) != envelope[key] for key in ("repo", "pr")):
-            raise _bad("draft targets a different repo or PR")
+            raise bad_request("draft targets a different repo or PR")
         if not _is_review(action):
             if any(_is_review(existing) for existing in actions):
-                raise _bad("cannot append a batch action to a review draft")
+                raise bad_request("cannot append a batch action to a review draft")
             return action
         if actions and not (len(actions) == 1 and _is_review(actions[0])):
-            raise _bad("not a review draft; choose a different batch name")
+            raise bad_request("not a review draft; choose a different batch name")
         if actions and manifest.get("head_sha") != envelope["head_sha"]:
-            raise _bad(
+            raise bad_request(
                 "PR head moved; discard the review draft and re-read the diff before re-anchoring"
             )
         if not actions:
@@ -290,7 +286,7 @@ def _pr_prepare(
         current = actions.pop()
         added = action.get("comments")
         if not isinstance(added, list) or not isinstance(current.get("comments"), list):
-            raise _bad("review comments must be a list")
+            raise bad_request("review comments must be a list")
         return {**current, "comments": [*current["comments"], *added]}
 
     return prepare
@@ -299,8 +295,8 @@ def _pr_prepare(
 def _pr_validate(name: str) -> DraftValidate:
     def check(manifest: dict[str, Any], bodies: Mapping[str, str]) -> None:
         if len(manifest["actions"]) > MAX_PR_DRAFT_ACTIONS:
-            raise _bad(f"PR manifest exceeds the cap of {MAX_PR_DRAFT_ACTIONS} actions")
-        _parse_pr(f"{name}.json", manifest, bodies)
+            raise bad_request(f"PR manifest exceeds the cap of {MAX_PR_DRAFT_ACTIONS} actions")
+        parse_pr(f"{name}.json", manifest, bodies)
 
     return check
 
@@ -316,13 +312,13 @@ def _submit_pr(
         raise wire.WireError(wire.NOT_FOUND, f"no pr draft {name}")
     review = args.get("review")
     if review is not None and not isinstance(review, dict):
-        raise _bad("review must be a JSON object")
-    extra = _bodies(args.get("bodies"))
+        raise bad_request("review must be a JSON object")
+    extra = parse_bodies(args.get("bodies"))
     is_review = any(_is_review(a) for a in json.loads(current.manifest).get("actions", []))
     if is_review and review is None:
-        raise _bad("review drafts require fresh PR metadata; use jailbee pr review submit PR")
+        raise bad_request("review drafts require fresh PR metadata; use jailbee pr review submit PR")
     if review is not None and not is_review:
-        raise _bad("not a review draft; choose a different batch name")
+        raise bad_request("not a review draft; choose a different batch name")
 
     def build(
         stem: str, manifest_text: str, bodies: Mapping[str, str]
@@ -331,11 +327,11 @@ def _submit_pr(
         actions = manifest.get("actions", [])
         if review is not None:
             if len(actions) != 1 or not _is_review(actions[0]):
-                raise _bad("not a review draft; choose a different batch name")
+                raise bad_request("not a review draft; choose a different batch name")
             if any(manifest.get(key) != review.get(key) for key in ("repo", "pr")):
-                raise _bad("draft targets a different repo or PR")
+                raise bad_request("draft targets a different repo or PR")
             if manifest.get("head_sha") != review.get("head_sha"):
-                raise _bad(
+                raise bad_request(
                     "PR head moved; discard the review draft and re-read the diff "
                     "before re-anchoring"
                 )
@@ -346,15 +342,15 @@ def _submit_pr(
                 summary["body"] = review.get("body", "")
             manifest["actions"] = [summary]
         elif any(_is_review(a) for a in actions):
-            raise _bad("review drafts require fresh PR metadata; use jailbee pr review submit PR")
+            raise bad_request("review drafts require fresh PR metadata; use jailbee pr review submit PR")
         if len(manifest["actions"]) > MAX_PR_DRAFT_ACTIONS:
-            raise _bad(f"PR manifest exceeds the cap of {MAX_PR_DRAFT_ACTIONS} actions")
+            raise bad_request(f"PR manifest exceeds the cap of {MAX_PR_DRAFT_ACTIONS} actions")
         merged = {**bodies, **extra}
-        refs = _pr_body_refs(json.dumps(manifest, ensure_ascii=False))
+        refs = pr_body_refs(json.dumps(manifest, ensure_ascii=False))
         used = {n: t for n, t in merged.items() if n in refs}
         names = {old: f"{stem}-{index}.md" for index, old in enumerate(used, 1)}
         final = {names[old]: text for old, text in used.items()}
-        text = _parse_pr(f"{stem}.json", _rename_refs(manifest, names), final)
+        text = parse_pr(f"{stem}.json", rename_refs(manifest, names), final)
         return text, final
 
     slug = "review" if is_review else name
@@ -363,7 +359,7 @@ def _submit_pr(
     except DraftNotFoundError as exc:
         raise wire.WireError(wire.NOT_FOUND, f"no pr draft {name}") from exc
     except ProposalCapError as exc:
-        raise _bad(str(exc)) from exc
+        raise bad_request(str(exc)) from exc
     return {"kind": proposal.kind, "name": proposal.name}
 
 
@@ -380,4 +376,4 @@ def handle(
         return handle_discard(store, uuid, args)
     if op == wire.OUTBOX_DRAFT_SUBMIT:
         return handle_submit(store, uuid, args, now=now)
-    raise _bad(f"unknown op '{op}'")
+    raise bad_request(f"unknown op '{op}'")
