@@ -13,7 +13,8 @@ if TYPE_CHECKING:
 
     from jailbee.incus import Incus
 
-CONTAINER_PATH = "/run/jailbee/orchestration"
+# Not under /run: systemd's boot-time tmpfs would hide Incus's pre-init mount.
+CONTAINER_PATH = "/opt/jailbee/orchestration"
 _GENERATION_SEP = "."
 
 
@@ -82,8 +83,10 @@ def device_config(directory: Path) -> dict[str, str]:
 def attach(incus: Incus, full: str, directory: Path, *, reassert: bool) -> None:
     """Make ``full`` carry the device for ``directory``; no-op when it already does."""
     config = device_config(directory)
-    if not reassert and incus.config_device_get(full, ORCHESTRATION_DEVICE, "source") == str(
-        directory
+    if (
+        not reassert
+        and incus.config_device_get(full, ORCHESTRATION_DEVICE, "source") == str(directory)
+        and incus.config_device_get(full, ORCHESTRATION_DEVICE, "path") == CONTAINER_PATH
     ):
         return
     incus.config_device_remove(full, ORCHESTRATION_DEVICE, missing_ok=True)
@@ -113,6 +116,17 @@ def source(entry: Mapping[str, object]) -> str | None:
     if not isinstance(device, dict):
         return None
     return str(device.get("source") or "")
+
+
+def mount_path(entry: Mapping[str, object]) -> str | None:
+    """The device's container-side mount point, if it has one."""
+    devices = entry.get("devices")
+    if not isinstance(devices, dict):
+        return None
+    device = devices.get(ORCHESTRATION_DEVICE)
+    if not isinstance(device, dict):
+        return None
+    return str(device.get("path") or "")
 
 
 def source_uuid(entry: Mapping[str, object]) -> str | None:

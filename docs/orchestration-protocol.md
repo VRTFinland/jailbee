@@ -17,9 +17,12 @@ directory name no device has used before; a legacy `<state>/sock/<instance
 uuid>/` is replaced by a fresh one and removed the first time the broker serves
 the container; directory mode 0700, socket mode 0600) and the broker attaches that directory to the container
 as a read-only disk device named `jailbee-orchestration`, mounted at
-`/run/jailbee/orchestration/`. The client connects to
-`/run/jailbee/orchestration/broker.sock` (override with
-`JAILBEE_ORCHESTRATION_SOCKET`). The broker identifies the caller by which
+`/opt/jailbee/orchestration/`. The client connects to
+`/opt/jailbee/orchestration/broker.sock` (override with
+`JAILBEE_ORCHESTRATION_SOCKET`). The mount is outside `/run` so systemd's
+boot-time tmpfs cannot hide it. The broker checks both source and mount path,
+re-attaching devices at the legacy path on its next round after an upgrade.
+The broker identifies the caller by which
 socket accepted the connection, never by anything in the request. Only
 orchestrators and children get the device. Jailbee's own copies strip it at
 once; a raw `incus copy` keeps it until the broker's next round removes it. In
