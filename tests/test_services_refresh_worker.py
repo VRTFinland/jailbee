@@ -24,7 +24,7 @@ def rig(tmp_path, mocker):
     grant = Grant(grantable=Grantable(loose=True)).to_label()
     incus = Mock()
     incus.list_containers.return_value = [
-        {"name": "proj-o", "status": "Running", "config": {labels.GRANT: grant}},
+        {"name": "proj-o", "status": "Running", "config": {labels.GRANT: grant, "volatile.uuid": "uuid-owner"}},
         {"name": "proj-c", "status": "Running", "config": {labels.SPAWNED_BY: "proj-o"}},
     ]
     path = tmp_path / "job.json"
@@ -569,5 +569,64 @@ def test_refresh_notification_delivers_to_verified_store_instance(rig, tmp_path,
         assert store.recipients() == {"proj-o": "uuid-stale"}
         assert not pending_dir(tmp_path, "proj-o").exists()
         assert not path.exists()
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("unavailable", ["exception", "missing-owner", "missing-uuid", "empty-uuid"])
+def test_refresh_notification_retries_inventory_failure_without_reexecution(
+    rig, tmp_path, mocker, capsys, unavailable
+):
+    from jailbee.orchestration.state import pending_dir
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    cfg, engine, delivery, incus, path = rig
+    mocker.stop(delivery)
+    rows = incus.list_containers.return_value
+    owner = rows[0]
+    report = elevated.RefreshReport((), True, "not running")
+    execute = mocker.patch.object(elevated, "run_plain_refresh", return_value=report)
+    inventory_calls = 0
+
+    def inventory():
+        nonlocal inventory_calls
+        inventory_calls += 1
+        if inventory_calls == 1:
+            return rows  # Normal authorization and refresh execution.
+        if unavailable == "exception":
+            raise RuntimeError("temporary inventory failure")
+        if unavailable == "missing-owner":
+            return rows[1:]
+        config = dict(owner["config"])
+        config.pop("volatile.uuid")
+        if unavailable == "empty-uuid":
+            config["volatile.uuid"] = ""
+        return [{**owner, "config": config}, *rows[1:]]
+
+    incus.list_containers.side_effect = inventory
+    job(path)
+    store = BrokerStore(store_path(tmp_path))
+    try:
+        assert elevated.run_job(cfg, incus, path) == 1
+        assert "recipient instance identity unavailable" in capsys.readouterr().out
+        assert path.exists()
+        saved = json.loads(path.read_text())
+        final = saved["final_status"]
+        assert final["state"] == "done" and final["detail"] == report.summary()
+        assert store.unacked("uuid-owner") == []
+        assert not pending_dir(tmp_path, "proj-o").exists()
+        assert execute.call_count == 1
+        with Session(engine) as session:
+            assert session.get(BackgroundJob, "proj-c") is None
+
+        # A later worker reads the saved final_status, not the refresh plan.
+        incus.list_containers.side_effect = None
+        assert elevated.run_job(cfg, incus, path) == 0
+        assert [row.id for row in store.unacked("uuid-owner")] == [final["id"]]
+        assert store.unacked("uuid-owner")[0].item == final
+        assert execute.call_count == 1
+        assert not path.exists()
+        assert not pending_dir(tmp_path, "proj-o").exists()
+        assert store.recipients() == {}
     finally:
         engine.dispose()

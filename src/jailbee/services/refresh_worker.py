@@ -42,6 +42,8 @@ def _deliver(
             recipient = {}
         config = recipient.get("config")
         uuid = config.get("volatile.uuid") if isinstance(config, dict) else None
+        if not isinstance(uuid, str) or not uuid:
+            raise ValueError("recipient instance identity unavailable; retry notification")
         item = item or InboxStatus(
             version=1,
             id=new_host_id(),
@@ -58,7 +60,7 @@ def _deliver(
             running=recipient.get("status") == "Running",
             uid=cfg.container_user.uid,
             now=datetime.now(UTC),
-            recipient_uuid=uuid if isinstance(uuid, str) and uuid else None,
+            recipient_uuid=uuid,
         )
         path.unlink(missing_ok=True)
     except Exception as exc:
