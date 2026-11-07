@@ -85,6 +85,9 @@ def _notify(
     now: datetime,
     seq: int,
 ) -> str | None:
+    recipient_uuid = _config(rows.get(recipient, {})).get("volatile.uuid")
+    if not isinstance(recipient_uuid, str) or not recipient_uuid:
+        return f"could not notify {short_name(cfg, recipient)}: recipient identity unavailable"
     item = InboxMessage.model_validate(
         {
             "version": 1,
@@ -105,7 +108,7 @@ def _notify(
             uid=cfg.container_user.uid,
             now=now,
             seq=seq,
-            recipient_uuid=str(_config(rows.get(recipient, {})).get("volatile.uuid") or "") or None,
+            recipient_uuid=recipient_uuid,
         )
     except (OSError, IncusError) as exc:
         return f"could not notify {short_name(cfg, recipient)}: {exc}"

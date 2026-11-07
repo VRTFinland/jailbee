@@ -22,7 +22,7 @@ def raw(name, *, status="Running", config=None, own=True):
         "name": name,
         "status": status,
         "profiles": ["myrepo-base"] if own else [],
-        "config": config or {},
+        "config": {"volatile.uuid": f"uuid-{name}", **(config or {})},
     }
 
 
@@ -288,17 +288,48 @@ def test_adopt_notifies_both_without_watching(cfg, rig, tmp_path, mocker):
             "uid": cfg.container_user.uid,
             "now": now,
             "seq": 0,
-            "recipient_uuid": None,
+            "recipient_uuid": "uuid-myrepo-a",
         },
         {
             "running": True,
             "uid": cfg.container_user.uid,
             "now": now,
             "seq": 1,
-            "recipient_uuid": None,
+            "recipient_uuid": "uuid-myrepo-o",
         },
     ]
     assert watch.load_watch(tmp_path) == {}
+
+
+@pytest.mark.parametrize("missing", ["child", "parent"])
+def test_adopt_missing_identity_warns_without_unbound_delivery(cfg, rig, tmp_path, mocker, missing):
+    rows, incus = rig
+    recipient = rows[1 if missing == "child" else 0]
+    recipient["config"].pop("volatile.uuid")
+    deliver = mocker.patch("jailbee.orchestration.outbox.deliver")
+    result = adoption.adopt(cfg, incus, "myrepo-o", ["myrepo-a"], root=tmp_path)
+    assert result.adopted == ("myrepo-a",)
+    assert result.warnings == (
+        f"could not notify {'a' if missing == 'child' else 'o'}: recipient identity unavailable",
+    )
+    assert deliver.call_count == 1
+    assert deliver.call_args.kwargs["recipient_uuid"]
+    incus.config_set.assert_any_call("myrepo-a", labels.SPAWNED_BY, "myrepo-o")
+    assert not state.pending_dir(tmp_path, recipient["name"]).exists()
+
+
+def test_release_missing_parent_identity_warns_after_release(cfg, rig, tmp_path, mocker):
+    rows, incus = rig
+    rows[0]["config"].pop("volatile.uuid")
+    rows[1]["config"][labels.SPAWNED_BY] = "myrepo-o"
+    mocker.patch("jailbee.orchestration.rights.revoke_owned", return_value=[])
+    deliver = mocker.patch("jailbee.orchestration.outbox.deliver")
+    result = adoption.release(cfg, incus, "myrepo-a", root=tmp_path)
+    assert result.orchestrator == "myrepo-o"
+    assert result.warnings == ("could not notify o: recipient identity unavailable",)
+    incus.config_unset_checked.assert_any_call("myrepo-a", labels.SPAWNED_BY)
+    deliver.assert_not_called()
+    assert not state.pending_dir(tmp_path, "myrepo-o").exists()
 
 
 def test_adopt_delivery_failures_are_warnings(cfg, rig, tmp_path, mocker):
