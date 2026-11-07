@@ -190,6 +190,54 @@ def deliver(
     return "parked"
 
 
+def acknowledge_delivery(
+    root: Path,
+    recipient_full: str,
+    item_id: str,
+    *,
+    recipient_uuid: str,
+    is_connected: Callable[[], bool],
+) -> None:
+    """Consume only this delivered status, after all initial delivery I/O finished.
+
+    Runs on the executor thread, like delivery and flushing. A disconnect during
+    a spool rewrite restores its original unread state; an already-read retry
+    stays read. SQLite checks connection liveness only after taking its write lock.
+    """
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    broker_store = BrokerStore(store_path(root))
+    if broker_store.get(recipient_uuid, item_id) is not None:
+        broker_store.ack_if_connected(
+            recipient_uuid, item_id, now=time.time(), is_connected=is_connected
+        )
+        return
+    directory = pending_dir(root, recipient_full)
+    if not directory.is_dir():
+        return
+    for path in directory.iterdir():
+        if not _deliverable(path):
+            continue
+        try:
+            pending = load_pending(path)
+        except (OSError, ValueError):
+            continue
+        if pending.recipient_uuid != recipient_uuid or pending.item.get("id") != item_id:
+            continue
+        if pending.acked or not is_connected():
+            return
+        save_pending(
+            path, pending.item, recipient_uuid=recipient_uuid,
+            completed=pending.completed, acked=True,
+        )
+        if not is_connected():
+            save_pending(
+                path, pending.item, recipient_uuid=recipient_uuid,
+                completed=pending.completed, acked=False,
+            )
+        return
+
+
 def _deliverable(path: Path) -> bool:
     """A parked file that still waits for delivery (not a temp or quarantined one)."""
     return path.is_file() and not path.name.startswith(".") and not path.name.endswith(".bad")

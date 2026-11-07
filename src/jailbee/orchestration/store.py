@@ -468,6 +468,29 @@ class BrokerStore:
             ).fetchone()
             return row is not None
 
+    def ack_if_connected(
+        self, uuid: str, id: str, *, now: float, is_connected: Callable[[], bool]
+    ) -> bool:
+        """Acknowledge only after acquiring the write lock and rechecking the sender.
+
+        Delivery starts unread. A disconnect while SQLite waits for a writer must
+        leave it that way. Already-read history is never made unread by a retry.
+        """
+        with self._tx() as con:
+            if not is_connected():
+                return False
+            changed = con.execute(
+                "UPDATE items SET acked_at=? WHERE recipient_uuid=? AND id=? AND acked_at IS NULL",
+                (now, uuid, id),
+            ).rowcount
+            if changed and not is_connected():
+                con.execute(
+                    "UPDATE items SET acked_at=NULL WHERE recipient_uuid=? AND id=?",
+                    (uuid, id),
+                )
+                return False
+            return True
+
     # -- requests ------------------------------------------------------
 
     def record_request(

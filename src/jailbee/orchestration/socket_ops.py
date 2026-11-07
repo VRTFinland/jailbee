@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from jailbee.inbox.render import jq_tostring
 from jailbee.orchestration import broker, publishing, wake, wire
 from jailbee.orchestration.actions import Outcome, refused
-from jailbee.orchestration.outbox import deliver, grant_json_text
+from jailbee.orchestration.outbox import acknowledge_delivery, deliver, grant_json_text
 from jailbee.orchestration.protocol import ManifestError, body_file_of, parse_manifest
 from jailbee.orchestration.store import StoreError
 from jailbee.outbox_io import _validate_outbox_name
@@ -74,14 +74,23 @@ def handle_send(
             now=ctx.now,
             seq=next(ctx.seq),
             recipient_uuid=ctx.sender.key,
-            acked=is_connected() and (wait or status.get("state") == "refused"),
+            acked=False,
         )
+
+    def consume_status(status: dict[str, object]) -> None:
+        if wait or status.get("state") == "refused":
+            acknowledge_delivery(
+                ctx.root, ctx.sender.full, str(status["id"]),
+                recipient_uuid=ctx.sender.key, is_connected=is_connected,
+            )
 
     recorded = store.lookup_request(ctx.sender.key, request_id)
     if recorded is not None and recorded.item is not None:
         # A crash between the journal and the insert may have lost the item;
         # the insert ignores a duplicate.
-        deliver_status(recorded.item)
+        if store.get(ctx.sender.key, str(recorded.item["id"])) is None:
+            deliver_status(recorded.item)
+        consume_status(recorded.item)
         return recorded.item
     if recorded is not None or publishing.was_accepted(ctx, request_id):
         # Requests without a recorded status need a stable duplicate answer,
@@ -142,6 +151,7 @@ def handle_send(
         label=file_name,
     )
     if item is not None:
+        consume_status(item)
         return item
     # dispatch ignored the request (no effective role); nothing was stored.
     return _item(request_id, outcome or refused("request ignored"))

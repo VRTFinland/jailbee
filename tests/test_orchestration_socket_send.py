@@ -240,3 +240,20 @@ def test_status_stays_behind_older_pending_delivery(env: Env, wait: bool) -> Non
     assert [r.id for r in history] == ["older", item["id"]]
     assert history[0].acked_at is None and history[1].acked_at is not None
     env.rig.dispatch.assert_called_once()
+
+
+def test_waiting_retry_acks_stored_status_despite_later_pending_item(env: Env) -> None:
+    from jailbee.orchestration.protocol import inbox_file_name_for
+    from jailbee.orchestration.state import pending_dir
+
+    item = env.send(_message())
+    ctx = env.ctx
+    directory = pending_dir(ctx.root, ctx.sender.full)
+    outbox.save_pending(
+        directory / inbox_file_name_for("later", ctx.now),
+        {"id": "later", "type": "message", "kind": "note"}, recipient_uuid=ctx.sender.key,
+    )
+    assert env.send(_message(), wait=True) == item
+    assert env.store.unacked(ctx.sender.key) == []
+    assert [outbox.load_pending(p).item["id"] for p in directory.iterdir()] == ["later"]
+    env.rig.dispatch.assert_called_once()

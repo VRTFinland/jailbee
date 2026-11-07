@@ -83,6 +83,20 @@ def test_ack_idempotent_and_unacked(st: BrokerStore) -> None:
     assert st.get("u", "zz") is None
 
 
+@pytest.mark.parametrize("already_acked", [False, True])
+def test_conditional_ack_restores_only_its_own_update(
+    st: BrokerStore, already_acked: bool
+) -> None:
+    st.insert_item("u", "p", msg("target"), now=1.0, acked=already_acked)
+    st.insert_item("u", "p", msg("other"), now=1.0, acked=True)
+    checks = iter([True, False])
+    st.ack_if_connected("u", "target", now=5.0, is_connected=lambda: next(checks))
+    target = st.get("u", "target")
+    other = st.get("u", "other")
+    assert target is not None and target.acked_at == (1.0 if already_acked else None)
+    assert other is not None and other.acked_at == 1.0
+
+
 def test_history_includes_both(st: BrokerStore) -> None:
     st.insert_item("u", "p", msg("1"), now=1.0)
     st.insert_item("u", "p", msg("2"), now=1.0, acked=True)

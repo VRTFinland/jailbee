@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import queue
+import socket
+import sqlite3
+import threading
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from jailbee.orchestration import broker, executor, socket_ops, wire
+from jailbee.orchestration import broker, executor, outbox, socket_ops, wire
 from jailbee.orchestration.actions import Outcome
-from jailbee.orchestration.listener import DisconnectEvent, RequestEvent
+from jailbee.orchestration.listener import DisconnectEvent, Listener, RequestEvent
 from jailbee.orchestration.store import BrokerStore
 from tests.test_orchestration_broker import Rig, _child, _orch
 
@@ -227,3 +230,116 @@ def test_send_disconnected_during_handler_leaves_unread_status(env: Env, state: 
     rows = env.store.unacked(env.kid)
     assert len(rows) == 1 and rows[0].item["state"] == state
     assert env.store.lookup_request(env.kid, "m1").item == rows[0].item
+
+
+@pytest.mark.parametrize("boundary", ["insert", "spool", "spool-ack", "sqlite-lock"])
+def test_real_send_disconnect_during_delivery_stays_unread(
+    env: Env, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    from jailbee.orchestration.protocol import inbox_file_name_for
+    from jailbee.orchestration.state import pending_dir
+
+    env.memory.requests = queue.Queue()
+    listener = Listener(env.memory.requests)
+    env.memory.listener = listener
+    listener.start()
+    listener.open_container(env.kid, tmp_path / "sock")
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.connect(str(tmp_path / "sock" / "broker.sock"))
+    client.sendall(wire.encode_request(wire.Request(
+        "send", {"manifest": _manifest(), "body": None, "wait": True},
+    )))
+    event = env.memory.requests.get(timeout=2)
+    assert isinstance(event, RequestEvent)
+
+    def disconnect() -> None:
+        client.close()
+        dropped = env.memory.requests.get(timeout=2)
+        assert isinstance(dropped, DisconnectEvent)
+        assert not listener.is_connected(event.conn_id)
+
+    ctx = env.memory.contexts[env.kid]
+    if boundary.startswith("spool"):
+        outbox.save_pending(
+            pending_dir(ctx.root, ctx.sender.full) / inbox_file_name_for("older", ctx.now),
+            {"id": "older", "type": "message", "kind": "note"}, recipient_uuid=env.kid,
+        )
+        real_save = outbox.save_pending
+
+        def save(*args: Any, **kwargs: Any) -> None:
+            if (boundary == "spool") or kwargs.get("acked") is True:
+                disconnect()
+            real_save(*args, **kwargs)
+
+        monkeypatch.setattr(outbox, "save_pending", save)
+    elif boundary == "insert":
+        real_insert = outbox.insert_into_store
+
+        def insert(*args: Any, **kwargs: Any) -> bool:
+            disconnect()
+            return real_insert(*args, **kwargs)
+
+        monkeypatch.setattr(outbox, "insert_into_store", insert)
+    else:
+        real_ack = BrokerStore.ack_if_connected
+        waiting = threading.Event()
+        release = threading.Event()
+        errors: list[BaseException] = []
+
+        def blocked_ack(self: BrokerStore, *args: Any, **kwargs: Any) -> bool:
+            # An actual writer blocks BEGIN IMMEDIATE until the socket has closed.
+            con = sqlite3.connect(self.path, isolation_level=None)
+            con.execute("BEGIN IMMEDIATE")
+
+            def close_while_locked() -> None:
+                try:
+                    assert waiting.wait(2)
+                    disconnect()
+                except BaseException as exc:
+                    errors.append(exc)
+                finally:
+                    release.set()
+
+            worker = threading.Thread(target=close_while_locked)
+            worker.start()
+            try:
+                real_connect = sqlite3.connect
+
+                def traced_connect(*a: Any, **kw: Any) -> sqlite3.Connection:
+                    connection = real_connect(*a, **kw)
+                    connection.set_trace_callback(
+                        lambda sql: waiting.set() if sql == "BEGIN IMMEDIATE" else None
+                    )
+                    return connection
+
+                monkeypatch.setattr(sqlite3, "connect", traced_connect)
+                # The trace fires at BEGIN, while our writer still owns the lock.
+                result: list[bool] = []
+                ack_worker = threading.Thread(target=lambda: result.append(real_ack(self, *args, **kwargs)))
+                ack_worker.start()
+                assert release.wait(2)
+                con.execute("COMMIT")
+                ack_worker.join(3)
+                assert not ack_worker.is_alive()
+                assert not errors
+                return result[0]
+            finally:
+                worker.join(3)
+                con.close()
+
+        monkeypatch.setattr(BrokerStore, "ack_if_connected", blocked_ack)
+    try:
+        executor.handle_event(env.memory, event)
+        rows = env.store.history(env.kid)
+        if boundary.startswith("spool"):
+            pending = [outbox.load_pending(p) for p in pending_dir(ctx.root, ctx.sender.full).iterdir()]
+            status = [p for p in pending if p.item.get("type") == "status"]
+            assert len(status) == 1 and not status[0].acked
+            outbox.flush_pending(ctx.incus, ctx.root, ctx.sender.full, uid=None, recipient_uuid=env.kid)
+            rows = env.store.history(env.kid)
+        status_rows = [r for r in rows if r.item.get("type") == "status"]
+        assert len(status_rows) == 1 and status_rows[0].acked_at is None
+        assert env.store.unacked(env.kid)
+    finally:
+        client.close()
+        listener.stop()
