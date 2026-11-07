@@ -143,6 +143,7 @@ def _merge_into_child(
     oid: str,
     label: str,
     child_branch: str,
+    origin_id: str,
 ) -> Outcome:
     uid = ctx.cfg.container_user.uid
     new_head: str | None
@@ -214,6 +215,7 @@ def _merge_into_child(
             "imported_ref": ref,
             "imported_sha": oid,
             "merged_head": new_head,
+            "origin_id": origin_id,
             "body": body,
         }
     )
@@ -309,6 +311,7 @@ def handle_update(ctx: ActionContext, manifest: Manifest) -> Outcome:
             oid=oid,
             label=branch,
             child_branch=child_branch,
+            origin_id=manifest.id,
         )
     msg = InboxMessage.model_validate(
         {
@@ -319,6 +322,7 @@ def handle_update(ctx: ActionContext, manifest: Manifest) -> Outcome:
             "from": ctx.sender.short,
             "imported_ref": ref,
             "imported_sha": oid,
+            "origin_id": manifest.id,
             "body": (
                 f"{ctx.sender.short} updated {branch}: merge {ref} ({oid[:12]}) "
                 "into your branch when convenient"

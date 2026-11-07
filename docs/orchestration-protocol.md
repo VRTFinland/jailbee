@@ -541,8 +541,10 @@ A `message` from a child:
 ```
 
 A message relayed from another container carries `origin_id`, the id its
-sender gave the manifest; host-generated messages (status-like notes, `idle`,
-adoption notices) have no `origin_id` key. Reply with the `h-<hex>` `id` (or
+sender gave the manifest; an `update` message carries the id of the
+orchestrator's `update` manifest, and a `done` report the id of the child's
+done manifest. Host-generated messages (status-like notes, `idle`, adoption
+notices) have no `origin_id` key. Reply with the `h-<hex>` `id` (or
 the `origin_id`): the recipient's copy of your reply has `in_reply_to` set to
 its own original id. The same holds in the other direction, including a
 child's `done` report that names one of your messages.

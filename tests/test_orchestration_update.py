@@ -44,6 +44,7 @@ def test_update_transports_and_messages_child(tmp_path, seams):
     msg = seams["deliver"].call_args.args[3]
     assert msg.kind == "update" and msg.imported_sha == SHA
     assert msg.imported_ref == "refs/jailbee/from/fix-1/fix-1"
+    assert msg.origin_id == "u1"
     assert seams["deliver"].call_args.args[2] == CHILD
     ctx.incus.config_set.assert_not_called()
 
@@ -321,6 +322,7 @@ def test_update_merge_fast_forward_merges_and_messages(tmp_path, seams, merge_se
     assert call.kwargs["uid"] == ctx.cfg.container_user.uid
     msg = seams["deliver"].call_args.args[3]
     assert msg.merged_head == "b" * 40 and "fast-forward" in msg.body
+    assert msg.origin_id == "u1"
 
 
 def test_update_merge_creates_merge_commit(tmp_path, seams, merge_seams):
