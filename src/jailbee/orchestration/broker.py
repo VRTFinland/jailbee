@@ -1445,7 +1445,9 @@ def _publish_queries(memory: BrokerMemory) -> None:
     empty_children = json.dumps({"children": [], "observed_at": None, "last_from_child": {}})
     try:
         recipients = set(memory.store.recipients().values())
-        snapshot = {uuid: ContainerSnapshot("none", True, empty_children, None) for uuid in recipients}
+        snapshot = {
+            uuid: ContainerSnapshot("none", True, empty_children, None) for uuid in recipients
+        }
     except Exception:
         log.exception("broker: publishing query recipients failed")
         snapshot = {

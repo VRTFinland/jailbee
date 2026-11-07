@@ -497,9 +497,7 @@ def test_recreated_orchestrator_does_not_inherit_children_on_history_failure(
 def test_unready_removed_recipient_stays_unready_on_enumeration_failure(
     env: Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    env.queries.publish_container(
-        "proj-orch", ContainerSnapshot("orchestrator", False, '{}', '{}')
-    )
+    env.queries.publish_container("proj-orch", ContainerSnapshot("orchestrator", False, "{}", "{}"))
     env.rig.incus.list_containers.return_value = []
     monkeypatch.setattr(
         env.store, "recipients", lambda: (_ for _ in ()).throw(StoreError("failed"))
@@ -525,9 +523,7 @@ def test_readiness_failure_preserves_prior_values_and_healthy_sibling(
     env.store.set_recipient("proj-other", "proj-other", now=1.0)
     env.rig.incus.list_containers.return_value = [_orch(), _orch("proj-other")]
     assert env.rig.tick(env.memory) is True
-    env.queries.publish_container(
-        "proj-orch", ContainerSnapshot("orchestrator", False, "{}", "{}")
-    )
+    env.queries.publish_container("proj-orch", ContainerSnapshot("orchestrator", False, "{}", "{}"))
     original = env.store.has_recipient_uuid
 
     def ready(uuid: str) -> bool:
@@ -537,7 +533,8 @@ def test_readiness_failure_preserves_prior_values_and_healthy_sibling(
 
     monkeypatch.setattr(env.store, "has_recipient_uuid", ready)
     env.rig.incus.list_containers.return_value = [
-        _orch(), _orch("proj-other", grant=GRANT.model_copy(update={"max_running_children": 9}))
+        _orch(),
+        _orch("proj-other", grant=GRANT.model_copy(update={"max_running_children": 9})),
     ]
     assert env.rig.tick(env.memory) is True
     assert env.queries.answer("proj-orch", wire.Request("grant")).error_code == wire.STORE
