@@ -15,7 +15,7 @@ from typing import IO, Any
 
 from jailbee.orchestration import wire
 
-DEFAULT_SOCKET = "/run/jailbee/orchestration/broker.sock"
+DEFAULT_SOCKET = "/opt/jailbee/orchestration/broker.sock"
 SOCKET_ENV = "JAILBEE_ORCHESTRATION_SOCKET"
 UNREACHABLE_MESSAGE = (
     "jailbee inbox: the host broker is not reachable; "

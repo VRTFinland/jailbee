@@ -26,6 +26,10 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- Broker sockets survive container reboots: the mount moves outside `/run`,
+  where systemd's boot-time tmpfs hid it. The broker automatically re-attaches
+  devices at the old mount path; no image rebuild or `jb apply` is needed
+  ([#101](https://github.com/VRTFinland/jailbee/issues/101)).
 - A message sent immediately after spawning a child is refused with a clear
   "still being created; message was not queued" reason and exit 1 until startup
   is confirmed, including before the child appears in Incus. Wait for the spawn's

@@ -355,11 +355,13 @@ def check_socket_devices(
             memory.attached.pop(name, None)
             continue
         if broker_state.labelled(config):
-            # A snapshot restore can keep the uuid and role but rewind the
-            # device to an old generation. Invalidate _ensure_socket's cache
-            # using this round's listing, without another per-container call.
-            if name in memory.attached and socket_device.source(entry) != str(
-                memory.listener.socket_dir(memory.attached[name])
+            # A snapshot restore can rewind the source; an upgrade can move
+            # the mount point. Invalidate _ensure_socket's cache using this
+            # round's listing, without another per-container call.
+            if name in memory.attached and (
+                socket_device.source(entry)
+                != str(memory.listener.socket_dir(memory.attached[name]))
+                or socket_device.mount_path(entry) != socket_device.CONTAINER_PATH
             ):
                 memory.attached.pop(name, None)
         elif name in memory.attached or socket_device.has_device(entry):

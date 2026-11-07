@@ -5978,14 +5978,14 @@ tracebacks, revoke the grant and destroy the disposable containers.
 Needs a real host with the broker running (`systemctl --user status
 jailbee-broker`) and a container `<o>` holding a grant (`jb orchestrate grant
 <o>`) with one child `<k>` spawned from it. Containers talk to the
-broker over a per-container socket mounted at `/run/jailbee/orchestration/`
+broker over a per-container socket mounted at `/opt/jailbee/orchestration/`
 (see [the transport](orchestration.md#transport-a-per-container-socket)).
 
 1. Device. On the host: `incus config device show <o>` and `... <k>`. Expect a
    `jailbee-orchestration` disk device in each: `source` under
    `~/.local/state/jailbee/orchestration/sock/<uuid>.<random>` (a container
    set up by an older broker moves off `sock/<uuid>`, which is removed), `path:
-   /run/jailbee/orchestration`, `readonly: "true"`, `required: "false"`.
+   /opt/jailbee/orchestration`, `readonly: "true"`, `required: "false"`.
    A container with no orchestration role has none.
 2. Traffic. In `<k>`: `jailbee inbox send message --kind note --text hi --wait`
    (exit 0, a `done` status), then in `<o>`: `jailbee inbox ls`, `wait`, `read
@@ -6007,7 +6007,7 @@ broker over a per-container socket mounted at `/run/jailbee/orchestration/`
    not start it in this test. Delete the copy.
 6. Copy that holds the directory. Run `jailbee inbox wait --timeout none` in
    `<k>`. On the host `incus copy <k> probe` and immediately `incus start probe`,
-   then in `probe` `cd /run/jailbee/orchestration` in a shell left open (so the
+   then in `probe` `cd /opt/jailbee/orchestration` in a shell left open (so the
    mount is busy). After the next round expect: a broker log line "mounted the
    socket of ... moved it to ...", `incus config device show <k>` names a new
    `sock/<uuid>.<random>` source and the old directory is gone on the host;
@@ -6035,6 +6035,22 @@ broker over a per-container socket mounted at `/run/jailbee/orchestration/`
    round (5 seconds plus the round's work), its device must name H again and
    `jailbee inbox ls` must work without restarting the broker. Confirm H did
    not rotate unnecessarily, then delete the test snapshot.
+10. Container reboot. Record `<k>`'s device source and the broker's process ID.
+    Restart `<k>` through `<o>` with `jailbee inbox send restart --child <k>
+    --wait --until done`, then send a message from `<k>` to `<o>` and read it.
+    Repeat with host-side `jb restart <o>` and `jb stop <o>` / `jb start <o>`;
+    `jailbee inbox ls` must work after each boot without restarting the broker.
+    Verify the device source and broker process ID did not change. In the
+    container's `/proc/1/mountinfo`, the device is mounted under `/opt`, not
+    hidden beneath `/run`'s tmpfs.
+11. Legacy mount migration. On a disposable served container, set the device's
+    `path` back to `/run/jailbee/orchestration` with `incus config device set
+    <o> jailbee-orchestration path=/run/jailbee/orchestration`, leaving its
+    `source` unchanged. After the next broker round, expect `path` to be
+    `/opt/jailbee/orchestration` again with the same source and
+    `jailbee inbox ls` working. Repeat with the legacy path set while the
+    container is stopped, then start it and wait for the broker to migrate it.
+    Neither test needs an image rebuild or `jb apply`.
 
 ### Broker state database migration (real host)
 

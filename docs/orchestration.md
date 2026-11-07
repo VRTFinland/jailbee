@@ -725,7 +725,10 @@ keeps for that container only. The broker creates
 `~/.local/state/jailbee/orchestration/sock/<instance uuid>.<random>/` (directory mode
 0700, socket `broker.sock` mode 0600, owned by your user) and attaches it to
 the container as a read-only disk device named `jailbee-orchestration`,
-mounted at `/run/jailbee/orchestration/`. The device is created per instance
+mounted at `/opt/jailbee/orchestration/`. This stays outside `/run`, whose
+boot-time tmpfs would hide a device Incus mounts before init. The broker
+re-attaches devices with an older mount path on its next round after an
+upgrade; no image rebuild or profile re-apply is needed. The device is created per instance
 and only for containers that hold an orchestration role, so the broker knows who
 is calling from which socket was used; nothing in a request names the sender.
 The device is `required=false`, so a container still starts when the host
