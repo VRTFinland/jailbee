@@ -82,3 +82,8 @@ def list_proposals(kind: Kind) -> list[dict[str, Any]]:
 
 def show(kind: Kind, name: str) -> dict[str, Any]:
     return cast(dict[str, Any], call(wire.OUTBOX_SHOW, {"kind": kind, "name": name}))
+
+
+def drop(kind: Kind, name: str) -> None:
+    """Remove one staged, unpublished proposal."""
+    call(wire.OUTBOX_DROP, {"kind": kind, "name": name})

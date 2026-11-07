@@ -364,6 +364,9 @@ def _build_view(
         "progress": evidence,
         "rejected": relevant_rejected,
     }
+    if store.versions:
+        # Host-store proposals: the row version is part of what the view was built from.
+        inputs["row_version"] = dict(store.versions).get(name)
     revision = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
     return ProposalView(ProposalId(store.kind, name), revision, raw, actions, state, error, block)
 

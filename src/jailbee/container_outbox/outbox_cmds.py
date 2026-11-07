@@ -95,7 +95,10 @@ def drop(target: TargetArg = None) -> None:
     def run() -> None:
         store = _guard()
         kind, name = _target(target)
-        store.drop(kind, name)
+        if kind == "issue":
+            broker.drop(kind, name)
+        else:
+            store.drop(kind, name)
         typer.echo(f"dropped {kind}/{name}")
 
     _run(run)

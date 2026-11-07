@@ -68,6 +68,23 @@ def route_issue_snapshot(mocker: Any, service: Any) -> Any:
     test's later re-patch applies) keeps those canned snapshots in force. The
     routed call carries ``uid=None``: the host store has no container user.
     """
+    # Deleting follows the same route: fixtures that observe `mutate_store` keep
+    # seeing the deletion scope; the real store path is tested in
+    # tests/test_outbox_service_issue_store.py.
+    def mutate(container: str, uuid: str | None, plan: Any, snapshot: Any) -> tuple[str, ...]:
+        return service.mutate_store(  # type: ignore[no-any-return]
+            None,
+            container,
+            "issue",
+            uid=None,
+            expected=snapshot.as_dict(),
+            new_manifest=(plan.proposal.name, plan.new_text) if plan.new_text is not None else None,
+            delete_names=plan.delete_names,
+            forbidden_progress=None,
+            rejected_names=snapshot.rejected,
+        )
+
+    mocker.patch.object(service, "_delete_issue_rows", side_effect=mutate)
     return mocker.patch.object(
         service,
         "issue_snapshot",
