@@ -308,6 +308,16 @@ def test_serve_returns_on_stop(env: Env) -> None:
     executor.serve_requests(env.memory, until=1e12, stop=stop)
 
 
+def test_bulk_ack_op(env: Env) -> None:
+    env.put("child-message")
+    env.store.insert_item(
+        env.orch, "proj-orch", {"id": "ok", "type": "status", "state": "done"}, now=1
+    )
+    env.ask(env.orch, "ack", ok_statuses=True)
+    assert env.last().ok and env.last().result == {"acked": 1}
+    assert [r.id for r in env.store.unacked(env.orch)] == ["child-message"]
+
+
 def test_ack_op_acks_and_unknown_is_not_found(env: Env) -> None:
     env.put("a")
     env.ask(env.orch, "ack", id="a")

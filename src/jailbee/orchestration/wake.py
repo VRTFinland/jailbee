@@ -7,9 +7,8 @@ from typing import Any, Protocol
 
 from jailbee.inbox.waiting import (
     MESSAGE_KINDS,
-    MSG_PREFIX,
-    STATUS_PREFIX,
     STATUS_STATES,
+    matches_wake_filter,
     valid_wake_token,
 )
 
@@ -145,14 +144,7 @@ def select_wakeup(
                 first.setdefault(name, row.id)
 
     for row in unacked:
-        is_status = row.type == "status"
-        token = row.kind_or_state
-        prefix = STATUS_PREFIX if is_status else MSG_PREFIX
-        matches = (
-            wake is not None
-            and isinstance(token, str)
-            and (token in wake or prefix + token in wake)
-        )
+        matches = matches_wake_filter(row.type, row.kind_or_state, wake)
         name = row.from_name
         is_first = isinstance(name, str) and first.get(name) == row.id
         if wake is None or matches or is_first:

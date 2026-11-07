@@ -235,13 +235,21 @@ def wait(
         "<kind or state> <first 60 chars of text>."
     ),
 )
-def ls() -> None:
-    _run(socket_cli.cmd_ls)
+def ls(
+    wake_on: Annotated[
+        str | None,
+        typer.Option(
+            "--wake-on",
+            help="Filter by comma-separated kinds/states, optionally msg:<kind> or status:<state>.",
+        ),
+    ] = None,
+) -> None:
+    _run(lambda: socket_cli.cmd_ls(wake_on=wake_on))
 
 
 @inbox_app.command(
     help=(
-        "Pretty-print a message and mark it read. "
+        "Pretty-print a message and mark it read, or acknowledge success statuses in bulk. "
         "Exit 1 if no unread message has that id, 4 = host broker not reachable."
     )
 )
@@ -250,9 +258,18 @@ def read(
     keep: Annotated[
         bool, typer.Option("--keep", help="Leave the message unread in place.")
     ] = False,
+    ok_statuses: Annotated[
+        bool,
+        typer.Option("--ok-statuses", help="Mark all unread queued/started/done statuses read."),
+    ] = False,
 ) -> None:
+    if ok_statuses:
+        if ident or keep:
+            raise UsageError("--ok-statuses cannot be combined with a message id or --keep")
+        _run(socket_cli.cmd_read_ok_statuses)
+        return
     if not ident:
-        raise UsageError("read needs a message id")
+        raise UsageError("read needs a message id or --ok-statuses")
     _run(lambda: socket_cli.cmd_read(ident, keep=keep))
 
 

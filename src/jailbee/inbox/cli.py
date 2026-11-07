@@ -338,7 +338,7 @@ def cmd_runners(grant: object, *, as_json: bool = False) -> int:
 def parse_wait_args(
     timeout: str, wake_on: str | None, quiet_after: str | None, digest: str | None
 ) -> tuple[int | None, int, int, frozenset[str] | None]:
-    from jailbee.inbox.waiting import valid_wake_token
+    from jailbee.inbox.waiting import parse_wake_filter
 
     seconds = parse_timeout(timeout)
     quiet = parse_duration(quiet_after) if quiet_after is not None else 0
@@ -347,13 +347,5 @@ def parse_wait_args(
         raise InboxUsage("--quiet-after must be positive")
     if digest is not None and not digest_seconds:
         raise InboxUsage("--digest must be positive")
-    wake = None
-    if wake_on is not None:
-        tokens = wake_on.split(",")
-        if not all(valid_wake_token(token) for token in tokens):
-            raise InboxUsage(
-                "--wake-on needs comma-separated message kinds or status states "
-                "(optionally msg:<kind> or status:<state>)"
-            )
-        wake = frozenset(tokens)
+    wake = parse_wake_filter(wake_on)
     return seconds, quiet, digest_seconds, wake

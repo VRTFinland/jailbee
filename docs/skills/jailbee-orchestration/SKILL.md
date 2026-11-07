@@ -357,8 +357,13 @@ usage error. Exit 4 means the host broker is not reachable: tell the human. `jai
 Run the waiter in the background if your agent supports it (for example
 Claude's background Bash), or use a /loop-style cycle. If you must poll, never
 poll more often than every 5 min. After `wait` returns, run `jailbee inbox ls`
-and handle **every** unread message before waiting again: replies to several
-manifests arrive as a burst. For a background orchestrator waiter, use
+and handle **every** unread child message and failed/refused status before
+waiting again: replies to several manifests arrive as a burst. Inspect any useful
+success details (for example published issue URLs), then run
+`jailbee inbox read --ok-statuses` to clear unread queued/started/done acks in
+one command. It prints the number marked read; child messages and failures
+stay untouched. The dashboard INBOX count includes only messages and
+failed/refused statuses, not informational success acks. For a background orchestrator waiter, use
 `--timeout none` only together with `--quiet-after` so silent children still
 wake it, and add `--digest 55m` for a periodic `inbox status` table.
 
@@ -370,7 +375,9 @@ wakes on `delivered to` acks); `msg:<kind>` matches only messages and
 `status:<state>` only status replies. A child's first message after
 spawn/restart overrides the filter even if it is a note; read history prevents
 later notes from overriding again. Explicitly read messages by id, not filename,
-or a matching unread message keeps waking you.
+or a matching unread message keeps waking you. `inbox ls --wake-on TOKENS`
+uses the same bare/prefixed filter for listing only matching unread items;
+it does not apply the waiter's first-child-message override or mark anything read.
 
 `--quiet-after 60m` also returns exit 0 with `quiet-child CHILD` (not a path)
 when a running child that has not reported done shows no activity for an hour.

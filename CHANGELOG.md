@@ -15,6 +15,10 @@ before editing `## Unreleased`.
   including created issue numbers and URLs in manifest order. `jailbee issue
   create --json` returns the staged manifest name for scripting
   ([#86](https://github.com/VRTFinland/jailbee/issues/86)).
+- `jailbee inbox ls --wake-on TOKENS` filters unread items with the same kind/state
+  syntax as `inbox wait`. `jailbee inbox read --ok-statuses` acknowledges all unread
+  queued/started/done status replies in one call, leaving child messages and failures
+  untouched ([#88](https://github.com/VRTFinland/jailbee/issues/88)).
 
 ### Fixed
 
@@ -27,6 +31,9 @@ before editing `## Unreleased`.
   wait start time and command. `wait --replace` takes over an orphaned or lost
   waiter cleanly; the old wait exits 1 without consuming unread messages
   ([#87](https://github.com/VRTFinland/jailbee/issues/87)).
+- The dashboard INBOX count includes only actionable unread messages and
+  failed/refused statuses. Successful broker acknowledgements remain readable but
+  no longer make an orchestrator look behind ([#88](https://github.com/VRTFinland/jailbee/issues/88)).
 
 ## 1.8.4 - 2026-11-07
 

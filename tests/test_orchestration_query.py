@@ -70,6 +70,21 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Env]:
     instance.listener.stop()
 
 
+def test_bulk_ack_through_query_socket_is_scoped(env: Env) -> None:
+    env.put("child-message")
+    for uuid in ("proj-orch", "proj-kid"):
+        for state in ("done", "queued", "started", "failed", "refused"):
+            env.store.insert_item(
+                uuid, uuid, {"id": state, "type": "status", "state": state}, now=1
+            )
+    assert env.call("ack", ok_statuses=True).result == {"acked": 3}
+    assert [r.id for r in env.store.unacked("proj-orch")] == ["child-message", "failed", "refused"]
+    assert len(env.store.unacked("proj-kid")) == 5
+    assert env.call("ack", ok_statuses=True).result == {"acked": 0}
+    assert env.call("ack", ok_statuses="true").error_code == wire.BAD_REQUEST
+    assert env.call("ack", ok_statuses=True, id="child-message").error_code == wire.BAD_REQUEST
+
+
 def test_all_queries_answer_last_round_while_executor_handler_is_blocked(env: Env) -> None:
     entered, unblock = threading.Event(), threading.Event()
     env.put("read-me")

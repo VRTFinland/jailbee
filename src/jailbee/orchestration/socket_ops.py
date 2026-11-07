@@ -259,8 +259,16 @@ def handle_read(
     return row.item
 
 
-def handle_ack(store: BrokerStore, uuid: str, *, id: object, now: float) -> dict[str, object]:
-    """Mark one item read (idempotent); an unknown id is `not_found`."""
+def handle_ack(
+    store: BrokerStore, uuid: str, *, id: object, now: float, ok_statuses: object = False
+) -> dict[str, object]:
+    """Mark one item read (idempotent), or all unread success statuses."""
+    if not isinstance(ok_statuses, bool):
+        raise wire.WireError(wire.BAD_REQUEST, "ok_statuses must be a boolean")
+    if ok_statuses:
+        if id is not None:
+            raise wire.WireError(wire.BAD_REQUEST, "ok_statuses cannot be combined with id")
+        return {"acked": store.ack_ok_statuses(uuid, now=now)}
     if not isinstance(id, str) or not id:
         raise wire.WireError(wire.BAD_REQUEST, "id must be a non-empty string")
     if not store.ack(uuid, id, now=now):
