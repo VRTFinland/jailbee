@@ -196,6 +196,7 @@ def tick(
     for key in [k for k in memory.contexts if k not in {n.key for n in nodes.values()}]:
         del memory.contexts[key]
     serve_failed: set[str] = set()
+    flush_failed: set[str] = set()
     for node in nodes.values():
         memory.contexts.pop(node.key, None)
         if not broker_state.labelled(node.config):
@@ -209,7 +210,7 @@ def tick(
                             publishing.settle(
                                 former_ctx, partial(broker_replies.reply, former_ctx, memory=memory)
                             )
-                            _flush_unlabelled(node, context, root, incus)
+                            _flush_unlabelled(node, context, root, incus, memory, flush_failed)
                     continue
                 if node.full in publishes:
                     publish_ctx = context(node)
@@ -218,7 +219,7 @@ def tick(
                             publish_ctx, partial(broker_replies.reply, publish_ctx, memory=memory)
                         )
                 if has_pending(root, node.full):
-                    _flush_unlabelled(node, context, root, incus)
+                    _flush_unlabelled(node, context, root, incus, memory, flush_failed)
             except Exception as exc:
                 serve_failed.add(f"serve:{node.full}")
                 memory.report_failure(
@@ -270,6 +271,7 @@ def tick(
             serve_failed.add(f"serve:{node.full}")
             memory.report_failure(f"serve:{node.full}", exc, "broker: serving %s failed", node.full)
     memory.settle_failures("serve:", serve_failed)
+    memory.settle_failures("flush:", flush_failed)
 
     # A child view belongs only to a currently valid orchestrator context.
     owners = {ctx.sender.full for ctx in memory.contexts.values() if ctx.role() == "orchestrator"}
@@ -355,7 +357,12 @@ def _clear_stale_stop_labels(incus: Incus, node: Node, memory: broker_state.Brok
 
 
 def _flush_unlabelled(
-    node: Node, context: Callable[[Node], ActionContext | None], root: Path, incus: Incus
+    node: Node,
+    context: Callable[[Node], ActionContext | None],
+    root: Path,
+    incus: Incus,
+    memory: broker_state.BrokerMemory,
+    failed: set[str],
 ) -> None:
     """Flush host-spooled messages even for stopped, unlabelled recipients."""
     try:
@@ -369,8 +376,9 @@ def _flush_unlabelled(
                 finish=finishing.flush_callback(ctx) if ctx.sender.running else None,
                 recipient_uuid=node.config.get("volatile.uuid"),
             )
-    except Exception:
-        log.exception("broker: flushing %s failed", node.full)
+    except Exception as exc:
+        failed.add(f"flush:{node.full}")
+        memory.report_failure(f"flush:{node.full}", exc, "broker: flushing %s failed", node.full)
 
 
 def _pause(seconds: float, stop: broker_state.StopFlag) -> None:

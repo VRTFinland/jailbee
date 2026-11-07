@@ -1725,6 +1725,73 @@ def test_persistent_serving_error_logs_one_traceback_and_recovers(
     assert len(serving()) == 2
 
 
+def _records(caplog: pytest.LogCaptureFixture, text: str) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if text in r.getMessage()]
+
+
+def test_device_busy_is_not_an_instance_busy_episode(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    memory = _stale_rig(rig)
+    rig.incus.config_unset_checked.side_effect = IncusError("Device or resource busy")
+    rig.tick(memory)
+    records = _stale_records(caplog)
+    assert [r.levelno for r in records] == [logging.ERROR]
+    assert records[0].exc_info is not None
+
+
+def test_busy_then_other_error_logs_error_with_traceback(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    memory = _stale_rig(rig)
+    rig.incus.config_unset_checked.side_effect = BUSY
+    rig.tick(memory)
+    rig.incus.config_unset_checked.side_effect = IncusError("daemon gone")
+    rig.tick(memory)
+    rig.tick(memory)
+    records = _stale_records(caplog)
+    assert [r.levelno for r in records] == [logging.WARNING, logging.ERROR]
+    assert records[1].exc_info is not None
+
+
+def test_vanished_container_drops_its_failure_entry(rig: Rig) -> None:
+    memory = _stale_rig(rig)
+    rig.incus.config_unset_checked.side_effect = BUSY
+    rig.tick(memory)
+    assert "stale-stop:proj-kid" in memory.failures
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.tick(memory)
+    assert "stale-stop:proj-kid" not in memory.failures
+
+
+def test_failure_prefixes_do_not_reset_each_other() -> None:
+    memory = broker_state.BrokerMemory()
+    memory.report_failure("serve:a", RuntimeError("x"), "serving a")
+    memory.report_failure("stale-stop:a", RuntimeError("y"), "stale a")
+    memory.settle_failures("serve:", set())
+    assert list(memory.failures) == ["stale-stop:a"]
+    memory.settle_failures("stale-stop:", {"stale-stop:a"})
+    assert list(memory.failures) == ["stale-stop:a"]
+
+
+def test_unlabelled_flush_failure_logs_once_and_recovers(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    memory = broker_state.BrokerMemory()
+    monkeypatch.setattr(broker, "has_pending", lambda root, full: True)
+    rig.incus.list_containers.return_value = [_orch(), _c("proj-plain", running=False)]
+    rig.flush_pending.side_effect = RuntimeError("disk full")
+    rig.tick(memory)
+    rig.tick(memory)
+    assert len(_records(caplog, "flushing proj-plain failed")) == 1
+    assert _records(caplog, "flushing proj-plain failed")[0].exc_info is not None
+    rig.flush_pending.side_effect = None
+    rig.tick(memory)
+    rig.flush_pending.side_effect = RuntimeError("disk full")
+    rig.tick(memory)
+    assert len(_records(caplog, "flushing proj-plain failed")) == 2
+
+
 # -- watch list: started children ------------------------------------------------
 
 

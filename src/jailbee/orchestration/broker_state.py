@@ -95,7 +95,7 @@ class BrokerMemory:
         with the traceback on that first line. `settle_failures` ends episodes.
         """
         text = str(exc)
-        busy = "busy" in text.lower()
+        busy = "instance is busy" in text.lower()
         signature = "busy" if busy else f"{type(exc).__name__}: {text}"
         if self.failures.get(key) == signature:
             return
