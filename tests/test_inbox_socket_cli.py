@@ -631,6 +631,9 @@ def test_runners_without_grant(broker: FakeBroker, sockdir: Path, tmp_path: Path
     "args",
     [
         ("send", "stop"),
+        ("send", "rights", "--loose", "--for", "nonsense"),
+        ("send", "rights", "--loose", "--for", "0s"),
+        ("send", "rights", "--loose", "--for", "25h"),
         ("send", "spawn", "--branch", "kid", "--text", ""),
         ("send", "message", "--text", "hello", "--timeout", "bad"),
         ("send", "message", "--text", "hello", "--wait", "--timeout", "bad"),
@@ -662,7 +665,16 @@ def test_runners_without_socket_lists_local_profiles(
     assert {"agent": "claude-jb", "profile": "local"} in [e["runner"] for e in entries]
 
 
-@pytest.mark.parametrize("args", [("send", "stop", "--child", "kid"), ("wait", "--timeout", "0")])
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("send", "stop", "--child", "kid"),
+        ("wait", "--timeout", "0"),
+        ("send", "rights", "--loose", "--for", "24h"),
+        ("send", "rights", "--loose", "--for", "1440"),
+        ("send", "rights", "--loose", "--for", "never"),
+    ],
+)
 def test_valid_broker_commands_without_socket(
     sockdir: Path, tmp_path: Path, args: tuple[str, ...]
 ) -> None:

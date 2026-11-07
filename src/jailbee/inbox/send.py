@@ -167,6 +167,19 @@ def validate(r: SendRequest) -> SendRequest:
         require(granted or revoked, "rights needs at least one grant or revoke")
         require(not granted or bool(r.duration), "rights grants need --for")
         require(granted or not r.duration, "--for needs a grant")
+        if r.duration:
+            value = r.duration.strip()
+            if value.lower() != "never":
+                match = re.fullmatch(r"(\d+)\s*([smh])", value)
+                bare = value.isascii() and value.isdigit()
+                require(bool(match) or bare, "--for needs a duration or never")
+                digits = match.group(1) if match else value
+                # Avoid converting arbitrarily large integers from command input.
+                digits = digits.lstrip("0") or "0"
+                require(len(digits) <= 5, "--for must be greater than zero and at most 24h")
+                unit = match.group(2) if match else "m"
+                seconds = int(digits) * {"s": 1, "m": 60, "h": 3600}[unit]
+                require(0 < seconds <= 86400, "--for must be greater than zero and at most 24h")
         require(not (r.loose and r.revoke_loose), "cannot grant and revoke loose")
         for item in r.mounts:
             require(item not in r.revoke_mounts, f"cannot grant and revoke mount {item}")
