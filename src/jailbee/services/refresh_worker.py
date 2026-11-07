@@ -117,8 +117,15 @@ def _run_job_locked(cfg: "Config", incus: "Incus", path: Path) -> int:
             print(f"invalid saved refresh status: {exc}")
             return 1
         return _deliver(
-            cfg, incus, path, owner, owner_uuid, ref,
-            ok=final.state == "done", detail=final.detail, item=final
+            cfg,
+            incus,
+            path,
+            owner,
+            owner_uuid,
+            ref,
+            ok=final.state == "done",
+            detail=final.detail,
+            item=final,
         )
     if job.get("execution_phase") == "executing":
         print("refresh execution outcome is uncertain; manual recovery required")

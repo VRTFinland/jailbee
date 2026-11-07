@@ -644,9 +644,7 @@ def test_refresh_notification_retries_inventory_failure_without_reexecution(
 
 @pytest.mark.parametrize("saved_status", [False, True])
 @pytest.mark.parametrize("identity", [None, "", 123])
-def test_refresh_job_without_valid_owner_identity_fails_closed(
-    rig, mocker, identity, saved_status
-):
+def test_refresh_job_without_valid_owner_identity_fails_closed(rig, mocker, identity, saved_status):
     cfg, _, delivery, incus, path = rig
     job(path)
     data = json.loads(path.read_text())
@@ -656,8 +654,12 @@ def test_refresh_job_without_valid_owner_identity_fails_closed(
         data["orchestrator_uuid"] = identity
     if saved_status:
         data["final_status"] = {
-            "version": 1, "id": "h-saved", "type": "status", "ref": "r1",
-            "state": "done", "detail": "old result",
+            "version": 1,
+            "id": "h-saved",
+            "type": "status",
+            "ref": "r1",
+            "state": "done",
+            "detail": "old result",
         }
     path.write_text(json.dumps(data))
     execute = mocker.patch.object(elevated, "run_plain_refresh")
