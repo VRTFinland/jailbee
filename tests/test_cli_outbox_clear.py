@@ -8,7 +8,7 @@ from jailbee.cli_outbox import normalize_outbox_argv
 from jailbee.incus import Incus
 from jailbee.outbox import service
 from jailbee.outbox_io import JournalStore
-from tests.outbox_support import IDENTITY, issue_files, pr_files, store
+from tests.outbox_support import IDENTITY, issue_files, pr_files, route_issue_snapshot, store
 
 
 @pytest.fixture
@@ -28,6 +28,7 @@ def env(mocker, make_cfg, tmp_path):
     mocker.patch("jailbee.incus.Incus", return_value=incus)
     snapshots = {"pr": store("pr", pr_files()), "issue": store("issue", issue_files())}
     mocker.patch.object(service, "read_store", side_effect=lambda i, c, k, **kw: snapshots[k])
+    route_issue_snapshot(mocker, service)
     mutation = mocker.patch.object(
         service, "mutate_store", side_effect=lambda *a, **kw: kw["delete_names"]
     )

@@ -11,7 +11,7 @@ from jailbee.db.models import RegisteredRepo
 from jailbee.outbox import service
 from jailbee.outbox.models import OutboxError
 from jailbee.outbox_io import JournalStore
-from tests.outbox_support import IDENTITY, issue_files, store
+from tests.outbox_support import IDENTITY, issue_files, route_issue_snapshot, store
 
 
 @pytest.fixture
@@ -38,6 +38,7 @@ def env(mocker, make_cfg, tmp_path):
         "read_store",
         side_effect=lambda i, c, k, **kw: store(k, issue_files() if k == "issue" else {}),
     )
+    route_issue_snapshot(mocker, service)
     mutation = mocker.patch.object(
         service, "mutate_store", side_effect=lambda *a, **kw: kw["delete_names"]
     )
@@ -215,9 +216,8 @@ def test_all_repos_each_own_uid_and_missing_root(env, make_cfg, tmp_path):
     result = discover(cfg, incus, None, all_repos=True, journal_store=journals)
     assert [v.available for v in result] == [True, True, False]
     assert "root" in result[2].error
-    assert {c.kwargs["uid"] for c in reader.call_args_list if c.args[1] == "other-feature"} == {
-        2345
-    }
+    container_reads = [c for c in reader.call_args_list if c.args[0] is not None]
+    assert {c.kwargs["uid"] for c in container_reads if c.args[1] == "other-feature"} == {2345}
 
 
 def test_absent_config_file_accepts_registered_effective_config(env, make_cfg, tmp_path):

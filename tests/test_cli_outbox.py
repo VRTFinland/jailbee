@@ -11,9 +11,10 @@ from jailbee.cli import app
 from jailbee.incus import Incus
 from jailbee.outbox import service
 from jailbee.outbox.models import ContainerView, ProposalId
+from jailbee.outbox.service import issue_snapshot as real_issue_snapshot
 from jailbee.outbox_io import JournalStore
 from tests.conftest import panel_text
-from tests.outbox_support import IDENTITY, issue_files, pr_files, store
+from tests.outbox_support import IDENTITY, issue_files, pr_files, route_issue_snapshot, store
 
 
 @pytest.fixture
@@ -35,6 +36,7 @@ def env(mocker, make_cfg, tmp_path):
     reader = mocker.patch.object(
         service, "read_store", side_effect=lambda i, c, k, **kw: snapshots[k]
     )
+    route_issue_snapshot(mocker, service)
     mutation = mocker.patch.object(
         service, "mutate_store", side_effect=lambda *a, **kw: kw["delete_names"]
     )
@@ -286,6 +288,31 @@ def test_literal_untrusted_detail(env):
     assert result.exit_code == 0, result.output
     assert "[bold]literal[/bold]" in result.output
     assert "\x1b" not in result.output and "‮" not in result.output
+
+
+def test_jb_outbox_lists_and_shows_a_proposal_staged_through_the_broker(env, mocker):
+    from jailbee.outbox import store_db as outbox_store
+    from jailbee.outbox import service as service_module
+    from tests.test_outbox_service import _stage_in_host_store
+
+    name = _stage_in_host_store("uuid-1")
+    env[6]["config"] = {"volatile.uuid": "uuid-1"}
+    env[2]["pr"] = store("pr", {})
+    mocker.patch.object(
+        service_module,
+        "issue_snapshot",
+        side_effect=lambda c, u: real_issue_snapshot(c, u),
+    )
+    reads = mocker.spy(outbox_store, "read_proposals")
+    listed = CliRunner().invoke(app, ["outbox", "ls", "feature", "-o", "json"])
+    assert listed.exit_code == 0, listed.output
+    (row,) = json.loads(listed.stdout)["containers"]
+    assert [p["id"] for p in row["proposals"]] == [f"issue/{name}"]
+    shown = CliRunner().invoke(app, ["outbox", "show", "feature", f"issue/{name}"])
+    assert shown.exit_code == 0, shown.output
+    assert "Original body" in shown.output
+    assert reads.call_count >= 2
+    assert not [c for c in env[1].mock_calls if c[0].startswith("exec")]
 
 
 def test_typo_is_missing_container_not_silent_overview(env):
@@ -993,7 +1020,8 @@ def test_apply_uses_target_owned_config_before_local_reads(
     reads = []
 
     def read(i, c, k, **kwargs):
-        assert kwargs["uid"] == 2345
+        # None: the issue listing routed from the host store (no container user).
+        assert kwargs["uid"] == (None if i is None else 2345)
         assert c == "acme-feature"
         reads.append(k)
         return env[2][k]

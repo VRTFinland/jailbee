@@ -9,7 +9,7 @@ from jailbee.incus import IncusTimeoutError
 from jailbee.outbox.delete import DeleteSelection, plan_delete
 from jailbee.outbox.models import OutboxChanged, OutboxError, OutboxExecutionError, ProposalId
 from jailbee.outbox_io import JournalStore, journal_key, proposal_digest
-from tests.outbox_support import IDENTITY, issue_files, pr_files, store
+from tests.outbox_support import IDENTITY, issue_files, pr_files, route_issue_snapshot, store
 
 
 def setup_service(mocker, make_cfg, tmp_path, kind="issue"):
@@ -28,6 +28,7 @@ def setup_service(mocker, make_cfg, tmp_path, kind="issue"):
     reader = mocker.patch.object(
         service, "read_store", side_effect=lambda i, c, k, **kw: snapshots[k]
     )
+    route_issue_snapshot(mocker, service)
     mutation = mocker.patch.object(
         service, "mutate_store", side_effect=lambda *args, **kw: kw["delete_names"]
     )
@@ -334,6 +335,71 @@ def test_identity_rechecked_after_lock_wait(mocker, make_cfg, tmp_path, kind):
     with pytest.raises(OutboxChanged):
         execute(env, plan)
     env[6].assert_not_called()
+
+
+def _stage_in_host_store(uuid: str) -> str:
+    from jailbee.db import state_dir
+    from jailbee.orchestration.store import BrokerStore, store_path
+    from jailbee.outbox.store_db import OutboxStore
+
+    files = issue_files()
+    manifest = json.loads(files["001.json"])
+
+    def build(stem: str) -> tuple[str, dict[str, str]]:
+        manifest["actions"][0]["body_file"] = f"{stem}-1.md"
+        return json.dumps(manifest), {f"{stem}-1.md": files["body.md"]}
+
+    store_db = OutboxStore(BrokerStore(store_path(state_dir() / "orchestration")))
+    return store_db.put_proposal(uuid, "issue", "example", build, now=1.0).name
+
+
+def test_issue_proposals_are_listed_from_the_host_store_without_incus_exec(
+    mocker, make_cfg, tmp_path
+):
+    from jailbee.incus import Incus
+    from jailbee.outbox import service
+
+    name = _stage_in_host_store("uuid-1")
+    _stage_in_host_store("uuid-other")  # another instance's proposal stays out
+    incus = mocker.Mock(spec=Incus)
+    incus.list_containers.return_value = [
+        {
+            "name": IDENTITY.full_name,
+            "created_at": IDENTITY.created_at,
+            "config": {"volatile.uuid": "uuid-1"},
+        }
+    ]
+
+    def read_pr_only(i, c, kind, **kw):
+        assert kind == "pr", "issue proposals must not be read from the container"
+        return store("pr", {})
+
+    mocker.patch.object(service, "read_store", side_effect=read_pr_only)
+    view = service.load_container(
+        make_cfg(tmp_path), incus, IDENTITY.full_name, journal_store=JournalStore(tmp_path / "j")
+    )
+    assert view.available, view.error
+    (proposal,) = view.proposals
+    assert proposal.id == ProposalId("issue", name)
+    assert proposal.state == "pending"
+    assert [a.kind for a in proposal.actions] == ["create", "comment", "comment"]
+    assert proposal.actions[0].body == "Original body"
+    assert not [c for c in incus.mock_calls if c[0].startswith("exec")]
+
+
+def test_an_instance_without_a_uuid_is_unavailable_not_empty(mocker, make_cfg, tmp_path):
+    from jailbee.outbox import service
+
+    incus = mocker.Mock()
+    incus.list_containers.return_value = [
+        {"name": IDENTITY.full_name, "created_at": IDENTITY.created_at}
+    ]
+    mocker.patch.object(service, "read_store", return_value=store("pr", {}))
+    view = service.load_container(
+        make_cfg(tmp_path), incus, IDENTITY.full_name, journal_store=JournalStore(tmp_path / "j")
+    )
+    assert not view.available
+    assert "uuid" in (view.error or "")
 
 
 def test_identity_timeout_unavailable(mocker, make_cfg, tmp_path):

@@ -8,14 +8,20 @@ from jailbee.incus import IncusError
 from jailbee.outbox.delete import DeletePlan, plan_delete
 from jailbee.outbox.inspect import build_views
 from jailbee.outbox.io import READ_TIMEOUT, PrManagement, mutate_store, read_store
-from jailbee.outbox.models import ContainerView, Kind, OutboxChanged, OutboxExecutionError
+from jailbee.outbox.models import (
+    ContainerView,
+    OutboxChanged,
+    OutboxExecutionError,
+    StoreSnapshot,
+)
 from jailbee.outbox_io import ContainerIdentity, JournalError, JournalStore, journal_key
 
 
-def _identity(incus: Incus, container: str) -> ContainerIdentity:
+def _instance(incus: Incus, container: str) -> tuple[ContainerIdentity, str | None]:
+    """The instance's legacy identity and its Incus ``volatile.uuid`` (None if unset)."""
     # The shared legacy identity helper has no timeout parameter. Keep the same
     # raw/nonzero timestamp contract while bounding this interactive service.
-    # --fast: created_at is a top-level key; every instance's state is not needed.
+    # --fast: created_at and config are top-level keys; no instance state is needed.
     raw = next(
         (
             item
@@ -27,7 +33,36 @@ def _identity(incus: Incus, container: str) -> ContainerIdentity:
     created = raw.get("created_at") if raw is not None else None
     if not isinstance(created, str) or not created or created.startswith("0001-01-01T00:00:00"):
         raise JournalError(f"{container}: stable instance identity is unavailable")
-    return ContainerIdentity(container, created)
+    config = raw.get("config") if raw is not None else None
+    uuid = config.get("volatile.uuid") if isinstance(config, dict) else None
+    return ContainerIdentity(container, created), uuid if isinstance(uuid, str) and uuid else None
+
+
+def _identity(incus: Incus, container: str) -> ContainerIdentity:
+    return _instance(incus, container)[0]
+
+
+def issue_snapshot(container: str, uuid: str | None) -> StoreSnapshot:
+    """The instance's pending issue proposals from the host outbox store.
+
+    Reads ``broker.db`` read-only: no Incus call, and it works with the broker
+    stopped. Bodies appear next to their manifests, as in the file layout.
+    """
+    from jailbee.db import state_dir
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox import store_db
+
+    if uuid is None:
+        raise JournalError(f"{container}: instance uuid is unavailable")
+    try:
+        rows = store_db.read_proposals(state_dir() / "orchestration", uuid, "issue")
+    except StoreError as exc:
+        raise OutboxExecutionError(f"outbox store is unreadable: {exc}") from exc
+    files: list[tuple[str, str]] = []
+    for row in rows:
+        files.append((row.name, row.manifest))
+        files.extend(row.bodies.items())
+    return StoreSnapshot("issue", tuple(sorted(files)), (), ())
 
 
 if TYPE_CHECKING:
@@ -46,12 +81,14 @@ def load_container(
     """Inspect stores; explicit operations retain typed failures, overviews do not."""
     identity = None
     try:
-        identity = _identity(incus, container)
-        kinds: tuple[Kind, ...] = ("pr", "issue")
-        stores = tuple(
-            read_store(incus, container, kind, uid=cfg.container_user.uid) for kind in kinds
+        identity, uuid = _instance(incus, container)
+        # PR proposals are still files in the container; issue proposals live
+        # in the host store and are read without any `incus exec`.
+        stores = (
+            read_store(incus, container, "pr", uid=cfg.container_user.uid),
+            issue_snapshot(container, uuid),
         )
-        if _identity(incus, container) != identity:
+        if _instance(incus, container) != (identity, uuid):
             raise OutboxChanged("container changed while reading; refresh required")
         # Canonical freshness matches publication, not optional PR display labels.
         proposals = build_views(identity, stores, journal_store=journal_store)

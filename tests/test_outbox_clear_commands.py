@@ -5,7 +5,7 @@ import pytest
 from jailbee.outbox import commands, service
 from jailbee.outbox.models import OutboxError, OutboxExecutionError
 from jailbee.outbox_io import JournalStore
-from tests.outbox_support import IDENTITY, issue_files, pr_files, store
+from tests.outbox_support import IDENTITY, issue_files, pr_files, route_issue_snapshot, store
 
 
 @pytest.fixture
@@ -36,6 +36,7 @@ def env(mocker, make_cfg, tmp_path):
     reader = mocker.patch.object(
         service, "read_store", side_effect=lambda i, c, k, **kw: store(k, files[c, k])
     )
+    route_issue_snapshot(mocker, service)
     mutation = mocker.patch.object(
         service, "mutate_store", side_effect=lambda *a, **kw: kw["delete_names"]
     )
