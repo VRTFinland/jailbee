@@ -609,15 +609,16 @@ messages; it neither detects idle nor configures the threshold.
 The broker is non-interactive. Anything that would prompt the operator (the
 autostart escalation gate for an untrusted source, an autofetch that needs a
 hardware-key touch) is refused with that reason; the broker never answers a
-prompt for you. Messages for a stopped recipient wait in the broker's on-disk
-queue and are delivered when it runs again, also across broker restarts.
+prompt for you. Messages for a stopped recipient are inserted into the broker's
+durable store and can be viewed on the host immediately. The recipient can read
+them when it runs again and connects to the broker, including after a restart.
 
 Orchestrators and children use `jailbee inbox` to communicate with the broker.
 `jailbee inbox grant` shows the effective grant; `jailbee inbox children [--json]`
 shows each child's running and done state and latest agent session. After `wait`,
-run `ls` and handle every unread message with `read <id>`. `JAILBEE_INBOX_SETTLE`
-controls the quiet window after an arrival (default 1 second, 0 disables), capped
-at 5 seconds and the wait timeout; messages already present return immediately.
+run `ls` and handle every unread message with `read <id>`. `wait` uses a broker
+socket long-poll and returns immediately when a matching unread message is
+already present.
 Use `send --wait` for spawn, update and destroy, and always for a child's done
 report: it consumes only that manifest's status, returning 0 for
 done/queued/started, 1 for refused/failed, 2 for usage errors and 3 for timeout
@@ -741,8 +742,8 @@ unread messages once they are older than its repo's retention.
 `jb orchestrate messages [CONTAINER] [--all] [--json]` lists them on the host
 (read-only; `--all` includes read ones).
 
-The host-only `pending/` spool holds deliveries for stopped or unlabelled
-recipients until they can be inserted into the store. Its versioned envelope
+The host-only `pending/` spool holds deliveries until they can be inserted into
+the store, including for stopped or unlabelled recipients. Its versioned envelope
 binds the recipient UUID and original item, and can hold a completed finish.
 Identity-free old spool entries and namesake UUID mismatches are quarantined
 as `.bad`, not migrated. A completed finish and its stable ID are persisted
