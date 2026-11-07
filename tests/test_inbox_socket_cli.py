@@ -627,6 +627,48 @@ def test_runners_without_grant(broker: FakeBroker, sockdir: Path, tmp_path: Path
     assert json.loads(r.stdout)[0]["runner"] is None
 
 
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("send", "stop"),
+        ("send", "spawn", "--branch", "kid", "--text", ""),
+        ("send", "message", "--text", "hello", "--timeout", "bad"),
+        ("send", "message", "--text", "hello", "--wait", "--timeout", "bad"),
+        ("wait", "--timeout", "bad"),
+        ("wait", "--wake-on", "nonsense"),
+        ("wait", "--quiet-after", "bad"),
+        ("wait", "--digest", "bad"),
+    ],
+)
+def test_invalid_arguments_without_socket(
+    sockdir: Path, tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    result = run(sockdir, *args, tmp=tmp_path)
+    assert result.returncode == 2, result.stderr
+
+
+def test_runners_without_socket_lists_local_profiles(
+    sockdir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from jailbee.inbox import cli, socket_cli
+
+    config = tmp_path / "litellm.json"
+    config.write_text(json.dumps({"profiles": {"local": {"tiers": {"sonnet": "model"}}}}))
+    monkeypatch.setenv("JAILBEE_LITELLM_CONFIG", str(config))
+    monkeypatch.setenv("JAILBEE_ORCHESTRATION_SOCKET", str(sockdir / "broker.sock"))
+    monkeypatch.setattr(cli.shutil, "which", lambda _: "/bin/claude")
+    assert socket_cli.cmd_runners(as_json=True) == 0
+    entries = json.loads(capsys.readouterr().out)
+    assert {"agent": "claude-jb", "profile": "local"} in [e["runner"] for e in entries]
+
+
+@pytest.mark.parametrize("args", [("send", "stop", "--child", "kid"), ("wait", "--timeout", "0")])
+def test_valid_broker_commands_without_socket(
+    sockdir: Path, tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    assert run(sockdir, *args, tmp=tmp_path).returncode == 4
+
+
 def test_unreachable_exit_4(sockdir: Path, tmp_path: Path) -> None:
     # The directory exists (the device mount point) but nothing listens.
     r = run(sockdir, "ls", tmp=tmp_path)

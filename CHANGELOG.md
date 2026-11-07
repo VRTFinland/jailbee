@@ -17,8 +17,8 @@ before editing `## Unreleased`.
 
 ### Changed
 
-- `jailbee inbox wait` prints the woken message's id; `--path` gives the old path output.
-- Orchestrators and children talk to the host broker over a per-container socket, and the broker's messages, spawn/restart queue and reservations, watch/supervision state, publication state and results, and manifest deduplication journal live in `broker.db`; `jailbee inbox` exits 4 when the host broker is not reachable. Durable host state is imported automatically on first use, with legacy files retained as `.migrated`. The file transport has no compatibility window: upgrade only when no orchestration is in progress; file waiters and unread messages are not carried over.
+- `jailbee inbox wait` prints the woken message's id; the obsolete `--path` also prints the id.
+- Orchestrators and children talk to the host broker over a per-container socket, and the broker's messages, spawn/restart queue and reservations, watch/supervision state, publication state and results, and manifest deduplication journal live in `broker.db`. Broker-bound inbox commands exit 4 when the broker is unreachable; invalid arguments exit 2, and `runners` lists local runners without grant filtering when the socket is absent. Send refusals are reported synchronously with exit 1, including without `--wait`; wait replies are not reported twice. Queries return the last completed state during long-running handlers. Durable host state is imported automatically on first use, with legacy files retained as `.migrated`. The file transport has no compatibility window: upgrade only when no orchestration is in progress; file waiters and unread messages are not carried over.
 
 ## 1.8.3 - 2026-11-05
 

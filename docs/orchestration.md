@@ -764,6 +764,9 @@ Durable host-state imports into `broker.db` remain available.
 If the broker is stopped or the socket is missing, every `jailbee inbox`
 command that needs it exits 4 with "the host broker is not reachable"; tell the
 human, who starts it (`systemctl --user start jailbee-broker`, or `jb doctor`).
+When the socket is absent, `jailbee inbox runners` instead lists local runners
+without a grant-derived default or grant filtering. A stale socket still requires
+a reachable broker. Invalid command arguments exit 2 before connecting.
 `jailbee inbox wait` reconnects on its own if the broker restarts while it
 waits. See the [protocol reference](orchestration-protocol.md#socket-transport).
 

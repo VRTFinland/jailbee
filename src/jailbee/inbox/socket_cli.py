@@ -28,7 +28,13 @@ CALL_TIMEOUT = 120.0
 
 
 def _factory() -> Client:
-    return Client(socket_path(os.environ))
+    path = socket_path(os.environ)
+    if not path.exists():
+        raise BrokerUnreachable(
+            "jailbee inbox: the host broker socket is missing; "
+            "ask the host operator to check orchestration"
+        )
+    return Client(path)
 
 
 def _call(op: str, args: dict[str, Any] | None = None) -> Any:
@@ -228,6 +234,8 @@ def cmd_grant(*, as_json: bool = False) -> int:
 
 
 def cmd_runners(*, as_json: bool = False) -> int:
+    if not socket_path(os.environ).exists():
+        return cli.cmd_runners(None, as_json=as_json)
     try:
         grant = _grant()
     except BrokerError as exc:

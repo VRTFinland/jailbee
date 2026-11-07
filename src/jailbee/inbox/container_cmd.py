@@ -1,6 +1,5 @@
 """Typer adapter for the standard-library orchestration inbox modules."""
 
-import os
 from collections.abc import Callable
 from typing import Annotated
 
@@ -55,11 +54,6 @@ def _run(command: Callable[[], int]) -> None:
     from jailbee.inbox import transport
 
     try:
-        if not transport.socket_path(os.environ).exists():
-            raise transport.BrokerUnreachable(
-                "jailbee inbox: the host broker socket is missing; "
-                "ask the host operator to check orchestration"
-            )
         code = command()
     except transport.BrokerUnreachable as exc:
         typer.echo(str(exc), err=True)
