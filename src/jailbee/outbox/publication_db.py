@@ -537,6 +537,15 @@ class PublicationStore:
         with self._store.transaction(write=False) as con:
             return _active(con, uuid, kind, name)
 
+    def stored_digest(self, uuid: str, kind: Kind, name: str) -> str | None:
+        """The stored proposal's content digest, None when it is no longer stored.
+
+        A publisher checks it under the claim: a proposal dropped or re-staged
+        after it was planned must not be published from the plan.
+        """
+        with self._store.transaction(write=False) as con:
+            return _stored_digest(con, uuid, kind, name)
+
     # journal writes
 
     def begin(

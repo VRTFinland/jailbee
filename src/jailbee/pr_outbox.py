@@ -1050,6 +1050,14 @@ def apply_manifest(
         )
 
     with store.claim(store_uuid, "pr", manifest.name) as claim:
+        # The plan was read before the claim: the container may have dropped or
+        # re-staged this proposal since (while an earlier manifest published).
+        stored = store.stored_digest(store_uuid, "pr", manifest.name)
+        if stored != digest:
+            gone = "is no longer in the outbox" if stored is None else "changed"
+            return ApplyOutcome(
+                (), (), f"{manifest.name} {gone} since it was planned; nothing published", draft
+            )
         journal = store.begin(
             claim,
             digest=digest,
