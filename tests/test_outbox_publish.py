@@ -1333,7 +1333,9 @@ def test_pr_force_relaxes_only_moved_review_head(env, force, mocker):
 def test_pr_nested_lock_uses_same_instance_once(env, mocker):
     flock = mocker.spy(io.fcntl, "flock")
     assert selected(env, "pr") == 0
-    assert [call.args[1] for call in flock.call_args_list] == [io.fcntl.LOCK_EX, io.fcntl.LOCK_UN]
+    # Publication claims take their own non-blocking per-token locks; not this one.
+    calls = [c.args[1] for c in flock.call_args_list if not c.args[1] & io.fcntl.LOCK_NB]
+    assert calls == [io.fcntl.LOCK_EX, io.fcntl.LOCK_UN]
 
 
 @pytest.mark.parametrize("kind", ["issue", "pr"])
