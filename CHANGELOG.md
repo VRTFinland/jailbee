@@ -20,6 +20,10 @@ before editing `## Unreleased`.
 - `jailbee inbox wait` prints the woken message's id; the obsolete `--path` also prints the id.
 - Orchestrators and children talk to the host broker over a per-container socket, and the broker's messages, spawn/restart queue and reservations, watch/supervision state, publication state and results, and manifest deduplication journal live in `broker.db`. Broker-bound inbox commands exit 4 when the broker is unreachable; invalid arguments exit 2, and `runners` lists local runners without grant filtering when the socket is absent. Send refusals are reported synchronously with exit 1, including without `--wait`; wait replies are not reported twice. Queries return the last completed state during long-running handlers. Durable host state is imported automatically on first use, with legacy files retained as `.migrated`. The file transport has no compatibility window: upgrade only when no orchestration is in progress; file waiters and unread messages are not carried over.
 
+### Fixed
+
+- A child's own subagents no longer message the orchestrator: the `jailbee-orchestration-child` skill and the child spawn prompt say subagents report only to the child's agent, and that the child's agent runs long builds and tests itself as its container's controller.
+
 ## 1.8.3 - 2026-11-05
 
 ### Added

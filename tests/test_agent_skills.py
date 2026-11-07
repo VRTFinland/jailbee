@@ -510,6 +510,14 @@ def test_orchestration_skill_pairs_none_with_quiet_after() -> None:
     )
 
 
+def test_child_skill_keeps_subagents_off_the_inbox() -> None:
+    text = _skill_text(CHILD)
+    assert "## Your own subagents" in text
+    assert "If you are a subagent" in text
+    assert "do not use `jailbee inbox`" in text
+    assert "you are the controller" in text
+
+
 def test_child_skill_covers_done_bounce() -> None:
     text = _skill_text(CHILD)
     assert "uncommitted" in text and "detached" in text

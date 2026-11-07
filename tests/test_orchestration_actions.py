@@ -88,6 +88,12 @@ def test_child_preamble_requests_background_waiter() -> None:
     assert "jailbee inbox wait --timeout none" in actions.child_preamble("orch")
 
 
+def test_child_preamble_keeps_subagents_off_the_inbox() -> None:
+    preamble = actions.child_preamble("orch")
+    assert "you are the controller" in preamble
+    assert "never use `jailbee inbox`" in preamble
+
+
 def test_child_preamble_discourages_progress_notes() -> None:
     assert "send no progress notes" in actions.child_preamble("orch")
 

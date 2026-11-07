@@ -273,7 +273,10 @@ def child_preamble(orchestrator_short: str) -> str:
         "Keep `jailbee inbox wait --timeout none` running in the background "
         "and re-arm it after handling messages. "
         "Message the orchestrator only when it must act or decide "
-        "(question, blocked, a scope change, done); send no progress notes."
+        "(question, blocked, a scope change, done); send no progress notes. "
+        "Within your container you are the controller: run long builds and tests "
+        "yourself. Your own subagents never use `jailbee inbox`; tell them to "
+        "report back to you, not to the orchestrator."
     )
 
 

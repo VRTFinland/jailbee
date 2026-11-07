@@ -34,6 +34,21 @@ or the user; do not change it.
 General development practice (style, tests, commits) comes from the project's
 own instructions.
 
+## Your own subagents
+
+**If you are a subagent** dispatched by the child's agent (an implementer,
+reviewer or any other helper), this skill's inbox protocol is not yours, even
+though `JAILBEE_ROLE=child` is set: do not use `jailbee inbox` at all. Return
+your result, question or blocker to the agent that dispatched you, through
+your normal return value.
+
+As the child's top-level agent, you are the controller of your container.
+Where the project's instructions reserve work for "the controller" (long
+builds or test runs, for example), that means you, never the orchestrator: do
+it yourself. When you dispatch subagents, tell them not to message the
+orchestrator and to report back to you instead. Only you talk to the
+orchestrator.
+
 ## Stay reachable
 
 At session start, run `jailbee inbox wait --timeout none` in the background;
