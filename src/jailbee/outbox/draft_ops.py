@@ -17,12 +17,12 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from jailbee.issue_manifest import _LOGIN_RE as LOGIN_RE
 from jailbee.issue_manifest import (
     MAX_MANIFESTS,
     MAX_OFFER_ACTIONS,
     ME_LOGIN,
 )
-from jailbee.issue_manifest import _LOGIN_RE as LOGIN_RE
 from jailbee.orchestration import wire
 from jailbee.outbox.broker_ops import _bad, _bodies, _kind, _parse_issue, _rename_refs
 from jailbee.outbox.store_db import (
@@ -149,9 +149,7 @@ def _validate(name: str) -> DraftValidate:
     return check
 
 
-def handle_append(
-    store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now: float
-) -> object:
+def handle_append(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now: float) -> object:
     kind = _issue_kind(args)
     name = _name(args)
     action = args.get("action")
@@ -204,13 +202,13 @@ def handle_discard(store: OutboxStore, uuid: str, args: Mapping[str, Any]) -> ob
     return {"kind": kind, "discarded": name}
 
 
-def handle_submit(
-    store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now: float
-) -> object:
+def handle_submit(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now: float) -> object:
     kind = _issue_kind(args)
     name = _name(args)
 
-    def build(stem: str, manifest_text: str, bodies: Mapping[str, str]) -> tuple[str, dict[str, str]]:
+    def build(
+        stem: str, manifest_text: str, bodies: Mapping[str, str]
+    ) -> tuple[str, dict[str, str]]:
         manifest = json.loads(manifest_text)
         if len(manifest.get("actions", [])) > MAX_OFFER_ACTIONS:
             raise _bad(f"issue manifest exceeds the cap of {MAX_OFFER_ACTIONS} actions")

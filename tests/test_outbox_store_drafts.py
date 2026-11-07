@@ -155,7 +155,7 @@ def test_concurrent_appends_to_one_draft_do_not_overlap_or_lose_actions(
     def run(n: int) -> None:
         try:
             ob.draft_append("u1", "issue", "b", comment(n), {}, now=float(n), prepare=prepare)
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:
             errors.append(exc)
 
     first = threading.Thread(target=run, args=(1,))
@@ -183,7 +183,7 @@ def test_many_threads_appending_lose_nothing(ob: OutboxStore) -> None:
     def run(n: int) -> None:
         try:
             ob.draft_append("u1", "issue", "b", comment(n), {}, now=float(n))
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:
             errors.append(exc)
 
     threads = [threading.Thread(target=run, args=(n,)) for n in range(1, 13)]

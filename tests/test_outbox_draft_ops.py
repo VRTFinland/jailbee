@@ -1,4 +1,5 @@
 """Draft socket ops: host-side @REF expected values, caps, role gates, submit."""
+# ruff: noqa: F811  (fixtures imported from the sibling test module)
 
 from __future__ import annotations
 
@@ -10,8 +11,8 @@ import pytest
 from jailbee.issue_manifest import MAX_BODY_BYTES, parse_manifest
 from jailbee.orchestration import wire
 from jailbee.outbox import store_db
-from tests.test_outbox_broker_ops import PLAIN, env, put  # noqa: F401  (env is a fixture)
 from tests.test_orchestration_query import Env
+from tests.test_outbox_broker_ops import PLAIN, env, put  # noqa: F401  (env is a fixture)
 
 
 def create(ref: str = "bug", **extra: object) -> dict[str, object]:
@@ -61,7 +62,8 @@ def test_append_builds_a_draft_and_submit_publishes_one_proposal(env: Env) -> No
     assert shown.ok and shown.result["revision"] == 2
     assert len(json.loads(shown.result["manifest"])["actions"]) == 2
     listed = env.call(wire.OUTBOX_DRAFT_LIST, uuid=PLAIN, kind="issue")
-    assert listed.result == {"drafts": [{"kind": "issue", "name": "b", "actions": 2, "revision": 2}]}
+    row = {"kind": "issue", "name": "b", "actions": 2, "revision": 2}
+    assert listed.result == {"drafts": [row]}
     submitted = env.call(wire.OUTBOX_DRAFT_SUBMIT, uuid=PLAIN, kind="issue", name="b")
     assert submitted.result == {"kind": "issue", "name": "001-b.json"}
     (row,) = store_db.read_proposals(env.rig.root, PLAIN, "issue")
@@ -71,8 +73,14 @@ def test_append_builds_a_draft_and_submit_publishes_one_proposal(env: Env) -> No
 
 def test_submit_renames_bodies_like_single_staging(env: Env) -> None:
     big = "x" * 5000
-    action = {"type": "create", "repo": ".", "title": "Bug", "body_file": "aa.md",
-              "labels": [], "ref": "bug"}
+    action = {
+        "type": "create",
+        "repo": ".",
+        "title": "Bug",
+        "body_file": "aa.md",
+        "labels": [],
+        "ref": "bug",
+    }
     assert append(env, action, bodies={"aa.md": big}).ok
     assert env.call(wire.OUTBOX_DRAFT_SUBMIT, uuid=PLAIN, kind="issue", name="b").ok
     (row,) = store_db.read_proposals(env.rig.root, PLAIN, "issue")
@@ -101,13 +109,20 @@ def test_ref_expected_values_are_derived_on_the_host(
 
 def test_a_container_supplied_expected_value_for_a_ref_is_overwritten(env: Env) -> None:
     assert append(env, create()).ok
-    assert append(env, on_ref("state", state="closed", reason="completed", expected={"state": "closed"})).ok
+    wrong = {"state": "closed"}
+    assert append(env, on_ref("state", state="closed", reason="completed", expected=wrong)).ok
     assert stored_actions(env)[1]["expected"] == {"state": "open"}
 
 
 def test_ref_expected_body_comes_from_the_stored_body_file(env: Env) -> None:
-    long_create = {"type": "create", "repo": ".", "title": "T", "body_file": "aa.md",
-                   "labels": [], "ref": "bug"}
+    long_create = {
+        "type": "create",
+        "repo": ".",
+        "title": "T",
+        "body_file": "aa.md",
+        "labels": [],
+        "ref": "bug",
+    }
     assert append(env, long_create, bodies={"aa.md": "long text"}).ok
     assert append(env, on_ref("edit", body="new")).ok
     assert stored_actions(env)[1]["expected"] == {"body": "long text"}
@@ -209,7 +224,10 @@ def test_drafts_are_scoped_to_the_calling_container(env: Env) -> None:
 
 def test_the_broker_refuses_a_child_every_draft_write_but_not_reads(env: Env) -> None:
     for op, args in [
-        (wire.OUTBOX_DRAFT_APPEND, {"kind": "issue", "name": "b", "action": create(), "bodies": {}}),
+        (
+            wire.OUTBOX_DRAFT_APPEND,
+            {"kind": "issue", "name": "b", "action": create(), "bodies": {}},
+        ),
         (wire.OUTBOX_DRAFT_SUBMIT, {"kind": "issue", "name": "b"}),
         (wire.OUTBOX_DRAFT_DISCARD, {"kind": "issue", "name": "b"}),
     ]:
