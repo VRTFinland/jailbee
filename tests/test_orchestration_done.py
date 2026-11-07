@@ -172,30 +172,31 @@ def test_done_with_surrogate_outbox_text_is_retained_and_serializable(
     real_probe = child_outbox.probe
     rig = _make(tmp_path, mocker)
     _policy(rig, "destroy")
-    issue = tmp_path / "issue-outbox"
-    issue.mkdir()
+    pr = tmp_path / "pr-outbox"
+    pr.mkdir()
     raw_name = b"bad\xff.json" if unsafe_part == "filename" else b"action.json"
     name = os.fsdecode(raw_name)
     verb = "comment" if unsafe_part == "filename" else "bad\udcffverb"
     text = json.dumps({"actions": [{"type": verb}]})
-    fd = os.open(os.fsencode(issue) + b"/" + raw_name, os.O_WRONLY | os.O_CREAT, 0o600)
+    fd = os.open(os.fsencode(pr) + b"/" + raw_name, os.O_WRONLY | os.O_CREAT, 0o600)
     with os.fdopen(fd, "w") as stream:
         stream.write(text)
 
     def discover(*args, **kwargs):
         output = io.StringIO()
         with monkeypatch.context() as scoped:
-            scoped.setattr("sys.argv", ["probe", str(issue), str(tmp_path / "pr-outbox"), "128"])
+            scoped.setattr("sys.argv", ["probe", str(pr), "128"])
             with contextlib.redirect_stdout(output):
                 exec(compile(child_outbox._NAMES_SCRIPT, "<child outbox probe>", "exec"), {})
         return output.getvalue()
 
     rig.incus.with_exec_timeout.return_value.exec_capped.side_effect = discover
-    mocker.patch("jailbee.outbox_io.read_text_outbox", side_effect=[{name: text}, {}])
+    mocker.patch("jailbee.outbox_io.read_text_outbox", side_effect=[{name: text}])
+    mocker.patch("jailbee.orchestration.child_outbox._staged_issues", return_value={})
     pending = real_probe(
         rig.incus.with_exec_timeout.return_value, CHILD, uid=rig.ctx.cfg.container_user.uid
     )
-    assert pending.count == 1 and pending.issue == (name,)
+    assert pending.count == 1 and pending.pr == (name,)
     rig.outbox_probe.return_value = pending
     messages.handle_message(rig.ctx, _done())
     msg = rig.insert_store.call_args.args[2]
@@ -232,7 +233,10 @@ def test_every_done_reports_staged_github_actions(tmp_path, mocker, policy, impo
     assert "staged GitHub" in out.detail
     assert labels.PENDING_DESTROY not in [c.args[1] for c in rig.incus.config_set.call_args_list]
     probe.assert_called_once_with(
-        rig.incus.with_exec_timeout.return_value, CHILD, uid=rig.ctx.cfg.container_user.uid
+        rig.incus.with_exec_timeout.return_value,
+        CHILD,
+        uid=rig.ctx.cfg.container_user.uid,
+        uuid=None,
     )
 
 

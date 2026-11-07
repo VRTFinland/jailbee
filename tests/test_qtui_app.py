@@ -782,7 +782,6 @@ def test_controller_retains_closing_dialog_until_blocked_delete_completes(
     from threading import Event
 
     from jailbee.dashboard.model import RepoTarget
-    from jailbee.outbox_io import JournalStore
     from jailbee.qtui import outbox
     from tests.outbox_support import IDENTITY
     from tests.test_qtui_outbox import select, views
@@ -791,7 +790,6 @@ def test_controller_retains_closing_dialog_until_blocked_delete_completes(
     mocker.patch.object(outbox.config_api, "load_repo_config", return_value=cfg)
     mocker.patch.object(outbox.commands, "resolve_target", return_value=(cfg, IDENTITY.full_name))
     mocker.patch.object(outbox, "Incus", return_value=mocker.Mock())
-    mocker.patch.object(outbox, "JournalStore", return_value=JournalStore(tmp_path / "journals"))
     mocker.patch.object(outbox.service, "load_container", return_value=views(tmp_path))
     entered, release = Event(), Event()
 
@@ -1808,7 +1806,6 @@ def test_run_persistence_error_still_joins_outbox_and_stops_refresh(
     from jailbee.dashboard.model import RepoTarget
     from jailbee.db.models import GuiState
     from jailbee.db.view_prefs import ViewState
-    from jailbee.outbox_io import JournalStore
     from jailbee.qtui import outbox
     from tests.outbox_support import IDENTITY
     from tests.test_qtui_outbox import select, views
@@ -1843,7 +1840,6 @@ def test_run_persistence_error_still_joins_outbox_and_stops_refresh(
     mocker.patch.object(outbox.config_api, "load_repo_config", return_value=cfg)
     mocker.patch.object(outbox.commands, "resolve_target", return_value=(cfg, IDENTITY.full_name))
     mocker.patch.object(outbox, "Incus", return_value=mocker.Mock())
-    mocker.patch.object(outbox, "JournalStore", return_value=JournalStore(tmp_path / "journals"))
     read = mocker.patch.object(outbox.service, "load_container", return_value=view)
     mutation = mocker.patch.object(outbox.service, "execute_delete", return_value=())
     mocker.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes)

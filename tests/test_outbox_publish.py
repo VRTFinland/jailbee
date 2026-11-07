@@ -10,8 +10,9 @@ from jailbee.outbox import io, service
 from jailbee.outbox.inspect import build_views
 from jailbee.outbox.io import PrManagement
 from jailbee.outbox.models import ProposalId
-from jailbee.outbox_io import journal_key, proposal_digest
+from jailbee.outbox_io import proposal_digest
 from tests.issue_store_support import UUID, StoreJournals, StoreSnapshots, instance
+from tests.outbox_journal_fake import journal_key
 from tests.outbox_support import IDENTITY, issue_files, pr_files, store
 
 
@@ -67,7 +68,7 @@ def env(mocker, make_cfg, tmp_path):
 
     def mutate(container, command, text, **kwargs):
         assert command[:4] == ["bash", "-c", io._MUTATE_SCRIPT, "bash"]
-        kind = "issue" if command[4].endswith("issue-outbox") else "pr"
+        kind = "pr"
         sync(kind)
         command = list(command)
         command[4] = str(directory)
@@ -80,11 +81,7 @@ def env(mocker, make_cfg, tmp_path):
     def execute(container, command, **kwargs):
         assert command[:2] == ["bash", "-c"]
         command = list(command)
-        if command[4].endswith("issue-outbox"):
-            # Issue receipts carry the directory and base64 payload, not a log path.
-            kind = "issue"
-            command[4] = str(directory)
-        elif command[-1].endswith(("progress.json", "applied.log")):
+        if command[-1].endswith(("progress.json", "applied.log")):
             kind = "pr"
             command[-1] = str(directory / command[-1].rsplit("/", 1)[-1])
         else:
@@ -202,7 +199,6 @@ def test_existing_whitespace_receipt_refuses_actual_selected_replay(env, name, s
             env[1],
             IDENTITY.full_name,
             ProposalId("pr", name),
-            journal_store=env[3],
             options=PublishOptions(publisher="user"),
             confirm=lambda count: True,
         )
@@ -289,7 +285,6 @@ def test_ambiguous_longer_name_with_valid_sidecar_keeps_existing_progress_rules(
             env[1],
             IDENTITY.full_name,
             ProposalId("pr", name),
-            journal_store=env[3],
             options=PublishOptions(publisher="user"),
             confirm=lambda count: True,
         )
@@ -343,13 +338,12 @@ def selected(
 ):
     from jailbee.outbox.publish import PublishOptions, publish_selected
 
-    cfg, incus, _, journals, *_ = env
+    cfg, incus, _, _journals, *_ = env
     return publish_selected(
         cfg,
         incus,
         IDENTITY.full_name,
         ProposalId(kind, "001.json"),
-        journal_store=journals,
         options=PublishOptions(**{"publisher": "user", **options}),
         confirm=confirm,
         expected_revision=revision,
@@ -373,7 +367,6 @@ def test_policy_refusal_applies_nothing(env, kind):
             env[1],
             IDENTITY.full_name,
             ProposalId(kind, "001.json"),
-            journal_store=env[3],
             options=PublishOptions(publisher="user"),
             confirm=lambda n: True,
             raise_errors=True,
@@ -394,7 +387,6 @@ def test_result_sink_gets_urls_and_policy_sees_applied_batch(env, kind):
             env[1],
             IDENTITY.full_name,
             ProposalId(kind, "001.json"),
-            journal_store=env[3],
             options=PublishOptions(publisher="user"),
             confirm=lambda n: True,
             raise_errors=True,
@@ -466,7 +458,6 @@ def test_created_issue_receipts_follow_manifest_order(env):
             env[1],
             IDENTITY.full_name,
             ProposalId("issue", "001.json"),
-            journal_store=env[3],
             options=PublishOptions(publisher="user"),
             confirm=lambda n: True,
             raise_errors=True,
@@ -493,7 +484,6 @@ def test_issue_receipts_include_partial_success_on_failure(env):
             env[1],
             IDENTITY.full_name,
             ProposalId("issue", "001.json"),
-            journal_store=env[3],
             options=PublishOptions(publisher="user"),
             confirm=lambda n: True,
             raise_errors=True,
@@ -511,7 +501,6 @@ def test_issue_receipts_include_partial_success_on_failure(env):
             env[1],
             IDENTITY.full_name,
             ProposalId("issue", "001.json"),
-            journal_store=env[3],
             options=PublishOptions(publisher="user"),
             confirm=lambda n: True,
             raise_errors=True,
@@ -543,7 +532,6 @@ def test_policy_not_reached_when_confirmation_rewrites_manifest(env, kind):
             env[1],
             IDENTITY.full_name,
             ProposalId(kind, "001.json"),
-            journal_store=env[3],
             options=PublishOptions(publisher="user"),
             confirm=confirm,
             raise_errors=True,
@@ -560,7 +548,7 @@ def test_broker_rewrite_after_precheck_is_refused_by_real_issue_policy(env, tmp_
     from jailbee.orchestration.protocol import PublishManifest
     from tests.test_orchestration_actions import _ctx, _node
 
-    cfg, incus, stores, journals, *_ = env
+    cfg, incus, stores, _journals, *_ = env
     files = {
         "001.json": json.dumps(
             {
@@ -576,7 +564,6 @@ def test_broker_rewrite_after_precheck_is_refused_by_real_issue_policy(env, tmp_
     ctx = _ctx(tmp_path / "broker", sender)
     ctx.cfg, ctx.incus = cfg, incus
     ctx.root.mkdir(parents=True, exist_ok=True)
-    mocker.patch.object(publishing, "JournalStore", return_value=journals)
     mocker.patch.object(publishing, "Incus", return_value=incus)
     request = PublishManifest(
         version=1, type="publish", id="pub-1", outbox="issue", manifest="001.json"
@@ -626,7 +613,6 @@ def test_review_budget_checks_the_progress_that_will_be_applied(env):
             env[1],
             IDENTITY.full_name,
             ProposalId("pr", "001.json"),
-            journal_store=env[3],
             options=PublishOptions(publisher="user"),
             confirm=lambda n: True,
             raise_errors=True,
@@ -864,9 +850,7 @@ def test_typed_mutation_failure_retains_receipts_and_execution_type(env, kind):
 
 def revision(env, kind):
     journals = issue_outbox.store_journals(IDENTITY, UUID) if kind == "issue" else None
-    return build_views(IDENTITY, (env[2][kind],), journal_store=env[3], issue_journals=journals)[
-        0
-    ].revision
+    return build_views(IDENTITY, (env[2][kind],), issue_journals=journals)[0].revision
 
 
 def assert_no_mutation(env):
@@ -973,14 +957,13 @@ def test_pr_draft_and_choose_mode_reach_offer(env, mocker):
 
     offer = mocker.patch("jailbee.pr_outbox.offer_pending_comments", return_value=0)
     callback = mocker.Mock(return_value="draft")
-    cfg, incus, _, journals, *_ = env
+    cfg, incus, _, _journals, *_ = env
     assert (
         publish_selected(
             cfg,
             incus,
             IDENTITY.full_name,
             ProposalId("pr", "001.json"),
-            journal_store=journals,
             options=PublishOptions(publisher="user", draft=True),
             confirm=lambda n: False,
             choose_mode=callback,
@@ -1552,13 +1535,12 @@ def test_ask_publish_mode_aggregate_draft_count(mocker):
 def _sink_publish(env, kind, sink, *, options=None, raise_errors=False, expected_revision=None):
     from jailbee.outbox.publish import PublishOptions, publish_selected
 
-    cfg, incus, _, journals, *_ = env
+    cfg, incus, _, _journals, *_ = env
     return publish_selected(
         cfg,
         incus,
         IDENTITY.full_name,
         ProposalId(kind, "001.json"),
-        journal_store=journals,
         options=options or PublishOptions(publisher="user", dry_run=True, foreign=True),
         confirm=lambda n: pytest.fail("a plan never asks"),
         raise_errors=raise_errors,

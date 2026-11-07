@@ -99,7 +99,10 @@ def test_destroy_guard_checks_running_child_outbox(tmp_path, seams, monkeypatch,
     else:
         assert reason is None
     probe.assert_called_once_with(
-        rig.incus.with_exec_timeout.return_value, rig.child.full, uid=rig.cfg.container_user.uid
+        rig.incus.with_exec_timeout.return_value,
+        rig.child.full,
+        uid=rig.cfg.container_user.uid,
+        uuid=None,
     )
     rig.incus.with_exec_timeout.assert_called_with(actions.CHILD_EXEC_TIMEOUT_S)
 

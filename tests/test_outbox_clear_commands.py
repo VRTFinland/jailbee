@@ -4,7 +4,6 @@ import pytest
 
 from jailbee.outbox import commands, service
 from jailbee.outbox.models import OutboxError, OutboxExecutionError
-from jailbee.outbox_io import JournalStore
 from tests.outbox_support import IDENTITY, issue_files, pr_files, route_issue_snapshot, store
 
 
@@ -40,17 +39,15 @@ def env(mocker, make_cfg, tmp_path):
     mutation = mocker.patch.object(
         service, "mutate_store", side_effect=lambda *a, **kw: kw["delete_names"]
     )
-    journals = JournalStore(tmp_path / "journals")
-    return cfg, incus, files, reader, mutation, journals
+    return cfg, incus, files, reader, mutation, None
 
 
 def clear(env, confirm, **kwargs):
-    cfg, incus, _, _, _, journals = env
+    cfg, incus, _, _, _, _journals = env
     return commands.clear_selected(
         cfg,
         incus,
         ["acme-feature", "acme-other"],
-        journal_store=journals,
         confirm=confirm,
         **kwargs,
     )
@@ -92,8 +89,8 @@ def test_initial_discovery_failure_does_not_block_healthy_target(env, mocker, ca
 def test_approved_snapshot_survives_detached_handoff_without_expanding(env):
     from jailbee.outbox.clear_snapshot import decode_snapshot, encode_snapshot
 
-    cfg, incus, files, _, mutation, journals = env
-    plans = commands.prepare_clear(cfg, incus, ["acme-feature"], journal_store=journals)
+    cfg, incus, files, _, mutation, _journals = env
+    plans = commands.prepare_clear(cfg, incus, ["acme-feature"])
     approved = decode_snapshot(encode_snapshot(plans))
     files["acme-feature", "pr"]["001.json"] += "\n"
     files["acme-feature", "issue"]["002.json"] = issue_files()["001.json"]
@@ -102,7 +99,6 @@ def test_approved_snapshot_survives_detached_handoff_without_expanding(env):
             cfg,
             incus,
             ["acme-feature"],
-            journal_store=journals,
             confirm=lambda plans: True,
             approved=approved,
         )

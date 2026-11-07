@@ -10,7 +10,6 @@ from sqlmodel import Session
 from jailbee import background, host_teardown
 from jailbee.db import get_engine, state_dir
 from jailbee.orchestration import state as ostate
-from jailbee.outbox_io import ContainerIdentity, JournalKey, JournalStore
 
 CREATED = "2026-11-01T10:00:00Z"
 NEW_CREATED = "2026-11-05T10:00:00Z"
@@ -160,42 +159,6 @@ def test_reservations_dead_dropped_live_kept(monkeypatch) -> None:
     assert [(r.child_full, r.pid) for r in kept] == [("foo", 222), ("foo-bar", 111)]
 
 
-def _journal(name: str, created: str, manifest: str, *, uncertain: bool) -> JournalStore:
-    store = JournalStore()
-    key = JournalKey(ContainerIdentity(name, created), manifest)
-    store.create(key, "a" * 64, 1)
-    store.mark_prepared(key, 0, repo="o/r")
-    # A journal left "prepared" is a publication with an unknown outcome.
-    if not uncertain:
-        store.mark_applied(key, 0, repo="o/r", url="https://github.com/o/r/issues/1", issue=1)
-    return store
-
-
-def _active(store: JournalStore, name: str, created: str) -> list:
-    d = store.root / JournalStore._container_directory(ContainerIdentity(name, created))
-    return sorted(p.name for p in d.glob("*.json")) if d.exists() else []
-
-
-def test_certain_journal_archived_uncertain_receipt_kept() -> None:
-    store = _journal("foo", CREATED, "ok.json", uncertain=False)
-    _journal("foo", CREATED, "unsure.json", uncertain=True)
-    host_teardown.cleanup(host_teardown.snapshot(_incus("foo"), "foo"))
-    remaining = _active(store, "foo", CREATED)
-    assert len(remaining) == 1  # only the uncertain one is still active
-    d = store.root / JournalStore._container_directory(ContainerIdentity("foo", CREATED))
-    assert len(list((d / "archive").glob("*.json"))) == 1
-
-
-def test_other_incarnation_and_overlapping_name_journals_untouched() -> None:
-    store = _journal("foo", NEW_CREATED, "m.json", uncertain=False)
-    _journal("foo-bar", CREATED, "m.json", uncertain=False)
-    _journal("foo", CREATED, "m.json", uncertain=False)
-    host_teardown.cleanup(host_teardown.snapshot(_incus("foo"), "foo"))
-    assert len(_active(store, "foo", CREATED)) == 0
-    assert len(_active(store, "foo", NEW_CREATED)) == 1
-    assert len(_active(store, "foo-bar", CREATED)) == 1
-
-
 def test_pr_lock_file_removed_for_exact_identity() -> None:
     import hashlib
 
@@ -215,14 +178,12 @@ def test_pr_lock_file_removed_for_exact_identity() -> None:
 
 
 def test_no_identity_skips_outbox_and_keeps_going(capsys) -> None:
-    store = _journal("foo", CREATED, "m.json", uncertain=False)
     mine = _touch_logs("foo")
     _job("foo", str(mine[0]))
     incus = MagicMock()
     incus.list_containers.return_value = []
     host_teardown.cleanup(host_teardown.snapshot(incus, "foo"))
     assert not mine[0].exists()
-    assert len(_active(store, "foo", CREATED)) == 1
 
 
 def test_step_failure_warns_and_later_steps_still_run(monkeypatch) -> None:

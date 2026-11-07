@@ -8,7 +8,7 @@ import pytest
 
 from jailbee.outbox import io as store_io
 from jailbee.outbox.models import StoreSnapshot
-from jailbee.outbox_io import ContainerIdentity, JournalStore
+from jailbee.outbox_io import ContainerIdentity
 from jailbee.pr_outbox import FinalizeError, Outbox, consume_manifest
 
 
@@ -43,14 +43,14 @@ def source_store(mocker, tmp_path):
 
     mocker.patch("jailbee.pr_outbox.read_outbox", side_effect=read)
     mutation = mocker.patch("jailbee.outbox.io.mutate_store", side_effect=mutate)
-    return incus, files, read, mutate, mutation, JournalStore(tmp_path / "journals")
+    return incus, files, read, mutate, mutation, None
 
 
 @pytest.mark.parametrize("zero", [False, True])
 def test_failed_delete_has_inspectable_progress_and_cleanup_retry(source_store, mocker, zero):
     from jailbee.outbox.inspect import build_views
 
-    incus, files, read, mutate, mutation, journals = source_store
+    incus, files, read, mutate, mutation, _journals = source_store
     if zero:
         raw = json.loads(files["m.json"])
         raw["actions"] = []
@@ -66,7 +66,7 @@ def test_failed_delete_has_inspectable_progress_and_cleanup_retry(source_store, 
     with pytest.raises(FinalizeError):
         consume_manifest(incus, "c", "m.json", "url", uid=1000, preview=original)
     store = StoreSnapshot("pr", tuple(sorted(files.items())), (), ())
-    view = build_views(original.identity, (store,), journal_store=journals)[0]
+    view = build_views(original.identity, (store,))[0]
     assert view.state == "applied"
     assert view.error is None
     assert all(a.state == "applied" and a.receipt == "url" for a in view.actions)
@@ -175,7 +175,7 @@ def test_malformed_source_progress_is_refused(source_store, bad):
 def test_inspection_refuses_receipt_from_replaced_container(source_store):
     from jailbee.outbox.inspect import build_views
 
-    incus, files, read, mutate, mutation, journals = source_store
+    incus, files, read, mutate, mutation, _journals = source_store
 
     def fail_delete(*args, **kwargs):
         if kwargs["delete_names"]:
@@ -186,7 +186,7 @@ def test_inspection_refuses_receipt_from_replaced_container(source_store):
     with pytest.raises(FinalizeError):
         consume_manifest(incus, "c", "m.json", "url", uid=1000, preview=read())
     store = StoreSnapshot("pr", tuple(sorted(files.items())), (), ())
-    view = build_views(ContainerIdentity("c", "replacement"), (store,), journal_store=journals)[0]
+    view = build_views(ContainerIdentity("c", "replacement"), (store,))[0]
     assert view.state == "uncertain"
     assert "another container" in view.error
 
@@ -219,7 +219,7 @@ def test_partial_cleanup_retains_recoverable_inputs(source_store, removed):
     from jailbee.outbox.inspect import build_views
 
     store = StoreSnapshot("pr", tuple(sorted(files.items())), (), ())
-    views = build_views(read().identity, (store,), journal_store=source_store[-1])
+    views = build_views(read().identity, (store,))
     assert len(views) == 1 and views[0].state == "applied"
     mutation.side_effect = mutate
     consume_manifest(incus, "c", "m.json", "url", uid=1000, preview=read())

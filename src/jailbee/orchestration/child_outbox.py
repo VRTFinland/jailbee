@@ -57,7 +57,7 @@ def names(path, cap):
 
 
 try:
-    cap = int(sys.argv[3])
+    cap = int(sys.argv[2])
     result = {'pr': names(sys.argv[1], cap)}
 except OSError as exc:
     result = {'error': str(exc)}

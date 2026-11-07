@@ -14,7 +14,7 @@ from jailbee.orchestration.actions import dispatch
 from jailbee.orchestration.grant import Grant, PublishRights
 from jailbee.orchestration.protocol import PublishManifest
 from jailbee.orchestration.store import open_state_store
-from jailbee.outbox_io import ContainerIdentity, JournalStore
+from jailbee.outbox_io import ContainerIdentity
 from tests.test_orchestration_actions import _ctx, _node
 
 
@@ -38,9 +38,6 @@ def rig(tmp_path, mocker):
     # The precheck reads the sender's proposals from the host outbox store by its key.
     mocker.patch.object(
         issue_outbox, "store_outbox", side_effect=lambda uuid: issue_outbox.OutboxSnapshot(files)
-    )
-    mocker.patch.object(
-        publishing, "JournalStore", return_value=JournalStore(tmp_path / "journals")
     )
     mocker.patch.object(
         issue_outbox,

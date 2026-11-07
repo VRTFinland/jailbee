@@ -81,7 +81,7 @@ def test_fresh_home_guard_allows_user_role_and_outbox_bootstrap(
     labels.write_child_role(incus, "proj-c", uid=cfg.container_user.uid)
     ensure_directories(cfg, incus, "proj-c")
     assert (home / ".jailbee/orchestration/role").read_text().strip() == "child"
-    for relative in (".jailbee", ".jailbee/pr-outbox", ".jailbee/issue-outbox"):
+    for relative in (".jailbee", ".jailbee/pr-outbox"):
         path = home / relative
         assert path.is_dir()
         assert path.stat().st_uid == os.getuid()

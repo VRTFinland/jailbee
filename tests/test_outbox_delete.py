@@ -8,14 +8,17 @@ import pytest
 from jailbee.outbox.delete import DeleteSelection, plan_delete
 from jailbee.outbox.inspect import build_views
 from jailbee.outbox.models import ContainerView, OutboxError, ProposalId
-from jailbee.outbox_io import JournalStore, journal_key, proposal_digest
+from jailbee.outbox_io import proposal_digest
+from tests.outbox_journal_fake import MemoryJournals, journal_key
 from tests.outbox_support import IDENTITY, issue_files, pr_files, store
 
 
 def inspected(tmp_path, kind, files, *, rejected=(), journals=None):
     snapshot = store(kind, files, rejected=rejected)
     views = build_views(
-        IDENTITY, (snapshot,), journal_store=journals or JournalStore(tmp_path / "journals")
+        IDENTITY,
+        (snapshot,),
+        issue_journals=journals.snapshot() if journals is not None else None,
     )
     return ContainerView(IDENTITY, IDENTITY.full_name, True, None, (snapshot,), views)
 
@@ -279,11 +282,11 @@ def test_pr_progress_blocks_deletion_even_for_invalid_manifest(tmp_path, progres
 
 @pytest.mark.parametrize("uncertain", [False, True])
 def test_issue_progress_requires_settled_explicit_archive(tmp_path, uncertain):
+    journals = MemoryJournals()
     files = issue_files()
-    journals = JournalStore(tmp_path / "journals")
     key = journal_key(IDENTITY, "001.json")
     journals.create(
-        key, proposal_digest("001.json", files["001.json"], {"body.md": "Original body"}), 3
+        key, proposal_digest("001.json", files["001.json"], {"body.md": files["body.md"]}), 3
     )
     journals.mark_prepared(key, 0, repo="acme/repo")
     if not uncertain:

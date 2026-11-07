@@ -5,14 +5,17 @@ import pytest
 from jailbee.outbox.delete import DeleteSelection, plan_clear
 from jailbee.outbox.inspect import build_views
 from jailbee.outbox.models import ContainerView, ProposalId
-from jailbee.outbox_io import JournalStore, journal_key, proposal_digest
+from jailbee.outbox_io import proposal_digest
+from tests.outbox_journal_fake import MemoryJournals, journal_key
 from tests.outbox_support import IDENTITY, issue_files, pr_files, store
 
 
 def inspected(tmp_path, kind, files, *, rejected=(), journals=None):
     snapshot = store(kind, files, rejected=rejected)
     views = build_views(
-        IDENTITY, (snapshot,), journal_store=journals or JournalStore(tmp_path / "journals")
+        IDENTITY,
+        (snapshot,),
+        issue_journals=journals.snapshot() if journals is not None else None,
     )
     return ContainerView(IDENTITY, IDENTITY.full_name, True, None, (snapshot,), views)
 
@@ -50,12 +53,12 @@ def test_pr_with_sidecar_or_log_is_kept(tmp_path, evidence):
 
 
 def test_settled_issue_journal_is_archive_deleted(tmp_path):
+    journals = MemoryJournals()
     files = issue_files()
-    journals = JournalStore(tmp_path / "journals")
     key = journal_key(IDENTITY, "001.json")
     journals.create(
         key,
-        proposal_digest("001.json", files["001.json"], {"body.md": "Original body"}),
+        proposal_digest("001.json", files["001.json"], {"body.md": files["body.md"]}),
         3,
     )
     journals.mark_prepared(key, 0, repo="acme/repo")
@@ -67,12 +70,12 @@ def test_settled_issue_journal_is_archive_deleted(tmp_path):
 
 
 def test_uncertain_issue_is_kept_with_resolve_hint(tmp_path):
+    journals = MemoryJournals()
     files = issue_files()
-    journals = JournalStore(tmp_path / "journals")
     key = journal_key(IDENTITY, "001.json")
     journals.create(
         key,
-        proposal_digest("001.json", files["001.json"], {"body.md": "Original body"}),
+        proposal_digest("001.json", files["001.json"], {"body.md": files["body.md"]}),
         3,
     )
     journals.mark_prepared(key, 0, repo="acme/repo")
@@ -129,7 +132,7 @@ def test_plan_lines_name_every_item_and_the_total(tmp_path):
     pr_files_with_evidence["002.json"] = pr_files_with_evidence["001.json"]
     pr = store("pr", pr_files_with_evidence)
     issue = store("issue", issue_files())
-    views = build_views(IDENTITY, (pr, issue), journal_store=JournalStore(tmp_path / "journals"))
+    views = build_views(IDENTITY, (pr, issue))
     container = ContainerView(IDENTITY, IDENTITY.full_name, True, None, (pr, issue), views)
     plan = plan_clear(container)
     lines = clear_plan_lines((plan,))

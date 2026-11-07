@@ -82,7 +82,7 @@ def test_issue_batch_cli_roundtrip(home, broker):
     assert len(data["actions"]) == 2
     assert list(bodies.values()) == ["x" * 5000]
     assert broker.draft_state("batch") is None
-    assert not list(Store(home).outbox("issue").glob("*.json"))
+    assert not (home / ".jailbee" / "issue-outbox").exists()
     listing = json.loads(invoke("ls", "--json").stdout)
     assert listing["issue"] == [{"name": name, "summary": "create, comment"}]
     assert listing["drafts"] == []

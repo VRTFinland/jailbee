@@ -8,7 +8,7 @@ import pytest
 from jailbee.incus import IncusTimeoutError
 from jailbee.outbox.delete import DeleteSelection, plan_delete
 from jailbee.outbox.models import OutboxChanged, OutboxError, OutboxExecutionError, ProposalId
-from jailbee.outbox_io import JournalStore, journal_key, proposal_digest
+from jailbee.outbox_io import proposal_digest
 from tests.issue_store_support import StoreJournals, instance
 from tests.outbox_support import IDENTITY, issue_files, pr_files, route_issue_snapshot, store
 
@@ -31,24 +31,23 @@ def setup_service(mocker, make_cfg, tmp_path, kind="issue"):
     mutation = mocker.patch.object(
         service, "mutate_store", side_effect=lambda *args, **kw: kw["delete_names"]
     )
-    journals = JournalStore(tmp_path / "journals")
-    return service, cfg, incus, files, snapshots, reader, mutation, journals
+    return service, cfg, incus, files, snapshots, reader, mutation, None
 
 
 def preview(env, selection=None, kind="issue"):
     if selection is None:
         selection = DeleteSelection(action=2)
-    service, cfg, incus, _, _, _, _, journals = env
-    view = service.load_container(cfg, incus, IDENTITY.full_name, journal_store=journals)
+    service, cfg, incus, _, _, _, _, _journals = env
+    view = service.load_container(cfg, incus, IDENTITY.full_name)
     return plan_delete(view, ProposalId(kind, "001.json"), selection)
 
 
 def execute(env, plan):
-    service, cfg, incus, _, _, _, _, journals = env
-    return service.execute_delete(cfg, incus, IDENTITY.full_name, plan, journal_store=journals)
+    service, cfg, incus, _, _, _, _, _journals = env
+    return service.execute_delete(cfg, incus, IDENTITY.full_name, plan)
 
 
-@pytest.mark.parametrize("kind", ["issue", "pr"])
+@pytest.mark.parametrize("kind", ["pr"])
 def test_delete_busy_lock_has_bounded_wait_without_mutation(mocker, make_cfg, tmp_path, kind):
     import time
 
@@ -58,11 +57,7 @@ def test_delete_busy_lock_has_bounded_wait_without_mutation(mocker, make_cfg, tm
     env = setup_service(mocker, make_cfg, tmp_path, kind)
     manager = PrManagement(tmp_path / "pr-locks")
     mocker.patch.object(env[0], "PrManagement", return_value=manager)
-    root = env[7].root if kind == "issue" else manager.root
-    archive = mocker.spy(env[7], "archive")
-    key = journal_key(IDENTITY, "001.json")
-    before = env[7].create(key, "a" * 64, 0)
-    raw = env[7]._path(key).read_bytes()
+    root = manager.root
     plan = preview(env, DeleteSelection(), kind)
     env[5].reset_mock()
     with held_by_process(kind, root, IDENTITY):
@@ -73,22 +68,17 @@ def test_delete_busy_lock_has_bounded_wait_without_mutation(mocker, make_cfg, tm
                 env[2],
                 IDENTITY.full_name,
                 plan,
-                journal_store=env[7],
                 lock_timeout=0.1,
             )
         assert 0.08 <= time.monotonic() - started < 0.8
         env[6].assert_not_called()
         env[5].assert_not_called()
-        archive.assert_not_called()
-        assert env[7].load(key) == before
-        assert env[7]._path(key).read_bytes() == raw
     assert (
         env[0].execute_delete(
             env[1],
             env[2],
             IDENTITY.full_name,
             plan,
-            journal_store=env[7],
             lock_timeout=0.1,
         )
         == plan.delete_names
@@ -163,20 +153,6 @@ def test_pr_evidence_blocks_whole_deletion(mocker, make_cfg, tmp_path, evidence)
     env[6].assert_not_called()
 
 
-def journal(env, state):
-    key = journal_key(IDENTITY, "001.json")
-    files = env[3]
-    env[7].create(
-        key, proposal_digest("001.json", files["001.json"], {"body.md": files["body.md"]}), 3
-    )
-    env[7].mark_prepared(key, 0, repo="acme/repo")
-    if state == "applied":
-        env[7].mark_applied(
-            key, 0, repo="acme/repo", url="https://github.com/acme/repo/issues/1", issue=1
-        )
-    return key
-
-
 def test_prepared_recovery_cannot_be_archived(mocker, make_cfg, tmp_path):
     env = setup_service(mocker, make_cfg, tmp_path)
     files = env[3]
@@ -185,38 +161,6 @@ def test_prepared_recovery_cannot_be_archived(mocker, make_cfg, tmp_path):
     StoreJournals(IDENTITY).record("001.json", digest, 3, 0, state="prepared", repo="acme/repo")
     with pytest.raises(OutboxError):
         preview(env, DeleteSelection(archive_journal=True))
-
-
-def test_failed_deletion_never_archives(mocker, make_cfg, tmp_path):
-    env = setup_service(mocker, make_cfg, tmp_path)
-    key = journal(env, "applied")
-    plan = preview(env, DeleteSelection(archive_journal=True))
-    env[6].side_effect = OutboxExecutionError("partial removal")
-    with pytest.raises(OutboxExecutionError):
-        execute(env, plan)
-    assert env[7].load(key).actions
-
-
-@pytest.mark.parametrize("count", [1, 9])
-def test_empty_old_journal_not_reset(mocker, make_cfg, tmp_path, count):
-    env = setup_service(mocker, make_cfg, tmp_path)
-    key = journal_key(IDENTITY, "001.json")
-    before = env[7].create(key, "b" * 64, count)
-    execute(env, preview(env))
-    assert env[7].load(key) == before
-
-
-@pytest.mark.parametrize("count", [1, 3, 9])
-def test_whole_archive_request_keeps_empty_old_journal(mocker, make_cfg, tmp_path, count):
-    env = setup_service(mocker, make_cfg, tmp_path)
-    key = journal_key(IDENTITY, "001.json")
-    before = env[7].create(key, "b" * 64, count)
-    raw = env[7]._path(key).read_bytes()
-    plan = preview(env, DeleteSelection(archive_journal=True))
-    assert execute(env, plan) == plan.delete_names
-    assert env[7].load(key) == before
-    assert env[7]._path(key).read_bytes() == raw
-    assert not (env[7]._path(key).parent / "archive").exists()
 
 
 def test_unreadable_journal_blocks(mocker, make_cfg, tmp_path):
@@ -232,7 +176,7 @@ def test_unreadable_journal_blocks(mocker, make_cfg, tmp_path):
 def test_timeout_unavailable_not_empty(mocker, make_cfg, tmp_path):
     env = setup_service(mocker, make_cfg, tmp_path)
     env[5].side_effect = OutboxExecutionError("timeout")
-    view = env[0].load_container(env[1], env[2], IDENTITY.full_name, journal_store=env[7])
+    view = env[0].load_container(env[1], env[2], IDENTITY.full_name)
     assert not view.available and view.error
     assert view.proposals == ()
 
@@ -258,7 +202,7 @@ def test_pr_null_is_locally_awaiting_and_canonical(mocker, make_cfg, tmp_path):
     payload["pr"] = None
     payload["actions"] = [{"type": "description", "body": "draft"}]
     env[4]["pr"] = store("pr", {"001.json": json.dumps(payload)})
-    view = env[0].load_container(env[1], env[2], IDENTITY.full_name, journal_store=env[7])
+    view = env[0].load_container(env[1], env[2], IDENTITY.full_name)
     assert view.proposals[0].state == "awaiting-pr"
     execute(env, plan_delete(view, ProposalId("pr", "001.json"), DeleteSelection()))
 
@@ -304,7 +248,7 @@ def test_identity_reads_have_finite_timeout(mocker, make_cfg, tmp_path):
     assert all(call.kwargs.get("timeout") == 30 for call in env[2].list_containers.call_args_list)
 
 
-@pytest.mark.parametrize("kind", ["pr", "issue"])
+@pytest.mark.parametrize("kind", ["pr"])
 def test_identity_rechecked_after_lock_wait(mocker, make_cfg, tmp_path, kind):
     from contextlib import contextmanager
 
@@ -316,10 +260,7 @@ def test_identity_rechecked_after_lock_wait(mocker, make_cfg, tmp_path, kind):
         env[2].list_containers.return_value[0]["created_at"] = "replacement"
         yield
 
-    if kind == "issue":
-        mocker.patch.object(env[7], "lock", side_effect=replacing_lock)
-    else:
-        mocker.patch.object(env[0].PrManagement, "lock", side_effect=replacing_lock)
+    mocker.patch.object(env[0].PrManagement, "lock", side_effect=replacing_lock)
     with pytest.raises(OutboxChanged):
         execute(env, plan)
     env[6].assert_not_called()
@@ -363,9 +304,7 @@ def test_issue_proposals_are_listed_from_the_host_store_without_incus_exec(
         return store("pr", {})
 
     mocker.patch.object(service, "read_store", side_effect=read_pr_only)
-    view = service.load_container(
-        make_cfg(tmp_path), incus, IDENTITY.full_name, journal_store=JournalStore(tmp_path / "j")
-    )
+    view = service.load_container(make_cfg(tmp_path), incus, IDENTITY.full_name)
     assert view.available, view.error
     (proposal,) = view.proposals
     assert proposal.id == ProposalId("issue", name)
@@ -383,9 +322,7 @@ def test_an_instance_without_a_uuid_is_unavailable_not_empty(mocker, make_cfg, t
         {"name": IDENTITY.full_name, "created_at": IDENTITY.created_at}
     ]
     mocker.patch.object(service, "read_store", return_value=store("pr", {}))
-    view = service.load_container(
-        make_cfg(tmp_path), incus, IDENTITY.full_name, journal_store=JournalStore(tmp_path / "j")
-    )
+    view = service.load_container(make_cfg(tmp_path), incus, IDENTITY.full_name)
     assert not view.available
     assert "uuid" in (view.error or "")
 
@@ -393,8 +330,4 @@ def test_an_instance_without_a_uuid_is_unavailable_not_empty(mocker, make_cfg, t
 def test_identity_timeout_unavailable(mocker, make_cfg, tmp_path):
     env = setup_service(mocker, make_cfg, tmp_path)
     env[2].list_containers.side_effect = IncusTimeoutError("timeout")
-    assert (
-        not env[0]
-        .load_container(env[1], env[2], IDENTITY.full_name, journal_store=env[7])
-        .available
-    )
+    assert not env[0].load_container(env[1], env[2], IDENTITY.full_name).available

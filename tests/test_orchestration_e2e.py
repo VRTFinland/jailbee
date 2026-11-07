@@ -91,8 +91,8 @@ class FakeIncus:
 
     def exec_capped(self, name: str, argv: list[str], **kw: object) -> str:
         if argv[:3] == ["python3", "-I", "-c"]:
-            return json.dumps({"issue": [], "pr": []})
-        if argv[4] in ("/home/dev/.jailbee/issue-outbox", "/home/dev/.jailbee/pr-outbox"):
+            return json.dumps({"pr": []})
+        if argv[4] == "/home/dev/.jailbee/pr-outbox":
             import base64
 
             return base64.b64encode(bytes(1024)).decode()

@@ -3818,13 +3818,8 @@ def test_draft_counts_only_pending_indices(mocker, make_cfg, tmp_path):
 
 def _revision(tmp_path, identity, store):
     from jailbee.outbox.inspect import build_views
-    from jailbee.outbox_io import JournalStore
 
-    return next(
-        v.revision
-        for v in build_views(identity, (store,), journal_store=JournalStore(tmp_path / "journals"))
-        if v.id.name == "one.json"
-    )
+    return next(v.revision for v in build_views(identity, (store,)) if v.id.name == "one.json")
 
 
 def test_selected_publication_preserves_full_cleanup_scope(mocker, make_cfg, tmp_path):

@@ -7,7 +7,6 @@ from jailbee.cli import app
 from jailbee.cli_outbox import normalize_outbox_argv
 from jailbee.incus import Incus
 from jailbee.outbox import service
-from jailbee.outbox_io import JournalStore
 from tests.outbox_support import IDENTITY, issue_files, pr_files, route_issue_snapshot, store
 
 
@@ -32,7 +31,6 @@ def env(mocker, make_cfg, tmp_path):
     mutation = mocker.patch.object(
         service, "mutate_store", side_effect=lambda *a, **kw: kw["delete_names"]
     )
-    mocker.patch("jailbee.outbox_io.JournalStore", return_value=JournalStore(tmp_path / "journals"))
     return incus, mutation, raw, snapshots
 
 
