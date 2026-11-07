@@ -786,13 +786,15 @@ def test_store_cap_allows_snapshot_on_sibling_connection(
     lis = Listener(queue.Queue(), queries=queries)
     lis.start()
     lis.open_container("a", short_dir / "a")
-    clients = [connect(short_dir / "a") for _ in range(3)]
+    clients = [connect(short_dir / "a") for _ in range(4)]
     try:
         for client in clients[:2]:
             client.sendall(req("list"))
         assert entered.wait(5)
-        clients[2].sendall(req("children"))
-        assert wire.decode_response(recv_line(clients[2])).result == {"op": "children"}
+        clients[2].sendall(req("read"))
+        _wait_until(lambda: any(conn.store_held for conn in lis._conns.values()))
+        clients[3].sendall(req("children"))
+        assert wire.decode_response(recv_line(clients[3])).result == {"op": "children"}
         assert lis._store_queries == {"a": 2}
     finally:
         unblock.set()
