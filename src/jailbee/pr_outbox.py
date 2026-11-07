@@ -1015,7 +1015,7 @@ def apply_manifest(
     draft: bool = False,
     before_action: Callable[[], None] | None = None,
     publisher: sent.Publisher,
-    container_created: datetime | None,
+    uuid: str | Callable[[], str],
     digest: str | None = None,
 ) -> ApplyOutcome:
     """Apply `target.manifest`'s pending actions to GitHub, in the fixed order.
@@ -1108,8 +1108,8 @@ def apply_manifest(
         pr_number = target.pr.number
         sent.record(
             instance=container,
+            uuid=uuid,
             container_prefix=cfg.container_prefix,
-            container_created=container_created,
             publisher=publisher,
             action=partial(
                 _sent_action, manifest, sent_digest, index, manifest.actions[index], url, pr_number
@@ -2952,6 +2952,15 @@ def _offer_locked(
     total = sum(planned_action_count(t.manifest, p, idx) for t, p, idx in plans)
     if action_limit is not None and total > action_limit:
         raise GateError("review actions exceed the reserved publish budget")
+    from functools import cache
+
+    from jailbee.outbox_io import instance_uuid
+
+    @cache
+    def instance_uuid_once() -> str:
+        # Looked up only when a Sent record is written (best effort, after GitHub).
+        return instance_uuid(incus, container)
+
     with ExitStack() as stack:
         tick = stack.enter_context(reporting(total))
         for position, (target, progress, idx) in enumerate(plans):
@@ -2966,7 +2975,7 @@ def _offer_locked(
                 draft=draft,
                 before_action=tick,
                 publisher=publisher,
-                container_created=sent.parse_created(identity.created_at),
+                uuid=instance_uuid_once,
                 digest=proposal_files_digest(outbox.files, target.manifest.name),
             )
             if audit_sink is not None:

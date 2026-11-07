@@ -15,7 +15,7 @@ from jailbee.outbox.sent import SentAction
 from tests.outbox_support import IDENTITY
 
 T0 = datetime(2026, 11, 4, 10, 0, tzinfo=UTC)
-CREATED = datetime(2026, 11, 1, 8, 0, tzinfo=UTC)
+CREATED = "uuid-alpha-x"  # the instance uuid names the incarnation
 URL = "https://github.com/o/r/issues/5#issuecomment-1"
 
 
@@ -23,7 +23,7 @@ def _rec(manifest, *, minutes=0, instance="alpha-x", created=CREATED, url=URL, s
     sent.record(
         instance=instance,
         container_prefix="alpha",
-        container_created=created,
+        uuid=created,
         publisher="user",
         action=SentAction(
             outbox="issue",
@@ -46,7 +46,7 @@ def _source(whole_repo):
     if whole_repo:
         live = {"alpha-x": CREATED}
         return dob.read_sent("alpha", live=live)
-    return dob.read_sent("alpha", instance="alpha-x", created=CREATED)
+    return dob.read_sent("alpha", instance="alpha-x", uuid=CREATED)
 
 
 @pytest.fixture
@@ -77,8 +77,8 @@ def _texts(dlg):
 def test_sent_list_newest_first_and_current_incarnation_only(dialog):
     _rec("old", minutes=0)
     _rec("new", minutes=5)
-    _rec("other-box", minutes=9, instance="alpha-y")
-    _rec("earlier", minutes=8, created=CREATED - timedelta(days=3))
+    _rec("other-box", minutes=9, instance="alpha-y", created="uuid-alpha-y")
+    _rec("earlier", minutes=8, created=CREATED + "-minus-3")
     dialog.sent_button.setChecked(True)
     assert _texts(dialog) == ["body of new", "body of old"]
 
@@ -134,8 +134,8 @@ def test_uncertain_row_is_marked(dialog):
 
 def test_whole_repo_shows_other_containers_and_marks_stale(dialog):
     _rec("mine", minutes=1)
-    _rec("elsewhere", minutes=2, instance="alpha-gone")
-    _rec("earlier", minutes=3, created=CREATED - timedelta(days=3))
+    _rec("elsewhere", minutes=2, instance="alpha-gone", created="uuid-alpha-gone")
+    _rec("earlier", minutes=3, created=CREATED + "-minus-3")
     dialog.sent_button.setChecked(True)
     assert _texts(dialog) == ["body of mine"]
     dialog.repo_check.setChecked(True)
@@ -166,8 +166,8 @@ def test_app_sent_source_uses_snapshot_incarnation(tmp_path):
     from tests.dashboard_fixtures import cfg_group, ci
 
     _rec("now", minutes=2)
-    _rec("earlier", minutes=1, created=CREATED - timedelta(days=3))
-    info = replace(ci("alpha-x", "alpha"), created_at=CREATED)
+    _rec("earlier", minutes=1, created=CREATED + "-minus-3")
+    info = replace(ci("alpha-x", "alpha"), uuid=CREATED)
     app = AppController.__new__(AppController)
     app._latest = [cfg_group(tmp_path, (info,))]
     read = app._sent_source("alpha-x")

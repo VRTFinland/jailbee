@@ -708,6 +708,7 @@ def test_persisted_declared_count_never_allocates_inspection_or_preparation(
     from jailbee import issue_github, issue_outbox
     from jailbee.outbox.inspect import build_views
     from jailbee.outbox_io import issue_receipt_line
+    from tests.issue_store_support import StoreJournals, instance, seed
     from tests.outbox_support import store
 
     name = "one.json"
@@ -737,10 +738,13 @@ def test_persisted_declared_count_never_allocates_inspection_or_preparation(
     cfg = make_cfg(tmp_path)
     incus = mocker.Mock()
     incus.list_containers.return_value = [
-        {"name": key.identity.full_name, "created_at": key.identity.created_at}
+        instance(key.identity.full_name, key.identity.created_at)
     ]
-    mocker.patch.object(
-        issue_outbox, "read_issue_outbox", return_value=issue_outbox.OutboxSnapshot(files)
+    # Preparation reads the host outbox store; its journal declares the wrong count
+    # (an SQLite integer cannot hold the huge one, so it stands in as 3).
+    seed(files)
+    StoreJournals(key.identity).record(
+        name, original_digest, min(count, 3), 0, state="applied", repo="acme/app", issue=7
     )
     mocker.patch.object(
         issue_outbox,
@@ -753,11 +757,9 @@ def test_persisted_declared_count_never_allocates_inspection_or_preparation(
     with pytest.raises(
         issue_outbox.IssueGateError, match=r"count differs|changed after recorded progress"
     ):
-        issue_outbox.prepare_batch(
-            cfg, incus, key.identity.full_name, (name,), uid=1000, journal_store=fresh
-        )
+        issue_outbox.prepare_batch(cfg, incus, key.identity.full_name, (name,))
     remote.assert_not_called()
-    assert fresh.load(key).digest == original_digest
+    assert StoreJournals(key.identity).load(key).digest == original_digest
 
 
 def _settled_log_journal(original, count=2):

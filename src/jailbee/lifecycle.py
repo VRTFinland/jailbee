@@ -85,6 +85,8 @@ class ContainerInfo:
     # Effective ordinary stages, derived by the dashboard gatherer from the host config.
     autostart_rerunnable: bool = False
     created_at: datetime | None = None
+    # Incus `volatile.uuid`: names this incarnation (the outbox store's key).
+    uuid: str | None = None
     memory_usage: int | None = None
     memory_override: bool = False
     # Raw inputs for the CPU/DOING columns, from the same `incus list`
@@ -646,6 +648,7 @@ def list_containers(
                 credential_group=credential_group_raw or None,
                 autostart_profile=config.get("user.jailbee.autostart_profile") or None,
                 created_at=_parse_incus_timestamp(raw.get("created_at")),
+                uuid=config.get("volatile.uuid") or None,
                 memory_usage=memory_usage,
                 init_pid=init_pid,
                 cpu_usage_ns=cpu_usage_ns,

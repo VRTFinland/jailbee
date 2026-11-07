@@ -42,7 +42,8 @@ from jailbee.update_check import UpdateNotice
 # 18 adds profile-aware autostart re-run eligibility.
 # 19 combines these with service choices and built-in autostart profiles.
 # 20 adds the outbox Sent record counts: ContainerInfo and RepoGroup.sent_count.
-PROTOCOL = 20
+# 21 adds ContainerInfo.uuid: Sent records are keyed by the instance uuid.
+PROTOCOL = 21
 
 
 class ProtocolError(ValueError):

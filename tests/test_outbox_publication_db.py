@@ -135,7 +135,9 @@ def test_uncertain_outcome_keeps_a_safe_detail_and_an_uncertain_sent_record(
             now=3.0,
         )
     journal = ps.load("u1", "issue", name)
-    assert journal is not None and journal.actions[0].detail == "GitHub mutation outcome is uncertain"
+    assert (
+        journal is not None and journal.actions[0].detail == "GitHub mutation outcome is uncertain"
+    )
     assert [r.state for r in pdb.read_sent(root)] == ["uncertain"]
 
 
@@ -204,7 +206,9 @@ def test_a_second_live_claim_is_refused_and_is_free_after_release(
         with ps.claim("u1", "issue", name):
             pass
         with BrokerStore(store_path(root)).transaction() as con:
-            (value,) = con.execute("SELECT value FROM state WHERE key LIKE 'outbox.claim:%'").fetchone()
+            (value,) = con.execute(
+                "SELECT value FROM state WHERE key LIKE 'outbox.claim:%'"
+            ).fetchone()
         owner = json.loads(value)
         assert owner["pid"] == os.getpid()
         # Another process holding it: simulate by swapping the token under us.
@@ -270,8 +274,20 @@ def test_a_dead_owners_claim_is_taken_over_and_its_writes_refused(
 def test_review_and_source_records_keep_their_outbox(ps: PublicationStore, root: Path) -> None:
     for outbox, kind in (("review", "comment"), ("source", "pr")):
         entry = SentEntry(
-            "u1", "acme", "acme-feat", "user", outbox, "001.json", "d", 0, kind, "o/r", 3,
-            "https://x", None, "c",
+            "u1",
+            "acme",
+            "acme-feat",
+            "user",
+            outbox,
+            "001.json",
+            "d",
+            0,
+            kind,
+            "o/r",
+            3,
+            "https://x",
+            None,
+            "c",
         )
         ps.record_sent(entry, "applied", now=1.0)
     assert sorted((r.outbox, r.kind) for r in pdb.read_sent(root)) == [
@@ -295,3 +311,41 @@ def test_reads_without_a_store_are_empty(tmp_path: Path) -> None:
     assert pdb.read_journals(missing, "u1") == {}
     assert pdb.sent_counts(missing) == ({}, {})
     assert not store_path(missing).exists()
+
+
+def test_another_thread_of_this_process_cannot_take_a_live_claim(
+    ps: PublicationStore, root: Path
+) -> None:
+    import threading
+
+    name, _ = _stage(root)
+    errors: list[Exception] = []
+
+    def contend() -> None:
+        try:
+            with PublicationStore(BrokerStore(store_path(root))).claim("u1", "issue", name):
+                pass
+        except ClaimBusyError as exc:
+            errors.append(exc)
+
+    with ps.claim("u1", "issue", name):
+        thread = threading.Thread(target=contend)
+        thread.start()
+        thread.join()
+    assert errors, "a live claim of the same process must refuse another thread"
+
+
+def test_a_leaked_claim_of_this_process_is_taken_over(ps: PublicationStore, root: Path) -> None:
+    """A release that failed leaves this process's row behind; it must not wedge a
+    long-running broker until restart."""
+    name, _ = _stage(root)
+    with BrokerStore(store_path(root)).transaction() as con:
+        con.execute(
+            "INSERT INTO state(key, value) VALUES(?, ?)",
+            (
+                f"outbox.claim:u1:issue:{name}",
+                json.dumps({"token": "leaked", "pid": os.getpid(), "start": None}),
+            ),
+        )
+    with ps.claim("u1", "issue", name) as claim:
+        assert claim.token != "leaked"

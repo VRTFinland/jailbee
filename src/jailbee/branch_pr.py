@@ -359,13 +359,16 @@ def publish_source_manifest(
                 authored = own_branches_only
             if audit_sink is not None:
                 audit_sink({"kind": "source", "repo": manifest.repo})
+            from functools import partial
+
             from jailbee.outbox import sent
+            from jailbee.outbox_io import instance_uuid
 
             source_sha = manifest.source_sha
             sent.record(
                 instance=full,
+                uuid=partial(instance_uuid, incus, full),
                 container_prefix=cfg.container_prefix,
-                container_created=sent.parse_created(snapshot.identity.created_at),
                 publisher=publisher,
                 action=lambda: sent.SentAction(
                     outbox="source",

@@ -211,6 +211,18 @@ def container_identity(incus: Incus, container: str) -> ContainerIdentity:
     return ContainerIdentity(full_name=container, created_at=created_at)
 
 
+def instance_uuid(incus: Incus, container: str) -> str:
+    """The instance's Incus ``volatile.uuid``: the outbox store's key for it."""
+    raw = next(
+        (item for item in incus.list_containers(fast=True) if item.get("name") == container), None
+    )
+    config = raw.get("config") if raw is not None else None
+    uuid = config.get("volatile.uuid") if isinstance(config, dict) else None
+    if not isinstance(uuid, str) or not uuid:
+        raise JournalError(f"{container}: instance uuid is unavailable")
+    return uuid
+
+
 def journal_key(identity: ContainerIdentity, manifest_name: str) -> JournalKey:
     """Build the logical key for one manifest journal."""
     if not identity.full_name or not identity.created_at or not manifest_name:

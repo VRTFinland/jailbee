@@ -792,7 +792,7 @@ def test_outbox_mutations_pin_validated_repo_despite_another_gh_default(
         Progress(applied=frozenset(), urls={}),
         uid=1000,
         publisher="user",
-        container_created=None,
+        uuid="uuid-feat",
     )
 
     assert outcome.failure is None
@@ -903,7 +903,7 @@ def test_recorded_transported_submodule_description_then_comments_are_publishabl
         Progress(applied=frozenset({0}), urls={}),
         uid=1000,
         publisher="user",
-        container_created=None,
+        uuid="uuid-feat",
     )
     assert outcome.applied == (1,)
     assert outcome.urls == ("https://x/comment",)
@@ -1453,7 +1453,7 @@ def test_apply_manifest_draft_routes_review_and_reply_to_session(mocker, make_cf
         indices=frozenset({0, 1, 3}),
         draft=True,
         publisher="user",
-        container_created=None,
+        uuid="uuid-feat",
     )
     factory.assert_called_once_with(target)
     assert outcome.applied == (0, 1, 3)
@@ -1511,7 +1511,7 @@ def _exercise_draft_finalization(mocker, make_cfg, tmp_path, *, publish_remainin
         indices=draft_indices(manifest, range(4)),
         draft=True,
         publisher="user",
-        container_created=None,
+        uuid="uuid-feat",
     )
     finalize(incus, "c", outbox, target, outcome, uid=1000)
     files = reader.return_value.as_dict()
@@ -1531,7 +1531,7 @@ def _exercise_draft_finalization(mocker, make_cfg, tmp_path, *, publish_remainin
             read_progress(outbox, manifest.name),
             uid=1000,
             publisher="user",
-            container_created=None,
+            uuid="uuid-feat",
         )
         assert outcome.applied == (2,)
         assert not outcome.draft
@@ -1561,7 +1561,7 @@ def test_apply_manifest_draft_rejects_general_comment(mocker, make_cfg, tmp_path
             indices=frozenset({2}),
             draft=True,
             publisher="user",
-            container_created=None,
+            uuid="uuid-feat",
         )
     calls["comment"].assert_not_called()
 
@@ -1643,7 +1643,7 @@ def test_direct_apply_manifest_refuses_source(mocker, make_cfg, tmp_path, number
             Progress(frozenset(), {}),
             uid=1000,
             publisher="user",
-            container_created=None,
+            uuid="uuid-feat",
         )
     for effect in (*calls.values(), progress, push, incus.exec):
         effect.assert_not_called()
@@ -1678,7 +1678,7 @@ def test_apply_manifest_dispatches_every_operation_in_target_submodule_scope(
         Progress(applied=frozenset(), urls={}),
         uid=1000,
         publisher="user",
-        container_created=None,
+        uuid="uuid-feat",
     )
 
     assert outcome.failure is None
@@ -1747,7 +1747,7 @@ def test_apply_runs_review_then_comments_then_description(mocker, make_cfg, tmp_
         Progress(applied=frozenset(), urls={}),
         uid=1000,
         publisher="user",
-        container_created=None,
+        uuid="uuid-feat",
     )
 
     assert outcome.failure is None
@@ -1780,7 +1780,7 @@ def test_apply_prefixes_a_general_reply_with_a_permalink(mocker, make_cfg, tmp_p
         Progress(applied=frozenset(), urls={}),
         uid=1000,
         publisher="user",
-        container_created=None,
+        uuid="uuid-feat",
     )
 
     body = calls["comment"].call_args.args[2]
@@ -1816,7 +1816,7 @@ def test_apply_skips_indices_already_applied(mocker, make_cfg, tmp_path):
         Progress(applied=frozenset({0}), urls={}),
         uid=1000,
         publisher="user",
-        container_created=None,
+        uuid="uuid-feat",
     )
 
     assert outcome.applied == (1,)
@@ -1850,7 +1850,7 @@ def test_apply_manifest_calls_before_action_once_per_attempt(mocker, make_cfg, t
         uid=1000,
         before_action=lambda: events.append("hook"),
         publisher="user",
-        container_created=None,
+        uuid="uuid-feat",
     )
     assert outcome.applied == (1, 2)
     assert events == ["hook", "post", "hook", "post"]
@@ -1883,7 +1883,7 @@ def test_apply_manifest_hook_stops_with_the_failure(mocker, make_cfg, tmp_path):
         uid=1000,
         before_action=lambda: events.append("hook"),
         publisher="user",
-        container_created=None,
+        uuid="uuid-feat",
     )
     assert outcome.failure is not None
     assert events == ["hook", "hook"]
@@ -1934,7 +1934,7 @@ def test_apply_stops_at_the_first_failure_and_records_progress(mocker, make_cfg,
         Progress(applied=frozenset(), urls={}),
         uid=1000,
         publisher="user",
-        container_created=None,
+        uuid="uuid-feat",
     )
 
     assert outcome.applied == (0,)
@@ -1979,7 +1979,7 @@ def test_apply_restricted_to_indices_leaves_the_rest_pending(mocker, make_cfg, t
         uid=1000,
         indices=frozenset({0}),
         publisher="user",
-        container_created=None,
+        uuid="uuid-feat",
     )
 
     assert outcome.applied == (0,)
@@ -2023,7 +2023,7 @@ def test_apply_writes_the_progress_sidecar_after_each_success(mocker, make_cfg, 
         Progress(applied=frozenset(), urls={}),
         uid=1000,
         publisher="user",
-        container_created=None,
+        uuid="uuid-feat",
     )
 
     sidecar_writes = [
@@ -2077,7 +2077,7 @@ def test_apply_reports_a_recording_failure_after_a_successful_post_and_stops(
         Progress(applied=frozenset(), urls={}),
         uid=1000,
         publisher="user",
-        container_created=None,
+        uuid="uuid-feat",
     )
 
     assert outcome.applied == (0,), "the post landed even though it couldn't be recorded"
@@ -4889,7 +4889,7 @@ def _sent_target(tmp_path, actions):
 def _sent_apply(mocker, make_cfg, tmp_path, target, *, progress=None, publisher="user", **kw):
     from jailbee.pr_outbox import Progress, apply_manifest
 
-    kw.setdefault("container_created", None)
+    kw.setdefault("uuid", "uuid-feat")
 
     return apply_manifest(
         make_cfg(tmp_path),
@@ -4916,14 +4916,11 @@ _FOUR_ACTIONS = [
 
 
 def test_apply_manifest_records_each_action_in_sent_log(mocker, make_cfg, tmp_path):
-    from datetime import UTC, datetime
-
     from jailbee.outbox import sent
 
     _apply_mocks(mocker)
     target = _sent_target(tmp_path, _FOUR_ACTIONS)
-    created = datetime(2026, 11, 1, 8, 0, tzinfo=UTC)
-    outcome = _sent_apply(mocker, make_cfg, tmp_path, target, container_created=created)
+    outcome = _sent_apply(mocker, make_cfg, tmp_path, target, uuid="uuid-created")
     assert outcome.failure is None
     rows = {r.index: r for r in sent.list_records()}
     assert sorted(rows) == [0, 1, 2, 3]
@@ -4931,7 +4928,7 @@ def test_apply_manifest_records_each_action_in_sent_log(mocker, make_cfg, tmp_pa
     assert all(r.target == 7 and r.repo == "acme/widgets" for r in rows.values())
     assert all(r.publisher == "user" and r.state == "applied" for r in rows.values())
     assert all(r.outbox == "review" and r.manifest == "rv.json" for r in rows.values())
-    assert all(r.instance == "app-feat" and r.container_created == created for r in rows.values())
+    assert all(r.instance == "app-feat" and r.uuid == "uuid-created" for r in rows.values())
     assert rows[0].url == "https://x/r"
     assert rows[0].content == "overall\n\na.py:3\nnit"
     assert rows[1].url == "https://x/p" and rows[1].content == "reply body"
@@ -4987,7 +4984,7 @@ def test_failed_action_is_not_recorded(mocker, make_cfg, tmp_path):
 
 def test_publish_survives_sent_record_failure_review(mocker, make_cfg, tmp_path, caplog):
     _apply_mocks(mocker)
-    mocker.patch("jailbee.outbox.sent.get_engine", side_effect=OSError("disk gone"))
+    mocker.patch("jailbee.outbox.sent.pdb.open_publications", side_effect=OSError("disk gone"))
     target = _sent_target(tmp_path, _FOUR_ACTIONS)
     with caplog.at_level("WARNING", logger="jailbee.outbox.sent"):
         outcome = _sent_apply(mocker, make_cfg, tmp_path, target)

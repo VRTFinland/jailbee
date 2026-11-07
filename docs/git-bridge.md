@@ -1276,15 +1276,20 @@ host-only recipe in [Manual testing](https://github.com/VRTFinland/jailbee/blob/
 #### The Sent log
 
 Every action JailBee publishes from an outbox is recorded locally in the host
-state database (`sent_record`): `review apply`, `issue apply`/`resolve`,
+outbox store (`broker.db`, table `outbox_sent`), keyed by the container's Incus
+instance uuid, which names one incarnation: `review apply`, `issue apply`/`resolve`,
 `pr push` (including source publications), the dashboard Outbox `p` and the
 orchestrator broker's [publish grants](orchestration.md#publish-the-orchestrators-own-outboxes).
 A record carries the publisher (`user` or `orchestrator`), the state
 (`applied`, or `uncertain` when GitHub may have accepted it; resolving it as
 applied updates the record, dropping it deletes the record), the content and the
-GitHub URL. Records outlive the container. Recording is best effort: a database
-error warns and never fails a publish that GitHub accepted, and a retry never
-duplicates a row.
+GitHub URL. Records outlive the container. An issue action's record is written
+in the same transaction as its journal entry, so the two never disagree; for PR
+reviews and sources recording is best effort: a database error warns and never
+fails a publish that GitHub accepted. A retry never duplicates a row. Inside the
+container, `jailbee outbox sent` lists that container's own records. Records
+written to `state.sqlite` by earlier versions are not carried over; the JSON
+output (`-o json`, schema 2) names the incarnation by `uuid`.
 
 ```bash
 jb outbox sent ls [CONTAINER] [--repo PREFIX] [-o table|json] [--limit N]
@@ -1571,18 +1576,19 @@ first, then — absent `--yes` — a confirmation naming the exact action
 
 ### Automatic journal archival, and `jailbee issue drop --archive-journal`
 
-Each fully applied manifest is cleaned up before the next manifest starts:
-its actions are logged to `~/.jailbee/issue-outbox/applied.log` (identifiers
-and receipt URLs, never body text), its outbox files are deleted (a shared
-`body_file` only when no other pending manifest references it), and its host
-journal is archived, in that order. A cleanup failure stops the batch.
-
-If logging or deletion fails while the manifest remains, retrying `apply`
-uses the journal to skip already-applied actions and retry cleanup. If
-archival fails **after deletion**, the proposal is already gone and the
-active journal remains; ordinary `apply` cannot rediscover that deleted
-manifest. Inspect the reported error and retained receipts rather than
-recreating the proposal and risking duplicate publication.
+Issue proposals, their publication journals and the Sent log all live in the
+host outbox store (`broker.db`). Publishing one action is two commits around
+the GitHub call: `prepared` first, then the outcome together with its Sent log
+record and — when that outcome completes the proposal — the proposal's removal
+and the journal's archiving, all in one transaction. So a fully applied
+proposal is gone from the outbox the moment its last receipt is recorded; there
+is no separate cleanup step that can half-fail. A run that dies between the two
+commits leaves the action `prepared`, which every reader shows as `uncertain`
+until it is resolved with `jailbee issue resolve`; a journal is never archived
+while an outcome is uncertain. Publication is single-flight per proposal: a
+claim in the store refuses a second run (or a resolution) while another live
+one holds it, and a claim whose process is gone is taken over. The container
+reads what was published from it with `jailbee outbox sent`.
 
 For abandoning a manifest by hand instead — one a human decided not to
 publish — `jailbee issue drop` refuses by default the instant the manifest

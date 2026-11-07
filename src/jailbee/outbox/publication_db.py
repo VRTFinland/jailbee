@@ -169,7 +169,8 @@ def _alive(pid: object, start: object) -> bool:
     return current is None or start is None or current == start
 
 
-_SELF_START = _start_time(os.getpid())
+# Tokens of the claims this process holds right now, across its threads.
+_LIVE_TOKENS: set[str] = set()
 
 
 def _claim_key(uuid: str, kind: str, name: str) -> str:
@@ -403,7 +404,9 @@ def _remove_proposal(con: sqlite3.Connection, uuid: str, kind: str, name: str) -
     con.execute(
         "DELETE FROM outbox_body WHERE uuid=? AND kind=? AND proposal_name=?", (uuid, kind, name)
     )
-    con.execute("DELETE FROM outbox_proposal WHERE uuid=? AND kind=? AND name=?", (uuid, kind, name))
+    con.execute(
+        "DELETE FROM outbox_proposal WHERE uuid=? AND kind=? AND name=?", (uuid, kind, name)
+    )
 
 
 def _archive(
@@ -454,7 +457,8 @@ class PublicationStore:
             return
         token = secrets.token_hex(16)
         key = _claim_key(uuid, kind, name)
-        value = json.dumps({"token": token, "pid": os.getpid(), "start": _SELF_START})
+        pid = os.getpid()  # per claim, not per import: a forked child is its own owner
+        value = json.dumps({"token": token, "pid": pid, "start": _start_time(pid)})
         with self._store.transaction() as con:
             row = con.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
             if row is not None:
@@ -464,7 +468,15 @@ class PublicationStore:
                     owner = {}
                 if not isinstance(owner, dict):
                     owner = {}
-                if _alive(owner.get("pid"), owner.get("start")):
+                mine = owner.get("pid") == os.getpid()
+                # A claim of this very process whose token no live claim holds was
+                # leaked (its release failed): stale, like a dead process's.
+                live = (
+                    owner.get("token") in _LIVE_TOKENS
+                    if mine
+                    else _alive(owner.get("pid"), owner.get("start"))
+                )
+                if live:
                     raise ClaimBusyError(
                         f"{name}: another run (pid {owner.get('pid')}) is publishing this "
                         "proposal; retry after it finishes"
@@ -476,10 +488,12 @@ class PublicationStore:
             )
         claim = Claim(uuid, kind, name, token)
         held[slot] = claim
+        _LIVE_TOKENS.add(token)
         try:
             yield claim
         finally:
             del held[slot]
+            _LIVE_TOKENS.discard(token)
             with contextlib.suppress(StoreError):
                 with self._store.transaction() as con:
                     con.execute(
@@ -533,7 +547,9 @@ class PublicationStore:
                 "AND digest=?",
                 (claim.uuid, claim.kind, claim.name, digest),
             ).fetchone():
-                raise JournalError(f"{claim.name}: this proposal was already published and archived")
+                raise JournalError(
+                    f"{claim.name}: this proposal was already published and archived"
+                )
             con.execute(
                 "INSERT INTO outbox_journal(uuid, kind, proposal_name, digest, container_full, "
                 "action_count, created_at) VALUES(?,?,?,?,?,?,?)",
@@ -669,9 +685,7 @@ class PublicationStore:
             )
             after = _active(con, claim.uuid, claim.kind, claim.name)
             if after is None:
-                actions = tuple(
-                    action if a.index == index else a for a in journal.actions
-                )
+                actions = tuple(action if a.index == index else a for a in journal.actions)
                 after = replace(journal, actions=actions)
             return Settled(after, finalized, changed)
 
@@ -681,8 +695,9 @@ class PublicationStore:
             self._check(con, claim)
             journal = self._required(con, claim, digest)
             finalized, changed = self._finalize(con, claim, digest, now)
-            return Settled(replace(journal, actions=tuple(map(_recover, journal.actions))),
-                           finalized, changed)
+            return Settled(
+                replace(journal, actions=tuple(map(_recover, journal.actions))), finalized, changed
+            )
 
     def resolve(
         self,
@@ -692,6 +707,7 @@ class PublicationStore:
         *,
         applied: tuple[str, int | None] | None,
         sent_outbox: str,
+        sent_target: int | None = None,
         now: float,
     ) -> Settled:
         """A human's resolution of one uncertain (or recovered prepared) action.
@@ -721,12 +737,10 @@ class PublicationStore:
                     digest=digest,
                     index=index,
                     url=url,
-                    target=issue,
+                    target=sent_target if sent_target is not None else issue,
                 )
                 finalized, changed = self._finalize(con, claim, digest, now)
-            after = _active(con, claim.uuid, claim.kind, claim.name) or replace(
-                journal, actions=()
-            )
+            after = _active(con, claim.uuid, claim.kind, claim.name) or replace(journal, actions=())
             return Settled(after, finalized, changed)
 
     def archive(self, uuid: str, kind: Kind, name: str, *, now: float) -> bool:
@@ -739,7 +753,9 @@ class PublicationStore:
             if journal is None:
                 return False
             if any(a.state in ("prepared", "uncertain") for a in journal.actions):
-                raise JournalError(f"{name}: cannot archive a journal containing uncertain progress")
+                raise JournalError(
+                    f"{name}: cannot archive a journal containing uncertain progress"
+                )
             _archive(con, uuid, kind, name, journal.digest, now)
             return True
 
@@ -776,7 +792,9 @@ class PublicationStore:
         self, *, uuid: str, outbox: str, manifest: str, digest: str, index: int
     ) -> None:
         with self._store.transaction() as con:
-            forget_sent(con, uuid=uuid, outbox=outbox, manifest=manifest, digest=digest, index=index)
+            forget_sent(
+                con, uuid=uuid, outbox=outbox, manifest=manifest, digest=digest, index=index
+            )
 
     def clear_sent(self, *, container_prefix: str, before: float | None) -> int:
         sql = "DELETE FROM outbox_sent WHERE container_prefix=?"
@@ -844,22 +862,24 @@ def _read_only(root: Path) -> Iterator[sqlite3.Connection | None]:
             con.close()
     except sqlite3.OperationalError as exc:
         if "no such table" in str(exc):
-            raise _NoTable from exc
+            raise _NoTableError from exc
         raise StoreError(str(exc)) from exc
     except sqlite3.Error as exc:
         raise StoreError(str(exc)) from exc
 
 
-class _NoTable(Exception):
+class _NoTableError(Exception):
     pass
 
 
-def read_journals(root: Path, uuid: str, kind: Kind | None = None) -> dict[tuple[str, str], Journal]:
+def read_journals(
+    root: Path, uuid: str, kind: Kind | None = None
+) -> dict[tuple[str, str], Journal]:
     """Active journals of one instance keyed by (kind, name); never writes."""
     try:
         with _read_only(root) as con:
             return {} if con is None else _active_in(con, uuid, kind)
-    except _NoTable:
+    except _NoTableError:
         return {}
 
 
@@ -879,7 +899,7 @@ def read_sent(
             return _select_sent(
                 con, container_prefix=container_prefix, uuid=uuid, record_id=record_id, limit=limit
             )
-    except _NoTable:
+    except _NoTableError:
         return []
 
 
@@ -897,7 +917,7 @@ def sent_counts(root: Path) -> tuple[dict[str, int], dict[str, int]]:
                 {str(u): int(n) for u, n in by_uuid},
                 {str(p): int(n) for p, n in by_prefix},
             )
-    except _NoTable:
+    except _NoTableError:
         return {}, {}
 
 

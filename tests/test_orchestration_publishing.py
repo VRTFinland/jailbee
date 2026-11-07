@@ -35,16 +35,12 @@ def rig(tmp_path, mocker):
             }
         )
     }
+    # The precheck reads the sender's proposals from the host outbox store by its key.
     mocker.patch.object(
-        issue_outbox,
-        "read_issue_outbox",
-        side_effect=lambda *a, **kw: issue_outbox.OutboxSnapshot(files),
+        issue_outbox, "store_outbox", side_effect=lambda uuid: issue_outbox.OutboxSnapshot(files)
     )
     mocker.patch.object(
         publishing, "JournalStore", return_value=JournalStore(tmp_path / "journals")
-    )
-    mocker.patch.object(
-        publishing, "container_identity", return_value=ContainerIdentity("proj-o", "created")
     )
     mocker.patch.object(
         issue_outbox,

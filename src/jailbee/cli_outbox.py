@@ -13,7 +13,6 @@ from typer import _click as click
 from typer.core import TyperGroup
 
 if TYPE_CHECKING:
-    from datetime import datetime
 
     from jailbee.config import Config
     from jailbee.incus import Incus
@@ -594,12 +593,9 @@ def sent_ls(
     from jailbee.outbox import sent, sent_view
     from jailbee.remote_ssh.repo_scope import scope_for_session
 
-    def show_rows(instance: str | None = None, created: datetime | None = None) -> int:
+    def show_rows(uuid: str | None = None) -> int:
         scope = scope_for_session()
-        rows = sent_view.in_scope(
-            sent.list_records(container_prefix=repo, instance=instance, container_created=created),
-            scope,
-        )
+        rows = sent_view.in_scope(sent.list_records(container_prefix=repo, uuid=uuid), scope)
         if limit is not None:
             rows = rows[:limit]
         if output is Output.json:
@@ -625,8 +621,9 @@ def sent_ls(
         from jailbee.outbox.commands import resolve_incarnation
 
         assert container is not None
-        full, raw = resolve_incarnation(cfg, incus, container)
-        return show_rows(full, sent.parse_created(raw))
+        _, uuid = resolve_incarnation(cfg, incus, container)
+        # No uuid, no incarnation of its own: nothing of it can be on record.
+        return show_rows(uuid) if uuid is not None else show_rows("-")
 
     if container is None:
         _run_sent(ctx, config, show_rows)
