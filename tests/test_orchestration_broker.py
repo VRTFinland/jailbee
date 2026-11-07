@@ -1648,6 +1648,83 @@ def test_failed_stopped_head_clear_does_not_stop_the_round(
     assert rig.serve_requests.call_count == 2
 
 
+BUSY = IncusError('Instance is busy running a "stop" operation')
+
+
+def _stale_rig(rig: Rig) -> broker_state.BrokerMemory:
+    kid = _child()
+    kid["config"][labels.STOPPED_HEAD] = "a" * 40
+    rig.incus.list_containers.return_value = [_orch(), kid]
+    return broker_state.BrokerMemory()
+
+
+def _stale_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if "stale stop labels" in r.getMessage()]
+
+
+def test_busy_instance_stale_clear_warns_once_without_traceback(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    memory = _stale_rig(rig)
+    rig.incus.config_unset_checked.side_effect = BUSY
+    for _ in range(4):
+        rig.tick(memory)
+    records = _stale_records(caplog)
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert records[0].exc_info is None
+    assert rig.incus.config_unset_checked.call_count == 4  # retried every round
+
+
+def test_busy_episode_resets_after_a_successful_round(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    memory = _stale_rig(rig)
+    rig.incus.config_unset_checked.side_effect = BUSY
+    rig.tick(memory)
+    rig.incus.config_unset_checked.side_effect = None
+    rig.tick(memory)
+    rig.incus.config_unset_checked.side_effect = BUSY
+    rig.tick(memory)
+    rig.tick(memory)
+    records = _stale_records(caplog)
+    assert [r.levelno for r in records] == [logging.WARNING, logging.WARNING]
+
+
+def test_persistent_stale_clear_error_logs_one_traceback(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    memory = _stale_rig(rig)
+    rig.incus.config_unset_checked.side_effect = IncusError("daemon gone")
+    for _ in range(4):
+        rig.tick(memory)
+    records = _stale_records(caplog)
+    assert len(records) == 1
+    assert records[0].levelno == logging.ERROR
+    assert records[0].exc_info is not None
+
+
+def test_persistent_serving_error_logs_one_traceback_and_recovers(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    memory = broker_state.BrokerMemory()
+    rig.incus.list_containers.return_value = [_orch()]
+    rig.serve_requests.side_effect = RuntimeError("boom")
+
+    def serving() -> list[logging.LogRecord]:
+        return [r for r in caplog.records if "serving proj-orch failed" in r.getMessage()]
+
+    rig.tick(memory)
+    rig.tick(memory)
+    assert len(serving()) == 1
+    assert serving()[0].exc_info is not None
+    rig.serve_requests.side_effect = None
+    rig.tick(memory)
+    rig.serve_requests.side_effect = RuntimeError("boom")
+    rig.tick(memory)
+    assert len(serving()) == 2
+
+
 # -- watch list: started children ------------------------------------------------
 
 

@@ -79,10 +79,36 @@ class BrokerMemory:
     # Never serve a directory a foreign device named, even if cleanup failed.
     unsafe_socket_dirs: set[str] = field(default_factory=set)
 
+    # Per-container failure key -> signature of the failure last logged for it.
+    failures: dict[str, str] = field(default_factory=dict)
+
     def warn_once(self, key: str, msg: str, *args: object) -> None:
         if key not in self.warned:
             self.warned.add(key)
             log.warning(msg, *args)
+
+    def report_failure(self, key: str, exc: Exception, msg: str, *args: object) -> None:
+        """Log a per-tick failure once per episode instead of once per round.
+
+        A busy instance (an operation in progress) is transient: one WARNING
+        without a traceback. Any other error logs once per distinct message,
+        with the traceback on that first line. `settle_failures` ends episodes.
+        """
+        text = str(exc)
+        busy = "busy" in text.lower()
+        signature = "busy" if busy else f"{type(exc).__name__}: {text}"
+        if self.failures.get(key) == signature:
+            return
+        self.failures[key] = signature
+        if busy:
+            log.warning("%s (instance busy, retrying next round): %s", msg % args, text)
+        else:
+            log.error(msg, *args, exc_info=exc)
+
+    def settle_failures(self, prefix: str, failed: set[str]) -> None:
+        """End the episodes under `prefix` that did not fail this round."""
+        for key in [k for k in self.failures if k.startswith(prefix) and k not in failed]:
+            del self.failures[key]
 
 
 def _new_waiters() -> Waiters:

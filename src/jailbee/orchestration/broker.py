@@ -176,13 +176,16 @@ def tick(
 
     # Before anything is served, so a `stop` handled later in this round keeps
     # the STOPPED_HEAD it records (the snapshot above predates it).
+    stale_failed: set[str] = set()
     for node in nodes.values():
         if node.running and (
             node.config.get(labels.STOPPED_HEAD)
             or node.config.get(labels.STOPPED_DIRTY)
             or node.config.get(labels.STOPPED_OUTBOX)
         ):
-            _clear_stale_stop_labels(incus, node)
+            if not _clear_stale_stop_labels(incus, node, memory):
+                stale_failed.add(f"stale-stop:{node.full}")
+    memory.settle_failures("stale-stop:", stale_failed)
 
     orchestrators: list[ActionContext] = []
     # A name can be reused by a different instance; never carry its child view over.
@@ -192,6 +195,7 @@ def tick(
             memory.children.pop(node.full, None)
     for key in [k for k in memory.contexts if k not in {n.key for n in nodes.values()}]:
         del memory.contexts[key]
+    serve_failed: set[str] = set()
     for node in nodes.values():
         memory.contexts.pop(node.key, None)
         if not broker_state.labelled(node.config):
@@ -215,8 +219,14 @@ def tick(
                         )
                 if has_pending(root, node.full):
                     _flush_unlabelled(node, context, root, incus)
-            except Exception:
-                log.exception("broker: serving former publisher %s failed", node.full)
+            except Exception as exc:
+                serve_failed.add(f"serve:{node.full}")
+                memory.report_failure(
+                    f"serve:{node.full}",
+                    exc,
+                    "broker: serving former publisher %s failed",
+                    node.full,
+                )
             continue
         try:
             ctx = context(node)
@@ -256,8 +266,10 @@ def tick(
                     finish=finishing.flush_callback(ctx) if ctx.sender.running else None,
                     recipient_uuid=node.config.get("volatile.uuid"),
                 )
-        except Exception:
-            log.exception("broker: serving %s failed", node.full)
+        except Exception as exc:
+            serve_failed.add(f"serve:{node.full}")
+            memory.report_failure(f"serve:{node.full}", exc, "broker: serving %s failed", node.full)
+    memory.settle_failures("serve:", serve_failed)
 
     # A child view belongs only to a currently valid orchestrator context.
     owners = {ctx.sender.full for ctx in memory.contexts.values() if ctx.role() == "orchestrator"}
@@ -322,14 +334,24 @@ def tick(
     return active
 
 
-def _clear_stale_stop_labels(incus: Incus, node: Node) -> None:
-    """A running container's recorded stop-time HEAD and dirty flag are stale."""
+def _clear_stale_stop_labels(incus: Incus, node: Node, memory: broker_state.BrokerMemory) -> bool:
+    """A running container's recorded stop-time HEAD and dirty flag are stale.
+
+    Returns False when clearing failed (logged once per episode, retried next round).
+    """
     try:
         for key in (labels.STOPPED_HEAD, labels.STOPPED_DIRTY, labels.STOPPED_OUTBOX):
             if node.config.get(key):
                 incus.config_unset_checked(node.full, key)
-    except Exception:
-        log.exception("broker: clearing the stale stop labels of %s failed", node.full)
+    except Exception as exc:
+        memory.report_failure(
+            f"stale-stop:{node.full}",
+            exc,
+            "broker: clearing the stale stop labels of %s failed",
+            node.full,
+        )
+        return False
+    return True
 
 
 def _flush_unlabelled(
