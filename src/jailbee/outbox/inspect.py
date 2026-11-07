@@ -8,7 +8,7 @@ import re
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, Union, cast
 
 from jailbee import issue_manifest as issues
 from jailbee import pr_outbox as prs
@@ -32,6 +32,12 @@ from jailbee.outbox_io import (
     journal_key,
     proposal_digest,
 )
+
+if TYPE_CHECKING:
+    from jailbee.outbox.publication_db import Journal
+
+# A store-held publication journal of either kind (``prepared`` read as uncertain).
+StoreJournal = Union[IssueJournal, "Journal"]
 
 
 @dataclass(frozen=True)
@@ -244,6 +250,7 @@ def _build_view(
     journal_store: JournalStore,
     recorded_pr: int | None,
     issue_journals: Mapping[str, IssueJournal] | None = None,
+    pr_journals: Mapping[str, StoreJournal] | None = None,
 ) -> ProposalView:
     files = store.as_dict()
     raw = files.get(name, "")
@@ -253,6 +260,7 @@ def _build_view(
     state: State = "pending"
     body_names: set[str] = set()
     evidence: object = None
+    is_source = False
     try:
         try:
             body_names = _body_names(json.loads(raw))
@@ -272,6 +280,7 @@ def _build_view(
             raw = parse_files.get(name, raw)
             manifest = prs.parse_manifest(name, raw, parse_files)
             actions = _pr_actions(manifest, None if manifest.source else recorded_pr)
+            is_source = manifest.source is not None
             if manifest.source is not None:
                 state = "awaiting-push"
             elif manifest.pr is None and recorded_pr is None:
@@ -284,7 +293,12 @@ def _build_view(
         error, state = "manifest JSON nesting exceeds the supported depth", "invalid"
     except (prs.ManifestError, issues.IssueManifestError, OutboxError) as exc:
         error, state = str(exc), "invalid"
-    if store.kind == "pr":
+    # Store-held proposals carry their journals; a PR source's one journaled
+    # action (the push and PR create/update) is not one of its manifest actions.
+    journals: Mapping[str, StoreJournal] | None = (
+        issue_journals if store.kind == "issue" else None if is_source else pr_journals
+    )
+    if store.kind == "pr" and journals is None:
         progress = pr_progress_evidence(
             store, name, len(actions) if state != "invalid" else None, identity=identity
         )
@@ -311,7 +325,7 @@ def _build_view(
     else:
         key = journal_key(identity, name)
         journal_evidence: dict[str, object]
-        if issue_journals is not None:
+        if journals is not None:
             # Store-backed journals (prepared already recovered as uncertain).
             journal_evidence = {"store": True}
         else:
@@ -325,9 +339,7 @@ def _build_view(
             journal_evidence = {"raw": None if journal_bytes is None else journal_bytes.hex()}
         evidence = journal_evidence
         try:
-            journal = (
-                issue_journals.get(name) if issue_journals is not None else journal_store.load(key)
-            )
+            journal = journals.get(name) if journals is not None else journal_store.load(key)
             if journal is not None:
                 journal_evidence["journal"] = asdict(journal)
                 if journal.actions:
@@ -335,8 +347,8 @@ def _build_view(
                     bodies = {n: files[n] for n in body_names if n in files}
                     digest = (
                         proposal_digest(name, raw, bodies)
-                        if issue_journals is not None
-                        else issue_proposal_digest(key, raw, bodies, journal)
+                        if journals is not None
+                        else issue_proposal_digest(key, raw, bodies, cast(IssueJournal, journal))
                     )
                     if journal.digest != digest or journal.action_count != len(actions):
                         raise JournalError("proposal differs from recorded journal history")
@@ -386,11 +398,14 @@ def build_views(
     journal_store: JournalStore,
     recorded_pr: int | None = None,
     issue_journals: Mapping[str, IssueJournal] | None = None,
+    pr_journals: Mapping[str, StoreJournal] | None = None,
 ) -> tuple[ProposalView, ...]:
     """Inspect supplied snapshots without target resolution or directory creation.
 
     issue_journals, when given, are the store's issue journals by manifest name
-    and replace the host journal files for issue proposals.
+    and replace the host journal files for issue proposals. pr_journals, when
+    given, are the store's PR journals: a store-held PR proposal's progress
+    comes from them instead of the container's progress sidecar.
 
     recorded_pr is display context only and never contributes to revision:
     publication must resolve and authorize its actual target through fresh gates.
@@ -413,7 +428,9 @@ def build_views(
                 # Non-addressable rejected entries remain visible in store evidence.
                 continue
             views.append(
-                _build_view(identity, store, name, journal_store, recorded_pr, issue_journals)
+                _build_view(
+                    identity, store, name, journal_store, recorded_pr, issue_journals, pr_journals
+                )
             )
     return tuple(views)
 

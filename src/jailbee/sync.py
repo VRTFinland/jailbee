@@ -3682,6 +3682,7 @@ def _warn_before_container_destroy(
             ],
         )
         _lifecycle.stamp_issue_outbox(ci)
+        _lifecycle.stamp_pr_outbox(ci)
 
     unknown = [short] if status_is_unknown(ci) else []
     summary = assess(cfg, ci)

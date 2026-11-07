@@ -22,7 +22,7 @@ from jailbee.orchestration.grant import Grant, PublishRights, effective_grant
 from jailbee.orchestration.protocol import Manifest, PublishManifest
 from jailbee.orchestration.state import atomic_write_text
 from jailbee.orchestration.store import BrokerStore, import_json_document, open_state_store
-from jailbee.outbox.models import ProposalId
+from jailbee.outbox.models import OutboxError, ProposalId
 from jailbee.outbox.publish import PublishOptions, publish_selected
 from jailbee.outbox_io import ContainerIdentity, JournalStore
 
@@ -195,7 +195,6 @@ def _review_policy(
 def _precheck(
     ctx: ActionContext, m: PublishManifest, rights: PublishRights
 ) -> tuple[str, list[dict[str, str]], bool]:
-    uid = ctx.cfg.container_user.uid
     if m.outbox == "issue":
         # Issue proposals and their journals live in the host outbox store,
         # keyed by the sender's uuid: no `incus exec` into the orchestrator.
@@ -250,7 +249,8 @@ def _precheck(
             [{"kind": "source", "repo": source.manifest.repo}] if pending else [],
             False,
         )
-    snapshot_pr = pr_outbox.read_outbox(ctx.incus, ctx.sender.full, uid=uid, strict=True)
+    # Every PR proposal lives in the host outbox store, keyed by the sender's uuid.
+    snapshot_pr = pr_outbox.store_outbox(ctx.sender.key, container=ctx.sender.full)
     if m.manifest not in snapshot_pr.files or snapshot_pr.rejected:
         raise pr_outbox.GateError("manifest unavailable or outbox snapshot incomplete")
     manifest_pr = pr_outbox.parse_manifest(
@@ -264,7 +264,12 @@ def _precheck(
     if not rights.pr_reviews:
         raise pr_outbox.GateError("pr_reviews is not granted")
     _own_review_repo(ctx.cfg, manifest_pr)
-    progress = pr_outbox._publication_progress(snapshot_pr, m.manifest, len(manifest_pr.actions))
+    try:
+        progress = pr_outbox._publication_progress(
+            snapshot_pr, m.manifest, len(manifest_pr.actions)
+        )
+    except OutboxError as exc:
+        raise pr_outbox.GateError(f"{exc}; resolve it on the host") from exc
     indices = pr_outbox.pending_indices(manifest_pr, progress)
     return (
         "review",

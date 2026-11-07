@@ -86,6 +86,16 @@ def route_issue_snapshot(mocker: Any, service: Any) -> Any:
         )
 
     mocker.patch.object(service, "_delete_issue_rows", side_effect=mutate)
+    # PR proposals likewise: the canned file snapshot (no row versions, so a
+    # deletion takes the `mutate_store` route) and no store journals, so the
+    # views read the canned progress sidecars. The store-backed PR path is
+    # tested in tests/test_outbox_service_pr_store.py.
+    mocker.patch.object(
+        service,
+        "pr_snapshot",
+        side_effect=lambda container, uuid: service.read_store(None, container, "pr", uid=None),
+    )
+    mocker.patch.object(service, "pr_journals", return_value=None)
     return mocker.patch.object(
         service,
         "issue_snapshot",

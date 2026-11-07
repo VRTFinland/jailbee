@@ -314,7 +314,9 @@ def publish_selected(
                     container,
                     pr_number=None,
                     confirm=confirm,
-                    outbox=pr_outbox.Outbox(snapshot.as_dict(), snapshot.rejected, identity),
+                    # The store-backed fresh read inside is checked against the
+                    # shared revision (`expected_revision`), not a second preview.
+                    outbox=None,
                     force=options.force,
                     draft=options.draft,
                     choose_mode=choose_mode,

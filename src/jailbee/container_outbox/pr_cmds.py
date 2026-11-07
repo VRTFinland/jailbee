@@ -259,7 +259,12 @@ def review_add(
         if start_line is not None:
             item["start_line"] = start_line
         bodies = _file_body(item, body_file is not None)
-        review = {"type": "review", "event": "COMMENT", "body": "", "comments": [item]}
+        review: dict[str, object] = {
+            "type": "review",
+            "event": "COMMENT",
+            "body": "",
+            "comments": [item],
+        }
         # The broker merges the comment into the draft's one review action and
         # refuses it when the PR head moved since the draft was started.
         broker.draft_append("pr", f"review-{view.number}", review, bodies, envelope=envelope)

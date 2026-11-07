@@ -56,14 +56,14 @@ def _view(cfg, incus, journals):
     return service.load_container(cfg, incus, IDENTITY.full_name, journal_store=journals)
 
 
-def test_store_sources_appear_next_to_file_proposals(mocker, make_cfg, tmp_path):
+def test_store_sources_appear_and_container_files_are_not_read(mocker, make_cfg, tmp_path):
     cfg, incus, journals, _ = _env(mocker, make_cfg, tmp_path, pr_files())
     name = _stage()
     view = _view(cfg, incus, journals)
     assert view.available, view.error
     states = {str(p.id): p.state for p in view.proposals}
-    assert states[f"pr/{name}"] == "awaiting-push"
-    assert "pr/001.json" in states
+    assert states == {f"pr/{name}": "awaiting-push"}
+    service.read_store.assert_not_called()
     incus.exec.assert_not_called()
 
 

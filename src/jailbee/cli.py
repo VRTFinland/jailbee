@@ -5521,6 +5521,7 @@ def destroy(
         short_name,
         snapshot_targets_for,
         stamp_issue_outbox,
+        stamp_pr_outbox,
     )
 
     cfg = _load_or_exit(config)
@@ -5600,6 +5601,7 @@ def destroy(
                         ],
                     )
                     stamp_issue_outbox(info_)
+                    stamp_pr_outbox(info_)
                 if not _warn_before_destroy(cfg, [info_], question=question):
                     raise typer.Abort()
         if run_in_background:
@@ -14596,6 +14598,8 @@ def review_drop_cmd(
 ) -> None:
     """Delete pending PR actions, unapplied — nothing is published."""
     _deprecated_alias_hint("review drop", "outbox drop")
+    import dataclasses
+
     from jailbee import pr_outbox, prompting
     from jailbee.lifecycle import short_name
 
@@ -14631,13 +14635,9 @@ def review_drop_cmd(
         except pr_outbox.FinalizeError as e:
             error_plain(str(e))
             raise typer.Exit(1) from e
-        # Shrink the snapshot as we go, so a body file shared by two of the
-        # manifests being dropped doesn't look referenced by each of them in
-        # turn and outlive them both.
-        remaining = pr_outbox.Outbox(
-            files={k: v for k, v in remaining.files.items() if k not in deleted},
-            rejected=remaining.rejected,
-            identity=remaining.identity,
+        # Shrink the snapshot as we go (it keeps the store key and row versions).
+        remaining = dataclasses.replace(
+            remaining, files={k: v for k, v in remaining.files.items() if k not in deleted}
         )
         success_plain(f"dropped {manifest_name} ({len(deleted)} file(s))")
 
