@@ -97,6 +97,8 @@ class StoreSnapshot:
     files: tuple[tuple[str, str], ...]
     rejected: tuple[str, ...]
     warnings: tuple[str, ...]
+    # Row versions of the host-store proposals (issue kind): (name, version).
+    versions: tuple[tuple[str, int], ...] = ()
 
     def as_dict(self) -> dict[str, str]:
         """Return content only; retain this snapshot for strict progress interpretation."""

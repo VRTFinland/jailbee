@@ -56,6 +56,14 @@ class ProposalCapError(Exception):
     Not a `StoreError`: the store worked, the request is refused."""
 
 
+class ProposalChangedError(Exception):
+    """The proposal is gone or its row version moved since the caller read it."""
+
+
+class ProposalLockedError(Exception):
+    """Publication already recorded progress for the proposal; it cannot be dropped."""
+
+
 @dataclass(frozen=True)
 class Proposal:
     uuid: str
@@ -352,6 +360,109 @@ class OutboxStore:
                 "DELETE FROM outbox_draft WHERE uuid=? AND kind=? AND name=?", (uuid, kind, name)
             )
         return proposal
+
+    def drop_proposal(
+        self, uuid: str, kind: Kind, name: str, revision: int | None = None
+    ) -> Proposal:
+        """Delete one proposal with its bodies and return the deleted row.
+
+        With ``revision``, the row version must still match (`ProposalChangedError`
+        otherwise, also when the row is gone). A proposal with recorded publication
+        progress (a live journal with actions) is refused (`ProposalLockedError`).
+        """
+        return self.edit_proposal(uuid, kind, name, revision, None)
+
+    def edit_proposal(
+        self,
+        uuid: str,
+        kind: Kind,
+        name: str,
+        revision: int | None,
+        manifest: str | None,
+    ) -> Proposal:
+        """Replace a proposal's manifest (bumping its row version), or delete it
+        when ``manifest`` is None. Same checks as `drop_proposal`."""
+        kind = _kind(kind)
+        with self._store.transaction() as con:
+            found = _select(con, uuid, kind, name)
+            if not found or (revision is not None and found[0].revision != revision):
+                raise ProposalChangedError(f"{kind}/{name} changed or is gone")
+            (live,) = con.execute(
+                "SELECT COUNT(*) FROM outbox_journal WHERE uuid=? AND kind=? "
+                "AND proposal_name=? AND archived_at IS NULL AND action_count>0",
+                (uuid, kind, name),
+            ).fetchone()
+            if live:
+                raise ProposalLockedError(
+                    f"{kind}/{name} has recorded publication progress and cannot be removed"
+                )
+            key = (uuid, kind, name)
+            if manifest is None:
+                con.execute(
+                    "DELETE FROM outbox_body WHERE uuid=? AND kind=? AND proposal_name=?", key
+                )
+                con.execute("DELETE FROM outbox_proposal WHERE uuid=? AND kind=? AND name=?", key)
+            else:
+                con.execute(
+                    "UPDATE outbox_proposal SET manifest=?, revision=revision+1 "
+                    "WHERE uuid=? AND kind=? AND name=?",
+                    (manifest, *key),
+                )
+        return found[0]
+
+    def delete_container(self, uuid: str) -> int:
+        """Destroy semantics: delete the uuid's pending proposals (with bodies) and
+        drafts. Journals and sent records are never touched, so an uncertain
+        journal stays resolvable. Returns the number of proposals deleted."""
+        with self._store.transaction() as con:
+            (count,) = con.execute(
+                "SELECT COUNT(*) FROM outbox_proposal WHERE uuid=?", (uuid,)
+            ).fetchone()
+            for table in ("outbox_body", "outbox_proposal", "outbox_draft"):
+                con.execute(f"DELETE FROM {table} WHERE uuid=?", (uuid,))
+        return int(count)
+
+
+def read_pending_counts(root: Path, kind: Kind = "issue") -> dict[str, int]:
+    """Pending proposals per container uuid, read-only (never creates or migrates).
+
+    Journal-aware: a proposal whose live journal records every action as applied
+    is finished and no longer pending. A missing file or table reads as empty.
+    """
+    path = store_path(root)
+    if not path.exists():
+        return {}
+    sql = (
+        "SELECT p.uuid, COUNT(*) FROM outbox_proposal p WHERE p.kind=? AND NOT EXISTS ("
+        " SELECT 1 FROM outbox_journal j WHERE j.uuid=p.uuid AND j.kind=p.kind"
+        " AND j.proposal_name=p.name AND j.archived_at IS NULL AND j.action_count>0"
+        " AND (SELECT COUNT(*) FROM outbox_journal_action a WHERE a.uuid=j.uuid"
+        "  AND a.kind=j.kind AND a.proposal_name=j.proposal_name AND a.digest=j.digest"
+        "  AND a.state='applied') >= j.action_count) GROUP BY p.uuid"
+    )
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=_BUSY_TIMEOUT_S)
+        try:
+            return {str(u): int(n) for u, n in con.execute(sql, (_kind(kind),)).fetchall()}
+        finally:
+            con.close()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc):
+            return {}
+        raise StoreError(str(exc)) from exc
+    except sqlite3.Error as exc:
+        raise StoreError(str(exc)) from exc
+
+
+def store_path_exists(root: Path) -> bool:
+    return store_path(root).exists()
+
+
+def host_store(root: Path) -> OutboxStore:
+    """The store for host-side writes (drop, clear, destroy); migrates on first use."""
+    from jailbee.orchestration.store import BrokerStore
+
+    return OutboxStore(BrokerStore(store_path(root)))
 
 
 def read_proposals(root: Path, uuid: str, kind: Kind | None = None) -> list[Proposal]:

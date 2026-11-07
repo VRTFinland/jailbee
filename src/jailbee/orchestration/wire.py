@@ -19,7 +19,8 @@ OUTBOX_MAX_LINE_BYTES = 8 * 1024 * 1024
 OUTBOX_PUT = "outbox.put"
 OUTBOX_LIST = "outbox.list"
 OUTBOX_SHOW = "outbox.show"
-OUTBOX_OPS: frozenset[str] = frozenset({OUTBOX_PUT, OUTBOX_LIST, OUTBOX_SHOW})
+OUTBOX_DROP = "outbox.drop"
+OUTBOX_OPS: frozenset[str] = frozenset({OUTBOX_PUT, OUTBOX_LIST, OUTBOX_SHOW, OUTBOX_DROP})
 # Draft batches (`--batch`): appends are small requests; showing one can return up
 # to its whole manifest plus bodies, so that reply gets the outbox cap.
 OUTBOX_DRAFT_APPEND = "outbox.draft.append"
