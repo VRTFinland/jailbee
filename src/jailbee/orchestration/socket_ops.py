@@ -415,9 +415,15 @@ def validate_next_context(
     view = memory.children.get(ctx.sender.full)
     try:
         wake.select_wakeup(
-            [], [], view.children if view is not None else None,
+            [],
+            [],
+            view.children if view is not None else None,
             children_observed_at=view.observed_at if view is not None else None,
-            wake=args.wake, quiet=args.quiet, digest=args.digest, digest_at=None, now=now,
+            wake=args.wake,
+            quiet=args.quiet,
+            digest=args.digest,
+            digest_at=None,
+            now=now,
         )
     except wake.WakeUsage as e:
         raise wire.WireError(wire.BAD_REQUEST, str(e)) from e

@@ -127,8 +127,14 @@ def test_second_next_is_busy(env: Env) -> None:
 
 def test_busy_names_container_waiter(env: Env) -> None:
     env.ask(
-        env.orch, "next", conn=1,
-        waiter={"pid": 123, "started_at": "2026-11-07T12:00:00+00:00", "command": "jailbee inbox wait"},
+        env.orch,
+        "next",
+        conn=1,
+        waiter={
+            "pid": 123,
+            "started_at": "2026-11-07T12:00:00+00:00",
+            "command": "jailbee inbox wait",
+        },
     )
     env.ask(env.orch, "next", conn=2)
     response = env.last()

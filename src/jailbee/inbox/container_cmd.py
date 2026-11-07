@@ -218,8 +218,12 @@ def wait(
 ) -> None:
     _run(
         lambda: socket_cli.cmd_wait(
-            timeout=timeout, wake_on=wake_on, quiet_after=quiet_after, digest=digest,
-            path=path, replace=replace,
+            timeout=timeout,
+            wake_on=wake_on,
+            quiet_after=quiet_after,
+            digest=digest,
+            path=path,
+            replace=replace,
         )
     )
 
