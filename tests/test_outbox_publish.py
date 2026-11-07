@@ -11,7 +11,7 @@ from jailbee.outbox.inspect import build_views
 from jailbee.outbox.io import PrManagement
 from jailbee.outbox.models import ProposalId
 from jailbee.outbox_io import JournalStore, journal_key, proposal_digest
-from tests.outbox_support import IDENTITY, issue_files, pr_files, store
+from tests.outbox_support import IDENTITY, issue_files, pr_files, route_issue_snapshot, store
 
 
 @pytest.fixture
@@ -112,6 +112,7 @@ def env(mocker, make_cfg, tmp_path):
 
     mocker.patch.object(service, "read_store", side_effect=read)
     mocker.patch.object(io, "read_store", side_effect=read)
+    route_issue_snapshot(mocker, service)
     mocker.patch.object(
         issue_outbox, "read_text_outbox", side_effect=lambda *a, **kw: snapshots["issue"].as_dict()
     )

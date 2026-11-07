@@ -23,7 +23,8 @@ log = logging.getLogger(__name__)
 
 SNAPSHOT_OPS = frozenset({"children", "status", "grant"})
 STORE_OPS = frozenset({"list", "read", "ack"})
-QUERY_OPS = SNAPSHOT_OPS | STORE_OPS
+# Outbox ops are SQLite queries too: query workers, never the round loop.
+QUERY_OPS = SNAPSHOT_OPS | STORE_OPS | wire.OUTBOX_OPS
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,8 @@ class Queries:
 
     def _dispatch(self, uuid: str, request: wire.Request) -> object:
         op, args = request.op, request.args
+        if op in wire.OUTBOX_OPS:
+            return self._outbox(uuid, op, args)
         if op in STORE_OPS:
             from jailbee.orchestration import socket_ops
 
@@ -128,6 +131,23 @@ class Queries:
             result["children"] = picked
         return result
 
+    def _outbox(self, uuid: str, op: str, args: dict[str, object]) -> object:
+        """Outbox ops for any container; a child may read but never stage. The
+        role comes from the completed-round view, so the broker, not the
+        container CLI, decides."""
+        from jailbee.container_outbox.role import CHILD_REFUSAL
+        from jailbee.outbox import broker_ops
+        from jailbee.outbox.store_db import OutboxStore
+
+        view = self._snapshot.get(uuid)
+        if view is None or not view.ready:
+            raise wire.WireError(
+                wire.STORE, "the broker does not know this container yet; retry shortly"
+            )
+        if view.role == "child" and op not in (wire.OUTBOX_LIST, wire.OUTBOX_SHOW):
+            raise wire.WireError(wire.REFUSED, CHILD_REFUSAL)
+        return broker_ops.handle(OutboxStore(self._store), uuid, op, args, now=time.time())
+
 
 def _context_snapshot(memory: broker_state.BrokerMemory, ctx: ActionContext) -> ContainerSnapshot:
     """Serialize on the executor so query readers never reach mutable contexts."""
@@ -179,9 +199,16 @@ def publish_queries(memory: broker_state.BrokerMemory) -> None:
         return
     empty_children = json.dumps({"children": [], "observed_at": None, "last_from_child": {}})
     try:
-        recipients = set(memory.store.recipients().values())
+        # A child whose context is missing this round (say, its repo config no
+        # longer loads) must not read as plain: outbox ops refuse children.
         snapshot = {
-            uuid: ContainerSnapshot("plain", True, empty_children, None) for uuid in recipients
+            uuid: ContainerSnapshot(
+                "child" if memory.env_roles.get(full) == "child" else "plain",
+                True,
+                empty_children,
+                None,
+            )
+            for full, uuid in memory.store.recipients().items()
         }
     except Exception:
         log.exception("broker: publishing query recipients failed")

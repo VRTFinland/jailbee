@@ -460,7 +460,10 @@ class Store:
             [dict[str, object], dict[str, str]], tuple[dict[str, object], dict[str, str]]
         ]
         | None = None,
+        write: Callable[[Kind, str, dict[str, object], dict[str, str]], str] | None = None,
     ) -> str:
+        """Stage the draft and remove it; ``write`` replaces the file store
+        (issue proposals are staged through the host broker)."""
         self._require_role()
         with self._draft_lock(kind, name):
             draft = self._draft(kind, name)
@@ -470,7 +473,11 @@ class Store:
             bodies = cast(dict[str, str], draft["bodies"])
             if prepare is not None:
                 manifest, bodies = prepare(manifest, bodies)
-            result = self.write_manifest(kind, slug, manifest, bodies)
+            if write is not None:
+                _validate(kind, f"{slug}.json", manifest, bodies)
+                result = write(kind, slug, manifest, bodies)
+            else:
+                result = self.write_manifest(kind, slug, manifest, bodies)
             with _directory(self.drafts(kind)) as fd:
                 _unlink(fd, f"{name}.json")
             return result

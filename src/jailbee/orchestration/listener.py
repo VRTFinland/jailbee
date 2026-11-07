@@ -27,9 +27,10 @@ connection's input buffer; snapshot and executor requests do not use these
 slots. The bounded global worker queue still answers ``BUSY`` when full.
 
 While a connection is held back its socket is still read, so a
-disconnect is noticed, until ``wire.MAX_LINE_BYTES`` are buffered; then
-reading pauses too. A pipelining client therefore costs bounded memory and
-never has more than one event ahead of another container's request.
+disconnect is noticed, until a line's worth is buffered (``wire.MAX_LINE_BYTES``,
+or ``wire.OUTBOX_MAX_LINE_BYTES`` for an ``outbox.put``); then reading pauses
+too. A pipelining client therefore costs bounded memory and never has more
+than one event ahead of another container's request.
 
 Stopping the listener leaves the socket files in place, so clients get
 ECONNREFUSED while the broker is down; only :meth:`Listener.close_container`
@@ -111,6 +112,11 @@ class _Conn:
     close_after_flush: bool = False
     in_flight: bool = False
     store_held: bool = False
+
+
+def _line_limit(conn: _Conn) -> int:
+    """The cap for the line at the head of ``conn``'s buffer (an outbox put gets more)."""
+    return wire.request_line_limit(bytes(conn.inbuf[:64]))
 
 
 def _prepare_dir(sock_dir: Path) -> bool:
@@ -288,9 +294,13 @@ class Listener:
         """
         self._post(lambda: self._finish(conn_id))
 
-    def respond(self, conn_id: int, response: wire.Response) -> None:
+    def respond(
+        self, conn_id: int, response: wire.Response, *, max_bytes: int = wire.MAX_LINE_BYTES
+    ) -> None:
+        """Answer the request in flight; ``max_bytes`` caps the reply line
+        (`wire.response_line_limit` of the request's op)."""
         try:
-            data = wire.encode_response(response)
+            data = wire.encode_response(response, max_bytes=max_bytes)
         except wire.WireError as exc:
             data = wire.encode_response(wire.fail(exc.code, exc.detail))
         self._post(lambda: self._reply(conn_id, data))
@@ -311,9 +321,10 @@ class Listener:
                         self.release(event.conn_id)
                 continue
             response = queries.answer(event.uuid, event.request)
+            limit = wire.response_line_limit(event.request.op)
             with self._query_lock:
                 if not self._query_stop.is_set():
-                    self.respond(event.conn_id, response)
+                    self.respond(event.conn_id, response, max_bytes=limit)
 
     # -- cross-thread plumbing -------------------------------------------
 
@@ -531,17 +542,18 @@ class Listener:
     def _parse(self, conn: _Conn) -> None:
         """Queue the next complete request line unless the connection is held."""
         while not self._held(conn):
+            limit = _line_limit(conn)
             nl = conn.inbuf.find(b"\n")
             if nl < 0:
-                if len(conn.inbuf) >= wire.MAX_LINE_BYTES:
-                    self._oversize(conn)
+                if len(conn.inbuf) >= limit:
+                    self._oversize(conn, limit)
                 return
-            if nl + 1 > wire.MAX_LINE_BYTES:
-                self._oversize(conn)
+            if nl + 1 > limit:
+                self._oversize(conn, limit)
                 return
             line = bytes(conn.inbuf[: nl + 1])
             try:
-                request = wire.decode_request(line)
+                request = wire.decode_request(line, max_bytes=limit)
             except wire.WireError as exc:
                 del conn.inbuf[: nl + 1]
                 self._send(conn.conn_id, wire.encode_response(wire.fail(exc.code, exc.detail)))
@@ -583,9 +595,9 @@ class Listener:
                 self._requests.put(event)
         self._update_interest(conn)
 
-    def _oversize(self, conn: _Conn) -> None:
+    def _oversize(self, conn: _Conn, limit: int) -> None:
         conn.inbuf.clear()
-        detail = f"line exceeds {wire.MAX_LINE_BYTES} bytes"
+        detail = f"line exceeds {limit} bytes"
         self._send(
             conn.conn_id, wire.encode_response(wire.fail(wire.BAD_REQUEST, detail)), close=True
         )
@@ -659,7 +671,7 @@ class Listener:
         events = 0
         if conn.outbuf:
             events |= selectors.EVENT_WRITE
-        if not (self._held(conn) and len(conn.inbuf) >= wire.MAX_LINE_BYTES):
+        if not (self._held(conn) and len(conn.inbuf) >= _line_limit(conn)):
             events |= selectors.EVENT_READ
         registered = conn.sock in self._sel.get_map() if conn.sock.fileno() >= 0 else False
         with contextlib.suppress(KeyError, ValueError, OSError):

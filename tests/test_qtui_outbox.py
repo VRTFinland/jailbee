@@ -15,7 +15,7 @@ from jailbee.dashboard.model import RepoTarget
 from jailbee.outbox.inspect import build_views
 from jailbee.outbox.models import ContainerView
 from jailbee.outbox_io import JournalStore
-from tests.outbox_support import IDENTITY, issue_files, pr_files, store
+from tests.outbox_support import IDENTITY, issue_files, pr_files, route_issue_snapshot, store
 
 
 def views(tmp_path, *, files=None):
@@ -354,6 +354,7 @@ def test_real_shared_deletion_changes_only_selected_comment(env, qtbot, mocker):
     mocker.patch.object(
         outbox.service, "read_store", side_effect=lambda i, c, kind, **kw: snapshots[kind]
     )
+    route_issue_snapshot(mocker, outbox.service)
     management = mocker.patch.object(outbox.service, "PrManagement")
     from jailbee.outbox.io import PrManagement
 

@@ -6,6 +6,7 @@ from typing import Annotated, cast
 
 import typer
 
+from jailbee.container_outbox import broker
 from jailbee.container_outbox.issue_cmds import _guard, _run
 from jailbee.container_outbox.store import Kind, OutboxCommandError, Store
 
@@ -52,8 +53,14 @@ def ls(
     def run() -> None:
         store = Store(Path.home())
         data: dict[str, list[dict[str, object]]] = {"issue": [], "pr": [], "drafts": []}
+        # Issue proposals live in the host store; PR proposals are still files here.
+        data["issue"] = [
+            {"name": row["name"], "summary": row["summary"]}
+            for row in broker.list_proposals("issue")
+        ]
         for entry in store.list():
-            data[entry.kind].append({"name": entry.name, "summary": entry.summary})
+            if entry.kind == "pr":
+                data["pr"].append({"name": entry.name, "summary": entry.summary})
         data["drafts"] = store.list_drafts()
         if as_json:
             typer.echo(json.dumps(data))
@@ -73,7 +80,10 @@ def show(target: TargetArg = None) -> None:
 
     def run() -> None:
         kind, name = _target(target)
-        typer.echo(Store(Path.home()).show(kind, name))
+        if kind == "issue":
+            typer.echo(broker.show(kind, name)["manifest"])
+        else:
+            typer.echo(Store(Path.home()).show(kind, name))
 
     _run(run)
 
@@ -112,7 +122,11 @@ def submit(name: DraftArg = None, kind: KindOpt = None) -> None:
         store = _guard()
         domain, draft = _resolve(store, name, kind)
         result = store.draft_submit(
-            domain, draft, draft, prepare=_not_review if domain == "pr" else None
+            domain,
+            draft,
+            draft,
+            prepare=_not_review if domain == "pr" else None,
+            write=broker.put if domain == "issue" else None,
         )
         typer.echo(f"staged {domain}/{result}")
 
