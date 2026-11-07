@@ -26,7 +26,21 @@ before editing `## Unreleased`.
 
 ### Changed
 
-- The outbox moved to the host: every container stages issue and PR proposals
+- The outbox moved to the host.
+  **Before upgrading**, with the version you run now:
+  - Drain the old outboxes through `jb outbox`: publish or drop every pending
+    issue and PR proposal, and resolve uncertain publications. The old
+    `~/.jailbee/{issue,pr}-outbox` directories are ignored afterwards.
+  - Note that the old Sent history in `state.sqlite` is dropped, not carried over.
+  - Do not plan to roll back to an older `jb` afterwards: `broker.db` then has a
+    newer schema than that version understands, so downgrading is unsupported.
+
+  After upgrading there is nothing to run: the broker restarts itself on the
+  new version, re-stages the in-container app and skills, and attaches the
+  socket device to running containers (`jb new` does so for new ones). If
+  `jb doctor` reports the broker as not running, run `jb setup`.
+
+  Every container now stages issue and PR proposals
   (and draft batches) over its broker socket into the host outbox store
   (`broker.db`), which also keeps each publication's per-action journal and the
   Sent log. Host commands (`jb outbox`, `jb issue`, `jb review`, `jb pr`) read and
@@ -37,10 +51,7 @@ before editing `## Unreleased`.
   is unreachable. Proposals are bound to the Incus instance, so a fork or a
   restored snapshot does not carry them. Destroying a container keeps only
   proposals with an uncertain publication outcome; `jb outbox` lists them as
-  `<container>@<uuid>` until they are resolved and dropped. **Before upgrading**, publish or drop
-  pending proposals and resolve uncertain publications: the old
-  `~/.jailbee/{issue,pr}-outbox` directories are ignored afterwards, and the old
-  Sent history in `state.sqlite` is not carried over
+  `<container>@<uuid>` until they are resolved and dropped
   ([#89](https://github.com/VRTFinland/jailbee/issues/89)).
 
 ### Fixed
