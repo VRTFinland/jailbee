@@ -30,6 +30,9 @@ class FakeListener:
     def is_connected(self, conn_id: int) -> bool:
         return conn_id not in self.dropped
 
+    def keepalive(self, conn_id: int) -> None:
+        self.respond(conn_id, wire.ok({"kind": "keepalive"}))
+
     def release(self, conn_id: int) -> None:
         self.released.append(conn_id)
 
@@ -101,6 +104,39 @@ def test_next_with_unread_item_answers_at_once(env: Env) -> None:
     assert env.listener.responses == []  # parked until evaluated
     executor.evaluate_waiters(env.memory)
     assert env.last().result == {"kind": "message", "id": "a"}
+
+
+def test_next_sends_initial_and_periodic_keepalives_without_answering_waiter(env: Env) -> None:
+    ticks = [0.0]
+    executor.handle_event(
+        env.memory,
+        RequestEvent(env.orch, 3, wire.Request("next", {"keepalive": True})),
+        clock=lambda: ticks[0],
+    )
+    assert env.listener.responses == [(3, wire.ok({"kind": "keepalive"}))]
+    assert len(env.memory.waiters) == 1
+    ticks[0] = wire.KEEPALIVE_INTERVAL - 0.1
+    executor.evaluate_waiters(env.memory, clock=lambda: ticks[0])
+    assert len(env.listener.responses) == 1
+    ticks[0] = wire.KEEPALIVE_INTERVAL
+    executor.evaluate_waiters(env.memory, clock=lambda: ticks[0])
+    assert env.listener.responses[-1] == (3, wire.ok({"kind": "keepalive"}))
+    assert len(env.memory.waiters) == 1
+    env.put("real-message")
+    ticks[0] += 1
+    executor.evaluate_waiters(env.memory, clock=lambda: ticks[0])
+    ticks[0] += 2
+    executor.evaluate_waiters(env.memory, clock=lambda: ticks[0])
+    assert env.listener.responses[-1] == (3, wire.ok({"kind": "message", "id": "real-message"}))
+    assert len(env.memory.waiters) == 0
+    env.ask(env.orch, "list", conn=8, after=0)
+    assert [item["id"] for item in env.last().result["items"]] == ["real-message"]
+
+
+def test_old_next_client_has_no_keepalive(env: Env) -> None:
+    env.ask(env.orch, "next", conn=4)
+    assert env.listener.responses == []
+    assert len(env.memory.waiters) == 1
 
 
 def test_next_parks_then_wakes_on_insert(env: Env) -> None:

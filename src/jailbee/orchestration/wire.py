@@ -12,6 +12,7 @@ from typing import IO, Any, cast
 
 VERSION = 1
 MAX_LINE_BYTES = 1024 * 1024  # 1 MiB, newline included
+KEEPALIVE_INTERVAL = 30.0
 
 VERSION_ERROR = "version"
 BAD_REQUEST = "bad_request"

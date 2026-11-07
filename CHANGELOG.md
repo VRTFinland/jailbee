@@ -26,6 +26,11 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- `jailbee inbox wait --timeout none` no longer hangs silently when the broker
+  stops or hangs: keepalives detect stalled connections, and two minutes of
+  continuous unavailability exits 4. Reconnects resolve the socket path again
+  without repeating a waiter takeover
+  ([#102](https://github.com/VRTFinland/jailbee/issues/102)).
 - Broker sockets survive container reboots: the mount moves outside `/run`,
   where systemd's boot-time tmpfs hid it. The broker automatically re-attaches
   devices at the old mount path; no image rebuild or `jb apply` is needed

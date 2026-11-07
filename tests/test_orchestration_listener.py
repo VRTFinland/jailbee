@@ -178,6 +178,46 @@ def test_unread_replies_stop_request_intake(
     c.close()
 
 
+def test_keepalive_does_not_finish_inflight_request_or_consume_budget(
+    env: tuple[Listener, queue.Queue[Event], Path],
+) -> None:
+    lis, q, root = env
+    lis.open_container("u", root / "u")
+    client = connect(root / "u")
+    client.sendall(req("next"))
+    event = q.get(timeout=2)
+    lis.keepalive(event.conn_id)
+    assert wire.decode_response(recv_line(client)).result == {"kind": "keepalive"}
+    assert lis._inflight == {"u": 1}
+    assert lis._conns[event.conn_id].in_flight
+    client.sendall(req("later"))
+    with pytest.raises(queue.Empty):
+        q.get(timeout=0.2)
+    lis.respond(event.conn_id, wire.ok({"kind": "done"}))
+    assert wire.decode_response(recv_line(client)).result == {"kind": "done"}
+    later = q.get(timeout=2)
+    assert isinstance(later, RequestEvent) and later.request.op == "later"
+    client.close()
+
+
+def test_keepalive_drops_connection_at_output_cap(env, monkeypatch):
+    from jailbee.orchestration import listener
+
+    lis, q, root = env
+    lis.open_container("u", root / "u")
+    client = connect(root / "u")
+    client.sendall(req("next"))
+    event = q.get(timeout=2)
+    monkeypatch.setattr(listener, "OUTBUF_CAP", 0)
+    lis.keepalive(event.conn_id)
+    dropped = q.get(timeout=2)
+    assert isinstance(dropped, DisconnectEvent)
+    assert dropped.conn_id == event.conn_id
+    assert not lis.is_connected(event.conn_id)
+    lis.release(event.conn_id)
+    client.close()
+
+
 def test_respond_delivers(env: tuple[Listener, queue.Queue[Event], Path]) -> None:
     lis, q, root = env
     lis.open_container("u", root / "u")

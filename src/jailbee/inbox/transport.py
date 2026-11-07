@@ -34,6 +34,8 @@ NO_REPLY_MESSAGE = (
 _BACKOFF_START = 0.5
 _BACKOFF_CAP = 5.0
 _READ_GRACE = 5.0  # socket read slack beyond the server-side long-poll timeout
+_UNREACHABLE_LIMIT = 120.0
+_KEEPALIVE_TIMEOUT = wire.KEEPALIVE_INTERVAL + 10.0
 
 
 class BrokerUnreachable(Exception):  # noqa: N818 - name fixed by the spec
@@ -71,6 +73,9 @@ class Client:
         self._reader: IO[bytes] | None = None
         self.connected = False  # a connect has succeeded at least once
         self.request_written = False  # a request has been fully written
+        self.on_keepalive: Callable[[], float | None] | None = None
+        self.connect_budget: float | None = None
+        self.read_budget: Callable[[], float] | None = None
 
     def __enter__(self) -> Client:
         return self
@@ -99,7 +104,10 @@ class Client:
             return self._sock
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
-            sock.settimeout(self._connect_timeout)
+            budget = self._connect_timeout
+            if self.connect_budget is not None:
+                budget = min(budget, self.connect_budget)
+            sock.settimeout(budget)
             sock.connect(self._path)
         except OSError as exc:  # includes connect timeout, refused, ENOENT
             sock.close()
@@ -109,36 +117,71 @@ class Client:
         self.connected = True
         return sock
 
+    def _next_line(self, sock: socket.socket, buffer: bytearray, timeout: float) -> bytes | None:
+        """Bound the whole frame, not just each recv of a partial JSON line."""
+        until = time.monotonic() + timeout
+        while True:
+            newline = buffer.find(b"\n")
+            if newline >= 0:
+                line = bytes(buffer[:newline + 1])
+                del buffer[:newline + 1]
+                if len(line) > wire.MAX_LINE_BYTES:
+                    raise wire.WireError(wire.BAD_REQUEST, "keepalive frame too large")
+                return line
+            if len(buffer) >= wire.MAX_LINE_BYTES:
+                raise wire.WireError(wire.BAD_REQUEST, "keepalive frame too large")
+            remaining = until - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError
+            sock.settimeout(remaining)
+            data = sock.recv(min(65536, wire.MAX_LINE_BYTES + 1 - len(buffer)))
+            if not data:
+                return None
+            buffer.extend(data)
+
     def call(self, op: str, args: dict[str, Any], *, timeout: float | None) -> Any:
         try:
             payload = wire.encode_request(wire.Request(op=op, args=args))
         except wire.WireError as exc:
             raise BrokerError(exc.code, exc.detail) from exc
         sock = self._connect()
+        if self.read_budget is not None:
+            timeout = self.read_budget()
         try:
             sock.settimeout(timeout)
             sock.sendall(payload)
             self.request_written = True
             assert self._reader is not None
-            line = wire.read_line(self._reader)
+            buffer = bytearray()
+            while True:
+                if op == "next" and args.get("keepalive") is True and timeout is not None:
+                    line = self._next_line(sock, buffer, timeout)
+                else:
+                    line = wire.read_line(self._reader)
+                if line is None:
+                    self.close()
+                    raise BrokerUnreachable()
+                resp = wire.decode_response(line)
+                if not (
+                    op == "next"
+                    and args.get("keepalive") is True
+                    and resp.ok
+                    and resp.result == {"kind": "keepalive"}
+                ):
+                    break
+                if self.on_keepalive is not None:
+                    timeout = self.on_keepalive()
+                    sock.settimeout(timeout)
         except TimeoutError:
             self.close()
             raise
         except wire.WireError as exc:
             self.close()
+            if exc.code == wire.VERSION_ERROR:
+                raise BrokerVersionMismatch() from exc
             raise BrokerUnreachable() from exc
         except OSError as exc:
             self.close()
-            raise BrokerUnreachable() from exc
-        if line is None:
-            self.close()
-            raise BrokerUnreachable()
-        try:
-            resp = wire.decode_response(line)
-        except wire.WireError as exc:
-            self.close()
-            if exc.code == wire.VERSION_ERROR:
-                raise BrokerVersionMismatch() from exc
             raise BrokerUnreachable() from exc
         if resp.ok:
             return resp.result
@@ -159,26 +202,59 @@ def call_next(
 
     The very first connect failing is raised at once; after one successful
     connect, drops are retried with backoff until the caller's deadline, at
-    which point ``{"kind": "timeout"}`` is returned.
+    which point ``{"kind": "timeout"}`` is returned. Continuous unavailability
+    is bounded even without a deadline. Only broker keepalives prove progress;
+    repeatedly connecting to a hung executor must not reset that bound.
+    ``client_factory`` re-resolves the socket path for each reconnect.
     """
     deadline = None if timeout is None else clock() + timeout
     ever_connected = False
     backoff = _BACKOFF_START
+    unreachable_since: float | None = None
+    last_progress = clock()
+
+    def read_budget() -> float:
+        budget = _KEEPALIVE_TIMEOUT
+        if deadline is not None:
+            budget = min(budget, max(deadline - clock(), 0.0) + _READ_GRACE)
+        if unreachable_since is not None:
+            budget = min(budget, max(_UNREACHABLE_LIMIT - (clock() - unreachable_since), 0.001))
+        return budget
+
+    def alive() -> float:
+        nonlocal unreachable_since, backoff, ever_connected, last_progress
+        last_progress = clock()
+        unreachable_since = None
+        backoff = _BACKOFF_START
+        ever_connected = True
+        if deadline is not None and clock() >= deadline:
+            raise TimeoutError
+        return read_budget()
+
     while True:
         remaining = None if deadline is None else deadline - clock()
         if remaining is not None and remaining <= 0:
             return {"kind": "timeout"}
-        attempt = dict(args)
+        if unreachable_since is not None and clock() - unreachable_since >= _UNREACHABLE_LIMIT:
+            raise BrokerUnreachable()
+        attempt = {**args, "keepalive": True}
         if ever_connected and "replace" in attempt:
             # A reconnect must not steal the slot from a newer explicit waiter.
             attempt["replace"] = False
         if remaining is not None:
             attempt["timeout"] = remaining
-        read_timeout = None if remaining is None else remaining + _READ_GRACE
         client = None
         try:
             client = client_factory()
-            return client.call("next", attempt, timeout=read_timeout)
+            if unreachable_since is None:
+                last_progress = clock()
+            client.on_keepalive = alive
+            client.read_budget = read_budget
+            connect_budget = read_budget()
+            if deadline is not None:
+                connect_budget = min(connect_budget, max(deadline - clock(), 0.001))
+            client.connect_budget = connect_budget
+            return client.call("next", attempt, timeout=read_budget())
         except BrokerVersionMismatch:
             raise
         except BrokerUnreachable:
@@ -187,13 +263,20 @@ def call_next(
             if not ever_connected:
                 raise
             if connected:
-                backoff = _BACKOFF_START  # the broker was reachable again
+                backoff = _BACKOFF_START
+            if unreachable_since is None:
+                unreachable_since = clock()
         except TimeoutError:
-            return {"kind": "timeout"}
+            if deadline is not None and clock() >= deadline:
+                return {"kind": "timeout"}
+            ever_connected = ever_connected or (client is not None and client.connected)
+            if unreachable_since is None:
+                unreachable_since = last_progress
         finally:
             if client is not None:
                 client.close()
-        pause = backoff
+        assert unreachable_since is not None
+        pause = min(backoff, max(_UNREACHABLE_LIMIT - (clock() - unreachable_since), 0.0))
         if deadline is not None:
             pause = min(pause, max(deadline - clock(), 0.0))
         sleep(pause)

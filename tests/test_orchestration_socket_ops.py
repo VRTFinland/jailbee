@@ -132,7 +132,12 @@ def test_next_args_validation() -> None:
     )
     assert ok == NextArgs(frozenset({"done"}), 5, 7, 2.5)
     assert socket_ops.handle_next_args({}) == NextArgs(None, 0, 0, None)
+    assert socket_ops.handle_next_args({"keepalive": True}).keepalive is True
+    assert socket_ops.handle_next_args({}).keepalive is False
     for bad in (
+        {"keepalive": "yes"},
+        {"keepalive": 1},
+        {"keepalive": None},
         {"wake_on": "done"},
         {"wake_on": ["bogus-token"]},
         {"wake_on": [1]},
@@ -225,6 +230,22 @@ def test_settle_delays_and_reselects(env: Env) -> None:
     assert env.evaluate(ws, mono=1.5) == []
     [(_, res)] = env.evaluate(ws, mono=2.0)
     assert res == {"kind": "message", "id": "m1"}  # re-selected, not cached
+
+
+def test_keepalive_due_only_for_still_parked_waiters(env: Env) -> None:
+    ws = Waiters()
+    first = env.waiter(conn_id=1, keepalive=True, next_keepalive=30.0)
+    second = env.waiter(conn_id=2, ref="other", keepalive=False)
+    ws.add(first)
+    ws.add(second)
+    assert ws.due_keepalives(29.9) == []
+    assert ws.due_keepalives(30.0) == [1]
+    assert ws.due_keepalives(59.9) == []
+    assert ws.due_keepalives(60.0) == [1]
+    env.put("wake")
+    env.evaluate(ws, mono=61.0)
+    env.evaluate(ws, mono=63.0)
+    assert ws.due_keepalives(90.0) == []
 
 
 def test_timeout(env: Env) -> None:

@@ -98,6 +98,15 @@ completed broker round without calling Incus or taking a store-query slot.
 In contrast, `send` and `next` use the executor and may wait for a handler to
 finish.
 
+`next` accepts optional `keepalive: true` (default false). A parked opted-in
+request receives `{"v":1,"ok":true,"result":{"kind":"keepalive"}}` on
+registration and every 30 s from the executor, in addition to its eventual
+final response. These frames leave the request in flight, retain its waiter
+slot, and neither satisfy a wake nor acknowledge an item. Clients ignore them
+and enforce a 40 s whole-frame read watchdog. See
+[broker liveness and reconnect bounds](orchestration.md#transport-a-per-container-socket) for
+recovery and old-broker behavior.
+
 At most one `next` is parked per container; a second gets `busy`. A `send`
 whose manifest id already has a recorded status gets that status back again,
 with no new delivery. `duplicate` is returned only when no status was recorded
