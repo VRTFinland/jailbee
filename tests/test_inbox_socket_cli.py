@@ -202,6 +202,31 @@ def test_wait_message(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None
     assert 0 < args["timeout"] <= 10
 
 
+@pytest.mark.parametrize("timeout", ["0", "10"])
+def test_wait_replace_sends_identity(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path, timeout: str
+) -> None:
+    broker.on("next", {"kind": "message", "id": "m7"})
+    r = run(sockdir, "wait", "--replace", "--timeout", timeout, tmp=tmp_path)
+    assert (r.returncode, r.stdout) == (0, "m7\n")
+    args = broker.requests[-1].args
+    assert args["replace"] is True
+    assert args["waiter"]["pid"] > 0
+    assert args["waiter"]["started_at"]
+    assert "wait --replace" in args["waiter"]["command"]
+
+
+def test_replaced_waiter_exits_without_retry(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path
+) -> None:
+    broker.on("next", {"kind": "replaced"})
+    r = run(sockdir, "wait", tmp=tmp_path)
+    assert r.returncode == 1
+    assert r.stdout == ""
+    assert "replaced by another waiter" in r.stderr
+    assert len(broker.requests) == 1
+
+
 def test_wait_path_is_obsolete_once(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
     broker.on("next", {"kind": "message", "id": "m7"})
     r = run(sockdir, "wait", "--path", tmp=tmp_path)

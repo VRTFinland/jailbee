@@ -122,8 +122,9 @@ def _dispatch(
         return socket_ops.handle_grant(memory, uuid)
     if op == "next":
         parsed = socket_ops.handle_next_args(args)
+        socket_ops.validate_next_context(memory, uuid, parsed, now=time.time())
         mono = clock()
-        memory.waiters.add(
+        previous = memory.waiters.add(
             socket_ops.Waiter(
                 uuid=uuid,
                 conn_id=event.conn_id,
@@ -131,8 +132,13 @@ def _dispatch(
                 quiet=parsed.quiet,
                 digest=parsed.digest,
                 deadline=mono + parsed.timeout if parsed.timeout is not None else None,
-            )
+                info=parsed.info,
+            ),
+            replace=parsed.replace,
         )
+        if previous is not None:
+            assert memory.listener is not None
+            memory.listener.respond(previous.conn_id, wire.ok({"kind": "replaced"}))
         return _PARKED
     raise wire.WireError(wire.BAD_REQUEST, f"unknown op '{op}'")
 

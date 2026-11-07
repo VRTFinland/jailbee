@@ -1,9 +1,11 @@
 """Inbox commands over the host broker socket (standard library only)."""
 
 import os
+import shlex
 import sys
 import time
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 from typing import Any
 
 from jailbee.inbox import cli
@@ -94,11 +96,12 @@ def cmd_wait(
     quiet_after: str | None = None,
     digest: str | None = None,
     path: bool = False,
+    replace: bool = False,
 ) -> int:
     seconds, quiet, digest_seconds, wake = cli.parse_wait_args(
         timeout, wake_on, quiet_after, digest
     )
-    return wait_once(seconds, quiet, digest_seconds, wake, path=path)
+    return wait_once(seconds, quiet, digest_seconds, wake, path=path, replace=replace)
 
 
 def wait_once(
@@ -108,12 +111,19 @@ def wait_once(
     wake: frozenset[str] | None,
     *,
     path: bool = False,
+    replace: bool = False,
 ) -> int:
     """One ordinary socket wait: prints exactly one result line (none on timeout)."""
     args: dict[str, Any] = {
         "wake_on": sorted(wake) if wake is not None else None,
         "quiet_after": quiet or None,
         "digest": digest_seconds or None,
+        "replace": replace,
+        "waiter": {
+            "pid": os.getpid(),
+            "started_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "command": shlex.join(sys.argv)[:1024],
+        },
     }
     try:
         if seconds == 0:
@@ -126,6 +136,9 @@ def wait_once(
             raise InboxUsage(exc.detail or "invalid wait request") from None
         return _fail(exc)
     kind = result.get("kind")
+    if kind == "replaced":
+        print(f"{PROG}: replaced by another waiter", file=sys.stderr)
+        return 1
     if kind == "message":
         print(clean_c0c1(str(result["id"])))
         if path:

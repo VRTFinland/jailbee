@@ -125,6 +125,110 @@ def test_second_next_is_busy(env: Env) -> None:
     assert conn == 2 and resp.error_code == wire.BUSY
 
 
+def test_busy_names_container_waiter(env: Env) -> None:
+    env.ask(
+        env.orch, "next", conn=1,
+        waiter={"pid": 123, "started_at": "2026-11-07T12:00:00+00:00", "command": "jailbee inbox wait"},
+    )
+    env.ask(env.orch, "next", conn=2)
+    response = env.last()
+    assert response.error_code == wire.BUSY
+    assert "PID 123" in response.error_detail
+    assert "2026-11-07T12:00:00+00:00" in response.error_detail
+    assert "jailbee inbox wait" in response.error_detail
+    assert "--replace" in response.error_detail
+
+
+def test_replace_answers_old_waiter_and_preserves_new_slot(env: Env) -> None:
+    env.ask(env.orch, "next", conn=1)
+    env.ask(env.kid, "next", conn=3)
+    env.ask(env.orch, "next", conn=2, replace=True)
+    assert env.listener.responses == [(1, wire.ok({"kind": "replaced"}))]
+    executor.handle_event(env.memory, DisconnectEvent(env.orch, 1))
+    assert len(env.memory.waiters) == 2
+    env.put("a")
+    executor.evaluate_waiters(env.memory)
+    assert env.listener.responses[-1] == (2, wire.ok({"kind": "message", "id": "a"}))
+    assert len(env.memory.waiters) == 1  # the other container is untouched
+    assert env.store.get(env.orch, "a").acked_at is None
+
+
+def test_malformed_replace_does_not_displace_waiter(env: Env) -> None:
+    env.ask(env.orch, "next", conn=1)
+    env.ask(env.orch, "next", conn=2, replace="yes")
+    assert env.listener.responses == [(2, wire.fail(wire.BAD_REQUEST, "replace must be a boolean"))]
+    env.put("a")
+    executor.evaluate_waiters(env.memory)
+    assert env.listener.responses[-1][0] == 1
+
+
+@pytest.mark.parametrize("option", ["quiet_after", "digest"])
+def test_invalid_child_wait_does_not_replace_existing(env: Env, option: str) -> None:
+    env.ask(env.kid, "next", conn=1)
+    env.ask(env.kid, "next", conn=2, replace=True, **{option: 60})
+    assert env.listener.responses[-1][0] == 2
+    assert env.last().error_code == wire.NOT_ORCHESTRATED
+    assert len(env.memory.waiters) == 1
+    executor.handle_event(env.memory, DisconnectEvent(env.kid, 1))
+    assert len(env.memory.waiters) == 0
+
+
+@pytest.mark.parametrize("option", ["quiet_after", "digest"])
+@pytest.mark.parametrize("view_state", ["missing", "stale"])
+def test_unusable_watchdog_does_not_replace_existing(
+    env: Env, option: str, view_state: str
+) -> None:
+    env.ask(env.orch, "next", conn=1)
+    if view_state == "missing":
+        env.memory.children.pop("proj-orch", None)
+    else:
+        env.memory.children["proj-orch"] = broker_state.ChildrenView(0.0, ())
+    env.ask(env.orch, "next", conn=2, replace=True, **{option: 60})
+    assert env.listener.responses[-1][0] == 2
+    assert env.last().error_code == wire.BAD_REQUEST
+    assert "fresh broker children list" in env.last().error_detail
+    assert len(env.memory.waiters) == 1
+    env.put("a")
+    executor.evaluate_waiters(env.memory)
+    assert env.listener.responses[-1][0] == 1
+
+
+def test_replace_with_no_existing_waiter(env: Env) -> None:
+    env.ask(env.orch, "next", conn=2, replace=True)
+    assert env.listener.responses == []
+    assert len(env.memory.waiters) == 1
+
+
+def test_real_socket_replace_replies_to_both_connections(env: Env, tmp_path: Path) -> None:
+    env.memory.requests = queue.Queue()
+    listener = Listener(env.memory.requests)
+    env.memory.listener = listener
+    listener.start()
+    listener.open_container(env.orch, tmp_path / "wait-sock")
+    clients = [socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) for _ in range(2)]
+    try:
+        for client, replace in zip(clients, (False, True), strict=True):
+            client.settimeout(2)
+            client.connect(str(tmp_path / "wait-sock" / "broker.sock"))
+            client.sendall(wire.encode_request(wire.Request("next", {"replace": replace})))
+            event = env.memory.requests.get(timeout=2)
+            assert isinstance(event, RequestEvent)
+            executor.handle_event(env.memory, event)
+        with clients[0].makefile("rb") as reader:
+            response = wire.decode_response(wire.read_line(reader))
+        assert response.ok and response.result == {"kind": "replaced"}
+        env.put("a")
+        executor.evaluate_waiters(env.memory)
+        with clients[1].makefile("rb") as reader:
+            response = wire.decode_response(wire.read_line(reader))
+        assert response.ok and response.result == {"kind": "message", "id": "a"}
+        assert env.store.get(env.orch, "a").acked_at is None
+    finally:
+        for client in clients:
+            client.close()
+        listener.stop()
+
+
 def test_disconnect_drops_waiter(env: Env) -> None:
     env.ask(env.orch, "next", conn=1)
     executor.handle_event(env.memory, DisconnectEvent(env.orch, 1))

@@ -169,6 +169,9 @@ def call_next(
         if remaining is not None and remaining <= 0:
             return {"kind": "timeout"}
         attempt = dict(args)
+        if ever_connected and "replace" in attempt:
+            # A reconnect must not steal the slot from a newer explicit waiter.
+            attempt["replace"] = False
         if remaining is not None:
             attempt["timeout"] = remaining
         read_timeout = None if remaining is None else remaining + _READ_GRACE

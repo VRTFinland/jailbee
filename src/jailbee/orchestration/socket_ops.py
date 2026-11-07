@@ -324,11 +324,42 @@ def handle_grant(memory: broker_state.BrokerMemory, uuid: str) -> dict[str, obje
 
 
 @dataclass(frozen=True)
+class WaiterInfo:
+    """Client-reported diagnostic identity, never used to signal a process."""
+
+    pid: int
+    started_at: str
+    command: str
+
+    def describe(self) -> str:
+        return f"PID {self.pid}, wait started {self.started_at}, command: {self.command}"
+
+
+def _waiter_info(value: object) -> WaiterInfo | None:
+    if value is None:
+        return None  # older clients do not report their identity
+    if not isinstance(value, dict):
+        raise wire.WireError(wire.BAD_REQUEST, "waiter must be an object")
+    pid = value.get("pid")
+    if type(pid) is not int or pid <= 0:
+        raise wire.WireError(wire.BAD_REQUEST, "waiter.pid must be a positive integer")
+    texts = []
+    for key in ("started_at", "command"):
+        text = value.get(key)
+        if not isinstance(text, str) or not text or len(text) > 1024:
+            raise wire.WireError(wire.BAD_REQUEST, f"waiter.{key} must be 1-1024 characters")
+        texts.append("".join(c for c in text if c.isprintable()))
+    return WaiterInfo(pid, texts[0], texts[1])
+
+
+@dataclass(frozen=True)
 class NextArgs:
     wake: frozenset[str] | None
     quiet: int
     digest: int
     timeout: float | None
+    replace: bool = False
+    info: WaiterInfo | None = None
 
 
 def _positive_int(args: dict[str, object], key: str) -> int:
@@ -342,6 +373,10 @@ def _positive_int(args: dict[str, object], key: str) -> int:
 
 def handle_next_args(args: dict[str, object]) -> NextArgs:
     """Validate the `next` arguments (BAD_REQUEST on anything malformed)."""
+    replace = args.get("replace", False)
+    if not isinstance(replace, bool):
+        raise wire.WireError(wire.BAD_REQUEST, "replace must be a boolean")
+    info = _waiter_info(args.get("waiter"))
     tokens = args.get("wake_on")
     wake_set: frozenset[str] | None = None
     if tokens is not None:
@@ -365,7 +400,27 @@ def handle_next_args(args: dict[str, object]) -> NextArgs:
         quiet=_positive_int(args, "quiet_after"),
         digest=_positive_int(args, "digest"),
         timeout=timeout,
+        replace=replace,
+        info=info,
     )
+
+
+def validate_next_context(
+    memory: broker_state.BrokerMemory, uuid: str, args: NextArgs, *, now: float
+) -> None:
+    """Reject unusable watchdog options before displacing an existing waiter."""
+    if not (args.quiet or args.digest):
+        return
+    ctx = _orchestrator(memory, uuid)
+    view = memory.children.get(ctx.sender.full)
+    try:
+        wake.select_wakeup(
+            [], [], view.children if view is not None else None,
+            children_observed_at=view.observed_at if view is not None else None,
+            wake=args.wake, quiet=args.quiet, digest=args.digest, digest_at=None, now=now,
+        )
+    except wake.WakeUsage as e:
+        raise wire.WireError(wire.BAD_REQUEST, str(e)) from e
 
 
 SETTLE_SECONDS = 1.0
@@ -381,6 +436,7 @@ class Waiter:
     deadline: float | None  # time.monotonic()
     waited: bool = False
     settle_until: float | None = None
+    info: WaiterInfo | None = None
 
 
 class Waiters:
@@ -392,10 +448,17 @@ class Waiters:
     def __len__(self) -> int:
         return len(self._by_uuid)
 
-    def add(self, waiter: Waiter) -> None:
-        if waiter.uuid in self._by_uuid:
-            raise wire.WireError(wire.BUSY, "another process is already waiting in this container")
+    def add(self, waiter: Waiter, *, replace: bool = False) -> Waiter | None:
+        current = self._by_uuid.get(waiter.uuid)
+        if current is not None and not replace:
+            identity = current.info.describe() if current.info else "PID unavailable (older client)"
+            raise wire.WireError(
+                wire.BUSY,
+                f"another process is already waiting in this container ({identity}); "
+                "use jailbee inbox wait --replace to take over",
+            )
         self._by_uuid[waiter.uuid] = waiter
+        return current
 
     def drop(self, uuid: str, conn_id: int) -> None:
         current = self._by_uuid.get(uuid)

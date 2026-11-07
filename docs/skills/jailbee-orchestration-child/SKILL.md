@@ -54,9 +54,15 @@ orchestrator.
 At session start, run `jailbee inbox wait --timeout none` in the background;
 with Claude, use Bash `run_in_background`. When it exits 0, run
 `jailbee inbox ls`, handle and `jailbee inbox read <id>` every unread message,
-including status replies, then re-arm the waiter. Exit 2 means a waiter already
-runs: do not start another, and never run a foreground ordinary `wait` alongside
-it. `send --wait` is safe alongside the waiter. After an accepted `done` in a
+including status replies, then re-arm the waiter. Exit 2 names the existing
+waiter's container PID, wait start time and command (unavailable for older
+clients). Keep a known live waiter. If it is orphaned or its output is lost,
+run `jailbee inbox wait --replace --timeout none` with Bash `run_in_background`:
+the broker releases the slot and the old waiter exits 1 without consuming any
+messages. Use the background-command facility rather than shell `&` inside a
+short-lived shell. A lost parent alone does not end a waiter. Never run a
+foreground ordinary `wait` alongside the background waiter.
+`send --wait` is safe alongside the waiter. After an accepted `done` in a
 kept child, keep the waiter armed between tasks. If background commands are not
 available, run `jailbee inbox wait --timeout 30m` in a loop and re-run it on
 exit 1. Exit 4 means the host broker is not reachable: tell the human.
