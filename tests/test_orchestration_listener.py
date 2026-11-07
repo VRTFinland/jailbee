@@ -572,10 +572,10 @@ def test_a_disconnect_without_a_request_in_flight_queues_nothing(
     lis, q, root = env
     lis.open_container("u", root / "u")
     for _ in range(20):
-        connect_retrying(root / "u").close()
-    deadline = time.monotonic() + 5
-    while lis._servers["u"].conns and time.monotonic() < deadline:
-        time.sleep(0.01)  # every close noticed, so the next connection is accepted
+        client = connect_retrying(root / "u")
+        _wait_until(lambda: bool(lis._servers["u"].conns))
+        client.close()
+        _wait_until(lambda: not lis._servers["u"].conns)
     c = connect(root / "u")
     c.sendall(req("list"))
     ev = q.get(timeout=2)
@@ -835,6 +835,63 @@ def test_disconnected_held_and_queued_queries_keep_only_admitted_budget(
         unblock.set()
         _wait_until(lambda: not lis._store_queries and not lis._inflight)
         assert seen == [0]
+    finally:
+        unblock.set()
+        for client in clients:
+            client.close()
+        lis.stop()
+
+
+@pytest.mark.parametrize("rotate", [False, True])
+def test_reopened_container_keeps_blocked_store_budget(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch, rotate: bool
+) -> None:
+    queries = Queries(BrokerStore(short_dir / "broker.db"))
+    entered = threading.Event()
+    unblock = threading.Event()
+    lock = threading.Lock()
+    seen: list[int] = []
+
+    def answer(uuid: str, request: wire.Request) -> wire.Response:
+        n = int(request.args["n"])
+        with lock:
+            seen.append(n)
+            if len(seen) == 2:
+                entered.set()
+        if n < 2:
+            assert unblock.wait(10)
+        return wire.ok({"n": n})
+
+    monkeypatch.setattr(queries, "answer", answer)
+    lis = Listener(queue.Queue(), queries=queries)
+    lis.start()
+    old_dir, new_dir = short_dir / "old", short_dir / "new"
+    lis.open_container("a", old_dir)
+    clients = [connect(old_dir) for _ in range(3)]
+    try:
+        for i in range(2):
+            clients[i].sendall(req("list", n=i))
+        assert entered.wait(5)
+        clients[2].sendall(req("ack", n=2))
+        _wait_until(lambda: any(conn.inbuf for conn in lis._conns.values()))
+        if rotate:
+            lis.rotate_container("a", new_dir)
+        else:
+            lis.close_container("a")
+            lis.open_container("a", new_dir)
+        assert lis._store_queries == {"a": 2}
+        with connect(new_dir) as new:
+            new.sendall(req("read", n=3))
+            _wait_until(lambda: any(conn.inbuf for conn in lis._conns.values()))
+            new.settimeout(0.1)
+            with pytest.raises(TimeoutError):
+                new.recv(1)
+            new.settimeout(5)
+            assert set(seen) == {0, 1}
+            unblock.set()
+            assert wire.decode_response(recv_line(new)).result == {"n": 3}
+        _wait_until(lambda: not lis._store_queries and not lis._inflight)
+        assert set(seen) == {0, 1, 3}
     finally:
         unblock.set()
         for client in clients:
