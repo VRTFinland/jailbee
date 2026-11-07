@@ -1,4 +1,4 @@
-"""Off-loop inbox queries and immutable views of the last completed broker round."""
+"""Off-loop inbox queries and immutable views of completed rounds and actions."""
 
 from __future__ import annotations
 
@@ -46,6 +46,10 @@ class Queries:
 
     def publish(self, snapshot: Mapping[str, ContainerSnapshot]) -> None:
         self._snapshot = MappingProxyType(dict(snapshot))
+
+    def publish_container(self, uuid: str, view: ContainerSnapshot) -> None:
+        """Replace one executor-built view without rebuilding unrelated containers."""
+        self.publish({**self._snapshot, uuid: view})
 
     def answer(self, uuid: str, request: wire.Request) -> wire.Response:
         try:

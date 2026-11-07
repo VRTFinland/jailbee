@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from jailbee.orchestration import broker, executor, socket_ops, wire
+from jailbee.orchestration.outbox import deliver
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.listener import Listener, RequestEvent
 from jailbee.orchestration.query import ContainerSnapshot, Queries
@@ -113,6 +114,99 @@ def test_all_queries_answer_last_round_while_executor_handler_is_blocked(env: En
         worker.join(timeout=3)
         sender.close()
     assert not worker.is_alive()
+
+
+@pytest.mark.parametrize("kind", ["stop", "destroy", "restart", "spawn"])
+def test_lifecycle_queries_are_current_before_success_reply(
+    env: Env, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    before_kids = [] if kind == "spawn" else [_child(running=kind != "restart")]
+    after_kids = [] if kind == "destroy" else [_child(running=kind != "stop")]
+    env.rig.incus.list_containers.return_value = [_orch(), *before_kids]
+    env.rig.tick(env.memory)
+    previous = env.call("children").result
+
+    def act(*args: Any) -> Outcome:
+        env.rig.incus.list_containers.return_value = [_orch(), *after_kids]
+        return Outcome("started" if kind in ("spawn", "restart") else "done", "handled")
+
+    env.rig.dispatch.side_effect = act
+    seen = []
+
+    def reply(*args: Any, **kwargs: Any) -> str:
+        children = env.queries.answer("proj-orch", wire.Request("children"))
+        assert children.ok
+        assert [(c["name"], c["running"]) for c in children.result["children"]] == (
+            [] if kind == "destroy" else [("kid", kind != "stop")]
+        )
+        status = env.queries.answer("proj-orch", wire.Request("status", {"child": "kid"}))
+        if kind == "destroy":
+            assert status.error_code == wire.NOT_FOUND
+        else:
+            assert status.ok and status.result == children.result
+        seen.append(children.result)
+        return deliver(*args, **kwargs)
+
+    monkeypatch.setattr(socket_ops, "deliver", reply)
+    manifest: dict[str, object] = {"version": 1, "id": "action", "type": kind, "child": "kid"}
+    if kind == "restart":
+        manifest["prompt"] = "continue"
+    elif kind == "spawn":
+        manifest = {
+            "version": 1, "id": "action", "type": "spawn", "kind": "new",
+            "branch": "kid", "prompt": "start",
+            "rights": {"version": 1, "mounts": [], "loose": False, "egress": []},
+        }
+    result = socket_ops.handle_send(
+        env.memory.contexts["proj-orch"], env.memory, env.store,
+        manifest=manifest, body=None, wait=True, is_connected=lambda: True,
+    )
+    assert result["state"] in ("done", "started")
+    assert len(seen) == 1
+    assert previous != seen[0]
+
+
+@pytest.mark.parametrize("kind", ["note", "question", "blocked", "done"])
+def test_child_message_queries_match_live_next_history_before_another_tick(
+    env: Env, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    from jailbee.orchestration import actions, messages
+
+    inventory = [_orch(), _child()]
+    for row in inventory:
+        row["config"]["volatile.uuid"] = row["name"]
+    env.rig.incus.list_containers.return_value = inventory
+    env.rig.tick(env.memory)
+    env.rig.dispatch.side_effect = actions.dispatch
+    if kind == "done":
+        # The import/cleanup work is outside this query regression's scope.
+        monkeypatch.setattr(messages, "handle_done", lambda ctx, m: messages._relay(
+            ctx, ctx.nodes["proj-orch"], m
+        ))
+    before = env.call("status", child="kid").result
+    assert before["last_from_child"] == {}
+    result = socket_ops.handle_send(
+        env.memory.contexts["proj-kid"], env.memory, env.store,
+        manifest={"version": 1, "id": "child-msg", "type": "message", "kind": kind,
+                  "body": "latest child update"},
+        body=None, wait=True, is_connected=lambda: True,
+    )
+    assert result["state"] == "done"
+    for row in env.store.unacked("proj-orch"):
+        env.store.ack("proj-orch", row.id, now=1.0)
+    env.store.set_digest_at("proj-orch", env.memory.children["proj-orch"].observed_at - 2)
+    waiter = socket_ops.Waiter("proj-orch", 1, frozenset(), 0, 1, None)
+    digest = socket_ops._evaluate_one(
+        waiter, env.memory, env.store,
+        now=env.memory.children["proj-orch"].observed_at, mono=1.0
+    )
+    assert isinstance(digest, dict) and digest["kind"] == "digest"
+    assert set(digest["last_from_child"]) == {"kid"}
+    for op in ("children", "status"):
+        response = env.queries.answer("proj-orch", wire.Request(op, {"child": "kid"}))
+        assert response.ok
+        assert response.result["last_from_child"] == digest["last_from_child"]
+    assert before["last_from_child"] == {}
 
 
 def test_snapshot_changes_only_at_completed_round(
@@ -247,16 +341,21 @@ def test_blocked_sqlite_worker_does_not_block_snapshot_queries(
         assert wire.decode_response(recv_line(client)).ok
 
 
-def test_concurrent_snapshot_swaps_keep_each_response_in_one_generation(env: Env) -> None:
+@pytest.mark.parametrize("targeted", [False, True])
+def test_concurrent_snapshot_swaps_keep_each_response_in_one_generation(
+    env: Env, targeted: bool
+) -> None:
     done = threading.Event()
 
     def publish() -> None:
         n = 0
         while not done.is_set():
             payload = json.dumps({"children": [{"name": str(n)}], "observed_at": n})
-            env.queries.publish(
-                {"proj-orch": ContainerSnapshot("orchestrator", True, payload, "{}")}
-            )
+            view = ContainerSnapshot("orchestrator", True, payload, "{}")
+            if targeted:
+                env.queries.publish_container("proj-orch", view)
+            else:
+                env.queries.publish({"proj-orch": view})
             n += 1
 
     worker = threading.Thread(target=publish)
@@ -269,6 +368,18 @@ def test_concurrent_snapshot_swaps_keep_each_response_in_one_generation(env: Env
         done.set()
         worker.join(timeout=2)
     assert not worker.is_alive()
+
+
+def test_targeted_publication_preserves_other_container_views(env: Env) -> None:
+    env.queries.publish_container(
+        "proj-orch", ContainerSnapshot("orchestrator", True, '{"children": []}', "{}")
+    )
+    assert env.queries.answer("proj-kid", wire.Request("children")).error_code == (
+        wire.NOT_ORCHESTRATED
+    )
+    assert env.queries.answer("proj-former", wire.Request("children")).error_code == (
+        wire.NOT_ORCHESTRATED
+    )
 
 
 def test_published_records_and_returned_results_have_no_mutable_aliases(env: Env) -> None:

@@ -643,6 +643,16 @@ def _handle_manifest(
     if outcome is not None:
         _watch_manifest(ctx, manifest, ref, outcome)
         _refresh_children_snapshot(ctx, manifest, outcome, memory)
+        if (
+            isinstance(manifest, MessageManifest)
+            and outcome.state in ("done", "queued")
+            and ctx.role() == "child"
+        ):
+            parent = ctx.nodes.get(ctx.sender.config[labels.SPAWNED_BY])
+            if parent is not None:
+                parent_ctx = memory.contexts.get(parent.key)
+                if parent_ctx is not None:
+                    _publish_context(memory, parent_ctx)
         reply(ref, outcome)
     is_publish = (
         isinstance(manifest, PublishManifest) and outcome is not None and outcome.state == "started"
@@ -689,6 +699,7 @@ def _refresh_children_snapshot(
     try:
         ctx.nodes = _nodes(ctx.incus.list_containers(), repo_configs(memory))
         _remember_children(ctx, memory, inbox_state.sync_children(ctx, memory.status))
+        _publish_context(memory, ctx)
     except Exception:
         log.exception("broker: child inbox state of %s failed", ctx.sender.full)
 
@@ -1370,6 +1381,28 @@ def tick(
     return active
 
 
+def _context_snapshot(memory: BrokerMemory, ctx: ActionContext) -> ContainerSnapshot:
+    """Serialize on the executor so query readers never reach mutable contexts."""
+    from jailbee.orchestration import socket_ops
+
+    assert memory.store is not None
+    grant = ctx.grant()
+    return ContainerSnapshot(
+        role=ctx.role(),
+        ready=memory.store.has_recipient_uuid(ctx.sender.key),
+        children_json=json.dumps(
+            socket_ops._children_result(memory, memory.store, ctx.sender.key, ctx)
+        ),
+        grant_json=grant_json_text(grant, *ctx.default_runner()) if grant is not None else None,
+    )
+
+
+def _publish_context(memory: BrokerMemory, ctx: ActionContext) -> None:
+    """Commit one action's view without publishing other unfinished round state."""
+    if memory.queries is not None and memory.store is not None:
+        memory.queries.publish_container(ctx.sender.key, _context_snapshot(memory, ctx))
+
+
 def _publish_queries(memory: BrokerMemory) -> None:
     """Build on the broker thread, then atomically replace the completed-round view.
 
@@ -1378,23 +1411,13 @@ def _publish_queries(memory: BrokerMemory) -> None:
     """
     if memory.queries is None or memory.store is None:
         return
-    from jailbee.orchestration import socket_ops
-
     empty_children = json.dumps({"children": [], "observed_at": None, "last_from_child": {}})
     snapshot = {
         uuid: ContainerSnapshot("none", True, empty_children, None)
         for uuid in memory.store.recipients().values()
     }
     for uuid, ctx in memory.contexts.items():
-        ready = memory.store.has_recipient_uuid(uuid)
-        children = socket_ops._children_result(memory, memory.store, uuid, ctx)
-        grant = ctx.grant()
-        snapshot[uuid] = ContainerSnapshot(
-            role=ctx.role(),
-            ready=ready,
-            children_json=json.dumps(children),
-            grant_json=grant_json_text(grant, *ctx.default_runner()) if grant is not None else None,
-        )
+        snapshot[uuid] = _context_snapshot(memory, ctx)
     memory.queries.publish(snapshot)
 
 
