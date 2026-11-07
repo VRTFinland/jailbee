@@ -22,6 +22,8 @@ before editing `## Unreleased`.
 
 ### Changed
 
+- Every command, option and argument of the in-container `jailbee` (`issue`,
+  `pr`, `outbox`, `service`, `config`, …) now has a description in `--help`.
 - `jailbee destroy` also removes the container's host-side leftovers: its background
   job logs, orchestration queue and reservation entries, PR lock and published issue
   journals. Journals whose publication outcome is unknown are kept.
