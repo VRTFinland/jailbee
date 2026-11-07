@@ -364,6 +364,29 @@ def test_call_send_resends_after_partial_write(path, monkeypatch):
         srv.close()
 
 
+def test_send_reconnect_uses_remaining_deadline(monkeypatch):
+    now = [0.0]
+    timeouts = []
+    class Stub:
+        connected = True
+        request_written = True
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            self.close()
+        def close(self):
+            pass
+        def call(self, op, args, *, timeout):
+            timeouts.append(timeout)
+            if len(timeouts) == 1:
+                now[0] = 4.0
+                raise BrokerUnreachable
+            return {"state": "started"}
+    monkeypatch.setattr(transport.time, "monotonic", lambda: now[0])
+    assert call_send(Stub, {}, timeout=5) == {"state": "started"}
+    assert timeouts == [5, 1]
+
+
 def test_call_send_timeout_propagates(path):
     release = threading.Event()
 

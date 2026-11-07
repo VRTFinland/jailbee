@@ -36,6 +36,8 @@ class SendRequest:
     default_runner: bool = False
     on_done: str = ""
     wait: bool = False
+    until: str = ""
+    json_output: bool = False
     timeout: str = ""
     ref: str = ""
     pr: str = ""
@@ -92,6 +94,9 @@ def validate(r: SendRequest) -> SendRequest:
             r.services is not None and any(s.strip() for s in r.services.split(",")),
             "refresh needs at least one service",
         )
+    require(not r.until or (t == "publish" and r.wait), "--until needs publish --wait")
+    require(r.until in {"", "done"}, "--until must be done")
+    require(not r.json_output or t == "publish", "--json only applies to publish")
     if r.timeout:
         require(r.wait, "--timeout needs --wait")
         parse_timeout(r.timeout)

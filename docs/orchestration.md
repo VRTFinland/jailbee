@@ -171,8 +171,8 @@ Every publication the broker performs is recorded in the Sent log with publisher
 After staging a manifest in its own issue or PR outbox, the orchestrator sends:
 
 ```bash
-jailbee inbox send publish --issue close-12.json --wait
-jailbee inbox send publish --pr imported-branch.json --wait
+jailbee inbox send publish --issue close-12.json --wait --until done --json
+jailbee inbox send publish --pr imported-branch.json --wait --until done
 ```
 
 The version-1 protocol request is
@@ -182,9 +182,20 @@ The broker checks every pending action before acceptance and again under the
 domain lock. Any uncovered kind or repository refuses the whole request.
 
 Acceptance replies `started`; a later `done` lists result URLs and created
-issue numbers in manifest order. `--wait` can return at `started`: read the
-final status for the same ref through the ordinary inbox. A worker failure
-replies `failed`. An uncertain outcome, including a broker restart during
+issue numbers in manifest order. `--wait --until done` waits for the final
+`done` or `failed`, bounded by `--timeout` (default `30m`; `none` is unlimited).
+It can run alongside the ordinary inbox waiter. Exit codes are 0 for done,
+1 for failed/refused and 3 for timeout; a timeout does not cancel publication.
+Plain `--wait` still returns the first status, possibly `started`.
+
+`--json` prints one JSON object. With `--wait`, this is the matching status;
+its `results` array contains applied issue actions in manifest order with
+`index`, `kind`, `repo`, `issue` and `url`. Filter `kind == "create"` for
+new issue numbers. Failed statuses can contain partial receipts; PR statuses
+currently contain an empty array. Without `--wait`, JSON contains the request
+`id` and initial `state`. For staging scripts, `jailbee issue create --json`
+prints `{"name": "001-....json"}` (not supported with `--batch`).
+A worker failure replies `failed`. An uncertain outcome, including a broker restart during
 publication, is never retried automatically: ask the human to inspect
 `jb outbox` on the host. Use a new request id for a deliberate retry.
 

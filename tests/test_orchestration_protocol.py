@@ -456,7 +456,7 @@ def test_inbox_status_accepts_failed() -> None:
     }
     s = InboxStatus.model_validate(raw)
     assert s.state == "failed"
-    assert s.model_dump() == {**raw, "version": 1}
+    assert s.model_dump() == {**raw, "version": 1, "results": []}
 
 
 def test_spawn_manifest_accepts_runner() -> None:

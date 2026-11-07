@@ -19,6 +19,21 @@ def invoke(*args):
     return CliRunner().invoke(container_app, ["issue", *args])
 
 
+def test_create_json_outputs_only_manifest_name(tmp_path):
+    result = invoke("create", "--title", "Bug", "--body", "body", "--json")
+    assert result.exit_code == 0, result.output
+    output = json.loads(result.output)
+    assert output == {"name": "001-bug.json"}
+    assert next((tmp_path / ".jailbee/issue-outbox").glob("*.json")).name == output["name"]
+
+
+def test_create_json_rejects_unpublished_batch(tmp_path):
+    result = invoke("create", "--title", "Bug", "--body", "body", "--batch", "b", "--json")
+    assert result.exit_code == 2
+    assert "--json cannot be combined with --batch" in result.output
+    assert not (tmp_path / ".jailbee/issue-outbox").exists()
+
+
 def test_create_and_batch_roundtrip(tmp_path):
     result = invoke(
         "create", "--title", "Bug", "--body", "x" * 5000, "--ref", "bug", "--batch", "b"

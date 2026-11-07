@@ -127,6 +127,7 @@ def _dispatch(
             socket_ops.Waiter(
                 uuid=uuid,
                 conn_id=event.conn_id,
+                ref=parsed.ref,
                 wake=parsed.wake,
                 quiet=parsed.quiet,
                 digest=parsed.digest,

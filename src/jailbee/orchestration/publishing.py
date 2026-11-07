@@ -442,6 +442,7 @@ def start(ctx: ActionContext, m: PublishManifest) -> threading.Thread | None:
 def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) -> None:
     lines: list[str] = []
     actual: list[dict[str, str]] = []
+    receipts: list[dict[str, object]] = []
     refused_by_policy = False
     try:
         incus = Incus()
@@ -499,6 +500,7 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
                 policy=policy,
                 result_sink=lines.append,
                 audit_sink=actual.append,
+                receipt_sink=receipts.append,
                 action_limit=count,
             )
         if result:
@@ -524,6 +526,7 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
                 "detail": detail[:4000],
                 "urls": [u for line in lines for u in re.findall(r"https?://[^\s)]+", line)],
                 "actions": actual,
+                "results": receipts,
                 "policy_refused": refused_by_policy,
             },
         )
@@ -585,7 +588,7 @@ def settle(ctx: ActionContext, reply: Callable[[str, Outcome], None]) -> None:
         _save(ctx.root, _INFLIGHT, current)
     if result.get("policy_refused") and not entry.get("refunded"):
         _refund(ctx.root, ctx.sender.full, entry)
-    reply(entry["ref"], Outcome(result["state"], result["detail"]))
+    reply(entry["ref"], Outcome(result["state"], result["detail"], result.get("results", [])))
     del current[ctx.sender.full]
     _save(ctx.root, _INFLIGHT, current)
     _results_store(ctx.root).kv_delete(

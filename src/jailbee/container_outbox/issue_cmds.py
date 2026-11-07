@@ -1,5 +1,6 @@
 """Stage issue proposals from inside a container."""
 
+import json
 import re
 import socket
 from collections.abc import Callable
@@ -246,7 +247,11 @@ def _check_assignees(add: object, remove: object, view: gh.IssueView | None) -> 
 
 
 def _stage(
-    store: Store, action: dict[str, object], batch: str | None, file_body: bool = False
+    store: Store,
+    action: dict[str, object],
+    batch: str | None,
+    file_body: bool = False,
+    as_json: bool = False,
 ) -> None:
     bodies: dict[str, str] = {}
     body = action.get("body")
@@ -266,10 +271,13 @@ def _stage(
             or "issue"
         )
         name = store.write_manifest("issue", slug, {"version": 1, "actions": [action]}, bodies)
-        typer.echo(
-            f"staged issue/{name} — publish on the host: "
-            f"jb issue apply {socket.gethostname()} {name}"
-        )
+        if as_json:
+            typer.echo(json.dumps({"name": name}))
+        else:
+            typer.echo(
+                f"staged issue/{name} — publish on the host: "
+                f"jb issue apply {socket.gethostname()} {name}"
+            )
 
 
 def _run(fn: Callable[[], None]) -> None:
@@ -292,11 +300,16 @@ def create(
         typer.Option(help="Name for later batch actions to target as @REF (default: issue)."),
     ] = None,
     batch: BatchOpt = None,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print the staged manifest name as JSON.")
+    ] = False,
 ) -> None:
     """Stage a new issue; give the body with --body or --body-file."""
 
     def run() -> None:
         store = _guard()
+        if as_json and batch is not None:
+            raise OutboxCommandError("--json cannot be combined with --batch; commit the draft first", 2)
         if not title:
             raise OutboxCommandError("missing title", 2)
         text = _body(body, body_file, True)
@@ -306,6 +319,7 @@ def create(
             create_action(repo, title, text, label or [], ref or "issue"),
             batch,
             body_file is not None,
+            as_json,
         )
 
     _run(run)

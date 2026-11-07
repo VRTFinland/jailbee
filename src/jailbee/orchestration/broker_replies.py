@@ -37,6 +37,7 @@ def status(ref: str, outcome: Outcome) -> InboxStatus:
         ref=ref,
         state=outcome.state,
         detail=outcome.detail,
+        results=outcome.results,
     )
 
 

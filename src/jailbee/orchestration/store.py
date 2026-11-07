@@ -426,6 +426,16 @@ class BrokerStore:
             (uuid, after, limit),
         )
 
+    def terminal_status(self, uuid: str, ref: str) -> StoredItem | None:
+        """Find a final reply even if an ordinary inbox reader already acknowledged it."""
+        rows = self._items(
+            f"SELECT {_ITEM_COLS} FROM items WHERE recipient_uuid=? AND ref=? "
+            "AND type='status' AND kind_or_state IN ('done', 'failed', 'refused') "
+            "ORDER BY seq DESC LIMIT 1",
+            (uuid, ref),
+        )
+        return rows[0] if rows else None
+
     def history(self, uuid: str) -> list[StoredItem]:
         return self._items(
             f"SELECT {_ITEM_COLS} FROM items WHERE recipient_uuid=? ORDER BY seq", (uuid,)

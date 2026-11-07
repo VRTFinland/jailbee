@@ -256,6 +256,7 @@ def publish_selected(
     | Callable[[pr_outbox.Manifest], None]
     | None = None,
     result_sink: Callable[[str], None] | None = None,
+    receipt_sink: Callable[[dict[str, object]], None] | None = None,
     action_limit: int | None = None,
     audit_sink: Callable[[dict[str, str]], None] | None = None,
 ) -> int:
@@ -442,6 +443,19 @@ def publish_selected(
                             "repo": applied_action.repo.slug,
                         }
                     )
+            if receipt_sink is not None:
+                for name, receipt in sorted(report.applied, key=lambda pair: pair[1].index):
+                    applied_manifest = next(m for m in batch.manifests if m.manifest.name == name)
+                    applied_action = next(
+                        a for a in applied_manifest.actions if a.index == receipt.index
+                    )
+                    receipt_sink({
+                        "index": receipt.index,
+                        "kind": type(applied_action.action).__name__.removesuffix("Action").lower(),
+                        "repo": applied_action.repo.slug,
+                        "issue": receipt.issue,
+                        "url": receipt.url,
+                    })
             print_issue_outcome(batch, report)
             if result_sink is not None:
                 for name, receipt in report.applied:

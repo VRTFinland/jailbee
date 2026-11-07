@@ -101,6 +101,7 @@ class Node:
 class Outcome:
     state: Literal["queued", "started", "done", "refused", "failed"]
     detail: str
+    results: list[dict[str, object]] = field(default_factory=list)
 
 
 def refused(detail: str) -> Outcome:

@@ -105,8 +105,8 @@ If the grant's `publish` rights cover every pending action, stage normally,
 then ask the host broker to publish your own outbox file:
 
 ```bash
-jailbee inbox send publish --issue a.json --wait
-jailbee inbox send publish --pr b.json --wait
+jailbee inbox send publish --issue a.json --wait --until done --json
+jailbee inbox send publish --pr b.json --wait --until done
 ```
 
 Issue kinds use `publish.issues` for the own repo/submodules, or
@@ -123,9 +123,23 @@ foreign PRs are refused. New PRs use the default base; updates require an
 authored source-PR binding, not a review-only PR/stacked label or adopted
 binding. Updating a PR opened some other way remains a host step. Children never publish.
 
-`--wait` may return at `started`; keep your inbox waiter armed and read the
-final `done`/`failed` status for the printed ref. Use the returned URLs and
-created issue numbers, in manifest order; staging or `started` is not success.
+Use `--wait --until done` to wait for the final `done` or `failed` status,
+within `--timeout` (default 30m; `none` is unlimited). Exit 0 means done, 1
+means refused/failed, and 3 means timeout: inspect the inbox before retrying.
+The ordinary inbox waiter can remain armed; this wait matches only its own
+request and acknowledges only the matching final status, even if another
+reader has already read it.
+
+`--json` prints one JSON object instead of the request ID plus status.
+The final status has a `results` array of applied issue actions in manifest
+order: `index`, `kind`, `repo`, `issue` and `url`. Select `kind == "create"`
+for newly created issue numbers; failed publication can still include receipts
+for actions already applied. PR publications currently return an empty array.
+`jailbee issue create --json` returns `{"name": "001-....json"}` for the
+staged manifest, suitable for `send publish --issue`.
+
+Plain `--wait` remains compatible and may return at `started`; then read the
+later final status for the printed ref. Staging or `started` is not success.
 One request runs at once. Budget is reserved for every pending action and is
 never refunded on failure (only an in-lock policy refusal returns it). An uncertain result means stop and tell the human
 to resolve it with `jb outbox` on the host; do not retry automatically. A

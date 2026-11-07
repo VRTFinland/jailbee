@@ -155,8 +155,9 @@ def cmd_send(request: SendRequest) -> int:
     ident, manifest, body = prepare_send(request)
     # Without --wait the broker still answers only between rounds: same deadline.
     timeout = cli.parse_timeout(request.timeout or "30m")
-    # Print the id before asking the broker.
-    print(ident, flush=True)
+    deadline = None if timeout is None else time.monotonic() + timeout
+    # Always expose the recovery id before sending, while keeping JSON stdout pure.
+    print(ident, file=sys.stderr if request.json_output else sys.stdout, flush=True)
     try:
         item = call_send(
             _factory, {"manifest": manifest, "body": body, "wait": request.wait}, timeout=timeout
@@ -169,7 +170,27 @@ def cmd_send(request: SendRequest) -> int:
     except TimeoutError:
         print(NO_REPLY_MESSAGE, file=sys.stderr)
         return 3
+    final_id = None
     state = item.get("state") if isinstance(item, dict) else None
+    if request.until == "done" and state in ("started", "queued"):
+        remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+        try:
+            result = call_next(_factory, {"ref": ident}, timeout=remaining)
+            if result.get("kind") == "timeout":
+                print(f"{PROG}: timed out waiting for publish {ident}; inspect inbox ls/read before retrying", file=sys.stderr)
+                return 3
+            if result.get("kind") != "status":
+                raise BrokerUnreachable(
+                    f"{PROG}: host broker does not support completion waits; "
+                    f"upgrade/restart it and inspect publish {ident} in the inbox"
+                )
+            item = result["item"]
+            state = item.get("state")
+            final_id = item["id"]
+        except BrokerError as exc:
+            return _fail(exc)
+    if request.json_output:
+        print(pretty(cli._clean_json(item if request.wait else {"id": ident, "state": state})), flush=True)
     if state == "refused":
         print(
             f"{PROG}: {clean_c0c1(str(item.get('detail') or 'request refused'))}", file=sys.stderr
@@ -177,7 +198,13 @@ def cmd_send(request: SendRequest) -> int:
         return 1
     if not request.wait:
         return 0
-    print(pretty(cli._clean_json(item)))
+    if not request.json_output:
+        print(pretty(cli._clean_json(item)), flush=True)
+    if final_id is not None:
+        try:
+            _call("ack", {"id": final_id})
+        except (BrokerError, BrokerUnreachable, OSError) as exc:
+            print(f"{PROG}: printed {final_id} but could not mark it read ({exc}); it stays unread", file=sys.stderr)
     return 0 if state in ("done", "queued", "started") else 1
 
 
