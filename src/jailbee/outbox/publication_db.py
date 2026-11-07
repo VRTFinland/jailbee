@@ -33,6 +33,7 @@ import re
 import secrets
 import sqlite3
 import threading
+import time
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -188,6 +189,22 @@ def _claim_key(uuid: str, kind: str, name: str) -> str:
 # claim. The kernel drops that lock when the owner releases, exits or crashes,
 # so a row whose lock nobody holds is stale for every process — including a
 # row left behind by a live process whose release (the row DELETE) failed.
+#
+# Writer and readers locate ``claims/`` the same way, from the real path of
+# broker.db (`_canonical`): SQLite reports the symlink-resolved file in
+# `PRAGMA database_list`, so a store opened through a symlink must not put
+# its locks next to the link, where a reader would find none and take a live
+# claim for stale.
+#
+# Known limitation, deliberately not solved: the lock is an flock on an open
+# file description, which a fork() inherits (O_CLOEXEC covers exec only). A
+# child forked while a claim is held keeps the lock held after the parent
+# releases or dies, so the claim reads as live until that child exits too.
+# Publishing code does not fork while it holds a claim.
+
+# A lock file nobody holds is swept only once this old: a claimer creates its
+# file and flocks it in two steps, and a sweep between them must not unlink it.
+_SWEEP_MIN_AGE_S = 60.0
 
 _TOKEN_RE = re.compile(r"[0-9a-f]{32}")
 
@@ -238,9 +255,43 @@ def _lock_held(path: Path) -> bool:
     return False
 
 
+def _canonical(store_file: Path | str) -> Path:
+    """The one location of broker.db the claim locks are placed next to."""
+    return Path(os.path.realpath(store_file))
+
+
 def _store_file(con: sqlite3.Connection) -> Path | None:
     row = con.execute("PRAGMA database_list").fetchone()
-    return Path(row[2]) if row is not None and row[2] else None
+    return _canonical(row[2]) if row is not None and row[2] else None
+
+
+def _sweep_orphan_locks(store_file: Path, now: float) -> None:
+    """Remove lock files nobody holds (owners that crashed between takeovers).
+
+    Opportunistic and best effort. A file is removed only while this sweep
+    itself holds its exclusive lock, so a held claim's file is never touched,
+    and only once older than `_SWEEP_MIN_AGE_S` (see there).
+    """
+    try:
+        entries = list(_claims_dir(store_file).iterdir())
+    except OSError:
+        return
+    for path in entries:
+        if not (path.suffix == ".lock" and _TOKEN_RE.fullmatch(path.stem)):
+            continue
+        try:
+            if now - path.stat().st_mtime < _SWEEP_MIN_AGE_S:
+                continue
+            fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+        except OSError:
+            continue
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            path.unlink()
+        except OSError:
+            pass  # held (BlockingIOError) or already gone
+        finally:
+            os.close(fd)
 
 
 def _live_owner(con: sqlite3.Connection, key: str) -> dict[str, object] | None:
@@ -599,7 +650,8 @@ class PublicationStore:
         key = _claim_key(uuid, kind, name)
         pid = os.getpid()  # per claim, not per import: a forked child is its own owner
         value = json.dumps({"token": token, "pid": pid, "start": _start_time(pid), "lock": True})
-        lock_path = _lock_file(Path(self._store.path), token)
+        store_file = _canonical(self._store.path)
+        lock_path = _lock_file(store_file, token)
         try:
             # Held before the row exists, so a row naming this token is never
             # mistaken for stale; dropped by the kernel however this run ends.
@@ -624,7 +676,8 @@ class PublicationStore:
             _drop_lock(lock_path, lock_fd)
             raise
         if previous is not None:
-            _forget_stale_lock(Path(self._store.path), previous[0])
+            _forget_stale_lock(store_file, previous[0])
+        _sweep_orphan_locks(store_file, time.time())
         claim = Claim(uuid, kind, name, token)
         held[slot] = claim
         _LIVE_TOKENS.add(token)
