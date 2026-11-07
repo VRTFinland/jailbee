@@ -5599,8 +5599,9 @@ def destroy(
                             (cfg.container_prefix, info_.base_branch or cfg.default_branch)
                         ],
                     )
-                    stamp_issue_outbox(info_)
-                    stamp_pr_outbox(info_)
+                # The outbox is host-side: counted for every container.
+                stamp_issue_outbox(info_)
+                stamp_pr_outbox(info_)
                 if not _warn_before_destroy(cfg, [info_], question=question):
                     raise typer.Abort()
         if run_in_background:

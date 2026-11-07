@@ -724,10 +724,10 @@ these; the Qt dashboard still shows them view-only.
 destroy would discard: a dirty working tree, a changed submodule, commits
 that exist on neither the host nor a remote-tracking ref (`remote_contained
 is not True` counts as at risk — unknown is not safe), unapplied PR
-actions still sitting in the container's outbox (see [PR review
-outbox](#pr-review-outbox) — the outbox lives in the container's own
-filesystem, so a destroy takes any unpublished review with it), or unapplied
-issue actions sitting in its issue outbox (see [Issue management
+actions still staged for the container in the host outbox store (see [PR
+review outbox](#pr-review-outbox) — the store counts every container, running
+or not and in any mount mode, and a destroy deletes the container's unpublished
+proposals), or unapplied issue actions staged there (see [Issue management
 outbox](#issue-management-outbox) — listed right after the PR reason).
 Nothing here fires for work already pulled to the host
 (`jailbee git pull`), pushed to a remote (`jailbee git push`, `jailbee pr push`,
@@ -1482,16 +1482,16 @@ Requires `gh` authenticated on the host. No NAME + a TTY → picker.
 | `--title <t>` / `--body <b>` | Set PR title / body (override AI per field). Default on create: last commit subject / placeholder. |
 | `--base <branch>` | PR base branch (default: the container's recorded base branch). |
 | `--ready` / `--draft` | Mark ready for review / move back to draft. Default: draft on create, unchanged on update. (`--no-draft` is a hidden back-compat alias for `--ready`.) |
-| `--description` / `-d` | Update only: request a description update; agent generation still needs consent (`--ai` off-TTY). A description already written in the container's outbox wins over this — add `--no-outbox` to regenerate anyway. |
+| `--description` / `-d` | Update only: request a description update; agent generation still needs consent (`--ai` off-TTY). A description already staged for the container in the outbox wins over this — add `--no-outbox` to regenerate anyway. |
 | `--as <branch>` | Explicit PR head branch name (overrides AI naming). **New PRs only** — exit 2 on any container that already has a PR (authored or adopted): its head is fixed, and a different branch would leave the PR untouched. On an undecided review container the rejection waits for the adopt-or-stack choice: legal with `--stacked`, refused (before any push or label write) when the run adopts. |
 | `--stacked` | On a `jailbee new --pr` container: open a NEW PR based on the reviewed PR's head instead of pushing into it. See above. Mutually exclusive with `--pr N` (exit 2). |
 | `--retarget` / `--no-retarget` | Move (or don't) the container's base branch to the stacked PR's base after opening it. Default: ask on a TTY, otherwise skip and print the command. Only acted on when a stacked PR is opened. |
 | `--pr N` | Push to existing PR N instead of opening a new one, when the container's branch is not named like N's head branch. Mutually exclusive with `--as` (exit 2). Refuses a closed/merged or fork PR; retargeting from another number takes a confirmation. |
 | `--yes` / `-y` | Answer the confirmations asked on a `jailbee new --pr` container: the one-time publish choice (adopt PR #N's head — its meaning before `--stacked` existed) and the `--force` overwrite gate. Required when there is no TTY, unless `--stacked` settles the choice. |
 | `--ai` | Authorize configured PR AI generation without asking; does not override disabled config. Mutually exclusive with `--no-ai`. |
-| `--no-ai` | Skip AI generation of the title/body (even when `pr.ai_description` is on); keep the container branch name as-is. Does **not** ignore a description already written in the container's outbox — that is `--no-outbox`. |
+| `--no-ai` | Skip AI generation of the title/body (even when `pr.ai_description` is on); keep the container branch name as-is. Does **not** ignore a description already staged for the container in the outbox — that is `--no-outbox`. |
 | `--no-submodules` | Skip the submodule PR checklist and publishing; publish only the superproject. |
-| `--no-outbox` | Ignore a PR description written in the container's outbox. See [PR review outbox](#pr-review-outbox). |
+| `--no-outbox` | Ignore a PR description staged for the container in the outbox. See [PR review outbox](#pr-review-outbox). |
 | `--force` | Force-push the PR head with `--force-with-lease` (rebased/amended branch); refuses if the remote moved. Requires an explicit NAME. On a PR JailBee did not create it first asks to confirm overwriting that head (`--yes` skips; no TTY → error). |
 | `--web` | Open the PR in the browser afterwards. |
 | `-b` / `--branch <b>` | Override branch detection. |
