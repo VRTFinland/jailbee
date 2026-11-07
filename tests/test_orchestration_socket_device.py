@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import logging
 import queue
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from jailbee.inbox import transport
 from jailbee.incus import ORCHESTRATION_DEVICE, IncusError
-from jailbee.orchestration import broker_state, labels, socket_device, state
+from jailbee.orchestration import broker_state, labels, socket_device, socket_lifecycle, state
 from jailbee.orchestration.store import BrokerStore, store_path
 from tests.test_orchestration_broker import GRANT, Rig, _c
 
@@ -136,7 +138,7 @@ def adds(env: Env) -> list[str]:
 def test_unit_helpers(tmp_path: Path) -> None:
     cfg = socket_device.device_config(tmp_path / "sock" / "u1.ab12")
     assert cfg["source"] == str(tmp_path / "sock" / "u1.ab12")
-    assert cfg["path"] == "/run/jailbee/orchestration"
+    assert cfg["path"] == "/opt/jailbee/orchestration"
     assert cfg["readonly"] == "true" and cfg["required"] == "false"
     entry = {"config": {"volatile.uuid": "u1"}, "devices": {ORCHESTRATION_DEVICE: cfg}}
     assert not socket_device.mismatched(entry)
@@ -149,6 +151,28 @@ def test_unit_helpers(tmp_path: Path) -> None:
         "devices": {ORCHESTRATION_DEVICE: {"source": str(tmp_path / "sock" / "u1")}},
     }
     assert socket_device.source_uuid(legacy) == "u1" and not socket_device.mismatched(legacy)
+
+
+def test_mount_path_survives_systemd_boot() -> None:
+    assert not PurePosixPath(socket_device.CONTAINER_PATH).is_relative_to("/run"), (
+        "systemd mounts a fresh /run tmpfs after Incus attaches devices before init, "
+        "hiding any broker socket mounted there"
+    )
+    assert transport.DEFAULT_SOCKET == f"{socket_device.CONTAINER_PATH}/broker.sock"
+
+
+def test_attach_replaces_a_device_with_only_the_mount_path_changed(env) -> None:
+    directory = env.rig.root / "sock" / f"{UUID}.0f0f"
+    env.devices["proj-orch"] = {
+        ORCHESTRATION_DEVICE: {
+            **socket_device.device_config(directory),
+            "path": "/run/jailbee/orchestration",
+        }
+    }
+    socket_device.attach(env.rig.incus, "proj-orch", directory, reassert=False)
+    assert adds(env) == ["proj-orch"]
+    env.remove.assert_called_once_with("proj-orch", ORCHESTRATION_DEVICE, missing_ok=True)
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["path"] == "/opt/jailbee/orchestration"
 
 
 def test_fresh_directories_never_repeat(tmp_path: Path) -> None:
@@ -197,7 +221,7 @@ def test_existing_dir_with_correct_device_is_left_alone(env) -> None:
     env.set(orch())
     recorded = env.rig.root / "sock" / f"{UUID}.0f0f"
     recorded.mkdir(parents=True)
-    env.devices["proj-orch"] = {ORCHESTRATION_DEVICE: {"source": str(recorded)}}
+    env.devices["proj-orch"] = {ORCHESTRATION_DEVICE: socket_device.device_config(recorded)}
     env.tick()
     assert adds(env) == []
     assert env.listener.dirs[UUID] == recorded
@@ -555,6 +579,25 @@ def test_mismatched_on_unlabelled_container_is_removed(env) -> None:
     env.devices["x-copy"] = {ORCHESTRATION_DEVICE: {"source": "/x/sock/old"}}
     env.tick()
     assert ORCHESTRATION_DEVICE not in env.devices["x-copy"]
+
+
+def test_legacy_mount_path_invalidates_the_cache_and_is_migrated(env) -> None:
+    env.set(orch())
+    env.tick()
+    live = env.listener.dirs[UUID]
+    env.devices["proj-orch"][ORCHESTRATION_DEVICE]["path"] = "/run/jailbee/orchestration"
+    socket_lifecycle.check_socket_devices(env.rig.incus, env._list(), env.memory, env.rig.root)
+    assert "proj-orch" not in env.memory.attached
+    env.tick()
+    assert adds(env) == ["proj-orch", "proj-orch"]
+    assert env.devices["proj-orch"][ORCHESTRATION_DEVICE]["path"] == "/opt/jailbee/orchestration"
+    assert env.listener.dirs[UUID] == live
+    assert env.listener.opened == [UUID]
+    assert env.memory.attached == {"proj-orch": UUID}
+    env.rig.incus.config_device_get.reset_mock()
+    env.tick()
+    assert adds(env) == ["proj-orch", "proj-orch"]
+    env.rig.incus.config_device_get.assert_not_called()
 
 
 def test_vanished_device_is_reattached(env) -> None:

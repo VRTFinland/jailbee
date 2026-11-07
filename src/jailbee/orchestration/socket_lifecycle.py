@@ -399,11 +399,13 @@ def check_socket_devices(
         if plain and managed is None:
             continue  # registry unknown: never tear a plain container down
         if not plain or (managed is not None and managed(name)):
-            # A snapshot restore can keep the uuid and role but rewind the
-            # device to an old generation. Invalidate ensure_socket's cache
-            # using this round's listing, without another per-container call.
-            if name in memory.attached and socket_device.source(entry) != str(
-                memory.listener.socket_dir(memory.attached[name])
+            # A snapshot restore can rewind the source; an upgrade can move
+            # the mount point. Invalidate ensure_socket's cache using this
+            # round's listing, without another per-container call.
+            if name in memory.attached and (
+                socket_device.source(entry)
+                != str(memory.listener.socket_dir(memory.attached[name]))
+                or socket_device.mount_path(entry) != socket_device.CONTAINER_PATH
             ):
                 memory.attached.pop(name, None)
         elif name in memory.attached or socket_device.has_device(entry):

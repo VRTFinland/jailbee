@@ -729,13 +729,16 @@ operations are allowed, never the socket. The broker creates
 `~/.local/state/jailbee/orchestration/sock/<instance uuid>.<random>/` (directory mode
 0700, socket `broker.sock` mode 0600, owned by your user) and attaches it to
 the container as a read-only disk device named `jailbee-orchestration`,
-mounted at `/run/jailbee/orchestration/`. The device is created per instance,
-so the broker knows who is calling from which socket was used; nothing in a
-request names the sender. `jb new` attaches the device (with a fresh directory
-the broker then binds in) before the container's first agent starts; the
-broker's rounds only repair drift, and serve running containers of registered
-repos. The device is `required=false`, so a container still starts when the
-host directory is missing.
+mounted at `/opt/jailbee/orchestration/`. This stays outside `/run`, whose
+boot-time tmpfs would hide a device Incus mounts before init. The broker
+re-attaches devices with an older mount path on its next round after an
+upgrade; no image rebuild or profile re-apply is needed. The device is created
+per instance, so the broker knows who is calling from which socket was used;
+nothing in a request names the sender. `jb new` attaches the device (with a
+fresh directory the broker then binds in) before the container's first agent
+starts; the broker's rounds only repair drift, and serve running containers of
+registered repos. The device is `required=false`, so a container still starts
+when the host directory is missing.
 
 A copy would otherwise reach the original's socket, so the device is stripped
 from copies. Only Jailbee's own copies (`Incus.copy`, used by `jb new` from the
