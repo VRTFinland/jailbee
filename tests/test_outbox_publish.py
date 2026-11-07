@@ -509,11 +509,20 @@ def test_issue_receipts_include_partial_success_on_failure(env):
     created = receipts[0]
     env[4]["comment"].side_effect = None
     receipts.clear()
-    assert publish_selected(
-        env[0], env[1], IDENTITY.full_name, ProposalId("issue", "001.json"),
-        journal_store=env[3], options=PublishOptions(publisher="user"), confirm=lambda n: True,
-        raise_errors=True, receipt_sink=receipts.append,
-    ) == 0
+    assert (
+        publish_selected(
+            env[0],
+            env[1],
+            IDENTITY.full_name,
+            ProposalId("issue", "001.json"),
+            journal_store=env[3],
+            options=PublishOptions(publisher="user"),
+            confirm=lambda n: True,
+            raise_errors=True,
+            receipt_sink=receipts.append,
+        )
+        == 0
+    )
     assert [r["index"] for r in receipts] == [0, 1, 2]
     assert receipts[0] == created
     env[4]["create"].assert_called_once()
