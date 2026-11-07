@@ -1120,8 +1120,8 @@ token. Revoke an exposed token at GitHub and remove stale container copies.
 
 **Two identities, on purpose.** Supply a read-only token for the container
 and keep the host's publishing credentials separate. The intended workflow
-stages issue mutations as proposals in the host outbox store and PR
-mutations as JSON manifests in `~/.jailbee/pr-outbox`; a human reviews and publishes them on the host
+stages issue and PR mutations as proposals in the host outbox store
+(`broker.db`); a human reviews and publishes them on the host
 with `jailbee issue apply`, `jailbee review apply` or `jailbee outbox apply`,
 using the host's independently authenticated `gh`.
 
@@ -1145,10 +1145,12 @@ or changing manifest schemas. Issue and PR proposals (review, comment, reply,
 description and source) and their draft batches live in the host outbox store
 (`broker.db`), staged over the broker socket; publication journals each PR
 action there (prepared before the GitHub call, applied with its sent record
-after it). Spawned children cannot stage GitHub proposals. Old
-`~/.jailbee/issue-outbox/` and `~/.jailbee/pr-outbox/` directories in existing
-containers are ignored, not imported. Inspection reads the store only and makes no
-`gh` or network calls.
+after it). Spawned children cannot stage GitHub proposals. Nothing is read
+from or written to the container, so the host never runs `incus exec` for the
+outbox, and `jb outbox`, `jb review ls` and `jb review apply` also work on
+stopped containers. Proposals staged by earlier versions as files in the
+container are ignored, not imported: publish or drop them before upgrading.
+Inspection reads the store only and makes no `gh` or network calls.
 
 ```bash
 jb outbox                          # the outbox manager: this repo's containers
@@ -1173,8 +1175,8 @@ files are retained while another pending manifest in the same store still
 uses them. Surviving JSON fields are preserved, not rebuilt from defaults.
 
 Selective deletion is an edit, allowed only before any recorded publication
-progress. PR progress sidecars/receipts and issue journals block edits;
-malformed or unreadable evidence is not treated as empty. For a whole issue
+progress. Publication journal entries (of both kinds) block edits; an
+unreadable journal is not treated as empty. For a whole issue
 manifest with settled progress only, `--archive-journal` permits local
 deletion. First run `jb outbox show <container> issue/<manifest>.json` and
 inspect its receipts and pending actions before approving whole-manifest
@@ -1206,9 +1208,8 @@ issue journal progress is archived automatically before deletion. It keeps
 issue manifests with any **uncertain** action: reconcile the outcome with
 `jb issue resolve` first. PR manifests with publication evidence (including
 partial publication) are also kept; inspect them with `jb outbox` or
-finish with `jb outbox apply`. Malformed or unreadable progress evidence is
-not treated as permission to delete. Unsafe rejected files are reported as
-warnings, not deleted.
+finish with `jb outbox apply`. An unreadable journal is
+not treated as permission to delete.
 
 The plan lists what will be deleted or kept and why. Before each deletion,
 JailBee rereads the proposal and its neighbors: proposals whose revision
@@ -1224,9 +1225,8 @@ same kept/unavailable status rules despite deleting nothing.
 
 `show` includes the revision token, raw JSON, full proposed text and available
 receipts. `ls`/`show` support `-o json` (also `--format`/`--output`) for
-structured inspection. A stopped or inaccessible container is
-**unavailable**, not empty; missing stores and rejected unsafe files are
-reported separately. Overview exits 2 if any container is unavailable,
+structured inspection. A stopped container is listed like a running one; an
+inaccessible store or instance is **unavailable**, not empty. Overview exits 2 if any container is unavailable,
 while still emitting its structured result.
 
 A human on the host can approve exactly one manifest:

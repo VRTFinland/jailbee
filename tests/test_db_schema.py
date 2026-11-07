@@ -1100,7 +1100,7 @@ def test_v15_db_gains_columns_version_defaulting_zero() -> None:
     assert row is not None
     assert row.columns_version == 0
     assert row.columns == '["name", "mem"]' and row.show_details is False
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 21
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 22
 
 
 def test_migrate_to_v16_is_idempotent() -> None:
@@ -1134,7 +1134,7 @@ def test_v16_db_gains_the_sort_columns() -> None:
     assert row is not None
     assert row.sort_field is None and row.sort_desc is False
     assert row.columns == '["name", "state"]' and row.columns_version == 1
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 21
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 22
 
 
 def test_migrate_to_v17_is_idempotent() -> None:
@@ -1167,7 +1167,7 @@ def test_v17_db_gains_show_system_defaulting_true() -> None:
     assert row is not None
     assert row.show_system is True
     assert row.columns == '["name"]' and row.show_details is False
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 21
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 22
 
 
 def test_migrate_to_v18_is_idempotent() -> None:
@@ -1200,7 +1200,7 @@ def test_v18_db_gains_details_rows_unset() -> None:
     assert row is not None
     assert row.details_rows is None
     assert row.columns == '["name"]' and row.show_details is False
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 21
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 22
 
 
 def test_migrate_to_v19_is_idempotent() -> None:
@@ -1253,28 +1253,43 @@ def test_v20_database_migrates_to_v21_with_seed_table() -> None:
         loaded = session.get(GoldenSeedState, "sampleapp--golden")
         version = meta.version if meta is not None else None
 
-    assert version == CURRENT_SCHEMA_VERSION == 21
+    assert version == CURRENT_SCHEMA_VERSION == 22
     assert loaded is not None
     assert loaded.seeded_at == datetime(2026, 11, 6, tzinfo=UTC)
 
 
-def test_v19_db_gains_sent_record_and_keeps_other_rows() -> None:
+def test_v21_db_drops_the_retired_sent_record_table_and_keeps_other_rows() -> None:
     from jailbee.db import _ensure_schema
-    from jailbee.db.models import SchemaMeta, SentRecord, ViewPrefs
+    from jailbee.db.models import SchemaMeta, ViewPrefs
 
     engine = create_engine("sqlite:///:memory:")
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
-        session.add(SchemaMeta(id=1, version=19))
+        session.add(SchemaMeta(id=1, version=21))
         session.add(ViewPrefs(frontend="tui", columns='["name"]'))
         session.commit()
     with engine.begin() as conn:
-        conn.exec_driver_sql("DROP TABLE sent_record")
+        conn.exec_driver_sql("CREATE TABLE sent_record (id INTEGER PRIMARY KEY, url TEXT)")
+        conn.exec_driver_sql("INSERT INTO sent_record (url) VALUES ('https://x')")
 
     _ensure_schema(engine)
+    with engine.begin() as conn:
+        tables = {
+            row[0]
+            for row in conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'")
+        }
     with Session(engine) as session:
         meta = session.get(SchemaMeta, 1)
         prefs = session.get(ViewPrefs, "tui")
-        assert session.exec(select(SentRecord)).all() == []
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 21
+    assert "sent_record" not in tables
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 22
     assert prefs is not None and prefs.columns == '["name"]'
+
+
+def test_migrate_to_v22_is_idempotent() -> None:
+    from jailbee.db import _migrate_to_v22
+
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as conn:
+        _migrate_to_v22(conn)
+        _migrate_to_v22(conn)  # no table left to drop: must not raise

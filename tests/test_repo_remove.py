@@ -520,7 +520,7 @@ def test_execute_cleans_exact_state_and_is_idempotent(db_engine, tmp_path, mocke
     assert destroy.call_count == 1
 
 
-def test_execute_removes_all_seven_state_tables_without_touching_other_repo(
+def test_execute_removes_all_six_state_tables_without_touching_other_repo(
     db_engine, tmp_path, mocker
 ):
     from sqlmodel import select
@@ -532,7 +532,6 @@ def test_execute_removes_all_seven_state_tables_without_touching_other_repo(
         PoolIP,
         RefreshState,
         RepoUpgradeState,
-        SentRecord,
     )
     from jailbee.incus import Incus
     from jailbee.repo_remove import RemovalPlan, execute_removal
@@ -593,22 +592,6 @@ def test_execute_removes_all_seven_state_tables_without_touching_other_repo(
                     dismissed_at=now,
                 )
             )
-            session.add(
-                SentRecord(
-                    dedup_key=prefix,
-                    sent_at=now,
-                    container_prefix=prefix,
-                    container="one",
-                    instance=f"{prefix}-one",
-                    publisher="user",
-                    state="applied",
-                    outbox="issue",
-                    manifest="001",
-                    action_index=0,
-                    kind="create",
-                    repo="owner/repo",
-                )
-            )
         session.commit()
     incus = MagicMock(spec=Incus)
     incus.profile_list.return_value = []
@@ -624,7 +607,6 @@ def test_execute_removes_all_seven_state_tables_without_touching_other_repo(
             EgressOverride,
             BackgroundJob,
             DismissedNotice,
-            SentRecord,
         ):
             rows = session.exec(select(model)).all()
             assert len(rows) == 1

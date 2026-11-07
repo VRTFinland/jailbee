@@ -24,18 +24,15 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, assert_never
 
 from rich.markup import escape
 from rich.text import Text
 
 from jailbee import git, pr
-from jailbee.config import CONTAINER_USERNAME
 from jailbee.github_repo import github_slug, is_github_slug
 from jailbee.incus import Incus, IncusError
 from jailbee.outbox import sent
-from jailbee.outbox.cleanup import exclusive_body_names
 from jailbee.outbox.io import PrManagement
 from jailbee.outbox.markdown_view import print_lines, render_markdown
 from jailbee.outbox.models import (
@@ -101,7 +98,6 @@ if TYPE_CHECKING:
     from jailbee.pr_draft import DraftSession
     from jailbee.pr_flow import PrScope
 
-OUTBOX_SUBPATH = ".jailbee/pr-outbox"
 
 MAX_MANIFESTS = 20
 
@@ -115,11 +111,6 @@ MAX_MANIFESTS = 20
 MAX_TITLE_CHARS = 120
 
 
-def outbox_dir() -> str:
-    """Absolute outbox path inside a container."""
-    return f"/home/{CONTAINER_USERNAME}/{OUTBOX_SUBPATH}"
-
-
 def parse_manifest(name: str, text: str, bodies: Mapping[str, str]) -> Manifest:
     """Parse the shared schema with the host's git branch validator."""
     return _parse_manifest(name, text, bodies, ref_validator=git.check_ref_format)
@@ -131,8 +122,7 @@ class Outbox:
 
     Read from the host outbox store, ``uuid`` is the instance's store key,
     ``journals`` its active publication journals by proposal name and
-    ``versions`` the proposals' row versions. A snapshot without ``uuid`` is
-    a legacy file layout (progress from sidecars).
+    ``versions`` the proposals' row versions.
     """
 
     files: dict[str, str]
@@ -144,10 +134,8 @@ class Outbox:
 
     @property
     def manifest_names(self) -> list[str]:
-        """Manifest file names, sorted. Progress sidecars are not manifests."""
-        return sorted(
-            n for n in self.files if n.endswith(".json") and not n.endswith(".progress.json")
-        )
+        """Manifest names, sorted (bodies are the other entries)."""
+        return sorted(n for n in self.files if n.endswith(".json"))
 
     def snapshot(self) -> StoreSnapshot:
         """The proposals as `jb outbox` inspects them (the same view revisions)."""
@@ -607,107 +595,24 @@ def action_summary(manifest: Manifest) -> str:
 # --------------------------------------------------------------------------
 # Applying a manifest
 #
-# GitHub calls are not transactional, so every write below goes through
-# ``incus.exec`` (never a shell string — argv only) and progress is recorded
-# *in the container*, not just returned to the caller: a review comment
-# posted twice is public noise nothing can take back. See design §C.
+# GitHub calls are not transactional, so every action is journaled in the
+# host outbox store around its GitHub call: a review comment posted twice is
+# public noise nothing can take back. See design §C.
 # --------------------------------------------------------------------------
 
 _NO_URL = "(no url)"
 
 
-def _now_iso() -> str:
-    """Current UTC time as `2026-09-09T12:34:56Z`, for `applied.log` lines."""
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _display_url(url: str) -> str:
-    """`url`, or a placeholder when `pr.py` returned "".
-
-    `submit_review`/`reply_to_review_comment`/`add_issue_comment` return ""
-    when a 2xx GitHub response ever lacks `html_url` (Task 4). Writing that
-    empty string into a human-facing log line would read as "the link is
-    missing" (a jailbee bug) rather than "GitHub didn't send one" — so the
-    log always gets an explicit placeholder instead. The progress sidecar's
-    `urls` map keeps the raw value (including ""): it's machine-read state
-    for a future run, not something shown to a person.
-    """
-    return url if url else _NO_URL
-
-
-def _write_sidecar(
-    incus: Incus, container: str, path: str, payload: dict[str, Any], *, uid: int | None
-) -> None:
-    """Overwrite `path` in the container with `payload` as one JSON document.
-
-    Argv only, never a shell string: the payload is passed as `$1` to a
-    `bash -c` script that never interpolates it. `>` (not `>>`) because the
-    sidecar always holds the *complete* current state, not an appended log.
-    """
-    incus.exec(
-        container,
-        ["bash", "-c", 'printf %s "$1" > "$2"', "bash", json.dumps(payload), path],
-        uid=uid,
-    )
-
-
-def _append_log_line(incus: Incus, container: str, line: str, *, uid: int | None) -> None:
-    """Append one line to `applied.log`. Argv only; `>>` to accumulate history."""
-    incus.exec(
-        container,
-        ["bash", "-c", 'printf "%s\\n" "$1" >> "$2"', "bash", line, f"{outbox_dir()}/applied.log"],
-        uid=uid,
-    )
-
-
 @dataclass(frozen=True)
 class Progress:
-    """What a manifest's `<name>.progress.json` sidecar records.
+    """What a proposal's publication journal records as applied.
 
     `urls` maps a stringified action index to the URL that landed for it
-    (or "" — see `_display_url`).
+    (or "" when GitHub returned none).
     """
 
     applied: frozenset[int]
     urls: dict[str, str]
-
-
-def _parse_progress_json(text: str) -> Progress:
-    """Parse one sidecar's text; any shape problem is "nothing applied yet".
-
-    A sidecar is jailbee's own output, but a half-written file (a crash
-    mid-`printf`) or a container-side accident is still possible, and the
-    safe response to unreadable progress is to treat it as no progress —
-    the caller then re-attempts, and re-attempting an already-landed action
-    is exactly what this sidecar exists to prevent when it *can* be read.
-    """
-    empty = Progress(applied=frozenset(), urls={})
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return empty
-    if not isinstance(data, dict):
-        return empty
-    applied_val = data.get("applied")
-    if not isinstance(applied_val, list):
-        return empty
-    if not all(isinstance(i, int) and not isinstance(i, bool) for i in applied_val):
-        return empty
-    urls_val = data.get("urls")
-    urls = {str(k): str(v) for k, v in urls_val.items()} if isinstance(urls_val, dict) else {}
-    return Progress(applied=frozenset(applied_val), urls=urls)
-
-
-def read_progress(outbox: Outbox, manifest_name: str) -> Progress:
-    """Read `<manifest_name>.progress.json` from `outbox`; tolerant of absence.
-
-    A missing sidecar (first run) and a broken one (see `_parse_progress_json`)
-    both resolve to "nothing applied yet" rather than raising.
-    """
-    text = outbox.files.get(f"{manifest_name}.progress.json")
-    if text is None:
-        return Progress(applied=frozenset(), urls={})
-    return _parse_progress_json(text)
 
 
 def _journal_progress(outbox: Outbox, name: str, action_count: int | None) -> Progress:
@@ -736,18 +641,8 @@ def _journal_progress(outbox: Outbox, name: str, action_count: int | None) -> Pr
 
 
 def _publication_progress(outbox: Outbox, name: str, action_count: int | None = None) -> Progress:
-    """Strict snapshots never use the tolerant legacy replay parser."""
-    if outbox.uuid is not None:
-        return _journal_progress(outbox, name, action_count)
-    if outbox.identity is None:
-        return read_progress(outbox, name)
-    from jailbee.outbox.inspect import pr_progress_evidence
-
-    store = StoreSnapshot("pr", tuple(sorted(outbox.files.items())), outbox.rejected, ())
-    evidence = pr_progress_evidence(store, name, action_count)
-    if evidence.error:
-        raise OutboxError(f"{name}: {evidence.error}")
-    return Progress(evidence.applied, {str(i): url for i, url in evidence.receipts})
+    """Progress of proposal `name` from its journal in the host outbox store."""
+    return _journal_progress(outbox, name, action_count)
 
 
 def pending_indices(manifest: Manifest, progress: Progress) -> list[int]:
@@ -1010,8 +905,8 @@ def _apply_one(target: Target, action: Action, session: DraftSession | None = No
 def manifest_digest(manifest: Manifest) -> str:
     """A content digest of a parsed manifest, for callers without its raw text.
 
-    Progress lives in the container's sidecar, not the manifest, so the digest
-    is the same on every resume of one proposal.
+    Progress lives in the publication journal, not the manifest, so the
+    digest is the same on every resume of one proposal.
     """
     from dataclasses import asdict
 
@@ -1264,77 +1159,15 @@ def _body_references(text: str) -> set[str]:
     return result
 
 
-def _orphaned_body_files(outbox: Outbox, exclude_name: str) -> list[str]:
-    """Only the completed proposal's exclusive references are cleanup candidates."""
-    if outbox.rejected:
-        return []
-    try:
-        candidates = _body_references(outbox.files[exclude_name])
-        referenced_elsewhere: set[str] = set()
-        for name in outbox.manifest_names:
-            if name != exclude_name:
-                # Invalid neighbors can conceal references: retain all candidates.
-                parse_manifest(name, outbox.files[name], outbox.files)
-                referenced_elsewhere.update(_body_references(outbox.files[name]))
-    except (KeyError, ValueError, RecursionError, ManifestError):
-        return []
-    return list(exclusive_body_names(candidates, outbox.files, referenced_elsewhere))
-
-
-def _delete_from_outbox(
-    incus: Incus,
-    container: str,
-    outbox: Outbox,
-    name: str,
-    *,
-    uid: int | None,
-    with_sidecar: bool,
-) -> list[str]:
-    """Remove manifest `name` and everything only it still needs, in one `rm`.
-
-    The single deletion path in this module: `finalize` uses it for a manifest
-    that is fully applied, `drop_manifest` for one the user discarded, and the
-    outbox layout, the ``-f`` and the orphan rule (`_orphaned_body_files`)
-    therefore live in exactly one place. `with_sidecar` is True whenever a
-    progress sidecar exists to remove — always, for `finalize`, which has just
-    written one.
-
-    Returns the outbox-relative names removed, and lets `IncusError` out: the
-    two callers have different things to say about a failed deletion.
-    """
-    names = [name]
-    if with_sidecar:
-        names.append(f"{name}.progress.json")
-    names.extend(_orphaned_body_files(outbox, name))
-    from jailbee.outbox import io as store_io
-
-    store_io.mutate_store(
-        incus,
-        container,
-        "pr",
-        uid=uid,
-        expected=outbox.files,
-        new_manifest=None,
-        delete_names=tuple(names),
-        forbidden_progress=None,
-        rejected_names=outbox.rejected,
-    )
-    return names
-
-
 class FinalizeError(Exception):
-    """`finalize`/`record_consumed`/`drop_manifest` could not write to the container.
+    """`finalize`/`record_consumed`/`drop_manifest` could not update the outbox store.
 
-    Raised when the *container* write itself fails (`IncusError`) after the
-    GitHub side of the work is already settled — e.g. the sidecar can't be
-    written, or a fully-applied (or deliberately dropped) manifest can't be
-    deleted. Unlike `apply_manifest`, none of them returns an `ApplyOutcome`
-    to carry a `failure` string in, so this is the equivalent for them: a named,
-    documented exception whose message says which step failed and what
-    that implies, rather than a bare `IncusError` from deep inside a
-    `bash -c printf` call. Each function stops at the first such failure —
-    it does not go on to a later step (appending the log, or deleting the
-    manifest) once an earlier one could not be recorded.
+    Raised when the host outbox store cannot record or remove a proposal after
+    the GitHub side of the work is already settled (or, for `drop_manifest`,
+    when the proposal could not be deleted). None of them returns an
+    `ApplyOutcome` to carry a `failure` string in, so this is the equivalent
+    for them: a named exception whose message says which step failed and
+    what that implies.
     """
 
 
@@ -1430,293 +1263,6 @@ def drop_manifest(
             f"manifest {name} could not be deleted ({e}); it is still pending"
         ) from e
     return [name, *sorted(removed.bodies)]
-
-
-def _read_optional(incus: Incus, container: str, path: str, *, uid: int | None) -> str | None:
-    """Read one file's content from the container; None if it can't be read.
-
-    The single-file counterpart of `_READ_SCRIPT`'s whole-outbox tar+base64,
-    for `record_consumed`, which has no `Outbox` in hand. Like that reader,
-    any failure (missing file, permission, the instance not running) is
-    treated as absence rather than surfaced — a caller here always has a
-    safe default for "the file isn't there".
-    """
-    try:
-        return incus.exec(container, ["cat", path], uid=uid)
-    except IncusError:
-        return None
-
-
-def _manifest_pr_and_action_count(text: str | None) -> tuple[str, int | None]:
-    """Best-effort `(pr= field, action count)` from a manifest's raw JSON text.
-
-    Used only for `record_consumed`'s log line and its own deletion check;
-    any parse failure yields `("none", None)`, which logs politely and
-    never deletes a manifest whose action count couldn't be confirmed.
-    """
-    if text is None:
-        return "none", None
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return "none", None
-    if not isinstance(data, dict):
-        return "none", None
-    pr_val = data.get("pr")
-    pr_field = str(pr_val) if isinstance(pr_val, int) and not isinstance(pr_val, bool) else "none"
-    actions_val = data.get("actions")
-    total = len(actions_val) if isinstance(actions_val, list) else None
-    return pr_field, total
-
-
-# Reserve for a GitHub PR URL, including worst-case JSON escaping in each field.
-SOURCE_RECEIPT_URL_BYTES = 4096
-
-
-def _source_progress_payload(outbox: Outbox, name: str, url: str) -> str:
-    """Build the actual recovery document used both by preflight and consumption."""
-    if outbox.identity is None or outbox.rejected:
-        raise OutboxChanged("source snapshot unavailable; refresh required")
-    if len(json.dumps(url).encode("utf-8")) > SOURCE_RECEIPT_URL_BYTES:
-        raise ManifestError("source publication URL exceeds the recovery receipt limit")
-    manifest = parse_manifest(name, outbox.files[name], outbox.files)
-    if not is_source_manifest(manifest):
-        raise ManifestError(f"{name} is not a source manifest")
-    references = _body_references(outbox.files[name])
-    if references & {"applied.log", f"{name}.progress.json", name}:
-        raise ManifestError("source body conflicts with publication evidence")
-    inputs = {n: outbox.files[n] for n in {name, *references}}
-    digest = hashlib.sha256(
-        json.dumps(sorted(inputs.items()), ensure_ascii=True).encode()
-    ).hexdigest()
-    line = (
-        f"{_now_iso()} {name} pr={manifest.pr if manifest.pr is not None else 'none'} "
-        f"actions={len(manifest.actions)} urls={_display_url(url)} source-receipt={digest}"
-    )
-    return json.dumps(
-        {
-            "applied": list(range(len(manifest.actions))),
-            "urls": {str(i): url for i in range(len(manifest.actions))},
-            "source": {
-                "identity": [outbox.identity.full_name, outbox.identity.created_at],
-                "inputs": inputs,
-                "cleanup": sorted(_orphaned_body_files(outbox, name)),
-                "url": url,
-                "line": line,
-            },
-        }
-    )
-
-
-def _source_receipt_log(previous: str, line: str) -> str:
-    """Frame a receipt without joining it to an unterminated history entry."""
-    separator = "\n" if previous and not previous.endswith("\n") else ""
-    return previous + separator + line + "\n"
-
-
-def preflight_source_progress(outbox: Outbox, name: str) -> None:
-    """Reserve the exact recovery shape and maximum escaped URL before publication."""
-    from jailbee.outbox.io import FILE_LIMIT
-
-    # JSON quotes consume two bytes; all URL occurrences (including the log line)
-    # use the same encoder. This fills the entire escaped URL budget exactly.
-    maximum_url = "x" * (SOURCE_RECEIPT_URL_BYTES - 2)
-    payload = _source_progress_payload(outbox, name, maximum_url)
-    if len(payload.encode("utf-8")) > FILE_LIMIT:
-        raise ManifestError("source publication recovery progress exceeds the outbox file limit")
-    line = json.loads(payload)["source"]["line"]
-    log = _source_receipt_log(outbox.files.get("applied.log", ""), line)
-    if len(log.encode("utf-8")) > FILE_LIMIT:
-        raise ManifestError("source publication applied.log exceeds the outbox file limit")
-
-
-def source_publication_receipt(outbox: Outbox, name: str) -> dict[str, Any] | None:
-    """Validate snapshot-bound source progress, including partial cleanup inputs."""
-    text = outbox.files.get(f"{name}.progress.json")
-    if text is None:
-        return None
-    try:
-        progress = json.loads(text)
-        if not isinstance(progress, dict) or "source" not in progress:
-            raise ValueError("source progress is unavailable")
-        if set(progress) != {"applied", "urls", "source"}:
-            raise ValueError("invalid source progress schema")
-        source = progress["source"]
-        if not isinstance(source, dict) or set(source) != {
-            "identity",
-            "inputs",
-            "cleanup",
-            "url",
-            "line",
-        }:
-            raise ValueError("invalid source receipt schema")
-        identity, inputs, cleanup = source["identity"], source["inputs"], source["cleanup"]
-        if (
-            not isinstance(identity, list)
-            or len(identity) != 2
-            or any(not isinstance(v, str) or not v for v in identity)
-        ):
-            raise ValueError("invalid source identity")
-        if outbox.identity is not None and identity != [
-            outbox.identity.full_name,
-            outbox.identity.created_at,
-        ]:
-            raise ValueError("source receipt belongs to another container")
-        if not isinstance(inputs, dict) or any(
-            not isinstance(k, str) or not isinstance(v, str) for k, v in inputs.items()
-        ):
-            raise ValueError("invalid source inputs")
-        manifest = parse_manifest(name, inputs[name], inputs)
-        references = _body_references(inputs[name])
-        if (
-            not is_source_manifest(manifest)
-            or set(inputs) != {name, *references}
-            or references & {"applied.log", f"{name}.progress.json", name}
-        ):
-            raise ValueError("invalid source input scope")
-        if (
-            not isinstance(cleanup, list)
-            or len(set(cleanup)) != len(cleanup)
-            or any(n not in inputs or n == name for n in cleanup)
-        ):
-            raise ValueError("invalid source cleanup scope")
-        for member, original in inputs.items():
-            if member in outbox.files:
-                if outbox.files[member] != original:
-                    raise ValueError("source input changed after publication")
-            elif member != name and member not in cleanup:
-                raise ValueError("shared source input missing")
-        url, line = source["url"], source["line"]
-        if not isinstance(url, str) or not isinstance(line, str) or "\n" in line or "\r" in line:
-            raise ValueError("invalid source publication receipt")
-        digest = hashlib.sha256(
-            json.dumps(sorted(inputs.items()), ensure_ascii=True).encode()
-        ).hexdigest()
-        suffix = (
-            f" {name} pr={manifest.pr if manifest.pr is not None else 'none'} "
-            f"actions={len(manifest.actions)} urls={_display_url(url)} source-receipt={digest}"
-        )
-        if not line.endswith(suffix) or len(line) != 20 + len(suffix):
-            raise ValueError("invalid source receipt record")
-        indices = list(range(len(manifest.actions)))
-        if progress["applied"] != indices or any(type(i) is not int for i in progress["applied"]):
-            raise ValueError("invalid source action progress")
-        if progress["urls"] != {str(i): url for i in indices}:
-            raise ValueError("invalid source action receipts")
-        return source
-    except (ValueError, TypeError, KeyError, RecursionError, ManifestError) as exc:
-        raise OutboxChanged(f"{name}: unusable source publication progress ({exc})") from exc
-
-
-def _source_cleanup(
-    incus: Incus,
-    container: str,
-    outbox: Outbox,
-    name: str,
-    source: dict[str, Any],
-    *,
-    uid: int | None,
-) -> None:
-    """Keep the recovery sidecar until every acknowledged cleanup target is gone."""
-    from jailbee.outbox import io as store_io
-
-    reconstructed = Outbox(outbox.files | source["inputs"], outbox.rejected, outbox.identity)
-    exclusive = set(_orphaned_body_files(reconstructed, name))
-    names = [n for n in source["cleanup"] if n in outbox.files and n in exclusive]
-    if name in outbox.files:
-        names.append(name)
-    names.append(f"{name}.progress.json")
-    if outbox.identity is None:
-        raise OutboxChanged("source cleanup identity unavailable")
-    _same_identity(incus, container, outbox.identity)
-    store_io.mutate_store(
-        incus,
-        container,
-        "pr",
-        uid=uid,
-        expected=outbox.files,
-        new_manifest=None,
-        delete_names=tuple(names),
-        forbidden_progress=None,
-        rejected_names=outbox.rejected,
-    )
-
-
-def consume_manifest(
-    incus: Incus,
-    container: str,
-    name: str,
-    url: str,
-    *,
-    uid: int | None,
-    preview: Outbox | None = None,
-    management: PrManagement | None = None,
-) -> None:
-    """Record and remove a fully published source proposal under its identity lock."""
-    manager = management if management is not None else PrManagement()
-    try:
-        ProposalId("pr", name)
-        original = (
-            preview if preview is not None else read_outbox(incus, container, uid=uid, strict=True)
-        )
-        if original.identity is None or original.rejected:
-            raise OutboxChanged("source snapshot unavailable; refresh required")
-        with manager.lock(original.identity):
-            fresh = read_outbox(incus, container, uid=uid, strict=True)
-            if (
-                fresh.identity != original.identity
-                or fresh.files != original.files
-                or fresh.rejected
-            ):
-                raise OutboxChanged("source snapshot changed; refresh required")
-            from jailbee.outbox import io as store_io
-
-            identity = original.identity
-
-            def replace_file(current: Outbox, member: str, text: str) -> Outbox:
-                _same_identity(incus, container, identity)
-                store_io.mutate_store(
-                    incus,
-                    container,
-                    "pr",
-                    uid=uid,
-                    expected=current.files,
-                    new_manifest=(member, text),
-                    delete_names=(),
-                    forbidden_progress=None,
-                )
-                expected = current.files | {member: text}
-                after = read_outbox(incus, container, uid=uid, strict=True)
-                if after.identity != original.identity or after.rejected or after.files != expected:
-                    raise OutboxChanged("source publication evidence changed; cleanup refused")
-                return after
-
-            source = source_publication_receipt(fresh, name)
-            if source is None:
-                payload = _source_progress_payload(fresh, name, url)
-                source = json.loads(payload)["source"]
-                fresh = replace_file(fresh, f"{name}.progress.json", payload)
-            line = source["line"]
-            if line not in fresh.files.get("applied.log", "").splitlines():
-                previous = fresh.files.get("applied.log", "")
-                fresh = replace_file(fresh, "applied.log", _source_receipt_log(previous, line))
-            # Exact full receipt (not just its digest token) must survive readback.
-            if line not in fresh.files.get("applied.log", "").splitlines():
-                raise OutboxChanged("source publication receipt unavailable; cleanup refused")
-            _source_cleanup(incus, container, fresh, name, source, uid=uid)
-    except (
-        IncusError,
-        JournalError,
-        OutboxError,
-        OutboxExecutionError,
-        OutboxReadError,
-        ManifestError,
-        KeyError,
-        ValueError,
-    ) as exc:
-        raise FinalizeError(
-            f"manifest {name} could not be consumed ({exc}); it may remain pending"
-        ) from exc
 
 
 def uncertain_actions(outbox: Outbox, name: str) -> list[int]:
@@ -2593,7 +2139,7 @@ def offer_pending_comments(
             eligible = []
             evidence_failures = 0
             for name in names:
-                # Validate strict evidence before converting it to legacy Progress.
+                # Validate the journal before planning anything from it.
                 try:
                     count = len(parse_manifest(name, fresh.files[name], fresh.files).actions)
                 except (ManifestError, RecursionError):
@@ -3069,9 +2615,9 @@ def _offer_locked(
                 finalize(incus, container, outbox, target, outcome, uid=uid)
             except FinalizeError as e:
                 stack.close()
-                # The GitHub side is settled but the container could not be told.
+                # The GitHub side is settled but the store could not record it.
                 # Publishing the next manifest would post more that nothing can
-                # record — the very thing the sidecar exists to prevent.
+                # record — the very thing the journal exists to prevent.
                 if raise_errors:
                     raise OutboxExecutionError(str(e)) from e
                 error_plain(str(e))

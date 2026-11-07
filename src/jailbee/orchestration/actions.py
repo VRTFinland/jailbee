@@ -987,8 +987,6 @@ def handle_stop(ctx: ActionContext, m: Manifest) -> Outcome:
 
 
 def _handle_stop_locked(ctx: ActionContext, m: Manifest) -> Outcome:
-    from jailbee.orchestration import child_outbox
-
     if not isinstance(m, StopManifest):
         return refused("not a stop manifest")
     child = ctx.child(m.child)
@@ -1016,17 +1014,6 @@ def _handle_stop_locked(ctx: ActionContext, m: Manifest) -> Outcome:
                 ctx.incus.config_unset_checked(child.full, labels.STOPPED_DIRTY)
             else:
                 ctx.incus.config_set(child.full, labels.STOPPED_DIRTY, "1")
-            try:
-                pending = child_outbox.probe(
-                    bounded,
-                    child.full,
-                    uid=ctx.cfg.container_user.uid,
-                    uuid=child.config.get("volatile.uuid"),
-                )
-            except child_outbox.ChildOutboxError:
-                ctx.incus.config_unset_checked(child.full, labels.STOPPED_OUTBOX)
-            else:
-                ctx.incus.config_set(child.full, labels.STOPPED_OUTBOX, str(pending.count))
         except Exception as e:
             return refused(f"child `{child.short}` could not be stopped: {e}")
         # A clean shutdown that outlives its budget escalates once to a forced
@@ -1338,24 +1325,13 @@ def destroy_guard(ctx: ActionContext, child: Node) -> str | None:
         dirty = child.config.get(labels.STOPPED_DIRTY) == "1"
     if dirty:
         return f"child `{child.short}` has uncommitted changes (use force: true to destroy anyway)"
-    if child.running:
-        try:
-            pending = child_outbox.probe(
-                bounded,
-                child.full,
-                uid=ctx.cfg.container_user.uid,
-                uuid=child.config.get("volatile.uuid"),
-            )
-        except child_outbox.ChildOutboxError:
-            return child_outbox.unchecked(child.short)
-        if pending.count:
-            return child_outbox.describe(child.short, pending)
-    else:
-        record = child.config.get(labels.STOPPED_OUTBOX, "")
-        if not record or not record.isascii() or not record.isdecimal() or len(record) > 10:
-            return child_outbox.unchecked(child.short)
-        if int(record):
-            return child_outbox.describe_count(child.short, int(record))
+    # The host outbox store holds a stopped child's proposals too.
+    try:
+        pending = child_outbox.probe(child.config.get("volatile.uuid"))
+    except child_outbox.ChildOutboxError:
+        return child_outbox.unchecked(child.short)
+    if pending.count:
+        return child_outbox.describe(child.short, pending)
     return None
 
 

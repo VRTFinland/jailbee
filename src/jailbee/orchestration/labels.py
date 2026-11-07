@@ -91,6 +91,9 @@ STOPPED_HEAD = "user.jailbee.orchestration.stopped_head"
 ON_DONE = "user.jailbee.orchestration.on_done"
 PENDING_DESTROY = "user.jailbee.orchestration.pending_destroy"
 STOPPED_DIRTY = "user.jailbee.orchestration.stopped_dirty"
+# Legacy: the staged-proposal count an older broker's `stop` recorded. The
+# outbox now lives in the host store, readable for a stopped child, so this
+# is never written; it is only cleared where an older version left it.
 STOPPED_OUTBOX = "user.jailbee.orch.stopped_outbox"
 ON_DONE_DESTROY = "destroy"
 ON_DONE_KEEP = "keep"

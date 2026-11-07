@@ -26,13 +26,10 @@ def rig(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("with_config", [False, True])
-def test_fresh_home_guard_allows_user_role_and_outbox_bootstrap(
-    tmp_path, monkeypatch, make_cfg, with_config
-):
+def test_fresh_home_guard_allows_user_role_bootstrap(tmp_path, monkeypatch, make_cfg, with_config):
     import os
 
     from jailbee.orchestration import labels
-    from jailbee.outbox.io import ensure_directories
 
     incus, _ = rig(tmp_path, monkeypatch)
     cfg = make_cfg(tmp_path / "repo")
@@ -79,20 +76,18 @@ def test_fresh_home_guard_allows_user_role_and_outbox_bootstrap(
     assert not guard.exists()
     assert (neutral / "jailbee").stat().st_mode & 0o777 == 0o755
     labels.write_child_role(incus, "proj-c", uid=cfg.container_user.uid)
-    ensure_directories(cfg, incus, "proj-c")
     assert (home / ".jailbee/orchestration/role").read_text().strip() == "child"
-    for relative in (".jailbee", ".jailbee/pr-outbox"):
-        path = home / relative
-        assert path.is_dir()
-        assert path.stat().st_uid == os.getuid()
-        assert os.access(path, os.W_OK | os.X_OK)
+    path = home / ".jailbee"
+    assert path.is_dir()
+    assert path.stat().st_uid == os.getuid()
+    assert os.access(path, os.W_OK | os.X_OK)
     assert home_exec_uids and all(uid == cfg.container_user.uid for uid in home_exec_uids)
 
 
 @pytest.mark.parametrize("answer", ["", "not-a-uid", "0", "-1"])
 def test_unknown_uid_and_old_mount_cannot_select_stale_binding(tmp_path, monkeypatch, answer):
     from jailbee.container_outbox import bindings
-    from jailbee.container_outbox.store import OutboxCommandError
+    from jailbee.container_outbox.common import OutboxCommandError
 
     incus, config = rig(tmp_path, monkeypatch)
     old = tmp_path / "old-visible.json"
@@ -289,7 +284,7 @@ def test_wrong_metadata_source_repairs_visible_binding_or_fails_closed(
     tmp_path, monkeypatch, failure
 ):
     from jailbee.container_outbox import bindings
-    from jailbee.container_outbox.store import OutboxCommandError
+    from jailbee.container_outbox.common import OutboxCommandError
 
     incus, config = rig(tmp_path, monkeypatch)
     config["user.jailbee.pr"] = "43"

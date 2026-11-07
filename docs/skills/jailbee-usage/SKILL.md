@@ -1677,7 +1677,7 @@ the **container-side** contract, exact schema and worked examples live in
 the **jailbee-pr-review** skill, not here. What matters on the host:
 
 ```bash
-jailbee review ls                    # (deprecated: use `jailbee outbox ...`) every running container's pending manifests
+jailbee review ls                    # (deprecated: use `jailbee outbox ...`) every container's pending manifests
 jailbee review show <name>           # (deprecated: use `jailbee outbox ...`) print every pending body in full (rendered on a terminal)
 jailbee review apply <name> --dry-run   # print the plan, publish nothing
 jailbee review apply <name>          # ask once, then publish to GitHub

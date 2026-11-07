@@ -492,13 +492,20 @@ def test_candidate_description_must_be_pending_in_real_evidence(mocker, tmp_path
             )
         )
     }
+    journals = {}
     if consumed:
-        files["a.json.progress.json"] = json.dumps(
-            {"applied": [0], "urls": {"0": "https://github.com/acme/a/pull/7"}}
-        )
+        from jailbee.outbox.publication_db import Journal
+        from jailbee.outbox_io import JournalAction
+        from jailbee.pr_outbox import proposal_files_digest
+
+        action = JournalAction(0, "applied", "acme/a", url="https://github.com/acme/a/pull/7")
+        digest = proposal_files_digest(files, "a.json")
+        journals["a.json"] = Journal("u", "pr", "a.json", digest, "c", 2, (action,))
     mocker.patch(
         "jailbee.pr_outbox.read_outbox",
-        return_value=Outbox(files, identity=ContainerIdentity("c", "born")),
+        return_value=Outbox(
+            files, identity=ContainerIdentity("c", "born"), uuid="u", journals=journals
+        ),
     )
     assert flow.submodule_pr_candidates(
         cfg, incus, "c", "s", repo_dir="/r", base_branch="main"

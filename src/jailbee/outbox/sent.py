@@ -40,7 +40,7 @@ Outbox = Literal["issue", "review", "source"]
 Publisher = Literal["user", "orchestrator"]
 State = Literal["applied", "uncertain"]
 
-# JournalError / IncusError: a uuid lookup (`outbox_io.instance_uuid`) that failed.
+# JournalError / IncusError: an instance identity or uuid lookup that failed.
 _BEST_EFFORT_ERRORS: tuple[type[Exception], ...] = (
     sqlite3.Error,
     OSError,

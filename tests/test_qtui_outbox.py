@@ -350,7 +350,10 @@ def test_real_shared_deletion_changes_only_selected_comment(env, qtbot, mocker):
         {"name": IDENTITY.full_name, "created_at": IDENTITY.created_at}
     ]
     mocker.patch.object(
-        outbox.service, "read_store", side_effect=lambda i, c, kind, **kw: snapshots[kind]
+        outbox.service,
+        "read_store",
+        create=True,
+        side_effect=lambda i, c, kind, **kw: snapshots[kind],
     )
     route_issue_snapshot(mocker, outbox.service)
     management = mocker.patch.object(outbox.service, "PrManagement")
@@ -367,7 +370,7 @@ def test_real_shared_deletion_changes_only_selected_comment(env, qtbot, mocker):
         snapshots[kind] = store(kind, files)
         return kwargs["delete_names"]
 
-    mocker.patch.object(outbox.service, "mutate_store", side_effect=mutation)
+    mocker.patch.object(outbox.service, "mutate_store", create=True, side_effect=mutation)
     select(dialog, action=0, comment=0)
     mocker.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes)
     with qtbot.waitSignal(dialog.changed):

@@ -61,10 +61,10 @@ def env(mocker, make_cfg, tmp_path):
     snapshots["pr"] = store("pr", pr_files())
     snapshots["issue"] = store("issue", issue_files())
     reader = mocker.patch.object(
-        service, "read_store", side_effect=lambda i, c, k, **kw: snapshots[k]
+        service, "read_store", create=True, side_effect=lambda i, c, k, **kw: snapshots[k]
     )
     mutation = mocker.patch.object(
-        service, "mutate_store", side_effect=lambda *a, **kw: kw["delete_names"]
+        service, "mutate_store", create=True, side_effect=lambda *a, **kw: kw["delete_names"]
     )
     # Issue drops observed through `mutate_store` (the deletion scope); the real
     # store path is tested in tests/test_outbox_service_issue_store.py.
@@ -311,13 +311,14 @@ def test_drop_execution_error_maps_to_one(env):
 
 
 @pytest.mark.parametrize("name", [[], ["feature"]])
-def test_stopped_is_structured_unavailable(env, name):
+def test_a_stopped_container_is_inspected_from_the_store(env, name):
     env[6]["status"] = "Stopped"
     result = CliRunner().invoke(app, ["outbox", "ls", *name, "-o", "json"])
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 0, result.output
     row = json.loads(result.stdout)["containers"][0]
-    assert row["available"] is False and "stopped" in row["error"].lower()
-    env[3].assert_not_called()
+    assert row["available"] is True and row["error"] is None
+    assert {p["id"] for p in row["proposals"]} == {"pr/001.json", "issue/001.json"}
+    env[1].exec.assert_not_called()
 
 
 def test_literal_untrusted_detail(env):

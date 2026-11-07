@@ -24,6 +24,23 @@ before editing `## Unreleased`.
   queued/started/done status replies in one call, leaving child messages and failures
   untouched ([#88](https://github.com/VRTFinland/jailbee/issues/88)).
 
+### Changed
+
+- The outbox moved to the host: every container stages issue and PR proposals
+  (and draft batches) over its broker socket into the host outbox store
+  (`broker.db`), which also keeps each publication's per-action journal and the
+  Sent log. Host commands (`jb outbox`, `jb issue`, `jb review`, `jb pr`) read and
+  write that store without `incus exec`, so `jb outbox` is fast and works on
+  stopped containers too, as do `jb review ls|apply`; an agent cannot edit
+  publication progress. `jailbee review resolve` settles an uncertain PR action
+  like `jailbee issue resolve` does for issues. Staging exits 4 when the broker
+  is unreachable. Proposals are bound to the Incus instance, so a fork or a
+  restored snapshot does not carry them. **Before upgrading**, publish or drop
+  pending proposals and resolve uncertain publications: the old
+  `~/.jailbee/{issue,pr}-outbox` directories are ignored afterwards, and the old
+  Sent history in `state.sqlite` is not carried over
+  ([#89](https://github.com/VRTFinland/jailbee/issues/89)).
+
 ### Fixed
 
 - Broker sockets survive container reboots: the mount moves outside `/run`,

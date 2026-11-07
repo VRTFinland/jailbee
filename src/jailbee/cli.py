@@ -14169,37 +14169,41 @@ class _ReviewRow(NamedTuple):
     error: str | None = None
 
 
+def _review_count(counts: dict[str, int] | None, uuid: str | None) -> int | None:
+    """A container's PR proposals in the host outbox store; None when unknown."""
+    if counts is None or uuid is None:
+        return None
+    return counts.get(uuid, 0)
+
+
 def _resolve_review_container(cfg: "Config", name: str | None) -> tuple["IncusType", str | None]:
     """The container to review; ``None`` when nothing anywhere is pending.
 
     With an explicit ``name`` this is the usual :func:`_resolve_existing`.
     Without one the candidate set is narrower than that helper's — only
-    running containers the status probe did not report as empty — so the
-    common case (one container wrote a review, six others did not) never
-    asks.
+    containers, running or stopped, whose PR proposal count in the host
+    outbox store is not zero — so the common case (one container wrote a
+    review, six others did not) never asks.
 
-    Only an explicit count of 0 means "nothing here". An unknown count
-    (``None``: a pre-upgrade container, a probe early-exit on a non-checkout,
-    an unparseable value) makes the container a candidate and its outbox is
-    read, exactly as `review ls` does — inferring "nothing pending" from "the
-    probe could not say" is how a written review gets silently lost, which is
-    the one thing this feature exists to prevent.
+    Only an explicit count of 0 means "nothing here". An unknown count (the
+    store could not be read, or the container has no uuid) makes the
+    container a candidate and its outbox is read, exactly as `review ls`
+    does — inferring "nothing pending" from "the count is unknown" is how a
+    written review gets silently lost, which is the one thing this feature
+    exists to prevent.
     """
     from jailbee import prompting
     from jailbee.incus import Incus
-    from jailbee.lifecycle import list_containers
+    from jailbee.lifecycle import list_containers, pr_outbox_counts
     from jailbee.tui import pick_container
 
     if name is not None:
         return _resolve_existing(cfg, name)
 
     incus = Incus()
+    counts = pr_outbox_counts()
     pending = [
-        c
-        for c in list_containers(cfg, incus, with_git_status=True)
-        # A stopped container's outbox cannot be read at all, so it is never a
-        # candidate — `review ls` skips it the same way and names it instead.
-        if c.state == "Running" and (c.git_status is None or c.git_status.pending_pr_actions != 0)
+        c for c in list_containers(cfg, incus, fast=True) if _review_count(counts, c.uuid) != 0
     ]
     if not pending:
         return incus, None
@@ -14233,14 +14237,6 @@ def _read_review_outbox_or_exit(
         return pr_outbox.read_outbox(incus, container, uid=cfg.container_user.uid)
     except pr_outbox.OutboxReadError as e:
         error_plain(str(e))
-        # The outbox lives in the container's own filesystem, so a stopped
-        # container has none to read — by far the likeliest way to land here,
-        # and the only one with an obvious remedy. The wording comes from
-        # Incus ("Instance is not running"); when it doesn't match, the
-        # message above is left to speak for itself rather than having a
-        # guess appended to it.
-        if "not running" in str(e).lower():
-            error_plain(f"Start it first: jailbee start {short}")
         raise typer.Exit(2) from e
 
 
@@ -14378,11 +14374,10 @@ def review_ls_cmd(
     ] = None,
     config: ConfigOption = None,
 ) -> None:
-    """List the PR actions waiting in each running container's outbox.
+    """List the PR actions waiting in each container's outbox.
 
-    One row per manifest. A stopped container is not probed and its outbox
-    cannot be read, so it is named in a note under the table rather than
-    listed as having nothing — JSON output describes manifests only.
+    One row per manifest. The proposals live in the host outbox store, so a
+    stopped container is listed like a running one.
     """
     _deprecated_alias_hint("review ls", "outbox ls")
     from rich.markup import escape
@@ -14395,20 +14390,17 @@ def review_ls_cmd(
     cfg = _load_or_exit(config)
     incus = Incus()
     rows: list[_ReviewRow] = []
-    skipped: list[str] = []
 
+    from jailbee.lifecycle import pr_outbox_counts
     from jailbee.remote_ssh.repo_scope import scope_for_session
 
+    counts = pr_outbox_counts()
     for ci in list_containers(
-        cfg, incus, all_repos=all_repos, with_git_status=True, scope=scope_for_session()
+        cfg, incus, all_repos=all_repos, fast=True, scope=scope_for_session()
     ):
         short = short_name(cfg, ci.name)
-        if ci.state != "Running":
-            skipped.append(short)
-            continue
-        pending = ci.git_status.pending_pr_actions if ci.git_status is not None else None
-        if pending == 0:
-            continue  # the probe already answered "nothing here" — don't ask twice
+        if _review_count(counts, ci.uuid) == 0:
+            continue  # the store already answered "nothing here" — don't ask twice
         try:
             outbox = pr_outbox.read_outbox(incus, ci.name, uid=cfg.container_user.uid)
         except pr_outbox.OutboxReadError as e:
@@ -14519,11 +14511,6 @@ def review_ls_cmd(
         title="Pending PR actions" if fmt == "table" else None,
         empty_message="No pending PR actions.",
     )
-    if fmt == "table" and skipped:
-        info(
-            f"Not checked, because a stopped container's outbox cannot be read: "
-            f"{', '.join(sorted(skipped))}"
-        )
 
 
 def _print_manifest_bodies(manifest: "Manifest") -> None:

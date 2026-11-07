@@ -20,7 +20,7 @@ OUTBOX_PUT = "outbox.put"
 OUTBOX_LIST = "outbox.list"
 OUTBOX_SHOW = "outbox.show"
 OUTBOX_DROP = "outbox.drop"
-# The calling container's own sent records (replaces reading `applied.log`).
+# The calling container's own sent records, from the host outbox store.
 OUTBOX_SENT = "outbox.sent"
 OUTBOX_OPS: frozenset[str] = frozenset(
     {OUTBOX_PUT, OUTBOX_LIST, OUTBOX_SHOW, OUTBOX_DROP, OUTBOX_SENT}

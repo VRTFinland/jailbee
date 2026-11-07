@@ -622,6 +622,16 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "the broker service is not running"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 5),
+        actions=frozenset({"apply"}),
+        reason=(
+            "issue and PR proposals live in the host outbox store, staged over that "
+            "broker socket: the old in-container outbox directories are ignored (publish "
+            "or drop what they held, and resolve uncertain publications, with the "
+            "previous version) and the old Sent history in state.sqlite is not carried over"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

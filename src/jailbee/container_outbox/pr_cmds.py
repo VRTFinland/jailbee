@@ -9,8 +9,8 @@ from uuid import uuid4
 import typer
 
 from jailbee.container_outbox import bindings, broker, gh
+from jailbee.container_outbox.common import OutboxCommandError
 from jailbee.container_outbox.issue_cmds import BatchOpt, BodyFileOpt, BodyOpt, _body, _guard, _run
-from jailbee.container_outbox.store import OutboxCommandError
 
 pr_app = typer.Typer(
     no_args_is_help=True,
