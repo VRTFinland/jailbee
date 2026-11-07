@@ -26,8 +26,14 @@ if TYPE_CHECKING:
     from jailbee.orchestration.protocol import Manifest
 
 
+def _recipient_uuid(target: Node) -> str | None:
+    return target.config.get("volatile.uuid")
+
+
 def _relay(ctx: ActionContext, target: Node, manifest: MessageManifest) -> Outcome:
     """Deliver to the target instance, parking only when store delivery is unavailable."""
+    if not _recipient_uuid(target):
+        return refused(f"cannot identify {target.short}; message was not queued")
     # Built from a dict: the wire name `from` is an alias, which mypy cannot see.
     msg = InboxMessage.model_validate(
         {
@@ -49,20 +55,11 @@ def _relay(ctx: ActionContext, target: Node, manifest: MessageManifest) -> Outco
         uid=ctx.cfg.container_user.uid,
         now=ctx.now,
         seq=next(ctx.seq),
-        recipient_uuid=target.config.get("volatile.uuid"),
+        recipient_uuid=_recipient_uuid(target),
     )
     if result == "delivered":
         return done(f"delivered to {target.short}")
     return Outcome("queued", f"delivery to {target.short} is queued; the broker will retry")
-
-
-def _orchestrator_of(ctx: ActionContext) -> Node:
-    """The sender's orchestrator; a destroyed one is a stopped stand-in so the message parks."""
-    full = ctx.sender.config[labels.SPAWNED_BY]
-    listed = ctx.nodes.get(full)
-    if listed is not None:
-        return listed
-    return Node(full, lifecycle.short_name(ctx.cfg, full), False, {})
 
 
 def _from_orchestrator(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
@@ -148,14 +145,12 @@ def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
         # before the store insert must leave a retryable delivery gate.
         pending = finishing.park(ctx, target, item)
         msg, summary = finishing.complete(ctx, ctx.sender, target, item)
-        outbox.save_pending(
-            pending, item, recipient_uuid=target.config.get("volatile.uuid"), completed=msg
-        )
+        outbox.save_pending(pending, item, recipient_uuid=_recipient_uuid(target), completed=msg)
         from jailbee.orchestration.store import StoreError
 
         try:
-            inserted = outbox._insert_into_store(
-                ctx.root, target.full, msg, recipient_uuid=target.config.get("volatile.uuid")
+            inserted = outbox.insert_into_store(
+                ctx.root, target.full, msg, recipient_uuid=_recipient_uuid(target)
             )
         except StoreError:
             inserted = False
@@ -171,11 +166,18 @@ def handle_done(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
 
 
 def _from_child(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
-    target = _orchestrator_of(ctx)
-    if manifest.to is not None and manifest.to != target.short:
+    full = ctx.sender.config[labels.SPAWNED_BY]
+    short = lifecycle.short_name(ctx.cfg, full)
+    if manifest.to is not None and manifest.to != short:
         return refused("a child can only message its orchestrator")
     if manifest.kind == "done":
+        target = ctx.nodes.get(full)
+        if target is not None and not _recipient_uuid(target):
+            return refused(f"cannot identify {short}; done report was not queued")
         return handle_done(ctx, manifest)
+    target = ctx.nodes.get(full)
+    if target is None:
+        return refused(f"your orchestrator {short} no longer exists; message was not queued")
     return _relay(ctx, target, manifest)
 
 

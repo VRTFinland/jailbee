@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import ValidationError
 
 from jailbee.incus import IncusError
-from jailbee.orchestration.protocol import FINISH_SUFFIX, PendingFinish, inbox_file_name
+from jailbee.orchestration.protocol import FINISH_SUFFIX, PendingFinish, inbox_file_name_for
 from jailbee.orchestration.state import atomic_write_text, pending_dir
 
 if TYPE_CHECKING:
@@ -58,6 +58,7 @@ class PendingDelivery:
     recipient_uuid: str | None
     item: dict[str, object]
     completed: dict[str, object] | None = None
+    acked: bool = False
 
 
 def save_pending(
@@ -66,6 +67,7 @@ def save_pending(
     *,
     recipient_uuid: str | None,
     completed: InboxMessage | dict[str, object] | None = None,
+    acked: bool = False,
 ) -> None:
     """Atomically retain identity and a stable completed result at the same causal gate."""
     data = item if isinstance(item, dict) else json.loads(item.model_dump_json(by_alias=True))
@@ -82,6 +84,7 @@ def save_pending(
                 "recipient_uuid": recipient_uuid,
                 "item": data,
                 "completed": result,
+                "acked": acked,
             }
         )
         + "\n",
@@ -98,11 +101,19 @@ def load_pending(path: Path) -> PendingDelivery:
         raise ValueError("invalid recipient identity")
     if not isinstance(item, dict) or (completed is not None and not isinstance(completed, dict)):
         raise ValueError("invalid host spool payload")
-    return PendingDelivery(uuid, item, completed)
+    acked = data.get("acked", False)
+    if not isinstance(acked, bool):
+        raise ValueError("invalid acknowledgement state")
+    return PendingDelivery(uuid, item, completed, acked)
 
 
-def _insert_into_store(
-    root: Path, full: str, item: InboxItem | dict[str, object], *, recipient_uuid: str | None = None
+def insert_into_store(
+    root: Path,
+    full: str,
+    item: InboxItem | dict[str, object],
+    *,
+    recipient_uuid: str | None = None,
+    acked: bool = False,
 ) -> bool:
     """Deliver to a verified instance, independently of its socket registration.
 
@@ -114,9 +125,11 @@ def _insert_into_store(
     if not recipient_uuid:
         return False
     data = item if isinstance(item, dict) else json.loads(item.model_dump_json(by_alias=True))
-    store.BrokerStore(store.store_path(root)).insert_item(
-        recipient_uuid, full, data, now=time.time()
-    )
+    broker_store = store.BrokerStore(store.store_path(root))
+    now = time.time()
+    broker_store.insert_item(recipient_uuid, full, data, now=now, acked=acked)
+    if acked:
+        broker_store.ack(recipient_uuid, str(data["id"]), now=now)
     return True  # An already-inserted id is delivered too (crash-safe retry).
 
 
@@ -124,28 +137,55 @@ def deliver(
     incus: Incus,
     root: Path,
     recipient_full: str,
-    item: InboxItem,
+    item: InboxItem | dict[str, object],
     *,
     running: bool,
     uid: int | None,
     now: datetime,
     seq: int = 0,
     recipient_uuid: str | None = None,
+    acked: bool = False,
 ) -> Literal["delivered", "parked"]:
-    """Insert into the store, or park behind older items/on missing identity or failure."""
+    """Insert into the store, or park behind older items on failure."""
     from jailbee.orchestration.store import StoreError
 
+    if not recipient_uuid:
+        raise ValueError("recipient identity is required for delivery")
+    data = item if isinstance(item, dict) else json.loads(item.model_dump_json(by_alias=True))
+    item_id = data.get("id")
+    if not isinstance(item_id, str):
+        raise ValueError("item id is required for delivery")
+    directory = pending_dir(root, recipient_full)
+    if directory.is_dir():
+        for path in directory.iterdir():
+            if not _deliverable(path):
+                continue
+            try:
+                pending = load_pending(path)
+            except (OSError, ValueError):
+                continue
+            if pending.recipient_uuid == recipient_uuid and pending.item.get("id") == item_id:
+                if acked and not pending.acked:
+                    save_pending(
+                        path,
+                        pending.item,
+                        recipient_uuid=recipient_uuid,
+                        completed=pending.completed,
+                        acked=True,
+                    )
+                return "parked"
     try:
-        if not has_pending(root, recipient_full) and _insert_into_store(
-            root, recipient_full, item, recipient_uuid=recipient_uuid
+        if not has_pending(root, recipient_full) and insert_into_store(
+            root, recipient_full, item, recipient_uuid=recipient_uuid, acked=acked
         ):
             return "delivered"
     except StoreError:
         logging.getLogger(__name__).exception("broker store unavailable; parking item")
     save_pending(
-        pending_dir(root, recipient_full) / inbox_file_name(item, now, seq=seq),
+        directory / inbox_file_name_for(item_id, now, seq=seq),
         item,
         recipient_uuid=recipient_uuid,
+        acked=acked,
     )
     return "parked"
 
@@ -182,11 +222,11 @@ def _note_quarantined(
             ),
         }
     )
-    name = inbox_file_name(note, datetime.now(UTC))
+    name = inbox_file_name_for(note.id, datetime.now(UTC))
     from jailbee.orchestration.store import StoreError
 
     try:
-        if _insert_into_store(root, recipient_full, note, recipient_uuid=recipient_uuid):
+        if insert_into_store(root, recipient_full, note, recipient_uuid=recipient_uuid):
             return
     except StoreError:
         logging.getLogger(__name__).exception("broker store unavailable; parking quarantine note")
@@ -244,7 +284,13 @@ def flush_pending(
                 break
             message = finish(item)
             # Persist the generated id before insertion: retries must never rerun complete.
-            save_pending(path, pending.item, recipient_uuid=recipient_uuid, completed=message)
+            save_pending(
+                path,
+                pending.item,
+                recipient_uuid=recipient_uuid,
+                completed=message,
+                acked=pending.acked,
+            )
             loaded = json.loads(message.model_dump_json(by_alias=True))
         if not isinstance(loaded.get("id"), str):
             logging.getLogger(__name__).error("invalid pending item %s", path)
@@ -254,8 +300,8 @@ def flush_pending(
             )
             continue
         try:
-            inserted = _insert_into_store(
-                root, recipient_full, loaded, recipient_uuid=recipient_uuid
+            inserted = insert_into_store(
+                root, recipient_full, loaded, recipient_uuid=recipient_uuid, acked=pending.acked
             )
         except StoreError:
             logging.getLogger(__name__).exception("broker store insert failed; keeping files")

@@ -72,7 +72,7 @@ class Rig:
         )
         self.head = mocker.patch("jailbee.orchestration.actions._child_head", return_value=SHA)
         self.insert_store = mocker.patch(
-            "jailbee.orchestration.outbox._insert_into_store", return_value=True
+            "jailbee.orchestration.outbox.insert_into_store", return_value=True
         )
         self.deliver = mocker.patch(
             "jailbee.orchestration.messages.deliver", return_value="delivered"
@@ -312,7 +312,12 @@ def test_done_without_destroy_grant_at_completion_is_a_kept_import_not_an_error(
     grant = Grant(operations=("spawn", "message", "import"))
     rig.ctx.nodes = {
         CHILD: rig.ctx.sender,
-        orch.full: Node(orch.full, orch.short, True, {labels.GRANT: grant.to_label()}),
+        orch.full: Node(
+            orch.full,
+            orch.short,
+            True,
+            {labels.GRANT: grant.to_label(), "volatile.uuid": "uuid-orch"},
+        ),
     }
     out = messages.handle_message(rig.ctx, _done())
     msg = rig.insert_store.call_args.args[2]
@@ -392,7 +397,12 @@ def test_done_keeps_child_when_destroy_grant_revoked(tmp_path: Path, mocker: Moc
     grant = Grant(operations=("spawn", "message", "import"))
     rig.ctx.nodes = {
         CHILD: rig.ctx.sender,
-        orch.full: Node(orch.full, orch.short, True, {labels.GRANT: grant.to_label()}),
+        orch.full: Node(
+            orch.full,
+            orch.short,
+            True,
+            {labels.GRANT: grant.to_label(), "volatile.uuid": "uuid-orch"},
+        ),
     }
     messages.handle_message(rig.ctx, _done())
     msg = rig.insert_store.call_args.args[2]

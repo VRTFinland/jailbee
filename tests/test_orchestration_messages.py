@@ -20,7 +20,12 @@ if TYPE_CHECKING:
 
 
 def _node(short: str, running: bool = True, **config: str) -> Node:
-    return Node(full=f"myrepo-{short}", short=short, running=running, config=config)
+    return Node(
+        full=f"myrepo-{short}",
+        short=short,
+        running=running,
+        config={"volatile.uuid": f"uuid-{short}", **config},
+    )
 
 
 def _ctx(tmp_path: Path, sender: Node, nodes: list[Node]) -> ActionContext:
@@ -140,12 +145,22 @@ def test_child_question_relayed_to_orchestrator(tmp_path: Path, deliver: MagicMo
     assert out == done("delivered to orch")
 
 
-def test_child_message_queued_when_orchestrator_gone(tmp_path: Path, deliver: MagicMockT) -> None:
-    deliver.return_value = "parked"
+def test_child_message_refused_when_orchestrator_gone(tmp_path: Path, deliver: MagicMockT) -> None:
     out = messages.handle_message(_child_ctx(tmp_path, orch_listed=False), _msg())
-    assert deliver.call_args.args[2] == "myrepo-orch"
-    assert deliver.call_args.kwargs["running"] is False
-    assert out == Outcome("queued", "delivery to orch is queued; the broker will retry")
+    assert out == refused("your orchestrator orch no longer exists; message was not queued")
+    deliver.assert_not_called()
+
+
+def test_missing_recipient_identity_refuses_message_and_done(tmp_path: Path, deliver: MagicMockT) -> None:
+    ctx = _child_ctx(tmp_path)
+    ctx.nodes["myrepo-orch"].config.pop("volatile.uuid")
+    assert messages.handle_message(ctx, _msg()) == refused(
+        "cannot identify orch; message was not queued"
+    )
+    assert messages.handle_message(ctx, _msg(kind="done")) == refused(
+        "cannot identify orch; done report was not queued"
+    )
+    deliver.assert_not_called()
 
 
 def test_child_may_name_its_orchestrator_in_to(tmp_path: Path, deliver: MagicMockT) -> None:

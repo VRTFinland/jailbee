@@ -270,9 +270,12 @@ def notify_orphaned_finishes(
     if not base.is_dir():
         return retry
     for directory in base.iterdir():
-        if not directory.is_dir() or directory.name in present:
+        if not directory.is_dir():
             continue
-        for path in sorted(directory.glob("*.finish.json")):
+        paths = list(directory.glob("*.finish.json.bad"))
+        if directory.name not in present:
+            paths.extend(directory.glob("*.finish.json"))
+        for path in sorted(paths):
             try:
                 pending = outbox.load_pending(path)
                 item = PendingFinish.model_validate(pending.item)
@@ -280,6 +283,16 @@ def notify_orphaned_finishes(
                 continue
             if item.child_full not in present:
                 continue
+            reason = (
+                "was replaced or its identity could not be verified"
+                if path.name.endswith(".bad")
+                else "was destroyed"
+            )
+            result = (
+                "the completed report could not be delivered"
+                if pending.completed is not None
+                else "your work was not imported and this container is kept"
+            )
             msg = InboxMessage.model_validate(
                 {
                     "version": 1,
@@ -287,10 +300,7 @@ def notify_orphaned_finishes(
                     "type": "message",
                     "kind": "note",
                     "from": directory.name,
-                    "body": (
-                        f"your orchestrator {directory.name} was destroyed; "
-                        "your work was not imported and this container is kept"
-                    ),
+                    "body": f"your orchestrator {directory.name} {reason}; {result}",
                 }
             )
             try:
@@ -306,7 +316,7 @@ def notify_orphaned_finishes(
                     seq=next(seq),
                     recipient_uuid=(identities or {}).get(item.child_full),
                 )
-            except IncusError as exc:
+            except (IncusError, OSError, ValueError) as exc:
                 logging.getLogger(__name__).warning(
                     "broker: notifying %s of the destroyed orchestrator %s failed: %s",
                     item.child_full,
@@ -315,5 +325,8 @@ def notify_orphaned_finishes(
                 )
                 retry.add(directory.name)
                 continue
-            path.unlink(missing_ok=True)
+            if path.name.endswith(".bad"):
+                path.rename(path.with_name("." + path.name + ".notified"))
+            else:
+                path.unlink(missing_ok=True)
     return retry

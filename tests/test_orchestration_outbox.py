@@ -271,18 +271,12 @@ def test_no_socket_row_needed_for_verified_delivery(tmp_path, running):
     incus.exec_with_input.assert_not_called()
 
 
-def test_missing_identity_parks_never_uses_namesakes_socket_row(tmp_path):
+def test_missing_identity_is_refused_without_spooling(tmp_path):
     store = _store_recipient(tmp_path)
-    incus = _incus()
-    assert (
-        outbox.deliver(incus, tmp_path, FULL, _item("1"), running=True, uid=None, now=AT)
-        == "parked"
-    )
+    with pytest.raises(ValueError, match="recipient identity"):
+        outbox.deliver(_incus(), tmp_path, FULL, _item("1"), running=True, uid=None, now=AT)
     assert store.unacked("uuid-1") == []
-    assert outbox.flush_pending(incus, tmp_path, FULL, uid=None) == 0
-    assert outbox.has_pending(tmp_path, FULL)
-    incus.exec.assert_not_called()
-    incus.exec_with_input.assert_not_called()
+    assert not outbox.has_pending(tmp_path, FULL)
 
 
 def test_verified_identity_ignores_namesakes_stale_socket_row(tmp_path):
@@ -346,13 +340,93 @@ def test_transport_era_identity_free_spool_is_quarantined_not_guessed(tmp_path, 
     callback.assert_not_called()
 
 
-def test_missing_identity_at_park_is_not_filled_from_later_inventory(tmp_path):
+def test_acked_retry_upgrades_parked_status_without_duplicate(tmp_path):
     store = _store_recipient(tmp_path)
-    assert (
-        outbox.deliver(_incus(), tmp_path, FULL, _item("unknown"), running=False, uid=None, now=AT)
-        == "parked"
-    )
-    assert flush(_incus(), tmp_path, FULL, uid=None) == 0
+    directory = pending_dir(tmp_path, FULL)
+    outbox.save_pending(directory / "a.json", _item("older"), recipient_uuid="uuid-1")
+    item = json.loads(_item("status").model_dump_json(by_alias=True))
+    for acked in (False, True):
+        assert (
+            outbox.deliver(
+                _incus(),
+                tmp_path,
+                FULL,
+                item,
+                running=True,
+                uid=None,
+                now=AT,
+                recipient_uuid="uuid-1",
+                acked=acked,
+            )
+            == "parked"
+        )
+    assert len(list(directory.iterdir())) == 2
+    assert flush(_incus(), tmp_path, FULL, uid=None) == 2
+    assert [row.id for row in store.unacked("uuid-1")] == ["h-older"]
+
+
+def test_acked_retry_acknowledges_existing_stored_item(tmp_path):
+    store = _store_recipient(tmp_path)
+    for acked in (False, True):
+        assert (
+            outbox.deliver(
+                _incus(),
+                tmp_path,
+                FULL,
+                _item("1"),
+                running=True,
+                uid=None,
+                now=AT,
+                recipient_uuid="uuid-1",
+                acked=acked,
+            )
+            == "delivered"
+        )
     assert store.unacked("uuid-1") == []
-    assert not outbox.has_pending(tmp_path, FULL)
-    assert len(list(pending_dir(tmp_path, FULL).glob("*.bad"))) == 1
+
+
+def test_stale_finish_is_quarantined_and_notifies_surviving_child(tmp_path, caplog):
+    from itertools import count
+    from jailbee.orchestration import finishing
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    path = pending_dir(tmp_path, FULL) / "a.finish.json"
+    outbox.save_pending(path, _finish_item(), recipient_uuid="old-uuid")
+    assert outbox.flush_pending(_incus(), tmp_path, FULL, uid=None, recipient_uuid="new-uuid") == 0
+    assert "quarantining obsolete pending identity" in caplog.text
+    assert path.with_name(path.name + ".bad").exists()
+    finishing.notify_orphaned_finishes(
+        _incus(),
+        tmp_path,
+        {FULL, "proj-c"},
+        {FULL, "proj-c"},
+        now=AT,
+        seq=count(),
+        identities={"proj-c": "child-uuid"},
+    )
+    notes = BrokerStore(store_path(tmp_path)).unacked("child-uuid")
+    assert len(notes) == 1
+    assert "not imported" in notes[0].item["body"]
+
+
+def test_orphan_notice_spool_error_is_logged_and_retried(tmp_path, monkeypatch, caplog):
+    from itertools import count
+    from jailbee.orchestration import finishing
+
+    path = pending_dir(tmp_path, FULL) / "a.finish.json"
+    outbox.save_pending(path, _finish_item(), recipient_uuid="old-uuid")
+    monkeypatch.setattr(
+        outbox, "deliver", lambda *a, **kw: (_ for _ in ()).throw(OSError("disk full"))
+    )
+    retry = finishing.notify_orphaned_finishes(
+        _incus(),
+        tmp_path,
+        {"proj-c"},
+        {"proj-c"},
+        now=AT,
+        seq=count(),
+        identities={"proj-c": "child-uuid"},
+    )
+    assert retry == {FULL}
+    assert path.exists()
+    assert "disk full" in caplog.text
