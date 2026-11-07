@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from jailbee.issue_manifest import (
     MAX_BODY_BYTES,
@@ -22,6 +22,9 @@ from jailbee.issue_manifest import (
 )
 from jailbee.orchestration import wire
 from jailbee.outbox.store_db import KINDS, Kind, OutboxStore, Proposal, ProposalCapError
+
+if TYPE_CHECKING:
+    from jailbee.outbox.publication_db import PublicationStore
 
 _SLUG_RE = re.compile(r"[a-z0-9-]{1,80}")
 _BODY_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -153,6 +156,43 @@ def handle_show(store: OutboxStore, uuid: str, args: Mapping[str, Any]) -> objec
         "bodies": dict(proposal.bodies),
         "revision": proposal.revision,
     }
+
+
+SENT_DEFAULT_LIMIT = 50
+SENT_MAX_LIMIT = 200
+_SENT_SUMMARY_CHARS = 120
+
+
+def handle_sent(store: PublicationStore, uuid: str, args: Mapping[str, Any]) -> object:
+    """The caller's own sent records, newest first: what the host published for it.
+
+    Only rows of the calling instance (its uuid from the socket) are returned;
+    the content is cut to a one-line summary to stay inside the reply cap.
+    """
+    limit = args.get("limit", SENT_DEFAULT_LIMIT)
+    if type(limit) is not int or not 1 <= limit <= SENT_MAX_LIMIT:
+        raise _bad(f"limit must be an integer from 1 to {SENT_MAX_LIMIT}")
+    kind = _kind(args.get("kind"), optional=True)
+    rows = []
+    for record in store.sent_for(uuid, outbox=kind, limit=limit):
+        first = next((line for line in record.content.splitlines() if line.strip()), "")
+        rows.append(
+            {
+                "sent_at": record.sent_at,
+                "outbox": record.outbox,
+                "kind": record.kind,
+                "manifest": record.manifest,
+                "index": record.index,
+                "repo": record.repo,
+                "target": record.target,
+                "url": record.url,
+                "state": record.state,
+                "publisher": record.publisher,
+                "title": record.title,
+                "summary": first[:_SENT_SUMMARY_CHARS],
+            }
+        )
+    return {"records": rows}
 
 
 def handle(

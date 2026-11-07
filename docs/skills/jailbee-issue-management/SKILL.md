@@ -148,7 +148,10 @@ The outbox is not a log of what happened — it is a queue of what you'd
 *like* to happen. A human may edit the issue's real state out from under a
 pending manifest (the `expected` gate exists exactly for this), reject a
 proposal outright, or ask you to fix it before it's applied. The only
-record of what actually landed on GitHub is
-`~/.jailbee/issue-outbox/applied.log`, written by the host after a
-successful `jb issue apply`. Never assume a manifest you wrote has been
-published; check that log (or ask) instead.
+record of what actually landed on GitHub is the host's sent log:
+`jailbee outbox sent` (add `--json`, `--limit N` or `--kind issue`) lists
+what the host published from this container, newest first, with each
+action's state (`applied`, or `uncertain` while a human resolves it) and
+GitHub URL. A published proposal also disappears from `jailbee outbox ls`.
+Never assume a manifest you wrote has been published; check `jailbee outbox
+sent` (or ask) instead.

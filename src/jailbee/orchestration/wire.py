@@ -19,7 +19,9 @@ OUTBOX_MAX_LINE_BYTES = 8 * 1024 * 1024
 OUTBOX_PUT = "outbox.put"
 OUTBOX_LIST = "outbox.list"
 OUTBOX_SHOW = "outbox.show"
-OUTBOX_OPS: frozenset[str] = frozenset({OUTBOX_PUT, OUTBOX_LIST, OUTBOX_SHOW})
+# The calling container's own sent records (replaces reading `applied.log`).
+OUTBOX_SENT = "outbox.sent"
+OUTBOX_OPS: frozenset[str] = frozenset({OUTBOX_PUT, OUTBOX_LIST, OUTBOX_SHOW, OUTBOX_SENT})
 # The exact prefix `encode_request` writes for an outbox put: the listener reads
 # it before the whole line is in, to know which cap the line gets.
 _OUTBOX_PUT_PREFIX = b'{"v":%d,"op":"%s",' % (VERSION, OUTBOX_PUT.encode())

@@ -21,7 +21,8 @@ HOST_SUBCOMMANDS = {
     "config": frozenset({"show", "migrate", "edit", "init"}),
     "pr": frozenset({"push", "bind", "unbind", "ls", "open"}),
     "issue": frozenset({"apply", "resolve", "drop", "ls", "show"}),
-    "outbox": frozenset({"apply", "browse", "clear", "sent"}),
+    # `outbox sent` exists on both sides: the container lists only its own records.
+    "outbox": frozenset({"apply", "browse", "clear"}),
 }
 
 

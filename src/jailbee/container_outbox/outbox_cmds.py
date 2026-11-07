@@ -1,6 +1,7 @@
 """Browse and manage container outbox proposals and batches."""
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, cast
 
@@ -70,6 +71,39 @@ def ls(
                     typer.echo(f"{kind}/{item['name']}  {item['summary']}")
             for draft in data["drafts"]:
                 typer.echo(f"draft {draft['kind']}/{draft['name']}  {draft['actions']} actions")
+
+    _run(run)
+
+
+@outbox_app.command("sent")
+def sent(
+    as_json: Annotated[bool, typer.Option("--json", help="Print one JSON document.")] = False,
+    limit: Annotated[
+        int | None, typer.Option("--limit", min=1, max=200, help="At most this many (default 50).")
+    ] = None,
+    kind: Annotated[str | None, typer.Option(help="Only issue or pr publications.")] = None,
+) -> None:
+    """List what the host published from this container, newest first."""
+
+    def run() -> None:
+        if kind is not None and kind not in ("issue", "pr"):
+            raise OutboxCommandError("kind must be issue or pr", 2)
+        records = broker.sent(limit=limit, kind=cast(Kind | None, kind))
+        if as_json:
+            typer.echo(json.dumps({"records": records}))
+            return
+        if not records:
+            typer.echo("Nothing published from this container yet.")
+            return
+        for record in records:
+            when = datetime.fromtimestamp(float(record["sent_at"]), UTC).strftime("%Y-%m-%d %H:%M")
+            target = record["repo"] + (f"#{record['target']}" if record["target"] else "")
+            state = "uncertain?" if record["state"] == "uncertain" else record["state"]
+            line = (
+                f"{when}  {record['outbox']}/{record['kind']}  {target}  {state}  "
+                f"{record['manifest']}#{record['index']}  {record['url'] or '-'}"
+            )
+            typer.echo(line)
 
     _run(run)
 
