@@ -16,7 +16,7 @@ from jailbee import background
 from jailbee.db.models import JOB_BOOT, JOB_CREATE
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
-from jailbee.orchestration import actions, broker, labels, outbox, watch
+from jailbee.orchestration import actions, broker, broker_state, labels, outbox, watch
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.grant import Grant, RepoCap
 from jailbee.orchestration.journal import Journal
@@ -198,7 +198,7 @@ def test_publish_worker_starts_after_recorded_status_and_reply(tmp_path, monkeyp
         return worker
 
     monkeypatch.setattr(publishing, "start", start)
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     rig.tick(memory)
     assert memory.publish_threads == [worker]
 
@@ -246,7 +246,7 @@ class Rig:
             None,
         )
         self.incus.exists.return_value = False
-        self.memory = broker.BrokerMemory()
+        self.memory = broker_state.BrokerMemory()
         self.store = BrokerStore(store_path(self.root))
         self.requests: dict[str, list[Request] | Exception] = {}
         self.seq = MagicMock()  # parent of every seam, to assert call order
@@ -271,7 +271,7 @@ class Rig:
             ("repo_configs", self.configs),
             ("load_global_config", self.gcfg),
         ]:
-            monkeypatch.setattr(broker, name, mock)
+            monkeypatch.setattr(broker_state if name == "repo_configs" else broker, name, mock)
             self.seq.attach_mock(mock, name)
 
         real_serve = broker._serve
@@ -322,7 +322,7 @@ class Rig:
                 before_publish=lambda: None,
             )
 
-    def tick(self, memory: broker.BrokerMemory | None = None) -> bool:
+    def tick(self, memory: broker_state.BrokerMemory | None = None) -> bool:
         return broker.tick(
             self.incus,
             root=self.root,
@@ -355,7 +355,7 @@ def test_ensure_env_runs_before_pending_delivery_without_container_writes(rig: R
 
 
 def test_child_marker_written_once_per_broker_process(rig: Rig) -> None:
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     rig.incus.list_containers.return_value = [_child(), _orch()]
     rig.tick(memory)
     rig.tick(memory)
@@ -371,7 +371,7 @@ def test_child_marker_written_once_per_broker_process(rig: Rig) -> None:
 
 
 def test_ensure_env_handles_orchestrator_to_child_transition(rig: Rig) -> None:
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     rig.incus.list_containers.return_value = [_orch()]
     rig.tick(memory)
     rig.incus.exec.reset_mock()
@@ -388,7 +388,7 @@ def test_ensure_env_handles_orchestrator_to_child_transition(rig: Rig) -> None:
 
 def test_ensure_env_reads_checked_labels_without_per_node_inventory(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch(), _child(), _child("proj-other")]
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     rig.tick(memory)
     assert rig.incus.list_containers.call_count == 2
     rig.incus.list_containers.reset_mock()
@@ -404,7 +404,7 @@ def test_ensure_env_reads_checked_labels_without_per_node_inventory(rig: Rig) ->
 @pytest.mark.parametrize("cached", [False, True])
 def test_ensure_env_checked_read_failure_forgets_cache(rig: Rig, cached: bool) -> None:
     rig.incus.list_containers.return_value = [_child()]
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     if cached:
         rig.tick(memory)
     rig.ensure_env.reset_mock()
@@ -424,7 +424,7 @@ def test_ensure_env_runs_for_children(rig: Rig) -> None:
 
 
 def test_ensure_env_once_per_broker_process(rig: Rig) -> None:
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     rig.incus.list_containers.return_value = [_orch()]
     rig.tick(memory)
     rig.tick(memory)
@@ -434,7 +434,7 @@ def test_ensure_env_once_per_broker_process(rig: Rig) -> None:
 def test_ensure_env_failure_is_logged_once_and_retried(
     rig: Rig, caplog: pytest.LogCaptureFixture
 ) -> None:
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     rig.ensure_env.side_effect = IncusError("read-only file system")
     rig.incus.list_containers.return_value = [_orch()]
     rig.tick(memory)
@@ -447,7 +447,7 @@ def test_ensure_env_failure_is_logged_once_and_retried(
 def test_broker_warns_once_for_old_image(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
     from jailbee.orchestration.outbox import MISSING_JAILBEE_MESSAGE, ContainerJailbeeMissing
 
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     rig.ensure_env.side_effect = ContainerJailbeeMissing(MISSING_JAILBEE_MESSAGE)
     rig.incus.list_containers.return_value = [_orch()]
     rig.tick(memory)
@@ -460,7 +460,7 @@ def test_broker_warns_once_for_old_image(rig: Rig, caplog: pytest.LogCaptureFixt
 
 
 def test_ensure_env_rerun_after_container_vanishes(rig: Rig) -> None:
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     rig.incus.list_containers.return_value = [_orch()]
     rig.tick(memory)
     rig.incus.list_containers.return_value = []
@@ -489,10 +489,10 @@ def test_config_for_picks_longest_prefix(tmp_path: Path) -> None:
     a = make_config(tmp_path).model_copy(update={"container_prefix": "proj"})
     b = make_config(tmp_path).model_copy(update={"container_prefix": "proj-x"})
     configs = {"proj": a, "proj-x": b}
-    assert broker.config_for("proj-x-feat", configs) is b
-    assert broker.config_for("proj-feat", configs) is a
-    assert broker.config_for("projfeat", configs) is None
-    assert broker.config_for("other-feat", configs) is None
+    assert broker_state.config_for("proj-x-feat", configs) is b
+    assert broker_state.config_for("proj-feat", configs) is a
+    assert broker_state.config_for("projfeat", configs) is None
+    assert broker_state.config_for("other-feat", configs) is None
 
 
 def test_failed_longer_prefix_is_not_attributed_to_a_shorter_one(
@@ -501,7 +501,7 @@ def test_failed_longer_prefix_is_not_attributed_to_a_shorter_one(
     rig.configs.return_value = {"proj": rig.cfg, "proj-x": None}
     rig.incus.list_containers.return_value = [_orch("proj-x-orch")]
     rig.requests["proj-x-orch"] = [_spawn_raw("s1")]
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     with caplog.at_level(logging.WARNING, logger="jailbee.orchestration.broker"):
         rig.tick(memory)
         rig.tick(memory)
@@ -553,18 +553,18 @@ def test_repo_configs_keeps_failed_prefixes_as_none(
             raise ValueError("broken yaml")
         return cfg
 
-    monkeypatch.setattr(broker, "load_repo_config", load)
-    out = broker.repo_configs()
+    monkeypatch.setattr(broker_state, "load_repo_config", load)
+    out = broker_state.repo_configs()
     assert out == {"proj": cfg, "proj-x": None, "gone": None}
-    assert broker.config_for("proj-x-orch", out) is None
-    assert broker.config_for("proj-orch", out) is cfg
+    assert broker_state.config_for("proj-x-orch", out) is None
+    assert broker_state.config_for("proj-orch", out) is cfg
     engine.dispose()
 
 
 def test_unparseable_grant_label_is_logged_once(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
     rig.incus.list_containers.return_value = [_c("proj-orch", **{labels.GRANT: "{nope"})]
     rig.requests["proj-orch"] = [_spawn_raw("s1")]
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     with caplog.at_level(logging.WARNING, logger="jailbee.orchestration.broker"):
         rig.tick(memory)
         rig.tick(memory)
@@ -763,7 +763,7 @@ def test_gcfg_is_loaded_once_and_shared(rig: Rig) -> None:
 def test_unregistered_repo_container_skipped(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
     rig.incus.list_containers.return_value = [_orch("stranger-orch")]
     rig.requests["stranger-orch"] = [_spawn_raw("s1")]
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     with caplog.at_level(logging.WARNING, logger="jailbee.orchestration.broker"):
         rig.tick(memory)
         rig.tick(memory)
@@ -778,7 +778,7 @@ def test_unregistered_repo_container_skipped(rig: Rig, caplog: pytest.LogCapture
 def test_grant_changes_are_visible_without_container_files(rig: Rig) -> None:
     from jailbee.orchestration import socket_ops
 
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     rig.incus.list_containers.return_value = [_orch()]
     rig.tick(memory)
     data = socket_ops.handle_grant(memory, "proj-orch")
@@ -923,7 +923,7 @@ def test_run_broker_backoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(broker, "tick", MagicMock(side_effect=[False, True, False]))
     pauses: list[float] = []
 
-    def fake_pause(seconds: float, stop: broker.StopFlag) -> None:
+    def fake_pause(seconds: float, stop: broker_state.StopFlag) -> None:
         pauses.append(seconds)
         if len(pauses) == 2:
             _sigterm()
@@ -957,7 +957,7 @@ def test_run_broker_keeps_running_when_the_installed_version_is_unknown(
     monkeypatch.setattr(broker, "_installed_version", lambda: None)
     pauses: list[float] = []
 
-    def fake_pause(seconds: float, stop: broker.StopFlag) -> None:
+    def fake_pause(seconds: float, stop: broker_state.StopFlag) -> None:
         pauses.append(seconds)
         if len(pauses) == 2:
             _sigterm()
@@ -982,7 +982,7 @@ def test_installed_version_is_none_without_package_metadata(
 def test_pause_sleeps_in_short_slices_and_stops_early(monkeypatch: pytest.MonkeyPatch) -> None:
     clock = [0.0]
     slept: list[float] = []
-    stop = broker.StopFlag()
+    stop = broker_state.StopFlag()
 
     def fake_sleep(seconds: float) -> None:
         slept.append(seconds)
@@ -997,7 +997,7 @@ def test_pause_sleeps_in_short_slices_and_stops_early(monkeypatch: pytest.Monkey
 
     slept.clear()
     clock[0] = 0.0
-    broker._pause(2.5, broker.StopFlag())
+    broker._pause(2.5, broker_state.StopFlag())
     assert slept == [1.0, 1.0, 0.5]
 
 
@@ -1035,7 +1035,7 @@ def test_run_broker_survives_a_failed_round(
     monkeypatch.setattr(broker, "tick", tick)
     pauses: list[float] = []
 
-    def fake_pause(seconds: float, stop: broker.StopFlag) -> None:
+    def fake_pause(seconds: float, stop: broker_state.StopFlag) -> None:
         pauses.append(seconds)
         if len(pauses) == 2:
             _sigterm()
@@ -1091,7 +1091,7 @@ def test_replies_carry_an_increasing_sequence(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch()]
     rig.requests["proj-orch"] = [_spawn_raw("s1"), _spawn_raw("s2")]
     rig.drain.return_value = [(_req("q1"), Outcome("started", "x"))]
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     rig.tick(memory)
     seqs = [c.kwargs["seq"] for c in rig.deliver.call_args_list]
     assert len(seqs) == 3
@@ -1173,7 +1173,7 @@ def test_tick_does_not_flush_role_none_without_pending(rig: Rig) -> None:
 def test_tick_context_shares_the_memory_sequence(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch()]
     rig.requests["proj-orch"] = [_spawn_raw("s1")]
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     rig.tick(memory)
     ctx = memory.contexts["proj-orch"]
     assert ctx.seq is memory.seq
@@ -1340,7 +1340,7 @@ def test_settle_watch_ignores_stale_finished_snapshot(rig: Rig, monkeypatch):
     rig.incus.list_containers.return_value = [_orch(), _child()]
     monkeypatch.setattr(watch, "read_jobs", lambda: {})
     monkeypatch.setattr("jailbee.orchestration.agent_watch.probe", lambda *a, **k: None)
-    broker._settle_watches(ctx, broker.BrokerMemory(), {})
+    broker._settle_watches(ctx, broker_state.BrokerMemory(), {})
     assert watch.load_watch(rig.root)[orch.full] == [entry]
 
 
@@ -2147,7 +2147,7 @@ def test_unreadable_job_db_reports_nothing(
     _seed(rig)
     monkeypatch.setattr(watch, "read_jobs", lambda: None)
     rig.incus.list_containers.return_value = [_orch()]
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     with caplog.at_level(logging.WARNING):
         rig.tick(memory)
         rig.tick(memory)
@@ -2264,7 +2264,7 @@ def test_grant_view_tracks_effective_default(rig):
     from jailbee.orchestration.runner_model import Runner
 
     rig.incus.list_containers.return_value = [_orch()]
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     rig.cfg._orchestration_view = OrchestrationView(
         default_runner=Runner(agent="claude", model="haiku"), default_runner_source="repo"
     )
@@ -2285,7 +2285,7 @@ def test_grant_view_tracks_source_changes(rig):
 
     runner = Runner(agent="claude", model="haiku")
     rig.incus.list_containers.return_value = [_orch()]
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     rig.cfg._orchestration_view = OrchestrationView(
         default_runner=runner, default_runner_source="repo"
     )
@@ -2396,7 +2396,7 @@ def test_broker_start_stages_and_syncs_registered_repos(
     )
     monkeypatch.setattr(container_app, "stage", stage)
     monkeypatch.setattr("jailbee.agent_skills.sync_agent_skills", sync)
-    monkeypatch.setattr(broker, "repo_configs", lambda memory: {"a": cfg1, "b": cfg2})
+    monkeypatch.setattr(broker_state, "repo_configs", lambda memory: {"a": cfg1, "b": cfg2})
     monkeypatch.setattr(broker, "state_root", lambda: tmp_path)
     tick = MagicMock(return_value=False)
     monkeypatch.setattr(broker, "tick", tick)
@@ -2424,7 +2424,7 @@ def test_nodes_carry_state_sampling_fields() -> None:
             "state": {"pid": True, "cpu": {"usage": 0}, "memory": {"usage": -1}},
         },
     ]
-    nodes = broker._nodes(raw, {})
+    nodes = broker_state.nodes(raw, {})
     assert nodes["proj-a"].init_pid == 42
     assert nodes["proj-a"].cpu_usage_ns == 7
     assert nodes["proj-a"].memory_usage == 1024
@@ -2437,7 +2437,7 @@ def test_nodes_carry_state_sampling_fields() -> None:
 
 
 def test_tick_prunes_status_cache_of_vanished_containers(rig: Rig) -> None:
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     memory.status.host_at.update({"proj-kid": 1.0, "proj-gone": 1.0})
     memory.status.exec_at.update({"proj-gone": 1.0})
     memory.status.sampler_for("proj-gone-orch")
@@ -2599,12 +2599,12 @@ def test_recreated_namesake_never_receives_old_spool_or_executes_finish(
     complete = MagicMock(side_effect=AssertionError("old work must not run for a new parent"))
     monkeypatch.setattr(finishing, "complete", complete)
     monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
-    memory = broker.BrokerMemory() if restart else rig.memory
+    memory = broker_state.BrokerMemory() if restart else rig.memory
     rig.tick(memory)
     assert rig.store.unacked("uuid-new") == []
     assert rig.store.unacked("uuid-old") == []
     complete.assert_not_called()
     assert not path.exists() and path.with_name(path.name + ".bad").exists()
-    rig.tick(broker.BrokerMemory())
+    rig.tick(broker_state.BrokerMemory())
     assert rig.store.unacked("uuid-new") == []
     complete.assert_not_called()

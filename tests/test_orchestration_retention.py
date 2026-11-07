@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from jailbee.config.models_orchestration import OrchestrationView, RepoOrchestration
-from jailbee.orchestration import broker, labels
+from jailbee.orchestration import broker, broker_state, labels
 from tests.test_orchestration_broker import GRANT, NOW, _c
 from tests.test_orchestration_socket_device import Env, env  # noqa: F401
 
@@ -22,7 +22,7 @@ def _item(i: str) -> dict:
 class Clock:
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.t = 1000.0
-        monkeypatch.setattr(broker, "_monotonic", lambda: self.t)
+        monkeypatch.setattr(broker_state, "monotonic", lambda: self.t)
 
 
 @pytest.fixture

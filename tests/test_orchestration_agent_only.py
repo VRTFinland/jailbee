@@ -266,7 +266,7 @@ def test_agent_only_requires_durable_watch(tmp_path, seams, session, monkeypatch
 def test_agent_only_watch_ignores_boot_jobs_and_reports_new_session(
     tmp_path, seams, session, monkeypatch
 ):
-    from jailbee.orchestration import broker
+    from jailbee.orchestration import broker, broker_state
 
     rig = Rig(tmp_path, running=True)
     ctx = rig.ctx()
@@ -283,7 +283,7 @@ def test_agent_only_watch_ignores_boot_jobs_and_reports_new_session(
     )
     reply = MagicMock()
     monkeypatch.setattr(broker, "_reply", reply)
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     broker._settle_watches(ctx, memory, {})
     ctx.now = ctx.now.replace(second=3)
     broker._settle_watches(ctx, memory, {})

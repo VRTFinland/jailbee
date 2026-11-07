@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
-import itertools
 import json
 import logging
-import queue
 import signal
-import threading
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
 from importlib.metadata import PackageNotFoundError
@@ -20,10 +17,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from jailbee import __version__
-from jailbee.config import load_repo_config
 from jailbee.global_config import default_global_config_path, load_global_config
 from jailbee.incus import ORCHESTRATION_DEVICE, IncusError
 from jailbee.orchestration import (
+    broker_state,
     finishing,
     inbox_state,
     labels,
@@ -43,7 +40,6 @@ from jailbee.orchestration.actions import (
     prune_reservations,
     refused,
 )
-from jailbee.orchestration.child_status import StatusCache
 from jailbee.orchestration.journal import Journal
 from jailbee.orchestration.listener import Listener
 from jailbee.orchestration.outbox import (
@@ -75,14 +71,11 @@ from jailbee.orchestration.state import (
 from jailbee.orchestration.store import BrokerStore, StoreError, store_path
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping
-    from types import FrameType
+    from collections.abc import Callable, Mapping
 
     from jailbee.config import Config
     from jailbee.incus import Incus
-    from jailbee.orchestration.listener import Event
     from jailbee.orchestration.protocol import Manifest
-    from jailbee.orchestration.socket_ops import Waiters
     from jailbee.orchestration.state import QueuedRequest
     from jailbee.orchestration.watch import JobSnapshot
 
@@ -97,79 +90,27 @@ LOCK_FILE = "broker.lock"
 UPGRADED_EXIT = 75
 
 
-@dataclass(frozen=True)
-class ChildrenView:
-    """An orchestrator's published children list and when it was observed."""
-
-    observed_at: float
-    children: list[dict[str, object]]
 
 
-@dataclass
-class BrokerMemory:
-    """What the broker remembers between rounds (in memory only)."""
-
-    publish_threads: list[threading.Thread] = field(default_factory=list)
-    env_ensured: set[str] = field(default_factory=set)
-    env_roles: dict[str, str | None] = field(default_factory=dict)
-    # Keys of warnings already logged, so a standing problem is logged once.
-    warned: set[str] = field(default_factory=set)
-    # Host spool sequence: orders the items emitted within one second.
-    seq: Iterator[int] = field(default_factory=itertools.count)
-    # Probe cadence and CPU readings behind the published child status (#64).
-    status: StatusCache = field(default_factory=StatusCache)
-    # Orchestrator full name -> its children as last published by sync_children.
-    children: dict[str, ChildrenView] = field(default_factory=dict)
-    # Container key (volatile.uuid) -> the context built for it in the last round.
-    contexts: dict[str, ActionContext] = field(default_factory=dict)
-    # Socket transport (None in tests that do not exercise it).
-    listener: Listener | None = None
-    store: BrokerStore | None = None
-    queries: Queries | None = None
-    requests: queue.Queue[Event] = field(default_factory=queue.Queue)
-    # Container full name -> volatile.uuid whose socket device we attached.
-    attached: dict[str, str] = field(default_factory=dict)
-    # volatile.uuids whose sock dir this process created: the device must be
-    # re-asserted (remove + add) until that has succeeded once.
-    reassert: set[str] = field(default_factory=set)
-    # Parked `next` long-polls, answered by the executor.
-    waiters: Waiters = field(default_factory=lambda: _new_waiters())
-    # `_monotonic()` of the last retention purge; None until the first round.
-    last_purge: float | None = None
-    # Store uuids the previous purge did not find in the listing.
-    absent_uuids: set[str] = field(default_factory=set)
-    # volatile.uuid values two or more listed instances share (no socket for them).
-    shared_uuids: set[str] = field(default_factory=set)
-    # Generations exclusively claimed by their owner in this round's full inventory.
-    reusable_socket_dirs: set[str] = field(default_factory=set)
-    # Never serve a directory a foreign device named, even if cleanup failed.
-    unsafe_socket_dirs: set[str] = field(default_factory=set)
-
-    def warn_once(self, key: str, msg: str, *args: object) -> None:
-        if key not in self.warned:
-            self.warned.add(key)
-            log.warning(msg, *args)
 
 
 PURGE_INTERVAL = 3600.0
 DEFAULT_RETENTION_DAYS = 30
 
 
-def _monotonic() -> float:
-    return time.monotonic()
 
 
 def _retention_days(
     full: str, config: Mapping[str, str], configs: Mapping[str, Config | None]
 ) -> int:
-    cfg = owner_config(full, config, configs)
+    cfg = broker_state.owner_config(full, config, configs)
     if cfg is None:
         return DEFAULT_RETENTION_DAYS
     return cfg.orchestration_view().repo.message_retention_days
 
 
 def _purge_messages(
-    memory: BrokerMemory,
+    memory: broker_state.BrokerMemory,
     raw: list[dict[str, object]],
     now: datetime,
     everywhere: list[dict[str, object]] | None = None,
@@ -183,7 +124,7 @@ def _purge_messages(
     store = memory.store
     if store is None:
         return
-    mono = _monotonic()
+    mono = broker_state.monotonic()
     if memory.last_purge is not None and mono - memory.last_purge < PURGE_INTERVAL:
         return
     memory.last_purge = mono
@@ -209,7 +150,7 @@ def _purge_messages(
             gone = absent & memory.absent_uuids
             memory.absent_uuids = absent
             if gone:
-                configs = repo_configs(memory)
+                configs = broker_state.repo_configs(memory)
                 names = store.recipient_names(gone)
                 by_days: dict[int, set[str]] = {}
                 for uuid in gone:
@@ -227,7 +168,7 @@ def _purge_messages(
         if not recipients:
             return
         if configs is None:
-            configs = repo_configs(memory)
+            configs = broker_state.repo_configs(memory)
     except Exception:
         log.exception("broker: message purge failed")
         return
@@ -241,82 +182,16 @@ def _purge_messages(
             log.exception("broker: message purge of %s failed", full)
 
 
-def _new_waiters() -> Waiters:
-    from jailbee.orchestration.socket_ops import Waiters
-
-    return Waiters()
 
 
-class StopFlag:
-    """SIGTERM/SIGINT handler that only records the request; the loop polls it."""
-
-    def __init__(self) -> None:
-        self.requested = False
-
-    def __call__(self, signum: int, frame: FrameType | None) -> None:
-        self.requested = True
 
 
-def repo_configs(memory: BrokerMemory | None = None) -> dict[str, Config | None]:
-    """Registered container prefix -> loaded `Config`, or None when it does not load.
-
-    A failed repo keeps its prefix (as None) so its containers are never
-    attributed to a shorter registered prefix.
-    """
-    from sqlmodel import Session, select
-
-    from jailbee.db import get_engine
-    from jailbee.db.models import RegisteredRepo
-
-    memory = memory if memory is not None else BrokerMemory()
-    with Session(get_engine()) as session:
-        rows = [(r.container_prefix, r.repo_root) for r in session.exec(select(RegisteredRepo))]
-    out: dict[str, Config | None] = {}
-    for prefix, repo_root in rows:
-        root = Path(repo_root)
-        cfg: Config | None = None
-        if not root.is_dir():
-            memory.warn_once(f"repo-gone:{prefix}", "broker: repo %s: %s is gone", prefix, root)
-        else:
-            try:
-                cfg = load_repo_config(root)
-            except Exception as e:
-                memory.warn_once(
-                    f"repo-load:{prefix}", "broker: repo %s: config load failed: %s", prefix, e
-                )
-            else:
-                if cfg.container_prefix != prefix:
-                    memory.warn_once(
-                        f"repo-prefix:{prefix}",
-                        "broker: repo %s: prefix changed to %s; run `jailbee apply`",
-                        prefix,
-                        cfg.container_prefix,
-                    )
-                    cfg = None
-        out[prefix] = cfg
-    return out
 
 
-def config_for(full: str, configs: Mapping[str, Config | None]) -> Config | None:
-    """The config of the longest prefix `full` starts with (plus `-`); None if it failed."""
-    best: str | None = None
-    for prefix in configs:
-        if full.startswith(prefix + "-") and (best is None or len(prefix) > len(best)):
-            best = prefix
-    return None if best is None else configs[best]
 
 
-def owner_config(
-    full: str, config: Mapping[str, str], configs: Mapping[str, Config | None]
-) -> Config | None:
-    """A child resolves through its orchestrator's repo; anything else by its own name."""
-    parent = config.get(labels.SPAWNED_BY)
-    return config_for(parent or full, configs)
 
 
-def _labelled(config: Mapping[str, str]) -> bool:
-    """Whether the labels make this container an orchestrator or a child candidate."""
-    return bool(config.get(labels.SPAWNED_BY) or config.get(labels.GRANT))
 
 
 def _status(ref: str, outcome: Outcome) -> InboxStatus:
@@ -330,7 +205,9 @@ def _status(ref: str, outcome: Outcome) -> InboxStatus:
     )
 
 
-def _reply(ctx: ActionContext, ref: str, outcome: Outcome, memory: BrokerMemory) -> None:
+def _reply(
+    ctx: ActionContext, ref: str, outcome: Outcome, memory: broker_state.BrokerMemory
+) -> None:
     deliver(
         ctx.incus,
         ctx.root,
@@ -396,7 +273,7 @@ def _watch_manifest(
 
 
 def _settle_watches(
-    ctx: ActionContext, memory: BrokerMemory, jobs: dict[str, JobSnapshot] | None
+    ctx: ActionContext, memory: broker_state.BrokerMemory, jobs: dict[str, JobSnapshot] | None
 ) -> None:
     """Report the final status of this orchestrator's watched children.
 
@@ -411,7 +288,7 @@ def _settle_watches(
         entries = watches.get(ctx.sender.full, [])
         if any(e.supervise for e in entries):
             try:
-                fresh_nodes = _nodes(
+                fresh_nodes = broker_state.nodes(
                     ctx.incus.list_containers(), {ctx.cfg.container_prefix: ctx.cfg}
                 )
             except Exception:
@@ -442,7 +319,7 @@ def _settle_watches(
 
 def _settle_agent_watch(
     ctx: ActionContext,
-    memory: BrokerMemory,
+    memory: broker_state.BrokerMemory,
     jobs: dict[str, JobSnapshot],
     watches: dict[str, list[watch.WatchEntry]],
     entries: list[watch.WatchEntry],
@@ -592,7 +469,7 @@ def _settle_agent_watch(
 
 def _handle_manifest(
     ctx: ActionContext,
-    memory: BrokerMemory,
+    memory: broker_state.BrokerMemory,
     *,
     ref: str,
     manifest: Manifest | None,
@@ -682,7 +559,10 @@ def _handle_manifest(
 
 
 def _refresh_children_snapshot(
-    ctx: ActionContext, manifest: Manifest | None, outcome: Outcome, memory: BrokerMemory
+    ctx: ActionContext,
+    manifest: Manifest | None,
+    outcome: Outcome,
+    memory: broker_state.BrokerMemory,
 ) -> None:
     """Refresh the children view right after the broker changed a child's state.
 
@@ -697,16 +577,20 @@ def _refresh_children_snapshot(
     ):
         return
     try:
-        ctx.nodes = _nodes(ctx.incus.list_containers(), repo_configs(memory))
+        ctx.nodes = broker_state.nodes(
+            ctx.incus.list_containers(), broker_state.repo_configs(memory)
+        )
         _remember_children(ctx, memory, inbox_state.sync_children(ctx, memory.status))
         _publish_context(memory, ctx)
     except Exception:
         log.exception("broker: child inbox state of %s failed", ctx.sender.full)
 
 
-def _remember_children(ctx: ActionContext, memory: BrokerMemory, children: object) -> None:
+def _remember_children(
+    ctx: ActionContext, memory: broker_state.BrokerMemory, children: object
+) -> None:
     if isinstance(children, list):
-        memory.children[ctx.sender.full] = ChildrenView(time.time(), children)
+        memory.children[ctx.sender.full] = broker_state.ChildrenView(time.time(), children)
 
 
 def _watch_drained(ctx: ActionContext, req: QueuedRequest, outcome: Outcome) -> None:
@@ -719,7 +603,7 @@ def _watch_drained(ctx: ActionContext, req: QueuedRequest, outcome: Outcome) -> 
         log.exception("broker: %s: could not watch %s", ctx.sender.full, req.manifest_id)
 
 
-def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
+def _ensure_env(ctx: ActionContext, memory: broker_state.BrokerMemory) -> None:
     """Ensure each served container once per broker process; retry failures.
 
     Fork children copy an ensured orchestrator; new children use the current
@@ -762,7 +646,7 @@ def _ensure_env(ctx: ActionContext, memory: BrokerMemory) -> None:
         )
 
 
-def _ensure_socket(ctx: ActionContext, memory: BrokerMemory) -> None:
+def _ensure_socket(ctx: ActionContext, memory: broker_state.BrokerMemory) -> None:
     """Open the listener, attach the device and record the recipient (idempotent)."""
     listener, store = memory.listener, memory.store
     uuid = ctx.sender.config.get("volatile.uuid")
@@ -818,7 +702,7 @@ def _ensure_socket(ctx: ActionContext, memory: BrokerMemory) -> None:
 
 
 def _teardown_socket(
-    incus: Incus, memory: BrokerMemory, full: str, uuid: str | None, root: Path
+    incus: Incus, memory: broker_state.BrokerMemory, full: str, uuid: str | None, root: Path
 ) -> None:
     """Remove socket access; unread items stay in the durable store."""
     listener, store = memory.listener, memory.store
@@ -839,7 +723,7 @@ def _teardown_socket(
         )
 
 
-def _forget_vanished(raw: list[dict[str, Any]], memory: BrokerMemory) -> None:
+def _forget_vanished(raw: list[dict[str, Any]], memory: broker_state.BrokerMemory) -> None:
     """Close listeners and drop state of containers that are gone or recreated.
 
     No device call: a vanished container has no device to remove, and a
@@ -889,7 +773,9 @@ def _shared_uuids(raw: list[dict[str, Any]]) -> set[str]:
     return shared
 
 
-def _rotate_socket(incus: Incus, memory: BrokerMemory, root: Path, uuid: str, copy: str) -> None:
+def _rotate_socket(
+    incus: Incus, memory: broker_state.BrokerMemory, root: Path, uuid: str, copy: str
+) -> None:
     """Move ``uuid``'s socket away from the directory ``copy`` mounts.
 
     Every connection drops and the old directory is removed, so the copy's
@@ -922,7 +808,7 @@ def _rotate_socket(incus: Incus, memory: BrokerMemory, root: Path, uuid: str, co
 
 def _strip_copy(
     incus: Incus,
-    memory: BrokerMemory,
+    memory: broker_state.BrokerMemory,
     root: Path,
     entry: dict[str, Any],
     name: str,
@@ -969,7 +855,7 @@ def _strip_copy(
         memory.warn_once(f"socket-dir:{path}", "broker: %s: %s", path, exc)
 
 
-def _other_projects(incus: Incus, memory: BrokerMemory) -> list[dict[str, Any]] | None:
+def _other_projects(incus: Incus, memory: broker_state.BrokerMemory) -> list[dict[str, Any]] | None:
     """The instances of every other Incus project, or None when they cannot be listed.
 
     A raw `incus copy --target-project` (or an import there) is invisible to
@@ -1004,7 +890,7 @@ def _other_projects(incus: Incus, memory: BrokerMemory) -> list[dict[str, Any]] 
 def _check_socket_devices(
     incus: Incus,
     raw: list[dict[str, Any]],
-    memory: BrokerMemory,
+    memory: broker_state.BrokerMemory,
     root: Path,
     others: list[dict[str, Any]] | None = None,
 ) -> None:
@@ -1051,7 +937,7 @@ def _check_socket_devices(
             _strip_copy(incus, memory, root, entry, name, None)
             memory.attached.pop(name, None)
             continue
-        if _labelled(config):
+        if broker_state.labelled(config):
             # A snapshot restore can keep the uuid and role but rewind the
             # device to an old generation. Invalidate _ensure_socket's cache
             # using this round's listing, without another per-container call.
@@ -1063,7 +949,7 @@ def _check_socket_devices(
             _teardown_socket(incus, memory, name, config.get("volatile.uuid"), root)
 
 
-def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
+def _serve(ctx: ActionContext, journal: Journal, memory: broker_state.BrokerMemory) -> None:
     """One running orchestrator or child: socket setup and durable deliveries."""
     _ensure_env(ctx, memory)
     uid = ctx.cfg.container_user.uid
@@ -1084,7 +970,7 @@ def _serve(ctx: ActionContext, journal: Journal, memory: BrokerMemory) -> None:
     publishing.settle(ctx, lambda ref, out: _reply(ctx, ref, out, memory))
 
 
-def _settle_queue(ctx: ActionContext, memory: BrokerMemory) -> None:
+def _settle_queue(ctx: ActionContext, memory: broker_state.BrokerMemory) -> None:
     """Start what the queue can start, or drop it when the grant is gone; report each."""
     if ctx.grant() is None:
         # A grant label still there means the repo cap forbids orchestration.
@@ -1097,49 +983,8 @@ def _settle_queue(ctx: ActionContext, memory: BrokerMemory) -> None:
         _reply(ctx, req.manifest_id, outcome, memory)
 
 
-def _nodes(raw: list[dict[str, object]], configs: Mapping[str, Config | None]) -> dict[str, Node]:
-    from jailbee.lifecycle import short_name
-
-    nodes: dict[str, Node] = {}
-    for entry in raw:
-        name = entry.get("name")
-        if not isinstance(name, str):
-            continue
-        conf = entry.get("config")
-        config = {str(k): str(v) for k, v in conf.items()} if isinstance(conf, dict) else {}
-        cfg = owner_config(name, config, configs)
-        short = short_name(cfg, name) if cfg is not None else name
-        started_at = None
-        last_used = entry.get("last_used_at")
-        if isinstance(last_used, str):
-            try:
-                boot = datetime.fromisoformat(last_used)
-                if boot.year > 1970 and boot.tzinfo is not None:
-                    started_at = boot.timestamp()
-            except ValueError:
-                pass
-        state = entry.get("state")
-        state_data: dict[str, object] = state if isinstance(state, dict) else {}
-        cpu = state_data.get("cpu")
-        memory = state_data.get("memory")
-        nodes[name] = Node(
-            full=name,
-            short=short,
-            running=entry.get("status") == "Running",
-            config=config,
-            started_at=started_at,
-            init_pid=_positive_int(state_data.get("pid")),
-            cpu_usage_ns=_positive_int(cpu.get("usage") if isinstance(cpu, dict) else None),
-            memory_usage=_positive_int(memory.get("usage") if isinstance(memory, dict) else None),
-        )
-    return nodes
 
 
-def _positive_int(value: object) -> int | None:
-    """An int > 0, else None; bools are ints in Python and are rejected."""
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        return None
-    return value
 
 
 def tick(
@@ -1148,10 +993,10 @@ def tick(
     root: Path,
     journal: Journal,
     now: datetime,
-    memory: BrokerMemory | None = None,
+    memory: broker_state.BrokerMemory | None = None,
 ) -> bool:
     """Run one broker round; True while any running orchestrator or child exists."""
-    memory = memory if memory is not None else BrokerMemory()
+    memory = memory if memory is not None else broker_state.BrokerMemory()
     # Release finished workers before taking the snapshot that replaces their slots.
     prune_reservations(root)
     memory.publish_threads[:] = [worker for worker in memory.publish_threads if worker.is_alive()]
@@ -1164,7 +1009,7 @@ def tick(
         for e in raw
         if isinstance(e.get("name"), str)
         and isinstance(e.get("config"), dict)
-        and _labelled(e["config"])
+        and broker_state.labelled(e["config"])
     ]
     active = any(e.get("status") == "Running" for e in candidates)
     present = {e.get("name") for e in raw}
@@ -1208,7 +1053,7 @@ def tick(
         e["name"]
         for e in raw
         if isinstance(e.get("name"), str)
-        and not (isinstance(e.get("config"), dict) and _labelled(e["config"]))
+        and not (isinstance(e.get("config"), dict) and broker_state.labelled(e["config"]))
         and has_pending(root, e["name"])
     ]
     # Before the early return: a later namesake must not inherit stale entries.
@@ -1230,11 +1075,11 @@ def tick(
     except Exception:
         log.exception("broker: global config failed to load; skipping this round")
         return True
-    configs = repo_configs(memory)
-    nodes = _nodes(raw, configs)
+    configs = broker_state.repo_configs(memory)
+    nodes = broker_state.nodes(raw, configs)
 
     def context(node: Node) -> ActionContext | None:
-        cfg = owner_config(node.full, node.config, configs)
+        cfg = broker_state.owner_config(node.full, node.config, configs)
         if cfg is None:
             memory.warn_once(
                 f"no-config:{node.full}",
@@ -1273,7 +1118,7 @@ def tick(
         del memory.contexts[key]
     for node in nodes.values():
         memory.contexts.pop(node.key, None)
-        if not _labelled(node.config):
+        if not broker_state.labelled(node.config):
             try:
                 if node.full in former_publishers:
                     former_ctx = context(node)
@@ -1345,7 +1190,7 @@ def tick(
     # Handlers changed labels and may have stopped children after our initial
     # snapshot. Refresh once before cleanup; share deletions with queue drain.
     if orchestrators:
-        nodes = _nodes(incus.list_containers(), configs)
+        nodes = broker_state.nodes(incus.list_containers(), configs)
         for ctx in orchestrators:
             ctx.nodes = nodes
             ctx.sender = nodes.get(ctx.sender.full, ctx.sender)
@@ -1386,7 +1231,7 @@ def tick(
     # Queue launches can finish before watch settlement; the earlier snapshot
     # may still say Stopped even though the agent is already running.
     if orchestrators and any(watch.load_watch(root).values()):
-        nodes = _nodes(incus.list_containers(), configs)
+        nodes = broker_state.nodes(incus.list_containers(), configs)
         for ctx in orchestrators:
             ctx.nodes = nodes
             ctx.sender = nodes.get(ctx.sender.full, ctx.sender)
@@ -1395,7 +1240,7 @@ def tick(
     return active
 
 
-def _context_snapshot(memory: BrokerMemory, ctx: ActionContext) -> ContainerSnapshot:
+def _context_snapshot(memory: broker_state.BrokerMemory, ctx: ActionContext) -> ContainerSnapshot:
     """Serialize on the executor so query readers never reach mutable contexts."""
     from jailbee.orchestration import socket_ops
 
@@ -1426,7 +1271,7 @@ def _context_snapshot(memory: BrokerMemory, ctx: ActionContext) -> ContainerSnap
     )
 
 
-def _publish_context(memory: BrokerMemory, ctx: ActionContext) -> None:
+def _publish_context(memory: broker_state.BrokerMemory, ctx: ActionContext) -> None:
     """Commit one action's view without publishing other unfinished round state."""
     if memory.queries is not None and memory.store is not None:
         try:
@@ -1435,7 +1280,7 @@ def _publish_context(memory: BrokerMemory, ctx: ActionContext) -> None:
             log.exception("broker: publishing query view for %s failed", ctx.sender.key)
 
 
-def _publish_queries(memory: BrokerMemory) -> None:
+def _publish_queries(memory: broker_state.BrokerMemory) -> None:
     """Build on the broker thread, then atomically replace the completed-round view.
 
     Each component is isolated so failed store reads do not hide other updates.
@@ -1469,7 +1314,10 @@ def _publish_queries(memory: BrokerMemory) -> None:
 
 
 def _settle_all_watches(
-    root: Path, orchestrators: list[ActionContext], present: set[object], memory: BrokerMemory
+    root: Path,
+    orchestrators: list[ActionContext],
+    present: set[object],
+    memory: broker_state.BrokerMemory,
 ) -> None:
     """Settle each orchestrator's watches."""
     jobs = watch.read_jobs()
@@ -1525,7 +1373,7 @@ def _flush_unlabelled(
         log.exception("broker: flushing %s failed", node.full)
 
 
-def _pause(seconds: float, stop: StopFlag) -> None:
+def _pause(seconds: float, stop: broker_state.StopFlag) -> None:
     """Sleep `seconds` in short slices, returning early once a stop is requested."""
     deadline = time.monotonic() + seconds
     while not stop.requested:
@@ -1543,7 +1391,7 @@ def _installed_version() -> str | None:
         return None
 
 
-def _stage_container_app(memory: BrokerMemory) -> None:
+def _stage_container_app(memory: broker_state.BrokerMemory) -> None:
     from jailbee import container_app
     from jailbee.agent_skills import sync_agent_skills
 
@@ -1553,7 +1401,7 @@ def _stage_container_app(memory: BrokerMemory) -> None:
         log.exception("broker: jailbee app staging failed; continuing")
         return
     try:
-        configs = repo_configs(memory)
+        configs = broker_state.repo_configs(memory)
     except Exception:
         log.exception("broker: cannot load repos for skills sync")
         return
@@ -1586,9 +1434,9 @@ def run_broker(incus: Incus) -> int:
         lock.close()
         log.info("another orchestration broker is running; exiting")
         return 0
-    stop = StopFlag()
+    stop = broker_state.StopFlag()
     previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT)}
-    memory = BrokerMemory()
+    memory = broker_state.BrokerMemory()
     memory.store = BrokerStore(store_path(root))
     memory.queries = Queries(memory.store)
     memory.listener = Listener(memory.requests, queries=memory.queries)

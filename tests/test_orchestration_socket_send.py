@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from jailbee.orchestration import broker, finishing, outbox, socket_ops, wire
+from jailbee.orchestration import broker, broker_state, finishing, outbox, socket_ops, wire
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.store import BrokerStore
 from tests.test_orchestration_broker import Rig, _child, _orch
@@ -31,7 +31,7 @@ class Env:
         self.rig = rig
         rig.incus.list_containers.return_value = [_orch(), _child()]
         rig.dispatch.return_value = Outcome("done", "delivered")
-        self.memory = broker.BrokerMemory()
+        self.memory = broker_state.BrokerMemory()
         rig.tick(self.memory)
         rig.deliver.reset_mock()
         rig.dispatch.reset_mock()
@@ -60,7 +60,7 @@ def env(rig: Rig) -> Env:
 
 def test_tick_fills_contexts_and_children(rig: Rig) -> None:
     rig.incus.list_containers.return_value = [_orch(), _child()]
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     rig.tick(memory)
     assert {c.sender.full for c in memory.contexts.values()} == {"proj-orch", "proj-kid"}
     assert set(memory.contexts) == {c.sender.key for c in memory.contexts.values()}

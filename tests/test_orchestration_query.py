@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from jailbee.orchestration import broker, executor, socket_ops, wire
+from jailbee.orchestration import broker, broker_state, executor, socket_ops, wire
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.listener import Listener, RequestEvent
 from jailbee.orchestration.outbox import deliver
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 class Env:
     def __init__(self, rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
         self.rig = rig
-        self.memory = broker.BrokerMemory()
+        self.memory = broker_state.BrokerMemory()
         rig.incus.list_containers.return_value = [_orch(), _child()]
         rig.tick(self.memory)
         self.store = BrokerStore(rig.root / "broker.db")

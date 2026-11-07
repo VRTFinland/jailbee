@@ -83,7 +83,7 @@ def test_release_racing_stale_broker_does_not_reinstall_marker(cfg, rig, tmp_pat
     from threading import Event
 
     from jailbee.global_config import GlobalConfig
-    from jailbee.orchestration import broker
+    from jailbee.orchestration import broker, broker_state
     from jailbee.orchestration.actions import ActionContext, Node
 
     rows, incus = rig
@@ -105,7 +105,7 @@ def test_release_racing_stale_broker_does_not_reinstall_marker(cfg, rig, tmp_pat
     mocker.patch.object(broker, "ensure_orchestration_env")
     started = Event()
     marker = [True]
-    memory = broker.BrokerMemory()
+    memory = broker_state.BrokerMemory()
     if cached:
         memory.env_ensured.add("myrepo-a")
         memory.env_roles["myrepo-a"] = "child"

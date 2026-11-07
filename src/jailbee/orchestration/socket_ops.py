@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from jailbee.inbox.render import jq_tostring
-from jailbee.orchestration import broker, publishing, wake, wire
+from jailbee.orchestration import broker, broker_state, publishing, wake, wire
 from jailbee.orchestration.actions import Outcome, refused
 from jailbee.orchestration.outbox import acknowledge_delivery, deliver, grant_json_text
 from jailbee.orchestration.protocol import ManifestError, body_file_of, parse_manifest
@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 
 def handle_send(
     ctx: ActionContext,
-    memory: broker.BrokerMemory,
+    memory: broker_state.BrokerMemory,
     store: BrokerStore,
     *,
     manifest: object,
@@ -268,7 +268,7 @@ def handle_ack(store: BrokerStore, uuid: str, *, id: object, now: float) -> dict
     return {"acked": True}
 
 
-def _orchestrator(memory: broker.BrokerMemory, uuid: str) -> ActionContext:
+def _orchestrator(memory: broker_state.BrokerMemory, uuid: str) -> ActionContext:
     ctx = memory.contexts.get(uuid)
     if ctx is None or ctx.role() != "orchestrator":
         raise wire.WireError(wire.NOT_ORCHESTRATED, "this container is not an orchestrator")
@@ -276,7 +276,7 @@ def _orchestrator(memory: broker.BrokerMemory, uuid: str) -> ActionContext:
 
 
 def _children_result(
-    memory: broker.BrokerMemory, store: BrokerStore, uuid: str, ctx: ActionContext
+    memory: broker_state.BrokerMemory, store: BrokerStore, uuid: str, ctx: ActionContext
 ) -> dict[str, object]:
     view = memory.children.get(ctx.sender.full)
     return {
@@ -287,14 +287,14 @@ def _children_result(
 
 
 def handle_children(
-    memory: broker.BrokerMemory, store: BrokerStore, uuid: str
+    memory: broker_state.BrokerMemory, store: BrokerStore, uuid: str
 ) -> dict[str, object]:
     """The orchestrator's published children list and when each child last wrote."""
     return _children_result(memory, store, uuid, _orchestrator(memory, uuid))
 
 
 def handle_status(
-    memory: broker.BrokerMemory, store: BrokerStore, uuid: str, *, child: object
+    memory: broker_state.BrokerMemory, store: BrokerStore, uuid: str, *, child: object
 ) -> dict[str, object]:
     """Like `handle_children`, optionally narrowed to one child by name."""
     if child is not None and not isinstance(child, str):
@@ -310,7 +310,7 @@ def handle_status(
     return result
 
 
-def handle_grant(memory: broker.BrokerMemory, uuid: str) -> dict[str, object]:
+def handle_grant(memory: broker_state.BrokerMemory, uuid: str) -> dict[str, object]:
     ctx = memory.contexts.get(uuid)
     grant = ctx.grant() if ctx is not None else None
     if ctx is None or grant is None:
@@ -403,7 +403,7 @@ class Waiters:
             del self._by_uuid[uuid]
 
     def evaluate(
-        self, memory: broker.BrokerMemory, store: BrokerStore, *, now: float, mono: float
+        self, memory: broker_state.BrokerMemory, store: BrokerStore, *, now: float, mono: float
     ) -> list[tuple[Waiter, dict[str, object] | wire.WireError]]:
         """Answer every waiter that is ready; the answered ones are removed."""
         answered: list[tuple[Waiter, dict[str, object] | wire.WireError]] = []
@@ -419,7 +419,12 @@ class Waiters:
 
 
 def _evaluate_one(
-    waiter: Waiter, memory: broker.BrokerMemory, store: BrokerStore, *, now: float, mono: float
+    waiter: Waiter,
+    memory: broker_state.BrokerMemory,
+    store: BrokerStore,
+    *,
+    now: float,
+    mono: float,
 ) -> dict[str, object] | wire.WireError | None:
     if waiter.settle_until is not None and mono < waiter.settle_until:
         return None
@@ -467,7 +472,7 @@ def _evaluate_one(
 
 def _wake_result(
     found: wake.Wake,
-    view: broker.ChildrenView | None,
+    view: broker_state.ChildrenView | None,
     history: list[ItemMeta],
     now: float,
 ) -> dict[str, object]:

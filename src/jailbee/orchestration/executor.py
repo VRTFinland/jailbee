@@ -20,7 +20,7 @@ from jailbee.orchestration.store import StoreError
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from jailbee.orchestration.broker import BrokerMemory, StopFlag
+    from jailbee.orchestration.broker_state import BrokerMemory, StopFlag
     from jailbee.orchestration.listener import Event
     from jailbee.orchestration.store import BrokerStore
 

@@ -63,12 +63,12 @@ def test_snapshot_stop_restart_and_removal(tmp_path):
 
 
 def test_snapshot_uses_incus_boot_timestamp_and_new_instance(tmp_path):
-    from jailbee.orchestration.broker import _nodes
+    from jailbee.orchestration.broker_state import nodes
     from tests.conftest import make_config
 
     ctx = context(tmp_path)
     cfg = make_config(tmp_path).model_copy(update={"container_prefix": "p"})
-    ctx.nodes = _nodes(
+    ctx.nodes = nodes(
         [
             {
                 "name": "p-kid",
