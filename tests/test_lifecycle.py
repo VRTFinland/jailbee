@@ -966,8 +966,10 @@ def test_listing_reads_broker_counts_for_stopped_and_failed_probes(make_cfg, tmp
     mocker.patch("jailbee.db.state_dir", return_value=root.parent)
     incus = MagicMock()
     incus.list_containers.return_value = [
-        _container(name="myrepo-a", user_config={"user.jailbee.repo_dir": "/repo"}),
-        _container(name="myrepo-b", state="Stopped"),
+        _container(
+            name="myrepo-a", user_config={"user.jailbee.repo_dir": "/repo", "volatile.uuid": "a"}
+        ),
+        _container(name="myrepo-b", state="Stopped", user_config={"volatile.uuid": "b"}),
     ]
     mocker.patch(
         "jailbee.lifecycle.probe_many_parallel",
@@ -980,6 +982,35 @@ def test_listing_reads_broker_counts_for_stopped_and_failed_probes(make_cfg, tmp
     assert rows["myrepo-b"].git_status.wt == "?"
     assert store_path(root).read_bytes() == before
     incus.exec.assert_not_called()
+
+
+def test_listing_ignores_predecessor_inbox(make_cfg, tmp_path, mocker):
+    from jailbee.git_status import GitStatus
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    root = tmp_path / "state" / "orchestration"
+    root.mkdir(parents=True)
+    store = BrokerStore(store_path(root))
+    store.insert_item("old", "myrepo-a", {"id": "1", "type": "message"}, now=1)
+    store.insert_item("old-b", "myrepo-b", {"id": "2", "type": "message"}, now=1)
+    mocker.patch("jailbee.db.state_dir", return_value=root.parent)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(
+            name="myrepo-a", user_config={"user.jailbee.repo_dir": "/repo", "volatile.uuid": "new"}
+        ),
+        _container(name="myrepo-b", state="Stopped", user_config={"volatile.uuid": "new-b"}),
+    ]
+    mocker.patch(
+        "jailbee.lifecycle.probe_many_parallel",
+        return_value={"myrepo-a": GitStatus("clean", "clean", "0", "ok")},
+    )
+    rows = {c.name: c for c in list_containers(cfg, incus, with_git_status=True)}
+    assert rows["myrepo-a"].git_status.unread_inbox == 0
+    assert rows["myrepo-b"].git_status is None
 
 
 def test_listing_missing_or_corrupt_store_never_writes(make_cfg, tmp_path, mocker):

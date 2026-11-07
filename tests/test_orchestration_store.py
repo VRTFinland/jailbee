@@ -28,6 +28,19 @@ def test_store_path(tmp_path: Path) -> None:
     assert store_path(tmp_path) == tmp_path / "broker.db"
 
 
+def test_unread_counts_by_uuid_does_not_decode_payloads(tmp_path: Path, st: BrokerStore) -> None:
+    assert store_mod.unread_counts_by_uuid(tmp_path) == {}
+    st.insert_item("old", "p", msg("1"), now=1)
+    st.insert_item("new", "p", msg("2"), now=1)
+    st.insert_item("new", "p", msg("3"), now=1)
+    st.insert_item("new", "p", msg("4"), now=1, acked=True)
+    with sqlite3.connect(st.path) as con:
+        con.execute("UPDATE items SET item_json='invalid json'")
+    before = st.path.read_bytes()
+    assert store_mod.unread_counts_by_uuid(tmp_path) == {"old": 1, "new": 2}
+    assert st.path.read_bytes() == before
+
+
 def test_schema_version_recorded(st: BrokerStore) -> None:
     st.recipients()
     import sqlite3

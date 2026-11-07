@@ -708,21 +708,21 @@ def list_containers(
                 },
             )
         from jailbee.db import state_dir
-        from jailbee.orchestration.store import StoreError, read_items
+        from jailbee.orchestration.store import StoreError, unread_counts_by_uuid
 
         try:
-            items = read_items(state_dir() / "orchestration")
-            counts: dict[str, int] = {}
-            for item in items:
-                if item.acked_at is None:
-                    counts[item.recipient_full] = counts.get(item.recipient_full, 0) + 1
-            unread_counts: dict[str, int] | None = counts
+            unread_counts: dict[str, int] | None = unread_counts_by_uuid(
+                state_dir() / "orchestration"
+            )
         except (StoreError, ValueError, OSError):
             unread_counts = None
 
+        uuids = {
+            raw.get("name"): (raw.get("config") or {}).get("volatile.uuid") for raw in instances
+        }
         for c in out:
             status = statuses.get(c.name)
-            unread = unread_counts.get(c.name, 0) if unread_counts is not None else None
+            unread = unread_counts.get(uuids.get(c.name), 0) if unread_counts is not None else None
             if status is None and unread:
                 status = GitStatus("?", "?", "?", "?")
             if status is not None:

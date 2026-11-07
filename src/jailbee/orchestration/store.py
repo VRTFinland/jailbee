@@ -158,6 +158,29 @@ def recipient_uuid(root: Path, full: str) -> str | None:
     return None if row is None else str(row[0])
 
 
+def unread_counts_by_uuid(root: Path) -> dict[str, int]:
+    """Count unread items without loading their payloads or writing the store."""
+    path = store_path(root)
+    if not path.exists():
+        return {}
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=_BUSY_TIMEOUT_MS / 1000)
+        try:
+            rows = con.execute(
+                "SELECT recipient_uuid, COUNT(*) FROM items "
+                "WHERE acked_at IS NULL GROUP BY recipient_uuid"
+            ).fetchall()
+            return {str(uuid): int(count) for uuid, count in rows}
+        finally:
+            con.close()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc):
+            return {}
+        raise StoreError(str(exc)) from exc
+    except sqlite3.Error as exc:
+        raise StoreError(str(exc)) from exc
+
+
 def read_items(root: Path, full: str | None = None) -> list[StoredItem]:
     """Every stored item (optionally one recipient's), read-only, in ``seq`` order.
 
