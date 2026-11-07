@@ -298,3 +298,27 @@ def test_host_items_without_origin_omit_the_key() -> None:
         {"version": 1, "id": "h-1", "type": "message", "from": "broker", "body": "x"}
     )
     assert "origin_id" not in msg.model_dump(by_alias=True)
+
+
+def test_parked_relay_keeps_origin_and_mapped_reply_through_flush(tmp_path: Path) -> None:
+    """A stopped-recipient delivery parks the item; the flush keeps both ids."""
+    from jailbee.orchestration import outbox
+    from jailbee.orchestration.state import pending_dir
+
+    child, orch = _pair(tmp_path)
+    messages.handle_message(child, _msg(kind="question", id="message-q-37b9"))
+    [question] = _inbox(tmp_path, "orch")
+    # An older parked item makes the next delivery queue behind it.
+    outbox.save_pending(
+        pending_dir(tmp_path, "myrepo-fix-1") / "00000000T000000Z-00000000-h-older.json",
+        {"version": 1, "id": "h-older", "type": "message", "from": "orch", "body": "older"},
+        recipient_uuid="uuid-fix-1",
+    )
+    out = messages.handle_message(orch, _msg(to="fix-1", id="a1", in_reply_to=str(question["id"])))
+    assert out.state == "queued"
+    assert _inbox(tmp_path, "fix-1") == []
+    outbox.flush_pending(
+        MagicMock(), tmp_path, "myrepo-fix-1", uid=None, recipient_uuid="uuid-fix-1"
+    )
+    [_, answer] = _inbox(tmp_path, "fix-1")
+    assert (answer["in_reply_to"], answer["origin_id"]) == ("message-q-37b9", "a1")

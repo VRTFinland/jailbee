@@ -768,3 +768,56 @@ def test_done_replying_by_host_id_reaches_orchestrator_as_its_own_id(
     messages.handle_message(ctx, _done(in_reply_to="h-1234abcd"))
     msg = rig.insert_store.call_args.args[2]
     assert (msg.in_reply_to, msg.origin_id) == ("orch-task-1", "d1")
+
+
+def test_parked_done_keeps_origin_and_mapped_reply_through_flush(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    from dataclasses import replace
+
+    from jailbee.orchestration import finishing
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    rig = _make(tmp_path, mocker, orch_running=False)
+    mocker.stop(rig.insert_store)  # real sqlite insert at flush time
+    sender = replace(rig.ctx.sender, config={**rig.ctx.sender.config, "volatile.uuid": "uuid-c"})
+    rig.ctx.sender = sender
+    rig.ctx.nodes = {**rig.ctx.nodes, CHILD: sender}
+    store = BrokerStore(store_path(tmp_path))
+    store.insert_item(
+        "uuid-c",
+        CHILD,
+        {
+            "version": 1,
+            "id": "h-1234abcd",
+            "type": "message",
+            "from": "orch",
+            "body": "finish up",
+            "origin_id": "orch-task-1",
+        },
+        now=1.0,
+    )
+    out = messages.handle_message(rig.ctx, _done(in_reply_to="h-1234abcd"))
+    assert out.state == "queued"
+    [parked] = pending_dir(tmp_path, "myrepo-orch").glob("*.finish.json")
+    assert outbox.load_pending(parked).item["in_reply_to"] == "orch-task-1"
+    orch = replace(rig.ctx.nodes["myrepo-orch"], running=True)
+    rig.ctx.sender = orch
+    rig.ctx.nodes = {**rig.ctx.nodes, orch.full: orch}
+    assert (
+        outbox.flush_pending(
+            rig.incus,
+            tmp_path,
+            orch.full,
+            uid=None,
+            finish=finishing.flush_callback(rig.ctx),
+            recipient_uuid="uuid-orch",
+        )
+        == 1
+    )
+    [delivered] = [s.item for s in store.unacked("uuid-orch")]
+    assert (delivered["kind"], delivered["in_reply_to"], delivered["origin_id"]) == (
+        "done",
+        "orch-task-1",
+        "d1",
+    )
