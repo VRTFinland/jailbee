@@ -1333,6 +1333,11 @@ def tick(
         except Exception:
             log.exception("broker: serving %s failed", node.full)
 
+    # A child view belongs only to a currently valid orchestrator context.
+    owners = {ctx.sender.full for ctx in memory.contexts.values() if ctx.role() == "orchestrator"}
+    for full in set(memory.children) - owners:
+        del memory.children[full]
+
     # Publish role and grant changes before any later inventory refresh can fail.
     _publish_queries(memory)
 
@@ -1440,10 +1445,13 @@ def _publish_queries(memory: BrokerMemory) -> None:
     empty_children = json.dumps({"children": [], "observed_at": None, "last_from_child": {}})
     try:
         recipients = set(memory.store.recipients().values())
+        snapshot = {uuid: ContainerSnapshot("none", True, empty_children, None) for uuid in recipients}
     except Exception:
         log.exception("broker: publishing query recipients failed")
-        recipients = set(memory.queries.snapshot())
-    snapshot = {uuid: ContainerSnapshot("none", True, empty_children, None) for uuid in recipients}
+        snapshot = {
+            uuid: ContainerSnapshot("none", view.ready, empty_children, None)
+            for uuid, view in memory.queries.snapshot().items()
+        }
     for uuid, ctx in memory.contexts.items():
         try:
             snapshot[uuid] = _context_snapshot(memory, ctx)

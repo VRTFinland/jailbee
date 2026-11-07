@@ -14,7 +14,7 @@ from jailbee.orchestration.listener import Listener, RequestEvent
 from jailbee.orchestration.outbox import deliver
 from jailbee.orchestration.query import ContainerSnapshot, Queries
 from jailbee.orchestration.store import BrokerStore, StoreError
-from tests.test_orchestration_broker import Rig, _child, _orch
+from tests.test_orchestration_broker import GRANT, Rig, _child, _orch
 from tests.test_orchestration_listener import _connect_long, recv_line
 
 if TYPE_CHECKING:
@@ -445,12 +445,16 @@ def test_history_failure_preserves_history_but_publishes_children_and_grant(
         return original(uuid)
 
     monkeypatch.setattr(env.store, "history_meta", history)
-    env.rig.incus.list_containers.return_value = [_orch(), _child(running=False)]
+    before_grant = env.queries.answer("proj-orch", wire.Request("grant")).result
+    changed_grant = GRANT.model_copy(update={"max_running_children": 7})
+    env.rig.incus.list_containers.return_value = [_orch(grant=changed_grant), _child(running=False)]
     assert env.rig.tick(env.memory) is True
     after = env.queries.answer("proj-orch", wire.Request("children")).result
     assert after["last_from_child"] == before["last_from_child"]
     assert after["children"][0]["running"] is False
-    assert env.queries.answer("proj-orch", wire.Request("grant")).ok
+    grant = env.queries.answer("proj-orch", wire.Request("grant"))
+    assert grant.ok and grant.result != before_grant
+    assert grant.result["max_running_children"] == 7
 
 
 def test_recipient_failure_does_not_abort_round_or_retain_removed_grant(
@@ -469,6 +473,9 @@ def test_recipient_failure_does_not_abort_round_or_retain_removed_grant(
 def test_recreated_orchestrator_does_not_inherit_children_on_history_failure(
     env: Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    revoked = {"name": "proj-orch", "status": "Running", "config": {}}
+    env.rig.incus.list_containers.return_value = [revoked, _child()]
+    assert env.rig.tick(env.memory) is True
     replacement = _orch()
     replacement["config"]["volatile.uuid"] = "new-uuid"
     env.store.set_recipient("proj-orch", "new-uuid", now=2.0)
@@ -487,6 +494,20 @@ def test_recreated_orchestrator_does_not_inherit_children_on_history_failure(
     assert not env.queries.answer("proj-orch", wire.Request("grant")).ok
 
 
+def test_unready_removed_recipient_stays_unready_on_enumeration_failure(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env.queries.publish_container(
+        "proj-orch", ContainerSnapshot("orchestrator", False, '{}', '{}')
+    )
+    env.rig.incus.list_containers.return_value = []
+    monkeypatch.setattr(
+        env.store, "recipients", lambda: (_ for _ in ()).throw(StoreError("failed"))
+    )
+    assert env.rig.tick(env.memory) is False
+    assert env.queries.answer("proj-orch", wire.Request("grant")).error_code == wire.STORE
+
+
 def test_no_active_round_revokes_grant_when_recipients_fail(
     env: Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -496,3 +517,29 @@ def test_no_active_round_revokes_grant_when_recipients_fail(
     )
     assert env.rig.tick(env.memory) is False
     assert not env.queries.answer("proj-orch", wire.Request("grant")).ok
+
+
+def test_readiness_failure_preserves_prior_values_and_healthy_sibling(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env.store.set_recipient("proj-other", "proj-other", now=1.0)
+    env.rig.incus.list_containers.return_value = [_orch(), _orch("proj-other")]
+    assert env.rig.tick(env.memory) is True
+    env.queries.publish_container(
+        "proj-orch", ContainerSnapshot("orchestrator", False, "{}", "{}")
+    )
+    original = env.store.has_recipient_uuid
+
+    def ready(uuid: str) -> bool:
+        if uuid == "proj-orch":
+            raise StoreError("readiness unavailable")
+        return original(uuid)
+
+    monkeypatch.setattr(env.store, "has_recipient_uuid", ready)
+    env.rig.incus.list_containers.return_value = [
+        _orch(), _orch("proj-other", grant=GRANT.model_copy(update={"max_running_children": 9}))
+    ]
+    assert env.rig.tick(env.memory) is True
+    assert env.queries.answer("proj-orch", wire.Request("grant")).error_code == wire.STORE
+    sibling = env.queries.answer("proj-other", wire.Request("grant"))
+    assert sibling.ok and sibling.result["max_running_children"] == 9
