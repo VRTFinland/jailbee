@@ -2054,14 +2054,22 @@ def _check_pool_roots(cfg: Config) -> list[CheckResult]:
 
 
 def _check_broker() -> CheckResult:
-    """Doctor check for the orchestration broker's systemd user unit."""
+    """Doctor check for the broker's systemd user unit.
+
+    The broker is core: every container's socket (orchestration inbox and,
+    later, the outbox) is served by it, so a stopped broker is a failure.
+    """
     from jailbee.orchestration import service as broker_service
 
     state = broker_service.status()
     return CheckResult(
-        name="orchestration broker",
+        name="broker",
         ok=state == "active",
-        detail=state if state == "active" else f"{state} — run `jb setup` to install/enable",
+        detail=(
+            state
+            if state == "active"
+            else f"{state} — container sockets are down; run `jb setup` to install/enable"
+        ),
     )
 
 

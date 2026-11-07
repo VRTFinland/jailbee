@@ -2350,6 +2350,17 @@ def _new_container(
 
     agent_private.attach(cfg, incus, name)
 
+    # Every container gets its broker socket device now, not on the broker's
+    # next round (5-60 s): the first agent may already want the socket. A
+    # failure is only a warning; the broker repairs the device.
+    from jailbee.orchestration import socket_device
+    from jailbee.orchestration.state import state_root
+
+    try:
+        socket_device.attach_new(incus, name, state_root())
+    except (IncusError, OSError) as e:
+        warn(f"Container created, but its broker socket was not attached (the broker will): {e}")
+
     # Infrastructure must exist even without cloning or autostart; a failed
     # bootstrap must not let agents write into an unsafe store.
     if opts.spawned_by is not None:

@@ -79,6 +79,9 @@ class Queries:
                 raise wire.WireError(
                     wire.STORE, "inbox store recipient is not ready; retry shortly"
                 )
+            known = self._snapshot.get(uuid)
+            if known is not None and known.role == "plain":
+                raise wire.WireError(wire.NOT_ORCHESTRATED, "this container is not an orchestrator")
             if op == "list":
                 return socket_ops.handle_list(self._store, uuid, after=args.get("after"))
             if op == "read":
@@ -178,12 +181,14 @@ def publish_queries(memory: broker_state.BrokerMemory) -> None:
     try:
         recipients = set(memory.store.recipients().values())
         snapshot = {
-            uuid: ContainerSnapshot("none", True, empty_children, None) for uuid in recipients
+            uuid: ContainerSnapshot("plain", True, empty_children, None) for uuid in recipients
         }
     except Exception:
         log.exception("broker: publishing query recipients failed")
         snapshot = {
-            uuid: ContainerSnapshot("none", view.ready, empty_children, None)
+            uuid: ContainerSnapshot(
+                "plain" if view.role == "plain" else "none", view.ready, empty_children, None
+            )
             for uuid, view in memory.queries.snapshot().items()
         }
     for uuid, ctx in memory.contexts.items():

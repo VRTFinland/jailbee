@@ -103,9 +103,9 @@ def test_role_child_wins_over_grant(tmp_path: Path) -> None:
     assert _ctx(tmp_path, s).role() == "child"
 
 
-def test_role_none_without_labels(tmp_path: Path) -> None:
+def test_role_plain_without_labels(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path, _node("proj-x"))
-    assert ctx.role() == "none"
+    assert ctx.role() == "plain"
     assert dispatch(ctx, _spawn()) is None
 
 

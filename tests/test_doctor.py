@@ -4569,7 +4569,7 @@ def test_doctor_reports_broker_inactive(mocker) -> None:
 
     check = _check_broker()
 
-    assert check.name == "orchestration broker"
+    assert check.name == "broker"
     assert check.ok is False
     assert "jb setup" in check.detail
 
