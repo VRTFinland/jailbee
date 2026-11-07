@@ -14,8 +14,8 @@ need a result. Do not write GitHub outbox files or directories by hand.
 You are inside a JailBee container working with GitHub issues (creating one,
 editing a title or body, commenting, adding or removing labels, assigning or
 unassigning people, closing, or reopening). Your `gh` here can **read** GitHub but must never **write** to
-it: every issue action you produce is written as a JSON manifest file into a
-fixed outbox directory, and a human on the host reviews and publishes it
+it: every issue action you produce is staged as a proposal in the host outbox
+store through the `jailbee issue` commands, and a human on the host reviews and publishes it
 later with `jb issue apply`. Nothing you write here reaches GitHub by
 itself.
 
