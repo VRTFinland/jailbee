@@ -16,7 +16,7 @@ from jailbee import background
 from jailbee.db.models import JOB_BOOT, JOB_CREATE
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
-from jailbee.orchestration import actions, broker, broker_state, labels, outbox, socket_lifecycle, watch
+from jailbee.orchestration import actions, broker, broker_replies, broker_state, labels, outbox, socket_lifecycle, watch
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.grant import Grant, RepoCap
 from jailbee.orchestration.journal import Journal
@@ -272,7 +272,7 @@ class Rig:
             ("load_global_config", self.gcfg),
         ]:
             monkeypatch.setattr(
-                broker_state if name == "repo_configs" else socket_lifecycle if name == "ensure_orchestration_env" else broker, name, mock
+                broker_replies if name == "deliver" else broker_state if name == "repo_configs" else socket_lifecycle if name == "ensure_orchestration_env" else broker, name, mock
             )
             self.seq.attach_mock(mock, name)
 
@@ -320,7 +320,7 @@ class Rig:
                 manifest=manifest,
                 outcome=outcome,
                 record=record,
-                reply=lambda ref, out: broker._reply(ctx, ref, out, memory),
+                reply=lambda ref, out: broker_replies.reply(ctx, ref, out, memory),
                 before_publish=lambda: None,
             )
 
@@ -1342,7 +1342,7 @@ def test_settle_watch_ignores_stale_finished_snapshot(rig: Rig, monkeypatch):
     rig.incus.list_containers.return_value = [_orch(), _child()]
     monkeypatch.setattr(watch, "read_jobs", lambda: {})
     monkeypatch.setattr("jailbee.orchestration.agent_watch.probe", lambda *a, **k: None)
-    broker._settle_watches(ctx, broker_state.BrokerMemory(), {})
+    broker_replies._settle_watches(ctx, broker_state.BrokerMemory(), {})
     assert watch.load_watch(rig.root)[orch.full] == [entry]
 
 
@@ -1528,7 +1528,7 @@ def test_done_cleanup_waits_for_durable_reply(
     raw = {"version": 1, "type": "message", "id": "d1", "kind": "done", "body": "finished"}
     rig.requests["proj-kid"] = [Request("d1.json", json.dumps(raw), {})]
     if failure == "parked_reply":
-        monkeypatch.setattr(broker, "deliver", outbox.deliver)
+        monkeypatch.setattr(broker_replies, "deliver", outbox.deliver)
 
         monkeypatch.setattr(outbox, "insert_into_store", lambda *a, **k: False)
     else:
@@ -1729,7 +1729,7 @@ def test_child_message_idle_reset_only_when_accepted(rig: Rig, monkeypatch, kind
     )
     rig.requests["proj-kid"] = [Request("m1.json", text, {"m1.json": text})]
     rig.dispatch.return_value = Outcome("done" if accepted else "refused", "result")
-    monkeypatch.setattr(broker, "_settle_all_watches", lambda *a, **k: None)
+    monkeypatch.setattr(broker_replies, "settle_all_watches", lambda *a, **k: None)
     rig.tick()
     saved = _watches(rig)[0]
     assert saved.last_message_kind == (kind if accepted else "blocked")

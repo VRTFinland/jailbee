@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from jailbee.orchestration import broker, broker_state, executor, socket_lifecycle, socket_ops, wire
+from jailbee.orchestration import broker, broker_replies, broker_state, executor, socket_lifecycle, socket_ops, wire
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.listener import Listener, RequestEvent
 from jailbee.orchestration.outbox import deliver
@@ -231,7 +231,7 @@ def test_snapshot_changes_only_at_completed_round(
 ) -> None:
     entered, unblock = threading.Event(), threading.Event()
     before = env.call("children").result
-    original = broker._settle_all_watches
+    original = broker_replies.settle_all_watches
 
     def blocked(*args: Any) -> None:
         env.memory.children["proj-orch"].children[0]["name"] = "new-kid"
@@ -239,7 +239,7 @@ def test_snapshot_changes_only_at_completed_round(
         assert unblock.wait(5)
         original(*args)
 
-    monkeypatch.setattr(broker, "_settle_all_watches", blocked)
+    monkeypatch.setattr(broker_replies, "settle_all_watches", blocked)
     worker = threading.Thread(target=env.rig.tick, args=(env.memory,))
     worker.start()
     try:
@@ -259,7 +259,7 @@ def test_failed_round_keeps_last_snapshot(env: Env, monkeypatch: pytest.MonkeyPa
         env.memory.children.clear()
         raise RuntimeError("round failed")
 
-    monkeypatch.setattr(broker, "_settle_all_watches", broken)
+    monkeypatch.setattr(broker_replies, "settle_all_watches", broken)
     with pytest.raises(RuntimeError, match="round failed"):
         env.rig.tick(env.memory)
     assert env.call("children").result == before

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from jailbee.orchestration import broker, broker_state, finishing, outbox, socket_ops, wire
+from jailbee.orchestration import broker, broker_replies, broker_state, finishing, outbox, socket_ops, wire
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.store import BrokerStore
 from tests.test_orchestration_broker import Rig, _child, _orch
@@ -192,7 +192,7 @@ def test_a_failing_reply_path_cleanup_does_not_fail_the_send(env: Env, monkeypat
     def boom(ctx: object, ref: str) -> None:
         raise OSError("read-only")
 
-    monkeypatch.setattr(broker, "clear_reply_path", boom)
+    monkeypatch.setattr(broker_replies, "clear_reply_path", boom)
     item = env.send(_message("d3", kind="done"))
     assert item["state"] == "done"
     assert env.store.get(env.ctx.sender.key, str(item["id"])) is not None

@@ -266,7 +266,7 @@ def test_agent_only_requires_durable_watch(tmp_path, seams, session, monkeypatch
 def test_agent_only_watch_ignores_boot_jobs_and_reports_new_session(
     tmp_path, seams, session, monkeypatch
 ):
-    from jailbee.orchestration import broker, broker_state
+    from jailbee.orchestration import broker_replies, broker_state, watch
 
     rig = Rig(tmp_path, running=True)
     ctx = rig.ctx()
@@ -279,22 +279,22 @@ def test_agent_only_watch_ignores_boot_jobs_and_reports_new_session(
     )
     register(tmp_path, rig.sender.full, entry)
     monkeypatch.setattr(
-        broker.watch, "verdict", MagicMock(side_effect=AssertionError("no boot verdict"))
+        watch, "verdict", MagicMock(side_effect=AssertionError("no boot verdict"))
     )
     reply = MagicMock()
-    monkeypatch.setattr(broker, "_reply", reply)
+    monkeypatch.setattr(broker_replies, "reply", reply)
     memory = broker_state.BrokerMemory()
-    broker._settle_watches(ctx, memory, {})
+    broker_replies._settle_watches(ctx, memory, {})
     ctx.now = ctx.now.replace(second=3)
-    broker._settle_watches(ctx, memory, {})
+    broker_replies._settle_watches(ctx, memory, {})
     assert reply.call_args.args[2].state == "done"
     assert load_watch(tmp_path)[rig.sender.full][0].confirmed
     monkeypatch.setattr(
         agent_watch, "probe", MagicMock(return_value=agent_watch.AgentStatus(False, "claude", 0))
     )
     deliver = MagicMock()
-    monkeypatch.setattr(broker, "deliver", deliver)
-    broker._settle_watches(ctx, memory, {})
+    monkeypatch.setattr(broker_replies, "deliver", deliver)
+    broker_replies._settle_watches(ctx, memory, {})
     assert deliver.call_args.args[3].kind == "blocked"
     assert load_watch(tmp_path).get(rig.sender.full, []) == []
 

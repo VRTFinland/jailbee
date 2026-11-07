@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from jailbee.inbox.render import jq_tostring
-from jailbee.orchestration import broker, broker_state, publishing, wake, wire
+from jailbee.orchestration import broker, broker_replies, broker_state, publishing, wake, wire
 from jailbee.orchestration.actions import Outcome, refused
 from jailbee.orchestration.outbox import acknowledge_delivery, deliver, grant_json_text
 from jailbee.orchestration.protocol import ManifestError, body_file_of, parse_manifest
@@ -137,7 +137,7 @@ def handle_send(
         assert item is not None
         deliver_status(item)
         try:
-            broker.clear_reply_path(ctx, ref)
+            broker_replies.clear_reply_path(ctx, ref)
         except OSError:
             # Only a stale gate remains; the status itself is delivered.
             log.warning("broker: %s: could not clear the reply gate of %s", ctx.sender.full, ref)
@@ -161,7 +161,7 @@ def handle_send(
 
 
 def _item(ref: str, outcome: Outcome) -> dict[str, object]:
-    status = broker._status(ref, outcome)
+    status = broker_replies.status(ref, outcome)
     loaded = json.loads(status.model_dump_json(by_alias=True))
     assert isinstance(loaded, dict)
     return loaded
