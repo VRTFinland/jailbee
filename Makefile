@@ -108,7 +108,7 @@ changelog:
 # last step, after the push and the PyPI upload had already happened.
 REPO ?= VRTFinland/jailbee
 
-# Cut a release:  make release VERSION=x.y.z  [REGEN=1]
+# Cut a release:  make release VERSION=x.y.z  [REGEN=1] [SKIP_CHECK=1]
 #
 # Interactively finalizes the CHANGELOG (drafting from git history when the
 # Unreleased section is empty, or always when REGEN=1), then bumps the
@@ -119,7 +119,7 @@ REPO ?= VRTFinland/jailbee
 release:
 	@set -euo pipefail; \
 	v="$(VERSION)"; \
-	[ -n "$$v" ] || { echo "Usage: make release VERSION=x.y.z [REGEN=1]"; exit 1; }; \
+	[ -n "$$v" ] || { echo "Usage: make release VERSION=x.y.z [REGEN=1] [SKIP_CHECK=1]"; exit 1; }; \
 	echo "$$v" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([.-]?[0-9A-Za-z]+)*$$' \
 	  || { echo "error: VERSION '$$v' is not a valid version"; exit 1; }; \
 	[ "$$(git rev-parse --abbrev-ref HEAD)" = "main" ] \
@@ -134,8 +134,12 @@ release:
 	  || { echo "error: gh cannot read $(REPO) — check \`gh auth status\`,"; \
 	       echo "       or override the target with: make release VERSION=$$v REPO=owner/name"; \
 	       exit 1; }; \
-	echo "==> Running checks"; \
-	$(MAKE) --no-print-directory check; \
+	if [ -n "$(SKIP_CHECK)" ]; then \
+	  echo "==> Skipping checks (SKIP_CHECK=1)"; \
+	else \
+	  echo "==> Running checks"; \
+	  $(MAKE) --no-print-directory check; \
+	fi; \
 	if python3 scripts/changelog.py unreleased-empty || [ -n "$(REGEN)" ]; then \
 	  echo "==> Drafting CHANGELOG from git history"; \
 	  python3 scripts/changelog.py draft || true; \
