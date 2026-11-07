@@ -404,7 +404,8 @@ def _base_problem(ctx: ActionContext, plan: SpawnPlan) -> str | None:
     try:
         lifecycle.resolve_clone_ref(cfg, opts, autofetch=False)
     except ValueError as exc:
-        return str(exc)
+        # The creation error spans several lines; a reply detail is one line.
+        return " ".join(str(exc).split())
     return None
 
 

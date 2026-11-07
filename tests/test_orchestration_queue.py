@@ -950,6 +950,16 @@ def test_missing_base_without_remote_refused_before_queueing(
     seams["start"].assert_not_called()
 
 
+def test_missing_base_refusal_is_one_line(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The creation error spans lines; the reply detail renders control chars as `?`."""
+    rig = _base_rig(tmp_path, monkeypatch, autofetch=True, remotes=[], local=set())
+    out = actions.handle_spawn(rig.ctx(), _new_with_base("no-such-branch"))
+    assert "\n" not in out.detail
+    assert "  " not in out.detail
+
+
 def test_missing_base_with_autofetch_off_refused(
     tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
 ) -> None:
