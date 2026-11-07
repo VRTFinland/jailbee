@@ -82,6 +82,71 @@ def test_tick_fills_contexts_and_children(rig: Rig) -> None:
     assert memory.contexts == {} and memory.children == {}
 
 
+@pytest.mark.parametrize("listed", [False, True])
+def test_message_during_spawn_returns_a_recorded_refusal(
+    rig: Rig, listed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration import actions, watch
+
+    child = _child()
+    child["config"]["volatile.uuid"] = "kid-uuid"
+    rig.incus.list_containers.return_value = [_orch(), *([child] if listed else [])]
+    memory = broker_state.BrokerMemory()
+    rig.tick(memory)
+    ctx = next(c for c in memory.contexts.values() if c.sender.full == "proj-orch")
+    watch.register(
+        rig.root,
+        ctx.sender.full,
+        watch.WatchEntry("spawn-1", "proj-kid", "spawn", ctx.now.isoformat(), supervise=True),
+    )
+    rig.dispatch.side_effect = actions.dispatch
+    delivery = rig.deliver
+    monkeypatch.setattr("jailbee.orchestration.messages.deliver", delivery)
+    delivery.reset_mock()
+    store = BrokerStore(rig.root / "broker.db")
+
+    def send(context: ActionContext, mid: str) -> dict[str, object]:
+        return socket_ops.handle_send(
+            context,
+            memory,
+            store,
+            manifest={**_message(mid), "to": "kid"},
+            body=None,
+            wait=True,
+            is_connected=lambda: True,
+        )
+
+    item = send(ctx, "early-1")
+    assert item["state"] == "refused"
+    assert item["detail"] == (
+        "child `kid` is still being created; message was not queued; retry after creation finishes"
+    )
+    assert store.lookup_request(ctx.sender.key, "early-1").item == item
+    assert store.unacked(ctx.sender.key) == []
+    delivery.assert_not_called()
+
+    # The same ref is final even after readiness; retry with a fresh id.
+    watch.register(
+        rig.root,
+        ctx.sender.full,
+        watch.WatchEntry(
+            "spawn-1",
+            "proj-kid",
+            "spawn",
+            ctx.now.isoformat(),
+            supervise=True,
+            confirmed=True,
+        ),
+    )
+    assert send(ctx, "early-1") == item
+    rig.incus.list_containers.return_value = [_orch(), child]
+    rig.tick(memory)
+    ready = next(c for c in memory.contexts.values() if c.sender.full == "proj-orch")
+    delivery.return_value = "delivered"
+    assert send(ready, "ready-1")["state"] == "done"
+    delivery.assert_called_once()
+
+
 def test_valid_message_dispatches_once_and_returns_done(env: Env) -> None:
     item = env.send(_message())
     env.rig.dispatch.assert_called_once()

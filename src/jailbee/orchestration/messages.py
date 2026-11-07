@@ -94,6 +94,20 @@ def _relay(ctx: ActionContext, target: Node, manifest: MessageManifest) -> Outco
 def _from_orchestrator(ctx: ActionContext, manifest: MessageManifest) -> Outcome:
     if manifest.to is None:
         return refused("`to` is required for a message from an orchestrator")
+    from jailbee.orchestration.watch import load_watch
+
+    # A spawn is registered before its worker starts, even before Incus lists
+    # the child. Do not claim delivery until startup has been confirmed.
+    if any(
+        entry.kind == "spawn"
+        and not entry.confirmed
+        and lifecycle.short_name(ctx.cfg, entry.child_full) == manifest.to
+        for entry in load_watch(ctx.root).get(ctx.sender.full, [])
+    ):
+        return refused(
+            f"child `{manifest.to}` is still being created; message was not queued; "
+            "retry after creation finishes"
+        )
     target = ctx.child(manifest.to)
     if isinstance(target, Outcome):
         return target

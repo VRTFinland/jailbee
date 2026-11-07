@@ -8,6 +8,14 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Fixed
+
+- A message sent immediately after spawning a child is refused with a clear
+  "still being created; message was not queued" reason and exit 1 until startup
+  is confirmed, including before the child appears in Incus. Wait for the spawn's
+  final readiness status before retrying; an early message is no longer mistaken
+  for a message to a non-child ([#85](https://github.com/VRTFinland/jailbee/issues/85)).
+
 ## 1.8.4 - 2026-11-07
 
 ### Added

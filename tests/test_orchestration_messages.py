@@ -117,6 +117,61 @@ def test_orchestrator_message_queued_when_child_stopped(
     assert deliver.call_args.kwargs["running"] is False
 
 
+@pytest.mark.parametrize("listed", [False, True])
+def test_message_to_creating_child_is_clearly_refused(
+    tmp_path: Path, deliver: MagicMockT, listed: bool
+) -> None:
+    from jailbee.orchestration.watch import WatchEntry, register
+
+    ctx = _orch(tmp_path, [_child_of_orch()] if listed else [])
+    register(
+        tmp_path,
+        ctx.sender.full,
+        WatchEntry("spawn-1", "myrepo-fix-1", "spawn", ctx.now.isoformat(), supervise=True),
+    )
+    out = messages.handle_message(ctx, _msg(to="fix-1"))
+    assert out == refused(
+        "child `fix-1` is still being created; message was not queued; "
+        "retry after creation finishes"
+    )
+    deliver.assert_not_called()
+
+
+def test_message_to_ready_child_is_delivered(tmp_path: Path, deliver: MagicMockT) -> None:
+    from jailbee.orchestration.watch import WatchEntry, register
+
+    ctx = _orch(tmp_path, [_child_of_orch()])
+    register(
+        tmp_path,
+        ctx.sender.full,
+        WatchEntry(
+            "spawn-1",
+            "myrepo-fix-1",
+            "spawn",
+            ctx.now.isoformat(),
+            supervise=True,
+            confirmed=True,
+        ),
+    )
+    assert messages.handle_message(ctx, _msg(to="fix-1")) == done("delivered to fix-1")
+    deliver.assert_called_once()
+
+
+def test_other_orchestrators_creation_is_not_a_child(tmp_path: Path, deliver: MagicMockT) -> None:
+    from jailbee.orchestration.watch import WatchEntry, register
+
+    ctx = _orch(tmp_path, [])
+    register(
+        tmp_path,
+        "myrepo-other",
+        WatchEntry("spawn-1", "myrepo-fix-1", "spawn", ctx.now.isoformat()),
+    )
+    assert messages.handle_message(ctx, _msg(to="fix-1")) == refused(
+        "`fix-1` is not a child of this orchestrator"
+    )
+    deliver.assert_not_called()
+
+
 def test_orchestrator_message_to_non_child_refused(tmp_path: Path, deliver: MagicMockT) -> None:
     out = messages.handle_message(_orch(tmp_path, []), _msg(to="x"))
     assert out == refused("`x` is not a child of this orchestrator")
