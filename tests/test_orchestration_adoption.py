@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, call
 import pytest
 
 from jailbee.config.models_orchestration import OrchestrationView, RepoOrchestration
-from jailbee.orchestration import adoption, labels, state, watch
+from jailbee.orchestration import adoption, labels, socket_lifecycle, state, watch
 from jailbee.orchestration.grant import Grant
 
 
@@ -83,7 +83,7 @@ def test_release_racing_stale_broker_does_not_reinstall_marker(cfg, rig, tmp_pat
     from threading import Event
 
     from jailbee.global_config import GlobalConfig
-    from jailbee.orchestration import broker, broker_state
+    from jailbee.orchestration import broker_state
     from jailbee.orchestration.actions import ActionContext, Node
 
     rows, incus = rig
@@ -102,7 +102,7 @@ def test_release_racing_stale_broker_does_not_reinstall_marker(cfg, rig, tmp_pat
     incus.config_unset_checked.side_effect = lambda name, key: config.pop(key, None)
     mocker.patch("jailbee.orchestration.rights.revoke_owned", return_value=[])
     mocker.patch("jailbee.orchestration.outbox.deliver")
-    mocker.patch.object(broker, "ensure_orchestration_env")
+    mocker.patch.object(socket_lifecycle, "ensure_orchestration_env")
     started = Event()
     marker = [True]
     memory = broker_state.BrokerMemory()
@@ -112,7 +112,7 @@ def test_release_racing_stale_broker_does_not_reinstall_marker(cfg, rig, tmp_pat
 
     def stale_broker():
         started.set()
-        broker._ensure_env(ctx, memory)
+        socket_lifecycle.ensure_env(ctx, memory)
 
     with ThreadPoolExecutor(max_workers=1) as workers:
         pending = []

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from jailbee.orchestration import broker, broker_state, executor, socket_ops, wire
+from jailbee.orchestration import broker, broker_state, executor, socket_lifecycle, socket_ops, wire
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.listener import Listener, RequestEvent
 from jailbee.orchestration.outbox import deliver
@@ -31,7 +31,7 @@ class Env:
         self.queries = Queries(self.store)
         self.memory.store = self.store
         self.memory.queries = self.queries
-        monkeypatch.setattr(broker, "_ensure_socket", lambda *a: None)
+        monkeypatch.setattr(socket_lifecycle, "_ensure_socket", lambda *a: None)
         for full in ("proj-orch", "proj-kid", "proj-former"):
             self.store.set_recipient(full, full, now=1.0)
         rig.tick(self.memory)

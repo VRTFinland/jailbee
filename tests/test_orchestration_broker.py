@@ -16,7 +16,7 @@ from jailbee import background
 from jailbee.db.models import JOB_BOOT, JOB_CREATE
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
-from jailbee.orchestration import actions, broker, broker_state, labels, outbox, watch
+from jailbee.orchestration import actions, broker, broker_state, labels, outbox, socket_lifecycle, watch
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.grant import Grant, RepoCap
 from jailbee.orchestration.journal import Journal
@@ -271,7 +271,9 @@ class Rig:
             ("repo_configs", self.configs),
             ("load_global_config", self.gcfg),
         ]:
-            monkeypatch.setattr(broker_state if name == "repo_configs" else broker, name, mock)
+            monkeypatch.setattr(
+                broker_state if name == "repo_configs" else socket_lifecycle if name == "ensure_orchestration_env" else broker, name, mock
+            )
             self.seq.attach_mock(mock, name)
 
         real_serve = broker._serve
