@@ -568,6 +568,17 @@ and exits with status 75, and systemd starts it again on the new code;
 version. A unit written by an older `jb setup` restarts it too, but logs the
 exit as a failure until `jb setup` rewrites the unit.
 
+Every container gets its broker socket device when `jb new` creates it, but
+the socket itself appears only when a broker round binds a listener in that
+directory. While such a fresh directory (under two minutes old) is not yet
+served, the broker starts its next round about 5 seconds after the last one
+instead of waiting out the 60-second idle interval; a round only serves a
+running container. Container commands (`jailbee issue`, `jailbee pr`,
+`jailbee outbox`, `jailbee inbox`) retry a missing or refused socket for 10
+seconds (`JAILBEE_BROKER_RETRY_SECONDS` overrides it) before exiting 4, so
+staging right after a container boots normally waits for that round rather
+than failing. With the broker stopped they exit 4 after the retry.
+
 The broker logs to the user journal (`journalctl --user -u jailbee-broker`).
 Each creation or restart worker it starts writes its own output to
 `~/.local/state/jailbee/logs/<container>-<timestamp>.log` (`$XDG_STATE_HOME`

@@ -401,6 +401,31 @@ def _flush_unlabelled(
         memory.report_failure(f"flush:{node.full}", exc, "broker: flushing %s failed", node.full)
 
 
+def new_socket_wake(
+    root: Path,
+    memory: broker_state.BrokerMemory,
+    started: float,
+    *,
+    clock: Callable[[], float] = time.monotonic,
+    wall: Callable[[], float] = time.time,
+) -> Callable[[], bool]:
+    """A `serve_requests` wake: the next round is due once `ACTIVE_INTERVAL` has passed
+    since ``started`` and a fresh socket directory (a `jb new`) is still unserved.
+
+    The socket directory is scanned at most once per `SLEEP_SLICE`.
+    """
+    scanned = [float("-inf")]
+
+    def wake() -> bool:
+        current = clock()
+        if current - started < ACTIVE_INTERVAL or current - scanned[0] < SLEEP_SLICE:
+            return False
+        scanned[0] = current
+        return socket_lifecycle.unserved_new_dir(root, memory, now=wall())
+
+    return wake
+
+
 def _pause(seconds: float, stop: broker_state.StopFlag) -> None:
     """Sleep `seconds` in short slices, returning early once a stop is requested."""
     deadline = time.monotonic() + seconds
@@ -477,6 +502,7 @@ def run_broker(incus: Incus) -> int:
         from jailbee.orchestration import executor
 
         while not stop.requested:
+            started = time.monotonic()
             try:
                 active = tick(
                     incus, root=root, journal=journal, now=datetime.now(UTC), memory=memory
@@ -491,7 +517,12 @@ def run_broker(incus: Incus) -> int:
             interval = ACTIVE_INTERVAL if active else IDLE_INTERVAL
             if memory.listener is not None:
                 executor.evaluate_waiters(memory)
-                executor.serve_requests(memory, until=time.monotonic() + interval, stop=stop)
+                executor.serve_requests(
+                    memory,
+                    until=time.monotonic() + interval,
+                    stop=stop,
+                    wake=new_socket_wake(root, memory, started),
+                )
             else:
                 _pause(interval, stop)
         log.info("orchestration broker stopping")

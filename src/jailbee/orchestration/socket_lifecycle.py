@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -153,6 +154,41 @@ def ensure_socket(
         memory.warn_once(
             f"socket:{full}", "broker: %s: could not set up the broker socket: %s", full, exc
         )
+
+
+# How long a socket directory nobody serves yet keeps the broker running rounds
+# early: `jb new` attaches the device of a new container (`socket_device.
+# attach_new`) and only a round binds the listener in it.
+NEW_DIR_GRACE_SECONDS = 120.0
+
+
+def unserved_new_dir(root: Path, memory: broker_state.BrokerMemory, *, now: float) -> bool:
+    """Whether a socket directory younger than `NEW_DIR_GRACE_SECONDS` is not served.
+
+    The broker then runs its next round early instead of after the idle interval,
+    so a container staging right after `jb new` reaches a listener within the
+    client's connect retry window. A directory that stays unserved (say, its
+    container is not started) stops counting once it is older than the grace.
+    """
+    listener = memory.listener
+    if listener is None:
+        return False
+    try:
+        entries = list(os.scandir(root / "sock"))
+    except OSError:
+        return False
+    for entry in entries:
+        try:
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            age = now - entry.stat(follow_symlinks=False).st_mtime
+        except OSError:
+            continue
+        if age > NEW_DIR_GRACE_SECONDS:
+            continue
+        if listener.socket_dir(socket_device.dir_uuid(entry.path)) != Path(entry.path):
+            return True
+    return False
 
 
 def teardown_socket(

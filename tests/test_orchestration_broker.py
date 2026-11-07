@@ -50,7 +50,7 @@ def _serve_requests_through_pause(monkeypatch: pytest.MonkeyPatch) -> None:
 
     from jailbee.orchestration import executor
 
-    def serve(memory: Any, *, until: float, stop: Any) -> None:
+    def serve(memory: Any, *, until: float, stop: Any, wake: Any = None) -> None:
         broker._pause(round(until - time.monotonic(), 2), stop)
 
     monkeypatch.setattr(executor, "serve_requests", serve)
@@ -1066,6 +1066,33 @@ def test_run_broker_survives_a_failed_round(
     assert broker.run_broker(MagicMock()) == 0
     assert pauses == [60.0, 5.0]
     assert tick.call_count == 2
+
+
+def test_run_broker_ends_its_wait_early_for_a_new_containers_socket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration import executor
+
+    monkeypatch.setattr(broker, "state_root", lambda: tmp_path)
+    monkeypatch.setattr(broker, "tick", MagicMock(return_value=False))
+    wakes: list[Any] = []
+
+    def serve(memory: Any, *, until: float, stop: Any, wake: Any = None) -> None:
+        wakes.append(wake)
+        _sigterm()
+
+    monkeypatch.setattr(executor, "serve_requests", serve)
+    seen: list[Path] = []
+    monkeypatch.setattr(
+        broker.socket_lifecycle,
+        "unserved_new_dir",
+        lambda root, memory, *, now: seen.append(root) or True,
+    )
+    monkeypatch.setattr(broker, "ACTIVE_INTERVAL", 0.0)
+    assert broker.run_broker(MagicMock()) == 0
+    (wake,) = wakes
+    assert wake() is True
+    assert seen == [tmp_path]
 
 
 def test_cli_broker_command_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
