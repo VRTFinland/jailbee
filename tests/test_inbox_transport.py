@@ -333,6 +333,27 @@ def test_call_next_factory_failures_honor_cap_and_deadline():
     assert calls == [6]
 
 
+def test_call_next_reconnect_does_not_repeat_takeover():
+    attempts = []
+
+    class Stub:
+        connected = True
+
+        def call(self, op, args, *, timeout):
+            attempts.append(args.copy())
+            if len(attempts) == 1:
+                raise BrokerUnreachable()
+            return {"kind": "message"}
+
+        def close(self):
+            pass
+
+    original = {"replace": True}
+    assert call_next(Stub, original, timeout=None, sleep=lambda _: None) == {"kind": "message"}
+    assert [a["replace"] for a in attempts] == [True, False]
+    assert original == {"replace": True}
+
+
 def test_call_next_first_factory_failure_preserves_detail():
     error = BrokerUnreachable("socket missing")
 

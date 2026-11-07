@@ -15,6 +15,10 @@ before editing `## Unreleased`.
   is confirmed, including before the child appears in Incus. Wait for the spawn's
   final readiness status before retrying; an early message is no longer mistaken
   for a message to a non-child ([#85](https://github.com/VRTFinland/jailbee/issues/85)).
+- A competing `jailbee inbox wait` names the existing waiter's container PID,
+  wait start time and command. `wait --replace` takes over an orphaned or lost
+  waiter cleanly; the old wait exits 1 without consuming unread messages
+  ([#87](https://github.com/VRTFinland/jailbee/issues/87)).
 
 ## 1.8.4 - 2026-11-07
 

@@ -826,7 +826,14 @@ keep `--quiet-after` from firing. The converse holds too: a child in one long
 silent build or test run wakes the waiter after the quiet period; `LONGEST`
 shows what it is running.
 
-One ordinary waiter per container is enforced by the broker (a second exits 2).
+One ordinary waiter per container is enforced by the broker. A second exits 2
+with the existing waiter's container PID, wait start time and command line
+(client-reported diagnostic information; unavailable for older clients).
+`jailbee inbox wait --replace` takes over the slot and tells the old waiter to
+exit 1, without signalling a PID or consuming messages. Use it with your desired
+wait options and a tracked background command when an orphaned waiter's output
+is lost. Parent exit alone does not end a waiter. Automatic reconnects do not
+repeat a takeover, so they cannot displace a newer explicit waiter.
 It may overlap `send --wait`: the first status is stored already read while the
 sender's connection remains live. A disconnect during handling leaves that
 status unread for the ordinary waiter. `ls` and explicit `read` remain

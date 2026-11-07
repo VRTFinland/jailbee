@@ -159,7 +159,8 @@ def _send(request: send.SendRequest, source: str | None = None) -> None:
         "Print the id of the oldest unread message (exit 0); --path is obsolete; "
         "exit 1 on timeout, 4 = host broker not reachable. "
         "Use ls to handle every unread message. Nothing is marked read. "
-        "Only one wait may run; a second exits 2."
+        "Only one wait may run; a second exits 2 and names the waiter. "
+        "Use --replace to take over; the old wait exits 1."
     )
 )
 def wait(
@@ -196,6 +197,10 @@ def wait(
             ),
         ),
     ] = None,
+    replace: Annotated[
+        bool,
+        typer.Option("--replace", help="Take over the wait slot; the old waiter exits 1."),
+    ] = False,
     path: Annotated[bool, typer.Option("--path", help="Obsolete; prints the message id.")] = False,
     digest: Annotated[
         str | None,
@@ -213,7 +218,12 @@ def wait(
 ) -> None:
     _run(
         lambda: socket_cli.cmd_wait(
-            timeout=timeout, wake_on=wake_on, quiet_after=quiet_after, digest=digest, path=path
+            timeout=timeout,
+            wake_on=wake_on,
+            quiet_after=quiet_after,
+            digest=digest,
+            path=path,
+            replace=replace,
         )
     )
 

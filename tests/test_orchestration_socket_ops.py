@@ -143,10 +143,28 @@ def test_next_args_validation() -> None:
         {"timeout": -1},
         {"timeout": "x"},
         {"timeout": True},
+        {"replace": 1},
+        {"replace": None},
+        {"waiter": "123"},
+        {"waiter": {}},
+        {"waiter": {"pid": True, "started_at": "now", "command": "wait"}},
+        {"waiter": {"pid": -1, "started_at": "now", "command": "wait"}},
+        {"waiter": {"pid": 123, "started_at": 1, "command": "wait"}},
+        {"waiter": {"pid": 123, "started_at": "now", "command": ""}},
+        {"waiter": {"pid": 123, "started_at": "now", "command": "x" * 1025}},
     ):
         with pytest.raises(wire.WireError) as e:
             socket_ops.handle_next_args(bad)
         assert e.value.code == wire.BAD_REQUEST, bad
+
+
+def test_waiter_identity_strips_terminal_controls() -> None:
+    parsed = socket_ops.handle_next_args(
+        {"replace": True, "waiter": {"pid": 123, "started_at": "now\n", "command": "wait\x1b\x9b"}}
+    )
+    assert parsed.replace is True
+    assert parsed.info is not None
+    assert parsed.info.describe() == "PID 123, wait started now, command: wait"
 
 
 def test_busy_and_drop(env: Env) -> None:

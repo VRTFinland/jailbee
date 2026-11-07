@@ -382,8 +382,15 @@ destroyed, and its services stay available. `done: true` means its `done` was
 accepted (its agent has usually exited). Never report a child as stopped
 because it is done.
 
-Only one ordinary `wait` may run per container; another exits 2. Concurrent
-`send --wait` is supported: its first status is stored read while the sender's
+Only one ordinary `wait` may run per container; another exits 2, naming the
+existing waiter's container PID, wait start time and command (older clients may
+have no identity). If that waiter is orphaned or its output is lost, start the
+replacement with `jailbee inbox wait --replace` plus the desired wait options,
+using the agent's background-command facility. The broker releases the old slot
+and tells the old waiter to exit 1; no PID is signalled and no messages are marked
+read. A lost parent alone does not end a waiter. Avoid shell `&` inside a
+short-lived command: its wakeups can disappear with the shell's output.
+Concurrent `send --wait` is supported: its first status is stored read while the sender's
 connection is live. A disconnect during handling leaves that status unread.
 After a wake, handle every unread message, including filtered notes.
 
