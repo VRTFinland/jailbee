@@ -236,7 +236,10 @@ def _precheck(
         return "issue", actions, foreign
     # PR source proposals live in the host outbox store, keyed by the sender's
     # uuid: no `incus exec` into the orchestrator.
-    source = branch_pr.stored_source(ctx.sender.key, m.manifest)
+    try:
+        source = branch_pr.stored_source(ctx.sender.key, m.manifest)
+    except pr_outbox.ManifestError:
+        source = None  # a stored review/comment/description proposal, gated below
     if source is not None:
         if not rights.pull_requests:
             raise pr_outbox.GateError("pull_requests is not granted")
@@ -257,10 +260,8 @@ def _precheck(
         m.manifest, snapshot_pr.files[m.manifest], snapshot_pr.files
     )
     if pr_outbox.is_source_manifest(manifest_pr):
-        # A file-based source predates the store: neither imported nor read (D9).
-        raise pr_outbox.GateError(
-            "source manifests are staged through the broker now; stage it again"
-        )
+        # stored_source accepted every valid source above; this one is not valid.
+        raise pr_outbox.GateError("invalid source manifest")
     if not rights.pr_reviews:
         raise pr_outbox.GateError("pr_reviews is not granted")
     _own_review_repo(ctx.cfg, manifest_pr)

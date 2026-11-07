@@ -14,7 +14,7 @@ from jailbee.orchestration.actions import dispatch
 from jailbee.orchestration.grant import Grant, PublishRights
 from jailbee.orchestration.protocol import PublishManifest
 from jailbee.orchestration.store import open_state_store
-from jailbee.outbox_io import ContainerIdentity, JournalStore
+from jailbee.outbox_io import JournalStore
 from tests.test_orchestration_actions import _ctx, _node
 
 
@@ -568,7 +568,10 @@ def test_revoked_or_cleared_grant_still_settles_inflight(rig, revoke):
     assert out.state == "refused"
 
 
-@pytest.mark.parametrize("source", [True, False])
+SOURCE_OR_REVIEW = [True, False]
+
+
+@pytest.mark.parametrize("source", SOURCE_OR_REVIEW)
 def test_pr_worker_uses_safe_domain_options(rig, mocker, source):
     ctx, m, *_ = rig
     worker_incus = Mock()
@@ -589,16 +592,8 @@ def test_pr_worker_uses_safe_domain_options(rig, mocker, source):
     }
     if source:
         manifest |= {"source": "refs/heads/topic", "source_sha": "a" * 40, "base": "main"}
-        seed_source(ctx.sender.key, manifest)
-        mocker.patch.object(pr_outbox, "read_outbox", side_effect=AssertionError("incus exec"))
-    else:
-        mocker.patch.object(
-            pr_outbox,
-            "read_outbox",
-            return_value=pr_outbox.Outbox(
-                {"a.json": json.dumps(manifest)}, identity=ContainerIdentity("proj-o", "created")
-            ),
-        )
+    seed_source(ctx.sender.key, manifest)
+    mocker.patch.object(pr_outbox, "read_outbox", side_effect=AssertionError("incus exec"))
     mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
 
     def publish(*args, **kw):
@@ -622,7 +617,7 @@ def test_pr_worker_uses_safe_domain_options(rig, mocker, source):
     assert replies[0].state == "done" and "/pull/12" in replies[0].detail
 
 
-@pytest.mark.parametrize("source", [True, False])
+@pytest.mark.parametrize("source", SOURCE_OR_REVIEW)
 def test_pr_manifest_needs_matching_right(rig, mocker, source):
     ctx, m, *_ = rig
     manifest = {
@@ -636,16 +631,8 @@ def test_pr_manifest_needs_matching_right(rig, mocker, source):
     }
     if source:
         manifest |= {"source": "refs/heads/topic", "source_sha": "a" * 40, "base": "main"}
-        seed_source(ctx.sender.key, manifest)
-        mocker.patch.object(pr_outbox, "read_outbox", side_effect=AssertionError("incus exec"))
-    else:
-        mocker.patch.object(
-            pr_outbox,
-            "read_outbox",
-            return_value=pr_outbox.Outbox(
-                {"a.json": json.dumps(manifest)}, identity=ContainerIdentity("proj-o", "created")
-            ),
-        )
+    seed_source(ctx.sender.key, manifest)
+    mocker.patch.object(pr_outbox, "read_outbox", side_effect=AssertionError("incus exec"))
     out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
     assert out.state == "refused"
     assert ("pull_requests" if source else "pr_reviews") in out.detail
@@ -691,23 +678,6 @@ SOURCE = {
     "source_sha": "a" * 40,
     "base": "main",
 }
-
-
-def test_a_file_based_source_manifest_is_refused(rig, mocker):
-    ctx, m, *_ = rig
-    ctx.sender = replace(
-        ctx.sender,
-        config={labels.GRANT: Grant(publish=PublishRights(pull_requests=True)).to_label()},
-    )
-    mocker.patch.object(
-        pr_outbox,
-        "read_outbox",
-        return_value=pr_outbox.Outbox(
-            {"a.json": json.dumps(SOURCE)}, identity=ContainerIdentity("proj-o", "created")
-        ),
-    )
-    out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
-    assert out.state == "refused" and "stage it again" in out.detail
 
 
 def test_an_uncertain_source_publication_refuses_a_new_request(rig, mocker):
