@@ -39,7 +39,6 @@ class ChildrenView:
     children: list[dict[str, object]]
 
 
-
 @dataclass
 class BrokerMemory:
     """What the broker remembers between rounds (in memory only)."""
@@ -86,12 +85,10 @@ class BrokerMemory:
             log.warning(msg, *args)
 
 
-
 def _new_waiters() -> Waiters:
     from jailbee.orchestration.socket_ops import Waiters
 
     return Waiters()
-
 
 
 class StopFlag:
@@ -104,10 +101,8 @@ class StopFlag:
         self.requested = True
 
 
-
 def monotonic() -> float:
     return time.monotonic()
-
 
 
 def repo_configs(memory: BrokerMemory | None = None) -> dict[str, Config | None]:
@@ -150,7 +145,6 @@ def repo_configs(memory: BrokerMemory | None = None) -> dict[str, Config | None]
     return out
 
 
-
 def config_for(full: str, configs: Mapping[str, Config | None]) -> Config | None:
     """The config of the longest prefix `full` starts with (plus `-`); None if it failed."""
     best: str | None = None
@@ -158,7 +152,6 @@ def config_for(full: str, configs: Mapping[str, Config | None]) -> Config | None
         if full.startswith(prefix + "-") and (best is None or len(prefix) > len(best)):
             best = prefix
     return None if best is None else configs[best]
-
 
 
 def owner_config(
@@ -169,11 +162,9 @@ def owner_config(
     return config_for(parent or full, configs)
 
 
-
 def labelled(config: Mapping[str, str]) -> bool:
     """Whether the labels make this container an orchestrator or a child candidate."""
     return bool(config.get(labels.SPAWNED_BY) or config.get(labels.GRANT))
-
 
 
 def nodes(raw: list[dict[str, object]], configs: Mapping[str, Config | None]) -> dict[str, Node]:
@@ -212,7 +203,6 @@ def nodes(raw: list[dict[str, object]], configs: Mapping[str, Config | None]) ->
             memory_usage=_positive_int(memory.get("usage") if isinstance(memory, dict) else None),
         )
     return nodes
-
 
 
 def _positive_int(value: object) -> int | None:

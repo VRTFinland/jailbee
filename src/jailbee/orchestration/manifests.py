@@ -190,7 +190,9 @@ def serve(ctx: ActionContext, journal: Journal, memory: broker_state.BrokerMemor
     if path.exists():
         saved = json.loads(path.read_text())
         if saved.get("ref"):
-            broker_replies.reply(ctx, saved["ref"], Outcome(saved["state"], saved["detail"]), memory)
+            broker_replies.reply(
+                ctx, saved["ref"], Outcome(saved["state"], saved["detail"]), memory
+            )
     publishing.settle(ctx, lambda ref, out: broker_replies.reply(ctx, ref, out, memory))
 
 

@@ -278,9 +278,7 @@ def test_agent_only_watch_ignores_boot_jobs_and_reports_new_session(
         "r-new", rig.child.full, "restart", ctx.now.isoformat(), supervise=True, agent_only=True
     )
     register(tmp_path, rig.sender.full, entry)
-    monkeypatch.setattr(
-        watch, "verdict", MagicMock(side_effect=AssertionError("no boot verdict"))
-    )
+    monkeypatch.setattr(watch, "verdict", MagicMock(side_effect=AssertionError("no boot verdict")))
     reply = MagicMock()
     monkeypatch.setattr(broker_replies, "reply", reply)
     memory = broker_state.BrokerMemory()

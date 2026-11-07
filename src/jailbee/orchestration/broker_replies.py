@@ -10,7 +10,13 @@ from typing import TYPE_CHECKING, Literal
 from jailbee.orchestration import broker_state, finishing, labels, watch
 from jailbee.orchestration.actions import Node
 from jailbee.orchestration.outbox import deliver, has_container_jailbee
-from jailbee.orchestration.protocol import InboxMessage, InboxStatus, RestartManifest, SpawnManifest, new_host_id
+from jailbee.orchestration.protocol import (
+    InboxMessage,
+    InboxStatus,
+    RestartManifest,
+    SpawnManifest,
+    new_host_id,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -33,6 +39,7 @@ def status(ref: str, outcome: Outcome) -> InboxStatus:
         detail=outcome.detail,
     )
 
+
 def reply(
     ctx: ActionContext, ref: str, outcome: Outcome, memory: broker_state.BrokerMemory
 ) -> None:
@@ -49,6 +56,7 @@ def reply(
     )
     clear_reply_path(ctx, ref)
 
+
 def clear_reply_path(ctx: ActionContext, ref: str) -> None:
     """Drop the done-reply gate once the status for `ref` reached the sender."""
     path = finishing.reply_path(ctx, ctx.sender)
@@ -56,6 +64,7 @@ def clear_reply_path(ctx: ActionContext, ref: str) -> None:
         saved = json.loads(path.read_text())
         if saved.get("ref") == ref:
             path.unlink(missing_ok=True)
+
 
 def _track(
     ctx: ActionContext, ref: str, child_full: str, kind: Literal["spawn", "restart"]
@@ -74,10 +83,12 @@ def _track(
         watches[ctx.sender.full] = mine
         watch.save_watch(ctx.root, watches)
 
+
 def _track_restart(ctx: ActionContext, ref: str, child_full: str, outcome: Outcome) -> None:
     """Every successful restart owes actual agent-liveness confirmation."""
     if outcome.state in ("done", "started"):
         _track(ctx, ref, child_full, "restart")
+
 
 def watch_manifest(
     ctx: ActionContext, manifest: Manifest | None, ref: str, outcome: Outcome
@@ -95,6 +106,7 @@ def watch_manifest(
     except Exception:
         log.exception("broker: %s: could not watch %s", ctx.sender.full, ref)
 
+
 def watch_drained(ctx: ActionContext, req: QueuedRequest, outcome: Outcome) -> None:
     try:
         if req.kind == "restart":
@@ -103,6 +115,7 @@ def watch_drained(ctx: ActionContext, req: QueuedRequest, outcome: Outcome) -> N
             _track(ctx, req.manifest_id, req.child_full, "spawn")
     except Exception:
         log.exception("broker: %s: could not watch %s", ctx.sender.full, req.manifest_id)
+
 
 def _settle_watches(
     ctx: ActionContext, memory: broker_state.BrokerMemory, jobs: dict[str, JobSnapshot] | None
@@ -147,6 +160,7 @@ def _settle_watches(
                 reply(ctx, entry.ref, outcome, memory)
             entries.remove(entry)
             watch.save_watch(ctx.root, watches)
+
 
 def _settle_agent_watch(
     ctx: ActionContext,
@@ -297,6 +311,7 @@ def _settle_agent_watch(
         entries[index] = updated
     watch.save_watch(ctx.root, watches)
 
+
 def settle_all_watches(
     root: Path,
     orchestrators: list[ActionContext],
@@ -314,6 +329,7 @@ def settle_all_watches(
             _settle_watches(ctx, memory, jobs)
         except Exception:
             log.exception("broker: watches of %s failed", ctx.sender.full)
+
 
 def forget_vanished_watches(root: Path, present: set[object]) -> None:
     """Drop the watch entries of orchestrators that no longer exist."""

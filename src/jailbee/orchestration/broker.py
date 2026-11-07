@@ -20,8 +20,8 @@ from jailbee.orchestration import (
     broker_state,
     finishing,
     inbox_state,
-    manifests,
     labels,
+    manifests,
     publishing,
     query,
     retention,
@@ -37,7 +37,6 @@ from jailbee.orchestration.journal import Journal
 from jailbee.orchestration.listener import Listener
 from jailbee.orchestration.outbox import (
     flush_pending,
-    has_container_jailbee,
     has_pending,
 )
 from jailbee.orchestration.state import (
@@ -211,7 +210,9 @@ def tick(
                 if node.full in publishes:
                     publish_ctx = context(node)
                     if publish_ctx is not None:
-                        publishing.settle(publish_ctx, partial(broker_replies.reply, publish_ctx, memory=memory))
+                        publishing.settle(
+                            publish_ctx, partial(broker_replies.reply, publish_ctx, memory=memory)
+                        )
                 if has_pending(root, node.full):
                     _flush_unlabelled(node, context, root, incus)
             except Exception:
@@ -228,7 +229,9 @@ def tick(
                     node.full,
                 )
                 # Socket access ends, but durable messages remain deliverable.
-                socket_lifecycle.teardown_socket(incus, memory, node.full, node.config.get("volatile.uuid"), root)
+                socket_lifecycle.teardown_socket(
+                    incus, memory, node.full, node.config.get("volatile.uuid"), root
+                )
                 if has_pending(root, node.full):
                     flush_pending(
                         incus,
@@ -285,7 +288,9 @@ def tick(
             log.exception("broker: queue of %s failed", ctx.sender.full)
         if ctx.sender.running:
             try:
-                manifests.remember_children(ctx, memory, inbox_state.sync_children(ctx, memory.status))
+                manifests.remember_children(
+                    ctx, memory, inbox_state.sync_children(ctx, memory.status)
+                )
             except Exception:
                 log.exception("broker: child inbox state of %s failed", ctx.sender.full)
     memory.status.prune(set(nodes), seen)

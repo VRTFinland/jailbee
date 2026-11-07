@@ -8,7 +8,15 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from jailbee.orchestration import broker, broker_replies, broker_state, executor, socket_lifecycle, socket_ops, wire
+from jailbee.orchestration import (
+    broker,
+    broker_replies,
+    broker_state,
+    executor,
+    socket_lifecycle,
+    socket_ops,
+    wire,
+)
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.listener import Listener, RequestEvent
 from jailbee.orchestration.outbox import deliver

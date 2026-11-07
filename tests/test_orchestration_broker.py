@@ -16,7 +16,17 @@ from jailbee import background
 from jailbee.db.models import JOB_BOOT, JOB_CREATE
 from jailbee.global_config import GlobalConfig
 from jailbee.incus import IncusError
-from jailbee.orchestration import actions, broker, broker_replies, broker_state, labels, manifests, outbox, socket_lifecycle, watch
+from jailbee.orchestration import (
+    actions,
+    broker,
+    broker_replies,
+    broker_state,
+    labels,
+    manifests,
+    outbox,
+    socket_lifecycle,
+    watch,
+)
 from jailbee.orchestration.actions import Outcome
 from jailbee.orchestration.grant import Grant, RepoCap
 from jailbee.orchestration.journal import Journal

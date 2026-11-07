@@ -19,8 +19,6 @@ PURGE_INTERVAL = 3600.0
 DEFAULT_RETENTION_DAYS = 30
 
 
-
-
 def _retention_days(
     full: str, config: Mapping[str, str], configs: Mapping[str, Config | None]
 ) -> int:
