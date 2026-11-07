@@ -722,7 +722,12 @@ def list_containers(
         }
         for c in out:
             status = statuses.get(c.name)
-            unread = unread_counts.get(uuids.get(c.name), 0) if unread_counts is not None else None
+            uuid = uuids.get(c.name)
+            unread = (
+                (unread_counts.get(uuid, 0) if isinstance(uuid, str) else 0)
+                if unread_counts is not None
+                else None
+            )
             if status is None and unread:
                 status = GitStatus("?", "?", "?", "?")
             if status is not None:
