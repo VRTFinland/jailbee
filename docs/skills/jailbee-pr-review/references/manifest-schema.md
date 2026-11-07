@@ -17,7 +17,7 @@ parsed by the host. Do not write manifests or outbox files by hand.
       "comments": [
         {"path": "src/worktime.py", "line": 88, "side": "RIGHT", "body": "…"},
         {"path": "src/worktime.py", "start_line": 120, "line": 134,
-         "body_file": "001-comment-worktime.md"}
+         "body_file": "001-review-1.md"}
       ]
     },
     {"type": "reply", "comment_id": 99887, "body": "…"},
@@ -71,9 +71,9 @@ For rework of PR 1234, a numbered source can have no description action:
 }
 ```
 
-`jailbee pr source` stages a source manifest in the host outbox store over
-the broker socket (not as a file in `~/.jailbee/pr-outbox/`); the broker
-re-validates it and refuses a child container. `jailbee outbox ls|show|drop`
+Every PR proposal — review, reply, comment, description and source — is
+staged in the host outbox store over the broker socket (never as a file in
+the container); the broker re-validates it and refuses a child container. `jailbee outbox ls|show|drop`
 cover it as `pr/NNN-source.json`, and `jailbee outbox sent` lists it once
 published. The host publishes one with `jb pr push <container>
 --source-manifest <name>`. Pending sources show `awaiting-push` and
@@ -173,7 +173,7 @@ outright, naming the manifest file and which cap it broke.
 
 ## Worked example 1 — a review pass with three line comments
 
-`~/.jailbee/pr-outbox/001-review.json`:
+Proposal `pr/001-review.json`:
 
 ```json
 {
@@ -198,7 +198,7 @@ outright, naming the manifest file and which cap it broke.
           "start_line": 120,
           "line": 134,
           "side": "RIGHT",
-          "body_file": "001-comment-worktime.md"
+          "body_file": "001-review-1.md"
         },
         {
           "path": "src/worktime.py",
@@ -212,7 +212,7 @@ outright, naming the manifest file and which cap it broke.
 }
 ```
 
-`~/.jailbee/pr-outbox/001-comment-worktime.md` (referenced by the
+Body `001-review-1.md` (referenced by the
 `start_line`..`line` span above, because the explanation runs long):
 
 ```markdown
@@ -237,7 +237,7 @@ Notes on this example:
 Written before the PR exists yet, to hand `jb pr push` a title, body, and
 proposed head branch instead of running its own Claude pass:
 
-`~/.jailbee/pr-outbox/002-description.json`:
+Proposal `pr/002-description.json`:
 
 ```json
 {
@@ -249,14 +249,14 @@ proposed head branch instead of running its own Claude pass:
     {
       "type": "description",
       "title": "fix(worktime): round half-up at the minute boundary",
-      "body_file": "002-body.md",
+      "body_file": "002-description-1.md",
       "branch": "fix/worktime-half-up-rounding"
     }
   ]
 }
 ```
 
-`~/.jailbee/pr-outbox/002-body.md`:
+Body `002-description-1.md`:
 
 ```markdown
 ## Background

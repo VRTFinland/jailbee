@@ -1141,15 +1141,11 @@ full field reference, the `0600` permission requirement, and the
 ## Unified proposal management
 
 `jb outbox` brings PR and issue proposals into one view without moving files
-or changing manifest schemas. Issue proposals and PR source proposals live in
-the host outbox store (`broker.db`), staged over the broker socket; PR review,
-comment, reply and description proposals are still files in
-`/home/dev/.jailbee/pr-outbox/` inside the container (`~/.jailbee/pr-outbox/`
-for its user). New non-child containers bootstrap both directories as the container
-user before agents run, including with `--no-clone` or `--no-autostart`.
-Spawned children do not bootstrap them and cannot stage GitHub proposals.
-Staging commands create missing stores as needed; do not write files or
-directories by hand. Inspection never creates missing directories and makes no
+or changing manifest schemas. Issue and PR proposals (review, comment, reply,
+description and source) and their draft batches live in the host outbox store
+(`broker.db`), staged over the broker socket; publication journals each PR
+action there (prepared before the GitHub call, applied with its sent record
+after it). Spawned children cannot stage GitHub proposals. Inspection reads the store only and makes no
 `gh` or network calls.
 
 ```bash
