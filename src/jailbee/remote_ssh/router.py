@@ -504,6 +504,7 @@ _CONTAINER_COMMANDS = _DEPRECATED_HIDDEN_COMMANDS | frozenset(
         "rename",
         "restart",
         "review apply",
+        "review resolve",
         "shell",
         "snapshot create",
         "snapshot delete",

@@ -724,6 +724,7 @@ def list_containers(
             raw.get("name"): (raw.get("config") or {}).get("volatile.uuid") for raw in instances
         }
         issue_counts = issue_outbox_counts()
+        pr_counts = pr_outbox_counts()
         for c in out:
             status = statuses.get(c.name)
             uuid = uuids.get(c.name)
@@ -738,6 +739,7 @@ def list_containers(
             if status is not None:
                 status = replace(status, unread_inbox=unread)
                 status = replace(status, pending_issue_actions=_issue_count(issue_counts, uuid))
+                status = replace(status, pending_pr_actions=_issue_count(pr_counts, uuid))
             c.git_status = (
                 None
                 if status is None
@@ -835,6 +837,27 @@ def stamp_issue_outbox(ci: ContainerInfo) -> None:
     if ci.git_status is not None:
         ci.git_status = replace(
             ci.git_status, pending_issue_actions=_issue_count(issue_outbox_counts(), ci.uuid)
+        )
+
+
+def pr_outbox_counts() -> dict[str, int] | None:
+    """Pending PR proposals per container uuid from the host store (journal-aware),
+    or None when the store cannot be read (the count is then unknown, never zero)."""
+    from jailbee.db import state_dir
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox.store_db import read_pending_counts
+
+    try:
+        return read_pending_counts(state_dir() / "orchestration", "pr")
+    except (StoreError, ValueError, OSError):
+        return None
+
+
+def stamp_pr_outbox(ci: ContainerInfo) -> None:
+    """Replace the probed PR proposal count of ``ci.git_status`` with the store's."""
+    if ci.git_status is not None:
+        ci.git_status = replace(
+            ci.git_status, pending_pr_actions=_issue_count(pr_outbox_counts(), ci.uuid)
         )
 
 

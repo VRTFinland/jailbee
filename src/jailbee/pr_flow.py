@@ -719,7 +719,13 @@ def record_outbox_consumption(
         info(f"description from {source.manifest} (written in the container)")
     try:
         pr_outbox.record_consumed(
-            incus, full, source.manifest, source.index, url, uid=cfg.container_user.uid
+            incus,
+            full,
+            source.manifest,
+            source.index,
+            url,
+            uid=cfg.container_user.uid,
+            container_prefix=cfg.container_prefix,
         )
     except pr_outbox.FinalizeError as exc:
         # No claim about what the manifest now looks like: `record_consumed`

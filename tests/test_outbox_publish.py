@@ -11,9 +11,37 @@ from jailbee.outbox.inspect import build_views
 from jailbee.outbox.io import PrManagement
 from jailbee.outbox.models import ProposalId
 from jailbee.outbox_io import proposal_digest
-from tests.issue_store_support import UUID, StoreJournals, StoreSnapshots, instance
+from tests.issue_store_support import UUID, StoreJournals, StoreSnapshots, broker, instance
 from tests.outbox_journal_fake import journal_key
 from tests.outbox_support import IDENTITY, issue_files, pr_files, store
+from tests.pr_store_support import seed_pr_store, sent_records, stored_names
+
+
+def _clear_pr_store() -> None:
+    with broker().transaction() as con:
+        for table, column in (
+            ("outbox_body", "kind"),
+            ("outbox_proposal", "kind"),
+            ("outbox_journal_action", "kind"),
+            ("outbox_journal", "kind"),
+        ):
+            con.execute(f"DELETE FROM {table} WHERE uuid=? AND {column}='pr'", (UUID,))
+
+
+class PrStoreSnapshots(StoreSnapshots):
+    """`StoreSnapshots` whose pr entry is the real store too (seeded, read back)."""
+
+    def __setitem__(self, kind, snapshot):
+        if kind == "pr":
+            _clear_pr_store()
+            seed_pr_store(snapshot.as_dict(), uuid=UUID)
+            return
+        super().__setitem__(kind, snapshot)
+
+    def __getitem__(self, kind):
+        if kind == "pr":
+            return service.pr_snapshot("test", UUID)
+        return super().__getitem__(kind)
 
 
 @pytest.fixture
@@ -30,8 +58,8 @@ def env(mocker, make_cfg, tmp_path):
         {"type": "comment", "body_file": "body.md"},
         {"type": "comment", "body": "Second action"},
     ]
-    # Issue proposals live in the host outbox store; PR proposals are still files.
-    snapshots = StoreSnapshots()
+    # Both kinds of proposal live in the host outbox store.
+    snapshots = PrStoreSnapshots()
     snapshots["issue"] = store("issue", issue_files() | {"002.json": issue_files()["001.json"]})
     snapshots["pr"] = store(
         "pr",
@@ -42,72 +70,6 @@ def env(mocker, make_cfg, tmp_path):
         },
     )
 
-    import subprocess
-
-    run_shell = subprocess.run
-    directory = tmp_path / "mutation-outbox"
-    directory.mkdir()
-
-    def sync(kind):
-        snapshot = snapshots[kind]
-        for path in directory.iterdir():
-            path.unlink()
-        for name, content in snapshot.files:
-            (directory / name).write_bytes(content.encode("utf-8"))
-        for name in snapshot.rejected:
-            (directory / name).write_bytes(b"\xff")
-
-    def save(kind):
-        snapshot = snapshots[kind]
-        files = {
-            p.name: p.read_bytes().decode("utf-8")
-            for p in directory.iterdir()
-            if p.name not in snapshot.rejected
-        }
-        snapshots[kind] = store(kind, files, rejected=snapshot.rejected)
-
-    def mutate(container, command, text, **kwargs):
-        assert command[:4] == ["bash", "-c", io._MUTATE_SCRIPT, "bash"]
-        kind = "pr"
-        sync(kind)
-        command = list(command)
-        command[4] = str(directory)
-        result = run_shell(command, input=text, text=True, capture_output=True, check=True).stdout
-        save(kind)
-        return result
-
-    incus.exec_with_input.side_effect = mutate
-
-    def execute(container, command, **kwargs):
-        assert command[:2] == ["bash", "-c"]
-        command = list(command)
-        if command[-1].endswith(("progress.json", "applied.log")):
-            kind = "pr"
-            command[-1] = str(directory / command[-1].rsplit("/", 1)[-1])
-        else:
-            raise AssertionError(command)
-        sync(kind)
-        result = run_shell(command, text=True, capture_output=True, check=True).stdout
-        save(kind)
-        return result
-
-    incus.exec.side_effect = execute
-
-    def read(i, c, k, **kw):
-        sync(k)
-        command = [
-            "bash",
-            "-c",
-            io._READ_SCRIPT,
-            "bash",
-            str(directory),
-            str(io.FILE_LIMIT),
-            str(io.SNAPSHOT_LIMIT),
-        ]
-        return io._decode(k, run_shell(command, text=True, capture_output=True, check=True).stdout)
-
-    mocker.patch.object(service, "read_store", side_effect=read)
-    mocker.patch.object(io, "read_store", side_effect=read)
     mocker.patch("subprocess.run", side_effect=AssertionError("unexpected real subprocess"))
     mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/acme/repo.git")
     mocker.patch("jailbee.submodules.declared_submodule_remotes", return_value=())
@@ -165,119 +127,13 @@ def env(mocker, make_cfg, tmp_path):
     return cfg, incus, snapshots, journals, mutations, labels, fetch, manager
 
 
-@pytest.mark.parametrize("name", ["one space.json", " leading .json", "one pr=7 space.json"])
-@pytest.mark.parametrize(
-    "suffix",
-    [
-        "pr=42 actions=1 urls=https://receipt",
-        "pr=42 actions=broken urls=https://x pr=7 actions=1 urls=https://y",
-        "pr=42 actions=1 urls=https://x pr=7 actions=1 urls=https://y",
-        "pr=42 actions=broken  urls=https://x pr=7 actions=1 urls=https://y",
-        "pr=42\tactions=broken\turls=https://x pr=7 actions=1 urls=https://y",
-        " pr=42  actions=broken   urls=https://x pr=7 actions=1 urls=https://y",
-        "pr = 42 actions = broken urls = https://x pr=7 actions=1 urls=https://y",
-        "pr=42 urls=https://x actions=broken pr=7 actions=1 urls=https://y",
-        "actions=broken urls=https://x pr=7 actions=1 urls=https://y",
-        "pr=42 urls=https://x pr=7 actions=1 urls=https://y",
-        "pr=42 actions=broken url=https://x pr=7 actions=1 urls=https://y",
-        "pr=42 urls=notes.json pr=7 actions=1 urls=https://y",
-        "actions=broken urls=notes.json pr=7 actions=1 urls=https://y",
-        "pr=42 actions=broken url=notes.json pr=7 actions=1 urls=https://y",
-        "unknown=notes.json pr=7 actions=1 urls=receipt.json",
-    ],
-)
-def test_existing_whitespace_receipt_refuses_actual_selected_replay(env, name, suffix):
-    from jailbee.outbox.publish import PublishOptions, publish_selected
-
-    files = env[2]["pr"].as_dict()
-    files[name] = files.pop("001.json")
-    files["applied.log"] = f"now {name} {suffix}\n"
-    env[2]["pr"] = store("pr", files)
-    assert (
-        publish_selected(
-            env[0],
-            env[1],
-            IDENTITY.full_name,
-            ProposalId("pr", name),
-            options=PublishOptions(publisher="user"),
-            confirm=lambda count: True,
-        )
-        == 1
-    )
-    env[4]["pr_comment"].assert_not_called()
-    env[1].exec_with_input.assert_not_called()
-    assert env[2]["pr"].as_dict() == files
-
-
-@pytest.mark.parametrize(
-    "other",
-    [
-        "001.json longer.json",
-        "001.json pr=7 longer.json",
-        "001.json pr=7 actions=notes.json",
-        "001.json pr=7  longer.json",
-        "001.json actions=notes.json",
-        "001.json pr = 7 longer.json",
-        " 001.json pr=7 longer.json",
-        "001.json-more pr=7.json",
-        "001 pr=7 longer.json",
-        "001.jsonx longer.json",
-    ],
-)
-def test_complete_name_prefix_receipt_refuses_ambiguous_publication(env, other):
-    files = env[2]["pr"].as_dict()
-    files[other] = files["001.json"]
-    history = f"now {other} pr=42 actions=1 urls=https://old\n"
-    files["applied.log"] = history
-    env[2]["pr"] = store("pr", files)
-
-    if other.startswith("001.json "):
-        assert selected(env, "pr") == 1
-        env[4]["pr_comment"].assert_not_called()
-        env[1].exec_with_input.assert_not_called()
-        assert env[2]["pr"].as_dict() == files
-    else:
-        assert selected(env, "pr") == 0
-        assert env[4]["pr_comment"].call_count == 2
-        remaining = env[2]["pr"].as_dict()
-        assert "001.json" not in remaining
-        assert remaining[other] == files[other]
-        assert remaining["applied.log"].startswith(history)
-        assert "001.json pr=42 actions=2" in remaining["applied.log"]
-
-
-@pytest.mark.parametrize("longer_present", [False, True])
-@pytest.mark.parametrize(
-    "fields",
-    [
-        "pr=42 urls=notes.json",
-        "actions=broken urls=notes.json",
-        "pr=42 actions=broken url=notes.json",
-        "unknown=notes.json",
-    ],
-)
-def test_filename_shaped_receipt_values_never_prove_other_ownership(env, longer_present, fields):
-    name = "001.json"
-    longer = f"{name} {fields}"
-    files = env[2]["pr"].as_dict()
-    if longer_present:
-        files[longer] = files[name]
-    files["applied.log"] = f"now {longer} pr=42 actions=1 urls=receipt.json\n"
-    env[2]["pr"] = store("pr", files)
-    assert selected(env, "pr") == 1
-    env[4]["pr_comment"].assert_not_called()
-    env[1].exec_with_input.assert_not_called()
-    assert env[2]["pr"].as_dict() == files
-
-
-def test_ambiguous_longer_name_with_valid_sidecar_keeps_existing_progress_rules(env):
+def test_odd_proposal_name_resumes_from_its_journal(env):
     from jailbee.outbox.publish import PublishOptions, publish_selected
 
     name = "001.json pr=42 urls=notes.json"
     files = env[2]["pr"].as_dict()
     files[name] = files["001.json"]
     files[f"{name}.progress.json"] = '{"applied":[0],"urls":{"0":"https://old"}}'
-    files["applied.log"] = f"now {name} pr=42 actions=1 urls=https://old\n"
     env[2]["pr"] = store("pr", files)
     assert (
         publish_selected(
@@ -291,11 +147,8 @@ def test_ambiguous_longer_name_with_valid_sidecar_keeps_existing_progress_rules(
         == 0
     )
     assert [c.args[2] for c in env[4]["pr_comment"].call_args_list] == ["Second action"]
-    remaining = env[2]["pr"].as_dict()
-    assert name not in remaining and f"{name}.progress.json" not in remaining
-    assert remaining["001.json"] == files["001.json"]
-    assert remaining["body.md"] == files["body.md"]
-    assert remaining["applied.log"].startswith(files["applied.log"])
+    assert name not in stored_names(UUID)
+    assert "001.json" in stored_names(UUID)
 
 
 @pytest.mark.parametrize("location", ["root", "action", "inline"])
@@ -327,7 +180,7 @@ def test_actual_selected_publication_accepts_ignored_numeric_extensions(env, loc
     assert "001.json" not in remaining
     assert remaining["002.json"] == files["002.json"]
     assert remaining["body.md"] == files["body.md"]
-    assert "001.json pr=42" in remaining["applied.log"]
+    assert {r.manifest for r in sent_records(UUID)} == {"001.json"}
     assert (
         env[4]["review"].call_count if location == "inline" else env[4]["pr_comment"].call_count
     ) == (1 if location == "inline" else 2)
@@ -738,12 +591,11 @@ def test_typed_publication_preserves_execution_cause(env, mocker, boundary):
 
 @pytest.mark.parametrize("kind", ["issue", "pr"])
 def test_typed_local_reader_failure_is_execution(env, mocker, kind):
-    from jailbee.incus import IncusTimeoutError
+    from jailbee.orchestration.store import StoreError
     from jailbee.outbox.models import OutboxExecutionError
 
-    failure = IncusTimeoutError("reader timed out")
-    mocker.patch.object(service, "read_store", side_effect=failure)
-    mocker.patch.object(io, "read_store", side_effect=failure)
+    failure = StoreError("broker.db is locked")
+    mocker.patch("jailbee.outbox.store_db.read_proposals", side_effect=failure)
     with pytest.raises(OutboxExecutionError):
         selected(env, kind, raise_errors=True)
     assert_no_mutation(env)
@@ -850,7 +702,10 @@ def test_typed_mutation_failure_retains_receipts_and_execution_type(env, kind):
 
 def revision(env, kind):
     journals = issue_outbox.store_journals(IDENTITY, UUID) if kind == "issue" else None
-    return build_views(IDENTITY, (env[2][kind],), issue_journals=journals)[0].revision
+    pr_journals = service.pr_journals(UUID) if kind == "pr" else None
+    return build_views(IDENTITY, (env[2][kind],), issue_journals=journals, pr_journals=pr_journals)[
+        0
+    ].revision
 
 
 def assert_no_mutation(env):
@@ -921,7 +776,11 @@ def test_pr_publishes_selected_all_actions_and_full_plain_text(env, capsys):
         "Second action",
     ]
     assert "001.json" not in env[2]["pr"].as_dict()
-    assert {"002.json", "body.md", "applied.log"} <= set(env[2]["pr"].as_dict())
+    assert {"002.json", "body.md"} <= set(env[2]["pr"].as_dict())
+    assert sorted((r.manifest, r.index) for r in sent_records(UUID)) == [
+        ("001.json", 0),
+        ("001.json", 1),
+    ]
     assert env[7].identity is None
 
 
@@ -1005,7 +864,7 @@ def test_original_shared_revision_guards_fresh_inputs(env, kind, when, change):
     original = revision(env, kind)
     prepared = []
 
-    if kind == "issue" and change == "rejected":
+    if change == "rejected":
         pytest.skip("the host outbox store has no rejected entries")
 
     def alter():
@@ -1021,7 +880,7 @@ def test_original_shared_revision_guards_fresh_inputs(env, kind, when, change):
             env[2][kind] = replace(snapshot, rejected=("body.md",))
             return
         elif kind == "pr":
-            files["001.json.progress.json"] = '{"applied":[],"urls":{}}'
+            files["001.json.progress.json"] = '{"applied":[0],"urls":{"0":"https://old"}}'
         else:
             env[3].create("001.json", "b" * 64, 3)
         env[2][kind] = store(kind, files)
@@ -1045,13 +904,6 @@ def test_domain_digest_is_not_a_ui_revision(env, kind):
     files = env[2][kind].as_dict()
     digest = proposal_digest("001.json", files["001.json"], {"body.md": files["body.md"]})
     assert selected(env, kind, revision=digest) == 1
-    assert_no_mutation(env)
-
-
-@pytest.mark.parametrize("rejected", ["001.json.progress.json", "applied.log"])
-def test_pr_rejected_progress_is_not_lost_in_dict_conversion(env, rejected):
-    env[2]["pr"] = replace(env[2]["pr"], rejected=(rejected,))
-    assert selected(env, "pr") == 1
     assert_no_mutation(env)
 
 
@@ -1205,7 +1057,7 @@ def test_review_apply_keeps_the_repository_lock_even_with_foreign(env, capsys):
         "feat",
         pr_number=None,
         confirm=lambda count: True,
-        outbox=pr_outbox.Outbox(files=env[2]["pr"].as_dict()),
+        outbox=None,
         allow_foreign=True,
         publisher="user",
     )
@@ -1263,10 +1115,8 @@ def test_pr_ownership_gained_after_confirm_still_refuses_a_foreign_plan(env):
 @pytest.mark.parametrize("kind", ["issue", "pr"])
 def test_before_prepare_stale_token_never_reaches_remote_gate(env, kind, mocker):
     token = revision(env, kind)
-    if kind == "issue":  # the host store has no rejected entries: change a body instead
-        env[2][kind] = store(kind, env[2][kind].as_dict() | {"body.md": "Changed"})
-    else:
-        env[2][kind] = replace(env[2][kind], rejected=("body.md",))
+    # The host store has no rejected entries: change a body instead.
+    env[2][kind] = store(kind, env[2][kind].as_dict() | {"body.md": "Changed"})
     login = mocker.patch.object(issue_github, "current_login")
     remote = mocker.patch.object(pr, "resolve_pr")
     assert selected(env, kind, revision=token) == 1
@@ -1700,7 +1550,7 @@ def test_plan_sink_requires_one_selected_manifest(env):
             IDENTITY.full_name,
             pr_number=None,
             confirm=lambda n: False,
-            outbox=pr_outbox.Outbox(env[2]["pr"].as_dict(), (), IDENTITY),
+            outbox=None,
             dry_run=True,
             manifest_names=("001.json", "002.json"),
             management=env[7],
@@ -1780,17 +1630,6 @@ def test_published_actions_recorded_with_publisher(env, kind, publisher):
     assert {r.outbox for r in rows} == {"issue" if kind == "issue" else "review"}
     assert {r.instance for r in rows} == {IDENTITY.full_name}
     assert all(r.state == "applied" and r.url for r in rows)
-
-
-def test_publish_survives_sent_record_failure_selected(env, mocker, caplog):
-    """PR records stay best effort; issue records commit with the journal instead."""
-    kind = "pr"
-    mocker.patch("jailbee.outbox.sent.pdb.open_publications", side_effect=OSError("disk gone"))
-    with caplog.at_level("WARNING", logger="jailbee.outbox.sent"):
-        assert selected(env, kind) == 0
-    assert "001.json" not in env[2][kind].as_dict()
-    assert caplog.records
-    assert all("disk gone" in r.getMessage() for r in caplog.records)
 
 
 def test_issue_plan_json_names_the_assignees_kind(env):

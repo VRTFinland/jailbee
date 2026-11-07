@@ -633,6 +633,7 @@ def test_submodule_outbox_pins_commands_and_consumes_an_existing_hint_once(
             0,
             "https://github.com/acme/lib-a/pull/123",
             uid=cfg.container_user.uid,
+            container_prefix="sampleapp",
         )
 
 

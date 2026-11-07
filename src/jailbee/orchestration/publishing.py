@@ -22,7 +22,7 @@ from jailbee.orchestration.grant import Grant, PublishRights, effective_grant
 from jailbee.orchestration.protocol import Manifest, PublishManifest
 from jailbee.orchestration.state import atomic_write_text
 from jailbee.orchestration.store import BrokerStore, import_json_document, open_state_store
-from jailbee.outbox.models import ProposalId
+from jailbee.outbox.models import OutboxError, ProposalId
 from jailbee.outbox.publish import PublishOptions, publish_selected
 from jailbee.outbox_io import ContainerIdentity
 
@@ -195,7 +195,6 @@ def _review_policy(
 def _precheck(
     ctx: ActionContext, m: PublishManifest, rights: PublishRights
 ) -> tuple[str, list[dict[str, str]], bool]:
-    uid = ctx.cfg.container_user.uid
     if m.outbox == "issue":
         # Issue proposals and their journals live in the host outbox store,
         # keyed by the sender's uuid: no `incus exec` into the orchestrator.
@@ -237,7 +236,10 @@ def _precheck(
         return "issue", actions, foreign
     # PR source proposals live in the host outbox store, keyed by the sender's
     # uuid: no `incus exec` into the orchestrator.
-    source = branch_pr.stored_source(ctx.sender.key, m.manifest)
+    try:
+        source = branch_pr.stored_source(ctx.sender.key, m.manifest)
+    except pr_outbox.ManifestError:
+        source = None  # a stored review/comment/description proposal, gated below
     if source is not None:
         if not rights.pull_requests:
             raise pr_outbox.GateError("pull_requests is not granted")
@@ -250,21 +252,25 @@ def _precheck(
             [{"kind": "source", "repo": source.manifest.repo}] if pending else [],
             False,
         )
-    snapshot_pr = pr_outbox.read_outbox(ctx.incus, ctx.sender.full, uid=uid, strict=True)
+    # Every PR proposal lives in the host outbox store, keyed by the sender's uuid.
+    snapshot_pr = pr_outbox.store_outbox(ctx.sender.key, container=ctx.sender.full)
     if m.manifest not in snapshot_pr.files or snapshot_pr.rejected:
         raise pr_outbox.GateError("manifest unavailable or outbox snapshot incomplete")
     manifest_pr = pr_outbox.parse_manifest(
         m.manifest, snapshot_pr.files[m.manifest], snapshot_pr.files
     )
     if pr_outbox.is_source_manifest(manifest_pr):
-        # A file-based source predates the store: neither imported nor read (D9).
-        raise pr_outbox.GateError(
-            "source manifests are staged through the broker now; stage it again"
-        )
+        # stored_source accepted every valid source above; this one is not valid.
+        raise pr_outbox.GateError("invalid source manifest")
     if not rights.pr_reviews:
         raise pr_outbox.GateError("pr_reviews is not granted")
     _own_review_repo(ctx.cfg, manifest_pr)
-    progress = pr_outbox._publication_progress(snapshot_pr, m.manifest, len(manifest_pr.actions))
+    try:
+        progress = pr_outbox._publication_progress(
+            snapshot_pr, m.manifest, len(manifest_pr.actions)
+        )
+    except OutboxError as exc:
+        raise pr_outbox.GateError(f"{exc}; resolve it on the host") from exc
     indices = pr_outbox.pending_indices(manifest_pr, progress)
     return (
         "review",

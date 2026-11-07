@@ -5,8 +5,10 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
+from jailbee import pr_outbox
 from jailbee.cli import app
 from tests.conftest import mock_pr_agent
+from tests.pr_store_support import instance
 
 
 @pytest.fixture(autouse=True)
@@ -45,13 +47,13 @@ def _pr_created(already: bool = False):
     )
 
 
-def _mock_store(mocker, files, *, rejected=(), warnings=()):
-    from jailbee.outbox.models import StoreSnapshot
-    from jailbee.pr_outbox import Outbox
+def _mock_store(mocker, files):
+    """Seed the instance's host outbox store; returns `read_outbox`, spied by `_setup`."""
+    from tests.pr_store_support import seed_pr_store
 
-    snapshot = StoreSnapshot("pr", tuple(sorted(files.items())), tuple(rejected), tuple(warnings))
-    mocker.patch("jailbee.outbox.io.read_store", return_value=snapshot)
-    return mocker.patch("jailbee.pr_outbox.read_outbox", return_value=Outbox(files=files))
+    if files:
+        seed_pr_store(files, container="sampleapp-feat-foo")
+    return pr_outbox.read_outbox
 
 
 def _setup(mocker, tmp_path, labels=None):
@@ -62,7 +64,7 @@ def _setup(mocker, tmp_path, labels=None):
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg_mock)
     incus_mock = mocker.MagicMock()
     incus_mock.list_containers.return_value = [
-        {"name": "sampleapp-feat-foo", "created_at": "2026-09-30T12:00:00Z"}
+        instance("sampleapp-feat-foo", "2026-09-30T12:00:00Z")
     ]
     cfg_mock.container_user.uid = 1000
     # Legacy flow tests synthesize text, not a revision-bearing store. Strict
@@ -92,14 +94,13 @@ def _setup(mocker, tmp_path, labels=None):
     mocker.patch("jailbee.pr_flow.offer_outbox_binding", return_value=None)
     # Likewise for the container's PR outbox: "nothing pending" for every test,
     # so `jailbee pr` takes its normal Claude/placeholder path. The outbox tests
-    # below re-patch it. Without this the real `read_outbox` would run against
-    # `incus_mock` and choke on a MagicMock where `incus exec` returns text.
+    # below re-patch it.
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
     mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/acme/widgets")
-    # And an empty outbox for the offer `jailbee pr` makes once the PR is up,
-    # for the same reason: every test that does not opt in below takes the
-    # "nothing to offer" path instead of reading a MagicMock.
-    _mock_store(mocker, {})
+    # And an empty outbox store for the offer `jailbee pr` makes once the PR is
+    # up: every test that does not opt in below takes the "nothing to offer" path.
+    if not hasattr(pr_outbox.read_outbox, "spy_return"):  # `_setup` may run twice per test
+        mocker.spy(pr_outbox, "read_outbox")
     mock_pr_agent(cfg_mock, False)
     cfg_mock.pr.ai_description = True
     cfg_mock.upstream_remote = "origin"
@@ -294,20 +295,20 @@ def test_pr_ls_delegates(mocker, tmp_path):
 
 
 def test_pr_offer_fixture_has_identity_and_strict_snapshot(mocker, tmp_path):
-    from jailbee.outbox import io as outbox_io
     from jailbee.outbox.inspect import pr_progress_evidence
     from jailbee.outbox_io import ContainerIdentity, container_identity
+    from jailbee.pr_outbox import parse_manifest, read_outbox
+    from tests.pr_store_support import UUID
 
     _, incus = _setup(mocker, tmp_path)
-    empty = outbox_io.read_store(incus, "sampleapp-feat-foo", "pr", uid=1000)
-    assert (empty.files, empty.rejected, empty.warnings) == ((), (), ())
+    empty = read_outbox(incus, "sampleapp-feat-foo", uid=1000)
+    assert (empty.files, empty.rejected) == ({}, ())
     target = _pending_comment_manifest(mocker, tmp_path)
-    assert container_identity(incus, "sampleapp-feat-foo") == ContainerIdentity(
-        "sampleapp-feat-foo", "2026-09-30T12:00:00Z"
-    )
-    store = outbox_io.read_store(incus, "sampleapp-feat-foo", "pr", uid=1000)
-    from jailbee.pr_outbox import parse_manifest
-
+    identity = ContainerIdentity("sampleapp-feat-foo", "2026-09-30T12:00:00Z")
+    assert container_identity(incus, "sampleapp-feat-foo") == identity
+    outbox = read_outbox(incus, "sampleapp-feat-foo", uid=1000)
+    store = outbox.snapshot()
+    assert (outbox.identity, outbox.uuid) == (identity, UUID)
     assert tuple(store.as_dict()) == ("001-x.json",)
     assert parse_manifest("001-x.json", store.as_dict()["001-x.json"], {}) == target.manifest
     assert (store.rejected, store.warnings) == ((), ())

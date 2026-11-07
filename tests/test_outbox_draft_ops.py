@@ -240,7 +240,7 @@ def test_the_broker_refuses_a_child_every_draft_write_but_not_reads(env: Env) ->
     assert shown.error_code == wire.NOT_FOUND  # reading is allowed; there is just none
 
 
-def test_only_the_issue_kind_has_broker_drafts_so_far(env: Env) -> None:
+def test_an_issue_action_is_refused_in_a_pr_draft(env: Env) -> None:
     response = env.call(
         wire.OUTBOX_DRAFT_APPEND, uuid=PLAIN, kind="pr", name="b", action=create(), bodies={}
     )

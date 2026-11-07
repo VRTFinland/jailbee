@@ -143,7 +143,9 @@ later edits at publication time. Supply the intended replacement body explicitly
 Use `--batch NAME` for related actions and `jailbee outbox submit NAME
 --kind pr` to stage them. Inspect with `jailbee outbox ls` and `jailbee
 outbox show pr/NAME`; discard with `jailbee outbox discard NAME --kind pr`.
-Commands manage `~/.jailbee/pr-outbox/`; never write it by hand. The
+The commands stage every proposal and draft through the host broker into the
+host's outbox store; nothing is kept in the container's filesystem. When the
+broker cannot be reached they exit 4 with nothing staged. The
 [schema](references/manifest-schema.md) describes their normative output.
 
 For inline reviews, use `jailbee pr review add N --file PATH --line LINE
@@ -182,14 +184,15 @@ If a broker `done` confirms publication, report its URLs. If there is no
 final result yet, say publication is pending. For manifests not sent through
 a granted orchestrator publish request, tell the user to run
 `jb review apply <container>` on the host: **nothing has been published yet.**
-Everything still queued is a proposal in the container's filesystem.
+Everything still queued is a proposal in the host's outbox store
+(`jailbee outbox ls`).
 
 ## What not to assume
 
 The outbox is not a log of what happened — it is a queue of what you'd
 *like* to happen. A human may edit the repo's remote state out from under a
 pending manifest, reject it outright, or ask you to fix it before it's
-applied. The only record of what actually landed on GitHub is
-`~/.jailbee/pr-outbox/applied.log`, written by the host after a successful
-`jb review apply`. Never assume a manifest you wrote has been published;
-check that log (or ask) instead.
+applied. The record of what actually landed on GitHub is
+`jailbee outbox sent` (add `--kind pr`), which lists what the host published
+from this container. Never assume a manifest you wrote has been published;
+check that list (or ask) instead.

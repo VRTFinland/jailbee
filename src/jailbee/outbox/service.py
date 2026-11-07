@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING
 from jailbee.incus import IncusError
 from jailbee.outbox.delete import DeletePlan, plan_delete
 from jailbee.outbox.inspect import build_views
-from jailbee.outbox.io import READ_TIMEOUT, PrManagement, mutate_store, read_store
+from jailbee.outbox.io import READ_TIMEOUT, PrManagement, mutate_store
+from jailbee.outbox.io import read_store as read_store  # file-layout tests patch it
 from jailbee.outbox.models import (
     ContainerView,
     Kind,
@@ -128,6 +129,43 @@ def with_store_sources(pr: StoreSnapshot, uuid: str | None) -> StoreSnapshot:
     return replace(pr, files=tuple(sorted(files.items())), versions=versions)
 
 
+def pr_snapshot(container: str, uuid: str | None) -> StoreSnapshot:
+    """The instance's pending PR proposals (every kind) from the host outbox store.
+
+    Read-only on ``broker.db``, like `issue_snapshot`: no Incus call. The row
+    versions mark every proposal as store-held (`execute_delete` routes on it).
+    """
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox import publication_db, store_db
+
+    if uuid is None:
+        raise JournalError(f"{container}: instance uuid is unavailable")
+    try:
+        rows = store_db.read_proposals(publication_db.default_root(), uuid, "pr")
+    except StoreError as exc:
+        raise OutboxExecutionError(f"outbox store is unreadable: {exc}") from exc
+    files: list[tuple[str, str]] = []
+    for row in rows:
+        files.append((row.name, row.manifest))
+        files.extend(row.bodies.items())
+    versions = tuple((row.name, row.revision) for row in rows)
+    return StoreSnapshot("pr", tuple(sorted(files)), (), (), versions)
+
+
+def pr_journals(uuid: str | None) -> dict[str, Journal]:
+    """The instance's active PR publication journals by proposal name."""
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox import publication_db
+
+    if uuid is None:
+        return {}
+    try:
+        stored = publication_db.read_journals(publication_db.default_root(), uuid, "pr")
+    except StoreError as exc:
+        raise OutboxExecutionError(f"outbox store is unreadable: {exc}") from exc
+    return {name: journal for (_, name), journal in stored.items()}
+
+
 def _source_uncertainty(
     proposals: tuple[ProposalView, ...], uuid: str | None
 ) -> tuple[ProposalView, ...]:
@@ -145,7 +183,11 @@ def _source_uncertainty(
     for view in proposals:
         journal = journals.get(("pr", view.id.name)) if view.id.kind == "pr" else None
         if journal is not None and journal.uncertain:
-            detail = "publication outcome uncertain; check GitHub, then rerun jb pr push"
+            detail = (
+                "publication outcome uncertain; check GitHub, then rerun jb pr push"
+                if view.state == "awaiting-push"
+                else "publication outcome uncertain; check GitHub, then jb review resolve"
+            )
             view = replace(
                 view,
                 state="uncertain",
@@ -159,6 +201,7 @@ def _source_uncertainty(
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
+    from jailbee.outbox.publication_db import Journal
 
 
 def load_container(
@@ -172,14 +215,8 @@ def load_container(
     identity = None
     try:
         identity, uuid = _instance(incus, container)
-        # PR proposals are still files in the container, but for PR sources;
-        # those and issue proposals live in the host store (no `incus exec`).
-        stores = (
-            with_store_sources(
-                read_store(incus, container, "pr", uid=cfg.container_user.uid), uuid
-            ),
-            issue_snapshot(container, uuid),
-        )
+        # Every proposal lives in the host outbox store (no `incus exec`).
+        stores = (pr_snapshot(container, uuid), issue_snapshot(container, uuid))
         if _instance(incus, container) != (identity, uuid):
             raise OutboxChanged("container changed while reading; refresh required")
         # Canonical freshness matches publication, not optional PR display labels.
@@ -188,6 +225,7 @@ def load_container(
                 identity,
                 stores,
                 issue_journals=issue_journals(container, identity, uuid),
+                pr_journals=pr_journals(uuid),
             ),
             uuid,
         )
@@ -240,7 +278,7 @@ def execute_delete(
                 # The store archives the issue journal in the deleting transaction.
                 return _delete_issue_rows(container, uuid, plan, snapshot)
             if plan.proposal.name in dict(snapshot.versions):
-                # A store-held PR source proposal.
+                # A store-held PR proposal.
                 return _delete_issue_rows(container, uuid, plan, snapshot, kind="pr")
             removed = mutate_store(
                 incus,

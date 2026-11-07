@@ -211,8 +211,9 @@ def test_all_repos_each_own_uid_and_missing_root(env, make_cfg, tmp_path):
     result = discover(cfg, incus, None, all_repos=True)
     assert [v.available for v in result] == [True, True, False]
     assert "root" in result[2].error
-    container_reads = [c for c in reader.call_args_list if c.args[0] is not None]
-    assert {c.kwargs["uid"] for c in container_reads if c.args[1] == "other-feature"} == {2345}
+    # Every proposal comes from the host store: no read reaches a container.
+    assert [c for c in reader.call_args_list if c.args[0] is not None] == []
+    assert any(c.args[1] == "other-feature" for c in reader.call_args_list)
 
 
 def test_absent_config_file_accepts_registered_effective_config(env, make_cfg, tmp_path):

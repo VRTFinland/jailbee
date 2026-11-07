@@ -1671,7 +1671,8 @@ large tree, or when `pr.prompt` asks for slower work.
 A container's own `gh` is read-only by design (see "Reviewing a pull
 request" above): an agent inside it that wants to post review comments,
 reply to one, or rewrite a PR's description cannot call the GitHub API
-directly. Instead it writes a JSON manifest into `~/.jailbee/pr-outbox/` —
+directly. Instead it stages a JSON manifest in the host outbox store over the
+broker socket —
 the **container-side** contract, exact schema and worked examples live in
 the **jailbee-pr-review** skill, not here. What matters on the host:
 
@@ -1688,9 +1689,10 @@ prompts when several do. `apply` shows the whole plan — every comment, reply
 and description body — before one confirmation (`-y` skips it; refused off a
 TTY without `-y`). A manifest whose PR head moved since it was written is
 held back (`--force` posts its line comments anyway, which GitHub then shows
-as outdated). Applying deletes the manifest and appends a line to
-`~/.jailbee/pr-outbox/applied.log`; re-running `apply` is a no-op for
-anything already published, so nothing double-posts.
+as outdated). Each action is journaled in the host outbox store and recorded
+in `jb outbox sent`; the manifest goes once every action landed. Re-running
+`apply` skips anything already published, so nothing double-posts; an action
+interrupted mid-call reads as uncertain and blocks a re-run until checked.
 
 When a PR manifest has a pending review comment or reply, `apply` offers
 **Publish**, **Publish as draft review**, and **Cancel** (Esc cancels too).

@@ -5520,6 +5520,7 @@ def destroy(
         short_name,
         snapshot_targets_for,
         stamp_issue_outbox,
+        stamp_pr_outbox,
     )
 
     cfg = _load_or_exit(config)
@@ -5599,6 +5600,7 @@ def destroy(
                         ],
                     )
                     stamp_issue_outbox(info_)
+                    stamp_pr_outbox(info_)
                 if not _warn_before_destroy(cfg, [info_], question=question):
                     raise typer.Abort()
         if run_in_background:
@@ -14583,6 +14585,76 @@ def review_show_cmd(
         raise typer.Exit(1)
 
 
+@review_app.command("resolve")
+def review_resolve_cmd(
+    name: ReviewContainerArg = None,
+    manifest: Annotated[
+        str | None, typer.Argument(help="Manifest file name. Asked for when omitted.")
+    ] = None,
+    action: Annotated[
+        int | None,
+        typer.Argument(help="Zero-based index of the uncertain action. Asked for when omitted."),
+    ] = None,
+    url: Annotated[
+        str | None,
+        typer.Option("--applied", help="It landed on GitHub: the URL of what it produced."),
+    ] = None,
+    retry: Annotated[
+        bool, typer.Option("--retry", help="Forget the uncertain outcome and retry it.")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Resolve one PR action whose GitHub outcome an earlier run left uncertain.
+
+    Check the PR on GitHub first. `--applied URL` records that it landed;
+    `--retry` forgets the outcome so `jailbee review apply` attempts it again.
+    """
+    from jailbee import pr_outbox, prompting
+    from jailbee.lifecycle import short_name
+    from jailbee.outbox.models import OutboxError
+
+    if (url is None) == (not retry):
+        error_plain("Exactly one of --applied URL or --retry is required.")
+        raise typer.Exit(2)
+    cfg = _load_or_exit(config)
+    incus, container = _resolve_review_container(cfg, name)
+    if container is None:
+        info("Nothing pending: no container in this repo has PR actions waiting.")
+        return
+    short = short_name(cfg, container)
+    outbox = _read_review_outbox_or_exit(cfg, incus, container, short)
+    if manifest is None:
+        uncertain = [m for m in outbox.manifest_names if pr_outbox.uncertain_actions(outbox, m)]
+        manifest = prompting.choose_one(
+            "manifest",
+            [prompting.Option(m, m, m) for m in uncertain],
+            destructive=True,
+            empty_reason=f"nothing uncertain to resolve in {short}",
+        )
+    if action is None:
+        action = prompting.choose_one(
+            "action",
+            [
+                prompting.Option(i, f"action {i}", str(i))
+                for i in pr_outbox.uncertain_actions(outbox, manifest)
+            ],
+            destructive=True,
+            empty_reason=f"{manifest} has no uncertain action",
+        )
+    try:
+        removed = pr_outbox.resolve_uncertain(incus, container, manifest, action, landed_url=url)
+    except OutboxError as e:
+        error_plain(str(e))
+        raise typer.Exit(1) from e
+    if url is not None:
+        success_plain(
+            f"recorded {manifest} action {action} as published"
+            + ("; the proposal is complete" if removed else "")
+        )
+    else:
+        success_plain(f"{manifest} action {action} will be attempted again")
+
+
 @review_app.command("drop", hidden=True)
 def review_drop_cmd(
     name: ReviewContainerArg = None,
@@ -14595,6 +14667,8 @@ def review_drop_cmd(
 ) -> None:
     """Delete pending PR actions, unapplied — nothing is published."""
     _deprecated_alias_hint("review drop", "outbox drop")
+    import dataclasses
+
     from jailbee import pr_outbox, prompting
     from jailbee.lifecycle import short_name
 
@@ -14630,13 +14704,9 @@ def review_drop_cmd(
         except pr_outbox.FinalizeError as e:
             error_plain(str(e))
             raise typer.Exit(1) from e
-        # Shrink the snapshot as we go, so a body file shared by two of the
-        # manifests being dropped doesn't look referenced by each of them in
-        # turn and outlive them both.
-        remaining = pr_outbox.Outbox(
-            files={k: v for k, v in remaining.files.items() if k not in deleted},
-            rejected=remaining.rejected,
-            identity=remaining.identity,
+        # Shrink the snapshot as we go (it keeps the store key and row versions).
+        remaining = dataclasses.replace(
+            remaining, files={k: v for k, v in remaining.files.items() if k not in deleted}
         )
         success_plain(f"dropped {manifest_name} ({len(deleted)} file(s))")
 
