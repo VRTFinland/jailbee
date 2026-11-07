@@ -30,7 +30,7 @@ it). Never run `gh issue create|edit|comment|close|reopen` or a mutating
 
 ## Publishing
 
-- **Orchestrator with a grant**: if `~/.jailbee/orchestration/grant.json`
+- **Orchestrator with a grant**: if `jailbee inbox grant` reports that
   `publish.issues` covers every pending action kind in the manifest (currently
   `create`, `comment`, `state`, `assign_self` — **not** labels), run
   `jailbee inbox send publish --issue NAME.json --wait` and read the final

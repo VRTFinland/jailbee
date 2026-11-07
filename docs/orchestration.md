@@ -612,25 +612,17 @@ hardware-key touch) is refused with that reason; the broker never answers a
 prompt for you. Messages for a stopped recipient wait in the broker's on-disk
 queue and are delivered when it runs again, also across broker restarts.
 
-Inside each orchestrator and child, `/home/dev/.jailbee/orchestration/` holds
-`outbox/` (container to host), `inbox/` (host to container) and, for an
-orchestrator, `grant.json`, a read-only copy of its limits. The broker creates
-both directories in every orchestrator and child it serves. New images include
-`jailbee inbox` (`wait`, `ls`, `read`, `runners`, `children`, `send`), so agents
-need not write JSON by hand. `jailbee inbox children [--json]` lists each child
-from the broker's `children.json` (it must be fresh, at most 15 minutes old): one
-line per child with its name, whether its container is running, its latest agent
-session (`-` if none) and whether its `done` report was accepted; `--json` prints
-the raw list. For an old image without the container CLI, run
-`jb base build` on the host and recreate the container. After `wait`, run `ls` and handle every
-unread message. `JAILBEE_INBOX_SETTLE` controls the quiet window after an arrival
-(default 1 second, 0 disables), capped at 5 seconds and the wait timeout;
-messages already present return immediately. Use `send --wait` for spawn,
-update and destroy, and always for a child's done report: it consumes only
-that manifest's status, returning 0 for done/queued/started, 1 for
-refused/failed, 2 for usage errors and 3 for timeout (default 30m).
-For `send --wait` and ordinary `wait`, `--timeout none` waits without a
-deadline; `send --wait --timeout none` never exits 3.
+Orchestrators and children use `jailbee inbox` to communicate with the broker.
+`jailbee inbox grant` shows the effective grant; `jailbee inbox children [--json]`
+shows each child's running and done state and latest agent session. After `wait`,
+run `ls` and handle every unread message with `read <id>`. `JAILBEE_INBOX_SETTLE`
+controls the quiet window after an arrival (default 1 second, 0 disables), capped
+at 5 seconds and the wait timeout; messages already present return immediately.
+Use `send --wait` for spawn, update and destroy, and always for a child's done
+report: it consumes only that manifest's status, returning 0 for
+done/queued/started, 1 for refused/failed, 2 for usage errors and 3 for timeout
+(default 30m). `--timeout none` waits without a deadline.
+
 For lower-noise orchestration, use the helper directly, not a wrapper that
 reads and discards progress notes:
 
@@ -652,7 +644,7 @@ usage error (exit 2). The recommended filter above wakes on child reports and
 on failed or refused manifests, but not on successful acks, which `send --wait`
 already returns.
 It prints the oldest matching unread message's id; use `jailbee inbox read <id>`
-to inspect it. Pass `--path` to print the file path instead. **Nothing is marked
+to inspect it. The obsolete `--path` option also prints the ID. **Nothing is marked
 read**, even when a message does not match. Omit the filter for any unread
 message. The first message from a child after each spawn/restart always wakes, regardless of
 kind; read history prevents later notes from counting as first again.
@@ -666,30 +658,13 @@ process keeps using some), taken from the `status` object below (the broker's ow
 from `child.short` count as messages from the child, for `LAST-MSG` too); with
 no activity, time is measured from the child's start. A child whose `status` is missing (an older broker) is timed by
 messages alone. Stop or restart resets monitoring, and an overdue child keeps
-waking until activity or a lifecycle change. The broker publishes read-only
-`children.json`: per child its name, `running` (the container state), `done` (an
-accepted `done`; a done child may keep running until it is stopped or
-destroyed), start time, latest agent session and `status`. After the broker
-itself completes a stop, destroy, restart or spawn, it republishes the snapshot
-before sending the reply. Quiet monitoring
-watches running children that are not done. Requested quiet monitoring exits 2
-if the snapshot is absent, malformed or older than 15 minutes; check the
-broker. Without quiet monitoring, filtering still works if that snapshot is
-missing, but the first-report override needs fresh child state.
+waking until activity or a lifecycle change. The broker supplies child state
+for quiet monitoring and the first-report override.
 
-`--digest DURATION` makes `wait` exit 0 printing `digest` on the first line and
-the `jailbee inbox status` table after it, when at least DURATION has passed
-since the last digest and a child is running and not done. At most one digest
-per period is emitted for all children together; the last time is stored
-atomically in `~/.jailbee/orchestration/digest-at`, and the first digest of a
-fresh container is due DURATION after its first `wait --digest`. A real message
-that is due at the same time wins and the digest follows at the next wait; a
-due digest ignores `--wake-on`. A due real message and a `quiet-child`
-wakeup both win over the digest. A missing, unreadable or future-dated stamp is
-created (reset) to now, which is not due, even with no running child; with a
-stale stamp the digest is due as soon as a child next runs, and with no running
-child an existing stamp is left unchanged. Like `--quiet-after`, it needs a
-fresh `children.json` (exit 2 otherwise).
+`--digest DURATION` makes `wait` print `digest` and the `jailbee inbox status`
+table when the period has elapsed and a child is running and not done. A due
+message or `quiet-child` wakeup takes precedence. The broker tracks the last
+digest time across waits and restarts.
 
 ### Transport: a per-container socket
 
@@ -743,11 +718,11 @@ deduplication journal. This lets the broker resume safely after a restart.
 `publish-log.jsonl` remains the append-only publication audit log, and
 `publish-review-uncertain/` remains the human-resolution block for uncertain
 publication outcomes; neither is part of the database migration. Socket,
-lock, and transitional file-transport state likewise remains file-based.
+lock, and the host-only pending delivery spool remain file-based.
 
 On first use of each state area, existing data is imported automatically into
 `broker.db`. Successfully imported files or directories are renamed with a
-`.migrated` suffix and kept for one compatibility release. Invalid/corrupt
+`.migrated` suffix and retained. Invalid/corrupt
 legacy data is warned about and quarantined with a `.corrupt` suffix. An
 unreadable file that cannot be read or renamed is warned about and retained for
 a retry; a database write failure fails closed rather than proceeding without
@@ -766,34 +741,39 @@ unread messages once they are older than its repo's retention.
 `jb orchestrate messages [CONTAINER] [--all] [--json]` lists them on the host
 (read-only; `--all` includes read ones).
 
+The host-only `pending/` spool holds deliveries for stopped or unlabelled
+recipients until they can be inserted into the store. Its versioned envelope
+binds the recipient UUID and original item, and can hold a completed finish.
+Identity-free old spool entries and namesake UUID mismatches are quarantined
+as `.bad`, not migrated. A completed finish and its stable ID are persisted
+before insertion, so retries do not duplicate it.
+
+Upgrade only when no orchestration is in progress. The old file transport has
+no compatibility window: its waiters and unread messages are not carried over.
+Durable host-state imports into `broker.db` remain available.
+
 If the broker is stopped or the socket is missing, every `jailbee inbox`
 command that needs it exits 4 with "the host broker is not reachable"; tell the
 human, who starts it (`systemctl --user start jailbee-broker`, or `jb doctor`).
 `jailbee inbox wait` reconnects on its own if the broker restarts while it
-waits. Containers without the device (for example one created before the
-upgrade and not yet seen by the broker) still use the file transport. The
-state directory holds `broker.db` and `sock/`; `children.json` remains a
-published snapshot. Queue, watch, publication state and journal are stored in
-the database, as described above. The message schema is in the
-[protocol reference](orchestration-protocol.md#socket-transport).
+waits. See the [protocol reference](orchestration-protocol.md#socket-transport).
 
 ### Child status
 
 `jailbee inbox status [--child C] [--json]` shows how each child is doing
-without asking it. It reads `children.json` (same validation and 15-minute
-staleness rule as `children`) and prints one line per child:
+without asking it. It queries the broker and prints one line per child:
 `NAME STATE AGENT ACTIVE CPU MEM HEAD DIRTY LONGEST LAST-MSG`. `STATE` is
 `running`, `stopped` or `done` (done wins); `AGENT` is `alive:<state>`, `starting`
 (the agent has not been launched yet: create or restart still running), `dead`
 (a recorded agent is gone) or `?`; `ACTIVE` is the age of `activity_at`; `LAST-MSG` shows the age of the
-last message from the child (`↑`, from its own inbox files) and the last
+last message from the child (`↑`) and the last
 delivery to it (`↓`). Unknown values print `?`. `--json` prints the items as
 published plus `last_from_child_at`. An unavailable or invalid snapshot, or an
 unknown `--child`, exits 1; a usage error exits 2. A stale (but valid) snapshot
 only warns on stderr and still prints with exit 0, unlike `wait --quiet-after`
 and `wait --digest`, which exit 2.
 
-Each child item in `children.json` carries `status` (an object for a running
+Each child item returned by the broker carries `status` (an object for a running
 child; for a stopped one `{"head", "last_to_child_at"}`, either value possibly
 `null` (a stopped child that was never observed or messaged has `status: null`;
 `version` stays 1 and every field is additive and optional, so older and newer

@@ -343,6 +343,13 @@ def test_orchestration_skill_uses_the_inbox_cli_only() -> None:
     assert "prints the message id" in text
 
 
+@pytest.mark.parametrize("name", ["jailbee-issue-management", "jailbee-pr-review"])
+def test_publication_skills_query_grants_via_inbox(name: str) -> None:
+    text = _skill_text(name)
+    assert "jailbee inbox grant" in text
+    assert "grant.json" not in text
+
+
 def test_orchestration_skill_keeps_the_orchestrator_role() -> None:
     text = _skill_text(ORCH)
     section = text.split("## Containers are not subagents\n", 1)[1].split("\n## ", 1)[0]

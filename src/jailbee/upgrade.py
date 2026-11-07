@@ -608,7 +608,8 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         reason=(
             "`jailbee apply` syncs orchestration skills that keep the orchestrator role "
             "for the session, using subagents for light work and children for work "
-            "needing its own development environment"
+            "needing its own development environment, and updates issue and review "
+            "skills to query grants through `jailbee inbox grant`"
         ),
     ),
 )

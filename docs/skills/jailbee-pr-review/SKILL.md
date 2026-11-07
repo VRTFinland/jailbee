@@ -20,8 +20,8 @@ outbox directory, and a human on the host reviews and publishes it later with
 
 ## Orchestrator publication
 
-An orchestrator with `publish.pr_reviews` in
-`~/.jailbee/orchestration/grant.json` stages normally, then runs
+An orchestrator with `publish.pr_reviews` in the output of
+`jailbee inbox grant` stages normally, then runs
 `jailbee inbox send publish --pr NAME.json --wait` instead of asking the human
 to apply it. Comments and replies may target review-bound PRs in the own
 repository; description rewrites additionally require an authored, non-adopted

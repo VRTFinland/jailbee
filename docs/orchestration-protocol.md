@@ -5,10 +5,9 @@ This page documents the wire format behind `jailbee inbox`. Agents use the
 The host broker validates manifests and answers invalid requests with `refused`.
 All names are **short names** (the branch-level name, never repo-prefixed).
 
-A container reaches the broker over one of two transports. A container that
-has the `jailbee-orchestration` device uses the [socket protocol](#socket-transport);
-any other orchestrated container still uses the [file transport](#file-transport-fallback).
-The manifests, inbox items and `grant` shapes below are the same on both.
+Containers reach the broker only through the socket protocol. Upgrade only
+when no orchestration is in progress: file-transport waiters and unread messages
+are not carried over.
 
 ## Socket transport
 
@@ -30,7 +29,7 @@ the copy's device could be removed: every connection drops (the original's
 client reconnects), and the copy's mount, however long it lingers, leads to a
 deleted directory, so the copy cannot keep speaking as the original. Two instances that share one instance uuid (an `incus import` beside
 the original) get no socket at all while both exist: the broker logs it and
-both use the file transport.
+neither can reach the broker until the conflict is resolved.
 
 Messages and statuses that the broker delivers live in `broker.db` (unread and
 read), not in files. `jailbee inbox ls`, `read` and `wait` read them through the
@@ -74,14 +73,14 @@ client exits 4 (`jb apply` / restart the broker to align versions).
 
 | Op | Args | Result |
 | --- | --- | --- |
-| `send` | `manifest` (an object, as in the file transport), `body` (string or null; the body file's text), `wait` (bool) | The status item for the manifest (an `InboxStatus` object). Delivered already read when `wait` is true, unread otherwise. |
+| `send` | `manifest` (a manifest object), `body` (string or null; the body file's text), `wait` (bool) | The status item for the manifest (an `InboxStatus` object). Delivered already read when `wait` is true, unread otherwise. |
 | `list` | `after` (optional; 0 for the first page, then the previous page's `next`) | The unread items, oldest first, in the shape `jailbee inbox ls` prints (long texts cut), one page at a time: `{"items": [...], "next": cursor or null}`. Without `after` (older clients) a plain list of the oldest items that fit one reply. |
 | `read` | `id`, `keep` (bool) | The unread item. Marks it read unless `keep`. `jailbee inbox read` calls it with `keep: true`, prints the item, then calls `ack`. |
 | `ack` | `id` | `{"acked": bool}`. Marks the item read. `jailbee inbox read` uses it after printing; if the ack fails the message stays unread. |
 | `next` | `wake_on` (list of wake tokens or null), `quiet_after` and `digest` (positive seconds or null), `timeout` (seconds or null for none) | A long-poll: `{"kind":"message","id":...}`, `{"kind":"quiet-child","child":...}`, `{"kind":"digest","children":[...],"last_from_child":{...},"observed_at":...}` or `{"kind":"timeout"}`. Nothing is marked read. |
 | `children` | none | Orchestrators only: `{"observed_at", "children", "last_from_child"}`. |
 | `status` | `child` (string or null) | Like `children`, narrowed to one child. |
-| `grant` | none | The container's grant, as in [`grant.json`](#grantjson), with `default_runner_source`. |
+| `grant` | none | The container's [grant document](#grantjson), with `default_runner_source`. |
 
 At most one `next` is parked per container; a second gets `busy`. A `send`
 whose manifest id already has a recorded status gets that status back again,
@@ -97,7 +96,7 @@ for the id. Resending the same `send` is safe: the broker journals each id.
 | `not_orchestrated` | the container has no orchestration role (or is not an orchestrator, for `children`/`status`/`next` with `quiet_after`/`digest`) | exit 1 with a message |
 | `not_found` | no unread item with that id, or an unknown child | exit 1 |
 | `refused` | the broker declined the request | exit 1 |
-| `store` | the broker's message store failed, or "inbox migration pending" while the broker moves a container's file inbox into the store | exit 4 |
+| `store` | the broker's message store failed | exit 4 |
 | `busy` | another `next` waiter on the container, or the per-container connection cap | `wait`: exit 2; the cap can also surface as exit 4 |
 | `duplicate` | a `send` id with no recorded status | exit 0, note on stderr |
 
@@ -111,35 +110,13 @@ an answer and does not come back. `jailbee inbox wait` retries a dropped
 connection with backoff until its timeout, but a first connect that fails exits
 4 at once. A `send --wait` with no reply before its timeout exits 3.
 
-## File transport (fallback)
+## Manifest rules
 
-Containers without the `jailbee-orchestration` device use files, as described
-in the rest of this page. This transport remains for the dual-window period in
-which both exist.
-
-## Directories
-
-| Path | Direction | Purpose |
-| --- | --- | --- |
-| `~/.jailbee/orchestration/outbox/` | container to host | manifests you write |
-| `~/.jailbee/orchestration/inbox/` | host to container | messages and status replies |
-| `~/.jailbee/orchestration/inbox/read/` | local | where you move handled messages |
-| `~/.jailbee/orchestration/grant.json` | host to container | your grant (read-only) |
-
-## File rules
-
-- A manifest is `outbox/<id>.json`. The id matches `^[a-z0-9][a-z0-9-]{0,63}$`
-  and must equal the file stem and the `"id"` field. Use a new id every time;
-  ids are never reused, even after a `refused`.
-- Long text (a prompt or message body) may live in a body file next to the
-  manifest, named `^[a-z0-9][a-z0-9._-]{0,127}[.]md$`, referenced by
-  `prompt_file` / `body_file`. Give exactly one of the inline field
-  (`prompt` / `body`) or the file field. Text is at most 65536 bytes.
-- Write atomically: write `.<id>.json.tmp` (and the body file first), then
-  `mv` it to `<id>.json`. Hidden files are ignored by the broker.
-- The broker deletes the manifest and its body file after acting on it.
-- `jailbee inbox send <type> ...` does all of this and prints the id.
-  Unknown keys in a manifest are refused.
+Manifest IDs match `^[a-z0-9][a-z0-9-]{0,63}$`; use a new ID for every
+request, even after refusal. Unknown keys are refused. Long prompt or message
+text is at most 65536 bytes and is supplied as the socket request's `body` when
+the manifest uses `prompt_file` or `body_file`. The `jailbee inbox send`
+commands construct the request and print its ID.
 
 ## Envelope
 
@@ -151,7 +128,7 @@ spawn also supports version `2`. The type is one of
 
 ### `publish`
 
-Only orchestrators with matching `grant.json.publish` rights may request this;
+Only orchestrators with matching grant `publish` rights may request this;
 children never can. The target file is read from the requester's own outbox.
 
 <!-- kind: outbox -->
@@ -246,7 +223,7 @@ a note; seeding never fails the fork. CLI: repeatable `--warm PATH` or
 Optional `runner` (spawn and restart): `{"agent": "claude" | "claude-jb",
 "profile": <LiteLLM profile, claude-jb only>, "model": "fable" | "opus" |
 "sonnet" | "haiku"}`; only `agent` is required, unknown keys are refused.
-On spawn, omitting it uses the effective default runner in `grant.json`, or the
+On spawn, omitting it uses the effective default runner in the grant, or the
 repo's default agent if none is configured. Choose a cheaper or stronger tier
 when appropriate for the task, following the user's model guidance; when in
 doubt use the default. Keep the default agent and profile unless guidance says
@@ -497,9 +474,8 @@ CLI: `jailbee inbox send rights --child C [--loose] [--mount K]...
 | `destroy` | `destroy` |
 | `rights` | `rights` when granting; revoke-only needs an active grant, no operation |
 
-A type whose operation is missing from `grant.json` is refused. The broker
-writes `grant.json` after its first round and the file may remain after a
-revoke.
+A type whose operation is missing from the effective grant is refused. Query it
+with `jailbee inbox grant`.
 
 ## Child manifests
 
@@ -527,9 +503,8 @@ failure still delivers done with `import_error` and keeps the child.
 
 ## Inbox
 
-Files are named `<UTC yyyymmddThhmmssZ>-<seq>-<id>.json`, so a plain sort is
-emission order. Host-generated ids look like `h-<8 hex>`. Move a handled
-message to `inbox/read/` (or use `jailbee inbox read <id>`).
+Host-generated IDs look like `h-<8 hex>`. Use `jailbee inbox read <id>` to
+inspect and acknowledge a message.
 
 A `message` from a child:
 
@@ -628,7 +603,9 @@ helper prints (`<type>-<UTC time>-<hex>`). Asking about an unknown child is
 refused ("`x` is not a child of this orchestrator"); after a revoked grant,
 "orchestration grant revoked".
 
-## `grant.json`
+<a id="grantjson"></a>
+
+## Grant document schema
 
 <!-- kind: grant -->
 ```json
@@ -695,9 +672,8 @@ never sends the grant block.
 ### Child inbox specifics
 
 
-Files are named `<UTC yyyymmddThhmmssZ>-<seq>-<id>.json`, so a plain sort is
-emission order. Host-generated ids look like `h-<8 hex>`. Move a handled
-message to `inbox/read/` (or use `jailbee inbox read <id>`).
+Host-generated IDs look like `h-<8 hex>`. Use `jailbee inbox read <id>` to
+inspect and acknowledge a message.
 
 A `message` from your orchestrator (`from` is its short name):
 

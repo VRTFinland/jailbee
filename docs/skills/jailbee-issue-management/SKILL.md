@@ -21,7 +21,7 @@ itself.
 
 ## Orchestrator publication
 
-An orchestrator whose `~/.jailbee/orchestration/grant.json` has matching
+An orchestrator whose `jailbee inbox grant` output has matching
 `publish.issues` (own repo/submodules), or `publish.foreign_issues` (listed
 repos and kinds), stages normally and then runs
 `jailbee inbox send publish --issue NAME.json --wait` instead of asking the

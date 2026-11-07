@@ -5932,159 +5932,46 @@ pgrep -a tmux                                          # no stray -L outbox-rig 
 
 Never `tmux kill-server`. The private socket vanishes with its last session.
 
-## Orchestration broker (plan D)
+## Orchestration broker (real host)
 
-> **Status: run 2026-10-25 on a nested rig** (broker started in the foreground
-> with `jailbee _broker`, not as the user unit). Everything below passed after
-> one fix: a child was labelled too late to count against the limit while it
-> was being created, so a queued spawn could start next to it. The inotify
-> branch of the former standalone inbox helper ran against a real `inotifywait`.
+Use a disposable rig, a registered repo, a running container `<c>`, and an
+optional mount `<m>` declared in the repo config. Upgrade only with no
+orchestration in progress; old file waiters and unread messages are not carried
+over. These socket-based steps replace the earlier file-transport test.
 
-Needs a disposable nested rig (see the sections above), a registered repo
-with a running container `<c>`, and one optional mount `<m>` declared in the
-repo config. Container paths: manifests go in
-`/home/dev/.jailbee/orchestration/outbox/`, the broker answers in
-`/home/dev/.jailbee/orchestration/inbox/` (`<timestamp>-<seq>-<id>.json`, type
-`status`; `<id>` is a broker-generated `h-<8 hex>` id, and the manifest it answers
-is named in the `ref` field), and the broker keeps a read-only copy of the effective grant in
-`/home/dev/.jailbee/orchestration/grant.json`.
+On the host grant `<c>` one child slot and check the broker:
 
 ```bash
-# Host: grant <c> the right to run one child at a time
 jb orchestrate grant <c> --children 1 --mount <m> --allow destroy
-jb orchestrate show <c>                  # limit 1, mounts <m>, Running children: 0
-systemctl --user status jailbee-broker   # active (running)
+jb orchestrate show <c>
+systemctl --user status jailbee-broker
 ```
 
-Inside `<c>` (`jb shell <c>`), write two spawn manifests. The file stem must
-equal `id`. Use `kind: "fork"` to start from `<c>`'s committed state or
-`"new"` (optionally with `base`) for a fresh branch; `rights` must stay
-within the grant.
+Inside `<c>`, check `jailbee inbox grant`, then spawn two children using
+`jailbee inbox send spawn --branch child-a --mount <m> --text "Create and commit hello-a.txt"`
+and `jailbee inbox send spawn --branch child-b --new --text "Create and commit hello-b.txt"`.
+Use `jailbee inbox ls` and `read <id>` to check that the first starts and the
+second queues. On the host `jb ls` should show only the first child. Stop it
+with `jailbee inbox send stop --child child-a --wait` and verify the second
+starts. Spawn against a nonexistent base with `--new --base no-such-branch`
+and verify refusal and no new container. Check an ungranted mount, an existing
+branch, a non-child stop and a restart of a running child are refused.
 
-```bash
-mkdir -p ~/.jailbee/orchestration/outbox
-cd ~/.jailbee/orchestration/outbox
-cat > spawn-a.json <<'JSON'
-{"version": 1, "id": "spawn-a", "type": "spawn", "kind": "fork",
- "branch": "child-a", "prompt": "Create a file hello-a.txt and commit it.",
- "rights": {"version": 1, "mounts": ["<m>"], "loose": false, "egress": []}}
-JSON
-cat > spawn-b.json <<'JSON'
-{"version": 1, "id": "spawn-b", "type": "spawn", "kind": "new",
- "branch": "child-b", "prompt_file": "spawn-b.md",
- "rights": {"version": 1}}
-JSON
-echo "Create hello-b.txt and commit it." > spawn-b.md   # prompt_file: next to the manifest
-```
+If `child-a` has unimported commits, `jailbee inbox send destroy --child child-a
+--wait` is refused; `--force` permits destruction. In `child-b`, send a question
+with `jailbee inbox send message --kind question --text "which file name?"`.
+In `<c>`, use `jailbee inbox wait`, `ls`, and `read <id>`, then reply with
+`jailbee inbox send message --to child-b --reply-to <id> --text "hello-b.txt"`.
+Verify the child receives the reply and its `in_reply_to` points to the question.
+With no unread messages, leave a child `jailbee inbox wait --timeout none`
+running for over 10 minutes, send it a message, and verify prompt wakeup. After
+Ctrl-C, a new waiter must not exit 2.
 
-Write `spawn-b.md` first, then the manifest, so the broker never sees a
-manifest whose file is missing. The broker polls every 5 s while any orchestrator or child is running and every
-60 s when idle, so the first status can take up to about a minute:
-
-```bash
-ls ~/.jailbee/orchestration/inbox/
-grep -l '"ref":\s*"spawn-a"' ~/.jailbee/orchestration/inbox/*.json | xargs cat   # "state": "started", "detail": "creation of child `child-a` started"
-grep -l '"ref":\s*"spawn-b"' ~/.jailbee/orchestration/inbox/*.json | xargs cat   # "state": "queued",  "detail": "queued at position 1"
-```
-
-expect: one child container for `child-a` (host: `jb ls` shows it, spawned by
-`<c>`), none for `child-b`, and the processed manifests gone from the outbox.
-
-Stop the first child; the queue drains and the second starts:
-
-```bash
-echo '{"version": 1, "id": "stop-a", "type": "stop", "child": "child-a"}' \
-  > ~/.jailbee/orchestration/outbox/stop-a.json
-grep -l '"ref":\s*"stop-a"' ~/.jailbee/orchestration/inbox/*.json | xargs cat   # "done", "child `child-a` stopped"
-```
-
-expect: `child-b` is created (host: `jb ls`), and a later status for `spawn-b`
-(same `grep -l` on its `ref`) reads ``creation of child `child-b` started``.
-
-Failure report. The limit is 1, so first stop `child-b` (a `stop` manifest
-as above) to leave a free slot, then spawn on a nonexistent base and expect a
-`refused`: a nonexistent base is
-caught synchronously by the create preflight, before any worker starts.
-
-```bash
-cat > ~/.jailbee/orchestration/outbox/spawn-bad.json <<'JSON'
-{"version": 1, "id": "spawn-bad", "type": "spawn", "kind": "new",
- "branch": "child-bad", "base": "no-such-branch", "prompt": "x",
- "rights": {"version": 1}}
-JSON
-grep -l '"ref":\s*"spawn-bad"' ~/.jailbee/orchestration/inbox/*.json | xargs cat
-```
-
-expect: a `refused` status at once, naming the missing base; host: `jb ls`
-shows no `child-bad` container. A `failed` status needs a failure inside the
-worker itself (after preflight), which this recipe cannot provoke on demand.
-
-Destroy guard. `child-a` has commits that were never imported:
-
-```bash
-echo '{"version": 1, "id": "destroy-a", "type": "destroy", "child": "child-a"}' \
-  > ~/.jailbee/orchestration/outbox/destroy-a.json
-# inbox: "refused", "child `child-a` has commits that were never imported (use force: true to destroy anyway)"
-echo '{"version": 1, "id": "destroy-a2", "type": "destroy", "child": "child-a", "force": true}' \
-  > ~/.jailbee/orchestration/outbox/destroy-a2.json
-# inbox: "done", "child `child-a` destroyed"
-```
-
-A `restart` takes a `prompt` (or `prompt_file`) like a spawn does; without
-one it is refused. Refusals worth one probe each (all `refused` statuses): a `rights.mounts`
-entry the grant does not list; a second spawn of an existing branch
-(``container `<short>` already exists``); a `stop` naming a container that
-is not a child (```x` is not a child of this orchestrator``); a `restart` (with a `prompt`) of
-a running child (``child `<short>` is running; stop it first``); a manifest
-from a container with no grant (`orchestration is not allowed in this repo`).
-
-### Messages, `done` and `import` (plan E)
-
-With `child-b` running (limit 1, so stop or destroy others first), use the
-in-container helper instead of hand-written manifests. In `child-b`, in the repo
-clone:
-
-```bash
-jailbee inbox send message --kind question --text "which file name?"   # prints the manifest id
-```
-
-In the orchestrator, `jailbee inbox wait` prints the id of the first unread
-message (use `--path` to print its path; it uses inotify when available, polls
-every `JAILBEE_INBOX_POLL` seconds otherwise); `ls` lists unread messages and
-`read <id>` prints one and moves it to `inbox/read/`. Mark the earlier `status`
-messages read first, or `wait` returns at once.
-
-1. In the child, with inotify available and no unread messages, start `jailbee inbox wait --timeout none`.
-2. Leave it waiting for more than 10 minutes, then send a message from the orchestrator.
-3. Expect the child waiter to wake promptly; read the message and start the waiter again.
-4. Interrupt it with Ctrl-C, then re-run it and verify it starts without exit 2.
-
-Reply:
-
-```bash
-jailbee inbox send message --to child-b --reply-to <id> --text "call it hello-b.txt"
-```
-
-expect: the child's `wait` returns the reply, whose `in_reply_to` is `<id>`, and
-the sender gets a `status` "delivered to ..." for each message.
-
-In `child-b` commit a file, then `jailbee inbox send message --kind done --text
-"finished"`. The orchestrator receives it as a `message` with `kind: done`.
-Then, in the orchestrator, `jailbee inbox send import --child child-b`:
-
-expect: `done`, "imported as refs/jailbee/from/child-b/<branch> at <sha>"; the
-orchestrator's own local branch of that name is not touched. Then
-`jailbee inbox send stop --child child-b` and `... destroy --child child-b`
-both succeed without `force`, while destroying a stopped child whose commits
-were never imported is refused until `--force`.
-
-Finally, on the host:
-
-```bash
-journalctl --user -u jailbee-broker --since "-15 min"   # expect: no tracebacks
-jb orchestrate revoke <c>
-jb destroy <c>   # and any remaining children; then stop the rig
-```
+Have the child commit and send `jailbee inbox send message --kind done --text
+"finished" --wait`. Verify the orchestrator receives the done report with the
+imported ref and SHA. Test explicit `jailbee inbox send import --child child-b
+--wait`, then stop and destroy the child without force. Inspect broker logs for
+tracebacks, revoke the grant and destroy the disposable containers.
 
 ## Orchestration over the broker socket (real host)
 
@@ -6102,7 +5989,7 @@ broker over a per-container socket mounted at `/run/jailbee/orchestration/`
    A container with no orchestration role has none.
 2. Traffic. In `<k>`: `jailbee inbox send message --kind note --text hi --wait`
    (exit 0, a `done` status), then in `<o>`: `jailbee inbox ls`, `wait`, `read
-   <id>`. Expect the message, and no files under `~/.jailbee/orchestration/inbox/`.
+   <id>`. Expect the message.
    On the host, `jb orchestrate messages <o>` lists it (unread), and with
    `--all` after `read` it shows as read.
 3. Broker restart. `systemctl --user restart jailbee-broker` while `<o>` runs
@@ -6151,7 +6038,9 @@ broker over a per-container socket mounted at `/run/jailbee/orchestration/`
 
 ### Broker state database migration (real host)
 
-Run on a disposable host with legacy orchestration state present. Do not
+Run on a disposable host with legacy durable host state present and no
+orchestration in progress. File-transport unread messages and waiters are not
+imported. Do not
 simulate corruption in valuable live state. Back up state before upgrading; the
 first use of each state area lazily imports it into `broker.db`, so starting the
 broker alone may not migrate every area.
@@ -6166,7 +6055,7 @@ tar -C "$state" --exclude='./sock' -cf "$backup/orchestration.tar" .
 systemctl --user start jailbee-broker
 ```
 
-Exercise inbox message delivery and the queue, watch/supervision, and
+Exercise the queue, watch/supervision, journal and
 publication paths that have legacy inputs, so each state area is accessed.
 Then check the migrated state:
 
@@ -6186,7 +6075,12 @@ Then check the migrated state:
   publication results or journal decisions should appear. `publish-log.jsonl`
   remains the audit log, and uncertain-publication review files remain available
   for human resolution.
-- The socket, lock and transitional file-transport files are not migrated.
+- The socket and lock are not migrated. On a disposable rig, check host-only
+  `pending/` entries for stopped and unlabelled recipients: the versioned
+  envelope binds the recipient UUID and original item. Identity-free old
+  entries and a namesake UUID mismatch are quarantined as `.bad`. Interrupt a
+  completed finish after it is persisted and before store insertion; on retry
+  verify its stable ID yields one delivered item.
 
 Host-confirmation items from the design spike (only a real host settles these):
 
