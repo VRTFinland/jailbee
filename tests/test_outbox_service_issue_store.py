@@ -25,7 +25,7 @@ def _env(mocker, make_cfg, tmp_path):
             "config": {"volatile.uuid": UUID},
         }
     ]
-    mocker.patch.object(service, "read_store", return_value=store("pr", {}))
+    mocker.patch.object(service, "read_store", create=True, return_value=store("pr", {}))
     return make_cfg(tmp_path), incus, None
 
 

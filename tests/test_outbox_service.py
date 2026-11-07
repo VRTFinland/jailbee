@@ -25,11 +25,11 @@ def setup_service(mocker, make_cfg, tmp_path, kind="issue"):
         "pr" if kind == "issue" else "issue": store("pr" if kind == "issue" else "issue", {}),
     }
     reader = mocker.patch.object(
-        service, "read_store", side_effect=lambda i, c, k, **kw: snapshots[k]
+        service, "read_store", create=True, side_effect=lambda i, c, k, **kw: snapshots[k]
     )
     route_issue_snapshot(mocker, service)
     mutation = mocker.patch.object(
-        service, "mutate_store", side_effect=lambda *args, **kw: kw["delete_names"]
+        service, "mutate_store", create=True, side_effect=lambda *args, **kw: kw["delete_names"]
     )
     return service, cfg, incus, files, snapshots, reader, mutation, None
 
@@ -134,20 +134,27 @@ def test_forged_scope_refused(mocker, make_cfg, tmp_path):
     env[6].assert_not_called()
 
 
-@pytest.mark.parametrize("evidence", ["empty", "bad", "receipt", "reject-sidecar", "reject-log"])
-def test_pr_evidence_blocks_whole_deletion(mocker, make_cfg, tmp_path, evidence):
+@pytest.mark.parametrize("evidence", ["applied", "uncertain", "other-text"])
+def test_pr_journal_blocks_whole_deletion(mocker, make_cfg, tmp_path, evidence):
+    from jailbee.outbox.publication_db import Journal
+    from jailbee.outbox_io import JournalAction
+
     env = setup_service(mocker, make_cfg, tmp_path, "pr")
-    files = env[3].copy()
-    rejected = ()
-    if evidence == "empty":
-        files["001.json.progress.json"] = '{"applied":[],"urls":{}}'
-    elif evidence == "bad":
-        files["001.json.progress.json"] = "{bad"
-    elif evidence == "receipt":
-        files["applied.log"] = "now 001.json pr=42 actions=1 urls=x\n"
-    else:
-        rejected = ("applied.log" if evidence == "reject-log" else "001.json.progress.json",)
-    env[4]["pr"] = store("pr", files, rejected=rejected)
+    files = env[3]
+    digest = proposal_digest("001.json", files["001.json"], {})
+    if evidence == "other-text":
+        digest = "0" * 64
+    state = "uncertain" if evidence == "uncertain" else "applied"
+    journal = Journal(
+        "uuid",
+        "pr",
+        "001.json",
+        digest,
+        IDENTITY.full_name,
+        1,
+        (JournalAction(0, state, "acme/repo"),),
+    )
+    mocker.patch.object(env[0], "pr_journals", return_value={"001.json": journal})
     with pytest.raises(OutboxError):
         preview(env, DeleteSelection(), "pr")
     env[6].assert_not_called()
@@ -303,7 +310,7 @@ def test_issue_proposals_are_listed_from_the_host_store_without_incus_exec(
         assert kind == "pr", "issue proposals must not be read from the container"
         return store("pr", {})
 
-    mocker.patch.object(service, "read_store", side_effect=read_pr_only)
+    mocker.patch.object(service, "read_store", create=True, side_effect=read_pr_only)
     view = service.load_container(make_cfg(tmp_path), incus, IDENTITY.full_name)
     assert view.available, view.error
     (proposal,) = view.proposals
@@ -321,7 +328,7 @@ def test_an_instance_without_a_uuid_is_unavailable_not_empty(mocker, make_cfg, t
     incus.list_containers.return_value = [
         {"name": IDENTITY.full_name, "created_at": IDENTITY.created_at}
     ]
-    mocker.patch.object(service, "read_store", return_value=store("pr", {}))
+    mocker.patch.object(service, "read_store", create=True, return_value=store("pr", {}))
     view = service.load_container(make_cfg(tmp_path), incus, IDENTITY.full_name)
     assert not view.available
     assert "uuid" in (view.error or "")

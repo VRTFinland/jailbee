@@ -1,7 +1,7 @@
 """Probe git state inside jailbee containers via `incus exec`.
 
 The probe makes one ``incus exec`` round-trip per container, runs a
-small shell snippet that emits fifteen NUL-separated fields, and the
+small shell snippet that emits thirteen NUL-separated fields, and the
 host parses them into a ``GitStatus``. Designed to be safe for
 parallel use from a thread pool.
 """
@@ -15,10 +15,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import TypedDict
 
-from jailbee.config import CONTAINER_USERNAME
 from jailbee.host_target import TargetSnapshot
 from jailbee.incus import Incus, IncusError
-from jailbee.pr_outbox import OUTBOX_SUBPATH
 from jailbee.submodules import HOST_SOURCE
 
 log = logging.getLogger(__name__)
@@ -110,10 +108,8 @@ class GitStatus:
     # prediction about a merge nobody ran. "?" means the probe could not say.
     in_progress: str = "?"  # "" | merge | rebase | cherry-pick | revert | "?"
     unmerged: int | None = None  # paths with unresolved conflicts; None = unknown
-    # Manifests waiting in the container's PR outbox (`pr_outbox`). Not a git
-    # fact, but it rides this probe because the probe is already the one
-    # `incus exec` per running container that every listing pays for. None
-    # means the probe could not say (older output, or an unreadable value).
+    # PR proposals waiting in the host outbox store. Never set by the probe:
+    # `lifecycle.stamp_pr_outbox` fills it from the store. None means unknown.
     pending_pr_actions: int | None = None
     # Issue proposals waiting in the host outbox store. Never set by the
     # probe: `lifecycle.stamp_issue_outbox` fills it from the store.
@@ -528,38 +524,10 @@ UNMERGED=$(git ls-files --unmerged 2>/dev/null \
   | cut -f2 | sort -u | wc -l | tr -d '[:space:]')
 case "$UNMERGED" in '' | *[!0-9]*) UNMERGED="?" ;; esac
 
-count_outbox_manifests() {
-    # Check ancestors before treating an absent store as empty: a failed
-    # lookup under an unsearchable directory is unknown, not absence.
-    directory="$1"
-    while :; do
-        [ ! -L "$directory" ] || { printf '?'; return; }
-        if [ -e "$directory" ]; then
-            [ -d "$directory" ] && [ -x "$directory" ] \
-                || { printf '?'; return; }
-        fi
-        [ "$directory" != / ] || break
-        directory="${directory%/*}"
-        [ -n "$directory" ] || directory=/
-    done
-    [ -e "$1" ] || { printf '0'; return; }
-    [ -r "$1" ] && [ -x "$1" ] || { printf '?'; return; }
-    count=0
-    for candidate in "$1"/*.json; do
-        case "$candidate" in *.progress.json) continue ;; esac
-        [ -f "$candidate" ] && [ ! -L "$candidate" ] || continue
-        count=$((count + 1))
-    done
-    printf '%s' "$count"
-}
-
-# --- field 13: manifest count, not a pending GitHub action count ---
-PENDING=$(count_outbox_manifests "$OUTBOX_DIR")
-
-printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
   "$WT" "$COMMITTED" "$COUNT" "$CONFLICT" "$SUB_COMMITTED_STRUCT" "$SUB_WT_STRUCT" \
   "$HEAD_SHA" "$REMOTE_CONTAINED" "$LOCAL_DIFF" "$LOCAL_COUNT" \
-  "$IN_PROGRESS" "$UNMERGED" "$PENDING" "$BEHIND_COUNT"
+  "$IN_PROGRESS" "$UNMERGED" "$BEHIND_COUNT"
 """
 
 
@@ -614,7 +582,6 @@ def probe_container_git(
                 "HOST_HEAD": host_head or "",
                 "TARGET_SHA": (target.sha or "") if target is not None else "",
                 "HOST_SOURCE": HOST_SOURCE,
-                "OUTBOX_DIR": f"/home/{CONTAINER_USERNAME}/{OUTBOX_SUBPATH}",
                 # The probe only reads, but `git status`/`git diff --cached`
                 # refresh the index and write it back — which takes
                 # `.git/index.lock`. (Worktree `git diff` ignores this
@@ -691,13 +658,7 @@ def probe_container_git(
         in_progress = "?"
         unmerged = None
 
-    if len(parts) >= 13:
-        raw_pending = parts[12].strip()
-        pending_pr_actions = int(raw_pending) if raw_pending.isdigit() else None
-    else:
-        pending_pr_actions = None
-
-    raw_behind = parts[13].strip() if len(parts) >= 14 else "?"
+    raw_behind = parts[12].strip() if len(parts) >= 13 else "?"
     behind_count = raw_behind if raw_behind.isdigit() else "?"
     target_diff = ahead_diff
 
@@ -713,7 +674,6 @@ def probe_container_git(
         local_count=local_count,
         in_progress=in_progress,
         unmerged=unmerged,
-        pending_pr_actions=pending_pr_actions,
         target_diff=target_diff,
         behind_count=behind_count if target is not None else "?",
         base_sha=target.sha if target is not None else None,

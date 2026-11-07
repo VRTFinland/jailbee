@@ -5,10 +5,9 @@ and writes the host outbox store (`broker.db`) only, with the instance found by
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import Any
-
-import json
 
 import pytest
 

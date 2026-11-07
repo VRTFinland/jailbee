@@ -95,11 +95,6 @@ def _inventory(
     return containers, _repo_roots(cfg, scope)
 
 
-def _running(item: ContainerInfo) -> None:
-    if item.state != "Running":
-        raise OutboxError(f"{item.name}: container is {item.state.lower()}; outbox is unavailable")
-
-
 def resolve_target(cfg: Config, incus: Incus, name: str) -> tuple[Config, str]:
     """Resolve public full/short names and fresh target-owned config before I/O.
 
@@ -109,9 +104,8 @@ def resolve_target(cfg: Config, incus: Incus, name: str) -> tuple[Config, str]:
     """
     containers, roots = _inventory(cfg, incus, all_repos=True)
     item = _resolve_visible(cfg, name, containers)
-    target = _own_config(item.repo, roots)
-    _running(item)
-    return target, item.name
+    # The proposals live in the host outbox store: a stopped container is served too.
+    return _own_config(item.repo, roots), item.name
 
 
 def _resolve_visible(cfg: Config, name: str, containers: Sequence[ContainerInfo]) -> ContainerInfo:
@@ -160,7 +154,6 @@ def discover(
     for item in containers:
         try:
             target = _own_config(item.repo, roots)
-            _running(item)
         except OutboxError as exc:
             result.append(ContainerView(None, item.name, False, str(exc), (), ()))
             continue

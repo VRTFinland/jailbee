@@ -13,12 +13,13 @@ from tests.outbox_journal_fake import MemoryJournals, journal_key
 from tests.outbox_support import IDENTITY, issue_files, pr_files, store
 
 
-def inspected(tmp_path, kind, files, *, rejected=(), journals=None):
+def inspected(tmp_path, kind, files, *, rejected=(), journals=None, pr_journals=None):
     snapshot = store(kind, files, rejected=rejected)
     views = build_views(
         IDENTITY,
         (snapshot,),
         issue_journals=journals.snapshot() if journals is not None else None,
+        pr_journals=pr_journals,
     )
     return ContainerView(IDENTITY, IDENTITY.full_name, True, None, (snapshot,), views)
 
@@ -262,22 +263,24 @@ def test_invalid_manifest_cannot_be_repaired_by_partial_delete(tmp_path, raw):
         )
 
 
-@pytest.mark.parametrize("progress", ["sidecar", "rejected", "log"])
-def test_pr_progress_blocks_deletion_even_for_invalid_manifest(tmp_path, progress):
+@pytest.mark.parametrize("state", ["applied", "uncertain"])
+def test_pr_journal_blocks_deletion_even_for_invalid_manifest(tmp_path, state):
+    from jailbee.outbox.publication_db import Journal
+    from jailbee.outbox_io import JournalAction
+
     files = {"001.json": "{bad"}
-    rejected = ()
-    if progress == "sidecar":
-        files["001.json.progress.json"] = '{"applied":[],"urls":{}}'
-    elif progress == "rejected":
-        rejected = ("applied.log",)
-    else:
-        files["applied.log"] = "now 001.json pr=42 actions=1 urls=x"
+    journal = Journal(
+        "uuid",
+        "pr",
+        "001.json",
+        "d" * 64,
+        IDENTITY.full_name,
+        1,
+        (JournalAction(0, state, "acme/repo"),),
+    )
+    view = inspected(tmp_path, "pr", files, pr_journals={"001.json": journal})
     with pytest.raises(OutboxError):
-        plan_delete(
-            inspected(tmp_path, "pr", files, rejected=rejected),
-            ProposalId("pr", "001.json"),
-            DeleteSelection(),
-        )
+        plan_delete(view, ProposalId("pr", "001.json"), DeleteSelection())
 
 
 @pytest.mark.parametrize("uncertain", [False, True])

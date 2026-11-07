@@ -81,8 +81,8 @@ def _null_pr_target(name: str = "001-x.json"):
     )
 
 
-def _running_ci(name: str = "acme-feat-foo", *, pending: int | None = 1, state: str = "Running"):
-    from jailbee.git_status import GitStatus
+def _running_ci(name: str = "acme-feat-foo", *, state: str = "Running"):
+    """A container row; its PR proposal count comes from `_counts` (unknown by default)."""
     from jailbee.lifecycle import ContainerInfo
 
     return ContainerInfo(
@@ -92,14 +92,13 @@ def _running_ci(name: str = "acme-feat-foo", *, pending: int | None = 1, state: 
         ip=None,
         memory_limit=None,
         repo="acme",
-        git_status=GitStatus(
-            wt="clean",
-            ahead_diff="clean",
-            ahead_count="0",
-            conflict="ok",
-            pending_pr_actions=pending,
-        ),
+        uuid=f"uuid-{name}",
     )
+
+
+def _counts(mocker, counts):
+    """The host store's PR proposal counts by container uuid (None: unreadable)."""
+    mocker.patch("jailbee.lifecycle.pr_outbox_counts", return_value=counts)
 
 
 def _setup(mocker, tmp_path, *, files=None):
@@ -122,6 +121,8 @@ def _setup(mocker, tmp_path, *, files=None):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     # Proposals live in the host outbox store, keyed by the instance uuid.
     seed_pr_store(files or {})
+    # Per-container counts are unknown unless a test says otherwise: every row is read.
+    _counts(mocker, None)
     return cfg, incus
 
 
@@ -262,28 +263,6 @@ def test_apply_exits_1_when_publishing_fails(mocker, tmp_path):
     assert "HTTP 500" in result.output
     # And the user is told what state that leaves them in.
     assert "still pending" in result.output
-
-
-def test_apply_refuses_a_stopped_container(mocker, tmp_path):
-    from jailbee.outbox.models import OutboxExecutionError
-    from jailbee.pr_outbox import OutboxReadError
-
-    _setup(mocker, tmp_path)
-    mocker.patch(
-        "jailbee.pr_outbox.read_outbox",
-        side_effect=OutboxReadError("could not read the outbox in acme-feat-foo: not running"),
-    )
-    mocker.patch(
-        "jailbee.outbox.io.read_store",
-        side_effect=OutboxExecutionError("outbox unavailable: acme-feat-foo: not running"),
-    )
-    apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
-
-    result = runner.invoke(app, ["review", "apply", "feat-foo"])
-
-    assert result.exit_code == 2
-    assert "jailbee start" in result.output
-    apply_mock.assert_not_called()
 
 
 def test_dry_run_never_prompts_and_never_publishes(mocker, tmp_path):
@@ -612,7 +591,7 @@ def test_apply_reads_a_container_whose_pending_count_is_unknown(mocker, tmp_path
     read = _spy_read(mocker)
     mocker.patch(
         "jailbee.lifecycle.list_containers",
-        return_value=[_running_ci(name="acme-feat-a", pending=None)],
+        return_value=[_running_ci(name="acme-feat-a")],
     )
     mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target())
 
@@ -623,17 +602,23 @@ def test_apply_reads_a_container_whose_pending_count_is_unknown(mocker, tmp_path
     assert "looks good" in result.output, "the manifest must be shown, not assumed away"
 
 
-def test_apply_ignores_a_stopped_container_when_choosing(mocker, tmp_path):
-    _setup(mocker, tmp_path)
+def test_apply_chooses_a_stopped_container_with_pending_proposals(mocker, tmp_path):
+    _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
+    read = _spy_read(mocker)
     mocker.patch(
         "jailbee.lifecycle.list_containers",
-        return_value=[_running_ci(name="acme-old", pending=None, state="Stopped")],
+        return_value=[
+            _running_ci(name="acme-feat-a", state="Stopped"),
+            _running_ci(name="acme-feat-b"),
+        ],
     )
+    _counts(mocker, {"uuid-acme-feat-a": 1, "uuid-acme-feat-b": 0})
+    mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target())
 
-    result = runner.invoke(app, ["review", "apply"])
+    result = runner.invoke(app, ["review", "apply", "--dry-run"])
 
     assert result.exit_code == 0, result.output
-    assert "nothing pending" in result.output.lower()
+    assert read.call_args.args[1] == "acme-feat-a"
 
 
 def test_apply_stops_before_the_next_manifest_after_a_failed_publish(mocker, tmp_path):
@@ -719,7 +704,8 @@ def test_apply_without_a_name_uses_the_single_pending_container(mocker, tmp_path
 
 def test_apply_without_a_name_and_nothing_pending_exits_0(mocker, tmp_path):
     _setup(mocker, tmp_path)
-    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_running_ci(pending=0)])
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_running_ci()])
+    _counts(mocker, {"uuid-acme-feat-foo": 0})
 
     result = runner.invoke(app, ["review", "apply"])
 
@@ -746,9 +732,9 @@ def test_ls_all_repos_filters_hidden_repo_before_review_probe(mocker, tmp_path):
 
     cfg, _ = _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
     cfg.container_prefix = "allowed"
-    allowed = _running_ci(name="allowed-feat", pending=1)
+    allowed = _running_ci(name="allowed-feat")
     allowed.repo = "allowed"
-    hidden = _running_ci(name="secret-feat", pending=1)
+    hidden = _running_ci(name="secret-feat")
     hidden.repo = "secret"
     scope = RemoteRepoScope(frozenset({"secret"}))
     mocker.patch("jailbee.remote_ssh.repo_scope.scope_for_session", return_value=scope)
@@ -813,17 +799,18 @@ def test_ls_lists_a_foreign_pr_manifest_instead_of_refusing_it(mocker, tmp_path,
     assert resolve.call_args.kwargs["allow_foreign"] is True
 
 
-def test_ls_notes_containers_it_could_not_read(mocker, tmp_path):
-    _setup(mocker, tmp_path)
+def test_ls_lists_a_stopped_containers_proposals(mocker, tmp_path):
+    _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
     mocker.patch(
         "jailbee.lifecycle.list_containers",
-        return_value=[_running_ci(name="acme-feat-off", state="Stopped")],
+        return_value=[_running_ci(state="Stopped")],
     )
+    mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target())
 
-    result = runner.invoke(app, ["review", "ls"])
+    result = runner.invoke(app, ["review", "ls", "-o", "json"])
 
     assert result.exit_code == 0, result.output
-    assert "stopped" in result.output.lower()
+    assert [row["manifest"] for row in json.loads(result.stdout)] == ["001-x.json"]
 
 
 def test_ls_counts_actions_by_type(mocker, tmp_path):

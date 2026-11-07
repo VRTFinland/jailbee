@@ -1391,8 +1391,20 @@ def test_submodule_changed_source_after_prompt_never_publishes(mocker, tmp_path,
         elif change == "body":
             fresh["body.md"] = "Changed"
         elif change == "progress":
-            fresh["d.json.progress.json"] = '{"applied":[0],"urls":{"0":"https://x/pull/123"}}'
+            published.append(True)
         return proposed
+
+    published: list[bool] = []
+
+    def journals() -> dict:
+        from jailbee.outbox.publication_db import Journal
+        from jailbee.outbox_io import JournalAction
+
+        if not published:
+            return {}
+        digest = pr_outbox.proposal_files_digest(fresh, "d.json")
+        action = JournalAction(0, "applied", "acme/widgets", url="https://x/pull/123")
+        return {"d.json": Journal("u", "pr", "d.json", digest, "c", 1, (action,))}
 
     mocker.patch.object(pr_flow, "confirm_pr_branch_name", side_effect=prompt)
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=source)
@@ -1403,6 +1415,8 @@ def test_submodule_changed_source_after_prompt_never_publishes(mocker, tmp_path,
             identity=ContainerIdentity(identity.full_name, "new")
             if change == "identity"
             else identity,
+            uuid="u",
+            journals=journals(),
         ),
     )
     create = mocker.patch("jailbee.pr.create_pr")

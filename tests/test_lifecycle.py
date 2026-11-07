@@ -11202,7 +11202,7 @@ def test_sample_ls_columns_reads_nothing_for_other_columns(mocker, make_cfg, tmp
 @pytest.mark.parametrize("worker", [False, True])
 @pytest.mark.parametrize("mount", [False, True])
 @pytest.mark.parametrize("autostart", [False, True])
-def test_new_container_bootstraps_outbox_before_agents(
+def test_new_container_creates_no_outbox_in_the_container(
     tmp_path, mocker, make_cfg, mount, autostart, worker
 ):
     repo = tmp_path / "repo"
@@ -11217,11 +11217,6 @@ def test_new_container_bootstraps_outbox_before_agents(
     mocker.patch("jailbee.pool.allocate_startup")
     mocker.patch(
         "jailbee.agent_private.attach", side_effect=lambda *a, **k: events.append("private")
-    )
-    mocker.patch(
-        "jailbee.outbox.io.ensure_directories",
-        side_effect=lambda *a: events.append("outbox"),
-        create=True,
     )
     mocker.patch(
         "jailbee.agents.ensure_agents", side_effect=lambda *a, **k: events.append("agents")
@@ -11240,108 +11235,15 @@ def test_new_container_bootstraps_outbox_before_agents(
             op_to_job(opts, container_name="repo-feat-x", log_path="worker.log")
         )
     new_container(cfg, incus, opts, on_phase=(lambda phase: None) if worker else None)
+    # The outbox lives in the host store: nothing is created in the container.
+    assert not any(
+        ".jailbee/pr-outbox" in arg for call in incus.exec.call_args_list for arg in call.args[1]
+    )
     assert events == [
         "private",
-        "outbox",
         "agents",
         *(["autostart", "autostart"] if autostart else []),
     ]
-
-
-def test_outbox_bootstrap_failure_blocks_agents_and_autostart(tmp_path, mocker, make_cfg):
-    from jailbee.outbox.models import OutboxExecutionError
-
-    cfg = make_cfg(tmp_path / "repo", shared_dir=tmp_path / "shared")
-    incus = MagicMock()
-    incus.exists.return_value = False
-    mocker.patch("jailbee.pool.allocate_startup")
-    mocker.patch("jailbee.agent_private.attach")
-    mocker.patch(
-        "jailbee.outbox.io.ensure_directories",
-        side_effect=OutboxExecutionError("cannot create outbox"),
-        create=True,
-    )
-    agents = mocker.patch("jailbee.agents.ensure_agents")
-    autostart = mocker.patch("jailbee.autostart.run_autostart")
-    with pytest.raises(OutboxExecutionError, match="cannot create outbox"):
-        new_container(
-            cfg, incus, NewContainerOptions("feat/x", None, "strict", "8GiB", 4, "base", False)
-        )
-    agents.assert_not_called()
-    autostart.assert_not_called()
-
-
-@pytest.mark.parametrize(
-    "blocked",
-    [
-        None,
-        "home-link",
-        "parent-link",
-        "pr-link",
-        "parent-file",
-        "pr-file",
-    ],
-)
-def test_outbox_bootstrap_script_safe_and_idempotent(tmp_path, mocker, make_cfg, blocked):
-    import subprocess
-
-    from jailbee.incus import IncusError
-    from jailbee.outbox import io as outbox_io
-    from jailbee.outbox.models import OutboxExecutionError
-
-    cfg = make_cfg(tmp_path / "repo")
-    home = tmp_path / "home" / "dev"
-    home.mkdir(parents=True)
-    parent = home / ".jailbee"
-    parent.mkdir()
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    targets = {
-        "home": home,
-        "parent": parent,
-        "pr": parent / "pr-outbox",
-    }
-    if blocked:
-        name, kind = blocked.split("-")
-        target = targets[name]
-        if target.is_dir():
-            if name == "home":
-                parent.rmdir()
-            target.rmdir()
-        if kind == "link":
-            target.symlink_to(outside, target_is_directory=True)
-        else:
-            target.write_text("preserve me")
-    incus = MagicMock()
-
-    def execute(container, argv, *, uid, timeout):
-        assert container == "repo-x"
-        assert uid == cfg.container_user.uid
-        assert 0 < timeout <= 60
-        assert argv[-1:] == ["/home/dev/.jailbee/pr-outbox"]
-        local = [
-            arg.replace("/home/dev", str(home)) if arg.startswith("/home/dev") else arg
-            for arg in argv
-        ]
-        result = subprocess.run(local, capture_output=True, text=True, timeout=timeout)
-        if result.returncode:
-            raise IncusError(result.stderr)
-        return result.stdout
-
-    incus.exec.side_effect = execute
-    if blocked:
-        with pytest.raises(OutboxExecutionError, match=r"create.*outbox|outbox.*creat"):
-            outbox_io.ensure_directories(cfg, incus, "repo-x")
-        assert list(outside.iterdir()) == []
-        if blocked.endswith("file"):
-            assert targets[blocked.split("-")[0]].read_text() == "preserve me"
-    else:
-        outbox_io.ensure_directories(cfg, incus, "repo-x")
-        manifest = parent / "pr-outbox" / "proposal.json"
-        manifest.write_text("existing")
-        outbox_io.ensure_directories(cfg, incus, "repo-x")
-        assert manifest.read_text() == "existing"
-        assert not (parent / "issue-outbox").exists()
 
 
 def _ci(name):
@@ -12090,9 +11992,7 @@ def _new_child(cfg, incus, mocker, **extra):
 def test_child_creation_writes_marker_instead_of_github_outboxes(make_cfg, tmp_path, mocker):
     cfg = _child_cfg(make_cfg, tmp_path)
     incus, _ = _child_incus(cfg)
-    ensure = mocker.patch("jailbee.outbox.io.ensure_directories")
     _new_child(cfg, incus, mocker, spawned_by="myrepo-orch")
-    ensure.assert_not_called()
     import os
 
     from jailbee.orchestration.labels import ROLE_MARKER_PATH

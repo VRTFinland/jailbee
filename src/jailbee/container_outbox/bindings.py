@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from jailbee.container_outbox.store import OutboxCommandError
+from jailbee.container_outbox.common import OutboxCommandError
 
 SNAPSHOT = Path("/opt/jailbee/metadata/bindings.json")
 ERROR_MARKER = Path("/run/jailbee/pr-bindings-error")

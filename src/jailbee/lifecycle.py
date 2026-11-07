@@ -2421,16 +2421,11 @@ def _new_container(
     except (IncusError, OSError) as e:
         warn(f"Container created, but its broker socket was not attached (the broker will): {e}")
 
-    # Infrastructure must exist even without cloning or autostart; a failed
-    # bootstrap must not let agents write into an unsafe store.
+    # Before cloning or autostart: a child must know its role from the start.
     if opts.spawned_by is not None:
         from jailbee.orchestration.labels import ensure_child_role
 
         ensure_child_role(incus, name, uid=cfg.container_user.uid)
-    else:
-        from jailbee.outbox.io import ensure_directories
-
-        ensure_directories(cfg, incus, name)
 
     # Before agents, autostart and `on_create`, any of which may commit. Both
     # modes: the XDG file never touches the host repo's own config.

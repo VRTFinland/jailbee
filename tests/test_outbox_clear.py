@@ -1,21 +1,20 @@
 """Whole-outbox clear planning stays conservative around publication evidence."""
 
-import pytest
-
 from jailbee.outbox.delete import DeleteSelection, plan_clear
 from jailbee.outbox.inspect import build_views
 from jailbee.outbox.models import ContainerView, ProposalId
 from jailbee.outbox_io import proposal_digest
 from tests.outbox_journal_fake import MemoryJournals, journal_key
-from tests.outbox_support import IDENTITY, issue_files, pr_files, store
+from tests.outbox_support import IDENTITY, issue_files, pr_files, pr_journal, store
 
 
-def inspected(tmp_path, kind, files, *, rejected=(), journals=None):
+def inspected(tmp_path, kind, files, *, rejected=(), journals=None, pr_journals=None):
     snapshot = store(kind, files, rejected=rejected)
     views = build_views(
         IDENTITY,
         (snapshot,),
         issue_journals=journals.snapshot() if journals is not None else None,
+        pr_journals=pr_journals,
     )
     return ContainerView(IDENTITY, IDENTITY.full_name, True, None, (snapshot,), views)
 
@@ -34,16 +33,10 @@ def test_unpublished_pr_and_issue_are_deleted_whole(tmp_path):
     assert pr_plan.keep == issue_plan.keep == ()
 
 
-@pytest.mark.parametrize(
-    "evidence",
-    [
-        {"001.json.progress.json": '{"applied":[0],"urls":{"0":"u"}}'},
-        {"applied.log": "now 001.json pr=42 actions=1 urls=x"},
-    ],
-)
-def test_pr_with_sidecar_or_log_is_kept(tmp_path, evidence):
-    files = pr_files() | evidence
-    plan = plan_clear(inspected(tmp_path, "pr", files))
+def test_pr_with_a_publication_journal_is_kept(tmp_path):
+    files = pr_files()
+    journal = pr_journal(files, applied=(0,))
+    plan = plan_clear(inspected(tmp_path, "pr", files, pr_journals={"001.json": journal}))
 
     assert plan.delete == ()
     assert len(plan.keep) == 1
@@ -115,7 +108,10 @@ def test_plan_total_counts_only_containers_with_deletions(tmp_path):
         plan_clear(inspected(tmp_path, "issue", issue_files())),
         plan_clear(
             inspected(
-                tmp_path, "pr", pr_files() | {"applied.log": "now 001.json pr=42 actions=1 urls=x"}
+                tmp_path,
+                "pr",
+                pr_files(),
+                pr_journals={"001.json": pr_journal(pr_files(), applied=(0,))},
             )
         ),
         plan_clear(inspected(tmp_path, "pr", {})),
@@ -127,12 +123,12 @@ def test_plan_total_counts_only_containers_with_deletions(tmp_path):
 def test_plan_lines_name_every_item_and_the_total(tmp_path):
     from jailbee.outbox.delete import clear_plan_lines
 
-    pr_files_with_evidence = pr_files()
-    pr_files_with_evidence["001.json.progress.json"] = '{"applied":[0],"urls":{"0":"u"}}'
-    pr_files_with_evidence["002.json"] = pr_files_with_evidence["001.json"]
-    pr = store("pr", pr_files_with_evidence)
+    files = pr_files()
+    files["002.json"] = files["001.json"]
+    pr = store("pr", files)
     issue = store("issue", issue_files())
-    views = build_views(IDENTITY, (pr, issue))
+    journals = {"001.json": pr_journal(files, applied=(0,))}
+    views = build_views(IDENTITY, (pr, issue), pr_journals=journals)
     container = ContainerView(IDENTITY, IDENTITY.full_name, True, None, (pr, issue), views)
     plan = plan_clear(container)
     lines = clear_plan_lines((plan,))

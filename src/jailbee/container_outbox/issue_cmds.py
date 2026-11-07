@@ -11,7 +11,7 @@ from uuid import uuid4
 import typer
 
 from jailbee.container_outbox import broker, gh
-from jailbee.container_outbox.store import OutboxCommandError, Store
+from jailbee.container_outbox.common import OutboxCommandError, require_role
 
 issue_app = typer.Typer(
     no_args_is_help=True,
@@ -114,10 +114,8 @@ def state_action(
     return action
 
 
-def _guard() -> Store:
-    store = Store(Path.home())
-    store.require_role()
-    return store
+def _guard() -> None:
+    require_role()
 
 
 def _body(body: str | None, body_file: Path | None, required: bool) -> str | None:

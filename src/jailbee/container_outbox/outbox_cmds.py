@@ -7,8 +7,8 @@ from typing import Annotated, cast
 import typer
 
 from jailbee.container_outbox import broker
+from jailbee.container_outbox.common import Kind, OutboxCommandError
 from jailbee.container_outbox.issue_cmds import _guard, _run
-from jailbee.container_outbox.store import Kind, OutboxCommandError
 
 outbox_app = typer.Typer(
     no_args_is_help=True,

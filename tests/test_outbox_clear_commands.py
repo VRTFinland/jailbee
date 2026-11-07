@@ -4,7 +4,14 @@ import pytest
 
 from jailbee.outbox import commands, service
 from jailbee.outbox.models import OutboxError, OutboxExecutionError
-from tests.outbox_support import IDENTITY, issue_files, pr_files, route_issue_snapshot, store
+from tests.outbox_support import (
+    IDENTITY,
+    issue_files,
+    pr_files,
+    pr_journal,
+    route_issue_snapshot,
+    store,
+)
 
 
 @pytest.fixture
@@ -19,7 +26,7 @@ def env(mocker, make_cfg, tmp_path):
             "created_at": IDENTITY.created_at,
             "profiles": ["acme-base"],
             "status": "Running",
-            "config": {"user.jailbee.issue_count": "0", "user.jailbee.review_count": "0"},
+            "config": {"volatile.uuid": f"uuid-{name}"},
         }
         for name in ("acme-feature", "acme-other")
     ]
@@ -33,11 +40,11 @@ def env(mocker, make_cfg, tmp_path):
         for kind, factory in (("pr", pr_files), ("issue", issue_files))
     }
     reader = mocker.patch.object(
-        service, "read_store", side_effect=lambda i, c, k, **kw: store(k, files[c, k])
+        service, "read_store", create=True, side_effect=lambda i, c, k, **kw: store(k, files[c, k])
     )
     route_issue_snapshot(mocker, service)
     mutation = mocker.patch.object(
-        service, "mutate_store", side_effect=lambda *a, **kw: kw["delete_names"]
+        service, "mutate_store", create=True, side_effect=lambda *a, **kw: kw["delete_names"]
     )
     return cfg, incus, files, reader, mutation, None
 
@@ -123,8 +130,18 @@ def test_dry_run_prints_plan_and_never_asks(env, mocker, capsys):
     assert "delete pr/001.json" in capsys.readouterr().out
 
 
-def test_kept_item_makes_exit_one(env, capsys):
-    env[2]["acme-feature", "pr"]["001.json.progress.json"] = '{"applied":[],"urls":{}}'
+def _published_pr(env, mocker, container="acme-feature"):
+    """`container`'s PR proposal has a publication journal (one action applied)."""
+    journal = pr_journal(env[2][container, "pr"], applied=(0,))
+    mocker.patch.object(
+        service,
+        "pr_journals",
+        side_effect=lambda uuid: {"001.json": journal} if uuid == f"uuid-{container}" else {},
+    )
+
+
+def test_kept_item_makes_exit_one(env, capsys, mocker):
+    _published_pr(env, mocker)
     assert clear(env, lambda plans: True) == 1
     calls = env[4].call_args_list
     assert not any(c.args[1:3] == ("acme-feature", "pr") for c in calls)
@@ -171,8 +188,24 @@ def test_shared_body_does_not_keep_the_second(env):
     assert set(calls[1].kwargs["delete_names"]) == {"002.json", "body.md"}
 
 
-def test_stopped_container_is_reported_and_others_cleared(env, capsys):
+def test_a_stopped_container_is_cleared_from_the_store(env):
     env[1].list_containers.return_value[1]["status"] = "Stopped"
+    assert clear(env, lambda plans: True) == 0
+    assert {c.args[1] for c in env[4].call_args_list} == {"acme-feature", "acme-other"}
+    env[1].exec.assert_not_called()
+
+
+def test_an_unreadable_store_is_reported_and_others_cleared(env, capsys, mocker):
+    from jailbee.outbox.models import OutboxExecutionError
+
+    real = service.pr_snapshot
+
+    def snapshot(container, uuid):
+        if container == "acme-other":
+            raise OutboxExecutionError("outbox store is unreadable")
+        return real(container, uuid)
+
+    mocker.patch.object(service, "pr_snapshot", side_effect=snapshot)
     assert clear(env, lambda plans: True) == 1
     assert {c.args[1] for c in env[4].call_args_list} == {"acme-feature"}
     captured = capsys.readouterr()
@@ -181,7 +214,7 @@ def test_stopped_container_is_reported_and_others_cleared(env, capsys):
 
 def test_stops_after_confirmation_and_other_container_continues(env, capsys):
     def confirm(plans):
-        env[1].list_containers.return_value[0]["status"] = "Stopped"
+        env[1].list_containers.return_value.pop(0)  # acme-feature is gone
         return True
 
     assert clear(env, confirm) == 1
@@ -189,8 +222,8 @@ def test_stops_after_confirmation_and_other_container_continues(env, capsys):
     assert "failed 2" in capsys.readouterr().err
 
 
-def test_the_summary_is_the_last_stderr_line(env, capsys):
-    env[2]["acme-feature", "pr"]["001.json.progress.json"] = '{"applied":[],"urls":{}}'
+def test_the_summary_is_the_last_stderr_line(env, capsys, mocker):
+    _published_pr(env, mocker)
     assert clear(env, lambda plans: True) == 1
     assert capsys.readouterr().err.splitlines()[-1].endswith("Cleared 3, kept 1, failed 0.")
 
@@ -210,8 +243,11 @@ def test_execution_failure_does_not_stop_other_items(env, capsys):
 
 
 def test_nothing_deletable_never_asks_and_unavailable_is_nonzero(env, mocker):
-    for row in env[1].list_containers.return_value:
-        row["status"] = "Stopped"
+    from jailbee.outbox.models import OutboxExecutionError
+
+    mocker.patch.object(
+        service, "pr_snapshot", side_effect=OutboxExecutionError("outbox store is unreadable")
+    )
     confirm = mocker.Mock()
     assert clear(env, confirm) == 1
     confirm.assert_not_called()

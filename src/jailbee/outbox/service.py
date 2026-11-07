@@ -10,8 +10,7 @@ from typing import TYPE_CHECKING
 from jailbee.incus import IncusError
 from jailbee.outbox.delete import DeletePlan, plan_delete
 from jailbee.outbox.inspect import build_views
-from jailbee.outbox.io import READ_TIMEOUT, PrManagement, mutate_store
-from jailbee.outbox.io import read_store as read_store  # file-layout tests patch it
+from jailbee.outbox.io import READ_TIMEOUT, PrManagement
 from jailbee.outbox.models import (
     ContainerView,
     Kind,
@@ -28,8 +27,8 @@ from jailbee.outbox_io import (
 
 
 def _instance(incus: Incus, container: str) -> tuple[ContainerIdentity, str | None]:
-    """The instance's legacy identity and its Incus ``volatile.uuid`` (None if unset)."""
-    # The shared legacy identity helper has no timeout parameter. Keep the same
+    """The instance's identity and its Incus ``volatile.uuid`` (None if unset)."""
+    # `outbox_io.container_identity` has no timeout parameter. Keep the same
     # raw/nonzero timestamp contract while bounding this interactive service.
     # --fast: created_at and config are top-level keys; no instance state is needed.
     raw = next(
@@ -49,7 +48,7 @@ def _instance(incus: Incus, container: str) -> tuple[ContainerIdentity, str | No
 
 
 def instance_identity(incus: Incus, container: str) -> tuple[ContainerIdentity, str]:
-    """The instance's legacy identity and its uuid, the outbox store's key for it."""
+    """The instance's identity and its uuid, the outbox store's key for it."""
     identity, uuid = _instance(incus, container)
     if uuid is None:
         raise JournalError(f"{container}: instance uuid is unavailable")
@@ -101,32 +100,6 @@ def issue_journals(
         name: IssueJournal(identity, name, j.digest, j.action_count, j.actions)
         for (_, name), j in stored.items()
     }
-
-
-def with_store_sources(pr: StoreSnapshot, uuid: str | None) -> StoreSnapshot:
-    """The PR snapshot with the instance's store-held PR source proposals added.
-
-    PR source proposals live in the host outbox store; the other PR proposals
-    are still container files. A store row wins over a file of the same name.
-    Their row versions mark them as store-held (`execute_delete` routes on it).
-    """
-    from jailbee.orchestration.store import StoreError
-    from jailbee.outbox import publication_db, store_db
-
-    if uuid is None:
-        return pr
-    try:
-        rows = store_db.read_proposals(publication_db.default_root(), uuid, "pr")
-    except StoreError as exc:
-        raise OutboxExecutionError(f"outbox store is unreadable: {exc}") from exc
-    if not rows:
-        return pr
-    files = dict(pr.files)
-    for row in rows:
-        files[row.name] = row.manifest
-        files.update(row.bodies)
-    versions = (*pr.versions, *((row.name, row.revision) for row in rows))
-    return replace(pr, files=tuple(sorted(files.items())), versions=versions)
 
 
 def pr_snapshot(container: str, uuid: str | None) -> StoreSnapshot:
@@ -274,35 +247,13 @@ def execute_delete(
             snapshot = next(s for s in fresh.stores if s.kind == plan.proposal.kind)
             if _identity(incus, container) != identity:
                 raise OutboxChanged("container changed before mutation; refresh required")
-            if plan.proposal.kind == "issue":
-                # The store archives the issue journal in the deleting transaction.
-                return _delete_issue_rows(container, uuid, plan, snapshot)
-            if plan.proposal.name in dict(snapshot.versions):
-                # A store-held PR proposal.
-                return _delete_issue_rows(container, uuid, plan, snapshot, kind="pr")
-            removed = mutate_store(
-                incus,
-                container,
-                plan.proposal.kind,
-                uid=cfg.container_user.uid,
-                expected=snapshot.as_dict(),
-                new_manifest=(plan.proposal.name, plan.new_text)
-                if plan.new_text is not None
-                else None,
-                delete_names=plan.delete_names,
-                forbidden_progress=f"{plan.proposal.name}.progress.json"
-                if plan.proposal.kind == "pr"
-                else None,
-                rejected_names=snapshot.rejected,
-            )
-            if removed != plan.delete_names:
-                raise OutboxExecutionError("incomplete deletion; journal retained")
-            return removed
+            # The store archives the proposal's journal in the deleting transaction.
+            return _delete_store_rows(container, uuid, plan, snapshot, kind=plan.proposal.kind)
     except (IncusError, JournalError) as exc:
         raise OutboxExecutionError(str(exc)) from exc
 
 
-def _delete_issue_rows(
+def _delete_store_rows(
     container: str,
     uuid: str | None,
     plan: DeletePlan,
@@ -310,8 +261,7 @@ def _delete_issue_rows(
     *,
     kind: Kind = "issue",
 ) -> tuple[str, ...]:
-    """Delete or edit a store-held proposal (every issue proposal, a PR source),
-    guarded by its row version."""
+    """Delete or edit a store-held proposal, guarded by its row version."""
     from jailbee.db import state_dir
     from jailbee.orchestration.store import StoreError
     from jailbee.outbox import store_db

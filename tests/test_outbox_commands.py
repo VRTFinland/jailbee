@@ -35,11 +35,12 @@ def env(mocker, make_cfg, tmp_path):
     reader = mocker.patch.object(
         service,
         "read_store",
+        create=True,
         side_effect=lambda i, c, k, **kw: store(k, issue_files() if k == "issue" else {}),
     )
     route_issue_snapshot(mocker, service)
     mutation = mocker.patch.object(
-        service, "mutate_store", side_effect=lambda *a, **kw: kw["delete_names"]
+        service, "mutate_store", create=True, side_effect=lambda *a, **kw: kw["delete_names"]
     )
     return cfg, incus, loader, reader, mutation, None
 

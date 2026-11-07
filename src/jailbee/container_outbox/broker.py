@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from typing import Any, cast
 
-from jailbee.container_outbox.store import Kind, OutboxCommandError
+from jailbee.container_outbox.common import Kind, OutboxCommandError
 from jailbee.inbox.transport import (
     CONNECT_RETRY_SECONDS,
     BrokerError,
