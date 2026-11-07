@@ -1280,8 +1280,8 @@ def _child(**kw: Any) -> ContainerInfo:
         egress=kw.pop("egress", ()),
         runner=kw.pop("runner", None),
     )
-    unread, outbox = kw.pop("unread", 0), kw.pop("outbox", 0)
-    gs = _gs(unread_inbox=unread, pending_orch_outbox=outbox) if unread or outbox else None
+    unread = kw.pop("unread", 0)
+    gs = _gs(unread_inbox=unread) if unread else None
     return _c(child=view, git_status=gs, **kw)
 
 
@@ -1338,11 +1338,6 @@ def test_child_card_shows_runner_default() -> None:
     assert p.orchestration[2] == "[dim]runner:[/dim] default"
 
 
-def test_child_card_shows_outbox_pending() -> None:
-    p = dd.container_panel(_child(orchestrator_running=True, outbox=1), NOW)
-    assert p.orchestration[0] == "child of orch · running · outbox 1 pending"
-
-
 def test_plain_container_has_no_orchestration_lines() -> None:
     assert dd.container_panel(_c(), NOW).orchestration == ()
 
@@ -1380,8 +1375,8 @@ def test_child_short_name_keeps_an_unprefixed_orchestrator_whole() -> None:
     assert p.orchestration[0].startswith("child of beta-orch")
 
 
-def test_unknown_inbox_and_outbox_counts_draw_nothing() -> None:
-    gs = _gs(unread_inbox=None, pending_orch_outbox=None)
+def test_unknown_inbox_count_draws_nothing() -> None:
+    gs = _gs(unread_inbox=None)
     child = dd.container_panel(replace(_child(), git_status=gs), NOW)
     assert child.orchestration[0] == "child of orch · running"
     orch = dd.container_panel(replace(_orch(), git_status=gs), NOW)

@@ -66,7 +66,6 @@ def _full_snapshot() -> Snapshot:
             pending_pr_actions=1,
             pending_issue_actions=3,
             unread_inbox=3,
-            pending_orch_outbox=1,
             target_diff="+1 -1",
             behind_count="0",
             base_sha="def456",

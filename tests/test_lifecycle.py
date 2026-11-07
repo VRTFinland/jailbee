@@ -945,6 +945,62 @@ def test_list_containers_with_git_status_invokes_probe_for_running_clone_only(
     assert by_name["myrepo-c"].git_status is None
 
 
+def test_listing_reads_broker_counts_for_stopped_and_failed_probes(make_cfg, tmp_path, mocker):
+    from jailbee.git_status import GitStatus
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    root = tmp_path / "state" / "orchestration"
+    root.mkdir(parents=True)
+    store = BrokerStore(store_path(root))
+    for uuid, name, ident, acked in (
+        ("a", "myrepo-a", "1", False),
+        ("a", "myrepo-a", "2", True),
+        ("b", "myrepo-b", "3", False),
+        ("b", "myrepo-b", "4", False),
+        ("c", "other", "5", False),
+    ):
+        store.insert_item(uuid, name, {"id": ident, "type": "message"}, now=1, acked=acked)
+    mocker.patch("jailbee.db.state_dir", return_value=root.parent)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(name="myrepo-a", user_config={"user.jailbee.repo_dir": "/repo"}),
+        _container(name="myrepo-b", state="Stopped"),
+    ]
+    mocker.patch("jailbee.lifecycle.probe_many_parallel", return_value={
+        "myrepo-a": GitStatus("?", "?", "?", "?")
+    })
+    before = store_path(root).read_bytes()
+    rows = {c.name: c for c in list_containers(cfg, incus, with_git_status=True)}
+    assert rows["myrepo-a"].git_status.unread_inbox == 1
+    assert rows["myrepo-b"].git_status.unread_inbox == 2
+    assert rows["myrepo-b"].git_status.wt == "?"
+    assert store_path(root).read_bytes() == before
+    incus.exec.assert_not_called()
+
+
+def test_listing_missing_or_corrupt_store_never_writes(make_cfg, tmp_path, mocker):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    state = tmp_path / "state"
+    mocker.patch("jailbee.db.state_dir", return_value=state)
+    incus = MagicMock()
+    incus.list_containers.return_value = [_container(name="myrepo-a", state="Stopped")]
+    list_containers(cfg, incus, with_git_status=True)
+    assert not state.exists()
+    root = state / "orchestration"
+    root.mkdir(parents=True)
+    db = root / "broker.db"
+    db.write_bytes(b"not sqlite")
+    list_containers(cfg, incus, with_git_status=True)
+    assert db.read_bytes() == b"not sqlite"
+    assert list(root.iterdir()) == [db]
+    incus.exec.assert_not_called()
+
+
 def test_list_containers_passes_base_branch_to_probe(make_cfg, tmp_path, mocker):
     repo = tmp_path / "myrepo"
     repo.mkdir()
@@ -12213,11 +12269,8 @@ def _orch_ci(name="myrepo-a", **kw):
 
     c = ci(name, "myrepo")
     unread = kw.pop("unread", None)
-    outbox = kw.pop("outbox", None)
-    if unread is not None or outbox is not None:
-        kw["git_status"] = GitStatus(
-            "clean", "clean", "0", "ok", unread_inbox=unread, pending_orch_outbox=outbox
-        )
+    if unread is not None:
+        kw["git_status"] = GitStatus("clean", "clean", "0", "ok", unread_inbox=unread)
     if kw.pop("as_orch", False):
         limit = kw.pop("limit", 2)
         kw["grant"] = GrantView(limit, ("spawn",), ("/m",), True, ("x.io",))
@@ -12276,9 +12329,9 @@ def test_children_json():
 
 
 def test_inbox_cell_and_json():
-    c = _orch_ci(as_child=True, unread=3, outbox=1)
+    c = _orch_ci(as_child=True, unread=3)
     assert _ls_spec("inbox").cell(c) == "✉3"
-    assert _ls_spec("inbox").json(c) == {"unread": 3, "outbox_pending": 1}
+    assert _ls_spec("inbox").json(c) == {"unread": 3}
     assert _ls_spec("inbox").cell(_orch_ci(as_child=True, unread=0)) == ""
     assert _ls_spec("inbox").json(_orch_ci()) is None
 

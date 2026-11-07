@@ -707,8 +707,26 @@ def list_containers(
                     for name in target_names
                 },
             )
+        from jailbee.db import state_dir
+        from jailbee.orchestration.store import StoreError, read_items
+
+        try:
+            items = read_items(state_dir() / "orchestration")
+            counts: dict[str, int] = {}
+            for item in items:
+                if item.acked_at is None:
+                    counts[item.recipient_full] = counts.get(item.recipient_full, 0) + 1
+            unread_counts: dict[str, int] | None = counts
+        except (StoreError, ValueError, OSError):
+            unread_counts = None
+
         for c in out:
             status = statuses.get(c.name)
+            unread = unread_counts.get(c.name, 0) if unread_counts is not None else None
+            if status is None and unread:
+                status = GitStatus("?", "?", "?", "?")
+            if status is not None:
+                status = replace(status, unread_inbox=unread)
             c.git_status = (
                 None
                 if status is None
@@ -3981,7 +3999,6 @@ def ls_field_specs(
         gs = c.git_status
         return {
             "unread": gs.unread_inbox if gs else None,
-            "outbox_pending": gs.pending_orch_outbox if gs else None,
         }
 
     def _git_key(
