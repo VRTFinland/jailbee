@@ -159,7 +159,11 @@ def recipient_uuid(root: Path, full: str) -> str | None:
 
 
 def unread_counts_by_uuid(root: Path) -> dict[str, int]:
-    """Count unread items without loading their payloads or writing the store."""
+    """Count actionable unread: messages and failed/refused status replies.
+
+    Informational success statuses stay unread, but do not inflate the dashboard
+    count. No payloads are loaded and the store is never written.
+    """
     path = store_path(root)
     if not path.exists():
         return {}
@@ -168,7 +172,9 @@ def unread_counts_by_uuid(root: Path) -> dict[str, int]:
         try:
             rows = con.execute(
                 "SELECT recipient_uuid, COUNT(*) FROM items "
-                "WHERE acked_at IS NULL GROUP BY recipient_uuid"
+                "WHERE acked_at IS NULL AND (type='message' OR "
+                "(type='status' AND kind_or_state IN ('failed', 'refused'))) "
+                "GROUP BY recipient_uuid"
             ).fetchall()
             return {str(uuid): int(count) for uuid, count in rows}
         finally:
@@ -467,6 +473,16 @@ class BrokerStore:
                 "SELECT 1 FROM items WHERE recipient_uuid=? AND id=?", (uuid, id)
             ).fetchone()
             return row is not None
+
+    def ack_ok_statuses(self, uuid: str, *, now: float) -> int:
+        """Acknowledge this recipient's unread success statuses in one transaction."""
+        with self._tx() as con:
+            result = con.execute(
+                "UPDATE items SET acked_at=? WHERE recipient_uuid=? AND acked_at IS NULL "
+                "AND type='status' AND kind_or_state IN ('queued', 'started', 'done')",
+                (now, uuid),
+            )
+            return result.rowcount
 
     def ack_if_connected(
         self, uuid: str, id: str, *, now: float, is_connected: Callable[[], bool]

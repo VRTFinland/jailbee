@@ -20,6 +20,7 @@ from jailbee.inbox.transport import (
     call_send,
     socket_path,
 )
+from jailbee.inbox.waiting import matches_wake_filter, parse_wake_filter
 from jailbee.orchestration import wire
 
 STALE_AFTER = 900
@@ -59,9 +60,22 @@ def _unread() -> Iterator[dict[str, Any]]:
         after = result.get("next")
 
 
-def cmd_ls() -> int:
+def cmd_ls(*, wake_on: str | None = None) -> int:
+    wake = parse_wake_filter(wake_on)
     for item in _unread():
-        print(ls_line(item))
+        record_type = str(item.get("type", ""))
+        token = item.get("state" if record_type == "status" else "kind")
+        if matches_wake_filter(record_type, token, wake):
+            print(ls_line(item))
+    return 0
+
+
+def cmd_read_ok_statuses() -> int:
+    try:
+        result = _call("ack", {"ok_statuses": True})
+    except BrokerError as exc:
+        return _fail(exc)
+    print(f"Marked {result['acked']} success statuses read.")
     return 0
 
 

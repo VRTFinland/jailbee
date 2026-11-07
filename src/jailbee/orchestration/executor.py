@@ -113,7 +113,10 @@ def _dispatch(
             store, uuid, id=args.get("id"), keep=args.get("keep", False), now=time.time()
         )
     if op == "ack":
-        return socket_ops.handle_ack(store, uuid, id=args.get("id"), now=time.time())
+        return socket_ops.handle_ack(
+            store, uuid, id=args.get("id"), now=time.time(),
+            ok_statuses=args.get("ok_statuses", False),
+        )
     if op == "children":
         return socket_ops.handle_children(memory, store, uuid)
     if op == "status":

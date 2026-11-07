@@ -663,7 +663,20 @@ to inspect it. The obsolete `--path` option also prints the ID. **Nothing is mar
 read**, even when a message does not match. Omit the filter for any unread
 message. The first message from a child after each spawn/restart always wakes, regardless of
 kind; read history prevents later notes from counting as first again.
-After waking, list and handle all unread messages, including filtered notes.
+After waking, list and handle all unread child messages, including filtered
+notes, and failed/refused statuses. Inspect useful success details (such as
+publish results with issue numbers and URLs), then run
+`jailbee inbox read --ok-statuses` to mark all unread queued/started/done
+statuses read in one call. It prints the count and leaves child messages and
+failed/refused statuses untouched. No success status is automatically marked
+read: the dashboard INBOX count simply counts actionable unread items (all
+messages plus failed/refused statuses), excluding informational success acks.
+
+`jailbee inbox ls --wake-on TOKENS` filters the unread list with the same
+bare-word, `msg:<kind>` and `status:<state>` syntax as `wait`. For example,
+`jailbee inbox ls --wake-on msg:done,question,blocked,idle,status:failed,status:refused`
+shows the recommended wake categories. Listing never marks items read and has
+no first-child-message override. Omit the filter to inspect every unread item.
 
 `--quiet-after` returns exit 0 with `quiet-child CHILD` instead of a path when
 a running child that has not reported done shows no activity for that duration.

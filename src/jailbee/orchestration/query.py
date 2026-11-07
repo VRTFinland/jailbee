@@ -89,7 +89,10 @@ class Queries:
                     keep=args.get("keep", False),
                     now=time.time(),
                 )
-            return socket_ops.handle_ack(self._store, uuid, id=args.get("id"), now=time.time())
+            return socket_ops.handle_ack(
+                self._store, uuid, id=args.get("id"), now=time.time(),
+                ok_statuses=args.get("ok_statuses", False),
+            )
 
         # Never consult BrokerMemory, ActionContext, Incus or SQLite here.
         snapshot = self._snapshot

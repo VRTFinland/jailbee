@@ -121,7 +121,8 @@ class GitStatus:
     # separate outbox directory. None means the probe could not say (older
     # output, or an unreadable value).
     pending_issue_actions: int | None = None
-    # Read from the host broker store, independently of the git probe.
+    # Actionable unread (messages + failed/refused statuses), read from the
+    # host broker store independently of the git probe.
     unread_inbox: int | None = None
     target_diff: str = "?"
     behind_count: str = "?"

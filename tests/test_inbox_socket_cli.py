@@ -117,6 +117,75 @@ def test_ls_prints_ls_lines(broker: FakeBroker, sockdir: Path, tmp_path: Path) -
     assert not (tmp_path / "nofiles").exists()
 
 
+@pytest.mark.parametrize(
+    ("tokens", "ids"),
+    [
+        ("done", ["child", "ok"]),
+        ("msg:done", ["child"]),
+        ("status:done,status:failed", ["ok", "bad"]),
+        ("question,status:failed", ["bad"]),
+    ],
+)
+def test_ls_filters_with_wait_tokens_across_pages(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path, tokens: str, ids: list[str]
+) -> None:
+    def page(req: wire.Request) -> wire.Response:
+        if req.args["after"] == 0:
+            return wire.ok({"items": [
+                {"id": "child", "type": "message", "kind": "done"},
+                {"id": "ok", "type": "status", "state": "done"},
+            ], "next": 2})
+        return wire.ok({"items": [
+            {"id": "bad", "type": "status", "state": "failed"},
+        ], "next": None})
+
+    broker.handlers["list"] = page
+    result = run(sockdir, "ls", "--wake-on", tokens, tmp=tmp_path)
+    assert result.returncode == 0
+    assert [line.split()[0] for line in result.stdout.splitlines()] == ids
+    assert [q.op for q in broker.requests] == ["list", "list"]
+
+
+@pytest.mark.parametrize("tokens", ["", "status:question", "msg:failed", "done,", "bogus"])
+def test_ls_rejects_invalid_filter_before_contacting_broker(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path, tokens: str
+) -> None:
+    result = run(sockdir, "ls", "--wake-on", tokens, tmp=tmp_path)
+    assert result.returncode == 2
+    assert "comma-separated message kinds or status states" in result.stderr
+    assert not broker.requests
+
+
+def test_read_ok_statuses_calls_bulk_ack(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path
+) -> None:
+    broker.on("ack", {"acked": 17})
+    result = run(sockdir, "read", "--ok-statuses", tmp=tmp_path)
+    assert result.returncode == 0
+    assert result.stdout == "Marked 17 success statuses read.\n"
+    assert [(q.op, q.args) for q in broker.requests] == [("ack", {"ok_statuses": True})]
+
+
+@pytest.mark.parametrize("args", [("m1", "--ok-statuses"), ("--keep", "--ok-statuses")])
+def test_read_ok_statuses_rejects_incompatible_options(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    result = run(sockdir, "read", *args, tmp=tmp_path)
+    assert result.returncode == 2
+    assert "--ok-statuses cannot be combined" in result.stderr
+    assert not broker.requests
+
+
+def test_read_ok_statuses_reports_failure(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path
+) -> None:
+    broker.on("ack", error=(wire.STORE, "locked"))
+    result = run(sockdir, "read", "--ok-statuses", tmp=tmp_path)
+    assert result.returncode == 4
+    assert "locked" in result.stderr
+    assert "Marked" not in result.stdout
+
+
 def test_read_prints_pretty_and_passes_keep(
     broker: FakeBroker, sockdir: Path, tmp_path: Path
 ) -> None:
@@ -789,7 +858,7 @@ def test_timeout_from_a_socket_command_is_exit_4(
 
     from jailbee.inbox import container_cmd, socket_cli
 
-    def boom() -> int:
+    def boom(*, wake_on: str | None = None) -> int:
         raise TimeoutError("timed out")
 
     monkeypatch.setenv("JAILBEE_ORCHESTRATION_SOCKET", str(sockdir / "broker.sock"))

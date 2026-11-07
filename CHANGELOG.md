@@ -8,6 +8,19 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- `jailbee inbox ls --wake-on TOKENS` filters unread items with the same kind/state
+  syntax as `inbox wait`. `jailbee inbox read --ok-statuses` acknowledges all unread
+  queued/started/done status replies in one call, leaving child messages and failures
+  untouched.
+
+### Fixed
+
+- The dashboard INBOX count includes only actionable unread messages and
+  failed/refused statuses. Successful broker acknowledgements remain readable but
+  no longer make an orchestrator look behind ([#88](https://github.com/VRTFinland/jailbee/issues/88)).
+
 ## 1.8.4 - 2026-11-07
 
 ### Added
