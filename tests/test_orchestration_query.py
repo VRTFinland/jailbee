@@ -476,7 +476,11 @@ def test_recreated_orchestrator_does_not_inherit_children_on_history_failure(
     monkeypatch.setattr(
         env.store, "history_meta", lambda *args: (_ for _ in ()).throw(StoreError("failed"))
     )
-    monkeypatch.setattr(broker.inbox_state, "sync_children", lambda *args: (_ for _ in ()).throw(RuntimeError("failed")))
+    monkeypatch.setattr(
+        broker.inbox_state,
+        "sync_children",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("failed")),
+    )
     assert env.rig.tick(env.memory) is True
     result = env.queries.answer("new-uuid", wire.Request("children"))
     assert result.ok and result.result["children"] == []

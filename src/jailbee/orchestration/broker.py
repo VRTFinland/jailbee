@@ -1443,9 +1443,7 @@ def _publish_queries(memory: BrokerMemory) -> None:
     except Exception:
         log.exception("broker: publishing query recipients failed")
         recipients = set(memory.queries.snapshot())
-    snapshot = {
-        uuid: ContainerSnapshot("none", True, empty_children, None) for uuid in recipients
-    }
+    snapshot = {uuid: ContainerSnapshot("none", True, empty_children, None) for uuid in recipients}
     for uuid, ctx in memory.contexts.items():
         try:
             snapshot[uuid] = _context_snapshot(memory, ctx)
