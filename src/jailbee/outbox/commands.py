@@ -23,10 +23,16 @@ from jailbee.outbox.models import (
     ProposalView,
 )
 from jailbee.outbox.publish import PublishOptions, publish_selected
-from jailbee.outbox.service import execute_delete, load_container
+from jailbee.outbox.service import (
+    execute_delete,
+    load_container,
+    parse_retained_ref,
+    retained_ref,
+)
 from jailbee.remote_ssh import repo_scope
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from jailbee.config import Config
@@ -66,7 +72,7 @@ def _repo_roots(cfg: Config, scope: RemoteRepoScope) -> dict[str, Path]:
     return roots
 
 
-def _own_config(prefix: str | None, roots: dict[str, Path]) -> Config:
+def _own_config(prefix: str | None, roots: Mapping[str, Path]) -> Config:
     if prefix is None or prefix not in roots:
         raise OutboxError("target repository is not registered; config is unavailable")
     root = roots[prefix]
@@ -102,10 +108,77 @@ def resolve_target(cfg: Config, incus: Incus, name: str) -> tuple[Config, str]:
     an immutable view. A missing config file can be a valid synthesized config;
     a missing root, failed load or changed prefix cannot fall back to the caller.
     """
+    if parse_retained_ref(name) is not None:
+        return _resolve_retained(cfg, incus, name)
     containers, roots = _inventory(cfg, incus, all_repos=True)
     item = _resolve_visible(cfg, name, containers)
     # The proposals live in the host outbox store: a stopped container is served too.
     return _own_config(item.repo, roots), item.name
+
+
+def _live_uuids(incus: Incus) -> set[str]:
+    """The ``volatile.uuid`` of every listed instance, whatever its repository."""
+    try:
+        raw = incus.list_containers(fast=True, timeout=READ_TIMEOUT)
+    except IncusError as exc:
+        raise OutboxExecutionError(str(exc)) from exc
+    uuids = set()
+    for item in raw:
+        config = item.get("config")
+        uuid = config.get("volatile.uuid") if isinstance(config, dict) else None
+        if isinstance(uuid, str) and uuid:
+            uuids.add(uuid)
+    return uuids
+
+
+def _owner_prefix(full: str, roots: Mapping[str, Path]) -> str | None:
+    """The registered prefix a container name belongs to (the longest that fits)."""
+    fits = [prefix for prefix in roots if full.startswith(f"{prefix}-")]
+    return max(fits, key=len) if fits else None
+
+
+def _retained(incus: Incus) -> dict[str, str]:
+    """uuid -> full name of destroyed instances whose uncertain proposals were kept."""
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox import publication_db, store_db
+
+    try:
+        retained = store_db.read_retained(publication_db.default_root())
+    except StoreError as exc:
+        raise OutboxExecutionError(f"outbox store is unreadable: {exc}") from exc
+    if not retained:
+        return {}  # the common case: no Incus listing needed
+    live = _live_uuids(incus)
+    return {uuid: full for uuid, full in retained.items() if uuid not in live}
+
+
+def _resolve_retained(cfg: Config, incus: Incus, name: str) -> tuple[Config, str]:
+    ref = parse_retained_ref(name)
+    assert ref is not None
+    full, uuid = ref
+    if _retained(incus).get(uuid) != full:
+        raise OutboxError(f"no destroyed container's retained outbox is named {name}")
+    roots = _repo_roots(cfg, repo_scope.scope_for_session())
+    return _own_config(_owner_prefix(full, roots), roots), name
+
+
+def _retained_views(
+    cfg: Config, incus: Incus, roots: Mapping[str, Path], *, all_repos: bool
+) -> list[ContainerView]:
+    """Views of destroyed instances' retained proposals in the listed scope."""
+    result = []
+    for uuid, full in sorted(_retained(incus).items(), key=lambda item: (item[1], item[0])):
+        prefix = _owner_prefix(full, roots)
+        if prefix is None or (not all_repos and prefix != cfg.container_prefix):
+            continue
+        ref = retained_ref(full, uuid)
+        try:
+            target = _own_config(prefix, roots)
+        except OutboxError as exc:
+            result.append(ContainerView(None, ref, False, str(exc), (), (), destroyed=True))
+            continue
+        result.append(load_container(target, incus, ref))
+    return result
 
 
 def _resolve_visible(cfg: Config, name: str, containers: Sequence[ContainerInfo]) -> ContainerInfo:
@@ -147,6 +220,9 @@ def discover(
     """Inspect all visible candidates, regardless of advisory probe counts."""
     if name is not None and all_repos:
         raise OutboxError("pass a container or --all-repos, not both")
+    if name is not None and parse_retained_ref(name) is not None:
+        target, ref = _resolve_retained(cfg, incus, name)
+        return (load_container(target, incus, ref),)
     containers, roots = _inventory(cfg, incus, all_repos=all_repos or name is not None)
     if name is not None:
         containers = [_resolve_visible(cfg, name, containers)]
@@ -158,6 +234,8 @@ def discover(
             result.append(ContainerView(None, item.name, False, str(exc), (), ()))
             continue
         result.append(load_container(target, incus, item.name))
+    if name is None:
+        result.extend(_retained_views(cfg, incus, roots, all_repos=all_repos))
     return tuple(result)
 
 
@@ -223,6 +301,11 @@ def apply_selected(
         raise OutboxError("draft is only valid for PR publication")
     if proposal.kind == "issue" and options.force:
         raise OutboxError("force is only valid for PR publication")
+    if parse_retained_ref(name) is not None:
+        raise OutboxError(
+            f"{name}: the container was destroyed; resolve its uncertain actions "
+            "(jailbee issue resolve / jailbee review resolve) or drop the proposal"
+        )
     target, container, view = _selected(cfg, incus, name, proposal, revision=expected_revision)
     if view.error:
         raise OutboxError(f"{proposal}: {view.error}")
@@ -373,8 +456,8 @@ def _attach_create_scopes(
             continue
         container = by_name.get(row["name"])
         proposals = row.get("proposals")
-        if container is None or not isinstance(proposals, list):
-            continue
+        if container is None or container.destroyed or not isinstance(proposals, list):
+            continue  # a destroyed instance can neither push nor create a PR
         for proposal_row in proposals:
             if isinstance(proposal_row, dict) and proposal_row.get("state") == "awaiting-push":
                 view = next(
@@ -457,16 +540,17 @@ def show_overview(
 
         table = Table("Container", "Proposal", "State", "Actions / Note")
         for container in containers:
+            label = container.name + (" (destroyed)" if container.destroyed else "")
             if not container.available or not container.proposals:
                 table.add_row(
-                    Text(safe_text(container.name)),
+                    Text(safe_text(label)),
                     "",
                     "unavailable" if not container.available else "empty",
                     Text(safe_text(container.error or "No proposals")),
                 )
             for proposal in container.proposals:
                 table.add_row(
-                    Text(safe_text(container.name)),
+                    Text(safe_text(label)),
                     Text(str(proposal.id)),
                     proposal.state,
                     Text(safe_text(proposal.error or str(len(proposal.actions)))),
@@ -474,14 +558,14 @@ def show_overview(
             for snapshot in container.stores:
                 for warning in snapshot.warnings:
                     table.add_row(
-                        Text(safe_text(container.name)),
+                        Text(safe_text(label)),
                         snapshot.kind,
                         "warning",
                         Text(safe_text(warning)),
                     )
                 for rejected in snapshot.rejected:
                     table.add_row(
-                        Text(safe_text(container.name)),
+                        Text(safe_text(label)),
                         snapshot.kind,
                         "rejected",
                         Text(safe_text(rejected)),

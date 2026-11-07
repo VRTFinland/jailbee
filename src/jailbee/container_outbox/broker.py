@@ -13,18 +13,17 @@ from typing import Any, cast
 
 from jailbee.container_outbox.common import Kind, OutboxCommandError
 from jailbee.inbox.transport import (
-    CONNECT_RETRY_SECONDS,
     BrokerError,
     BrokerUnreachable,
     BrokerVersionMismatch,
     Client,
+    retry_seconds,
     socket_path,
 )
 from jailbee.orchestration import wire
 
 EXIT_UNREACHABLE = 4
 CALL_TIMEOUT = 60.0
-RETRY_ENV = "JAILBEE_BROKER_RETRY_SECONDS"  # shared with `jailbee inbox`
 _UNREACHABLE = (
     "the host broker is not reachable; nothing was staged. "
     "If this persists, tell the human (`jailbee doctor` on the host)"
@@ -39,16 +38,9 @@ _WRITE_OPS = frozenset({wire.OUTBOX_PUT, wire.OUTBOX_DRAFT_APPEND, wire.OUTBOX_D
 _VERSION = "container and broker versions differ; ask the human to run `jb apply` on the host"
 
 
-def _retry_seconds() -> float:
-    try:
-        return max(0.0, float(os.environ.get(RETRY_ENV, CONNECT_RETRY_SECONDS)))
-    except ValueError:
-        return CONNECT_RETRY_SECONDS
-
-
 def call(op: str, args: dict[str, Any]) -> Any:
     """One broker op; raises `OutboxCommandError` with the exit code to use."""
-    client = Client(socket_path(os.environ), retry_for=_retry_seconds())
+    client = Client(socket_path(os.environ), retry_for=retry_seconds())
     try:
         return client.call(op, args, timeout=CALL_TIMEOUT)
     except BrokerVersionMismatch as exc:

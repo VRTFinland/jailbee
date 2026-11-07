@@ -7,8 +7,8 @@ from typing import Annotated, cast
 import typer
 
 from jailbee.container_outbox import broker
-from jailbee.container_outbox.common import Kind, OutboxCommandError
-from jailbee.container_outbox.issue_cmds import _guard, _run
+from jailbee.container_outbox.common import Kind, OutboxCommandError, require_role
+from jailbee.container_outbox.issue_cmds import _run
 
 outbox_app = typer.Typer(
     no_args_is_help=True,
@@ -131,7 +131,7 @@ def drop(target: TargetArg = None) -> None:
     """Remove a staged proposal that is not yet published."""
 
     def run() -> None:
-        _guard()
+        require_role()
         kind, name = _target(target)
         broker.drop(kind, name)
         typer.echo(f"dropped {kind}/{name}")
@@ -144,7 +144,7 @@ def submit(name: DraftArg = None, kind: KindOpt = None) -> None:
     """Stage a draft batch for publishing; review drafts need pr review submit."""
 
     def run() -> None:
-        _guard()
+        require_role()
         domain, draft = _resolve(name, kind)
         # The broker refuses a review draft here: it needs `jailbee pr review submit`.
         result = broker.draft_submit(domain, draft)
@@ -158,7 +158,7 @@ def discard(name: DraftArg = None, kind: KindOpt = None) -> None:
     """Discard a draft batch without staging it."""
 
     def run() -> None:
-        _guard()
+        require_role()
         domain, draft = _resolve(name, kind)
         broker.draft_discard(domain, draft)
         typer.echo(f"discarded {domain} draft {draft}")

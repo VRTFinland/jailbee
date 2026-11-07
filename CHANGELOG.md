@@ -35,7 +35,9 @@ before editing `## Unreleased`.
   publication progress. `jailbee review resolve` settles an uncertain PR action
   like `jailbee issue resolve` does for issues. Staging exits 4 when the broker
   is unreachable. Proposals are bound to the Incus instance, so a fork or a
-  restored snapshot does not carry them. **Before upgrading**, publish or drop
+  restored snapshot does not carry them. Destroying a container keeps only
+  proposals with an uncertain publication outcome; `jb outbox` lists them as
+  `<container>@<uuid>` until they are resolved and dropped. **Before upgrading**, publish or drop
   pending proposals and resolve uncertain publications: the old
   `~/.jailbee/{issue,pr}-outbox` directories are ignored afterwards, and the old
   Sent history in `state.sqlite` is not carried over

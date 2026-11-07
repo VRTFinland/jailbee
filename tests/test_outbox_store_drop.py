@@ -65,23 +65,30 @@ def test_a_proposal_with_recorded_progress_cannot_be_dropped(ob: OutboxStore) ->
         ob.drop_proposal("u1", "issue", row.name)
 
 
-def test_destroy_deletes_proposals_and_drafts_but_keeps_journals(
+def test_destroy_deletes_proposals_and_drafts_but_keeps_journals_and_uncertain_ones(
     ob: OutboxStore, tmp_path: Path
 ) -> None:
-    row = ob.put_proposal("u1", "issue", "a", _build, now=1.0)
+    uncertain = ob.put_proposal("u1", "issue", "a", _build, now=1.0)
+    settled = ob.put_proposal("u1", "issue", "b", _build, now=1.0)
+    ob.put_proposal("u1", "issue", "c", _build, now=1.0)
     ob.put_proposal("u2", "issue", "a", _build, now=1.0)
-    _journal(ob, "u1", row.name, ["uncertain"])
+    _journal(ob, "u1", uncertain.name, ["uncertain"])
+    _journal(ob, "u1", settled.name, ["applied"])
     with ob._store.transaction() as con:
         con.execute(
             "INSERT INTO outbox_draft(uuid, kind, name, manifest, bodies, created_at, "
             "updated_at) VALUES('u1','issue','d','{}','{}',1,1)"
         )
-    assert ob.delete_container("u1") == 1
-    assert store_db.read_proposals(tmp_path, "u1") == []
+    assert ob.delete_container("u1") == 2
+    (kept,) = store_db.read_proposals(tmp_path, "u1")
+    assert (kept.name, kept.bodies) == (uncertain.name, uncertain.bodies)
     assert len(store_db.read_proposals(tmp_path, "u2")) == 1
     with ob._store.transaction(write=False) as con:
         assert con.execute("SELECT COUNT(*) FROM outbox_draft").fetchone() == (0,)
-        assert con.execute("SELECT state FROM outbox_journal_action").fetchall() == [("uncertain",)]
+        assert sorted(con.execute("SELECT state FROM outbox_journal_action").fetchall()) == [
+            ("applied",),
+            ("uncertain",),
+        ]
 
 
 def test_pending_counts_are_journal_aware(ob: OutboxStore, tmp_path: Path) -> None:

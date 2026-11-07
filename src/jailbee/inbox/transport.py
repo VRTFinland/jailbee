@@ -6,6 +6,7 @@ this module is imported by the inbox commands inside a container.
 
 from __future__ import annotations
 
+import os
 import socket
 import time
 from collections.abc import Callable, Mapping
@@ -36,7 +37,16 @@ _BACKOFF_CAP = 5.0
 _RETRY_PAUSE = 0.25
 _RETRY_PAUSE_CAP = 1.0
 CONNECT_RETRY_SECONDS = 10.0  # covers a broker restart
+RETRY_ENV = "JAILBEE_BROKER_RETRY_SECONDS"  # overrides it, for tests and operators
 _READ_GRACE = 5.0  # socket read slack beyond the server-side long-poll timeout
+
+
+def retry_seconds() -> float:
+    """The connect retry window: `CONNECT_RETRY_SECONDS`, or `RETRY_ENV` when set."""
+    try:
+        return max(0.0, float(os.environ.get(RETRY_ENV, CONNECT_RETRY_SECONDS)))
+    except ValueError:
+        return CONNECT_RETRY_SECONDS
 
 
 class BrokerUnreachable(Exception):  # noqa: N818 - name fixed by the spec

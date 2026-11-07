@@ -667,7 +667,7 @@ def validate_outbox_source(
         ):
             raise OutboxChanged("description source changed; refresh required")
         bodies = tuple(
-            sorted((n, fresh.files[n]) for n in pr_outbox._body_references(source.manifest_text))
+            sorted((n, fresh.files[n]) for n in pr_outbox.body_references(source.manifest_text))
         )
         digest = pr_outbox.description_source_digest(
             fresh, source.manifest, source.index, source.text

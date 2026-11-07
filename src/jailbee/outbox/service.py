@@ -25,9 +25,35 @@ from jailbee.outbox_io import (
     JournalError,
 )
 
+RETAINED_SEPARATOR = "@"
+
+
+def retained_ref(full: str, uuid: str) -> str:
+    """How `jb outbox` names a destroyed container's retained proposals: ``full@uuid``.
+
+    Incus names never contain ``@``, so the form cannot collide with a live
+    container, and the uuid tells a namesake's later incarnation apart.
+    """
+    return f"{full}{RETAINED_SEPARATOR}{uuid}"
+
+
+def parse_retained_ref(name: str) -> tuple[str, str] | None:
+    """``(full, uuid)`` of a `retained_ref`, or None for an ordinary container name."""
+    full, separator, uuid = name.rpartition(RETAINED_SEPARATOR)
+    if not separator or not uuid or RETAINED_SEPARATOR in full:
+        return None
+    return full, uuid
+
 
 def _instance(incus: Incus, container: str) -> tuple[ContainerIdentity, str | None]:
-    """The instance's identity and its Incus ``volatile.uuid`` (None if unset)."""
+    """The instance's identity and its Incus ``volatile.uuid`` (None if unset).
+
+    A `retained_ref` names a destroyed instance: its uuid is in the name and
+    its identity has no creation time; no Incus call is made.
+    """
+    retained = parse_retained_ref(container)
+    if retained is not None:
+        return ContainerIdentity(retained[0], ""), retained[1]
     # `outbox_io.container_identity` has no timeout parameter. Keep the same
     # raw/nonzero timestamp contract while bounding this interactive service.
     # --fast: created_at and config are top-level keys; no instance state is needed.
@@ -184,8 +210,13 @@ def load_container(
     *,
     raise_errors: bool = False,
 ) -> ContainerView:
-    """Inspect stores; explicit operations retain typed failures, overviews do not."""
+    """Inspect stores; explicit operations retain typed failures, overviews do not.
+
+    ``container`` may be a `retained_ref`: the view then shows what a destroy
+    kept of that instance (proposals with an uncertain publication outcome).
+    """
     identity = None
+    destroyed = parse_retained_ref(container) is not None
     try:
         identity, uuid = _instance(incus, container)
         # Every proposal lives in the host outbox store (no `incus exec`).
@@ -202,13 +233,15 @@ def load_container(
             ),
             uuid,
         )
-        return ContainerView(identity, container, True, None, stores, proposals)
+        return ContainerView(
+            identity, container, True, None, stores, proposals, destroyed=destroyed
+        )
     except (IncusError, JournalError, OutboxExecutionError, OutboxChanged) as exc:
         if raise_errors:
             if isinstance(exc, (OutboxChanged, OutboxExecutionError)):
                 raise
             raise OutboxExecutionError(str(exc)) from exc
-        return ContainerView(identity, container, False, str(exc), (), ())
+        return ContainerView(identity, container, False, str(exc), (), (), destroyed=destroyed)
 
 
 def execute_delete(
@@ -222,8 +255,9 @@ def execute_delete(
     """Recheck deletion under its lock, optionally bounding the lock wait only."""
     try:
         identity, uuid = _instance(incus, container)
-        # Issue proposals are guarded by their row version in the host store.
-        if plan.proposal.kind == "issue":
+        # Issue proposals are guarded by their row version in the host store, as
+        # are a destroyed instance's (no PR flow can run for it any more).
+        if plan.proposal.kind == "issue" or parse_retained_ref(container) is not None:
             lock: AbstractContextManager[object] = nullcontext()
         else:
             manager = PrManagement()

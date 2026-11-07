@@ -141,15 +141,17 @@ def _drop_orchestration(snap: TeardownSnapshot) -> None:
 def _delete_outbox_rows(snap: TeardownSnapshot) -> None:
     """Delete the destroyed instance's pending proposals and drafts from the store.
 
-    Journals and sent records stay, so an uncertain publication remains resolvable.
+    Journals and sent records stay, and so does a proposal whose publication
+    outcome is uncertain, so it remains resolvable in ``jb outbox``.
     """
     if snap.uuid is None:
         return
     from jailbee.db import state_dir
-    from jailbee.outbox.store_db import host_store, store_path_exists
+    from jailbee.orchestration.store import store_path
+    from jailbee.outbox.store_db import host_store
 
     root = state_dir() / "orchestration"
-    if not store_path_exists(root):
+    if not store_path(root).exists():
         return  # nothing was ever staged; do not create the database
     host_store(root).delete_container(snap.uuid)
 

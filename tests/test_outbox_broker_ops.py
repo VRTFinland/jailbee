@@ -121,6 +121,69 @@ def test_a_child_without_a_round_context_is_still_refused(env: Env) -> None:
     assert stored(env, "proj-lost") == []
 
 
+def _without_context(env: Env, monkeypatch: pytest.MonkeyPatch, full: str, **label: str) -> None:
+    """List ``full`` with ``label`` but give it no round context (its repo config
+    does not load), so the broker never prepares it: no env_roles entry."""
+    from jailbee.orchestration import broker_state
+
+    real = broker_state.owner_config
+    monkeypatch.setattr(
+        broker_state,
+        "owner_config",
+        lambda name, *a: None if name == full else real(name, *a),
+    )
+    env.store.set_recipient(full, full, now=1.0)
+    env.listener.open_container(full, env.rig.root / full)
+    env.rig.incus.list_containers.return_value.append(_c(full, **{"volatile.uuid": full, **label}))
+    env.rig.tick(env.memory)
+    assert full not in env.memory.env_roles
+    assert full not in {ctx.sender.full for ctx in env.memory.contexts.values()}
+
+
+def test_a_child_the_broker_never_prepared_is_refused_from_its_labels(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration import labels
+
+    _without_context(env, monkeypatch, "proj-lost", **{labels.SPAWNED_BY: "proj-orch"})
+    response = put(env, uuid="proj-lost")
+    assert response.error_code == wire.REFUSED
+    assert "child container" in response.error_detail
+    assert stored(env, "proj-lost") == []
+
+
+def test_an_orchestrator_without_a_valid_context_may_read_but_not_stage(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration import labels
+
+    _without_context(env, monkeypatch, "proj-odd", **{labels.GRANT: "anything"})
+    assert env.queries.snapshot()["proj-odd"].role == "none"
+    response = put(env, uuid="proj-odd")
+    assert response.error_code == wire.REFUSED
+    assert "role" in response.error_detail
+    assert stored(env, "proj-odd") == []
+    assert env.call(wire.OUTBOX_LIST, uuid="proj-odd", kind="issue").result == {"proposals": []}
+
+
+def test_a_failed_recipient_read_does_not_turn_a_child_plain(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.orchestration import query
+    from jailbee.orchestration.store import StoreError
+
+    assert env.queries.snapshot()[PLAIN].role == "plain"
+    env.memory.listed_roles[PLAIN] = "child"  # labelled a child since the last round
+
+    def fail() -> dict[str, str]:
+        raise StoreError("locked")
+
+    monkeypatch.setattr(env.store, "recipients", fail)
+    query.publish_queries(env.memory)
+    assert env.queries.snapshot()[PLAIN].role == "child"
+    assert put(env).error_code == wire.REFUSED
+
+
 def test_a_container_without_a_published_view_is_told_to_retry(env: Env) -> None:
     assert put(env, uuid="unknown").error_code == wire.STORE
     assert stored(env, "unknown") == []

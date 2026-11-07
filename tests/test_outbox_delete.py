@@ -176,7 +176,6 @@ def test_whole_deletes_only_referenced_exclusive_bodies(tmp_path, last_action):
             "001.json": json.dumps(raw),
             "body.md": "Body",
             "orphan.md": "Keep",
-            "applied.log": "Unrelated receipt",
         }
     )
     plan = plan_delete(
@@ -190,9 +189,9 @@ def test_whole_deletes_only_referenced_exclusive_bodies(tmp_path, last_action):
 
 
 @pytest.mark.parametrize("kind", ["issue", "pr"])
-@pytest.mark.parametrize("body", ["002.json", "other.json.progress.json", "applied.log"])
+@pytest.mark.parametrize("body", ["002.json", "other.json.progress.json"])
 @pytest.mark.parametrize("last_action", [False, True])
-def test_body_cleanup_never_removes_manifest_or_history(tmp_path, kind, body, last_action):
+def test_body_cleanup_never_removes_a_manifest(tmp_path, kind, body, last_action):
     files = issue_files() if kind == "issue" else pr_files()
     raw = json.loads(files["001.json"])
     raw["actions"] = raw["actions"][:1]

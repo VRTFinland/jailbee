@@ -5,9 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from jailbee.orchestration.wire import OutboxKind
 from jailbee.outbox_io import ContainerIdentity
 
-Kind = Literal["pr", "issue"]
+Kind = OutboxKind  # one definition of the two outboxes, with the wire protocol
 State = Literal[
     "pending", "partial", "applied", "uncertain", "invalid", "awaiting-pr", "awaiting-push"
 ]
@@ -33,7 +34,6 @@ class ProposalId:
     def __post_init__(self) -> None:
         if self.kind not in ("pr", "issue") or (
             not self.name.endswith(".json")
-            or self.name.endswith(".progress.json")
             or any(c in self.name for c in ("/", "\\", "\0"))
             or self.name in (".json", "..json")
             or any(ord(c) < 32 or ord(c) == 127 for c in self.name)
@@ -124,3 +124,6 @@ class ContainerView:
     error: str | None
     stores: tuple[StoreSnapshot, ...]
     proposals: tuple[ProposalView, ...]
+    # The instance is gone: these are proposals its destroy kept because their
+    # publication outcome is uncertain (``name`` is a ``full@uuid`` reference).
+    destroyed: bool = False

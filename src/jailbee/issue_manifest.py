@@ -195,7 +195,7 @@ def _labels(value: object, field: str, context: str) -> tuple[str, ...]:
 
 
 ME_LOGIN: Final = "@me"
-_LOGIN_RE: Final = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9_]|-(?=[A-Za-z0-9_])){0,38}")
+LOGIN_RE: Final = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9_]|-(?=[A-Za-z0-9_])){0,38}")
 
 
 def _logins(value: object, field: str, context: str, *, allow_me: bool) -> tuple[str, ...]:
@@ -206,7 +206,7 @@ def _logins(value: object, field: str, context: str, *, allow_me: bool) -> tuple
     for login in value:
         if not isinstance(login, str):
             raise IssueManifestError(f"{context}: {field} must contain login strings")
-        if not (_LOGIN_RE.fullmatch(login) or (allow_me and login == ME_LOGIN)):
+        if not (LOGIN_RE.fullmatch(login) or (allow_me and login == ME_LOGIN)):
             raise IssueManifestError(f"{context}: invalid login {login!r} in {field}")
         folded = login.casefold()
         if folded in seen:

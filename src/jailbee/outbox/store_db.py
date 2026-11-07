@@ -21,15 +21,16 @@ import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from jailbee.orchestration.store import StoreError, store_path
+from jailbee.orchestration.wire import OUTBOX_KINDS, OutboxKind, outbox_kind
 
 if TYPE_CHECKING:
     from jailbee.orchestration.store import BrokerStore
 
-Kind = Literal["issue", "pr"]
-KINDS: tuple[Kind, ...] = ("issue", "pr")
+Kind = OutboxKind
+KINDS = OUTBOX_KINDS
 MAX_PENDING = 20  # pending proposals per container and kind
 _BUSY_TIMEOUT_S = 5.0
 
@@ -129,9 +130,10 @@ def _load_draft(con: sqlite3.Connection, uuid: str, kind: Kind, name: str) -> Dr
 
 
 def _kind(kind: str) -> Kind:
-    if kind not in KINDS:
+    checked = outbox_kind(kind)
+    if checked is None:
         raise ValueError(f"outbox kind must be issue or pr, not {kind!r}")
-    return "issue" if kind == "issue" else "pr"
+    return checked
 
 
 _COLS = "uuid, kind, name, seq, manifest, created_at, revision"
@@ -434,15 +436,71 @@ class OutboxStore:
 
     def delete_container(self, uuid: str) -> int:
         """Destroy semantics: delete the uuid's pending proposals (with bodies) and
-        drafts. Journals and sent records are never touched, so an uncertain
-        journal stays resolvable. Returns the number of proposals deleted."""
+        drafts. Journals and sent records are never touched. A proposal whose
+        active journal holds an uncertain (or leftover prepared) action is kept
+        with its bodies, so it stays resolvable in ``jb outbox`` after the
+        container is gone (`read_retained`). Returns the number of proposals deleted.
+        """
         with self._store.transaction() as con:
-            (count,) = con.execute(
-                "SELECT COUNT(*) FROM outbox_proposal WHERE uuid=?", (uuid,)
-            ).fetchone()
-            for table in ("outbox_body", "outbox_proposal", "outbox_draft"):
-                con.execute(f"DELETE FROM {table} WHERE uuid=?", (uuid,))
-        return int(count)
+            kept = {
+                (str(kind), str(name))
+                for kind, name in con.execute(_UNCERTAIN_PROPOSALS_SQL, (uuid,)).fetchall()
+            }
+            rows = con.execute(
+                "SELECT kind, name FROM outbox_proposal WHERE uuid=?", (uuid,)
+            ).fetchall()
+            doomed = [(uuid, str(k), str(n)) for k, n in rows if (str(k), str(n)) not in kept]
+            con.executemany(
+                "DELETE FROM outbox_body WHERE uuid=? AND kind=? AND proposal_name=?", doomed
+            )
+            con.executemany(
+                "DELETE FROM outbox_proposal WHERE uuid=? AND kind=? AND name=?", doomed
+            )
+            con.execute("DELETE FROM outbox_draft WHERE uuid=?", (uuid,))
+        return len(doomed)
+
+
+# (kind, name) of one uuid's proposals whose active journal has an uncertain or
+# prepared action: what a destroy keeps.
+_UNCERTAIN_PROPOSALS_SQL = (
+    "SELECT DISTINCT p.kind, p.name FROM outbox_proposal p"
+    " JOIN outbox_journal j ON j.uuid=p.uuid AND j.kind=p.kind AND j.proposal_name=p.name"
+    " AND j.archived_at IS NULL"
+    " JOIN outbox_journal_action a ON a.uuid=j.uuid AND a.kind=j.kind"
+    " AND a.proposal_name=j.proposal_name AND a.digest=j.digest"
+    " AND a.state IN ('prepared', 'uncertain')"
+    " WHERE p.uuid=?"
+)
+
+
+def read_retained(root: Path) -> dict[str, str]:
+    """Container uuid -> full name for every uuid holding a proposal with an active
+    publication journal, read-only (never creates or migrates).
+
+    The caller drops the uuids of live instances; what is left are proposals a
+    destroy kept because their publication outcome was uncertain. The name is
+    the one the journal recorded. A missing file or table reads as empty.
+    """
+    path = store_path(root)
+    if not path.exists():
+        return {}
+    sql = (
+        "SELECT j.uuid, MAX(j.container_full) FROM outbox_journal j JOIN outbox_proposal p"
+        " ON p.uuid=j.uuid AND p.kind=j.kind AND p.name=j.proposal_name"
+        " WHERE j.archived_at IS NULL GROUP BY j.uuid"
+    )
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=_BUSY_TIMEOUT_S)
+        try:
+            return {str(u): str(full) for u, full in con.execute(sql).fetchall()}
+        finally:
+            con.close()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc):
+            return {}
+        raise StoreError(str(exc)) from exc
+    except sqlite3.Error as exc:
+        raise StoreError(str(exc)) from exc
 
 
 def read_pending_counts(root: Path, kind: Kind = "issue") -> dict[str, int]:
@@ -474,10 +532,6 @@ def read_pending_counts(root: Path, kind: Kind = "issue") -> dict[str, int]:
         raise StoreError(str(exc)) from exc
     except sqlite3.Error as exc:
         raise StoreError(str(exc)) from exc
-
-
-def store_path_exists(root: Path) -> bool:
-    return store_path(root).exists()
 
 
 def host_store(root: Path) -> OutboxStore:

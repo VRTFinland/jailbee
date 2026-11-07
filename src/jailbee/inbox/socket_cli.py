@@ -14,13 +14,13 @@ from jailbee.inbox.errors import InboxUsage
 from jailbee.inbox.render import clean_c0c1, ls_line, pretty, render_status
 from jailbee.inbox.send import SendRequest, prepare_send, validate
 from jailbee.inbox.transport import (
-    CONNECT_RETRY_SECONDS,
     NO_REPLY_MESSAGE,
     BrokerError,
     BrokerUnreachable,
     Client,
     call_next,
     call_send,
+    retry_seconds,
     socket_path,
 )
 from jailbee.inbox.waiting import matches_wake_filter, parse_wake_filter
@@ -29,21 +29,12 @@ from jailbee.orchestration import wire
 STALE_AFTER = 900
 # The broker serves requests only between its rounds, which can take a while.
 CALL_TIMEOUT = 120.0
-RETRY_ENV = "JAILBEE_BROKER_RETRY_SECONDS"
-
-
-def _retry_seconds() -> float:
-    """The connect retry window; the env knob exists for tests and operators."""
-    try:
-        return max(0.0, float(os.environ.get(RETRY_ENV, CONNECT_RETRY_SECONDS)))
-    except ValueError:
-        return CONNECT_RETRY_SECONDS
 
 
 def _factory() -> Client:
     return Client(
         socket_path(os.environ),
-        retry_for=_retry_seconds(),
+        retry_for=retry_seconds(),
         missing_message=(
             "jailbee inbox: the host broker socket is missing; "
             "ask the host operator to check orchestration"

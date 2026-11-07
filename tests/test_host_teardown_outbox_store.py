@@ -48,7 +48,8 @@ def test_destroy_deletes_proposals_and_drafts_and_keeps_an_uncertain_journal() -
 
     host_teardown.cleanup(host_teardown.snapshot(_incus("foo", "u-dead"), "foo"))
 
-    assert store_db.read_proposals(root, "u-dead") == []
+    # The uncertain proposal is kept (with its bodies) so it stays resolvable.
+    assert [p.name for p in store_db.read_proposals(root, "u-dead")] == [row.name]
     assert len(store_db.read_proposals(root, "u-live")) == 1
     with ob._store.transaction(write=False) as con:
         assert con.execute("SELECT COUNT(*) FROM outbox_draft").fetchone() == (0,)

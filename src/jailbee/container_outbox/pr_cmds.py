@@ -9,8 +9,8 @@ from uuid import uuid4
 import typer
 
 from jailbee.container_outbox import bindings, broker, gh
-from jailbee.container_outbox.common import OutboxCommandError
-from jailbee.container_outbox.issue_cmds import BatchOpt, BodyFileOpt, BodyOpt, _body, _guard, _run
+from jailbee.container_outbox.common import OutboxCommandError, require_role
+from jailbee.container_outbox.issue_cmds import BatchOpt, BodyFileOpt, BodyOpt, _body, _run
 
 pr_app = typer.Typer(
     no_args_is_help=True,
@@ -130,7 +130,7 @@ def comment(
     """Stage a general PR comment."""
 
     def run() -> None:
-        _guard()
+        require_role()
         text = _body(body, body_file, True)
         action: dict[str, object] = {"type": "comment", "body": text}
         if reply_to is not None:
@@ -153,7 +153,7 @@ def reply(
     """Stage a reply to a review comment."""
 
     def run() -> None:
-        _guard()
+        require_role()
         if to is None:
             raise OutboxCommandError("missing --to comment ID", 2)
         if to < 1:
@@ -196,7 +196,7 @@ def description(
     """Stage a PR title and body replacement (a body is required)."""
 
     def run() -> None:
-        _guard()
+        require_role()
         if new and pr is not None:
             raise OutboxCommandError("--new cannot be combined with a PR number", 2)
         text = _body(body, body_file, False)
@@ -243,7 +243,7 @@ def review_add(
     """Add an inline comment to the review draft for a PR."""
 
     def run() -> None:
-        _guard()
+        require_role()
         if not file:
             raise OutboxCommandError("missing --file path", 2)
         if line is None:
@@ -284,7 +284,7 @@ def review_submit(
     """Stage the review draft with an optional summary body."""
 
     def run() -> None:
-        _guard()
+        require_role()
         text = _body(body, body_file, False)
         view = _view(pr)
         summary: dict[str, object] = {"body": text if text is not None else ""}
@@ -306,7 +306,7 @@ def review_discard(pr: PrArg = None) -> None:
     """Discard the review draft for a PR."""
 
     def run() -> None:
-        _guard()
+        require_role()
         view = _view(pr)
         envelope = _envelope(view)
         name = f"review-{view.number}"
@@ -336,7 +336,7 @@ def source(
     """Stage a PR source manifest; the host pushes the ref and opens or updates the PR."""
 
     def run() -> None:
-        _guard()
+        require_role()
         if not ref:
             raise OutboxCommandError("missing --ref (--head)", 2)
         if not sha:

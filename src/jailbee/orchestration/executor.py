@@ -35,8 +35,12 @@ def serve_requests(
     until: float,
     stop: StopFlag,
     clock: Callable[[], float] = time.monotonic,
+    wake: Callable[[], bool] | None = None,
 ) -> None:
-    """Serve queued requests until `clock()` reaches `until` or a stop is requested."""
+    """Serve queued requests until `clock()` reaches `until` or a stop is requested.
+
+    ``wake``, checked after every poll, ends the wait early (the next round is due).
+    """
     while not stop.requested:
         remaining = until - clock()
         if remaining <= 0:
@@ -48,6 +52,8 @@ def serve_requests(
         if event is not None:
             handle_event(memory, event, clock=clock)
         evaluate_waiters(memory, clock=clock)
+        if wake is not None and wake():
+            return
 
 
 def handle_event(

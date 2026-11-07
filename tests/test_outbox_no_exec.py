@@ -217,6 +217,58 @@ def _child_outbox_count(cfg: Any, incus: Any) -> object:
     return pending
 
 
+def _orchestrator_publish_issue(cfg: Any, incus: Any) -> object:
+    """`jailbee inbox send publish`: the broker's precheck, then its worker."""
+    from types import SimpleNamespace
+    from unittest import mock
+
+    from jailbee.orchestration import publishing
+    from jailbee.orchestration.grant import PublishRights
+    from jailbee.outbox import publication_db
+
+    name = stage_issue()
+    rights = PublishRights(issues=("comment",))
+    ctx = SimpleNamespace(cfg=cfg, sender=SimpleNamespace(key=UUID, full=FULL, short="c1"))
+    request = SimpleNamespace(outbox="issue", manifest=name)
+    kind, actions, foreign = publishing._precheck(ctx, request, rights)  # type: ignore[arg-type]  # duck-typed context
+    assert actions, "nothing to publish"
+    entry = {
+        "ref": "r1",
+        "container_key": UUID,
+        "outbox": "issue",
+        "manifest": name,
+        "actions": actions,
+        "kind": kind,
+        "foreign": foreign,
+        "rights": rights.model_dump(mode="json"),
+    }
+    root = publication_db.default_root()
+    with mock.patch.object(publishing, "Incus", return_value=incus):
+        publishing._run(cfg, root, FULL, "c1", entry)
+    result = publishing._get_result(root, UUID, "r1")
+    assert result is not None and result["state"] == "done", result
+    assert not issue_outbox.store_outbox(UUID).manifest_names
+    return result
+
+
+def _outbox_clear(cfg: Any, incus: Any) -> object:
+    from unittest import mock
+
+    from jailbee.outbox.commands import clear_selected
+
+    stage_issue()
+    stage(manifest(COMMENT))
+    # The scoped inventory: the container carries its repo's base profile.
+    (listed,) = incus.list_containers.return_value
+    listed["profiles"] = [f"{cfg.container_prefix}-base"]
+    with mock.patch("jailbee.config.load_repo_config", return_value=cfg):
+        status = clear_selected(cfg, incus, [FULL], confirm=lambda _plans: True)
+    assert status == 0
+    assert not issue_outbox.store_outbox(UUID).manifest_names
+    assert pr_outbox.read_outbox(incus, FULL, uid=1000).manifest_names == []
+    return f"status={status}"
+
+
 ENTRY_POINTS: dict[str, Callable[[Any, Any], object]] = {
     "jb review apply": _review_apply,
     "jb pr offer after push": _offer_after_pr,
@@ -231,6 +283,8 @@ ENTRY_POINTS: dict[str, Callable[[Any, Any], object]] = {
     "jb outbox apply (issue)": _outbox_publish_issue,
     "jb outbox ls/drop (issue)": _outbox_view_and_delete_issue,
     "orchestrator stop/destroy/finish outbox count": _child_outbox_count,
+    "orchestrator send publish (issue)": _orchestrator_publish_issue,
+    "jb outbox clear": _outbox_clear,
 }
 
 
