@@ -238,3 +238,38 @@ def test_journal_progress_marks_applied_indices(incus):
     progress = pr_outbox._publication_progress(outbox, name, 2)
     assert progress.applied == frozenset({1})
     assert progress.urls == {"1": "https://x/r"}
+
+
+def _crash(cfg, incus, github, name):
+    github.comment.side_effect = KeyboardInterrupt
+    with pytest.raises(KeyboardInterrupt):
+        review_apply(cfg, incus, name)
+    github.comment.side_effect = None
+
+
+def test_an_uncertain_action_resolved_as_landed_completes_the_proposal(cfg, incus, github):
+    name = stage(manifest(COMMENT))
+    _crash(cfg, incus, github, name)
+    outbox = pr_outbox.read_outbox(incus, FULL, uid=None)
+    assert pr_outbox.uncertain_actions(outbox, name) == [0]
+    url = "https://github.com/acme/widgets/pull/12#issuecomment-9"
+    assert pr_outbox.resolve_uncertain(incus, FULL, name, 0, landed_url=url) is True
+    assert rows() == []
+    (record,) = sent()
+    assert (record.state, record.url) == ("applied", url)
+    assert github.comment.call_count == 1
+
+
+def test_an_uncertain_action_resolved_for_retry_is_published_again(cfg, incus, github):
+    name = stage(manifest(COMMENT))
+    _crash(cfg, incus, github, name)
+    assert pr_outbox.resolve_uncertain(incus, FULL, name, 0, landed_url=None) is False
+    assert review_apply(cfg, incus, name) == 0
+    assert github.comment.call_count == 2
+    assert rows() == []
+
+
+def test_only_an_uncertain_action_can_be_resolved(incus):
+    name = stage(manifest(COMMENT))
+    with pytest.raises(pr_outbox.OutboxError, match="no uncertain action 0"):
+        pr_outbox.resolve_uncertain(incus, FULL, name, 0, landed_url=None)

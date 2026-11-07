@@ -184,7 +184,11 @@ def _source_uncertainty(
     for view in proposals:
         journal = journals.get(("pr", view.id.name)) if view.id.kind == "pr" else None
         if journal is not None and journal.uncertain:
-            detail = "publication outcome uncertain; check GitHub, then rerun jb pr push"
+            detail = (
+                "publication outcome uncertain; check GitHub, then rerun jb pr push"
+                if view.state == "awaiting-push"
+                else "publication outcome uncertain; check GitHub, then jb review resolve"
+            )
             view = replace(
                 view,
                 state="uncertain",

@@ -730,7 +730,7 @@ def _journal_progress(outbox: Outbox, name: str, action_count: int | None) -> Pr
         index = next(a.index for a in journal.actions if a.state == "uncertain")
         raise OutboxError(
             f"{name}: the outcome of action {index} from an earlier run is uncertain; "
-            "check the PR on GitHub before anything is published again"
+            "check the PR on GitHub, then settle it with `jailbee review resolve`"
         )
     applied = {a.index: a.url or "" for a in journal.actions if a.state == "applied"}
     return Progress(frozenset(applied), {str(i): url for i, url in applied.items()})
@@ -1170,7 +1170,7 @@ def apply_manifest(
                 (),
                 (),
                 f"the outcome of action {uncertain[0]} from an earlier run is uncertain; "
-                "check the PR on GitHub before anything is published again",
+                "check the PR on GitHub, then settle it with `jailbee review resolve`",
                 draft,
             )
         for index in _apply_order(manifest.actions):
@@ -1718,6 +1718,58 @@ def consume_manifest(
         raise FinalizeError(
             f"manifest {name} could not be consumed ({exc}); it may remain pending"
         ) from exc
+
+
+def uncertain_actions(outbox: Outbox, name: str) -> list[int]:
+    """Indices of proposal `name` whose publication outcome is uncertain."""
+    journal = outbox.journals.get(name)
+    return sorted(a.index for a in journal.actions if a.state == "uncertain") if journal else []
+
+
+def resolve_uncertain(
+    incus: Incus,
+    container: str,
+    name: str,
+    index: int,
+    *,
+    landed_url: str | None,
+    publications: PublicationStore | None = None,
+    clock: Callable[[], float] = time.time,
+) -> bool:
+    """A human's resolution of one uncertain PR action, after checking GitHub.
+
+    ``landed_url`` records that the action did land (its sent record turns
+    applied, and a now-complete proposal is removed); None forgets the
+    uncertain outcome so the next publication attempts it again. Returns
+    whether the proposal was removed. Raises `OutboxError` when there is no
+    such uncertain action or the proposal changed. No ``incus exec``.
+    """
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox import publication_db
+
+    if landed_url is not None and not landed_url.startswith("https://"):
+        raise OutboxError("the landed URL must be an https:// URL")
+    store = publications if publications is not None else publication_db.open_publications()
+    try:
+        outbox = read_outbox(incus, container, uid=None)
+        if name not in outbox.files or outbox.uuid is None:
+            raise OutboxChanged(f"{name}: proposal unavailable; refresh required")
+        if index not in uncertain_actions(outbox, name):
+            raise OutboxError(f"{name} has no uncertain action {index}")
+        manifest = parse_manifest(name, outbox.files[name], outbox.files)
+        digest = proposal_files_digest(outbox.files, name)
+        with store.claim(outbox.uuid, "pr", name) as claim:
+            settled = store.resolve(
+                claim,
+                digest,
+                index,
+                applied=None if landed_url is None else (landed_url, manifest.pr),
+                sent_outbox="review",
+                now=clock(),
+            )
+    except (OutboxReadError, ManifestError, JournalError, StoreError) as exc:
+        raise OutboxError(str(exc)) from exc
+    return settled.finalized
 
 
 def record_consumed(

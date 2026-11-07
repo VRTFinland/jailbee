@@ -248,7 +248,7 @@ def test_pr_review_skill_forbids_writing_from_the_container() -> None:
     assert "gh pr comment" in text
     assert "gh pr review" in text
     assert "jb review apply" in text
-    assert "~/.jailbee/pr-outbox" in text
+    assert "host's outbox store" in text
 
 
 def test_bundled_skills_include_issue_management() -> None:
@@ -300,13 +300,16 @@ def test_orchestration_source_example_stages_new_pr(tmp_path: Path, monkeypatch)
     text = (Path(agent_skills._skills_root()) / "jailbee-orchestration" / "SKILL.md").read_text()
     match = re.search(r"```bash\n(jailbee pr source [^\n]+)\n```", text)
     assert match, "missing runnable source example"
+    from tests import container_broker_support
+
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("JAILBEE_ROLE", raising=False)
+    broker = container_broker_support.install(monkeypatch, tmp_path / "broker")
     args = shlex.split(match.group(1))[1:]
     args = [arg.replace("REF", "refs/heads/feature").replace("SHA", "a" * 40) for arg in args]
     result = CliRunner().invoke(container_app, args)
     assert result.exit_code == 0, result.output
-    assert list((tmp_path / ".jailbee/pr-outbox").glob("*.json"))
+    assert [row.name for row in broker.proposals("pr")] == ["001-source.json"]
 
 
 ORCH = "jailbee-orchestration"

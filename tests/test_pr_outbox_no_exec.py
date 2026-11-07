@@ -15,7 +15,7 @@ from jailbee.outbox import service
 from jailbee.outbox.delete import DeleteSelection, plan_delete
 from jailbee.outbox.models import ProposalId
 from jailbee.outbox.publish import PublishOptions, publish_selected
-from jailbee.outbox_io import JournalStore
+from jailbee.outbox_io import JournalStore, proposal_digest
 from jailbee.pr_flow import PrScope
 from tests.test_pr_outbox_store import (
     COMMENT,
@@ -133,6 +133,20 @@ def _pending_sources(cfg: Any, incus: Any) -> object:
     return branch_pr.pending_source_manifests(cfg, incus, FULL)
 
 
+def _resolve(cfg: Any, incus: Any) -> object:
+    from jailbee.outbox import publication_db, store_db
+
+    name = stage(manifest(COMMENT))
+    (row,) = store_db.read_proposals(publication_db.default_root(), UUID, "pr")
+    digest = proposal_digest(row.name, row.manifest, row.bodies)
+    pubs = publication_db.open_publications()
+    with pubs.claim(UUID, "pr", name) as claim:
+        pubs.begin(claim, digest=digest, action_count=1, container_full=FULL, now=1.0)
+        pubs.mark_prepared(claim, digest, 0, repo=REPO, now=1.0)
+    removed = pr_outbox.resolve_uncertain(incus, FULL, name, 0, landed_url="https://github.com/x/1")
+    return f"removed={removed}"
+
+
 ENTRY_POINTS: dict[str, Callable[[Any, Any], object]] = {
     "jb review apply": _review_apply,
     "jb pr offer after push": _offer_after_pr,
@@ -142,6 +156,7 @@ ENTRY_POINTS: dict[str, Callable[[Any, Any], object]] = {
     "jb pr description from the outbox": _record_consumed,
     "jb pr outbox references": _references,
     "jb pr push source list": _pending_sources,
+    "jb review resolve": _resolve,
 }
 
 
