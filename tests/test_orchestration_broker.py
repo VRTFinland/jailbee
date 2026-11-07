@@ -1304,7 +1304,10 @@ def test_stale_completed_finish_keeps_child_in_same_tick(rig: Rig, monkeypatch) 
     assert path.with_name(path.name + ".bad").exists()
     rig.tick()
     destroy.assert_not_called()
-    assert rig.store.unacked("new-proj-kid")
+    notes = rig.store.unacked("new-proj-kid")
+    assert len(notes) == 1
+    assert "completed report could not be delivered" in notes[0].item["body"]
+    assert "not imported" not in notes[0].item["body"]
 
 
 def _destroy_seams(monkeypatch: pytest.MonkeyPatch):

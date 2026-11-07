@@ -409,6 +409,47 @@ def test_stale_finish_is_quarantined_and_notifies_surviving_child(tmp_path, capl
     assert "not imported" in notes[0].item["body"]
 
 
+@pytest.mark.parametrize("quarantined", [False, True])
+def test_orphan_cleanup_error_retries_without_duplicate(tmp_path, monkeypatch, caplog, quarantined):
+    from itertools import count
+    from pathlib import Path
+
+    from jailbee.orchestration import finishing
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    directory = pending_dir(tmp_path, FULL)
+    suffix = ".finish.json.bad" if quarantined else ".finish.json"
+    first, second = directory / ("a" + suffix), directory / ("b" + suffix)
+    outbox.save_pending(first, _finish_item(), recipient_uuid="old-uuid")
+    other = _finish_item().model_copy(update={"id": "f-2", "child_full": "proj-d"})
+    outbox.save_pending(second, other, recipient_uuid="old-uuid")
+    method = "rename" if quarantined else "unlink"
+    original = getattr(Path, method)
+
+    def fail_first(path, *args, **kwargs):
+        if path == first:
+            raise OSError("disk full")
+        return original(path, *args, **kwargs)
+
+    present = {"proj-c", "proj-d"} | ({FULL} if quarantined else set())
+    identities = {"proj-c": "uuid-c", "proj-d": "uuid-d"}
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, method, fail_first)
+        retry = finishing.notify_orphaned_finishes(
+            _incus(), tmp_path, present, present, now=AT, seq=count(), identities=identities
+        )
+    assert retry == {FULL}
+    assert first.exists() and not second.exists()
+    assert "disk full" in caplog.text
+    store = BrokerStore(store_path(tmp_path))
+    assert len(store.unacked("uuid-c")) == len(store.unacked("uuid-d")) == 1
+    finishing.notify_orphaned_finishes(
+        _incus(), tmp_path, present, present, now=AT, seq=count(), identities=identities
+    )
+    assert not first.exists()
+    assert len(store.unacked("uuid-c")) == len(store.unacked("uuid-d")) == 1
+
+
 def test_orphan_notice_spool_error_is_logged_and_retried(tmp_path, monkeypatch, caplog):
     from itertools import count
     from jailbee.orchestration import finishing

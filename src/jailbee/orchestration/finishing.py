@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import replace
 from typing import TYPE_CHECKING
@@ -309,10 +310,12 @@ def notify_orphaned_finishes(
                 if pending.completed is not None
                 else "your work was not imported and this container is kept"
             )
+            notice_key = f"{directory.name}\0{path.name}\0{item.child_full}\0{item.id}"
+            notice_id = "h-" + hashlib.sha256(notice_key.encode()).hexdigest()
             msg = InboxMessage.model_validate(
                 {
                     "version": 1,
-                    "id": new_host_id(),
+                    "id": notice_id,
                     "type": "message",
                     "kind": "note",
                     "from": directory.name,
@@ -332,6 +335,10 @@ def notify_orphaned_finishes(
                     seq=next(seq),
                     recipient_uuid=(identities or {}).get(item.child_full),
                 )
+                if path.name.endswith(".bad"):
+                    path.rename(path.with_name("." + path.name + ".notified"))
+                else:
+                    path.unlink(missing_ok=True)
             except (IncusError, OSError, ValueError) as exc:
                 logging.getLogger(__name__).warning(
                     "broker: notifying %s of the destroyed orchestrator %s failed: %s",
@@ -341,8 +348,4 @@ def notify_orphaned_finishes(
                 )
                 retry.add(directory.name)
                 continue
-            if path.name.endswith(".bad"):
-                path.rename(path.with_name("." + path.name + ".notified"))
-            else:
-                path.unlink(missing_ok=True)
     return retry
