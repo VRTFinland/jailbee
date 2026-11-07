@@ -18,7 +18,6 @@ from typing import TypedDict
 from jailbee.config import CONTAINER_USERNAME
 from jailbee.host_target import TargetSnapshot
 from jailbee.incus import Incus, IncusError
-from jailbee.issue_outbox import ISSUE_OUTBOX_SUBPATH
 from jailbee.pr_outbox import OUTBOX_SUBPATH
 from jailbee.submodules import HOST_SOURCE
 
@@ -116,10 +115,8 @@ class GitStatus:
     # `incus exec` per running container that every listing pays for. None
     # means the probe could not say (older output, or an unreadable value).
     pending_pr_actions: int | None = None
-    # Manifests waiting in the container's issue outbox (`issue_outbox`).
-    # Computed exactly like `pending_pr_actions`, one field later, from a
-    # separate outbox directory. None means the probe could not say (older
-    # output, or an unreadable value).
+    # Issue proposals waiting in the host outbox store. Never set by the
+    # probe: `lifecycle.stamp_issue_outbox` fills it from the store.
     pending_issue_actions: int | None = None
     # Actionable unread (messages + failed/refused statuses), read from the
     # host broker store independently of the git probe.
@@ -556,14 +553,13 @@ count_outbox_manifests() {
     printf '%s' "$count"
 }
 
-# --- fields 13-14: manifest counts, not pending GitHub action counts ---
+# --- field 13: manifest count, not a pending GitHub action count ---
 PENDING=$(count_outbox_manifests "$OUTBOX_DIR")
-PENDING_ISSUES=$(count_outbox_manifests "$ISSUE_OUTBOX_DIR")
 
-printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
   "$WT" "$COMMITTED" "$COUNT" "$CONFLICT" "$SUB_COMMITTED_STRUCT" "$SUB_WT_STRUCT" \
   "$HEAD_SHA" "$REMOTE_CONTAINED" "$LOCAL_DIFF" "$LOCAL_COUNT" \
-  "$IN_PROGRESS" "$UNMERGED" "$PENDING" "$PENDING_ISSUES" "$BEHIND_COUNT"
+  "$IN_PROGRESS" "$UNMERGED" "$PENDING" "$BEHIND_COUNT"
 """
 
 
@@ -619,7 +615,6 @@ def probe_container_git(
                 "TARGET_SHA": (target.sha or "") if target is not None else "",
                 "HOST_SOURCE": HOST_SOURCE,
                 "OUTBOX_DIR": f"/home/{CONTAINER_USERNAME}/{OUTBOX_SUBPATH}",
-                "ISSUE_OUTBOX_DIR": f"/home/{CONTAINER_USERNAME}/{ISSUE_OUTBOX_SUBPATH}",
                 # The probe only reads, but `git status`/`git diff --cached`
                 # refresh the index and write it back — which takes
                 # `.git/index.lock`. (Worktree `git diff` ignores this
@@ -702,13 +697,7 @@ def probe_container_git(
     else:
         pending_pr_actions = None
 
-    if len(parts) >= 14:
-        raw_pending_issues = parts[13].strip()
-        pending_issue_actions = int(raw_pending_issues) if raw_pending_issues.isdigit() else None
-    else:
-        pending_issue_actions = None
-
-    raw_behind = parts[14].strip() if len(parts) >= 15 else "?"
+    raw_behind = parts[13].strip() if len(parts) >= 14 else "?"
     behind_count = raw_behind if raw_behind.isdigit() else "?"
     target_diff = ahead_diff
 
@@ -725,7 +714,6 @@ def probe_container_git(
         in_progress=in_progress,
         unmerged=unmerged,
         pending_pr_actions=pending_pr_actions,
-        pending_issue_actions=pending_issue_actions,
         target_diff=target_diff,
         behind_count=behind_count if target is not None else "?",
         base_sha=target.sha if target is not None else None,

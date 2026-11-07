@@ -16,7 +16,6 @@ if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
     from jailbee.outbox.models import ProposalId
-    from jailbee.outbox_io import JournalStore
 
 _COMMANDS = frozenset(("browse", "ls", "show", "drop", "clear", "apply", "sent"))
 
@@ -147,7 +146,6 @@ def _pick_target(
     container: str | None,
     proposal: str | None,
     *,
-    journal_store: JournalStore,
     destructive: bool,
 ) -> tuple[str, ProposalId]:
     """The container and proposal a command acts on, asking for what is missing."""
@@ -157,7 +155,7 @@ def _pick_target(
 
     if container is not None and proposal is not None:
         return container, ProposalId.parse(proposal)
-    discovered = discover(cfg, incus, container, all_repos=False, journal_store=journal_store)
+    discovered = discover(cfg, incus, container, all_repos=False)
     views = [v for v in discovered if v.proposals]
     if container is not None:
         # Named, so nothing to ask: `discover` already resolved it to one container.
@@ -212,7 +210,6 @@ def browse(
     from jailbee import prompting
     from jailbee.outbox.commands import show_overview
     from jailbee.outbox.models import OutboxError
-    from jailbee.outbox_io import JournalStore
 
     path = config if config is not None else ctx.obj
 
@@ -224,7 +221,6 @@ def browse(
                 container,
                 all_repos=all_repos,
                 output="table",
-                journal_store=JournalStore(),
             )
         if container is not None and all_repos:
             raise OutboxError("pass a container or --all-repos, not both")
@@ -255,7 +251,6 @@ def list_cmd(
 ) -> None:
     """List proposals, including structured unavailable containers."""
     from jailbee.outbox.commands import show_overview
-    from jailbee.outbox_io import JournalStore
 
     _run(
         ctx,
@@ -266,7 +261,6 @@ def list_cmd(
             container,
             all_repos=all_repos,
             output=output.value,
-            journal_store=JournalStore(),
         ),
     )
 
@@ -296,16 +290,10 @@ def show(
     so `| grep` matches what the agent wrote, unless `--color` is given.
     """
     from jailbee.outbox.commands import show_selected
-    from jailbee.outbox_io import JournalStore
 
     def operation(cfg: Config, incus: Incus) -> int:
-        store = JournalStore()
-        name, pid = _pick_target(
-            cfg, incus, container, proposal, journal_store=store, destructive=False
-        )
-        return show_selected(
-            cfg, incus, name, pid, output=output.value, journal_store=store, color=color
-        )
+        name, pid = _pick_target(cfg, incus, container, proposal, destructive=False)
+        return show_selected(cfg, incus, name, pid, output=output.value, color=color)
 
     _run(ctx, config, operation)
 
@@ -335,7 +323,6 @@ def drop(
     from jailbee.outbox.commands import drop_selected
     from jailbee.outbox.delete import DeletePlan, DeleteSelection
     from jailbee.outbox.markdown_view import print_lines
-    from jailbee.outbox_io import JournalStore
 
     def confirm(plan: DeletePlan) -> bool:
         print_lines(plan.summary)
@@ -345,17 +332,13 @@ def drop(
         return accepted
 
     def operation(cfg: Config, incus: Incus) -> int:
-        store = JournalStore()
-        name, pid = _pick_target(
-            cfg, incus, container, proposal, journal_store=store, destructive=True
-        )
+        name, pid = _pick_target(cfg, incus, container, proposal, destructive=True)
         return drop_selected(
             cfg,
             incus,
             name,
             pid,
             selection=DeleteSelection(action, comment, with_dependents, archive_journal),
-            journal_store=store,
             confirm=confirm,
             expected_revision=revision,
         )
@@ -394,7 +377,6 @@ def clear(
     from jailbee.outbox.commands import clear_selected, discover, prepare_clear
     from jailbee.outbox.delete import ContainerClearPlan
     from jailbee.outbox.models import OutboxError
-    from jailbee.outbox_io import JournalStore
 
     def confirm(plans: Sequence[ContainerClearPlan]) -> bool:
         total = sum(len(plan.delete) for plan in plans)
@@ -406,7 +388,6 @@ def clear(
         )
 
     def operation(cfg: Config, incus: Incus) -> int:
-        store = JournalStore()
         names = containers
         if prepare_snapshot and (approved_snapshot is not None or dry_run or yes):
             raise OutboxError("snapshot preparation cannot be combined with execution options")
@@ -414,10 +395,10 @@ def clear(
             raise OutboxError("snapshot transport requires explicit full container names")
         approved = decode_snapshot(approved_snapshot) if approved_snapshot is not None else None
         if prepare_snapshot:
-            typer.echo(encode_snapshot(prepare_clear(cfg, incus, names or (), journal_store=store)))
+            typer.echo(encode_snapshot(prepare_clear(cfg, incus, names or ())))
             return 0
         if not names:
-            views = discover(cfg, incus, None, all_repos=False, journal_store=store)
+            views = discover(cfg, incus, None, all_repos=False)
             chosen = prompting.choose_one(
                 "container",
                 [prompting.Option(v.name, v.name, v.name) for v in views if v.proposals],
@@ -429,7 +410,6 @@ def clear(
             cfg,
             incus,
             names,
-            journal_store=store,
             confirm=confirm,
             dry_run=dry_run,
             approved=approved,
@@ -486,17 +466,13 @@ def apply(
     from jailbee.outbox.markdown_view import print_lines
     from jailbee.outbox.models import OutboxError
     from jailbee.outbox.publish import PublishOptions, ask_publish_mode
-    from jailbee.outbox_io import JournalStore
 
     as_json = output is Output.json
 
     def operation(cfg: Config, incus: Incus) -> int:
         if as_json and not dry_run:
             raise OutboxError("JSON output requires --dry-run")
-        store = JournalStore()
-        name, pid = _pick_target(
-            cfg, incus, container, proposal, journal_store=store, destructive=not as_json
-        )
+        name, pid = _pick_target(cfg, incus, container, proposal, destructive=not as_json)
         return apply_selected(
             cfg,
             incus,
@@ -516,7 +492,6 @@ def apply(
             choose_mode=ask_publish_mode
             if prompting.is_interactive() and not yes and not draft and not as_json
             else None,
-            journal_store=store,
             confirm=lambda total: (
                 yes
                 or typer.confirm(

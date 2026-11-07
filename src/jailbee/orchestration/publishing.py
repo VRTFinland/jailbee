@@ -24,7 +24,7 @@ from jailbee.orchestration.state import atomic_write_text
 from jailbee.orchestration.store import BrokerStore, import_json_document, open_state_store
 from jailbee.outbox.models import ProposalId
 from jailbee.outbox.publish import PublishOptions, publish_selected
-from jailbee.outbox_io import ContainerIdentity, JournalStore
+from jailbee.outbox_io import ContainerIdentity
 
 if TYPE_CHECKING:
     from jailbee.config import Config
@@ -494,7 +494,6 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
                 incus,
                 full,
                 ProposalId(entry["outbox"], entry["manifest"]),
-                journal_store=JournalStore(),
                 options=PublishOptions(foreign=entry["foreign"], publisher="orchestrator"),
                 confirm=lambda n: True,
                 confirm_foreign=lambda q: False,

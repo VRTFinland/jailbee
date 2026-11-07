@@ -12,7 +12,6 @@ from jailbee.outbox.io import store_directory
 
 if TYPE_CHECKING:
     from jailbee.incus import Incus
-    from jailbee.outbox.models import Kind
 
 _MAX_MANIFESTS = 128
 _MAX_FILE_BYTES = 65536
@@ -59,7 +58,7 @@ def names(path, cap):
 
 try:
     cap = int(sys.argv[3])
-    result = {'issue': names(sys.argv[1], cap), 'pr': names(sys.argv[2], cap)}
+    result = {'pr': names(sys.argv[1], cap)}
 except OSError as exc:
     result = {'error': str(exc)}
 print(json.dumps(result, ensure_ascii=True))
@@ -81,7 +80,8 @@ class PendingGithub:
         return len(self.issue) + len(self.pr)
 
 
-def _names(incus: Incus, full: str, *, uid: int | None) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _names(incus: Incus, full: str, *, uid: int | None) -> tuple[str, ...]:
+    """The child's staged PR manifest names (PR proposals are still files)."""
     from jailbee.orchestration.actions import CHILD_EXEC_TIMEOUT_S
 
     try:
@@ -92,7 +92,6 @@ def _names(incus: Incus, full: str, *, uid: int | None) -> tuple[tuple[str, ...]
                 "-I",
                 "-c",
                 _NAMES_SCRIPT,
-                store_directory("issue"),
                 store_directory("pr"),
                 str(_MAX_MANIFESTS),
             ],
@@ -101,30 +100,41 @@ def _names(incus: Incus, full: str, *, uid: int | None) -> tuple[tuple[str, ...]
             max_bytes=_MAX_NAMES_BYTES,
         )
         data = json.loads(raw)
-        if not isinstance(data, dict) or set(data) != {"issue", "pr"}:
+        if not isinstance(data, dict) or set(data) != {"pr"}:
             raise ValueError("unknown outbox state")
-        result = []
-        for kind in ("issue", "pr"):
-            names = data[kind]
-            if not isinstance(names, list) or len(names) > _MAX_MANIFESTS:
-                raise ValueError("invalid outbox names")
-            if any(
-                not isinstance(name, str)
-                or not name.endswith(".json")
-                or name.startswith(".")
-                or name.endswith(".progress.json")
-                or "/" in name
-                or "\0" in name
-                or len(name) > 255
-                for name in names
-            ):
-                raise ValueError("invalid outbox name")
-            if len(set(names)) != len(names):
-                raise ValueError("duplicate outbox name")
-            result.append(tuple(sorted(names)))
-        return result[0], result[1]
+        names = data["pr"]
+        if not isinstance(names, list) or len(names) > _MAX_MANIFESTS:
+            raise ValueError("invalid outbox names")
+        if any(
+            not isinstance(name, str)
+            or not name.endswith(".json")
+            or name.startswith(".")
+            or name.endswith(".progress.json")
+            or "/" in name
+            or "\0" in name
+            or len(name) > 255
+            for name in names
+        ):
+            raise ValueError("invalid outbox name")
+        if len(set(names)) != len(names):
+            raise ValueError("duplicate outbox name")
+        return tuple(sorted(names))
     except (IncusError, ValueError, TypeError, RecursionError) as exc:
         raise ChildOutboxError(f"outbox could not be checked: {exc}") from exc
+
+
+def _staged_issues(uuid: str | None) -> dict[str, str]:
+    """The instance's staged issue proposals (name to manifest) from the host store."""
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox import publication_db, store_db
+
+    if uuid is None:
+        return {}  # no store key: the broker cannot hold proposals for it
+    try:
+        rows = store_db.read_proposals(publication_db.default_root(), uuid, "issue")
+    except StoreError as exc:
+        raise ChildOutboxError(f"outbox could not be checked: {exc}") from exc
+    return {row.name: row.manifest for row in rows}
 
 
 def _display(text: str) -> str:
@@ -157,33 +167,34 @@ def _summary(kind: str, name: str, text: str | None) -> str:
         return prefix
 
 
-def probe(incus: Incus, full: str, *, uid: int | None) -> PendingGithub:
-    """Count names independently; snapshots provide best-effort summaries only.
+def probe(incus: Incus, full: str, *, uid: int | None, uuid: str | None = None) -> PendingGithub:
+    """Count staged proposals independently; PR snapshots give best-effort summaries.
 
     The caller supplies an Incus wrapper bounded by CHILD_EXEC_TIMEOUT_S.
     Recheck names after reading to reject a changing snapshot rather than
-    declaring a newly populated store empty.
+    declaring a newly populated store empty. Issue proposals come from the
+    host outbox store, keyed by the instance's `volatile.uuid`.
     """
     from jailbee.orchestration.actions import CHILD_EXEC_TIMEOUT_S
 
-    issue, pr = _names(incus, full, uid=uid)
-    summaries: list[str] = []
-    stores: tuple[tuple[Kind, tuple[str, ...]], ...] = (("issue", issue), ("pr", pr))
+    issues = _staged_issues(uuid)
+    issue = tuple(sorted(issues))
+    pr = _names(incus, full, uid=uid)
+    summaries = [_summary("issue", name, issues[name]) for name in issue]
     try:
-        for kind, names in stores:
-            files = outbox_io.read_text_outbox(
-                incus,
-                full,
-                store_directory(kind),
-                uid=uid,
-                max_file_bytes=_MAX_FILE_BYTES,
-                timeout=CHILD_EXEC_TIMEOUT_S,
-                select=[("*.json", _MAX_MANIFESTS)],
-            )
-            summaries.extend(_summary(kind, name, files.get(name)) for name in names)
+        files = outbox_io.read_text_outbox(
+            incus,
+            full,
+            store_directory("pr"),
+            uid=uid,
+            max_file_bytes=_MAX_FILE_BYTES,
+            timeout=CHILD_EXEC_TIMEOUT_S,
+            select=[("*.json", _MAX_MANIFESTS)],
+        )
+        summaries.extend(_summary("pr", name, files.get(name)) for name in pr)
     except outbox_io.OutboxReadError as exc:
         raise ChildOutboxError(f"outbox could not be checked: {exc}") from exc
-    if (issue, pr) != _names(incus, full, uid=uid):
+    if (issue, pr) != (tuple(sorted(_staged_issues(uuid))), _names(incus, full, uid=uid)):
         raise ChildOutboxError("outbox could not be checked: manifests changed during inspection")
     return PendingGithub(issue, pr, tuple(summaries))
 

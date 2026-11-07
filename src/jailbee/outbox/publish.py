@@ -27,7 +27,6 @@ from jailbee.outbox.service import _identity, instance_identity, load_container
 from jailbee.outbox_io import (
     ContainerIdentity,
     JournalError,
-    JournalStore,
     OutboxReadError,
 )
 from jailbee.tui import error_plain, info_plain, success_plain
@@ -77,14 +76,11 @@ def _checked(
     container: str,
     proposal: ProposalId,
     identity: ContainerIdentity,
-    journal_store: JournalStore,
     expected_revision: str | None,
     *,
     raise_errors: bool = False,
 ) -> tuple[ContainerView, str]:
-    fresh = load_container(
-        cfg, incus, container, journal_store=journal_store, raise_errors=raise_errors
-    )
+    fresh = load_container(cfg, incus, container, raise_errors=raise_errors)
     if not fresh.available or fresh.identity != identity:
         raise OutboxChanged(fresh.error or "container changed; refresh required")
     view = next((v for v in fresh.proposals if v.id == proposal), None)
@@ -246,7 +242,6 @@ def publish_selected(
     container: str,
     proposal: ProposalId,
     *,
-    journal_store: JournalStore,
     options: PublishOptions,
     confirm: Callable[[int], bool],
     confirm_foreign: Callable[[str], bool] | None = None,
@@ -300,7 +295,6 @@ def publish_selected(
                 container,
                 proposal,
                 identity,
-                journal_store,
                 expected_revision,
                 raise_errors=raise_errors,
             )
@@ -352,7 +346,6 @@ def publish_selected(
                     for v in build_views(
                         batch.identity,
                         (prepared_store,),
-                        journal_store=journal_store,
                         issue_journals=issue_outbox.store_journals(batch.identity, batch.uuid),
                     )
                     if v.id == proposal
@@ -367,7 +360,6 @@ def publish_selected(
                 container,
                 proposal,
                 identity,
-                journal_store,
                 revision,
                 raise_errors=raise_errors,
             )
@@ -408,7 +400,6 @@ def publish_selected(
                 container,
                 proposal,
                 identity,
-                journal_store,
                 revision,
                 raise_errors=raise_errors,
             )
@@ -419,7 +410,6 @@ def publish_selected(
                 container,
                 proposal,
                 identity,
-                journal_store,
                 revision,
                 raise_errors=raise_errors,
             )

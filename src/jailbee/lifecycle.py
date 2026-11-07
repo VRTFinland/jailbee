@@ -827,7 +827,7 @@ def _issue_count(counts: dict[str, int] | None, uuid: object) -> int | None:
 
 
 def stamp_issue_outbox(ci: ContainerInfo) -> None:
-    """Replace the probed issue count of ``ci.git_status`` with the store's.
+    """Set the issue count of ``ci.git_status`` from the host outbox store.
 
     For callers that probe one container themselves (the destroy guard). A
     container never probed keeps ``git_status`` None.

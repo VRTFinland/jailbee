@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus
     from jailbee.lifecycle import ContainerInfo
     from jailbee.outbox.delete import ContainerClearPlan
-    from jailbee.outbox_io import JournalStore
     from jailbee.pr_outbox import ChooseMode, DraftPreview, PlanSink, PublishMode
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
@@ -149,7 +148,7 @@ def resolve_incarnation(cfg: Config, incus: Incus, name: str) -> tuple[str, str 
 
 
 def discover(
-    cfg: Config, incus: Incus, name: str | None, *, all_repos: bool, journal_store: JournalStore
+    cfg: Config, incus: Incus, name: str | None, *, all_repos: bool
 ) -> tuple[ContainerView, ...]:
     """Inspect all visible candidates, regardless of advisory probe counts."""
     if name is not None and all_repos:
@@ -165,7 +164,7 @@ def discover(
         except OutboxError as exc:
             result.append(ContainerView(None, item.name, False, str(exc), (), ()))
             continue
-        result.append(load_container(target, incus, item.name, journal_store=journal_store))
+        result.append(load_container(target, incus, item.name))
     return tuple(result)
 
 
@@ -175,11 +174,10 @@ def _selected(
     name: str,
     proposal: ProposalId,
     *,
-    journal_store: JournalStore,
     revision: str | None = None,
 ) -> tuple[Config, ContainerView, ProposalView]:
     target, full = resolve_target(cfg, incus, name)
-    container = load_container(target, incus, full, journal_store=journal_store, raise_errors=True)
+    container = load_container(target, incus, full, raise_errors=True)
     if not container.available:
         raise OutboxError(container.error or "container is unavailable")
     view = next((p for p in container.proposals if p.id == proposal), None)
@@ -203,18 +201,15 @@ def drop_selected(
     proposal: ProposalId,
     *,
     selection: DeleteSelection,
-    journal_store: JournalStore,
     confirm: Callable[[DeletePlan], bool],
     expected_revision: str | None = None,
 ) -> int:
-    target, container, _ = _selected(
-        cfg, incus, name, proposal, journal_store=journal_store, revision=expected_revision
-    )
+    target, container, _ = _selected(cfg, incus, name, proposal, revision=expected_revision)
     plan = plan_delete(container, proposal, selection)
     if not confirm(plan):
         return 0
     _recheck_target(cfg, incus, container.name, target)
-    execute_delete(target, incus, container.name, plan, journal_store=journal_store)
+    execute_delete(target, incus, container.name, plan)
     return 0
 
 
@@ -225,7 +220,6 @@ def apply_selected(
     proposal: ProposalId,
     *,
     options: PublishOptions,
-    journal_store: JournalStore,
     confirm: Callable[[int], bool],
     confirm_foreign: Callable[[str], bool] | None = None,
     expected_revision: str | None = None,
@@ -236,9 +230,7 @@ def apply_selected(
         raise OutboxError("draft is only valid for PR publication")
     if proposal.kind == "issue" and options.force:
         raise OutboxError("force is only valid for PR publication")
-    target, container, view = _selected(
-        cfg, incus, name, proposal, journal_store=journal_store, revision=expected_revision
-    )
+    target, container, view = _selected(cfg, incus, name, proposal, revision=expected_revision)
     if view.error:
         raise OutboxError(f"{proposal}: {view.error}")
 
@@ -270,7 +262,6 @@ def apply_selected(
         incus,
         container.name,
         proposal,
-        journal_store=journal_store,
         options=options,
         confirm=checked_confirm,
         choose_mode=checked_mode,
@@ -282,7 +273,7 @@ def apply_selected(
 
 
 def prepare_clear(
-    cfg: Config, incus: Incus, names: Sequence[str], *, journal_store: JournalStore
+    cfg: Config, incus: Incus, names: Sequence[str]
 ) -> tuple[ContainerClearPlan, ...]:
     """Isolate unavailable targets while fixing the exact pre-question revisions."""
     from jailbee.outbox.delete import plan_clear
@@ -290,7 +281,7 @@ def prepare_clear(
     plans: list[ContainerClearPlan] = []
     for name in dict.fromkeys(names):
         try:
-            views = discover(cfg, incus, name, all_repos=False, journal_store=journal_store)
+            views = discover(cfg, incus, name, all_repos=False)
         except (OutboxError, OutboxExecutionError, IncusError, OSError) as exc:
             views = (ContainerView(None, name, False, str(exc), (), ()),)
         plans.extend(plan_clear(view) for view in views)
@@ -302,7 +293,6 @@ def clear_selected(
     incus: Incus,
     names: Sequence[str],
     *,
-    journal_store: JournalStore,
     confirm: Callable[[Sequence[ContainerClearPlan]], bool],
     dry_run: bool = False,
     approved: Sequence[ContainerClearPlan] | None = None,
@@ -313,11 +303,7 @@ def clear_selected(
 
     if approved is not None and tuple(names) != tuple(p.name for p in approved):
         raise OutboxError("approved snapshot containers must match the explicit full names")
-    plans = (
-        approved
-        if approved is not None
-        else prepare_clear(cfg, incus, names, journal_store=journal_store)
-    )
+    plans = approved if approved is not None else prepare_clear(cfg, incus, names)
     print_lines(clear_plan_lines(plans))
     kept = sum(len(plan.keep) for plan in plans)
     failed = sum(not plan.available for plan in plans)
@@ -335,9 +321,7 @@ def clear_selected(
             for item in plan.delete:
                 try:
                     target, full = resolve_target(cfg, incus, plan.name)
-                    fresh = load_container(
-                        target, incus, full, journal_store=journal_store, raise_errors=True
-                    )
+                    fresh = load_container(target, incus, full, raise_errors=True)
                     view = next((v for v in fresh.proposals if v.id == item.proposal), None)
                     if view is None or view.revision != item.revision:
                         kept += 1
@@ -352,7 +336,6 @@ def clear_selected(
                         incus,
                         full,
                         plan_delete(fresh, item.proposal, item.selection),
-                        journal_store=journal_store,
                     )
                 except (OutboxError, OutboxExecutionError, IncusError, OSError) as exc:
                     failed += 1
@@ -467,9 +450,8 @@ def show_overview(
     *,
     all_repos: bool,
     output: str,
-    journal_store: JournalStore,
 ) -> int:
-    containers = discover(cfg, incus, name, all_repos=all_repos, journal_store=journal_store)
+    containers = discover(cfg, incus, name, all_repos=all_repos)
     if output == "json":
         payload = overview_json(containers)
         _attach_create_scopes(cfg, incus, containers, payload)
@@ -522,7 +504,6 @@ def show_selected(
     proposal: ProposalId,
     *,
     output: str,
-    journal_store: JournalStore,
     color: bool | None = None,
 ) -> int:
     """Print one proposal; its Markdown bodies are laid out unless `render_width` says verbatim.
@@ -530,7 +511,7 @@ def show_selected(
     The raw manifest that closes the table is always verbatim: it is the exact
     input, the thing to compare the rendered bodies against.
     """
-    _, container, view = _selected(cfg, incus, name, proposal, journal_store=journal_store)
+    _, container, view = _selected(cfg, incus, name, proposal)
     if output == "json":
         print_lines((json.dumps(detail_json(container, view), ensure_ascii=True),))
         return 0
