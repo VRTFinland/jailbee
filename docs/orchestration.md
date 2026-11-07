@@ -609,8 +609,9 @@ messages; it neither detects idle nor configures the threshold.
 The broker is non-interactive. Anything that would prompt the operator (the
 autostart escalation gate for an untrusted source, an autofetch that needs a
 hardware-key touch) is refused with that reason; the broker never answers a
-prompt for you. Messages for a stopped recipient are inserted into the broker's
-durable store and can be viewed on the host immediately. The recipient can read
+prompt for you. Messages for a stopped recipient are normally inserted directly
+into the broker's durable store and can be viewed on the host immediately. Pending
+spool entries appear there after successful processing. The recipient can read
 them when it runs again and connects to the broker, including after a restart.
 
 Orchestrators and children use `jailbee inbox` to communicate with the broker.
