@@ -444,7 +444,9 @@ def publish_selected(
                         }
                     )
             if receipt_sink is not None:
-                for name, receipt in sorted(report.applied, key=lambda pair: pair[1].index):
+                for name, receipt in sorted(
+                    (*report.applied, *report.skipped), key=lambda pair: pair[1].index
+                ):
                     applied_manifest = next(m for m in batch.manifests if m.manifest.name == name)
                     applied_action = next(
                         a for a in applied_manifest.actions if a.index == receipt.index
