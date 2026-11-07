@@ -49,9 +49,7 @@ def test_resolving_a_source_publication_as_landed_records_the_binding(
     _uncertain(p)
     p["resolve"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
 
-    branch_pr.resolve_uncertain_source(
-        p["cfg"], p["incus"], "full", "m.json", 0, landed_url=LANDED
-    )
+    branch_pr.resolve_uncertain_source(p["cfg"], p["incus"], "full", "m.json", 0, landed_url=LANDED)
 
     saved = json.loads(p["incus"].config_set.call_args.args[2])
     assert saved["feature/a"]["pr"] == 42
@@ -92,9 +90,7 @@ def test_review_resolve_applied_settles_a_source_publication(
     mocker.patch("jailbee.cli._resolve_existing", return_value=(p["incus"], "full"))
     mocker.patch("jailbee.lifecycle.short_name", return_value="c")
 
-    result = CliRunner().invoke(
-        app, ["review", "resolve", "c", "m.json", "0", "--applied", LANDED]
-    )
+    result = CliRunner().invoke(app, ["review", "resolve", "c", "m.json", "0", "--applied", LANDED])
 
     assert result.exit_code == 0, result.output
     (record,) = sent.list_records()

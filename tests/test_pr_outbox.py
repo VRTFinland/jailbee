@@ -1990,7 +1990,11 @@ def test_apply_refuses_a_proposal_replaced_after_it_was_planned(mocker, make_cfg
         with store.transaction() as con:
             con.execute(
                 "UPDATE outbox_proposal SET manifest=? WHERE uuid=? AND kind='pr' AND name=?",
-                (_manifest_text(actions=[{"type": "comment", "body": "other"}]), UUID, "002-y.json"),
+                (
+                    _manifest_text(actions=[{"type": "comment", "body": "other"}]),
+                    UUID,
+                    "002-y.json",
+                ),
             )
 
     outcome, calls = _staged_then(mocker, make_cfg, tmp_path, replace_text)

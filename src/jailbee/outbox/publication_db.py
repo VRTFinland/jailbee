@@ -16,8 +16,9 @@ Single flight. A publication claim is one row in the broker's ``state`` table
 (``outbox.claim:<uuid>:<kind>:<name>``) naming the owning process and a token
 whose lock file the owner holds (flock) while it holds the claim. Claiming a
 proposal whose lock is held raises `ClaimBusyError`; a claim whose lock nobody
-holds — its owner exited, crashed, or failed to delete the row — is taken over. Every write below re-checks its claim inside its
-own transaction, so a taken-over claim can never interleave writes.
+holds — its owner exited, crashed, or failed to delete the row — is taken over.
+Every write below re-checks its claim inside its own transaction, so a
+taken-over claim can never interleave writes.
 
 Host side only (broker and host commands); no Incus call.
 """
