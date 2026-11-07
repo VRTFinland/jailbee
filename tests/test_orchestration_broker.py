@@ -1268,6 +1268,45 @@ def _marked_child(rig: Rig) -> dict[str, Any]:
     return kid
 
 
+def test_stale_completed_finish_keeps_child_in_same_tick(rig: Rig, monkeypatch) -> None:
+    from jailbee.orchestration.protocol import InboxMessage, PendingFinish
+    from jailbee.orchestration.state import pending_dir
+
+    _marked_child(rig)
+    for row in rig.incus.list_containers.return_value:
+        row["config"]["volatile.uuid"] = "new-" + row["name"]
+    destroy = _destroy_seams(monkeypatch)
+
+    def unset(full, key):
+        for row in rig.incus.list_containers.return_value:
+            if row["name"] == full:
+                row["config"].pop(key, None)
+
+    rig.incus.config_unset_checked.side_effect = unset
+    monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
+    item = PendingFinish(
+        version=1,
+        type="finish",
+        id="done-1",
+        child_full="proj-kid",
+        child_short="kid",
+        branch="b",
+        done_sha="a" * 40,
+        body="done",
+        in_reply_to=None,
+        uid=1000,
+    )
+    completed = InboxMessage(version=1, id="h-done", type="message", from_="kid", body="done")
+    path = pending_dir(rig.root, "proj-orch") / "a.finish.json"
+    outbox.save_pending(path, item, recipient_uuid="old-orch", completed=completed)
+    rig.tick()
+    destroy.assert_not_called()
+    assert path.with_name(path.name + ".bad").exists()
+    rig.tick()
+    destroy.assert_not_called()
+    assert rig.store.unacked("new-proj-kid")
+
+
 def _destroy_seams(monkeypatch: pytest.MonkeyPatch):
     destroy = MagicMock()
     monkeypatch.setattr(actions.lifecycle, "destroy_container", destroy)
@@ -1486,7 +1525,7 @@ def test_done_cleanup_waits_for_durable_reply(
     if failure == "parked_reply":
         monkeypatch.setattr(broker, "deliver", outbox.deliver)
 
-        monkeypatch.setattr(outbox, "_insert_into_store", lambda *a, **k: False)
+        monkeypatch.setattr(outbox, "insert_into_store", lambda *a, **k: False)
     else:
         rig.deliver.side_effect = RuntimeError("crash after journal")
     rig.tick()
@@ -1494,7 +1533,7 @@ def test_done_cleanup_waits_for_durable_reply(
     # A fresh broker round must replay the reply without dispatching done again.
     rig.deliver.side_effect = None
     rig.deliver.return_value = "delivered"
-    monkeypatch.setattr(outbox, "_insert_into_store", lambda *a, **k: True)
+    monkeypatch.setattr(outbox, "insert_into_store", lambda *a, **k: True)
     monkeypatch.setattr(broker, "flush_pending", outbox.flush_pending)
     rig.tick()
     assert not broker.has_pending(rig.root, "proj-orch")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -187,7 +188,24 @@ def _settle_destroys_locked(ctx: ActionContext) -> None:
 
     if not ctx.sender.running or outbox.has_pending(ctx.root, ctx.sender.full):
         return
+    # A stale finish may have been quarantined in this same broker round,
+    # after the orphan-notice pass. Its child must survive until notified.
+    quarantined: set[str] = set()
+    directory = pending_dir(ctx.root, ctx.sender.full)
+    for path in directory.glob("*.finish.json.bad"):
+        try:
+            pending = outbox.load_pending(path)
+            quarantined.add(PendingFinish.model_validate(pending.item).child_full)
+        except ValueError:
+            continue
+        except OSError:
+            logging.getLogger(__name__).warning(
+                "cannot inspect quarantined finish %s; deferring cleanup", path
+            )
+            return
     for child in ctx.children():
+        if child.full in quarantined:
+            continue
         marker = child.config.get(labels.PENDING_DESTROY)
         if not marker:
             continue
@@ -261,8 +279,6 @@ def notify_orphaned_finishes(
     the vanished orchestrators that still hold such files are returned, so the
     caller leaves them unpurged and the next round retries.
     """
-    import logging
-
     from jailbee.orchestration import outbox
 
     retry: set[str] = set()
