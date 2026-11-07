@@ -83,9 +83,15 @@ client exits 4 (`jb apply` / restart the broker to align versions).
 | `grant` | none | The container's [grant document](#grantjson), with `default_runner_source`. |
 
 The broker serves `list`, `read` and `ack` outside the executor, including
-while a long-running handler is executing. `children`, `status` and `grant`
-read an immutable snapshot from the last completed broker round without calling
-Incus. `jailbee inbox runners` obtains that grant before rendering local runners.
+while a long-running handler is executing. Each container may have at most two
+of these store queries queued or running; further requests wait in their
+connections without a `busy` error. This leaves query workers available to other
+containers. The shared worker queue remains bounded: a store query gets `busy`
+only when the broker-wide query queue is full.
+
+`children`, `status` and `grant` read an immutable snapshot from the last
+completed broker round without calling Incus or taking a store-query slot.
+`jailbee inbox runners` obtains that grant before rendering local runners.
 In contrast, `send` and `next` use the executor and may wait for a handler to
 finish.
 
@@ -104,7 +110,7 @@ for the id. Resending the same `send` is safe: the broker journals each id.
 | `not_found` | no unread item with that id, or an unknown child | exit 1 |
 | `refused` | the broker declined the request | exit 1 |
 | `store` | the broker's message store failed | exit 4 |
-| `busy` | another `next` waiter on the container, or the per-container connection cap | `wait`: exit 2; the cap can also surface as exit 4 |
+| `busy` | another `next` waiter on the container, the per-container connection cap, or a full broker-wide store-query queue | `wait`: exit 2; store queries: exit 1; the connection cap can also surface as exit 4 |
 | `duplicate` | a `send` id with no recorded status | exit 0, note on stderr |
 
 The connection cap is 8 connections per container. A ninth connection gets
