@@ -87,9 +87,10 @@ def test_issue_batch_cli_roundtrip(home, broker):
 
 def test_a_refused_issue_draft_submit_keeps_the_draft(home, broker):
     for _ in range(20):
-        assert CliRunner().invoke(
-            container_app, ["issue", "comment", "7", "--body", "x"]
-        ).exit_code == 0
+        assert (
+            CliRunner().invoke(container_app, ["issue", "comment", "7", "--body", "x"]).exit_code
+            == 0
+        )
     assert (
         CliRunner()
         .invoke(container_app, ["issue", "comment", "7", "--body", "y", "--batch", "b"])

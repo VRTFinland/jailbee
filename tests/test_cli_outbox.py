@@ -291,8 +291,8 @@ def test_literal_untrusted_detail(env):
 
 
 def test_jb_outbox_lists_and_shows_a_proposal_staged_through_the_broker(env, mocker):
-    from jailbee.outbox import store_db as outbox_store
     from jailbee.outbox import service as service_module
+    from jailbee.outbox import store_db as outbox_store
     from tests.test_outbox_service import _stage_in_host_store
 
     name = _stage_in_host_store("uuid-1")

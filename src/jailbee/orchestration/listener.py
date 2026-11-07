@@ -28,8 +28,9 @@ slots. The bounded global worker queue still answers ``BUSY`` when full.
 
 While a connection is held back its socket is still read, so a
 disconnect is noticed, until a line's worth is buffered (``wire.MAX_LINE_BYTES``,
-or ``wire.OUTBOX_MAX_LINE_BYTES`` for an ``outbox.put``); then reading pauses too. A pipelining client therefore costs bounded memory and
-never has more than one event ahead of another container's request.
+or ``wire.OUTBOX_MAX_LINE_BYTES`` for an ``outbox.put``); then reading pauses
+too. A pipelining client therefore costs bounded memory and never has more
+than one event ahead of another container's request.
 
 Stopping the listener leaves the socket files in place, so clients get
 ECONNREFUSED while the broker is down; only :meth:`Listener.close_container`
