@@ -24,7 +24,7 @@ from jailbee.orchestration.state import atomic_write_text
 from jailbee.orchestration.store import BrokerStore, import_json_document, open_state_store
 from jailbee.outbox.models import ProposalId
 from jailbee.outbox.publish import PublishOptions, publish_selected
-from jailbee.outbox_io import JournalStore, container_identity
+from jailbee.outbox_io import ContainerIdentity, JournalStore
 
 if TYPE_CHECKING:
     from jailbee.config import Config
@@ -197,7 +197,10 @@ def _precheck(
 ) -> tuple[str, list[dict[str, str]], bool]:
     uid = ctx.cfg.container_user.uid
     if m.outbox == "issue":
-        snapshot = issue_outbox.read_issue_outbox(ctx.incus, ctx.sender.full, uid=uid)
+        # Issue proposals and their journals live in the host outbox store,
+        # keyed by the sender's uuid: no `incus exec` into the orchestrator.
+        uuid = ctx.sender.key
+        snapshot = issue_outbox.store_outbox(uuid)
         targets = issue_outbox.resolve_repo_targets(ctx.cfg)
         refusals: list[str] = []
         proposals = issue_outbox._load_proposals(
@@ -205,8 +208,7 @@ def _precheck(
             (m.manifest,),
             targets,
             ctx.cfg.repo_root,
-            container_identity(ctx.incus, ctx.sender.full),
-            JournalStore(),
+            issue_outbox.store_journals(ContainerIdentity(ctx.sender.full, ""), uuid),
             refusals,
         )
         if refusals:

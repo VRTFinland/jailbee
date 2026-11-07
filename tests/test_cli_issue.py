@@ -32,6 +32,7 @@ runner = CliRunner()
 
 _IDENTITY = ContainerIdentity(full_name="acme-feat-foo", created_at="2026-01-01T00:00:00Z")
 _DIGEST = "a" * 64
+_UUID = "uuid-feat-foo"
 
 
 def _manifest_text(**overrides) -> str:
@@ -54,6 +55,7 @@ def _running_ci(name: str = "acme-feat-foo", *, pending: int | None = None, stat
         ip=None,
         memory_limit=None,
         repo="acme",
+        uuid=f"uuid-{name}",
         git_status=GitStatus(
             wt="clean",
             ahead_diff="clean",
@@ -75,10 +77,23 @@ def _setup(mocker, tmp_path, *, files=None):
     mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "acme-feat-foo"))
     mocker.patch("jailbee.lifecycle.short_name", return_value="feat-foo")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch(
-        "jailbee.issue_outbox.read_issue_outbox",
-        return_value=OutboxSnapshot(files=files or {}),
-    )
+    snapshot = OutboxSnapshot(files=files or {})
+    # `ls` and `drop` still read the container; `apply`, `show` and `resolve`
+    # read proposals and journals from the host outbox store by instance uuid.
+    mocker.patch("jailbee.issue_outbox.read_issue_outbox", return_value=snapshot)
+    mocker.patch("jailbee.issue_outbox.store_outbox", return_value=snapshot)
+    mocker.patch("jailbee.outbox.service.instance_identity", return_value=(_IDENTITY, _UUID))
+
+    def journals(identity, uuid):
+        # Bridges the tests' `JournalStore.load` patches to the store reader.
+        from jailbee import issue_outbox
+        from jailbee.outbox_io import JournalStore, journal_key
+
+        names = issue_outbox.store_outbox(uuid).manifest_names
+        loaded = {name: JournalStore().load(journal_key(identity, name)) for name in names}
+        return {name: journal for name, journal in loaded.items() if journal is not None}
+
+    mocker.patch("jailbee.issue_outbox.store_journals", side_effect=journals)
     return cfg, incus
 
 
@@ -172,14 +187,33 @@ def test_apply_reports_nothing_pending_with_zero_candidates(mocker, tmp_path):
     assert "nothing pending" in result.output.lower()
 
 
-def test_apply_ignores_a_stopped_container_when_choosing(mocker, tmp_path):
-    # A stopped container's outbox has a pending manifest too -- if the
-    # `Running` guard in `_resolve_issue_container` were removed, it would
-    # become the single auto-selected candidate instead of being excluded.
+def test_apply_chooses_from_the_store_including_a_stopped_container(mocker, tmp_path):
+    """Proposals live in the host store: a stopped container's are publishable too,
+    and choosing never runs `incus exec`."""
     _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
     mocker.patch(
         "jailbee.lifecycle.list_containers",
         return_value=[_running_ci(name="acme-old", state="Stopped")],
+    )
+    prepare = mocker.patch(
+        "jailbee.issue_outbox.prepare_batch", return_value=_prepared_batch(tmp_path)
+    )
+    mocker.patch("jailbee.issue_outbox.plan_lines", return_value=["a plan line"])
+    container_read = mocker.patch("jailbee.issue_outbox.read_issue_outbox")
+
+    result = runner.invoke(app, ["issue", "apply", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert prepare.call_args.args[2] == "acme-old"
+    container_read.assert_not_called()
+
+
+def test_apply_skips_a_container_without_an_instance_uuid(mocker, tmp_path):
+    from dataclasses import replace
+
+    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
+    mocker.patch(
+        "jailbee.lifecycle.list_containers", return_value=[replace(_running_ci(), uuid=None)]
     )
 
     result = runner.invoke(app, ["issue", "apply"])
@@ -235,48 +269,6 @@ def test_apply_refuses_off_a_tty_rather_than_showing_the_picker(mocker, tmp_path
     assert result.exit_code == 2
     pick.assert_not_called()
     assert "feat-a" in result.output and "feat-b" in result.output
-
-
-def test_apply_probe_zero_container_is_never_read(mocker, tmp_path):
-    """The probe's explicit 0 means "nothing here" -- the outbox is not even
-    opened, unlike an unknown (`None`) count."""
-    _setup(mocker, tmp_path)
-    read = mocker.patch(
-        "jailbee.issue_outbox.read_issue_outbox",
-        return_value=OutboxSnapshot(files={"001.json": _manifest_text()}),
-    )
-    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_running_ci(pending=0)])
-
-    result = runner.invoke(app, ["issue", "apply"])
-
-    assert result.exit_code == 0, result.output
-    assert "nothing pending" in result.output.lower()
-    read.assert_not_called()
-
-
-def test_apply_probe_none_container_is_still_read(mocker, tmp_path):
-    """`None` means the probe could not say -- the outbox stays authoritative."""
-    _setup(mocker, tmp_path)
-    read = mocker.patch(
-        "jailbee.issue_outbox.read_issue_outbox",
-        return_value=OutboxSnapshot(files={"001.json": _manifest_text()}),
-    )
-    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_running_ci(pending=None)])
-    prepare = mocker.patch(
-        "jailbee.issue_outbox.prepare_batch", return_value=_prepared_batch(tmp_path)
-    )
-    mocker.patch("jailbee.issue_outbox.plan_lines", return_value=["a plan line"])
-
-    result = runner.invoke(app, ["issue", "apply", "--dry-run"])
-
-    assert result.exit_code == 0, result.output
-    # Once to decide candidacy, once more in `_read_issue_outbox_or_exit` --
-    # unrelated to this pre-filter, and true before it too.
-    assert read.call_count == 2
-    assert prepare.call_args.args[2] == "acme-feat-foo"
-
-
-# ---- approval and ordering (apply) -----------------------------------------
 
 
 def test_apply_prints_the_plan_and_stops_at_no(mocker, tmp_path):

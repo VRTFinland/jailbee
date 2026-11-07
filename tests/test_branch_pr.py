@@ -29,6 +29,10 @@ def source_publisher(mocker, make_cfg, tmp_path):
     cfg = make_cfg(tmp_path)
     incus = MagicMock()
     incus.config_get_checked.return_value = None
+    # The Sent log keys records by the instance uuid.
+    incus.list_containers.return_value = [
+        {"name": "full", "created_at": "created", "config": {"volatile.uuid": "uuid-full"}}
+    ]
     data = {
         "version": 1,
         "repo": "acme/widgets",
@@ -678,7 +682,9 @@ def test_source_published_retry_only_cleans_up(source_publisher, mocker, remove_
     p["consume"].side_effect = p["real_consume"]
     if existing:
         p["discover"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
-    p["incus"].list_containers.return_value = [{"name": "full", "created_at": "created"}]
+    p["incus"].list_containers.return_value = [
+        {"name": "full", "created_at": "created", "config": {"volatile.uuid": "uuid-full"}}
+    ]
     files = p["snapshot"].files
     failed = False
 
@@ -1018,7 +1024,7 @@ def test_source_record_survives_finalize_error(source_publisher):
 
 def test_publish_survives_sent_record_failure_source(source_publisher, mocker, caplog):
     p = source_publisher
-    mocker.patch("jailbee.outbox.sent.get_engine", side_effect=OSError("disk gone"))
+    mocker.patch("jailbee.outbox.sent.pdb.open_publications", side_effect=OSError("disk gone"))
     with caplog.at_level("WARNING", logger="jailbee.outbox.sent"):
         assert _publish(p) == 0
     p["create"].assert_called_once()

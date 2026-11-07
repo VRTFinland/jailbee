@@ -9,6 +9,7 @@ from jailbee.incus import IncusTimeoutError
 from jailbee.outbox.delete import DeleteSelection, plan_delete
 from jailbee.outbox.models import OutboxChanged, OutboxError, OutboxExecutionError, ProposalId
 from jailbee.outbox_io import JournalStore, journal_key, proposal_digest
+from tests.issue_store_support import StoreJournals, instance
 from tests.outbox_support import IDENTITY, issue_files, pr_files, route_issue_snapshot, store
 
 
@@ -17,9 +18,7 @@ def setup_service(mocker, make_cfg, tmp_path, kind="issue"):
 
     cfg = make_cfg(tmp_path)
     incus = mocker.Mock()
-    incus.list_containers.return_value = [
-        {"name": IDENTITY.full_name, "created_at": IDENTITY.created_at}
-    ]
+    incus.list_containers.return_value = [instance(IDENTITY.full_name, IDENTITY.created_at)]
     files = issue_files() if kind == "issue" else pr_files()
     snapshots = {
         kind: store(kind, files),
@@ -116,7 +115,8 @@ def test_changed_preview_refuses_before_mutation(mocker, make_cfg, tmp_path, cha
     if change == "identity":
         env[2].list_containers.return_value[0]["created_at"] = "replacement"
     elif change == "journal":
-        env[7].create(journal_key(IDENTITY, "001.json"), "b" * 64, 9)
+        # Issue journals live in the host outbox store.
+        StoreJournals(IDENTITY).create("001.json", "b" * 64, 9)
     elif change == "rejected":
         env[4]["issue"] = store("issue", env[3], rejected=("body.md",))
     else:
@@ -179,25 +179,12 @@ def journal(env, state):
 
 def test_prepared_recovery_cannot_be_archived(mocker, make_cfg, tmp_path):
     env = setup_service(mocker, make_cfg, tmp_path)
-    journal(env, "prepared")
+    files = env[3]
+    digest = proposal_digest("001.json", files["001.json"], {"body.md": files["body.md"]})
+    # A stored `prepared` action (a run died mid-publication) reads as uncertain.
+    StoreJournals(IDENTITY).record("001.json", digest, 3, 0, state="prepared", repo="acme/repo")
     with pytest.raises(OutboxError):
         preview(env, DeleteSelection(archive_journal=True))
-
-
-def test_settled_archive_only_after_success_under_same_lock(mocker, make_cfg, tmp_path):
-    env = setup_service(mocker, make_cfg, tmp_path)
-    key = journal(env, "applied")
-    plan = preview(env, DeleteSelection(archive_journal=True))
-
-    def mutation(*args, **kwargs):
-        assert env[7]._lock_path(key) in env[7]._held_lock_paths()
-        assert env[7]._path(key).exists()
-        return plan.delete_names
-
-    env[6].side_effect = mutation
-    assert execute(env, plan) == plan.delete_names
-    assert env[7].load(key) is None
-    assert list((env[7]._path(key).parent / "archive").glob("*.json"))
 
 
 def test_failed_deletion_never_archives(mocker, make_cfg, tmp_path):
@@ -233,10 +220,11 @@ def test_whole_archive_request_keeps_empty_old_journal(mocker, make_cfg, tmp_pat
 
 
 def test_unreadable_journal_blocks(mocker, make_cfg, tmp_path):
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox import publication_db
+
     env = setup_service(mocker, make_cfg, tmp_path)
-    key = journal_key(IDENTITY, "001.json")
-    env[7]._path(key).parent.mkdir(parents=True)
-    env[7]._path(key).mkdir()
+    mocker.patch.object(publication_db, "read_journals", side_effect=StoreError("corrupt"))
     with pytest.raises(OutboxError):
         preview(env)
 

@@ -20,7 +20,11 @@ OUTBOX_PUT = "outbox.put"
 OUTBOX_LIST = "outbox.list"
 OUTBOX_SHOW = "outbox.show"
 OUTBOX_DROP = "outbox.drop"
-OUTBOX_OPS: frozenset[str] = frozenset({OUTBOX_PUT, OUTBOX_LIST, OUTBOX_SHOW, OUTBOX_DROP})
+# The calling container's own sent records (replaces reading `applied.log`).
+OUTBOX_SENT = "outbox.sent"
+OUTBOX_OPS: frozenset[str] = frozenset(
+    {OUTBOX_PUT, OUTBOX_LIST, OUTBOX_SHOW, OUTBOX_DROP, OUTBOX_SENT}
+)
 # Draft batches (`--batch`): appends are small requests; showing one can return up
 # to its whole manifest plus bodies, so that reply gets the outbox cap.
 OUTBOX_DRAFT_APPEND = "outbox.draft.append"

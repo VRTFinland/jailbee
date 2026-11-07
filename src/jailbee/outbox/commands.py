@@ -125,10 +125,10 @@ def _resolve_visible(cfg: Config, name: str, containers: Sequence[ContainerInfo]
 
 
 def resolve_incarnation(cfg: Config, incus: Incus, name: str) -> tuple[str, str | None]:
-    """The visible container `name` names: its full name and raw Incus creation time.
+    """The visible container `name` names: its full name and Incus ``volatile.uuid``.
 
-    The time is None when Incus does not report a usable one. Stopped containers
-    resolve too; only the scoped inventory supplies candidates.
+    The uuid (which names this incarnation) is None when Incus reports none.
+    Stopped containers resolve too; only the scoped inventory supplies candidates.
     """
     containers, _ = _inventory(cfg, incus, all_repos=True)
     item = _resolve_visible(cfg, name, containers)
@@ -143,8 +143,9 @@ def resolve_incarnation(cfg: Config, incus: Incus, name: str) -> tuple[str, str 
         )
     except IncusError as exc:
         raise OutboxExecutionError(str(exc)) from exc
-    created = raw.get("created_at") if raw is not None else None
-    return item.name, created if isinstance(created, str) else None
+    config = raw.get("config") if raw is not None else None
+    uuid = config.get("volatile.uuid") if isinstance(config, dict) else None
+    return item.name, uuid if isinstance(uuid, str) and uuid else None
 
 
 def discover(

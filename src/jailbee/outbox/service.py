@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 from jailbee.incus import IncusError
@@ -14,7 +15,13 @@ from jailbee.outbox.models import (
     OutboxExecutionError,
     StoreSnapshot,
 )
-from jailbee.outbox_io import ContainerIdentity, JournalError, JournalStore, journal_key
+from jailbee.outbox_io import (
+    ContainerIdentity,
+    IssueJournal,
+    JournalError,
+    JournalStore,
+    journal_key,
+)
 
 
 def _instance(incus: Incus, container: str) -> tuple[ContainerIdentity, str | None]:
@@ -36,6 +43,14 @@ def _instance(incus: Incus, container: str) -> tuple[ContainerIdentity, str | No
     config = raw.get("config") if raw is not None else None
     uuid = config.get("volatile.uuid") if isinstance(config, dict) else None
     return ContainerIdentity(container, created), uuid if isinstance(uuid, str) and uuid else None
+
+
+def instance_identity(incus: Incus, container: str) -> tuple[ContainerIdentity, str]:
+    """The instance's legacy identity and its uuid, the outbox store's key for it."""
+    identity, uuid = _instance(incus, container)
+    if uuid is None:
+        raise JournalError(f"{container}: instance uuid is unavailable")
+    return identity, uuid
 
 
 def _identity(incus: Incus, container: str) -> ContainerIdentity:
@@ -66,6 +81,25 @@ def issue_snapshot(container: str, uuid: str | None) -> StoreSnapshot:
     return StoreSnapshot("issue", tuple(sorted(files)), (), (), versions)
 
 
+def issue_journals(
+    container: str, identity: ContainerIdentity, uuid: str | None
+) -> dict[str, IssueJournal]:
+    """The instance's active issue publication journals from the host outbox store."""
+    from jailbee.orchestration.store import StoreError
+    from jailbee.outbox import publication_db
+
+    if uuid is None:
+        return {}  # no store key, so no journal (issue_snapshot refuses such an instance)
+    try:
+        stored = publication_db.read_journals(publication_db.default_root(), uuid, "issue")
+    except StoreError as exc:
+        raise OutboxExecutionError(f"outbox store is unreadable: {exc}") from exc
+    return {
+        name: IssueJournal(identity, name, j.digest, j.action_count, j.actions)
+        for (_, name), j in stored.items()
+    }
+
+
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
@@ -92,7 +126,12 @@ def load_container(
         if _instance(incus, container) != (identity, uuid):
             raise OutboxChanged("container changed while reading; refresh required")
         # Canonical freshness matches publication, not optional PR display labels.
-        proposals = build_views(identity, stores, journal_store=journal_store)
+        proposals = build_views(
+            identity,
+            stores,
+            journal_store=journal_store,
+            issue_journals=issue_journals(container, identity, uuid),
+        )
         return ContainerView(identity, container, True, None, stores, proposals)
     except (IncusError, JournalError, OutboxExecutionError, OutboxChanged) as exc:
         if raise_errors:
@@ -145,12 +184,8 @@ def execute_delete(
             if _identity(incus, container) != identity:
                 raise OutboxChanged("container changed before mutation; refresh required")
             if plan.proposal.kind == "issue":
-                removed = _delete_issue_rows(container, uuid, plan, snapshot)
-                if plan.selection.archive_journal:
-                    journal = journal_store.load(key)
-                    if journal is not None and journal.actions:
-                        journal_store.archive(key)
-                return removed
+                # The store archives the issue journal in the deleting transaction.
+                return _delete_issue_rows(container, uuid, plan, snapshot)
             removed = mutate_store(
                 incus,
                 container,
@@ -192,7 +227,13 @@ def _delete_issue_rows(
         raise OutboxChanged("proposal changed; refresh required")
     try:
         store_db.host_store(state_dir() / "orchestration").edit_proposal(
-            uuid, "issue", plan.proposal.name, version, plan.new_text
+            uuid,
+            "issue",
+            plan.proposal.name,
+            version,
+            plan.new_text,
+            archive_journal=plan.selection.archive_journal,
+            now=time.time(),
         )
     except store_db.ProposalChangedError as exc:
         raise OutboxChanged("proposal changed; refresh required") from exc

@@ -12,7 +12,7 @@ import logging
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from jailbee.agent_activity import ActivityReader
@@ -221,8 +221,7 @@ class Gatherer:
         for group in groups:
             group.sent_count = counts.by_prefix.get(group.prefix, 0)
             for c in group.containers:
-                created = c.created_at.astimezone(UTC) if c.created_at is not None else None
-                c.sent_count = counts.by_instance.get((c.name, created), 0)
+                c.sent_count = counts.by_uuid.get(c.uuid, 0) if c.uuid else 0
 
     def _update_notice_now(self, *, refresh: bool) -> UpdateNotice | None:
         """The update notice, re-read once a minute or when a client asks.

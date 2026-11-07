@@ -339,18 +339,18 @@ def test_fast_window_never_slows_a_faster_cadence():
 
 def _sent_groups():
     old = _ci("alpha-x")
-    old.created_at = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+    old.uuid = "uuid-x"
     fresh = _ci("alpha-y")
-    fresh.created_at = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
+    fresh.uuid = "uuid-y-now"
     return [RepoGroup("alpha", "/a", None, [old, fresh])]
 
 
 def test_sent_counts_are_set_per_current_incarnation_and_per_repo(mocker):
     counts = SentCounts(
-        by_instance={
-            ("alpha-x", datetime(2026, 10, 1, 12, 0, tzinfo=UTC)): 3,
-            # An earlier incarnation of alpha-y: not this container's.
-            ("alpha-y", datetime(2026, 10, 15, 12, 0, tzinfo=UTC)): 5,
+        by_uuid={
+            "uuid-x": 3,
+            # An earlier incarnation of alpha-y (another uuid): not this container's.
+            "uuid-y-before": 5,
         },
         by_prefix={"alpha": 8},
     )

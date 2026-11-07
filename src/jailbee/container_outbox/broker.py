@@ -83,6 +83,16 @@ def list_proposals(kind: Kind) -> list[dict[str, Any]]:
     return list(cast(dict[str, Any], result)["proposals"])
 
 
+def sent(*, limit: int | None = None, kind: Kind | None = None) -> list[dict[str, Any]]:
+    """This container's sent records (what the host published for it), newest first."""
+    args: dict[str, Any] = {}
+    if limit is not None:
+        args["limit"] = limit
+    if kind is not None:
+        args["kind"] = kind
+    return list(cast(dict[str, Any], call(wire.OUTBOX_SENT, args))["records"])
+
+
 def show(kind: Kind, name: str) -> dict[str, Any]:
     return cast(dict[str, Any], call(wire.OUTBOX_SHOW, {"kind": kind, "name": name}))
 

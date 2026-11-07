@@ -648,6 +648,7 @@ def list_containers(
                 credential_group=credential_group_raw or None,
                 autostart_profile=config.get("user.jailbee.autostart_profile") or None,
                 created_at=_parse_incus_timestamp(raw.get("created_at")),
+                uuid=config.get("volatile.uuid") or None,
                 memory_usage=memory_usage,
                 init_pid=init_pid,
                 cpu_usage_ns=cpu_usage_ns,

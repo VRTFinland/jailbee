@@ -347,6 +347,10 @@ def _execute_removal_locked(
                 if notice.scope == plan.prefix:
                     session.delete(notice)
             session.commit()
+            # Sent records moved to the host outbox store (broker.db).
+            from jailbee.outbox import sent as sent_log
+
+            sent_log.clear(container_prefix=plan.prefix, before=None)
             # Never purge recoverable user data after an incomplete removal.
             if all(result.ok for result in results):
                 for path in plan.purge_files:

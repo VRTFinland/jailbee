@@ -147,9 +147,14 @@ class Queries:
         if view.role == "child" and op not in (
             wire.OUTBOX_LIST,
             wire.OUTBOX_SHOW,
+            wire.OUTBOX_SENT,
             *wire.OUTBOX_DRAFT_READ_OPS,
         ):
             raise wire.WireError(wire.REFUSED, CHILD_REFUSAL)
+        if op == wire.OUTBOX_SENT:
+            from jailbee.outbox.publication_db import PublicationStore
+
+            return broker_ops.handle_sent(PublicationStore(self._store), uuid, args)
         return broker_ops.handle(OutboxStore(self._store), uuid, op, args, now=time.time())
 
 

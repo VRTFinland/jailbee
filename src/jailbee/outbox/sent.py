@@ -1,18 +1,20 @@
-"""The outbox Sent log: what the host published to GitHub, kept in the state DB.
+"""The outbox Sent log: what the host published to GitHub, kept in the outbox store.
 
-`record`, `mark_applied` and `forget` are called by the shared host publish
-code right after GitHub accepted an action. They are best effort: a database
-or filesystem failure here must never fail or undo a publish, so each swallows
-`SQLAlchemyError` / `sqlite3.Error` / `OSError` and warns. The readers
-(`list_records`, `get_record`, `clear`, `counts`) raise normally; their
-callers decide how to degrade.
+Records live in ``outbox_sent`` in the broker's ``broker.db`` (see
+`jailbee.outbox.publication_db`), keyed by the container's Incus
+``volatile.uuid``: one row per action of one exact proposal (uuid, outbox,
+manifest, proposal digest, action index), so a retried or resumed publish
+updates its row instead of adding one, and a recreated container (new uuid)
+gets rows of its own.
 
-One row per action, keyed by `dedup_key` (instance, `container_created`,
-outbox, manifest, proposal digest, action index) so a retried or resumed
-publish updates its row instead of adding one, while a reused manifest name
-with different content gets rows of its own. Source publications qualify the
-proposal digest with create/update, keeping the create receipt when the same
-proposal is later used to update a PR. All datetimes are UTC.
+Issue publication writes its records inside the journal transaction
+(`publication_db.PublicationStore.settle`). The PR family (review, source)
+still calls `record`, `mark_applied` and `forget` right after GitHub accepted an
+action; these are best effort: a store failure must never fail or undo a
+publish, so each swallows `StoreError` / `sqlite3.Error` / `OSError` and warns.
+The readers (`list_records`, `get_record`, `clear`, `counts`) raise normally
+(`StoreError`, an `OSError`); their callers decide how to degrade. Readers open
+the store read-only and never create it. All datetimes are UTC.
 """
 
 from __future__ import annotations
@@ -25,12 +27,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
-from sqlalchemy import delete, func
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlmodel import Session, col, select
-
-from jailbee.db import get_engine
-from jailbee.db.models import SentRecord
+from jailbee.incus import IncusError
+from jailbee.outbox import publication_db as pdb
+from jailbee.outbox_io import JournalError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -41,7 +40,13 @@ Outbox = Literal["issue", "review", "source"]
 Publisher = Literal["user", "orchestrator"]
 State = Literal["applied", "uncertain"]
 
-_BEST_EFFORT_ERRORS = (SQLAlchemyError, sqlite3.Error, OSError)
+# JournalError / IncusError: a uuid lookup (`outbox_io.instance_uuid`) that failed.
+_BEST_EFFORT_ERRORS: tuple[type[Exception], ...] = (
+    sqlite3.Error,
+    OSError,
+    JournalError,
+    IncusError,
+)
 
 
 @dataclass(frozen=True)
@@ -63,14 +68,14 @@ class SentAction:
 
 @dataclass(frozen=True)
 class SentRow:
-    """One stored record, detached from any session."""
+    """One stored record."""
 
     id: int
     sent_at: datetime
     container_prefix: str
-    container: str
-    instance: str
-    container_created: datetime | None
+    container: str  # short name
+    instance: str  # full Incus name
+    uuid: str  # the instance incarnation (Incus volatile.uuid)
     publisher: str
     state: str
     outbox: str
@@ -88,7 +93,7 @@ class SentRow:
 class SentCounts:
     """Record counts the dashboards' gatherer carries in its snapshot."""
 
-    by_instance: dict[tuple[str, datetime | None], int] = field(default_factory=dict)
+    by_uuid: dict[str, int] = field(default_factory=dict)
     by_prefix: dict[str, int] = field(default_factory=dict)
 
 
@@ -100,29 +105,11 @@ def _utc(value: datetime | None) -> datetime | None:
     return value.astimezone(UTC)
 
 
-def dedup_key(
-    instance: str,
-    container_created: datetime | None,
-    outbox: str,
-    manifest: str,
-    digest: str,
-    index: int,
-) -> str:
-    """The unique key of one action; an unknown creation time still keys per instance."""
-    created = _utc(container_created)
-    stamp = created.isoformat() if created is not None else "-"
-    return f"{instance}|{stamp}|{outbox}|{manifest}|{digest}|{index}"
-
-
 _SUBSEC_RE = re.compile(r"(\.\d{6})\d+")
 
 
 def parse_created(raw: str | None) -> datetime | None:
-    """An Incus ``created_at`` (RFC3339Nano) as an aware UTC datetime, or None.
-
-    The Go zero time Incus reports for an unset timestamp is None too, so an
-    unknown creation time keys the record per instance only.
-    """
+    """An Incus ``created_at`` (RFC3339Nano) as an aware UTC datetime, or None."""
     if not raw:
         return None
     text = _SUBSEC_RE.sub(r"\1", raw.strip())
@@ -152,27 +139,53 @@ def _best_effort(what: str, fn: Callable[[], None]) -> None:
         _warn(what, exc)
 
 
-def _short_name(instance: str, container_prefix: str) -> str:
+def short_name(instance: str, container_prefix: str) -> str:
     prefix = f"{container_prefix}-"
     if container_prefix and instance.startswith(prefix):
         return instance[len(prefix) :]
     return instance
 
 
-def _to_row(rec: SentRecord) -> SentRow:
-    assert rec.id is not None
+def entry(
+    action: SentAction,
+    *,
+    instance: str,
+    uuid: str,
+    container_prefix: str,
+    publisher: Publisher,
+) -> pdb.SentEntry:
+    """The stored form of ``action`` published from ``instance``."""
+    return pdb.SentEntry(
+        uuid=uuid,
+        container_prefix=container_prefix,
+        container=instance,
+        publisher=publisher,
+        outbox=action.outbox,
+        manifest=action.manifest,
+        digest=action.digest,
+        index=action.index,
+        kind=action.kind,
+        repo=action.repo,
+        target=action.target,
+        url=action.url,
+        title=action.title,
+        content=action.content,
+    )
+
+
+def _to_row(rec: pdb.SentRecord) -> SentRow:
     return SentRow(
         id=rec.id,
-        sent_at=rec.sent_at,
+        sent_at=datetime.fromtimestamp(rec.sent_at, UTC),
         container_prefix=rec.container_prefix,
-        container=rec.container,
-        instance=rec.instance,
-        container_created=rec.container_created,
+        container=short_name(rec.container, rec.container_prefix),
+        instance=rec.container,
+        uuid=rec.uuid,
         publisher=rec.publisher,
         state=rec.state,
         outbox=rec.outbox,
         manifest=rec.manifest,
-        index=rec.action_index,
+        index=rec.index,
         kind=rec.kind,
         repo=rec.repo,
         target=rec.target,
@@ -182,86 +195,44 @@ def _to_row(rec: SentRecord) -> SentRow:
     )
 
 
-def _upsert(
-    key: str,
-    state: State,
-    action: SentAction,
-    instance: str,
-    container_prefix: str,
-    container_created: datetime | None,
-    publisher: Publisher,
-    now: datetime,
-) -> None:
-    with Session(get_engine()) as session:
-        existing = session.exec(select(SentRecord).where(SentRecord.dedup_key == key)).first()
-        if existing is None:
-            session.add(
-                SentRecord(
-                    dedup_key=key,
-                    sent_at=_utc(now) or now,
-                    container_prefix=container_prefix,
-                    container=_short_name(instance, container_prefix),
-                    instance=instance,
-                    container_created=_utc(container_created),
-                    publisher=publisher,
-                    state=state,
-                    outbox=action.outbox,
-                    manifest=action.manifest,
-                    action_index=action.index,
-                    kind=action.kind,
-                    repo=action.repo,
-                    target=action.target,
-                    url=action.url,
-                    title=action.title,
-                    content=action.content,
-                )
-            )
-        else:
-            if existing.state == "uncertain" and state == "applied":
-                existing.publisher = publisher
-                existing.sent_at = _utc(now) or now
-            if existing.state != "applied":
-                existing.state = state
-            existing.url = action.url or existing.url
-            existing.target = action.target if action.target is not None else existing.target
-            existing.title = action.title or existing.title
-            existing.content = action.content or existing.content
-            session.add(existing)
-        session.commit()
-
-
 def record(
     *,
     instance: str,
+    uuid: str | Callable[[], str],
     container_prefix: str,
-    container_created: datetime | None,
     publisher: Publisher,
     action: SentAction | Callable[[], SentAction],
     state: State,
     now: datetime | None = None,
 ) -> None:
-    """Upsert without downgrading applied rows; a factory builds the action best effort too."""
+    """Upsert without downgrading applied rows.
+
+    A factory for the action or the uuid is called best effort too, so a
+    failed lookup after GitHub accepted the action only warns.
+    """
 
     def run() -> None:
         built = action() if callable(action) else action
-        key = dedup_key(
-            instance, container_created, built.outbox, built.manifest, built.digest, built.index
+        key = uuid() if callable(uuid) else uuid
+        stamp = _utc(now) or datetime.now(UTC)
+        pdb.open_publications().record_sent(
+            entry(
+                built,
+                instance=instance,
+                uuid=key,
+                container_prefix=container_prefix,
+                publisher=publisher,
+            ),
+            state,
+            now=stamp.timestamp(),
         )
-        stamp = now if now is not None else datetime.now(UTC)
-        args = (key, state, built, instance, container_prefix, container_created, publisher, stamp)
-        try:
-            _upsert(*args)
-        except IntegrityError:
-            # Lost an insert race with another publisher of the same action.
-            _upsert(*args)
 
     _best_effort("record the action", run)
 
 
 def mark_applied(
     *,
-    instance: str,
-    container_created: datetime | None,
+    uuid: str,
     outbox: str,
     manifest: str,
     digest: str,
@@ -270,106 +241,58 @@ def mark_applied(
     target: int | None,
 ) -> None:
     """Turn an `uncertain` row into `applied`, filling the URL/target. Best effort."""
-    key = dedup_key(instance, container_created, outbox, manifest, digest, index)
-
-    def run() -> None:
-        with Session(get_engine()) as session:
-            rec = session.exec(select(SentRecord).where(SentRecord.dedup_key == key)).first()
-            if rec is None:
-                return
-            rec.state = "applied"
-            if url:
-                rec.url = url
-            if target is not None:
-                rec.target = target
-            session.add(rec)
-            session.commit()
-
-    _best_effort("mark the action applied", run)
+    _best_effort(
+        "mark the action applied",
+        lambda: pdb.open_publications().mark_sent(
+            uuid=uuid,
+            outbox=outbox,
+            manifest=manifest,
+            digest=digest,
+            index=index,
+            url=url,
+            target=target,
+        ),
+    )
 
 
-def forget(
-    *,
-    instance: str,
-    container_created: datetime | None,
-    outbox: str,
-    manifest: str,
-    digest: str,
-    index: int,
-) -> None:
+def forget(*, uuid: str, outbox: str, manifest: str, digest: str, index: int) -> None:
     """Delete the `uncertain` row of a dropped action; applied rows stay. Best effort."""
-    key = dedup_key(instance, container_created, outbox, manifest, digest, index)
-
-    def run() -> None:
-        with Session(get_engine()) as session:
-            session.exec(
-                delete(SentRecord).where(
-                    col(SentRecord.dedup_key) == key, col(SentRecord.state) == "uncertain"
-                )
-            )
-            session.commit()
-
-    _best_effort("forget the action", run)
+    _best_effort(
+        "forget the action",
+        lambda: pdb.open_publications().forget_sent(
+            uuid=uuid, outbox=outbox, manifest=manifest, digest=digest, index=index
+        ),
+    )
 
 
 def list_records(
     *,
     container_prefix: str | None = None,
-    instance: str | None = None,
-    container_created: datetime | None = None,
+    uuid: str | None = None,
     limit: int | None = None,
 ) -> list[SentRow]:
-    """Records newest first, optionally narrowed to a repo or one container incarnation.
-
-    `container_created` only narrows when `instance` is given too (it names an
-    incarnation of that instance); `None` then means "any incarnation".
-    """
-    stmt = select(SentRecord)
-    if container_prefix is not None:
-        stmt = stmt.where(SentRecord.container_prefix == container_prefix)
-    if instance is not None:
-        stmt = stmt.where(SentRecord.instance == instance)
-        if container_created is not None:
-            stmt = stmt.where(SentRecord.container_created == _utc(container_created))
-    stmt = stmt.order_by(col(SentRecord.sent_at).desc(), col(SentRecord.id).desc())
-    if limit is not None:
-        stmt = stmt.limit(limit)
-    with Session(get_engine()) as session:
-        return [_to_row(rec) for rec in session.exec(stmt)]
+    """Records newest first, optionally narrowed to a repo or one container incarnation."""
+    rows = pdb.read_sent(
+        pdb.default_root(), container_prefix=container_prefix, uuid=uuid, limit=limit
+    )
+    return [_to_row(rec) for rec in rows]
 
 
 def get_record(id: int) -> SentRow | None:
-    with Session(get_engine()) as session:
-        rec = session.get(SentRecord, id)
-        return _to_row(rec) if rec is not None else None
+    rows = pdb.read_sent(pdb.default_root(), record_id=id)
+    return _to_row(rows[0]) if rows else None
 
 
 def clear(*, container_prefix: str, before: datetime | None) -> int:
     """Delete a repo's records (those sent before `before`, if given); return the count."""
-    stmt = delete(SentRecord).where(col(SentRecord.container_prefix) == container_prefix)
-    if before is not None:
-        stmt = stmt.where(col(SentRecord.sent_at) < _utc(before))
-    with Session(get_engine()) as session:
-        result = session.execute(stmt)
-        session.commit()
-        # Result is typed as the generic Result; a DELETE's CursorResult has rowcount.
-        return int(result.rowcount or 0)  # type: ignore[attr-defined]
+    cutoff = _utc(before)
+    return pdb.open_publications().clear_sent(
+        container_prefix=container_prefix,
+        before=None if cutoff is None else cutoff.timestamp(),
+    )
 
 
 def counts() -> SentCounts:
-    """Record counts per (instance, incarnation) and per repo prefix: two grouped queries."""
-    with Session(get_engine()) as session:
-        inst = session.exec(
-            select(SentRecord.instance, SentRecord.container_created, func.count()).group_by(
-                col(SentRecord.instance), col(SentRecord.container_created)
-            )
-        ).all()
-        pref = session.exec(
-            select(SentRecord.container_prefix, func.count()).group_by(
-                col(SentRecord.container_prefix)
-            )
-        ).all()
-    return SentCounts(
-        by_instance={(i, _utc(c)): int(n) for i, c, n in inst},
-        by_prefix={p: int(n) for p, n in pref},
-    )
+    """Record counts per instance incarnation (uuid) and per repo prefix."""
+    by_uuid, by_prefix = pdb.sent_counts(pdb.default_root())
+    return SentCounts(by_uuid=by_uuid, by_prefix=by_prefix)

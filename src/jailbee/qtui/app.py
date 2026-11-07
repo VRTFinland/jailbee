@@ -754,8 +754,6 @@ class AppController(QObject):
 
     def _sent_source(self, container: str) -> Callable[[bool], tuple[SentItem, ...]]:
         """Reads the Sent log for ``container``'s repo from the latest snapshot, on demand."""
-        from datetime import UTC
-
         from jailbee.dashboard import outbox as dob
 
         def read(whole_repo: bool) -> tuple[SentItem, ...]:
@@ -763,16 +761,11 @@ class AppController(QObject):
             if group is None:
                 return ()
             if whole_repo:
-                live = {
-                    c.name: c.created_at.astimezone(UTC) if c.created_at is not None else None
-                    for c in group.containers
-                }
+                live = {c.name: c.uuid for c in group.containers}
                 return dob.read_sent(group.prefix, live=live)
             info = next((c for c in group.containers if c.name == container), None)
-            created = (
-                info.created_at.astimezone(UTC) if info and info.created_at is not None else None
-            )
-            return dob.read_sent(group.prefix, instance=container, created=created)
+            uuid = info.uuid if info is not None else None
+            return dob.read_sent(group.prefix, instance=container, uuid=uuid)
 
         return read
 

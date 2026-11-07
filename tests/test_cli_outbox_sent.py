@@ -22,7 +22,7 @@ def _rec(
     *,
     prefix: str = "acme",
     instance: str = "acme-feat",
-    created: datetime | None = NEW,
+    uuid: str = "uuid-new",
     at: datetime = datetime(2026, 11, 4, 10, 0, tzinfo=UTC),
     state: str = "applied",
     content: str = "hello body",
@@ -32,7 +32,7 @@ def _rec(
     sent.record(
         instance=instance,
         container_prefix=prefix,
-        container_created=created,
+        uuid=uuid,
         publisher="user",
         action=SentAction("issue", manifest, 0, "comment", "o/r", 5, url, title, content, "d"),
         state=state,  # type: ignore[arg-type]
@@ -51,7 +51,7 @@ def test_ls_without_args_lists_everything_newest_first_and_never_prompts(mocker)
     result = _run("ls", "-o", "json")
     assert result.exit_code == 0, result.output
     data = json.loads(result.stdout)
-    assert data["schema"] == 1
+    assert data["schema"] == 2
     assert [r["manifest"] for r in data["records"]] == ["b", "a"]
     ask.assert_not_called()
 
@@ -82,12 +82,13 @@ def test_ls_container_limits_to_its_current_incarnation(mocker, make_cfg, tmp_pa
             "created_at": "2026-11-01T08:00:00Z",
             "profiles": ["acme-base"],
             "status": "Running",
+            "config": {"volatile.uuid": "uuid-new"},
         }
     ]
     mocker.patch("jailbee.incus.Incus", return_value=incus)
-    _rec("now", created=NEW)
-    _rec("past-life", created=OLD)
-    _rec("elsewhere", instance="acme-other")
+    _rec("now")
+    _rec("past-life", uuid="uuid-old")
+    _rec("elsewhere", instance="acme-other", uuid="uuid-other")
     result = _run("ls", "feat", "-o", "json")
     assert result.exit_code == 0, result.output
     assert [r["manifest"] for r in json.loads(result.stdout)["records"]] == ["now"]

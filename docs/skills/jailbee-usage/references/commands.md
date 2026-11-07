@@ -37,7 +37,9 @@ Use `--batch NAME` to collect actions, `jailbee outbox ls [--json]` and
 staged proposal with `jailbee outbox drop issue/NAME` or `pr/NAME`. For
 issue batches, create with `--ref REF` and address it later as `@REF`;
 expected values come from that earlier create. Existing issue changes fetch
-current state for host staleness checks.
+current state for host staleness checks. `jailbee outbox sent [--json]
+[--limit N] [--kind issue|pr]` lists what the host published from this
+container (its own Sent log records only), newest first.
 
 Inline reviews use `jailbee pr review add N --file PATH --line LINE --body
 TEXT` followed by `jailbee pr review submit N`; generic outbox submit refuses

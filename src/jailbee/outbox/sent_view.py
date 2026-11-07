@@ -14,7 +14,8 @@ if TYPE_CHECKING:
     from jailbee.outbox.sent import SentRow
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
-SCHEMA = 1
+# 2 replaced container_created with the instance uuid (records moved to broker.db).
+SCHEMA = 2
 _UNCERTAIN_NOTE = (
     "uncertain: GitHub may or may not have accepted this action; "
     "check the target, then resolve or drop it in the outbox"
@@ -103,7 +104,7 @@ def row_json(row: SentRow) -> dict[str, object]:
         "container_prefix": row.container_prefix,
         "container": row.container,
         "instance": row.instance,
-        "container_created": _iso(row.container_created),
+        "uuid": row.uuid,
         "publisher": row.publisher,
         "state": row.state,
         "outbox": row.outbox,
@@ -128,7 +129,7 @@ def show_lines(row: SentRow) -> list[str]:
         f"Record {row.id}",
         f"Sent:       {_when(row.sent_at)} UTC",
         f"Container:  {safe_text(row.container)} ({safe_text(row.instance)})",
-        f"Created:    {_when(row.container_created)} UTC",
+        f"Instance:   {safe_text(row.uuid)}",
         f"Repo:       {safe_text(row.container_prefix)}",
         f"Published:  by {row.publisher}",
         f"Action:     {row.outbox}/{row.kind}",

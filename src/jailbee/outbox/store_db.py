@@ -379,22 +379,44 @@ class OutboxStore:
         name: str,
         revision: int | None,
         manifest: str | None,
+        *,
+        archive_journal: bool = False,
+        now: float = 0.0,
     ) -> Proposal:
         """Replace a proposal's manifest (bumping its row version), or delete it
-        when ``manifest`` is None. Same checks as `drop_proposal`."""
+        when ``manifest`` is None. Same checks as `drop_proposal`.
+
+        Refused while a live publication claim holds the proposal. Recorded
+        publication progress refuses too, unless the whole proposal is deleted
+        with ``archive_journal``: then its journal is archived in the same
+        transaction — never while an outcome is uncertain (or still prepared).
+        """
+        from jailbee.outbox import publication_db
+
         kind = _kind(kind)
         with self._store.transaction() as con:
             found = _select(con, uuid, kind, name)
             if not found or (revision is not None and found[0].revision != revision):
                 raise ProposalChangedError(f"{kind}/{name} changed or is gone")
-            (live,) = con.execute(
-                "SELECT COUNT(*) FROM outbox_journal WHERE uuid=? AND kind=? "
-                "AND proposal_name=? AND archived_at IS NULL AND action_count>0",
-                (uuid, kind, name),
-            ).fetchone()
-            if live:
-                raise ProposalLockedError(
-                    f"{kind}/{name} has recorded publication progress and cannot be removed"
+            if publication_db.claim_is_live(con, uuid, kind, name):
+                raise ProposalLockedError(f"{kind}/{name} is being published; retry afterwards")
+            journal = publication_db.active_journal(con, uuid, kind, name)
+            if journal is not None and journal.actions:
+                if manifest is not None or not archive_journal:
+                    raise ProposalLockedError(
+                        f"{kind}/{name} has recorded publication progress and cannot be removed"
+                    )
+                if journal.uncertain:
+                    raise ProposalLockedError(
+                        f"{kind}/{name}: cannot archive a journal containing uncertain progress"
+                    )
+                publication_db.archive_active(con, uuid, kind, name, journal.digest, now)
+            elif journal is not None and manifest is None:
+                # Nothing was ever recorded: the untouched journal goes with the proposal.
+                con.execute(
+                    "DELETE FROM outbox_journal WHERE uuid=? AND kind=? AND proposal_name=? "
+                    "AND archived_at IS NULL",
+                    (uuid, kind, name),
                 )
             key = (uuid, kind, name)
             if manifest is None:

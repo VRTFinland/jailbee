@@ -12,8 +12,8 @@ from jailbee.incus import Incus
 from jailbee.outbox import service
 from jailbee.outbox.models import ContainerView, ProposalId
 from jailbee.outbox.service import issue_snapshot as real_issue_snapshot
-from jailbee.outbox_io import JournalStore
 from tests.conftest import panel_text
+from tests.issue_store_support import UUID, StoreJournals, StoreSnapshots
 from tests.outbox_support import IDENTITY, issue_files, pr_files, route_issue_snapshot, store
 
 
@@ -28,24 +28,32 @@ def env(mocker, make_cfg, tmp_path):
         "created_at": IDENTITY.created_at,
         "profiles": ["acme-base"],
         "status": "Running",
+        "config": {"volatile.uuid": UUID},
     }
     incus.list_containers.return_value = [raw]
     incus.exists.side_effect = lambda name: name == IDENTITY.full_name
     mocker.patch("jailbee.incus.Incus", return_value=incus)
-    snapshots = {"pr": store("pr", pr_files()), "issue": store("issue", issue_files())}
+    # Issue proposals live in the host outbox store; PR proposals are still files.
+    snapshots = StoreSnapshots()
+    snapshots["pr"] = store("pr", pr_files())
+    snapshots["issue"] = store("issue", issue_files())
     reader = mocker.patch.object(
         service, "read_store", side_effect=lambda i, c, k, **kw: snapshots[k]
     )
-    route_issue_snapshot(mocker, service)
     mutation = mocker.patch.object(
         service, "mutate_store", side_effect=lambda *a, **kw: kw["delete_names"]
     )
-    journals = JournalStore(tmp_path / "journals")
+    # Issue drops observed through `mutate_store` (the deletion scope); the real
+    # store path is tested in tests/test_outbox_service_issue_store.py.
+    issue_snapshot = service.issue_snapshot
+    route_issue_snapshot(mocker, service)
+    mocker.patch.object(service, "issue_snapshot", side_effect=issue_snapshot)
+    journals = StoreJournals(IDENTITY)
     mocker.patch("jailbee.outbox_io.JournalStore", return_value=journals)
     return cfg, incus, snapshots, reader, mutation, journals, raw
 
 
-@pytest.mark.parametrize("args", [["ls"], ["show", "feature", "issue/001.json"], ["browse"]])
+@pytest.mark.parametrize("args", [["ls"], ["show", "feature", "pr/001.json"], ["browse"]])
 def test_inspection_missing_registry_does_not_bootstrap_state(env, monkeypatch, tmp_path, args):
     state = tmp_path / "fresh-state"
     monkeypatch.setenv("XDG_STATE_HOME", str(state))
@@ -326,7 +334,7 @@ def test_typo_is_missing_container_not_silent_overview(env):
 def publication_env(env, mocker, tmp_path):
     import subprocess
 
-    from jailbee import issue_github, issue_outbox, pr
+    from jailbee import issue_github, pr
     from jailbee.outbox import io
     from jailbee.outbox.io import PrManagement
 
@@ -384,9 +392,6 @@ def publication_env(env, mocker, tmp_path):
 
     env[1].exec.side_effect = execute
     mocker.patch.object(io, "read_store", side_effect=lambda i, c, k, **kw: env[2][k])
-    mocker.patch.object(
-        issue_outbox, "read_text_outbox", side_effect=lambda *a, **kw: env[2]["issue"].as_dict()
-    )
     mocker.patch("subprocess.run", side_effect=AssertionError("unexpected subprocess"))
     mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/acme/repo.git")
     mocker.patch("jailbee.submodules.declared_submodule_remotes", return_value=())
@@ -464,15 +469,15 @@ def test_apply_real_domain_orchestration(publication_env, mocker, kind, mode):
         create.assert_called_once()
         assert [call.args[2] for call in comment.call_args_list] == [73, 42]
         assert "fully applied" in result.output
-        receipts = [
-            json.loads(line) for line in env[2]["issue"].as_dict()["applied.log"].splitlines()
-        ]
-        assert [(r["manifest"], r["index"], r["issue"]) for r in receipts] == [
+        from jailbee.outbox import sent
+
+        receipts = sorted(sent.list_records(), key=lambda r: r.index)
+        assert [(r.manifest, r.index, r.target) for r in receipts] == [
             ("001.json", 0, 73),
             ("001.json", 1, 42),
             ("001.json", 2, 42),
         ]
-        assert all(r["repo"] == "acme/repo" and r["url"] for r in receipts)
+        assert all(r.repo == "acme/repo" and r.url for r in receipts)
     else:
         review.assert_called_once()
     if mode == "yes":
@@ -784,8 +789,10 @@ def test_apply_final_domain_validation_is_two(publication_env, mocker, change):
     env = publication_env[0]
     armed = False
     reached = []
-    read = issue_outbox.read_issue_outbox
-    identify = issue_outbox.container_identity
+    from jailbee.outbox import service
+
+    read = issue_outbox.store_outbox
+    identify = service.instance_identity
 
     def final_read(*args, **kwargs):
         if armed and change != "identity":
@@ -799,19 +806,19 @@ def test_apply_final_domain_validation_is_two(publication_env, mocker, change):
         return read(*args, **kwargs)
 
     def final_identity(*args, **kwargs):
-        value = identify(*args, **kwargs)
+        value, uuid = identify(*args, **kwargs)
         if armed and change == "identity":
             reached.append(change)
-            return replace(value, created_at="replacement")
-        return value
+            return replace(value, created_at="replacement"), uuid
+        return value, uuid
 
     def confirm(*args, **kwargs):
         nonlocal armed
         armed = True
         return True
 
-    mocker.patch.object(issue_outbox, "read_issue_outbox", side_effect=final_read)
-    mocker.patch.object(issue_outbox, "container_identity", side_effect=final_identity)
+    mocker.patch.object(issue_outbox, "store_outbox", side_effect=final_read)
+    mocker.patch.object(service, "instance_identity", side_effect=final_identity)
     mocker.patch("typer.confirm", side_effect=confirm)
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", "issue/001.json"])
     assert result.exit_code == 2, result.output
@@ -838,7 +845,7 @@ def test_apply_transport_failure_has_safe_execution_diagnostic(
     publication_env, mocker, boundary, late
 ):
     from jailbee import issue_github, issue_outbox, pr
-    from jailbee.outbox_io import OutboxReadError
+    from jailbee.orchestration.store import StoreError
 
     env = publication_env[0]
     kind = "pr" if boundary.startswith("pr-") else "issue"
@@ -849,7 +856,7 @@ def test_apply_transport_failure_has_safe_execution_diagnostic(
         "login": (issue_github, "current_login", issue_github.IssueGithubReadError),
         "issue": (issue_github, "get_issue", issue_github.IssueGithubReadError),
         "labels": (issue_github, "list_labels", issue_github.IssueGithubReadError),
-        "outbox": (issue_outbox, "read_text_outbox", OutboxReadError),
+        "outbox": (issue_outbox, "store_outbox", StoreError),
         "pr-read": (pr, "resolve_pr", pr.PrError),
         "pr-login": (pr, "gh_login", pr.PrError),
     }[boundary]
@@ -1041,7 +1048,8 @@ def test_apply_uses_target_owned_config_before_local_reads(
         ],
     )
     assert result.exit_code == 0, result.output
-    assert set(reads) == {"issue", "pr"}
+    # Issue proposals come from the host store, never through the container reader.
+    assert set(reads) == {"pr"}
     assert {call.args[0] for call in git.get_remote_url.call_args_list} == {target.repo_root}
     assert_publication_refused(publication_env)
 
