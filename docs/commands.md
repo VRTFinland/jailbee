@@ -368,8 +368,13 @@ SSH; Qt opens PR flows in a terminal for the same question.
 then pending source PR proposals from its outbox, labelled with title, source
 head, base and manifest file. Picking one runs the same confirmation, validation
 and receipt handling as `--source-manifest <file>`. Cancel publishes nothing.
-An own-branch description is not a separate source; published proposals awaiting
-cleanup are not offered again. Without pending sources there is no extra question.
+An own-branch description is not a separate source. Source proposals are read
+from the host outbox store, keyed by the container's uuid, without entering the
+container; only the source commits come over the git bridge. The PR
+create/update is journaled in the store: when a run is interrupted during it,
+the proposal reads `uncertain` and the next push asks before publishing again
+(an orchestrator request is refused). Without pending sources there is no extra
+question.
 The dashboards' **Create/update PR** offers the same choice: the terminal
 frontend uses the CLI picker; Qt shows a native choice and opens a terminal for
 source publication confirmation.
