@@ -873,7 +873,7 @@ With `enabled`, `api.github.com:443` is on the strict allowlist, so `gh` reads w
 **This token must be scoped read-only:** Contents: Read, Issues: Read,
 Pull requests: Read, Metadata: Read — no write permission at all. The container's
 `gh` only ever reads; every issue or PR write an in-container agent proposes
-is staged as a manifest (`~/.jailbee/issue-outbox`, `~/.jailbee/pr-outbox`)
+is staged as a proposal (the host outbox store for issues, `~/.jailbee/pr-outbox` for PRs)
 for a human to apply from the host with `jailbee issue apply` / `jailbee
 review apply` / `jailbee outbox apply`, using the host's own `gh`. jailbee cannot verify a
 fine-grained PAT's effective permissions, so a token scoped wider than

@@ -170,7 +170,7 @@ def assess(cfg: Config, ci: ContainerInfo) -> RiskSummary | None:
     if pending:
         reasons.append(f"{pending} unapplied PR action{'s' if pending != 1 else ''}")
 
-    # Same rationale, for the container's issue outbox (`issue_outbox`).
+    # Same rationale, for staged issue proposals in the host outbox store.
     pending_issues = status.pending_issue_actions
     if pending_issues:
         reasons.append(

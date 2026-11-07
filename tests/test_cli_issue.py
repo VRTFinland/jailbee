@@ -2,7 +2,7 @@
 
 Fully mocked: `issue_outbox`'s container reads and every orchestration call
 (`prepare_batch`, `plan_lines`, `revalidate_batch`, `apply_batch`,
-`reconcile_action`, `drop_manifest`) are patched, so nothing here touches
+`reconcile_action`) are patched, so nothing here touches
 Incus or GitHub. The TTY check is patched the same way `test_cli_review.py`
 patches it.
 """
@@ -66,6 +66,19 @@ def _running_ci(name: str = "acme-feat-foo", *, pending: int | None = None, stat
     )
 
 
+def _stub_journals(mocker, journal):
+    """Every staged manifest has `journal` as its store journal (None: no journals)."""
+
+    def journals(identity, uuid):
+        from jailbee import issue_outbox
+
+        if journal is None:
+            return {}
+        return {name: journal for name in issue_outbox.store_outbox(uuid).manifest_names}
+
+    mocker.patch("jailbee.issue_outbox.store_journals", side_effect=journals)
+
+
 def _setup(mocker, tmp_path, *, files=None):
     cfg = mocker.MagicMock()
     cfg.repo_root = tmp_path
@@ -78,22 +91,12 @@ def _setup(mocker, tmp_path, *, files=None):
     mocker.patch("jailbee.lifecycle.short_name", return_value="feat-foo")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     snapshot = OutboxSnapshot(files=files or {})
-    # `ls` and `drop` still read the container; `apply`, `show` and `resolve`
-    # read proposals and journals from the host outbox store by instance uuid.
-    mocker.patch("jailbee.issue_outbox.read_issue_outbox", return_value=snapshot)
+    # `apply`, `show` and `resolve` read proposals and journals from the host
+    # outbox store by instance uuid.
     mocker.patch("jailbee.issue_outbox.store_outbox", return_value=snapshot)
     mocker.patch("jailbee.outbox.service.instance_identity", return_value=(_IDENTITY, _UUID))
 
-    def journals(identity, uuid):
-        # Bridges the tests' `JournalStore.load` patches to the store reader.
-        from jailbee import issue_outbox
-        from jailbee.outbox_io import JournalStore, journal_key
-
-        names = issue_outbox.store_outbox(uuid).manifest_names
-        loaded = {name: JournalStore().load(journal_key(identity, name)) for name in names}
-        return {name: journal for name, journal in loaded.items() if journal is not None}
-
-    mocker.patch("jailbee.issue_outbox.store_journals", side_effect=journals)
+    _stub_journals(mocker, None)
     return cfg, incus
 
 
@@ -136,17 +139,10 @@ def test_issue_help_lists_the_visible_subcommands():
 
     for name in ("apply", "resolve"):
         assert not group.commands[name].hidden
-    for name in ("ls", "show", "drop"):
-        assert group.commands[name].hidden
-
-
-def test_ls_help_shows_format_and_fields_options():
-    result = runner.invoke(app, ["issue", "ls", "--help"])
-
-    assert result.exit_code == 0, result.output
-    assert "--format" in result.output
-    assert "-o" in result.output
-    assert "--fields" in result.output
+    assert group.commands["show"].hidden
+    # Listing and dropping issue proposals is `outbox ls|drop`, not `issue ls|drop`.
+    assert "ls" not in group.commands
+    assert "drop" not in group.commands
 
 
 def test_apply_help_shows_its_options():
@@ -156,14 +152,6 @@ def test_apply_help_shows_its_options():
     assert "--manifest" in result.output
     assert "--yes" in result.output
     assert "--dry-run" in result.output
-
-
-def test_drop_help_shows_its_options():
-    result = runner.invoke(app, ["issue", "drop", "--help"])
-
-    assert result.exit_code == 0, result.output
-    assert "--archive-journal" in result.output
-    assert "--yes" in result.output
 
 
 def test_resolve_help_shows_its_options():
@@ -199,13 +187,11 @@ def test_apply_chooses_from_the_store_including_a_stopped_container(mocker, tmp_
         "jailbee.issue_outbox.prepare_batch", return_value=_prepared_batch(tmp_path)
     )
     mocker.patch("jailbee.issue_outbox.plan_lines", return_value=["a plan line"])
-    container_read = mocker.patch("jailbee.issue_outbox.read_issue_outbox")
 
     result = runner.invoke(app, ["issue", "apply", "--dry-run"])
 
     assert result.exit_code == 0, result.output
     assert prepare.call_args.args[2] == "acme-old"
-    container_read.assert_not_called()
 
 
 def test_apply_skips_a_container_without_an_instance_uuid(mocker, tmp_path):
@@ -510,112 +496,6 @@ def test_apply_uncertain_failure_points_at_resolve_command(mocker, tmp_path):
 # ---- ls ---------------------------------------------------------------------
 
 
-def test_ls_renders_one_row_per_manifest_as_json(mocker, tmp_path):
-    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
-    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_running_ci()])
-    mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
-
-    result = runner.invoke(app, ["issue", "ls", "-o", "json"])
-
-    assert result.exit_code == 0, result.output
-    rows = json.loads(result.stdout)
-    assert len(rows) == 1
-    assert rows[0]["manifest"] == "001.json"
-    assert rows[0]["state"] == "pending"
-
-
-def test_ls_never_touches_github(mocker, tmp_path):
-    """`ls` must render from the outbox/journal alone -- no `gh` adapter call.
-
-    Patches `_run_api`, the module's sole subprocess boundary, so this holds
-    for every present and future adapter function, not just `get_issue`.
-    """
-    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
-    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_running_ci()])
-    mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
-    run_api = mocker.patch("jailbee.issue_github._run_api")
-
-    result = runner.invoke(app, ["issue", "ls"])
-
-    assert result.exit_code == 0, result.output
-    run_api.assert_not_called()
-
-
-def test_ls_skips_reading_a_container_whose_probe_says_zero(mocker, tmp_path):
-    _setup(mocker, tmp_path)
-    read = mocker.patch(
-        "jailbee.issue_outbox.read_issue_outbox",
-        return_value=OutboxSnapshot(files={"001.json": _manifest_text()}),
-    )
-    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_running_ci(pending=0)])
-
-    result = runner.invoke(app, ["issue", "ls", "-o", "json"])
-
-    assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout) == []
-    read.assert_not_called()
-
-
-def test_ls_with_a_name_does_not_probe_git_status(mocker, tmp_path):
-    """A single named container has nothing to pre-filter between -- the
-    outbox read is the authoritative answer either way, so probing every
-    running container of the repo for its git status just to keep one row
-    buys nothing."""
-    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
-    list_containers = mocker.patch(
-        "jailbee.lifecycle.list_containers", return_value=[_running_ci()]
-    )
-    mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
-
-    result = runner.invoke(app, ["issue", "ls", "acme-feat-foo", "-o", "json"])
-
-    assert result.exit_code == 0, result.output
-    assert list_containers.call_args.kwargs.get("with_git_status") is not True
-
-
-def test_ls_notes_a_stopped_container_instead_of_reading_it(mocker, tmp_path):
-    _setup(mocker, tmp_path)
-    mocker.patch(
-        "jailbee.lifecycle.list_containers",
-        return_value=[_running_ci(name="acme-feat-off", state="Stopped")],
-    )
-
-    result = runner.invoke(app, ["issue", "ls"])
-
-    assert result.exit_code == 0, result.output
-    assert "stopped" in result.output.lower() or "not checked" in result.output.lower()
-
-
-def test_ls_marks_a_manifest_with_an_uncertain_receipt(mocker, tmp_path):
-    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
-    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_running_ci()])
-    mocker.patch(
-        "jailbee.outbox_io.container_identity",
-        return_value=_IDENTITY,
-    )
-    journal = IssueJournal(
-        identity=_IDENTITY,
-        manifest_name="001.json",
-        digest=_DIGEST,
-        action_count=1,
-        actions=(
-            JournalAction(
-                index=0, state="uncertain", repo="acme/widgets", detail="uncertain outcome"
-            ),
-        ),
-    )
-    mocker.patch("jailbee.outbox_io.JournalStore.load", return_value=journal)
-
-    result = runner.invoke(app, ["issue", "ls", "-o", "json"])
-
-    assert result.exit_code == 0, result.output
-    rows = json.loads(result.stdout)
-    assert rows[0]["state"] == "uncertain"
-
-
-# ---- show ---------------------------------------------------------------------
-
-
 def test_show_prints_the_manifest_body(mocker, tmp_path):
     long_body = "x" * 400
     text = _manifest_text(
@@ -623,7 +503,7 @@ def test_show_prints_the_manifest_body(mocker, tmp_path):
     )
     _setup(mocker, tmp_path, files={"001.json": text})
     mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
-    mocker.patch("jailbee.outbox_io.JournalStore.load", return_value=None)
+    _stub_journals(mocker, None)
 
     result = runner.invoke(app, ["issue", "show", "feat-foo"])
 
@@ -640,7 +520,7 @@ def test_show_renders_bodies_to_the_terminal_width(mocker, monkeypatch, tmp_path
     )
     _setup(mocker, tmp_path, files={"001.json": text})
     mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
-    mocker.patch("jailbee.outbox_io.JournalStore.load", return_value=None)
+    _stub_journals(mocker, None)
 
     result = runner.invoke(app, ["issue", "show", "feat-foo"])
 
@@ -674,7 +554,7 @@ def test_show_never_touches_github(mocker, tmp_path):
     equivalent test for why."""
     _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
     mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
-    mocker.patch("jailbee.outbox_io.JournalStore.load", return_value=None)
+    _stub_journals(mocker, None)
     run_api = mocker.patch("jailbee.issue_github._run_api")
 
     result = runner.invoke(app, ["issue", "show", "feat-foo"])
@@ -697,7 +577,7 @@ def test_show_can_select_one_manifest(mocker, tmp_path):
         },
     )
     mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
-    mocker.patch("jailbee.outbox_io.JournalStore.load", return_value=None)
+    _stub_journals(mocker, None)
 
     result = runner.invoke(app, ["issue", "show", "feat-foo", "002.json"])
 
@@ -715,227 +595,7 @@ def test_show_rejects_an_unknown_manifest(mocker, tmp_path):
     assert "nope.json" in result.output
 
 
-# ---- drop ---------------------------------------------------------------------
-
-
-def test_drop_removes_never_started_files_by_default(mocker, tmp_path):
-    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
-    mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
-    drop = mocker.patch("jailbee.issue_outbox.drop_manifest", return_value=("001.json",))
-
-    result = runner.invoke(app, ["issue", "drop", "feat-foo", "-y"])
-
-    assert result.exit_code == 0, result.output
-    drop.assert_called_once()
-    assert drop.call_args.kwargs["archive_journal"] is False
-
-
-def test_drop_never_touches_github(mocker, tmp_path):
-    """Patches `_run_api`, the module's sole subprocess boundary -- see `ls`'s
-    equivalent test for why."""
-    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
-    mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
-    mocker.patch("jailbee.issue_outbox.drop_manifest", return_value=("001.json",))
-    run_api = mocker.patch("jailbee.issue_github._run_api")
-
-    result = runner.invoke(app, ["issue", "drop", "feat-foo", "-y"])
-
-    assert result.exit_code == 0, result.output
-    run_api.assert_not_called()
-
-
-def test_drop_refuses_recorded_progress_without_archive_journal(mocker, tmp_path):
-    from jailbee.outbox_io import JournalError
-
-    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
-    mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
-    mocker.patch(
-        "jailbee.issue_outbox.drop_manifest",
-        side_effect=JournalError("001.json: cannot drop a manifest with recorded progress"),
-    )
-
-    result = runner.invoke(app, ["issue", "drop", "feat-foo", "-y"])
-
-    assert result.exit_code == 1
-    assert "recorded progress" in result.output
-
-
-def test_drop_archive_journal_shows_applied_receipts_and_pending_then_archives(mocker, tmp_path):
-    manifest_text = _manifest_text(
-        actions=[
-            {"type": "comment", "repo": ".", "issue": 42, "body": "first"},
-            {"type": "comment", "repo": ".", "issue": 42, "body": "second"},
-        ]
-    )
-    _setup(mocker, tmp_path, files={"001.json": manifest_text})
-    mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
-    journal = IssueJournal(
-        identity=_IDENTITY,
-        manifest_name="001.json",
-        digest=_DIGEST,
-        action_count=2,
-        actions=(JournalAction(index=0, state="applied", repo="acme/widgets", url="https://x/1"),),
-    )
-    mocker.patch("jailbee.outbox_io.JournalStore.load", return_value=journal)
-    drop = mocker.patch("jailbee.issue_outbox.drop_manifest", return_value=("001.json",))
-
-    result = runner.invoke(app, ["issue", "drop", "feat-foo", "--archive-journal", "-y"])
-
-    assert result.exit_code == 0, result.output
-    assert "https://x/1" in result.output
-    assert "action 1" in result.output and "pending" in result.output.lower()
-    drop.assert_called_once()
-    assert drop.call_args.kwargs["archive_journal"] is True
-
-
-def test_drop_archive_journal_still_refuses_uncertainty(mocker, tmp_path):
-    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
-    mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
-    journal = IssueJournal(
-        identity=_IDENTITY,
-        manifest_name="001.json",
-        digest=_DIGEST,
-        action_count=1,
-        actions=(JournalAction(index=0, state="uncertain", repo="acme/widgets", detail="x"),),
-    )
-    mocker.patch("jailbee.outbox_io.JournalStore.load", return_value=journal)
-    drop = mocker.patch("jailbee.issue_outbox.drop_manifest")
-
-    result = runner.invoke(app, ["issue", "drop", "feat-foo", "--archive-journal", "-y"])
-
-    assert result.exit_code == 1
-    assert "uncertain" in result.output.lower()
-    drop.assert_not_called()
-
-
-def _real_drop_rig(mocker, make_cfg, tmp_path, files):
-    """Real CLI, drop_manifest, strict read and checked mutation over tmp_path."""
-    import subprocess
-
-    from jailbee.outbox import io as store_io
-
-    cfg = make_cfg(tmp_path)
-    container = f"{cfg.container_prefix}-feat-foo"
-    incus = mocker.Mock()
-    incus.list_containers.return_value = [{"name": container, "created_at": "2026-10-01T00:00:00Z"}]
-    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
-    mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, container))
-    directory = tmp_path / "issue-outbox"
-    directory.mkdir()
-    for file_name, text in files.items():
-        (directory / file_name).write_bytes(text.encode("utf-8"))
-    run_shell = subprocess.run
-    store = store_io.store_directory("issue")
-
-    def remap(command):
-        command = list(command)
-        assert command[:2] == ["bash", "-c"] and command[4] == store, command
-        command[4] = str(directory)
-        return command
-
-    def execute(container_name, command, **kwargs):
-        return run_shell(remap(command), text=True, capture_output=True, check=True).stdout
-
-    def mutate(container_name, command, text, **kwargs):
-        command = remap(command)
-        return run_shell(command, input=text, text=True, capture_output=True, check=True).stdout
-
-    incus.exec.side_effect = execute
-    incus.exec_with_input.side_effect = mutate
-    run_api = mocker.patch("jailbee.issue_github._run_api")
-    return cfg, container, incus, directory, run_api
-
-
-@pytest.mark.parametrize("archive", [False, True])
-def test_drop_refused_checked_mutation_is_controlled_diagnostic(
-    mocker, make_cfg, tmp_path, archive
-):
-    from jailbee.outbox_io import (
-        ContainerIdentity,
-        JournalStore,
-        journal_key,
-        proposal_digest,
-    )
-
-    text = _manifest_text(
-        actions=[
-            {"type": "comment", "repo": ".", "issue": 42, "body": "first"},
-            {"type": "comment", "repo": ".", "issue": 42, "body": "second"},
-        ]
-    )
-    _cfg, container, incus, directory, run_api = _real_drop_rig(
-        mocker, make_cfg, tmp_path, {"001.json": text}
-    )
-    key = journal_key(ContainerIdentity(container, "2026-10-01T00:00:00Z"), "001.json")
-    journals = JournalStore()
-    if archive:
-        journals.create(key, proposal_digest("001.json", text, {}), 2)
-        journals.mark_prepared(key, 0, repo="acme/widgets")
-        journals.mark_applied(key, 0, repo="acme/widgets", url="https://x/1", issue=42)
-    transport = incus.exec_with_input.side_effect
-
-    def late_writer(*args, **kwargs):
-        # A genuine concurrent agent write after the strict preview read.
-        (directory / "late.md").write_text("late")
-        return transport(*args, **kwargs)
-
-    incus.exec_with_input.side_effect = late_writer
-    args = ["issue", "drop", "feat-foo", "001.json", "-y"]
-    result = runner.invoke(app, args + (["--archive-journal"] if archive else []))
-
-    assert result.exit_code == 1, result.output
-    assert "001.json" in result.output
-    assert "refused or failed" in result.output
-    assert "dropped 001.json" not in result.output
-    assert isinstance(result.exception, SystemExit)
-    assert (directory / "001.json").read_text() == text
-    assert (directory / "late.md").read_text() == "late"
-    run_api.assert_not_called()
-    journal = journals.load(key)
-    assert (journal is not None) == archive
-    assert not list(journals.root.rglob("archive/*.json"))
-
-
-def test_drop_strict_transport_failure_is_controlled_diagnostic(mocker, make_cfg, tmp_path):
-    from jailbee.incus import IncusError
-
-    text = _manifest_text()
-    _cfg, _container, incus, directory, run_api = _real_drop_rig(
-        mocker, make_cfg, tmp_path, {"001.json": text}
-    )
-    from jailbee.outbox import io as store_io
-
-    transport = incus.exec.side_effect
-
-    def strict_down(container_name, command, **kwargs):
-        if command[2] == store_io._READ_SCRIPT:
-            raise IncusError("exit 255: transport down")
-        return transport(container_name, command, **kwargs)
-
-    incus.exec.side_effect = strict_down
-    result = runner.invoke(app, ["issue", "drop", "feat-foo", "001.json", "-y"])
-
-    assert result.exit_code == 1, result.output
-    assert "001.json" in result.output and "transport down" in result.output
-    assert "dropped 001.json" not in result.output
-    assert isinstance(result.exception, SystemExit)
-    assert (directory / "001.json").read_text() == text
-    incus.exec_with_input.assert_not_called()
-    run_api.assert_not_called()
-
-
-def test_drop_asks_first_and_keeps_the_manifest_on_no(mocker, tmp_path):
-    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
-    mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
-    drop = mocker.patch("jailbee.issue_outbox.drop_manifest")
-
-    result = runner.invoke(app, ["issue", "drop", "feat-foo"], input="n\n")
-
-    assert result.exit_code == 0, result.output
-    drop.assert_not_called()
-
-
-# ---- resolve --------------------------------------------------------------
+# ---- resolve ---------------------------------------------------------------
 
 
 def _setup_resolve(mocker, tmp_path, *, manifest_text=None, journal_actions=()):
@@ -948,9 +608,7 @@ def _setup_resolve(mocker, tmp_path, *, manifest_text=None, journal_actions=()):
         action_count=1,
         actions=journal_actions,
     )
-    mocker.patch(
-        "jailbee.outbox_io.JournalStore.load", return_value=journal if journal_actions else None
-    )
+    _stub_journals(mocker, journal if journal_actions else None)
     mocker.patch(
         "jailbee.issue_outbox.resolve_repo_targets",
         return_value={".": RepoTarget(".", tmp_path, "acme/widgets")},
@@ -1201,7 +859,7 @@ def _uncertain_setup(mocker, tmp_path, *, name_resolver=True):
 def test_show_without_name_uses_the_issue_resolver(mocker, tmp_path):
     _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
     mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
-    mocker.patch("jailbee.outbox_io.JournalStore.load", return_value=None)
+    _stub_journals(mocker, None)
     res = mocker.patch(
         "jailbee.cli._resolve_issue_container",
         return_value=(mocker.MagicMock(), "acme-feat-foo"),
@@ -1211,18 +869,6 @@ def test_show_without_name_uses_the_issue_resolver(mocker, tmp_path):
 
     assert result.exit_code == 0, result.output
     assert res.call_args.args[1] is None
-
-
-def test_drop_without_name_and_nothing_pending_says_so(mocker, tmp_path):
-    _setup(mocker, tmp_path)
-    mocker.patch("jailbee.cli._resolve_issue_container", return_value=(mocker.MagicMock(), None))
-    drop = mocker.patch("jailbee.issue_outbox.drop_manifest")
-
-    result = runner.invoke(app, ["issue", "drop", "-y"])
-
-    assert result.exit_code == 0
-    assert "Nothing pending" in result.output
-    drop.assert_not_called()
 
 
 def test_show_without_name_and_nothing_pending_says_so(mocker, tmp_path):
@@ -1563,10 +1209,7 @@ def test_apply_dry_run_with_foreign_asks_nothing(mocker, tmp_path):
 # ---- deprecated aliases -----------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("sub", "new"),
-    [("ls", "outbox ls"), ("show", "outbox show"), ("drop", "outbox drop")],
-)
+@pytest.mark.parametrize(("sub", "new"), [("show", "outbox show")])
 def test_issue_alias_is_hidden_and_hints(mocker, tmp_path, sub, new):
     _setup(mocker, tmp_path)
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[])
@@ -1576,19 +1219,7 @@ def test_issue_alias_is_hidden_and_hints(mocker, tmp_path, sub, new):
     group = typer.main.get_command(app).commands["issue"]  # type: ignore[attr-defined]  # click Group
     assert group.commands[sub].hidden
 
-    result = runner.invoke(app, ["issue", sub, "-y"] if sub == "drop" else ["issue", sub])
+    result = runner.invoke(app, ["issue", sub])
 
     assert f"`jailbee issue {sub}` is deprecated; use `jailbee {new}`." in result.stderr
     assert "deprecated" not in result.stdout
-
-
-def test_issue_ls_json_stdout_stays_clean_json(mocker, tmp_path):
-    _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
-    mocker.patch("jailbee.lifecycle.list_containers", return_value=[_running_ci()])
-    mocker.patch("jailbee.outbox_io.container_identity", return_value=_IDENTITY)
-
-    result = runner.invoke(app, ["issue", "ls", "-o", "json"])
-
-    assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout)[0]["manifest"] == "001.json"
-    assert "deprecated" in result.stderr

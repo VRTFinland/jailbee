@@ -8,13 +8,11 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, assert_never
 
 from jailbee import git, issue_github, submodules
-from jailbee.config import CONTAINER_USERNAME
 from jailbee.github_repo import github_slug, resolve_submodule_url
 from jailbee.incus import Incus, IncusError
 from jailbee.issue_github import (
@@ -24,7 +22,6 @@ from jailbee.issue_github import (
     MutationReceipt,
 )
 from jailbee.issue_manifest import (
-    MAX_MANIFEST_BYTES,
     MAX_MANIFESTS,
     MAX_OFFER_ACTIONS,
     ME_LOGIN,
@@ -42,11 +39,8 @@ from jailbee.issue_manifest import (
     foreign_slug,
     parse_manifest,
 )
-from jailbee.outbox import io as store_io
 from jailbee.outbox import publication_db, sent
-from jailbee.outbox.cleanup import exclusive_body_names
 from jailbee.outbox.markdown_view import render_markdown
-from jailbee.outbox.models import StoreSnapshot
 from jailbee.outbox_io import (
     ASSIGN_NOT_APPLIED_DETAIL,
     UNASSIGN_NOT_APPLIED_DETAIL,
@@ -54,14 +48,7 @@ from jailbee.outbox_io import (
     IssueJournal,
     JournalAction,
     JournalError,
-    JournalStore,
-    container_identity,
-    instance_uuid,
-    issue_proposal_digest,
-    journal_has_uncertainty,
-    journal_key,
     proposal_digest,
-    read_text_outbox,
     safe_mutation_detail,
 )
 
@@ -249,26 +236,6 @@ class PreparedBatch:
     @property
     def foreign_pending(self) -> int:
         return len(self._foreign_actions())
-
-
-ISSUE_OUTBOX_SUBPATH = ".jailbee/issue-outbox"
-
-
-def _outbox_directory() -> str:
-    """Absolute issue outbox path inside a container."""
-    return f"/home/{CONTAINER_USERNAME}/{ISSUE_OUTBOX_SUBPATH}"
-
-
-def read_issue_outbox(incus: Incus, container: str, *, uid: int | None) -> OutboxSnapshot:
-    """Read proposal text without accepting container-owned progress."""
-    files = read_text_outbox(
-        incus,
-        container,
-        _outbox_directory(),
-        uid=uid,
-        max_file_bytes=MAX_MANIFEST_BYTES,
-    )
-    return OutboxSnapshot(MappingProxyType(files))
 
 
 def store_outbox(uuid: str) -> OutboxSnapshot:
@@ -968,36 +935,6 @@ def _apply_failure_detail(message: str, *, uncertain: bool) -> str:
     return message if message in _SAFE_DEFINITE_DETAILS else _DEFAULT_DEFINITE_DETAIL
 
 
-def _now_iso() -> str:
-    """Current UTC time as `2026-09-18T12:34:56Z`, for `applied.log` lines."""
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _referenced_elsewhere(outbox: StoreSnapshot, exclude_name: str) -> frozenset[str] | None:
-    """Body files other manifests in `outbox` still reference, or None if unknown.
-
-    Returns `None` — "cannot tell, so keep everything" — the instant any
-    *other* manifest in the outbox fails to parse, rather than risk deleting
-    a file a broken manifest still names. The container is untrusted input;
-    an unparseable manifest is exactly the hostile-or-corrupt case that must
-    fail safe, not silently drop what might be someone else's still-pending
-    proposal text.
-    """
-    if outbox.rejected:
-        return None
-    files = outbox.as_dict()
-    referenced: set[str] = set()
-    for name in OutboxSnapshot(files).manifest_names:
-        if name == exclude_name:
-            continue
-        try:
-            other = parse_manifest(name, files[name], files)
-        except (IssueManifestError, RecursionError):
-            return None
-        referenced.update(other.body_files)
-    return frozenset(referenced)
-
-
 def _resolved_number(issue: ResolvedIssue, created: Mapping[str, int]) -> int:
     """The issue number `issue` targets: its own, or a ref created this run."""
     if issue.number is not None:
@@ -1569,147 +1506,3 @@ def reconcile_action(
             now=clock(),
         )
         return settled.finalized
-
-
-# --------------------------------------------------------------------------
-# Manual cleanup
-#
-# Discarding a proposal the human never wants applied. The default refuses
-# any recorded progress at all — even settled, all-`applied` progress —
-# because silently deleting a manifest that already changed GitHub without
-# a trace would erase the only record of it; `archive_journal=True` is the
-# explicit opt-in to keep that record while abandoning the rest.
-# --------------------------------------------------------------------------
-
-
-def drop_manifest(
-    incus: Incus,
-    container: str,
-    outbox: OutboxSnapshot,
-    manifest_name: str,
-    *,
-    uid: int | None,
-    journal_store: JournalStore,
-    identity: ContainerIdentity,
-    archive_journal: bool = False,
-) -> tuple[str, ...]:
-    """Delete `manifest_name` from the container's outbox without applying it.
-
-    Refuses to touch a manifest whose text no longer matches `outbox` — the
-    snapshot the caller read and is asking to drop — a fresh read must
-    still agree with it. By default, any recorded journal progress at all
-    refuses the drop outright. With `archive_journal=True`, uncertainty
-    still refuses it, but settled progress (applied actions, pending ones
-    left untouched) is allowed: the container files are deleted *first*,
-    and only once that succeeds is the journal archived — so a delete
-    failure leaves the active journal exactly as it was, still the replay
-    barrier for whatever was already applied.
-
-    Deletes the manifest itself unconditionally, but only the body files no
-    *other* manifest in a freshly re-read outbox still references — not
-    `outbox` itself, which may predate a manifest written after the caller's
-    own read. A shared Markdown file is kept either way. Returns the
-    outbox-relative names actually deleted.
-    """
-    key = journal_key(identity, manifest_name)
-    with journal_store.lock(key):
-        if container_identity(incus, container) != identity:
-            raise JournalError(
-                f"{manifest_name}: the container's identity changed; re-read it before dropping"
-            )
-        strict = store_io.read_store(incus, container, "issue", uid=uid)
-        fresh = OutboxSnapshot(strict.as_dict())
-        if fresh.files.get(manifest_name) != outbox.files.get(manifest_name):
-            raise JournalError(
-                f"{manifest_name}: the outbox changed since it was read; re-read it before dropping"
-            )
-        text = outbox.files.get(manifest_name)
-        if text is None:
-            raise JournalError(f"{manifest_name}: manifest is not in the outbox")
-
-        try:
-            parsed = parse_manifest(manifest_name, text, outbox.files)
-            body_files: frozenset[str] = parsed.body_files
-        except IssueManifestError:
-            body_files = frozenset()
-            parsed = None
-        digest = proposal_digest(
-            manifest_name, text, {body: outbox.files[body] for body in body_files}
-        )
-        fresh_digest = proposal_digest(
-            manifest_name,
-            fresh.files[manifest_name],
-            {body: fresh.files.get(body, "") for body in body_files},
-        )
-        if fresh_digest != digest or any(body not in fresh.files for body in body_files):
-            raise JournalError(
-                f"{manifest_name}: the outbox changed since it was read; re-read it before dropping"
-            )
-        journal = journal_store.load(key)
-        recorded_digest = issue_proposal_digest(
-            key,
-            text,
-            {body: outbox.files[body] for body in body_files},
-            journal,
-        )
-        if (
-            journal is not None
-            and journal.actions
-            and (
-                parsed is None
-                or journal.digest != recorded_digest
-                or journal.action_count != len(parsed.actions)
-            )
-        ):
-            raise JournalError(f"{manifest_name}: proposal changed after recorded progress")
-        has_uncertainty = journal is not None and journal_has_uncertainty(journal)
-        if archive_journal:
-            if has_uncertainty:
-                raise JournalError(
-                    f"{manifest_name}: cannot archive a journal containing uncertain progress"
-                )
-        elif journal is not None and journal.actions:
-            raise JournalError(
-                f"{manifest_name}: cannot drop a manifest with recorded progress; pass "
-                "archive_journal=True to archive its settled progress instead"
-            )
-
-        referenced = _referenced_elsewhere(strict, manifest_name)
-        names = [manifest_name]
-        if referenced is not None:
-            names.extend(exclusive_body_names(body_files, fresh.files, referenced))
-
-        store_io.mutate_store(
-            incus,
-            container,
-            "issue",
-            uid=uid,
-            expected=fresh.files,
-            new_manifest=None,
-            delete_names=tuple(names),
-            forbidden_progress=None,
-            rejected_names=strict.rejected,
-        )
-
-        if archive_journal and journal is not None and journal.actions:
-            journal_store.archive(key)
-
-        try:
-            drop_uuid: str | None = instance_uuid(incus, container)
-        except (JournalError, IncusError):
-            drop_uuid = None
-        if parsed is not None and drop_uuid is not None:
-            # An action without a journal record was never settled: a retried
-            # uncertain one still has its `uncertain` Sent-log row, which goes.
-            recorded = {a.index for a in journal.actions} if journal is not None else set()
-            for index in range(len(parsed.actions)):
-                if index not in recorded:
-                    sent.forget(
-                        uuid=drop_uuid,
-                        outbox="issue",
-                        manifest=manifest_name,
-                        digest=recorded_digest,
-                        index=index,
-                    )
-
-        return tuple(names)

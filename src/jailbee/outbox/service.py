@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -22,8 +23,6 @@ from jailbee.outbox_io import (
     ContainerIdentity,
     IssueJournal,
     JournalError,
-    JournalStore,
-    journal_key,
 )
 
 
@@ -167,7 +166,6 @@ def load_container(
     incus: Incus,
     container: str,
     *,
-    journal_store: JournalStore,
     raise_errors: bool = False,
 ) -> ContainerView:
     """Inspect stores; explicit operations retain typed failures, overviews do not."""
@@ -189,7 +187,6 @@ def load_container(
             build_views(
                 identity,
                 stores,
-                journal_store=journal_store,
                 issue_journals=issue_journals(container, identity, uuid),
             ),
             uuid,
@@ -209,20 +206,14 @@ def execute_delete(
     container: str,
     plan: DeletePlan,
     *,
-    journal_store: JournalStore,
     lock_timeout: float | None = None,
 ) -> tuple[str, ...]:
     """Recheck deletion under its lock, optionally bounding the lock wait only."""
     try:
         identity, uuid = _instance(incus, container)
-        key = journal_key(identity, plan.proposal.name)
-        # Preserve the legacy no-keyword call for blocking callers and adapters.
+        # Issue proposals are guarded by their row version in the host store.
         if plan.proposal.kind == "issue":
-            lock = (
-                journal_store.lock(key)
-                if lock_timeout is None
-                else journal_store.lock(key, timeout=lock_timeout)
-            )
+            lock: AbstractContextManager[object] = nullcontext()
         else:
             manager = PrManagement()
             lock = (
@@ -233,7 +224,7 @@ def execute_delete(
         with lock:
             if _identity(incus, container) != identity:
                 raise OutboxChanged("container changed while waiting; refresh required")
-            fresh = load_container(cfg, incus, container, journal_store=journal_store)
+            fresh = load_container(cfg, incus, container)
             if not fresh.available or fresh.identity != identity:
                 raise OutboxChanged(fresh.error or "container changed; refresh required")
             selected = next((v for v in fresh.proposals if v.id == plan.proposal), None)
@@ -268,10 +259,6 @@ def execute_delete(
             )
             if removed != plan.delete_names:
                 raise OutboxExecutionError("incomplete deletion; journal retained")
-            if plan.selection.archive_journal:
-                journal = journal_store.load(key)
-                if journal is not None and journal.actions:
-                    journal_store.archive(key)
             return removed
     except (IncusError, JournalError) as exc:
         raise OutboxExecutionError(str(exc)) from exc

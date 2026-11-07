@@ -209,7 +209,6 @@ def test_probe_passes_env_vars_into_snippet(mocker):
         "TARGET_SHA": "",
         "HOST_SOURCE": "/mnt/host-source",
         "OUTBOX_DIR": "/home/dev/.jailbee/pr-outbox",
-        "ISSUE_OUTBOX_DIR": "/home/dev/.jailbee/issue-outbox",
         "GIT_OPTIONAL_LOCKS": "0",
     }
     assert kwargs.get("timeout") == 5
@@ -859,29 +858,7 @@ def test_non_numeric_pending_count_is_unknown(mocker):
     assert status.pending_pr_actions is None
 
 
-def test_probe_parses_the_pending_issue_action_count(mocker):
-    incus = mocker.MagicMock()
-    incus.exec.return_value = _payload(*_TWELVE, "3", "5")
-
-    status = probe_container_git(incus, "c", "/home/dev/repo", "main", "main")
-
-    assert status.pending_pr_actions == 3
-    assert status.pending_issue_actions == 5
-
-
-def test_probe_passes_the_issue_outbox_dir_in_the_environment(mocker):
-    incus = mocker.MagicMock()
-    incus.exec.return_value = _payload(*_TWELVE, "0", "0")
-
-    probe_container_git(incus, "c", "/home/dev/repo", "main", "main")
-
-    env = incus.exec.call_args.kwargs["env"]
-    # $HOME is not dependable under `incus exec --user`, so the path is passed in.
-    assert env["ISSUE_OUTBOX_DIR"].endswith("/.jailbee/issue-outbox")
-
-
-def test_thirteen_field_payload_still_parses_with_an_unknown_issue_count(mocker):
-    """Regression pin: the tiered parser must keep 13-field output working."""
+def test_probe_leaves_the_issue_count_to_the_host_store(mocker):
     incus = mocker.MagicMock()
     incus.exec.return_value = _payload(*_TWELVE, "3")
 
@@ -889,16 +866,7 @@ def test_thirteen_field_payload_still_parses_with_an_unknown_issue_count(mocker)
 
     assert status.pending_pr_actions == 3
     assert status.pending_issue_actions is None
-    assert status.head_sha == "abc1234"  # everything else unchanged
-
-
-def test_non_numeric_pending_issue_count_is_unknown(mocker):
-    incus = mocker.MagicMock()
-    incus.exec.return_value = _payload(*_TWELVE, "3", "?")
-
-    status = probe_container_git(incus, "c", "/home/dev/repo", "main", "main")
-
-    assert status.pending_issue_actions is None
+    assert "ISSUE_OUTBOX_DIR" not in incus.exec.call_args.kwargs["env"]
 
 
 def test_live_target_probe_uses_direct_tree_and_symmetric_commit_comparison(mocker):
@@ -918,7 +886,6 @@ def test_live_target_probe_uses_direct_tree_and_symmetric_commit_comparison(mock
         "?",
         "?",
         "",
-        "0",
         "0",
         "0",
         "1",
@@ -991,7 +958,6 @@ def test_unavailable_live_target_keeps_worktree_and_live_operation(mocker):
         "merge",
         "2",
         "0",
-        "0",
         "",
         "unavailable",
         "unavailable",
@@ -1040,7 +1006,6 @@ def test_missing_submodule_object_makes_live_target_diff_unknown(mocker):
         "?",
         "?",
         "",
-        "0",
         "0",
         "1",
     )
@@ -1184,7 +1149,6 @@ def test_probe_failure_preserves_host_target_snapshot(mocker, failure):
     assert status.upstream_ref == "refs/remotes/origin/main"
 
 
-@pytest.mark.parametrize("store", ["pr", "issue"])
 @pytest.mark.parametrize(
     "state,expected",
     [
@@ -1201,14 +1165,15 @@ def test_probe_failure_preserves_host_target_snapshot(mocker, failure):
     ],
 )
 def test_probe_counts_only_root_manifests_and_preserves_unknown_stores(
-    mocker, tmp_path, store, state, expected
+    mocker, tmp_path, state, expected
 ):
+    store = "pr"
     # Removing the regular-file/progress guards or coercing access failures
     # to zero must fail these tests, including when pytest runs as root.
     repo = tmp_path / "repo"
     (repo / ".git").mkdir(parents=True)
-    stores = {name: tmp_path / name for name in ("pr", "issue")}
-    other = stores["issue" if store == "pr" else "pr"]
+    stores = {"pr": tmp_path / "pr"}
+    other = tmp_path / "other"
     other.mkdir()
     for index in range(3):
         (other / f"{index}.json").write_text("{}")
@@ -1275,7 +1240,6 @@ def test_probe_counts_only_root_manifests_and_preserves_unknown_stores(
                 "PATH": f"{bin_dir}:/usr/bin:/bin",
                 **env,
                 "OUTBOX_DIR": str(stores["pr"]),
-                "ISSUE_OUTBOX_DIR": str(stores["issue"]),
                 "DENIED_DIR": denied,
                 "DENIED_FLAG": denied_flag,
             },
@@ -1286,16 +1250,14 @@ def test_probe_counts_only_root_manifests_and_preserves_unknown_stores(
         )
         fields = completed.stdout.split("\0")
         assert fields[6:12] == ["headsha", "0", "?", "?", "", "0"]
-        assert fields[12 if store == "pr" else 13] == ("?" if expected is None else str(expected))
-        assert fields[13 if store == "pr" else 12] == "3"
-        assert fields[14] == "?"
+        assert fields[12] == ("?" if expected is None else str(expected))
+        assert fields[13] == "?"
         return completed.stdout
 
     incus = mocker.Mock()
     incus.exec.side_effect = exec_snippet
     status = probe_container_git(incus, "c", str(repo), "main", "main")
-    assert getattr(status, f"pending_{store}_actions") == expected
-    assert getattr(status, f"pending_{'issue' if store == 'pr' else 'pr'}_actions") == 3
+    assert status.pending_pr_actions == expected
     if state in ("missing", "missing-parents", "missing-inaccessible-parent"):
         assert not outbox.exists()
 

@@ -31,7 +31,6 @@ from jailbee.outbox import commands, service
 from jailbee.outbox.delete import DeletePlan, DeleteSelection, plan_delete
 from jailbee.outbox.inspect import safe_text
 from jailbee.outbox.models import ContainerView, OutboxChanged, OutboxError, ProposalView
-from jailbee.outbox_io import JournalStore
 from jailbee.remote_ssh.session import is_ssh_session
 
 if TYPE_CHECKING:
@@ -72,17 +71,15 @@ class _Request(QThread):
                 if self.target.config_path is not None
                 else config_api.load_repo_config(self.target.repo_root)
             )
-            incus, journals = Incus(), JournalStore()
+            incus = Incus()
             own, full = commands.resolve_target(cfg, incus, self.container)
             if self.plan is not None:
                 fresh, resolved = commands.resolve_target(cfg, incus, full)
                 if fresh != own or resolved != full:
                     raise OutboxChanged("target config changed; refresh required")
                 self.mutation_attempted = True
-                service.execute_delete(
-                    own, incus, full, self.plan, journal_store=journals, lock_timeout=2.0
-                )
-            self.view = service.load_container(own, incus, full, journal_store=journals)
+                service.execute_delete(own, incus, full, self.plan, lock_timeout=2.0)
+            self.view = service.load_container(own, incus, full)
         except Exception as exc:
             # Always deliver completion, including ambiguous mutation/reload failures.
             self.error = str(exc)

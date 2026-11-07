@@ -47,7 +47,6 @@ from jailbee.outbox.models import (
 from jailbee.outbox_io import (
     ContainerIdentity,
     JournalError,
-    JournalStore,
     container_identity,
     read_text_outbox,
 )
@@ -2421,9 +2420,7 @@ def _same_identity(incus: Incus, container: str, identity: ContainerIdentity) ->
 def _views(identity: ContainerIdentity, store: StoreSnapshot) -> dict[str, str]:
     from jailbee.outbox.inspect import build_views
 
-    return {
-        v.id.name: v.revision for v in build_views(identity, (store,), journal_store=JournalStore())
-    }
+    return {v.id.name: v.revision for v in build_views(identity, (store,))}
 
 
 def _compare_preview(

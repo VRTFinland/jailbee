@@ -1017,7 +1017,12 @@ def _handle_stop_locked(ctx: ActionContext, m: Manifest) -> Outcome:
             else:
                 ctx.incus.config_set(child.full, labels.STOPPED_DIRTY, "1")
             try:
-                pending = child_outbox.probe(bounded, child.full, uid=ctx.cfg.container_user.uid)
+                pending = child_outbox.probe(
+                    bounded,
+                    child.full,
+                    uid=ctx.cfg.container_user.uid,
+                    uuid=child.config.get("volatile.uuid"),
+                )
             except child_outbox.ChildOutboxError:
                 ctx.incus.config_unset_checked(child.full, labels.STOPPED_OUTBOX)
             else:
@@ -1335,7 +1340,12 @@ def destroy_guard(ctx: ActionContext, child: Node) -> str | None:
         return f"child `{child.short}` has uncommitted changes (use force: true to destroy anyway)"
     if child.running:
         try:
-            pending = child_outbox.probe(bounded, child.full, uid=ctx.cfg.container_user.uid)
+            pending = child_outbox.probe(
+                bounded,
+                child.full,
+                uid=ctx.cfg.container_user.uid,
+                uuid=child.config.get("volatile.uuid"),
+            )
         except child_outbox.ChildOutboxError:
             return child_outbox.unchecked(child.short)
         if pending.count:

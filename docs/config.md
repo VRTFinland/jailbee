@@ -2850,7 +2850,7 @@ Eleven columns are dynamic and appear only when they have
 something to say: `job` (a background job is running), `ttl` (a container is
 in loose mode), `mounts` (optional mounts are attached), `pr` (a container tracks a PR), `mode` (a mount-mode
 container exists — on a clone-only host the column would be a constant),
-`issues` (a container has pending issue-outbox actions), `outbox` (a
+`issues` (a container has pending issue proposals), `outbox` (a
 container has staged PR or issue manifests) and `group` (a
 container resolves to a credential group). Three more belong to
 container orchestration and appear only when it is in use: `role` (`orch` for
@@ -3215,8 +3215,8 @@ the config. `jailbee doctor` reports insecure permissions. Run
 Pull requests: Read, Metadata: Read — read-only.** Classic PATs (`ghp_*`) get
 a doctor warning because they cannot be scoped per-repo. JailBee's outbox
 workflows publish issue and PR changes through the host's own `gh`, applying
-a manifest an in-container agent staged into `~/.jailbee/issue-outbox` or
-`~/.jailbee/pr-outbox` — see
+a proposal an in-container agent staged in the host outbox store (issues) or
+into `~/.jailbee/pr-outbox` (PRs) — see
 [`jailbee issue`](git-bridge.md#issue-management) and the
 `jailbee-issue-management` / `jailbee-pr-review` skills. This token
 authenticates the container's own `gh`, which has whatever permissions the PAT

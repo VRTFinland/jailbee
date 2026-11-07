@@ -93,8 +93,8 @@ same `repo` value.
 
 Use `jailbee issue create --title "Title" --body "Details"`, or `edit`,
 `comment`, `labels`, `assign` and `state` with an issue number. Use `--body-file PATH`
-for long text and `--repo PATH` to select a repository. Commands create
-`~/.jailbee/issue-outbox/` as needed; never write it manually. See the
+for long text and `--repo PATH` to select a repository. Commands stage the
+proposal in the host outbox store; never write outbox files by hand. See the
 normative [output schema](references/manifest-schema.md).
 
 Assignment: `jailbee issue assign 42 --me` assigns the publishing account
@@ -138,7 +138,8 @@ If there is no final result yet, say publication is pending. For manifests
 not sent through a granted orchestrator publish request, tell the user to
 run `jb issue apply <container>` on the host: **nothing has been published
 yet.** Everything still queued is a proposal
-sitting in the container's filesystem until then. The host also sees the
+sitting in the host outbox store until then. `jailbee outbox sent` lists what
+was published. The host also sees the
 pending count without being told: `jb ls`'s ISSUES column shows `✉N` for
 this container, and the dashboards' OUTBOX column counts it together with any staged PR actions.
 

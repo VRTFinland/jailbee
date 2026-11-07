@@ -185,7 +185,7 @@ outright, naming the manifest file and which cap it broke.
 
 ## Worked example 1 — a multi-issue superproject batch
 
-`~/.jailbee/issue-outbox/001-timeout-bugs.json`: file a new bug, then
+Staged proposal `001-timeout-bugs.json`: file a new bug, then
 immediately comment and label it, plus edit and close an unrelated existing
 issue — all in the superproject (`repo: "."`).
 
@@ -234,7 +234,7 @@ issue — all in the superproject (`repo: "."`).
 }
 ```
 
-`~/.jailbee/issue-outbox/001-timeout-bug-body.md`:
+Body file `001-timeout-bug-body.md` (staged with that proposal):
 
 ```markdown
 ## What happens
@@ -268,7 +268,7 @@ Notes on this example:
 
 ## Worked example 2 — a mixed superproject/submodule triage batch with local refs
 
-`~/.jailbee/issue-outbox/002-triage.json`: reopen a wrongly-closed
+Staged proposal `002-triage.json`: reopen a wrongly-closed
 superproject issue, and separately file, then label, a new issue in a
 submodule — a `ref` in one repo's actions never resolves against another
 repo's `create`.

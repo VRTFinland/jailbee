@@ -13,7 +13,6 @@ from typing import Any
 
 from jailbee.orchestration.store import BrokerStore, store_path
 from jailbee.outbox import publication_db
-from jailbee.outbox_io import JournalStore
 
 UUID = "0f9c3c7e-test-box"
 
@@ -168,18 +167,16 @@ class StoreSnapshots(dict[str, Any]):
         return super().__getitem__(kind)
 
 
-class StoreJournals(JournalStore):
-    """A `JournalStore` whose issue journals are the real host outbox store's.
+class StoreJournals:
+    """The real host outbox store's issue journals for one instance.
 
-    `load` reads the store for this instance; the file-journal machinery
-    (locks, paths) stays for the paths that still pass a journal store around.
-    `rows` proves nothing was written; the seeding helpers write directly.
+    `load` reads the store for this instance. `rows` proves nothing was
+    written; the seeding helpers write directly.
     """
 
     def __init__(self, identity: Any, uuid: str = UUID) -> None:
         from jailbee.outbox.publication_db import open_publications
 
-        super().__init__()
         self.identity = identity
         self.uuid = uuid
         self.pubs = open_publications()

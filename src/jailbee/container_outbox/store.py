@@ -16,8 +16,6 @@ from typing import Literal, cast
 from uuid import uuid4
 
 from jailbee.container_outbox import role
-from jailbee.issue_manifest import IssueManifestError
-from jailbee.issue_manifest import parse_manifest as parse_issue
 from jailbee.outbox.cleanup import exclusive_body_names
 from jailbee.pr_manifest import ManifestError
 from jailbee.pr_manifest import parse_manifest as parse_pr
@@ -147,18 +145,12 @@ def _is_manifest(name: str) -> bool:
 def _validate(kind: Kind, name: str, manifest: dict[str, object], bodies: Mapping[str, str]) -> str:
     try:
         text = json.dumps(manifest)
-        if kind == "issue":
-            actions = manifest.get("actions")
-            if isinstance(actions, list) and len(actions) > 100:
-                raise OutboxCommandError("issue manifest exceeds the cap of 100 actions", 2)
-            parse_issue(name, text, bodies)
-        else:
-            parse_pr(name, text, bodies)
+        parse_pr(name, text, bodies)
         for body_name, body in bodies.items():
             _plain_name(body_name)
             body.encode("utf-8")
         return text
-    except (IssueManifestError, ManifestError, TypeError, ValueError, UnicodeError) as exc:
+    except (ManifestError, TypeError, ValueError, UnicodeError) as exc:
         raise OutboxCommandError(str(exc), 2) from exc
 
 
@@ -167,8 +159,9 @@ class Store:
         self.home = home.absolute()
 
     def outbox(self, kind: Kind) -> Path:
-        if kind not in ("issue", "pr"):
-            raise OutboxCommandError("kind must be issue or pr", 2)
+        # Issue proposals and drafts live in the host store, never here.
+        if kind != "pr":
+            raise OutboxCommandError("kind must be pr", 2)
         return self.home / ".jailbee" / f"{kind}-outbox"
 
     def drafts(self, kind: Kind) -> Path:
@@ -188,9 +181,8 @@ class Store:
 
     def require_writable(self, env: Mapping[str, str] | None = None) -> None:
         self._require_role(env)
-        for kind in ("issue", "pr"):
-            with _directory(self.outbox(kind), create=True):
-                pass
+        with _directory(self.outbox("pr"), create=True):
+            pass
 
     def write_manifest(
         self, kind: Kind, slug: str, manifest: dict[str, object], bodies: Mapping[str, str]
@@ -250,7 +242,7 @@ class Store:
 
     def list(self) -> builtins.list[Entry]:
         entries = []
-        kinds: tuple[Kind, ...] = ("issue", "pr")
+        kinds: tuple[Kind, ...] = ("pr",)
         for domain in kinds:
             path = self.outbox(domain)
             if not path.exists() and not path.is_symlink():
@@ -272,7 +264,7 @@ class Store:
 
     def list_drafts(self) -> builtins.list[dict[str, object]]:
         result: builtins.list[dict[str, object]] = []
-        kinds: tuple[Kind, ...] = ("issue", "pr")
+        kinds: tuple[Kind, ...] = ("pr",)
         for kind in kinds:
             path = self.drafts(kind)
             if not path.exists() and not path.is_symlink():

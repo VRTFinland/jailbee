@@ -937,7 +937,6 @@ def test_ssh_outbox_browser_is_read_only_through_real_cli(
     cfg = make_cfg(tmp_path)
     mocker.patch("jailbee.config.load_repo_config", return_value=cfg)
     mocker.patch("jailbee.incus.Incus", return_value=mocker.Mock(spec=Incus))
-    mocker.patch("jailbee.outbox_io.JournalStore")
     overview = mocker.patch("jailbee.outbox.commands.show_overview", return_value=0)
     drop = mocker.patch("jailbee.outbox.commands.drop_selected")
     publish = mocker.patch("jailbee.outbox.commands.apply_selected")
@@ -1730,7 +1729,13 @@ def test_deprecated_hidden_aliases_classify_as_container_commands() -> None:
     )
 
     assert _DEPRECATED_HIDDEN_COMMANDS == {
-        f"{group} {sub}" for group in ("review", "issue") for sub in ("ls", "show", "drop")
+        f"{group} {sub}"
+        for group, sub in (
+            ("review", "ls"),
+            ("review", "show"),
+            ("review", "drop"),
+            ("issue", "show"),
+        )
     }
     for path in _DEPRECATED_HIDDEN_COMMANDS:
         assert path in known_command_paths()

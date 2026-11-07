@@ -3430,13 +3430,12 @@ def _individual_delete_after_publication(root, identity, connection):
     from jailbee.outbox.inspect import build_views
     from jailbee.outbox.io import PrManagement
     from jailbee.outbox.models import ContainerView, OutboxError, ProposalId, StoreSnapshot
-    from jailbee.outbox_io import JournalStore
 
     connection.send("waiting")
     with PrManagement(root / "locks").lock(identity):
         files = {p.name: p.read_text() for p in (root / "store").iterdir()}
         snapshot = StoreSnapshot("pr", tuple(sorted(files.items())), (), ())
-        views = build_views(identity, (snapshot,), journal_store=JournalStore(root / "journals"))
+        views = build_views(identity, (snapshot,))
         container = ContainerView(identity, identity.full_name, True, None, (snapshot,), views)
         try:
             plan = plan_delete(container, ProposalId("pr", "d.json"), DeleteSelection(action=0))
