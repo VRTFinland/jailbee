@@ -592,5 +592,21 @@ def publish(
     ] = "",
     wait: Wait = False,
     timeout: Timeout = "",
+    until: Annotated[
+        str, typer.Option("--until", help="With --wait, use done to wait for done or failed.")
+    ] = "",
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Print one JSON object, including publication results.")
+    ] = False,
 ) -> None:
-    _send(send.SendRequest(type="publish", issue=issue, pr=pr, wait=wait, timeout=timeout))
+    _send(
+        send.SendRequest(
+            type="publish",
+            issue=issue,
+            pr=pr,
+            wait=wait,
+            timeout=timeout,
+            until=until,
+            json_output=json_output,
+        )
+    )

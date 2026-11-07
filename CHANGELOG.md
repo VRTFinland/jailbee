@@ -8,6 +8,14 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- `jailbee inbox send publish --wait --until done` waits for the final publication
+  status within `--timeout`. `--json` returns structured issue action receipts,
+  including created issue numbers and URLs in manifest order. `jailbee issue
+  create --json` returns the staged manifest name for scripting
+  ([#86](https://github.com/VRTFinland/jailbee/issues/86)).
+
 ### Fixed
 
 - A message sent immediately after spawning a child is refused with a clear

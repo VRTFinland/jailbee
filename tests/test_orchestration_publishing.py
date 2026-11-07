@@ -345,12 +345,21 @@ def test_vanished_publish_is_abandoned_not_delivered_to_namesake(rig):
 
 
 def test_publish_started_then_done_with_urls(rig):
+    receipts = [{"index": 0, "kind": "create", "issue": 42, "url": "https://example.test/42"}]
+
+    def publish(*args, **kwargs):
+        kwargs["receipt_sink"](receipts[0])
+        kwargs["result_sink"]("https://github.com/org/repo/issues/12#issuecomment-1")
+        return 0
+
+    rig[4].side_effect = publish
     accept(rig)
     replies = []
     publishing.settle(rig[0], lambda ref, out: replies.append((ref, out)))
     assert replies[0][0] == "pub-1"
     assert replies[0][1].state == "done"
     assert "#issuecomment-1" in replies[0][1].detail
+    assert replies[0][1].results == receipts
     publishing.settle(rig[0], lambda *a: pytest.fail("duplicate result"))
 
 

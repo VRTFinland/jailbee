@@ -460,6 +460,7 @@ class InboxStatus(BaseModel):
     ref: str
     state: Literal["queued", "started", "done", "refused", "failed"]
     detail: str
+    results: list[dict[str, object]] = Field(default_factory=list)
 
 
 InboxItem = InboxMessage | InboxStatus

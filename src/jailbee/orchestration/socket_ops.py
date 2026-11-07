@@ -360,6 +360,7 @@ class NextArgs:
     timeout: float | None
     replace: bool = False
     info: WaiterInfo | None = None
+    ref: str | None = None
 
 
 def _positive_int(args: dict[str, object], key: str) -> int:
@@ -395,7 +396,14 @@ def handle_next_args(args: dict[str, object]) -> NextArgs:
         ):
             raise wire.WireError(wire.BAD_REQUEST, "timeout must be a non-negative number")
         timeout = float(raw_timeout)  # type: ignore[arg-type]  # validated above
+    ref = args.get("ref")
+    if ref is not None:
+        if not isinstance(ref, str) or not ref or len(ref) > 256:
+            raise wire.WireError(wire.BAD_REQUEST, "ref must be a non-empty request id")
+        if any(args.get(k) is not None for k in ("wake_on", "quiet_after", "digest")):
+            raise wire.WireError(wire.BAD_REQUEST, "ref cannot be combined with wake filters")
     return NextArgs(
+        ref=ref,
         wake=wake_set,
         quiet=_positive_int(args, "quiet_after"),
         digest=_positive_int(args, "digest"),
@@ -440,22 +448,25 @@ class Waiter:
     quiet: int
     digest: int
     deadline: float | None  # time.monotonic()
+    ref: str | None = None
     waited: bool = False
     settle_until: float | None = None
     info: WaiterInfo | None = None
 
 
 class Waiters:
-    """Parked `next` long-polls: at most one per container."""
+    """Parked `next` long-polls: one ordinary wait plus request-specific waits."""
 
     def __init__(self) -> None:
-        self._by_uuid: dict[str, Waiter] = {}
+        self._by_uuid: dict[tuple[str, str | None], Waiter] = {}
 
     def __len__(self) -> int:
         return len(self._by_uuid)
 
     def add(self, waiter: Waiter, *, replace: bool = False) -> Waiter | None:
-        current = self._by_uuid.get(waiter.uuid)
+        """Park `waiter`; with `replace`, displace and return the one on the same key."""
+        key = (waiter.uuid, waiter.ref)
+        current = self._by_uuid.get(key)
         if current is not None and not replace:
             identity = current.info.describe() if current.info else "PID unavailable (older client)"
             raise wire.WireError(
@@ -463,26 +474,26 @@ class Waiters:
                 f"another process is already waiting in this container ({identity}); "
                 "use jailbee inbox wait --replace to take over",
             )
-        self._by_uuid[waiter.uuid] = waiter
+        self._by_uuid[key] = waiter
         return current
 
     def drop(self, uuid: str, conn_id: int) -> None:
-        current = self._by_uuid.get(uuid)
-        if current is not None and current.conn_id == conn_id:
-            del self._by_uuid[uuid]
+        for key, current in list(self._by_uuid.items()):
+            if current.uuid == uuid and current.conn_id == conn_id:
+                del self._by_uuid[key]
 
     def evaluate(
         self, memory: broker_state.BrokerMemory, store: BrokerStore, *, now: float, mono: float
     ) -> list[tuple[Waiter, dict[str, object] | wire.WireError]]:
         """Answer every waiter that is ready; the answered ones are removed."""
         answered: list[tuple[Waiter, dict[str, object] | wire.WireError]] = []
-        for uuid, waiter in list(self._by_uuid.items()):
+        for key, waiter in list(self._by_uuid.items()):
             try:
                 outcome = _evaluate_one(waiter, memory, store, now=now, mono=mono)
             except StoreError as e:
                 outcome = wire.WireError(wire.STORE, str(e))
             if outcome is not None:
-                del self._by_uuid[uuid]
+                del self._by_uuid[key]
                 answered.append((waiter, outcome))
         return answered
 
@@ -498,6 +509,13 @@ def _evaluate_one(
     if waiter.settle_until is not None and mono < waiter.settle_until:
         return None
     uuid = waiter.uuid
+    if waiter.ref is not None:
+        status = store.terminal_status(uuid, waiter.ref)
+        if status is not None:
+            return {"kind": "status", "item": status.item}
+        if waiter.deadline is not None and mono >= waiter.deadline:
+            return {"kind": "timeout"}
+        return None
     ctx = memory.contexts.get(uuid)
     if (waiter.quiet or waiter.digest) and (ctx is None or ctx.role() != "orchestrator"):
         return wire.WireError(wire.NOT_ORCHESTRATED, "this container is not an orchestrator")

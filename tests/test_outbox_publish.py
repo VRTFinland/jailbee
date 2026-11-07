@@ -391,7 +391,7 @@ def test_policy_refusal_applies_nothing(env, kind):
 def test_result_sink_gets_urls_and_policy_sees_applied_batch(env, kind):
     from jailbee.outbox.publish import PublishOptions, publish_selected
 
-    seen, lines, audited = [], [], []
+    seen, lines, audited, receipts = [], [], [], []
     assert (
         publish_selected(
             env[0],
@@ -405,6 +405,7 @@ def test_result_sink_gets_urls_and_policy_sees_applied_batch(env, kind):
             policy=seen.append,
             result_sink=lines.append,
             audit_sink=audited.append,
+            receipt_sink=receipts.append,
         )
         == 0
     )
@@ -417,8 +418,114 @@ def test_result_sink_gets_urls_and_policy_sees_applied_batch(env, kind):
         assert any("73" in line for line in lines)
         assert any("#issuecomment-1" in line for line in lines)
         assert len(seen[0].manifests[0].actions) == 3
+        assert [r["index"] for r in receipts] == [0, 1, 2]
+        assert receipts[0] == {
+            "index": 0,
+            "kind": "create",
+            "repo": "acme/repo",
+            "issue": 73,
+            "url": "https://github.com/acme/repo/issues/73",
+        }
     else:
         assert len(lines) == 2
+
+
+def test_created_issue_receipts_follow_manifest_order(env):
+    from jailbee.outbox.publish import PublishOptions, publish_selected
+
+    env[2]["issue"] = store(
+        "issue",
+        {
+            "001.json": json.dumps(
+                {
+                    "version": 1,
+                    "actions": [
+                        {
+                            "type": "create",
+                            "repo": ".",
+                            "title": "First",
+                            "body": "body",
+                            "ref": "first",
+                        },
+                        {
+                            "type": "create",
+                            "repo": ".",
+                            "title": "Second",
+                            "body": "body",
+                            "ref": "second",
+                        },
+                    ],
+                }
+            )
+        },
+    )
+    env[4]["create"].side_effect = [
+        issue_github.MutationReceipt(issue=n, url=f"https://github.com/acme/repo/issues/{n}")
+        for n in (90, 81)
+    ]
+    receipts = []
+    assert (
+        publish_selected(
+            env[0],
+            env[1],
+            IDENTITY.full_name,
+            ProposalId("issue", "001.json"),
+            journal_store=env[3],
+            options=PublishOptions(publisher="user"),
+            confirm=lambda n: True,
+            raise_errors=True,
+            receipt_sink=receipts.append,
+        )
+        == 0
+    )
+    assert [(r["index"], r["issue"], r["url"]) for r in receipts] == [
+        (0, 90, "https://github.com/acme/repo/issues/90"),
+        (1, 81, "https://github.com/acme/repo/issues/81"),
+    ]
+
+
+def test_issue_receipts_include_partial_success_on_failure(env):
+    from jailbee.issue_github import IssueGithubMutationError
+    from jailbee.outbox.models import OutboxExecutionError
+    from jailbee.outbox.publish import PublishOptions, publish_selected
+
+    env[4]["comment"].side_effect = IssueGithubMutationError("failed", uncertain=False)
+    receipts = []
+    with pytest.raises(OutboxExecutionError):
+        publish_selected(
+            env[0],
+            env[1],
+            IDENTITY.full_name,
+            ProposalId("issue", "001.json"),
+            journal_store=env[3],
+            options=PublishOptions(publisher="user"),
+            confirm=lambda n: True,
+            raise_errors=True,
+            receipt_sink=receipts.append,
+        )
+    assert len(receipts) == 1
+    assert receipts[0]["kind"] == "create"
+    assert receipts[0]["issue"] == 73
+    created = receipts[0]
+    env[4]["comment"].side_effect = None
+    receipts.clear()
+    assert (
+        publish_selected(
+            env[0],
+            env[1],
+            IDENTITY.full_name,
+            ProposalId("issue", "001.json"),
+            journal_store=env[3],
+            options=PublishOptions(publisher="user"),
+            confirm=lambda n: True,
+            raise_errors=True,
+            receipt_sink=receipts.append,
+        )
+        == 0
+    )
+    assert [r["index"] for r in receipts] == [0, 1, 2]
+    assert receipts[0] == created
+    env[4]["create"].assert_called_once()
 
 
 @pytest.mark.parametrize("kind", ["issue", "pr"])

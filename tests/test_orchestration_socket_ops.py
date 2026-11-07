@@ -179,6 +179,19 @@ def test_busy_and_drop(env: Env) -> None:
     ws.add(env.waiter(conn_id=2))
 
 
+def test_replace_displaces_only_the_waiter_on_the_same_key(env: Env) -> None:
+    ws = Waiters()
+    ordinary = env.waiter()
+    publish = env.waiter(conn_id=2, ref="publish-1")
+    ws.add(ordinary)
+    assert ws.add(publish) is None  # a request-specific wait coexists with the ordinary one
+    assert ws.add(env.waiter(conn_id=3), replace=True) is ordinary
+    assert len(ws) == 2
+    with pytest.raises(wire.WireError) as e:
+        ws.add(env.waiter(conn_id=4, ref="publish-1"))
+    assert e.value.code == wire.BUSY
+
+
 def test_immediate_message_answer(env: Env) -> None:
     env.put("m1")
     ws = Waiters()

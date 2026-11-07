@@ -212,6 +212,7 @@ def call_send(
 
     A client-side ``TimeoutError`` propagates unchanged; callers map it to
     exit 3, like a "no reply" timeout."""
+    deadline = None if timeout is None else time.monotonic() + timeout
     first = client_factory()
     try:
         return first.call("send", args, timeout=timeout)
@@ -222,5 +223,8 @@ def call_send(
             raise
     finally:
         first.close()
+    remaining = None if deadline is None else deadline - time.monotonic()
+    if remaining is not None and remaining <= 0:
+        raise TimeoutError
     with client_factory() as second:
-        return second.call("send", args, timeout=timeout)
+        return second.call("send", args, timeout=remaining)
