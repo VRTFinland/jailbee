@@ -43,9 +43,7 @@ def seed_pr_store(
     (they are then invalid proposals, as an unparsable file was).
     """
     store = BrokerStore(store_path(root()))
-    manifests = sorted(
-        n for n in files if n.endswith(".json") and not n.endswith(".progress.json")
-    )
+    manifests = sorted(n for n in files if n.endswith(".json") and not n.endswith(".progress.json"))
     digests: dict[str, str] = {}
     with store.transaction() as con:
         (start,) = con.execute(
