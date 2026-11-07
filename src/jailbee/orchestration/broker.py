@@ -1221,6 +1221,7 @@ def tick(
         and not (former_publishers & present)
     ):
         memory.contexts.clear()
+        memory.children.clear()
         _publish_queries(memory)
         return False
 

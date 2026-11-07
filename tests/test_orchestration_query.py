@@ -494,6 +494,31 @@ def test_recreated_orchestrator_does_not_inherit_children_on_history_failure(
     assert not env.queries.answer("proj-orch", wire.Request("grant")).ok
 
 
+def test_recreated_orchestrator_after_inactive_round_has_no_stale_children(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert env.queries.answer("proj-orch", wire.Request("children")).result["children"]
+    env.rig.incus.list_containers.return_value = [
+        {"name": "proj-orch", "status": "Running", "config": {}}
+    ]
+    assert env.rig.tick(env.memory) is False
+    replacement = _orch()
+    replacement["config"]["volatile.uuid"] = "new-uuid"
+    env.store.set_recipient("proj-orch", "new-uuid", now=2.0)
+    env.rig.incus.list_containers.return_value = [replacement]
+    monkeypatch.setattr(
+        env.store, "history_meta", lambda *args: (_ for _ in ()).throw(StoreError("failed"))
+    )
+    monkeypatch.setattr(
+        broker.inbox_state,
+        "sync_children",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("failed")),
+    )
+    assert env.rig.tick(env.memory) is True
+    response = env.queries.answer("new-uuid", wire.Request("children"))
+    assert response.ok and response.result["children"] == []
+
+
 def test_unready_removed_recipient_stays_unready_on_enumeration_failure(
     env: Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
