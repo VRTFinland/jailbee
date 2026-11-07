@@ -73,8 +73,8 @@ client exits 4 (`jb apply` / restart the broker to align versions).
 
 | Op | Args | Result |
 | --- | --- | --- |
-| `send` | `manifest` (a manifest object), `body` (string or null; the body file's text), `wait` (bool) | The status item for the manifest (an `InboxStatus` object). Delivered already read when `wait` is true, unread otherwise. |
-| `list` | `after` (optional; 0 for the first page, then the previous page's `next`) | The unread items, oldest first, in the shape `jailbee inbox ls` prints (long texts cut), one page at a time: `{"items": [...], "next": cursor or null}`. Without `after` (older clients) a plain list of the oldest items that fit one reply. |
+| `send` | `manifest` (a manifest object), `body` (string or null; the body file's text), `wait` (bool) | The status item for the manifest (an `InboxStatus` object). Delivered already read when the connection is live and either `wait` is true or the first state is `refused`; unread otherwise. Uses the ordinary per-recipient pending gate. |
+| `list` | `after` (required; 0 for the first page, then the previous page's `next`) | The unread items, oldest first, in the shape `jailbee inbox ls` prints (long texts cut), one page at a time: `{"items": [...], "next": cursor or null}`. |
 | `read` | `id`, `keep` (bool) | The unread item. Marks it read unless `keep`. `jailbee inbox read` calls it with `keep: true`, prints the item, then calls `ack`. |
 | `ack` | `id` | `{"acked": bool}`. Marks the item read. `jailbee inbox read` uses it after printing; if the ack fails the message stays unread. |
 | `next` | `wake_on` (list of wake tokens or null), `quiet_after` and `digest` (positive seconds or null), `timeout` (seconds or null for none) | A long-poll: `{"kind":"message","id":...}`, `{"kind":"quiet-child","child":...}`, `{"kind":"digest","children":[...],"last_from_child":{...},"observed_at":...}` or `{"kind":"timeout"}`. Nothing is marked read. |
@@ -108,7 +108,11 @@ Exit 4 is also used when the broker cannot be reached at all: the socket is
 missing, refuses connections (broker stopped), or the connection drops without
 an answer and does not come back. `jailbee inbox wait` retries a dropped
 connection with backoff until its timeout, but a first connect that fails exits
-4 at once. A `send --wait` with no reply before its timeout exits 3.
+4 at once. Any `send` with no reply before its timeout exits 3. The request may
+or may not have run: a disconnected request still queued for execution is
+dropped as flood defense. Inspect `jailbee inbox ls` and `jailbee inbox status`
+before resending with a new ID. A disconnect after handling began leaves the
+status unread, including for `send --wait`.
 
 ## Manifest rules
 
@@ -495,8 +499,9 @@ A `kind: "done"` message is accepted only when the worktree is clean and HEAD
 is on a branch. Refusals include `uncommitted changes: commit everything before
 reporting done` and `detached HEAD: check out your branch before reporting done`;
 fix the cause and resend under a new id. Always use `send message --kind done
---wait`. A timeout needs the original reply, not another report; the container
-may be destroyed after accepted done, so commit first.
+--wait`. After a timeout, inspect inbox messages and status before deciding
+whether to resend with a new ID; the request may or may not have run. The
+container may be destroyed after accepted done, so commit first.
 
 An accepted done records HEAD, imports before delivery, then schedules cleanup
 according to `on_done`. A stopped or busy orchestrator gets an ordered pending
@@ -530,7 +535,11 @@ after fixing `import_error`.
 `send --wait [--timeout DUR|none]` consumes only the status for that manifest:
 exit 0 on done/queued/started, 1 on refused/failed, 2 on usage errors, 3 on
 timeout (default 30m). `none` waits without a deadline and never exits 3.
-Recommend it for spawn, update and destroy.
+Recommend it for spawn, update and destroy. A first-state `refused` prints its
+reason to stderr and exits 1 even without `--wait`; stdout contains only the
+request ID. This refusal is stored as read history while the connection is live,
+so an ordinary waiter does not report it again. Other `--wait` statuses print
+after the ID. Statuses follow the same pending delivery order as messages.
 
 For waits, use `jailbee inbox wait --wake-on msg:done,question,blocked,idle,status:failed,status:refused --quiet-after 60m --timeout 30m`.
 The broker may send a host-only `message` of kind `idle`, with the child's

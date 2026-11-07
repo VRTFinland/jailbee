@@ -25,6 +25,11 @@ VERSION_MESSAGE = (
     "jailbee inbox: container and broker versions differ; run `jb apply` / restart the broker"
 )
 EXIT_UNREACHABLE = 4
+NO_REPLY_MESSAGE = (
+    "jailbee inbox: no reply from the host broker yet; the request (id printed above) "
+    "may or may not have run. Inspect `jailbee inbox ls` and `jailbee inbox status` "
+    "before resending with a new id"
+)
 
 _BACKOFF_START = 0.5
 _BACKOFF_CAP = 5.0

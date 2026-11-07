@@ -378,12 +378,9 @@ accepted (its agent has usually exited). Never report a child as stopped
 because it is done.
 
 Only one ordinary `wait` may run per container; another exits 2. Concurrent
-`send --wait` is supported: it reserves its status ref before publishing and
-ordinary `wait` skips that ref while the sender lives. Reservations disappear
-on process exit, including crashes/timeouts; stale lock files do not hide
-replies. Do not explicitly `read` a pending sender's status from another
-session. After a wake, handle all other unread messages, including filtered
-notes, but leave reserved replies to their sender.
+`send --wait` is supported: its first status is stored read while the sender's
+connection is live. A disconnect during handling leaves that status unread.
+After a wake, handle every unread message, including filtered notes.
 
 ## Checking on children
 
@@ -432,9 +429,12 @@ Use `send --wait` for `spawn`, `update` and `destroy`. It prints and marks
 only the matching status read: exit 0 for done/queued/started, 1 for
 refused/failed, 2 for usage errors, 3 for timeout (`--timeout`, default 30m;
 `none` waits without a deadline and never exits 3).
-A timeout is not a refusal: read the eventual reply instead of resending. If
-`send --wait` repeatedly times out without a reply, tell the human; the host
-broker may be unavailable. The broker is not instant; expect seconds, not milliseconds.
+A first-state refusal prints its reason to stderr and exits 1 even without
+`--wait`; stdout contains only the request ID, and the refusal is stored read.
+A timeout means the request may or may not have run: queued requests are dropped
+if their connection closes. Inspect `jailbee inbox ls` and `jailbee inbox status`
+before resending with a new ID. If repeated attempts get no reply, tell the human;
+the host broker may be unavailable. The broker is not instant; expect seconds, not milliseconds.
 
 Spawn and restart get `queued` or `started`, then final `done`
 (``child `<short>` is ready; agent is alive``) or `failed`. `started` is not

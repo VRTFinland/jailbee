@@ -102,7 +102,9 @@ def child(name: str = "kid") -> dict[str, object]:
 
 def test_ls_prints_ls_lines(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
     broker.on(
-        "list", [{"id": "m1", "type": "message", "from": "kid", "kind": "note", "body": "hello"}]
+        "list",
+        {"items": [{"id": "m1", "type": "message", "from": "kid", "kind": "note", "body": "hello"}],
+         "next": None},
     )
     r = run(sockdir, "ls", tmp=tmp_path)
     assert r.returncode == 0
@@ -318,7 +320,11 @@ def test_send_wait_status(
     assert r.returncode == code
     ident, _, rest = r.stdout.partition("\n")
     assert ident.startswith("stop-")
-    assert json.loads(rest)["state"] == state
+    if state == "refused":
+        assert rest == ""
+        assert "request refused" in r.stderr
+    else:
+        assert json.loads(rest)["state"] == state
     assert broker.requests[-1].args["wait"] is True
 
 
@@ -710,7 +716,8 @@ def test_send_timeout_message_and_exit_3(
     err = capsys.readouterr().err
     assert (
         "jailbee inbox: no reply from the host broker yet; the request (id printed above) "
-        "may still be processed and its status will arrive in the inbox"
+        "may or may not have run. Inspect `jailbee inbox ls` and `jailbee inbox status` "
+        "before resending with a new id"
     ) in err
 
 
@@ -749,19 +756,13 @@ def test_store_error_is_exit_4_with_detail(
     assert r.returncode == 4
 
 
-# -- handover of running file-mode waits --------------------------------------
-
-
-def _status_item(ref: str, state: str, ident: str = "s1") -> dict[str, object]:
-    return {"id": ident, "type": "status", "ref": ref, "state": state}
+# -- paged inbox listing -----------------------------------------------------
 
 
 def _paging_list(items: list[dict[str, object]], size: int) -> Handler:
-    """A broker that pages `list` by seq (cursor = index); a plain call gets page one."""
+    """A broker that pages `list` by seq (cursor = index)."""
 
     def handle(req: wire.Request) -> wire.Response:
-        if "after" not in req.args:
-            return wire.ok(items[:size])
         start = int(req.args["after"] or 0)
         end = start + size
         return wire.ok({"items": items[start:end], "next": end if end < len(items) else None})
@@ -780,35 +781,13 @@ def test_ls_pages_through_a_long_inbox(broker: FakeBroker, sockdir: Path, tmp_pa
     assert [line.split()[0] for line in r.stdout.splitlines()] == [f"m{n}" for n in range(7)]
 
 
-def test_ls_accepts_an_older_broker_plain_list(
-    broker: FakeBroker, sockdir: Path, tmp_path: Path
+
+@pytest.mark.parametrize("wait", [False, True])
+def test_send_refusal_always_prints_detail_not_status(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path, wait: bool
 ) -> None:
-    broker.on("list", [{"id": "m1", "type": "message", "from": "kid", "kind": "note"}])
-    r = run(sockdir, "ls", tmp=tmp_path)
-    assert r.returncode == 0
-    assert r.stdout.split()[0] == "m1"
-
-
-def test_wait_status_finds_its_status_on_a_later_page(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from jailbee.inbox import socket_cli
-
-    items: list[dict[str, object]] = [
-        {"id": f"m{n}", "type": "message", "kind": "note"} for n in range(5)
-    ] + [{"id": "s1", "type": "status", "ref": "req-1", "state": "done"}]
-    handler = _paging_list(items, 2)
-
-    def call(op: str, args: dict[str, object] | None = None) -> object:
-        if op == "list":
-            resp = handler(wire.Request("list", dict(args or {})))
-            return resp.result
-        if op == "read":
-            return items[-1]
-        return {"acked": True}
-
-    monkeypatch.setattr(socket_cli, "_call", call)
-    monkeypatch.setattr(
-        socket_cli, "call_next", lambda *a, **k: pytest.fail("the status is already unread")
-    )
-    assert socket_cli.wait_status("req-1", 5.0) == 0
+    broker.on("send", {**send_status("refused"), "detail": "operation not granted"})
+    r = run(sockdir, "send", "stop", "--child", "kid", *(["--wait"] if wait else []), tmp=tmp_path)
+    assert r.returncode == 1
+    assert len(r.stdout.splitlines()) == 1 and r.stdout.startswith("stop-")
+    assert "operation not granted" in r.stderr

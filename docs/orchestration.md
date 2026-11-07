@@ -621,9 +621,16 @@ run `ls` and handle every unread message with `read <id>`. `wait` uses a broker
 socket long-poll and returns immediately when a matching unread message is
 already present.
 Use `send --wait` for spawn, update and destroy, and always for a child's done
-report: it consumes only that manifest's status, returning 0 for
-done/queued/started, 1 for refused/failed, 2 for usage errors and 3 for timeout
-(default 30m). `--timeout none` waits without a deadline.
+report: it consumes only that manifest's first status, returning 0 for
+done/queued/started, 1 for refused/failed and 2 for usage errors. A first-state
+refusal always prints its reason to stderr and exits 1, even without `--wait`;
+stdout contains only the request ID. The refusal is retained as read history,
+so an ordinary waiter does not see it again. Other `--wait` replies print the
+status after the ID. Exit 3 means no reply before the timeout (default 30m);
+`--timeout none` waits without a deadline. The request may or may not have run:
+requests whose connection closes while still queued are dropped as flood defense.
+Inspect `jailbee inbox ls` and `jailbee inbox status` before resending with a new
+ID. If handling already began, its status remains unread after disconnection.
 
 For lower-noise orchestration, use the helper directly, not a wrapper that
 reads and discards progress notes:
@@ -810,13 +817,13 @@ keep `--quiet-after` from firing. The converse holds too: a child in one long
 silent build or test run wakes the waiter after the quiet period; `LONGEST`
 shows what it is running.
 
-One ordinary waiter per container is enforced with a process lock (a second
-exits 2). It may overlap `send --wait`: the sender reserves its status ref
-before publishing the manifest, and ordinary wait skips those statuses while
-the sender lives. Locks release on exit/crash/timeout; leftover lock files do
-not reserve anything. `ls` and explicit `read` remain administrative operations:
-do not read a pending sender's reply in another session. Ordinary wait never
-consumes a reply. After a send timeout, a late reply is eligible again.
+One ordinary waiter per container is enforced by the broker (a second exits 2).
+It may overlap `send --wait`: the first status is stored already read while the
+sender's connection remains live. A disconnect during handling leaves that
+status unread for the ordinary waiter. `ls` and explicit `read` remain
+administrative operations; ordinary wait never consumes a reply. Status delivery
+uses the same per-recipient pending gate as messages, so a newer status cannot
+jump ahead of older parked items.
 
 For multi-session work, spawn with `--on-done keep`; `update --child C`
 brings the parent's latest committed branch into the existing child. Add

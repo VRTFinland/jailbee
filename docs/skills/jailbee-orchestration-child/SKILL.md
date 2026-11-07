@@ -123,9 +123,10 @@ your next accepted message.
 Always send `done` with `--wait` and end the session only after exit 0
 (`done` or `queued`). The reply says whether work was imported and whether
 the container will be destroyed or kept. On exit 1, fix the refusal and
-resend under a new id. Exit 3 is a timeout, not a refusal: wait for the
-original status; do not duplicate the report. After accepted `done`, stop
-working: the container may be destroyed. Commit everything before reporting.
+resend under a new id. Exit 3 means no reply: the request may or may not have
+run. Inspect `jailbee inbox ls` and `jailbee inbox status` before resending with
+a new ID; queued requests are dropped when their connection closes.
+After accepted `done`, stop working: the container may be destroyed. Commit everything before reporting.
 Use the same `--wait` rule for any message your work depends on.
 
 ## Updates from your orchestrator
@@ -153,11 +154,9 @@ message.
 `wait` never marks anything read. Optional `--wake-on` filters message kinds
 and status states, leaving nonmatches unread; children normally omit it so
 no orchestrator instruction is missed. Only one ordinary waiter may run
-(another exits 2). A concurrent `send --wait` reserves its status ref before
-publishing: ordinary wait skips those replies while the sender lives. Do not
-explicitly read a pending sender's reply in another session. On sender exit
-or timeout the reservation is released automatically; late statuses remain
-visible. The orchestrator's `--quiet-after` watchdog uses broker child state;
+(another exits 2). A concurrent `send --wait` stores its first status read while
+the sender's connection is live. A disconnect during handling leaves it unread.
+The orchestrator's `--quiet-after` watchdog uses broker child state;
 it is not needed by a child waiting for its parent.
 
 ## Checking the inbox while working
@@ -176,7 +175,9 @@ items; the report is imported before delivery when it can receive it. Do not
 resend it. `send --wait [--timeout DUR|none]` (default 30m) prints the matching
 status and marks only that status read: 0 for done/queued/started,
 1 for refused/failed, 2 for usage error, 3 for timeout. `none` waits without a
-deadline and never exits 3.
+deadline and never exits 3. A first-state refusal always prints its detail to
+stderr and exits 1, even without `--wait`; stdout contains only the request ID.
+The refusal stays in read history, so an ordinary waiter does not see it again.
 
 Two `refused` details for `done` are not a fault in your manifest or your
 tree: `could not fetch your branch to the host: ...` and

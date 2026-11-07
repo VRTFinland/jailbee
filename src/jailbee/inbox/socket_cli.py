@@ -15,6 +15,7 @@ from jailbee.inbox.transport import (
     BrokerError,
     BrokerUnreachable,
     Client,
+    NO_REPLY_MESSAGE,
     call_next,
     call_send,
     socket_path,
@@ -24,11 +25,6 @@ from jailbee.orchestration import wire
 STALE_AFTER = 900
 # The broker serves requests only between its rounds, which can take a while.
 CALL_TIMEOUT = 120.0
-STATUS_RECHECK_PAUSE = 1.0  # between status-wait re-checks that found nothing new
-NO_REPLY_MESSAGE = (
-    "jailbee inbox: no reply from the host broker yet; the request (id printed above) "
-    "may still be processed and its status will arrive in the inbox"
-)
 
 
 def _factory() -> Client:
@@ -49,17 +45,10 @@ def _fail(exc: BrokerError) -> int:
 
 
 def _unread() -> Iterator[dict[str, Any]]:
-    """Every unread item, oldest first, one `list` page at a time.
-
-    A broker that ignores `after` (an unreleased development build; every
-    released broker with a socket pages) answers a plain list: that is all.
-    """
+    """Every unread item, oldest first, one `list` page at a time."""
     after: Any = 0
     while after is not None:
         result = _call("list", {"after": after})
-        if isinstance(result, list):
-            yield from result
-            return
         yield from result["items"]
         after = result.get("next")
 
@@ -174,49 +163,14 @@ def cmd_send(request: SendRequest) -> int:
     except TimeoutError:
         print(NO_REPLY_MESSAGE, file=sys.stderr)
         return 3
+    state = item.get("state") if isinstance(item, dict) else None
+    if state == "refused":
+        print(f"{PROG}: {clean_c0c1(str(item.get('detail') or 'request refused'))}", file=sys.stderr)
+        return 1
     if not request.wait:
         return 0
     print(pretty(cli._clean_json(item)))
-    state = item.get("state") if isinstance(item, dict) else None
     return 0 if state in ("done", "queued", "started") else 1
-
-
-def wait_status(
-    ref: str,
-    timeout: float | None,
-    *,
-    clock: Callable[[], float] = time.monotonic,
-) -> int:
-    """Wait for the unread status whose `ref` is `ref`; the exit code of `send --wait`.
-
-    `next` returns the first matching unread item, which may be someone else's,
-    so each wake re-reads the list and only the matching status is read and
-    acked. Returns 3 when the deadline passes first.
-    """
-    deadline = None if timeout is None else clock() + timeout
-    wake_on = ["queued", "started", "done", "refused", "failed"]
-    while True:
-        for item in _unread():
-            if item.get("type") == "status" and item.get("ref") == ref:
-                ident = str(item["id"])
-                if cmd_read(ident):
-                    return 1
-                return 0 if item.get("state") in ("done", "queued", "started") else 1
-        remaining = None if deadline is None else deadline - clock()
-        if remaining is not None and remaining <= 0:
-            return 3
-        try:
-            result = call_next(_factory, {"wake_on": wake_on}, timeout=remaining)
-        except BrokerError as exc:
-            if exc.code != wire.BUSY:  # another waiter is parked: poll the list instead
-                raise
-            result = {"kind": "busy"}
-        if result.get("kind") != "timeout":
-            # Woken by something that may not be ours: do not spin on it.
-            pause = STATUS_RECHECK_PAUSE
-            if deadline is not None:
-                pause = min(pause, max(deadline - clock(), 0.0))
-            time.sleep(pause)
 
 
 def _children_view(op: str, args: dict[str, Any], what: str) -> dict[str, Any] | None:

@@ -41,8 +41,10 @@ send_app = typer.Typer(
         "Send a request to the host broker and print its id. "
         "Text (body or prompt) comes from --text T, --file PATH or - (stdin); "
         "at most 65536 bytes, not empty. "
-        "--wait waits for its status: exit 0 on done/queued/started, "
-        "1 on refused/failed, 3 on timeout (default 30m; none waits indefinitely), "
+        "A first-state refusal prints its reason to stderr and exits 1, even without --wait. "
+        "--wait prints other status replies: exit 0 on done/queued/started, 1 on failed. "
+        "Exit 3 means no reply (may or may not have run); inspect inbox ls/status before "
+        "resending with a new id. Timeout defaults to 30m; none waits indefinitely. "
         "4 = host broker not reachable."
     ),
 )
