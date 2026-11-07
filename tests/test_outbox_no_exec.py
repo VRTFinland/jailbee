@@ -1,5 +1,6 @@
-"""No host PR outbox path runs ``incus exec``: every entry point reads and writes
-the host outbox store (`broker.db`) only, with the instance found by ``incus list``.
+"""No host outbox path runs ``incus exec``: every entry point, issue and PR, reads
+and writes the host outbox store (`broker.db`) only, with the instance found by
+``incus list``. The container may be stopped.
 """
 
 from __future__ import annotations
@@ -7,9 +8,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import json
+
 import pytest
 
-from jailbee import branch_pr, pr, pr_flow, pr_outbox
+from jailbee import branch_pr, issue_github, issue_outbox, pr, pr_flow, pr_outbox
 from jailbee.incus import Incus
 from jailbee.outbox import service
 from jailbee.outbox.delete import DeleteSelection, plan_delete
@@ -36,7 +39,12 @@ def incus(mocker):
     """An Incus whose every ``exec*`` fails the test."""
     fake = mocker.Mock(spec=Incus)
     fake.list_containers.return_value = [
-        {"name": FULL, "created_at": CREATED, "config": {"volatile.uuid": UUID}}
+        {
+            "name": FULL,
+            "status": "Stopped",
+            "created_at": CREATED,
+            "config": {"volatile.uuid": UUID},
+        }
     ]
     fake.config_get.return_value = None
     for name in EXEC_METHODS:
@@ -60,6 +68,29 @@ def github(mocker, cfg):
     mocker.patch.object(pr_outbox, "scope_slug", return_value=REPO)
     mocker.patch.object(pr, "gh_login", return_value="me")
     mocker.patch.object(pr, "add_issue_comment", return_value="https://github.com/x/pull/12#c")
+    targets = {".": issue_outbox.RepoTarget(".", cfg.repo_root, REPO)}
+    mocker.patch.object(issue_outbox, "resolve_repo_targets", return_value=targets)
+    mocker.patch.object(issue_github, "current_login", return_value="me")
+    mocker.patch.object(issue_github, "list_labels", return_value={})
+    snapshot = issue_github.IssueSnapshot(
+        7, "Title", "Body", (), "open", f"https://github.com/{REPO}/issues/7", False
+    )
+    mocker.patch.object(issue_github, "get_issue", return_value=snapshot)
+    mocker.patch.object(
+        issue_github,
+        "add_comment",
+        return_value=issue_github.MutationReceipt(7, f"https://github.com/{REPO}/issues/7#c"),
+    )
+
+
+def stage_issue(name: str = "001.json") -> str:
+    from tests.issue_store_support import seed
+
+    text = json.dumps(
+        {"version": 1, "actions": [{"type": "comment", "repo": ".", "issue": 7, "body": "Hi"}]}
+    )
+    seed({name: text}, uuid=UUID)
+    return name
 
 
 def _review_apply(cfg: Any, incus: Any) -> object:
@@ -145,6 +176,48 @@ def _resolve(cfg: Any, incus: Any) -> object:
     return f"removed={removed}"
 
 
+def _issue_apply(cfg: Any, incus: Any) -> object:
+    name = stage_issue()
+    batch = issue_outbox.prepare_batch(cfg, incus, FULL, [name])
+    issue_outbox.revalidate_batch(batch)
+    report = issue_outbox.apply_batch(
+        batch, incus=incus, container_prefix=cfg.container_prefix, publisher="user"
+    )
+    assert not issue_outbox.store_outbox(UUID).manifest_names
+    return report
+
+
+def _outbox_publish_issue(cfg: Any, incus: Any) -> object:
+    name = stage_issue()
+    failures = publish_selected(
+        cfg,
+        incus,
+        FULL,
+        ProposalId("issue", name),
+        options=PublishOptions(publisher="user"),
+        confirm=lambda _n: True,
+    )
+    assert not issue_outbox.store_outbox(UUID).manifest_names
+    return f"failures={failures}"
+
+
+def _outbox_view_and_delete_issue(cfg: Any, incus: Any) -> object:
+    name = stage_issue()
+    view = service.load_container(cfg, incus, FULL)
+    plan = plan_delete(view, ProposalId("issue", name), DeleteSelection())
+    return service.execute_delete(cfg, incus, FULL, plan)
+
+
+def _child_outbox_count(cfg: Any, incus: Any) -> object:
+    from jailbee.orchestration import child_outbox
+
+    stage_issue()
+    stage(manifest(COMMENT))
+    pending = child_outbox.probe(UUID)
+    assert pending.count == 2
+    return pending
+
+
 ENTRY_POINTS: dict[str, Callable[[Any, Any], object]] = {
     "jb review apply": _review_apply,
     "jb pr offer after push": _offer_after_pr,
@@ -155,11 +228,15 @@ ENTRY_POINTS: dict[str, Callable[[Any, Any], object]] = {
     "jb pr outbox references": _references,
     "jb pr push source list": _pending_sources,
     "jb review resolve": _resolve,
+    "jb issue apply": _issue_apply,
+    "jb outbox apply (issue)": _outbox_publish_issue,
+    "jb outbox ls/drop (issue)": _outbox_view_and_delete_issue,
+    "orchestrator stop/destroy/finish outbox count": _child_outbox_count,
 }
 
 
 @pytest.mark.parametrize("entry", sorted(ENTRY_POINTS))
-def test_no_incus_exec_on_a_host_pr_outbox_path(cfg, incus, entry):
+def test_no_incus_exec_on_a_host_outbox_path(cfg, incus, entry):
     result = ENTRY_POINTS[entry](cfg, incus)
     assert result not in (1, None, [], {}), result  # the path ran to its end
     for name in EXEC_METHODS:
