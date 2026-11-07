@@ -137,7 +137,6 @@ class Queries:
         """Outbox ops for any container; a child may read but never stage. The
         role comes from the completed-round view, so the broker, not the
         container CLI, decides."""
-        from jailbee.container_outbox.role import CHILD_REFUSAL
         from jailbee.outbox import broker_ops
         from jailbee.outbox.store_db import OutboxStore
 
@@ -154,19 +153,44 @@ class Queries:
         )
         # Fail closed: only the roles allowed to stage are named; a child, an
         # unknown role or an invalid grant ("none") may read but never change.
-        if not reading and view.role not in WRITER_ROLES:
-            if view.role == "child":
-                raise wire.WireError(wire.REFUSED, CHILD_REFUSAL)
-            raise wire.WireError(
-                wire.REFUSED,
-                "the broker could not establish this container's role; "
-                "outbox changes are refused until it can (retry after the next broker round)",
-            )
+        if not reading:
+            refusal = _writer_refusal(view.role)
+            if refusal is not None:
+                raise refusal
         if op == wire.OUTBOX_SENT:
             from jailbee.outbox.publication_db import PublicationStore
 
             return broker_ops.handle_sent(PublicationStore(self._store), uuid, args)
         return broker_ops.handle(OutboxStore(self._store), uuid, op, args, now=time.time())
+
+    def put_refusal(self, uuid: str) -> wire.Response | None:
+        """The answer an ``outbox.put`` from ``uuid`` gets for its role, if refused.
+
+        For the listener, which reads only the head of a put line: a role the
+        current view already refuses is answered without buffering or decoding
+        the (up to `wire.OUTBOX_MAX_LINE_BYTES`) line. An unknown or not-ready
+        container returns None and is decided by `answer` as usual.
+        """
+        view = self._snapshot.get(uuid)
+        if view is None or not view.ready:
+            return None
+        refusal = _writer_refusal(view.role)
+        return None if refusal is None else wire.fail(refusal.code, refusal.detail)
+
+
+def _writer_refusal(role: str) -> wire.WireError | None:
+    """The refusal of an outbox change by ``role``, or None when it may stage."""
+    if role in WRITER_ROLES:
+        return None
+    if role == "child":
+        from jailbee.container_outbox.role import CHILD_REFUSAL
+
+        return wire.WireError(wire.REFUSED, CHILD_REFUSAL)
+    return wire.WireError(
+        wire.REFUSED,
+        "the broker could not establish this container's role; "
+        "outbox changes are refused until it can (retry after the next broker round)",
+    )
 
 
 def _context_snapshot(memory: broker_state.BrokerMemory, ctx: ActionContext) -> ContainerSnapshot:
