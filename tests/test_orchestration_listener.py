@@ -10,7 +10,7 @@ import stat
 import tempfile
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -701,6 +701,147 @@ def test_store_queries_hold_budget_until_worker_finishes(
         lis.stop()
 
 
+def _wait_until(predicate: Callable[[], bool]) -> None:
+    deadline = time.monotonic() + 5
+    while not predicate():
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+
+
+def test_store_query_cap_resumes_pipelines_and_siblings(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queries = Queries(BrokerStore(short_dir / "broker.db"))
+    unblock = threading.Event()
+    entered = threading.Event()
+    lock = threading.Lock()
+    seen: list[tuple[str, int]] = []
+
+    def answer(uuid: str, request: wire.Request) -> wire.Response:
+        if uuid == "a" and request.op in {"list", "read", "ack"}:
+            with lock:
+                seen.append((uuid, int(request.args["n"])))
+                if len(seen) == 2:
+                    entered.set()
+            assert unblock.wait(10)
+        return wire.ok(request.args)
+
+    monkeypatch.setattr(queries, "answer", answer)
+    lis = Listener(queue.Queue(), queries=queries)
+    lis.start()
+    lis.open_container("a", short_dir / "a")
+    lis.open_container("b", short_dir / "b")
+    clients = [connect(short_dir / "a") for _ in range(8)]
+    try:
+        for i, client in enumerate(clients):
+            client.sendall(req(("list", "read", "ack")[i % 3], n=i) + req("ack", n=i + 8))
+        assert entered.wait(5)
+        _wait_until(lambda: len(lis._servers["a"].conns) == 8)
+        lis._call(lambda: None)
+        assert lis._store_queries == {"a": 2}
+        assert lis._query_queue.qsize() == 0
+        assert len(seen) == 2
+        for client in clients:
+            client.settimeout(0.05)
+            with pytest.raises(TimeoutError):
+                client.recv(1)
+            client.settimeout(5)
+        with connect(short_dir / "b") as other:
+            other.sendall(req("list", n=100))
+            assert wire.decode_response(recv_line(other)).result == {"n": 100}
+        unblock.set()
+        for i, client in enumerate(clients):
+            with client.makefile("rb") as reader:
+                assert wire.decode_response(reader.readline()).result == {"n": i}
+                assert wire.decode_response(reader.readline()).result == {"n": i + 8}
+        _wait_until(lambda: not lis._store_queries and not lis._inflight)
+        assert len(seen) == 16
+    finally:
+        unblock.set()
+        for client in clients:
+            client.close()
+        lis.stop()
+
+
+def test_store_cap_allows_snapshot_on_sibling_connection(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queries = Queries(BrokerStore(short_dir / "broker.db"))
+    unblock = threading.Event()
+    entered = threading.Event()
+    count = 0
+    lock = threading.Lock()
+
+    def answer(uuid: str, request: wire.Request) -> wire.Response:
+        nonlocal count
+        if request.op == "list":
+            with lock:
+                count += 1
+                if count == 2:
+                    entered.set()
+            assert unblock.wait(10)
+        return wire.ok({"op": request.op})
+
+    monkeypatch.setattr(queries, "answer", answer)
+    lis = Listener(queue.Queue(), queries=queries)
+    lis.start()
+    lis.open_container("a", short_dir / "a")
+    clients = [connect(short_dir / "a") for _ in range(3)]
+    try:
+        for client in clients[:2]:
+            client.sendall(req("list"))
+        assert entered.wait(5)
+        clients[2].sendall(req("children"))
+        assert wire.decode_response(recv_line(clients[2])).result == {"op": "children"}
+        assert lis._store_queries == {"a": 2}
+    finally:
+        unblock.set()
+        for client in clients:
+            client.close()
+        lis.stop()
+
+
+def test_disconnected_held_and_queued_queries_keep_only_admitted_budget(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("jailbee.orchestration.listener._QUERY_WORKERS", 1)
+    queries = Queries(BrokerStore(short_dir / "broker.db"))
+    entered, unblock = threading.Event(), threading.Event()
+    seen: list[int] = []
+
+    def answer(uuid: str, request: wire.Request) -> wire.Response:
+        seen.append(int(request.args["n"]))
+        entered.set()
+        assert unblock.wait(10)
+        return wire.ok()
+
+    monkeypatch.setattr(queries, "answer", answer)
+    lis = Listener(queue.Queue(), queries=queries)
+    lis.start()
+    lis.open_container("a", short_dir / "a")
+    clients = [connect(short_dir / "a") for _ in range(3)]
+    try:
+        clients[0].sendall(req("list", n=0))
+        assert entered.wait(5)
+        clients[1].sendall(req("read", n=1))
+        _wait_until(lambda: lis._query_queue.qsize() == 1)
+        clients[2].sendall(req("ack", n=2))
+        _wait_until(lambda: any(conn.inbuf for conn in lis._conns.values()))
+        for client in clients:
+            client.close()
+        _wait_until(lambda: not lis._servers["a"].conns)
+        assert lis._store_queries == {"a": 2}
+        assert lis._inflight == {"a": 2}
+        unblock.set()
+        _wait_until(lambda: not lis._store_queries and not lis._inflight)
+        assert seen == [0]
+    finally:
+        unblock.set()
+        for client in clients:
+            client.close()
+        lis.stop()
+
+
 def test_query_worker_queue_is_bounded_without_blocking_listener(
     short_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -717,8 +858,9 @@ def test_query_worker_queue_is_bounded_without_blocking_listener(
     monkeypatch.setattr(queries, "answer", blocked)
     lis = Listener(queue.Queue(), queries=queries)
     lis.start()
-    lis.open_container("u", short_dir / "u")
-    clients = [connect(short_dir / "u") for _ in range(3)]
+    for uuid in ("u", "v", "w"):
+        lis.open_container(uuid, short_dir / uuid)
+    clients = [connect(short_dir / uuid) for uuid in ("u", "v", "w")]
     try:
         clients[0].sendall(req("list", after=0))
         assert entered.wait(2)
@@ -760,6 +902,7 @@ def test_stop_does_not_wait_for_a_blocked_query_worker(
             start = time.monotonic()
             lis.stop()
             assert time.monotonic() - start < 1
+            assert not lis._store_queries
         finally:
             unblock.set()
             for worker in lis._query_threads:
