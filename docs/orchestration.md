@@ -847,7 +847,9 @@ merged state.
 ## Lifecycle
 
 - **Spawn.** `kind: fork` (from the orchestrator's committed work) or `kind:
-  new` (from a base), plus the prompt and rights. Only **running** children
+  new` (from a base), plus the prompt and rights. A `new` spawn whose `--base`
+  cannot resolve is refused at once, not queued, unless `new.autofetch` is on
+  and the upstream remote exists (the base may then arrive at creation). Only **running** children
   count against `max_running_children`; a child being created counts as
   running. During creation, a child counts from the `started` reply until
   it is running and its create has finished, or its create has failed.

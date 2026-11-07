@@ -911,3 +911,68 @@ def test_drain_and_prune_leave_queue_alone_while_reservations_import_is_pending(
     actions.prune_reservations(tmp_path)
     assert load_queue(tmp_path) == {"proj-orch": [entry]}
     seams["start"].assert_not_called()
+
+
+def _base_rig(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    autofetch: bool,
+    remotes: list[str],
+    local: set[str],
+) -> Rig:
+    """A full rig whose git probes answer from `remotes` and the local branch set."""
+    rig = Rig(tmp_path, limit=1, running=1)  # at the limit: an accepted spawn queues
+    rig.cfg = rig.cfg.model_copy(
+        update={"new": rig.cfg.new.model_copy(update={"autofetch": autofetch})}
+    )
+    monkeypatch.setattr("jailbee.git.list_remotes", lambda root: remotes)
+    monkeypatch.setattr(lifecycle, "list_remotes", lambda root: remotes)
+    monkeypatch.setattr(lifecycle, "branch_exists_in_source", lambda root, remote, b: False)
+    monkeypatch.setattr(lifecycle, "branch_exists_locally", lambda root, b: b in local)
+    monkeypatch.setattr(lifecycle, "rev_parse_remote", lambda root, remote, b: None)
+    return rig
+
+
+def _new_with_base(base: str) -> SpawnManifest:
+    m = _m("fix/1", kind="new")
+    return m.model_copy(update={"base": base})
+
+
+def test_missing_base_without_remote_refused_before_queueing(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig = _base_rig(tmp_path, monkeypatch, autofetch=True, remotes=[], local=set())
+    out = actions.handle_spawn(rig.ctx(), _new_with_base("no-such-branch"))
+    assert out.state == "refused"
+    assert "branch 'no-such-branch' not found" in out.detail
+    assert load_queue(tmp_path) == {}
+    seams["start"].assert_not_called()
+
+
+def test_missing_base_with_autofetch_off_refused(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig = _base_rig(tmp_path, monkeypatch, autofetch=False, remotes=["origin"], local=set())
+    out = actions.handle_spawn(rig.ctx(), _new_with_base("no-such-branch"))
+    assert out.state == "refused"
+    assert "no-such-branch" in out.detail
+    assert load_queue(tmp_path) == {}
+
+
+def test_missing_base_with_autofetch_and_remote_still_queues(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig = _base_rig(tmp_path, monkeypatch, autofetch=True, remotes=["origin"], local=set())
+    monkeypatch.setattr("jailbee.git.list_remotes", lambda root: [rig.cfg.upstream_remote])
+    out = actions.handle_spawn(rig.ctx(), _new_with_base("upstream-only"))
+    assert out == Outcome("queued", "queued at position 1")
+    assert load_queue(tmp_path)["proj-orch"][0].base == "upstream-only"
+
+
+def test_existing_local_base_queues_as_before(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig = _base_rig(tmp_path, monkeypatch, autofetch=False, remotes=[], local={"develop"})
+    out = actions.handle_spawn(rig.ctx(), _new_with_base("develop"))
+    assert out == Outcome("queued", "queued at position 1")

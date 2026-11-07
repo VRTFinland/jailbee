@@ -368,7 +368,7 @@ def plan_spawn(
         return refused("on_done destroy needs the `destroy` operation in this container's grant")
     policy = m.on_done or ("destroy" if "destroy" in effective.operations else "keep")
     prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
-    return SpawnPlan(
+    plan = SpawnPlan(
         full,
         m.kind,
         branch,
@@ -386,6 +386,31 @@ def plan_spawn(
         services=m.services,
         warm_paths=m.warm_paths,
     )
+    problem = _base_problem(ctx, plan)
+    return refused(problem) if problem is not None else plan
+
+
+def _base_problem(ctx: ActionContext, plan: SpawnPlan) -> str | None:
+    """Why a `new` spawn's `--base` can never resolve, or None when it may.
+
+    Uses the resolution `jailbee new` runs at creation. The verdict is only
+    definitive when creation would not fetch: with autofetch on and the
+    upstream remote present, a base that exists only upstream resolves then,
+    so it is accepted here and the late check stays.
+    """
+    if plan.kind != "new" or plan.base is None:
+        return None
+    from jailbee import git
+
+    cfg = ctx.cfg
+    if cfg.new.autofetch and cfg.upstream_remote in git.list_remotes(cfg.repo_root):
+        return None
+    opts = child_options(cfg, plan, orchestrator_full=ctx.sender.full, fork=None)
+    try:
+        lifecycle.resolve_clone_ref(cfg, opts, autofetch=False)
+    except ValueError as exc:
+        return str(exc)
+    return None
 
 
 def escalation_policy(rights: ChildRights) -> Callable[[EscalationVerdict], bool]:
