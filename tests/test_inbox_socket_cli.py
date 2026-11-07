@@ -904,8 +904,19 @@ def test_child_readiness_wait_json_cli(broker, sockdir, tmp_path, action, first,
     broker.on("ack", {"acked": True})
     target = ["--branch", "fix/task"] if action == "spawn" else ["--child", "kid"]
     result = run(
-        sockdir, "send", action, *target, "--text", "Do the task.", "--wait",
-        "--until", "done", "--timeout", "10s", "--json", tmp=tmp_path,
+        sockdir,
+        "send",
+        action,
+        *target,
+        "--text",
+        "Do the task.",
+        "--wait",
+        "--until",
+        "done",
+        "--timeout",
+        "10s",
+        "--json",
+        tmp=tmp_path,
     )
     assert result.returncode == code, result.stderr
     assert json.loads(result.stdout) == final
@@ -919,8 +930,18 @@ def test_child_readiness_wait_timeout_cli(broker, sockdir, tmp_path, action, fir
     broker.on("next", {"kind": "timeout"})
     target = ["--branch", "fix/task"] if action == "spawn" else ["--child", "kid"]
     result = run(
-        sockdir, "send", action, *target, "--text", "Do the task.", "--wait",
-        "--until", "done", "--timeout", "1s", tmp=tmp_path,
+        sockdir,
+        "send",
+        action,
+        *target,
+        "--text",
+        "Do the task.",
+        "--wait",
+        "--until",
+        "done",
+        "--timeout",
+        "1s",
+        tmp=tmp_path,
     )
     assert result.returncode == 3, result.stderr
     ident = result.stdout.strip()
@@ -932,13 +953,22 @@ def test_child_readiness_wait_timeout_cli(broker, sockdir, tmp_path, action, fir
 @pytest.mark.parametrize("action", ["spawn", "restart"])
 @pytest.mark.parametrize("state,code", [("queued", 0), ("started", 0), ("refused", 1)])
 @pytest.mark.parametrize("as_json", [False, True])
-def test_child_plain_wait_returns_first_status(broker, sockdir, tmp_path, action, state, code, as_json):
+def test_child_plain_wait_returns_first_status(
+    broker, sockdir, tmp_path, action, state, code, as_json
+):
     first = send_status(state)
     broker.on("send", first)
     target = ["--branch", "fix/task"] if action == "spawn" else ["--child", "kid"]
     result = run(
-        sockdir, "send", action, *target, "--text", "Do the task.", "--wait",
-        *(["--json"] if as_json else []), tmp=tmp_path,
+        sockdir,
+        "send",
+        action,
+        *target,
+        "--text",
+        "Do the task.",
+        "--wait",
+        *(["--json"] if as_json else []),
+        tmp=tmp_path,
     )
     assert result.returncode == code, result.stderr
     if as_json:
@@ -955,8 +985,17 @@ def test_child_readiness_immediate_final_status(broker, sockdir, tmp_path, actio
     broker.on("send", final)
     target = ["--branch", "fix/task"] if action == "spawn" else ["--child", "kid"]
     result = run(
-        sockdir, "send", action, *target, "--text", "Do the task.", "--wait",
-        "--until", "done", "--json", tmp=tmp_path,
+        sockdir,
+        "send",
+        action,
+        *target,
+        "--text",
+        "Do the task.",
+        "--wait",
+        "--until",
+        "done",
+        "--json",
+        tmp=tmp_path,
     )
     assert result.returncode == code, result.stderr
     assert json.loads(result.stdout) == final
@@ -969,7 +1008,14 @@ def test_child_readiness_until_requires_wait_and_done(broker, sockdir, tmp_path,
     target = ["--branch", "fix/task"] if action == "spawn" else ["--child", "kid"]
     options = extra or ["--until", "done"]
     result = run(
-        sockdir, "send", action, *target, "--text", "Do the task.", *options, tmp=tmp_path,
+        sockdir,
+        "send",
+        action,
+        *target,
+        "--text",
+        "Do the task.",
+        *options,
+        tmp=tmp_path,
     )
     assert result.returncode == 2
     assert "--until" in result.stderr

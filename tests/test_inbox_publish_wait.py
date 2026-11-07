@@ -109,7 +109,8 @@ def test_readiness_ref_wait_ignores_queued_and_started(tmp_path, monkeypatch, ac
     env.ask(env.orch, "next", conn=2, ref=ref, timeout=30)
     for seq, intermediate in enumerate(["queued", "started"], start=1):
         env.store.insert_item(
-            env.orch, "proj-orch",
+            env.orch,
+            "proj-orch",
             {"id": f"s{seq}", "type": "status", "ref": ref, "state": intermediate},
             now=seq,
         )
@@ -124,9 +125,13 @@ def test_readiness_ref_wait_ignores_queued_and_started(tmp_path, monkeypatch, ac
 @pytest.mark.parametrize("action", ["spawn", "restart"])
 def test_readiness_wait_shares_send_timeout(monkeypatch, capsys, action):
     request = SendRequest(
-        type=action, branch="fix/task" if action == "spawn" else "",
-        child="kid" if action == "restart" else "", text="Do the task.",
-        wait=True, until="done", timeout="10s",
+        type=action,
+        branch="fix/task" if action == "spawn" else "",
+        child="kid" if action == "restart" else "",
+        text="Do the task.",
+        wait=True,
+        until="done",
+        timeout="10s",
     )
     monkeypatch.setattr(socket_cli, "prepare_send", lambda r: ("request", {}, None))
     ticks = iter([100.0, 107.0])
