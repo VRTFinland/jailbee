@@ -1,10 +1,12 @@
-r"""Host-side socket listener for the broker: one thread, pure I/O.
+r"""Host-side broker sockets: selector thread plus bounded inbox query workers.
 
 Every container gets a listening AF_UNIX socket at ``<sock_dir>/broker.sock``.
-Requests are decoded with :mod:`jailbee.orchestration.wire` and put on a queue
-as events; responses are written back through :meth:`Listener.respond`. All
-selector and socket state is owned by the listener thread; other threads hand
-work over through a command queue plus a wakeup socket pair.
+Requests are decoded with :mod:`jailbee.orchestration.wire`. Mutations and
+long-polls are queued to the broker executor. Snapshot queries read immutable
+completed-round data here; SQLite inbox queries run on bounded daemon workers.
+Responses are written back through :meth:`Listener.respond`. All selector and
+socket state is owned by the listener thread; other threads hand work over
+through a command queue plus a wakeup socket pair.
 
 A client that half-closes (``SHUT_WR``) before its reply is dropped: EOF is
 treated as a disconnect, so clients must keep the write side open until the
@@ -17,7 +19,8 @@ long-poll counts as in flight), and only while the unsent replies stay under
 requests queued or in flight across its connections; a slot comes back only
 when the request is answered or released (:meth:`Listener.release`), never
 on a disconnect, so open/send/close loops cannot grow the executor's queue. A
-disconnect is queued only for a connection with a request in flight.
+disconnect is queued only for an executor request in flight; query workers
+release their own slots when they finish, even after the connection drops.
 
 While a connection is held back its socket is still read, so a
 disconnect is noticed, until ``wire.MAX_LINE_BYTES`` are buffered; then
@@ -48,9 +51,13 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from jailbee.orchestration import wire
+from jailbee.orchestration.query import QUERY_OPS, SNAPSHOT_OPS
+
+if TYPE_CHECKING:
+    from jailbee.orchestration.query import Queries
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +68,8 @@ _ACCEPT_PAUSE = 1.0  # seconds a listening socket rests after EMFILE/ENFILE
 _RECV_BYTES = 65536
 _SUN_PATH_MAX = 107  # Linux sockaddr_un.sun_path minus the terminating NUL
 OUTBUF_CAP = 4 * 1024 * 1024  # unsent reply bytes above which intake stops
+_QUERY_WORKERS = 4
+_QUERY_QUEUE_CAP = 32
 
 
 @dataclass(frozen=True)
@@ -129,8 +138,14 @@ def _bind(sock: socket.socket, path: Path) -> None:
 
 
 class Listener:
-    def __init__(self, requests: queue.Queue[Event]) -> None:
+    def __init__(self, requests: queue.Queue[Event], *, queries: Queries | None = None) -> None:
         self._requests = requests
+        self._queries = queries
+        self._query_queue: queue.Queue[RequestEvent] = queue.Queue(maxsize=_QUERY_QUEUE_CAP)
+        self._query_stop = threading.Event()
+        self._query_lock = threading.Lock()  # orders worker handoffs against shutdown
+        self._query_threads: list[threading.Thread] = []
+        self._query_pending: set[int] = set()  # listener-owned; no executor disconnect event
         self._sel = selectors.DefaultSelector()
         self._wake_r, self._wake_w = socket.socketpair()
         self._wake_r.setblocking(False)
@@ -158,10 +173,19 @@ class Listener:
         if self._thread is not None:
             return
         self._running = True
+        if self._queries is not None:
+            for i in range(_QUERY_WORKERS):
+                worker = threading.Thread(target=self._query_worker, name=f"broker-query-{i}", daemon=True)
+                self._query_threads.append(worker)
+                worker.start()
         self._thread = threading.Thread(target=self._run, name="broker-listener", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
+        # Daemon workers may be inside SQLite's bounded busy wait. Do not let
+        # them delay shutdown or post replies into the closed selector.
+        with self._query_lock:
+            self._query_stop.set()
         thread = self._thread
         if thread is not None:
             self._running = False
@@ -169,6 +193,17 @@ class Listener:
             thread.join()
             self._thread = None
         self._shutdown_all()
+        deadline = time.monotonic() + 0.2
+        for worker in self._query_threads:
+            worker.join(timeout=max(0.0, deadline - time.monotonic()))
+        while True:
+            try:
+                self._query_queue.get_nowait()
+            except queue.Empty:
+                break
+        self._pending.clear()
+        self._inflight.clear()
+        self._query_pending.clear()
         for s in (self._wake_r, self._wake_w):
             with contextlib.suppress(OSError):
                 s.close()
@@ -247,6 +282,26 @@ class Listener:
         except wire.WireError as exc:
             data = wire.encode_response(wire.fail(exc.code, exc.detail))
         self._post(lambda: self._reply(conn_id, data))
+
+    def _query_worker(self) -> None:
+        queries = self._queries
+        assert queries is not None
+        while not self._query_stop.is_set():
+            try:
+                event = self._query_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if self._query_stop.is_set():
+                return
+            if not self.is_connected(event.conn_id):
+                with self._query_lock:
+                    if not self._query_stop.is_set():
+                        self.release(event.conn_id)
+                continue
+            response = queries.answer(event.uuid, event.request)
+            with self._query_lock:
+                if not self._query_stop.is_set():
+                    self.respond(event.conn_id, response)
 
     # -- cross-thread plumbing -------------------------------------------
 
@@ -480,7 +535,18 @@ class Listener:
             conn.in_flight = True
             self._pending[conn.conn_id] = conn.uuid
             self._inflight[conn.uuid] = self._inflight.get(conn.uuid, 0) + 1
-            self._requests.put(RequestEvent(conn.uuid, conn.conn_id, request))
+            event = RequestEvent(conn.uuid, conn.conn_id, request)
+            if self._queries is not None and request.op in QUERY_OPS:
+                self._query_pending.add(conn.conn_id)
+                if request.op in SNAPSHOT_OPS:
+                    self.respond(conn.conn_id, self._queries.answer(conn.uuid, request))
+                else:
+                    try:
+                        self._query_queue.put_nowait(event)
+                    except queue.Full:
+                        self.respond(conn.conn_id, wire.fail(wire.BUSY, "query workers are busy"))
+            else:
+                self._requests.put(event)
         self._update_interest(conn)
 
     def _oversize(self, conn: _Conn) -> None:
@@ -503,6 +569,7 @@ class Listener:
     def _finish(self, conn_id: int) -> None:
         """Return the request budget of ``conn_id``; resume connections it held."""
         uuid = self._pending.pop(conn_id, None)
+        self._query_pending.discard(conn_id)
         if uuid is None:
             return
         left = self._inflight.get(uuid, 0) - 1
@@ -579,5 +646,5 @@ class Listener:
         # Only a request still in flight (perhaps a parked long-poll) needs the
         # executor to hear of the disconnect; its budget stays taken until the
         # executor answers or releases it.
-        if event and conn_id in self._pending:
+        if event and conn_id in self._pending and conn_id not in self._query_pending:
             self._requests.put(DisconnectEvent(conn.uuid, conn_id))

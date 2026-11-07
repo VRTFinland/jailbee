@@ -46,10 +46,12 @@ from jailbee.orchestration.actions import (
 from jailbee.orchestration.child_status import StatusCache
 from jailbee.orchestration.journal import Journal
 from jailbee.orchestration.listener import Listener
+from jailbee.orchestration.query import ContainerSnapshot, Queries
 from jailbee.orchestration.outbox import (
     deliver,
     ensure_orchestration_env,
     flush_pending,
+    grant_json_text,
     has_container_jailbee,
     has_pending,
 )
@@ -123,6 +125,7 @@ class BrokerMemory:
     # Socket transport (None in tests that do not exercise it).
     listener: Listener | None = None
     store: BrokerStore | None = None
+    queries: Queries | None = None
     requests: queue.Queue[Event] = field(default_factory=queue.Queue)
     # Container full name -> volatile.uuid whose socket device we attached.
     attached: dict[str, str] = field(default_factory=dict)
@@ -1207,6 +1210,7 @@ def tick(
         and not (former_publishers & present)
     ):
         memory.contexts.clear()
+        _publish_queries(memory)
         return False
 
     try:
@@ -1362,7 +1366,36 @@ def tick(
             ctx.nodes = nodes
             ctx.sender = nodes.get(ctx.sender.full, ctx.sender)
     _settle_all_watches(root, orchestrators, present, memory)
+    _publish_queries(memory)
     return active
+
+
+def _publish_queries(memory: BrokerMemory) -> None:
+    """Build on the broker thread, then atomically replace the completed-round view.
+
+    Failed/unfinished rounds leave the previous generation readable throughout.
+    Neither contexts nor their mutable children/grant data cross into the listener.
+    """
+    if memory.queries is None or memory.store is None:
+        return
+    from jailbee.orchestration import socket_ops
+
+    empty_children = json.dumps({"children": [], "observed_at": None, "last_from_child": {}})
+    snapshot = {
+        uuid: ContainerSnapshot("none", True, empty_children, None)
+        for uuid in memory.store.recipients().values()
+    }
+    for uuid, ctx in memory.contexts.items():
+        ready = memory.store.has_recipient_uuid(uuid)
+        children = socket_ops._children_result(memory, memory.store, uuid, ctx)
+        grant = ctx.grant()
+        snapshot[uuid] = ContainerSnapshot(
+            role=ctx.role(),
+            ready=ready,
+            children_json=json.dumps(children),
+            grant_json=grant_json_text(grant, *ctx.default_runner()) if grant is not None else None,
+        )
+    memory.queries.publish(snapshot)
 
 
 def _settle_all_watches(
@@ -1487,7 +1520,8 @@ def run_broker(incus: Incus) -> int:
     previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT)}
     memory = BrokerMemory()
     memory.store = BrokerStore(store_path(root))
-    memory.listener = Listener(memory.requests)
+    memory.queries = Queries(memory.store)
+    memory.listener = Listener(memory.requests, queries=memory.queries)
     memory.listener.start()
     try:
         journal = Journal(root)

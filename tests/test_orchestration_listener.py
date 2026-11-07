@@ -16,6 +16,8 @@ from pathlib import Path
 import pytest
 
 from jailbee.orchestration import wire
+from jailbee.orchestration.query import Queries
+from jailbee.orchestration.store import BrokerStore
 from jailbee.orchestration.listener import (
     MAX_CONNECTIONS_PER_CONTAINER,
     MAX_INFLIGHT_PER_CONTAINER,
@@ -649,3 +651,118 @@ def test_a_failed_open_leaves_no_directory_behind(
     with pytest.raises(OSError):
         lis.open_container("k", lis_dir_existing)
     assert lis_dir_existing.exists()  # not ours to remove
+
+
+def test_store_queries_hold_budget_until_worker_finishes(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queries = Queries(BrokerStore(short_dir / "broker.db"))
+    entered, unblock = threading.Event(), threading.Event()
+    seen: list[str] = []
+
+    def blocked(uuid: str, request: wire.Request) -> wire.Response:
+        seen.append(request.op)
+        entered.set()
+        assert unblock.wait(5)
+        return wire.ok([])
+
+    monkeypatch.setattr(queries, "answer", blocked)
+    q: queue.Queue[Event] = queue.Queue()
+    lis = Listener(q, queries=queries)
+    lis.start()
+    lis.open_container("u", short_dir / "u")
+    c = connect(short_dir / "u")
+    try:
+        c.sendall(req("list", after=0) + req("ack", id="one"))
+        assert entered.wait(2)
+        lis._call(lambda: None)
+        assert seen == ["list"]
+        c.close()
+        deadline = time.monotonic() + 2
+        while lis._servers["u"].conns:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert lis._inflight == {"u": 1}
+        assert q.empty()  # executor must not release the worker's budget
+        unblock.set()
+        deadline = time.monotonic() + 2
+        while lis._inflight:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert seen == ["list"]
+        assert not lis._query_pending
+        with connect(short_dir / "u") as again:
+            again.sendall(req("ack", id="two"))
+            assert wire.decode_response(recv_line(again)).ok
+        assert seen == ["list", "ack"]
+    finally:
+        unblock.set()
+        c.close()
+        lis.stop()
+
+
+def test_query_worker_queue_is_bounded_without_blocking_listener(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("jailbee.orchestration.listener._QUERY_WORKERS", 1)
+    monkeypatch.setattr("jailbee.orchestration.listener._QUERY_QUEUE_CAP", 1)
+    queries = Queries(BrokerStore(short_dir / "broker.db"))
+    entered, unblock = threading.Event(), threading.Event()
+
+    def blocked(uuid: str, request: wire.Request) -> wire.Response:
+        entered.set()
+        assert unblock.wait(5)
+        return wire.ok([])
+
+    monkeypatch.setattr(queries, "answer", blocked)
+    lis = Listener(queue.Queue(), queries=queries)
+    lis.start()
+    lis.open_container("u", short_dir / "u")
+    clients = [connect(short_dir / "u") for _ in range(3)]
+    try:
+        clients[0].sendall(req("list", after=0))
+        assert entered.wait(2)
+        clients[1].sendall(req("list", after=0))
+        deadline = time.monotonic() + 2
+        while lis._query_queue.qsize() != 1:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        clients[2].sendall(req("list", after=0))
+        assert wire.decode_response(recv_line(clients[2])).error_code == wire.BUSY
+        assert lis._query_queue.qsize() == 1
+        assert len(lis._query_threads) == 1
+    finally:
+        unblock.set()
+        for client in clients:
+            client.close()
+        lis.stop()
+
+
+def test_stop_does_not_wait_for_a_blocked_query_worker(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queries = Queries(BrokerStore(short_dir / "broker.db"))
+    entered, unblock = threading.Event(), threading.Event()
+
+    def blocked(uuid: str, request: wire.Request) -> wire.Response:
+        entered.set()
+        assert unblock.wait(5)
+        return wire.ok([])
+
+    monkeypatch.setattr(queries, "answer", blocked)
+    lis = Listener(queue.Queue(), queries=queries)
+    lis.start()
+    lis.open_container("u", short_dir / "u")
+    with connect(short_dir / "u") as c:
+        c.sendall(req("list", after=0))
+        assert entered.wait(2)
+        try:
+            start = time.monotonic()
+            lis.stop()
+            assert time.monotonic() - start < 1
+        finally:
+            unblock.set()
+            for worker in lis._query_threads:
+                worker.join(timeout=2)
+        assert all(not worker.is_alive() for worker in lis._query_threads)
+        assert lis._commands.empty()  # no late response into a dead listener
