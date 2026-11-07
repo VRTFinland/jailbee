@@ -266,6 +266,41 @@ def test_send_without_wait(broker: FakeBroker, sockdir: Path, tmp_path: Path) ->
     assert not (tmp_path / "nofiles").exists()
 
 
+@pytest.mark.parametrize("branch", [None, "review-feature"])
+@pytest.mark.parametrize("wait", [False, True])
+def test_spawn_pr_sends_json_integer_and_exact_manifest(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path, branch: str | None, wait: bool
+) -> None:
+    broker.on("send", send_status("started"))
+    args = ["send", "spawn", "--pr", "123", "--text", "Review this PR"]
+    if branch is not None:
+        args += ["--branch", branch]
+    if wait:
+        args += ["--wait"]
+    result = run(sockdir, *args, tmp=tmp_path)
+    assert result.returncode == 0, result.stderr
+    ident = result.stdout.splitlines()[0]
+    assert len(broker.requests) == 1
+    request = broker.requests[0]
+    assert request.op == "send"
+    assert request.args == {
+        "manifest": {
+            "version": 2,
+            "id": ident,
+            "type": "spawn",
+            "kind": "pr",
+            "pr": 123,
+            "branch": branch or "pr-placeholder",
+            "prompt_file": f"{ident}.md",
+            "rights": {"version": 1, "mounts": [], "loose": False, "egress": []},
+        },
+        "body": "Review this PR",
+        "wait": wait,
+    }
+    assert type(request.args["manifest"]["pr"]) is int
+    assert not (tmp_path / "nofiles").exists()
+
+
 def test_send_without_body(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
     broker.on("send", send_status("queued"))
     r = run(sockdir, "send", "stop", "--child", "kid", tmp=tmp_path)

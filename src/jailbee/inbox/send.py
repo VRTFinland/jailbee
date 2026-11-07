@@ -7,7 +7,6 @@ import secrets
 import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import BinaryIO
 
 from jailbee.inbox.errors import InboxBadUsage, InboxUsage
@@ -257,7 +256,7 @@ def build_manifest(r: SendRequest, id_: str, body_name: str | None) -> dict[str,
         for key, spawn_value in (
             ("base", r.base_branch),
             ("ref", r.ref),
-            ("pr", Decimal(r.pr) if r.pr else None),
+            ("pr", int(r.pr) if r.pr else None),
             ("note", r.note),
         ):
             if spawn_value:

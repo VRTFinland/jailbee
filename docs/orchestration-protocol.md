@@ -288,8 +288,10 @@ Send a message to a child. `to` is the child's short name; `body` or
 `body_file`; `kind` is optional (`note`, `question`, `done`, `blocked`);
 `in_reply_to` is the `h-<hex>` id of the inbox message you answer (the
 host re-ids every relayed message, so use the id you read in the inbox).
-A message to a stopped child is answered `queued` and delivered when it
-runs again.
+Ordinary messages are delivered to the broker store even while the child is
+stopped, normally with a `done` acknowledgement (`delivered to <child>`).
+A `queued` acknowledgement means store delivery is pending, for example behind
+older pending work; it does not depend on whether the child is running.
 
 <!-- kind: outbox -->
 ```json
@@ -596,7 +598,9 @@ container``; a missing error reads `see the worker log`. Statuses never carry
 host paths: the broker log names the worker's log.
 
 A `queued` status applies to `restart` as well as `spawn`, and to a
-`message` for a stopped child. Other `done` details: `delivered to <child>`,
+`message` waiting for store delivery or older pending work, regardless of the
+recipient's running state. Stopped children normally receive ordinary messages
+in the store immediately, with `done: delivered to <child>`. Other `done` details:
 `child \`<child>\` stopped`, `child \`<child>\` destroyed`. `refused` is
 final. The `ref` of a status is the id of your manifest; note the id a
 helper prints (`<type>-<UTC time>-<hex>`). Asking about an unknown child is
@@ -701,8 +705,10 @@ to the orchestrator for retry. A queued finish waits for parent delivery
 before import/cleanup; a vanished parent keeps the child and reports an error.
 
 A `status` reply answers one of your manifests; `ref` is the manifest id and
-`state` is `done` (delivered), `queued` (your orchestrator is not running; the
-message is delivered when it starts) or `refused`. Only `refused` is final and
+`state` is `done` (delivered), `queued` (waiting for store delivery or older
+pending work; a finish may also wait for a running orchestrator before import)
+or `refused`. Ordinary messages can be delivered while the orchestrator is
+stopped. Only `refused` is final and
 needs action. The two `done`-check refusals above are joined by
 `could not fetch your branch to the host: ...` and
 `could not record the done report: ...`, which are not your manifest's fault:

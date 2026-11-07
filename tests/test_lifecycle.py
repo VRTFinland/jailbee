@@ -983,20 +983,33 @@ def test_listing_reads_broker_counts_for_stopped_and_failed_probes(make_cfg, tmp
 
 
 def test_listing_missing_or_corrupt_store_never_writes(make_cfg, tmp_path, mocker):
+    from jailbee.git_status import GitStatus
+
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo)
     state = tmp_path / "state"
     mocker.patch("jailbee.db.state_dir", return_value=state)
     incus = MagicMock()
-    incus.list_containers.return_value = [_container(name="myrepo-a", state="Stopped")]
-    list_containers(cfg, incus, with_git_status=True)
+    incus.list_containers.return_value = [
+        _container(name="myrepo-a", user_config={"user.jailbee.repo_dir": "/repo"}),
+        _container(name="myrepo-b", state="Stopped"),
+    ]
+    mocker.patch(
+        "jailbee.lifecycle.probe_many_parallel",
+        return_value={"myrepo-a": GitStatus("clean", "clean", "0", "ok")},
+    )
+    missing = {c.name: c for c in list_containers(cfg, incus, with_git_status=True)}
+    assert missing["myrepo-a"].git_status.unread_inbox == 0
+    assert missing["myrepo-b"].git_status is None
     assert not state.exists()
     root = state / "orchestration"
     root.mkdir(parents=True)
     db = root / "broker.db"
     db.write_bytes(b"not sqlite")
-    list_containers(cfg, incus, with_git_status=True)
+    corrupt = {c.name: c for c in list_containers(cfg, incus, with_git_status=True)}
+    assert corrupt["myrepo-a"].git_status.unread_inbox is None
+    assert corrupt["myrepo-b"].git_status is None
     assert db.read_bytes() == b"not sqlite"
     assert list(root.iterdir()) == [db]
     incus.exec.assert_not_called()

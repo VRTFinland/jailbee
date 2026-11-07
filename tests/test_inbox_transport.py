@@ -171,6 +171,10 @@ def test_call_next_deadline_returns_timeout(path):
     sleeps: list[float] = []
 
     def sleep(s: float) -> None:
+        # Fake time must not reconnect before the server has closed its listener.
+        # A real reconnect resets backoff, so that race changes the second pause.
+        srv._thread.join(timeout=5)
+        assert not srv._thread.is_alive()
         sleeps.append(s)
         now[0] += s
 

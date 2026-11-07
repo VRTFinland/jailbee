@@ -138,8 +138,7 @@ def recipient_uuid(root: Path, full: str) -> str | None:
 
     Returns None only when the file or the ``recipients`` table is missing (no
     store inbox exists yet). Any other SQLite error (locked, corrupt) raises
-    `StoreError`: the answer is unknown, and treating it as "no store" would
-    send an item to the file inbox of a store recipient.
+    `StoreError`: the answer is unknown, not proof that the recipient is absent.
     """
     path = store_path(root)
     if not path.exists():
@@ -381,9 +380,9 @@ class BrokerStore:
     def insert_for_recipient(self, full: str, item: Mapping[str, object], *, now: float) -> bool:
         """Insert `item` unacked for `full`'s recorded uuid, in one transaction.
 
-        False (nothing inserted) when `full` is not a store recipient, so a
-        teardown that removes the recipient row can never strand an item that
-        was inserted after its last export.
+        False (nothing inserted) when `full` has no registered recipient.
+        Looking up the UUID and inserting in one transaction prevents a
+        concurrent teardown from invalidating that lookup before insertion.
         """
         with self._tx() as con:
             row = con.execute("SELECT uuid FROM recipients WHERE full=?", (full,)).fetchone()

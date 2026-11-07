@@ -29,6 +29,7 @@ def _deliver(
     incus: "Incus",
     path: Path,
     owner: str,
+    owner_uuid: str,
     ref: str,
     *,
     ok: bool,
@@ -44,6 +45,9 @@ def _deliver(
         uuid = config.get("volatile.uuid") if isinstance(config, dict) else None
         if not isinstance(uuid, str) or not uuid:
             raise ValueError("recipient instance identity unavailable; retry notification")
+        if uuid != owner_uuid:
+            path.rename(path.with_suffix(".quarantined"))
+            raise ValueError("recipient instance identity changed; refresh job quarantined")
         item = item or InboxStatus(
             version=1,
             id=new_host_id(),
@@ -60,7 +64,7 @@ def _deliver(
             running=recipient.get("status") == "Running",
             uid=cfg.container_user.uid,
             now=datetime.now(UTC),
-            recipient_uuid=uuid,
+            recipient_uuid=owner_uuid,
         )
         path.unlink(missing_ok=True)
     except Exception as exc:
@@ -98,6 +102,9 @@ def _run_job_locked(cfg: "Config", incus: "Incus", path: Path) -> int:
         if not isinstance(ref, str):
             raise ValueError("invalid manifest id")
         _checked_id(ref)
+        owner_uuid = job["orchestrator_uuid"]
+        if not isinstance(owner_uuid, str) or not owner_uuid:
+            raise ValueError("invalid orchestrator instance identity")
     except Exception as exc:
         print(f"invalid refresh job identity: {exc}")
         return 1
@@ -110,7 +117,8 @@ def _run_job_locked(cfg: "Config", incus: "Incus", path: Path) -> int:
             print(f"invalid saved refresh status: {exc}")
             return 1
         return _deliver(
-            cfg, incus, path, owner, ref, ok=final.state == "done", detail=final.detail, item=final
+            cfg, incus, path, owner, owner_uuid, ref,
+            ok=final.state == "done", detail=final.detail, item=final
         )
     if job.get("execution_phase") == "executing":
         print("refresh execution outcome is uncertain; manual recovery required")
@@ -119,6 +127,7 @@ def _run_job_locked(cfg: "Config", incus: "Incus", path: Path) -> int:
         if set(job) != {
             "child_full",
             "orchestrator_full",
+            "orchestrator_uuid",
             "manifest_id",
             "elevated",
             "payload",
@@ -136,7 +145,7 @@ def _run_job_locked(cfg: "Config", incus: "Incus", path: Path) -> int:
             raise ValueError("elevation mismatch")
     except Exception as exc:
         return _deliver(
-            cfg, incus, path, owner, ref, ok=False, detail=f"invalid refresh job: {exc}"
+            cfg, incus, path, owner, owner_uuid, ref, ok=False, detail=f"invalid refresh job: {exc}"
         )
 
     pid = os.getpid()
@@ -187,6 +196,8 @@ def _run_job_locked(cfg: "Config", incus: "Incus", path: Path) -> int:
             or not isinstance(owner_config, dict)
         ):
             raise elevated.RefreshError("child ownership could not be verified")
+        if owner_config.get("volatile.uuid") != owner_uuid:
+            raise elevated.RefreshError("orchestrator instance identity changed")
         grant = effective_grant(Grant.from_label(owner_config.get(labels.GRANT, "")), repo_cap(cfg))
         if grant is None or "refresh" not in grant.operations:
             raise elevated.RefreshError("refresh grant revoked")
@@ -299,4 +310,4 @@ def _run_job_locked(cfg: "Config", incus: "Incus", path: Path) -> int:
                 except Exception as persist_exc:
                     print(f"could not persist completed cleanup: {persist_exc}")
                     return 1
-    return _deliver(cfg, incus, path, owner, ref, ok=ok, detail=detail, item=final)
+    return _deliver(cfg, incus, path, owner, owner_uuid, ref, ok=ok, detail=detail, item=final)

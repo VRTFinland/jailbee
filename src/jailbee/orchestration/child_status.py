@@ -68,7 +68,7 @@ def _is_waiter(comm: str, cmdline: str | None) -> bool:
     In a container `jailbee` is a wrapper that execs
     `python -P -m jailbee.container_main ...`, so the real process is named
     `python` and only its command line says what it is. Matches an entry point
-    (`jailbee`, `jailbee-inbox` or `-m <jailbee module>`) anywhere in the
+    (`jailbee` or `-m <jailbee module>`) anywhere in the
     words, followed by an optional `inbox` and then `wait`, or `send` with
     `--wait`. A tool such as `python -m pytest` never matches.
     """

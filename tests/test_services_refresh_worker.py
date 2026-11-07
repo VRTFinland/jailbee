@@ -63,6 +63,7 @@ def job(path, *, elevated_plan=False, force=False, mixed=False):
             {
                 "child_full": "proj-c",
                 "orchestrator_full": "proj-o",
+                "orchestrator_uuid": "uuid-owner",
                 "manifest_id": "r1",
                 "elevated": elevated_plan,
                 "payload": plan.to_json(),
@@ -564,7 +565,9 @@ def test_refresh_notification_delivers_to_verified_store_instance(rig, tmp_path,
     path.write_text("{}")
     try:
         assert (
-            refresh_worker._deliver(cfg, incus, path, "proj-o", "ref", ok=True, detail="finished")
+            refresh_worker._deliver(
+                cfg, incus, path, "proj-o", "uuid-current", "ref", ok=True, detail="finished"
+            )
             == 0
         )
         rows = store.unacked("uuid-current")
@@ -617,6 +620,7 @@ def test_refresh_notification_retries_inventory_failure_without_reexecution(
         assert "recipient instance identity unavailable" in capsys.readouterr().out
         assert path.exists()
         saved = json.loads(path.read_text())
+        assert saved["orchestrator_uuid"] == "uuid-owner"
         final = saved["final_status"]
         assert final["state"] == "done" and final["detail"] == report.summary()
         assert store.unacked("uuid-owner") == []
@@ -634,5 +638,84 @@ def test_refresh_notification_retries_inventory_failure_without_reexecution(
         assert not path.exists()
         assert not pending_dir(tmp_path, "proj-o").exists()
         assert store.recipients() == {}
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("saved_status", [False, True])
+@pytest.mark.parametrize("identity", [None, "", 123])
+def test_refresh_job_without_valid_owner_identity_fails_closed(
+    rig, mocker, identity, saved_status
+):
+    cfg, _, delivery, incus, path = rig
+    job(path)
+    data = json.loads(path.read_text())
+    if identity is None:
+        data.pop("orchestrator_uuid")
+    else:
+        data["orchestrator_uuid"] = identity
+    if saved_status:
+        data["final_status"] = {
+            "version": 1, "id": "h-saved", "type": "status", "ref": "r1",
+            "state": "done", "detail": "old result",
+        }
+    path.write_text(json.dumps(data))
+    execute = mocker.patch.object(elevated, "run_plain_refresh")
+    assert elevated.run_job(cfg, incus, path) == 1
+    assert json.loads(path.read_text()) == data
+    incus.list_containers.assert_not_called()
+    execute.assert_not_called()
+    delivery.assert_not_called()
+
+
+def test_refresh_recreated_owner_before_execution_is_quarantined(rig, mocker, capsys):
+    cfg, _, delivery, incus, path = rig
+    job(path)
+    incus.list_containers.return_value[0]["config"]["volatile.uuid"] = "uuid-recreated"
+    execute = mocker.patch.object(elevated, "run_plain_refresh")
+    assert elevated.run_job(cfg, incus, path) == 1
+    assert "recipient instance identity changed" in capsys.readouterr().out
+    assert not path.exists()
+    saved = json.loads(path.with_suffix(".quarantined").read_text())
+    assert saved["orchestrator_uuid"] == "uuid-owner"
+    assert saved["final_status"]["state"] == "failed"
+    execute.assert_not_called()
+    delivery.assert_not_called()
+
+
+def test_refresh_saved_result_never_rebinds_to_recreated_owner(rig, tmp_path, mocker, capsys):
+    from jailbee.orchestration.state import pending_dir
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    cfg, engine, delivery, incus, path = rig
+    mocker.stop(delivery)
+    rows = incus.list_containers.return_value
+    execute = mocker.patch.object(
+        elevated, "run_plain_refresh", return_value=elevated.RefreshReport((), True, "not running")
+    )
+    incus.list_containers.side_effect = [rows, RuntimeError("inventory outage")]
+    job(path)
+    store = BrokerStore(store_path(tmp_path))
+    store.set_recipient("proj-o", "uuid-recreated", now=1)
+    try:
+        assert elevated.run_job(cfg, incus, path) == 1
+        assert "recipient instance identity unavailable" in capsys.readouterr().out
+        saved = json.loads(path.read_text())
+        assert saved["orchestrator_uuid"] == "uuid-owner"
+        assert saved["final_status"]["state"] == "done"
+        incus.list_containers.side_effect = None
+        rows[0]["config"]["volatile.uuid"] = "uuid-recreated"
+        assert elevated.run_job(cfg, incus, path) == 1
+        assert "recipient instance identity changed" in capsys.readouterr().out
+        assert not path.exists()
+        quarantined = path.with_suffix(".quarantined")
+        assert json.loads(quarantined.read_text()) == saved
+        assert store.unacked("uuid-recreated") == []
+        assert store.unacked("uuid-owner") == []
+        assert store.recipients() == {"proj-o": "uuid-recreated"}
+        assert not pending_dir(tmp_path, "proj-o").exists()
+        assert execute.call_count == 1
+        with Session(engine) as session:
+            assert session.get(BackgroundJob, "proj-c") is None
     finally:
         engine.dispose()

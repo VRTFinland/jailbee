@@ -12,7 +12,7 @@ from tests.test_orchestration_actions import _ctx, _grant, _node
 def test_refresh_refuses_stopped_child(tmp_path: Path) -> None:
     ctx = _ctx(
         tmp_path,
-        _node("proj-o", **{labels.GRANT: _grant()}),
+        _node("proj-o", **{labels.GRANT: _grant(), "volatile.uuid": "uuid-owner"}),
         [_node("proj-c", running=False, **{labels.SPAWNED_BY: "proj-o"})],
     )
     manifest = RefreshManifest(version=1, id="r1", type="refresh", child="c", services=["db"])
@@ -22,7 +22,7 @@ def test_refresh_refuses_stopped_child(tmp_path: Path) -> None:
 def test_refresh_refuses_busy_child(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ctx = _ctx(
         tmp_path,
-        _node("proj-o", **{labels.GRANT: _grant()}),
+        _node("proj-o", **{labels.GRANT: _grant(), "volatile.uuid": "uuid-owner"}),
         [_node("proj-c", **{labels.SPAWNED_BY: "proj-o"})],
     )
     monkeypatch.setattr(actions, "live_job_kind", lambda name: "boot")
@@ -41,7 +41,7 @@ def refresh_rig(tmp_path, mocker):
 
     ctx = _ctx(
         tmp_path,
-        _node("proj-o", **{labels.GRANT: _grant()}),
+        _node("proj-o", **{labels.GRANT: _grant(), "volatile.uuid": "uuid-owner"}),
         [_node("proj-c", **{labels.SPAWNED_BY: "proj-o"})],
     )
     plan = Plan(("db",), ("db",), (PlannedService("db", False, (), None, ()),))
@@ -72,6 +72,7 @@ def test_accepted_plan_is_persisted_with_force(refresh_rig, mocker, tmp_path):
     assert job == {
         "child_full": "proj-c",
         "orchestrator_full": "proj-o",
+        "orchestrator_uuid": "uuid-owner",
         "manifest_id": "r1",
         "elevated": False,
         "payload": json.loads(run.return_value.stdout),
@@ -89,6 +90,25 @@ def test_accepted_plan_is_persisted_with_force(refresh_rig, mocker, tmp_path):
         "--json",
         "db",
     ]
+
+
+@pytest.mark.parametrize("uuid", [None, ""])
+def test_refresh_refuses_missing_owner_identity(refresh_rig, mocker, tmp_path, uuid):
+    from dataclasses import replace
+
+    ctx, run = refresh_rig
+    config = dict(ctx.sender.config)
+    config.pop("volatile.uuid")
+    if uuid is not None:
+        config["volatile.uuid"] = uuid
+    ctx.sender = replace(ctx.sender, config=config)
+    launch = mocker.patch("jailbee.create_flow.launch_refresh_background")
+    manifest = RefreshManifest(version=1, id="r1", type="refresh", child="c", services=["db"])
+    outcome = actions.dispatch(ctx, manifest)
+    assert outcome.state == "refused" and "instance identity unavailable" in outcome.detail
+    run.assert_not_called()
+    launch.assert_not_called()
+    assert not (tmp_path / "refresh-jobs").exists()
 
 
 def test_same_manifest_id_never_overwrites_another_job(refresh_rig, mocker):
@@ -171,7 +191,7 @@ def test_mutations_refused_during_refresh(tmp_path, monkeypatch, body):
 
     ctx = _ctx(
         tmp_path,
-        _node("proj-o", **{labels.GRANT: _grant()}),
+        _node("proj-o", **{labels.GRANT: _grant(), "volatile.uuid": "uuid-owner"}),
         [_node("proj-c", **{labels.SPAWNED_BY: "proj-o"})],
     )
     monkeypatch.setattr(actions, "live_job_kind", lambda name: "refresh")

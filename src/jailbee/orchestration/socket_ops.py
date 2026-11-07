@@ -71,9 +71,9 @@ def handle_send(
             store.ack(ctx.sender.key, str(recorded.item["id"]), now=time.time())
         return recorded.item
     if recorded is not None or publishing.was_accepted(ctx, request_id):
-        # The file transport drops these silently; a socket client needs a
-        # stable answer that is not a refusal. The real status is (or will be)
-        # in its inbox, or was already reported.
+        # Requests without a recorded status need a stable duplicate answer,
+        # not a refusal. The real status is (or will be) in the inbox, or was
+        # already reported.
         raise wire.WireError(
             wire.DUPLICATE,
             f"request {request_id} was already handled; "
@@ -217,7 +217,7 @@ def handle_list(store: BrokerStore, uuid: str, *, after: object = _NO_CURSOR) ->
 
     The truncation is silent, and only the plain form could make an `ls` or
     a `send --wait` miss a later item. No released client sends it: the socket
-    transport first shipped with paging, and every client before that uses
+    transport first shipped with paging, and every client before that used
     the file transport, so the plain form only answers unreleased development
     builds. Broker and in-container client come from the same jailbee
     release, so a released client always pages.

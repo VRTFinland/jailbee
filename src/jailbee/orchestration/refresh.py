@@ -23,6 +23,9 @@ def handle_refresh(ctx: actions.ActionContext, m: Manifest) -> actions.Outcome:
         return child
     if not child.running:
         return actions.refused(f"child `{child.short}` is not running")
+    owner_uuid = ctx.sender.config.get("volatile.uuid")
+    if not isinstance(owner_uuid, str) or not owner_uuid:
+        return actions.refused("orchestrator instance identity unavailable; retry refresh")
     kind = actions.live_job_kind(child.full)
     if kind is not None:
         return actions.refused(
@@ -86,6 +89,7 @@ def handle_refresh(ctx: actions.ActionContext, m: Manifest) -> actions.Outcome:
                     {
                         "child_full": child.full,
                         "orchestrator_full": ctx.sender.full,
+                        "orchestrator_uuid": owner_uuid,
                         "manifest_id": m.id,
                         "elevated": plan.elevated,
                         "payload": plan.to_json(),
