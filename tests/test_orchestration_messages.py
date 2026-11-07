@@ -145,17 +145,19 @@ def test_message_to_ready_child_is_delivered(tmp_path: Path, deliver: MagicMockT
         tmp_path,
         ctx.sender.full,
         WatchEntry(
-            "spawn-1", "myrepo-fix-1", "spawn", ctx.now.isoformat(),
-            supervise=True, confirmed=True,
+            "spawn-1",
+            "myrepo-fix-1",
+            "spawn",
+            ctx.now.isoformat(),
+            supervise=True,
+            confirmed=True,
         ),
     )
     assert messages.handle_message(ctx, _msg(to="fix-1")) == done("delivered to fix-1")
     deliver.assert_called_once()
 
 
-def test_other_orchestrators_creation_is_not_a_child(
-    tmp_path: Path, deliver: MagicMockT
-) -> None:
+def test_other_orchestrators_creation_is_not_a_child(tmp_path: Path, deliver: MagicMockT) -> None:
     from jailbee.orchestration.watch import WatchEntry, register
 
     ctx = _orch(tmp_path, [])

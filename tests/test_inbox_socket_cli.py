@@ -848,15 +848,12 @@ def test_send_refusal_always_prints_detail_not_status(
     broker: FakeBroker, sockdir: Path, tmp_path: Path, wait: bool, creating: bool
 ) -> None:
     detail = (
-        "child `kid` is still being created; message was not queued; "
-        "retry after creation finishes"
-        if creating else "operation not granted"
+        "child `kid` is still being created; message was not queued; retry after creation finishes"
+        if creating
+        else "operation not granted"
     )
     broker.on("send", {**send_status("refused"), "detail": detail})
-    args = (
-        ["message", "--to", "kid", "--text", "hi"]
-        if creating else ["stop", "--child", "kid"]
-    )
+    args = ["message", "--to", "kid", "--text", "hi"] if creating else ["stop", "--child", "kid"]
     r = run(sockdir, "send", *args, *(["--wait"] if wait else []), tmp=tmp_path)
     assert r.returncode == 1
     assert len(r.stdout.splitlines()) == 1 and r.stdout.startswith(f"{args[0]}-")

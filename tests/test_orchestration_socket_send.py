@@ -87,7 +87,6 @@ def test_message_during_spawn_returns_a_recorded_refusal(
     rig: Rig, listed: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from jailbee.orchestration import actions, watch
-    from jailbee.orchestration.actions import ActionContext
 
     child = _child()
     child["config"]["volatile.uuid"] = "kid-uuid"
@@ -108,15 +107,19 @@ def test_message_during_spawn_returns_a_recorded_refusal(
 
     def send(context: ActionContext, mid: str) -> dict[str, object]:
         return socket_ops.handle_send(
-            context, memory, store, manifest={**_message(mid), "to": "kid"},
-            body=None, wait=True, is_connected=lambda: True,
+            context,
+            memory,
+            store,
+            manifest={**_message(mid), "to": "kid"},
+            body=None,
+            wait=True,
+            is_connected=lambda: True,
         )
 
     item = send(ctx, "early-1")
     assert item["state"] == "refused"
     assert item["detail"] == (
-        "child `kid` is still being created; message was not queued; "
-        "retry after creation finishes"
+        "child `kid` is still being created; message was not queued; retry after creation finishes"
     )
     assert store.lookup_request(ctx.sender.key, "early-1").item == item
     assert store.unacked(ctx.sender.key) == []
@@ -124,10 +127,15 @@ def test_message_during_spawn_returns_a_recorded_refusal(
 
     # The same ref is final even after readiness; retry with a fresh id.
     watch.register(
-        rig.root, ctx.sender.full,
+        rig.root,
+        ctx.sender.full,
         watch.WatchEntry(
-            "spawn-1", "proj-kid", "spawn", ctx.now.isoformat(),
-            supervise=True, confirmed=True,
+            "spawn-1",
+            "proj-kid",
+            "spawn",
+            ctx.now.isoformat(),
+            supervise=True,
+            confirmed=True,
         ),
     )
     assert send(ctx, "early-1") == item
