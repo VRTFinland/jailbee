@@ -245,7 +245,11 @@ def _precheck(
         if recorded is not None and recorded.uncertain:
             raise pr_outbox.GateError("outcome uncertain; resolve with `jb pr push` on the host")
         pending = recorded is None or recorded.digest != source.digest or not recorded.complete
-        return "source", [{"kind": "source", "repo": source.manifest.repo}] if pending else [], False
+        return (
+            "source",
+            [{"kind": "source", "repo": source.manifest.repo}] if pending else [],
+            False,
+        )
     snapshot_pr = pr_outbox.read_outbox(ctx.incus, ctx.sender.full, uid=uid, strict=True)
     if m.manifest not in snapshot_pr.files or snapshot_pr.rejected:
         raise pr_outbox.GateError("manifest unavailable or outbox snapshot incomplete")

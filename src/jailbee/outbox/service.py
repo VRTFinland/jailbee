@@ -177,7 +177,9 @@ def load_container(
         # PR proposals are still files in the container, but for PR sources;
         # those and issue proposals live in the host store (no `incus exec`).
         stores = (
-            with_store_sources(read_store(incus, container, "pr", uid=cfg.container_user.uid), uuid),
+            with_store_sources(
+                read_store(incus, container, "pr", uid=cfg.container_user.uid), uuid
+            ),
             issue_snapshot(container, uuid),
         )
         if _instance(incus, container) != (identity, uuid):

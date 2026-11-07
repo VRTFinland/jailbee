@@ -189,9 +189,7 @@ def test_submitted_review_keeps_original_anchor_for_real_host_gate(
 
 @pytest.mark.parametrize("alias", ["--ref", "--head"])
 @pytest.mark.parametrize("numbered", [False, True])
-def test_source_schema_examples_without_existing_pr(
-    monkeypatch, tmp_path, broker, alias, numbered
-):
+def test_source_schema_examples_without_existing_pr(monkeypatch, tmp_path, broker, alias, numbered):
     monkeypatch.setattr(
         gh, "pr_view", lambda *a: pytest.fail("source with repo must not need a PR")
     )
