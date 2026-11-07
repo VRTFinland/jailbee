@@ -294,6 +294,16 @@ def call_next(
             if deadline is not None:
                 connect_budget = min(connect_budget, max(deadline - clock(), 0.001))
             client.connect_budget = connect_budget
+            # The factory's connect retry window (#92: rides out a broker
+            # restart) must not outlive the caller's deadline; a reconnect's
+            # window is also bounded by the continuous-outage limit (#102).
+            retry_for = getattr(client, "retry_for", 0.0)  # test doubles may lack it
+            if deadline is not None:
+                retry_for = min(retry_for, max(deadline - clock(), 0.0))
+            if unreachable_since is not None:
+                outage_left = _UNREACHABLE_LIMIT - (clock() - unreachable_since)
+                retry_for = min(retry_for, max(outage_left, 0.0))
+            client.retry_for = retry_for
             return client.call("next", attempt, timeout=read_budget())
         except BrokerVersionMismatch:
             raise
