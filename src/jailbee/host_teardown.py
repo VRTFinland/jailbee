@@ -141,7 +141,8 @@ def _drop_orchestration(snap: TeardownSnapshot) -> None:
 def _delete_outbox_rows(snap: TeardownSnapshot) -> None:
     """Delete the destroyed instance's pending proposals and drafts from the store.
 
-    Journals and sent records stay, so an uncertain publication remains resolvable.
+    Journals and sent records stay, and so does a proposal whose publication
+    outcome is uncertain, so it remains resolvable in ``jb outbox``.
     """
     if snap.uuid is None:
         return

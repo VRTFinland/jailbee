@@ -124,3 +124,6 @@ class ContainerView:
     error: str | None
     stores: tuple[StoreSnapshot, ...]
     proposals: tuple[ProposalView, ...]
+    # The instance is gone: these are proposals its destroy kept because their
+    # publication outcome is uncertain (``name`` is a ``full@uuid`` reference).
+    destroyed: bool = False

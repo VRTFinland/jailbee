@@ -14176,7 +14176,9 @@ def _review_count(counts: dict[str, int] | None, uuid: str | None) -> int | None
     return counts.get(uuid, 0)
 
 
-def _resolve_review_container(cfg: "Config", name: str | None) -> tuple["IncusType", str | None]:
+def _resolve_review_container(
+    cfg: "Config", name: str | None, *, retained: bool = False
+) -> tuple["IncusType", str | None]:
     """The container to review; ``None`` when nothing anywhere is pending.
 
     With an explicit ``name`` this is the usual :func:`_resolve_existing`.
@@ -14195,8 +14197,12 @@ def _resolve_review_container(cfg: "Config", name: str | None) -> tuple["IncusTy
     from jailbee import prompting
     from jailbee.incus import Incus
     from jailbee.lifecycle import list_containers, pr_outbox_counts
+    from jailbee.outbox.service import parse_retained_ref
     from jailbee.tui import pick_container
 
+    if name is not None and retained and parse_retained_ref(name) is not None:
+        # A destroyed instance's kept proposals (`jb outbox` lists them as full@uuid).
+        return Incus(), name
     if name is not None:
         return _resolve_existing(cfg, name)
 
@@ -14604,7 +14610,7 @@ def review_resolve_cmd(
         error_plain("Exactly one of --applied URL or --retry is required.")
         raise typer.Exit(2)
     cfg = _load_or_exit(config)
-    incus, container = _resolve_review_container(cfg, name)
+    incus, container = _resolve_review_container(cfg, name, retained=True)
     if container is None:
         info("Nothing pending: no container in this repo has PR actions waiting.")
         return
@@ -14713,21 +14719,28 @@ issue_app = typer.Typer(
 app.add_typer(issue_app)
 
 
-def _resolve_issue_container(cfg: "Config", name: str | None) -> tuple["IncusType", str | None]:
+def _resolve_issue_container(
+    cfg: "Config", name: str | None, *, retained: bool = False
+) -> tuple["IncusType", str | None]:
     """The container to act on; ``None`` when nothing anywhere is pending.
 
     Candidates are this repo's containers with staged issue proposals in the
     host outbox store (keyed by instance uuid): one Incus listing, no
     `incus exec`, stopped containers included. Zero candidates is success
     ("nothing pending"); one auto-selects; several prompt on a TTY and exit 2,
-    naming short names, off one.
+    naming short names, off one. With ``retained``, a ``full@uuid`` name (a
+    destroyed instance's kept proposals) is taken as it is.
     """
     from jailbee import issue_outbox, prompting
     from jailbee.incus import Incus
     from jailbee.lifecycle import list_containers
     from jailbee.orchestration.store import StoreError
+    from jailbee.outbox.service import parse_retained_ref
     from jailbee.tui import pick_container
 
+    if name is not None and retained and parse_retained_ref(name) is not None:
+        # A destroyed instance's kept proposals (`jb outbox` lists them as full@uuid).
+        return Incus(), name
     if name is not None:
         return _resolve_existing(cfg, name)
 
@@ -15013,7 +15026,7 @@ def issue_resolve_cmd(
         raise typer.Exit(2)
 
     cfg = _load_or_exit(config)
-    incus, container = _resolve_issue_container(cfg, name)
+    incus, container = _resolve_issue_container(cfg, name, retained=True)
     if container is None:
         info("Nothing pending: no container in this repo has issue actions waiting.")
         return

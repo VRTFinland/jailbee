@@ -356,6 +356,7 @@ def _container_json(container: ContainerView) -> dict[str, object]:
         "name": container.name,
         "identity": asdict(container.identity) if container.identity else None,
         "available": container.available,
+        "destroyed": container.destroyed,
         "error": container.error,
         "counts": counts,
         "stores": [

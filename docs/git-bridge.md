@@ -1600,6 +1600,20 @@ removes the proposal, and archives the journal in the same transaction —
 keeping the record of what happened while discarding the rest of the
 proposal.
 
+### Uncertain publications of a destroyed container
+
+Destroying a container deletes its pending proposals and drafts, except a
+proposal whose publication outcome is uncertain: that one is kept, with its
+bodies and journal, so the outcome can still be settled. `jailbee outbox`
+lists such proposals under `<container>@<instance-uuid>`, marked
+`(destroyed)` (`"destroyed": true` in `-o json`). Use that name with
+`jailbee issue resolve` or `jailbee review resolve` to settle the uncertain
+action, and with `jailbee outbox show` / `drop` (`--archive-journal` for
+settled progress) to inspect or discard what is left. A destroyed
+container's proposals cannot be published (`jailbee outbox apply` refuses);
+a PR source proposal cannot be pushed again either, so settle it with
+`jailbee review resolve` and drop it.
+
 ### What enforces read-only container access
 
 GitHub enforces the permissions of the token you supply; JailBee does not
