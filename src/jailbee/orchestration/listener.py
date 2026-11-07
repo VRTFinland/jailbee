@@ -21,6 +21,10 @@ when the request is answered or released (:meth:`Listener.release`), never
 on a disconnect, so open/send/close loops cannot grow the executor's queue. A
 disconnect is queued only for an executor request in flight; query workers
 release their own slots when they finish, even after the connection drops.
+SQLite inbox queries additionally share ``MAX_STORE_QUERIES_PER_CONTAINER``
+queued or running slots per container. Excess queries wait unconsumed in the
+connection's input buffer; snapshot and executor requests do not use these
+slots. The bounded global worker queue still answers ``BUSY`` when full.
 
 While a connection is held back its socket is still read, so a
 disconnect is noticed, until ``wire.MAX_LINE_BYTES`` are buffered; then
@@ -64,6 +68,7 @@ log = logging.getLogger(__name__)
 SOCKET_NAME = "broker.sock"
 MAX_CONNECTIONS_PER_CONTAINER = 8
 MAX_INFLIGHT_PER_CONTAINER = MAX_CONNECTIONS_PER_CONTAINER  # queued, unanswered requests
+MAX_STORE_QUERIES_PER_CONTAINER = 2  # queued or running SQLite inbox queries
 _ACCEPT_PAUSE = 1.0  # seconds a listening socket rests after EMFILE/ENFILE
 _RECV_BYTES = 65536
 _SUN_PATH_MAX = 107  # Linux sockaddr_un.sun_path minus the terminating NUL
@@ -105,6 +110,7 @@ class _Conn:
     outbuf: bytearray = field(default_factory=bytearray)
     close_after_flush: bool = False
     in_flight: bool = False
+    store_held: bool = False
 
 
 def _prepare_dir(sock_dir: Path) -> bool:
@@ -163,6 +169,8 @@ class Listener:
         # and their count per uuid. A disconnect frees nothing (H2).
         self._pending: dict[int, str] = {}
         self._inflight: dict[str, int] = {}
+        self._store_queries: dict[str, int] = {}  # queued or running, listener-owned
+        self._store_pending: set[int] = set()  # request classification survives disconnects
         self._live: set[int] = set()  # open connection ids (under _lock)
         self._thread: threading.Thread | None = None
         self._running = False
@@ -206,6 +214,8 @@ class Listener:
         self._pending.clear()
         self._inflight.clear()
         self._query_pending.clear()
+        self._store_queries.clear()
+        self._store_pending.clear()
         for s in (self._wake_r, self._wake_w):
             with contextlib.suppress(OSError):
                 s.close()
@@ -512,6 +522,10 @@ class Listener:
             or conn.close_after_flush
             or len(conn.outbuf) > OUTBUF_CAP
             or self._inflight.get(conn.uuid, 0) >= MAX_INFLIGHT_PER_CONTAINER
+            or (
+                conn.store_held
+                and self._store_queries.get(conn.uuid, 0) >= MAX_STORE_QUERIES_PER_CONTAINER
+            )
         )
 
     def _parse(self, conn: _Conn) -> None:
@@ -526,14 +540,32 @@ class Listener:
                 self._oversize(conn)
                 return
             line = bytes(conn.inbuf[: nl + 1])
-            del conn.inbuf[: nl + 1]
             try:
                 request = wire.decode_request(line)
             except wire.WireError as exc:
+                del conn.inbuf[: nl + 1]
                 self._send(conn.conn_id, wire.encode_response(wire.fail(exc.code, exc.detail)))
                 if conn.conn_id not in self._conns:
                     return  # dropped while replying (e.g. EPIPE)
                 continue
+            store_query = (
+                self._queries is not None
+                and request.op in QUERY_OPS
+                and request.op not in SNAPSHOT_OPS
+            )
+            if (
+                store_query
+                and self._store_queries.get(conn.uuid, 0) >= MAX_STORE_QUERIES_PER_CONTAINER
+            ):
+                # Leave the line untouched and bound further reads while it waits.
+                conn.store_held = True
+                self._update_interest(conn)
+                return
+            conn.store_held = False
+            del conn.inbuf[: nl + 1]
+            if store_query:
+                self._store_pending.add(conn.conn_id)
+                self._store_queries[conn.uuid] = self._store_queries.get(conn.uuid, 0) + 1
             conn.in_flight = True
             self._pending[conn.conn_id] = conn.uuid
             self._inflight[conn.uuid] = self._inflight.get(conn.uuid, 0) + 1
@@ -574,6 +606,13 @@ class Listener:
         self._query_pending.discard(conn_id)
         if uuid is None:
             return
+        if conn_id in self._store_pending:
+            self._store_pending.remove(conn_id)
+            store_left = self._store_queries[uuid] - 1
+            if store_left > 0:
+                self._store_queries[uuid] = store_left
+            else:
+                self._store_queries.pop(uuid)
         left = self._inflight.get(uuid, 0) - 1
         if left > 0:
             self._inflight[uuid] = left
