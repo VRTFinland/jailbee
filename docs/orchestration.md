@@ -585,6 +585,19 @@ or a failed boot/setup returns a final `failed` for the same ref. A child that
 already reported done before readiness was confirmed still gets a final `done`
 (``child `<short>` is ready; it already reported done``), so the ref always ends.
 
+Use `jailbee inbox send spawn --wait --until done` or `jailbee inbox send restart
+--wait --until done` to wait for readiness before sending a follow-up message.
+An early message is refused with ``child `<short>` is still being created; message
+was not queued``; after the completion wait returns 0, messages pass the startup
+gate. If the child has already finished and stopped, messages are queued until it
+runs again.
+The wait passes through `queued` and `started` to final `done` (exit 0) or
+`failed`/`refused` (exit 1). A queued request may wait for a free running slot.
+One `--timeout` covers acceptance and readiness (default `30m`; `none` is
+unlimited); expiry returns 3 and does not cancel startup. Inspect the inbox before
+retrying. Plain `--wait` keeps its first-status behavior. `--json` prints one JSON
+object: the matching status with `--wait`, or the request ID and state without it.
+
 The broker continues monitoring that process. Any exit without an accepted
 child `done` sends the orchestrator a `blocked` message, including exit 0,
 nonzero exits and signals. The detail includes the exit status and signal

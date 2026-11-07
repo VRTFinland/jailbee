@@ -481,9 +481,17 @@ when the cause is fixed. Wait for the spawn's final readiness `done` before
 sending follow-up messages. While startup is unconfirmed, `send message`
 is refused with ``child `<short>` is still being created; message was not queued``
 and exits 1; the reason is on stderr, not a JSON status on stdout, even with
-`--wait`. Read the spawn's final status through the inbox waiter, then retry
-with a new message id. This also applies before the child appears in Incus;
-`started` only acknowledges the creation worker, not message readiness.
+`--wait`. Use `send spawn --wait --until done` (or `send restart --wait --until done`)
+before the first follow-up message: exit 0 confirms the startup gate has cleared.
+The child accepts messages; if it already finished and stopped, they queue until
+it runs again. If an early message was refused, retry it with a new id after readiness.
+This also applies before the child appears in Incus; `started` only acknowledges
+the creation worker, not message readiness. The completion wait passes through
+`queued` and `started` to `done` or `failed`; a queued request may wait for a free
+slot. One `--timeout` covers acceptance and readiness (default `30m`; `none` is
+unlimited). Exit 1 means failed/refused, 3 means timeout; inspect the inbox before
+retrying a timed-out request. Plain `--wait` still returns the first status.
+Add `--json` for one JSON status object.
 A `message` to an already-ready but stopped child is answered `queued` and
 delivered when it runs again.
 

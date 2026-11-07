@@ -94,9 +94,15 @@ def validate(r: SendRequest) -> SendRequest:
             r.services is not None and any(s.strip() for s in r.services.split(",")),
             "refresh needs at least one service",
         )
-    require(not r.until or (t == "publish" and r.wait), "--until needs publish --wait")
+    require(
+        not r.until or (t in {"publish", "spawn", "restart"} and r.wait),
+        "--until needs spawn, restart or publish with --wait",
+    )
     require(r.until in {"", "done"}, "--until must be done")
-    require(not r.json_output or t == "publish", "--json only applies to publish")
+    require(
+        not r.json_output or t in {"publish", "spawn", "restart"},
+        "--json only applies to spawn, restart and publish",
+    )
     if r.timeout:
         require(r.wait, "--timeout needs --wait")
         parse_timeout(r.timeout)

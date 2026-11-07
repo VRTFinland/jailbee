@@ -881,10 +881,151 @@ def test_publish_until_done_json_cli(broker, sockdir, tmp_path, state, code):
     assert [r.op for r in broker.requests] == ["send", "next", "ack"]
 
 
+@pytest.mark.parametrize("action", ["spawn", "restart"])
+@pytest.mark.parametrize("first", ["queued", "started"])
+@pytest.mark.parametrize("state,code", [("done", 0), ("failed", 1)])
+def test_child_readiness_wait_json_cli(broker, sockdir, tmp_path, action, first, state, code):
+    final = {"id": "h-ready", "type": "status", "state": state, "detail": "startup result"}
+    request_ids = []
+
+    def send_request(request):
+        assert request.args["manifest"]["type"] == action
+        assert request.args["wait"] is True
+        request_ids.append(request.args["manifest"]["id"])
+        return wire.ok(send_status(first))
+
+    def next_status(request):
+        assert request.args["ref"] == request_ids[0]
+        assert 0 < request.args["timeout"] <= 10
+        return wire.ok({"kind": "status", "item": final})
+
+    broker.handlers["send"] = send_request
+    broker.handlers["next"] = next_status
+    broker.on("ack", {"acked": True})
+    target = ["--branch", "fix/task"] if action == "spawn" else ["--child", "kid"]
+    result = run(
+        sockdir,
+        "send",
+        action,
+        *target,
+        "--text",
+        "Do the task.",
+        "--wait",
+        "--until",
+        "done",
+        "--timeout",
+        "10s",
+        "--json",
+        tmp=tmp_path,
+    )
+    assert result.returncode == code, result.stderr
+    assert json.loads(result.stdout) == final
+    assert [r.op for r in broker.requests] == ["send", "next", "ack"]
+
+
+@pytest.mark.parametrize("action", ["spawn", "restart"])
+@pytest.mark.parametrize("first", ["queued", "started"])
+def test_child_readiness_wait_timeout_cli(broker, sockdir, tmp_path, action, first):
+    broker.on("send", send_status(first))
+    broker.on("next", {"kind": "timeout"})
+    target = ["--branch", "fix/task"] if action == "spawn" else ["--child", "kid"]
+    result = run(
+        sockdir,
+        "send",
+        action,
+        *target,
+        "--text",
+        "Do the task.",
+        "--wait",
+        "--until",
+        "done",
+        "--timeout",
+        "1s",
+        tmp=tmp_path,
+    )
+    assert result.returncode == 3, result.stderr
+    ident = result.stdout.strip()
+    assert ident.startswith(f"{action}-")
+    assert f"timed out waiting for request {ident}" in result.stderr
+    assert [r.op for r in broker.requests] == ["send", "next"]
+
+
+@pytest.mark.parametrize("action", ["spawn", "restart"])
+@pytest.mark.parametrize("state,code", [("queued", 0), ("started", 0), ("refused", 1)])
+@pytest.mark.parametrize("as_json", [False, True])
+def test_child_plain_wait_returns_first_status(
+    broker, sockdir, tmp_path, action, state, code, as_json
+):
+    first = send_status(state)
+    broker.on("send", first)
+    target = ["--branch", "fix/task"] if action == "spawn" else ["--child", "kid"]
+    result = run(
+        sockdir,
+        "send",
+        action,
+        *target,
+        "--text",
+        "Do the task.",
+        "--wait",
+        *(["--json"] if as_json else []),
+        tmp=tmp_path,
+    )
+    assert result.returncode == code, result.stderr
+    if as_json:
+        assert json.loads(result.stdout) == first
+    elif state != "refused":
+        assert json.loads(result.stdout.split("\n", 1)[1]) == first
+    assert [r.op for r in broker.requests] == ["send"]
+
+
+@pytest.mark.parametrize("action", ["spawn", "restart"])
+@pytest.mark.parametrize("state,code", [("done", 0), ("failed", 1), ("refused", 1)])
+def test_child_readiness_immediate_final_status(broker, sockdir, tmp_path, action, state, code):
+    final = send_status(state)
+    broker.on("send", final)
+    target = ["--branch", "fix/task"] if action == "spawn" else ["--child", "kid"]
+    result = run(
+        sockdir,
+        "send",
+        action,
+        *target,
+        "--text",
+        "Do the task.",
+        "--wait",
+        "--until",
+        "done",
+        "--json",
+        tmp=tmp_path,
+    )
+    assert result.returncode == code, result.stderr
+    assert json.loads(result.stdout) == final
+    assert [r.op for r in broker.requests] == ["send"]
+
+
+@pytest.mark.parametrize("action", ["spawn", "restart"])
+@pytest.mark.parametrize("extra", [[], ["--wait", "--until", "started"]])
+def test_child_readiness_until_requires_wait_and_done(broker, sockdir, tmp_path, action, extra):
+    target = ["--branch", "fix/task"] if action == "spawn" else ["--child", "kid"]
+    options = extra or ["--until", "done"]
+    result = run(
+        sockdir,
+        "send",
+        action,
+        *target,
+        "--text",
+        "Do the task.",
+        *options,
+        tmp=tmp_path,
+    )
+    assert result.returncode == 2
+    assert "--until" in result.stderr
+    assert broker.requests == []
+
+
 def test_publish_until_without_wait_is_usage_error(broker, sockdir, tmp_path):
     result = run(sockdir, "send", "publish", "--issue", "a.json", "--until", "done", tmp=tmp_path)
     assert result.returncode == 2
-    assert "--until needs publish --wait" in result.stderr
+    assert "--until needs spawn, restart or publish with --wait" in result.stderr
     assert broker.requests == []
 
 
