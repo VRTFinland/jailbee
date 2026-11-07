@@ -269,6 +269,104 @@ def _outbox_clear(cfg: Any, incus: Any) -> object:
     return f"status={status}"
 
 
+def _seed_sent(cfg: Any) -> None:
+    from jailbee.outbox import sent
+
+    action = sent.SentAction(
+        "issue", "001.json", 0, "comment", REPO, 7, "https://x/7#c", "T", "Hi", "d" * 64
+    )
+    sent.record(
+        instance=FULL,
+        uuid=UUID,
+        container_prefix=cfg.container_prefix,
+        publisher="user",
+        action=action,
+        state="applied",
+    )
+
+
+def _dashboard_sent_loaders(cfg: Any, incus: Any) -> object:
+    """The dashboard and Qt Sent loaders: one container's tab and the repo timeline."""
+    from jailbee.dashboard import outbox as dob
+
+    _seed_sent(cfg)
+    one = dob.read_sent(cfg.container_prefix, instance=FULL, uuid=UUID)
+    whole = dob.read_sent(cfg.container_prefix, live={FULL: UUID})
+    assert len(one) == 1 and len(whole) == 1
+    return f"rows={len(one)}+{len(whole)}"
+
+
+def _host_teardown(cfg: Any, incus: Any) -> object:
+    from jailbee import host_teardown
+
+    stage(manifest(COMMENT))
+    snap = host_teardown.snapshot(incus, FULL)
+    assert snap.uuid == UUID
+    host_teardown.cleanup(snap)
+    assert not pr_outbox.read_outbox(incus, FULL, uid=1000).manifest_names
+    return f"uuid={snap.uuid}"
+
+
+def _repo_remove(cfg: Any, incus: Any) -> object:
+    from sqlmodel import Session
+
+    from jailbee.outbox import sent
+    from jailbee.repo_remove import RemovalPlan, execute_removal
+    from tests.conftest import memory_engine
+
+    _seed_sent(cfg)
+    plan = RemovalPlan(cfg.container_prefix, None, [], [], [], [], [], None, {}, [], [], [])
+    incus.profile_list.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.list_images.return_value = []
+    incus.list_containers.return_value = []
+    engine = memory_engine()
+    results = execute_removal(plan, incus, lambda: Session(engine))
+    assert all(result.ok for result in results), [(r.label, r.detail) for r in results if not r.ok]
+    assert sent.list_records(container_prefix=cfg.container_prefix, uuid=None) == []
+    return f"steps={len(results)}"
+
+
+def _ls_counts(cfg: Any, incus: Any) -> object:
+    from jailbee import lifecycle
+
+    stage_issue()
+    stage(manifest(COMMENT))
+    incus.list_containers.return_value[0]["profiles"] = [f"{cfg.container_prefix}-base"]
+    (info,) = lifecycle.list_containers(cfg, incus, with_git_status=True)
+    assert (info.outbox_issue, info.outbox_pr) == (1, 1)
+    lifecycle.stamp_issue_outbox(info)
+    lifecycle.stamp_pr_outbox(info)
+    assert (info.outbox_issue, info.outbox_pr) == (1, 1)
+    return f"counts={info.outbox_issue}+{info.outbox_pr}"
+
+
+def _branch_pr_map(cfg: Any, incus: Any) -> object:
+    mapping = branch_pr.BranchPrMap(incus, FULL)
+    incus.config_get_checked.return_value = None
+    assert mapping.read() == {}
+    assert mapping.numbers() == frozenset()
+    return mapping.get("topic") or "unbound"
+
+
+def _review_policy(cfg: Any, incus: Any, mocker: Any = None) -> object:
+    from unittest import mock
+
+    from jailbee.orchestration import publishing
+    from jailbee.orchestration.grant import PublishRights
+
+    name = stage(manifest(COMMENT))
+    outbox = pr_outbox.read_outbox(incus, FULL, uid=1000)
+    bodies = {k: v for k, v in outbox.files.items() if k != name}
+    loaded = pr_outbox.parse_manifest(name, outbox.files[name], bodies)
+    incus.config_get_checked.return_value = "12"
+    check = publishing._review_policy(PublishRights(pr_reviews=True), 1, cfg, incus, FULL)
+    remote = f"https://github.com/{REPO}.git"
+    with mock.patch.object(publishing.git, "get_remote_url", return_value=remote):
+        check(loaded)
+    return "admitted"
+
+
 ENTRY_POINTS: dict[str, Callable[[Any, Any], object]] = {
     "jb review apply": _review_apply,
     "jb pr offer after push": _offer_after_pr,
@@ -285,6 +383,12 @@ ENTRY_POINTS: dict[str, Callable[[Any, Any], object]] = {
     "orchestrator stop/destroy/finish outbox count": _child_outbox_count,
     "orchestrator send publish (issue)": _orchestrator_publish_issue,
     "jb outbox clear": _outbox_clear,
+    "dashboard and Qt Sent loaders": _dashboard_sent_loaders,
+    "host teardown": _host_teardown,
+    "jb repo rm": _repo_remove,
+    "jb ls outbox counts": _ls_counts,
+    "BranchPrMap": _branch_pr_map,
+    "orchestrator review policy": _review_policy,
 }
 
 
