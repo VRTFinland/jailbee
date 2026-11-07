@@ -28,7 +28,7 @@ def main() -> NoReturn:
         raise SystemExit(snapshot_main(sys.argv[2:]))
     from jailbee.container_cli import container_app
 
-    container_app()
+    container_app(prog_name="jailbee")
     raise SystemExit(0)
 
 

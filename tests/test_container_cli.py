@@ -174,7 +174,7 @@ def test_container_main_dispatches_inbox_through_typer(monkeypatch, mocker, tmp_
     with pytest.raises(SystemExit) as exc:
         container_main.main()
     assert exc.value.code == 0
-    target.assert_called_once_with()
+    target.assert_called_once_with(prog_name="jailbee")
 
 
 def test_expect_version_mismatch_exits_86(tmp_path, monkeypatch):
@@ -335,3 +335,23 @@ def test_container_cli_inbox_end_to_end(monkeypatch, tmp_path):
     assert sent.exit_code == 4
     assert "broker socket is missing" in sent.output
     assert not (tmp_path / "outbox").exists()
+
+
+@pytest.mark.parametrize("argv", [["--help"], ["inbox", "--bogus"], ["service", "--bogus"]])
+def test_container_main_names_program_jailbee(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+) -> None:
+    from jailbee import container_main
+
+    monkeypatch.setattr(container_main.container_deps, "check", lambda: None)
+    monkeypatch.setattr(container_main, "PACKAGE_DIR", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["python -m jailbee.container_main", *argv])
+    with pytest.raises(SystemExit):
+        container_main.main()
+    captured = capsys.readouterr()
+    out = captured.out + captured.err
+    assert "Usage: jailbee" in out
+    assert "container_main" not in out
