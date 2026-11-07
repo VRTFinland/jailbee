@@ -14,8 +14,9 @@ need a result. Do not write GitHub outbox files or directories by hand.
 You are inside a JailBee container reviewing a pull request (typically one
 created with `jailbee new --pr <n>`). Your `gh` here can **read** GitHub but
 must never **write** to it: every review comment, reply, general comment, or
-description you produce is written as a JSON manifest file into a fixed
-outbox directory, and a human on the host reviews and publishes it later with
+description you produce is staged with `jailbee pr ...` commands into the
+host outbox store (over the broker socket; nothing is written as a file in the
+container), and a human on the host reviews and publishes it later with
 `jb review apply`. Nothing you write here reaches GitHub by itself.
 
 ## Orchestrator publication

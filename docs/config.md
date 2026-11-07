@@ -3215,8 +3215,8 @@ the config. `jailbee doctor` reports insecure permissions. Run
 Pull requests: Read, Metadata: Read — read-only.** Classic PATs (`ghp_*`) get
 a doctor warning because they cannot be scoped per-repo. JailBee's outbox
 workflows publish issue and PR changes through the host's own `gh`, applying
-a proposal an in-container agent staged in the host outbox store (issues) or
-into `~/.jailbee/pr-outbox` (PRs) — see
+a proposal an in-container agent staged in the host outbox store (issues and
+PRs) — see
 [`jailbee issue`](git-bridge.md#issue-management) and the
 `jailbee-issue-management` / `jailbee-pr-review` skills. This token
 authenticates the container's own `gh`, which has whatever permissions the PAT

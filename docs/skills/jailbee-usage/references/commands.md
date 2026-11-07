@@ -1540,9 +1540,10 @@ raise `pr.timeout`.)
 
 A container's `gh` cannot write to GitHub; an in-container agent stages
 review comments, replies, general comments and description rewrites as JSON
-manifests in `~/.jailbee/pr-outbox/` instead (the manifest schema is
-normative in the **jailbee-pr-review** skill, not here). These commands read
-and publish what it wrote.
+manifests in the host outbox store instead, over the broker socket (the
+manifest schema is normative in the **jailbee-pr-review** skill, not here).
+These commands read and publish what it staged; the host never reads the
+container for it, so this works on stopped containers too.
 
 ### `jailbee review apply [NAME] [-y] [--dry-run] [--force] [--foreign]`
 
@@ -1556,8 +1557,8 @@ without publishing anything. `--force` posts a `review` action's line
 comments even though the PR head moved since the manifest was written — the
 one refusal it relaxes; GitHub then shows those as outdated comments. A
 manifest fully applied is deleted (with any `body_file` no other pending
-manifest still references) and gets a line in
-`~/.jailbee/pr-outbox/applied.log`; re-running `apply` afterwards finds
+manifest still references) and its actions are
+recorded in the Sent log (`jailbee outbox sent ls`); re-running `apply` afterwards finds
 nothing left to publish for it — nothing double-posts. A manifest naming a
 PR of the same repo that the container does not own is published only after
 a warning directly above its confirmation; with `-y` (nobody reads that warning) it is
@@ -1571,13 +1572,12 @@ PR — it is left as a deferral for `jailbee pr push` to consume, not a refusal.
 
 **Deprecated** alias of `jailbee outbox ls` (hidden from `--help`, prints a hint on stderr); prefer `jailbee outbox`.
 
-One row per pending manifest across running containers: CONTAINER, PR,
+One row per pending manifest across containers, running or stopped: CONTAINER, PR,
 MANIFEST, ACTIONS, STATE (`ok`, `stale`, `not bound` — a PR the container
 does not own, see `apply --foreign` — `for jb pr`, or `error`), and ERROR
-(hidden from the default table). A stopped container's outbox cannot be read
-at all, so it is named in a note under the table instead of appearing empty.
-`--fields` is comma-separated from that same list; `-o json` describes
-manifests only (no stopped-container note).
+(hidden from the default table). A container whose proposals cannot be read
+gets an `error` row instead of appearing empty. `--fields` is
+comma-separated from that same list.
 
 ### `jailbee review show [NAME] [MANIFEST]`
 
@@ -1587,14 +1587,14 @@ Print every pending manifest's action bodies in full — never truncated, so
 this is the way to actually read a comment before deciding to publish it. On
 a terminal the Markdown is wrapped to the window and coloured, with HTML tags
 and image URLs shown as text rather than hidden; piped output is the raw text
-exactly as the container wrote it. Omit `MANIFEST` for every pending manifest in the container.
+exactly as it was staged. Omit `MANIFEST` for every pending manifest in the container.
 
 ### `jailbee review drop [NAME] [MANIFEST] [-y]`
 
 **Deprecated** alias of `jailbee outbox drop` (hidden from `--help`, prints a hint on stderr); prefer `jailbee outbox`.
 
 Delete pending manifests **without publishing them** — no GitHub call, no
-`applied.log` line. Confirms first unless `-y`; refuses off a TTY without
+Sent-log record. Confirms first unless `-y`; refuses off a TTY without
 it. Omit `MANIFEST` to drop everything pending in the container.
 
 ### Interaction with `jailbee pr push`
