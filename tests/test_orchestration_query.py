@@ -411,3 +411,84 @@ def test_published_records_and_returned_results_have_no_mutable_aliases(env: Env
     assert env.queries.answer("proj-orch", wire.Request("children")).result["children"] == [
         {"name": "one"}
     ]
+
+
+def test_revoked_grant_published_before_later_inventory_failure(env: Env) -> None:
+    calls = 0
+
+    def inventory(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        nonlocal calls
+        if kwargs.get("all_projects"):
+            return []
+        calls += 1
+        if calls > 1:
+            raise RuntimeError("inventory failed")
+        return [_child(), _orch("proj-other")]
+
+    env.rig.incus.list_containers.side_effect = inventory
+    with pytest.raises(RuntimeError, match="inventory failed"):
+        env.rig.tick(env.memory)
+    assert not env.queries.answer("proj-orch", wire.Request("grant")).ok
+
+
+def test_history_failure_preserves_history_but_publishes_children_and_grant(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env.put("prior")
+    env.rig.tick(env.memory)
+    before = env.queries.answer("proj-orch", wire.Request("children")).result
+    original = env.store.history_meta
+
+    def history(uuid: str) -> Any:
+        if uuid == "proj-orch":
+            raise StoreError("history unavailable")
+        return original(uuid)
+
+    monkeypatch.setattr(env.store, "history_meta", history)
+    env.rig.incus.list_containers.return_value = [_orch(), _child(running=False)]
+    assert env.rig.tick(env.memory) is True
+    after = env.queries.answer("proj-orch", wire.Request("children")).result
+    assert after["last_from_child"] == before["last_from_child"]
+    assert after["children"][0]["running"] is False
+    assert env.queries.answer("proj-orch", wire.Request("grant")).ok
+
+
+def test_recipient_failure_does_not_abort_round_or_retain_removed_grant(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*args: Any) -> Any:
+        raise StoreError("recipients unavailable")
+
+    monkeypatch.setattr(env.store, "recipients", fail)
+    env.rig.incus.list_containers.return_value = [_child()]
+    assert env.rig.tick(env.memory) is True
+    assert not env.queries.answer("proj-orch", wire.Request("grant")).ok
+    assert env.queries.answer("proj-kid", wire.Request("grant")).error_code == wire.NOT_ORCHESTRATED
+
+
+def test_recreated_orchestrator_does_not_inherit_children_on_history_failure(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    replacement = _orch()
+    replacement["config"]["volatile.uuid"] = "new-uuid"
+    env.store.set_recipient("proj-orch", "new-uuid", now=2.0)
+    env.rig.incus.list_containers.return_value = [replacement]
+    monkeypatch.setattr(
+        env.store, "history_meta", lambda *args: (_ for _ in ()).throw(StoreError("failed"))
+    )
+    monkeypatch.setattr(broker.inbox_state, "sync_children", lambda *args: (_ for _ in ()).throw(RuntimeError("failed")))
+    assert env.rig.tick(env.memory) is True
+    result = env.queries.answer("new-uuid", wire.Request("children"))
+    assert result.ok and result.result["children"] == []
+    assert not env.queries.answer("proj-orch", wire.Request("grant")).ok
+
+
+def test_no_active_round_revokes_grant_when_recipients_fail(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env.rig.incus.list_containers.return_value = []
+    monkeypatch.setattr(
+        env.store, "recipients", lambda: (_ for _ in ()).throw(StoreError("failed"))
+    )
+    assert env.rig.tick(env.memory) is False
+    assert not env.queries.answer("proj-orch", wire.Request("grant")).ok

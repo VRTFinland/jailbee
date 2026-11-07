@@ -1263,6 +1263,11 @@ def tick(
             _clear_stale_stop_labels(incus, node)
 
     orchestrators: list[ActionContext] = []
+    # A name can be reused by a different instance; never carry its child view over.
+    old_identities = {ctx.sender.full: key for key, ctx in memory.contexts.items()}
+    for node in nodes.values():
+        if node.full in old_identities and old_identities[node.full] != node.key:
+            memory.children.pop(node.full, None)
     for key in [k for k in memory.contexts if k not in {n.key for n in nodes.values()}]:
         del memory.contexts[key]
     for node in nodes.values():
@@ -1328,6 +1333,9 @@ def tick(
         except Exception:
             log.exception("broker: serving %s failed", node.full)
 
+    # Publish role and grant changes before any later inventory refresh can fail.
+    _publish_queries(memory)
+
     # Handlers changed labels and may have stopped children after our initial
     # snapshot. Refresh once before cleanup; share deletions with queue drain.
     if orchestrators:
@@ -1386,13 +1394,28 @@ def _context_snapshot(memory: BrokerMemory, ctx: ActionContext) -> ContainerSnap
     from jailbee.orchestration import socket_ops
 
     assert memory.store is not None
+    previous = memory.queries.snapshot().get(ctx.sender.key) if memory.queries else None
     grant = ctx.grant()
+    try:
+        ready = memory.store.has_recipient_uuid(ctx.sender.key)
+    except StoreError:
+        log.exception("broker: recipient readiness for %s failed", ctx.sender.key)
+        ready = previous.ready if previous is not None else False
+    try:
+        children = socket_ops._children_result(memory, memory.store, ctx.sender.key, ctx)
+    except StoreError:
+        log.exception("broker: child history for %s failed", ctx.sender.key)
+        view = memory.children.get(ctx.sender.full)
+        old = json.loads(previous.children_json) if previous is not None else {}
+        children = {
+            "observed_at": view.observed_at if view is not None else None,
+            "children": list(view.children) if view is not None else [],
+            "last_from_child": old.get("last_from_child", {}),
+        }
     return ContainerSnapshot(
         role=ctx.role(),
-        ready=memory.store.has_recipient_uuid(ctx.sender.key),
-        children_json=json.dumps(
-            socket_ops._children_result(memory, memory.store, ctx.sender.key, ctx)
-        ),
+        ready=ready,
+        children_json=json.dumps(children),
         grant_json=grant_json_text(grant, *ctx.default_runner()) if grant is not None else None,
     )
 
@@ -1400,25 +1423,40 @@ def _context_snapshot(memory: BrokerMemory, ctx: ActionContext) -> ContainerSnap
 def _publish_context(memory: BrokerMemory, ctx: ActionContext) -> None:
     """Commit one action's view without publishing other unfinished round state."""
     if memory.queries is not None and memory.store is not None:
-        memory.queries.publish_container(ctx.sender.key, _context_snapshot(memory, ctx))
+        try:
+            memory.queries.publish_container(ctx.sender.key, _context_snapshot(memory, ctx))
+        except Exception:
+            log.exception("broker: publishing query view for %s failed", ctx.sender.key)
 
 
 def _publish_queries(memory: BrokerMemory) -> None:
     """Build on the broker thread, then atomically replace the completed-round view.
 
-    Failed/unfinished rounds leave the previous generation readable throughout.
+    Each component is isolated so failed store reads do not hide other updates.
     Neither contexts nor their mutable children/grant data cross into the listener.
     """
     if memory.queries is None or memory.store is None:
         return
     empty_children = json.dumps({"children": [], "observed_at": None, "last_from_child": {}})
+    try:
+        recipients = set(memory.store.recipients().values())
+    except Exception:
+        log.exception("broker: publishing query recipients failed")
+        recipients = set(memory.queries.snapshot())
     snapshot = {
-        uuid: ContainerSnapshot("none", True, empty_children, None)
-        for uuid in memory.store.recipients().values()
+        uuid: ContainerSnapshot("none", True, empty_children, None) for uuid in recipients
     }
     for uuid, ctx in memory.contexts.items():
-        snapshot[uuid] = _context_snapshot(memory, ctx)
-    memory.queries.publish(snapshot)
+        try:
+            snapshot[uuid] = _context_snapshot(memory, ctx)
+        except Exception:
+            log.exception("broker: publishing query view for %s failed", uuid)
+            # Fail closed: never retain a stale grant if serialization fails.
+            snapshot[uuid] = ContainerSnapshot("none", False, empty_children, None)
+    try:
+        memory.queries.publish(snapshot)
+    except Exception:
+        log.exception("broker: publishing query snapshot failed")
 
 
 def _settle_all_watches(
