@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 _SLUG_RE = re.compile(r"[a-z0-9-]{1,80}")
 _BODY_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _PROPOSAL_NAME_RE = re.compile(r"[0-9]{3,}-[a-z0-9-]{1,80}\.json")
+MAX_PR_ACTIONS = 100  # actions per PR proposal or draft, as MAX_OFFER_ACTIONS for issues
 
 
 def _bad(detail: str) -> wire.WireError:
@@ -124,6 +125,9 @@ def _parse_pr(name: str, manifest: object, bodies: Mapping[str, str]) -> str:
 
     if not isinstance(manifest, dict):
         raise _bad("manifest must be a JSON object")
+    actions = manifest.get("actions")
+    if isinstance(actions, list) and len(actions) > MAX_PR_ACTIONS:
+        raise _bad(f"PR manifest exceeds the cap of {MAX_PR_ACTIONS} actions")
     try:
         text = json.dumps(manifest, ensure_ascii=False)
         parse_pr(name, text, bodies)

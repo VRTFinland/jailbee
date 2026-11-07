@@ -25,6 +25,7 @@ from jailbee.issue_manifest import (
 )
 from jailbee.orchestration import wire
 from jailbee.outbox.broker_ops import (
+    MAX_PR_ACTIONS,
     _bad,
     _bodies,
     _kind,
@@ -247,7 +248,7 @@ def handle_submit(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now
 # fixes it, every later one must match it, and a review additionally pins the
 # head its line anchors were read at.
 
-MAX_PR_DRAFT_ACTIONS = 100
+MAX_PR_DRAFT_ACTIONS = MAX_PR_ACTIONS
 _ENVELOPE_KEYS = ("repo", "pr", "head_sha")
 
 

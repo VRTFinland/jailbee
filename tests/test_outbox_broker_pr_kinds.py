@@ -103,6 +103,30 @@ def test_an_invalid_pr_action_is_refused_with_nothing_stored(env: Env) -> None:
     assert stored(env) == []
 
 
+def test_a_pr_proposal_over_the_action_cap_is_refused_with_nothing_stored(env: Env) -> None:
+    actions = [{"type": "comment", "body": f"c{i}"} for i in range(101)]
+    response = env.call(
+        wire.OUTBOX_PUT,
+        uuid=PLAIN,
+        kind="pr",
+        slug="many",
+        manifest={**envelope(), "actions": actions},
+        bodies={},
+    )
+    assert response.error_code == wire.BAD_REQUEST
+    assert "cap of 100 actions" in response.error_detail
+    assert stored(env) == []
+    # Exactly the cap is accepted.
+    assert env.call(
+        wire.OUTBOX_PUT,
+        uuid=PLAIN,
+        kind="pr",
+        slug="many",
+        manifest={**envelope(), "actions": actions[:100]},
+        bodies={},
+    ).ok
+
+
 def test_a_child_container_cannot_stage_a_pr_comment(env: Env) -> None:
     response = env.call(
         wire.OUTBOX_PUT,
