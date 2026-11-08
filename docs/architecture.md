@@ -453,7 +453,7 @@ Proposals, drafts, publication journals and sent records all live there. Host
 commands (`jb outbox`, `jb review`, `jb issue`, `jb pr`) read and write the
 store directly and never run `incus exec` for the outbox, so stopped
 containers are inspectable too. See
-[ADR 0001](adr/0001-outbox-through-the-broker.md).
+[ADR 0001](https://github.com/VRTFinland/jailbee/blob/main/docs/adr/0001-outbox-through-the-broker.md).
 
 ## Security model
 
