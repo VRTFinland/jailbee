@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.8.5 - 2026-11-08
+
 ### Added
 
 - `jailbee inbox send spawn|restart --wait --until done` waits for child readiness
