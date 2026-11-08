@@ -294,6 +294,16 @@ def call_next(
             if deadline is not None:
                 connect_budget = min(connect_budget, max(deadline - clock(), 0.001))
             client.connect_budget = connect_budget
+            # The factory's connect retry window (#92: rides out a broker
+            # restart) must not outlive the caller's deadline; a reconnect's
+            # window is also bounded by the continuous-outage limit (#102).
+            retry_for = getattr(client, "retry_for", 0.0)  # test doubles may lack it
+            if deadline is not None:
+                retry_for = min(retry_for, max(deadline - clock(), 0.0))
+            if unreachable_since is not None:
+                outage_left = _UNREACHABLE_LIMIT - (clock() - unreachable_since)
+                retry_for = min(retry_for, max(outage_left, 0.0))
+            client.retry_for = retry_for
             return client.call("next", attempt, timeout=read_budget())
         except BrokerVersionMismatch:
             raise
@@ -328,15 +338,29 @@ def call_send(
     args: dict[str, Any],
     *,
     timeout: float | None,
+    clock: Callable[[], float] | None = None,
 ) -> Any:
     """Send once; re-send the same request once if the connection dropped
     after it was written, or while it was being written (the broker never got
     a full line, and is idempotent by manifest id).
 
+    The factory's connect retry window (#92: rides out a broker restart) is
+    capped by the caller's deadline, for the first connect and the re-send
+    alike, as in `call_next`. A send has no reconnect loop, so #102's
+    continuous-outage bound does not apply here.
+
     A client-side ``TimeoutError`` propagates unchanged; callers map it to
     exit 3, like a "no reply" timeout."""
-    deadline = None if timeout is None else time.monotonic() + timeout
-    first = client_factory()
+    clock = clock or time.monotonic
+    deadline = None if timeout is None else clock() + timeout
+
+    def capped(client: Client) -> Client:
+        if deadline is not None:
+            retry_for = getattr(client, "retry_for", 0.0)  # test doubles may lack it
+            client.retry_for = min(retry_for, max(deadline - clock(), 0.0))
+        return client
+
+    first = capped(client_factory())
     try:
         return first.call("send", args, timeout=timeout)
     except BrokerVersionMismatch:
@@ -346,8 +370,8 @@ def call_send(
             raise
     finally:
         first.close()
-    remaining = None if deadline is None else deadline - time.monotonic()
+    remaining = None if deadline is None else deadline - clock()
     if remaining is not None and remaining <= 0:
         raise TimeoutError
-    with client_factory() as second:
+    with capped(client_factory()) as second:
         return second.call("send", args, timeout=remaining)

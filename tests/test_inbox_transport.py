@@ -718,3 +718,117 @@ def test_call_send_timeout_propagates(path):
     finally:
         release.set()
         srv.close()
+
+
+def _fake_time() -> tuple[list[float], Callable[[float], None]]:
+    now = [0.0]
+
+    def sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    return now, sleep
+
+
+def test_first_connect_retry_window_is_capped_by_wait_deadline(path):
+    """`jailbee inbox wait --timeout 2` with no broker must not spend the full
+    10 s connect retry window before giving up."""
+    now, sleep = _fake_time()
+
+    def factory() -> Client:
+        return Client(path, retry_for=10.0, clock=lambda: now[0], sleep=sleep)
+
+    with pytest.raises(BrokerUnreachable):
+        call_next(factory, {}, timeout=2.0, clock=lambda: now[0], sleep=sleep)
+    assert now[0] <= 2.0
+
+
+def test_first_connect_without_deadline_keeps_full_retry_window(path):
+    now, sleep = _fake_time()
+
+    def factory() -> Client:
+        return Client(path, retry_for=10.0, clock=lambda: now[0], sleep=sleep)
+
+    with pytest.raises(BrokerUnreachable):
+        call_next(factory, {}, timeout=None, clock=lambda: now[0], sleep=sleep)
+    assert now[0] == pytest.approx(10.0)
+
+
+def test_reconnect_retry_window_is_capped_by_wait_deadline(path):
+    srv = serve(path, lambda r: None)  # drops once, then nobody listens
+    now = [0.0]
+
+    def sleep(seconds: float) -> None:
+        srv._thread.join(timeout=5)  # reconnect only after the listener closed
+        now[0] += seconds
+
+    def factory() -> Client:
+        return Client(path, connect_timeout=1, retry_for=10.0, clock=lambda: now[0], sleep=sleep)
+
+    try:
+        result = call_next(factory, {}, timeout=3.0, clock=lambda: now[0], sleep=sleep)
+    finally:
+        srv.close()
+    assert result == {"kind": "timeout"}
+    assert now[0] == pytest.approx(3.0)
+
+
+def test_send_first_connect_retry_window_is_capped_by_its_deadline(path):
+    """`jailbee inbox send --timeout 2` with no broker must not spend the full
+    10 s connect retry window before giving up."""
+    now, sleep = _fake_time()
+
+    def factory() -> Client:
+        return Client(path, retry_for=10.0, clock=lambda: now[0], sleep=sleep)
+
+    with pytest.raises(BrokerUnreachable):
+        call_send(factory, {"id": "x"}, timeout=2.0, clock=lambda: now[0])
+    assert now[0] <= 2.0
+
+
+def test_send_first_connect_without_deadline_keeps_full_retry_window(path):
+    now, sleep = _fake_time()
+
+    def factory() -> Client:
+        return Client(path, retry_for=10.0, clock=lambda: now[0], sleep=sleep)
+
+    with pytest.raises(BrokerUnreachable):
+        call_send(factory, {"id": "x"}, timeout=None, clock=lambda: now[0])
+    assert now[0] == pytest.approx(10.0)
+
+
+def test_send_resend_retry_window_is_capped_by_the_remaining_deadline(path):
+    srv = serve(path, lambda r: None)  # takes the request, drops, then nobody listens
+    now = [0.0]
+
+    def sleep(seconds: float) -> None:
+        srv._thread.join(timeout=5)  # reconnect only after the listener closed
+        now[0] += seconds
+
+    def factory() -> Client:
+        return Client(path, connect_timeout=1, retry_for=10.0, clock=lambda: now[0], sleep=sleep)
+
+    try:
+        with pytest.raises(BrokerUnreachable):
+            call_send(factory, {"id": "x"}, timeout=3.0, clock=lambda: now[0])
+    finally:
+        srv.close()
+    assert now[0] <= 3.0
+
+
+def test_reconnect_retry_window_is_capped_by_outage_bound(path):
+    srv = serve(path, lambda r: None)  # drops once, then nobody listens
+    now = [0.0]
+
+    def sleep(seconds: float) -> None:
+        srv._thread.join(timeout=5)
+        now[0] += seconds
+
+    def factory() -> Client:
+        return Client(path, connect_timeout=1, retry_for=10.0, clock=lambda: now[0], sleep=sleep)
+
+    try:
+        with pytest.raises(BrokerUnreachable):
+            call_next(factory, {}, timeout=None, clock=lambda: now[0], sleep=sleep)
+    finally:
+        srv.close()
+    assert now[0] == pytest.approx(transport._UNREACHABLE_LIMIT)

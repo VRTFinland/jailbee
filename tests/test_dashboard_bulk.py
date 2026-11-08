@@ -59,16 +59,41 @@ def test_outbox_clear_takes_containers_with_pending_manifests(tmp_path):
 
     action = bulk.plan_bulk(groups, ["alpha-a", "alpha-b", "alpha-c"], "outbox clear")
 
-    assert action.eligible == ("alpha-a",)
-    assert action.skipped == (("alpha-b", "outbox empty"), ("alpha-c", "not running"))
+    # The outbox is host-side: a stopped container's proposals clear as well.
+    assert action.eligible == ("alpha-a", "alpha-c")
+    assert action.skipped == (("alpha-b", "outbox empty"),)
     assert action.mode == "parallel"
-    assert action.label == "Clear outbox… (1)"
+    assert action.label == "Clear outbox… (2)"
     assert bulk.BULK_KEYS[action.verb] == "X"
     assert action.verb in bulk.TUI_ONLY_VERBS
     assert action.verb not in bulk.DETACHED_MENU_VERBS
     verbs = [a.verb for a in bulk.bulk_actions(groups, ["alpha-a"])]
     assert verbs[-2:] == ["outbox clear", "destroy"]
     assert bulk.BULK_VERBS.index("outbox clear") == bulk.BULK_VERBS.index("rename --clear") + 1
+
+
+def test_an_empty_stopped_outbox_is_skipped_as_empty_not_as_not_running(tmp_path):
+    empty = replace(ci("alpha-a", "alpha", "Stopped"), outbox_pr=0, outbox_issue=0)
+
+    action = bulk.plan_bulk([_group(tmp_path, empty)], ["alpha-a"], "outbox clear")
+
+    assert action.skipped == (("alpha-a", "outbox empty"),)
+
+
+def test_a_stopped_outbox_with_an_unknown_count_is_not_called_empty(tmp_path):
+    action = bulk.plan_bulk(
+        [_group(tmp_path, ci("alpha-a", "alpha", "Stopped"))], ["alpha-a"], "outbox clear"
+    )
+
+    assert action.skipped == (("alpha-a", "outbox count unknown"),)
+
+
+def test_outbox_clear_lines_count_a_stopped_row_from_the_store(tmp_path):
+    stopped = replace(ci("alpha-a", "alpha", "Stopped"), outbox_pr=1, outbox_issue=2)
+
+    assert bulk.outbox_clear_lines([_group(tmp_path, stopped)], ["alpha-a"]) == (
+        "alpha-a: 3 manifests (1 PR, 2 issue)",
+    )
 
 
 def test_outbox_clear_argv_confirms_itself():

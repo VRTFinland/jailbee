@@ -75,6 +75,7 @@ if TYPE_CHECKING:
     from jailbee.dashboard.bulk import BulkAction
     from jailbee.dashboard.model import RepoGroup
     from jailbee.dashboard.outbox import SentItem
+    from jailbee.destroy_guard import RiskSummary
     from jailbee.lifecycle import ContainerInfo
     from jailbee.state_service.protocol import Snapshot
 
@@ -335,9 +336,8 @@ class AppController(QObject):
         one from `_warn_before_destroy` is bypassed here by construction.
         "No" (decline) is the default button.
         """
-        from jailbee.config import load_repo_config
         from jailbee.destroy_guard import (
-            assess,
+            outbox_risk,
             status_is_unknown,
             unknown_status_warning,
         )
@@ -354,22 +354,15 @@ class AppController(QObject):
                 # front-end asked. A mount-mode container is deliberately not
                 # "unknown" — see `status_is_unknown`.
                 detail = f"\n\n{unknown_status_warning([container.display_name])}."
-            elif container.git_status is not None:
-                try:
-                    # From the repo root, not a config path: a repo with no
-                    # config file still has a config — the synthesized one the
-                    # dashboard is already displaying — and the guard has to
-                    # see the same one.
-                    summary = assess(load_repo_config(target.repo_root), container)
-                except Exception:
-                    # An unreadable repo config must not block the GUI — the
-                    # guard degrades to "no risk shown", same as an unprobed
-                    # container — but the failure should still be discoverable
-                    # rather than vanishing silently.
-                    log.debug("destroy guard: could not assess %s", target.repo_root, exc_info=True)
-                    summary = None
-                if summary is not None:
-                    detail = f"\n\n⚠  {summary.line}\nDestroying loses this."
+            summary: RiskSummary | None
+            if container.git_status is None:
+                # Unprobed (stopped, mount mode): its outbox proposals still
+                # live in the host store and are counted whatever its state.
+                summary = outbox_risk(container)
+            else:
+                summary = self._assess_probed(target, container)
+            if summary is not None:
+                detail += f"\n\n⚠  {summary.line}\nDestroying loses this."
 
         question = confirm_text(verb, name, container.base_branch)
         reply = QMessageBox.question(
@@ -380,6 +373,24 @@ class AppController(QObject):
             QMessageBox.StandardButton.No,
         )
         return reply == QMessageBox.StandardButton.Yes
+
+    @staticmethod
+    def _assess_probed(target: RepoTarget, container: ContainerInfo) -> RiskSummary | None:
+        """``destroy_guard.assess`` with the repo's config; None if unreadable."""
+        from jailbee.config import load_repo_config
+        from jailbee.destroy_guard import assess
+
+        try:
+            # From the repo root, not a config path: a repo with no config
+            # file still has a config — the synthesized one the dashboard is
+            # already displaying — and the guard has to see the same one.
+            return assess(load_repo_config(target.repo_root), container)
+        except Exception:
+            # An unreadable repo config must not block the GUI — the guard
+            # degrades to "no risk shown", same as an unprobed container — but
+            # the failure should still be discoverable rather than vanishing.
+            log.debug("destroy guard: could not assess %s", target.repo_root, exc_info=True)
+            return None
 
     def _collect_answers(
         self, verb: str, name: str, group: RepoGroup, container: ContainerInfo | None

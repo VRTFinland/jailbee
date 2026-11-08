@@ -121,6 +121,37 @@ def _nothing_measurable(status: GitStatus) -> bool:
     )
 
 
+# A store read failed: the proposals a destroy deletes could not be counted.
+_OUTBOX_UNREADABLE_REASON = "outbox state could not be read (staged actions may be lost)"
+
+
+def _outbox_reasons(ci: ContainerInfo) -> list[str]:
+    """What a destroy would drop from the host outbox store.
+
+    The row's own store counts (``ci.outbox_pr`` / ``outbox_issue``) exist for
+    every container, probed or not, and win; the probe's copy on
+    ``git_status`` is the fallback. A count that is still None while the
+    container's uuid is known means the store read failed
+    (``lifecycle._issue_count``): that is named, never passed as "nothing
+    staged". A row without a uuid was never looked up, and stays silent.
+    """
+    status = ci.git_status
+    pr = ci.outbox_pr
+    issue = ci.outbox_issue
+    if pr is None and status is not None:
+        pr = status.pending_pr_actions
+    if issue is None and status is not None:
+        issue = status.pending_issue_actions
+    reasons: list[str] = []
+    if ci.uuid and (pr is None or issue is None):
+        reasons.append(_OUTBOX_UNREADABLE_REASON)
+    if pr:
+        reasons.append(f"{pr} unapplied PR action{'s' if pr != 1 else ''}")
+    if issue:
+        reasons.append(f"{issue} unapplied issue action{'s' if issue != 1 else ''}")
+    return reasons
+
+
 @dataclass(frozen=True)
 class RiskSummary:
     """What a destroy would discard, and how to say it in one line."""
@@ -133,13 +164,26 @@ class RiskSummary:
         return f"{self.container}: " + " · ".join(self.reasons)
 
 
+def outbox_risk(ci: ContainerInfo) -> RiskSummary | None:
+    """What a destroy would drop from the host outbox store alone, or None.
+
+    Needs no config: it is :func:`assess` for a row whose git state is not
+    measured (stopped, mount mode), so a front-end need not load the repo
+    config just to warn about staged proposals.
+    """
+    reasons = _outbox_reasons(ci)
+    return RiskSummary(container=ci.display_name, reasons=tuple(reasons)) if reasons else None
+
+
 def assess(cfg: Config, ci: ContainerInfo) -> RiskSummary | None:
     """Summarise what destroying ``ci`` would lose, or None when nothing would.
 
-    ``None`` also comes back when ``ci.git_status`` is None — the container
-    was never probed (stopped containers aren't) or the probe was skipped,
-    so nothing is *knowable*. Callers must not read that as safety: they
-    show their normal confirmation plus a note that git status is unknown.
+    ``None`` also comes back when ``ci.git_status`` is None and the host
+    outbox store holds nothing for the container — it was never probed
+    (stopped containers aren't) or the probe was skipped, so its git state is
+    not *knowable*. Callers must not read that as safety: they show their
+    normal confirmation plus a note that git status is unknown. The outbox
+    counts are host-side and assessed for every container, probed or not.
 
     That contract does **not** extend to a container that *was* probed but
     came back with no usable signal at all (every field unmeasured — a
@@ -149,10 +193,15 @@ def assess(cfg: Config, ci: ContainerInfo) -> RiskSummary | None:
     """
     status = ci.git_status
     if status is None:
-        return None
+        # Git state unmeasured, but the outbox lives in the host store and is
+        # counted for every container, whatever its state or mount mode.
+        return outbox_risk(ci)
 
     if _nothing_measurable(status):
-        return RiskSummary(container=ci.display_name, reasons=(_NOTHING_MEASURABLE_REASON,))
+        return RiskSummary(
+            container=ci.display_name,
+            reasons=(_NOTHING_MEASURABLE_REASON, *_outbox_reasons(ci)),
+        )
 
     reasons: list[str] = []
 
@@ -161,21 +210,10 @@ def assess(cfg: Config, ci: ContainerInfo) -> RiskSummary | None:
 
     reasons.extend(_submodule_reason(sub) for sub in status.submodules)
 
-    # The outbox lives in the container's own filesystem, so a destroy takes
-    # any written-but-unpublished review with it. Deliberately generic: the
-    # count is manifests, which may hold comments, a description for
-    # `jailbee pr`, or both — the guard's job is to say something would be
-    # lost, not to itemise it.
-    pending = status.pending_pr_actions
-    if pending:
-        reasons.append(f"{pending} unapplied PR action{'s' if pending != 1 else ''}")
-
-    # Same rationale, for staged issue proposals in the host outbox store.
-    pending_issues = status.pending_issue_actions
-    if pending_issues:
-        reasons.append(
-            f"{pending_issues} unapplied issue action{'s' if pending_issues != 1 else ''}"
-        )
+    # Staged proposals live in the host outbox store, and a destroy deletes
+    # them. Deliberately generic: the count is manifests, which may hold
+    # comments, a description for `jailbee pr`, or both.
+    reasons.extend(_outbox_reasons(ci))
 
     # Commits are only at risk when they exist nowhere else: not on the
     # host (any earlier `jailbee git pull` put them there) and not behind a

@@ -27,10 +27,18 @@ connection's input buffer; snapshot and executor requests do not use these
 slots. The bounded global worker queue still answers ``BUSY`` when full.
 
 While a connection is held back its socket is still read, so a
-disconnect is noticed, until a line's worth is buffered (``wire.MAX_LINE_BYTES``,
-or ``wire.OUTBOX_MAX_LINE_BYTES`` for an ``outbox.put``); then reading pauses
-too. A pipelining client therefore costs bounded memory and never has more
-than one event ahead of another container's request.
+disconnect is noticed, until a line's worth is buffered (``wire.MAX_LINE_BYTES``);
+then reading pauses too. A pipelining client therefore costs bounded memory and
+never has more than one event ahead of another container's request.
+
+Only an ``outbox.put`` may grow to ``wire.OUTBOX_MAX_LINE_BYTES``, and only
+one per container at a time: its line takes the container's outbox slot when
+its head is seen and keeps it while buffered, queued or in flight, until it
+is answered or released (or, still unread, its connection drops). Another
+put of the same container waits held, at most ``wire.MAX_LINE_BYTES``
+buffered. A put from a role that may not stage (`Queries.put_refusal`: a
+child, or ``none``) is answered from the line's head; the rest of the line is
+skipped unbuffered and never decoded.
 
 Stopping the listener leaves the socket files in place, so clients get
 ECONNREFUSED while the broker is down; only :meth:`Listener.close_container`
@@ -112,11 +120,23 @@ class _Conn:
     close_after_flush: bool = False
     in_flight: bool = False
     store_held: bool = False
+    # The line at the head of ``inbuf`` is an outbox put holding its
+    # container's outbox slot (it may grow to the outbox cap).
+    slot_line: bool = False
+    # Bytes of a refused put line skipped so far; None when not skipping.
+    discarding: int | None = None
+    discard_reply: bytes = b""
+
+
+def _put_head(conn: _Conn) -> bool:
+    """Whether the line at the head of ``conn``'s buffer is an outbox put."""
+    return wire.request_line_limit(bytes(conn.inbuf[:64])) == wire.OUTBOX_MAX_LINE_BYTES
 
 
 def _line_limit(conn: _Conn) -> int:
-    """The cap for the line at the head of ``conn``'s buffer (an outbox put gets more)."""
-    return wire.request_line_limit(bytes(conn.inbuf[:64]))
+    """The cap for the line at the head of ``conn``'s buffer: an outbox put
+    gets the outbox cap only while it holds its container's outbox slot."""
+    return wire.OUTBOX_MAX_LINE_BYTES if conn.slot_line else wire.MAX_LINE_BYTES
 
 
 def _prepare_dir(sock_dir: Path) -> bool:
@@ -177,6 +197,9 @@ class Listener:
         self._inflight: dict[str, int] = {}
         self._store_queries: dict[str, int] = {}  # queued or running, listener-owned
         self._store_pending: set[int] = set()  # request classification survives disconnects
+        # uuid -> the connection whose outbox put is buffered, queued or in
+        # flight: one outbox-cap line per container at a time.
+        self._outbox_slots: dict[str, int] = {}
         self._live: set[int] = set()  # open connection ids (under _lock)
         self._thread: threading.Thread | None = None
         self._running = False
@@ -222,6 +245,7 @@ class Listener:
         self._query_pending.clear()
         self._store_queries.clear()
         self._store_pending.clear()
+        self._outbox_slots.clear()
         for s in (self._wake_r, self._wake_w):
             with contextlib.suppress(OSError):
                 s.close()
@@ -536,6 +560,10 @@ class Listener:
             return
         if conn.close_after_flush:
             return
+        if conn.discarding is not None:
+            data = self._discard(conn, data)
+            if conn.conn_id not in self._conns or conn.close_after_flush:
+                return
         conn.inbuf += data
         self._parse(conn)
 
@@ -544,6 +572,8 @@ class Listener:
         return (
             conn.in_flight
             or conn.close_after_flush
+            or conn.discarding is not None
+            or (not conn.slot_line and conn.uuid in self._outbox_slots and _put_head(conn))
             or len(conn.outbuf) > OUTBUF_CAP
             or self._inflight.get(conn.uuid, 0) >= MAX_INFLIGHT_PER_CONTAINER
             or (
@@ -555,12 +585,28 @@ class Listener:
     def _parse(self, conn: _Conn) -> None:
         """Queue the next complete request line unless the connection is held."""
         while not self._held(conn):
+            if not conn.slot_line and _put_head(conn):
+                refusal = self._queries.put_refusal(conn.uuid) if self._queries else None
+                if refusal is not None:
+                    # Answer from the line's head; skip the rest unbuffered.
+                    conn.discarding = 0
+                    conn.discard_reply = wire.encode_response(refusal)
+                    rest = self._discard(conn, bytes(conn.inbuf))
+                    conn.inbuf.clear()
+                    if conn.conn_id not in self._conns or conn.close_after_flush:
+                        return
+                    conn.inbuf += rest
+                    continue
+                # Not held, so the container's outbox slot is free.
+                self._outbox_slots[conn.uuid] = conn.conn_id
+                conn.slot_line = True
             limit = _line_limit(conn)
             nl = conn.inbuf.find(b"\n")
             if nl < 0:
                 if len(conn.inbuf) >= limit:
                     self._oversize(conn, limit)
-                return
+                    return
+                break  # read on: a slot just taken may have raised the limit
             if nl + 1 > limit:
                 self._oversize(conn, limit)
                 return
@@ -569,6 +615,7 @@ class Listener:
                 request = wire.decode_request(line, max_bytes=limit)
             except wire.WireError as exc:
                 del conn.inbuf[: nl + 1]
+                self._release_slot_line(conn)
                 self._send(conn.conn_id, wire.encode_response(wire.fail(exc.code, exc.detail)))
                 if conn.conn_id not in self._conns:
                     return  # dropped while replying (e.g. EPIPE)
@@ -588,6 +635,8 @@ class Listener:
                 return
             conn.store_held = False
             del conn.inbuf[: nl + 1]
+            # A dispatched put keeps the slot until it is answered or released.
+            conn.slot_line = False
             if store_query:
                 self._store_pending.add(conn.conn_id)
                 self._store_queries[conn.uuid] = self._store_queries.get(conn.uuid, 0) + 1
@@ -610,10 +659,43 @@ class Listener:
 
     def _oversize(self, conn: _Conn, limit: int) -> None:
         conn.inbuf.clear()
+        conn.discarding = None
+        self._release_slot_line(conn)
         detail = f"line exceeds {limit} bytes"
         self._send(
             conn.conn_id, wire.encode_response(wire.fail(wire.BAD_REQUEST, detail)), close=True
         )
+
+    def _discard(self, conn: _Conn, data: bytes) -> bytes:
+        """Skip ``data`` of a refused put line; at its end send the refusal.
+
+        Returns the bytes after the line (empty while it continues). A line
+        longer than the outbox cap is cut off as oversize, as if buffered.
+        """
+        assert conn.discarding is not None
+        nl = data.find(b"\n")
+        skipped = conn.discarding + (len(data) if nl < 0 else nl + 1)
+        if skipped > wire.OUTBOX_MAX_LINE_BYTES or (
+            nl < 0 and skipped >= wire.OUTBOX_MAX_LINE_BYTES
+        ):
+            self._oversize(conn, wire.OUTBOX_MAX_LINE_BYTES)
+            return b""
+        if nl < 0:
+            conn.discarding = skipped
+            return b""
+        conn.discarding = None
+        reply, conn.discard_reply = conn.discard_reply, b""
+        self._send(conn.conn_id, reply)
+        return data[nl + 1 :]
+
+    def _release_slot_line(self, conn: _Conn) -> None:
+        """Free the outbox slot held by ``conn``'s undispatched head line."""
+        if not conn.slot_line:
+            return
+        conn.slot_line = False
+        if self._outbox_slots.get(conn.uuid) == conn.conn_id:
+            del self._outbox_slots[conn.uuid]
+            self._resume(conn.uuid, skip=conn.conn_id)
 
     def _reply(self, conn_id: int, data: bytes) -> None:
         """Send the answer to the request in flight, then take the next one."""
@@ -643,12 +725,22 @@ class Listener:
             self._inflight[uuid] = left
         else:
             self._inflight.pop(uuid, None)
+        if self._outbox_slots.get(uuid) == conn_id:
+            conn = self._conns.get(conn_id)
+            if conn is None or not conn.slot_line:  # the answered put's slot
+                del self._outbox_slots[uuid]
+        self._resume(uuid)
+
+    def _resume(self, uuid: str, skip: int | None = None) -> None:
+        """Take the next request from ``uuid``'s connections a freed budget unblocks."""
         server = self._servers.get(uuid)
         if server is None:
             return
         for other_id in sorted(server.conns):
             if self._inflight.get(uuid, 0) >= MAX_INFLIGHT_PER_CONTAINER:
                 return
+            if other_id == skip:
+                continue
             other = self._conns.get(other_id)
             if other is not None and other.inbuf and not self._held(other):
                 self._parse(other)
@@ -709,6 +801,9 @@ class Listener:
             conn.sock.close()
         with self._lock:
             self._live.discard(conn_id)
+        # An unfinished put line frees the slot now; a dispatched one keeps it
+        # until it is answered or released (`_finish`).
+        self._release_slot_line(conn)
         # Only a request still in flight (perhaps a parked long-poll) needs the
         # executor to hear of the disconnect; its budget stays taken until the
         # executor answers or releases it.

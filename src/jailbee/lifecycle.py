@@ -107,6 +107,11 @@ class ContainerInfo:
     git_status: GitStatus | None = None
     # Incus volatile.uuid, the key of the host outbox store; set by `list_containers`.
     uuid: str | None = None
+    # Staged proposals per kind read from the host outbox store, whatever the
+    # container's state or mount mode (`git_status` is None for stopped and
+    # mount rows). None = not read or unreadable, never zero.
+    outbox_pr: int | None = None
+    outbox_issue: int | None = None
     job_live: bool = False
     # Outbox "Sent" log records of this container's current incarnation; set by
     # the state service's gatherer (never by `list_containers`), 0 = none.
@@ -736,6 +741,8 @@ def list_containers(
             )
             if status is None and unread:
                 status = GitStatus("?", "?", "?", "?")
+            c.outbox_issue = _issue_count(issue_counts, uuid)
+            c.outbox_pr = _issue_count(pr_counts, uuid)
             if status is not None:
                 status = replace(status, unread_inbox=unread)
                 status = replace(status, pending_issue_actions=_issue_count(issue_counts, uuid))
@@ -831,13 +838,14 @@ def _issue_count(counts: dict[str, int] | None, uuid: object) -> int | None:
 def stamp_issue_outbox(ci: ContainerInfo) -> None:
     """Set the issue count of ``ci.git_status`` from the host outbox store.
 
-    For callers that probe one container themselves (the destroy guard). A
-    container never probed keeps ``git_status`` None.
+    For callers that probe one container themselves (the destroy guard). The
+    count is also kept on ``ci.outbox_issue``, so a container never probed
+    (stopped, mount mode) keeps ``git_status`` None but is still counted.
     """
+    count = _issue_count(issue_outbox_counts(), ci.uuid)
+    ci.outbox_issue = count
     if ci.git_status is not None:
-        ci.git_status = replace(
-            ci.git_status, pending_issue_actions=_issue_count(issue_outbox_counts(), ci.uuid)
-        )
+        ci.git_status = replace(ci.git_status, pending_issue_actions=count)
 
 
 def pr_outbox_counts() -> dict[str, int] | None:
@@ -855,10 +863,10 @@ def pr_outbox_counts() -> dict[str, int] | None:
 
 def stamp_pr_outbox(ci: ContainerInfo) -> None:
     """Replace the probed PR proposal count of ``ci.git_status`` with the store's."""
+    count = _issue_count(pr_outbox_counts(), ci.uuid)
+    ci.outbox_pr = count
     if ci.git_status is not None:
-        ci.git_status = replace(
-            ci.git_status, pending_pr_actions=_issue_count(pr_outbox_counts(), ci.uuid)
-        )
+        ci.git_status = replace(ci.git_status, pending_pr_actions=count)
 
 
 def annotate_activity(containers: Sequence[ContainerInfo], sampler: ActivitySampler) -> None:
