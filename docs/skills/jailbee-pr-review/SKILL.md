@@ -23,13 +23,13 @@ container), and a human on the host reviews and publishes it later with
 
 An orchestrator with `publish.pr_reviews` in the output of
 `jailbee inbox grant` stages normally, then runs
-`jailbee inbox send publish --pr NAME.json --wait` instead of asking the human
-to apply it. Comments and replies may target review-bound PRs in the own
+`jailbee inbox send publish --pr NAME.json --wait --until done --json` instead
+of asking the human to apply it. Comments and replies may target review-bound PRs in the own
 repository; description rewrites additionally require an authored, non-adopted
 source-PR binding. No foreign PR, submodule or force override. Source PR manifests instead need
 `publish.pull_requests` and the own-branch restrictions described by
-`jailbee-orchestration`. `started` is acceptance, not success: read the final
-status for its ref and use the returned URLs. An uncertain result requires
+`jailbee-orchestration`. Without `--until done`, `--wait` returns at `started`,
+which is acceptance, not success; the final status carries the returned URLs. An uncertain result requires
 human resolution with `jb outbox` on the host, never automatic retry.
 Without the right, keep the human handoff. Children never publish.
 

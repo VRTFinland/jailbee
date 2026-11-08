@@ -24,9 +24,10 @@ itself.
 An orchestrator whose `jailbee inbox grant` output has matching
 `publish.issues` (own repo/submodules), or `publish.foreign_issues` (listed
 repos and kinds), stages normally and then runs
-`jailbee inbox send publish --issue NAME.json --wait` instead of asking the
-human to apply it. `started` is acceptance, not success: read the final status
-for the printed ref and use its issue numbers/URLs. An uncertain outcome must
+`jailbee inbox send publish --issue NAME.json --wait --until done --json`
+instead of asking the human to apply it. Without `--until done`, `--wait`
+returns at `started`, which is acceptance, not success; the final status
+(`done` or `failed`) carries the issue numbers/URLs. An uncertain outcome must
 be resolved by the human through `jb outbox` on the host, never retried
 automatically. Without coverage, keep the human handoff. Children never publish.
 
