@@ -1,5 +1,6 @@
 """Smoke tests for CLI invocation."""
 
+import os
 import subprocess
 from datetime import UTC
 from pathlib import Path
@@ -2207,7 +2208,7 @@ def test_start_without_name_auto_picks(mocker, tmp_path):
         "myrepo-feat-only",
         ["jailbee", "_agent-snapshot", "--boot"],
         max_bytes=65536,
-        uid=53023,
+        uid=os.getuid(),
         timeout=15,
     )
 

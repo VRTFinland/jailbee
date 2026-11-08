@@ -79,8 +79,16 @@ def broker(sockdir: Path) -> Iterator[FakeBroker]:
 def run(
     sockdir: Path, *args: str, tmp: Path, input_: str | None = None
 ) -> subprocess.CompletedProcess[str]:
+    # The child process does not see conftest's in-process Typer patch, so a CI
+    # runner's GITHUB_ACTIONS would force Rich terminal output (ANSI codes,
+    # 80-column wrapping) and split the error text the tests assert on.
+    inherited = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in {"GITHUB_ACTIONS", "FORCE_COLOR", "PY_COLORS", "CLICOLOR_FORCE"}
+    }
     env = {
-        **os.environ,
+        **inherited,
         "JAILBEE_ORCHESTRATION_SOCKET": str(sockdir / "broker.sock"),
         "JAILBEE_ORCHESTRATION_DIR": str(tmp / "nofiles"),
         "JAILBEE_LITELLM_CONFIG": str(tmp / "none.json"),
