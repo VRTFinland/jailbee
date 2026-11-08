@@ -12005,12 +12005,8 @@ def test_child_creation_writes_marker_instead_of_github_outboxes(make_cfg, tmp_p
     argv = list(marker_calls[0].args[1])
     marker = tmp_path / "home/dev/.jailbee/orchestration/role"
     argv[-1] = str(marker)
-    pid = os.fork()
-    if pid == 0:
-        try:
-            os.execvp(argv[0], argv)
-        finally:
-            os._exit(127)
+    # posix_spawnp, not fork+exec: os.fork() warns in a multi-threaded process.
+    pid = os.posix_spawnp(argv[0], argv, os.environ)
     _, status = os.waitpid(pid, 0)
     assert os.waitstatus_to_exitcode(status) == 0
     assert marker.read_text() == "child\n"
