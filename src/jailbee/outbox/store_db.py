@@ -428,6 +428,11 @@ class OutboxStore:
                 )
                 con.execute("DELETE FROM outbox_proposal WHERE uuid=? AND kind=? AND name=?", key)
             else:
+                # The new manifest is a new digest: an `uncertain` Sent row left
+                # by an action of the old one resolved for retry can no longer be
+                # replaced by a retry or resolved, so it goes now (before the
+                # update, while the stored digest is still the old one).
+                publication_db.forget_dropped_sent(con, uuid, kind, name)
                 con.execute(
                     "UPDATE outbox_proposal SET manifest=?, revision=revision+1 "
                     "WHERE uuid=? AND kind=? AND name=?",
@@ -437,11 +442,15 @@ class OutboxStore:
 
     def delete_container(self, uuid: str) -> int:
         """Destroy semantics: delete the uuid's pending proposals (with bodies) and
-        drafts. Journals and sent records are never touched. A proposal whose
+        drafts. Journals and applied sent records are never touched; the
+        `uncertain` sent rows of a deleted proposal (left by actions resolved for
+        retry) are forgotten, as on a drop. A proposal whose
         active journal holds an uncertain (or leftover prepared) action is kept
         with its bodies, so it stays resolvable in ``jb outbox`` after the
         container is gone (`read_retained`). Returns the number of proposals deleted.
         """
+        from jailbee.outbox import publication_db
+
         with self._store.transaction() as con:
             kept = {
                 (str(kind), str(name))
@@ -451,6 +460,10 @@ class OutboxStore:
                 "SELECT kind, name FROM outbox_proposal WHERE uuid=?", (uuid,)
             ).fetchall()
             doomed = [(uuid, str(k), str(n)) for k, n in rows if (str(k), str(n)) not in kept]
+            # Same as a drop: a deleted proposal's actions resolved for retry
+            # would otherwise leave their `uncertain` Sent rows forever.
+            for _uuid, kind, name in doomed:
+                publication_db.forget_dropped_sent(con, uuid, kind, name)
             con.executemany(
                 "DELETE FROM outbox_body WHERE uuid=? AND kind=? AND proposal_name=?", doomed
             )

@@ -185,6 +185,18 @@ def _offered(
     }
 
 
+def _outbox_store_counts(container: ContainerInfo) -> tuple[int | None, int | None]:
+    """(PR, issue) proposals in the host store; the row's counts win over the probe's."""
+    git = container.git_status
+    pr = container.outbox_pr
+    issue = container.outbox_issue
+    if pr is None and git is not None:
+        pr = git.pending_pr_actions
+    if issue is None and git is not None:
+        issue = git.pending_issue_actions
+    return pr, issue
+
+
 def _skip_reason(container: ContainerInfo | None, verb: str) -> str:
     """Why a container's menu does not offer ``verb``, in a few words."""
     if container is None:
@@ -198,10 +210,13 @@ def _skip_reason(container: ContainerInfo | None, verb: str) -> str:
         return "already running" if state == "Running" else state.lower()
     if verb in _GIT_VERBS and container.mode == "mount":
         return "mount mode"
+    if verb == "outbox clear" and state in ("Running", "Stopped"):
+        # The outbox is host-side: a stopped container's is offered too, so
+        # only its count can be why it is not.
+        pr, issue = _outbox_store_counts(container)
+        return "outbox empty" if (pr, issue) == (0, 0) else "outbox count unknown"
     if state != "Running":
         return "already stopped" if verb == "stop" and state == "Stopped" else "not running"
-    if verb == "outbox clear":
-        return "outbox empty"
     if verb.startswith("net "):
         return f"already {container.network}"
     if verb == "git pull":
@@ -373,15 +388,20 @@ class BulkBatch:
 
 
 def outbox_clear_lines(groups: Sequence[RepoGroup], names: Sequence[str]) -> tuple[str, ...]:
-    """The probed manifest counts per store, in the requested container order."""
+    """The host store's manifest counts per outbox, in the requested container order.
+
+    Stopped and mount rows count too: their ``git_status`` is None, but the
+    row carries the store counts. A row with neither count known is left out.
+    """
     lines: list[str] = []
     for name in names:
         container = _container(groups, name)
-        if container is None or container.git_status is None:
+        if container is None:
             continue
-        status = container.git_status
-        pr = status.pending_pr_actions or 0
-        issue = status.pending_issue_actions or 0
+        counts = _outbox_store_counts(container)
+        if counts == (None, None):
+            continue
+        pr, issue = (n or 0 for n in counts)
         lines.append(f"{name}: {pr + issue} manifests ({pr} PR, {issue} issue)")
     return tuple(lines)
 
@@ -395,7 +415,12 @@ def destroy_risk_lines(groups: Sequence[RepoGroup], names: Sequence[str]) -> tup
     config degrades to "no risk shown", as in the Qt dialog.
     """
     from jailbee.config import load_repo_config
-    from jailbee.destroy_guard import assess, status_is_unknown, unknown_status_warning
+    from jailbee.destroy_guard import (
+        assess,
+        outbox_risk,
+        status_is_unknown,
+        unknown_status_warning,
+    )
 
     lines: list[str] = []
     unknown: list[str] = []
@@ -407,8 +432,12 @@ def destroy_risk_lines(groups: Sequence[RepoGroup], names: Sequence[str]) -> tup
             continue
         if status_is_unknown(container):
             unknown.append(container.name)
-            continue
         if container.git_status is None:
+            # Unprobed (stopped, mount mode): its outbox proposals still live
+            # in the host store and are counted whatever its state or mode.
+            outbox = outbox_risk(container)
+            if outbox is not None:
+                lines.append(f"⚠ {outbox.line}")
             continue
         if group.prefix not in configs:
             try:

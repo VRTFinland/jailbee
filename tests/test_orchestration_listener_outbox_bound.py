@@ -19,7 +19,7 @@ import pytest
 
 from jailbee.container_outbox.role import CHILD_REFUSAL
 from jailbee.orchestration import wire
-from jailbee.orchestration.listener import Event, Listener
+from jailbee.orchestration.listener import Event, Listener, RequestEvent
 from jailbee.orchestration.query import ContainerSnapshot, Queries
 from jailbee.orchestration.store import BrokerStore
 
@@ -115,6 +115,10 @@ def test_a_second_outbox_put_waits_while_one_is_in_flight(short_dir: Path) -> No
 
 
 def test_a_dropped_partial_put_frees_the_slot(short_dir: Path) -> None:
+    # Fails when `_drop_conn` stops releasing an undispatched slot line (the
+    # second put then waits forever). Without slots at all it passes by
+    # construction; `test_a_second_outbox_put_waits_while_one_is_in_flight`
+    # is the one that proves the slot exists.
     lis, _ = _listener(short_dir, "plain", lambda uuid, request: wire.ok({"name": "001-a.json"}))
     partial = _connect(short_dir / "u")
     whole = _connect(short_dir / "u")
@@ -177,6 +181,18 @@ def test_a_non_writer_put_past_the_outbox_cap_is_cut_off(short_dir: Path) -> Non
     head = _put(bodies={"b": ""})[:40]
     blob = head + b"z" * (wire.OUTBOX_MAX_LINE_BYTES + _SLACK)
     sent = 0
+    # Buffering the line first would also end in the oversize reply; only the
+    # peak buffer tells the skipped line from a buffered one.
+    peak = [0]
+    stop = threading.Event()
+
+    def watch() -> None:
+        while not stop.is_set():
+            peak[0] = max(peak[0], _max_inbuf(lis))
+            time.sleep(0.005)
+
+    watcher = threading.Thread(target=watch)
+    watcher.start()
     try:
         deadline = time.monotonic() + 5
         while sent < len(blob) and time.monotonic() < deadline:
@@ -190,5 +206,97 @@ def test_a_non_writer_put_past_the_outbox_cap_is_cut_off(short_dir: Path) -> Non
         resp = wire.decode_response(_recv_line(c))
         assert resp.error_code == wire.BAD_REQUEST
     finally:
+        stop.set()
+        watcher.join(5)
         c.close()
+        lis.stop()
+    assert peak[0] < wire.MAX_LINE_BYTES
+
+
+def _slots(lis: Listener) -> dict[str, int]:
+    box: list[dict[str, int]] = []
+    lis._call(lambda: box.append(dict(lis._outbox_slots)))
+    return box[0]
+
+
+def _conn_count(lis: Listener) -> int:
+    box: list[int] = []
+    lis._call(lambda: box.append(len(lis._conns)))
+    return box[0]
+
+
+def test_the_outbox_slot_is_freed_after_a_busy_reply(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lis, _ = _listener(short_dir, "plain", lambda uuid, request: wire.ok({"name": "001-a.json"}))
+    real_put = lis._query_queue.put_nowait
+    full = [True]
+
+    def put_nowait(event: RequestEvent) -> None:
+        if full[0]:
+            full[0] = False
+            raise queue.Full
+        real_put(event)
+
+    monkeypatch.setattr(lis._query_queue, "put_nowait", put_nowait)
+    first, second = _connect(short_dir / "u"), _connect(short_dir / "u")
+    try:
+        first.sendall(_put(bodies={"b": "x"}))
+        assert wire.decode_response(_recv_line(first)).error_code == wire.BUSY
+        assert _slots(lis) == {}
+        second.sendall(_put(bodies={"b": _BIG}))
+        assert wire.decode_response(_recv_line(second)).ok
+    finally:
+        first.close()
+        second.close()
+        lis.stop()
+
+
+def test_the_outbox_slot_is_freed_after_a_decode_error(short_dir: Path) -> None:
+    lis, _ = _listener(short_dir, "plain", lambda uuid, request: wire.ok({"name": "001-a.json"}))
+    bad, good = _connect(short_dir / "u"), _connect(short_dir / "u")
+    try:
+        # A put head (so it takes the slot) whose line is not valid JSON.
+        bad.sendall(_put(bodies={"b": "x"})[:40] + b"\x00 not json\n")
+        assert wire.decode_response(_recv_line(bad)).error_code == wire.BAD_REQUEST
+        assert _slots(lis) == {}
+        good.sendall(_put(bodies={"b": _BIG}))
+        assert wire.decode_response(_recv_line(good)).ok
+    finally:
+        bad.close()
+        good.close()
+        lis.stop()
+
+
+def test_a_dispatched_put_keeps_the_slot_past_its_drop_until_answered(short_dir: Path) -> None:
+    entered, unblock = threading.Event(), threading.Event()
+    seen: list[int] = []
+
+    def answer(uuid: str, request: wire.Request) -> wire.Response:
+        seen.append(1)
+        if len(seen) == 1:
+            entered.set()
+            assert unblock.wait(10)
+        return wire.ok({"name": f"00{len(seen)}-a.json"})
+
+    lis, _ = _listener(short_dir, "plain", answer)
+    first, second = _connect(short_dir / "u"), _connect(short_dir / "u")
+    try:
+        first.sendall(_put(bodies={"b": "x"}))
+        assert entered.wait(5)
+        first.close()  # dropped while its put is being answered
+        _wait_until(lambda: _conn_count(lis) == 1)
+        assert len(_slots(lis)) == 1
+        sender = threading.Thread(target=second.sendall, args=(_put(bodies={"b": _BIG}),))
+        sender.start()
+        time.sleep(0.3)
+        assert seen == [1]  # the dropped put still holds the container's slot
+        unblock.set()
+        # Answering the dropped put frees the slot for the waiting one.
+        assert wire.decode_response(_recv_line(second)).result == {"name": "002-a.json"}
+        sender.join(5)
+        _wait_until(lambda: _slots(lis) == {})
+    finally:
+        unblock.set()
+        second.close()
         lis.stop()

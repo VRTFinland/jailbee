@@ -81,6 +81,10 @@ def test_drop_keeps_applied_sent_rows(tmp_path: Path) -> None:
     digest = proposal_digest(put.name, put.manifest, put.bodies)
     ps = PublicationStore(store)
     ps.record_sent(_entry("issue", put.name, digest, 0), "applied", now=1.0)
+    # A sibling uncertain row of the same proposal: the drop must tell the two
+    # apart, so this test fails both when the forget is missing (the uncertain
+    # row stays) and when it is over-broad (the applied row goes).
+    ps.record_sent(_entry("issue", put.name, digest, 1), "uncertain", now=1.0)
 
     proposals.drop_proposal("u1", "issue", put.name)
 

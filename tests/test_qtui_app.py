@@ -1460,6 +1460,45 @@ def test_destroy_unknown_note_is_the_same_sentence_the_cli_prints(mocker, tmp_pa
     assert unknown_status_warning(["p-foo"]) in question.call_args.args[2]
 
 
+def test_destroy_stopped_container_names_its_staged_outbox_proposals(mocker, tmp_path):
+    """The outbox is host-side: an unprobed row still has counted proposals."""
+    controller = _controller_with_group(mocker, tmp_path)
+    ci = controller._latest[0].containers[0]
+    ci.state = "Stopped"
+    ci.git_status = None
+    ci.uuid = "u1"
+    ci.outbox_pr = 2
+    ci.outbox_issue = 0
+    question = mocker.patch(
+        "jailbee.qtui.app.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.No,
+    )
+
+    controller.on_action("destroy", "p-foo")
+
+    text = question.call_args.args[2]
+    assert "2 unapplied PR actions" in text
+    assert "unknown" in text.lower()
+
+
+def test_destroy_mount_mode_names_its_staged_outbox_proposals(mocker, tmp_path):
+    controller = _controller_with_group(mocker, tmp_path)
+    ci = controller._latest[0].containers[0]
+    ci.git_status = None
+    ci.mode = "mount"
+    ci.uuid = "u1"
+    ci.outbox_pr = 0
+    ci.outbox_issue = 1
+    question = mocker.patch(
+        "jailbee.qtui.app.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.No,
+    )
+
+    controller.on_action("destroy", "p-foo")
+
+    assert "1 unapplied issue action" in question.call_args.args[2]
+
+
 def test_destroy_mount_mode_gets_no_unknown_note(mocker, tmp_path):
     """A mount container's working tree is the host's and survives the
     destroy, so "may discard uncommitted work" would be provably false."""
