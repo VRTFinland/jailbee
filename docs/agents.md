@@ -106,7 +106,9 @@ is just an ordinary step. Generated steps normally follow your own
 the insertion point to the computed hand-off boundary.
 
 Every attach (`jailbee tmux`, `--attach tmux`, or the dashboard) opens its
-own tmux session grouped with `autostart` (`tmux new-session -t autostart`).
+own tmux session grouped with `autostart`
+(`tmux new-session -t autostart -c <repo_dir>`). New windows and splits
+start in the repository directory, not the attach client's working directory.
 The windows are shared, but each attached terminal has its own current
 window, so the dashboard and a second terminal no longer pull each other
 from window to window. The grouped session disappears when you detach.
