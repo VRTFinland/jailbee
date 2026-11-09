@@ -508,6 +508,65 @@ def _write_global(tmp_path, monkeypatch, global_yaml: str = ""):
     return xdg / "jailbee" / "global.yaml"
 
 
+def test_repo_disables_globally_enabled_github(tmp_path, monkeypatch, mocker):
+    _write_global(
+        tmp_path, monkeypatch, "github:\n  enabled: true\n  api_tokens:\n    myrepo: secret\n"
+    )
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    repo = _write_repo(tmp_path, name="myrepo", config_yaml="github: {enabled: false}\n")
+
+    cfg = load_config(repo / ".jailbee" / "config.yaml")
+
+    assert cfg.github.enabled is False
+
+
+@pytest.mark.parametrize(
+    "github",
+    [
+        "null",
+        "{}",
+        "true",
+        "false",
+        "[]",
+        "{token: secret}",
+        "{api_tokens: {myrepo: secret}}",
+        "{other: false}",
+        "{enabled: true}",
+        "{enabled: 0}",
+        "{enabled: null}",
+        "{enabled: 'false'}",
+        "{enabled: false, token: secret}",
+        "{enabled: false, api_tokens: {myrepo: secret}}",
+        "{enabled: false, other: false}",
+    ],
+)
+def test_repo_rejects_other_github_forms(tmp_path, monkeypatch, github):
+    _write_global(tmp_path, monkeypatch)
+    repo = _write_repo(tmp_path, name="myrepo", config_yaml=f"github: {github}\n")
+
+    with pytest.raises(ConfigError) as exc:
+        load_config(repo / ".jailbee" / "config.yaml")
+    assert "github: {enabled: false}" in str(exc.value)
+    assert "~/.config/jailbee/global.yaml" in str(exc.value)
+    assert "host-local" in str(exc.value)
+
+
+def test_repo_layer_accepts_github_disabled(tmp_path):
+    from jailbee.config.repo_layer import load_repo_layer
+
+    path = _make_config(tmp_path, "github: {enabled: false}\n")
+    assert load_repo_layer(path).github.enabled is False
+
+
+@pytest.mark.parametrize("github", ["null", "{enabled: 0}", "{enabled: false, token: secret}"])
+def test_repo_layer_rejects_unsafe_github_forms(tmp_path, github):
+    from jailbee.config.repo_layer import load_repo_layer
+
+    path = _make_config(tmp_path, f"github: {github}\n")
+    with pytest.raises(ConfigError, match=r"github: \{enabled: false\}"):
+        load_repo_layer(path)
+
+
 def test_container_prefix_defaults_to_repo_root_name(tmp_path, mocker):
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     repo = _write_repo(tmp_path, name="myrepo")
@@ -4974,10 +5033,10 @@ def test_load_config_from_layers_still_applies_the_repo_ban_list(tmp_path, mocke
     mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
     mocker.patch("jailbee.config.loader.detect_upstream_remote", return_value="origin")
 
-    with pytest.raises(ConfigError, match="`github` block is not allowed"):
+    with pytest.raises(ConfigError, match="github: \\{enabled: false\\}"):
         load_config_from_layers(
             {},
-            {"github": {"enabled": False}},
+            {"github": {"enabled": True}},
             tmp_path / "repo" / ".jailbee" / "config.yaml",
             origin="<staged>",
         )

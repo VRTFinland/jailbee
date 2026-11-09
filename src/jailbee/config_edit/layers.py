@@ -214,15 +214,16 @@ def disabled_reason(spec: FieldSpec, layer: LayerName) -> str | None:
     the reason next to it (spec 3.3). A silently missing setting reads as
     a bug; a disabled one with a reason reads as a rule.
 
-    `GLOBAL_ONLY_KEYS` is checked against `spec.path[0]`. Of its five
-    members, only `github` appears as a top-level key in `repo_specs()`;
-    the other four (`credentials`, `claude_credentials`, `credential_group`
-    and `claude_credentials_dir`) are either not `Config` fields at all or
-    are in `COMPUTED_FIELDS` so `build_specs` skips them. The set is kept
-    complete to mirror the ban list in `config/loader.py` exactly — a future
-    maintainer should not expect a sixth key to silence a repo-layer setting
-    that has no visible `repo_specs()` entry.
+    `GLOBAL_ONLY_KEYS` mirrors the loader's credential placement rules,
+    including computed and legacy names not shown by `repo_specs()`.
+    GitHub permits only the safe disabled exception at the repo layer.
     """
+    if layer == "repo" and spec.path[0] == "github" and spec.path[1:] != ("enabled",):
+        return (
+            "Only `github: {enabled: false}` is allowed in a repo config — "
+            "set api_tokens in ~/.config/jailbee/global.yaml and github.token "
+            "in the host-local per-repo file."
+        )
     if layer == "repo" and spec.path[0] in GLOBAL_ONLY_KEYS:
         return (
             f"`{spec.path[0]}` is host-local and is rejected in a repo config — "

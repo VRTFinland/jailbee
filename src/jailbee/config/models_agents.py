@@ -830,15 +830,17 @@ class GithubConfig(BaseModel):
 
     The token is per repo: `token`, in the host-local file. The deprecated
     `api_tokens` map may only be set in `~/.config/jailbee/global.yaml`.
-    `load_config` rejects this block in a repo's `.jailbee/config.yaml`
-    outright, since committing a repo file with a token would leak it.
+    A repo's committed `.jailbee/config.yaml` may only set `enabled: false`
+    to opt out; tokens and opt-in settings stay in the host-side layers.
     """
 
     model_config = ConfigDict(extra="forbid")
     enabled: bool = Field(
         default=False,
         description=(
-            "Master switch. Off by default; opt in via ~/.config/jailbee/global.yaml. When "
+            "Master switch. Off by default; opt in via ~/.config/jailbee/global.yaml. "
+            "A committed repo config may only set github: {enabled: false}, with no "
+            "other GitHub keys, to override the global switch for that repo. When "
             "false, jailbee skips the api.github.com strict-mode egress add, the GH_TOKEN "
             "autostart injection, and the github doctor checks. The gh binary itself is "
             "always installed in the golden image regardless."

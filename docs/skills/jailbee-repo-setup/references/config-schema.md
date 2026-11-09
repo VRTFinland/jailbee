@@ -38,7 +38,7 @@ Both files are deep-merged at load time. Repo wins on scalars, repo list appends
 | `agents` | dict of name → `{enabled, autostart, command, install, install_check, update, auto_update, install_network, shared, egress_allow, env, skills_dir, install_jailbee_skills, global_instructions, headless}` | `{}` (six presets available: `claude`, `codex`, `gemini`, `aider`, `opencode`, `grok`) | global for the master switch, repo appends |
 | `claude` | **legacy alias for `agents.claude`** — same fields, plus Claude-only ones (`plugins_enabled`, `agent_view`, `seed_onboarding`) | `enabled: false`, rest see below | global |
 | `pr` | `{agent, ai_description, ai_branch, model, prompt, timeout}` — how `jailbee pr push` writes PR text; see the `pr` section below. Replaces the old `claude.ai_pr_*` / `claude.pr_prompt` keys, which still load with a deprecation notice | `agent: auto`, rest see below | global for `agent`/`timeout`/`model`, repo for `prompt` |
-| `github` | `{enabled, token}` (+ deprecated `api_tokens`) | `enabled: false` (opt-in) | `enabled` global; `token` in the host-local `repos/<prefix>.yaml` — never the committed repo file |
+| `github` | `{enabled, token}` (+ deprecated `api_tokens`) | `enabled: false` (opt-in) | Opt in globally; repo may set only `github: {enabled: false}`; `token` only in host-local `repos/<prefix>.yaml` |
 | `terminal` | `{kitty: {enabled, host_terminfo_path}}` | `kitty.enabled: "auto"` | global |
 | `loose_auto_revert` | `{enabled, after}` | `enabled: true`, `after: "15m"` | global/repo |
 | `ls` / `dashboard` | `{fields, hide}` | `fields: null`, `hide: []` (`dashboard.hide` defaults to `[repo, full_name, git_status, created, ttl]`) | global (personal display preference) |
@@ -864,8 +864,8 @@ GitHub CLI (`gh`) integration inside containers.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | bool | `false` | Master switch. When `true`: auto-adds `api.github.com:443` to strict-mode egress, writes `/etc/profile.d/jailbee-github.sh` (exports the token) at autostart, and enables the `github` doctor checks. The `gh` binary is always in the golden image regardless. |
-| `token` | PAT | unset | This repo's fine-grained personal access token. A `SecretStr` (masked in config dumps). **Set only in the host-local file `~/.config/jailbee/repos/<container_prefix>.yaml`**, mode `0600` — `load_config` rejects the `github` block in the committed repo file (it would be committed to git) and `github.token` in `global.yaml`. |
+| `enabled` | bool | `false` | Master switch. Enable globally; a committed repo config may contain only `github: {enabled: false}` to override it. When `true`: auto-adds `api.github.com:443` to strict-mode egress, writes `/etc/profile.d/jailbee-github.sh` (exports the token) at autostart, and enables the `github` doctor checks. The `gh` binary is always in the golden image regardless. |
+| `token` | PAT | unset | This repo's fine-grained personal access token. A `SecretStr` (masked in config dumps). **Set only in the host-local file `~/.config/jailbee/repos/<container_prefix>.yaml`**, mode `0600` — `load_config` rejects tokens in the committed repo file and `github.token` in `global.yaml`. |
 | `api_tokens` | map `container_prefix` → PAT | `{}` | **Deprecated; removed in 2.0.0.** The pre-1.6 per-repo map in `global.yaml`; the host operator moves it with `jailbee config migrate --apply`. Don't write new entries. |
 
 With `enabled`, `api.github.com:443` is on the strict allowlist, so `gh` reads work in strict mode. Writes do not: the token is read-only (below), and `github.com` itself is reachable only over HTTPS when Claude's plugins add it, with no write credential.

@@ -302,11 +302,12 @@ def test_help_pane_keeps_the_inherited_entries_for_a_staged_reset(tmp_path):
     assert "discards" not in text
 
 
-def test_edit_block_names_a_global_only_key():
-    reason = edit_block(_spec("github.enabled"), "repo")
+def test_edit_block_allows_repo_github_switch_but_blocks_tokens():
+    assert edit_block(_spec("github.enabled"), "repo") is None
+    reason = edit_block(_spec("github.api_tokens"), "repo")
     assert reason is not None
     assert "global.yaml" in reason
-    assert edit_block(_spec("github.enabled"), "global") is None
+    assert edit_block(_spec("github.api_tokens"), "global") is None
 
 
 def test_edit_block_lets_a_collection_through():

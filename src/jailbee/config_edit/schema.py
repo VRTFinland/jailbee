@@ -556,20 +556,20 @@ this filter entirely) is the real answer at this schema size.
 
 GLOBAL_ONLY_KEYS: frozenset[str] = frozenset(
     {
-        "github",
         "credentials",
         "claude_credentials",
         "credential_group",
         "claude_credentials_dir",
     }
 )
-"""Top-level keys `load_config_from_layers` refuses in a repo config.
+"""Top-level keys wholly refused by the loader in a repo config.
 
 Tokens and credential-group names are host-local: a repo config is
 typically committed, so a value here would leak or would name a group
-that exists on one machine only. The editor keeps these in the repo tree
-and renders them disabled with the reason (spec 3.3) rather than hiding
-them, so the setting does not appear to have vanished.
+that exists on one machine only. GitHub is intentionally not included:
+the loader permits the single safe exception `github: {enabled: false}`.
+The editor keeps all these fields in its tree and disables the forbidden
+ones with a reason rather than hiding them.
 
 Both spellings of the block and both names of the computed field are listed,
 not just the current ones: the loader still bans the legacy spellings, and a

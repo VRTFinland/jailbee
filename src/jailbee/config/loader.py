@@ -729,7 +729,7 @@ def load_config_from_text(text: str, path: Path) -> Config:
 
     Identical to `load_config_unsanitized` except the repo layer comes from
     `text` instead of from disk: same host-key split, retired-key check, pull
-    migration check, `github` placement ban, global deep-merge, and token
+    migration check, `github` placement restriction, global deep-merge, and token
     checks. `path` is used only to derive `repo_root` and to label errors — the
     file at `path` is never read and need not exist.
 
@@ -780,7 +780,7 @@ def load_config_from_layers(
 
     Every rule `_load_config_from_repo_raw` applies also applies here — the
     retired-key check, the pull and agents migration checks, the `github`
-    and credential-group placement bans, the deep merge, the 0600
+    and credential-group placement restrictions, the deep merge, the 0600
     token-permission check — because this *is* that function's body. The
     only difference is that `global_raw` is supplied rather than read, so
     the config editor can validate a staged global layer before anything
@@ -826,13 +826,17 @@ def load_config_from_layers(
     _check_pull_migration(global_for_merge, repo_raw, default_global_config_path(), path)
     _check_agents_spelling(global_for_merge, repo_raw, default_global_config_path(), path)
 
-    # Placement constraint: github tokens must live in ~/.config/jailbee/global.yaml,
-    # never in repo .jailbee/config.yaml — the latter is typically committed to git.
-    if "github" in repo_raw:
+    # A committed repo may disable GitHub, but must not contain host settings or tokens.
+    repo_github = repo_raw.get("github")
+    if "github" in repo_raw and not (
+        isinstance(repo_github, dict)
+        and list(repo_github) == ["enabled"]
+        and repo_github["enabled"] is False
+    ):
         raise ConfigError(
-            "`github` block is not allowed in repo .jailbee/config.yaml — "
-            "move it to ~/.config/jailbee/global.yaml. Tokens would leak via "
-            "git commit if placed here."
+            "Only `github: {enabled: false}` is allowed in repo .jailbee/config.yaml; "
+            "enable GitHub and keep legacy api_tokens in ~/.config/jailbee/global.yaml; "
+            f"put github.token in the host-local {local_config_path('<container_prefix>')}."
         )
 
     # Host-only, for the same reason as `github`: a repo config is typically

@@ -419,15 +419,13 @@ def test_search_finds_a_field_in_another_section(rendered):
     assert "ssh.enabled" in text
 
 
-def test_a_field_that_cannot_be_edited_here_says_so(rendered, tmp_path):
-    """`github` is banned from a repo config; the row explains rather than
-    acts. Search for it, Enter on the first hit, quit. No crash, no write.
-    """
+def test_repo_github_group_opens_and_only_enabled_is_editable(rendered, tmp_path):
+    """The safe repo exception must be reachable without exposing secret children."""
     repo = tmp_path / "repo" / ".jailbee" / "config.yaml"
     before = repo.read_text()
-    text = rendered("/github\r\rq")
-    assert "is host-local and is rejected in a repo config" in text
-    assert "●" not in text
+    text = rendered("/github.enabled\r\r qqq")
+    assert "github.enabled" in text
+    assert "host-local and is rejected" not in text
     assert repo.read_text() == before
 
 
@@ -1491,12 +1489,8 @@ def test_enter_refuses_a_drill_down_the_layer_bans_and_says_why(tmp_path):
     """`enter` bypassed `render.edit_block` — `render.py` calls it the editor's
     single gate, and `toggle`, `reset` and `edit_current` all consult it.
 
-    At the repo layer that made `github ▸ api_tokens` fully navigable: a screen
-    for a key `config/loader.py` refuses in a repo config, whose entry prompt
-    then seeded `updated` from `st.effective`, resolving through to the
-    *global* token and staging it into the repo file. `layers.validate` refused
-    the save, so nothing leaked — but the loader ban was the only thing left
-    standing, and `docs/skills/` claimed the UI blocked it.
+    At the repo layer that made `github ▸ api_tokens` navigable even though
+    secret values must not be exposed or staged into a committed repo config.
     """
     editor = _editor(tmp_path, repo={}, global_={"github": {"api_tokens": {"gisgro": "ghp_x"}}})
     _descend(editor, "github")
@@ -1506,7 +1500,7 @@ def test_enter_refuses_a_drill_down_the_layer_bans_and_says_why(tmp_path):
     editor.enter()
 
     assert editor.state.trail == ("github",)  # did not descend
-    assert "host-local" in editor.message
+    assert "Only `github: {enabled: false}` is allowed" in editor.message
     assert editor.message_style == "class:error"
     assert editor.state.staged == {}
 
