@@ -8,6 +8,15 @@ from jailbee.config import Autostart
 from jailbee.tmux import TmuxStepError
 
 
+@pytest.fixture(autouse=True)
+def _host_autostart_defaults(mocker):
+    """Unrelated rerun tests do not read branch files from mocked containers."""
+    mocker.patch(
+        "jailbee.branch_config.effective_autostart_config",
+        side_effect=lambda cfg, incus, container: cfg,
+    )
+
+
 def collision_cfg(tmp_path, step_name):
     """Creation-only collisions must remain valid through the real loader."""
     from pathlib import Path
@@ -305,6 +314,62 @@ def test_prepare_uses_stored_profile(make_cfg, tmp_path, mocker):
     assert cfg.autostart.on_start
 
 
+def test_rerun_lists_branch_steps_and_respects_branch_service_windows(
+    make_cfg, tmp_path, mocker, capsys
+):
+    from jailbee.autostart_rerun import command
+
+    host = make_cfg(tmp_path)
+    branch = collision_cfg(tmp_path, "svc-db")
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = ""
+    helper = mocker.patch(
+        "jailbee.branch_config.effective_autostart_config", return_value=branch, create=True
+    )
+    command(
+        host,
+        incus,
+        "c",
+        stages=[],
+        steps=[],
+        failed=False,
+        trigger=None,
+        listing=True,
+        json_output=True,
+        wait=False,
+        spawn=mocker.MagicMock(),
+    )
+    output = capsys.readouterr().out
+    assert '"safe"' in output
+    assert '"svc-db"' not in output
+    helper.assert_called_once_with(host, incus, "c")
+
+
+def test_rerun_protects_host_service_missing_from_branch(make_cfg, tmp_path, mocker, capsys):
+    from jailbee.autostart_rerun import command
+
+    host = make_cfg(tmp_path, services={"db": {"run": "sleep infinity"}})
+    branch = collision_cfg(tmp_path, "svc-db")
+    branch = branch.model_copy(update={"services": {}})
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = ""
+    mocker.patch("jailbee.branch_config.effective_autostart_config", return_value=branch)
+    command(
+        host,
+        incus,
+        "c",
+        stages=[],
+        steps=[],
+        failed=False,
+        trigger=None,
+        listing=True,
+        json_output=True,
+        wait=False,
+        spawn=mocker.MagicMock(),
+    )
+    assert '"svc-db"' not in capsys.readouterr().out
+
+
 def test_effective_config_resolves_profile_before_selection(make_cfg, tmp_path, mocker):
     from jailbee.autostart_rerun import effective_config
 
@@ -553,6 +618,7 @@ def test_any_nonempty_claim_blocks_rerun(make_cfg, tmp_path, mocker, claim):
 
     cfg = rerun_cfg(make_cfg, tmp_path)
     incus = mocker.MagicMock()
+    incus.config_get.return_value = ""
     incus.config_get_checked.return_value = claim
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
     spawn = mocker.MagicMock()

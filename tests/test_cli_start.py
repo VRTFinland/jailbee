@@ -18,6 +18,14 @@ runner = CliRunner()
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
+@pytest.fixture(autouse=True)
+def _host_autostart_config(mocker):
+    mocker.patch(
+        "jailbee.branch_config.effective_autostart_config",
+        side_effect=lambda cfg, *_args, **_kwargs: cfg,
+    )
+
+
 def test_start_calls_apply_hosts_for_strict_container(mocker):
     mocker.patch(
         "jailbee.cli._resolve_existing",

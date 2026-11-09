@@ -151,7 +151,6 @@ def test_restart_reset_services_unsets_key(restart_env):
     "args,message",
     [
         (["--services", "", "--reset-services"], "cannot be used together"),
-        (["--autostart-profile", "bad"], "autostart profile `bad` is not defined"),
         (["--autostart-profile", "none", "--services", "bad name"], "Invalid service name"),
     ],
 )

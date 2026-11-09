@@ -2370,9 +2370,9 @@ running in their own window until the container stops.
 
 #### Where does the autostart config come from?
 
-In clone mode, `jailbee new <branch>` reads `autostart` from the **target
-branch's** committed `.jailbee/config.yaml`, at the exact commit it is about to
-clone — not from your checkout. The container runs the branch's files, so it
+In clone mode, `jailbee new <branch>` reads `autostart` and `services` from the
+**target branch's** committed `.jailbee/config.yaml`, at the exact commit it is
+about to clone — not from your checkout. The container runs the branch's files, so it
 runs the branch's startup steps. Every other key (mounts, network defaults,
 `cpu`/`memory`, `container_prefix`, and host-level keys like
 `docker_registry_mirror`, `ls`, `dashboard`) still comes from the checkout you
@@ -2488,10 +2488,34 @@ exists but can't be used (invalid YAML, a validation failure, or an
 autostart step naming an `optional_mounts` key your host config doesn't
 define) warns and falls back the same way.
 
+For an existing clone-mode container, `jailbee start` and `jailbee restart`
+read both blocks from the container checkout's **HEAD commit** using
+`git show HEAD:.jailbee/config.yaml` (with `.gie/config.yaml` as a legacy
+fallback). Uncommitted config edits in the container do not count. Profile
+resolution and the services-stage/selection decision use this same effective
+config; a detached autostart worker receives the selected block in its job file.
+Service definitions themselves still come from the container's working tree,
+as with `jailbee service`; service preparation remains bounded by the stored
+approved elevation envelope.
+
+On start/restart, any network or mount privilege widening against the reviewed
+baseline requires confirmation. Foreground commands ask on an interactive
+terminal; `--yes`/`-y` accepts without asking. Declining, or starting without a
+terminal (including dashboard and background boots), warns and uses the host
+checkout's config instead. Background boots do not inherit foreground
+`--yes` approval. The `--no-autostart` flag skips this read and check unless
+`restart --autostart-profile` needs to validate a custom branch profile. Custom
+profile validation happens after boot, when the container checkout is readable;
+service selections and built-in profiles are still stored before boot.
+
+Restarts performed by `jailbee apply` and explicit `jailbee autostart run`
+also use the container's committed config, but never prompt for additional
+branch privileges: they warn and fall back to the host config when approval
+would be required. `apply --yes` only skips restart confirmation and does not
+authorize branch privilege widening.
+
 `--mount` and `--no-clone` are unaffected — they share the host working tree,
-so there is no distinct target branch to read from. `jailbee start`, `jailbee
-restart`, and `jailbee apply` always use your checkout's config; only creation
-reads the branch.
+so there is no distinct target branch to read from.
 
 ### `container_prefix`
 

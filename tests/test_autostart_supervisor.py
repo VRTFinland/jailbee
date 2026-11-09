@@ -1105,6 +1105,10 @@ def _bg_worker_env(tmp_path, mocker, make_cfg, block: Autostart):
     repo.mkdir()
     cfg = make_cfg(repo).model_copy(update={"autostart": block})
     object.__setattr__(cfg, "container_prefix", "myrepo")
+    mocker.patch(
+        "jailbee.branch_config.effective_autostart_config",
+        side_effect=lambda cfg, *_args, **_kwargs: cfg,
+    )
     incus = mocker.MagicMock()
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.incus.Incus", return_value=incus)
@@ -1518,6 +1522,10 @@ def test_rerun_claim_survives_unavailable_job_tracking(tmp_path, mocker, make_cf
 
     block = Autostart.model_validate({"on_start": [_stage("deps")]})
     cfg = _cfg_with(make_cfg, tmp_path, block)
+    mocker.patch(
+        "jailbee.branch_config.effective_autostart_config",
+        side_effect=lambda cfg, *_args, **_kwargs: cfg,
+    )
     incus = mocker.MagicMock()
     marker = {}
     key = "user.jailbee.autostart_in_progress"
@@ -1577,6 +1585,10 @@ def test_rerun_refuses_when_worker_claim_read_fails(tmp_path, mocker, make_cfg):
     cfg = _cfg_with(make_cfg, tmp_path, block)
     incus = mocker.MagicMock()
     incus.config_get.return_value = ""
+    mocker.patch(
+        "jailbee.branch_config.effective_autostart_config",
+        side_effect=lambda cfg, *_args, **_kwargs: cfg,
+    )
     incus.config_get_checked.side_effect = Incus().config_get_checked
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
     mocker.patch("jailbee.lifecycle.lookup_background_job", return_value=None)

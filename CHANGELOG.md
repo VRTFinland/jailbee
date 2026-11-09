@@ -22,6 +22,12 @@ before editing `## Unreleased`.
   repository checkout again, rather than
   `/home/dev`. This fixes a regression introduced in 1.8.1
   ([#105](https://github.com/VRTFinland/jailbee/issues/105)).
+- `jailbee start` / `restart` now use a clone-mode container's committed
+  `autostart` and `services` config instead of the host checkout's. This restores
+  legacy startup steps when the host has migrated to services, and keeps profile
+  and services-stage selection consistent. Apply restarts and explicit autostart
+  reruns use the same source; privilege widening requires approval or falls back
+  to the host config ([#107](https://github.com/VRTFinland/jailbee/issues/107)).
 - `jailbee net refresh`, run by the `jailbee-net-refresh.timer` every minute,
   listed every Incus instance about a dozen times per registered repo. Each
   listing makes incusd build every instance's full state, so on a host with

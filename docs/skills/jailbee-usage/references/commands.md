@@ -544,7 +544,18 @@ No committed branch config, or one that fails to validate or references an
 `optional_mounts` key your host config doesn't define, falls back silently or
 with a warning to your checkout's autostart. `--no-autostart` skips the branch
 config entirely — no steps run, so there is nothing to diff or confirm.
-`jailbee start`/`restart`/`apply` never read the branch — only `jailbee new` does.
+For existing clones, `jailbee start`/`restart`, `apply` restarts, and
+`autostart run` read `autostart` + `services` from the container checkout's
+committed HEAD (`.jailbee/config.yaml`, falling back to `.gie/config.yaml`),
+not uncommitted edits. Mount-mode containers retain the host working-tree config.
+Start/restart ask before any network or mount privilege widening against the
+reviewed baseline; `--yes` accepts in the foreground. Without an interactive
+terminal, including dashboard/background boots, they warn and fall back to the
+host config instead. Apply restarts and reruns never ask for branch privilege
+approval and use the same warning/fallback policy; `apply --yes` does not
+approve widening. Profiles and services-stage/selection decisions use the
+effective config. Service definitions still follow the container working tree,
+bounded by the stored approved service-elevation envelope.
 See [Configuration](../../../config.md#where-does-the-autostart-config-come-from).
 
 ### `jailbee start|stop|restart [NAME]`
@@ -555,7 +566,7 @@ accept a picker when `NAME` is omitted with a TTY. Both `start` and `restart`
 refuse while a foreground `autostart run --wait` owns the rerun lock.
 
 `autostart run NAME --stage STAGE`, `--step STAGE/STEP`, or `--failed` reruns
-current host-profile-eligible ordinary steps, detached unless `--wait` is set.
+current effective-profile-eligible ordinary steps, detached unless `--wait` is set.
 Any nonempty in-progress claim blocks a rerun, including foreground `1` and
 unknown/dead markers. Failure counts ignore removed/renamed or profile-excluded
 steps. Restricted SSH refuses stage or legacy-step network/mount changes;
@@ -564,6 +575,7 @@ steps. Restricted SSH refuses stage or legacy-step network/mount changes;
 | Flag (`start` / `restart`) | Effect |
 |---|---|
 | `--no-autostart` | Boot only — no `on_start` steps or agent startup. The `/etc/hosts` pin and the `GH_TOKEN` write still happen (infrastructure, not user steps). |
+| `--yes` / `-y` | Accept branch autostart privilege widening without asking on a foreground start/restart. Background boots still fall back to the host config when approval is required. |
 | `--background` / `-b` | Detached boot + autostart; track via `jailbee ls`. Overrides `boot.background`. `--no-background` forces foreground. |
 | `--wait` | Run every `autostart` stage in the foreground, ignoring `detach: true`. Mutually exclusive with `--no-wait`. |
 | `--no-wait` | Hand off after the first stage, whatever the config says. Mutually exclusive with `--wait`. |

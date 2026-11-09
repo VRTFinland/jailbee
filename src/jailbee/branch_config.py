@@ -43,6 +43,7 @@ from jailbee.config import AutostartStage
 if TYPE_CHECKING:
     from jailbee.config import Autostart, AutostartStep, Config
     from jailbee.config.models_services import Service
+    from jailbee.incus import Incus
 
 _TRIGGERS = ("on_create", "on_start")
 
@@ -745,13 +746,17 @@ def load_branch_autostart(
     when the clone follows a local branch, or `"<sha12> (<branch>)"` when it is
     pinned to a commit (origin-mode, `--pr`).
     """
-    from jailbee.config import ConfigError, load_config_from_text
-    from jailbee.tui import warn_plain
-
     found = _config_text_at_ref(cfg.repo_root, ref)
     if found is None:
         return None
-    text, config_rel = found
+    return _graft_branch_autostart(cfg, *found, source_label=source_label)
+
+
+def _graft_branch_autostart(
+    cfg: Config, text: str, config_rel: str, *, source_label: str
+) -> BranchAutostart | None:
+    from jailbee.config import ConfigError, load_config_from_text
+    from jailbee.tui import warn_plain
 
     try:
         branch_cfg = load_config_from_text(text, cfg.repo_root / config_rel)
@@ -784,3 +789,84 @@ def load_branch_autostart(
         deviation=diff_autostart(cfg.autostart, branch_cfg.autostart),
         source=source_label,
     )
+
+
+def effective_autostart_config(
+    cfg: Config,
+    incus: Incus,
+    container: str,
+    *,
+    assume_yes: bool = False,
+    allow_prompt: bool = False,
+    approval_profile: str | None = None,
+) -> Config:
+    """Use the container's committed startup config when its privileges are approved."""
+    from jailbee import prompting
+    from jailbee.config import CONTAINER_USERNAME
+    from jailbee.incus import IncusError
+    from jailbee.lifecycle import container_repo_dir
+    from jailbee.paths import REPO_CONFIG_DIRS
+    from jailbee.remote_ssh.session import is_remote_session
+    from jailbee.tui import default_confirm, warn_plain
+
+    if incus.config_get(container, "user.jailbee.mode") == "mount":
+        return cfg
+    repo_dir = container_repo_dir(cfg, incus, container)
+    loaded = None
+    for name in REPO_CONFIG_DIRS:
+        rel = f"{name}/config.yaml"
+        try:
+            text = incus.exec(
+                container,
+                ["git", "-C", repo_dir, "show", f"HEAD:{rel}"],
+                uid=cfg.container_user.uid,
+                gid=cfg.container_user.gid,
+                env={"HOME": f"/home/{CONTAINER_USERNAME}"},
+            )
+        except IncusError:
+            continue
+        loaded = _graft_branch_autostart(cfg, text, rel, source_label=f"{container} HEAD")
+        break
+    if loaded is None:
+        return cfg
+    verdict = assess_escalation(
+        cfg, loaded.cfg.autostart, untrusted=True, services=loaded.cfg.services
+    )
+    if verdict.any_widening:
+        warn_plain(format_escalation(verdict))
+        accepted = not is_remote_session() and (
+            assume_yes
+            or (
+                allow_prompt
+                and prompting.is_interactive()
+                and default_confirm("Use the branch's widened autostart privileges?")
+            )
+        )
+        if not accepted:
+            warn_plain(
+                _fallback_warning(f"{container} HEAD", "widened privileges were not approved")
+            )
+            return cfg
+        from jailbee.services.autostart import ENVELOPE_KEY, approval_envelope, selected_services
+
+        if approval_profile is not None:
+            from jailbee.autostart_profiles import (
+                SERVICES_KEY,
+                decode_names,
+                selection,
+                validate_profile_name,
+            )
+
+            # Invalid choices are reported by store_choice without changing approval.
+            try:
+                validate_profile_name(loaded.cfg.autostart, approval_profile)
+            except ValueError:
+                return loaded.cfg
+            names = decode_names(incus.config_get(container, SERVICES_KEY))
+            if names is None:
+                profile = selection(loaded.cfg.autostart, approval_profile)
+                names = None if profile == "all" else profile.services
+        else:
+            names = selected_services(loaded.cfg, incus, container)
+        incus.config_set(container, ENVELOPE_KEY, approval_envelope(loaded.cfg, names))
+    return loaded.cfg

@@ -924,6 +924,8 @@ def _restart_one(
         inject_github_token,
         run_autostart,
     )
+    from jailbee.autostart_profiles import profiled_config, resolve_profile
+    from jailbee.branch_config import effective_autostart_config
     from jailbee.hosts import sync_hosts
     from jailbee.lifecycle import (
         boot_container,
@@ -939,8 +941,10 @@ def _restart_one(
     # Re-inject GH_TOKEN (infrastructure, not a user autostart step) so a
     # rotated PAT is picked up on `jailbee apply`.
     inject_github_token(cfg, incus, name, repo_dir, mirror_endpoint=mirror_endpoint)
+    effective = effective_autostart_config(cfg, incus, name)
+    effective = profiled_config(effective, resolve_profile(effective, incus, name))
     run_autostart(
-        cfg,
+        effective,
         incus,
         name,
         AutostartTrigger.ON_START,
