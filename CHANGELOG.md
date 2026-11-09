@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.8.6 - 2026-11-09
+
 ### Added
 
 - A committed `.jailbee/config.yaml` may set `github: {enabled: false}` to
