@@ -53,7 +53,7 @@ check:
 	uv run ruff check src/ tests/
 	uv run ruff format --check src/ tests/
 	uv run mypy src/
-	uv run pytest -q
+	uv run pytest -n auto -q
 
 # The documentation site generator, from the `docs` dependency group. Never a
 # bare `zensical`: the pinned version is the one the config was written for.

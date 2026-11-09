@@ -231,9 +231,9 @@ rest.
   ```bash
   make release VERSION=1.0.1 REGEN=1
   ```
-- `SKIP_CHECK=1` — skip `make check` in preflight, for when the same commit
-  has just passed it (for example with `uv run pytest -n auto`, which is much
-  faster than the serial suite `check` runs). Everything else in preflight still runs:
+- `SKIP_CHECK=1` — skip `make check` in preflight when the same commit has
+  just passed it. By default, `make check` runs tests in parallel with
+  `pytest -n auto`. Everything else in preflight still runs:
   ```bash
   make release VERSION=1.0.1 SKIP_CHECK=1
   ```
