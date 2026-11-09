@@ -798,6 +798,7 @@ def effective_autostart_config(
     *,
     assume_yes: bool = False,
     allow_prompt: bool = False,
+    approval_profile: str | None = None,
 ) -> Config:
     """Use the container's committed startup config when its privileges are approved."""
     from jailbee import prompting
@@ -848,6 +849,24 @@ def effective_autostart_config(
             return cfg
         from jailbee.services.autostart import ENVELOPE_KEY, approval_envelope, selected_services
 
-        names = selected_services(loaded.cfg, incus, container)
+        if approval_profile is not None:
+            from jailbee.autostart_profiles import (
+                SERVICES_KEY,
+                decode_names,
+                selection,
+                validate_profile_name,
+            )
+
+            # Invalid choices are reported by store_choice without changing approval.
+            try:
+                validate_profile_name(loaded.cfg.autostart, approval_profile)
+            except ValueError:
+                return loaded.cfg
+            names = decode_names(incus.config_get(container, SERVICES_KEY))
+            if names is None:
+                profile = selection(loaded.cfg.autostart, approval_profile)
+                names = None if profile == "all" else profile.services
+        else:
+            names = selected_services(loaded.cfg, incus, container)
         incus.config_set(container, ENVELOPE_KEY, approval_envelope(loaded.cfg, names))
     return loaded.cfg

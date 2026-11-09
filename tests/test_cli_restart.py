@@ -84,6 +84,46 @@ def test_boot_uses_committed_legacy_startup_with_host_services(command, tmp_path
     assert spawn.call_args.kwargs["services_present"] is False
 
 
+def test_restart_approves_services_of_new_branch_profile(tmp_path, make_cfg, mocker):
+    cfg = make_cfg(tmp_path)
+    incus = mocker.MagicMock()
+    values = {
+        "user.jailbee.mode": "clone",
+        "user.jailbee.autostart_profile": "old",
+    }
+    incus.config_get.side_effect = lambda container, key: values.get(key)
+    incus.config_set.side_effect = lambda container, key, value: values.update({key: value})
+    incus.exec.return_value = (
+        "container_prefix: test\nautostart:\n  default_profile: old\n  profiles:\n"
+        "    old:\n      stages: [services]\n      services: []\n"
+        "    new:\n      stages: [services]\n      services: [web]\n"
+        "services:\n  web:\n    run: serve\n"
+        "    prepare:\n      - run: setup\n        network: loose\n"
+    )
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "box"))
+    mocker.patch("jailbee.cli._resolve_config_path_or_none", return_value=None)
+    mocker.patch("jailbee.lifecycle.boot_container")
+    mocker.patch("jailbee.cli._clear_superseded_boot_job")
+    mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    mocker.patch("jailbee.autostart.inject_github_token")
+    mocker.patch("jailbee.hosts.sync_hosts")
+    mocker.patch("jailbee.egress_proxy.sync_container")
+    mocker.patch("jailbee.cli._post_create_gui_launches")
+    mocker.patch("jailbee.autostart.run_autostart", return_value=_NO_DETACHED)
+    mocker.patch("jailbee.remote_ssh.session.is_remote_session", return_value=False)
+
+    result = runner.invoke(app, ["restart", "box", "--yes", "--autostart-profile", "new"])
+
+    assert result.exit_code == 0, result.output
+    assert values["user.jailbee.autostart_profile"] == "new"
+    assert values["user.jailbee.services_approval"] == (
+        '{"version":1,"services":{"web":{"network":"loose","mounts":[]}}}'
+    )
+
+
 @pytest.mark.parametrize("profile, expected", [("branch-only", 0), ("host-only", 2)])
 def test_restart_validates_profile_against_effective_branch_config(
     mocker, tmp_path, make_cfg, profile, expected

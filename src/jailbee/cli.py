@@ -4632,9 +4632,15 @@ def _post_start_actions(
     from jailbee.branch_config import effective_autostart_config
 
     if not no_autostart or (choice is not None and choice[0] is not None):
-        cfg = effective_autostart_config(
-            cfg, incus, name, assume_yes=assume_yes, allow_prompt=allow_prompt
-        )
+        if choice is not None and choice[0] is not None:
+            cfg = effective_autostart_config(
+                cfg, incus, name, assume_yes=assume_yes, allow_prompt=allow_prompt,
+                approval_profile=choice[0],
+            )
+        else:
+            cfg = effective_autostart_config(
+                cfg, incus, name, assume_yes=assume_yes, allow_prompt=allow_prompt
+            )
     if choice is not None:
         from jailbee.autostart_profiles import store_choice
         from jailbee.create_flow import CreateError

@@ -129,6 +129,38 @@ def test_widening_requires_local_approval(
         incus.config_set.assert_not_called()
 
 
+@pytest.mark.parametrize("requested,override,expected", [
+    ("new", ",", '{"version":1,"services":{}}'),
+    ("missing", None, None),
+])
+def test_requested_profile_respects_override_and_invalid_does_not_write(
+    mocker, tmp_path, requested, override, expected
+):
+    cfg = make_cfg(tmp_path)
+    incus = mocker.Mock()
+    incus.config_get.side_effect = lambda name, key: {
+        "user.jailbee.mode": "clone",
+        "user.jailbee.repo_dir": "/repo",
+        "user.jailbee.autostart_services": override,
+    }.get(key)
+    incus.exec.return_value = (
+        "container_prefix: test\nautostart:\n  default_profile: new\n  profiles:\n"
+        "    new:\n      stages: [services]\n      services: [web]\n"
+        "services:\n  web:\n    run: serve\n"
+        "    prepare:\n      - run: setup\n        network: loose\n"
+    )
+    mocker.patch("jailbee.remote_ssh.session.is_remote_session", return_value=False)
+
+    branch_config.effective_autostart_config(
+        cfg, incus, "box", assume_yes=True, approval_profile=requested
+    )
+
+    if expected is None:
+        incus.config_set.assert_not_called()
+    else:
+        incus.config_set.assert_called_once_with("box", "user.jailbee.services_approval", expected)
+
+
 @pytest.mark.parametrize(
     "interactive,yes,answer,remote,accepted",
     [
