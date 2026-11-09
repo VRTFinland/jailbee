@@ -21,6 +21,10 @@ def profile_cfg(make_cfg, tmp_path):
 def state_incus(mocker, state=None):
     state = dict(state or {})
     incus = mocker.MagicMock()
+    mocker.patch(
+        "jailbee.branch_config.effective_autostart_config",
+        side_effect=lambda cfg, *_args, **_kwargs: cfg,
+    )
     incus.config_get.side_effect = lambda c, k: state.get(k)
 
     def set_config(c, k, v):

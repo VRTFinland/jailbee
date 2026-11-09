@@ -551,7 +551,9 @@ reviewed baseline; `--yes` accepts in the foreground. Without an interactive
 terminal, including dashboard/background boots, they warn and fall back to the
 host config instead. Apply restarts and reruns never ask for branch privilege
 approval and use the same warning/fallback policy; `apply --yes` does not
-approve widening. Profiles and services-stage selection use the effective config.
+approve widening. Profiles and services-stage/selection decisions use the
+effective config. Service definitions still follow the container working tree,
+bounded by the stored approved service-elevation envelope.
 See [Configuration](../../../config.md#where-does-the-autostart-config-come-from).
 
 ### `jailbee start|stop|restart [NAME]`

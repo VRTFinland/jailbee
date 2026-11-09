@@ -2492,8 +2492,11 @@ For an existing clone-mode container, `jailbee start` and `jailbee restart`
 read both blocks from the container checkout's **HEAD commit** using
 `git show HEAD:.jailbee/config.yaml` (with `.gie/config.yaml` as a legacy
 fallback). Uncommitted config edits in the container do not count. Profile
-resolution and the services-stage decision use this same effective config;
-a detached autostart worker receives the selected block in its job file.
+resolution and the services-stage/selection decision use this same effective
+config; a detached autostart worker receives the selected block in its job file.
+Service definitions themselves still come from the container's working tree,
+as with `jailbee service`; service preparation remains bounded by the stored
+approved elevation envelope.
 
 On start/restart, any network or mount privilege widening against the reviewed
 baseline requires confirmation. Foreground commands ask on an interactive

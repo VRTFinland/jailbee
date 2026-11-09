@@ -72,12 +72,72 @@ def test_boot_uses_committed_legacy_startup_with_host_services(command, tmp_path
 
     assert result.exit_code == 0, result.output
     incus.exec.assert_called_once_with(
-        "myrepo-feat-x", ["git", "-C", "/repo", "show", "HEAD:.jailbee/config.yaml"]
+        "myrepo-feat-x",
+        ["git", "-C", "/repo", "show", "HEAD:.jailbee/config.yaml"],
+        uid=cfg.container_user.uid,
+        gid=cfg.container_user.gid,
+        env={"HOME": "/home/dev"},
     )
     assert profile.call_args.args[0].autostart.on_start[0].run == "branch-command"
     assert run.call_args.args[0].autostart.on_start[0].run == "branch-command"
     assert spawn.call_args.kwargs["autostart"].on_start[0].run == "branch-command"
     assert spawn.call_args.kwargs["services_present"] is False
+
+
+@pytest.mark.parametrize("profile, expected", [("branch-only", 0), ("host-only", 2)])
+def test_restart_validates_profile_against_effective_branch_config(
+    mocker, tmp_path, make_cfg, profile, expected
+):
+    from jailbee.config.models_agents import AutostartProfile
+
+    _common_mocks(mocker)
+    cfg = make_cfg(tmp_path)
+    cfg = cfg.model_copy(
+        update={
+            "autostart": cfg.autostart.model_copy(
+                update={"profiles": {"host-only": AutostartProfile(stages=["example"], services=[])}}
+            )
+        }
+    )
+    branch = cfg.model_copy(
+        update={
+            "autostart": cfg.autostart.model_copy(
+                update={"profiles": {"branch-only": AutostartProfile(stages=["example"], services=[])}}
+            )
+        }
+    )
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.branch_config.effective_autostart_config", return_value=branch)
+    mocker.patch("jailbee.autostart.run_autostart", return_value=_NO_DETACHED)
+
+    result = runner.invoke(app, ["restart", "myrepo-feat-x", "--autostart-profile", profile])
+
+    assert result.exit_code == expected, result.output
+
+
+def test_restart_background_forwards_choice_without_approval(mocker):
+    _common_mocks(mocker)
+    spawn = mocker.patch("jailbee.cli._spawn_boot_worker")
+    result = runner.invoke(app, [
+        "restart", "myrepo-feat-x", "--background", "--yes",
+        "--autostart-profile", "branch-only", "--services", "web,db",
+    ])
+    assert result.exit_code == 0, result.output
+    assert spawn.call_args.kwargs["choice"] == ("branch-only", None, False)
+    assert "assume_yes" not in spawn.call_args.kwargs
+
+
+def test_restart_no_autostart_still_stores_profile(mocker):
+    _common_mocks(mocker)
+    store = mocker.patch("jailbee.autostart_profiles.store_choice")
+    result = runner.invoke(app, [
+        "restart", "myrepo-feat-x", "--no-autostart",
+        "--autostart-profile", "all", "--services", "web",
+    ])
+    assert result.exit_code == 0, result.output
+    assert store.call_args.kwargs == {
+        "profile": "all", "services": ["web"], "reset_services": False,
+    }
 
 
 def test_restart_runs_autostart_on_start_trigger(mocker):

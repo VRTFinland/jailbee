@@ -125,3 +125,51 @@ def test_widening_requires_local_approval(
     output = capsys.readouterr().out
     assert "widens privileges" in output
     assert ("Falling back" in output) == (not accepted)
+    if not accepted:
+        incus.config_set.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "interactive,yes,answer,remote,accepted",
+    [
+        (True, False, True, False, True),
+        (False, True, False, False, True),
+        (True, False, False, False, False),
+        (False, False, True, False, False),
+        (True, True, True, True, False),
+    ],
+)
+def test_service_widening_updates_approval_only_when_accepted(
+    mocker, tmp_path, interactive, yes, answer, remote, accepted
+):
+    cfg = make_cfg(tmp_path)
+    incus = mocker.Mock()
+    incus.config_get.side_effect = lambda name, key: {
+        "user.jailbee.mode": "clone",
+        "user.jailbee.repo_dir": "/repo",
+        "user.jailbee.autostart_services": None,
+        "user.jailbee.autostart_profile": None,
+    }.get(key)
+    incus.exec.return_value = (
+        "container_prefix: test\nservices:\n  web:\n    run: serve\n"
+        "    prepare:\n      - run: setup\n        network: loose\n"
+    )
+    mocker.patch("jailbee.git.show_file_at_ref", return_value=None)
+    mocker.patch("jailbee.git.remote_ref_exists", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=interactive)
+    mocker.patch("jailbee.tui.default_confirm", return_value=answer)
+    mocker.patch("jailbee.remote_ssh.session.is_remote_session", return_value=remote)
+
+    result = branch_config.effective_autostart_config(
+        cfg, incus, "box", assume_yes=yes, allow_prompt=True
+    )
+
+    assert (result is not cfg) == accepted
+    if accepted:
+        incus.config_set.assert_called_once_with(
+            "box",
+            "user.jailbee.services_approval",
+            '{"version":1,"services":{"web":{"network":"loose","mounts":[]}}}',
+        )
+    else:
+        incus.config_set.assert_not_called()

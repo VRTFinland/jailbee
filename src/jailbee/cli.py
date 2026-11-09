@@ -3353,6 +3353,10 @@ def _boot_worker(
     wait: WaitOption = False,
     no_wait: NoWaitOption = False,
     config: ConfigOption = None,
+    autostart_profile: Annotated[
+        str | None,
+        typer.Option("--autostart-profile", help="Store this branch profile after boot."),
+    ] = None,
 ) -> None:
     """Internal: boot a container detached, tracking phase in SQLite.
 
@@ -3390,6 +3394,7 @@ def _boot_worker(
             incus,
             name,
             no_autostart=no_autostart,
+            choice=(autostart_profile, None, False) if autostart_profile is not None else None,
             override=autostart_override,
             # Already the detached process: no second worker, no second job
             # row — see `_inline_autostart_handler`.
@@ -4584,6 +4589,7 @@ def _post_start_actions(
     no_autostart: bool,
     assume_yes: bool = False,
     allow_prompt: bool = False,
+    choice: tuple[str | None, str | None, bool] | None = None,
     override: Literal["wait", "no_wait"] | None = None,
     on_detach: "Callable[[Autostart, str, str, bool, AutostartPlan | None], None] | None" = None,
 ) -> None:
@@ -4622,18 +4628,44 @@ def _post_start_actions(
     # `jailbee start --no-autostart` (and to pick up a rotated PAT on every boot).
     inject_github_token(cfg, incus, name, repo_dir, mirror_endpoint=mirror_endpoint)
 
+    from jailbee.autostart_profiles import missing_on_create, profiled_config, resolve_profile
+    from jailbee.branch_config import effective_autostart_config
+
+    if not no_autostart or (choice is not None and choice[0] is not None):
+        cfg = effective_autostart_config(
+            cfg, incus, name, assume_yes=assume_yes, allow_prompt=allow_prompt
+        )
+    if choice is not None:
+        from jailbee.autostart_profiles import store_choice
+        from jailbee.create_flow import CreateError
+        from jailbee.incus import IncusError
+
+        chosen_profile, services, reset_services = choice
+        selected = (
+            None if services is None else [s.strip() for s in services.split(",") if s.strip()]
+        )
+        try:
+            store_choice(
+                cfg,
+                incus,
+                name,
+                profile=chosen_profile,
+                services=selected,
+                reset_services=reset_services,
+            )
+        except (ValueError, CreateError) as exc:
+            error_plain(str(exc))
+            raise typer.Exit(2) from exc
+        except IncusError as exc:
+            error_plain(str(exc))
+            raise typer.Exit(1) from exc
+
     if no_autostart:
         from jailbee.agent_resume import boot_entries
 
         boot_entries(cfg, incus, name)
         return
 
-    from jailbee.autostart_profiles import missing_on_create, profiled_config, resolve_profile
-    from jailbee.branch_config import effective_autostart_config
-
-    cfg = effective_autostart_config(
-        cfg, incus, name, assume_yes=assume_yes, allow_prompt=allow_prompt
-    )
     profile = resolve_profile(cfg, incus, name)
     missing = missing_on_create(cfg, incus, name, profile) if profile is not None else None
     cfg = profiled_config(cfg, profile)
@@ -4810,6 +4842,7 @@ def _spawn_boot_worker(
     restart: bool,
     no_autostart: bool,
     override: Literal["wait", "no_wait"] | None = None,
+    choice: tuple[str | None, str | None, bool] | None = None,
 ) -> None:
     """Spawn a detached `_boot-worker` for one container and record its job row.
 
@@ -4869,6 +4902,10 @@ def _spawn_boot_worker(
         worker_argv.append("--no-autostart")
     if override is not None:
         worker_argv.append("--wait" if override == "wait" else "--no-wait")
+    if choice is not None:
+        profile, _, _ = choice
+        if profile is not None:
+            worker_argv.extend(["--autostart-profile", profile])
 
     # Deliberately not closed here: the handle is inherited by the
     # detached child as its stdout/stderr; the parent returns immediately
@@ -4940,7 +4977,9 @@ def start(
             help="Force a foreground start, overriding `boot.background`.",
         ),
     ] = False,
-    yes: Annotated[bool, typer.Option("--yes", "-y", help="Approve branch autostart changes.")] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Approve branch autostart changes.")
+    ] = False,
     wait: WaitOption = False,
     no_wait: NoWaitOption = False,
     config: ConfigOption = None,
@@ -5242,13 +5281,16 @@ def restart(
             help="Force a foreground restart, overriding `boot.background`.",
         ),
     ] = False,
-    yes: Annotated[bool, typer.Option("--yes", "-y", help="Approve branch autostart changes.")] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Approve branch autostart changes.")
+    ] = False,
     wait: WaitOption = False,
     no_wait: NoWaitOption = False,
     config: ConfigOption = None,
 ) -> None:
     """Restart a container, then run autostart."""
     from jailbee.autostart_profiles import store_choice
+    from jailbee.config.models_agents import BUILTIN_PROFILES
     from jailbee.create_flow import CreateError
     from jailbee.incus import IncusError
     from jailbee.lifecycle import boot_container, short_name
@@ -5265,24 +5307,21 @@ def restart(
     # `jailbee autostart cancel`, which the refusal names.
     _refuse_while_autostart_reruns(name)
     _refuse_while_autostart_runs(cfg, name)
+    builtin = autostart_profile if autostart_profile in BUILTIN_PROFILES else None
+    custom = autostart_profile if autostart_profile is not None and builtin is None else None
     selected_services = (
         None if services is None else [s.strip() for s in services.split(",") if s.strip()]
     )
     try:
-        store_choice(
-            cfg,
-            incus,
-            name,
-            profile=autostart_profile,
-            services=selected_services,
-            reset_services=reset_services,
-        )
+        store_choice(cfg, incus, name, profile=builtin, services=selected_services,
+                     reset_services=reset_services)
     except (ValueError, CreateError) as exc:
         error_plain(str(exc))
         raise typer.Exit(2) from exc
     except IncusError as exc:
         error_plain(str(exc))
         raise typer.Exit(1) from exc
+    choice = (custom, None, False) if custom is not None else None
     _preflight_cache_pools(cfg)
     if run_in_background:
         _spawn_boot_worker(
@@ -5292,6 +5331,7 @@ def restart(
             restart=True,
             no_autostart=no_autostart,
             override=autostart_override,
+            choice=choice,
         )
         return
     try:
@@ -5307,6 +5347,7 @@ def restart(
         no_autostart=no_autostart,
         assume_yes=yes,
         allow_prompt=True,
+        choice=choice,
         override=autostart_override,
         on_detach=_autostart_detach_handler(
             cfg,

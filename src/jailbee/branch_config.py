@@ -846,4 +846,8 @@ def effective_autostart_config(
                 _fallback_warning(f"{container} HEAD", "widened privileges were not approved")
             )
             return cfg
+        from jailbee.services.autostart import ENVELOPE_KEY, approval_envelope, selected_services
+
+        names = selected_services(loaded.cfg, incus, container)
+        incus.config_set(container, ENVELOPE_KEY, approval_envelope(loaded.cfg, names))
     return loaded.cfg
