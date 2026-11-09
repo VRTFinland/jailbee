@@ -10,8 +10,9 @@ before editing `## Unreleased`.
 
 ### Fixed
 
-- New tmux windows and splits opened after `jailbee shell`, `jailbee tmux`,
-  or a dashboard attach start in the repository checkout again, rather than
+- New tmux windows and splits opened after `jailbee tmux`,
+  `jailbee new --attach tmux`, or a dashboard attach start in the repository
+  checkout again, rather than
   `/home/dev`. This fixes a regression introduced in 1.8.1
   ([#105](https://github.com/VRTFinland/jailbee/issues/105)).
 - `jailbee net refresh`, run by the `jailbee-net-refresh.timer` every minute,

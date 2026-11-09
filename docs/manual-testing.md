@@ -990,8 +990,7 @@ jailbee job clear feat-bootsmoke
 
 On a running container with an autostart session:
 
-1. Attach with `jailbee shell <name>` or `jailbee tmux <name>` from outside
-   the repository directory.
+1. Attach with `jailbee tmux <name>` from outside the repository directory.
 2. Create a window with prefix + `c`; `pwd` must show the repository checkout,
    not `/home/dev`.
 3. Split with prefix + `"` and prefix + `%`; `pwd` must show the checkout
