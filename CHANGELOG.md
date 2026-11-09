@@ -11,8 +11,9 @@ before editing `## Unreleased`.
 ### Added
 
 - A committed `.jailbee/config.yaml` may set `github: {enabled: false}` to
-  disable GitHub integration for that repo even when enabled globally. All
-  other GitHub settings remain host-only
+  disable GitHub integration for that repo even when enabled globally. A
+  host-local override still takes precedence; all other GitHub settings remain
+  host-only
   ([#104](https://github.com/VRTFinland/jailbee/issues/104)).
 
 ### Fixed
@@ -25,9 +26,11 @@ before editing `## Unreleased`.
 - `jailbee start` / `restart` now use a clone-mode container's committed
   `autostart` and `services` config instead of the host checkout's. This restores
   legacy startup steps when the host has migrated to services, and keeps profile
-  and services-stage selection consistent. Apply restarts and explicit autostart
-  reruns use the same source; privilege widening requires approval or falls back
-  to the host config ([#107](https://github.com/VRTFinland/jailbee/issues/107)).
+  and services-stage selection consistent. Foreground start/restart commands ask
+  before widening network or mount privileges (`--yes` accepts). Background and
+  dashboard boots, apply restarts, and explicit autostart reruns use the same
+  source but fall back to the host config if additional approval would be needed
+  ([#107](https://github.com/VRTFinland/jailbee/issues/107)).
 - `jailbee net refresh`, run by the `jailbee-net-refresh.timer` every minute,
   listed every Incus instance about a dozen times per registered repo. Each
   listing makes incusd build every instance's full state, so on a host with
