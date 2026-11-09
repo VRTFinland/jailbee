@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from jailbee.autostart_plan import AutostartPlan
@@ -30,6 +31,53 @@ def _common_mocks(mocker):
     )
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
     mocker.patch("jailbee.autostart.has_graphical_session", return_value=False)
+    mocker.patch(
+        "jailbee.branch_config.effective_autostart_config", side_effect=lambda cfg, *a, **kw: cfg
+    )
+
+
+@pytest.mark.parametrize("command", ["start", "restart"])
+def test_boot_uses_committed_legacy_startup_with_host_services(command, tmp_path, make_cfg, mocker):
+    from jailbee.config import AutostartStage, Service
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cfg = make_cfg(repo).model_copy(update={"services": {"web": Service(run="serve")}})
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = None
+    incus.exec.return_value = (
+        "autostart:\n  on_start:\n    - name: branch-step\n      run: branch-command\n"
+    )
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "myrepo-feat-x"))
+    mocker.patch("jailbee.cli._resolve_config_path_or_none", return_value=None)
+    mocker.patch("jailbee.lifecycle.boot_container")
+    mocker.patch("jailbee.cli._clear_superseded_boot_job")
+    mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/repo")
+    mocker.patch("jailbee.autostart.inject_github_token")
+    mocker.patch("jailbee.hosts.sync_hosts")
+    mocker.patch("jailbee.egress_proxy.sync_container")
+    mocker.patch("jailbee.cli._post_create_gui_launches")
+    profile = mocker.patch("jailbee.autostart_profiles.resolve_profile", return_value=None)
+    stage = AutostartStage(stage="deferred", steps=[{"name": "s", "run": "true"}])
+    run = mocker.patch(
+        "jailbee.autostart.run_autostart",
+        return_value=AutostartPlan(blocking=[], detached=[stage]),
+    )
+    spawn = mocker.patch("jailbee.cli._spawn_autostart_worker")
+
+    result = runner.invoke(app, [command, "myrepo-feat-x", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    incus.exec.assert_called_once_with(
+        "myrepo-feat-x", ["git", "-C", "/repo", "show", "HEAD:.jailbee/config.yaml"]
+    )
+    assert profile.call_args.args[0].autostart.on_start[0].run == "branch-command"
+    assert run.call_args.args[0].autostart.on_start[0].run == "branch-command"
+    assert spawn.call_args.kwargs["autostart"].on_start[0].run == "branch-command"
+    assert spawn.call_args.kwargs["services_present"] is False
 
 
 def test_restart_runs_autostart_on_start_trigger(mocker):

@@ -801,6 +801,7 @@ def effective_autostart_config(
 ) -> Config:
     """Use the container's committed startup config when its privileges are approved."""
     from jailbee import prompting
+    from jailbee.config import CONTAINER_USERNAME
     from jailbee.incus import IncusError
     from jailbee.lifecycle import container_repo_dir
     from jailbee.paths import REPO_CONFIG_DIRS
@@ -814,7 +815,13 @@ def effective_autostart_config(
     for name in REPO_CONFIG_DIRS:
         rel = f"{name}/config.yaml"
         try:
-            text = incus.exec(container, ["git", "-C", repo_dir, "show", f"HEAD:{rel}"])
+            text = incus.exec(
+                container,
+                ["git", "-C", repo_dir, "show", f"HEAD:{rel}"],
+                uid=cfg.container_user.uid,
+                gid=cfg.container_user.gid,
+                env={"HOME": f"/home/{CONTAINER_USERNAME}"},
+            )
         except IncusError:
             continue
         loaded = _graft_branch_autostart(cfg, text, rel, source_label=f"{container} HEAD")

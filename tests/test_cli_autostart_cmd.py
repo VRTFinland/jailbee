@@ -25,6 +25,10 @@ def _setup(tmp_path, mocker):
     cfg = make_cfg(repo)
     object.__setattr__(cfg, "container_prefix", "myrepo")
     incus = mocker.MagicMock()
+    mocker.patch(
+        "jailbee.branch_config.effective_autostart_config",
+        side_effect=lambda cfg, *_args, **_kwargs: cfg,
+    )
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "myrepo-feat-a"))
     return cfg, incus

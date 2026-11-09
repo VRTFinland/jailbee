@@ -9,6 +9,9 @@ from tests.conftest import make_cfg
 
 def test_clone_loads_head_autostart_and_services(mocker, tmp_path):
     cfg = make_cfg(tmp_path)
+    cfg = cfg.model_copy(
+        update={"container_user": cfg.container_user.model_copy(update={"uid": 2345, "gid": 3456})}
+    )
     incus = mocker.Mock()
     incus.config_get.side_effect = lambda name, key: {
         "user.jailbee.mode": "clone",
@@ -31,7 +34,11 @@ def test_clone_loads_head_autostart_and_services(mocker, tmp_path):
     assert result.services["web"].run == "serve"
     assert cfg.services == {}
     incus.exec.assert_called_once_with(
-        "box", ["git", "-C", "/repo", "show", "HEAD:.jailbee/config.yaml"]
+        "box",
+        ["git", "-C", "/repo", "show", "HEAD:.jailbee/config.yaml"],
+        uid=2345,
+        gid=3456,
+        env={"HOME": "/home/dev"},
     )
 
 

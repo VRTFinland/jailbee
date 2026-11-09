@@ -13,6 +13,16 @@ from jailbee.incus import Incus, IncusError
 
 
 @pytest.fixture(autouse=True)
+def _host_autostart_defaults(mocker: MockerFixture) -> None:
+    """Unrelated apply tests do not read branch files from mocked containers."""
+    mocker.patch(
+        "jailbee.branch_config.effective_autostart_config",
+        side_effect=lambda cfg, incus, container: cfg,
+    )
+    mocker.patch("jailbee.autostart_profiles.resolve_profile", return_value=None)
+
+
+@pytest.fixture(autouse=True)
 def _no_mirror_lookup(mocker: MockerFixture) -> Any:
     """Default: mirror disabled. Override per-test by re-patching.
 
@@ -1888,7 +1898,8 @@ def test_restart_one_uses_effective_branch_profile(make_cfg, tmp_path, mocker):
     })
     incus = MagicMock(spec=Incus)
     incus.config_get.return_value = "light"
-    helper = mocker.patch("jailbee.branch_config.effective_autostart_config", return_value=branch, create=True)
+    helper = mocker.patch("jailbee.branch_config.effective_autostart_config", return_value=branch)
+    mocker.patch("jailbee.autostart_profiles.resolve_profile", return_value="light")
     mocker.patch("jailbee.lifecycle.boot_container")
     mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/r")

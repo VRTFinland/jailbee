@@ -8,6 +8,15 @@ from jailbee.config import Autostart
 from jailbee.tmux import TmuxStepError
 
 
+@pytest.fixture(autouse=True)
+def _host_autostart_defaults(mocker):
+    """Unrelated rerun tests do not read branch files from mocked containers."""
+    mocker.patch(
+        "jailbee.branch_config.effective_autostart_config",
+        side_effect=lambda cfg, incus, container: cfg,
+    )
+
+
 def collision_cfg(tmp_path, step_name):
     """Creation-only collisions must remain valid through the real loader."""
     from pathlib import Path
@@ -583,6 +592,7 @@ def test_any_nonempty_claim_blocks_rerun(make_cfg, tmp_path, mocker, claim):
 
     cfg = rerun_cfg(make_cfg, tmp_path)
     incus = mocker.MagicMock()
+    incus.config_get.return_value = ""
     incus.config_get_checked.return_value = claim
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
     spawn = mocker.MagicMock()
