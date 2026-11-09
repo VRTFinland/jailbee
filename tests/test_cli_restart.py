@@ -135,14 +135,18 @@ def test_restart_validates_profile_against_effective_branch_config(
     cfg = cfg.model_copy(
         update={
             "autostart": cfg.autostart.model_copy(
-                update={"profiles": {"host-only": AutostartProfile(stages=["example"], services=[])}}
+                update={
+                    "profiles": {"host-only": AutostartProfile(stages=["example"], services=[])}
+                }
             )
         }
     )
     branch = cfg.model_copy(
         update={
             "autostart": cfg.autostart.model_copy(
-                update={"profiles": {"branch-only": AutostartProfile(stages=["example"], services=[])}}
+                update={
+                    "profiles": {"branch-only": AutostartProfile(stages=["example"], services=[])}
+                }
             )
         }
     )
@@ -158,10 +162,19 @@ def test_restart_validates_profile_against_effective_branch_config(
 def test_restart_background_forwards_choice_without_approval(mocker):
     _common_mocks(mocker)
     spawn = mocker.patch("jailbee.cli._spawn_boot_worker")
-    result = runner.invoke(app, [
-        "restart", "myrepo-feat-x", "--background", "--yes",
-        "--autostart-profile", "branch-only", "--services", "web,db",
-    ])
+    result = runner.invoke(
+        app,
+        [
+            "restart",
+            "myrepo-feat-x",
+            "--background",
+            "--yes",
+            "--autostart-profile",
+            "branch-only",
+            "--services",
+            "web,db",
+        ],
+    )
     assert result.exit_code == 0, result.output
     assert spawn.call_args.kwargs["choice"] == ("branch-only", None, False)
     assert "assume_yes" not in spawn.call_args.kwargs
@@ -170,13 +183,23 @@ def test_restart_background_forwards_choice_without_approval(mocker):
 def test_restart_no_autostart_still_stores_profile(mocker):
     _common_mocks(mocker)
     store = mocker.patch("jailbee.autostart_profiles.store_choice")
-    result = runner.invoke(app, [
-        "restart", "myrepo-feat-x", "--no-autostart",
-        "--autostart-profile", "all", "--services", "web",
-    ])
+    result = runner.invoke(
+        app,
+        [
+            "restart",
+            "myrepo-feat-x",
+            "--no-autostart",
+            "--autostart-profile",
+            "all",
+            "--services",
+            "web",
+        ],
+    )
     assert result.exit_code == 0, result.output
     assert store.call_args.kwargs == {
-        "profile": "all", "services": ["web"], "reset_services": False,
+        "profile": "all",
+        "services": ["web"],
+        "reset_services": False,
     }
 
 

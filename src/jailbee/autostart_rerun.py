@@ -116,9 +116,7 @@ def effective_config(cfg: Config, incus: Incus, container: str) -> Config:
     effective = effective_autostart_config(cfg, incus, container)
     # A host-configured service may still occupy its window after a branch
     # removes it, so protect both sets during selection and execution.
-    effective = effective.model_copy(
-        update={"services": {**cfg.services, **effective.services}}
-    )
+    effective = effective.model_copy(update={"services": {**cfg.services, **effective.services}})
     return profiled_config(effective, resolve_profile(effective, incus, container))
 
 

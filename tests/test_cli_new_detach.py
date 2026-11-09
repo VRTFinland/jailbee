@@ -373,10 +373,12 @@ def test_start_uses_branch_autostart_for_profile_and_detached_job(tmp_path, mock
     run = _setup_boot(tmp_path, mocker, detached=True)
     host = make_cfg(tmp_path / "myrepo", services={"db": {"run": "sleep infinity"}})
     mocker.patch("jailbee.cli._load_or_exit", return_value=host)
-    branch = host.model_copy(update={
-        "autostart": Autostart(on_start=[AutostartStep(name="branch", run="branch-command")]),
-        "services": {},
-    })
+    branch = host.model_copy(
+        update={
+            "autostart": Autostart(on_start=[AutostartStep(name="branch", run="branch-command")]),
+            "services": {},
+        }
+    )
     loader = mocker.patch(
         "jailbee.branch_config.effective_autostart_config", return_value=branch, create=True
     )

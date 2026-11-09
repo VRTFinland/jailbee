@@ -4634,7 +4634,11 @@ def _post_start_actions(
     if not no_autostart or (choice is not None and choice[0] is not None):
         if choice is not None and choice[0] is not None:
             cfg = effective_autostart_config(
-                cfg, incus, name, assume_yes=assume_yes, allow_prompt=allow_prompt,
+                cfg,
+                incus,
+                name,
+                assume_yes=assume_yes,
+                allow_prompt=allow_prompt,
                 approval_profile=choice[0],
             )
         else:
@@ -5319,8 +5323,14 @@ def restart(
         None if services is None else [s.strip() for s in services.split(",") if s.strip()]
     )
     try:
-        store_choice(cfg, incus, name, profile=builtin, services=selected_services,
-                     reset_services=reset_services)
+        store_choice(
+            cfg,
+            incus,
+            name,
+            profile=builtin,
+            services=selected_services,
+            reset_services=reset_services,
+        )
     except (ValueError, CreateError) as exc:
         error_plain(str(exc))
         raise typer.Exit(2) from exc

@@ -129,10 +129,13 @@ def test_widening_requires_local_approval(
         incus.config_set.assert_not_called()
 
 
-@pytest.mark.parametrize("requested,override,expected", [
-    ("new", ",", '{"version":1,"services":{}}'),
-    ("missing", None, None),
-])
+@pytest.mark.parametrize(
+    "requested,override,expected",
+    [
+        ("new", ",", '{"version":1,"services":{}}'),
+        ("missing", None, None),
+    ],
+)
 def test_requested_profile_respects_override_and_invalid_does_not_write(
     mocker, tmp_path, requested, override, expected
 ):

@@ -1892,10 +1892,15 @@ def test_restart_one_uses_effective_branch_profile(make_cfg, tmp_path, mocker):
     from jailbee.apply import _restart_one
 
     cfg = make_cfg(tmp_path)
-    branch = make_cfg(tmp_path, services={"db": {"run": "sleep infinity"}}, autostart={
-        "on_start": [{"stage": "branch", "steps": [{"name": "run", "run": "true"}]}],
-        "profiles": {"light": "all"}, "default_profile": "light",
-    })
+    branch = make_cfg(
+        tmp_path,
+        services={"db": {"run": "sleep infinity"}},
+        autostart={
+            "on_start": [{"stage": "branch", "steps": [{"name": "run", "run": "true"}]}],
+            "profiles": {"light": "all"},
+            "default_profile": "light",
+        },
+    )
     incus = MagicMock(spec=Incus)
     incus.config_get.return_value = "light"
     helper = mocker.patch("jailbee.branch_config.effective_autostart_config", return_value=branch)
