@@ -2503,7 +2503,10 @@ baseline requires confirmation. Foreground commands ask on an interactive
 terminal; `--yes`/`-y` accepts without asking. Declining, or starting without a
 terminal (including dashboard and background boots), warns and uses the host
 checkout's config instead. Background boots do not inherit foreground
-`--yes` approval. The `--no-autostart` flag skips this read and check entirely.
+`--yes` approval. The `--no-autostart` flag skips this read and check unless
+`restart --autostart-profile` needs to validate a custom branch profile. Custom
+profile validation happens after boot, when the container checkout is readable;
+service selections and built-in profiles are still stored before boot.
 
 Restarts performed by `jailbee apply` and explicit `jailbee autostart run`
 also use the container's committed config, but never prompt for additional
