@@ -145,14 +145,26 @@ def _spec(dotted):
     return next(s for s in repo_specs() if s.path == wanted)
 
 
-def test_github_is_disabled_in_the_repo_layer():
-    reason = layers.disabled_reason(_spec("github.api_tokens"), "repo")
-    assert reason is not None
-    assert "global.yaml" in reason
+def test_repo_github_enabled_is_editable_but_secrets_are_not():
+    assert layers.disabled_reason(_spec("github.enabled"), "repo") is None
+
+    for field in ("github.token", "github.api_tokens"):
+        reason = layers.disabled_reason(_spec(field), "repo")
+        assert reason is not None
+        assert "global.yaml" in reason
 
 
 def test_github_is_editable_in_the_global_layer():
     assert layers.disabled_reason(_spec("github.api_tokens"), "global") is None
+
+
+def test_repo_github_disabled_is_valid_but_enabling_it_is_rejected(opened):
+    got = opened()
+
+    assert layers.validate(got, "repo", [YamlChange(("github", "enabled"), False)]) is None
+    error = layers.validate(got, "repo", [YamlChange(("github", "enabled"), True)])
+    assert error is not None
+    assert "Only `github: {enabled: false}` is allowed" in error
 
 
 def test_ordinary_fields_are_never_disabled():

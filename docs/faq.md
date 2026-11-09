@@ -660,9 +660,9 @@ in the repo's host-local file, `~/.config/jailbee/repos/<container_prefix>.yaml`
 as `github.token`; `chmod 600` that file. With those token permissions, the
 container's `gh` can read but not publish changes: agents stage issue and PR
 writes in an outbox that you publish from the host.
-The `github` block is **rejected** in a repo's `.jailbee/config.yaml` so
-tokens can't leak via git, and `jailbee doctor` warns about classic (`ghp_*`)
-tokens. A pre-1.6 `github.api_tokens` map in `global.yaml` still works until
+A repo's `.jailbee/config.yaml` may contain only `github: {enabled: false}`
+to opt out; all other GitHub settings are rejected there so tokens can't leak
+via git. `jailbee doctor` warns about classic (`ghp_*`) tokens. A pre-1.6 `github.api_tokens` map in `global.yaml` still works until
 2.0.0; `jailbee config migrate --apply` moves it.
 
 → [GitHub CLI (`gh`) inside containers](git-bridge.md#github-cli-gh-inside-containers)
@@ -743,8 +743,8 @@ agent API keys — go global. Personal things that concern one repo — its GitH
 token, its credential group, your own extra egress for it — go in its host-local
 file. Repo-shaped things — stacks, autostart, resource limits, repo-specific
 egress — go in the repo file. Most fields are legal at any layer and the split
-is convention, but `github`, `credentials` and `litellm` are rejected in the
-committed repo file outright.
+is convention, but `credentials` and `litellm` are rejected in the committed
+repo file. For GitHub, only `github: {enabled: false}` is allowed there.
 
 → [Recommended placement](config.md#recommended-placement)
 

@@ -8,6 +8,13 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- A committed `.jailbee/config.yaml` may set `github: {enabled: false}` to
+  disable GitHub integration for that repo even when enabled globally. All
+  other GitHub settings remain host-only
+  ([#104](https://github.com/VRTFinland/jailbee/issues/104)).
+
 ### Fixed
 
 - `jailbee net refresh`, run by the `jailbee-net-refresh.timer` every minute,

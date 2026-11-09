@@ -383,8 +383,9 @@ The three layers, lowest first: `~/.config/jailbee/global.yaml` (personal,
 every repo), the committed `.jailbee/config.yaml`, and the host-local
 `~/.config/jailbee/repos/<container_prefix>.yaml` (personal, this repo,
 never committed — the home of `github.token`, a per-repo
-`credentials.group` and personal `egress_allow`). `github`, `credentials`
-and `litellm` are rejected in the committed file.
+`credentials.group` and personal `egress_allow`). The committed file may
+contain exactly `github: {enabled: false}` to opt out of GitHub integration;
+all other `github` forms, `credentials` and `litellm` are rejected there.
 
 ### `jailbee config edit`
 
@@ -451,9 +452,10 @@ init` there first, or edit the global layer, where those settings live.
 `github.token` shows in the `--local` editor as a masked, read-only row: the
 editor never paints a token on a terminal, so edit the host-local file by
 hand and keep it at mode `0600`. The deprecated `github.api_tokens` map
-(global layer only) is masked the same way. The whole `github` block is
-blocked at the repo layer (plain `jailbee config edit`) because the config
-loader rejects it in a repo config. `scratch.config` has no schema to build a form from;
+(global layer only) is masked the same way. At the repo layer (plain
+`jailbee config edit`), only `github.enabled: false` is allowed; token fields
+remain blocked, and validation rejects enabling the integration there.
+`scratch.config` has no schema to build a form from;
 it is edited as a YAML block and checked before it is staged.
 
 A repo config's lists are *appended* to the global ones by jailbee's merge

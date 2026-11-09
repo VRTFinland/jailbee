@@ -3201,9 +3201,25 @@ github:
 [Host-local overrides](#host-local-overrides). A fine-grained
 PAT is scoped to its owner and selected repositories.
 
-**Placement constraint:** `github.enabled` belongs in `global.yaml`, while
-`github.token` belongs in the host-local per-repo file. A `github` block in
-committed `.jailbee/config.yaml` is rejected to avoid committing a secret.
+**Placement constraint:** enable the integration in `global.yaml`, and put
+`github.token` in the host-local per-repo file. A committed
+`.jailbee/config.yaml` may opt this repo out of a globally enabled integration
+with exactly:
+
+```yaml
+github:
+  enabled: false
+```
+
+This skips GitHub token injection, the integration's automatic
+`api.github.com:443` egress entry, and GitHub doctor checks. It does not remove
+hosts added by other features (such as Claude plugins) or explicit egress
+entries. The normal layer order still applies: a host-local override takes
+precedence over the committed repo setting.
+
+Every other `github` form in the committed file is rejected, including
+`enabled: true`, empty blocks, tokens, and additional keys, to keep secrets
+and opt-in settings on the host.
 
 **Permissions:** use mode `0600` for a local file containing `github.token`.
 Loading warns if group or other permissions are present; it does not reject
@@ -3230,7 +3246,7 @@ Field defaults:
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `enabled` | bool | `false` | Master switch. Opt-in via global.yaml. |
+| `enabled` | bool | `false` | Master switch. Opt in via global.yaml; a committed repo config may only contain `github: {enabled: false}` to opt out. |
 | `token` | SecretStr | unset | This repo's GitHub PAT; set only in the host-local file. Masked in output and read-only in the interactive config editor. |
 | `api_tokens` | dict[str, SecretStr] | `{}` | **Deprecated; removed in 2.0.0.** Legacy map from `container_prefix` to PAT; migrate to local `github.token` with `jailbee config migrate`. |
 

@@ -1132,8 +1132,9 @@ inside the container can bypass the outbox review step. See the
 `jailbee-issue-management` and `jailbee-pr-review` skills for the intended
 read-only-container workflow.
 
-The `github` block must never live in a repo's `.jailbee/config.yaml` —
-`jailbee` rejects it at the repo layer so tokens can't leak via git commits.
+A repo's `.jailbee/config.yaml` may contain exactly `github: {enabled: false}`
+to opt out of the integration. `jailbee` rejects every other GitHub setting at
+the repo layer so tokens can't leak via git commits.
 See [`config.md`](config.md#github) for the
 full field reference, the `0600` permission requirement, and the
 `jailbee doctor` checks.

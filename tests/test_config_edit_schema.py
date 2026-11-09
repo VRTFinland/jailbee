@@ -393,22 +393,21 @@ def test_loose_auto_revert_appears_once_on_the_config_side():
 
 
 def test_global_only_keys_is_the_documented_ban_list():
-    """Pins our copy of the keys `load_config_from_layers` refuses in a repo config.
+    """Pins the top-level keys wholly refused in a repo config.
 
     The loader is the source of truth; this only holds `GLOBAL_ONLY_KEYS`
     to the list as documented, so a silent edit to the constant is caught.
     It does not derive the list from the loader, so it cannot notice the
     loader growing a sixth ban.
 
-    Both spellings of the credential block and both names of the computed
-    field are pinned: the loader bans the legacy spellings too, and a set
-    naming only the current keys would no longer mirror it.
+    The credentials block spellings and computed-field names are pinned.
+    GitHub is deliberately absent: the loader permits only
+    `github: {enabled: false}` in repo configs.
     """
     from jailbee.config_edit.schema import GLOBAL_ONLY_KEYS
 
     assert GLOBAL_ONLY_KEYS == frozenset(
         {
-            "github",
             "credentials",
             "claude_credentials",
             "credential_group",
@@ -417,11 +416,8 @@ def test_global_only_keys_is_the_documented_ban_list():
     )
 
 
-def test_github_stays_in_the_repo_tree_so_it_can_be_shown_disabled():
-    """Spec 3.3: a global-only key renders disabled with a reason, not absent.
-
-    Dropping it would leave the user wondering where the setting went.
-    """
+def test_github_enabled_stays_in_the_repo_tree_as_the_safe_exception():
+    """Repo configs may disable GitHub, but may not enable it or store secrets."""
     from jailbee.config_edit.schema import repo_specs
 
     assert ("github", "enabled") in {s.path for s in repo_specs()}
