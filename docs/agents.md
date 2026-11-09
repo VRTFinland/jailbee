@@ -105,7 +105,7 @@ is just an ordinary step. Generated steps normally follow your own
 `on_start` steps, but `--no-wait` or an already-deferred `on_create` changes
 the insertion point to the computed hand-off boundary.
 
-Every attach (`jailbee tmux`, `--attach tmux`, or the dashboard) opens its
+Every tmux attach (`jailbee tmux`, `--attach tmux`, or the dashboard) opens its
 own tmux session grouped with `autostart`
 (`tmux new-session -t autostart -c <repo_dir>`). New windows and splits
 start in the repository directory, not the attach client's working directory.

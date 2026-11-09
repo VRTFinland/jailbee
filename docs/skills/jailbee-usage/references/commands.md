@@ -1182,8 +1182,9 @@ stopped containers older than 30 days (`--yes-to-all` to skip prompts).
 | `jailbee tmux [NAME]` | Attach the autostart tmux session (where `background: true` steps run). |
 | `jailbee exec [NAME] -- CMD...` | Run a command as the dev user. `NAME` comes first, so the command must follow it (`jailbee exec NAME -- cmd`); both are asked for on a terminal and are required arguments for you (exit 2 otherwise). `jailbee exec feat-foo -- pnpm test`. `--cwd home` runs from `$HOME` instead of the clone. Preserves `container.env` (routes via `incus exec`, not sudo). |
 
-Tmux attaches use a per-client grouped session. New windows and splits start
-in the repository directory, even when the attach command runs from elsewhere.
+Tmux attaches (including the dashboard's tmux action) use a per-client grouped
+session. New windows and splits start in the repository directory, even when
+the attach command runs from elsewhere.
 See [the attach behavior](https://jailbee.gisgro.io/docs/agents/#where-the-generated-launch-steps-go)
 for window selection and detach behavior.
 
