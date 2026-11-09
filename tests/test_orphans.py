@@ -81,7 +81,7 @@ def test_attach_tmux_uses_the_repo_dir_label(mocker):
     ensure.assert_called_once_with(incus, "gamma-x", start_dir="/home/dev/gamma")
     args, kwargs = incus.exec_interactive.call_args
     assert args[0] == "gamma-x"
-    assert args[1][:4] == ["tmux", "new-session", "-t", "autostart"]
+    assert args[1][:6] == ["tmux", "new-session", "-t", "autostart", "-c", "/home/dev/gamma"]
     assert args[1][-2:] == ["-t", "@2"]
     assert kwargs["uid"] == 1000 and kwargs["init_groups"] is True
 

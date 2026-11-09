@@ -11154,7 +11154,7 @@ def _attach_tmux_rig(mocker, *, remembered, steps):
 
 def test_attach_tmux_first_attach_lands_on_last_agent_window(mocker):
     argv = _attach_tmux_rig(mocker, remembered=None, steps=["codex", "claude"])
-    assert argv[:4] == ["tmux", "new-session", "-t", "autostart"]
+    assert argv[:6] == ["tmux", "new-session", "-t", "autostart", "-c", "/home/dev/r"]
     assert argv[-3:] == ["select-window", "-t", ":=claude"]
 
 

@@ -210,18 +210,18 @@ def test_landing_window_none_on_exec_error():
 def test_grouped_attach_argv_without_window():
     from jailbee.tmux import grouped_attach_argv
 
-    argv = grouped_attach_argv(None)
-    assert argv[:4] == ["tmux", "new-session", "-t", "autostart"]
-    assert ["set-option", "destroy-unattached", "on"] == argv[5:8]
-    assert argv[9:11] == ["set-hook", "session-window-changed"]
-    assert "@jailbee_window #{window_id}" in argv[11]
+    argv = grouped_attach_argv(None, "/home/dev/repo")
+    assert argv[:6] == ["tmux", "new-session", "-t", "autostart", "-c", "/home/dev/repo"]
+    assert ["set-option", "destroy-unattached", "on"] == argv[7:10]
+    assert argv[11:13] == ["set-hook", "session-window-changed"]
+    assert "@jailbee_window #{window_id}" in argv[13]
     assert "select-window" not in argv
 
 
 def test_grouped_attach_argv_selects_window_last():
     from jailbee.tmux import grouped_attach_argv
 
-    argv = grouped_attach_argv(":=claude")
+    argv = grouped_attach_argv(":=claude", "/home/dev/repo")
     assert argv[-4:] == [";", "select-window", "-t", ":=claude"]
 
 

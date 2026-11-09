@@ -10,6 +10,11 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- New tmux windows and splits opened after `jailbee tmux`,
+  `jailbee new --attach tmux`, or a dashboard tmux attach start in the
+  repository checkout again, rather than
+  `/home/dev`. This fixes a regression introduced in 1.8.1
+  ([#105](https://github.com/VRTFinland/jailbee/issues/105)).
 - `jailbee net refresh`, run by the `jailbee-net-refresh.timer` every minute,
   listed every Incus instance about a dozen times per registered repo. Each
   listing makes incusd build every instance's full state, so on a host with

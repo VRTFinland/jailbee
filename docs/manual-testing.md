@@ -986,6 +986,27 @@ jailbee shell feat-bootsmoke   # warns about the failed job, offers to attach an
 jailbee job clear feat-bootsmoke
 ```
 
+## Tmux attach working directory (#105)
+
+On a running container with an autostart session:
+
+1. Attach with `jailbee tmux <name>` from outside the repository directory.
+2. Create a window with prefix + `c`; `pwd` must show the repository checkout,
+   not `/home/dev`.
+3. Split with prefix + `"` and prefix + `%`; `pwd` must show the checkout
+   in both new panes.
+4. Detach, then repeat through the dashboard's tmux action. For an orphan
+   container, repeat with `jailbee orphan tmux <full-name>`.
+
+For an isolated local tmux reproduction, use a private socket
+(`tmux -L test-105 -f /dev/null ...`) and create a detached `autostart`
+session with `-c <repo_dir>`. Attach from a different directory through
+`tmux -L test-105 new-session -t autostart -c <repo_dir>` in a real terminal
+or PTY. Use the default prefix + `c`, prefix + `"`, and prefix + `%`
+bindings: the new window and both split panes must start in `<repo_dir>`.
+Clean up only that private server with
+`tmux -L test-105 kill-server`.
+
 ## `jailbee tmux`/`shell` wait-for-background smoke test
 
 > Host-only. Verifies attach commands block until a backgrounded

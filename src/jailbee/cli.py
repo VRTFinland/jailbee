@@ -3834,7 +3834,8 @@ def _attach_tmux(cfg: "Config", incus: "IncusType", name: str) -> int:
         landing_window,
     )
 
-    ensure_session(incus, name, start_dir=container_repo_dir(cfg, incus, name))
+    repo_dir = container_repo_dir(cfg, incus, name)
+    ensure_session(incus, name, start_dir=repo_dir)
     enable_terminal_features(incus, name)
     window = landing_window(incus, name)
     steps = agent_autostart_steps(cfg)
@@ -3850,7 +3851,7 @@ def _attach_tmux(cfg: "Config", incus: "IncusType", name: str) -> int:
     env.update(terminal_env(incus, name, uid=uid, gid=gid, home=home, environ=os.environ))
     return incus.exec_interactive(
         name,
-        grouped_attach_argv(window),
+        grouped_attach_argv(window, repo_dir),
         uid=uid,
         gid=gid,
         env=env,

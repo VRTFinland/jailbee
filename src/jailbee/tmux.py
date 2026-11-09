@@ -242,7 +242,7 @@ def landing_window(incus: Incus, container: str) -> str | None:
     return window if _WINDOW_ID.fullmatch(window) else None
 
 
-def grouped_attach_argv(window: str | None) -> list[str]:
+def grouped_attach_argv(window: str | None, repo_dir: str) -> list[str]:
     """`tmux` argv that attaches through a new session grouped with autostart.
 
     Each attach gets its own session sharing the autostart windows, so
@@ -257,6 +257,8 @@ def grouped_attach_argv(window: str | None) -> list[str]:
         "new-session",
         "-t",
         SESSION_NAME,
+        "-c",
+        repo_dir,
         ";",
         "set-option",
         "destroy-unattached",

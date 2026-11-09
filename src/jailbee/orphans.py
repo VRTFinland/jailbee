@@ -122,14 +122,15 @@ def attach_tmux(incus: Incus, name: str) -> int:
         landing_window,
     )
 
-    ensure_session(incus, name, start_dir=_repo_dir(incus, name))
+    repo_dir = _repo_dir(incus, name)
+    ensure_session(incus, name, start_dir=repo_dir)
     enable_terminal_features(incus, name)
     uid, gid = container_ids(incus, name)
     env = _dev_env()
     env.update(terminal_env(incus, name, uid=uid, gid=gid, home=env["HOME"], environ=os.environ))
     return incus.exec_interactive(
         name,
-        grouped_attach_argv(landing_window(incus, name)),
+        grouped_attach_argv(landing_window(incus, name), repo_dir),
         uid=uid,
         gid=gid,
         env=env,
