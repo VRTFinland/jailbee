@@ -972,7 +972,15 @@ def changes(state: EditorState) -> tuple[YamlChange, ...]:
         present, existing = lookup(state.layer_raw, path)
         if value is UNSET:
             if present:
-                out.append(YamlChange(path, DELETE))
+                # Repo GitHub overrides only permit enabled: false, not an empty block.
+                if (
+                    state.layer == "repo"
+                    and path == ("github", "enabled")
+                    and state.layer_raw.get("github") == {"enabled": existing}
+                ):
+                    out.append(YamlChange(("github",), DELETE))
+                else:
+                    out.append(YamlChange(path, DELETE))
             continue
         if present and existing == value:
             continue

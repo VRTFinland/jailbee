@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import stat
 
+import pytest
 import yaml
 
-from jailbee.config_edit.layers import read_layers
+from jailbee.config import load_config_from_layers
+from jailbee.config_edit import state as st
+from jailbee.config_edit.layers import apply_changes, raw_for, read_layers, resolve, validate
 from jailbee.config_edit.save import (
     SavePlan,
     build_plan,
@@ -34,6 +37,60 @@ def _layers(tmp_path, repo_text="", global_text=""):
     if global_text:
         glob.write_text(global_text)
     return read_layers(repo, glob)
+
+
+@pytest.mark.parametrize("policy", ["patch", "regenerate"])
+def test_repo_github_reset_inherits_global_and_saves_valid_yaml(tmp_path, policy):
+    layers = _layers(
+        tmp_path,
+        repo_text="container_prefix: demo\ngithub:\n  enabled: false\n",
+        global_text="github:\n  enabled: true\n  api_tokens:\n    demo: ghp_test\n",
+    )
+    specs = repo_specs()
+    state = st.open_editor(
+        layer="repo",
+        specs=specs,
+        origins=resolve(specs, layers),
+        layer_raw=raw_for(layers, "repo"),
+    )
+    state = st.toggle_show_all(st.enter_crumb(state, "github"))
+    state = st.reset_current(state)
+    changes = st.changes(state)
+
+    assert "github" not in apply_changes(layers.repo_raw, changes)
+    assert validate(layers, "repo", changes) is None
+    plan = build_plan(layers, "repo", changes, specs, policy)
+    commit(plan)
+    saved = yaml.safe_load(layers.repo_path.read_text())
+    assert "github" not in saved
+    config = load_config_from_layers(
+        layers.global_raw,
+        saved,
+        layers.repo_path,
+        origin=str(layers.repo_path),
+        emit_hint=False,
+    )
+    assert config.github.enabled is True
+
+
+def test_github_reset_preserves_other_children_and_other_layers(tmp_path):
+    for layer, repo, global_ in (
+        ("repo", {"github": {"enabled": False, "unknown": "keep"}}, {}),
+        ("global", {}, {"github": {"enabled": False, "api_tokens": {"demo": "token"}}}),
+    ):
+        layers = _layers(tmp_path, yaml.safe_dump(repo), yaml.safe_dump(global_))
+        specs = repo_specs() if layer == "repo" else global_specs()
+        state = st.open_editor(
+            layer=layer,
+            specs=specs,
+            origins=resolve(specs, layers),
+            layer_raw=raw_for(layers, layer),
+        )
+        state = st.toggle_show_all(st.enter_crumb(state, "github"))
+        result = apply_changes(raw_for(layers, layer), st.changes(st.reset_current(state)))
+        assert result["github"] == (
+            {"unknown": "keep"} if layer == "repo" else {"api_tokens": {"demo": "token"}}
+        )
 
 
 def test_auto_picks_the_documented_default_per_layer():

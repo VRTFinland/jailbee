@@ -248,7 +248,7 @@ def test_load_config_rejects_github_block_in_repo_yaml(repo_and_global):
         },
     )
 
-    with pytest.raises(ConfigError, match=r"`github` block is not allowed in repo"):
+    with pytest.raises(ConfigError, match=r"Only `github: \{enabled: false\}` is allowed in repo"):
         load_config(repo_path)
 
 
