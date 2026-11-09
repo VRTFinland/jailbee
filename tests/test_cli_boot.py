@@ -13,6 +13,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from sqlmodel import Session
 from typer.testing import CliRunner
 
@@ -461,3 +462,22 @@ def test_boot_worker_marks_the_job_failed_on_error(tmp_path, mocker):
     row = _jobs()["myrepo-feat-a"]
     assert row.phase == "failed"
     assert row.error_msg == "boom"
+
+
+@pytest.mark.parametrize("command", ["start", "restart"])
+def test_foreground_start_yes_allows_branch_prompt(tmp_path, mocker, command):
+    _setup(tmp_path, mocker)
+    post = mocker.patch("jailbee.cli._post_start_actions")
+    result = runner.invoke(app, [command, "feat-a", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert post.call_args.kwargs["assume_yes"] is True
+    assert post.call_args.kwargs["allow_prompt"] is True
+
+
+@pytest.mark.parametrize("command", ["start", "restart"])
+def test_background_yes_is_not_forwarded_to_worker(tmp_path, mocker, command):
+    _setup(tmp_path, mocker)
+    popen = _patch_popen(mocker)
+    result = runner.invoke(app, [command, "feat-a", "--background", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "--yes" not in popen.call_args.args[0]

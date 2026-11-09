@@ -1878,6 +1878,33 @@ def test_run_apply_assume_yes_never_moves_cache_directories(
     assert restart_one.call_count == 0
 
 
+def test_restart_one_uses_effective_branch_profile(make_cfg, tmp_path, mocker):
+    from jailbee.apply import _restart_one
+
+    cfg = make_cfg(tmp_path)
+    branch = make_cfg(tmp_path, services={"db": {"run": "sleep infinity"}}, autostart={
+        "on_start": [{"stage": "branch", "steps": [{"name": "run", "run": "true"}]}],
+        "profiles": {"light": "all"}, "default_profile": "light",
+    })
+    incus = MagicMock(spec=Incus)
+    incus.config_get.return_value = "light"
+    helper = mocker.patch("jailbee.branch_config.effective_autostart_config", return_value=branch, create=True)
+    mocker.patch("jailbee.lifecycle.boot_container")
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="loose")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/r")
+    mocker.patch("jailbee.hosts.sync_hosts")
+    mocker.patch("jailbee.egress_proxy.sync_container")
+    mocker.patch("jailbee.autostart.inject_github_token")
+    run = mocker.patch("jailbee.autostart.run_autostart")
+
+    _restart_one(cfg, incus, "c")
+
+    helper.assert_called_once_with(cfg, incus, "c")
+    used = run.call_args.args[0]
+    assert "db" in used.services
+    assert used.autostart.on_start[0].stage == "branch"
+
+
 def test_restart_one_runs_autostart_on_start(
     make_cfg, tmp_path: Path, mocker: MockerFixture
 ) -> None:

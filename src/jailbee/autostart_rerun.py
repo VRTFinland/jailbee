@@ -109,10 +109,12 @@ def failed_targets(cfg: Config, container: str) -> list[RerunTarget]:
 
 
 def effective_config(cfg: Config, incus: Incus, container: str) -> Config:
-    """Resolve the stored host profile before selecting explicit or failed targets."""
+    """Resolve the effective config and stored profile before selecting targets."""
     from jailbee.autostart_profiles import profiled_config, resolve_profile
+    from jailbee.branch_config import effective_autostart_config
 
-    return profiled_config(cfg, resolve_profile(cfg, incus, container))
+    effective = effective_autostart_config(cfg, incus, container)
+    return profiled_config(effective, resolve_profile(effective, incus, container))
 
 
 def prepare(cfg: Config, incus: Incus, container: str, targets: Sequence[RerunTarget]) -> Autostart:
@@ -126,7 +128,7 @@ def prepare(cfg: Config, incus: Incus, container: str, targets: Sequence[RerunTa
         raise RuntimeError(f"Container '{container}' must be running to re-run autostart")
     effective = effective_config(cfg, incus, container)
     block = rerun_block(effective.autostart, targets)
-    validate_windows(cfg, block)
+    validate_windows(effective, block)
     validate_remote(block)
     return block
 
@@ -318,7 +320,7 @@ def _command(
         return
     block = prepare(cfg, incus, container, targets)
     if wait:
-        run_foreground(cfg, incus, container, block)
+        run_foreground(effective, incus, container, block)
     else:
         import os
 

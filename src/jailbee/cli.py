@@ -4582,6 +4582,8 @@ def _post_start_actions(
     name: str,
     *,
     no_autostart: bool,
+    assume_yes: bool = False,
+    allow_prompt: bool = False,
     override: Literal["wait", "no_wait"] | None = None,
     on_detach: "Callable[[Autostart, str, str, bool, AutostartPlan | None], None] | None" = None,
 ) -> None:
@@ -4627,7 +4629,11 @@ def _post_start_actions(
         return
 
     from jailbee.autostart_profiles import missing_on_create, profiled_config, resolve_profile
+    from jailbee.branch_config import effective_autostart_config
 
+    cfg = effective_autostart_config(
+        cfg, incus, name, assume_yes=assume_yes, allow_prompt=allow_prompt
+    )
     profile = resolve_profile(cfg, incus, name)
     missing = missing_on_create(cfg, incus, name, profile) if profile is not None else None
     cfg = profiled_config(cfg, profile)
@@ -4934,6 +4940,7 @@ def start(
             help="Force a foreground start, overriding `boot.background`.",
         ),
     ] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Approve branch autostart changes.")] = False,
     wait: WaitOption = False,
     no_wait: NoWaitOption = False,
     config: ConfigOption = None,
@@ -4974,6 +4981,8 @@ def start(
         incus,
         name,
         no_autostart=no_autostart,
+        assume_yes=yes,
+        allow_prompt=True,
         override=autostart_override,
         on_detach=_autostart_detach_handler(
             cfg,
@@ -5233,6 +5242,7 @@ def restart(
             help="Force a foreground restart, overriding `boot.background`.",
         ),
     ] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Approve branch autostart changes.")] = False,
     wait: WaitOption = False,
     no_wait: NoWaitOption = False,
     config: ConfigOption = None,
@@ -5295,6 +5305,8 @@ def restart(
         incus,
         name,
         no_autostart=no_autostart,
+        assume_yes=yes,
+        allow_prompt=True,
         override=autostart_override,
         on_detach=_autostart_detach_handler(
             cfg,

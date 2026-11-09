@@ -359,3 +359,29 @@ def test_detach_handlers_forward_branch_services_presence(tmp_path, mocker, pres
     )
     inline(cfg.autostart, "on_create", "/r", presence)
     assert run.call_args.args[2].services_present is presence
+
+
+def test_start_uses_branch_autostart_for_profile_and_detached_job(tmp_path, mocker):
+    from jailbee.config import Autostart, AutostartStep
+
+    run = _setup_boot(tmp_path, mocker, detached=True)
+    host = __import__("jailbee.cli", fromlist=["x"])._load_or_exit.return_value
+    branch = host.model_copy(update={
+        "autostart": Autostart(on_start=[AutostartStep(name="branch", run="branch-command")]),
+        "services": {},
+    })
+    loader = mocker.patch(
+        "jailbee.branch_config.effective_autostart_config", return_value=branch, create=True
+    )
+    profile = mocker.patch("jailbee.autostart_profiles.resolve_profile", return_value=None)
+    spawn = mocker.patch("jailbee.cli._spawn_autostart_worker")
+
+    result = runner.invoke(app, ["start", "feat-a", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert loader.call_args.args[0] is host
+    assert loader.call_args.kwargs == {"assume_yes": True, "allow_prompt": True}
+    assert profile.call_args.args[0] is branch
+    assert run.call_args.args[0].autostart.on_start[0].run == "branch-command"
+    assert spawn.call_args.kwargs["autostart"].on_start[0].run == "branch-command"
+    assert spawn.call_args.kwargs["services_present"] is False
