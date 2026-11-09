@@ -232,6 +232,10 @@ def _setup_boot(tmp_path: Path, mocker, *, detached: bool):
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/myrepo")
     mocker.patch("jailbee.autostart.inject_github_token")
     mocker.patch("jailbee.hosts.sync_hosts")
+    mocker.patch("jailbee.egress_proxy.sync_container")
+    mocker.patch(
+        "jailbee.branch_config.effective_autostart_config", side_effect=lambda cfg, *a, **kw: cfg
+    )
     run_autostart = mocker.patch(
         "jailbee.autostart.run_autostart",
         return_value=AutostartPlan(blocking=[], detached=[_stage("deps")] if detached else []),
@@ -361,11 +365,14 @@ def test_detach_handlers_forward_branch_services_presence(tmp_path, mocker, pres
     assert run.call_args.args[2].services_present is presence
 
 
-def test_start_uses_branch_autostart_for_profile_and_detached_job(tmp_path, mocker):
+@pytest.mark.parametrize("command", ["start", "restart"])
+@pytest.mark.parametrize("yes", [False, True])
+def test_start_uses_branch_autostart_for_profile_and_detached_job(tmp_path, mocker, command, yes):
     from jailbee.config import Autostart, AutostartStep
 
     run = _setup_boot(tmp_path, mocker, detached=True)
-    host = __import__("jailbee.cli", fromlist=["x"])._load_or_exit.return_value
+    host = make_cfg(tmp_path / "myrepo", services={"db": {"run": "sleep infinity"}})
+    mocker.patch("jailbee.cli._load_or_exit", return_value=host)
     branch = host.model_copy(update={
         "autostart": Autostart(on_start=[AutostartStep(name="branch", run="branch-command")]),
         "services": {},
@@ -376,11 +383,12 @@ def test_start_uses_branch_autostart_for_profile_and_detached_job(tmp_path, mock
     profile = mocker.patch("jailbee.autostart_profiles.resolve_profile", return_value=None)
     spawn = mocker.patch("jailbee.cli._spawn_autostart_worker")
 
-    result = runner.invoke(app, ["start", "feat-a", "--yes"])
+    result = runner.invoke(app, [command, "feat-a", *(["--yes"] if yes else [])])
 
     assert result.exit_code == 0, result.output
+    assert host.services and not branch.services
     assert loader.call_args.args[0] is host
-    assert loader.call_args.kwargs == {"assume_yes": True, "allow_prompt": True}
+    assert loader.call_args.kwargs == {"assume_yes": yes, "allow_prompt": True}
     assert profile.call_args.args[0] is branch
     assert run.call_args.args[0].autostart.on_start[0].run == "branch-command"
     assert spawn.call_args.kwargs["autostart"].on_start[0].run == "branch-command"

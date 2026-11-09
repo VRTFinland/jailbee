@@ -321,6 +321,20 @@ def test_rerun_lists_branch_steps_and_respects_branch_service_windows(make_cfg, 
     helper.assert_called_once_with(host, incus, "c")
 
 
+def test_rerun_protects_host_service_missing_from_branch(make_cfg, tmp_path, mocker, capsys):
+    from jailbee.autostart_rerun import command
+
+    host = make_cfg(tmp_path, services={"db": {"run": "sleep infinity"}})
+    branch = collision_cfg(tmp_path, "svc-db")
+    branch = branch.model_copy(update={"services": {}})
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = ""
+    mocker.patch("jailbee.branch_config.effective_autostart_config", return_value=branch)
+    command(host, incus, "c", stages=[], steps=[], failed=False, trigger=None,
+            listing=True, json_output=True, wait=False, spawn=mocker.MagicMock())
+    assert '"svc-db"' not in capsys.readouterr().out
+
+
 def test_effective_config_resolves_profile_before_selection(make_cfg, tmp_path, mocker):
     from jailbee.autostart_rerun import effective_config
 

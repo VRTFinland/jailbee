@@ -14,6 +14,12 @@ def test_clone_loads_head_autostart_and_services(mocker, tmp_path):
         "user.jailbee.mode": "clone",
         "user.jailbee.repo_dir": "/repo",
     }[key]
+    checkout = tmp_path / ".jailbee"
+    checkout.mkdir(exist_ok=True)
+    (checkout / "config.yaml").write_text(
+        "container_prefix: test\nautostart:\n  on_start:\n    - name: uncommitted\n"
+        "      run: false\n"
+    )
     incus.exec.return_value = (
         "container_prefix: test\nautostart:\n  on_start:\n    - name: build\n"
         "      run: make\nservices:\n  web:\n    run: serve\n"
@@ -57,8 +63,9 @@ def test_legacy_path_and_missing_config(mocker, tmp_path, capsys):
     "text",
     [
         "container_prefix: test\nautostart: [broken]",
-        "container_prefix: test\nautostart:\n  on_start:\n    - name: build\n"
-        "      run: make\n      mounts: [unknown]\n",
+        "container_prefix: test\noptional_mounts:\n  unknown:\n"
+        "    host: /tmp\n    container: /creds\nautostart:\n  on_start:\n"
+        "    - name: build\n      run: make\n      mounts: [unknown]\n",
     ],
 )
 def test_invalid_or_incompatible_falls_back(mocker, tmp_path, capsys, text):
@@ -70,6 +77,7 @@ def test_invalid_or_incompatible_falls_back(mocker, tmp_path, capsys, text):
     assert "Falling back" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("grant", ["network: loose", "mounts: [credentials]"])
 @pytest.mark.parametrize(
     "interactive,allow,yes,answer,remote,accepted",
     [
@@ -82,14 +90,20 @@ def test_invalid_or_incompatible_falls_back(mocker, tmp_path, capsys, text):
     ],
 )
 def test_widening_requires_local_approval(
-    mocker, tmp_path, interactive, allow, yes, answer, remote, accepted
+    mocker, tmp_path, capsys, grant, interactive, allow, yes, answer, remote, accepted
 ):
-    cfg = make_cfg(tmp_path)
+    from jailbee.config.models_host import OptionalMount
+
+    cfg = make_cfg(tmp_path).model_copy(
+        update={
+            "optional_mounts": {"credentials": OptionalMount(host=tmp_path, container="/creds")}
+        }
+    )
     incus = mocker.Mock()
     incus.config_get.return_value = "clone"
     incus.exec.return_value = (
         "container_prefix: test\nautostart:\n  on_start:\n    - name: open\n"
-        "      run: make\n      network: loose\n"
+        f"      run: make\n      {grant}\n"
     )
     mocker.patch("jailbee.git.show_file_at_ref", return_value=None)
     mocker.patch("jailbee.git.remote_ref_exists", return_value=True)
@@ -101,3 +115,6 @@ def test_widening_requires_local_approval(
     )
     assert (result is not cfg) == accepted
     assert confirm.called == (not remote and not yes and allow and interactive)
+    output = capsys.readouterr().out
+    assert "widens privileges" in output
+    assert ("Falling back" in output) == (not accepted)
