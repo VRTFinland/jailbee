@@ -8,6 +8,15 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Fixed
+
+- `jailbee net refresh`, run by the `jailbee-net-refresh.timer` every minute,
+  listed every Incus instance about a dozen times per registered repo. Each
+  listing makes incusd build every instance's full state, so on a host with
+  many repos the timer kept incusd busy permanently. One refresh now lists
+  instances once per repo
+  ([#106](https://github.com/VRTFinland/jailbee/issues/106)).
+
 ## 1.8.5 - 2026-11-08
 
 ### Added

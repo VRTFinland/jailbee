@@ -2017,3 +2017,125 @@ def test_exec_pipe_guard_checks_both_instances(incus, mocker):
     with pytest.raises(IncusError, match="identity changed"):
         incus.exec_pipe("src", ["save"], "dst", ["load"])
     subprocess_mock.Popen.assert_not_called()
+
+
+# ---- instance_snapshot (issue #106) -------------------------------------------
+
+
+def _list_counting_run(mocker, payload: list[dict]) -> list[list[str]]:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd[1:])
+        stdout = json.dumps(payload) if cmd[1] == "list" else ""
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=stdout, stderr="")
+
+    mocker.patch("jailbee.incus.subprocess.run", side_effect=fake_run)
+    return calls
+
+
+def _list_calls(calls: list[list[str]]) -> int:
+    return sum(1 for c in calls if c[0] == "list")
+
+
+def test_list_containers_lists_every_time_without_a_snapshot(incus, mocker):
+    calls = _list_counting_run(mocker, [{"name": "a"}])
+    incus.list_containers()
+    incus.list_containers()
+    assert _list_calls(calls) == 2
+
+
+def test_instance_snapshot_reuses_one_listing(incus, mocker):
+    calls = _list_counting_run(mocker, [{"name": "a"}])
+    with incus.instance_snapshot():
+        assert incus.list_containers() == [{"name": "a"}]
+        assert incus.exists("a")
+        incus.list_containers(timeout=5)
+    assert _list_calls(calls) == 1
+
+
+def test_instance_snapshot_ends_with_the_block(incus, mocker):
+    calls = _list_counting_run(mocker, [{"name": "a"}])
+    with incus.instance_snapshot():
+        incus.list_containers()
+    incus.list_containers()
+    assert _list_calls(calls) == 2
+
+
+def test_instance_snapshot_hands_out_copies(incus, mocker):
+    _list_counting_run(mocker, [{"name": "a", "config": {}}])
+    with incus.instance_snapshot():
+        incus.list_containers()[0]["config"]["k"] = "v"
+        assert incus.list_containers() == [{"name": "a", "config": {}}]
+
+
+def test_instance_snapshot_keys_on_fast_and_all_projects(incus, mocker):
+    calls = _list_counting_run(mocker, [])
+    with incus.instance_snapshot():
+        incus.list_containers()
+        incus.list_containers(fast=True)
+        incus.list_containers(all_projects=True)
+        incus.list_containers(fast=True)
+    assert _list_calls(calls) == 3
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["config", "get", "a", "k"],
+        ["config", "show", "a"],
+        ["config", "device", "get", "a", "eth0", "network"],
+        ["exec", "a", "--", "true"],
+        ["file", "push", "/x", "a/x"],
+        ["info", "a"],
+        ["network", "acl", "edit", "acl-x"],
+        ["network", "get", "incusbr0", "ipv4.address"],
+        ["profile", "show", "p"],
+        ["query", "/1.0/instances/a"],
+    ],
+)
+def test_instance_snapshot_survives_commands_that_leave_instances_alone(incus, mocker, args):
+    calls = _list_counting_run(mocker, [])
+    with incus.instance_snapshot():
+        incus.list_containers()
+        incus._run(args)
+        incus.list_containers()
+    assert _list_calls(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["config", "set", "a", "k", "v"],
+        ["config", "unset", "a", "k"],
+        ["config", "device", "add", "a", "d", "disk"],
+        ["config", "device", "set", "a", "eth0", "network", "n"],
+        ["start", "a"],
+        ["stop", "a"],
+        ["delete", "a"],
+        ["profile", "edit", "p"],
+        ["profile", "set", "p", "k", "v"],
+        ["network", "set", "incusbr0", "k", "v"],
+        ["query", "-X", "PATCH", "/1.0/instances/a"],
+        ["query", "--request=PUT", "/1.0/instances/a"],
+        ["snapshot", "create", "a"],
+    ],
+)
+def test_instance_snapshot_drops_on_commands_that_may_change_instances(incus, mocker, args):
+    calls = _list_counting_run(mocker, [])
+    with incus.instance_snapshot():
+        incus.list_containers()
+        incus._run(args)
+        incus.list_containers()
+        incus.list_containers()
+    assert _list_calls(calls) == 2
+
+
+def test_nested_instance_snapshot_keeps_the_outer_one(incus, mocker):
+    calls = _list_counting_run(mocker, [])
+    with incus.instance_snapshot():
+        incus.list_containers()
+        with incus.instance_snapshot():
+            incus.list_containers()
+        incus.list_containers()
+    assert _list_calls(calls) == 1

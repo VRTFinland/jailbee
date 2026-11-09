@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,7 @@ def incus(mocker: MockerFixture) -> Any:
     # `egress_scope.container_extras` (now on the `_update_container_hosts`
     # path too) would try to json.loads() and blow up on.
     i.config_get.return_value = None
+    i.instance_snapshot.side_effect = contextlib.nullcontext
     return i
 
 
@@ -1817,3 +1819,61 @@ def test_refresh_all_survives_a_failing_fragment_drop(
 
     assert drop.call_count == 2
     assert db_session.exec(select(RegisteredRepo)).all() == []
+
+
+def test_refresh_all_runs_each_repo_inside_one_instance_snapshot(
+    db_session: Session,
+    gcfg: Any,
+    frozen_now: datetime,
+    tmp_path: Path,
+    mocker: MockerFixture,
+) -> None:
+    """Issue #106: every step of one repo's refresh shares a single listing."""
+    from jailbee import egress_pool
+    from jailbee.incus import Incus
+
+    for name in ("a", "b"):
+        (tmp_path / name / ".jailbee").mkdir(parents=True)
+        (tmp_path / name / ".jailbee" / "config.yaml").write_text("# placeholder")
+        db_session.add(
+            RegisteredRepo(
+                container_prefix=name.upper(),
+                repo_root=str(tmp_path / name),
+                registered_at=frozen_now,
+            )
+        )
+    db_session.commit()
+
+    def fake_load(repo_root: Path) -> Any:
+        m = mocker.Mock()
+        m.container_prefix = repo_root.name.upper()
+        return m
+
+    mocker.patch("jailbee.egress_pool.load_repo_config", side_effect=fake_load)
+    real = Incus()
+    listings: list[int] = []
+    mocker.patch.object(
+        real, "_run", side_effect=lambda args, **_: listings.append(1) or _completed("[]")
+    )
+
+    def many_listings(*_a: Any, **_k: Any) -> Any:
+        for _ in range(5):
+            real.list_containers()
+        return egress_pool.RefreshResult(container_prefix="x", status="ok")
+
+    mocker.patch.object(egress_pool, "_refresh_pool_locked", side_effect=many_listings)
+    mocker.patch.object(egress_pool, "check_and_revert_loose", side_effect=many_listings)
+    mocker.patch.object(egress_pool, "check_and_revert_mounts", side_effect=many_listings)
+    mocker.patch.object(egress_pool, "check_and_revert_egress", side_effect=many_listings)
+    mocker.patch.object(egress_pool, "_compute_mirror_endpoint", return_value=None)
+
+    egress_pool.refresh_all(db_session, gcfg, real, now=frozen_now)
+
+    assert len(listings) == 2  # one per repo, not one per step
+    assert real._instance_snapshot is None
+
+
+def _completed(stdout: str) -> Any:
+    import subprocess
+
+    return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")

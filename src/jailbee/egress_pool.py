@@ -250,9 +250,10 @@ def refresh_pool(
             with Session(session.get_bind()) as current:
                 repo = current.get(RegisteredRepo, prefix)
                 if repo is not None:
-                    return _refresh_pool_locked(
-                        cfg, gcfg, incus, current, now=now, ttl=ttl, max_per_host=max_per_host
-                    )
+                    with incus.instance_snapshot():
+                        return _refresh_pool_locked(
+                            cfg, gcfg, incus, current, now=now, ttl=ttl, max_per_host=max_per_host
+                        )
     return RefreshResult(container_prefix=prefix, status="skipped")
 
 
@@ -758,7 +759,11 @@ def refresh_all(
                 repo = current.get(RegisteredRepo, prefix)
                 if repo is None:
                     continue
-                out.update(_refresh_registered_repo(repo, current, gcfg, incus, now=now))
+                # One `incus list` per repo instead of one per step (#106);
+                # taken under the repo's lock, so it cannot go stale against
+                # this repo's own lifecycle operations.
+                with incus.instance_snapshot():
+                    out.update(_refresh_registered_repo(repo, current, gcfg, incus, now=now))
                 current.commit()
     return out
 

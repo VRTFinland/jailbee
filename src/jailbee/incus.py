@@ -169,6 +169,42 @@ def _partial_output(exc: subprocess.TimeoutExpired) -> str:
     return stderr or stdout
 
 
+_READ_ONLY_VERBS = frozenset({"show", "get", "list", "info"})
+
+
+def _keeps_instance_listing(args: list[str]) -> bool:
+    """True when `incus <args>` cannot change what `incus list` reports.
+
+    Conservative: anything not recognised here drops an open
+    `Incus.instance_snapshot`. `exec` and `file` touch only the guest's
+    filesystem, and network ACLs live outside the instance records.
+    """
+    if not args:
+        return False
+    verb = args[0]
+    if verb in ("list", "info", "exec", "file", "console", "version"):
+        return True
+    if verb == "query":
+        for i, arg in enumerate(args):
+            if arg in ("-X", "--request"):
+                method = args[i + 1] if i + 1 < len(args) else ""
+            elif arg.startswith("--request="):
+                method = arg.partition("=")[2]
+            else:
+                continue
+            if method.upper() != "GET":
+                return False
+        return True
+    if verb in ("config", "profile", "network"):
+        rest = args[1:]
+        if verb == "config" and rest[:1] == ["device"]:
+            rest = rest[1:]
+        if verb == "network" and rest[:1] == ["acl"]:
+            return True
+        return bool(rest) and rest[0] in _READ_ONLY_VERBS
+    return False
+
+
 class Incus:
     """Typed wrapper around the `incus` CLI.
 
@@ -185,6 +221,9 @@ class Incus:
         self._client_version: tuple[int, ...] | None = None
         self._client_version_probed = False
         self._guarded_instances: dict[str, str] = {}
+        # Active `instance_snapshot` cache, keyed by (fast, all_projects);
+        # None when no snapshot is open.
+        self._instance_snapshot: dict[tuple[bool, bool], list[dict[str, Any]]] | None = None
 
     def guard_instance(self, name: str, uuid: str) -> None:
         """Pin worker-side exec/config writes to an Incus instance, not its name."""
@@ -206,6 +245,27 @@ class Incus:
             raise IncusTimeoutError(f"`incus {_render_args(args)}` timed out: deadline expired")
         return remaining if timeout is None else min(timeout, remaining)
 
+    @contextlib.contextmanager
+    def instance_snapshot(self) -> Generator[None]:
+        """Serve `list_containers` from one listing for the block's duration.
+
+        `incus list` is `GET /1.0/instances?recursion=2`, which makes incusd
+        build every instance's full state; a periodic pass that lists once per
+        helper keeps the daemon busy (issue #106). Inside this block a listing
+        is fetched once and reused until a command that may change what it
+        reports (see `_keeps_instance_listing`) drops it. Callers get copies,
+        so mutating a returned dict cannot leak into the next call. Nested
+        blocks reuse the outer snapshot.
+        """
+        if self._instance_snapshot is not None:
+            yield
+            return
+        self._instance_snapshot = {}
+        try:
+            yield
+        finally:
+            self._instance_snapshot = None
+
     def _run(
         self,
         args: list[str],
@@ -216,6 +276,8 @@ class Incus:
         input_text: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         self._check_guard(args)
+        if self._instance_snapshot and not _keeps_instance_listing(args):
+            self._instance_snapshot.clear()
         cmd = [self.binary, *args]
         if self.dry_run:
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
@@ -402,13 +464,19 @@ class Incus:
         ``all_projects=True`` adds ``--all-projects``: every entry then carries
         its ``project``, and names may repeat across projects.
         """
+        key = (fast, all_projects)
+        if self._instance_snapshot is not None and key in self._instance_snapshot:
+            return copy.deepcopy(self._instance_snapshot[key])
         args = ["list", "--format", "json"]
         if fast:
             args.append("--fast")
         if all_projects:
             args.append("--all-projects")
         result = self._run(args, timeout=timeout)
-        return json.loads(result.stdout) if result.stdout else []
+        instances: list[dict[str, Any]] = json.loads(result.stdout) if result.stdout else []
+        if self._instance_snapshot is not None:
+            self._instance_snapshot[key] = copy.deepcopy(instances)
+        return instances
 
     def exists(self, name: str) -> bool:
         """Return True if a container with this name exists."""
