@@ -39,10 +39,13 @@ def test_the_broker_unit_restarts_itself_on_upgrade() -> None:
 
 def _outbox_entry() -> str:
     text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    unreleased = text.split("\n## Unreleased\n", 1)[1].split("\n## ", 1)[0]
-    entries = re.split(r"\n(?=- )", unreleased)
-    (entry,) = [e for e in entries if "The outbox moved to the host" in e]
-    return entry
+    release = text.split("\n## 1.8.5 - ", 1)
+    assert len(release) == 2, "CHANGELOG.md is missing the 1.8.5 release section"
+    section = release[1].split("\n## ", 1)[0]
+    entries = re.split(r"\n(?=- )", section)
+    matches = [e for e in entries if "The outbox moved to the host" in e]
+    assert len(matches) == 1, "1.8.5 CHANGELOG section must contain one outbox entry"
+    return matches[0]
 
 
 def test_changelog_outbox_entry_opens_with_the_before_upgrading_block() -> None:
