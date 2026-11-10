@@ -338,3 +338,181 @@ def test_ask_text_passes_completions_through(mocker):
         prompting.ask_text("base branch", validate=lambda _t: None, completions=["main"]) == "main"
     )
     ask.assert_called_once_with("base branch", None, ["main"])
+
+
+# --- the backend seam and the full question-kind API -------------------------
+
+C = Option("c-full", "c  (title)", "c")
+
+
+@pytest.fixture
+def tty(monkeypatch):
+    monkeypatch.delenv("JAILBEE_NONINTERACTIVE", raising=False)
+    monkeypatch.setattr("jailbee.prompting.is_interactive", lambda: True)
+
+
+@pytest.fixture
+def no_tty(monkeypatch):
+    monkeypatch.setattr("jailbee.prompting.is_interactive", lambda: False)
+
+
+def test_choose_many_returns_the_ticked_values(mocker, tty):
+    pick = mocker.patch("jailbee.prompting._select_many", return_value=["a-full", "c-full"])
+    assert prompting.choose_many("containers", [A, B, C]) == ["a-full", "c-full"]
+    assert pick.call_args.args[0] == "containers"
+
+
+def test_choose_many_empty_selection_is_an_answer_not_a_cancel(mocker, tty):
+    mocker.patch("jailbee.prompting._select_many", return_value=[])
+    assert prompting.choose_many("containers", [A, B]) == []
+
+
+def test_choose_many_cancel_raises_cancelled(mocker, tty):
+    mocker.patch("jailbee.prompting._select_many", return_value=None)
+    with pytest.raises(Cancelled):
+        prompting.choose_many("containers", [A, B])
+
+
+def test_choose_many_off_a_tty_names_the_candidates(no_tty):
+    with pytest.raises(MissingValue) as exc:
+        prompting.choose_many("containers", [A, B])
+    assert exc.value.exit_code == 2
+    assert "a, b" in exc.value.format_message()
+
+
+def test_choose_many_with_one_option_still_asks(mocker, tty):
+    pick = mocker.patch("jailbee.prompting._select_many", return_value=["a-full"])
+    assert prompting.choose_many("containers", [A]) == ["a-full"]
+    pick.assert_called_once()
+
+
+def test_choose_many_no_options_is_missing_with_the_reason(tty):
+    with pytest.raises(MissingValue, match="nothing here"):
+        prompting.choose_many("containers", [], empty_reason="nothing here")
+
+
+def test_secret_returns_the_typed_text(mocker, tty):
+    mocker.patch("jailbee.prompting._ask_secret", return_value="hunter2")
+    assert prompting.ask_secret("token") == "hunter2"
+
+
+def test_secret_cancel_raises_cancelled(mocker, tty):
+    mocker.patch("jailbee.prompting._ask_secret", return_value=None)
+    with pytest.raises(Cancelled):
+        prompting.ask_secret("token")
+
+
+def test_secret_off_a_tty_is_missing_and_never_asks(mocker, no_tty):
+    ask = mocker.patch("jailbee.prompting._ask_secret")
+    with pytest.raises(MissingValue, match="token"):
+        prompting.ask_secret("token", alternative="--token")
+    ask.assert_not_called()
+
+
+def test_ask_confirm_returns_the_answer_and_passes_default(mocker, tty):
+    ask = mocker.patch("jailbee.prompting._confirm", return_value=True)
+    assert prompting.ask_confirm("Go?", default=False) is True
+    assert ask.call_args.args == ("Go?", False)
+
+
+def test_ask_confirm_cancel_raises_cancelled(mocker, tty):
+    mocker.patch("jailbee.prompting._confirm", return_value=None)
+    with pytest.raises(Cancelled):
+        prompting.ask_confirm("Go?")
+
+
+def test_ask_confirm_off_a_tty_is_missing_not_a_silent_default(mocker, no_tty):
+    ask = mocker.patch("jailbee.prompting._confirm")
+    with pytest.raises(MissingValue) as exc:
+        prompting.ask_confirm("Destroy it?", alternative="--yes")
+    assert exc.value.exit_code == 2
+    assert "--yes" in exc.value.format_message()
+    ask.assert_not_called()
+
+
+def test_destructive_confirm_defaults_to_no_even_if_asked_for_yes(mocker, tty):
+    ask = mocker.patch("jailbee.prompting._confirm", return_value=False)
+    prompting.ask_confirm("Destroy it?", default=True, destructive=True)
+    assert ask.call_args.args == ("Destroy it?", False)
+
+
+def test_noninteractive_env_beats_a_tty_for_every_kind(mocker, monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True, raising=False)
+    monkeypatch.setenv("JAILBEE_NONINTERACTIVE", "1")
+    for name in ("_confirm", "_select", "_select_many", "_ask", "_ask_secret"):
+        mocker.patch(f"jailbee.prompting.{name}", side_effect=AssertionError(name))
+    calls = [
+        lambda: prompting.ask_confirm("Go?"),
+        lambda: choose_one("x", [A, B]),
+        lambda: prompting.choose_many("x", [A, B]),
+        lambda: ask_text("x", validate=lambda s: None),
+        lambda: prompting.ask_secret("x"),
+    ]
+    for call in calls:
+        with pytest.raises(MissingValue):
+            call()
+
+
+def test_selection_follows_is_interactive_at_call_time(mocker, monkeypatch):
+    monkeypatch.delenv("JAILBEE_NONINTERACTIVE", raising=False)
+    monkeypatch.setattr("jailbee.prompting.is_interactive", lambda: True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
+    assert prompting.ask_confirm("Go?") is True
+    monkeypatch.setattr("jailbee.prompting.is_interactive", lambda: False)
+    with pytest.raises(MissingValue):
+        prompting.ask_confirm("Go?")
+
+
+def test_context_is_accepted_by_every_kind(mocker, tty):
+    ctx = prompting.PromptContext(repo="r", container="c1")
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value="a-full")
+    mocker.patch("jailbee.prompting._select_many", return_value=[])
+    mocker.patch("jailbee.prompting._ask", return_value="x")
+    mocker.patch("jailbee.prompting._ask_secret", return_value="s")
+    assert prompting.ask_confirm("Go?", context=ctx) is True
+    assert choose_one("x", [A, B], context=ctx) == "a-full"
+    assert prompting.choose_many("x", [A, B], context=ctx) == []
+    assert ask_text("x", validate=lambda s: None, context=ctx) == "x"
+    assert prompting.ask_secret("x", context=ctx) == "s"
+
+
+def test_a_backend_receives_the_context_and_a_custom_one_can_be_selected(monkeypatch):
+    seen = {}
+
+    class Fake:
+        def confirm(self, question, *, default, destructive, context, alternative):
+            seen["ctx"] = context
+            return True
+
+    monkeypatch.setattr("jailbee.prompting.select_backend", lambda: Fake())
+    ctx = prompting.PromptContext(container="c1")
+    assert prompting.ask_confirm("Go?", context=ctx) is True
+    assert seen["ctx"] == ctx
+
+
+def test_option_description_is_optional():
+    assert Option("v", "t", "l").description == ""
+    assert Option("v", "t", "l", "d").description == "d"
+
+
+def test_default_secret_prompt_hides_input_and_maps_cancel(mocker):
+    pw = mocker.patch("questionary.password", return_value=mocker.Mock(ask=lambda: None))
+    assert prompting._ask_secret("API token") is None
+    assert pw.call_args.args[0] == "API token:"
+    mocker.patch("questionary.password", return_value=mocker.Mock(ask=lambda: "s3"))
+    assert prompting._ask_secret("token") == "s3"
+
+
+def test_default_multi_picker_returns_values_and_none_on_cancel(mocker):
+    seen = {}
+
+    def fake(message, choices, **kw):
+        seen["choices"] = choices
+        return ["a-full"]
+
+    mocker.patch("jailbee.tui.checkbox", side_effect=fake)
+    assert prompting._select_many("things", [A, B]) == ["a-full"]
+    assert [c.value for c in seen["choices"]] == ["a-full", "b-full"]
+    mocker.patch("jailbee.tui.checkbox", return_value=None)
+    assert prompting._select_many("things", [A, B]) is None

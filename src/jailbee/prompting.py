@@ -5,6 +5,25 @@ given is picked or typed on an interactive terminal, and is an exit-2 error
 naming the candidates anywhere else. Rendering stays in `tui`; this module
 decides *whether* to ask and what the refusal says.
 
+Every question kind goes through one public function and one `PromptBackend`
+chosen per call by `select_backend()`:
+
+=============  ==========================================  =================
+function       answer                                      cancel (Ctrl-C/Esc)
+=============  ==========================================  =================
+ask_confirm    bool                                        Cancelled (never "no")
+choose_one     the chosen option's value                   Cancelled
+choose_many    list of values; [] is a valid answer        Cancelled
+ask_text       validated str; "" only via clear_shortcut   Cancelled
+ask_secret     str, never echoed or logged                 Cancelled
+=============  ==========================================  =================
+
+A backend returns None for cancel; the public function raises `Cancelled`
+(exit 1), so every backend reproduces the same meaning. Cancel is never an
+answer: it must not read as "no", "nothing selected" or an empty string. A
+backend that cannot ask raises `MissingValue` (exit 2) naming the value.
+`JAILBEE_NONINTERACTIVE` forces the non-interactive backend over everything.
+
 `MissingValue` and `Cancelled` are Typer's `ClickException`s, so Typer prints
 them (its `Error` panel, stderr) and sets the exit code — under `CliRunner`
 exactly as in production. Typer vendors Click (`typer._click`); a top-level
@@ -19,7 +38,7 @@ import os
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Protocol, TypeVar
 
 from rich.text import Text
 from typer._click.exceptions import ClickException
@@ -50,6 +69,7 @@ class Option(Generic[T]):  # noqa: UP046
     value: T
     title: str
     label: str
+    description: str = ""
 
 
 class MissingValue(ClickException):
@@ -86,6 +106,212 @@ class Cancelled(ClickException):
 
     def __init__(self) -> None:
         super().__init__("cancelled")
+
+
+@dataclass(frozen=True)
+class PromptContext:
+    """Where a question comes from; a backend may show it (the terminal does not)."""
+
+    repo: str | None = None
+    container: str | None = None
+
+
+class PromptBackend(Protocol):
+    """How questions are put to a user. Each method returns None for cancel.
+
+    Backends do not apply policy (single-candidate shortcuts, validation
+    loops, `Cancelled`); the public functions do. A backend that cannot ask
+    raises `MissingValue`.
+    """
+
+    def confirm(
+        self,
+        question: str,
+        *,
+        default: bool,
+        destructive: bool,
+        context: PromptContext | None,
+        alternative: str | None,
+    ) -> bool | None: ...
+
+    def choose_one(
+        self,
+        noun: str,
+        options: Sequence[Option[Any]],
+        *,
+        destructive: bool,
+        context: PromptContext | None,
+        alternative: str | None,
+        picker: Callable[[Sequence[Option[Any]]], Any | None] | None,
+    ) -> Any | None: ...
+
+    def choose_many(
+        self,
+        noun: str,
+        options: Sequence[Option[Any]],
+        *,
+        context: PromptContext | None,
+        alternative: str | None,
+    ) -> list[Any] | None: ...
+
+    def text(
+        self,
+        noun: str,
+        *,
+        default: str | None,
+        completions: Sequence[str] | None,
+        clear_shortcut: bool,
+        context: PromptContext | None,
+        alternative: str | None,
+    ) -> str | None: ...
+
+    def secret(
+        self,
+        noun: str,
+        *,
+        context: PromptContext | None,
+        alternative: str | None,
+    ) -> str | None: ...
+
+
+class TerminalBackend:
+    """Today's rendering: questionary and the `tui` pickers on the terminal."""
+
+    def confirm(
+        self,
+        question: str,
+        *,
+        default: bool,
+        destructive: bool,
+        context: PromptContext | None,
+        alternative: str | None,
+    ) -> bool | None:
+        # A destructive question never defaults to consent.
+        return _confirm(question, False if destructive else default)
+
+    def choose_one(
+        self,
+        noun: str,
+        options: Sequence[Option[Any]],
+        *,
+        destructive: bool,
+        context: PromptContext | None,
+        alternative: str | None,
+        picker: Callable[[Sequence[Option[Any]]], Any | None] | None,
+    ) -> Any | None:
+        return (picker or (lambda opts: _select(noun, opts)))(options)
+
+    def choose_many(
+        self,
+        noun: str,
+        options: Sequence[Option[Any]],
+        *,
+        context: PromptContext | None,
+        alternative: str | None,
+    ) -> list[Any] | None:
+        return _select_many(noun, options)
+
+    def text(
+        self,
+        noun: str,
+        *,
+        default: str | None,
+        completions: Sequence[str] | None,
+        clear_shortcut: bool,
+        context: PromptContext | None,
+        alternative: str | None,
+    ) -> str | None:
+        if clear_shortcut:
+            return _ask(noun, default, completions, clear_shortcut=True)
+        return _ask(noun, default, completions)
+
+    def secret(
+        self,
+        noun: str,
+        *,
+        context: PromptContext | None,
+        alternative: str | None,
+    ) -> str | None:
+        return _ask_secret(noun)
+
+
+class NonInteractiveBackend:
+    """No one to ask: every question is `MissingValue` (exit 2) naming the value."""
+
+    def confirm(
+        self,
+        question: str,
+        *,
+        default: bool,
+        destructive: bool,
+        context: PromptContext | None,
+        alternative: str | None,
+    ) -> bool | None:
+        how = f"pass it explicitly{f' or use {alternative}' if alternative else ''}"
+        raise MissingValue(
+            "confirmation",
+            reason=f"confirmation needed ({question}); {how}, or run in a terminal to answer",
+        )
+
+    def choose_one(
+        self,
+        noun: str,
+        options: Sequence[Option[Any]],
+        *,
+        destructive: bool,
+        context: PromptContext | None,
+        alternative: str | None,
+        picker: Callable[[Sequence[Option[Any]]], Any | None] | None,
+    ) -> Any | None:
+        raise MissingValue(noun, candidates=[o.label for o in options], alternative=alternative)
+
+    def choose_many(
+        self,
+        noun: str,
+        options: Sequence[Option[Any]],
+        *,
+        context: PromptContext | None,
+        alternative: str | None,
+    ) -> list[Any] | None:
+        raise MissingValue(noun, candidates=[o.label for o in options], alternative=alternative)
+
+    def text(
+        self,
+        noun: str,
+        *,
+        default: str | None,
+        completions: Sequence[str] | None,
+        clear_shortcut: bool,
+        context: PromptContext | None,
+        alternative: str | None,
+    ) -> str | None:
+        raise MissingValue(noun, alternative=alternative, free_text=True)
+
+    def secret(
+        self,
+        noun: str,
+        *,
+        context: PromptContext | None,
+        alternative: str | None,
+    ) -> str | None:
+        raise MissingValue(noun, alternative=alternative, free_text=True)
+
+
+def select_backend() -> PromptBackend:
+    """The backend for this call. The one place a backend is chosen.
+
+    `JAILBEE_NONINTERACTIVE` wins over everything (a channel backend added
+    here must be checked *after* it); then the terminal if `is_interactive()`
+    (looked up at call time); else non-interactive.
+    """
+    return _backend_for(None)
+
+
+def _backend_for(interactive: Callable[[], bool] | None) -> PromptBackend:
+    if os.environ.get("JAILBEE_NONINTERACTIVE"):
+        return NonInteractiveBackend()
+    test = interactive if interactive is not None else globals()["is_interactive"]
+    return TerminalBackend() if test() else NonInteractiveBackend()
 
 
 def _note(message: str) -> None:
@@ -181,6 +407,29 @@ def _ask(
     return None if result is None else str(result)
 
 
+def _select_many(noun: str, options: Sequence[Option[T]]) -> list[T] | None:  # noqa: UP047
+    """The default multi-picker (`tui.checkbox`); None on Ctrl-C / Esc, [] if none ticked."""
+    import questionary
+
+    from jailbee.tui import checkbox
+
+    choices = [
+        questionary.Choice(title=o.title, value=o.value, description=o.description or None)
+        for o in options
+    ]
+    result = checkbox(f"Select {noun}:", choices=choices)
+    return None if result is None else list(result)
+
+
+def _ask_secret(noun: str) -> str | None:
+    """The default secret prompt (input hidden). None on Ctrl-C / Esc."""
+    import questionary
+
+    label = noun[:1].upper() + noun[1:]
+    result = questionary.password(f"{label}:").ask()
+    return None if result is None else str(result)
+
+
 def _confirm(question: str, default: bool) -> bool | None:
     """The default yes/no prompt. None on Ctrl-C / Esc."""
     import questionary
@@ -198,27 +447,60 @@ def choose_one(  # noqa: UP047
     alternative: str | None = None,
     picker: Callable[[Sequence[Option[T]]], T | None] | None = None,
     is_interactive: Callable[[], bool] | None = None,
+    context: PromptContext | None = None,
 ) -> T:
     """Resolve a missing value from its candidates.
 
-    No candidates → `MissingValue(empty_reason)`. One, not `destructive` →
-    taken, with a line on stderr saying so. Otherwise the picker on a
-    terminal, `MissingValue` naming the candidates off one. `picker` lets a
-    caller keep a richer renderer (the container table); it gets the options
-    and returns a value, or None for cancel.
+    No candidates -> `MissingValue(empty_reason)`. One, not `destructive` ->
+    taken, with a line on stderr saying so. Otherwise the backend asks:
+    the picker on a terminal, `MissingValue` naming the candidates off one.
+    `picker` lets a caller keep a richer renderer (the container table); it
+    gets the options and returns a value, or None for cancel.
+
+    Cancel (Ctrl-C / Esc / the picker's cancel row) -> `Cancelled`.
     """
-    interactive = is_interactive if is_interactive is not None else globals()["is_interactive"]
     if not options:
         raise MissingValue(noun, reason=empty_reason or f"no {noun} to choose from")
     if len(options) == 1 and not destructive:
         _note(f"Using {noun} {options[0].label}")
         return options[0].value
-    if not interactive():
-        raise MissingValue(noun, candidates=[o.label for o in options], alternative=alternative)
-    chosen = (picker or (lambda opts: _select(noun, opts)))(options)
+    chosen = _backend_for(is_interactive).choose_one(
+        noun,
+        options,
+        destructive=destructive,
+        context=context,
+        alternative=alternative,
+        picker=picker,
+    )
     if chosen is None:
         raise Cancelled()
-    return chosen
+    return chosen  # type: ignore[no-any-return]  # Protocol backends return Any; values are the options'
+
+
+def choose_many(  # noqa: UP047
+    noun: str,
+    options: Sequence[Option[T]],
+    *,
+    empty_reason: str | None = None,
+    alternative: str | None = None,
+    context: PromptContext | None = None,
+) -> list[T]:
+    """Resolve a missing set of values from its candidates.
+
+    No candidates -> `MissingValue(empty_reason)`. A single candidate is still
+    asked (an empty selection is a legitimate answer; callers decide whether
+    it is acceptable). Off a terminal, `MissingValue` naming the candidates.
+
+    Cancel (Ctrl-C / Esc) -> `Cancelled`. Submitting with nothing ticked is
+    not a cancel: it returns `[]` (the terminal picker's bare Enter selects
+    the highlighted row, as `tui.checkbox` documents).
+    """
+    if not options:
+        raise MissingValue(noun, reason=empty_reason or f"no {noun} to choose from")
+    chosen = select_backend().choose_many(noun, options, context=context, alternative=alternative)
+    if chosen is None:
+        raise Cancelled()
+    return list(chosen)
 
 
 def ask_text(
@@ -230,6 +512,7 @@ def ask_text(
     is_interactive: Callable[[], bool] | None = None,
     completions: Sequence[str] | None = None,
     clear_shortcut: bool = False,
+    context: PromptContext | None = None,
 ) -> str:
     """Resolve a missing free-text value; re-ask while `validate` objects.
 
@@ -238,15 +521,18 @@ def ask_text(
     text, so `validate` decides whether it must be one of them.
     `clear_shortcut` offers Ctrl-R and returns "" without validation when
     pressed; ordinary empty submissions are blocked by the text prompt.
+
+    Cancel (Ctrl-C / Esc) -> `Cancelled`; never an empty string.
     """
-    interactive = is_interactive if is_interactive is not None else globals()["is_interactive"]
-    if not interactive():
-        raise MissingValue(noun, alternative=alternative, free_text=True)
+    backend = _backend_for(is_interactive)
     while True:
-        answer = (
-            _ask(noun, default, completions, clear_shortcut=True)
-            if clear_shortcut
-            else _ask(noun, default, completions)
+        answer = backend.text(
+            noun,
+            default=default,
+            completions=completions,
+            clear_shortcut=clear_shortcut,
+            context=context,
+            alternative=alternative,
         )
         if answer is None:
             raise Cancelled()
@@ -258,12 +544,59 @@ def ask_text(
         _note(problem)
 
 
+def ask_secret(
+    noun: str,
+    *,
+    alternative: str | None = None,
+    context: PromptContext | None = None,
+) -> str:
+    """Resolve a missing secret (token, password); the answer is never echoed.
+
+    Not validated or retried here. Off a terminal, `MissingValue` naming the
+    value (never a default, never read from argv by this function).
+
+    Cancel (Ctrl-C / Esc) -> `Cancelled`; never an empty string.
+    """
+    answer = select_backend().secret(noun, context=context, alternative=alternative)
+    if answer is None:
+        raise Cancelled()
+    return answer
+
+
+def ask_confirm(
+    question: str,
+    *,
+    default: bool = True,
+    destructive: bool = False,
+    alternative: str | None = None,
+    context: PromptContext | None = None,
+) -> bool:
+    """Resolve a missing yes/no decision; the missing-value form of `confirm`.
+
+    `destructive` forces the default to "no" whatever `default` says, so a bare
+    Enter never consents to damage. Off a terminal this is `MissingValue`
+    (exit 2, naming `alternative` such as `--yes`), never a silent default.
+
+    Cancel (Ctrl-C / Esc) -> `Cancelled`; it is not the answer "no".
+    """
+    answer = select_backend().confirm(
+        question,
+        default=default,
+        destructive=destructive,
+        context=context,
+        alternative=alternative,
+    )
+    if answer is None:
+        raise Cancelled()
+    return answer
+
+
 def confirm(question: str, *, default: bool = True) -> bool:
     """Ask a yes/no question on the terminal; Ctrl-C / Esc is `Cancelled`.
 
-    Unlike `choose_one` / `ask_text` this is not a missing-value resolver:
-    the caller decides what a non-interactive run means and checks
-    `is_interactive()` before asking.
+    Legacy form, kept until call sites move to `ask_confirm`. Unlike it, this
+    is not a missing-value resolver: the caller decides what a non-interactive
+    run means and checks `is_interactive()` before asking.
     """
     answer = _confirm(question, default)
     if answer is None:
