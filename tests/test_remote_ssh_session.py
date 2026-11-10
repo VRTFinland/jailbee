@@ -7,9 +7,9 @@ from jailbee.remote_ssh.session import (
     REMOTE_GUI_PORT_ENV,
     REMOTE_RESTRICTED_ENV,
     REMOTE_SESSION_ENV,
+    REMOTE_TRANSPORT_ENV,
     TRANSPORT_SSH,
     TRANSPORT_WEB,
-    REMOTE_TRANSPORT_ENV,
     WAYPIPE_ATTACH_ENV,
     WAYPIPE_COMPRESS_ENV,
     WAYPIPE_SESSION_ENV,
@@ -17,8 +17,8 @@ from jailbee.remote_ssh.session import (
     child_environment,
     host_restricted,
     is_remote_session,
-    is_shared_display_session,
     is_restricted_session,
+    is_shared_display_session,
     is_ssh_session,
     remote_transport,
     shared_display_port,
@@ -195,7 +195,7 @@ def test_waypipe_session_needs_the_ssh_marker_and_a_well_formed_id() -> None:
     env = child_environment({}, transport=TRANSPORT_SSH, gui_port=2222, waypipe=_WP)
 
     assert (
-        waypipe_session({k: v for k, v in env.items() if not k.startswith(("JAILBEE_REMOTE"))})
+        waypipe_session({k: v for k, v in env.items() if not k.startswith("JAILBEE_REMOTE")})
         is None
     )
     assert waypipe_session({**env, WAYPIPE_SESSION_ENV: "../../etc"}) is None
