@@ -4170,7 +4170,7 @@ if TYPE_CHECKING:
     from jailbee.config import Autostart, Config, LooseAutoRevert
     from jailbee.config.models_agents import AutostartStep
     from jailbee.config.models_behaviour import FfPolicy, TagPolicy
-    from jailbee.config.models_remote import RemoteSSHConfig
+    from jailbee.config.models_remote import RemotePolicy, RemoteSSHConfig
     from jailbee.dashboard.columns import TableWindow
     from jailbee.db.models import BackgroundJob
     from jailbee.docker_seed import SeedOutcome
@@ -12738,7 +12738,7 @@ def _pick_mount_kind(
     name: str,
     *,
     attached: bool,
-    policy: "RemoteSSHConfig | None" = None,
+    policy: "RemotePolicy | None" = None,
 ) -> str:
     """The optional mount to add (attached=False) or remove (attached=True)."""
     from jailbee import prompting
@@ -12756,8 +12756,9 @@ def _pick_mount_kind(
     )
     if not attached and policy is not None:
         from jailbee.remote_ssh.mount_policy import grantable_kinds
+        from jailbee.remote_ssh.session import policy_transport
 
-        allowed = set(grantable_kinds(policy, cfg))
+        allowed = set(grantable_kinds(policy, cfg, transport=policy_transport()))
         kinds = [k for k in kinds if k in allowed]
         reason = (
             f"no optional mount this remote session may add to {short} "
@@ -12768,17 +12769,20 @@ def _pick_mount_kind(
     )
 
 
-def _remote_session_policy() -> "RemoteSSHConfig | None":
-    """The `remote.ssh` policy a command answers to in a remote SSH session; None locally.
+def _remote_session_policy() -> "RemotePolicy | None":
+    """The `remote.<transport>` policy a command answers to in a restricted remote session; None locally.
 
     Used by `mount` and `orchestrate grant`.
 
     Read from `global.yaml` on every call, so a root removed there stops the
     next `mount` even inside an SSH session that opened before the edit.
     """
-    from jailbee.remote_ssh.session import is_restricted_session
+    from jailbee.remote_ssh.session import TRANSPORT_WEB, is_restricted_session, policy_transport
 
-    return _load_global().remote.ssh if is_restricted_session() else None
+    if not is_restricted_session():
+        return None
+    remote = _load_global().remote
+    return remote.web if policy_transport() == TRANSPORT_WEB else remote.ssh
 
 
 @app.command("mount")
@@ -12847,8 +12851,9 @@ def mount_cmd(
     grant = None
     if policy is not None:
         from jailbee.remote_ssh.mount_policy import remote_mount_grant
+        from jailbee.remote_ssh.session import policy_transport
 
-        decision = remote_mount_grant(policy, cfg, kind)
+        decision = remote_mount_grant(policy, cfg, kind, transport=policy_transport())
         if isinstance(decision, str):
             error_plain(decision)
             raise typer.Exit(2)
