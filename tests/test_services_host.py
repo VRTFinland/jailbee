@@ -268,7 +268,7 @@ def test_host_refresh_foreign_agents_noninteractive(
     assert host.refresh(cfg, incus, "one", ["web"], assume_yes=True) == 0
     assert run.call_args.kwargs["force"] is False
     monkeypatch.setattr(prompting, "is_interactive", lambda: True)
-    monkeypatch.setattr(prompting, "confirm", lambda *a, **kw: False)
+    monkeypatch.setattr(prompting, "ask_confirm", lambda *a, **kw: False)
     assert host.refresh(cfg, incus, "one", ["web"], assume_yes=False) == 1
     assert run.call_count == 1
 
