@@ -5,8 +5,8 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+import typer
 
-from jailbee import prompting
 from jailbee.app_instance import (
     AppMoveError,
     decide_move,
@@ -260,7 +260,8 @@ def test_cancelling_the_prompt_closes_nothing(tmp_path, mocker):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.prompting._confirm", return_value=None)
     incus = _incus(ON_HOST)
-    with pytest.raises(prompting.Cancelled):
+    # A cancelled confirmation aborts exactly like Ctrl-C at typer.confirm.
+    with pytest.raises(typer.Abort):
         ensure_on_this_display(
             make_cfg(tmp_path), incus, "c1", SPEC, SHARED, move=None, sleep_fn=lambda s: None
         )
