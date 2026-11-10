@@ -512,6 +512,7 @@ async def handle_process(
                 and is_gui_app_command(selected.argv)
             ),
             terminal=tuple(terminal_identity(process.env).items()),
+            client=process.get_extra_info("jailbee_key_fingerprint"),
         )
         if selected.repo_root is None:
             spec.cwd.mkdir(parents=True, exist_ok=True)

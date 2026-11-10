@@ -28,6 +28,7 @@ from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.jobs import JobResult, JobRunner
+from jailbee.dashboard import runner as drunner
 from jailbee.dashboard.runner import RunResult
 from jailbee.dashboard.settings import CURSOR_STYLE
 from jailbee.dashboard.tui import app as tapp
@@ -449,6 +450,7 @@ def make_app(  # type: ignore[no-untyped-def]
     mouse: bool = True,
     jobs: type[JobRunner] = SyncJobs,
     auto_optimize: bool = False,
+    remote_client: str | None = None,
 ) -> tapp.DashboardApp:
     """Build the real app with the same isolated startup for pilots and snapshots.
 
@@ -482,6 +484,7 @@ def make_app(  # type: ignore[no-untyped-def]
         scope=scope,
         tick_seconds=None,
         auto_optimize=auto_optimize,
+        remote_client=remote_client,
     )
     # Actions run inline through the one (mocked) `subprocess.run`, so a test
     # asserts on `["jailbee", *argv]` as it always did; real runner behaviour
@@ -603,7 +606,7 @@ class BareTerminal:
         self.ran = [*getattr(self, "ran", []), *runs]
         chunks: list[str] = []
         results = [subprocess_runner(r.argv, cwd=r.cwd, on_output=chunks.append) for r in runs]
-        done(tsession.ActionOutcome(results, "".join(chunks)))
+        done(drunner.ActionOutcome(results, "".join(chunks)))
 
     def show_output(self, title, text, *, failed):  # type: ignore[no-untyped-def]
         self.shown = [*getattr(self, "shown", []), (title, text, failed)]

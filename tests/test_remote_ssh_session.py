@@ -253,3 +253,14 @@ def test_child_environment_without_a_client_terminal_drops_the_servers() -> None
     )
 
     assert "COLORTERM" not in env
+
+
+def test_child_environment_carries_the_client_and_never_inherits_one() -> None:
+    from jailbee.remote_ssh.session import REMOTE_CLIENT_ENV, remote_client
+
+    env = child_environment({}, transport=TRANSPORT_SSH, client="SHA256:abc")
+    assert env[REMOTE_CLIENT_ENV] == "SHA256:abc"
+    assert remote_client(env) == "SHA256:abc"
+    stale = child_environment({REMOTE_CLIENT_ENV: "someone-else"}, transport=TRANSPORT_SSH)
+    assert REMOTE_CLIENT_ENV not in stale
+    assert remote_client(stale) is None

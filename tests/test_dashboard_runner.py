@@ -275,3 +275,37 @@ def test_real_child_asks_through_the_channel(
     assert questions == ["Proceed?"]
     assert result.status == 7
     assert "answer True" in "".join(out)
+
+
+def test_run_actions_runs_each_in_order_with_headers_and_stops_at_a_refusal(tmp_path):
+    calls: list[list[str]] = []
+
+    def fake(argv, *, cwd, on_output, **common):
+        calls.append(list(argv))
+        on_output(f"out {argv[-1]}\n")
+        if argv[-1] == "b":
+            return runner.RunResult(refused="not allowed here")
+        return runner.RunResult(status=0)
+
+    runs = [runner.ActionRun(["git", "pull", n], tmp_path) for n in ("a", "b", "c")]
+    outcome = runner.run_actions(runs, run=fake, transport="none", policy=None)
+
+    assert calls == [["git", "pull", "a"], ["git", "pull", "b"]]  # "c" never started
+    assert [r.refused for r in outcome.results] == [None, "not allowed here"]
+    # Headers name the command, never its arguments (container names).
+    assert outcome.output == "── jailbee git pull ──\nout a\n── jailbee git pull ──\nout b\n"
+
+
+def test_run_actions_a_single_run_has_no_header_and_a_failed_exit_does_not_stop_the_rest(tmp_path):
+    seen: list[str] = []
+
+    def fake(argv, *, cwd, on_output, **common):
+        seen.append(argv[-1])
+        return runner.RunResult(status=1)
+
+    one = runner.run_actions([runner.ActionRun(["ls"], tmp_path)], run=fake)
+    assert "──" not in one.output
+    two = runner.run_actions(
+        [runner.ActionRun(["ls", "x"], tmp_path), runner.ActionRun(["ls", "y"], tmp_path)], run=fake
+    )
+    assert seen[-2:] == ["x", "y"] and len(two.results) == 2

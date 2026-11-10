@@ -59,6 +59,10 @@ REMOTE_EXCLUDED_REPOS_ENV = "JAILBEE_REMOTE_EXCLUDED_REPOS"
 # `remote.ssh.rdp` is on, and only then: `child_environment` removes any value
 # it inherits. It says GUI apps launched here belong on the shared RDP display
 # and tells the child which port to print in the connection recipe.
+# Who is at the other end: the SSH key fingerprint of the connection (set by the
+# SSH server; the web transport will set its own client name). Audit records of
+# actions a remote dashboard runs carry it.
+REMOTE_CLIENT_ENV = "JAILBEE_REMOTE_CLIENT"
 REMOTE_GUI_PORT_ENV = "JAILBEE_REMOTE_GUI_PORT"
 # Set only for a child of a `waypipe ssh` session on a server whose
 # `remote.ssh.waypipe` is on (`server.handle_process`); `child_environment` removes
@@ -105,6 +109,7 @@ def child_environment(
     waypipe: WaypipeSession | None = None,
     waypipe_attach: bool = False,
     terminal: Mapping[str, str] | None = None,
+    client: str | None = None,
 ) -> dict[str, str]:
     """The environment for a child of a remote transport, built from ``base``.
 
@@ -132,6 +137,9 @@ def child_environment(
     env[REMOTE_TRANSPORT_ENV] = transport
     env[REMOTE_EXCLUDED_REPOS_ENV] = json.dumps(list(excluded_repos))
     env.pop(REMOTE_GUI_PORT_ENV, None)
+    env.pop(REMOTE_CLIENT_ENV, None)
+    if client:
+        env[REMOTE_CLIENT_ENV] = client
     if is_ssh and gui_port is not None:
         env[REMOTE_GUI_PORT_ENV] = str(gui_port)
     for name in (WAYPIPE_SESSION_ENV, WAYPIPE_COMPRESS_ENV, WAYPIPE_ATTACH_ENV):
@@ -194,6 +202,11 @@ def remote_transport(environ: Mapping[str, str] | None = None) -> RemoteTranspor
 def policy_transport(environ: Mapping[str, str] | None = None) -> RemoteTransport:
     """The transport whose `remote.<name>` policy governs this session (ssh when unmarked)."""
     return remote_transport(environ) or TRANSPORT_SSH
+
+
+def remote_client(environ: Mapping[str, str] | None = None) -> str | None:
+    """Who is at the other end of this remote session (its key fingerprint), or None."""
+    return (os.environ if environ is None else environ).get(REMOTE_CLIENT_ENV) or None
 
 
 def remote_session_policy(

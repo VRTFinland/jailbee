@@ -258,6 +258,20 @@ def test_fork_child_executes_literal_argv_cwd_and_only_trusted_env(spec, boundar
     assert runner.os.environ["TERM"] == "old"
 
 
+def test_the_clients_identity_reaches_the_child_environment(spec, boundary, monkeypatch):
+    import dataclasses
+
+    boundary.fork.return_value = (0, -1)
+    monkeypatch.setattr(runner.os, "environ", {"PATH": "/bin", "JAILBEE_REMOTE_CLIENT": "stale"})
+    execute = Mock(side_effect=OSError("exec failed"))
+    monkeypatch.setattr(runner.os, "chdir", Mock())
+    monkeypatch.setattr(runner.os, "execvpe", execute)
+    monkeypatch.setattr(runner.os, "_exit", Mock(side_effect=ChildExited))
+    with pytest.raises(ChildExited):
+        asyncio.run(run_child(SSHProcess("xterm"), dataclasses.replace(spec, client="SHA256:abc")))
+    assert execute.call_args.args[2]["JAILBEE_REMOTE_CLIENT"] == "SHA256:abc"
+
+
 def test_child_env_is_built_before_fork_not_in_the_child(spec, boundary, monkeypatch):
     """Regression for final-review finding M1.
 

@@ -4059,7 +4059,12 @@ def _run_dashboard(
     from jailbee.config.models_remote import RemoteSSHConfig
     from jailbee.dashboard.commands import Transport
     from jailbee.incus import Incus
-    from jailbee.remote_ssh.session import is_remote_session, is_restricted_session, policy_transport
+    from jailbee.remote_ssh.session import (
+        is_remote_session,
+        is_restricted_session,
+        policy_transport,
+        remote_client,
+    )
 
     remote = is_restricted_session()
     transport: Transport = policy_transport() if is_remote_session() else "none"
@@ -4152,6 +4157,7 @@ def _run_dashboard(
         transport=transport,
         ssh_policy=ssh_policy,
         scope=scope,
+        remote_client=remote_client(),
     )
 
 

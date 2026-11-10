@@ -22,6 +22,7 @@ from textual.message import Message
 
 from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard import runner as drunner
+from jailbee.dashboard.runner import ActionOutcome, ActionRun
 from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.tui import scrollbar
@@ -45,8 +46,6 @@ from jailbee.dashboard.tui.prompt_modals import OutputScreen, modal_for
 from jailbee.dashboard.tui.session import (
     DOUBLE_CLICK_KINDS,
     OVERLAY_GLOBAL_TOKENS,
-    ActionOutcome,
-    ActionRun,
     DashboardSession,
     Outcome,
     Startup,
@@ -121,6 +120,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         scope: RemoteRepoScope | None = None,
         tick_seconds: float | None = TICK_SECONDS,
         auto_optimize: bool = True,
+        remote_client: str | None = None,
     ) -> None:
         super().__init__(ansi_color=True)
         scrollbar.install()
@@ -136,6 +136,9 @@ class DashboardApp(App[int], inherit_bindings=False):
             auto_optimize=auto_optimize,
         )
         self.session.url_opener = self.open_url
+        # Who is at the other end of a remote session (the SSH key's fingerprint);
+        # written into the audit record of every action this dashboard runs.
+        self.remote_client = remote_client
         self._tick_seconds = tick_seconds
         self._painted: tuple[DashboardView, Size] | None = None
         self._last_title: str | None = None
@@ -197,27 +200,15 @@ class DashboardApp(App[int], inherit_bindings=False):
         extra: dict[str, Any] = {"spawn": self.action_spawn} if self.action_spawn else {}
 
         def work() -> None:
-            chunks: list[str] = []
-            results: list[drunner.RunResult] = []
-            try:
-                for run in runs:
-                    if len(runs) > 1:
-                        chunks.append(f"── jailbee {' '.join(run.argv[:2])} ──\n")
-                    result = self.action_runner(
-                        run.argv,
-                        transport=session.transport,
-                        policy=session.ssh_policy,
-                        cwd=run.cwd,
-                        on_prompt=self._ask_from_worker,
-                        on_output=chunks.append,
-                        **extra,
-                    )
-                    results.append(result)
-                    if result.error is not None or result.refused is not None:
-                        break
-            except Exception as exc:
-                results.append(drunner.RunResult(error=str(exc)))
-            outcome = ActionOutcome(results, "".join(chunks))
+            outcome = drunner.run_actions(
+                runs,
+                run=self.action_runner,
+                transport=session.transport,
+                policy=session.ssh_policy,
+                on_prompt=self._ask_from_worker,
+                client=self.remote_client,
+                **extra,
+            )
             self._on_app_thread(lambda: done(outcome))
 
         if self.threaded_actions:
@@ -546,6 +537,7 @@ def run(
     transport: Transport = "none",
     ssh_policy: RemotePolicy | None = None,
     scope: RemoteRepoScope | None = None,
+    remote_client: str | None = None,
 ) -> int:
     """Open the terminal dashboard; return its exit code."""
     startup = open_dashboard(cwd_root, scope=scope)
@@ -560,6 +552,7 @@ def run(
             transport=transport,
             ssh_policy=ssh_policy,
             scope=scope,
+            remote_client=remote_client,
         )
         # Pushed before Textual takes the screen and popped after it gives it
         # back, so the terminal's own title is saved and restored intact.

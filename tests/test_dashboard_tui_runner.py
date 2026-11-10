@@ -193,3 +193,33 @@ def test_attach_verbs_still_hand_over_the_terminal(mocker, tmp_path):
     session.dispatch("alpha-x", "stop")
     assert len(terminal.handed) == 1  # a plain action does not take the terminal
     assert [r.argv[0] for r in terminal.ran] == ["stop"]
+
+
+def test_remote_dashboard_action_audit_record_carries_the_ssh_client(mocker, tmp_path):
+    from jailbee.config.models_remote import RemoteSSHConfig
+
+    records: list[dict[str, Any]] = []
+    mocker.patch.object(drunner, "jsonl_audit", return_value=records.append)
+    app = make_app(
+        mocker,
+        [_group(tmp_path)],
+        remote=True,
+        transport="ssh",
+        ssh_policy=RemoteSSHConfig(),
+        remote_client="SHA256:abc",
+    )
+    app.threaded_actions = True
+    app.action_runner = drunner.run_action
+    app.action_spawn = Spawns()
+
+    async def main() -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            for key in ["j", "!", *keys("merge"), "enter"]:
+                await pilot.press(key)
+            await _until(pilot, lambda: bool(records), "the audit record")
+
+    asyncio.run(asyncio.wait_for(main(), 20))
+
+    assert records[0]["transport"] == "ssh"
+    assert records[0]["client"] == "SHA256:abc"

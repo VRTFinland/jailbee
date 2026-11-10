@@ -137,7 +137,7 @@ from jailbee.dashboard.overlays import (
     parse_pr_number,
     validate_answer,
 )
-from jailbee.dashboard.runner import RunResult, is_attach_style
+from jailbee.dashboard.runner import ActionOutcome, ActionRun, RunResult, is_attach_style
 from jailbee.dashboard.settings import (
     SettingsState,
     Tab,
@@ -329,22 +329,6 @@ class Terminal(Protocol):
     def show_output(self, title: str, text: str, *, failed: bool) -> None:
         """Show an action's captured ``text`` until the user dismisses it."""
         ...
-
-
-@dataclass(frozen=True)
-class ActionRun:
-    """One action for :meth:`Terminal.run_actions`: ``jailbee <argv>`` in ``cwd``."""
-
-    argv: list[str]  # without the program name, already addressed at its repo
-    cwd: Path
-
-
-@dataclass(frozen=True)
-class ActionOutcome:
-    """How the runs of :meth:`Terminal.run_actions` ended, and what they printed."""
-
-    results: list[RunResult]  # one per run that was started, in order
-    output: str
 
 
 @dataclass(frozen=True)
