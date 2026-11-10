@@ -343,3 +343,19 @@ def test_nonsense_answer_is_a_failure_not_a_wrong_value(channel: Any) -> None:
     channel(lambda p: "no-such-id")
     with pytest.raises(MissingValue):
         choose_one("n", [Option(1, "a", "a"), Option(2, "b", "b")])
+
+
+def test_choose_one_sends_the_explicit_question(channel: Any) -> None:
+    peer = channel(lambda p: p.options[0].id)
+    choose_one(
+        "pending PR description",
+        [Option("a", "A", "alpha"), Option("b", "B", "beta")],
+        question="More than one PR description is pending. Which one?",
+    )
+    assert peer.prompts[0].question == "More than one PR description is pending. Which one?"
+
+
+def test_choose_one_without_a_question_sends_the_noun(channel: Any) -> None:
+    peer = channel(lambda p: p.options[0].id)
+    choose_one("thing", [Option("a", "A", "alpha"), Option("b", "B", "beta")])
+    assert peer.prompts[0].question == "thing"

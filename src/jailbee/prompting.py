@@ -149,6 +149,7 @@ class PromptBackend(Protocol):
         context: PromptContext | None,
         alternative: str | None,
         picker: Callable[[Sequence[Option[Any]]], Any | None] | None,
+        question: str | None,
     ) -> Any | None: ...
 
     def choose_many(
@@ -159,6 +160,7 @@ class PromptBackend(Protocol):
         context: PromptContext | None,
         alternative: str | None,
         picker: Callable[[Sequence[Option[Any]]], list[Any] | None] | None,
+        question: str | None,
     ) -> list[Any] | None: ...
 
     def text(
@@ -205,8 +207,9 @@ class TerminalBackend:
         context: PromptContext | None,
         alternative: str | None,
         picker: Callable[[Sequence[Option[Any]]], Any | None] | None,
+        question: str | None,
     ) -> Any | None:
-        return (picker or (lambda opts: _select(noun, opts)))(options)
+        return (picker or (lambda opts: _select(noun, opts, question=question)))(options)
 
     def choose_many(
         self,
@@ -216,8 +219,9 @@ class TerminalBackend:
         context: PromptContext | None,
         alternative: str | None,
         picker: Callable[[Sequence[Option[Any]]], list[Any] | None] | None,
+        question: str | None,
     ) -> list[Any] | None:
-        return (picker or (lambda opts: _select_many(noun, opts)))(options)
+        return (picker or (lambda opts: _select_many(noun, opts, question=question)))(options)
 
     def text(
         self,
@@ -270,6 +274,7 @@ class NonInteractiveBackend:
         context: PromptContext | None,
         alternative: str | None,
         picker: Callable[[Sequence[Option[Any]]], Any | None] | None,
+        question: str | None,
     ) -> Any | None:
         raise MissingValue(noun, candidates=[o.label for o in options], alternative=alternative)
 
@@ -281,6 +286,7 @@ class NonInteractiveBackend:
         context: PromptContext | None,
         alternative: str | None,
         picker: Callable[[Sequence[Option[Any]]], list[Any] | None] | None,
+        question: str | None,
     ) -> list[Any] | None:
         raise MissingValue(noun, candidates=[o.label for o in options], alternative=alternative)
 
@@ -405,13 +411,15 @@ class ChannelBackend:
         context: PromptContext | None,
         alternative: str | None,
         picker: Callable[[Sequence[Option[Any]]], Any | None] | None,
+        question: str | None,
     ) -> Any | None:
         wire = _wire_options(options)
+        text = noun if question is None else question
         reply = self._ask(
             lambda i: pc.Prompt(
                 i,
                 "choose_one",
-                noun,
+                text,
                 options=wire,
                 destructive=destructive,
                 context=_wire_context(context),
@@ -432,12 +440,14 @@ class ChannelBackend:
         context: PromptContext | None,
         alternative: str | None,
         picker: Callable[[Sequence[Option[Any]]], list[Any] | None] | None,
+        question: str | None,
     ) -> list[Any] | None:
         # `picker` is a terminal renderer; the channel sends the question instead.
         wire = _wire_options(options)
+        text = noun if question is None else question
         reply = self._ask(
             lambda i: pc.Prompt(
-                i, "choose_many", noun, options=wire, context=_wire_context(context)
+                i, "choose_many", text, options=wire, context=_wire_context(context)
             )
         )
         if reply is None:
@@ -524,16 +534,17 @@ def _note(message: str) -> None:
     hint_console.print(Text(message), highlight=False)
 
 
-def _select(noun: str, options: Sequence[Option[T]]) -> T | None:  # noqa: UP047
-    """The default picker: an arrow-key list over the options' titles."""
+def _select(noun: str, options: Sequence[Option[T]], *, question: str | None = None) -> T | None:  # noqa: UP047
+    """The default picker: an arrow-key list over the options' titles.
+
+    The header is `question` when given, else "Select <noun>:"."""
     import questionary
 
     choices = [questionary.Choice(title=o.title, value=o.value) for o in options]
     choices.append(questionary.Choice(title="cancel", value=_CANCEL))
     # questionary has 36 shortcut keys (0-9, a-z); more rows than that raise.
-    result = questionary.select(
-        f"Select {noun}:", choices=choices, use_shortcuts=len(choices) <= 36
-    ).ask()
+    header = f"Select {noun}:" if question is None else question
+    result = questionary.select(header, choices=choices, use_shortcuts=len(choices) <= 36).ask()
     if result is None or result is _CANCEL:
         return None
     return result  # type: ignore[no-any-return]  # questionary is untyped; values are ours
@@ -611,7 +622,9 @@ def _ask(
     return None if result is None else str(result)
 
 
-def _select_many(noun: str, options: Sequence[Option[T]]) -> list[T] | None:  # noqa: UP047
+def _select_many(  # noqa: UP047
+    noun: str, options: Sequence[Option[T]], *, question: str | None = None
+) -> list[T] | None:
     """The default multi-picker (`tui.checkbox`); None on Ctrl-C / Esc, [] if none ticked."""
     import questionary
 
@@ -621,7 +634,8 @@ def _select_many(noun: str, options: Sequence[Option[T]]) -> list[T] | None:  # 
         questionary.Choice(title=o.title, value=o.value, description=o.description or None)
         for o in options
     ]
-    result = checkbox(f"Select {noun}:", choices=choices)
+    header = f"Select {noun}:" if question is None else question
+    result = checkbox(header, choices=choices)
     return None if result is None else list(result)
 
 
@@ -652,6 +666,7 @@ def choose_one(  # noqa: UP047
     picker: Callable[[Sequence[Option[T]]], T | None] | None = None,
     is_interactive: Callable[[], bool] | None = None,
     context: PromptContext | None = None,
+    question: str | None = None,
 ) -> T:
     """Resolve a missing value from its candidates.
 
@@ -660,6 +675,8 @@ def choose_one(  # noqa: UP047
     the picker on a terminal, `MissingValue` naming the candidates off one.
     `picker` lets a caller keep a richer renderer (the container table); it
     gets the options and returns a value, or None for cancel.
+    `question` is the question as the user reads it (the picker header, the
+    channel's question); without it the header is "Select <noun>:".
 
     Cancel (Ctrl-C / Esc / the picker's cancel row) -> `Cancelled`.
     """
@@ -675,6 +692,7 @@ def choose_one(  # noqa: UP047
         context=context,
         alternative=alternative,
         picker=picker,
+        question=question,
     )
     if chosen is None:
         raise Cancelled()
@@ -689,6 +707,7 @@ def choose_many(  # noqa: UP047
     alternative: str | None = None,
     context: PromptContext | None = None,
     picker: Callable[[Sequence[Option[T]]], list[T] | None] | None = None,
+    question: str | None = None,
 ) -> list[T]:
     """Resolve a missing set of values from its candidates.
 
@@ -698,6 +717,7 @@ def choose_many(  # noqa: UP047
     `picker` lets a caller keep a richer renderer (its own question, cursor
     row or pre-ticked rows); it gets the options and returns the chosen values,
     or None for cancel.
+    `question` is the question shown, as for `choose_one`.
 
     Cancel (Ctrl-C / Esc) -> `Cancelled`. Submitting with nothing ticked is
     not a cancel: it returns `[]` (the terminal picker's bare Enter selects
@@ -706,7 +726,7 @@ def choose_many(  # noqa: UP047
     if not options:
         raise MissingValue(noun, reason=empty_reason or f"no {noun} to choose from")
     chosen = select_backend().choose_many(
-        noun, options, context=context, alternative=alternative, picker=picker
+        noun, options, context=context, alternative=alternative, picker=picker, question=question
     )
     if chosen is None:
         raise Cancelled()

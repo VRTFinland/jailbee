@@ -4,33 +4,40 @@ from __future__ import annotations
 
 
 def prompt_add_entry() -> str | None:
-    """Ask for an Egress destination."""
-    import questionary
+    """Ask for an Egress destination; None when the user cancels."""
+    from jailbee import prompting
 
-    answer = questionary.text(
-        "Destination (host, host:port, *.domain, IPv4, or CIDR):",
-        validate=lambda value: _validate_entry(value),
-    ).ask()
-    return answer if isinstance(answer, str) else None
+    try:
+        return prompting.ask_text(
+            "destination (host, host:port, *.domain, IPv4, or CIDR)",
+            validate=_validate_entry,
+        )
+    except prompting.Cancelled:
+        return None
 
 
-def _validate_entry(value: str) -> bool | str:
+def _validate_entry(value: str) -> str | None:
+    """The problem with `value` as an Egress destination, or None when it is valid."""
     from jailbee.egress import validate_allow_entry
 
     try:
         validate_allow_entry(value)
     except ValueError as exc:
         return str(exc)
-    return True
+    return None
 
 
 def pick_remove_entry(entries: list[str], *, scope: str) -> str | None:
     """Select an Egress override to remove, or cancel."""
     if not entries:
         return None
-    import questionary
+    from jailbee import prompting
 
-    choices = [questionary.Choice(entry, value=entry) for entry in entries]
-    choices.append(questionary.Choice("cancel — change nothing", value="__cancel__"))
-    selected = questionary.select(f"Select {scope} override to remove:", choices=choices).ask()
-    return selected if isinstance(selected, str) and selected != "__cancel__" else None
+    try:
+        return prompting.choose_one(
+            f"{scope} override to remove",
+            [prompting.Option(value=entry, title=entry, label=entry) for entry in entries],
+            destructive=True,
+        )
+    except prompting.Cancelled:
+        return None

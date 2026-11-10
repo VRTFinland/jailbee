@@ -516,3 +516,41 @@ def test_default_multi_picker_returns_values_and_none_on_cancel(mocker):
     assert [c.value for c in seen["choices"]] == ["a-full", "b-full"]
     mocker.patch("jailbee.tui.checkbox", return_value=None)
     assert prompting._select_many("things", [A, B]) is None
+
+
+def test_explicit_question_is_the_terminal_header_and_the_default_row_stays(mocker, tty):
+    headers = []
+
+    def select(message, choices, **kwargs):
+        headers.append(message)
+        assert "default" not in kwargs  # the first row is highlighted, not Cancel
+        return mocker.Mock(ask=lambda: choices[0].value)
+
+    mocker.patch("questionary.select", side_effect=select)
+    got = choose_one(
+        "pending PR description",
+        [A, B],
+        question="More than one PR description is pending. Which one?",
+    )
+    assert got == "a-full"
+    assert headers == ["More than one PR description is pending. Which one?"]
+
+
+def test_without_a_question_the_header_is_select_noun(mocker, tty):
+    headers = []
+
+    def select(message, choices, **kwargs):
+        headers.append(message)
+        return mocker.Mock(ask=lambda: choices[0].value)
+
+    mocker.patch("questionary.select", side_effect=select)
+    choose_one("container", [A, B])
+    assert headers == ["Select container:"]
+
+
+def test_explicit_question_is_the_terminal_header_for_choose_many(mocker, tty):
+    pick = mocker.patch("jailbee.tui.checkbox", return_value=[])
+
+    prompting.choose_many("labels", [A, B], question="Which labels?")
+
+    assert pick.call_args.args[0] == "Which labels?"
