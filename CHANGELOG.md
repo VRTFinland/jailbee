@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.8.7 - 2026-11-10
+
 ### Fixed
 
 - Fresh installs and upgrades picked up typer 0.29.0 (released 2026-11-09),
