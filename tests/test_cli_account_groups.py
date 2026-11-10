@@ -933,7 +933,7 @@ def test_rm_refuses_while_a_container_carries_only_the_legacy_label(group_env, m
     assert groups.group_dir(CLAUDE.name, "personal").exists()
 
 
-def test_rm_parks_a_login_before_removing_the_group(group_env, mocker):
+def test_rm_parks_a_login_before_removing_the_group(group_env, mocker, typed_confirmations):
     from jailbee.accounts import groups
     from jailbee.accounts.adapters.claude import CLAUDE, CREDENTIAL_FILE
     from jailbee.accounts.models import PoolChange
@@ -1219,7 +1219,7 @@ def test_create_makes_a_directory_for_every_pooled_adapter(two_agents):
         assert stat.S_IMODE(created.stat().st_mode) == 0o700
 
 
-def test_rm_parks_and_removes_the_group_for_every_adapter(two_agents, mocker):
+def test_rm_parks_and_removes_the_group_for_every_adapter(two_agents, mocker, typed_confirmations):
     from jailbee.accounts import groups
     from jailbee.accounts.models import PoolChange
 
@@ -1247,7 +1247,9 @@ def test_rm_parks_and_removes_the_group_for_every_adapter(two_agents, mocker):
         assert not holder.exists()
 
 
-def test_rm_reports_the_adapter_that_failed_and_keeps_earlier_parks(two_agents, mocker):
+def test_rm_reports_the_adapter_that_failed_and_keeps_earlier_parks(
+    two_agents, mocker, typed_confirmations
+):
     """A failure on the second adapter must not roll the first one's moved
     grant back by copying it: it is parked, and it stays parked."""
     from jailbee.accounts import groups

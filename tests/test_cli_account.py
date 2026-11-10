@@ -522,7 +522,7 @@ def test_use_with_an_account_does_not_read_the_store(repo, mocker):
     slots.assert_not_called()
 
 
-def test_rm_without_an_account_picks_from_a_menu(repo, mocker):
+def test_rm_without_an_account_picks_from_a_menu(repo, mocker, typed_confirmations):
     """`rm` has the same signature as `use`, so it gets the same menu — and its
     own confirmation still stands in front of the deletion."""
     parked = Slot("two@corp.com", Path("/s/two.json"), live=False)
@@ -651,7 +651,7 @@ def test_park_of_an_empty_holder_is_not_an_error(repo, mocker):
     assert "Nothing to park" in result.output
 
 
-def test_rm_confirms_before_deleting(repo, mocker):
+def test_rm_confirms_before_deleting(repo, mocker, typed_confirmations):
     slot = Slot("old@x.com", Path("/s/old@x.com.json"), live=False)
     mocker.patch("jailbee.accounts.engine.list_slots", return_value=[slot])
     remove = mocker.patch("jailbee.accounts.engine.remove_slot")

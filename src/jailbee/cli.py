@@ -818,10 +818,12 @@ def _advise_setup(*, offer: bool = False) -> None:
     # something, and a step that then fails must say so rather than vanish.
     # Ctrl-C at the prompt keeps its usual meaning — abandon the command —
     # which is why `typer.Abort` is re-raised rather than swallowed.
+    from jailbee import prompting
+
     try:
-        if typer.confirm("Run `jb setup` now?", default=True):
+        if prompting.ask_confirm("Run `jb setup` now?", default=True):
             _run_setup_steps(list(sc.STEP_KEYS), shells, assume_yes=False)
-    except typer.Abort:
+    except (typer.Abort, prompting.Cancelled):
         raise
     except Exception as e:
         error_plain(f"Setup did not finish: {e}")
@@ -834,10 +836,11 @@ def _run_setup_steps(keys: list["StepKey"], shells: list[str], *, assume_yes: bo
     two cannot differ on what "running setup" means — including that the run
     is recorded even when every step was declined.
     """
+    from jailbee import prompting
     from jailbee import setup_command as sc
 
     def ask(question: str, default: bool) -> bool:
-        return typer.confirm(question, default=default)
+        return prompting.ask_confirm(question, default=default, alternative="--yes")
 
     ran = sc.run_setup(keys=keys, shells=shells, confirm=None if assume_yes else ask)
     if "timer" in ran:
@@ -2646,7 +2649,7 @@ def new_cmd(
                 if base is None
                 else f"Use existing branch '{container_branch}' with base '{base}'?"
             )
-            if not yes and not typer.confirm(question, default=True):
+            if not yes and not prompting.ask_confirm(question, default=True, alternative="--yes"):
                 hint = (
                     "Aborted. Pick a different name, or pass a base branch: "
                     f"'jailbee new <newname> {container_branch}'."
@@ -4324,7 +4327,7 @@ def _confirm_attach(*, force: bool) -> bool:
 
     if force or not prompting.is_interactive():
         return True
-    return typer.confirm("Continue anyway?", default=True)
+    return prompting.ask_confirm("Continue anyway?", default=True)
 
 
 def _confirm_batch(question: str, *, flag: bool | None) -> None:
@@ -4420,7 +4423,9 @@ def _resolve_attachable(
         # answers this one on the user's behalf: offer the unfinished
         # container only when someone is at the keyboard to accept it, and
         # default to no, since they just interrupted.
-        if not (prompting.is_interactive() and typer.confirm("Attach anyway?", default=False)):
+        if not (
+            prompting.is_interactive() and prompting.ask_confirm("Attach anyway?", default=False)
+        ):
             raise typer.Exit(1) from None
     except ValueError as e:
         # A dead job (terminal phase, or a worker that vanished) over a
@@ -5102,7 +5107,7 @@ def mem_cmd(
             full,
             size,
             force=force,
-            confirm=lambda question: prompting.confirm(question, default=False),
+            confirm=lambda question: prompting.ask_confirm(question, default=False),
             interactive=prompting.is_interactive(),
             confirmed_target=confirmed_target,
         )
@@ -6644,7 +6649,7 @@ def _confirm_bridge_plan(plan: "BridgePlan") -> None:
     console.print(render_bridge_plan(plan), markup=False, highlight=False)
     if not prompting.is_interactive():
         return
-    if not typer.confirm("Continue?", default=True):
+    if not prompting.ask_confirm("Continue?", default=True):
         raise typer.Abort()
 
 
@@ -6672,7 +6677,7 @@ def _confirm_submodule_pr_plan(plan: "SubmodulePrPlan") -> None:
     if not prompting.is_interactive():
         return
     console.print(render_submodule_pr_plan(plan), markup=False, highlight=False)
-    if not typer.confirm("Continue?", default=True):
+    if not prompting.ask_confirm("Continue?", default=True):
         raise typer.Abort()
 
 
@@ -6839,20 +6844,20 @@ def _resolve_push_ref_pref(
 
 
 def _pick_push_action() -> str | None:
-    """Open a questionary.select for the push action.
+    """Ask for the push action through the prompt API.
 
-    Returns 'merge' / 'rebase' / 'plain', or None if the user cancels."""
-    import questionary
+    Returns 'merge' / 'rebase' / 'plain'. Cancelling raises `prompting.Cancelled`."""
+    from jailbee import prompting
 
-    choices = [
-        questionary.Choice(title="merge into container's branch", value="merge"),
-        questionary.Choice(title="rebase container's branch onto pushed ref", value="rebase"),
-        questionary.Choice(title="plain (transport only, no merge/rebase)", value="plain"),
-    ]
-    result = questionary.select("What to do with the pushed ref?", choices=choices).ask()
-    if result is None:
-        return None
-    return str(result)
+    return prompting.choose_one(
+        "push action",
+        [
+            prompting.Option("merge", "merge into container's branch", "merge"),
+            prompting.Option("rebase", "rebase container's branch onto pushed ref", "rebase"),
+            prompting.Option("plain", "plain (transport only, no merge/rebase)", "plain"),
+        ],
+        question="What to do with the pushed ref?",
+    )
 
 
 class _PrHead:
@@ -6989,10 +6994,10 @@ def _pick_push_source(
     pr_head: tuple[int, str] | None = None,
     base: str | None = None,
 ) -> "str | _PrHead | None":
-    """Open a questionary.select for the push source branch.
+    """Ask for the push source branch through the prompt API.
 
-    Returns the branch name, the `_PR_HEAD` sentinel, or None if the user
-    cancels. When `pr_head` is given (the target is a single PR container),
+    Returns the branch name or the `_PR_HEAD` sentinel; cancelling raises
+    `prompting.Cancelled`. When `pr_head` is given (the target is a single PR container),
     the PR head is offered as the first/default choice — selecting it means
     "refresh the PR head from GitHub and push that".
 
@@ -7005,8 +7010,7 @@ def _pick_push_source(
     the default branch (or HEAD is detached) there is only one eligible source
     — skip the picker and return the default branch directly.
     """
-    import questionary
-
+    from jailbee import prompting
     from jailbee.git import detect_default_branch, get_current_branch
 
     default_branch = detect_default_branch(cfg.repo_root, cfg.upstream_remote)
@@ -7020,36 +7024,26 @@ def _pick_push_source(
         info(f"Only one eligible source branch; pushing from '{default_branch}'.")
         return default_branch
 
-    choices: list[questionary.Choice] = []
+    choices: list[prompting.Option[str | _PrHead]] = []
     if pr_head is not None:
         pr_number, head_ref = pr_head
-        choices.append(
-            questionary.Choice(
-                title=f"{head_ref} (PR #{pr_number} head — refresh from GitHub)",
-                value=_PR_HEAD,
-            )
-        )
+        title = f"{head_ref} (PR #{pr_number} head — refresh from GitHub)"
+        choices.append(prompting.Option(_PR_HEAD, title, head_ref))
     if base is not None and base != default_branch and base != current_branch:
-        choices.append(
-            questionary.Choice(
-                title=f"{base} (container base branch)",
-                value=base,
-            )
-        )
+        choices.append(prompting.Option(base, f"{base} (container base branch)", base))
     choices.append(
-        questionary.Choice(title=f"{default_branch} (default branch)", value=default_branch)
+        prompting.Option(default_branch, f"{default_branch} (default branch)", default_branch)
     )
     if current_branch is not None and current_branch != default_branch:
         choices.append(
-            questionary.Choice(
-                title=f"{current_branch} (current host branch)",
-                value=current_branch,
+            prompting.Option(
+                current_branch, f"{current_branch} (current host branch)", current_branch
             )
         )
 
-    result = questionary.select("Push from which host branch?", choices=choices).ask()
-    if result is None:
-        return None
+    result = prompting.choose_one(
+        "host branch to push from", choices, question="Push from which host branch?"
+    )
     if isinstance(result, _PrHead):
         return _PR_HEAD
     return str(result)
@@ -8567,7 +8561,7 @@ def _offer_outbox_comments(
 
     def _confirm(count: int) -> bool:
         plural = "" if count == 1 else "s"
-        return typer.confirm(f"Post {count} pending PR comment{plural} now?", default=False)
+        return prompting.ask_confirm(f"Post {count} pending PR comment{plural} now?", default=False)
 
     return pr_outbox.offer_pending_comments(
         cfg,
@@ -8820,7 +8814,7 @@ def pr_push_cmd(
             manifest,
             force=force,
             yes=yes,
-            confirm=lambda question: prompting.confirm(question, default=False),
+            confirm=lambda question: prompting.ask_confirm(question, default=False),
             publisher="user",
         )
         if result:
@@ -9119,7 +9113,7 @@ def pr_push_cmd(
             # bump points nowhere, and a host with push.recurseSubmodules=check
             # refuses the push outright. Ask before anything is pushed.
             if failed_subs and not yes and prompting.is_interactive():
-                if not typer.confirm(
+                if not prompting.ask_confirm(
                     f"Submodule PR failed for {', '.join(failed_subs)}. "
                     "Publish the superproject PR anyway?",
                     default=False,
@@ -9353,7 +9347,7 @@ def pr_unbind_cmd(
             full,
             head,
             yes=yes,
-            confirm=lambda question: prompting.confirm(question, default=False),
+            confirm=lambda question: prompting.ask_confirm(question, default=False),
         )
         if result:
             raise typer.Exit(result)
@@ -9884,7 +9878,9 @@ def net_migrate_cmd(
         "This prepares jailbee-work, but does not verify host firewall reachability. "
         "Configure your host firewall and test traffic before relying on this network."
     )
-    if not yes and not typer.confirm("Continue with the unverified host network setup?"):
+    if not yes and not prompting.ask_confirm(
+        "Continue with the unverified host network setup?", alternative="--yes"
+    ):
         raise typer.Abort()
     from jailbee.incus import Incus
 
@@ -10419,60 +10415,51 @@ class _Ttl:
     duration: timedelta | None
 
 
-def _validate_duration_answer(raw: str) -> bool | str:
-    """questionary validator: True when parseable, else the error message."""
+def _validate_duration_answer(raw: str) -> str | None:
+    """Text-prompt validator: None when parseable, else the error message."""
     from jailbee.config import parse_ttl
 
     try:
         parse_ttl(raw)
     except ValueError as e:
         return str(e)
-    return True
+    return None
 
 
 def _prompt_ttl(question: str, default_after: str) -> _Ttl | None:
     """Ask for a TTL. None means cancelled; `_Ttl(duration=None)` means no auto-revert."""
-    import questionary
-
+    from jailbee import prompting
     from jailbee.config import TTL_PRESETS, parse_ttl
 
     presets = list(TTL_PRESETS)
     if default_after not in presets:
         presets.insert(0, default_after)
 
-    # Explicit sentinels: `questionary.Choice` treats `value=None` as *unset*
-    # and falls back to the title, so a cancel entry with `value=None` would
-    # answer the string "cancel" and get parsed as a duration.
+    # An explicit sentinel for "custom": the picker's own cancel row is not a
+    # value, so nothing here can be mistaken for a duration title.
     custom = "__custom__"
-    cancel = "__cancel__"
-    choices = [
-        questionary.Choice(
-            title=f"{p}  (config default)" if p == default_after else p,
-            value=p,
-        )
+    options = [
+        prompting.Option(p, f"{p}  (config default)" if p == default_after else p, f"TTL {p}")
         for p in presets
     ]
-    choices.append(questionary.Choice(title="no auto-revert", value="never"))
-    choices.append(questionary.Choice(title="custom…", value=custom))
-    choices.append(questionary.Choice(title="cancel", value=cancel))
+    options.append(prompting.Option("never", "no auto-revert", "no auto-revert"))
+    options.append(prompting.Option(custom, "custom…", "custom duration"))
 
-    answer = questionary.select(
-        question,
-        choices=choices,
-        default=default_after,
-    ).ask()
-    # `None` is Ctrl-C; `cancel` is the menu entry. Both abort.
-    if answer is None or answer == cancel:
-        return None
-    if answer == custom:
-        raw = questionary.text(
-            "Duration (e.g. 30s, 45m, 4h; max 24h, or `never`):",
+    try:
+        answer = prompting.choose_one(
+            "duration",
+            options,
+            question=question,
             default=default_after,
-            validate=_validate_duration_answer,
-        ).ask()
-        if raw is None:
-            return None
-        answer = raw
+        )
+        if answer == custom:
+            answer = prompting.ask_text(
+                "duration (e.g. 30s, 45m, 4h; max 24h, or `never`)",
+                validate=_validate_duration_answer,
+                default=default_after,
+            )
+    except prompting.Cancelled:
+        return None
     return _Ttl(duration=parse_ttl(answer))
 
 
@@ -11733,6 +11720,7 @@ def base_prune_cmd(
     """
     from datetime import UTC, datetime, timedelta
 
+    from jailbee import prompting
     from jailbee.golden import find_all_archived_images, find_archived_images
     from jailbee.incus import Incus, IncusError
     from jailbee.maintenance import humanize
@@ -11768,8 +11756,11 @@ def base_prune_cmd(
     for a in archives:
         info(f"  - {a.alias}  ({a.date.isoformat()}, {humanize(a.size_bytes)})")
 
-    if not yes_to_all and not typer.confirm(
-        f"Delete these {len(archives)} image(s) ({humanize(total)})?"
+    if not yes_to_all and not prompting.ask_confirm(
+        f"Delete these {len(archives)} image(s) ({humanize(total)})?",
+        default=False,
+        destructive=True,
+        alternative="--yes-to-all",
     ):
         info("Aborted.")
         return
@@ -13107,7 +13098,12 @@ def orphan_destroy_cmd(
         if not prompting.is_interactive():
             error(f"Refusing to destroy '{container.name}' without a terminal; pass --force")
             raise typer.Exit(2)
-        if not prompting.confirm(f"Destroy orphan container '{container.name}'?", default=False):
+        if not prompting.ask_confirm(
+            f"Destroy orphan container '{container.name}'?",
+            default=False,
+            destructive=True,
+            alternative="--force",
+        ):
             raise typer.Abort()
     # Asked (or --force): no clean-shutdown courtesy, as `jailbee destroy` does.
     orphans.destroy_orphan(incus, container.name, force=True)
@@ -14401,7 +14397,7 @@ def review_apply_cmd(
             )
             raise typer.Exit(2)
         question = f"Publish {count} actions as a draft review?" if draft else "Proceed?"
-        return typer.confirm(question, default=False)
+        return prompting.ask_confirm(question, default=False)
 
     if pr_outbox.offer_pending_comments(
         cfg,
@@ -14766,7 +14762,7 @@ def review_drop_cmd(
             )
             raise typer.Exit(2)
         info(f"About to discard, unpublished, from {short}: {', '.join(names)}")
-        if not typer.confirm("Delete them?"):
+        if not prompting.ask_confirm("Delete them?", default=False, destructive=True):
             info("Nothing deleted.")
             return
 
@@ -15013,10 +15009,10 @@ def issue_apply_cmd(
         # One question: when foreign repositories are involved it names them.
         combined = None if foreign else issue_outbox.foreign_question(batch)
         if combined is not None:
-            if not typer.confirm(combined, default=False):
+            if not prompting.ask_confirm(combined, default=False):
                 info("Nothing applied.")
                 return
-        elif not typer.confirm("Proceed?"):
+        elif not prompting.ask_confirm("Proceed?", default=False):
             info("Nothing applied.")
             return
     else:
@@ -15208,7 +15204,7 @@ def issue_resolve_cmd(
             )
             raise typer.Exit(2)
         verb = "Retry" if retry else "Mark applied"
-        if not typer.confirm(f"{verb} {manifest} action {action}?"):
+        if not prompting.ask_confirm(f"{verb} {manifest} action {action}?", default=False):
             info("Nothing changed.")
             return
 
@@ -16424,6 +16420,7 @@ def _pool_rm(
     also carries: such a name is ambiguous for a switch but not for a deletion,
     and `rm` is the command that clears that state.
     """
+    from jailbee import prompting
     from jailbee.accounts import engine, selection
     from jailbee.accounts.models import PoolError
 
@@ -16443,9 +16440,11 @@ def _pool_rm(
         # Pre-checked so the confirmation prompt is never shown for a deletion
         # that `remove_slot` would refuse anyway.
         raise PoolError(engine.live_account_refusal(adapter, slot.name))
-    if not yes and not typer.confirm(
+    if not yes and not prompting.ask_confirm(
         f"Delete stored login `{slot.name}`? It can only come back through a browser /login.",
         default=False,
+        destructive=True,
+        alternative="--yes",
     ):
         raise typer.Exit(1)
     try:
@@ -17054,7 +17053,11 @@ def account_group_rm_cmd(
             )
             raise typer.Exit(2)
         info(f"Group `{group}`: {held}.")
-        if not typer.confirm("Park them into the host-wide store and remove the group?"):
+        if not prompting.ask_confirm(
+            "Park them into the host-wide store and remove the group?",
+            default=False,
+            destructive=True,
+        ):
             raise typer.Abort()
 
     # Exactly the path `account park -g` takes: a holder view, because this
@@ -18200,6 +18203,7 @@ def prune(
     config: ConfigOption = None,
 ) -> None:
     """Interactively clean up stopped containers older than 30 days."""
+    from jailbee import prompting
     from jailbee.incus import Incus
     from jailbee.lifecycle import destroy_container, list_containers, short_name
     from jailbee.maintenance import find_stale_stopped
@@ -18225,7 +18229,9 @@ def prune(
 
     if not yes_to_all:
         for name in stale:
-            if typer.confirm(f"Destroy '{short_name(cfg, name)}'?"):
+            if prompting.ask_confirm(
+                f"Destroy '{short_name(cfg, name)}'?", default=False, destructive=True
+            ):
                 destroy_container(cfg, incus, name, force=True)
                 success(f"Destroyed {short_name(cfg, name)}")
             else:

@@ -76,7 +76,7 @@ def decide_move(move: bool | None, question: str) -> bool:
     if move is not None:
         return move
     if prompting.is_interactive():
-        return prompting.confirm(question, default=True)
+        return prompting.ask_confirm(question, default=True)
     return True
 
 

@@ -150,6 +150,7 @@ class PromptBackend(Protocol):
         alternative: str | None,
         picker: Callable[[Sequence[Option[Any]]], Any | None] | None,
         question: str | None,
+        default: Any | None = None,
     ) -> Any | None: ...
 
     def choose_many(
@@ -208,13 +209,17 @@ class TerminalBackend:
         alternative: str | None,
         picker: Callable[[Sequence[Option[Any]]], Any | None] | None,
         question: str | None,
+        default: Any | None = None,
     ) -> Any | None:
         if picker is not None:
             return picker(options)
         # Keep the documented two-argument seam when no question is given.
-        if question is None:
-            return _select(noun, options)
-        return _select(noun, options, question=question)
+        kwargs: dict[str, Any] = {}
+        if question is not None:
+            kwargs["question"] = question
+        if default is not None:
+            kwargs["default"] = default
+        return _select(noun, options, **kwargs)
 
     def choose_many(
         self,
@@ -284,6 +289,7 @@ class NonInteractiveBackend:
         alternative: str | None,
         picker: Callable[[Sequence[Option[Any]]], Any | None] | None,
         question: str | None,
+        default: Any | None = None,
     ) -> Any | None:
         raise MissingValue(noun, candidates=[o.label for o in options], alternative=alternative)
 
@@ -421,15 +427,25 @@ class ChannelBackend:
         alternative: str | None,
         picker: Callable[[Sequence[Option[Any]]], Any | None] | None,
         question: str | None,
+        default: Any | None = None,
     ) -> Any | None:
         wire = _wire_options(options)
         text = noun if question is None else question
+        default_id = next(
+            (
+                w.id
+                for w, o in zip(wire, options, strict=True)
+                if default is not None and o.value == default
+            ),
+            None,
+        )
         reply = self._ask(
             lambda i: pc.Prompt(
                 i,
                 "choose_one",
                 text,
                 options=wire,
+                default=default_id,
                 destructive=destructive,
                 context=_wire_context(context),
             )
@@ -543,17 +559,28 @@ def _note(message: str) -> None:
     hint_console.print(Text(message), highlight=False)
 
 
-def _select(noun: str, options: Sequence[Option[T]], *, question: str | None = None) -> T | None:  # noqa: UP047
+def _select(  # noqa: UP047
+    noun: str,
+    options: Sequence[Option[T]],
+    *,
+    question: str | None = None,
+    default: T | None = None,
+) -> T | None:
     """The default picker: an arrow-key list over the options' titles.
 
-    The header is `question` when given, else "Select <noun>:"."""
+    The header is `question` when given, else "Select <noun>:". `default` is the
+    value of the row the cursor starts on."""
     import questionary
 
     choices = [questionary.Choice(title=o.title, value=o.value) for o in options]
     choices.append(questionary.Choice(title="cancel", value=_CANCEL))
     # questionary has 36 shortcut keys (0-9, a-z); more rows than that raise.
     header = f"Select {noun}:" if question is None else question
-    result = questionary.select(header, choices=choices, use_shortcuts=len(choices) <= 36).ask()
+    preselect = next((c for c in choices if default is not None and c.value == default), None)
+    extra: dict[str, Any] = {} if preselect is None else {"default": preselect}
+    result = questionary.select(
+        header, choices=choices, use_shortcuts=len(choices) <= 36, **extra
+    ).ask()
     if result is None or result is _CANCEL:
         return None
     return result  # type: ignore[no-any-return]  # questionary is untyped; values are ours
@@ -676,6 +703,7 @@ def choose_one(  # noqa: UP047
     is_interactive: Callable[[], bool] | None = None,
     context: PromptContext | None = None,
     question: str | None = None,
+    default: T | None = None,
 ) -> T:
     """Resolve a missing value from its candidates.
 
@@ -686,6 +714,8 @@ def choose_one(  # noqa: UP047
     gets the options and returns a value, or None for cancel.
     `question` is the question as the user reads it (the picker header, the
     channel's question); without it the header is "Select <noun>:".
+    `default` is the value to preselect (terminal: the cursor row; channel: the
+    prompt's `default` option id); the non-interactive backend ignores it.
 
     Cancel (Ctrl-C / Esc / the picker's cancel row) -> `Cancelled`.
     """
@@ -702,6 +732,7 @@ def choose_one(  # noqa: UP047
         alternative=alternative,
         picker=picker,
         question=question,
+        default=default,
     )
     if chosen is None:
         raise Cancelled()

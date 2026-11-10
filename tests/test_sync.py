@@ -2182,7 +2182,7 @@ def test_merge_into_same_branch_proceeds_without_prompt(mocker, make_cfg, tmp_pa
     incus = mocker.MagicMock()
     _stub_fetch(mocker)
     mocker.patch("jailbee.sync.git.get_current_branch", return_value="feat/foo")
-    mock_input = mocker.patch("builtins.input")
+    mock_input = mocker.patch("jailbee.prompting._confirm")
     mock_merge = mocker.patch("jailbee.sync.git.merge_ref")
     mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
 
@@ -2199,7 +2199,7 @@ def test_merge_into_same_branch_ff_only_proceeds_without_prompt(mocker, make_cfg
     incus = mocker.MagicMock()
     _stub_fetch(mocker)
     mocker.patch("jailbee.sync.git.get_current_branch", return_value="feat/foo")
-    mock_input = mocker.patch("builtins.input")
+    mock_input = mocker.patch("jailbee.prompting._confirm")
     mock_merge = mocker.patch("jailbee.sync.git.merge_ref")
     mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
 
@@ -4896,7 +4896,7 @@ def test_push_and_reset_not_running_refuses(mocker, make_cfg, tmp_path):
 def test_should_run_step_runs_when_always(mocker):
     from jailbee.sync import _should_run_cleanup_step
 
-    mock_input = mocker.patch("builtins.input")
+    mock_input = mocker.patch("jailbee.prompting._confirm")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
 
     result = _should_run_cleanup_step(prompt="x? ", policy="always")
@@ -4908,7 +4908,7 @@ def test_should_run_step_runs_when_always(mocker):
 def test_should_run_step_never_skips(mocker):
     from jailbee.sync import _should_run_cleanup_step
 
-    mock_input = mocker.patch("builtins.input")
+    mock_input = mocker.patch("jailbee.prompting._confirm")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
 
     result = _should_run_cleanup_step(prompt="x? ", policy="never")
@@ -4920,7 +4920,7 @@ def test_should_run_step_never_skips(mocker):
 def test_should_run_step_prompt_skips_in_non_tty(mocker):
     from jailbee.sync import _should_run_cleanup_step
 
-    mock_input = mocker.patch("builtins.input")
+    mock_input = mocker.patch("jailbee.prompting._confirm")
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = _should_run_cleanup_step(prompt="x? ", policy="prompt")
@@ -4929,26 +4929,15 @@ def test_should_run_step_prompt_skips_in_non_tty(mocker):
     mock_input.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    "answer,expected",
-    [
-        ("y", True),
-        ("yes", True),
-        ("Y", True),
-        ("YES", True),
-        ("n", False),
-        ("", False),
-        ("no", False),
-        ("maybe", False),
-    ],
-)
-def test_should_run_step_prompt_in_tty_uses_input(mocker, answer, expected):
+@pytest.mark.parametrize("answer", [True, False])
+def test_should_run_step_prompt_in_tty_asks_yes_no_defaulting_to_no(mocker, answer):
     from jailbee.sync import _should_run_cleanup_step
 
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value=answer)
+    ask = mocker.patch("jailbee.prompting._confirm", return_value=answer)
 
-    assert _should_run_cleanup_step(prompt="x? ", policy="prompt") is expected
+    assert _should_run_cleanup_step(prompt="x?", policy="prompt") is answer
+    ask.assert_called_once_with("x?", False)
 
 
 def test_cleanup_destroy_only_branch_never(mocker, make_cfg, tmp_path):
@@ -6328,7 +6317,7 @@ def test_publish_retries_the_push_when_the_user_accepts(mocker, make_cfg, tmp_pa
         side_effect=[GitError("git push failed (exit 128)"), None],
     )
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value="y")
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
     reported = mocker.patch("jailbee.retry.error")
 
     result = publish_branch_from_container(cfg, incus, "feat-foo")
@@ -6357,7 +6346,7 @@ def test_publish_push_retry_is_not_offered_off_tty(mocker, make_cfg, tmp_path):
         side_effect=GitError("git push failed (exit 128)"),
     )
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
-    prompt = mocker.patch("builtins.input")
+    prompt = mocker.patch("jailbee.prompting._confirm")
 
     with pytest.raises(SyncError, match="force-with-lease"):
         publish_branch_from_container(cfg, incus, "feat-foo")

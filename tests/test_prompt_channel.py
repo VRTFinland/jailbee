@@ -120,6 +120,18 @@ def test_choose_one_maps_id_back_to_arbitrary_object(channel: Any) -> None:
     ]
 
 
+def test_choose_one_sends_the_default_as_the_option_id(channel: Any) -> None:
+    peer = channel(lambda p: p.options[0].id)
+    choose_one("thing", [Option("a", "A", "a"), Option("b", "B", "b")], default="b")
+    assert peer.prompts[0].default == peer.prompts[0].options[1].id
+
+
+def test_choose_one_without_a_default_sends_none(channel: Any) -> None:
+    peer = channel(lambda p: p.options[0].id)
+    choose_one("thing", [Option("a", "A", "a"), Option("b", "B", "b")])
+    assert peer.prompts[0].default is None
+
+
 def test_choose_one_destructive_asks_even_single_option(channel: Any) -> None:
     peer = channel(lambda p: p.options[0].id)
     assert choose_one("thing", [Option(7, "t", "l")], destructive=True) == 7

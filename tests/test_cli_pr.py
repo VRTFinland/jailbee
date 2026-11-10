@@ -3003,7 +3003,7 @@ def _pending_comment_manifest(mocker, tmp_path, actions=None):
     return target
 
 
-def test_pr_offers_to_post_pending_comments(mocker, tmp_path):
+def test_pr_offers_to_post_pending_comments(mocker, tmp_path, typed_confirmations):
     from jailbee.pr_outbox import ApplyOutcome
 
     _setup(mocker, tmp_path)
@@ -3027,7 +3027,7 @@ def test_pr_offers_to_post_pending_comments(mocker, tmp_path):
     assert "https://x/c" in result.output
 
 
-def test_declining_the_offer_leaves_everything_pending(mocker, tmp_path):
+def test_declining_the_offer_leaves_everything_pending(mocker, tmp_path, typed_confirmations):
     _setup(mocker, tmp_path)
     _tty(mocker)
     mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
@@ -3174,7 +3174,7 @@ def test_no_outbox_suppresses_the_offer(mocker, tmp_path):
     apply.assert_not_called()
 
 
-def test_a_failed_post_exits_1_after_the_pr_line(mocker, tmp_path):
+def test_a_failed_post_exits_1_after_the_pr_line(mocker, tmp_path, typed_confirmations):
     from jailbee.pr_outbox import ApplyOutcome
 
     _setup(mocker, tmp_path)
@@ -3215,7 +3215,7 @@ def test_a_description_only_manifest_is_not_offered(mocker, tmp_path):
     resolve.assert_not_called()  # not even gated: there is nothing to offer
 
 
-def test_a_pending_description_is_not_published_by_the_offer(mocker, tmp_path):
+def test_a_pending_description_is_not_published_by_the_offer(mocker, tmp_path, typed_confirmations):
     """`--body` won the description; the offer must not overwrite it with the outbox's.
 
     §F.1's precedence leaves the outbox `description` action pending when an

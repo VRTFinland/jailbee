@@ -490,7 +490,7 @@ def test_fetch_pr_head_retries_a_transient_failure_when_accepted(tmp_path, mocke
 
     mocker.patch("subprocess.run", side_effect=fake_run)
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value="y")
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = fetch_pr_head(tmp_path, _pr_info(head_sha="newsha"), remote="origin")
 
@@ -515,7 +515,7 @@ def test_fetch_pr_head_retry_is_not_offered_off_tty(tmp_path, mocker):
 
     mocker.patch("subprocess.run", side_effect=fake_run)
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
-    prompt = mocker.patch("builtins.input")
+    prompt = mocker.patch("jailbee.prompting._confirm")
 
     with pytest.raises(PrFetchError, match="Could not read"):
         fetch_pr_head(tmp_path, _pr_info(), remote="origin")

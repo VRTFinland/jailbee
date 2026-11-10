@@ -499,6 +499,35 @@ def _interactive_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("JAILBEE_PROMPT_FD", raising=False)
 
 
+@pytest.fixture
+def typed_confirmations(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Answer `prompting.ask_confirm` from stdin, as `CliRunner(input=...)` feeds it.
+
+    The terminal backend asks through questionary, which a test cannot type
+    into. This pins the terminal backend (whatever `is_interactive` says, so a
+    test can still pretend there is no TTY for the code's own checks) and
+    replaces its yes/no seam with one that reads a line per question: `y`/`yes`
+    consent, blank takes the default, EOF cancels. Tests that patch
+    `prompting._confirm` themselves override it.
+    """
+    import sys
+
+    import typer
+
+    from jailbee import prompting
+
+    def read(question: str, default: bool) -> bool | None:
+        typer.echo(f"{question} [{'Y/n' if default else 'y/N'}]: ", nl=False)
+        line = sys.stdin.readline()
+        if not line:
+            return None
+        text = line.strip().lower()
+        return default if text == "" else text in ("y", "yes")
+
+    monkeypatch.setattr(prompting, "select_backend", prompting.TerminalBackend)
+    monkeypatch.setattr(prompting, "_confirm", read)
+
+
 @pytest.fixture(autouse=True)
 def _block_real_incus(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Fail any test that runs the real ``incus`` binary.

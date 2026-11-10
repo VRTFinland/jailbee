@@ -3,10 +3,10 @@
 import json
 
 import pytest
-import typer
 from rich.text import Text
 from typer.testing import CliRunner
 
+from jailbee import prompting
 from jailbee.cli import app
 from jailbee.incus import Incus
 from jailbee.outbox import service
@@ -129,7 +129,9 @@ def test_normalize(argv, expected):
 
 @pytest.mark.parametrize("args", [[], ["feature"], ["browse", "feature"]])
 def test_browser_overview_without_prompt(env, mocker, args):
-    prompt = mocker.patch("typer.confirm", side_effect=AssertionError("inspection prompted"))
+    prompt = mocker.patch(
+        "jailbee.prompting._confirm", side_effect=AssertionError("inspection prompted")
+    )
     result = CliRunner().invoke(app, ["outbox", *args])
     assert result.exit_code == 0, result.output
     assert "issue/001.json" in result.output and "pr/001.json" in result.output
@@ -287,7 +289,7 @@ def test_stale_revision_is_validation_error(env, leaf):
     env[4].assert_not_called()
 
 
-def test_drop_cancel_and_exact_confirmed_cascade(env):
+def test_drop_cancel_and_exact_confirmed_cascade(env, typed_confirmations):
     args = ["outbox", "drop", "feature", "issue/001.json", "--action", "0", "--with-dependents"]
     result = CliRunner().invoke(app, args, input="n\n")
     assert result.exit_code == 0, result.output
@@ -419,9 +421,9 @@ def publication_env(env, mocker, tmp_path):
 
 @pytest.mark.parametrize("kind", ["issue", "pr"])
 @pytest.mark.parametrize("mode", ["yes", "cancel", "dry-run"])
-def test_apply_real_domain_orchestration(publication_env, mocker, kind, mode):
+def test_apply_real_domain_orchestration(publication_env, mocker, kind, mode, typed_confirmations):
     env, create, comment, review = publication_env
-    prompt = mocker.spy(typer, "confirm")
+    prompt = mocker.spy(prompting, "_confirm")
     args = ["outbox", "apply", "feature", f"{kind}/001.json"]
     if mode == "yes":
         args += ["-y"]
@@ -432,7 +434,7 @@ def test_apply_real_domain_orchestration(publication_env, mocker, kind, mode):
     assert "alice" in result.output
     if mode == "cancel":
         prompt.assert_called_once_with(
-            f"Publish {3 if kind == 'issue' else 1} pending actions?", default=False
+            f"Publish {3 if kind == 'issue' else 1} pending actions?", False
         )
     else:
         prompt.assert_not_called()
@@ -508,7 +510,9 @@ def test_apply_at_a_terminal_warns_and_asks_about_an_unowned_pr(publication_env,
 
 
 @pytest.mark.parametrize("accepted", [False, True], ids=["decline", "approve"])
-def test_dashboard_description_publish_warns_before_consent(publication_env, mocker, accepted):
+def test_dashboard_description_publish_warns_before_consent(
+    publication_env, mocker, accepted, typed_confirmations
+):
     from jailbee import pr
     from jailbee.dashboard import outbox as dashboard_outbox
 
@@ -544,7 +548,9 @@ def test_dashboard_description_publish_warns_before_consent(publication_env, moc
         assert "001.json" in env[2]["pr"].as_dict()
 
 
-def test_apply_at_a_terminal_publishes_an_issue_without_foreign(publication_env, mocker):
+def test_apply_at_a_terminal_publishes_an_issue_without_foreign(
+    publication_env, mocker, typed_confirmations
+):
     _env, create, _comment, _review = publication_env
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
 
@@ -581,7 +587,11 @@ def _foreign_issue(env):
 
 @pytest.mark.parametrize(("answer", "published"), [("n\n", False), ("y\n", True)])
 def test_apply_at_a_terminal_asks_once_for_a_foreign_issue_repo(
-    publication_env, mocker, answer, published
+    publication_env,
+    mocker,
+    answer,
+    published,
+    typed_confirmations,
 ):
     env, create, _comment, _review = publication_env
     _foreign_issue(env)
@@ -702,7 +712,9 @@ def issue_edit(env):
 
 @pytest.mark.parametrize("kind", ["issue", "pr"])
 @pytest.mark.parametrize("late", [False, True])
-def test_apply_target_staleness_is_validation(publication_env, mocker, kind, late):
+def test_apply_target_staleness_is_validation(
+    publication_env, mocker, kind, late, typed_confirmations
+):
     from dataclasses import replace
 
     from jailbee import issue_github
@@ -728,7 +740,7 @@ def test_apply_target_staleness_is_validation(publication_env, mocker, kind, lat
         change()
         return True
 
-    prompt = mocker.patch("typer.confirm", side_effect=confirm)
+    prompt = mocker.patch("jailbee.prompting._confirm", side_effect=confirm)
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", f"{kind}/001.json"])
     assert result.exit_code == 2, result.output
     assert result.stderr
@@ -737,7 +749,9 @@ def test_apply_target_staleness_is_validation(publication_env, mocker, kind, lat
 
 
 @pytest.mark.parametrize("kind", ["issue", "pr"])
-def test_apply_content_changed_during_confirmation_is_validation(publication_env, mocker, kind):
+def test_apply_content_changed_during_confirmation_is_validation(
+    publication_env, mocker, kind, typed_confirmations
+):
     env = publication_env[0]
 
     def confirm(*args, **kwargs):
@@ -748,7 +762,7 @@ def test_apply_content_changed_during_confirmation_is_validation(publication_env
         env[2][kind] = store(kind, files)
         return True
 
-    mocker.patch("typer.confirm", side_effect=confirm)
+    mocker.patch("jailbee.prompting._confirm", side_effect=confirm)
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", f"{kind}/001.json"])
     assert result.exit_code == 2, result.output
     assert "refresh" in result.output
@@ -756,7 +770,7 @@ def test_apply_content_changed_during_confirmation_is_validation(publication_env
 
 
 @pytest.mark.parametrize("change", ["body", "missing", "identity"])
-def test_apply_final_domain_validation_is_two(publication_env, mocker, change):
+def test_apply_final_domain_validation_is_two(publication_env, mocker, change, typed_confirmations):
     from dataclasses import replace
 
     from jailbee import issue_outbox
@@ -794,7 +808,7 @@ def test_apply_final_domain_validation_is_two(publication_env, mocker, change):
 
     mocker.patch.object(issue_outbox, "store_outbox", side_effect=final_read)
     mocker.patch.object(service, "instance_identity", side_effect=final_identity)
-    mocker.patch("typer.confirm", side_effect=confirm)
+    mocker.patch("jailbee.prompting._confirm", side_effect=confirm)
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", "issue/001.json"])
     assert result.exit_code == 2, result.output
     assert reached == [change]
@@ -817,7 +831,11 @@ def test_apply_final_domain_validation_is_two(publication_env, mocker, change):
     ],
 )
 def test_apply_transport_failure_has_safe_execution_diagnostic(
-    publication_env, mocker, boundary, late
+    publication_env,
+    mocker,
+    boundary,
+    late,
+    typed_confirmations,
 ):
     from jailbee import issue_github, issue_outbox, pr
     from jailbee.orchestration.store import StoreError
@@ -846,7 +864,7 @@ def test_apply_transport_failure_has_safe_execution_diagnostic(
         fail()
         return True
 
-    prompt = mocker.patch("typer.confirm", side_effect=confirm)
+    prompt = mocker.patch("jailbee.prompting._confirm", side_effect=confirm)
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", f"{kind}/001.json"])
     assert result.exit_code == 1, result.output
     assert "transport [bold]down[/bold]" in result.stderr
@@ -901,7 +919,7 @@ def test_apply_confirmation_rechecks_scope(publication_env, mocker, kind):
         scope.return_value = RemoteRepoScope(frozenset({"acme"}))
         return True
 
-    mocker.patch("typer.confirm", side_effect=confirm)
+    mocker.patch("jailbee.prompting._confirm", side_effect=confirm)
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", f"{kind}/001.json"])
     assert result.exit_code == 2, result.output
     for mutation in publication_env[1:]:
@@ -924,7 +942,9 @@ def test_apply_scope_refusal_precedes_local_reads(publication_env, mocker, kind)
 
 
 @pytest.mark.parametrize("kind", ["issue", "pr"])
-def test_apply_confirmation_reloads_target_config(publication_env, mocker, kind):
+def test_apply_confirmation_reloads_target_config(
+    publication_env, mocker, kind, typed_confirmations
+):
     env = publication_env[0]
     changed = env[0].model_copy(
         update={"container_user": env[0].container_user.model_copy(update={"uid": 2345})}
@@ -935,7 +955,7 @@ def test_apply_confirmation_reloads_target_config(publication_env, mocker, kind)
         loader.return_value = changed
         return True
 
-    mocker.patch("typer.confirm", side_effect=confirm)
+    mocker.patch("jailbee.prompting._confirm", side_effect=confirm)
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", f"{kind}/001.json"])
     assert result.exit_code == 2, result.output
     assert "target config changed" in result.stderr
@@ -955,7 +975,9 @@ def test_apply_inspected_revision_refuses_drift_before_remote_gate(publication_e
     payload["actions"][0]["body"] = "Changed since inspection"
     files["001.json"] = json.dumps(payload)
     env[2][kind] = store(kind, files)
-    prompt = mocker.patch("typer.confirm", side_effect=AssertionError("stale token prompted"))
+    prompt = mocker.patch(
+        "jailbee.prompting._confirm", side_effect=AssertionError("stale token prompted")
+    )
     result = CliRunner().invoke(
         app, ["outbox", "apply", "feature", f"{kind}/001.json", "--revision", token, "-y"]
     )
@@ -987,7 +1009,11 @@ def test_apply_read_only_plan_runs_one_domain_preflight(publication_env, kind):
 
 @pytest.mark.parametrize("kind", ["issue", "pr"])
 def test_apply_uses_target_owned_config_before_local_reads(
-    publication_env, mocker, make_cfg, tmp_path, kind
+    publication_env,
+    mocker,
+    make_cfg,
+    tmp_path,
+    kind,
 ):
     from jailbee import git
     from tests.test_outbox_commands import register
@@ -1024,7 +1050,10 @@ def test_apply_uses_target_owned_config_before_local_reads(
 
 @pytest.mark.parametrize("kind", ["issue", "pr"])
 def test_apply_retry_preserves_recorded_receipt_and_only_confirms_pending(
-    publication_env, mocker, kind
+    publication_env,
+    mocker,
+    kind,
+    typed_confirmations,
 ):
     from jailbee import issue_github, pr
     from tests.outbox_journal_fake import journal_key
@@ -1058,10 +1087,10 @@ def test_apply_retry_preserves_recorded_receipt_and_only_confirms_pending(
         )
         env[2][kind] = store(kind, files)
         pending = mocker.patch.object(pr, "add_issue_comment", return_value="receipt")
-        prompt = mocker.spy(typer, "confirm")
+        prompt = mocker.spy(prompting, "_confirm")
         retry = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json"], input="y\n")
         assert retry.exit_code == 0, retry.output
-        prompt.assert_called_once_with("Publish 1 pending actions?", default=False)
+        prompt.assert_called_once_with("Publish 1 pending actions?", False)
         review.assert_not_called()
         pending.assert_called_once_with(env[0].repo_root, 42, "Still pending", repo="acme/repo")
         assert "Already published (skipped): [0]" in retry.output
@@ -1295,12 +1324,14 @@ def test_show_no_color_keeps_bodies_verbatim_on_a_terminal(env, mocker):
         (False, [], False, False),
     ],
 )
-def test_outbox_apply_draft_wiring(env, mocker, interactive, flags, draft, chooser):
+def test_outbox_apply_draft_wiring(
+    env, mocker, interactive, flags, draft, chooser, typed_confirmations
+):
     from jailbee.outbox.publish import ask_publish_mode
 
     mocker.patch("jailbee.prompting.is_interactive", return_value=interactive)
     applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
-    confirm = mocker.patch("typer.confirm", return_value=False)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=False)
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json", *flags])
     assert result.exit_code == 0, result.output
     kw = applied.call_args.kwargs
@@ -1310,7 +1341,7 @@ def test_outbox_apply_draft_wiring(env, mocker, interactive, flags, draft, choos
         assert kw["confirm"](3) is ("-y" in flags)
         if "-y" not in flags:
             assert "as a draft review" in confirm.call_args.args[0]
-            assert confirm.call_args.kwargs["default"] is False
+            assert confirm.call_args.args[1] is False
 
 
 def test_outbox_apply_draft_off_tty_refuses(publication_env, mocker):
@@ -1351,7 +1382,7 @@ def test_apply_json_requires_dry_run(env, mocker):
 def test_apply_dry_run_json_never_prompts(env, mocker):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     apply = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
-    prompt = mocker.spy(typer, "confirm")
+    prompt = mocker.spy(prompting, "_confirm")
     result = CliRunner().invoke(
         app, ["outbox", "apply", "feature", "pr/001.json", "--dry-run", "-o", "json"]
     )

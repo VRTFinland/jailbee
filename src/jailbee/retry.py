@@ -35,7 +35,7 @@ def _ask(label: str) -> bool:
     """Ask `Retry <label>?` on a TTY; False off-TTY without prompting."""
     if not prompting.is_interactive():
         return False
-    return input(f"Retry {label}? [y/N]: ").strip().lower() in ("y", "yes")
+    return prompting.ask_confirm(f"Retry {label}?", default=False)
 
 
 def confirm_retry(label: str, exc: Exception) -> bool:

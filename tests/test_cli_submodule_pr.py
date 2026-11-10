@@ -909,7 +909,7 @@ def test_off_a_tty_a_single_container_is_still_auto_picked(mocker, tmp_path):
     _happy(mocker)
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     pick = mocker.patch("jailbee.tui.pick_submodule")
-    confirm = mocker.patch("typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
 
     result = runner.invoke(app, ["submodule", "pr", "push"])
 
@@ -958,7 +958,7 @@ def test_off_a_tty_the_plan_block_is_not_printed_at_all(mocker, tmp_path):
     _setup(mocker, tmp_path, candidates=[_candidate("lib/a", dirty=True)])
     _happy(mocker)
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
-    confirm = mocker.patch("typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
 
     result = runner.invoke(app, ["submodule", "pr", "push"])
 
@@ -975,7 +975,7 @@ def test_on_a_tty_the_picker_runs_for_a_single_candidate(mocker, tmp_path):
     _happy(mocker)
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     pick = mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
-    mocker.patch("typer.confirm", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = runner.invoke(app, ["submodule", "pr", "push"])
 
@@ -994,7 +994,7 @@ def test_picking_a_zero_commit_submodule_proceeds_to_transport_and_publish(mocke
     _happy(mocker)
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/idle")
-    mocker.patch("typer.confirm", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
     transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host", return_value=None)
 
     result = runner.invoke(app, ["submodule", "pr", "push"])
@@ -1015,7 +1015,7 @@ def test_on_a_tty_the_picker_is_offered_every_candidate_ordered(mocker, tmp_path
     _happy(mocker)
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     pick = mocker.patch("jailbee.tui.pick_submodule", return_value="lib/b")
-    mocker.patch("typer.confirm", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = runner.invoke(app, ["submodule", "pr", "push"])
 
@@ -1040,7 +1040,7 @@ def test_declining_the_confirmation_transports_nothing(mocker, tmp_path):
     _setup(mocker, tmp_path, candidates=[_candidate("lib/a")])
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
-    mocker.patch("typer.confirm", return_value=False)
+    mocker.patch("jailbee.prompting._confirm", return_value=False)
     transport = mocker.patch("jailbee.submodule_pr.transport_submodule_to_host", return_value=None)
     publish = mocker.patch("jailbee.submodule_pr.publish_submodule_branch")
 
@@ -1056,7 +1056,7 @@ def test_yes_skips_the_confirmation_but_not_the_picker(mocker, tmp_path):
     _happy(mocker)
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     pick = mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
-    confirm = mocker.patch("typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
 
     result = runner.invoke(app, ["submodule", "pr", "push", "--yes"])
 
@@ -1070,7 +1070,7 @@ def test_an_explicit_path_skips_the_picker_but_still_confirms(mocker, tmp_path):
     _happy(mocker)
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     pick = mocker.patch("jailbee.tui.pick_submodule")
-    confirm = mocker.patch("typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "lib/a"])
 
@@ -1088,7 +1088,7 @@ def test_the_container_picker_runs_when_no_name_is_given(mocker, tmp_path):
         "jailbee.cli._resolve_existing", return_value=(incus, "sampleapp-feat-foo")
     )
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
-    mocker.patch("typer.confirm", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = runner.invoke(app, ["submodule", "pr", "push"])
 
@@ -1105,7 +1105,7 @@ def test_the_container_prompt_is_withheld_off_a_tty(mocker, tmp_path):
         "jailbee.cli._resolve_existing", return_value=(incus, "sampleapp-feat-foo")
     )
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
-    mocker.patch("typer.confirm", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     runner.invoke(app, ["submodule", "pr", "push"])
 
@@ -1120,7 +1120,7 @@ def test_an_explicit_container_name_does_not_prompt(mocker, tmp_path):
         "jailbee.cli._resolve_existing", return_value=(incus, "sampleapp-feat-foo")
     )
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
-    mocker.patch("typer.confirm", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
@@ -1160,7 +1160,7 @@ def test_the_plan_defers_base_and_remote_for_a_submodule_not_on_the_host(mocker,
     _happy(mocker)
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
-    mocker.patch("typer.confirm", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
     mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=False)
 
     result = runner.invoke(app, ["submodule", "pr", "push"])
@@ -1174,7 +1174,7 @@ def test_the_plan_shows_real_base_and_remote_when_the_subrepo_exists(mocker, tmp
     _happy(mocker)
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
-    mocker.patch("typer.confirm", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
     mocker.patch("jailbee.submodules.host_subrepo_exists", return_value=True)
 
     result = runner.invoke(app, ["submodule", "pr", "push"])
@@ -1194,8 +1194,6 @@ def test_the_plan_says_update_when_binding_to_a_numbered_pr(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
     mocker.patch("jailbee.prompting._confirm", return_value=True)
-    # The plan's "Continue?" is still a typer.confirm outside this ticket's scope.
-    mocker.patch("typer.confirm", return_value=True)
 
     result = runner.invoke(app, ["submodule", "pr", "push", "--pr", "456"])
 
@@ -1225,7 +1223,7 @@ def test_the_plan_does_not_claim_a_draft_change_on_the_update_path(mocker, tmp_p
     mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(12, True))
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
-    mocker.patch("typer.confirm", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = runner.invoke(app, ["submodule", "pr", "push"])
 

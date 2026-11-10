@@ -1845,7 +1845,7 @@ def test_resolve_attachable_ready_job_never_asks(mocker):
 
     _mock_attach_guard(mocker)
     warn = mocker.patch("jailbee.cli.warn")
-    confirm = mocker.patch("jailbee.cli.typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
 
     _incus, name = cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
 
@@ -1866,7 +1866,7 @@ def test_resolve_attachable_failed_job_attaches_after_confirmation(mocker):
     )
     warn = mocker.patch("jailbee.cli.warn")
     info = mocker.patch("jailbee.cli.info")
-    confirm = mocker.patch("jailbee.cli.typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     _incus, name = cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
 
@@ -1890,7 +1890,7 @@ def test_resolve_attachable_failed_job_declined_exits(mocker):
     )
     mocker.patch("jailbee.cli.warn")
     mocker.patch("jailbee.cli.info")
-    confirm = mocker.patch("jailbee.cli.typer.confirm", return_value=False)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=False)
 
     with pytest.raises(typer.Exit) as exc_info:
         cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
@@ -1909,7 +1909,7 @@ def test_resolve_attachable_force_skips_the_confirmation(mocker):
     )
     mocker.patch("jailbee.cli.warn")
     mocker.patch("jailbee.cli.info")
-    confirm = mocker.patch("jailbee.cli.typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
 
     _incus, name = cli._resolve_attachable(mocker.MagicMock(), "feat-bg", force=True)
 
@@ -1930,7 +1930,7 @@ def test_resolve_attachable_without_a_tty_skips_the_confirmation(mocker):
     )
     mocker.patch("jailbee.cli.warn")
     mocker.patch("jailbee.cli.info")
-    confirm = mocker.patch("jailbee.cli.typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
 
     _incus, name = cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
 
@@ -1949,7 +1949,7 @@ def test_resolve_attachable_never_hints_at_force(mocker):
     )
     warn = mocker.patch("jailbee.cli.warn")
     info = mocker.patch("jailbee.cli.info")
-    mocker.patch("jailbee.cli.typer.confirm", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     cli._resolve_attachable(mocker.MagicMock(), "feat-bg", attach_cmd="tmux")
 
@@ -1969,7 +1969,7 @@ def test_resolve_attachable_dead_worker_attaches_after_confirmation(mocker):
     mocker.patch("jailbee.background.worker_alive", return_value=False)
     mocker.patch("jailbee.cli.warn")
     mocker.patch("jailbee.cli.info")
-    confirm = mocker.patch("jailbee.cli.typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     _incus, name = cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
 
@@ -1991,7 +1991,7 @@ def test_resolve_attachable_live_destroy_job_is_not_offered(mocker):
     )
     mocker.patch("jailbee.background.worker_alive", return_value=True)
     err = mocker.patch("jailbee.cli.error")
-    confirm = mocker.patch("jailbee.cli.typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
 
     with pytest.raises(typer.Exit) as exc_info:
         cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
@@ -2016,7 +2016,7 @@ def test_resolve_attachable_failed_job_without_a_container_exits(mocker):
     )
     err = mocker.patch("jailbee.cli.error")
     info = mocker.patch("jailbee.cli.info")
-    confirm = mocker.patch("jailbee.cli.typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
 
     with pytest.raises(typer.Exit) as exc_info:
         cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
@@ -2035,7 +2035,7 @@ def test_resolve_attachable_keyboard_interrupt_offers_the_running_container(mock
 
     _mock_attach_guard(mocker, wait_error=KeyboardInterrupt)
     warn = mocker.patch("jailbee.cli.warn")
-    confirm = mocker.patch("jailbee.cli.typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     _incus, name = cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
 
@@ -2055,7 +2055,7 @@ def test_resolve_attachable_keyboard_interrupt_names_a_create(mocker):
         row=mocker.MagicMock(phase="autostart", pid=1, op_kind=JOB_CREATE),
     )
     warn = mocker.patch("jailbee.cli.warn")
-    mocker.patch("jailbee.cli.typer.confirm", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
 
@@ -2074,7 +2074,7 @@ def test_resolve_attachable_keyboard_interrupt_names_a_boot(mocker):
         row=mocker.MagicMock(phase="autostart", pid=1, op_kind=JOB_BOOT),
     )
     warn = mocker.patch("jailbee.cli.warn")
-    mocker.patch("jailbee.cli.typer.confirm", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
 
@@ -2088,7 +2088,7 @@ def test_resolve_attachable_keyboard_interrupt_declined_exits(mocker):
 
     _mock_attach_guard(mocker, wait_error=KeyboardInterrupt)
     mocker.patch("jailbee.cli.warn")
-    confirm = mocker.patch("jailbee.cli.typer.confirm", return_value=False)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=False)
 
     with pytest.raises(typer.Exit) as exc_info:
         cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
@@ -2106,7 +2106,7 @@ def test_resolve_attachable_keyboard_interrupt_still_asks_under_force(mocker):
 
     _mock_attach_guard(mocker, wait_error=KeyboardInterrupt)
     mocker.patch("jailbee.cli.warn")
-    confirm = mocker.patch("jailbee.cli.typer.confirm", return_value=False)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=False)
 
     with pytest.raises(typer.Exit):
         cli._resolve_attachable(mocker.MagicMock(), "feat-bg", force=True)
@@ -2121,7 +2121,7 @@ def test_resolve_attachable_keyboard_interrupt_without_a_tty_exits(mocker):
 
     _mock_attach_guard(mocker, wait_error=KeyboardInterrupt, tty=False)
     mocker.patch("jailbee.cli.warn")
-    confirm = mocker.patch("jailbee.cli.typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
 
     with pytest.raises(typer.Exit) as exc_info:
         cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
@@ -2138,7 +2138,7 @@ def test_resolve_attachable_keyboard_interrupt_without_a_container_exits(mocker)
 
     _mock_attach_guard(mocker, exists=False, wait_error=KeyboardInterrupt)
     warn = mocker.patch("jailbee.cli.warn")
-    confirm = mocker.patch("jailbee.cli.typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
 
     with pytest.raises(typer.Exit) as exc_info:
         cli._resolve_attachable(mocker.MagicMock(), "feat-bg")
@@ -3003,7 +3003,7 @@ def test_new_cmd_explicit_attach_overrides_config_background(tmp_path, mocker, f
     attach_tmux.assert_called_once()
 
 
-def test_new_cmd_prompts_when_branch_exists_in_source(tmp_path, mocker):
+def test_new_cmd_prompts_when_branch_exists_in_source(tmp_path, mocker, typed_confirmations):
     """`gie new feat/x` should ask before silently checking out an
     existing remote branch (no --base, no --yes)."""
     from typer.testing import CliRunner
@@ -3022,7 +3022,7 @@ def test_new_cmd_prompts_when_branch_exists_in_source(tmp_path, mocker):
     new_container.assert_called_once()
 
 
-def test_new_cmd_aborts_when_user_declines_existing_branch(tmp_path, mocker):
+def test_new_cmd_aborts_when_user_declines_existing_branch(tmp_path, mocker, typed_confirmations):
     """Answering 'n' to the prompt should exit 0 without creating anything."""
     from typer.testing import CliRunner
 
@@ -3057,7 +3057,9 @@ def test_new_cmd_yes_flag_skips_existing_branch_prompt(tmp_path, mocker):
     new_container.assert_called_once()
 
 
-def test_new_cmd_existing_branch_with_base_prompts_and_names_the_base(tmp_path, mocker):
+def test_new_cmd_existing_branch_with_base_prompts_and_names_the_base(
+    tmp_path, mocker, typed_confirmations
+):
     """`gie new <existing> <base>` reuses the branch with that base branch.
 
     The base is not a fork point here, so the prompt says which base the
@@ -3079,7 +3081,9 @@ def test_new_cmd_existing_branch_with_base_prompts_and_names_the_base(tmp_path, 
     assert opts.base == "main"
 
 
-def test_new_cmd_existing_branch_with_base_abort_creates_nothing(tmp_path, mocker):
+def test_new_cmd_existing_branch_with_base_abort_creates_nothing(
+    tmp_path, mocker, typed_confirmations
+):
     from typer.testing import CliRunner
 
     from jailbee.cli import app
@@ -6430,8 +6434,8 @@ def test_net_loose_reads_the_global_config_once_without_a_tty(tmp_path, mocker):
 def test_validate_duration_answer_returns_message_on_bad_input() -> None:
     from jailbee.cli import _validate_duration_answer
 
-    assert _validate_duration_answer("2h") is True
-    assert _validate_duration_answer("never") is True
+    assert _validate_duration_answer("2h") is None
+    assert _validate_duration_answer("never") is None
     assert isinstance(_validate_duration_answer("banana"), str)
     assert isinstance(_validate_duration_answer("25h"), str)
 
@@ -6442,8 +6446,8 @@ def test_prompt_loose_ttl_preset_answer_returns_parsed_duration(mocker) -> None:
 
     from jailbee.cli import _prompt_loose_ttl, _Ttl
 
-    select_mock = mocker.patch("questionary.select")
-    select_mock.return_value.ask.return_value = "2h"
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value="2h")
 
     result = _prompt_loose_ttl("5m")
 
@@ -6455,8 +6459,8 @@ def test_prompt_loose_ttl_never_answer_is_ttl_with_no_duration_not_none(mocker) 
     it must not be confused with the `None` sentinel used for cancellation."""
     from jailbee.cli import _prompt_loose_ttl, _Ttl
 
-    select_mock = mocker.patch("questionary.select")
-    select_mock.return_value.ask.return_value = "never"
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value="never")
 
     result = _prompt_loose_ttl("5m")
 
@@ -6465,109 +6469,85 @@ def test_prompt_loose_ttl_never_answer_is_ttl_with_no_duration_not_none(mocker) 
 
 
 def test_prompt_loose_ttl_cancel_at_select_returns_none(mocker) -> None:
-    """Ctrl-C at the select prompt — questionary's `.ask()` returns None."""
+    """Ctrl-C / the cancel row at the picker abort instead of parsing anything."""
     from jailbee.cli import _prompt_loose_ttl
 
-    select_mock = mocker.patch("questionary.select")
-    select_mock.return_value.ask.return_value = None
-
-    result = _prompt_loose_ttl("5m")
-
-    assert result is None
-
-
-def test_prompt_loose_ttl_cancel_entry_aborts_instead_of_parsing_its_title(mocker) -> None:
-    """Picking the "cancel" entry must abort, not fall through to the parser.
-
-    The value is resolved from the real choice list by title, exactly like the
-    "custom…" tests: `questionary.Choice` treats `value=None` as *unset* and
-    substitutes the title, so a cancel entry built with `value=None` actually
-    answers the string "cancel" — and a test that hardcoded the sentinel would
-    sail straight past that.
-    """
-    from jailbee.cli import _prompt_loose_ttl
-
-    select_mock = mocker.patch("questionary.select")
-
-    def fake_select(_message, choices, default):
-        cancel_choice = next(c for c in choices if c.title == "cancel")
-        select_mock.return_value.ask.return_value = cancel_choice.value
-        return select_mock.return_value
-
-    select_mock.side_effect = fake_select
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value=None)
 
     assert _prompt_loose_ttl("5m") is None
 
 
 def test_prompt_loose_ttl_custom_opens_text_prompt_and_parses_answer(mocker) -> None:
-    """Picking "custom…" must hand off to questionary.text, validated by
-    `_validate_duration_answer`, and the typed answer must be parsed through
-    `config.parse_ttl` (not swallowed or re-parsed some other way)."""
+    """Picking "custom…" asks for free text, validated by
+    `_validate_duration_answer`, and the typed answer goes through `parse_ttl`."""
     from datetime import timedelta
 
     from jailbee.cli import _prompt_loose_ttl, _Ttl, _validate_duration_answer
 
-    select_mock = mocker.patch("questionary.select")
-    text_mock = mocker.patch("questionary.text")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
 
-    def fake_select(_message, choices, default):
-        # Drive the real choice list built by _prompt_loose_ttl: find the
-        # "custom…" entry and answer with its actual value, rather than
-        # hardcoding the private sentinel string.
-        custom_choice = next(c for c in choices if c.title == "custom…")
-        select_mock.return_value.ask.return_value = custom_choice.value
-        return select_mock.return_value
+    def fake_select(_noun, options, **_kw):
+        return next(o.value for o in options if o.title == "custom…")
 
-    select_mock.side_effect = fake_select
-    text_mock.return_value.ask.return_value = "90m"
+    mocker.patch("jailbee.prompting._select", side_effect=fake_select)
+    ask = mocker.patch("jailbee.prompting._ask", return_value="90m")
 
     result = _prompt_loose_ttl("5m")
 
     assert result == _Ttl(duration=timedelta(minutes=90))
-    text_mock.assert_called_once()
-    assert text_mock.call_args.kwargs["validate"] is _validate_duration_answer
+    ask.assert_called_once()
+    assert _validate_duration_answer("banana") is not None
+
+
+def test_prompt_loose_ttl_custom_invalid_text_is_asked_again(mocker) -> None:
+    from datetime import timedelta
+
+    from jailbee.cli import _prompt_loose_ttl, _Ttl
+
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch(
+        "jailbee.prompting._select",
+        side_effect=lambda _n, options, **_kw: next(
+            o.value for o in options if o.title == "custom…"
+        ),
+    )
+    ask = mocker.patch("jailbee.prompting._ask", side_effect=["banana", "2h"])
+
+    assert _prompt_loose_ttl("5m") == _Ttl(duration=timedelta(hours=2))
+    assert ask.call_count == 2
 
 
 def test_prompt_loose_ttl_custom_cancel_returns_none(mocker) -> None:
     from jailbee.cli import _prompt_loose_ttl
 
-    select_mock = mocker.patch("questionary.select")
-    text_mock = mocker.patch("questionary.text")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch(
+        "jailbee.prompting._select",
+        side_effect=lambda _n, options, **_kw: next(
+            o.value for o in options if o.title == "custom…"
+        ),
+    )
+    mocker.patch("jailbee.prompting._ask", return_value=None)
 
-    def fake_select(_message, choices, default):
-        custom_choice = next(c for c in choices if c.title == "custom…")
-        select_mock.return_value.ask.return_value = custom_choice.value
-        return select_mock.return_value
-
-    select_mock.side_effect = fake_select
-    text_mock.return_value.ask.return_value = None
-
-    result = _prompt_loose_ttl("5m")
-
-    assert result is None
+    assert _prompt_loose_ttl("5m") is None
 
 
 def test_prompt_loose_ttl_inserts_missing_default_as_first_choice(mocker) -> None:
-    """A `default_after` outside TTL_PRESETS (e.g. a custom config
-    value like "7m") must still appear in the offered choices — and as the
-    `default=` kwarg passed to questionary.select, so it can never trigger
-    questionary's own ValueError for a default absent from `choices`."""
+    """A `default_after` outside TTL_PRESETS (e.g. a custom config value like
+    "7m") must still appear in the offered choices, first and marked."""
     from jailbee.cli import _prompt_loose_ttl
 
-    select_mock = mocker.patch("questionary.select")
-    select_mock.return_value.ask.return_value = None  # cancel; only args matter here
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select", return_value=None)
 
     _prompt_loose_ttl("7m")
 
-    select_mock.assert_called_once()
-    _, kwargs = select_mock.call_args
-    assert kwargs["default"] == "7m"
-    choices = kwargs["choices"]
-    values = [c.value for c in choices]
-    assert values[0] == "7m"  # inserted at the front
-    titles_by_value = {c.value: c.title for c in choices}
-    assert titles_by_value["7m"] == "7m  (config default)"
-    assert kwargs["default"] in values
+    options = select.call_args.args[1]
+    assert options[0].value == "7m"
+    assert options[0].title == "7m  (config default)"
+    assert select.call_args.kwargs["default"] == "7m"
+    assert select.call_args.kwargs["question"] == "Keep loose for how long?"
 
 
 def test_net_offline_command_is_gone() -> None:
@@ -7060,7 +7040,7 @@ def test_pick_push_source_skips_picker_when_current_equals_default(mocker):
     mocker.patch("jailbee.git.detect_default_branch", return_value="main")
     mocker.patch("jailbee.git.get_current_branch", return_value="main")
 
-    select_mock = mocker.patch("questionary.select")
+    select_mock = mocker.patch("jailbee.prompting._select")
 
     result = _pick_push_source(cfg)
 
@@ -7083,7 +7063,7 @@ def test_pick_push_source_skips_picker_when_detached_head(mocker):
     mocker.patch("jailbee.git.detect_default_branch", return_value="main")
     mocker.patch("jailbee.git.get_current_branch", return_value=None)
 
-    select_mock = mocker.patch("questionary.select")
+    select_mock = mocker.patch("jailbee.prompting._select")
 
     result = _pick_push_source(cfg)
 
@@ -7109,13 +7089,13 @@ def test_pick_push_source_shows_picker_when_branches_differ(mocker):
         return_value="feat/x",
     )
 
-    select_mock = mocker.patch("questionary.select")
-    select_mock.return_value.ask.return_value = "feat/x"
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select_mock = mocker.patch("jailbee.prompting._select", return_value="feat/x")
 
     result = _pick_push_source(cfg)
 
     assert result == "feat/x"
-    choices = select_mock.call_args.kwargs["choices"]
+    choices = select_mock.call_args.args[1]
     assert len(choices) == 2
     assert "default branch" in choices[0].title
     assert "current host branch" in choices[1].title
@@ -7577,13 +7557,13 @@ def test_pick_push_source_prepends_pr_head_first(mocker):
     mocker.patch("jailbee.git.detect_default_branch", return_value="main")
     mocker.patch("jailbee.git.get_current_branch", return_value="main")
 
-    select_mock = mocker.patch("questionary.select")
-    select_mock.return_value.ask.return_value = _PR_HEAD
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select_mock = mocker.patch("jailbee.prompting._select", return_value=_PR_HEAD)
 
     result = _pick_push_source(cfg, pr_head=(42, "feat/pr"))
 
     assert result is _PR_HEAD
-    choices = select_mock.call_args.kwargs["choices"]
+    choices = select_mock.call_args.args[1]
     # PR head is the first choice even though current == default.
     assert choices[0].value is _PR_HEAD
     assert "PR #42" in choices[0].title
@@ -7603,13 +7583,13 @@ def test_pick_push_source_pr_head_with_distinct_current(mocker):
     mocker.patch("jailbee.git.detect_default_branch", return_value="main")
     mocker.patch("jailbee.git.get_current_branch", return_value="feat/host")
 
-    select_mock = mocker.patch("questionary.select")
-    select_mock.return_value.ask.return_value = "main"
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select_mock = mocker.patch("jailbee.prompting._select", return_value="main")
 
     result = _pick_push_source(cfg, pr_head=(42, "feat/pr"))
 
     assert result == "main"
-    titles = [c.title for c in select_mock.call_args.kwargs["choices"]]
+    titles = [c.title for c in select_mock.call_args.args[1]]
     # PR head first, then default, then current host branch.
     assert "PR #42" in titles[0]
     assert "default branch" in titles[1]
@@ -7633,14 +7613,13 @@ def test_pick_push_source_offers_base_first(mocker):
 
     captured: dict[str, object] = {}
 
-    def _fake_select(msg: str, choices: object, **kw: object) -> object:
-        captured["choices"] = choices
-        m = mocker.MagicMock()
-        assert isinstance(choices, list)
-        m.ask.return_value = choices[0].value
-        return m
+    def _fake_select(noun: str, options: object, **_kw: object) -> object:
+        captured["choices"] = options
+        assert isinstance(options, list)
+        return options[0].value
 
-    mocker.patch("questionary.select", side_effect=_fake_select)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", side_effect=_fake_select)
 
     result = _pick_push_source(cfg, base="feat/x")
 
@@ -7668,14 +7647,13 @@ def test_pick_push_source_base_not_duplicated_when_equals_default(mocker):
 
     captured: dict[str, object] = {}
 
-    def _fake_select(msg: str, choices: object, **kw: object) -> object:
-        captured["choices"] = choices
-        m = mocker.MagicMock()
-        assert isinstance(choices, list)
-        m.ask.return_value = choices[0].value
-        return m
+    def _fake_select(noun: str, options: object, **_kw: object) -> object:
+        captured["choices"] = options
+        assert isinstance(options, list)
+        return options[0].value
 
-    mocker.patch("questionary.select", side_effect=_fake_select)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", side_effect=_fake_select)
 
     # base == default branch "main" → no extra entry
     _pick_push_source(cfg, base="main")
@@ -10987,7 +10965,7 @@ def test_setup_offer_is_never_made_over_ssh(mocker, monkeypatch, marker):
     mocker.patch("jailbee.cli._setup_offer_allowed", return_value=True)
     consume = mocker.patch("jailbee.setup_command.consume_hint", return_value=[])
     pending = mocker.patch("jailbee.setup_command.hint_pending")
-    confirm = mocker.patch("jailbee.cli.typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
 
     cli._advise_setup(offer=True)
 

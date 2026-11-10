@@ -101,7 +101,7 @@ def test_submodule_failure_asks_before_pushing_the_superproject(mocker, tmp_path
         "jailbee.sync.publish_branch_from_container", return_value=_publish_result()
     )
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    confirm = mocker.patch("typer.confirm", return_value=False)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=False)
 
     result = runner.invoke(app, ["pr", "push", "feat-foo", "--no-ai"])
 
@@ -114,7 +114,7 @@ def test_submodule_failure_asks_before_pushing_the_superproject(mocker, tmp_path
 def test_submodule_failure_superproject_continues_when_confirmed(mocker, tmp_path):
     _, create, _ = _wire(mocker, tmp_path, [SubPrOutcome("docs", "failed")])
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("typer.confirm", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = runner.invoke(app, ["pr", "push", "feat-foo", "--no-ai"])
 
