@@ -158,6 +158,7 @@ class PromptBackend(Protocol):
         *,
         context: PromptContext | None,
         alternative: str | None,
+        picker: Callable[[Sequence[Option[Any]]], list[Any] | None] | None,
     ) -> list[Any] | None: ...
 
     def text(
@@ -214,8 +215,9 @@ class TerminalBackend:
         *,
         context: PromptContext | None,
         alternative: str | None,
+        picker: Callable[[Sequence[Option[Any]]], list[Any] | None] | None,
     ) -> list[Any] | None:
-        return _select_many(noun, options)
+        return (picker or (lambda opts: _select_many(noun, opts)))(options)
 
     def text(
         self,
@@ -278,6 +280,7 @@ class NonInteractiveBackend:
         *,
         context: PromptContext | None,
         alternative: str | None,
+        picker: Callable[[Sequence[Option[Any]]], list[Any] | None] | None,
     ) -> list[Any] | None:
         raise MissingValue(noun, candidates=[o.label for o in options], alternative=alternative)
 
@@ -428,7 +431,9 @@ class ChannelBackend:
         *,
         context: PromptContext | None,
         alternative: str | None,
+        picker: Callable[[Sequence[Option[Any]]], list[Any] | None] | None,
     ) -> list[Any] | None:
+        # `picker` is a terminal renderer; the channel sends the question instead.
         wire = _wire_options(options)
         reply = self._ask(
             lambda i: pc.Prompt(
@@ -683,12 +688,16 @@ def choose_many(  # noqa: UP047
     empty_reason: str | None = None,
     alternative: str | None = None,
     context: PromptContext | None = None,
+    picker: Callable[[Sequence[Option[T]]], list[T] | None] | None = None,
 ) -> list[T]:
     """Resolve a missing set of values from its candidates.
 
     No candidates -> `MissingValue(empty_reason)`. A single candidate is still
     asked (an empty selection is a legitimate answer; callers decide whether
     it is acceptable). Off a terminal, `MissingValue` naming the candidates.
+    `picker` lets a caller keep a richer renderer (its own question, cursor
+    row or pre-ticked rows); it gets the options and returns the chosen values,
+    or None for cancel.
 
     Cancel (Ctrl-C / Esc) -> `Cancelled`. Submitting with nothing ticked is
     not a cancel: it returns `[]` (the terminal picker's bare Enter selects
@@ -696,7 +705,9 @@ def choose_many(  # noqa: UP047
     """
     if not options:
         raise MissingValue(noun, reason=empty_reason or f"no {noun} to choose from")
-    chosen = select_backend().choose_many(noun, options, context=context, alternative=alternative)
+    chosen = select_backend().choose_many(
+        noun, options, context=context, alternative=alternative, picker=picker
+    )
     if chosen is None:
         raise Cancelled()
     return list(chosen)

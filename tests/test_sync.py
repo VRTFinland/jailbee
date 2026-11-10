@@ -1285,7 +1285,7 @@ def test_cleanup_destroy_prompts_in_tty_yes(mocker, make_cfg, tmp_path):
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[])
-    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1314,7 +1314,7 @@ def test_cleanup_destroy_prompts_in_tty_no(mocker, make_cfg, tmp_path):
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[])
-    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=False)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1359,7 +1359,7 @@ def test_cleanup_always_policy_skips_the_destroy_guard(mocker, make_cfg, tmp_pat
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
     list_containers = mocker.patch("jailbee.lifecycle.list_containers")
     probe = mocker.patch("jailbee.git_status.probe_container_git")
-    confirm = mocker.patch("jailbee.tui.typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1398,7 +1398,7 @@ def test_cleanup_destroy_guard_asks_once_when_clean(mocker, make_cfg, tmp_path):
         "jailbee.git_status.probe_container_git",
         return_value=GitStatus(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok"),
     )
-    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1463,7 +1463,7 @@ def test_cleanup_destroy_guard_declined_keeps_container(mocker, make_cfg, tmp_pa
         return_value=GitStatus(wt="+3 -1", ahead_diff="clean", ahead_count="0", conflict="ok"),
     )
     mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
-    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=False)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1501,7 +1501,7 @@ def test_cleanup_destroy_guard_accepted_destroys_after_one_prompt(mocker, make_c
         return_value=GitStatus(wt="+3 -1", ahead_diff="clean", ahead_count="0", conflict="ok"),
     )
     mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
-    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1536,7 +1536,7 @@ def test_cleanup_destroy_guard_notes_unknown_for_stopped_container(
         return_value=[_guarded_container_info(full_name, cfg, state="Stopped")],
     )
     probe = mocker.patch("jailbee.git_status.probe_container_git")
-    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1570,7 +1570,7 @@ def test_cleanup_destroy_guard_notes_unknown_when_container_missing_from_listing
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[])
     probe = mocker.patch("jailbee.git_status.probe_container_git")
-    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1621,7 +1621,7 @@ def test_cleanup_mount_mode_container_is_not_reported_as_unknown(
     )
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[mount_info])
     probe = mocker.patch("jailbee.git_status.probe_container_git")
-    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
