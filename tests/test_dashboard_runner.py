@@ -117,7 +117,9 @@ def test_missing_policy_refuses(tmp_path: Path) -> None:
     assert result.refused and spawn.calls == []
 
 
-@pytest.mark.parametrize("argv", [["shell", "a"], ["tmux", "a"], ["apps", "run", "gimp", "a"], ["ide", "a"]])
+@pytest.mark.parametrize(
+    "argv", [["shell", "a"], ["tmux", "a"], ["apps", "run", "gimp", "a"], ["ide", "a"]]
+)
 def test_attach_style_is_never_spawned(argv: list[str], tmp_path: Path) -> None:
     spawn = Spawns()
     assert runner.is_attach_style(argv)
@@ -138,7 +140,9 @@ def test_prompt_relay_output_and_exit_status(tmp_path: Path) -> None:
         seen.append(p.question)
         return p.question == "Sure?"
 
-    result, out = _run(["ls"], spawn, tmp_path, policy=_policy("ls"), on_prompt=handler, audit=audit)
+    result, out = _run(
+        ["ls"], spawn, tmp_path, policy=_policy("ls"), on_prompt=handler, audit=audit
+    )
     assert result.status == 3 and not result.ok
     assert seen == ["Sure?", "Really?"]
     assert [a.__dict__["value"] for a in spawn.child.answers] == [True, False]  # type: ignore[union-attr]  # test: child exists after spawn
@@ -210,7 +214,9 @@ def test_remote_child_carries_transport_markers(tmp_path: Path) -> None:
     assert env["JAILBEE_REMOTE_RESTRICTED"] == "1"
 
 
-def test_default_audit_is_jsonl_without_arguments(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_default_audit_is_jsonl_without_arguments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     out: list[str] = []
     runner.run_action(
@@ -231,7 +237,9 @@ def test_default_audit_is_jsonl_without_arguments(tmp_path: Path, monkeypatch: p
     assert path.stat().st_mode & 0o777 == 0o600
 
 
-def test_real_child_asks_through_the_channel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_real_child_asks_through_the_channel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A real subprocess: JAILBEE_PROMPT_FD reaches it and ask_confirm is relayed."""
     code = (
         "from jailbee.prompting import ask_confirm\n"
