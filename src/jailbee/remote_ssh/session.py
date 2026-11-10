@@ -1,9 +1,15 @@
-"""Mark the processes a remote SSH session starts, and recognise them later.
+"""Mark the processes a remote session starts, and recognise them later.
 
-Every child the SSH server starts (`pty.py`) gets `REMOTE_SESSION_ENV` in its
+The markers are transport-neutral: a remote transport (`ssh` today, `web`
+later) starts its children through `child_environment(..., transport=...)`,
+and downstream checks ask these helpers instead of which transport it was.
+Only the behaviour that is intrinsically SSH (waypipe, the shared RDP
+display, `LESSSECURE`) keys off `is_ssh_session()`, a transport-name check.
+
+Every child the SSH server starts (`pty.py`) gets the markers in its
 environment, and so does everything that child starts in turn — dashboard
 actions, console commands, background workers. A command that behaves
-differently for a remote caller asks `is_remote_session()` rather than taking
+differently for a remote caller asks `is_restricted_session()` rather than taking
 a flag, because a flag has to be threaded through every re-exec by hand and
 the one that is forgotten fails open.
 
@@ -18,6 +24,10 @@ for a server that is not itself running inside a restricted session: a
 marker already in the server's own environment is inherited, never removed,
 so a server started from a restricted session cannot lift the restriction
 it runs under (see `host_restricted`).
+
+A later transport (the web server) builds its children's environment with
+`child_environment(base, transport=TRANSPORT_WEB, ...)`; nothing else sets
+the markers.
 """
 
 from __future__ import annotations
@@ -31,18 +41,23 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-REMOTE_SESSION_ENV = "JAILBEE_REMOTE_SSH"
-# Set for every child of the SSH server, restricted or not. It says only
+TRANSPORT_SSH = "ssh"
+TRANSPORT_WEB = "web"
+# Set for every child of a remote transport, restricted or not. It says only
 # that the person at the other end is not at this host's keyboard — which
 # decides what is pointless to offer (a Qt window, the setup steps, the
 # server's own working directory as a repo) rather than what is forbidden.
-SSH_SESSION_ENV = "JAILBEE_SSH_SESSION"
-SSH_EXCLUDED_REPOS_ENV = "JAILBEE_SSH_EXCLUDED_REPOS"
+REMOTE_SESSION_ENV = "JAILBEE_REMOTE_SESSION"
+# The name of the transport that started the session (`TRANSPORT_SSH`, ...).
+REMOTE_TRANSPORT_ENV = "JAILBEE_REMOTE_TRANSPORT"
+# Set only for a restricted session (`remote.<transport>.restrict_host`).
+REMOTE_RESTRICTED_ENV = "JAILBEE_REMOTE_RESTRICTED"
+REMOTE_EXCLUDED_REPOS_ENV = "JAILBEE_REMOTE_EXCLUDED_REPOS"
 # Set (to the SSH server's port) for a child of a server whose
 # `remote.ssh.rdp` is on, and only then: `child_environment` removes any value
 # it inherits. It says GUI apps launched here belong on the shared RDP display
 # and tells the child which port to print in the connection recipe.
-SSH_GUI_ENV = "JAILBEE_SSH_GUI"
+REMOTE_GUI_PORT_ENV = "JAILBEE_REMOTE_GUI_PORT"
 # Set only for a child of a `waypipe ssh` session on a server whose
 # `remote.ssh.waypipe` is on (`server.handle_process`); `child_environment` removes
 # any inherited value. GUI apps launched here draw through the session's
@@ -80,6 +95,7 @@ class WaypipeSession:
 def child_environment(
     base: Mapping[str, str],
     *,
+    transport: str,
     term: str | None = None,
     restricted: bool = True,
     excluded_repos: Sequence[str] = (),
@@ -88,15 +104,18 @@ def child_environment(
     waypipe_attach: bool = False,
     terminal: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """The environment for a child of the SSH server, built from ``base``.
+    """The environment for a child of a remote transport, built from ``base``.
 
-    Every child carries `SSH_SESSION_ENV`. A ``restricted`` one is also marked
-    with `REMOTE_SESSION_ENV` and gets `LESSSECURE=1`, so a `less` reached
+    Every child carries `REMOTE_SESSION_ENV`, the ``transport`` name and the
+    excluded repos; inherited values of those are replaced. A ``restricted``
+    one is also marked with `REMOTE_RESTRICTED_ENV`. Over ``ssh`` it gets
+    `LESSSECURE=1` too (the web transport has no terminal), so a `less` reached
     through any path — a pager, a tool's own paging — cannot start a shell
     (`!`), an editor (`v`) or a pipe (`|`) on the host. An unrestricted one
     otherwise gets ``base`` unchanged, the restriction marker included if
-    ``base`` already carries it. ``waypipe`` marks the child as part of that
-    `waypipe ssh` session; ``waypipe_attach`` adds that its own command is a
+    ``base`` already carries it. ``gui_port`` and ``waypipe`` apply only to
+    the ``ssh`` transport and are ignored for any other. ``waypipe`` marks the
+    child as part of that `waypipe ssh` session; ``waypipe_attach`` adds that its own command is a
     GUI launcher. Inherited waypipe markers are always removed.
     ``terminal`` is the client's own terminal identity (`terminal_identity`);
     the server's inherited values for those names describe the wrong
@@ -106,21 +125,24 @@ def child_environment(
     for name in TERMINAL_IDENTITY_ENV:
         env.pop(name, None)
     env.update(terminal or {})
-    env[SSH_SESSION_ENV] = "1"
-    env[SSH_EXCLUDED_REPOS_ENV] = json.dumps(list(excluded_repos))
-    env.pop(SSH_GUI_ENV, None)
-    if gui_port is not None:
-        env[SSH_GUI_ENV] = str(gui_port)
+    is_ssh = transport == TRANSPORT_SSH
+    env[REMOTE_SESSION_ENV] = "1"
+    env[REMOTE_TRANSPORT_ENV] = transport
+    env[REMOTE_EXCLUDED_REPOS_ENV] = json.dumps(list(excluded_repos))
+    env.pop(REMOTE_GUI_PORT_ENV, None)
+    if is_ssh and gui_port is not None:
+        env[REMOTE_GUI_PORT_ENV] = str(gui_port)
     for name in (WAYPIPE_SESSION_ENV, WAYPIPE_COMPRESS_ENV, WAYPIPE_ATTACH_ENV):
         env.pop(name, None)
-    if waypipe is not None:
+    if is_ssh and waypipe is not None:
         env[WAYPIPE_SESSION_ENV] = waypipe.id
         env[WAYPIPE_COMPRESS_ENV] = waypipe.compress
         if waypipe_attach:
             env[WAYPIPE_ATTACH_ENV] = "1"
     if restricted:
-        env[REMOTE_SESSION_ENV] = "1"
-        env["LESSSECURE"] = "1"
+        env[REMOTE_RESTRICTED_ENV] = "1"
+        if is_ssh:
+            env["LESSSECURE"] = "1"
     if term is not None:
         env["TERM"] = term
     return env
@@ -140,23 +162,41 @@ def terminal_identity(client_env: Mapping[str, object]) -> dict[str, str]:
     }
 
 
-def is_remote_session(environ: Mapping[str, str] | None = None) -> bool:
-    """True when this process descends from a remote SSH session.
+def is_restricted_session(environ: Mapping[str, str] | None = None) -> bool:
+    """True when this process descends from a restricted remote session.
 
     Any non-empty value counts: the marker fails closed.
     """
-    return bool((os.environ if environ is None else environ).get(REMOTE_SESSION_ENV))
+    return bool((os.environ if environ is None else environ).get(REMOTE_RESTRICTED_ENV))
+
+
+def is_remote_session(environ: Mapping[str, str] | None = None) -> bool:
+    """True when this process descends from any remote session, restricted or not."""
+    env = os.environ if environ is None else environ
+    return bool(
+        env.get(REMOTE_SESSION_ENV) or env.get(REMOTE_TRANSPORT_ENV)
+    ) or is_restricted_session(env)
+
+
+def remote_transport(environ: Mapping[str, str] | None = None) -> str | None:
+    """The name of the transport that started this session, or None."""
+    env = os.environ if environ is None else environ
+    return env.get(REMOTE_TRANSPORT_ENV) or None
+
+
+def policy_transport(environ: Mapping[str, str] | None = None) -> str:
+    """The transport whose `remote.<name>` policy governs this session (ssh when unmarked)."""
+    return remote_transport(environ) or TRANSPORT_SSH
 
 
 def is_ssh_session(environ: Mapping[str, str] | None = None) -> bool:
-    """True when this process descends from any SSH session, restricted or not."""
-    env = os.environ if environ is None else environ
-    return bool(env.get(SSH_SESSION_ENV)) or is_remote_session(env)
+    """True when the session's transport is SSH (a transport-name check)."""
+    return remote_transport(environ) == TRANSPORT_SSH
 
 
 def shared_display_port(environ: Mapping[str, str] | None = None) -> int | None:
     """The SSH server port a GUI-enabled session was started under, or None."""
-    value = (os.environ if environ is None else environ).get(SSH_GUI_ENV, "")
+    value = (os.environ if environ is None else environ).get(REMOTE_GUI_PORT_ENV, "")
     return int(value) if value.isascii() and value.isdigit() else None
 
 
@@ -240,4 +280,4 @@ def host_restricted(restrict_host: bool, environ: Mapping[str, str] | None = Non
     True when the setting says so, and also whenever this process already
     runs inside a restricted session, whatever the setting says.
     """
-    return restrict_host or is_remote_session(environ)
+    return restrict_host or is_restricted_session(environ)

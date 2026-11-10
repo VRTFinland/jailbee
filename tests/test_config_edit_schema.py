@@ -304,7 +304,8 @@ def test_build_specs_covers_every_config_leaf():
     # golden.docker_seed contributes its four editable submodel leaves.
     assert len(build_specs(Config)) == 121
     # remote.ssh.gpg adds one opt-in global boolean.
-    assert len(build_specs(GlobalConfig)) == 59
+    # remote.web adds the ten `RemotePolicy` leaves: 59 + 10 = 69.
+    assert len(build_specs(GlobalConfig)) == 69
 
 
 def test_a_default_factory_field_reports_its_real_default():

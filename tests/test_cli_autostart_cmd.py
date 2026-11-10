@@ -755,7 +755,7 @@ def test_run_interactive_picker_counts_interrupted_steps(tmp_path, mocker):
     autostart_outcomes.record("myrepo-feat-a", "on_start", "deps", "npm", "start")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     picker = mocker.patch(
-        "jailbee.prompting._select", side_effect=lambda noun, options: options[0].value
+        "jailbee.prompting._select", side_effect=lambda noun, options, **_: options[0].value
     )
     foreground = mocker.patch("jailbee.autostart_rerun.run_foreground")
     result = runner.invoke(app, ["autostart", "run", "feat-a", "--wait"])

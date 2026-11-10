@@ -6703,15 +6703,15 @@ def test_resolve_container_name_full_match_other_repo(make_cfg, tmp_path):
 def test_ssh_resolve_rejects_excluded_exact_container_before_exists_probe(
     make_cfg, tmp_path, monkeypatch
 ):
-    from jailbee.remote_ssh.session import SSH_EXCLUDED_REPOS_ENV, SSH_SESSION_ENV
+    from jailbee.remote_ssh.session import REMOTE_EXCLUDED_REPOS_ENV, REMOTE_TRANSPORT_ENV
 
     repo = tmp_path / "myrepo"
     repo.mkdir()
     cfg = make_cfg(repo)
     incus = MagicMock()
     incus.list_containers.return_value = [{"name": "secret-feat", "profiles": ["secret-base"]}]
-    monkeypatch.setenv(SSH_SESSION_ENV, "1")
-    monkeypatch.setenv(SSH_EXCLUDED_REPOS_ENV, '["secret"]')
+    monkeypatch.setenv(REMOTE_TRANSPORT_ENV, "ssh")
+    monkeypatch.setenv(REMOTE_EXCLUDED_REPOS_ENV, '["secret"]')
 
     with pytest.raises(ValueError, match="no such container"):
         resolve_container_name(cfg, incus, "secret-feat")
@@ -11048,7 +11048,7 @@ def test_remote_session_cannot_approve_a_branch_privilege_widening(
     from jailbee import lifecycle
     from jailbee.lifecycle import BranchAutostartAssessment, NewContainerOptions, new_container
 
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
     cfg = make_cfg(tmp_path)
     incus = MagicMock()
     incus.list_containers.return_value = []
@@ -11092,9 +11092,9 @@ def test_assert_remote_may_enter(monkeypatch, marker, mode, refused):
     from jailbee.lifecycle import assert_remote_may_enter
 
     if marker is None:
-        monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+        monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     else:
-        monkeypatch.setenv("JAILBEE_REMOTE_SSH", marker)
+        monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", marker)
     incus = MagicMock()
     incus.config_get.side_effect = lambda n, k: mode if k == "user.jailbee.mode" else None
 

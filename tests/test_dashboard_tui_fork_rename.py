@@ -132,7 +132,7 @@ def test_fork_builder_over_ssh_addresses_the_repo_by_cwd(mocker, tmp_path):
         mocker,
         tmp_path,
         remote=True,
-        over_ssh=True,
+        transport="ssh",
         ssh_policy=RemoteSSHConfig(restrict_host=False),
     )
     run_new = mocker.patch.object(session, "run_new_container")

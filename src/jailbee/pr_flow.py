@@ -64,9 +64,10 @@ class AiConsent:
                     fields.append("PR title and description")
                 if branch:
                     fields.append("branch-name proposal")
-                self._answer = prompting.confirm(
+                self._answer = prompting.ask_confirm(
                     f"Generate the {' and '.join(fields)} with {pr_ai.agent_label(cfg)}?",
                     default=False,
+                    alternative="--ai",
                 )
             else:
                 from jailbee.tui import hint_console
@@ -372,7 +373,12 @@ def confirm_foreign_force_push(
         f"--force will overwrite {target}'s head {head_desc} with this "
         f"container's history. Commits pushed there by anyone else are lost."
     )
-    if not typer.confirm(f"Force-push over {target}'s head {head_desc}?", default=False):
+    if not prompting.ask_confirm(
+        f"Force-push over {target}'s head {head_desc}?",
+        default=False,
+        destructive=True,
+        alternative="--yes",
+    ):
         raise typer.Abort()
 
 
@@ -390,11 +396,16 @@ def confirm_pr_branch_name(proposed: str, source_branch: str | None) -> str:
 
     if proposed == source_branch or not prompting.is_interactive():
         return proposed
-    while True:
-        chosen: str = typer.prompt("PR head branch name", default=proposed).strip()
-        if git_mod.check_ref_format(chosen):
-            return chosen
-        warn(f"'{chosen}' is not a valid branch name.")
+
+    def problem(value: str) -> str | None:
+        # A blank answer takes the proposal, as an empty prompt always did.
+        chosen = value.strip()
+        if not chosen or git_mod.check_ref_format(chosen):
+            return None
+        return f"'{chosen}' is not a valid branch name."
+
+    answer = prompting.ask_text("PR head branch name", validate=problem, default=proposed)
+    return answer.strip() or proposed
 
 
 def _can_prompt() -> bool:
@@ -418,22 +429,30 @@ def _pick_outbox_manifest(names: list[str]) -> str | None:
     called when this run may prompt (`pending_pr_text`'s `pick` is None
     otherwise — see `_can_prompt`).
     """
-    import questionary
+    from jailbee import prompting
 
-    # Explicit sentinel, exactly as in `_pick_review_action`: `questionary.Choice`
-    # treats `value=None` as *unset* and falls back to the title, so a cancel
-    # entry with `value=None` would answer the string "cancel" — and a manifest
-    # by that name is not what the user asked for.
-    cancel = "__cancel__"
-    choices = [questionary.Choice(title=name, value=name) for name in names]
-    choices.append(questionary.Choice(title="none — write the description as usual", value=cancel))
-    result = questionary.select(
-        "More than one PR description is pending. Which one?", choices=choices
-    ).ask()
-    # `None` is Ctrl-C; `cancel` is the menu entry. Both mean "use none".
-    if result is None or result == cancel:
+    # A private sentinel, not a string: a manifest could be named like any string.
+    none = object()
+    options: list[prompting.Option[str | object]] = [
+        prompting.Option(value=name, title=name, label=name) for name in names
+    ]
+    options.append(
+        prompting.Option(
+            value=none,
+            title="none — write the description as usual",
+            label="none",
+        )
+    )
+    try:
+        chosen = prompting.choose_one(
+            "pending PR description",
+            options,
+            question="More than one PR description is pending. Which one?",
+        )
+    except prompting.Cancelled:
+        # Ctrl-C and the menu entry both mean "use none".
         return None
-    return str(result)
+    return None if chosen is none else str(chosen)
 
 
 def _confirm_foreign_description(scope: PrScope, source: OutboxPrText, for_pr: int | None) -> bool:
@@ -452,6 +471,8 @@ def _confirm_foreign_description(scope: PrScope, source: OutboxPrText, for_pr: i
     makes once the PR is up names every description this run left pending, and
     the command that publishes them, in one place.
     """
+    from jailbee import prompting
+
     label = scope.noun(str(for_pr) if for_pr is not None else None)
     if not _can_prompt():
         warn(
@@ -459,9 +480,10 @@ def _confirm_foreign_description(scope: PrScope, source: OutboxPrText, for_pr: i
             f"did not open; not replacing it unattended."
         )
         return False
-    return typer.confirm(
+    return prompting.ask_confirm(
         f"Replace {label}'s description with the one {source.manifest} proposes?",
         default=False,
+        destructive=True,
     )
 
 
@@ -1123,28 +1145,30 @@ class ReviewTarget:
 
 
 def _pick_review_action(number: int, head: str) -> str | None:
-    """Open a questionary.select for a review container's publish target.
+    """Ask which action a review container publishes: 'adopt' / 'stacked'.
 
-    Returns 'adopt' / 'stacked', or None if the user cancels.
+    Returns None if the user cancels.
     """
-    import questionary
+    from jailbee import prompting
 
-    # Explicit sentinel: `questionary.Choice` treats `value=None` as *unset* and
-    # falls back to the title, so a cancel entry with `value=None` would answer
-    # the string "cancel" and get published as an action.
-    cancel = "__cancel__"
-    choices = [
-        questionary.Choice(
-            title=f"push these commits to PR #{number}'s head '{head}'", value="adopt"
+    options = [
+        prompting.Option(
+            value="adopt",
+            title=f"push these commits to PR #{number}'s head '{head}'",
+            label="adopt",
         ),
-        questionary.Choice(title=f"open a NEW PR based on '{head}'  (stacked)", value="stacked"),
-        questionary.Choice(title="cancel", value=cancel),
+        prompting.Option(
+            value="stacked",
+            title=f"open a NEW PR based on '{head}'  (stacked)",
+            label="stacked",
+        ),
     ]
-    result = questionary.select("What should jailbee publish?", choices=choices).ask()
-    # `None` is Ctrl-C; `cancel` is the menu entry. Both abort.
-    if result is None or result == cancel:
+    try:
+        return str(
+            prompting.choose_one("publish target", options, question="What should jailbee publish?")
+        )
+    except prompting.Cancelled:
         return None
-    return str(result)
 
 
 def resolve_review_target(
@@ -1357,10 +1381,11 @@ def maybe_retarget_to_parent(
                 f"{target.parent_head}"
             )
             return
-        if not typer.confirm(
+        if not prompting.ask_confirm(
             f"Retarget '{short}' base branch {old_desc} → '{target.parent_head}', "
             f"so AHEAD and diffs count only this container's own commits?",
             default=True,
+            alternative="--retarget",
         ):
             return
     try:
@@ -1444,9 +1469,10 @@ def adopt_existing_pr_for_branch(
                 f"re-run with --yes when there is no terminal to ask on."
             )
             raise typer.Exit(1)
-        if not typer.confirm(
+        if not prompting.ask_confirm(
             f"Push this container's commits to PR #{found.number} instead of opening a new one?",
             default=True,
+            alternative="--yes",
         ):
             info(
                 "Aborted. To open a separate PR from this container, re-run with "
@@ -1563,7 +1589,7 @@ def bind_pr_by_number(
         if not prompting.is_interactive():
             error(refusal)
             raise typer.Exit(1)
-        if not typer.confirm(question, default=True):
+        if not prompting.ask_confirm(question, default=True, alternative="--yes"):
             raise typer.Abort()
 
     recorded = state.record(
@@ -1605,7 +1631,12 @@ def unbind_pr(scope: PrScope, state: PrState, *, target_label: str, yes: bool) -
                 f"re-run with --yes when there is no terminal to ask on."
             )
             raise typer.Exit(1)
-        if not typer.confirm(f"Unbind {target_label} from {binding_label}?", default=False):
+        if not prompting.ask_confirm(
+            f"Unbind {target_label} from {binding_label}?",
+            default=False,
+            destructive=True,
+            alternative="--yes",
+        ):
             raise typer.Abort()
 
     if not state.clear():

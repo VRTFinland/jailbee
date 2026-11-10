@@ -191,9 +191,9 @@ def browser_read_only() -> bool:
     This includes unrestricted SSH sessions. Mutations must use explicit
     drop/apply commands so the router checks each command's permissions.
     """
-    from jailbee.remote_ssh.session import is_ssh_session
+    from jailbee.remote_ssh.session import is_remote_session
 
-    return is_ssh_session()
+    return is_remote_session()
 
 
 @app.command()

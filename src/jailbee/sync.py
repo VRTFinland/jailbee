@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Literal, assert_never
 
 from jailbee import git, prompting, submodules
 from jailbee.incus import IncusError
-from jailbee.remote_ssh.session import host_tree_refusal, is_remote_session
+from jailbee.remote_ssh.session import host_tree_refusal, is_restricted_session
 from jailbee.retry import confirm_retry_quiet, with_remote_retry
 
 if TYPE_CHECKING:
@@ -47,7 +47,7 @@ def _refuse_remote_tree_write(action: str, hint: str | None = None) -> None:
     user a message that names the command and what to run instead, rather
     than one about whichever primitive happened to be reached first.
     """
-    if is_remote_session():
+    if is_restricted_session():
         raise SyncError(host_tree_refusal(action, hint))
 
 

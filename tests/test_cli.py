@@ -10825,7 +10825,7 @@ def test_background_new_preflight_refuses_a_widening_over_remote_ssh(
     from jailbee import create_flow
     from jailbee.lifecycle import BranchAutostartAssessment, NewContainerOptions
 
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
     cfg = make_cfg(tmp_path)
     mocker.patch("jailbee.lifecycle.resolve_clone_ref", return_value=mocker.MagicMock())
     verdict = SimpleNamespace(prompts=True, baseline_source="origin/main")
@@ -10862,8 +10862,8 @@ def _mount_mode_incus(mocker):
 
 def test_remote_exec_refuses_a_mount_mode_container(mocker, monkeypatch):
     """Inside a mount-mode container is the host's own working tree."""
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     mocker.patch("jailbee.cli._load_or_exit")
     incus = _mount_mode_incus(mocker)
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="p-box")
@@ -10878,8 +10878,8 @@ def test_remote_exec_refuses_a_mount_mode_container(mocker, monkeypatch):
 
 @pytest.mark.parametrize("command", ["shell", "tmux"])
 def test_remote_attach_refuses_a_mount_mode_container(mocker, monkeypatch, command):
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     mocker.patch("jailbee.cli._load_or_exit")
     incus = _mount_mode_incus(mocker)
     mocker.patch("jailbee.lifecycle.resolve_container_for_interactive", return_value="p-box")
@@ -10898,7 +10898,7 @@ def test_remote_attach_refuses_a_mount_mode_container(mocker, monkeypatch, comma
 
 
 def test_local_shell_still_enters_a_mount_mode_container(mocker, monkeypatch):
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     mocker.patch("jailbee.cli._load_or_exit")
     _mount_mode_incus(mocker)
     mocker.patch("jailbee.lifecycle.resolve_container_for_interactive", return_value="p-box")
@@ -10915,7 +10915,7 @@ def test_local_shell_still_enters_a_mount_mode_container(mocker, monkeypatch):
 def test_ssh_restart_hint_names_the_stale_service(mocker, monkeypatch, capsys):
     from jailbee import cli
 
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     mocker.patch(
         "jailbee.remote_ssh.service.stale_service_reason",
         return_value="The SSH service (pid 7) is stale. Restart it: jb remote ssh restart",
@@ -10929,7 +10929,7 @@ def test_ssh_restart_hint_names_the_stale_service(mocker, monkeypatch, capsys):
 def test_ssh_restart_hint_is_silent_in_a_remote_session(mocker, monkeypatch, capsys):
     from jailbee import cli
 
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
     reason = mocker.patch("jailbee.remote_ssh.service.stale_service_reason", return_value="x")
 
     cli._advise_ssh_restart()
@@ -10941,20 +10941,20 @@ def test_ssh_restart_hint_is_silent_in_a_remote_session(mocker, monkeypatch, cap
 def test_ssh_restart_hint_never_fails_the_command(mocker, monkeypatch):
     from jailbee import cli
 
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     mocker.patch("jailbee.remote_ssh.service.stale_service_reason", side_effect=OSError("boom"))
 
     cli._advise_ssh_restart()  # no exception
 
 
-@pytest.mark.parametrize("marker", ["JAILBEE_SSH_SESSION", "JAILBEE_REMOTE_SSH"])
+@pytest.mark.parametrize("marker", ["JAILBEE_REMOTE_TRANSPORT", "JAILBEE_REMOTE_RESTRICTED"])
 def test_setup_offer_is_never_made_over_ssh(mocker, monkeypatch, marker):
     """The steps install into this host's rc files and agent config; the one
     who would answer is not at it. Only the one-shot hint remains."""
     from jailbee import cli
 
-    monkeypatch.delenv("JAILBEE_SSH_SESSION", raising=False)
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_TRANSPORT", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     monkeypatch.setenv(marker, "1")
     mocker.patch("jailbee.cli._setup_offer_allowed", return_value=True)
     consume = mocker.patch("jailbee.setup_command.consume_hint", return_value=[])

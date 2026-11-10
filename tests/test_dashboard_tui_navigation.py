@@ -61,7 +61,7 @@ def test_ssh_dashboard_existing_attach_actions_work_without_exec(
         ["j", key, "ctrl+c"],
         [group],
         remote=True,
-        over_ssh=True,
+        transport="ssh",
         ssh_policy=RemoteSSHConfig(),
     )
 
@@ -473,7 +473,7 @@ def test_ssh_disabled_policy_rejects_new_before_prompt_or_spawn(mocker, tmp_path
         ["n", *keys("feature"), "enter", "enter", "enter"],
         groups=[group],
         remote=True,
-        over_ssh=True,
+        transport="ssh",
         ssh_policy=policy,
     )
 
@@ -501,7 +501,7 @@ def test_ssh_allowlisted_new_prompts_then_spawns_final_argv(mocker, tmp_path):
         ["n", *keys("feature"), "enter", "enter", "enter"],
         groups=[group],
         remote=True,
-        over_ssh=True,
+        transport="ssh",
         ssh_policy=policy,
     )
 
@@ -526,7 +526,7 @@ def test_ssh_inline_shell_works_when_exec_entrypoint_is_disabled(mocker, tmp_pat
         ["j", "!", *keys("shell"), "enter"],
         groups=[group],
         remote=True,
-        over_ssh=True,
+        transport="ssh",
         ssh_policy=policy,
     )
 
@@ -555,7 +555,7 @@ def test_open_menu_rechecks_policy_and_eligibility_before_dispatch(mocker, tmp_p
         ["j", "enter", change_underfoot, "enter"],
         [group],
         remote=True,
-        over_ssh=True,
+        transport="ssh",
         ssh_policy=policy,
     )
 

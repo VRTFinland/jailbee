@@ -4,10 +4,26 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from jailbee.cli import app
 from tests.conftest import make_cfg, panel_text
+
+
+@pytest.fixture
+def stdin_answers(mocker):
+    """Answer the destroy prompts from CliRunner's input, as typer did before.
+
+    The prompts now go through `prompting`, which asks only on a terminal; the
+    terminal seam `_confirm` reads stdin through typer so `input="y\\n"` still answers.
+    """
+    import typer
+
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    return mocker.patch(
+        "jailbee.prompting._confirm", side_effect=lambda q, d: typer.confirm(q, default=d)
+    )
 
 
 def _payload(name: str, status: str = "Running") -> dict:
@@ -75,7 +91,7 @@ def test_destroy_single_probes_and_warns_about_stranded_work(tmp_path, mocker):
     assert result.exit_code != 0
 
 
-def test_destroy_single_at_risk_asks_once_with_summary_first(tmp_path, mocker):
+def test_destroy_single_at_risk_asks_once_with_summary_first(tmp_path, mocker, stdin_answers):
     """The risk summary is printed above the one "Destroy …?" prompt, not
     as a second prompt after it: a single `y` destroys."""
     incus, destroy_mock = _setup(tmp_path, mocker, [])
@@ -124,7 +140,7 @@ def test_destroy_declining_the_risk_prompt_destroys_nothing(tmp_path, mocker):
     destroy_mock.assert_not_called()
 
 
-def test_destroy_accepting_the_prompt_destroys(tmp_path, mocker):
+def test_destroy_accepting_the_prompt_destroys(tmp_path, mocker, stdin_answers):
     incus, destroy_mock = _setup(tmp_path, mocker, [])
     incus.list_containers.return_value = [_clone_payload("myrepo-feat-a")]
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="myrepo-feat-a")
@@ -137,7 +153,7 @@ def test_destroy_accepting_the_prompt_destroys(tmp_path, mocker):
     destroy_mock.assert_called_once()
 
 
-def test_destroy_clean_container_asks_only_once(tmp_path, mocker):
+def test_destroy_clean_container_asks_only_once(tmp_path, mocker, stdin_answers):
     incus, destroy_mock = _setup(tmp_path, mocker, [])
     incus.list_containers.return_value = [_clone_payload("myrepo-feat-a")]
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="myrepo-feat-a")
@@ -181,7 +197,7 @@ def test_destroy_notes_unknown_git_status(tmp_path, mocker):
     assert "git status unknown" in result.stdout.lower()
 
 
-def test_destroy_mount_mode_is_not_reported_as_unknown(tmp_path, mocker):
+def test_destroy_mount_mode_is_not_reported_as_unknown(tmp_path, mocker, stdin_answers):
     """A mount-mode container's working tree *is* the host's directory and
     survives the destroy, so "git status unknown — may discard uncommitted
     work" is the one case where the note would be provably false. It is not
@@ -201,7 +217,9 @@ def test_destroy_mount_mode_is_not_reported_as_unknown(tmp_path, mocker):
     destroy_mock.assert_called_once()
 
 
-def test_destroy_single_missing_from_listing_notes_unknown_and_destroys(tmp_path, mocker):
+def test_destroy_single_missing_from_listing_notes_unknown_and_destroys(
+    tmp_path, mocker, stdin_answers
+):
     """If the resolved container isn't found in list_containers (e.g. it
     vanished between resolve and list), the guard still speaks up instead
     of silently skipping straight to destroy with no note at all."""
@@ -218,7 +236,7 @@ def test_destroy_single_missing_from_listing_notes_unknown_and_destroys(tmp_path
     destroy_mock.assert_called_once()
 
 
-def test_destroy_all_lists_at_risk_containers_without_probing(tmp_path, mocker):
+def test_destroy_all_lists_at_risk_containers_without_probing(tmp_path, mocker, stdin_answers):
     """--all already gets git status from list_containers(with_git_status=True)."""
     incus, destroy_mock = _setup(tmp_path, mocker, [])
     incus.list_containers.return_value = [
@@ -257,7 +275,9 @@ def test_destroy_all_force_skips_the_git_status_probe(tmp_path, mocker):
     destroy_mock.assert_called_once()
 
 
-def test_destroy_all_without_force_still_probes_for_the_risk_summary(tmp_path, mocker):
+def test_destroy_all_without_force_still_probes_for_the_risk_summary(
+    tmp_path, mocker, stdin_answers
+):
     """Without `--force`, `_warn_before_destroy` needs the probed git status —
     the optimization above must not skip it here."""
     incus, destroy_mock = _setup(tmp_path, mocker, [])
@@ -271,7 +291,7 @@ def test_destroy_all_without_force_still_probes_for_the_risk_summary(tmp_path, m
     destroy_mock.assert_called_once()
 
 
-def test_destroy_single_target_prompts_and_destroys(tmp_path, mocker):
+def test_destroy_single_target_prompts_and_destroys(tmp_path, mocker, stdin_answers):
     _, destroy_mock = _setup(tmp_path, mocker, ["myrepo-feat-a"])
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="myrepo-feat-a")
 
@@ -306,7 +326,7 @@ def test_destroy_all_with_zero_containers_prints_message_and_exits_zero(tmp_path
     destroy_mock.assert_not_called()
 
 
-def test_destroy_all_prompts_then_destroys_each(tmp_path, mocker):
+def test_destroy_all_prompts_then_destroys_each(tmp_path, mocker, stdin_answers):
     _, destroy_mock = _setup(tmp_path, mocker, ["myrepo-feat-a", "myrepo-feat-b", "myrepo-feat-c"])
 
     result = CliRunner().invoke(app, ["destroy", "--all"], input="y\n")
@@ -320,7 +340,7 @@ def test_destroy_all_prompts_then_destroys_each(tmp_path, mocker):
     assert destroyed == ["myrepo-feat-a", "myrepo-feat-b", "myrepo-feat-c"]
 
 
-def test_destroy_all_prompt_rejected_aborts_without_destroying(tmp_path, mocker):
+def test_destroy_all_prompt_rejected_aborts_without_destroying(tmp_path, mocker, stdin_answers):
     _, destroy_mock = _setup(tmp_path, mocker, ["myrepo-feat-a", "myrepo-feat-b"])
 
     result = CliRunner().invoke(app, ["destroy", "--all"], input="n\n")
@@ -377,7 +397,7 @@ def _setup_mixed(tmp_path: Path, mocker):
     return incus, destroy_mock
 
 
-def test_destroy_stopped_destroys_only_stopped_containers(tmp_path, mocker):
+def test_destroy_stopped_destroys_only_stopped_containers(tmp_path, mocker, stdin_answers):
     _, destroy_mock = _setup_mixed(tmp_path, mocker)
 
     result = CliRunner().invoke(app, ["destroy", "--stopped"], input="y\n")

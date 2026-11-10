@@ -38,7 +38,7 @@ from jailbee.remote_ssh.router import (
     policy_allows,
     resolve_repo,
 )
-from jailbee.remote_ssh.session import is_ssh_session
+from jailbee.remote_ssh.session import is_remote_session
 
 _LOCAL_COMMANDS = ("dashboard", "exit", "help", "repos", "use")
 
@@ -377,7 +377,7 @@ def run_local(initial_repo: str | None = None) -> int:
     Refused inside any SSH session: this console applies no `remote.ssh`
     policy, so a remote user reaching it would escape theirs.
     """
-    if is_ssh_session():
+    if is_remote_session():
         _error("`console` runs without the remote policy; use the remote console entry point")
         return 1
     return run_console(local_policy(), initial_repo, local=True)

@@ -25,6 +25,7 @@ from textual.widget import Widget
 
 from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import model as dmodel
+from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.jobs import JobResult, JobRunner
 from jailbee.dashboard.settings import CURSOR_STYLE
@@ -423,7 +424,7 @@ def make_app(  # type: ignore[no-untyped-def]
     groups=None,
     *,
     remote=False,
-    over_ssh=False,
+    transport: Transport = "none",
     ssh_policy=None,
     view_state=None,
     git_enabled=False,
@@ -462,7 +463,7 @@ def make_app(  # type: ignore[no-untyped-def]
         incus=mocker.Mock(),
         cwd_root=cwd_root,
         remote=remote,
-        over_ssh=over_ssh,
+        transport=transport,
         ssh_policy=ssh_policy,
         scope=scope,
         tick_seconds=None,
@@ -476,7 +477,7 @@ def drive(  # type: ignore[no-untyped-def]
     groups=None,
     *,
     remote=False,
-    over_ssh=False,
+    transport: Transport = "none",
     ssh_policy=None,
     view_state=None,
     git_enabled=False,
@@ -500,7 +501,7 @@ def drive(  # type: ignore[no-untyped-def]
         mocker,
         groups,
         remote=remote,
-        over_ssh=over_ssh,
+        transport=transport,
         ssh_policy=ssh_policy,
         view_state=view_state,
         git_enabled=git_enabled,
@@ -600,7 +601,7 @@ def patch_in(mocker, name: str, *modules: object, **kwargs: Any):  # type: ignor
 def container_egress_keys(group: dmodel.RepoGroup, **menu_kwargs: Any) -> list[str]:
     """Keys that open the first container's Egress panel from the dashboard.
 
-    ``menu_kwargs`` (``remote``/``over_ssh``/``ssh_policy``) must match the
+    ``menu_kwargs`` (``remote``/``transport``/``ssh_policy``) must match the
     ``drive()`` call: the menu an SSH session sees has other entries.
     """
     menu = tmenu.open_menu([group], group.containers[0].name, **menu_kwargs)
@@ -621,7 +622,7 @@ def repo_menu_keys(group: dmodel.RepoGroup, verb: str, **menu_kwargs: Any) -> li
     """Keys that choose repo-menu ``verb`` from the first row (the repo header).
 
     Finds a top-level leaf or one inside a submenu, so no test counts entries.
-    ``menu_kwargs`` (``ssh_policy``/``over_ssh``) must match the ``drive()`` call.
+    ``menu_kwargs`` (``ssh_policy``/``transport``) must match the ``drive()`` call.
     """
     menu = tmenu.open_repo_menu([group], group.prefix, frozenset(), **menu_kwargs)
     assert menu is not None
@@ -638,7 +639,7 @@ def repo_menu_keys(group: dmodel.RepoGroup, verb: str, **menu_kwargs: Any) -> li
 def container_menu_keys(group: dmodel.RepoGroup, verb: str, **menu_kwargs: Any) -> list[str]:
     """Keys that choose top-level container-menu leaf ``verb`` for the first container.
 
-    ``menu_kwargs`` (``remote``/``over_ssh``/``ssh_policy``) must match the ``drive()`` call.
+    ``menu_kwargs`` (``remote``/``transport``/``ssh_policy``) must match the ``drive()`` call.
     """
     menu = tmenu.open_menu([group], group.containers[0].name, **menu_kwargs)
     assert menu is not None

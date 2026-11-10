@@ -5,7 +5,7 @@ import os
 import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal, Self
+from typing import ClassVar, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -140,36 +140,19 @@ class RemoteCommandPolicy(BaseModel):
         return self
 
 
-class RemoteSSHConfig(BaseModel):
+class RemotePolicy(BaseModel):
+    """Transport-agnostic remote permissions: what a remote session may do.
+
+    Shared by every remote transport (`remote.ssh`, `remote.web`). The defaults
+    here are the most restrictive; `RemoteSSHConfig` keeps its historical
+    looser ones. `restrict_host` is a plain field here and forced on for the web.
+    """
+
     model_config = ConfigDict(extra="forbid")
-    listen: str = Field(
-        default="127.0.0.1",
-        description="IP address the SSH server binds to.",
-    )
-    port: int = Field(
-        default=8022,
-        ge=1,
-        le=65535,
-        description="TCP port the SSH server listens on.",
-    )
-    dashboard: bool = Field(
-        default=True,
-        description="Whether SSH clients may open the dashboard.",
-    )
-    console: bool = Field(
-        default=True,
-        description="Enable the interactive JailBee console entry point.",
-    )
-    exec: bool = Field(
-        default=True,
-        description="Enable one-shot JailBee command routing.",
-    )
-    default_entrypoint: Literal["help", "dashboard", "console"] = Field(
-        default="help",
-        description="Entry point opened when an SSH client supplies no command.",
-    )
+    _label: ClassVar[str] = "remote"
+
     commands: RemoteCommandPolicy = Field(
-        default_factory=lambda: RemoteCommandPolicy(mode="full"),
+        default_factory=RemoteCommandPolicy,
         description="Shared command policy for all remote entry points.",
     )
     restrict_host: bool = Field(
@@ -188,24 +171,6 @@ class RemoteSSHConfig(BaseModel):
             "SSH may forward to it, and dev containers mount its socket "
             "directory. Every container shares that one screen and clipboard. "
             "Off by default."
-        ),
-    )
-    waypipe: bool = Field(
-        default=True,
-        description=(
-            "Let `waypipe ssh` sessions launch GUI apps as native windows on "
-            "the client. Each container reaches only its own waypipe server. "
-            "On by default."
-        ),
-    )
-    gpg: bool = Field(
-        default=False,
-        description=(
-            "Let a `jb remote ssh` client forward its gpg-agent "
-            "(`RemoteForward /jailbee/gpg-agent <agent-extra-socket>`); while "
-            "the forward is up, every `gpg.enabled` container uses the client's "
-            "keys instead of the host's agent. Containers pick the change up "
-            "on their next start. Off by default."
         ),
     )
     network: bool = Field(
@@ -244,7 +209,7 @@ class RemoteSSHConfig(BaseModel):
         ),
     )
     orchestration: Literal["off", "ssh", "orchestrator"] = Field(
-        default="ssh",
+        default="off",
         description=(
             "Let remote sessions run `orchestrate grant`, `adopt` and `profile save`: "
             "`ssh` (the default; also `true`) "
@@ -265,6 +230,112 @@ class RemoteSSHConfig(BaseModel):
             return "ssh" if value else "off"
         return value
 
+    def files_enabled(self) -> bool:
+        """Whether SFTP/SCP is on: the explicit value, else `commands.mode == "full"`.
+
+        Resolved on read, not stored: `apply_ssh_overrides` rebuilds the model
+        from a dump, and an override narrowing the command policy must narrow
+        an unset `files` with it.
+        """
+        if self.files is not None:
+            return self.files
+        return self.commands.mode == "full"
+
+    @property
+    def policy(self) -> RemotePolicy:
+        """This transport's permissions as a plain `RemotePolicy`.
+
+        Built on read from the current field values (a property, so it follows
+        `model_copy(update=...)` and override rebuilds; never stored).
+        """
+        return RemotePolicy.model_validate(
+            {name: getattr(self, name) for name in RemotePolicy.model_fields}
+        )
+
+    @model_validator(mode="after")
+    def _policy_is_consistent(self) -> Self:
+        if self.excluded_repos and not self.restrict_host:
+            raise ValueError(f"{self._label}.excluded_repos requires restrict_host=true")
+        if self.mount_roots and not self.restrict_host:
+            raise ValueError(f"{self._label}.mount_roots requires restrict_host=true")
+        paths = [root.path for root in self.mount_roots]
+        if len(paths) != len(set(paths)):
+            raise ValueError(f"{self._label}.mount_roots contains duplicate paths")
+        return self
+
+    @field_validator("excluded_repos")
+    @classmethod
+    def _validate_excluded_repos(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError(f"{cls._label}.excluded_repos contains duplicates")
+        if any(not _PREFIX_RE.fullmatch(value) for value in values):
+            raise ValueError(
+                f"{cls._label}.excluded_repos entries must be valid container prefixes"
+            )
+        return values
+
+
+class RemoteSSHConfig(RemotePolicy):
+    """`remote.ssh`: the SSH-only settings on top of the shared `RemotePolicy`.
+
+    The policy fields keep their historical keys and looser defaults
+    (`commands.mode=full`, `orchestration=ssh`).
+    """
+
+    _label: ClassVar[str] = "remote.ssh"
+    listen: str = Field(
+        default="127.0.0.1",
+        description="IP address the SSH server binds to.",
+    )
+    port: int = Field(
+        default=8022,
+        ge=1,
+        le=65535,
+        description="TCP port the SSH server listens on.",
+    )
+    dashboard: bool = Field(
+        default=True,
+        description="Whether SSH clients may open the dashboard.",
+    )
+    console: bool = Field(
+        default=True,
+        description="Enable the interactive JailBee console entry point.",
+    )
+    exec: bool = Field(
+        default=True,
+        description="Enable one-shot JailBee command routing.",
+    )
+    default_entrypoint: Literal["help", "dashboard", "console"] = Field(
+        default="help",
+        description="Entry point opened when an SSH client supplies no command.",
+    )
+    waypipe: bool = Field(
+        default=True,
+        description=(
+            "Let `waypipe ssh` sessions launch GUI apps as native windows on "
+            "the client. Each container reaches only its own waypipe server. "
+            "On by default."
+        ),
+    )
+    gpg: bool = Field(
+        default=False,
+        description=(
+            "Let a `jb remote ssh` client forward its gpg-agent "
+            "(`RemoteForward /jailbee/gpg-agent <agent-extra-socket>`); while "
+            "the forward is up, every `gpg.enabled` container uses the client's "
+            "keys instead of the host's agent. Containers pick the change up "
+            "on their next start. Off by default."
+        ),
+    )
+    commands: RemoteCommandPolicy = Field(
+        default_factory=lambda: RemoteCommandPolicy(mode="full"),
+        description="Shared command policy for all remote entry points.",
+    )
+    orchestration: Literal["off", "ssh", "orchestrator"] = Field(
+        default="ssh",
+        description=RemotePolicy.model_fields["orchestration"].description,
+    )
+
     @field_validator("listen")
     @classmethod
     def _listen_is_an_ip_literal(cls, value: str) -> str:
@@ -282,40 +353,31 @@ class RemoteSSHConfig(BaseModel):
             return folded
         return data
 
-    def files_enabled(self) -> bool:
-        """Whether SFTP/SCP is on: the explicit value, else `commands.mode == "full"`.
-
-        Resolved on read, not stored: `apply_ssh_overrides` rebuilds the model
-        from a dump, and an override narrowing the command policy must narrow
-        an unset `files` with it.
-        """
-        if self.files is not None:
-            return self.files
-        return self.commands.mode == "full"
-
     @model_validator(mode="after")
     def _entrypoints_are_usable(self) -> Self:
-        if self.excluded_repos and not self.restrict_host:
-            raise ValueError("remote.ssh.excluded_repos requires restrict_host=true")
-        if self.mount_roots and not self.restrict_host:
-            raise ValueError("remote.ssh.mount_roots requires restrict_host=true")
-        paths = [root.path for root in self.mount_roots]
-        if len(paths) != len(set(paths)):
-            raise ValueError("remote.ssh.mount_roots contains duplicate paths")
         if not (self.dashboard or self.console or self.exec):
             raise ValueError("remote.ssh must enable at least one entry point")
         if self.default_entrypoint != "help" and not getattr(self, self.default_entrypoint):
             raise ValueError("remote.ssh.default_entrypoint must be an enabled entry point")
         return self
 
-    @field_validator("excluded_repos")
-    @classmethod
-    def _validate_excluded_repos(cls, values: list[str]) -> list[str]:
-        if len(values) != len(set(values)):
-            raise ValueError("remote.ssh.excluded_repos contains duplicates")
-        if any(not _PREFIX_RE.fullmatch(value) for value in values):
-            raise ValueError("remote.ssh.excluded_repos entries must be valid container prefixes")
-        return values
+
+class RemoteWebConfig(RemotePolicy):
+    """`remote.web`: the policy fields only, most restrictive by default.
+
+    Listen address, port and auth belong to the web server (spec #109).
+    `restrict_host` is forced on: the web never gets host access.
+    """
+
+    _label: ClassVar[str] = "remote.web"
+
+    @model_validator(mode="after")
+    def _host_restriction_is_forced(self) -> Self:
+        if not self.restrict_host:
+            raise ValueError(
+                "remote.web.restrict_host cannot be false: the web is always host-restricted"
+            )
+        return self
 
 
 class RemoteConfig(BaseModel):
@@ -323,4 +385,11 @@ class RemoteConfig(BaseModel):
     ssh: RemoteSSHConfig = Field(
         default_factory=RemoteSSHConfig,
         description="Host-global SSH server settings.",
+    )
+    web: RemoteWebConfig = Field(
+        default_factory=RemoteWebConfig,
+        description=(
+            "Host-global web policy: the same permission settings as `remote.ssh`, "
+            "most restrictive by default, host restriction always on."
+        ),
     )

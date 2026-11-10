@@ -1193,8 +1193,7 @@ def test_the_plan_says_update_when_binding_to_a_numbered_pr(mocker, tmp_path):
     mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(456, already=True))
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.tui.pick_submodule", return_value="lib/a")
-    mocker.patch("jailbee.prompting._confirm", return_value=True)  # the plan question
-    mocker.patch("typer.confirm", return_value=True)  # pr_flow's own "push to PR?" question
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = runner.invoke(app, ["submodule", "pr", "push", "--pr", "456"])
 
