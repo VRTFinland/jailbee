@@ -136,9 +136,9 @@ the host's display; with `remote.ssh.rdp` on, or inside a `waypipe ssh`
 session with `remote.ssh.waypipe` on, launches go to the shared RDP display or
 the client's display instead). The admitted `exec --gui` route is an exception to the
 named GUI-launcher restrictions, described below. Restricted child processes
-carry `JAILBEE_REMOTE_SSH=1` and `LESSSECURE=1`, inherited by their children.
+carry `JAILBEE_REMOTE_RESTRICTED=1` and `LESSSECURE=1`, inherited by their children.
 Every SSH session, restricted or not, also carries
-`JAILBEE_SSH_SESSION=1`, which keeps the dashboard to registered repos, the
+`JAILBEE_REMOTE_TRANSPORT=ssh`, which keeps the dashboard to registered repos, the
 Qt dashboard refused and the post-install setup offer unmade: the one at the
 other end is not at this host.
 
@@ -300,10 +300,10 @@ This detects version changes, not every editable-source modification (see
 
 `remote.ssh.restrict_host: false` (or `jb remote ssh serve
 --no-restrict-host` for one run) disables the host-restriction command and
-argument checks and stops adding `JAILBEE_REMOTE_SSH` and `LESSSECURE` to
+argument checks and stops adding `JAILBEE_REMOTE_RESTRICTED` and `LESSSECURE` to
 child processes. Treat admitted commands as host-user capabilities. It does
 not disable the command policy, reserved/internal-route checks or the general
-`JAILBEE_SSH_SESSION` marker: the dashboard still lists registered repos only,
+`JAILBEE_REMOTE_TRANSPORT` marker: the dashboard still lists registered repos only,
 Qt is refused and the setup offer stays suppressed. The startup log announces
 `host restrictions: OFF`. A server started from inside a restricted session
 inherits its restricted marker and stays restricted whatever the setting says.

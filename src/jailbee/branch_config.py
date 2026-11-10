@@ -806,7 +806,7 @@ def effective_autostart_config(
     from jailbee.incus import IncusError
     from jailbee.lifecycle import container_repo_dir
     from jailbee.paths import REPO_CONFIG_DIRS
-    from jailbee.remote_ssh.session import is_remote_session
+    from jailbee.remote_ssh.session import is_restricted_session
     from jailbee.tui import default_confirm, warn_plain
 
     if incus.config_get(container, "user.jailbee.mode") == "mount":
@@ -834,7 +834,7 @@ def effective_autostart_config(
     )
     if verdict.any_widening:
         warn_plain(format_escalation(verdict))
-        accepted = not is_remote_session() and (
+        accepted = not is_restricted_session() and (
             assume_yes
             or (
                 allow_prompt

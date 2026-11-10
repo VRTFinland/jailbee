@@ -31,7 +31,7 @@ from jailbee.outbox import commands, service
 from jailbee.outbox.delete import DeletePlan, DeleteSelection, plan_delete
 from jailbee.outbox.inspect import safe_text
 from jailbee.outbox.models import ContainerView, OutboxChanged, OutboxError, ProposalView
-from jailbee.remote_ssh.session import is_ssh_session
+from jailbee.remote_ssh.session import is_remote_session
 
 if TYPE_CHECKING:
     from jailbee.dashboard.model import RepoTarget
@@ -104,7 +104,7 @@ class OutboxDialog(QDialog):
         parent: QWidget | None = None,
         sent_source: SentSource | None = None,
     ) -> None:
-        if is_ssh_session():
+        if is_remote_session():
             raise OutboxError("Use the read-only terminal outbox manager over SSH")
         super().__init__(parent)
         self._target, self._container = target, container

@@ -193,9 +193,9 @@ def test_attach_reports_an_incus_failure(host, mocker) -> None:
 
 
 def test_attach_is_refused_from_an_ssh_session(host, mocker, monkeypatch) -> None:
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
-    monkeypatch.setenv("JAILBEE_SSH_GUI", "8022")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_GUI_PORT", "8022")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     ensure = mocker.patch("jailbee.runtime_mounts.ensure_host_display")
 
     out = runner.invoke(app, ["display", "attach", "c1"])

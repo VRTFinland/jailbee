@@ -16,7 +16,7 @@ from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
-from jailbee.remote_ssh.session import WaypipeSession, child_environment
+from jailbee.remote_ssh.session import TRANSPORT_SSH, WaypipeSession, child_environment
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator
@@ -365,6 +365,7 @@ async def _run_pty(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
     # chdir + execve + _exit.
     env = child_environment(
         os.environ,
+        transport=TRANSPORT_SSH,
         term=term,
         restricted=spec.restrict_host,
         excluded_repos=spec.excluded_repos,
@@ -441,6 +442,7 @@ async def _run_pipes(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
             stderr=asyncio.subprocess.PIPE,
             env=child_environment(
                 os.environ,
+                transport=TRANSPORT_SSH,
                 restricted=spec.restrict_host,
                 excluded_repos=spec.excluded_repos,
                 gui_port=spec.gui_port,

@@ -1996,9 +1996,9 @@ def transport_submodules_to_host(
         sub = locate_host_subrepo(parent, leaf, name)
         created = sub is None
         if sub is None:
-            from jailbee.remote_ssh.session import is_remote_session
+            from jailbee.remote_ssh.session import is_restricted_session
 
-            if is_remote_session():
+            if is_restricted_session():
                 _warn(
                     f"submodule '{path}' is new in the container; it is not brought "
                     f"onto the host over remote SSH — run this on the host to bring it in."

@@ -64,7 +64,7 @@ from jailbee.qtui.prompts import (
 from jailbee.qtui.refresh import StateBridge
 from jailbee.qtui.terminal import detect_terminal
 from jailbee.qtui.window import MainWindow
-from jailbee.remote_ssh.session import is_ssh_session
+from jailbee.remote_ssh.session import is_remote_session
 from jailbee.state_service import StateServiceUnavailable
 from jailbee.state_service.client import StateClient
 from jailbee.tui import error
@@ -479,7 +479,7 @@ class AppController(QObject):
         target = RepoTarget.of(group)
         if target is None:
             return  # an orphan group: no repo root to address a child at
-        if verb == "outbox browse" and not is_ssh_session():
+        if verb == "outbox browse" and not is_remote_session():
             self._open_outbox(target, name)
             return
         container = next((c for c in group.containers if c.name == name), None)
@@ -781,7 +781,7 @@ class AppController(QObject):
         return read
 
     def _open_outbox(self, target: RepoTarget, container: str) -> None:
-        if is_ssh_session():
+        if is_remote_session():
             self.on_action("outbox browse", container)
             return
         key = (target, container)
@@ -813,7 +813,7 @@ class AppController(QObject):
     def _publish_outbox(
         self, target: RepoTarget, container: str, proposal: str, revision: str
     ) -> bool:
-        if is_ssh_session():
+        if is_remote_session():
             QMessageBox.warning(
                 self._window, "Read-only browser", "Use explicit outbox apply over SSH."
             )

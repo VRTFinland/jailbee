@@ -770,11 +770,11 @@ def mount_directions(
     SSH session a kind is mountable only when `remote_mountable` names it, the
     same rule `jailbee mount` applies there.
     """
-    from jailbee.remote_ssh.session import is_remote_session
+    from jailbee.remote_ssh.session import is_restricted_session
 
     can_add = permitted(mount_argv("kind", container.name), ssh_policy, over_ssh=over_ssh)
     can_remove = permitted(unmount_argv("kind", container.name), ssh_policy, over_ssh=over_ssh)
-    restricted = over_ssh and is_remote_session()
+    restricted = over_ssh and is_restricted_session()
     addable = tuple(
         kind for kind in kinds if can_add and (not restricted or kind in remote_mountable)
     )

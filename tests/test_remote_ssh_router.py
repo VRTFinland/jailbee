@@ -582,7 +582,7 @@ def test_check_arguments_leaves_help_alone() -> None:
 
 
 def test_restrict_host_false_lets_host_arguments_through(monkeypatch) -> None:
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
 
     assert policy_allows(("ls", "--config", "/x"), FULL, restrict_host=False) == "ls"
     assert policy_allows(("new", "feat", "--mount"), FULL, restrict_host=False) == "new"
@@ -590,14 +590,14 @@ def test_restrict_host_false_lets_host_arguments_through(monkeypatch) -> None:
 
 def test_restrict_host_false_is_ignored_inside_a_restricted_session(monkeypatch) -> None:
     """A nested `serve --no-restrict-host` run from a restricted session."""
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
 
     with pytest.raises(RouteError, match="may not set --config"):
         policy_allows(("ls", "--config", "/x"), FULL, restrict_host=False)
 
 
 def test_exec_route_honours_restrict_host_false(engine, repo, monkeypatch) -> None:
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     cfg = RemoteSSHConfig(exec=True, commands=FULL, restrict_host=False)
 
     assert route("ls --config /x", cfg, engine=engine).argv == (
@@ -704,7 +704,7 @@ def test_local_console_is_never_a_remote_command() -> None:
     ],
 )
 def test_a_restricted_session_never_manages_the_host_even_in_full_mode(argv, monkeypatch):
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
 
     with pytest.raises(RouteError, match=r"manages the host itself|opens a window"):
         policy_allows(argv, FULL)
@@ -719,7 +719,7 @@ def test_host_commands_are_refused_in_allowlist_mode_too() -> None:
 
 
 def test_restrict_host_false_allows_host_commands(monkeypatch) -> None:
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
 
     assert policy_allows(("config", "edit"), FULL, restrict_host=False) == "config edit"
 
@@ -748,7 +748,7 @@ def test_publishing_is_confirmed_and_never_opens_a_host_browser(argv, flag, monk
     """Publishing with the host's GitHub identity stays allowed, but each
     action is confirmed: `--yes` from the remote user is not the review the
     outbox exists for. `--web`/`--open` would start a browser on the host."""
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
 
     with pytest.raises(RouteError, match=f"may not set {flag}"):
         policy_allows(argv, FULL)
@@ -764,7 +764,7 @@ def test_publishing_is_confirmed_and_never_opens_a_host_browser(argv, flag, monk
     ],
 )
 def test_publishing_itself_stays_allowed(argv, monkeypatch) -> None:
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
 
     assert policy_allows(argv, FULL)
 
@@ -929,8 +929,12 @@ def test_ssh_outbox_browser_is_read_only_through_real_cli(
     from jailbee.incus import Incus
     from jailbee.remote_ssh.session import child_environment
 
-    env = child_environment({}, restricted=restricted)
-    for key in ("JAILBEE_REMOTE_SSH", "JAILBEE_SSH_SESSION", "JAILBEE_SSH_EXCLUDED_REPOS"):
+    env = child_environment({}, transport="ssh", restricted=restricted)
+    for key in (
+        "JAILBEE_REMOTE_RESTRICTED",
+        "JAILBEE_REMOTE_TRANSPORT",
+        "JAILBEE_REMOTE_EXCLUDED_REPOS",
+    ):
         monkeypatch.delenv(key, raising=False)
         if key in env:
             monkeypatch.setenv(key, env[key])
@@ -971,8 +975,8 @@ def test_ssh_outbox_browser_is_read_only_through_real_cli(
 def test_local_outbox_browser_policy_is_writable(monkeypatch):
     from jailbee.cli_outbox import browser_read_only
 
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
-    monkeypatch.delenv("JAILBEE_SSH_SESSION", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_TRANSPORT", raising=False)
     assert browser_read_only() is False
 
 
@@ -983,8 +987,10 @@ def test_outbox_exclusions_hold_for_unrestricted_ssh_children(
     from jailbee.remote_ssh.repo_scope import scope_for_session
     from jailbee.remote_ssh.session import child_environment
 
-    env = child_environment({}, restricted=restrict_host, excluded_repos=["secret"])
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    env = child_environment(
+        {}, transport="ssh", restricted=restrict_host, excluded_repos=["secret"]
+    )
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     scope = scope_for_session()
@@ -1130,7 +1136,7 @@ def test_remote_unlocks_gui_unlocks_the_app_launchers_only() -> None:
 def test_network_widening_is_a_host_command_unless_the_feature_is_on(argv, monkeypatch) -> None:
     from jailbee.remote_ssh.router import RemoteUnlocks
 
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     with pytest.raises(RouteError, match="manages the host itself"):
         policy_allows(argv, FULL)
     assert policy_allows(argv, FULL, unlocks=RemoteUnlocks(network=True)) in {
@@ -1148,7 +1154,7 @@ def test_network_widening_is_a_host_command_unless_the_feature_is_on(argv, monke
     ],
 )
 def test_network_narrowing_is_always_allowed(argv, monkeypatch) -> None:
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     assert policy_allows(argv, FULL) in {"net strict", "net egress rm"}
 
 
@@ -1166,7 +1172,7 @@ def test_network_narrowing_is_always_allowed(argv, monkeypatch) -> None:
 def test_repo_scope_egress_is_refused_even_with_network_on(argv, monkeypatch) -> None:
     from jailbee.remote_ssh.router import RemoteUnlocks
 
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     with pytest.raises(RouteError, match="may not set --repo"):
         policy_allows(argv, FULL, unlocks=RemoteUnlocks(network=True))
 
@@ -1174,14 +1180,14 @@ def test_repo_scope_egress_is_refused_even_with_network_on(argv, monkeypatch) ->
 def test_network_widening_still_respects_an_allowlist(monkeypatch) -> None:
     from jailbee.remote_ssh.router import RemoteUnlocks
 
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     allow = RemoteCommandPolicy(mode="allowlist", allow=["net strict"])
     with pytest.raises(RouteError, match="not allowed"):
         policy_allows(("net", "loose", "box"), allow, unlocks=RemoteUnlocks(network=True))
 
 
 def test_unrestricted_sessions_keep_every_network_command(monkeypatch) -> None:
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     assert policy_allows(("net", "loose", "box"), FULL, restrict_host=False) == "net loose"
     assert (
         policy_allows(("net", "egress", "add", "x.org", "--repo"), FULL, restrict_host=False)
@@ -1289,7 +1295,7 @@ _NEW_LOOSE = [
 def test_new_net_loose_needs_the_network_switch(argv, monkeypatch) -> None:
     from jailbee.remote_ssh.router import RemoteUnlocks
 
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     with pytest.raises(RouteError, match=r"--net=loose unless remote\.ssh\.network is on: new"):
         policy_allows(argv, FULL)
     with pytest.raises(RouteError, match=r"remote\.ssh\.network"):
@@ -1299,7 +1305,7 @@ def test_new_net_loose_needs_the_network_switch(argv, monkeypatch) -> None:
 
 @pytest.mark.parametrize("argv", _NEW_LOOSE)
 def test_new_net_loose_is_refused_in_allowlist_mode_too(argv, monkeypatch) -> None:
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     allow = RemoteCommandPolicy(mode="allowlist", allow=["new"])
     with pytest.raises(RouteError, match=r"remote\.ssh\.network"):
         policy_allows(argv, allow)
@@ -1316,12 +1322,12 @@ def test_new_net_loose_is_refused_in_allowlist_mode_too(argv, monkeypatch) -> No
     ],
 )
 def test_new_without_a_widening_net_value_is_allowed(argv, monkeypatch) -> None:
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     assert policy_allows(argv, FULL) == "new"
 
 
 def test_new_net_loose_is_unchanged_when_the_host_is_unrestricted(monkeypatch) -> None:
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     argv = ("new", "feat", "--net", "loose")
     assert policy_allows(argv, FULL, restrict_host=False) == "new"
 
@@ -1329,7 +1335,7 @@ def test_new_net_loose_is_unchanged_when_the_host_is_unrestricted(monkeypatch) -
 def test_dashboard_new_net_loose_follows_the_network_switch(monkeypatch) -> None:
     from jailbee.dashboard.commands import permitted
 
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     off = RemoteSSHConfig(commands=FULL)
     on = off.model_copy(update={"network": True})
     argv = ["new", "feat", "--net", "loose"]
@@ -1649,7 +1655,7 @@ def test_gui_launchers_unlock_for_rdp_or_a_waypipe_session(rdp, waypipe_on, in_s
 
 
 def test_unlocks_read_the_process_session_by_default(monkeypatch):
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
     monkeypatch.setenv("JAILBEE_WAYPIPE_SESSION", "0a1b2c3d")
     monkeypatch.setenv("JAILBEE_WAYPIPE_COMPRESS", "lz4")
 
@@ -1802,7 +1808,7 @@ def test_orchestrate_profile_save_needs_unlock_and_allowlist(level, force) -> No
 def test_orchestrate_grant_is_a_host_command_unless_the_feature_is_on(monkeypatch) -> None:
     from jailbee.remote_ssh.router import RemoteUnlocks
 
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     argv = ("orchestrate", "grant", "box")
     with pytest.raises(RouteError, match="manages the host itself"):
         policy_allows(argv, FULL)

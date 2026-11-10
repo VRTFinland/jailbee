@@ -579,8 +579,8 @@ def test_a_renew_only_mount_asks_about_renewing(tmp_path):
 
 
 def test_a_kind_not_remote_mountable_says_so_in_a_restricted_session(tmp_path, monkeypatch):
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     group = replace(_mount_group(tmp_path, _attached("alpha-a")), remote_mountable=("gcp",))
     policy = RemoteSSHConfig.model_validate({"mounts": True})
 

@@ -468,7 +468,7 @@ def _assessment_with_prompting_verdict(mocker, cfg):
     rc = mocker.patch("jailbee.lifecycle.resolve_clone_ref", return_value=mocker.MagicMock())
     assessment = BranchAutostartAssessment(ref="abc", effective_cfg=cfg, verdict=verdict)
     mocker.patch("jailbee.lifecycle.assess_branch_autostart", return_value=assessment)
-    mocker.patch("jailbee.remote_ssh.session.is_remote_session", return_value=False)
+    mocker.patch("jailbee.remote_ssh.session.is_restricted_session", return_value=False)
     return rc, assessment
 
 
@@ -542,7 +542,7 @@ def test_preflight_assume_yes_skips_every_question(mocker, tmp_path):
 def test_preflight_remote_session_refuses_even_with_a_policy(mocker, tmp_path):
     cfg, _incus, _gcfg = _env(tmp_path, mocker)
     _assessment_with_prompting_verdict(mocker, cfg)
-    mocker.patch("jailbee.remote_ssh.session.is_remote_session", return_value=True)
+    mocker.patch("jailbee.remote_ssh.session.is_restricted_session", return_value=True)
 
     with pytest.raises(CreateError) as e:
         preflight_background(

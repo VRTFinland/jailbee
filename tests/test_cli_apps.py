@@ -544,8 +544,8 @@ def test_post_create_gui_launches_in_a_gui_ssh_session_ignores_the_host_display(
     from jailbee.incus import Incus
     from tests.conftest import make_cfg
 
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
-    monkeypatch.setenv("JAILBEE_SSH_GUI", "8022")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_GUI_PORT", "8022")
     cfg = make_cfg(tmp_path, apps={"a": {"command": "/a", "autostart": True}})
     mocker.patch("jailbee.autostart.has_graphical_session", return_value=False)
     warn_mock = mocker.patch("jailbee.autostart.maybe_warn_no_gui")
@@ -564,8 +564,8 @@ def test_remote_apps_ls_still_inspects_a_mount_mode_container(tmp_path, mocker, 
     mount-mode refusal (for commands that enter) does not apply."""
     from tests.conftest import make_cfg
 
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     cfg = make_cfg(tmp_path, apps={"figma": {"command": "/opt/f/f"}})
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()

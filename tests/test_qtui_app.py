@@ -667,7 +667,7 @@ def test_outbox_action_opens_native_not_terminal(mocker, tmp_path):
     terminal.assert_not_called()
 
 
-@pytest.mark.parametrize("marker", ["JAILBEE_SSH_SESSION", "JAILBEE_REMOTE_SSH"])
+@pytest.mark.parametrize("marker", ["JAILBEE_REMOTE_TRANSPORT", "JAILBEE_REMOTE_RESTRICTED"])
 def test_outbox_over_any_ssh_keeps_terminal_browser(mocker, tmp_path, monkeypatch, marker):
     from jailbee.qtui.terminal import TerminalSpec
 

@@ -147,11 +147,13 @@ def test_usage_all_aggregates_across_repos(mocker, db_engine):
 
 
 def test_usage_all_filters_excluded_repos_before_incus_probe(mocker, db_engine):
-    from jailbee.remote_ssh.session import SSH_EXCLUDED_REPOS_ENV
+    from jailbee.remote_ssh.session import REMOTE_EXCLUDED_REPOS_ENV
 
     _register(db_engine, "foo", "bar")
     mocker.patch("jailbee.db.get_engine", return_value=db_engine)
-    mocker.patch.dict("os.environ", {SSH_EXCLUDED_REPOS_ENV: '["bar"]', "JAILBEE_SSH_SESSION": "1"})
+    mocker.patch.dict(
+        "os.environ", {REMOTE_EXCLUDED_REPOS_ENV: '["bar"]', "JAILBEE_REMOTE_TRANSPORT": "ssh"}
+    )
     mocker.patch("jailbee.incus.Incus")
     gather = mocker.patch("jailbee.golden.gather_golden_usage", return_value=[])
 

@@ -743,11 +743,11 @@ def _advise_ssh_restart() -> None:
     while every session runs the new CLI. Not shown inside a remote session,
     which can do nothing about it.
     """
-    from jailbee.remote_ssh.session import is_remote_session
+    from jailbee.remote_ssh.session import is_restricted_session
     from jailbee.tui import hint
 
     try:
-        if is_remote_session():
+        if is_restricted_session():
             return
         from jailbee.remote_ssh import service
 
@@ -792,13 +792,13 @@ def _advise_setup(*, offer: bool = False) -> None:
 
     from jailbee import setup_command as sc
     from jailbee.db import get_engine
-    from jailbee.remote_ssh.session import is_ssh_session
+    from jailbee.remote_ssh.session import is_remote_session
     from jailbee.tui import hint
 
     # Over SSH the steps would install into this host's rc files and agent
     # config for someone who is not at it — and `setup` itself is a host
     # command a restricted session is refused. The hint alone still prints.
-    if is_ssh_session():
+    if is_remote_session():
         offer = False
     try:
         shell = sc.detect_shell()
@@ -4055,10 +4055,10 @@ def _run_dashboard(
     from jailbee.config import ConfigError, load_repo_config
     from jailbee.config.models_remote import RemoteSSHConfig
     from jailbee.incus import Incus
-    from jailbee.remote_ssh.session import is_remote_session, is_ssh_session
+    from jailbee.remote_ssh.session import is_remote_session, is_restricted_session
 
-    remote = is_remote_session()
-    over_ssh = is_ssh_session()
+    remote = is_restricted_session()
+    over_ssh = is_remote_session()
     if over_ssh and gui:
         error("The graphical dashboard is not available over remote SSH.")
         return 2
@@ -12776,9 +12776,9 @@ def _remote_session_policy() -> "RemoteSSHConfig | None":
     Read from `global.yaml` on every call, so a root removed there stops the
     next `mount` even inside an SSH session that opened before the edit.
     """
-    from jailbee.remote_ssh.session import is_remote_session
+    from jailbee.remote_ssh.session import is_restricted_session
 
-    return _load_global().remote.ssh if is_remote_session() else None
+    return _load_global().remote.ssh if is_restricted_session() else None
 
 
 @app.command("mount")

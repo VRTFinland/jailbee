@@ -459,7 +459,7 @@ def test_remote_rerun_refuses_elevation_before_claim(
     incus.config_get_checked.side_effect = lambda c, k: state.get(k)
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
     autostart_outcomes.record("c", "on_create", "init", "init", "fail")
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
     spawn = mocker.MagicMock()
     execute, switch, add, _ = execution_deps(mocker)
     with pytest.raises(RuntimeError, match=r"remote.*network or mounts"):
@@ -495,7 +495,7 @@ def test_remote_allows_listing_and_safe_execution(
     incus.config_get_checked.side_effect = lambda c, k: state.get(k)
     incus.config_unset.side_effect = lambda c, k: state.pop(k, None)
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
     execute, switch, add, _ = execution_deps(mocker)
     captured = []
 
@@ -535,7 +535,7 @@ def test_remote_rerun_executor_refuses_unfiltered_elevation(
     from tests.test_autostart_supervisor import _spec
 
     cfg = rerun_cfg(make_cfg, tmp_path)
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
     incus = mocker.MagicMock()
     execute, switch, add, _ = execution_deps(mocker)
     with pytest.raises(RuntimeError, match=r"remote.*network or mounts"):
