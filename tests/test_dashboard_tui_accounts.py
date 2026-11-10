@@ -258,7 +258,7 @@ def test_repo_credential_group_config_flag_is_local_only(mocker, tmp_path, over_
         [*OPEN_REPO_GROUP_PICKER, "enter"],
         [group],
         remote=over_ssh,
-        over_ssh=over_ssh,
+        transport=("ssh" if over_ssh else "none"),
         ssh_policy=RemoteSSHConfig(restrict_host=False) if over_ssh else None,
     )
     assert run.rc == 0
@@ -318,7 +318,11 @@ def test_container_credential_group_config_flag_is_local_only(mocker, tmp_path, 
     group = dmodel.RepoGroup("alpha", str(tmp_path), config_path, [ci("alpha-x", "alpha")])
     cli = fake_account_cli(mocker, listing=groups_listing(TEAM_ROWS))
     policy = RemoteSSHConfig(restrict_host=False) if over_ssh else None
-    menu_kwargs = {"remote": over_ssh, "over_ssh": over_ssh, "ssh_policy": policy}
+    menu_kwargs = {
+        "remote": over_ssh,
+        "transport": "ssh" if over_ssh else "none",
+        "ssh_policy": policy,
+    }
 
     steps = [*open_container_group_picker(group, **menu_kwargs), "enter"]
     run = drive(mocker, steps, [group], **menu_kwargs)

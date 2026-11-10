@@ -57,12 +57,12 @@ def test_ssh_egress_container_panel_can_remove_but_not_add_without_network(mocke
     child = mocker.patch.object(tsession.subprocess, "run")
 
     steps = [
-        *container_egress_keys(group, remote=True, over_ssh=True, ssh_policy=policy),
+        *container_egress_keys(group, remote=True, transport="ssh", ssh_policy=policy),
         "a",
         "escape",
         "ctrl+c",
     ]
-    run = drive(mocker, steps, groups=[group], remote=True, over_ssh=True, ssh_policy=policy)
+    run = drive(mocker, steps, groups=[group], remote=True, transport="ssh", ssh_policy=policy)
     assert run.rc == 0
 
     prompt.assert_not_called()
@@ -177,14 +177,14 @@ def test_egress_add_rechecks_the_ssh_policy_at_submit(mocker, tmp_path):
         policy.commands.allow[:] = ["net egress ls"]
 
     steps = [
-        *container_egress_keys(group, remote=True, over_ssh=True, ssh_policy=policy),
+        *container_egress_keys(group, remote=True, transport="ssh", ssh_policy=policy),
         "a",
         *keys("example.co"),
         revoke_add,
         "m",
         "enter",
     ]
-    run = drive(mocker, steps, groups=[group], remote=True, over_ssh=True, ssh_policy=policy)
+    run = drive(mocker, steps, groups=[group], remote=True, transport="ssh", ssh_policy=policy)
     assert run.rc == 0
 
     assert any(n.text == "example.com" for n in run.prompts()), (

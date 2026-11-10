@@ -727,9 +727,9 @@ def test_default_dashboard_preserves_orchestration_policy_through_cli(
 
     def run_dashboard(incus, **kwargs):
         dashboard.remote = kwargs["remote"]
-        dashboard.over_ssh = kwargs["over_ssh"]
+        dashboard.transport = kwargs["transport"]
         dashboard.ssh_policy = kwargs["ssh_policy"]
-        assert dashboard.remote and dashboard.over_ssh
+        assert dashboard.remote and dashboard.transport == "ssh"
         assert dashboard.ssh_policy.orchestration == "ssh"
         assert dashboard.ssh_policy.commands.mode == "full"
         values = {e.value for e in dashboard.open_orchestration("alpha-one").entries}

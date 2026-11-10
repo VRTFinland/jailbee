@@ -8,10 +8,11 @@ from dataclasses import dataclass
 from rich.cells import cell_len
 from rich.text import Text
 
-from jailbee.config.models_remote import RemoteSSHConfig
+from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard import actions as dact
 from jailbee.dashboard.advisories import owing_repos
 from jailbee.dashboard.commands import (
+    Transport,
     permitted,
 )
 from jailbee.dashboard.menus import (
@@ -69,8 +70,8 @@ def open_menu(
     name: str | None,
     *,
     remote: bool = False,
-    ssh_policy: RemoteSSHConfig | None = None,
-    over_ssh: bool = False,
+    ssh_policy: RemotePolicy | None = None,
+    transport: Transport = "none",
 ) -> MenuState | None:
     """The menu for ``name``, or None when there is nothing to show.
 
@@ -84,7 +85,7 @@ def open_menu(
     here, not in :func:`menu_actions`, because the Qt dashboard shares that list.
     """
     actions = actions_for_container(
-        groups, name, remote=remote, ssh_policy=ssh_policy, over_ssh=over_ssh, orphans=True
+        groups, name, remote=remote, ssh_policy=ssh_policy, transport=transport, orphans=True
     )
     if name is None:
         return None
@@ -102,26 +103,26 @@ def open_menu(
         container,
         group.optional_mounts,
         ssh_policy,
-        over_ssh=over_ssh,
+        transport=transport,
         remote_mountable=group.remote_mountable,
         rows=group.containers,
         services=group.autostart_services,
     )
     if container.state in ("Running", "Stopped") and permitted(
-        ["restart", name], ssh_policy, over_ssh=over_ssh
+        ["restart", name], ssh_policy, transport=transport
     ):
         anchor = "restart" if container.state == "Running" else "start"
         at = next((i for i, (_, verb) in enumerate(actions) if verb == anchor), len(actions) - 1)
         actions.insert(at + 1, ("Restart with…", "restart-with"))
     if group.autostart_profiles and permitted(
-        ["autostart", "profile", name, "x"], ssh_policy, over_ssh=over_ssh
+        ["autostart", "profile", name, "x"], ssh_policy, transport=transport
     ):
         actions.append(("Profile…", "autostart-profile"))
     actions = _insert_after_job(actions, extras.after_job)
     if extras.before_network:
         actions = _insert_before_network(actions, extras.before_network)
     # Probed with placeholders: the policy judges the command, not its values.
-    if permitted(["account", "group", "use", "x", "y"], ssh_policy, over_ssh=over_ssh):
+    if permitted(["account", "group", "use", "x", "y"], ssh_policy, transport=transport):
         actions = _with_credential_group(actions)
     # The shared list can be empty (an SSH allowlist naming no lifecycle or
     # shell verb) while a terminal-only entry is still permitted; nothing at
@@ -134,21 +135,21 @@ def open_menu(
 def _advisory_entries(
     all_groups: list[RepoGroup],
     group: RepoGroup,
-    ssh_policy: RemoteSSHConfig | None,
+    ssh_policy: RemotePolicy | None,
     *,
-    over_ssh: bool,
+    transport: Transport,
 ) -> list[MenuItem]:
     """Run / dismiss / upgrade-all entries for a repo's advisories, each hidden when refused."""
     out: list[MenuItem] = []
     if any(a.action == "base_build" for a in group.advisories) and permitted(
-        dact.base_build_argv(), ssh_policy, over_ssh=over_ssh
+        dact.base_build_argv(), ssh_policy, transport=transport
     ):
         out.append(("Run base build", dact.REPO_BASE_BUILD))
     # Dismissing writes the local state DB; it is not a jb command, so never over SSH.
-    if group.advisories and not over_ssh:
+    if group.advisories and transport == "none":
         out.append(("Dismiss notice…", dact.REPO_DISMISS_ADVISORIES))
     if owing_repos(all_groups) >= 2 and permitted(
-        dact.upgrade_all_argv(), ssh_policy, over_ssh=over_ssh
+        dact.upgrade_all_argv(), ssh_policy, transport=transport
     ):
         out.append(("Upgrade all repos…", dact.REPO_UPGRADE_ALL))
     return out
@@ -159,8 +160,8 @@ def open_repo_menu(
     prefix: str,
     folded: frozenset[str],
     *,
-    ssh_policy: RemoteSSHConfig | None = None,
-    over_ssh: bool = False,
+    ssh_policy: RemotePolicy | None = None,
+    transport: Transport = "none",
     all_groups: list[RepoGroup] | None = None,
 ) -> RepoMenuState | None:
     """Offer creation, the credential group, egress and repo-level CLI entries, folding for all.
@@ -180,29 +181,29 @@ def open_repo_menu(
         actions.append(("New container…", "new"))
         actions.append(("New from PR…", "new-pr"))
         # Probed with a placeholder group: the policy judges the command, not its value.
-        if permitted(["account", "group", "set", "x"], ssh_policy, over_ssh=over_ssh):
+        if permitted(["account", "group", "set", "x"], ssh_policy, transport=transport):
             actions.append(("Credential group…", "credential-group"))
-        if permitted(["account", "ls"], ssh_policy, over_ssh=over_ssh):
+        if permitted(["account", "ls"], ssh_policy, transport=transport):
             actions.append(("Accounts…", "accounts"))
-        if permitted(["net", "egress", "ls", "--repo"], ssh_policy, over_ssh=over_ssh):
+        if permitted(["net", "egress", "ls", "--repo"], ssh_policy, transport=transport):
             actions.append(MenuGroup("Network →", (("Egress…", "net egress ls"),)))
         if group.sent_count and permitted(
-            ["outbox", "sent", "ls", "--repo", "x"], ssh_policy, over_ssh=over_ssh
+            ["outbox", "sent", "ls", "--repo", "x"], ssh_policy, transport=transport
         ):
             actions.append(("Sent…", dact.REPO_SENT))
-        extras = dact.repo_extras(ssh_policy, over_ssh=over_ssh)
+        extras = dact.repo_extras(ssh_policy, transport=transport)
         if extras.apply is not None:
             actions.append(extras.apply)
         actions.extend(
             _advisory_entries(
-                groups if all_groups is None else all_groups, group, ssh_policy, over_ssh=over_ssh
+                groups if all_groups is None else all_groups, group, ssh_policy, transport=transport
             )
         )
         if extras.diagnostics:
             actions.append(MenuGroup(dact.DIAGNOSTICS_LABEL, extras.diagnostics))
         if extras.prune is not None:
             actions.append(extras.prune)
-    if permitted(dact.repo_remove_argv(prefix), ssh_policy, over_ssh=over_ssh):
+    if permitted(dact.repo_remove_argv(prefix), ssh_policy, transport=transport):
         actions.append(("Remove repo…", dact.REPO_REMOVE))
     actions.append(("Unfold" if prefix in folded else "Fold", "fold"))
     return RepoMenuState(prefix, actions)

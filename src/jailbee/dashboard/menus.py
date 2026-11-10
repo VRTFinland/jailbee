@@ -10,14 +10,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from jailbee.config.models_remote import RemoteSSHConfig
+from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard import actions as dact
 from jailbee.dashboard.commands import (
+    Transport,
     check_dashboard_command,
     dashboard_action_argv,
+    remote_unlocks,
 )
 from jailbee.dashboard.model import AppMenuEntry, RepoGroup, RepoTarget, Row, _find_group
-from jailbee.remote_ssh.router import RemoteUnlocks, RouteError
+from jailbee.remote_ssh.router import RouteError
 
 if TYPE_CHECKING:
     from jailbee.git_status import GitStatus
@@ -471,8 +473,8 @@ def actions_for_container(
     name: str | None,
     *,
     remote: bool = False,
-    ssh_policy: RemoteSSHConfig | None = None,
-    over_ssh: bool = False,
+    ssh_policy: RemotePolicy | None = None,
+    transport: Transport = "none",
     orphans: bool = False,
 ) -> list[tuple[str, str]]:
     """Resolve the ``(label, verb)`` action list for a container by name.
@@ -492,7 +494,11 @@ def actions_for_container(
     if container is None:
         return []
     if RepoTarget.of(group) is None:
-        return orphan_actions(container.state) if orphans and not (remote or over_ssh) else []
+        return (
+            orphan_actions(container.state)
+            if orphans and not (remote or transport != "none")
+            else []
+        )
     from jailbee import background
 
     job_clearable = (
@@ -517,7 +523,7 @@ def actions_for_container(
             job_running=container.job_phase is not None and not job_clearable,
             git_status=container.git_status,
             remote=remote,
-            gui_remote=bool(remote and ssh_policy is not None and RemoteUnlocks.of(ssh_policy).gui),
+            gui_remote=bool(remote and ssh_policy is not None and remote_unlocks(ssh_policy).gui),
             alias=container.alias,
             memory_limit=container.memory_limit,
             memory_override=container.memory_override,
@@ -526,14 +532,14 @@ def actions_for_container(
             outbox_issue=container.outbox_issue,
         )
     )
-    if over_ssh:
+    if transport != "none":
         permitted: list[tuple[str, str]] = []
         for label, verb in actions:
             try:
                 check_dashboard_command(
                     dashboard_action_argv(verb, name, force=verb in ATTACH_VERBS),
                     ssh_policy,
-                    over_ssh=True,
+                    transport="ssh",
                 )
             except RouteError:
                 continue

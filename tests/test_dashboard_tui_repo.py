@@ -67,9 +67,9 @@ def test_remove_repo_menu_respects_ssh_policy(mocker, tmp_path, allowed):
     group = cfg_group(tmp_path)
     policy = RemoteSSHConfig(restrict_host=False)
     permitted = mocker.patch.object(tmenu, "permitted", return_value=allowed)
-    menu = tmenu.open_repo_menu([group], "alpha", frozenset(), ssh_policy=policy, over_ssh=True)
+    menu = tmenu.open_repo_menu([group], "alpha", frozenset(), ssh_policy=policy, transport="ssh")
     assert ("repo-remove" in repo_menu_verbs(menu)) is allowed
-    permitted.assert_any_call(["repo", "rm", "alpha"], policy, over_ssh=True)
+    permitted.assert_any_call(["repo", "rm", "alpha"], policy, transport="ssh")
 
 
 def test_remove_repo_menu_uses_actual_ssh_permission(tmp_path):
@@ -79,10 +79,10 @@ def test_remove_repo_menu_uses_actual_ssh_permission(tmp_path):
         "alpha",
         frozenset(),
         ssh_policy=RemoteSSHConfig(restrict_host=False),
-        over_ssh=True,
+        transport="ssh",
     )
     restricted = tmenu.open_repo_menu(
-        [group], "alpha", frozenset(), ssh_policy=RemoteSSHConfig(), over_ssh=True
+        [group], "alpha", frozenset(), ssh_policy=RemoteSSHConfig(), transport="ssh"
     )
     assert "repo-remove" in repo_menu_verbs(unrestricted)
     assert "repo-remove" not in repo_menu_verbs(restricted)
@@ -150,8 +150,8 @@ def test_repo_apply_over_unrestricted_ssh_sends_no_config_flag(mocker, tmp_path)
     child.return_value.returncode = 0
     patch_pause(mocker)
 
-    steps = [*repo_menu_keys(group, "apply", ssh_policy=policy, over_ssh=True), "enter"]
-    assert drive(mocker, steps, [group], over_ssh=True, ssh_policy=policy).rc == 0
+    steps = [*repo_menu_keys(group, "apply", ssh_policy=policy, transport="ssh"), "enter"]
+    assert drive(mocker, steps, [group], transport="ssh", ssh_policy=policy).rc == 0
 
     child.assert_called_once_with(["jailbee", "apply"], check=False, cwd=tmp_path)
 
@@ -160,7 +160,7 @@ def test_repo_apply_is_not_offered_to_a_default_ssh_session(mocker, tmp_path):
     group = cfg_group(tmp_path)
 
     run = drive(
-        mocker, ["enter"], [group], remote=True, over_ssh=True, ssh_policy=RemoteSSHConfig()
+        mocker, ["enter"], [group], remote=True, transport="ssh", ssh_policy=RemoteSSHConfig()
     )
     assert run.rc == 0
 
@@ -316,8 +316,8 @@ def test_repo_doctor_over_ssh_pauses_instead_of_paging_and_sends_no_config(mocke
     child.return_value.returncode = 0
     wait = patch_pause(mocker)
 
-    steps = repo_menu_keys(group, "doctor", ssh_policy=policy, over_ssh=True)
-    assert drive(mocker, steps, [group], remote=True, over_ssh=True, ssh_policy=policy).rc == 0
+    steps = repo_menu_keys(group, "doctor", ssh_policy=policy, transport="ssh")
+    assert drive(mocker, steps, [group], remote=True, transport="ssh", ssh_policy=policy).rc == 0
 
     paged.assert_not_called()
     child.assert_called_once_with(["jailbee", "doctor"], check=False, cwd=tmp_path)
@@ -339,8 +339,17 @@ def test_repo_disk_usage_and_prune_run_in_the_terminal_with_a_pause(
     child.return_value.returncode = 0
     wait = patch_pause(mocker)
 
-    steps = repo_menu_keys(group, verb, ssh_policy=policy, over_ssh=over_ssh)
-    run = drive(mocker, steps, [group], remote=over_ssh, over_ssh=over_ssh, ssh_policy=policy)
+    steps = repo_menu_keys(
+        group, verb, ssh_policy=policy, transport=("ssh" if over_ssh else "none")
+    )
+    run = drive(
+        mocker,
+        steps,
+        [group],
+        remote=over_ssh,
+        transport=("ssh" if over_ssh else "none"),
+        ssh_policy=policy,
+    )
     assert run.rc == 0
 
     flags = [] if over_ssh else ["--config", str(group.config_path)]
@@ -413,7 +422,7 @@ def test_repo_menu_hides_them_over_ssh(tmp_path):
     groups = [_owing_group(tmp_path, "alpha", *_BOTH), _owing_group(tmp_path, "beta", *_BOTH)]
     verbs = repo_menu_verbs(
         tmenu.open_repo_menu(
-            groups, "alpha", frozenset(), ssh_policy=RemoteSSHConfig(), over_ssh=True
+            groups, "alpha", frozenset(), ssh_policy=RemoteSSHConfig(), transport="ssh"
         )
     )
     assert not verbs & {"base-build", "dismiss-advisories", "upgrade-all"}

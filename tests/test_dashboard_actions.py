@@ -124,7 +124,7 @@ def test_rerun_gating_uses_gathered_worker_state(mocker, state, live, eligible, 
     probe = mocker.patch(
         "jailbee.background.clearable", side_effect=AssertionError("frontend probe")
     )
-    extras = dact.container_extras(c, (), None, over_ssh=False)
+    extras = dact.container_extras(c, (), None, transport="none")
     assert (("Re-run…", "autostart-rerun") in extras.after_job) is offered
     probe.assert_not_called()
 
@@ -134,7 +134,7 @@ def test_rerun_menu_requires_list_and_run_permission():
     policy = RemoteSSHConfig.model_validate(
         {"commands": {"mode": "allowlist", "allow": ["autostart status"]}}
     )
-    extras = dact.container_extras(c, (), policy, over_ssh=True)
+    extras = dact.container_extras(c, (), policy, transport="ssh")
     assert "autostart-rerun" not in {verb for _, verb in extras.after_job}
 
 
@@ -142,7 +142,7 @@ def test_rerun_menu_requires_list_and_run_permission():
 def test_rerun_menu_checks_both_command_shapes(mocker, denied):
     c = ContainerInfo("alpha-x", "Running", None, None, None, autostart_rerunnable=True)
     mocker.patch.object(dact, "permitted", side_effect=lambda argv, *a, **kw: denied not in argv)
-    extras = dact.container_extras(c, (), None, over_ssh=True)
+    extras = dact.container_extras(c, (), None, transport="ssh")
     assert "autostart-rerun" not in {verb for _, verb in extras.after_job}
 
 
@@ -294,7 +294,7 @@ def _allow(*leaves: str, restrict_host: bool = True) -> PolicyCase:
 
 def _repo_verbs(case: PolicyCase) -> set[str]:
     over_ssh, kwargs = case
-    extras = dact.repo_extras(_policy(kwargs), over_ssh=over_ssh)
+    extras = dact.repo_extras(_policy(kwargs), transport=("ssh" if over_ssh else "none"))
     leaves = [extras.apply, *extras.diagnostics, extras.prune]
     return {leaf[1] for leaf in leaves if leaf is not None}
 
@@ -338,7 +338,7 @@ def test_repo_extras_follow_the_ssh_policy(case, expected):
 
 
 def test_repo_extras_labels_and_submenu_order():
-    extras = dact.repo_extras(None, over_ssh=False)
+    extras = dact.repo_extras(None, transport="none")
     assert extras.apply == ("Apply config…", "apply")
     assert extras.diagnostics == (("Doctor", "doctor"), ("Disk usage", "disk-usage"))
     assert extras.prune == ("Prune stale containers…", "prune")
@@ -370,12 +370,15 @@ def test_apply_picker_is_a_repo_question_with_restart_first():
 )
 def test_addressed_puts_config_before_the_separator_and_never_over_ssh(over_ssh, expected):
     argv = ["snapshot", "create", "--", "alpha-x", "t"]
-    assert dact.addressed(argv, ["--config", "/r/c.yaml"], over_ssh=over_ssh) == expected
+    assert (
+        dact.addressed(argv, ["--config", "/r/c.yaml"], transport=("ssh" if over_ssh else "none"))
+        == expected
+    )
     assert argv == ["snapshot", "create", "--", "alpha-x", "t"]  # not mutated
 
 
 def test_addressed_appends_config_when_there_is_no_separator():
-    assert dact.addressed(["apply"], ["--config", "/c"], over_ssh=False) == [
+    assert dact.addressed(["apply"], ["--config", "/c"], transport="none") == [
         "apply",
         "--config",
         "/c",
@@ -418,7 +421,11 @@ def _container_verbs(case: PolicyCase, container: ContainerInfo | None = None) -
     over_ssh, kwargs = case
     info = container or _container(**_AUTOSTART_LIVE, optional_mounts=("gcloud",))
     extras = dact.container_extras(
-        info, ("aws", "gcloud"), _policy(kwargs), over_ssh=over_ssh, services=("db",)
+        info,
+        ("aws", "gcloud"),
+        _policy(kwargs),
+        transport=("ssh" if over_ssh else "none"),
+        services=("db",),
     )
     return {verb for _label, verb in (*extras.after_job, *extras.before_network)}
 
@@ -469,7 +476,7 @@ def test_container_extras_order_and_labels():
         _container(**_AUTOSTART_LIVE, optional_mounts=("gcloud",)),
         ("aws", "gcloud"),
         None,
-        over_ssh=False,
+        transport="none",
         services=("db",),
     )
     assert extras.after_job == (
@@ -514,8 +521,10 @@ def test_mount_argv_puts_for_before_the_separator():
     assert dact.mount_argv("aws", "p-x", "never") == ["mount", "--for", "never", "--", "aws", "p-x"]
 
 
-def _mount_entries(info, kinds, policy=None, *, over_ssh=False):  # type: ignore[no-untyped-def]
-    return [(e.label, e.value) for e in dact.mount_entries(info, kinds, policy, over_ssh=over_ssh)]
+def _mount_entries(info, kinds, policy=None, *, transport="none"):  # type: ignore[no-untyped-def]
+    return [
+        (e.label, e.value) for e in dact.mount_entries(info, kinds, policy, transport=transport)
+    ]
 
 
 def test_mount_entries_merge_both_directions_in_config_order():
@@ -531,7 +540,7 @@ def test_mount_entries_gate_each_direction_on_the_ssh_policy():
     info = _container(optional_mounts=("gcloud",))
     kinds = ("aws", "gcloud")
     # `mount` is a host command, so the default policy hides only the mount direction
-    assert [v for _l, v in _mount_entries(info, kinds, _policy({}), over_ssh=True)] == [
+    assert [v for _l, v in _mount_entries(info, kinds, _policy({}), transport="ssh")] == [
         "unmount:gcloud"
     ]
     assert [v for _l, v in _mount_entries(info, kinds)] == ["mount:aws", "unmount:gcloud"]
@@ -549,7 +558,11 @@ def test_mount_entries_over_restricted_ssh_offer_only_remote_mountable(monkeypat
     monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     info = _container(optional_mounts=())
     entries = dact.mount_entries(
-        info, ("aws", "data"), _policy({"mounts": True}), over_ssh=True, remote_mountable=("data",)
+        info,
+        ("aws", "data"),
+        _policy({"mounts": True}),
+        transport="ssh",
+        remote_mountable=("data",),
     )
     assert [e.value for e in entries] == ["mount:data"]
 
@@ -559,7 +572,7 @@ def test_mount_entries_over_restricted_ssh_keep_unmount_for_ungranted_kinds(monk
     monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     info = _container(optional_mounts=("aws",))
     entries = dact.mount_entries(
-        info, ("aws", "data"), _policy({"mounts": True}), over_ssh=True, remote_mountable=()
+        info, ("aws", "data"), _policy({"mounts": True}), transport="ssh", remote_mountable=()
     )
     assert [e.value for e in entries] == ["unmount:aws"]
 
@@ -567,7 +580,7 @@ def test_mount_entries_over_restricted_ssh_keep_unmount_for_ungranted_kinds(monk
 def test_mount_entries_without_the_marker_ignore_remote_mountable(monkeypatch):
     monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     info = _container(optional_mounts=())
-    entries = dact.mount_entries(info, ("aws",), None, over_ssh=False, remote_mountable=())
+    entries = dact.mount_entries(info, ("aws",), None, transport="none", remote_mountable=())
     assert [e.value for e in entries] == ["mount:aws"]
 
 
@@ -584,7 +597,7 @@ def test_mount_entries_without_the_marker_ignore_remote_mountable(monkeypatch):
 )
 def test_mounts_entry_appears_only_when_there_is_something_to_do(attached, kinds, offered):
     extras = dact.container_extras(
-        _container(optional_mounts=attached), kinds, None, over_ssh=False
+        _container(optional_mounts=attached), kinds, None, transport="none"
     )
     verbs = {verb for _label, verb in extras.before_network}
     assert ("mounts" in verbs) is offered
@@ -839,17 +852,17 @@ def _granted_container() -> ContainerInfo:
 
 def test_orchestration_offered_over_ssh_with_revoke_only_when_setting_off():
     policy = RemoteSSHConfig(orchestration="off")
-    assert dact.orchestration_offered(_granted_container(), policy, over_ssh=True)
-    assert not dact.orchestration_offered(_container(), policy, over_ssh=True)
+    assert dact.orchestration_offered(_granted_container(), policy, transport="ssh")
+    assert not dact.orchestration_offered(_container(), policy, transport="ssh")
 
 
 def test_orchestration_grant_permitted_needs_the_setting_over_ssh():
     info = _granted_container()
     off = RemoteSSHConfig(orchestration="off")
     ssh = RemoteSSHConfig(orchestration="ssh")
-    assert not dact.orchestration_grant_permitted(info, off, over_ssh=True)
-    assert dact.orchestration_grant_permitted(info, ssh, over_ssh=True)
-    assert dact.orchestration_grant_permitted(info, off, over_ssh=False)
+    assert not dact.orchestration_grant_permitted(info, off, transport="ssh")
+    assert dact.orchestration_grant_permitted(info, ssh, transport="ssh")
+    assert dact.orchestration_grant_permitted(info, off, transport="none")
 
 
 def test_orchestrate_grant_runner_options():

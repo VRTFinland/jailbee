@@ -4054,17 +4054,19 @@ def _run_dashboard(
 
     from jailbee.config import ConfigError, load_repo_config
     from jailbee.config.models_remote import RemoteSSHConfig
+    from jailbee.dashboard.commands import Transport
     from jailbee.incus import Incus
     from jailbee.remote_ssh.session import is_remote_session, is_restricted_session
 
     remote = is_restricted_session()
-    over_ssh = is_remote_session()
-    if over_ssh and gui:
+    # The terminal dashboard is only ever started over SSH (the web one has its own server).
+    transport: Transport = "ssh" if is_remote_session() else "none"
+    if transport != "none" and gui:
         error("The graphical dashboard is not available over remote SSH.")
         return 2
     ssh_policy: RemoteSSHConfig | None = None
     scope = None
-    if over_ssh:
+    if transport != "none":
         if remote_policy_json is None:
             error("remote SSH dashboard has no server policy")
             return 2
@@ -4077,7 +4079,7 @@ def _run_dashboard(
 
         session_scope = scope_for_session()
         scope = RemoteRepoScope(session_scope.excluded | frozenset(ssh_policy.excluded_repos))
-    if over_ssh:
+    if transport != "none":
         cwd_root = None
     else:
         # Before either frontend takes the screen: this is the other command
@@ -4145,7 +4147,7 @@ def _run_dashboard(
         Incus(),
         cwd_root=cwd_root,
         remote=remote,
-        over_ssh=over_ssh,
+        transport=transport,
         ssh_policy=ssh_policy,
         scope=scope,
     )

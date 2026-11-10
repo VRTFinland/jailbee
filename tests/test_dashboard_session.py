@@ -227,7 +227,7 @@ def test_memory_ssh_denial_never_opens_picker(mocker, tmp_path):
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 
     session, quiet = _memory_session(mocker, tmp_path)
-    session.over_ssh = True
+    session.transport = True
     session.ssh_policy = RemoteSSHConfig(
         commands=RemoteCommandPolicy(mode="allowlist", allow=["shell"])
     )
@@ -390,7 +390,7 @@ def test_open_outbox_route_error_is_a_notice(mocker, tmp_path):
     quiet = _quiet(mocker)
     policy = RemoteSSHConfig.model_validate({"commands": {"mode": "allowlist", "allow": ["shell"]}})
     session, _ = bare_session(
-        mocker, [_outbox_group(tmp_path)], over_ssh=True, remote=True, ssh_policy=policy
+        mocker, [_outbox_group(tmp_path)], transport="ssh", remote=True, ssh_policy=policy
     )
 
     assert session.open_outbox("alpha-x") is None
@@ -412,7 +412,7 @@ def test_outbox_runner_checks_policy_before_spawn(mocker, tmp_path):
         {"commands": {"mode": "allowlist", "allow": ["outbox browse", "outbox ls"]}}
     )
     session, _ = bare_session(
-        mocker, [_outbox_group(tmp_path)], over_ssh=True, remote=True, ssh_policy=policy
+        mocker, [_outbox_group(tmp_path)], transport="ssh", remote=True, ssh_policy=policy
     )
     session.jobs = _HeldJobs()  # type: ignore[assignment]  # test double
 
@@ -439,7 +439,11 @@ def test_outbox_publish_over_ssh_hands_off_without_yes(mocker, tmp_path):
     child.return_value.returncode = 0
     mocker.patch("jailbee.dashboard.dispatch._wait_for_return")
     session, terminal = bare_session(
-        mocker, [_outbox_group(tmp_path)], over_ssh=True, remote=True, ssh_policy=RemoteSSHConfig()
+        mocker,
+        [_outbox_group(tmp_path)],
+        transport="ssh",
+        remote=True,
+        ssh_policy=RemoteSSHConfig(),
     )
     session.jobs = _HeldJobs()  # type: ignore[assignment]  # test double
     _open_box(session)
@@ -793,7 +797,7 @@ def test_ssh_topology_only_opens_container_menu_and_picker(mocker, tmp_path, act
     if action == "release":
         row = dataclasses.replace(row, child=ChildView("alpha-one", "working", (), False, ()))
     session.groups[0].containers.append(row)
-    session.over_ssh = True
+    session.transport = True
     session.ssh_policy = RemoteSSHConfig.model_validate(
         {
             "commands": {"mode": "allowlist", "allow": [f"orchestrate {action}"]},
@@ -802,7 +806,7 @@ def test_ssh_topology_only_opens_container_menu_and_picker(mocker, tmp_path, act
         }
     )
     outer = tmenu.open_menu(
-        session.groups, "alpha-one", ssh_policy=session.ssh_policy, over_ssh=True
+        session.groups, "alpha-one", ssh_policy=session.ssh_policy, transport="ssh"
     )
     assert outer is not None
     assert any(verb == "orchestration" for _, verb in outer.actions)
@@ -824,7 +828,7 @@ def test_ssh_topology_does_not_offer_other_repo_candidates(mocker, tmp_path):
     session.groups.append(
         dmodel.RepoGroup("beta", str(tmp_path / "beta"), None, [ci("beta-free", "beta")])
     )
-    session.over_ssh = True
+    session.transport = True
     session.ssh_policy = RemoteSSHConfig.model_validate(
         {
             "commands": {"mode": "allowlist", "allow": ["orchestrate adopt"]},
@@ -833,7 +837,7 @@ def test_ssh_topology_does_not_offer_other_repo_candidates(mocker, tmp_path):
         }
     )
     assert (
-        tmenu.open_menu(session.groups, "alpha-one", ssh_policy=session.ssh_policy, over_ssh=True)
+        tmenu.open_menu(session.groups, "alpha-one", ssh_policy=session.ssh_policy, transport="ssh")
         is None
     )
     assert session.open_orchestration("alpha-one") is None
@@ -862,7 +866,7 @@ def test_orchestration_topology_empty_and_ssh_gates(mocker, tmp_path):
     menu = session.open_orchestration("alpha-one")
     picker = session.submit_picker(menu, next(e for e in menu.entries if e.value == "release"))
     assert [e.value for e in picker.entries] == ["alpha-child"]
-    session.over_ssh = True
+    session.transport = True
     session.ssh_policy = RemoteSSHConfig.model_validate(
         {
             "commands": {"mode": "allowlist", "allow": ["orchestrate grant"]},
@@ -1476,7 +1480,7 @@ def _ssh_orchestration_session(mocker, tmp_path, *, level, grant_kw=None, kinds=
     if grant_kw:
         info = dataclasses.replace(info, grant=dataclasses.replace(info.grant, **grant_kw))
         group.containers[0] = info
-    session.over_ssh = True
+    session.transport = True
     session.ssh_policy = RemoteSSHConfig(orchestration=level)
     return session
 
@@ -1647,7 +1651,7 @@ def test_services_menu_order_and_ssh_action_gates(mocker, tmp_path):
     assert labels.index("Mounts…") < labels.index("Services…") < labels.index("Network →")
     assert tmenu.menu_hotkeys(entries)[labels.index("Services…")] == "V"
     session, _ = bare_session(mocker, [group])
-    session.over_ssh = True
+    session.transport = True
     session.ssh_policy = RemoteSSHConfig()
     result = mocker.patch("jailbee.dashboard.accounts.run_cli_quiet").return_value
     result.ok = True
@@ -1873,7 +1877,7 @@ def _ssh_publish_session(mocker, tmp_path, allow, publish=None):
     from jailbee.config.models_remote import RemoteSSHConfig
 
     session, quiet = _orchestration_session(mocker, tmp_path, grant=True, publish=publish)
-    session.over_ssh = True
+    session.transport = True
     session.ssh_policy = RemoteSSHConfig.model_validate(
         {
             "commands": {"mode": "allowlist", "allow": ["orchestrate grant", *allow]},

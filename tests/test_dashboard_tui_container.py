@@ -46,7 +46,7 @@ _VANISH_WHEN = pytest.mark.parametrize("when", ["frame-before-enter", "same-read
 
 
 def _kwargs(over_ssh: bool, policy: RemoteSSHConfig | None) -> dict[str, object]:
-    return {"remote": over_ssh, "over_ssh": over_ssh, "ssh_policy": policy}
+    return {"remote": over_ssh, "transport": "ssh" if over_ssh else "none", "ssh_policy": policy}
 
 
 def _allowlist(*allow: str) -> RemoteSSHConfig:
@@ -138,7 +138,7 @@ def test_rerun_list_policy_rechecked_before_capture(mocker, tmp_path):
     group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
     quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
     session, _ = bare_session(
-        mocker, [group], over_ssh=True, ssh_policy=_allowlist("autostart status")
+        mocker, [group], transport="ssh", ssh_policy=_allowlist("autostart status")
     )
     assert session.open_container_entry("alpha-x", "autostart-rerun") is None
     quiet.assert_not_called()
@@ -161,11 +161,11 @@ def test_rerun_picker_filters_each_argv_and_retains_captured_names(mocker, tmp_p
     session, _ = bare_session(mocker, [group])
     real = tsession.permitted
 
-    def allow(argv, policy, *, over_ssh):
+    def allow(argv, policy, *, transport):
         return (
             "--failed" not in argv
             and "--step" not in argv
-            and real(argv, policy, over_ssh=over_ssh)
+            and real(argv, policy, transport=transport)
         )
 
     mocker.patch.object(tsession, "permitted", side_effect=allow)
@@ -201,7 +201,7 @@ def test_rerun_confirmation_no_and_stale_ssh_policy_spawn_nothing(mocker, tmp_pa
     confirm = session.submit_picker(picker, picker.entries[0])
     session.submit_picker(confirm, confirm.entries[0])
     child.assert_not_called()
-    session.over_ssh = True
+    session.transport = True
     session.ssh_policy = _allowlist("autostart status")
     session.submit_picker(confirm, confirm.entries[1])
     child.assert_not_called()
@@ -329,10 +329,10 @@ def test_stale_menu_refused_by_the_policy_at_submit_spawns_nothing(mocker, tmp_p
     steps = container_menu_keys(group, "autostart-status")  # built while the menu offers it
     real_check = tsession.check_dashboard_command
 
-    def refuse(argv, policy, *, over_ssh):
+    def refuse(argv, policy, *, transport):
         if argv[:2] == ["autostart", "status"]:
             raise tsession.RouteError("autostart status is not permitted")
-        return real_check(argv, policy, over_ssh=over_ssh)
+        return real_check(argv, policy, transport=transport)
 
     patch_in(
         mocker,
@@ -575,10 +575,10 @@ def test_snapshot_create_refused_by_the_policy_at_submit_spawns_nothing(mocker, 
     child = mocker.patch.object(tsession.subprocess, "run")
     real_check = tsession.check_dashboard_command
 
-    def refuse(argv, policy, *, over_ssh):
+    def refuse(argv, policy, *, transport):
         if argv[:2] == ["snapshot", "create"]:
             raise tsession.RouteError("snapshot create is not permitted")
-        return real_check(argv, policy, over_ssh=over_ssh)
+        return real_check(argv, policy, transport=transport)
 
     patch_in(
         mocker,
@@ -786,10 +786,10 @@ def test_snapshot_change_refused_by_the_policy_at_submit_spawns_nothing(mocker, 
     child = mocker.patch.object(tsession.subprocess, "run")
     real_check = tsession.check_dashboard_command
 
-    def refuse(argv, policy, *, over_ssh):
+    def refuse(argv, policy, *, transport):
         if argv[:2] == ["snapshot", verb]:
             raise tsession.RouteError(f"snapshot {verb} is not permitted")
-        return real_check(argv, policy, over_ssh=over_ssh)
+        return real_check(argv, policy, transport=transport)
 
     patch_in(
         mocker,
@@ -1368,10 +1368,10 @@ def test_stale_mount_menu_refused_by_the_policy_at_submit_runs_nothing(mocker, t
     quiet = mocker.patch.object(tsession.da, "run_cli_quiet")
     real_check = tsession.check_dashboard_command
 
-    def refuse(argv, policy, *, over_ssh):
+    def refuse(argv, policy, *, transport):
         if argv[:1] == ["mount"]:
             raise tsession.RouteError("mount is not permitted")
-        return real_check(argv, policy, over_ssh=over_ssh)
+        return real_check(argv, policy, transport=transport)
 
     patch_in(
         mocker,
@@ -1491,7 +1491,7 @@ def test_an_orphan_row_opens_its_own_small_menu(mocker):
 def test_an_orphan_row_has_no_menu_in_a_remote_session():
     group = dmodel.RepoGroup("gamma", None, None, [ci("gamma-x", "gamma")])
 
-    assert tmenu.open_menu([group], "gamma-x", remote=True, over_ssh=True) is None
+    assert tmenu.open_menu([group], "gamma-x", remote=True, transport="ssh") is None
 
 
 def test_an_orphan_action_runs_from_home_with_no_config_flag(mocker):

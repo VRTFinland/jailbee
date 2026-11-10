@@ -18,7 +18,8 @@ from textual.app import App, ComposeResult
 from textual.geometry import Size
 from textual.message import Message
 
-from jailbee.config.models_remote import RemoteSSHConfig
+from jailbee.config.models_remote import RemotePolicy
+from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.tui import scrollbar
 from jailbee.dashboard.tui.frame import DashboardView
@@ -108,8 +109,8 @@ class DashboardApp(App[int], inherit_bindings=False):
         incus: Incus,
         cwd_root: Path | None,
         remote: bool = False,
-        over_ssh: bool = False,
-        ssh_policy: RemoteSSHConfig | None = None,
+        transport: Transport = "none",
+        ssh_policy: RemotePolicy | None = None,
         scope: RemoteRepoScope | None = None,
         tick_seconds: float | None = TICK_SECONDS,
         auto_optimize: bool = True,
@@ -122,7 +123,7 @@ class DashboardApp(App[int], inherit_bindings=False):
             cwd_root=cwd_root,
             terminal=self,
             remote=remote,
-            over_ssh=over_ssh,
+            transport=transport,
             ssh_policy=ssh_policy,
             scope=scope,
             auto_optimize=auto_optimize,
@@ -435,8 +436,8 @@ def run(
     cwd_root: Path | None,
     *,
     remote: bool = False,
-    over_ssh: bool = False,
-    ssh_policy: RemoteSSHConfig | None = None,
+    transport: Transport = "none",
+    ssh_policy: RemotePolicy | None = None,
     scope: RemoteRepoScope | None = None,
 ) -> int:
     """Open the terminal dashboard; return its exit code."""
@@ -449,7 +450,7 @@ def run(
             incus=incus,
             cwd_root=cwd_root,
             remote=remote,
-            over_ssh=over_ssh,
+            transport=transport,
             ssh_policy=ssh_policy,
             scope=scope,
         )
