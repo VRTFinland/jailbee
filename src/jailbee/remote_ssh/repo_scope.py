@@ -1,4 +1,4 @@
-"""Immutable repository visibility policy for an SSH session."""
+"""Immutable repository visibility policy for a remote session."""
 
 from __future__ import annotations
 
@@ -20,16 +20,23 @@ if TYPE_CHECKING:
 
     from sqlalchemy.engine import Engine
 
+    from jailbee.config.models_remote import RemotePolicy
+
 _PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 class RepoScopeError(ValueError):
-    """An SSH child has no trustworthy repository policy snapshot."""
+    """A remote child has no trustworthy repository policy snapshot."""
 
 
 @dataclass(frozen=True)
 class RemoteRepoScope:
     excluded: frozenset[str]
+
+    @classmethod
+    def of(cls, policy: RemotePolicy) -> RemoteRepoScope:
+        """The scope `policy` (any transport's `remote.*` block) excludes."""
+        return cls(frozenset(policy.excluded_repos))
 
     def allows(self, prefix: str | None) -> bool:
         return prefix is None or prefix not in self.excluded

@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from jailbee.config import Config
-    from jailbee.config.models_remote import RemoteSSHConfig
+    from jailbee.config.models_remote import RemotePolicy
     from jailbee.incus import Incus
 
 _MODE_LABEL = "user.jailbee.mode"
@@ -318,13 +318,13 @@ def grant(
     full: str,
     flags: GrantFlags,
     *,
-    remote: RemoteSSHConfig | None = None,
+    remote: RemotePolicy | None = None,
     on_previous: Callable[[Grant | None], None] | None = None,
 ) -> Grant:
     """Validate and store a grant on `full`; nothing is written on refusal.
 
-    With `remote` (a restricted SSH session's policy) the resulting grant is
-    also bounded by `remote.ssh.orchestration`; elements the stored grant
+    With `remote` (a restricted remote session's policy) the resulting grant is
+    also bounded by `remote.<transport>.orchestration`; elements the stored grant
     already holds stay, so narrowing and unrelated edits always pass.
     """
     refusal = grant_refusal(cfg, incus, full)
@@ -352,13 +352,15 @@ def _check_remote_bound(
     full: str,
     new: Grant,
     current: Grant | None,
-    remote: RemoteSSHConfig,
+    remote: RemotePolicy,
 ) -> None:
     from jailbee.remote_ssh import orchestration_policy as policy
+    from jailbee.remote_ssh.session import policy_transport
 
+    transport = policy_transport()
     if remote.orchestration == "off":
         raise GrantError(
-            "orchestrate grant is a host command here: remote.ssh.orchestration is off"
+            f"orchestrate grant is a host command here: remote.{transport}.orchestration is off"
         )
     rights = (
         policy.read_orchestrator_rights(cfg, incus, full)
@@ -367,7 +369,7 @@ def _check_remote_bound(
     )
     bound = policy.grant_bound(remote, cfg.optional_mounts, rights)
     if bound is None:  # unreachable: "off" is refused above
-        raise GrantError("remote.ssh.orchestration is off")
+        raise GrantError(f"remote.{transport}.orchestration is off")
     from jailbee.remote_ssh.router import RemoteUnlocks, RouteError, policy_allows
 
     required: list[tuple[str, list[str]]] = []
@@ -398,11 +400,11 @@ def _check_remote_bound(
                 argv,
                 remote.commands,
                 restrict_host=remote.restrict_host,
-                unlocks=RemoteUnlocks.of(remote),
+                unlocks=RemoteUnlocks.of(remote, transport=transport),
             )
         except RouteError as e:
             raise GrantError(f"publish right {right!r} needs manual publish permission: {e}") from e
-    excess = policy.grant_excess(new, current, bound)
+    excess = policy.grant_excess(new, current, bound, transport=transport)
     if excess:
         raise GrantError("; ".join(excess))
 

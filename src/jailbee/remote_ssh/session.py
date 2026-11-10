@@ -184,6 +184,11 @@ def remote_transport(environ: Mapping[str, str] | None = None) -> str | None:
     return env.get(REMOTE_TRANSPORT_ENV) or None
 
 
+def policy_transport(environ: Mapping[str, str] | None = None) -> str:
+    """The transport whose `remote.<name>` policy governs this session (ssh when unmarked)."""
+    return remote_transport(environ) or TRANSPORT_SSH
+
+
 def is_ssh_session(environ: Mapping[str, str] | None = None) -> bool:
     """True when the session's transport is SSH (a transport-name check)."""
     return remote_transport(environ) == TRANSPORT_SSH
