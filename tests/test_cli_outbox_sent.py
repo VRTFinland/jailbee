@@ -150,14 +150,14 @@ def test_clear_non_tty_without_repo_exits_2_naming_candidates(mocker) -> None:
     assert len(sent.list_records()) == 2
 
 
-def test_clear_confirmation_defaults_to_no() -> None:
+def test_clear_confirmation_defaults_to_no(typed_confirmations) -> None:
     _rec("a")
     result = _run("clear", "--repo", "acme", input="\n")
     assert result.exit_code == 0, result.output
     assert len(sent.list_records()) == 1
 
 
-def test_clear_confirmed_deletes_only_that_repo() -> None:
+def test_clear_confirmed_deletes_only_that_repo(typed_confirmations) -> None:
     _rec("a")
     _rec("b", prefix="other", instance="other-x")
     assert _run("clear", "--repo", "acme", input="y\n").exit_code == 0

@@ -479,7 +479,9 @@ def test_destroy_no_args_tty_destroys_ticked_containers(tmp_path, mocker):
     assert "Destroyed: feat-c" in result.stdout
 
 
-def test_destroy_no_args_tty_warns_about_the_ticked_containers_risk(tmp_path, mocker):
+def test_destroy_no_args_tty_warns_about_the_ticked_containers_risk(
+    tmp_path, mocker, typed_confirmations
+):
     """The picker path runs the same guard as the single-name and `--all`
     paths, and only for the containers actually ticked."""
     incus, destroy_mock = _setup(tmp_path, mocker, [])
