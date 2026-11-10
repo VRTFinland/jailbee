@@ -13,7 +13,11 @@ from typing import TYPE_CHECKING, Literal, cast
 from sqlalchemy.engine import Engine
 from sqlmodel import Session
 
-from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+from jailbee.config.models_remote import (
+    RemoteCommandPolicy,
+    RemotePolicy,
+    RemoteSSHConfig,
+)
 from jailbee.db import get_engine
 from jailbee.db.models import RegisteredRepo
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
@@ -385,10 +389,21 @@ class RemoteUnlocks:
     orchestration: bool = False
     # Whether `remote.ssh.waypipe` is on: only worded into the GUI refusal.
     waypipe_available: bool = False
+    # The transport named in refusals (`remote.<transport>.network is on`).
+    transport: str = "ssh"
 
     @classmethod
-    def of(cls, config: RemoteSSHConfig | None, *, waypipe: bool | None = None) -> RemoteUnlocks:
+    def of(
+        cls,
+        config: RemotePolicy | None,
+        *,
+        waypipe: bool | None = None,
+        transport: str = "ssh",
+    ) -> RemoteUnlocks:
         """The switches `config` turns on; all off without a config.
+
+        ``transport`` names the remote transport; waypipe is an SSH-only
+        feature, so only an SSH policy (a `RemoteSSHConfig`) can enable it.
 
         GUI launchers are container commands with `rdp` on (they draw on the
         shared display), or with `waypipe` on inside a `waypipe ssh` session
@@ -399,16 +414,18 @@ class RemoteUnlocks:
         """
         if config is None:
             return cls()
+        waypipe_on = transport == "ssh" and isinstance(config, RemoteSSHConfig) and config.waypipe
         if waypipe is None:
             from jailbee.remote_ssh.session import waypipe_session
 
             waypipe = waypipe_session() is not None
         return cls(
-            gui=config.rdp or (config.waypipe and waypipe),
+            gui=config.rdp or (waypipe_on and waypipe),
             network=config.network,
             mounts=config.mounts or bool(config.mount_roots),
             orchestration=config.orchestration != "off",
-            waypipe_available=config.waypipe,
+            waypipe_available=waypipe_on,
+            transport=transport,
         )
 
     def commands(self) -> frozenset[str]:
@@ -682,7 +699,7 @@ def check_arguments(argv: Sequence[str], *, unlocks: RemoteUnlocks = NO_UNLOCKS)
                 option = next((p.opts[0] for p in command.params if p.name == name), name)
                 raise RouteError(
                     f"remote Jailbee commands may not set {option}={value} "
-                    f"unless remote.ssh.network is on: {canonical}"
+                    f"unless remote.{unlocks.transport}.network is on: {canonical}"
                 )
 
 
@@ -879,18 +896,20 @@ def policy_allows(
     if host_restricted(restrict_host):
         if is_host_command(path, unlocks=unlocks):
             if path in _GUI_APP_COMMANDS:
+                rdp = f"remote.{unlocks.transport}.rdp"
                 advice = (
-                    "run it from a `waypipe ssh` session, or enable remote.ssh.rdp on "
+                    f"run it from a `waypipe ssh` session, or enable {rdp} on "
                     "the host for the shared RDP display"
                     if unlocks.waypipe_available
-                    else "enable remote.ssh.rdp on the host for the shared RDP display"
+                    else f"enable {rdp} on the host for the shared RDP display"
                 )
                 raise RouteError(
                     f"`{path}` opens a window, which this session has no display for: {advice}"
                 )
             if path in _ORCHESTRATION_COMMANDS and not unlocks.orchestration:
                 raise RouteError(
-                    f"remote.ssh.orchestration is off: `{path}` manages the host itself"
+                    f"remote.{unlocks.transport}.orchestration is off: "
+                    f"`{path}` manages the host itself"
                 )
             raise RouteError(
                 f"`{path}` manages the host itself, which a restricted remote session never does"
@@ -944,7 +963,7 @@ def route(
 ) -> Route:
     """Route one remote SSH command according to the restricted grammar."""
     argv = _parse(raw) if raw is not None else ()
-    scope = RemoteRepoScope(frozenset(config.excluded_repos))
+    scope = RemoteRepoScope.of(config)
     if not argv:
         if config.default_entrypoint != "help":
             return route(config.default_entrypoint, config, engine=engine, waypipe=waypipe)
@@ -1034,7 +1053,7 @@ def help_text(config: RemoteSSHConfig, *, waypipe: bool = False) -> str:
         allowed_command_paths(
             config.commands,
             restrict_host=config.restrict_host,
-            scope=RemoteRepoScope(frozenset(config.excluded_repos)),
+            scope=RemoteRepoScope.of(config),
             unlocks=RemoteUnlocks.of(config, waypipe=waypipe),
         )
     )
@@ -1048,7 +1067,7 @@ def repos_text(config: RemoteSSHConfig, *, engine: Engine | None = None) -> str:
     """List prefix<TAB>root for registered repositories this session may reach."""
     from jailbee.remote_ssh.repo_scope import registered_repos
 
-    scope = RemoteRepoScope(frozenset(config.excluded_repos))
+    scope = RemoteRepoScope.of(config)
     return "".join(
         f"{repo.prefix}\t{repo.root}\n" for repo in registered_repos(engine=engine, scope=scope)
     )
