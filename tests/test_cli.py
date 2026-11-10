@@ -6487,7 +6487,7 @@ def test_prompt_loose_ttl_custom_opens_text_prompt_and_parses_answer(mocker) -> 
 
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
 
-    def fake_select(_noun, options):
+    def fake_select(_noun, options, **_kw):
         return next(o.value for o in options if o.title == "custom…")
 
     mocker.patch("jailbee.prompting._select", side_effect=fake_select)
@@ -6508,7 +6508,9 @@ def test_prompt_loose_ttl_custom_invalid_text_is_asked_again(mocker) -> None:
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
         "jailbee.prompting._select",
-        side_effect=lambda _n, options: next(o.value for o in options if o.title == "custom…"),
+        side_effect=lambda _n, options, **_kw: next(
+            o.value for o in options if o.title == "custom…"
+        ),
     )
     ask = mocker.patch("jailbee.prompting._ask", side_effect=["banana", "2h"])
 
@@ -6522,7 +6524,9 @@ def test_prompt_loose_ttl_custom_cancel_returns_none(mocker) -> None:
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
         "jailbee.prompting._select",
-        side_effect=lambda _n, options: next(o.value for o in options if o.title == "custom…"),
+        side_effect=lambda _n, options, **_kw: next(
+            o.value for o in options if o.title == "custom…"
+        ),
     )
     mocker.patch("jailbee.prompting._ask", return_value=None)
 
@@ -6542,6 +6546,8 @@ def test_prompt_loose_ttl_inserts_missing_default_as_first_choice(mocker) -> Non
     options = select.call_args.args[1]
     assert options[0].value == "7m"
     assert options[0].title == "7m  (config default)"
+    assert select.call_args.kwargs["default"] == "7m"
+    assert select.call_args.kwargs["question"] == "Keep loose for how long?"
 
 
 def test_net_offline_command_is_gone() -> None:
@@ -7607,7 +7613,7 @@ def test_pick_push_source_offers_base_first(mocker):
 
     captured: dict[str, object] = {}
 
-    def _fake_select(noun: str, options: object) -> object:
+    def _fake_select(noun: str, options: object, **_kw: object) -> object:
         captured["choices"] = options
         assert isinstance(options, list)
         return options[0].value
@@ -7641,7 +7647,7 @@ def test_pick_push_source_base_not_duplicated_when_equals_default(mocker):
 
     captured: dict[str, object] = {}
 
-    def _fake_select(noun: str, options: object) -> object:
+    def _fake_select(noun: str, options: object, **_kw: object) -> object:
         captured["choices"] = options
         assert isinstance(options, list)
         return options[0].value

@@ -577,7 +577,7 @@ def _select(  # noqa: UP047
     # questionary has 36 shortcut keys (0-9, a-z); more rows than that raise.
     header = f"Select {noun}:" if question is None else question
     preselect = next((c for c in choices if default is not None and c.value == default), None)
-    extra = {} if preselect is None else {"default": preselect}
+    extra: dict[str, Any] = {} if preselect is None else {"default": preselect}
     result = questionary.select(
         header, choices=choices, use_shortcuts=len(choices) <= 36, **extra
     ).ask()

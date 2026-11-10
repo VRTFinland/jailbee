@@ -6850,12 +6850,13 @@ def _pick_push_action() -> str | None:
     from jailbee import prompting
 
     return prompting.choose_one(
-        "push action (what to do with the pushed ref)",
+        "push action",
         [
             prompting.Option("merge", "merge into container's branch", "merge"),
             prompting.Option("rebase", "rebase container's branch onto pushed ref", "rebase"),
             prompting.Option("plain", "plain (transport only, no merge/rebase)", "plain"),
         ],
+        question="What to do with the pushed ref?",
     )
 
 
@@ -7040,7 +7041,9 @@ def _pick_push_source(
             )
         )
 
-    result = prompting.choose_one("host branch to push from", choices)
+    result = prompting.choose_one(
+        "host branch to push from", choices, question="Push from which host branch?"
+    )
     if isinstance(result, _PrHead):
         return _PR_HEAD
     return str(result)
@@ -10443,9 +10446,12 @@ def _prompt_ttl(question: str, default_after: str) -> _Ttl | None:
     options.append(prompting.Option(custom, "custom…", "custom duration"))
 
     try:
-        # `choose_one` frames its own "Select <noun>:" line, so the question
-        # becomes the noun: "Keep loose for how long?" -> "keep loose for how long".
-        answer = prompting.choose_one(question.rstrip("?").lower(), options)
+        answer = prompting.choose_one(
+            "duration",
+            options,
+            question=question,
+            default=default_after,
+        )
         if answer == custom:
             answer = prompting.ask_text(
                 "duration (e.g. 30s, 45m, 4h; max 24h, or `never`)",
