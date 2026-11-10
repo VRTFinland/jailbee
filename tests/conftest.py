@@ -695,6 +695,12 @@ def _disable_cli_color(monkeypatch):
     ``CliRunner`` captures a plain, non-tty buffer, so the output has no colour
     and ``env={"COLUMNS": ...}`` decides the width. The colour env vars are
     neutralised too, for the Rich consoles jailbee builds itself.
+
+    ``COLUMNS`` defaults to 1000. Without it Rich asks ``os.get_terminal_size``
+    on the standard streams, so the width was the developer's terminal under
+    ``make release`` and 80 elsewhere, and a message carrying a ``tmp_path``
+    wrapped mid-path on hosts with a longer user name — asserting on the path
+    then failed only there. A test that needs a narrow layout sets its own.
     """
     monkeypatch.setattr("typer.rich_utils.FORCE_TERMINAL", None, raising=False)
     monkeypatch.delenv("FORCE_COLOR", raising=False)
@@ -702,6 +708,7 @@ def _disable_cli_color(monkeypatch):
     monkeypatch.delenv("PY_COLORS", raising=False)
     monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.setenv("TERM", "dumb")
+    monkeypatch.setenv("COLUMNS", "1000")
 
 
 @pytest.fixture(autouse=True)
