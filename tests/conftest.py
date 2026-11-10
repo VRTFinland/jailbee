@@ -515,7 +515,9 @@ def typed_confirmations(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     from jailbee import prompting
 
-    monkeypatch.setattr(prompting, "select_backend", lambda interactive=None: prompting.TerminalBackend())
+    monkeypatch.setattr(
+        prompting, "select_backend", lambda interactive=None: prompting.TerminalBackend()
+    )
 
 
 @pytest.fixture(autouse=True)

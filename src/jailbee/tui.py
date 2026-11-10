@@ -11,7 +11,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-import typer
 from rich.console import Console
 from rich.text import Text
 
@@ -984,9 +983,7 @@ def pick_account(
 GROUP_PICKER_QUESTION = "Change the group of:"
 
 
-def container_group_options(
-    cfg: Config, incus: Incus, names: Sequence[str]
-) -> list[Option[str]]:
+def container_group_options(cfg: Config, incus: Incus, names: Sequence[str]) -> list[Option[str]]:
     """Prompt options over this repo's containers, each row carrying the
     container's current credential group: the fact the user is about to change."""
     from jailbee import prompting

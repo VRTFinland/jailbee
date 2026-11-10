@@ -79,7 +79,7 @@ def _capitalized(noun: str) -> str:
 
 
 def _explicit_hint(alternative: str | None) -> str:
-    """"pass it explicitly" plus the flag that also answers, when there is one."""
+    """ "pass it explicitly" plus the flag that also answers, when there is one."""
     return f"pass it explicitly{f' or use {alternative}' if alternative else ''}"
 
 
@@ -127,7 +127,8 @@ class MissingValue(ClickException):
             message = reason
         else:
             verb = "type it" if free_text else "choose"
-            message = f"missing {noun}; {_explicit_hint(alternative)}, or run in a terminal to {verb}"
+            how = _explicit_hint(alternative)
+            message = f"missing {noun}; {how}, or run in a terminal to {verb}"
             if self.candidates:
                 message += ". Candidates: " + ", ".join(self.candidates)
         super().__init__(message)

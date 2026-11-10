@@ -93,7 +93,12 @@ def test_delete_picks_the_container_destructively_then_the_tag(mocker, tmp_path,
     from jailbee.lifecycle import ContainerInfo
 
     info = ContainerInfo(
-        name="app-x", state="Running", network="strict", ip="10.0.0.5", memory_limit="4GB", repo="app"
+        name="app-x",
+        state="Running",
+        network="strict",
+        ip="10.0.0.5",
+        memory_limit="4GB",
+        repo="app",
     )
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[info])
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)

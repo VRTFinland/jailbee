@@ -25,10 +25,10 @@ from textual.widget import Widget
 
 from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import model as dmodel
+from jailbee.dashboard import runner as drunner
 from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.jobs import JobResult, JobRunner
-from jailbee.dashboard import runner as drunner
 from jailbee.dashboard.runner import RunResult
 from jailbee.dashboard.settings import CURSOR_STYLE
 from jailbee.dashboard.tui import app as tapp

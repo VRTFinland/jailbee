@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from jailbee.config.models_remote import RemoteSSHConfig
-from jailbee.dashboard import dispatch as ddispatch
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import model as dmodel
@@ -123,7 +122,7 @@ def test_repo_apply_runs_with_the_chosen_restart_policy(mocker, tmp_path, downs,
     child.assert_called_once_with(
         ["jailbee", "apply", *tail, "--config", str(group.config_path)], check=False, cwd=tmp_path
     )
-    (title, text, failed) = run.app.outputs[0]
+    (_title, text, failed) = run.app.outputs[0]
     assert len(run.app.outputs) == 1
     assert "output of jailbee apply" in text  # what the command printed is on the screen
     assert ("--no-restart" in text) == bool(tail)
