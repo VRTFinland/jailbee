@@ -8,13 +8,13 @@ from typing import Literal
 
 from typer._click.core import ParameterSource
 
-from jailbee.config.models_remote import RemotePolicy
+from jailbee.config.models_remote import RemotePolicy, RemoteTransport
 from jailbee.remote_ssh import router
 from jailbee.remote_ssh.router import RouteError
 
 # Where a dashboard runs: ``none`` is the local keyboard, ``ssh`` and ``web`` are
 # remote transports, each checked against that transport's own `RemotePolicy`.
-Transport = Literal["none", "ssh", "web"]
+Transport = RemoteTransport | Literal["none"]
 
 
 def dashboard_action_argv(verb: str, name: str, *, force: bool = False) -> list[str]:

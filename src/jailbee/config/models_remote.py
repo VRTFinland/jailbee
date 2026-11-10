@@ -13,6 +13,11 @@ from jailbee.config.models_host import _PREFIX_RE
 from jailbee.paths import xdg_data_home
 
 CommandMode = Literal["disabled", "allowlist", "full"]
+# The remote transports that have a `remote.<name>` policy: the one type every
+# signature that names a transport uses (a dashboard adds ``"none"`` for the
+# local keyboard, see `dashboard.commands.Transport`).
+RemoteTransport = Literal["ssh", "web"]
+
 _COMMAND_PATH_RE = re.compile(r"^[a-z][a-z0-9-]*(?: [a-z][a-z0-9-]*)*$")
 
 
@@ -211,16 +216,17 @@ class RemotePolicy(BaseModel):
     orchestration: Literal["off", "ssh", "orchestrator"] = Field(
         default="off",
         description=(
-            "Let remote sessions run `orchestrate grant`, `adopt` and `profile save`: "
-            "`ssh` (the default; also `true`) "
-            "bounds what children may be given to what the session could do itself, "
-            "`orchestrator` to the orchestrator's own permanent rights, `off` (also `false`) "
-            "refuses it. `revoke` never needs this."
+            "Let remote sessions (SSH or web) run `orchestrate grant`, `adopt` and "
+            "`profile save`: `ssh` (also `true`; the name is historical, it means the "
+            "session's own transport) bounds what children may be given to what the "
+            "session could do itself, `orchestrator` to the orchestrator's own permanent "
+            "rights, `off` (also `false`) refuses it. `revoke` never needs this. Default: "
+            "`ssh` under `remote.ssh`, `off` under `remote.web`."
         ),
     )
     excluded_repos: list[str] = Field(
         default_factory=list,
-        description="Registered repository prefixes unavailable through remote SSH.",
+        description="Registered repository prefixes unavailable through a remote session.",
     )
 
     @field_validator("orchestration", mode="before")

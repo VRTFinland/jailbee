@@ -31,13 +31,12 @@ from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard import actions as dact
 from jailbee.dashboard.commands import Transport, check_dashboard_command
 from jailbee.dashboard.menus import APPS_RUN_PREFIX, ATTACH_VERBS
-from jailbee.prompt_channel import Prompt, UiEnd
+from jailbee.prompt_channel import PROMPT_FD_ENV, Prompt, UiEnd
 from jailbee.remote_ssh import router
 from jailbee.remote_ssh.router import RouteError
 
 log = logging.getLogger(__name__)
 
-PROMPT_FD_ENV = "JAILBEE_PROMPT_FD"
 
 # A prompt handler returns the wire value (see `prompt_channel`: bool for
 # confirm, option id for choose_one, list of ids for choose_many, str for
@@ -74,6 +73,22 @@ class RunResult:
     @property
     def ok(self) -> bool:
         return self.refused is None and self.error is None and self.status == 0
+
+
+@dataclass(frozen=True)
+class ActionRun:
+    """One action of a batch: ``jailbee <argv>`` in ``cwd``."""
+
+    argv: list[str]  # without the program name, already addressed at its repo
+    cwd: Path
+
+
+@dataclass(frozen=True)
+class ActionOutcome:
+    """How a batch of runs ended, and what they printed."""
+
+    results: list[RunResult]  # one per run that was started, in order
+    output: str
 
 
 # The orphan rows' own attach verbs (terminal dashboard only, never remote).
@@ -157,7 +172,9 @@ def popen_spawn(
     return _PopenChild(proc)
 
 
-def _child_env(transport: Transport, policy: RemotePolicy | None) -> dict[str, str]:
+def _child_env(
+    transport: Transport, policy: RemotePolicy | None, client: str | None = None
+) -> dict[str, str]:
     if transport == "none" or policy is None:
         return dict(os.environ)
     from jailbee.remote_ssh.repo_scope import scope_for_session
@@ -169,7 +186,39 @@ def _child_env(transport: Transport, policy: RemotePolicy | None) -> dict[str, s
         transport=transport,
         restricted=host_restricted(policy.restrict_host),
         excluded_repos=excluded,
+        client=client,
     )
+
+
+def run_actions(
+    runs: Sequence[ActionRun],
+    *,
+    run: Callable[..., RunResult] | None = None,
+    **common: Any,
+) -> ActionOutcome:
+    """Run ``runs`` one after another through ``run`` (default `run_action`).
+
+    ``common`` is what every run shares (`transport`, `policy`, `on_prompt`,
+    `client`, `spawn`...). The output of all runs is one text: with more than
+    one run each starts with a ``── jailbee <command> ──`` header. The batch
+    stops at the first run that was refused or could not start; a run that
+    merely exits non-zero does not stop the others. Frontend-agnostic: the
+    terminal and web dashboards both run bulk actions through it.
+    """
+    runner_fn = run if run is not None else run_action
+    chunks: list[str] = []
+    results: list[RunResult] = []
+    try:
+        for item in runs:
+            if len(runs) > 1:
+                chunks.append(f"── jailbee {_command_path(item.argv)} ──\n")
+            result = runner_fn(item.argv, cwd=item.cwd, on_output=chunks.append, **common)
+            results.append(result)
+            if result.error is not None or result.refused is not None:
+                break
+    except Exception as exc:
+        results.append(RunResult(error=str(exc)))
+    return ActionOutcome(results, "".join(chunks))
 
 
 def run_action(
@@ -227,7 +276,7 @@ def run_action(
 
     full = cli_argv(dact.addressed(argv, address_flags, transport=transport))
     try:
-        env = _child_env(transport, policy)
+        env = _child_env(transport, policy, client)
     except Exception as exc:  # scope snapshot unreadable: fail closed, nothing started
         record("refused")
         return RunResult(refused=f"remote policy snapshot unavailable: {exc}")

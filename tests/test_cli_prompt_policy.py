@@ -110,7 +110,7 @@ def test_the_walk_sees_the_whole_tree() -> None:
 # ---- Direct prompt libraries: only `jailbee.prompting` may ask ---------------------
 #
 # Every question goes through `jailbee.prompting` so a dashboard can answer it over
-# the prompt channel (ADR 0006). A direct `typer.confirm`, questionary, Rich prompt or
+# the prompt channel (ADR 0003). A direct `typer.confirm`, questionary, Rich prompt or
 # `input()` would block on a terminal nobody is watching.
 
 # Allowed places, keyed by path relative to src/jailbee. A key is a file, a directory
@@ -133,8 +133,7 @@ _DIRECT_PROMPT_ALLOWED = {
     "tui.py::pick_submodule": "terminal renderer passed as choose_one(picker=)",
     "tui.py::pick_containers_multi": "terminal renderer passed as choose_many(picker=)",
     "tui.py::pick_submodules_multi.render": "terminal renderer passed as choose_many(picker=)",
-    "tui.py::pick_account": "terminal renderer passed as choose_one(picker=)",
-    "tui.py::pick_container_for_group": "terminal renderer passed as choose_one(picker=)",
+    "tui.py::pick_account": "terminal renderer passed as choose_one(picker=) by tui.choose_account",
 }
 
 _PROMPT_NAMES = {"Prompt", "Confirm", "IntPrompt", "FloatPrompt"}
@@ -281,29 +280,34 @@ def test_the_allow_list_matches_files_directories_and_functions() -> None:
     assert _allowed("cli.py", "") is None
 
 
-# `tui`'s pickers render a question on the terminal and nothing else. They are
-# reachable only as `picker=` of a prompting function (a lambda or a reference), so
-# the question still goes through the prompt channel when one is present.
+# `tui`'s pickers render a question on the terminal and nothing else. A renderer may
+# appear in a module only as the value of a `picker=` keyword: named directly
+# (`picker=pick_account`) or inside a lambda that is itself that value. Anywhere else
+# (a plain call, a positional argument, an assignment, an `async def`, a lambda that is
+# not a `picker=`) the question would bypass the prompt channel.
+#
+# Not listed: `pick_containers_multi` and `pick_submodules_multi`. They are not
+# renderers but prompting callers (`choose_many` with their own `picker=` inside), so
+# calling them directly is how a command asks.
 _RENDERERS = {"pick_container", "pick_submodule", "pick_account", "pick_container_for_group"}
 
 
-def _direct_renderer_calls(source: str) -> list[int]:
-    """Lines where a tui renderer is called outside a lambda or a function named
-    `*picker*` (a `picker=` callable defined by name)."""
-    lines: list[int] = []
-
-    def visit(node: ast.AST, in_lambda: bool) -> None:
+def _renderer_references(source: str) -> list[int]:
+    """Lines where a tui renderer is named outside a `picker=` keyword's value."""
+    tree = ast.parse(source)
+    allowed: set[int] = set()
+    for node in ast.walk(tree):
         if isinstance(node, ast.Call):
-            func = node.func
-            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
-            if name in _RENDERERS and not in_lambda:
+            for keyword in node.keywords:
+                if keyword.arg == "picker":
+                    allowed.update(id(child) for child in ast.walk(keyword.value))
+    lines: list[int] = []
+    for node in ast.walk(tree):
+        name = node.id if isinstance(node, ast.Name) else getattr(node, "attr", None)
+        if isinstance(node, ast.Name | ast.Attribute) and name in _RENDERERS:
+            if id(node) not in allowed:
                 lines.append(node.lineno)
-        for child in ast.iter_child_nodes(node):
-            named_picker = isinstance(node, ast.FunctionDef) and "picker" in node.name
-            visit(child, in_lambda or isinstance(node, ast.Lambda) or named_picker)
-
-    visit(ast.parse(source), False)
-    return lines
+    return sorted(lines)
 
 
 def test_tui_renderers_are_only_called_as_prompting_pickers() -> None:
@@ -312,7 +316,7 @@ def test_tui_renderers_are_only_called_as_prompting_pickers() -> None:
         rel = path.relative_to(SRC).as_posix()
         if rel in {"tui.py", "prompting.py"} or rel.startswith("qtui/"):
             continue
-        offenders += [f"{rel}:{line}" for line in _direct_renderer_calls(path.read_text())]
+        offenders += [f"{rel}:{line}" for line in _renderer_references(path.read_text())]
     assert offenders == [], (
         "a tui picker renders on the terminal only; pass it as "
         "`picker=lambda opts: ...` to jailbee.prompting.choose_one so a dashboard can "
@@ -320,10 +324,24 @@ def test_tui_renderers_are_only_called_as_prompting_pickers() -> None:
     )
 
 
-def test_the_renderer_checker_allows_a_picker_lambda_only() -> None:
-    assert _direct_renderer_calls("x = pick_container(c)\n") == [1]
-    assert _direct_renderer_calls("x = tui.pick_submodule(c)\n") == [1]
-    assert (
-        _direct_renderer_calls("choose_one('n', o, picker=lambda _o: tui.pick_container(c))\n")
-        == []
-    )
+def test_the_renderer_checker_allows_a_picker_value_only() -> None:
+    allowed = [
+        "choose_one('n', o, picker=lambda _o: tui.pick_container(c))\n",
+        "choose_one('n', o, picker=pick_account)\n",
+        "choose_one('n', o, picker=tui.pick_account)\n",
+        "choose_many('n', o, picker=lambda opts: [pick_container(c) for _ in opts])\n",
+    ]
+    for source in allowed:
+        assert _renderer_references(source) == [], source
+    flagged = {
+        "x = pick_container(c)\n": [1],
+        "x = tui.pick_submodule(c)\n": [1],
+        "x = pick_container\n": [1],  # named, not called: still escapes the channel
+        "run(pick_account)\n": [1],  # positional, not `picker=`
+        "f = lambda: pick_container(c)\n": [1],  # a lambda that is not a `picker=` value
+        "async def go():\n    return pick_container(c)\n": [2],
+        "def my_picker(o):\n    return pick_container(o)\n": [2],  # a name is no exemption
+        "choose_one('n', o, other=lambda: pick_container(c))\n": [1],
+    }
+    for source, lines in flagged.items():
+        assert _renderer_references(source) == lines, source

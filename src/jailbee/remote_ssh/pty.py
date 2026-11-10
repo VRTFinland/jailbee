@@ -54,6 +54,8 @@ class ChildSpec:
     waypipe_attach: bool = False
     # The client's terminal identity (`session.terminal_identity`), as pairs.
     terminal: tuple[tuple[str, str], ...] = ()
+    # Who is connected (the SSH key fingerprint), for the audit of what the child does.
+    client: str | None = None
 
 
 class _Reader(Protocol):
@@ -373,6 +375,7 @@ async def _run_pty(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
         waypipe=spec.waypipe,
         waypipe_attach=spec.waypipe_attach,
         terminal=dict(spec.terminal),
+        client=spec.client,
     )
     pid, master = pty.fork()
     if pid == 0:

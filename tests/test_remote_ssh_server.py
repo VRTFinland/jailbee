@@ -413,6 +413,7 @@ def test_dispatch_uses_current_python_literal_argv_and_selected_cwd(
             argv=expected_argv,
             cwd=repo if has_repo else fallback,
             requires_pty=requires_pty,
+            client=FINGERPRINT,
         ),
     )
     configured.assert_called_once_with(default_global_config_path())
@@ -424,7 +425,10 @@ def test_trailing_repo_dispatches_like_the_leading_form(child, configured, repo)
     child.assert_awaited_once_with(
         process,
         ChildSpec(
-            argv=(sys.executable, "-m", "jailbee", "ls", "--all"), cwd=repo, requires_pty=False
+            argv=(sys.executable, "-m", "jailbee", "ls", "--all"),
+            cwd=repo,
+            requires_pty=False,
+            client=FINGERPRINT,
         ),
     )
     channel.exit.assert_called_once_with(7)
@@ -450,6 +454,7 @@ def test_missing_repo_spawns_a_picking_child_in_the_state_dir(
             restrict_host=False,
             excluded_repos=tuple(excluded),
             gui_port=8022,
+            client=FINGERPRINT,
         ),
     )
     assert fallback.is_dir()
@@ -818,6 +823,11 @@ def test_client_terminal_identity_reaches_the_child_spec(child, configured, repo
     channel.exit.assert_called_once_with(7)
     spec = child.await_args.args[1]
     assert spec.terminal == (("LC_TERMINAL", "iTerm2"),)
+
+
+def test_the_clients_key_fingerprint_reaches_the_child_spec(child, configured, repo):
+    session("--repo project ls")
+    assert child.await_args.args[1].client == FINGERPRINT
 
 
 def test_client_environment_requests_do_not_block_commandless_help(child):

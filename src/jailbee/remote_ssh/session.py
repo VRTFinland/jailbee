@@ -39,10 +39,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
-TRANSPORT_SSH = "ssh"
-TRANSPORT_WEB = "web"
+    from jailbee.config.models_remote import RemoteConfig, RemotePolicy, RemoteTransport
+
+TRANSPORT_SSH: RemoteTransport = "ssh"
+TRANSPORT_WEB: RemoteTransport = "web"
 # Set for every child of a remote transport, restricted or not. It says only
 # that the person at the other end is not at this host's keyboard — which
 # decides what is pointless to offer (a Qt window, the setup steps, the
@@ -57,6 +59,10 @@ REMOTE_EXCLUDED_REPOS_ENV = "JAILBEE_REMOTE_EXCLUDED_REPOS"
 # `remote.ssh.rdp` is on, and only then: `child_environment` removes any value
 # it inherits. It says GUI apps launched here belong on the shared RDP display
 # and tells the child which port to print in the connection recipe.
+# Who is at the other end: the SSH key fingerprint of the connection (set by the
+# SSH server; the web transport will set its own client name). Audit records of
+# actions a remote dashboard runs carry it.
+REMOTE_CLIENT_ENV = "JAILBEE_REMOTE_CLIENT"
 REMOTE_GUI_PORT_ENV = "JAILBEE_REMOTE_GUI_PORT"
 # Set only for a child of a `waypipe ssh` session on a server whose
 # `remote.ssh.waypipe` is on (`server.handle_process`); `child_environment` removes
@@ -95,7 +101,7 @@ class WaypipeSession:
 def child_environment(
     base: Mapping[str, str],
     *,
-    transport: str,
+    transport: RemoteTransport,
     term: str | None = None,
     restricted: bool = True,
     excluded_repos: Sequence[str] = (),
@@ -103,6 +109,7 @@ def child_environment(
     waypipe: WaypipeSession | None = None,
     waypipe_attach: bool = False,
     terminal: Mapping[str, str] | None = None,
+    client: str | None = None,
 ) -> dict[str, str]:
     """The environment for a child of a remote transport, built from ``base``.
 
@@ -130,6 +137,9 @@ def child_environment(
     env[REMOTE_TRANSPORT_ENV] = transport
     env[REMOTE_EXCLUDED_REPOS_ENV] = json.dumps(list(excluded_repos))
     env.pop(REMOTE_GUI_PORT_ENV, None)
+    env.pop(REMOTE_CLIENT_ENV, None)
+    if client:
+        env[REMOTE_CLIENT_ENV] = client
     if is_ssh and gui_port is not None:
         env[REMOTE_GUI_PORT_ENV] = str(gui_port)
     for name in (WAYPIPE_SESSION_ENV, WAYPIPE_COMPRESS_ENV, WAYPIPE_ATTACH_ENV):
@@ -178,15 +188,40 @@ def is_remote_session(environ: Mapping[str, str] | None = None) -> bool:
     ) or is_restricted_session(env)
 
 
-def remote_transport(environ: Mapping[str, str] | None = None) -> str | None:
-    """The name of the transport that started this session, or None."""
+def remote_transport(environ: Mapping[str, str] | None = None) -> RemoteTransport | None:
+    """The transport that started this session, or None (unmarked, or not a known one)."""
     env = os.environ if environ is None else environ
-    return env.get(REMOTE_TRANSPORT_ENV) or None
+    value = env.get(REMOTE_TRANSPORT_ENV)
+    if value == TRANSPORT_SSH:
+        return TRANSPORT_SSH
+    if value == TRANSPORT_WEB:
+        return TRANSPORT_WEB
+    return None
 
 
-def policy_transport(environ: Mapping[str, str] | None = None) -> str:
+def policy_transport(environ: Mapping[str, str] | None = None) -> RemoteTransport:
     """The transport whose `remote.<name>` policy governs this session (ssh when unmarked)."""
     return remote_transport(environ) or TRANSPORT_SSH
+
+
+def remote_client(environ: Mapping[str, str] | None = None) -> str | None:
+    """Who is at the other end of this remote session (its key fingerprint), or None."""
+    return (os.environ if environ is None else environ).get(REMOTE_CLIENT_ENV) or None
+
+
+def remote_session_policy(
+    load_remote: Callable[[], RemoteConfig], environ: Mapping[str, str] | None = None
+) -> RemotePolicy | None:
+    """The `remote.<transport>` policy a restricted session answers to; None otherwise.
+
+    ``load_remote`` reads the `remote` block of `global.yaml` and is called only
+    for a restricted session, so an edit to it applies to the next command even
+    inside a session that opened before the edit.
+    """
+    if not is_restricted_session(environ):
+        return None
+    remote = load_remote()
+    return remote.web if policy_transport(environ) == TRANSPORT_WEB else remote.ssh
 
 
 def is_ssh_session(environ: Mapping[str, str] | None = None) -> bool:

@@ -123,6 +123,23 @@ def prepare_argv(argv: list[str]) -> list[str]:
     return repo_option.with_repo_first(prefix if prefix is not None else late, rewritten)
 
 
+def _adopt_prompt_channel() -> None:
+    """Take over `JAILBEE_PROMPT_FD` before anything is spawned.
+
+    A command run by a dashboard inherits one end of its prompt channel; the
+    variable naming it is consumed here, once, so no process this command
+    starts later inherits it.
+    """
+    import os
+
+    from jailbee import prompt_channel
+
+    if os.environ.get(prompt_channel.PROMPT_FD_ENV):
+        from jailbee import prompting
+
+        prompting.adopt_channel()
+
+
 def main() -> None:
     from jailbee import cli_context
 
@@ -136,6 +153,8 @@ def main() -> None:
         if error:
             print(error, file=sys.stderr)
             raise SystemExit(2)
+
+    _adopt_prompt_channel()
 
     from jailbee.macos import BridgeError, maybe_delegate
 

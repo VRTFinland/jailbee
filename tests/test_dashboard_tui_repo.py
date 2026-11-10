@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from jailbee.config.models_remote import RemoteSSHConfig
-from jailbee.dashboard import dispatch as ddispatch
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import model as dmodel
@@ -123,7 +122,11 @@ def test_repo_apply_runs_with_the_chosen_restart_policy(mocker, tmp_path, downs,
     child.assert_called_once_with(
         ["jailbee", "apply", *tail, "--config", str(group.config_path)], check=False, cwd=tmp_path
     )
+    (_title, text, failed) = run.app.outputs[0]
     assert len(run.app.outputs) == 1
+    assert "output of jailbee apply" in text  # what the command printed is on the screen
+    assert ("--no-restart" in text) == bool(tail)
+    assert failed is False
 
 
 @pytest.mark.parametrize("key", ["escape", "ctrl+c"], ids=["escape", "ctrl-c"])
@@ -301,7 +304,10 @@ def test_repo_doctor_output_is_shown_on_a_scrollable_screen(mocker, tmp_path):
     child.assert_called_once_with(
         ["jailbee", "doctor", "--config", str(group.config_path)], check=False, cwd=tmp_path
     )
+    (_title, text, failed) = run.app.outputs[0]
     assert len(run.app.outputs) == 1  # the paged style: a scrollable output screen
+    assert text.startswith("output of jailbee doctor")  # the command's output, not just a count
+    assert failed is False
 
 
 def test_repo_doctor_over_ssh_sends_no_config(mocker, tmp_path):
@@ -351,10 +357,8 @@ def test_repo_disk_usage_and_prune_show_their_output(mocker, tmp_path, verb, arg
 
 def test_repo_doctor_failure_is_a_notice(mocker, tmp_path):
     group = cfg_group(tmp_path)
-    mocker.patch.object(ddispatch, "pager_argv", return_value=None)
     child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 1
-    patch_pause(mocker)
 
     run = drive(mocker, repo_menu_keys(group, "doctor"), [group])
 

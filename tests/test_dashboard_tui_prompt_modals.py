@@ -36,6 +36,11 @@ def run(prompt: Prompt, keys: list[str]) -> tuple[Any, Host]:
             shown["screen"] = host.screen
             shown["focused"] = host.focused
             shown["texts"] = [str(w.render()) for w in host.screen.query("Static")]
+            shown["option_texts"] = [
+                str(o.prompt)
+                for widget in host.screen.query("OptionList, SelectionList")
+                for o in (widget.get_option_at_index(i) for i in range(widget.option_count))
+            ]
             for key in keys:
                 await pilot.press(key)
             await pilot.pause()
@@ -117,11 +122,24 @@ def test_text_prefills_its_default():
     assert run(Prompt(1, "text", "name", default="main"), ["enter"])[0] == "main"
 
 
-def test_text_refuses_an_empty_answer_unless_clear_shortcut():
-    p = Prompt(1, "text", "name")
+def test_text_accepts_an_empty_answer_like_the_terminal():
+    # At the terminal "" is a normal answer; the command's validator decides.
+    assert run(Prompt(1, "text", "name"), ["enter"])[0] == ""
+
+
+def test_text_with_a_clear_shortcut_yields_empty_only_through_the_shortcut():
+    p = Prompt(1, "text", "name", clear_shortcut=True)
     answer, _ = run(p, ["enter", "escape"])
-    assert answer is None  # Enter did not answer; Esc did
-    assert run(Prompt(1, "text", "name", clear_shortcut=True), ["enter"])[0] == ""
+    assert answer is None  # Enter on empty did not answer; Esc did
+    assert run(p, ["space", "enter", "escape"])[0] is None  # blank is not an answer either
+    assert run(p, ["ctrl+r"])[0] == ""
+    assert run(p, [*"ab", "enter"])[0] == "ab"
+
+
+def test_text_shows_why_the_previous_answer_was_refused():
+    p = Prompt(2, "text", "name", error="not a valid branch name")
+    _a, host = run(p, ["escape"])
+    assert any("not a valid branch name" in t for t in host.shown["texts"])  # type: ignore[attr-defined]
 
 
 def test_secret_is_masked_and_returned_verbatim():
@@ -141,3 +159,36 @@ def test_context_is_shown():
     p = Prompt(1, "confirm", "q", context=WireContext(repo="alpha", container="alpha-x"))
     _a, host = run(p, ["y"])
     assert any("alpha / alpha-x" in t for t in host.shown["texts"])  # type: ignore[attr-defined]
+
+
+def test_confirm_shows_the_detail_above_the_buttons():
+    p = Prompt(1, "confirm", "Destroy x?", destructive=True, detail="3 unpushed commits")
+    _a, host = run(p, ["n"])
+    assert any("3 unpushed commits" in t for t in host.shown["texts"])  # type: ignore[attr-defined]
+
+
+def test_choose_one_rows_show_the_title_the_terminal_shows_not_the_label():
+    row = WireOption("0", "(config default)", "default", "")
+    other = WireOption("1", "4h", "4h", "")
+    p = Prompt(1, "choose_one", "How long?", options=(row, other))
+    _a, host = run(p, ["escape"])
+    rendered = _option_texts(host)
+    assert rendered[0].strip() == "(config default)"
+
+
+def _option_texts(host: Host) -> list[str]:
+    return host.shown["option_texts"]  # type: ignore[attr-defined,no-any-return]
+
+
+def test_choose_many_rows_show_titles_and_description_and_preticked_defaults():
+    options = (
+        WireOption("0", "first row", "one", "about one"),
+        WireOption("1", "second row", "two", ""),
+    )
+    p = Prompt(1, "choose_many", "Publish first?", options=options, default=("1",))
+    answer, host = run(p, ["enter"])
+    assert answer == ["1"]  # pre-ticked: Enter alone confirms it
+    rendered = _option_texts(host)
+    assert "first row" in rendered[0] and "about one" in rendered[0]
+    assert "second row" in rendered[1]
+    assert "one" not in rendered[1]

@@ -4059,11 +4059,15 @@ def _run_dashboard(
     from jailbee.config.models_remote import RemoteSSHConfig
     from jailbee.dashboard.commands import Transport
     from jailbee.incus import Incus
-    from jailbee.remote_ssh.session import is_remote_session, is_restricted_session
+    from jailbee.remote_ssh.session import (
+        is_remote_session,
+        is_restricted_session,
+        policy_transport,
+        remote_client,
+    )
 
     remote = is_restricted_session()
-    # The terminal dashboard is only ever started over SSH (the web one has its own server).
-    transport: Transport = "ssh" if is_remote_session() else "none"
+    transport: Transport = policy_transport() if is_remote_session() else "none"
     if transport != "none" and gui:
         error("The graphical dashboard is not available over remote SSH.")
         return 2
@@ -4153,6 +4157,7 @@ def _run_dashboard(
         transport=transport,
         ssh_policy=ssh_policy,
         scope=scope,
+        remote_client=remote_client(),
     )
 
 
@@ -7589,9 +7594,10 @@ def push(
             # unasked here: off a TTY it must be named, as for the plain branch.
             full = prompting.choose_one(
                 "PR container",
-                [prompting.Option(c.name, c.display_name, c.display_name) for c in candidates],
+                tui.container_options(candidates),
                 destructive=True,
                 empty_reason="No running clone-mode PR containers to push to.",
+                question="Select a PR container to push to:",
                 picker=lambda _opts: tui.pick_container(
                     candidates, message="Select a PR container to push to:"
                 ),
@@ -8291,8 +8297,9 @@ def _prompt_merge_endpoints(
                     cfg,
                     prompting.choose_one(
                         source_noun,
-                        [prompting.Option(c.name, c.display_name, c.display_name) for c in offer],
+                        tui.container_options(offer),
                         destructive=True,
+                        question="Select the container to merge FROM:",
                         picker=lambda _opts: tui.pick_container(
                             offer, message="Select the container to merge FROM:"
                         ),
@@ -12782,12 +12789,9 @@ def _remote_session_policy() -> "RemotePolicy | None":
     Read from `global.yaml` on every call, so a root removed there stops the
     next `mount` even inside an SSH session that opened before the edit.
     """
-    from jailbee.remote_ssh.session import TRANSPORT_WEB, is_restricted_session, policy_transport
+    from jailbee.remote_ssh.session import remote_session_policy
 
-    if not is_restricted_session():
-        return None
-    remote = _load_global().remote
-    return remote.web if policy_transport() == TRANSPORT_WEB else remote.ssh
+    return remote_session_policy(lambda: _load_global().remote)
 
 
 @app.command("mount")
@@ -14284,7 +14288,7 @@ def _resolve_review_container(
     from jailbee.incus import Incus
     from jailbee.lifecycle import list_containers, pr_outbox_counts
     from jailbee.outbox.service import parse_retained_ref
-    from jailbee.tui import pick_container
+    from jailbee.tui import container_options, pick_container
 
     if name is not None and retained and parse_retained_ref(name) is not None:
         # A destroyed instance's kept proposals (`jb outbox` lists them as full@uuid).
@@ -14316,7 +14320,7 @@ def _resolve_review_container(
     try:
         picked = prompting.choose_one(
             "container",
-            [prompting.Option(c.name, c.display_name, c.display_name) for c in pending],
+            container_options(pending),
             question="Select a container:",
             picker=lambda _opts: pick_container(pending),
         )
@@ -14830,7 +14834,7 @@ def _resolve_issue_container(
     from jailbee.lifecycle import list_containers
     from jailbee.orchestration.store import StoreError
     from jailbee.outbox.service import parse_retained_ref
-    from jailbee.tui import pick_container
+    from jailbee.tui import container_options, pick_container
 
     if name is not None and retained and parse_retained_ref(name) is not None:
         # A destroyed instance's kept proposals (`jb outbox` lists them as full@uuid).
@@ -14854,7 +14858,8 @@ def _resolve_issue_container(
         return incus, None
     picked = prompting.choose_one(
         "container",
-        [prompting.Option(ci.name, ci.display_name, ci.display_name) for ci in pending],
+        container_options(pending),
+        question="Select a container:",
         picker=lambda _options: pick_container(pending),
     )
     return incus, picked
@@ -15736,14 +15741,14 @@ def _choose_account_choice(
     """
     from jailbee import prompting
     from jailbee.accounts import selection
-    from jailbee.tui import pick_account
+    from jailbee.tui import choose_account
 
     return selection.choose(
         choices,
         ref=ref,
         nothing=nothing,
         message=message,
-        picker=pick_account,
+        picker=choose_account,
         is_interactive=prompting.is_interactive,
     )
 
@@ -16566,7 +16571,11 @@ def _resolve_group_container(
     from jailbee import prompting
     from jailbee.golden import is_golden_instance_name
     from jailbee.lifecycle import resolve_container_for_interactive
-    from jailbee.tui import pick_container_for_group
+    from jailbee.tui import (
+        GROUP_PICKER_QUESTION,
+        container_group_options,
+        pick_container_for_group,
+    )
 
     if name is not None:
         # `resolve_container_for_interactive` directly, not `_resolve_existing`:
@@ -16586,11 +16595,12 @@ def _resolve_group_container(
     names = sorted(str(r["name"]) for r in rows)
     return prompting.choose_one(
         "container",
-        [prompting.Option(n, n, n) for n in names],
+        container_group_options(cfg, incus, names),
         empty_reason=(
             f"No containers for {cfg.container_prefix}. `jailbee new <branch>` creates one."
         ),
-        picker=lambda opts: pick_container_for_group(cfg, incus, [o.value for o in opts]),
+        question=GROUP_PICKER_QUESTION,
+        picker=lambda opts: pick_container_for_group(opts),
     )
 
 

@@ -17,6 +17,7 @@ from jailbee.config.models_remote import (
     RemoteCommandPolicy,
     RemotePolicy,
     RemoteSSHConfig,
+    RemoteTransport,
 )
 from jailbee.db import get_engine
 from jailbee.db.models import RegisteredRepo
@@ -390,7 +391,7 @@ class RemoteUnlocks:
     # Whether `remote.ssh.waypipe` is on: only worded into the GUI refusal.
     waypipe_available: bool = False
     # The transport named in refusals (`remote.<transport>.network is on`).
-    transport: str = "ssh"
+    transport: RemoteTransport = "ssh"
 
     @classmethod
     def of(
@@ -398,7 +399,7 @@ class RemoteUnlocks:
         config: RemotePolicy | None,
         *,
         waypipe: bool | None = None,
-        transport: str = "ssh",
+        transport: RemoteTransport = "ssh",
     ) -> RemoteUnlocks:
         """The switches `config` turns on; all off without a config.
 

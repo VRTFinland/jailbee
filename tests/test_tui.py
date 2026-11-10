@@ -594,12 +594,13 @@ def test_default_confirm_off_a_terminal_is_missing_value_not_a_silent_no(mocker)
 def test_default_confirm_cancel_is_cancelled_not_no(terminal, mocker):
     """Ctrl-C means "abandon the command", not "answer no": run_apply treats a
     False answer as "skip the restart" and would exit 0 half done."""
+    import typer
+
     from jailbee import tui
-    from jailbee.prompting import Cancelled
 
     mocker.patch("jailbee.prompting._confirm", return_value=None)
 
-    with pytest.raises(Cancelled):
+    with pytest.raises(typer.Abort):
         tui.default_confirm("Proceed?")
 
 

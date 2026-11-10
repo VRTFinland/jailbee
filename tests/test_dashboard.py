@@ -2339,27 +2339,6 @@ def test_dispatch_action_omits_the_config_flag_for_a_scratch_repo(mocker, tmp_pa
     run.assert_called_once_with(["jailbee", "net", "loose", "alpha-x"], check=False, cwd=tmp_path)
 
 
-def test_dispatch_action_pages_a_scratch_repo_from_its_repo_root(mocker, tmp_path):
-    """The pager path spawns the command itself, so it needs the cwd too —
-    otherwise `jailbee git diff` in a scratch repo resolves the dashboard's own
-    directory instead of the row's."""
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    popen = mocker.patch.object(tsession.subprocess, "Popen")
-    popen.return_value.wait.return_value = 0
-    # Patching `Popen` alone is process-wide and takes `subprocess.run` with
-    # it too — mocked here (as the sibling non-scratch test already does) so
-    # a regression that reaches the plain `run` fallback fails with a
-    # readable assertion instead of a `TypeError` from the real subprocess API.
-    run = mocker.patch.object(tsession.subprocess, "run")
-
-    ddispatch._dispatch_action(dmodel.RepoTarget(tmp_path, None), "git diff", "alpha-x")
-
-    producer = popen.call_args_list[0]
-    assert producer.args[0] == ["jailbee", "git", "diff", "alpha-x", "--color"]
-    assert producer.kwargs["cwd"] == tmp_path
-    run.assert_not_called()  # the paged path replaces the plain run entirely
-
-
 def _report_child(marks: str | None):  # type: ignore[no-untyped-def]
     """A fake `subprocess.run` that writes ``marks`` where the env says, like `tui` does."""
 
@@ -2429,68 +2408,6 @@ def test_every_printing_verb_is_a_real_menu_verb():
         ddispatch._OUTPUT_VERBS | ddispatch._PAGED_VERBS | ddispatch._REPORT_VERBS
         == dmenus.PRINTING_VERBS
     )
-
-
-def test_pager_argv_prefers_the_environment(mocker):
-    mocker.patch.dict(ddispatch.os.environ, {"PAGER": "bat -p"}, clear=False)
-    assert ddispatch.pager_argv() == ["bat", "-p"]
-
-
-def test_pager_argv_falls_back_to_less_then_more(mocker):
-    mocker.patch.dict(ddispatch.os.environ, {}, clear=True)
-    which = mocker.patch.object(ddispatch.shutil, "which", return_value=None)
-    assert ddispatch.pager_argv() is None
-
-    which.side_effect = lambda n: "/usr/bin/more" if n == "more" else None
-    assert ddispatch.pager_argv() == ["more"]
-
-    which.side_effect = lambda n: f"/usr/bin/{n}"
-    assert ddispatch.pager_argv() == ["less", "-R"]
-
-
-def test_dispatch_action_pages_the_diff_and_forces_colour(mocker, tmp_path):
-    config_path = tmp_path / "config.yaml"
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    popen = mocker.patch.object(tsession.subprocess, "Popen")
-    popen.return_value.wait.return_value = 0
-    run = mocker.patch.object(tsession.subprocess, "run")
-
-    rc = ddispatch._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x")
-
-    assert rc == 0
-    producer, viewer = popen.call_args_list
-    assert producer.args[0] == [
-        "jailbee",
-        "git",
-        "diff",
-        "alpha-x",
-        "--config",
-        str(config_path),
-        "--color",
-    ]
-    assert producer.kwargs["cwd"] == tmp_path
-    assert viewer.args[0] == ["less", "-R"]
-    # The pager is a plain viewer on a pipe: it has no repo of its own, so it
-    # must not be pinned to one.
-    assert "cwd" not in viewer.kwargs
-    run.assert_not_called()  # the paged path replaces the plain run entirely
-
-
-def test_remote_dispatch_action_never_starts_a_pager(mocker, tmp_path):
-    """`less`'s `!`, `v` and `|` would run on the host. A remote diff is
-    printed and paused on instead, and no pager process exists at all."""
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    popen = mocker.patch.object(tsession.subprocess, "Popen")
-    run = mocker.patch.object(tsession.subprocess, "run")
-    run.return_value.returncode = 0
-    wait = patch_pause(mocker)
-
-    rc = ddispatch._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x", remote=True)
-
-    assert rc == 0
-    popen.assert_not_called()
-    assert run.call_args.args[0][:4] == ["jailbee", "git", "diff", "alpha-x"]
-    wait.assert_called_once_with()
 
 
 def test_pr_push_dispatch_inherits_terminal_streams(mocker, tmp_path):
@@ -2565,74 +2482,6 @@ def test_dispatch_action_does_not_pause_after_an_interactive_verb(mocker, tmp_pa
     ddispatch._dispatch_action(_dispatch_target(tmp_path), "tmux", "alpha-x")
 
     wait.assert_not_called()
-
-
-def test_dispatch_action_falls_back_to_a_pause_when_there_is_no_pager(mocker, tmp_path):
-    mocker.patch.object(ddispatch, "pager_argv", return_value=None)
-    run = mocker.patch.object(tsession.subprocess, "run")
-    run.return_value.returncode = 3
-    wait = patch_pause(mocker)
-
-    rc = ddispatch._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x")
-
-    assert rc == 3
-    wait.assert_called_once_with()
-    assert "--color" not in run.call_args.args[0]  # no pager, so no forced colour
-
-
-def test_dispatch_action_falls_back_when_the_pager_cannot_be_spawned(mocker, tmp_path):
-    """`which` said yes and `exec` said no. The command still has to run, and
-    its output still has to be readable."""
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    producer = mocker.MagicMock()
-    popen = mocker.patch.object(tsession.subprocess, "Popen")
-    popen.side_effect = [producer, OSError("no less")]
-    run = mocker.patch.object(tsession.subprocess, "run")
-    run.return_value.returncode = 0
-    wait = patch_pause(mocker)
-
-    rc = ddispatch._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x")
-
-    assert rc == 0
-    # Nothing will ever read the pipe, so the first process must not be left
-    # blocked on a full one.
-    producer.kill.assert_called_once_with()
-    run.assert_called_once()
-    wait.assert_called_once_with()
-
-
-def test_dispatch_action_does_not_mistake_a_vanished_repo_for_a_missing_pager(mocker, tmp_path):
-    """The producer itself can fail to start too — most notably when the
-    repo's directory has disappeared out from under the dispatch. That must
-    not be logged (or handled) as "pager failed": it has to surface as a bare
-    `OSError` so the caller (`run`'s `dispatch`) can tell the two apart and
-    report the real cause. Before the fix, this was swallowed by the same
-    `except OSError` that exists for a missing pager and then fell through to
-    the plain `subprocess.run` fallback — which would raise the identical
-    `OSError` uncaught, taking the whole TUI down.
-    """
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    popen = mocker.patch.object(tsession.subprocess, "Popen")
-    popen.side_effect = OSError("no such directory")
-    run = mocker.patch.object(tsession.subprocess, "run")
-
-    with pytest.raises(OSError):
-        ddispatch._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x")
-
-    run.assert_not_called()  # must not fall back to a doomed retry
-
-
-def test_dispatch_falls_back_to_a_pager_unavailable_when_the_pager_itself_fails(mocker, tmp_path):
-    """Sanity check alongside the test above: the pager-missing case is still
-    a `_PagerUnavailableError` (an `OSError` subclass), and `_run_paged` raising it
-    is what the call site's `except _PagerUnavailableError` actually catches."""
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    producer = mocker.MagicMock()
-    popen = mocker.patch.object(tsession.subprocess, "Popen")
-    popen.side_effect = [producer, OSError("no less")]
-
-    with pytest.raises(ddispatch._PagerUnavailableError):
-        ddispatch._run_paged(["jailbee", "git", "diff"], ["less", "-R"], tmp_path)
 
 
 def test_actions_for_container_matches_menu_actions():
@@ -5650,71 +5499,18 @@ def test_run_cli_foreground_refuses_before_spawning(mocker, tmp_path):
     from jailbee.remote_ssh.router import RouteError
 
     run = mocker.patch.object(tsession.subprocess, "run")
-    paged = mocker.patch.object(ddispatch, "_run_paged")
 
     with pytest.raises(RouteError):
         ddispatch._run_cli_foreground(
             _target(tmp_path),
             ["apply"],
-            style="paged",
+            style="output",
             remote=True,
             transport="ssh",
             ssh_policy=RemoteSSHConfig(),
         )
 
     run.assert_not_called()
-    paged.assert_not_called()
-
-
-def test_run_cli_foreground_pages_locally(mocker, tmp_path):
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    paged = mocker.patch.object(ddispatch, "_run_paged", return_value=3)
-    run = mocker.patch.object(tsession.subprocess, "run")
-
-    rc = ddispatch._run_cli_foreground(_target(tmp_path), ["doctor"], style="paged")
-
-    assert rc == 3
-    paged.assert_called_once_with(
-        ["jailbee", "doctor", "--config", str(tmp_path / "c.yaml")], ["less", "-R"], tmp_path
-    )
-    run.assert_not_called()
-
-
-def test_run_cli_foreground_never_pages_a_remote_session(mocker, tmp_path):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    paged = mocker.patch.object(ddispatch, "_run_paged")
-    run = mocker.patch.object(tsession.subprocess, "run")
-    run.return_value.returncode = 0
-    wait = patch_pause(mocker)
-
-    ddispatch._run_cli_foreground(
-        _target(tmp_path),
-        ["doctor"],
-        style="paged",
-        remote=True,
-        transport="ssh",
-        ssh_policy=RemoteSSHConfig(),
-    )
-
-    paged.assert_not_called()
-    run.assert_called_once_with(["jailbee", "doctor"], check=False, cwd=tmp_path)
-    wait.assert_called_once()
-
-
-def test_run_cli_foreground_falls_back_to_a_pause_when_the_pager_fails(mocker, tmp_path):
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    mocker.patch.object(
-        ddispatch, "_run_paged", side_effect=ddispatch._PagerUnavailableError("gone")
-    )
-    run = mocker.patch.object(tsession.subprocess, "run")
-    run.return_value.returncode = 0
-    wait = patch_pause(mocker)
-
-    assert ddispatch._run_cli_foreground(_target(tmp_path), ["doctor"], style="paged") == 0
-    run.assert_called_once()
-    wait.assert_called_once()
 
 
 def test_run_cli_foreground_plain_does_not_pause(mocker, tmp_path):
@@ -5761,33 +5557,6 @@ def test_run_cli_foreground_report_pauses_on_a_failure(mocker, tmp_path):
     )
 
     assert rc == 1
-    wait.assert_called_once()
-
-
-@pytest.mark.parametrize(("remote", "over_ssh"), [(False, True), (True, False)])
-def test_run_cli_foreground_either_remote_flag_alone_forbids_the_pager(
-    mocker, tmp_path, remote, over_ssh
-):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    pager = mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    paged = mocker.patch.object(ddispatch, "_run_paged")
-    run = mocker.patch.object(tsession.subprocess, "run")
-    run.return_value.returncode = 0
-    wait = patch_pause(mocker)
-
-    ddispatch._run_cli_foreground(
-        _target(tmp_path),
-        ["doctor"],
-        style="paged",
-        remote=remote,
-        transport=("ssh" if over_ssh else "none"),
-        ssh_policy=RemoteSSHConfig(),
-    )
-
-    pager.assert_not_called()
-    paged.assert_not_called()
-    run.assert_called_once()
     wait.assert_called_once()
 
 
