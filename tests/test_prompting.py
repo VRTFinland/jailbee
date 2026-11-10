@@ -433,10 +433,86 @@ def test_ask_confirm_returns_the_answer_and_passes_default(mocker, tty):
     assert ask.call_args.args == ("Go?", False)
 
 
-def test_ask_confirm_cancel_raises_cancelled(mocker, tty):
+def test_ask_confirm_cancel_is_typers_abort_not_cancelled(mocker, tty):
     mocker.patch("jailbee.prompting._confirm", return_value=None)
-    with pytest.raises(Cancelled):
+    with pytest.raises(typer.Abort):
         prompting.ask_confirm("Go?")
+
+
+def test_the_terminal_confirmation_is_typer_confirm(mocker):
+    ask = mocker.patch("typer.confirm", return_value=True)
+    assert prompting._confirm("Go?", False) is True
+    ask.assert_called_once_with("Go?", default=False)
+
+
+def _confirming_app() -> typer.Typer:
+    demo = typer.Typer()
+
+    @demo.command()
+    def go() -> None:
+        typer.echo("answer=" + str(prompting.ask_confirm("Delete it?", default=False)))
+
+    @demo.command()
+    def other() -> None:
+        pass
+
+    return demo
+
+
+def test_a_confirmation_looks_like_typers_at_the_terminal(mocker, tty):
+    result = CliRunner().invoke(_confirming_app(), ["go"], input="y\n")
+    assert result.exit_code == 0
+    assert "Delete it? [y/N]: " in result.output
+    assert "answer=True" in result.output
+
+
+def test_ctrl_c_at_a_confirmation_is_the_aborted_exit(mocker, tty):
+    result = CliRunner().invoke(_confirming_app(), ["go"], input="")  # EOF
+    assert result.exit_code == 1
+    assert "Aborted" in result.output
+
+
+def test_a_confirmation_detail_is_printed_before_the_question(mocker, tty, capsys):
+    mocker.patch("typer.confirm", side_effect=lambda *a, **k: print("[question asked]") or True)
+    prompting.ask_confirm("Go?", detail="⚠ it is dirty\nplain line")
+    out = capsys.readouterr().out
+    assert out.index("it is dirty") < out.index("plain line") < out.index("[question asked]")
+
+
+def test_select_backend_is_the_one_place_for_every_function(monkeypatch):
+    seen = []
+
+    class Fake:
+        def choose_one(self, noun, options, **kw):
+            seen.append("choose_one")
+            return options[0].value
+
+        def text(self, noun, **kw):
+            seen.append("text")
+            return "typed"
+
+    monkeypatch.setattr(prompting, "select_backend", lambda interactive=None: Fake())
+    assert choose_one("x", [A, B]) == "a-full"
+    assert ask_text("x", validate=lambda t: None) == "typed"
+    assert seen == ["choose_one", "text"]
+
+
+def test_select_many_ticks_the_default_rows(mocker):
+    seen = {}
+
+    def checkbox(header, choices, **kw):
+        seen["header"] = header
+        seen["checked"] = [c.value for c in choices if c.checked]
+        return []
+
+    mocker.patch("jailbee.tui.checkbox", side_effect=checkbox)
+    prompting._select_many("thing", [A, B], default=["b-full"])
+    assert seen == {"header": "Select thing:", "checked": ["b-full"]}
+
+
+def test_displayed_question_is_the_terminal_header_and_the_channel_question():
+    assert prompting.displayed_question("login", None) == "Select login:"
+    assert prompting.displayed_question("login", "Which one?") == "Which one?"
 
 
 def test_ask_confirm_off_a_tty_is_missing_not_a_silent_default(mocker, no_tty):
@@ -499,11 +575,11 @@ def test_a_backend_receives_the_context_and_a_custom_one_can_be_selected(monkeyp
     seen = {}
 
     class Fake:
-        def confirm(self, question, *, default, destructive, context, alternative):
+        def confirm(self, question, *, default, destructive, context, alternative, detail=None):
             seen["ctx"] = context
             return True
 
-    monkeypatch.setattr("jailbee.prompting.select_backend", lambda: Fake())
+    monkeypatch.setattr("jailbee.prompting.select_backend", lambda interactive=None: Fake())
     ctx = prompting.PromptContext(container="c1")
     assert prompting.ask_confirm("Go?", context=ctx) is True
     assert seen["ctx"] == ctx

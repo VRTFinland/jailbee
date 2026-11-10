@@ -11,7 +11,8 @@ Wire format (every object has a ``type``)::
                                        | "text" | "secret",
      "question": str, "options": [{"id": "0", "title": str, "label": str,
                                    "description": str}, ...],
-     "default": bool | str | null, "destructive": bool,
+     "default": bool | str | [str] | null, "destructive": bool,
+     "detail": str | null, "error": str | null,
      "context": {"repo": str | null, "container": str | null} | null,
      "completions": [str] | null, "clear_shortcut": bool}
     {"type": "answer", "id": 7, "value": ...}   # confirm: bool; choose_one: option
@@ -19,6 +20,13 @@ Wire format (every object has a ``type``)::
                                                 # text/secret: str
     {"type": "cancel", "id": 7}
     {"type": "progress", ...} / {"type": "output", ...}   # reserved, not emitted
+
+``options[].title`` is the row exactly as the terminal prints it (``label`` is
+the short name used in errors). ``default`` is the preselected option id
+(choose_one), the pre-ticked option ids (choose_many), the prefilled text or
+the confirm default. ``detail`` is context shown with a confirm (what a
+destroy would lose); ``error`` is why the previous answer to this question was
+refused, on the re-ask of a text prompt.
 
 Each side sends its hello first and then reads the peer's; a differing
 ``version`` raises `ProtocolVersionError` on both ends. EOF means cancel.
@@ -39,6 +47,9 @@ from dataclasses import dataclass, field
 from typing import IO, Any
 
 PROTOCOL_VERSION = 1
+
+# The environment variable naming the command's inherited end of the channel.
+PROMPT_FD_ENV = "JAILBEE_PROMPT_FD"
 
 KINDS = ("confirm", "choose_one", "choose_many", "text", "secret")
 # Reserved for later versions: defined, never emitted by this one.
@@ -77,11 +88,13 @@ class Prompt:
     kind: str
     question: str
     options: tuple[WireOption, ...] = ()
-    default: bool | str | None = None
+    default: bool | str | tuple[str, ...] | None = None
     destructive: bool = False
     context: WireContext | None = None
     completions: tuple[str, ...] | None = None
     clear_shortcut: bool = False
+    detail: str | None = None
+    error: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -93,7 +106,7 @@ class Prompt:
                 {"id": o.id, "title": o.title, "label": o.label, "description": o.description}
                 for o in self.options
             ],
-            "default": self.default,
+            "default": list(self.default) if isinstance(self.default, tuple) else self.default,
             "destructive": self.destructive,
             "context": (
                 None
@@ -102,6 +115,8 @@ class Prompt:
             ),
             "completions": None if self.completions is None else list(self.completions),
             "clear_shortcut": self.clear_shortcut,
+            "detail": self.detail,
+            "error": self.error,
         }
 
     @classmethod
@@ -112,6 +127,9 @@ class Prompt:
                 raise ProtocolError(f"unknown prompt kind {kind!r}")
             ctx = data.get("context")
             comps = data.get("completions")
+            default = data.get("default")
+            detail = data.get("detail")
+            error = data.get("error")
             return cls(
                 id=int(data["id"]),
                 kind=kind,
@@ -125,11 +143,13 @@ class Prompt:
                     )
                     for o in data.get("options") or ()
                 ),
-                default=data.get("default"),
+                default=tuple(str(d) for d in default) if isinstance(default, list) else default,
                 destructive=bool(data.get("destructive", False)),
                 context=None if ctx is None else WireContext(ctx.get("repo"), ctx.get("container")),
                 completions=None if comps is None else tuple(str(c) for c in comps),
                 clear_shortcut=bool(data.get("clear_shortcut", False)),
+                detail=None if detail is None else str(detail),
+                error=None if error is None else str(error),
             )
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
             raise ProtocolError(f"malformed prompt message: {exc!r}") from exc

@@ -31,13 +31,12 @@ from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard import actions as dact
 from jailbee.dashboard.commands import Transport, check_dashboard_command
 from jailbee.dashboard.menus import APPS_RUN_PREFIX, ATTACH_VERBS
-from jailbee.prompt_channel import Prompt, UiEnd
+from jailbee.prompt_channel import PROMPT_FD_ENV, Prompt, UiEnd
 from jailbee.remote_ssh import router
 from jailbee.remote_ssh.router import RouteError
 
 log = logging.getLogger(__name__)
 
-PROMPT_FD_ENV = "JAILBEE_PROMPT_FD"
 
 # A prompt handler returns the wire value (see `prompt_channel`: bool for
 # confirm, option id for choose_one, list of ids for choose_many, str for

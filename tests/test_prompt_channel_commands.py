@@ -93,9 +93,7 @@ def _open_channel(
 
     def close() -> None:
         # Command side first: the peer's serve loop ends on EOF.
-        for end in prompting._CHANNELS.values():
-            end.close()
-        prompting._CHANNELS.clear()
+        prompting.drop_channel()
         cmd_sock.close()
         peer.join()
         ui_sock.close()

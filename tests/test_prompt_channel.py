@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
+import typer
 
 from jailbee import prompt_channel as pc
 from jailbee import prompting
@@ -74,9 +75,7 @@ def channel(
 
     yield make
     # Close the command side first: the peer's serve loop ends on EOF.
-    for end in prompting._CHANNELS.values():
-        end.close()
-    prompting._CHANNELS.clear()
+    prompting.drop_channel()
     cmd_sock.close()
     for peer in peers:
         peer.join()
@@ -182,19 +181,22 @@ def test_secret_answer(channel: Any) -> None:
 
 
 @pytest.mark.parametrize(
-    "call",
+    "call, raised",
     [
-        lambda: ask_confirm("q"),
-        lambda: choose_one("n", [Option(1, "a", "a"), Option(2, "b", "b")]),
-        lambda: choose_many("n", [Option(1, "a", "a")]),
-        lambda: ask_text("n", validate=lambda t: None),
-        lambda: ask_secret("n"),
+        # A confirmation has always been typer's: its cancel is typer's Abort.
+        (lambda: ask_confirm("q"), typer.Abort),
+        (lambda: choose_one("n", [Option(1, "a", "a"), Option(2, "b", "b")]), Cancelled),
+        (lambda: choose_many("n", [Option(1, "a", "a")]), Cancelled),
+        (lambda: ask_text("n", validate=lambda t: None), Cancelled),
+        (lambda: ask_secret("n"), Cancelled),
     ],
     ids=["confirm", "choose_one", "choose_many", "text", "secret"],
 )
-def test_cancel_raises_cancelled_for_every_kind(channel: Any, call: Callable[[], object]) -> None:
+def test_cancel_has_the_cancel_exit_for_every_kind(
+    channel: Any, call: Callable[[], object], raised: type[Exception]
+) -> None:
     channel(lambda p: None)
-    with pytest.raises(Cancelled):
+    with pytest.raises(raised):
         call()
 
 
@@ -203,12 +205,10 @@ def test_eof_is_cancel(channel: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("JAILBEE_PROMPT_FD", str(cmd_sock.fileno()))
     ui_sock.close()
     try:
-        with pytest.raises(Cancelled):
+        with pytest.raises(typer.Abort):
             ask_confirm("q")
     finally:
-        for end in prompting._CHANNELS.values():
-            end.close()
-        prompting._CHANNELS.clear()
+        prompting.drop_channel()
         cmd_sock.close()
 
 
@@ -224,13 +224,11 @@ def test_ui_dying_mid_question_cancels(channel: Any, monkeypatch: pytest.MonkeyP
     t = threading.Thread(target=die, daemon=True)
     t.start()
     try:
-        with pytest.raises(Cancelled):
+        with pytest.raises(typer.Abort):
             ask_confirm("q")
     finally:
         t.join(JOIN)
-        for end in prompting._CHANNELS.values():
-            end.close()
-        prompting._CHANNELS.clear()
+        prompting.drop_channel()
         cmd_sock.close()
 
 
@@ -308,9 +306,7 @@ def test_version_mismatch_fails_clearly_on_command_side(
     finally:
         ui_sock.close()
         t.join(JOIN)
-        for end in prompting._CHANNELS.values():
-            end.close()
-        prompting._CHANNELS.clear()
+        prompting.drop_channel()
         cmd_sock.close()
 
 
@@ -344,9 +340,7 @@ def test_reserved_events_are_skipped(channel: Any, monkeypatch: pytest.MonkeyPat
         assert ask_confirm("q") is True
     finally:
         t.join(JOIN)
-        for end in prompting._CHANNELS.values():
-            end.close()
-        prompting._CHANNELS.clear()
+        prompting.drop_channel()
         cmd_sock.close()
         ui_sock.close()
 
@@ -367,7 +361,73 @@ def test_choose_one_sends_the_explicit_question(channel: Any) -> None:
     assert peer.prompts[0].question == "More than one PR description is pending. Which one?"
 
 
-def test_choose_one_without_a_question_sends_the_noun(channel: Any) -> None:
+# ---- adoption: the descriptor variable is consumed once ----------------------------
+
+
+def test_adoption_consumes_the_variable_and_later_asks_still_use_the_channel(
+    channel: Any,
+) -> None:
+    import os
+
+    peer = channel(lambda p: True)
+    assert os.environ.get(pc.PROMPT_FD_ENV)
+    prompting.adopt_channel()
+    assert pc.PROMPT_FD_ENV not in os.environ  # a grandchild cannot inherit the name
+    assert prompting.is_interactive() is True
+    assert ask_confirm("q") is True
+    assert len(peer.prompts) == 1
+
+
+def test_adoption_makes_the_descriptor_non_inheritable(channel: Any) -> None:
+    import os
+
+    channel(lambda p: True)
+    fd = int(os.environ[pc.PROMPT_FD_ENV])
+    prompting.adopt_channel()
+    assert os.get_inheritable(fd) is False
+    os.fstat(fd)  # still open: the inherited end is never closed
+
+
+def test_a_grandchild_does_not_see_the_prompt_variable(channel: Any) -> None:
+    import subprocess
+    import sys
+
+    channel(lambda p: True)
+    prompting.adopt_channel()
+    out = subprocess.run(
+        [sys.executable, "-c", "import os;print(os.environ.get('JAILBEE_PROMPT_FD'))"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert out.strip() == "None"
+
+
+# ---- wire details the dashboard shows ----------------------------------------------
+
+
+def test_confirm_detail_travels(channel: Any) -> None:
+    peer = channel(lambda p: True)
+    ask_confirm("Destroy?", destructive=True, detail="⚠ 3 unpushed commits")
+    assert peer.prompts[0].detail == "⚠ 3 unpushed commits"
+
+
+def test_choose_many_defaults_travel_as_option_ids(channel: Any) -> None:
+    peer = channel(lambda p: ["1"])
+    opts = [Option("a", "A", "a"), Option("b", "B", "b"), Option("c", "C", "c")]
+    choose_many("things", opts, default=["a", "c"])
+    assert peer.prompts[0].default == ("0", "2")
+
+
+def test_choose_one_question_is_the_terminals_header_by_default(channel: Any) -> None:
     peer = channel(lambda p: p.options[0].id)
-    choose_one("thing", [Option("a", "A", "alpha"), Option("b", "B", "beta")])
-    assert peer.prompts[0].question == "thing"
+    choose_one("login", [Option("a", "A", "a"), Option("b", "B", "b")])
+    choose_one("login", [Option("a", "A", "a"), Option("b", "B", "b")], question="Which?")
+    assert [p.question for p in peer.prompts] == ["Select login:", "Which?"]
+
+
+def test_a_refused_text_answer_is_explained_on_the_next_prompt(channel: Any) -> None:
+    answers = iter(["bad", "good"])
+    peer = channel(lambda p: next(answers))
+    ask_text("name", validate=lambda t: None if t == "good" else "not a name")
+    assert [p.error for p in peer.prompts] == [None, "not a name"]

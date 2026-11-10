@@ -11,7 +11,7 @@ chosen per call by `select_backend()`:
 =============  ==========================================  =================
 function       answer                                      cancel (Ctrl-C/Esc)
 =============  ==========================================  =================
-ask_confirm    bool                                        Cancelled (never "no")
+ask_confirm    bool                                        typer.Abort (never "no")
 choose_one     the chosen option's value                   Cancelled
 choose_many    list of values; [] is a valid answer        Cancelled
 ask_text       validated str; "" only via clear_shortcut   Cancelled
@@ -23,6 +23,11 @@ A backend returns None for cancel; the public function raises `Cancelled`
 answer: it must not read as "no", "nothing selected" or an empty string. A
 backend that cannot ask raises `MissingValue` (exit 2) naming the value.
 `JAILBEE_NONINTERACTIVE` forces the non-interactive backend over everything.
+
+The one exception to `Cancelled` is the yes/no question: it has always been
+`typer.confirm`, whose Ctrl-C is typer's `Abort` ("Aborted!", exit 1), and a
+cancelled confirmation presents that way on every backend, a prompt channel's
+cancel included, so cancelling is exactly Ctrl-C.
 
 `MissingValue` and `Cancelled` are Typer's `ClickException`s, so Typer prints
 them (its `Error` panel, stderr) and sets the exit code — under `CliRunner`
@@ -42,6 +47,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Generic, Protocol, TypeVar
 
+import typer
 from rich.text import Text
 from typer._click.exceptions import ClickException
 
@@ -56,6 +62,25 @@ _CANCEL = object()
 # cancel row, so a bare Enter backs out (an optional, consequential choice).
 # Over the channel it names no option: the prompt has no default.
 CANCEL_ROW: Any = _CANCEL
+
+
+def displayed_question(noun: str, question: str | None) -> str:
+    """The question as the user reads it: `question`, else "Select <noun>:".
+
+    The one place this text is built: the terminal's default pickers and the
+    prompt channel both call it, so a dashboard asks what the terminal asks.
+    """
+    return f"Select {noun}:" if question is None else question
+
+
+def _capitalized(noun: str) -> str:
+    # Not str.capitalize(): it lowercases the rest ("GitHub" -> "Github").
+    return noun[:1].upper() + noun[1:]
+
+
+def _explicit_hint(alternative: str | None) -> str:
+    """"pass it explicitly" plus the flag that also answers, when there is one."""
+    return f"pass it explicitly{f' or use {alternative}' if alternative else ''}"
 
 
 def is_interactive() -> bool:
@@ -101,9 +126,8 @@ class MissingValue(ClickException):
         if reason is not None:
             message = reason
         else:
-            how = f"pass it explicitly{f' or use {alternative}' if alternative else ''}"
             verb = "type it" if free_text else "choose"
-            message = f"missing {noun}; {how}, or run in a terminal to {verb}"
+            message = f"missing {noun}; {_explicit_hint(alternative)}, or run in a terminal to {verb}"
             if self.candidates:
                 message += ". Candidates: " + ", ".join(self.candidates)
         super().__init__(message)
@@ -142,6 +166,7 @@ class PromptBackend(Protocol):
         destructive: bool,
         context: PromptContext | None,
         alternative: str | None,
+        detail: str | None = None,
     ) -> bool | None: ...
 
     def choose_one(
@@ -166,6 +191,7 @@ class PromptBackend(Protocol):
         alternative: str | None,
         picker: Callable[[Sequence[Option[Any]]], list[Any] | None] | None,
         question: str | None,
+        default: Sequence[Any] | None = None,
     ) -> list[Any] | None: ...
 
     def text(
@@ -177,6 +203,7 @@ class PromptBackend(Protocol):
         clear_shortcut: bool,
         context: PromptContext | None,
         alternative: str | None,
+        error: str | None = None,
     ) -> str | None: ...
 
     def secret(
@@ -199,7 +226,10 @@ class TerminalBackend:
         destructive: bool,
         context: PromptContext | None,
         alternative: str | None,
+        detail: str | None = None,
     ) -> bool | None:
+        if detail:
+            _show_detail(detail)
         # A destructive question never defaults to consent.
         return _confirm(question, False if destructive else default)
 
@@ -234,12 +264,16 @@ class TerminalBackend:
         alternative: str | None,
         picker: Callable[[Sequence[Option[Any]]], list[Any] | None] | None,
         question: str | None,
+        default: Sequence[Any] | None = None,
     ) -> list[Any] | None:
         if picker is not None:
             return picker(options)
-        if question is None:
-            return _select_many(noun, options)
-        return _select_many(noun, options, question=question)
+        kwargs: dict[str, Any] = {}
+        if question is not None:
+            kwargs["question"] = question
+        if default is not None:
+            kwargs["default"] = default
+        return _select_many(noun, options, **kwargs)
 
     def text(
         self,
@@ -250,6 +284,7 @@ class TerminalBackend:
         clear_shortcut: bool,
         context: PromptContext | None,
         alternative: str | None,
+        error: str | None = None,
     ) -> str | None:
         if clear_shortcut:
             return _ask(noun, default, completions, clear_shortcut=True)
@@ -276,11 +311,14 @@ class NonInteractiveBackend:
         destructive: bool,
         context: PromptContext | None,
         alternative: str | None,
+        detail: str | None = None,
     ) -> bool | None:
-        how = f"pass it explicitly{f' or use {alternative}' if alternative else ''}"
         raise MissingValue(
             "confirmation",
-            reason=f"confirmation needed ({question}); {how}, or run in a terminal to answer",
+            reason=(
+                f"confirmation needed ({question}); {_explicit_hint(alternative)}, "
+                "or run in a terminal to answer"
+            ),
         )
 
     def choose_one(
@@ -306,6 +344,7 @@ class NonInteractiveBackend:
         alternative: str | None,
         picker: Callable[[Sequence[Option[Any]]], list[Any] | None] | None,
         question: str | None,
+        default: Sequence[Any] | None = None,
     ) -> list[Any] | None:
         raise MissingValue(noun, candidates=[o.label for o in options], alternative=alternative)
 
@@ -318,6 +357,7 @@ class NonInteractiveBackend:
         clear_shortcut: bool,
         context: PromptContext | None,
         alternative: str | None,
+        error: str | None = None,
     ) -> str | None:
         raise MissingValue(noun, alternative=alternative, free_text=True)
 
@@ -331,38 +371,54 @@ class NonInteractiveBackend:
         raise MissingValue(noun, alternative=alternative, free_text=True)
 
 
-_CHANNELS: dict[tuple[int, int, int], pc.CommandEnd] = {}
+# The one process-wide global in jailbee's prompting: a process has exactly one
+# prompt channel, adopted once from `JAILBEE_PROMPT_FD` and then reused by every
+# question. It cannot be an argument: the questions are asked from hundreds of
+# call sites that have no handle to pass it through.
+_CHANNELS: list[pc.CommandEnd] = []
+
+
+def drop_channel() -> None:
+    """Close and forget the adopted channel (tests; a process normally keeps it)."""
+    for end in _CHANNELS:
+        end.close()
+    _CHANNELS.clear()
+
+
+def adopt_channel() -> None:
+    """Consume `JAILBEE_PROMPT_FD`: dup the socket, cache the channel, unset the variable.
+
+    The variable is removed so no grandchild (a detached worker, a subprocess)
+    inherits a number that, in its table, may name some other descriptor. The
+    inherited descriptor is made non-inheritable and left open; the duplicate
+    is the channel. A value that is not a descriptor of an open socket (not a
+    number, 0-2, closed, not a socket) is dropped as if absent. The CLI entry
+    calls this before it spawns anything.
+    """
+    raw = os.environ.pop(pc.PROMPT_FD_ENV, None)
+    if not raw:
+        return
+    try:
+        fd = int(raw)
+        if fd <= 2 or not stat.S_ISSOCK(os.fstat(fd).st_mode):
+            return
+        os.set_inheritable(fd, False)
+        sock = socket.socket(fileno=os.dup(fd))
+    except (ValueError, OSError):
+        return
+    drop_channel()
+    _CHANNELS.append(pc.CommandEnd(sock))
 
 
 def _channel_end() -> pc.CommandEnd | None:
-    """The command end of the prompt channel named by `JAILBEE_PROMPT_FD`.
+    """The prompt channel this process was started under, if any.
 
-    None when unset or invalid (not a number, 0-2, not an open socket): an
-    invalid fd behaves as if absent. The descriptor is duplicated, so the
-    inherited one is never closed; the end is cached per socket (a reused fd
-    number is a different socket) so the hello is exchanged once.
+    A newly set `JAILBEE_PROMPT_FD` is adopted first (see `adopt_channel`);
+    afterwards the cached channel serves every call.
     """
-    raw = os.environ.get("JAILBEE_PROMPT_FD")
-    if not raw:
-        return None
-    try:
-        fd = int(raw)
-        if fd <= 2:
-            return None
-        st = os.fstat(fd)
-    except (ValueError, OSError):
-        return None
-    if not stat.S_ISSOCK(st.st_mode):
-        return None
-    key = (fd, st.st_dev, st.st_ino)
-    end = _CHANNELS.get(key)
-    if end is None:
-        try:
-            sock = socket.socket(fileno=os.dup(fd))
-        except OSError:
-            return None
-        end = _CHANNELS[key] = pc.CommandEnd(sock)
-    return end
+    if os.environ.get(pc.PROMPT_FD_ENV):
+        adopt_channel()
+    return _CHANNELS[0] if _CHANNELS else None
 
 
 def _wire_context(context: PromptContext | None) -> pc.WireContext | None:
@@ -404,6 +460,7 @@ class ChannelBackend:
         destructive: bool,
         context: PromptContext | None,
         alternative: str | None,
+        detail: str | None = None,
     ) -> bool | None:
         reply = self._ask(
             lambda i: pc.Prompt(
@@ -413,6 +470,7 @@ class ChannelBackend:
                 default=False if destructive else default,
                 destructive=destructive,
                 context=_wire_context(context),
+                detail=detail,
             )
         )
         if reply is None:
@@ -434,7 +492,7 @@ class ChannelBackend:
         default: Any | None = None,
     ) -> Any | None:
         wire = _wire_options(options)
-        text = noun if question is None else question
+        text = displayed_question(noun, question)
         default_id = next(
             (
                 w.id
@@ -470,13 +528,24 @@ class ChannelBackend:
         alternative: str | None,
         picker: Callable[[Sequence[Option[Any]]], list[Any] | None] | None,
         question: str | None,
+        default: Sequence[Any] | None = None,
     ) -> list[Any] | None:
         # `picker` is a terminal renderer; the channel sends the question instead.
         wire = _wire_options(options)
-        text = noun if question is None else question
+        text = displayed_question(noun, question)
+        ticked = (
+            None
+            if default is None
+            else tuple(w.id for w, o in zip(wire, options, strict=True) if o.value in default)
+        )
         reply = self._ask(
             lambda i: pc.Prompt(
-                i, "choose_many", text, options=wire, context=_wire_context(context)
+                i,
+                "choose_many",
+                text,
+                options=wire,
+                default=ticked,
+                context=_wire_context(context),
             )
         )
         if reply is None:
@@ -499,6 +568,7 @@ class ChannelBackend:
         clear_shortcut: bool,
         context: PromptContext | None,
         alternative: str | None,
+        error: str | None = None,
     ) -> str | None:
         reply = self._ask(
             lambda i: pc.Prompt(
@@ -509,6 +579,7 @@ class ChannelBackend:
                 completions=None if completions is None else tuple(completions),
                 clear_shortcut=clear_shortcut,
                 context=_wire_context(context),
+                error=error,
             )
         )
         if reply is None:
@@ -537,24 +608,34 @@ class _Reply:
     value: Any
 
 
-def select_backend() -> PromptBackend:
+def select_backend(interactive: Callable[[], bool] | None = None) -> PromptBackend:
     """The backend for this call. The one place a backend is chosen.
 
     `JAILBEE_NONINTERACTIVE` wins over everything; then a prompt channel
-    (`JAILBEE_PROMPT_FD` naming a valid inherited socket); then the terminal
-    if `is_interactive()` (looked up at call time); else non-interactive.
+    (`JAILBEE_PROMPT_FD` adopted at start-up, see `adopt_channel`); then the
+    terminal if `is_interactive()` (looked up at call time, or the legacy
+    `interactive` override a caller passed); else non-interactive.
     """
-    return _backend_for(None)
-
-
-def _backend_for(interactive: Callable[[], bool] | None) -> PromptBackend:
     if os.environ.get("JAILBEE_NONINTERACTIVE"):
         return NonInteractiveBackend()
     end = _channel_end()
     if end is not None:
         return ChannelBackend(end)
-    test = interactive if interactive is not None else globals()["is_interactive"]
+    test = interactive if interactive is not None else is_interactive
     return TerminalBackend() if test() else NonInteractiveBackend()
+
+
+def _show_detail(detail: str) -> None:
+    """Print a confirmation's detail lines before the question, as the CLI always did.
+
+    A leading "⚠ " keeps its yellow marker; nothing is read as Rich markup."""
+    from jailbee.tui import console
+
+    for line in detail.splitlines():
+        if line.startswith("⚠ "):
+            console.print("[yellow]⚠[/yellow] ", Text(line[2:]), sep="", highlight=False)
+        else:
+            console.print(Text(line), highlight=False)
 
 
 def _note(message: str) -> None:
@@ -579,7 +660,7 @@ def _select(  # noqa: UP047
     choices = [questionary.Choice(title=o.title, value=o.value) for o in options]
     choices.append(questionary.Choice(title="cancel", value=_CANCEL))
     # questionary has 36 shortcut keys (0-9, a-z); more rows than that raise.
-    header = f"Select {noun}:" if question is None else question
+    header = displayed_question(noun, question)
     preselect = next((c for c in choices if default is not None and c.value == default), None)
     extra: dict[str, Any] = {} if preselect is None else {"default": preselect}
     from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent, merge_key_bindings
@@ -611,8 +692,7 @@ def _ask(
     """The default text prompt; Tab completes from `completions`. None on Ctrl-C / Esc."""
     import questionary
 
-    # Not str.capitalize(): it lowercases the rest ("GitHub" -> "Github").
-    label = noun[:1].upper() + noun[1:]
+    label = _capitalized(noun)
     kwargs: dict[str, Any] = {}
     if clear_shortcut:
         from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
@@ -640,7 +720,11 @@ def _ask(
 
 
 def _select_many(  # noqa: UP047
-    noun: str, options: Sequence[Option[T]], *, question: str | None = None
+    noun: str,
+    options: Sequence[Option[T]],
+    *,
+    question: str | None = None,
+    default: Sequence[T] | None = None,
 ) -> list[T] | None:
     """The default multi-picker (`tui.checkbox`); None on Ctrl-C / Esc, [] if none ticked."""
     import questionary
@@ -648,11 +732,15 @@ def _select_many(  # noqa: UP047
     from jailbee.tui import checkbox
 
     choices = [
-        questionary.Choice(title=o.title, value=o.value, description=o.description or None)
+        questionary.Choice(
+            title=o.title,
+            value=o.value,
+            description=o.description or None,
+            checked=default is not None and o.value in default,
+        )
         for o in options
     ]
-    header = f"Select {noun}:" if question is None else question
-    result = checkbox(header, choices=choices)
+    result = checkbox(displayed_question(noun, question), choices=choices)
     return None if result is None else list(result)
 
 
@@ -660,17 +748,15 @@ def _ask_secret(noun: str) -> str | None:
     """The default secret prompt (input hidden). None on Ctrl-C / Esc."""
     import questionary
 
-    label = noun[:1].upper() + noun[1:]
-    result = questionary.password(f"{label}:").ask()
+    result = questionary.password(f"{_capitalized(noun)}:").ask()
     return None if result is None else str(result)
 
 
 def _confirm(question: str, default: bool) -> bool | None:
-    """The default yes/no prompt. None on Ctrl-C / Esc."""
-    import questionary
+    """The default yes/no prompt: `typer.confirm`, as every command always asked.
 
-    result = questionary.confirm(question, default=default).ask()
-    return None if result is None else bool(result)
+    Ctrl-C / EOF is typer's `Abort` ("Aborted!", exit 1), not a return value."""
+    return typer.confirm(question, default=default)
 
 
 def choose_one(  # noqa: UP047
@@ -708,7 +794,7 @@ def choose_one(  # noqa: UP047
     if len(options) == 1 and not (destructive or always_ask):
         _note(f"Using {noun} {options[0].label}")
         return options[0].value
-    chosen = _backend_for(is_interactive).choose_one(
+    chosen = select_backend(is_interactive).choose_one(
         noun,
         options,
         destructive=destructive,
@@ -732,6 +818,7 @@ def choose_many(  # noqa: UP047
     context: PromptContext | None = None,
     picker: Callable[[Sequence[Option[T]]], list[T] | None] | None = None,
     question: str | None = None,
+    default: Sequence[T] | None = None,
 ) -> list[T]:
     """Resolve a missing set of values from its candidates.
 
@@ -741,7 +828,9 @@ def choose_many(  # noqa: UP047
     `picker` lets a caller keep a richer renderer (its own question, cursor
     row or pre-ticked rows); it gets the options and returns the chosen values,
     or None for cancel.
-    `question` is the question shown, as for `choose_one`.
+    `question` is the question shown, as for `choose_one`. `default` lists the
+    values pre-ticked (terminal checkbox and channel alike; a `picker` ticks
+    its own rows).
 
     Cancel (Ctrl-C / Esc) -> `Cancelled`. Submitting with nothing ticked is
     not a cancel: it returns `[]` (the terminal picker's bare Enter selects
@@ -750,7 +839,13 @@ def choose_many(  # noqa: UP047
     if not options:
         raise MissingValue(noun, reason=empty_reason or f"no {noun} to choose from")
     chosen = select_backend().choose_many(
-        noun, options, context=context, alternative=alternative, picker=picker, question=question
+        noun,
+        options,
+        context=context,
+        alternative=alternative,
+        picker=picker,
+        question=question,
+        default=default,
     )
     if chosen is None:
         raise Cancelled()
@@ -778,7 +873,8 @@ def ask_text(
 
     Cancel (Ctrl-C / Esc) -> `Cancelled`; never an empty string.
     """
-    backend = _backend_for(is_interactive)
+    backend = select_backend(is_interactive)
+    error: str | None = None
     while True:
         answer = backend.text(
             noun,
@@ -787,6 +883,7 @@ def ask_text(
             clear_shortcut=clear_shortcut,
             context=context,
             alternative=alternative,
+            error=error,
         )
         if answer is None:
             raise Cancelled()
@@ -796,6 +893,7 @@ def ask_text(
         if problem is None:
             return answer
         _note(problem)
+        error = problem
 
 
 def ask_secret(
@@ -824,14 +922,20 @@ def ask_confirm(
     destructive: bool = False,
     alternative: str | None = None,
     context: PromptContext | None = None,
+    detail: str | None = None,
 ) -> bool:
-    """Resolve a missing yes/no decision; the missing-value form of `confirm`.
+    """Resolve a missing yes/no decision.
 
     `destructive` forces the default to "no" whatever `default` says, so a bare
     Enter never consents to damage. Off a terminal this is `MissingValue`
     (exit 2, naming `alternative` such as `--yes`), never a silent default.
 
-    Cancel (Ctrl-C / Esc) -> `Cancelled`; it is not the answer "no".
+    `detail` is what the user should know before answering (a risk summary):
+    the terminal prints it above the question, a channel carries it to the
+    modal. "⚠ " opens a line the terminal marks as a warning.
+
+    Cancel (Ctrl-C / Esc / a channel's cancel) -> `typer.Abort`, as
+    `typer.confirm` always did; it is not the answer "no".
     """
     answer = select_backend().confirm(
         question,
@@ -839,7 +943,8 @@ def ask_confirm(
         destructive=destructive,
         context=context,
         alternative=alternative,
+        detail=detail,
     )
     if answer is None:
-        raise Cancelled()
+        raise typer.Abort()
     return answer
