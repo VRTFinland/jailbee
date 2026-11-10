@@ -497,9 +497,7 @@ def choose_many(  # noqa: UP047
     """
     if not options:
         raise MissingValue(noun, reason=empty_reason or f"no {noun} to choose from")
-    chosen = select_backend().choose_many(
-        noun, options, context=context, alternative=alternative
-    )
+    chosen = select_backend().choose_many(noun, options, context=context, alternative=alternative)
     if chosen is None:
         raise Cancelled()
     return list(chosen)
