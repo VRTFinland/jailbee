@@ -3608,6 +3608,26 @@ above for that one foreground run, for trying out a different policy without
 editing this file — see [`serve`](commands.md#remote-ssh-service). Persistent
 settings still belong here; the systemd service never passes those flags.
 
+### `remote.web`
+
+Host-global remote policy for the web transport. Like `remote.ssh`, it is set
+only in `~/.config/jailbee/global.yaml`. It carries the shared permission
+settings and nothing else: the policy keys are the same as `remote.ssh`'s
+(`commands.mode`, `commands.allow`, `restrict_host`, `excluded_repos`,
+`mount_roots`, `mounts`, `orchestration`, `network`, `files`, `rdp`) and mean
+the same, see [`remote.ssh`](#remotessh). The defaults are the most restrictive
+policy:
+
+| Key | Default |
+|---|---|
+| `commands.mode` | `disabled` |
+| `restrict_host` | `true`, and `false` is a validation error |
+| `mounts`, `mount_roots` | off, empty |
+| `orchestration` | `off` |
+| `network` | `false` |
+| `files` | unset, which follows `commands.mode` (so off by default) |
+| `rdp` | `false` |
+
 ### `credentials`
 
 Lets several repos on this host share one login per agent. The default

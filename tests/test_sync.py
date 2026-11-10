@@ -9361,8 +9361,8 @@ def test_every_tag_policy_value_is_handled_in_both_transports(mocker, tmp_path, 
 
 @pytest.fixture
 def remote_session(monkeypatch):
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
 
 
 def test_remote_checkout_refuses_before_fetching(mocker, make_cfg, tmp_path, remote_session):

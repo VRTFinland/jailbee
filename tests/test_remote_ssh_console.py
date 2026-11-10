@@ -20,7 +20,7 @@ from jailbee.db.models import RegisteredRepo
 from jailbee.global_config import GlobalConfig
 from jailbee.remote_ssh import console
 from jailbee.remote_ssh.router import RouteError
-from jailbee.remote_ssh.session import SSH_EXCLUDED_REPOS_ENV, SSH_SESSION_ENV
+from jailbee.remote_ssh.session import REMOTE_EXCLUDED_REPOS_ENV, REMOTE_TRANSPORT_ENV
 
 
 @dataclass
@@ -203,8 +203,8 @@ def test_line_with_bad_repo_option_is_reported_and_not_run(
 def test_line_repo_option_cannot_select_an_excluded_repo(
     console_env: ConsoleEnv, mocker, monkeypatch, capsys
 ) -> None:
-    monkeypatch.setenv(SSH_SESSION_ENV, "1")
-    monkeypatch.setenv(SSH_EXCLUDED_REPOS_ENV, '["other"]')
+    monkeypatch.setenv(REMOTE_TRANSPORT_ENV, "ssh")
+    monkeypatch.setenv(REMOTE_EXCLUDED_REPOS_ENV, '["other"]')
     run = mocker.patch("jailbee.remote_ssh.console.subprocess.run")
     console_env.lines(["ls --repo other", "exit"])
 
@@ -402,11 +402,11 @@ def test_console_reports_when_no_registered_repos(console_env: ConsoleEnv, mocke
 def test_console_fails_closed_without_valid_ssh_scope_snapshot(
     console_env: ConsoleEnv, monkeypatch, snapshot: str | None, capsys
 ) -> None:
-    monkeypatch.setenv(SSH_SESSION_ENV, "1")
+    monkeypatch.setenv(REMOTE_TRANSPORT_ENV, "ssh")
     if snapshot is None:
-        monkeypatch.delenv(SSH_EXCLUDED_REPOS_ENV, raising=False)
+        monkeypatch.delenv(REMOTE_EXCLUDED_REPOS_ENV, raising=False)
     else:
-        monkeypatch.setenv(SSH_EXCLUDED_REPOS_ENV, snapshot)
+        monkeypatch.setenv(REMOTE_EXCLUDED_REPOS_ENV, snapshot)
 
     assert console.run("project", console_env.policy_json) == 1
     captured = capsys.readouterr()
@@ -417,8 +417,8 @@ def test_console_fails_closed_without_valid_ssh_scope_snapshot(
 def test_console_uses_snapshot_to_filter_repos_and_reject_explicit_use(
     console_env: ConsoleEnv, monkeypatch, capsys
 ) -> None:
-    monkeypatch.setenv(SSH_SESSION_ENV, "1")
-    monkeypatch.setenv(SSH_EXCLUDED_REPOS_ENV, '["other"]')
+    monkeypatch.setenv(REMOTE_TRANSPORT_ENV, "ssh")
+    monkeypatch.setenv(REMOTE_EXCLUDED_REPOS_ENV, '["other"]')
     console_env.lines(["use other", "exit"])
 
     assert console.run("project", console_env.policy_json) == 0
@@ -432,8 +432,8 @@ def test_console_uses_snapshot_to_filter_repos_and_reject_explicit_use(
 def test_console_picker_and_repos_command_never_show_snapshot_exclusion(
     console_env: ConsoleEnv, monkeypatch, capsys
 ) -> None:
-    monkeypatch.setenv(SSH_SESSION_ENV, "1")
-    monkeypatch.setenv(SSH_EXCLUDED_REPOS_ENV, '["other"]')
+    monkeypatch.setenv(REMOTE_TRANSPORT_ENV, "ssh")
+    monkeypatch.setenv(REMOTE_EXCLUDED_REPOS_ENV, '["other"]')
     console_env.lines(["repos", "exit"])
 
     assert console.run(policy_json=console_env.policy_json) == 0
@@ -446,8 +446,8 @@ def test_console_picker_and_repos_command_never_show_snapshot_exclusion(
 def test_console_empty_state_uses_union_of_policy_and_snapshot_exclusions(
     console_env: ConsoleEnv, monkeypatch, capsys
 ) -> None:
-    monkeypatch.setenv(SSH_SESSION_ENV, "1")
-    monkeypatch.setenv(SSH_EXCLUDED_REPOS_ENV, '["other"]')
+    monkeypatch.setenv(REMOTE_TRANSPORT_ENV, "ssh")
+    monkeypatch.setenv(REMOTE_EXCLUDED_REPOS_ENV, '["other"]')
     policy = RemoteSSHConfig(
         console=True,
         excluded_repos=["project"],
@@ -1068,7 +1068,7 @@ def test_console_refuses_a_host_path_argument_without_running_anything(
 def test_console_with_restrict_host_false_runs_host_arguments(
     console_env: ConsoleEnv, mocker, monkeypatch
 ) -> None:
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     policy = RemoteSSHConfig(
         console=True, commands=RemoteCommandPolicy(mode="full"), restrict_host=False
     )
@@ -1085,7 +1085,7 @@ def test_console_with_restrict_host_false_runs_host_arguments(
 
 
 def test_restricted_completion_never_offers_a_host_command(monkeypatch) -> None:
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     full = RemoteCommandPolicy(mode="full")
 
     restricted = console._allowed_paths(full)
@@ -1258,9 +1258,9 @@ def test_run_local_outside_any_repo_uses_picker(console_env: ConsoleEnv, mocker,
 def test_run_local_refuses_inside_a_remote_session(
     console_env: ConsoleEnv, monkeypatch, capsys
 ) -> None:
-    from jailbee.remote_ssh.session import SSH_SESSION_ENV
+    from jailbee.remote_ssh.session import REMOTE_TRANSPORT_ENV
 
-    monkeypatch.setenv(SSH_SESSION_ENV, "1")
+    monkeypatch.setenv(REMOTE_TRANSPORT_ENV, "ssh")
     console_env.lines(["exit"])
     assert console.run_local("project") != 0
     assert "remote" in capsys.readouterr().err

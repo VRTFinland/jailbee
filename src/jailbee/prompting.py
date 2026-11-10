@@ -35,6 +35,8 @@ into exit 1, and would swallow these into the wrong code.
 from __future__ import annotations
 
 import os
+import socket
+import stat
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -42,6 +44,8 @@ from typing import Any, Generic, Protocol, TypeVar
 
 from rich.text import Text
 from typer._click.exceptions import ClickException
+
+from jailbee import prompt_channel as pc
 
 T = TypeVar("T")
 
@@ -51,9 +55,11 @@ _CANCEL = object()
 
 
 def is_interactive() -> bool:
-    """Whether jailbee may stop and ask: stdin is a terminal, and the
-    `JAILBEE_NONINTERACTIVE` override is unset."""
-    return sys.stdin.isatty() and not os.environ.get("JAILBEE_NONINTERACTIVE")
+    """Whether jailbee may stop and ask: stdin is a terminal or a prompt
+    channel is present, and the `JAILBEE_NONINTERACTIVE` override is unset."""
+    if os.environ.get("JAILBEE_NONINTERACTIVE"):
+        return False
+    return _channel_end() is not None or sys.stdin.isatty()
 
 
 def stdout_is_terminal() -> bool:
@@ -300,12 +306,202 @@ class NonInteractiveBackend:
         raise MissingValue(noun, alternative=alternative, free_text=True)
 
 
+_CHANNELS: dict[tuple[int, int, int], pc.CommandEnd] = {}
+
+
+def _channel_end() -> pc.CommandEnd | None:
+    """The command end of the prompt channel named by `JAILBEE_PROMPT_FD`.
+
+    None when unset or invalid (not a number, 0-2, not an open socket): an
+    invalid fd behaves as if absent. The descriptor is duplicated, so the
+    inherited one is never closed; the end is cached per socket (a reused fd
+    number is a different socket) so the hello is exchanged once.
+    """
+    raw = os.environ.get("JAILBEE_PROMPT_FD")
+    if not raw:
+        return None
+    try:
+        fd = int(raw)
+        if fd <= 2:
+            return None
+        st = os.fstat(fd)
+    except (ValueError, OSError):
+        return None
+    if not stat.S_ISSOCK(st.st_mode):
+        return None
+    key = (fd, st.st_dev, st.st_ino)
+    end = _CHANNELS.get(key)
+    if end is None:
+        try:
+            sock = socket.socket(fileno=os.dup(fd))
+        except OSError:
+            return None
+        end = _CHANNELS[key] = pc.CommandEnd(sock)
+    return end
+
+
+def _wire_context(context: PromptContext | None) -> pc.WireContext | None:
+    return None if context is None else pc.WireContext(context.repo, context.container)
+
+
+def _wire_options(options: Sequence[Option[Any]]) -> tuple[pc.WireOption, ...]:
+    return tuple(
+        pc.WireOption(str(i), o.title, o.label, o.description) for i, o in enumerate(options)
+    )
+
+
+class ChannelBackend:
+    """Questions travel to the UI that spawned this command (`prompt_channel`).
+
+    Cancel, and the UI going away, are None. A peer that speaks another
+    protocol version, or answers nonsense, is `MissingValue` (exit 2): the
+    command cannot be asked, and says why.
+    """
+
+    def __init__(self, end: pc.CommandEnd) -> None:
+        self._end = end
+
+    def _ask(self, make: Callable[[int], pc.Prompt]) -> Any | None:
+        try:
+            reply = self._end.ask(make)
+        except pc.ProtocolError as exc:
+            raise MissingValue("answer", reason=f"prompt channel failed: {exc}") from exc
+        return None if isinstance(reply, pc.Cancel) else _Reply(reply.value)
+
+    def _bad(self, what: str) -> MissingValue:
+        return MissingValue("answer", reason=f"prompt channel failed: {what}")
+
+    def confirm(
+        self,
+        question: str,
+        *,
+        default: bool,
+        destructive: bool,
+        context: PromptContext | None,
+        alternative: str | None,
+    ) -> bool | None:
+        reply = self._ask(
+            lambda i: pc.Prompt(
+                i,
+                "confirm",
+                question,
+                default=False if destructive else default,
+                destructive=destructive,
+                context=_wire_context(context),
+            )
+        )
+        if reply is None:
+            return None
+        if not isinstance(reply.value, bool):
+            raise self._bad("confirm answer is not a boolean")
+        return reply.value
+
+    def choose_one(
+        self,
+        noun: str,
+        options: Sequence[Option[Any]],
+        *,
+        destructive: bool,
+        context: PromptContext | None,
+        alternative: str | None,
+        picker: Callable[[Sequence[Option[Any]]], Any | None] | None,
+    ) -> Any | None:
+        wire = _wire_options(options)
+        reply = self._ask(
+            lambda i: pc.Prompt(
+                i,
+                "choose_one",
+                noun,
+                options=wire,
+                destructive=destructive,
+                context=_wire_context(context),
+            )
+        )
+        if reply is None:
+            return None
+        for w, o in zip(wire, options, strict=True):
+            if reply.value == w.id:
+                return o.value
+        raise self._bad(f"unknown option {reply.value!r}")
+
+    def choose_many(
+        self,
+        noun: str,
+        options: Sequence[Option[Any]],
+        *,
+        context: PromptContext | None,
+        alternative: str | None,
+    ) -> list[Any] | None:
+        wire = _wire_options(options)
+        reply = self._ask(
+            lambda i: pc.Prompt(
+                i, "choose_many", noun, options=wire, context=_wire_context(context)
+            )
+        )
+        if reply is None:
+            return None
+        ids = reply.value
+        if not isinstance(ids, list):
+            raise self._bad("choose_many answer is not a list")
+        by_id = {w.id: o.value for w, o in zip(wire, options, strict=True)}
+        try:
+            return [by_id[x] for x in ids]
+        except (KeyError, TypeError) as exc:
+            raise self._bad(f"unknown option in {ids!r}") from exc
+
+    def text(
+        self,
+        noun: str,
+        *,
+        default: str | None,
+        completions: Sequence[str] | None,
+        clear_shortcut: bool,
+        context: PromptContext | None,
+        alternative: str | None,
+    ) -> str | None:
+        reply = self._ask(
+            lambda i: pc.Prompt(
+                i,
+                "text",
+                noun,
+                default=default,
+                completions=None if completions is None else tuple(completions),
+                clear_shortcut=clear_shortcut,
+                context=_wire_context(context),
+            )
+        )
+        if reply is None:
+            return None
+        if not isinstance(reply.value, str):
+            raise self._bad("text answer is not a string")
+        return reply.value
+
+    def secret(
+        self,
+        noun: str,
+        *,
+        context: PromptContext | None,
+        alternative: str | None,
+    ) -> str | None:
+        reply = self._ask(lambda i: pc.Prompt(i, "secret", noun, context=_wire_context(context)))
+        if reply is None:
+            return None
+        if not isinstance(reply.value, str):
+            raise self._bad("secret answer is not a string")
+        return reply.value
+
+
+@dataclass(frozen=True)
+class _Reply:
+    value: Any
+
+
 def select_backend() -> PromptBackend:
     """The backend for this call. The one place a backend is chosen.
 
-    `JAILBEE_NONINTERACTIVE` wins over everything (a channel backend added
-    here must be checked *after* it); then the terminal if `is_interactive()`
-    (looked up at call time); else non-interactive.
+    `JAILBEE_NONINTERACTIVE` wins over everything; then a prompt channel
+    (`JAILBEE_PROMPT_FD` naming a valid inherited socket); then the terminal
+    if `is_interactive()` (looked up at call time); else non-interactive.
     """
     return _backend_for(None)
 
@@ -313,6 +509,9 @@ def select_backend() -> PromptBackend:
 def _backend_for(interactive: Callable[[], bool] | None) -> PromptBackend:
     if os.environ.get("JAILBEE_NONINTERACTIVE"):
         return NonInteractiveBackend()
+    end = _channel_end()
+    if end is not None:
+        return ChannelBackend(end)
     test = interactive if interactive is not None else globals()["is_interactive"]
     return TerminalBackend() if test() else NonInteractiveBackend()
 

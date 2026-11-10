@@ -1996,7 +1996,7 @@ _TREE_WRITERS = [
 
 @pytest.mark.parametrize(("name", "call"), _TREE_WRITERS)
 def test_tree_writers_refuse_in_a_restricted_remote_session(mocker, monkeypatch, name, call):
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
     spawn = mocker.patch("jailbee.git.subprocess.call", return_value=0)
 
     with pytest.raises(git.HostTreeWriteRefusedError, match="checked-out working tree"):
@@ -2007,7 +2007,7 @@ def test_tree_writers_refuse_in_a_restricted_remote_session(mocker, monkeypatch,
 
 @pytest.mark.parametrize(("name", "call"), _TREE_WRITERS)
 def test_tree_writers_run_outside_a_remote_session(mocker, monkeypatch, name, call):
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     spawn = mocker.patch("jailbee.git.subprocess.call", return_value=0)
 
     if name == "init_subrepo_gitdir":

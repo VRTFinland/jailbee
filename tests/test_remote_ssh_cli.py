@@ -27,11 +27,11 @@ from tests.conftest import flat_output, make_cfg
 def test_remote_dashboard_fails_closed_on_invalid_exclusion_snapshot(
     snapshot: str | None, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
     if snapshot is not None:
-        monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", snapshot)
+        monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", snapshot)
     else:
-        monkeypatch.delenv("JAILBEE_SSH_EXCLUDED_REPOS", raising=False)
+        monkeypatch.delenv("JAILBEE_REMOTE_EXCLUDED_REPOS", raising=False)
     run = mocker.patch("jailbee.dashboard.tui.app.run")
     incus = mocker.patch("jailbee.incus.Incus")
     policy = '{"exec":true,"commands":{"mode":"full"}}'
@@ -93,8 +93,8 @@ def test_ssh_ls_all_fails_closed_before_listing_without_snapshot(
     root = tmp_path / "myrepo"
     root.mkdir()
     mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(root))
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
-    monkeypatch.delenv("JAILBEE_SSH_EXCLUDED_REPOS", raising=False)
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.delenv("JAILBEE_REMOTE_EXCLUDED_REPOS", raising=False)
     listing = mocker.patch("jailbee.lifecycle.list_containers")
 
     result = CliRunner().invoke(app, ["ls", "--all"])
@@ -111,11 +111,11 @@ def test_ssh_ls_all_fails_closed_before_listing_without_snapshot(
 def test_every_ssh_cli_leaf_requires_a_valid_scope_snapshot(
     argv: list[str], snapshot: str | None, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
 ) -> None:
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
     if snapshot is None:
-        monkeypatch.delenv("JAILBEE_SSH_EXCLUDED_REPOS", raising=False)
+        monkeypatch.delenv("JAILBEE_REMOTE_EXCLUDED_REPOS", raising=False)
     else:
-        monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", snapshot)
+        monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", snapshot)
     mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(Path("/repo")))
 
     result = CliRunner().invoke(app, argv)
@@ -141,8 +141,8 @@ def test_local_ls_all_keeps_all_rows_with_empty_scope(
     mocker.patch("jailbee.cli._advise_setup")
     mocker.patch("jailbee.cli._load_global", return_value=MagicMock())
     mocker.patch("jailbee.lifecycle.repo_has_submodules", return_value=False)
-    monkeypatch.delenv("JAILBEE_SSH_SESSION", raising=False)
-    monkeypatch.delenv("JAILBEE_SSH_EXCLUDED_REPOS", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_TRANSPORT", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_EXCLUDED_REPOS", raising=False)
     records = [
         ContainerInfo("allowed-feat", "Stopped", None, None, None, repo="allowed"),
         ContainerInfo("secret-feat", "Stopped", None, None, None, repo="secret"),
@@ -175,8 +175,8 @@ def test_prune_never_destroys_a_hidden_stale_candidate(
         return_value=[ContainerInfo("public-stale", "Stopped", None, None, None, repo="public")],
     )
     destroy = mocker.patch("jailbee.lifecycle.destroy_container")
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", '["secret"]')
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", '["secret"]')
 
     result = CliRunner().invoke(app, ["prune", "--yes-to-all"])
 

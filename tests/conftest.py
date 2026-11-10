@@ -496,6 +496,7 @@ def _interactive_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     about the override set it themselves; this runs first.
     """
     monkeypatch.delenv("JAILBEE_NONINTERACTIVE", raising=False)
+    monkeypatch.delenv("JAILBEE_PROMPT_FD", raising=False)
 
 
 @pytest.fixture(autouse=True)

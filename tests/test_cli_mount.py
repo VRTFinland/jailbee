@@ -148,7 +148,7 @@ def _remote(monkeypatch, mocker, tmp_path, make_cfg, *, roots, mounts, attached=
     gcfg = GlobalConfig.model_validate(
         {"remote": {"ssh": {"mount_roots": [r.model_dump(mode="json") for r in roots]}}}
     )
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     mocker.patch(
         "jailbee.remote_ssh.repo_scope.scope_for_session",
@@ -284,7 +284,7 @@ def test_remote_mount_picker_with_nothing_grantable_names_the_setting(
 
 def test_local_mount_ignores_mount_roots(monkeypatch, mocker, tmp_path, make_cfg):
     t = _tree(tmp_path)
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     incus = _ttl_env(
         mocker,

@@ -442,9 +442,9 @@ def preflight_background(
     verdict = assessment.verdict
     approved_ref: str | None = None
     if verdict is not None and verdict.prompts:
-        from jailbee.remote_ssh.session import escalation_refusal, is_remote_session
+        from jailbee.remote_ssh.session import escalation_refusal, is_restricted_session
 
-        if is_remote_session():
+        if is_restricted_session():
             raise CreateError(escalation_refusal(verdict.baseline_source), 2)
     if verdict is not None and verdict.prompts and not opts.assume_yes:
         if interaction.accept_escalation is not None:

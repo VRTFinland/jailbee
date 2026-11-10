@@ -433,7 +433,7 @@ def test_grant_passes_the_remote_policy_in_a_remote_session(patched, mocker, rem
     policy = RemoteSSHConfig(orchestration="ssh")
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
-    mocker.patch("jailbee.remote_ssh.session.is_remote_session", return_value=remote_session)
+    mocker.patch("jailbee.remote_ssh.session.is_restricted_session", return_value=remote_session)
     mocker.patch(
         "jailbee.remote_ssh.repo_scope.scope_for_session",
         return_value=RemoteRepoScope(frozenset()),
