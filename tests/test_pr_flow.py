@@ -193,7 +193,7 @@ def test_reject_as_on_pr_update_exits_2(tmp_path):
 
 
 def test_foreign_force_push_is_silent_with_yes(tmp_path, mocker):
-    confirm = mocker.patch("typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
     pr_flow.confirm_foreign_force_push(_super_scope(tmp_path), "feat-foo", "12", "user/x", yes=True)
     confirm.assert_not_called()
 
@@ -209,7 +209,7 @@ def test_foreign_force_push_exits_1_without_a_tty(tmp_path, mocker):
 
 def test_foreign_force_push_aborts_on_decline(tmp_path, mocker):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("typer.confirm", return_value=False)
+    mocker.patch("jailbee.prompting._confirm", return_value=False)
     with pytest.raises(typer.Abort):
         pr_flow.confirm_foreign_force_push(
             _super_scope(tmp_path), "feat-foo", "12", "user/x", yes=False
@@ -217,23 +217,29 @@ def test_foreign_force_push_aborts_on_decline(tmp_path, mocker):
 
 
 def test_confirm_branch_name_returns_proposal_when_equal_to_source(mocker):
-    prompt = mocker.patch("typer.prompt")
+    prompt = mocker.patch("jailbee.prompting._ask")
     assert pr_flow.confirm_pr_branch_name("feat/foo", "feat/foo") == "feat/foo"
     prompt.assert_not_called()
 
 
 def test_confirm_branch_name_returns_proposal_off_tty(mocker):
     mocker.patch("sys.stdin.isatty", return_value=False)
-    prompt = mocker.patch("typer.prompt")
+    prompt = mocker.patch("jailbee.prompting._ask")
     assert pr_flow.confirm_pr_branch_name("user/ai", "feat/foo") == "user/ai"
     prompt.assert_not_called()
 
 
 def test_confirm_branch_name_reprompts_until_valid(mocker):
     mocker.patch("sys.stdin.isatty", return_value=True)
-    mocker.patch("typer.prompt", side_effect=["bad name", "user/ok"])
+    mocker.patch("jailbee.prompting._ask", side_effect=["bad name", "user/ok"])
     mocker.patch("jailbee.git.check_ref_format", side_effect=[False, True])
     assert pr_flow.confirm_pr_branch_name("user/ai", "feat/foo") == "user/ok"
+
+
+def test_confirm_branch_name_blank_answer_takes_the_proposal(mocker):
+    mocker.patch("sys.stdin.isatty", return_value=True)
+    mocker.patch("jailbee.prompting._ask", return_value="   ")
+    assert pr_flow.confirm_pr_branch_name("user/ai", "feat/foo") == "user/ai"
 
 
 def _cfg(tmp_path):
@@ -303,7 +309,7 @@ def test_description_update_passes_the_scope_subpath_to_the_ai(tmp_path, mocker)
 
 def test_description_update_offer_is_suppressed_on_a_foreign_pr(tmp_path, mocker):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    confirm = mocker.patch("typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
     result = pr_flow.resolve_pr_description_update(
         _cfg(tmp_path),
         mocker.MagicMock(),
@@ -506,7 +512,7 @@ def test_adopt_exits_1_without_a_tty(tmp_path, mocker):
 def test_adopt_aborts_on_decline(tmp_path, mocker):
     mocker.patch("jailbee.pr.find_pr_for_branch", return_value=_pr_info())
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("typer.confirm", return_value=False)
+    mocker.patch("jailbee.prompting._confirm", return_value=False)
     with pytest.raises(typer.Abort):
         pr_flow.adopt_existing_pr_for_branch(
             _super_scope(tmp_path),
@@ -856,7 +862,7 @@ def _update_edit(tmp_path, mocker, *, scope=None, **kwargs):
 
 def test_update_path_prefers_the_outbox_over_regenerating(tmp_path, mocker):
     generate = mocker.patch("jailbee.pr_ai.generate_pr_text")
-    confirm = mocker.patch("typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
 
@@ -911,7 +917,7 @@ def test_a_foreign_pr_takes_a_description_that_names_it_after_confirming(tmp_pat
     `jailbee pr --pr N`. Dropping the description its agent wrote for that very
     number was the bug; the guard is a narrowed lookup plus one question."""
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    confirm = mocker.patch("typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
 
     edit = _update_edit(tmp_path, mocker, use_outbox=True, foreign_head=True)
@@ -927,7 +933,7 @@ def test_a_declined_foreign_description_consumes_nothing(tmp_path, mocker):
     `edit_pr`, so `record_outbox_consumption` is never reached and the manifest
     stays pending for `jailbee review apply`."""
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("typer.confirm", return_value=False)
+    mocker.patch("jailbee.prompting._confirm", return_value=False)
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
 
     edit = _update_edit(tmp_path, mocker, use_outbox=True, foreign_head=True)
@@ -941,7 +947,7 @@ def test_a_declined_foreign_description_still_lets_description_regenerate(tmp_pa
     from jailbee.pr_ai import PrText
 
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("typer.confirm", return_value=False)
+    mocker.patch("jailbee.prompting._confirm", return_value=False)
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
     mocker.patch(
         "jailbee.pr_ai.generate_pr_text",
@@ -965,7 +971,7 @@ def test_a_foreign_description_is_never_applied_off_a_tty(tmp_path, mocker):
     """The question has no answer when there is nobody to ask, and an
     unattended run may not decide it on the user's behalf."""
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
-    confirm = mocker.patch("typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
 
     edit = _update_edit(tmp_path, mocker, use_outbox=True, foreign_head=True)
@@ -978,7 +984,7 @@ def test_an_authored_pr_asks_nothing_before_using_the_outbox(tmp_path, mocker):
     """The confirmation belongs to the foreign head alone: jailbee's own PR
     carries the description its own container wrote, as it always did."""
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    confirm = mocker.patch("typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=_outbox_source())
 
     edit = _update_edit(tmp_path, mocker, use_outbox=True, for_pr=77)
@@ -1712,9 +1718,9 @@ def test_bind_persistence_failure_depends_on_intent(tmp_path, mocker, intent):
 
 def test_bind_by_number_bind_intent_wording(tmp_path, mocker):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    confirm = mocker.patch("typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
     _bind_number(tmp_path, mocker, intent="bind", target_label="submodule 'lib/a'")
-    confirm.assert_called_once_with("Bind submodule 'lib/a' to PR #7 ('feat/foo')?", default=True)
+    confirm.assert_called_once_with("Bind submodule 'lib/a' to PR #7 ('feat/foo')?", True)
 
 
 def test_bind_by_number_bind_intent_refusal(tmp_path, mocker):
@@ -1728,7 +1734,7 @@ def test_bind_by_number_bind_intent_refusal(tmp_path, mocker):
 
 def test_bind_by_number_confirmed_skips_prompt(tmp_path, mocker):
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
-    confirm = mocker.patch("typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
     state, result = _bind_number(tmp_path, mocker, confirmed=True)
     confirm.assert_not_called()
     state.record.assert_called_once_with(
@@ -1756,7 +1762,7 @@ def test_unbind_confirms_and_clears(tmp_path, mocker, yes):
     state.read.return_value = _record(head="feat/foo", author=True)
     state.clear.return_value = True
     mocker.patch("jailbee.prompting.is_interactive", return_value=not yes)
-    confirm = mocker.patch("typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
     success = mocker.patch("jailbee.pr_flow.success")
     assert pr_flow.unbind_pr(_super_scope(tmp_path), state, target_label="c1", yes=yes)
     state.clear.assert_called_once_with()
@@ -1764,7 +1770,7 @@ def test_unbind_confirms_and_clears(tmp_path, mocker, yes):
     if yes:
         confirm.assert_not_called()
     else:
-        confirm.assert_called_once_with("Unbind c1 from PR #7?", default=False)
+        confirm.assert_called_once_with("Unbind c1 from PR #7?", False)
 
 
 def test_unbind_noninteractive_without_yes_exits_1(tmp_path, mocker):
@@ -1783,7 +1789,7 @@ def test_unbind_declined_does_not_clear(tmp_path, mocker):
     state = mocker.MagicMock()
     state.read.return_value = _record()
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("typer.confirm", return_value=False)
+    mocker.patch("jailbee.prompting._confirm", return_value=False)
     with pytest.raises(typer.Abort):
         pr_flow.unbind_pr(_super_scope(tmp_path), state, target_label="c1", yes=False)
     state.clear.assert_not_called()
@@ -1833,7 +1839,7 @@ def test_unbind_head_only_names_branch(tmp_path, mocker):
     labels = {"user.jailbee.pr_branch": "feat/head-only"}
     incus.config_get.side_effect = lambda full, key: labels.get(key, "")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    confirm = mocker.patch("typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
     success = mocker.patch("jailbee.pr_flow.success")
     info = mocker.patch("jailbee.pr_flow.info")
     assert pr_flow.unbind_pr(
@@ -1842,7 +1848,7 @@ def test_unbind_head_only_names_branch(tmp_path, mocker):
         target_label="c1",
         yes=False,
     )
-    confirm.assert_called_once_with("Unbind c1 from branch 'feat/head-only'?", default=False)
+    confirm.assert_called_once_with("Unbind c1 from branch 'feat/head-only'?", False)
     success.assert_called_once_with("Unbound c1 from branch 'feat/head-only'.")
     info.assert_not_called()
 
@@ -1866,7 +1872,7 @@ def _fake_select(mocker, index):
         def ask(self):
             return captured["choices"][index].value
 
-    def fake(message, choices):
+    def fake(message, choices, **kwargs):
         captured["choices"] = choices
         return _Question()
 
@@ -1875,6 +1881,7 @@ def _fake_select(mocker, index):
 
 
 def test_pick_review_action_returns_the_selected_action(mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     _fake_select(mocker, 0)
     assert pr_flow._pick_review_action(7, "feat/x") == "adopt"
     _fake_select(mocker, 1)
@@ -1885,11 +1892,25 @@ def test_pick_review_action_maps_the_cancel_entry_to_none(mocker):
     """`questionary.Choice` treats `value=None` as *unset* and falls back to the
     title, so a cancel entry needs an explicit sentinel — otherwise cancelling
     answers the string "cancel" and gets published as an action."""
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     _fake_select(mocker, -1)
     assert pr_flow._pick_review_action(7, "feat/x") is None
 
 
+def test_pick_review_action_ctrl_c_cancels(mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value=None)
+    assert pr_flow._pick_review_action(7, "feat/x") is None
+
+
+def test_pick_outbox_manifest_ctrl_c_means_use_none(mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", return_value=None)
+    assert pr_flow._pick_outbox_manifest(["001-a.json", "002-b.json"]) is None
+
+
 def test_pick_outbox_manifest_returns_the_selected_name(mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     _fake_select(mocker, 1)
     assert pr_flow._pick_outbox_manifest(["001-a.json", "002-b.json"]) == "002-b.json"
 
@@ -1898,6 +1919,7 @@ def test_pick_outbox_manifest_maps_the_cancel_entry_to_none(mocker):
     """The same `value=None` trap as `_pick_review_action`: without an explicit
     sentinel the cancel entry answers its own title and is used as a manifest
     name — which is exactly the "never guess between two descriptions" rule."""
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     _fake_select(mocker, -1)
     assert pr_flow._pick_outbox_manifest(["001-a.json", "002-b.json"]) is None
 
@@ -2179,7 +2201,7 @@ def test_standalone_updates_guard_and_revalidate_after_prompt(mocker, tmp_path, 
             raise typer.Abort()
         return True
 
-    mocker.patch("typer.confirm", side_effect=confirm)
+    mocker.patch("jailbee.prompting._confirm", side_effect=confirm)
     mocker.patch(
         "jailbee.git.get_remote_url",
         return_value=None if outcome == "early_return" else "https://github.com/acme/widgets",
@@ -2296,7 +2318,7 @@ def test_detached_source_still_takes_the_outbox_branch(tmp_path, mocker):
 
 def test_confirm_branch_name_prompts_when_there_is_no_source_branch(mocker):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    prompt = mocker.patch("typer.prompt", return_value="feat/typed")
+    prompt = mocker.patch("jailbee.prompting._ask", return_value="feat/typed")
 
     assert pr_flow.confirm_pr_branch_name("feat/x", None) == "feat/typed"
     prompt.assert_called_once()
