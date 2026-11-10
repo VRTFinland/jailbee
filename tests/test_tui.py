@@ -71,7 +71,17 @@ def test_pick_container_handles_missing_network_and_ip(mocker):
     assert " - " in choices[0].title  # network or ip rendered as "-"
 
 
-def test_pick_containers_multi_returns_selected_full_names(mocker):
+def test_pick_containers_multi_is_missing_value_off_a_terminal(mocker):
+    from jailbee.prompting import MissingValue
+
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    mocker.patch("jailbee.tui.checkbox", side_effect=AssertionError("must not render"))
+
+    with pytest.raises(MissingValue):
+        pick_containers_multi([_info("only")])
+
+
+def test_pick_containers_multi_returns_selected_full_names(terminal, mocker):
     cb = mocker.patch("jailbee.tui.checkbox")
     cb.return_value = ["myrepo-feat-a", "myrepo-feat-c"]
 
@@ -102,21 +112,21 @@ def test_pick_containers_multi_returns_selected_full_names(mocker):
     assert " - " in choices[2].title or choices[2].title.endswith("-")
 
 
-def test_pick_containers_multi_returns_none_when_cancelled(mocker):
+def test_pick_containers_multi_returns_none_when_cancelled(terminal, mocker):
     cb = mocker.patch("jailbee.tui.checkbox")
     cb.return_value = None
 
     assert pick_containers_multi([_info("only")]) is None
 
 
-def test_pick_containers_multi_returns_empty_list_when_no_box_ticked(mocker):
+def test_pick_containers_multi_returns_empty_list_when_no_box_ticked(terminal, mocker):
     cb = mocker.patch("jailbee.tui.checkbox")
     cb.return_value = []
 
     assert pick_containers_multi([_info("only")]) == []
 
 
-def test_pick_containers_multi_uses_custom_message(mocker):
+def test_pick_containers_multi_uses_custom_message(terminal, mocker):
     cb = mocker.patch("jailbee.tui.checkbox")
     cb.return_value = []
 
@@ -220,7 +230,7 @@ def test_picker_marks_tracking_fallback_base_and_aligns_rows(mocker):
     assert "(tracking)" not in titles[1]
 
 
-def test_pick_containers_multi_label_includes_base_and_git_status(mocker):
+def test_pick_containers_multi_label_includes_base_and_git_status(terminal, mocker):
     cb = mocker.patch("jailbee.tui.checkbox")
     cb.return_value = []
 
@@ -555,42 +565,85 @@ def test_render_bridge_plan_renders_notes():
     assert "⚠ container working tree is dirty" in block
 
 
-def test_default_confirm_delegates_to_rich(mocker):
+@pytest.fixture
+def terminal(mocker):
+    """Stands in for a terminal: prompts are allowed and their seams are patched."""
+    return mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+
+
+def test_default_confirm_asks_through_prompting_with_no_as_default(terminal, mocker):
     from jailbee import tui
 
-    ask = mocker.patch("rich.prompt.Confirm.ask", return_value=True)
+    ask = mocker.patch("jailbee.prompting._confirm", return_value=True)
+
     assert tui.default_confirm("Proceed?") is True
-    ask.assert_called_once_with("Proceed?", default=False)
+    ask.assert_called_once_with("Proceed?", False)
 
 
-def test_default_confirm_returns_false_without_stdin(mocker):
-    """`gie new < /dev/null` declines instead of raising.
-
-    With no stdin there is no answer to be had, and callers turn `False` into
-    the "declined — pass --yes" abort, which is a better message than Click's
-    bare "Aborted!".
-    """
+def test_default_confirm_off_a_terminal_is_missing_value_not_a_silent_no(mocker):
     from jailbee import tui
+    from jailbee.prompting import MissingValue
 
-    mocker.patch("rich.prompt.Confirm.ask", side_effect=EOFError("EOF when reading a line"))
-    assert tui.default_confirm("Proceed?") is False
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    mocker.patch("rich.prompt.Confirm.ask", side_effect=AssertionError("must not prompt"))
 
-
-def test_default_confirm_lets_ctrl_c_propagate(mocker):
-    """Ctrl-C means "abandon the command", not "answer no".
-
-    The distinction matters for `run_apply`, which treats a `False` answer as
-    "skip the restart" and then finishes normally — so swallowing
-    KeyboardInterrupt here would make `gie apply` exit 0 having done half its
-    job. Click turns the escaping exception into `Abort`.
-    """
-    import pytest
-
-    from jailbee import tui
-
-    mocker.patch("rich.prompt.Confirm.ask", side_effect=KeyboardInterrupt)
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(MissingValue):
         tui.default_confirm("Proceed?")
+
+
+def test_default_confirm_cancel_is_cancelled_not_no(terminal, mocker):
+    """Ctrl-C means "abandon the command", not "answer no": run_apply treats a
+    False answer as "skip the restart" and would exit 0 half done."""
+    from jailbee import tui
+    from jailbee.prompting import Cancelled
+
+    mocker.patch("jailbee.prompting._confirm", return_value=None)
+
+    with pytest.raises(Cancelled):
+        tui.default_confirm("Proceed?")
+
+
+def test_destroy_risk_confirmation_is_destructive_and_returns_the_answer(terminal, mocker):
+    from types import SimpleNamespace
+
+    from jailbee.tui import confirm_destroy_risk
+
+    ask = mocker.patch("jailbee.prompting._confirm", return_value=True)
+
+    assert confirm_destroy_risk([], [SimpleNamespace(line="dirty")], question="Destroy it?")
+    ask.assert_called_once_with("Destroy it?", False)
+
+
+def test_destroy_risk_default_question_is_the_continue_prompt(terminal, mocker):
+    from types import SimpleNamespace
+
+    from jailbee.tui import confirm_destroy_risk
+
+    ask = mocker.patch("jailbee.prompting._confirm", return_value=False)
+
+    assert confirm_destroy_risk([], [SimpleNamespace(line="dirty")]) is False
+    ask.assert_called_once_with("   Destroying loses this. Continue?", False)
+
+
+def test_destroy_risk_off_a_terminal_is_missing_value(mocker):
+    from types import SimpleNamespace
+
+    from jailbee.prompting import MissingValue
+    from jailbee.tui import confirm_destroy_risk
+
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+
+    with pytest.raises(MissingValue):
+        confirm_destroy_risk([], [SimpleNamespace(line="dirty")], question="Destroy it?")
+
+
+def test_destroy_risk_with_nothing_to_report_asks_nothing(mocker):
+    from jailbee.tui import confirm_destroy_risk
+
+    ask = mocker.patch("jailbee.prompting._confirm")
+
+    assert confirm_destroy_risk([], []) is True
+    ask.assert_not_called()
 
 
 def test_confirm_fn_alias_is_str_to_bool():
@@ -815,6 +868,7 @@ def test_choose_shared_credential_offers_both_sides_and_names_the_opt_out(
     )
 
     assert result == "group"
+    assert select.call_args.args[0] == "Which login should the group keep?"
     values = [c.value for c in select.call_args.kwargs["choices"]]
     assert values == ["group", "repo", "cancel"]
     out = capsys.readouterr()
@@ -854,6 +908,17 @@ def _sub(path="libs/foo", commits=2):
         recorded_sha="aaa",
         subject="feat: work",
     )
+
+
+def test_pick_submodules_multi_is_missing_value_off_a_terminal(mocker):
+    from jailbee.prompting import MissingValue
+    from jailbee.tui import pick_submodules_multi
+
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    mocker.patch("jailbee.tui.checkbox", side_effect=AssertionError("must not render"))
+
+    with pytest.raises(MissingValue):
+        pick_submodules_multi([_sub("libs/a")])
 
 
 def test_pick_submodule_returns_the_chosen_path(mocker):
@@ -1027,7 +1092,7 @@ def test_choice_base_shows_a_forks_base_not_its_source():
     assert _choice_base(c) == "main"
 
 
-def test_pick_containers_multi_forwards_initial_as_the_cursor_row(mocker):
+def test_pick_containers_multi_forwards_initial_as_the_cursor_row(terminal, mocker):
     cb = mocker.patch("jailbee.tui.checkbox", return_value=[])
 
     pick_containers_multi([_info("r-a"), _info("r-b")], initial="r-b")
@@ -1035,7 +1100,7 @@ def test_pick_containers_multi_forwards_initial_as_the_cursor_row(mocker):
     assert cb.call_args.kwargs["initial_choice"] == "r-b"
 
 
-def test_pick_containers_multi_has_no_cursor_row_by_default(mocker):
+def test_pick_containers_multi_has_no_cursor_row_by_default(terminal, mocker):
     cb = mocker.patch("jailbee.tui.checkbox", return_value=[])
 
     pick_containers_multi([_info("r-a")])
