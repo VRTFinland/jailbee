@@ -313,6 +313,8 @@ class NonInteractiveBackend:
         alternative: str | None,
         detail: str | None = None,
     ) -> bool | None:
+        if detail:
+            _show_detail(detail)  # the user who cannot answer still learns what is at stake
         raise MissingValue(
             "confirmation",
             reason=(

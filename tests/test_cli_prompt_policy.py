@@ -133,8 +133,7 @@ _DIRECT_PROMPT_ALLOWED = {
     "tui.py::pick_submodule": "terminal renderer passed as choose_one(picker=)",
     "tui.py::pick_containers_multi": "terminal renderer passed as choose_many(picker=)",
     "tui.py::pick_submodules_multi.render": "terminal renderer passed as choose_many(picker=)",
-    "tui.py::pick_account": "terminal renderer passed as choose_one(picker=)",
-    "tui.py::pick_container_for_group": "terminal renderer passed as choose_one(picker=)",
+    "tui.py::pick_account": "terminal renderer passed as choose_one(picker=) by tui.choose_account",
 }
 
 _PROMPT_NAMES = {"Prompt", "Confirm", "IntPrompt", "FloatPrompt"}

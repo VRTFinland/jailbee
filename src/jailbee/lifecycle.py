@@ -3488,10 +3488,13 @@ def resolve_container_for_interactive_detailed(
             answers.append(interactive())
         return answers[0]
 
+    from jailbee.tui import container_options
+
     asks = always_prompt and tty()
     chosen = prompting.choose_one(
         "container",
-        [prompting.Option(c.name, c.display_name, c.display_name) for c in containers],
+        container_options(containers),
+        question="Select a container:",
         destructive=always_prompt,
         empty_reason=f"no managed containers found for repo '{cfg.container_prefix}'",
         picker=lambda _opts: picker(list(by_name.values())),

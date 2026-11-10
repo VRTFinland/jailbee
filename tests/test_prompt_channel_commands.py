@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import socket
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -29,55 +29,65 @@ class Asked:
     question: str
     options: tuple[str, ...]
     default: Any
-    destructive: bool
+    # The terminal draws no "destructive" flag, so only the dashboard side knows it.
+    destructive: bool = field(default=False, compare=False)
+    detail: str | None = None
 
 
-# What the user answers, by question: a bool for a confirmation, an option title for a choice.
+# What the user answers, by question: a bool for a confirmation, an option title for a choice,
+# a list of titles for a multiple choice.
 Answer = Callable[[Asked], Any]
-
-
-def _title_of(options: Any, value: Any) -> str | None:
-    return next((o.title for o in options if value is not None and o.value == value), None)
 
 
 @pytest.fixture
 def at_terminal(monkeypatch: pytest.MonkeyPatch, mocker: Any) -> Callable[[Answer], list[Asked]]:
-    """Make the process a terminal; record what the terminal backend is asked."""
+    """Make the process a terminal; record what the terminal itself renders.
+
+    Nothing of `prompting`'s own question logic is stubbed: the recording sits at
+    the renderers' libraries (`typer.confirm`, `questionary.select`, the `tui`
+    checkbox), so the question text, rows and defaults are what the terminal
+    would actually draw, independent of the channel backend's code.
+    """
 
     def start(answer: Answer) -> list[Asked]:
         asked: list[Asked] = []
         mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+        details: list[str] = []
+        monkeypatch.setattr(prompting, "_show_detail", details.append)
 
-        def confirm(
-            self: Any, question: str, *, default: bool, destructive: bool, **_: Any
-        ) -> bool:
-            item = Asked("confirm", question, (), False if destructive else default, destructive)
+        def confirm(text: str, default: bool = False, **_: Any) -> bool:
+            item = Asked("confirm", text, (), default, detail=details.pop() if details else None)
             asked.append(item)
             return bool(answer(item))
 
-        def choose_one(
-            self: Any,
-            noun: str,
-            options: Any,
-            *,
-            destructive: bool,
-            question: str | None,
-            default: Any = None,
-            **_: Any,
-        ) -> Any:
+        def select(message: str, choices: Any, **kwargs: Any) -> Any:
+            rows = [c for c in choices if c.title != "cancel"]
+            preselected = kwargs.get("default")
             item = Asked(
                 "choose_one",
-                noun if question is None else question,
-                tuple(o.title for o in options),
-                _title_of(options, default),
-                destructive,
+                message,
+                tuple(c.title for c in rows),
+                None if preselected is None else preselected.title,
             )
             asked.append(item)
             title = answer(item)
-            return next(o.value for o in options if o.title == title)
+            value = next(c.value for c in rows if c.title == title)
+            return mocker.Mock(ask=lambda: value)
 
-        monkeypatch.setattr(prompting.TerminalBackend, "confirm", confirm)
-        monkeypatch.setattr(prompting.TerminalBackend, "choose_one", choose_one)
+        def checkbox(message: str, choices: Any, **_: Any) -> list[Any]:
+            item = Asked(
+                "choose_many",
+                message,
+                tuple(c.title for c in choices),
+                tuple(c.title for c in choices if getattr(c, "checked", False)),
+            )
+            asked.append(item)
+            ticked = answer(item)
+            return [c.value for c in choices if c.title in ticked]
+
+        mocker.patch("typer.confirm", side_effect=confirm)
+        mocker.patch("questionary.select", side_effect=select)
+        mocker.patch("jailbee.tui.checkbox", side_effect=checkbox)
         return asked
 
     return start
@@ -113,17 +123,26 @@ def at_dashboard(
 
         def handler(p: pc.Prompt) -> Any:
             titles = {o.id: o.title for o in p.options}
+            if p.kind == "choose_one":
+                default: Any = titles.get(str(p.default))
+            elif p.kind == "choose_many":
+                default = tuple(titles[i] for i in (p.default or ()))
+            else:
+                default = p.default
             item = Asked(
                 p.kind,
                 p.question,
                 tuple(o.title for o in p.options),
-                titles.get(str(p.default)) if p.kind == "choose_one" else p.default,
+                default,
                 p.destructive,
+                p.detail,
             )
             asked.append(item)
             reply = answer(item)
             if p.kind == "choose_one":
                 return next(o.id for o in p.options if o.title == reply)
+            if p.kind == "choose_many":
+                return [o.id for o in p.options if o.title in reply]
             return reply
 
         _open_channel(monkeypatch, request, handler)
@@ -174,8 +193,10 @@ def test_destroy_asks_the_same_destructive_confirmation(
 
     assert len(terminal) == 1
     assert terminal[0].kind == "confirm"
-    assert terminal[0].destructive is True
     assert terminal[0].default is False
+    assert dashboard[0].destructive is True
+    # What a destroy would lose is shown with the question, not only on stdout.
+    assert terminal[0].detail
     assert dashboard == terminal
     assert destroy.call_count == (2 if consent else 0)  # once per run when consented
     assert (t_result.exit_code == 0) == (d_result.exit_code == 0) == consent
@@ -279,3 +300,140 @@ def test_shared_credential_asks_the_same_choice(
     assert dashboard_asked == terminal_asked
     assert _holder_cred(cfg).read_text() == kept
     assert not repo_cred.exists()
+
+
+# ---- pickers that draw their own header or rows --------------------------------------
+
+
+def test_account_picker_asks_the_same_choice(at_terminal, at_dashboard):
+    from types import SimpleNamespace
+
+    from jailbee import cli
+    from jailbee.accounts.models import Slot
+
+    choices = [
+        (SimpleNamespace(name="claude"), Slot("me@corp.com#c0ffee12", Path("/s/a"), live=False)),
+        (SimpleNamespace(name="codex"), Slot("you@corp.com", Path("/s/b"), live=False)),
+    ]
+
+    def run() -> Any:
+        return cli._choose_account_choice(
+            choices, ref=None, nothing="nothing", message="Switch this repo to:"
+        )
+
+    terminal, dashboard, t_result, d_result = _both(
+        at_terminal, at_dashboard, lambda asked: asked.options[1], run
+    )
+
+    assert terminal[0].question == "Switch this repo to:"
+    assert len(terminal[0].options) == 2
+    assert dashboard == terminal
+    assert t_result == d_result == choices[1]
+
+
+def test_group_container_picker_asks_the_same_choice(mocker, at_terminal, at_dashboard):
+    from types import SimpleNamespace
+
+    from jailbee.cli import _resolve_group_container
+
+    cfg = SimpleNamespace(container_prefix="myrepo")
+    incus = mocker.MagicMock()
+    incus.list_containers.return_value = [{"name": "myrepo-a"}, {"name": "myrepo-b"}]
+    mocker.patch(
+        "jailbee.accounts.groups.effective_group",
+        side_effect=lambda _cfg, _incus, name: "team" if name == "myrepo-a" else None,
+    )
+
+    terminal, dashboard, t_result, d_result = _both(
+        at_terminal,
+        at_dashboard,
+        lambda asked: asked.options[0],
+        lambda: _resolve_group_container(cfg, incus, None),
+    )
+
+    assert terminal[0].question == "Change the group of:"
+    assert "team" in terminal[0].options[0]  # the fact the user is about to change
+    assert "no group" in terminal[0].options[1]
+    assert dashboard == terminal
+    assert t_result == d_result == "myrepo-a"
+
+
+def _container(name: str, state: str = "Running") -> Any:
+    from jailbee.lifecycle import ContainerInfo
+
+    return ContainerInfo(
+        name=name, state=state, network="strict", ip="10.0.0.5", memory_limit="4GB", repo="myrepo"
+    )
+
+
+def test_container_picker_asks_the_same_choice(mocker, at_terminal, at_dashboard):
+    from types import SimpleNamespace
+
+    from jailbee import lifecycle
+
+    cfg = SimpleNamespace(container_prefix="myrepo")
+    mocker.patch(
+        "jailbee.lifecycle.list_containers",
+        return_value=[_container("myrepo-a"), _container("myrepo-b", "Stopped")],
+    )
+
+    terminal, dashboard, t_result, d_result = _both(
+        at_terminal,
+        at_dashboard,
+        lambda asked: asked.options[1],
+        lambda: lifecycle.resolve_container_for_interactive(cfg, mocker.MagicMock(), None),
+    )
+
+    assert terminal[0].question == "Select a container:"
+    assert "Stopped" in terminal[0].options[1]  # the table row, not just the name
+    assert dashboard == terminal
+    assert t_result == d_result == "myrepo-b"
+
+
+def test_submodule_multi_picker_asks_the_same_question_with_everything_ticked(
+    at_terminal, at_dashboard
+):
+    from jailbee import tui
+    from jailbee.submodule_pr import SubCandidate
+
+    subs = [
+        SubCandidate(
+            path=path,
+            commits=2,
+            branch="feat/x",
+            dirty=False,
+            head_sha="aaa",
+            recorded_sha="bbb",
+            subject="work",
+        )
+        for path in ("lib/a", "lib/b")
+    ]
+
+    terminal, dashboard, t_result, d_result = _both(
+        at_terminal,
+        at_dashboard,
+        lambda asked: asked.options[:1],  # untick the second
+        lambda: tui.pick_submodules_multi(subs),
+    )
+
+    assert terminal[0].question == "Publish these submodule PRs first?"
+    assert terminal[0].default == terminal[0].options  # every row starts ticked
+    assert dashboard == terminal
+    assert t_result == d_result == ["lib/a"]
+
+
+def test_containers_multi_picker_asks_the_same_question(at_terminal, at_dashboard):
+    from jailbee import tui
+
+    containers = [_container("myrepo-a"), _container("myrepo-b")]
+
+    terminal, dashboard, t_result, d_result = _both(
+        at_terminal,
+        at_dashboard,
+        lambda asked: asked.options[1:],
+        lambda: tui.pick_containers_multi(containers, message="Select containers to merge FROM:"),
+    )
+
+    assert terminal[0].question == "Select containers to merge FROM:"
+    assert dashboard == terminal
+    assert t_result == d_result == ["myrepo-b"]
