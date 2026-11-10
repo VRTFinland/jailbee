@@ -3778,7 +3778,7 @@ def test_new_container_retries_autofetch_when_accepted(tmp_path, mocker):
     )
     mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value=None)
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value="y")
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
     reported = mocker.patch("jailbee.retry.error")
 
     opts = NewContainerOptions(
@@ -3921,7 +3921,7 @@ def test_new_container_autofetch_retry_is_not_offered_off_tty(tmp_path, mocker):
         side_effect=GitFetchError("fetch failed", stderr="fatal: connection refused"),
     )
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
-    prompt = mocker.patch("builtins.input")
+    prompt = mocker.patch("jailbee.prompting._confirm")
 
     opts = NewContainerOptions(
         container_branch="feat/new",
