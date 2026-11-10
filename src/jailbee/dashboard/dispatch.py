@@ -10,12 +10,10 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Literal
 
@@ -64,22 +62,6 @@ def dispatch_style(verb: str) -> DispatchStyle:
 def command_needs_pause(typed: str) -> bool:
     """Retain output for noninteractive commands entered in the editor."""
     return typed not in ATTACH_VERBS and not typed.startswith(APPS_RUN_PREFIX)
-
-
-def pager_argv() -> list[str] | None:
-    """The pager to page long output through, or None when the host has none.
-
-    ``$PAGER`` wins (split as a shell word list, so ``PAGER="bat -p"`` works);
-    otherwise ``less -R``, which renders the ANSI colour the diff is asked to
-    emit, then ``more``.
-    """
-    env = os.environ.get("PAGER")
-    if env:
-        return shlex.split(env)
-    for candidate in (["less", "-R"], ["more"]):
-        if shutil.which(candidate[0]):
-            return candidate
-    return None
 
 
 def _wait_for_return() -> None:
@@ -136,56 +118,6 @@ def _run_reporting(argv: list[str], cwd: Path) -> int:
     if rc != 0 or noisy:
         _wait_for_return()
     return rc
-
-
-class _PagerUnavailableError(OSError):
-    """The pager process itself could not be started.
-
-    Raised only from the viewer ``Popen`` below — never from the producer's —
-    so a caller catching this specifically (rather than bare ``OSError``) can
-    tell "the pager is missing" apart from "the producer couldn't even start"
-    (e.g. its ``cwd`` has vanished) and fall back to the unpaged path only for
-    the former. A bare ``OSError`` out of this function is always the
-    producer's.
-    """
-
-
-def _run_paged(argv: list[str], pager: list[str], cwd: Path) -> int:
-    """Pipe ``argv``'s stdout into ``pager``; return the command's exit code.
-
-    Two processes rather than a shell string, so there is no quoting to get
-    wrong. Stderr stays attached to the terminal: an error message must not be
-    swallowed by the pager. The pager owns the terminal until the user quits
-    it, which is why the paged path needs no keypress pause of its own.
-
-    ``cwd`` applies to the producer only — it is how a repo with no config file
-    is addressed at all (see :class:`RepoTarget`). The pager is a plain viewer
-    on a pipe and has no repo of its own.
-
-    Raises a bare ``OSError`` (uncaught here) if the producer itself cannot be
-    started — most notably a ``cwd`` that has disappeared out from under a
-    dispatch — and :class:`_PagerUnavailableError` if the pager cannot be started,
-    so callers do not conflate the two.
-    """
-    producer = subprocess.Popen(argv, stdout=subprocess.PIPE, cwd=cwd)
-    out = producer.stdout
-    if out is None:  # unreachable with stdout=PIPE; keeps mypy honest
-        return producer.wait()
-    try:
-        viewer = subprocess.Popen(pager, stdin=out)
-    except OSError as exc:
-        # The pager vanished between which() and exec. Nothing will ever read
-        # the pipe, so kill the producer rather than leaving it blocked on a
-        # full one, and let the caller fall back to the unpaged path.
-        producer.kill()
-        producer.wait()
-        raise _PagerUnavailableError(str(exc)) from exc
-    finally:
-        # The viewer owns the read end now. Keeping this copy open would stop
-        # the pager ever seeing EOF, so it would hang on a finished command.
-        out.close()
-    viewer.wait()
-    return producer.wait()
 
 
 def action_cli_argv(
@@ -253,23 +185,15 @@ def _dispatch_action(
     ``--force``; ``--force`` means something different on every other
     command (and most don't accept it), so nothing else gets it.
 
-    The verb's :func:`dispatch_style` decides what happens to its output: a
-    pager for the diff (with ``--color`` forced, because the pipe would
-    otherwise turn colour off), a keypress pause for the other printing verbs
-    (for `git push`/`git pull` only after a failure or warning), and nothing
-    at all for the rest. A missing or unstartable pager degrades to
-    the pause rather than losing the output.
-
-    A remote session (``remote``) never gets a pager: every pager worth the
-    name can run commands (`less`'s ``!``, ``v`` and ``|``, `more`'s ``!``),
-    and here they would run on the host. The paged verbs fall back to the
-    keypress pause instead, and the client's own scrollback does the paging.
+    Only commands that keep the terminal come here (attach verbs, a followed
+    log); everything else runs through the action runner. The verb's style
+    decides what happens to its output: a keypress pause for a printing verb
+    (for `git push`/`git pull` only after a failure or warning), nothing at
+    all for the rest. There is no pager: a pager can run host commands.
 
     Raises ``OSError`` (uncaught here) if ``target.cwd()`` has disappeared out
-    from under the dispatch — the caller (:func:`run`'s ``dispatch``) turns
-    that into a notice naming the directory rather than letting it take the
-    whole TUI down. That is deliberately *not* caught as "pager failed": see
-    :class:`_PagerUnavailableError`.
+    from under the dispatch — the caller turns that into a notice naming the
+    directory rather than letting it take the whole TUI down.
     """
     action_argv = dashboard_action_argv(
         verb, name, force=verb in ATTACH_VERBS or verb.startswith(APPS_RUN_PREFIX)
@@ -277,13 +201,6 @@ def _dispatch_action(
     check_dashboard_command(action_argv, ssh_policy, transport=transport)
     argv = ["jailbee", *action_cli_argv(target, verb, name, transport=transport)]
     style = action_style(verb, remote=remote, transport=transport, ssh_policy=ssh_policy)
-    if style == "paged":
-        pager = pager_argv()
-        if pager is not None:
-            try:
-                return _run_paged([*argv, "--color"], pager, target.cwd())
-            except _PagerUnavailableError as exc:
-                log.debug("pager %s failed: %s", pager, exc)
     if style == "report":
         return _run_reporting(argv, target.cwd())
     rc = subprocess.run(argv, check=False, cwd=target.cwd()).returncode
@@ -315,25 +232,12 @@ def _run_cli_foreground(
     before any ``--``, and nothing is added over SSH (`jailbee.dashboard.actions.addressed`).
     ``style`` works as in :func:`_dispatch_action`, plus ``"report"``: the
     pause only when the command failed or warned (see :func:`_run_reporting`).
-    A remote session never gets a pager, because a pager can run host
-    commands, so it gets the pause. A pager that cannot start also degrades to
-    the pause.
-
     Raises :class:`RouteError` before anything runs when the policy refuses
     ``argv``, and ``OSError`` when ``target.cwd()`` has vanished (the caller
     turns that into a notice).
     """
     check_dashboard_command(argv, ssh_policy, transport=transport)
     full = ["jailbee", *dact.addressed(argv, target.flags(), transport=transport)]
-    if style == "paged" and (remote or transport != "none"):
-        style = "output"
-    if style == "paged":
-        pager = pager_argv()
-        if pager is not None:
-            try:
-                return _run_paged(full, pager, target.cwd())
-            except _PagerUnavailableError as exc:
-                log.debug("pager %s failed: %s", pager, exc)
     if style == "report":
         return _run_reporting(full, target.cwd())
     env = None
@@ -348,49 +252,3 @@ def _run_cli_foreground(
     if style != "plain":
         _wait_for_return()
     return rc
-
-
-def _run_bulk_foreground(
-    runs: Sequence[tuple[RepoTarget, Sequence[str]]],
-    *,
-    transport: Transport = "none",
-    ssh_policy: RemotePolicy | None = None,
-    codes: list[int] | None = None,
-) -> list[int]:
-    """Run each ``(repo, argv)`` in the terminal, in order; return the exit codes.
-
-    A bulk git verb over several repos: one run per repo, because one
-    ``--config`` addresses one repo. Every argv is checked against the SSH
-    policy before the first one runs, so a refusal leaves nothing half done.
-    One pause after the last run, not one per repo: the CLI prints a roll-up
-    per run, and they read better together. It is skipped when every run
-    exited 0 without a warning or error (one shared :func:`_diagnostics_marker`
-    tells), and kept when a run cannot start (``OSError``), so the earlier
-    runs' output is not lost.
-
-    ``codes`` is appended to as each run ends, so a caller that sees an
-    exception still knows the runs that completed before it.
-    """
-    for _target, argv in runs:
-        check_dashboard_command(list(argv), ssh_policy, transport=transport)
-    done = codes if codes is not None else []
-    clean = False
-    with _diagnostics_marker() as marker:
-        try:
-            for target, argv in runs:
-                done.append(
-                    subprocess.run(
-                        [
-                            "jailbee",
-                            *dact.addressed(list(argv), target.flags(), transport=transport),
-                        ],
-                        check=False,
-                        cwd=target.cwd(),
-                        env=_noting_env(marker),
-                    ).returncode
-                )
-            clean = not any(done) and not marker.exists()
-        finally:
-            if not clean:
-                _wait_for_return()
-    return done
