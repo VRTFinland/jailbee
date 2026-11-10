@@ -444,7 +444,11 @@ def _pick_outbox_manifest(names: list[str]) -> str | None:
         )
     )
     try:
-        chosen = prompting.choose_one("pending PR description", options)
+        chosen = prompting.choose_one(
+            "pending PR description",
+            options,
+            question="More than one PR description is pending. Which one?",
+        )
     except prompting.Cancelled:
         # Ctrl-C and the menu entry both mean "use none".
         return None
@@ -1160,7 +1164,9 @@ def _pick_review_action(number: int, head: str) -> str | None:
         ),
     ]
     try:
-        return str(prompting.choose_one("publish target", options))
+        return str(
+            prompting.choose_one("publish target", options, question="What should jailbee publish?")
+        )
     except prompting.Cancelled:
         return None
 

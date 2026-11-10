@@ -2332,3 +2332,29 @@ def test_scope_for_submodule_uses_located_root(tmp_path, mocker):
     assert pr_flow.PrScope.for_submodule(cfg, "lib").repo_root == root
     locate.assert_called_once_with(cfg.repo_root, "lib")
     remote.assert_called_once_with(cfg.repo_root, "lib", host_root=root)
+
+
+def test_review_action_menu_keeps_its_question(mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    headers = []
+
+    def select(message, choices, **kwargs):
+        headers.append(message)
+        return mocker.Mock(ask=lambda: choices[0].value)
+
+    mocker.patch("questionary.select", side_effect=select)
+    assert pr_flow._pick_review_action(7, "feat/x") == "adopt"
+    assert headers == ["What should jailbee publish?"]
+
+
+def test_outbox_manifest_menu_keeps_its_question(mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    headers = []
+
+    def select(message, choices, **kwargs):
+        headers.append(message)
+        return mocker.Mock(ask=lambda: choices[0].value)
+
+    mocker.patch("questionary.select", side_effect=select)
+    pr_flow._pick_outbox_manifest(["001-a.json", "002-b.json"])
+    assert headers == ["More than one PR description is pending. Which one?"]
