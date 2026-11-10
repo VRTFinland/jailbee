@@ -161,8 +161,7 @@ particular, the remote dashboard shows registered repos only and exposes its
 container and git-bridge actions: creating, starting, stopping or destroying
 containers and moving commits can therefore affect host state. It withholds
 what would reach the host beyond that — the config editor (a config decides
-host mounts and this very policy), the diff pager (a pager can start a
-shell), "Open PR" and GUI app launches (a browser or window would open on
+host mounts and this very policy), "Open PR" and GUI app launches (a browser or window would open on
 the host's display; with `remote.ssh.rdp` on, or inside a `waypipe ssh`
 session with `remote.ssh.waypipe` on, launches go to the shared RDP display or
 the client's display instead). The admitted `exec --gui` route is an exception to the

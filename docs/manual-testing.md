@@ -3302,15 +3302,17 @@ jailbee new feat/dashsmoke --background
 # Workflow entries (the menu block above tmux/shell). Make a commit inside the
 # container first, so there is something for git pull and git diff to show:
 jailbee shell feat-dashsmoke -- bash -lc 'cd ~/*/ && echo x >> README.md && git commit -am wip'
-#  d (or the "Show diff (git diff)" entry) -> the diff opens in $PAGER
-#     (less -R) WITH colour, not as a plain scroll-past dump; q in less returns
-#     to the dashboard with the table intact.
+#  d (or the "Show diff (git diff)" entry) -> the dashboard keeps drawing and
+#     the diff opens in a scrollable output screen WITH colour; Enter/Esc/q
+#     returns to the dashboard with the table intact.
 #  u ("Update from base (git push)") -> in a repo with push.default_action:
-#     ask, the CLI's own merge/rebase picker appears (the TUI hands over the
-#     real terminal); after it finishes, expect a
-#     "── press Enter to return to the dashboard ──" line and the output still
-#     readable until you press Enter.
-#  "Send commits to host (git pull)" -> same pause behaviour. On a container
+#     ask, the merge/rebase question appears as a dashboard modal (the screen
+#     is NOT handed over); Esc cancels exactly as Esc at the CLI picker. On
+#     success expect a short "done" notice, on failure an output screen.
+#  "Send commits to host (git pull)" -> same notice / output-screen behaviour.
+#  Destroy from the menu -> a "DESTRUCTIVE:" red-bordered confirmation modal
+#     with "No" focused. Quit the dashboard (q) while it is open -> the
+#     dashboard exits at once and no `jailbee destroy` process is left behind. On a container
 #     with nothing ahead of its base, expect the entry to be ABSENT from the
 #     menu.
 #  "Job log" -> present only while a job row exists; on a live background job
