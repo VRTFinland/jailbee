@@ -8,7 +8,7 @@ from typing import Literal
 
 from typer._click.core import ParameterSource
 
-from jailbee.config.models_remote import RemotePolicy, RemoteSSHConfig
+from jailbee.config.models_remote import RemotePolicy
 from jailbee.remote_ssh import router
 from jailbee.remote_ssh.router import RouteError
 
@@ -36,20 +36,11 @@ _CONTAINER_POSITIONALS: dict[str, str] = {
 }
 
 
-def remote_unlocks(policy: RemotePolicy | None) -> router.RemoteUnlocks:
-    """The unlock switches of any remote policy, SSH or not.
-
-    `RemoteUnlocks.of` reads `waypipe`, an SSH-only field, so a plain
-    `RemotePolicy` (the web dashboard's) is mapped here, without it.
-    """
-    if policy is None or isinstance(policy, RemoteSSHConfig):
-        return router.RemoteUnlocks.of(policy)
-    return router.RemoteUnlocks(
-        gui=policy.rdp,
-        network=policy.network,
-        mounts=policy.mounts or bool(policy.mount_roots),
-        orchestration=policy.orchestration != "off",
-    )
+def remote_unlocks(policy: RemotePolicy | None, transport: Transport) -> router.RemoteUnlocks:
+    """The unlock switches of ``policy`` for ``transport`` (refusals name it)."""
+    if policy is None or transport == "none":
+        return router.RemoteUnlocks()
+    return router.RemoteUnlocks.of(policy, transport=transport)
 
 
 def check_dashboard_command(
@@ -72,7 +63,7 @@ def check_dashboard_command(
         policy.commands,
         restrict_host=policy.restrict_host,
         scope=RemoteRepoScope(snapshot_scope.excluded | frozenset(policy.excluded_repos)),
-        unlocks=remote_unlocks(policy),
+        unlocks=remote_unlocks(policy, transport),
     )
 
 

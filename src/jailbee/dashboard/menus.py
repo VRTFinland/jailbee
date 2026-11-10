@@ -523,7 +523,9 @@ def actions_for_container(
             job_running=container.job_phase is not None and not job_clearable,
             git_status=container.git_status,
             remote=remote,
-            gui_remote=bool(remote and ssh_policy is not None and remote_unlocks(ssh_policy).gui),
+            gui_remote=bool(
+                remote and ssh_policy is not None and remote_unlocks(ssh_policy, transport).gui
+            ),
             alias=container.alias,
             memory_limit=container.memory_limit,
             memory_override=container.memory_override,

@@ -3126,7 +3126,7 @@ class DashboardSession:
                     self.ssh_policy.commands,
                     restrict_host=self.ssh_policy.restrict_host,
                     scope=self.scope,
-                    unlocks=remote_unlocks(self.ssh_policy),
+                    unlocks=remote_unlocks(self.ssh_policy, self.transport),
                 )
         return completion_candidates(
             text,
@@ -3137,7 +3137,7 @@ class DashboardSession:
                 and self.ssh_policy is not None
                 and host_restricted(self.ssh_policy.restrict_host)
             ),
-            unlocks=remote_unlocks(self.ssh_policy if (self.transport != "none") else None),
+            unlocks=remote_unlocks(self.ssh_policy, self.transport),
         )
 
     def command_submitted(self, text: str) -> None:
