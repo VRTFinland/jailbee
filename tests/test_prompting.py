@@ -114,24 +114,31 @@ def test_picker_returning_none_is_cancelled():
         choose_one("container", [A, B], picker=lambda o: None, is_interactive=_yes)
 
 
-@pytest.mark.parametrize("answer", ["b-full", None])
-def test_choose_returns_value_and_none_on_cancel(mocker, answer):
-    select = mocker.patch("jailbee.prompting._select_question", return_value=answer, create=True)
-    interactive = mocker.patch("jailbee.prompting.is_interactive", side_effect=AssertionError)
-    assert prompting.choose("Publish?", [A, B]) == answer
-    select.assert_called_once_with("Publish?", [A, B])
-    interactive.assert_not_called()
-
-
 @pytest.mark.parametrize("keys, expected", [("\r", None), ("\x1b", None), ("\x1b[A\r", "b-full")])
-def test_choose_real_picker_defaults_to_cancel_and_honors_escape(keys, expected):
+def test_select_can_start_on_the_cancel_row_and_escape_cancels(keys, expected):
     from prompt_toolkit.application import create_app_session
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
 
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
         pipe.send_text(keys)
-        assert prompting.choose("Publish?", [A, B]) == expected
+        answer = prompting._select(
+            "mode", [A, B], question="Publish?", default=prompting.CANCEL_ROW
+        )
+    assert answer == expected
+
+
+def test_a_single_option_is_asked_when_always_ask(mocker):
+    sel = mocker.patch("jailbee.prompting._select", return_value="a-full")
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    assert choose_one("container", [A], always_ask=True) == "a-full"
+    sel.assert_called_once()
+
+
+def test_a_single_option_is_still_taken_without_always_ask(mocker):
+    sel = mocker.patch("jailbee.prompting._select")
+    assert choose_one("container", [A], is_interactive=_yes) == "a-full"
+    sel.assert_not_called()
 
 
 def test_default_picker_is_the_select_seam(mocker):
@@ -279,24 +286,6 @@ def test_stdout_is_terminal_follows_stdout(mocker):
     assert prompting.stdout_is_terminal() is False
     mocker.patch("jailbee.prompting.sys.stdout.isatty", return_value=True)
     assert prompting.stdout_is_terminal() is True
-
-
-def test_confirm_returns_the_answer(mocker):
-    ask = mocker.patch("jailbee.prompting._confirm", return_value=False)
-    assert prompting.confirm("Move it?", default=True) is False
-    ask.assert_called_once_with("Move it?", True)
-
-
-def test_confirm_passes_the_default_through(mocker):
-    ask = mocker.patch("jailbee.prompting._confirm", return_value=True)
-    assert prompting.confirm("Move it?", default=False) is True
-    ask.assert_called_once_with("Move it?", False)
-
-
-def test_confirm_cancel_raises_cancelled(mocker):
-    mocker.patch("jailbee.prompting._confirm", return_value=None)
-    with pytest.raises(Cancelled):
-        prompting.confirm("Move it?")
 
 
 def test_ask_with_completions_uses_autocomplete(mocker):

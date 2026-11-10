@@ -498,8 +498,9 @@ def test_apply_at_a_terminal_warns_and_asks_about_an_unowned_pr(publication_env,
     _unowned(env)
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
-        "jailbee.prompting.choose",
-        side_effect=lambda question, options: print(question) or "publish",
+        "jailbee.prompting._select",
+        side_effect=lambda noun, options, question=None, default=None: print(question)
+        or "publish",
     )
 
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json"])
@@ -1346,7 +1347,7 @@ def test_outbox_apply_draft_wiring(
 
 def test_outbox_apply_draft_off_tty_refuses(publication_env, mocker):
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
-    picker = mocker.patch("jailbee.prompting.choose", side_effect=AssertionError("picker"))
+    picker = mocker.patch("jailbee.prompting._select", side_effect=AssertionError("picker"))
     draft = mocker.patch("jailbee.pr_draft.DraftSession")
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json", "--draft"])
     assert result.exit_code != 0, result.output

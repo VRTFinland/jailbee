@@ -155,7 +155,6 @@ def offer_outbox_binding(
         )
         return None
 
-    # None is reserved for cancellation by prompting.choose.
     new_pr = object()
     options: list[prompting.Option[int | object]] = [
         prompting.Option(
@@ -166,9 +165,15 @@ def offer_outbox_binding(
         for number, names in sorted(refs.items())
     ]
     options.append(prompting.Option(value=new_pr, title="Open a new PR", label="Open a new PR"))
-    chosen = prompting.choose("Outbox manifests reference existing PRs. Publish to:", options)
-    if chosen is None:
-        raise typer.Abort()
+    try:
+        chosen = prompting.choose_one(
+            "PR",
+            options,
+            question="Outbox manifests reference existing PRs. Publish to:",
+            default=prompting.CANCEL_ROW,
+        )
+    except prompting.Cancelled:
+        raise typer.Abort() from None
     if chosen is new_pr:
         return None
     assert isinstance(chosen, int)

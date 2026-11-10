@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 
 import pytest
+from jailbee import prompting
 
 from jailbee import issue_github, issue_outbox, pr
 from jailbee.outbox import io, service
@@ -839,17 +840,18 @@ def test_ask_publish_mode_maps_cancel_to_none_and_shows_chosen_counts(mocker, mo
     from jailbee.outbox.publish import ask_publish_mode
     from jailbee.pr_outbox import DraftPreview
 
-    choose = mocker.patch("jailbee.prompting.choose", return_value=mode, create=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    choose = mocker.patch("jailbee.prompting._select", return_value=mode)
     assert ask_publish_mode(5, DraftPreview(42, 2, 2, description)) == mode
-    question, options = choose.call_args.args
-    assert question == "Publish 5 pending actions?"
+    options = choose.call_args.args[1]
+    assert choose.call_args.kwargs["question"] == "Publish 5 pending actions?"
+    assert choose.call_args.kwargs["default"] is prompting.CANCEL_ROW
     assert options[0].value == "publish"
     assert options[0].title == "Publish"
     assert options[1].value == "draft"
     assert f"{2 + int(description)} pending actions" in options[1].title
     assert "only you see it until you submit it on GitHub" in options[1].title
-    assert options[-1].title == "Cancel"
-    assert options[-1].value is None
+    assert len(options) == 2  # cancelling is the picker's own cancel row, not an option
 
 
 def test_issue_force_is_refused(env):
@@ -1376,7 +1378,8 @@ def test_ask_publish_mode_aggregate_draft_count(mocker):
     from jailbee.outbox.publish import ask_publish_mode
     from jailbee.pr_outbox import DraftPreview
 
-    choose = mocker.patch("jailbee.prompting.choose", return_value=None)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    choose = mocker.patch("jailbee.prompting._select", return_value=None)
     assert ask_publish_mode(12, DraftPreview(7, 1, 1, True, draft_total=5)) is None
     assert "5 pending actions" in choose.call_args.args[1][1].title
 

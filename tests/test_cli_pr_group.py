@@ -340,7 +340,7 @@ def test_push_real_offer_gate_never_implicitly_binds(mocker, tmp_path, yes, inte
     _setup(mocker, tmp_path)
     mocker.patch("jailbee.pr_flow.offer_outbox_binding", side_effect=offer_outbox_binding)
     mocker.patch("jailbee.prompting.is_interactive", return_value=interactive)
-    picker = mocker.patch("jailbee.prompting.choose")
+    picker = mocker.patch("jailbee.prompting._select")
     refs = mocker.patch("jailbee.pr_outbox.outbox_pr_references", return_value={5: ("a.json",)})
     binding = mocker.patch("jailbee.pr_flow.bind_pr_by_number")
     mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
