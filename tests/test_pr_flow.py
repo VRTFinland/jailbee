@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import types
 from pathlib import Path
 
 import pytest
 import typer
 
-from jailbee import pr_flow
+from jailbee import pr_flow, prompting
 
 
 @pytest.fixture(autouse=True)
@@ -35,9 +36,7 @@ def test_offer_outbox_binding_without_picker_prints_scoped_advice(
     tmp_path, mocker, yes, interactive, submodule
 ):
     mocker.patch("jailbee.prompting.is_interactive", return_value=interactive)
-    select = mocker.patch(
-        "jailbee.prompting._select_question", side_effect=AssertionError("must not ask")
-    )
+    select = mocker.patch("jailbee.prompting._select", side_effect=AssertionError("must not ask"))
     legacy_select = mocker.patch(
         "jailbee.prompting._select", side_effect=AssertionError("must not ask")
     )
@@ -73,13 +72,17 @@ def test_offer_outbox_binding_pick_number_and_single_ref_still_asks(
     tmp_path, mocker, refs, selection
 ):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    select = mocker.patch("jailbee.prompting._select_question", return_value=selection)
+    select = mocker.patch("jailbee.prompting._select", return_value=selection)
     assert (
         pr_flow.offer_outbox_binding(_super_scope(tmp_path), refs, yes=False, short="c1")
         == selection
     )
-    question, options = select.call_args.args
-    assert question == "Outbox manifests reference existing PRs. Publish to:"
+    options = select.call_args.args[1]
+    assert (
+        select.call_args.kwargs["question"]
+        == "Outbox manifests reference existing PRs. Publish to:"
+    )
+    assert select.call_args.kwargs["default"] is prompting.CANCEL_ROW
     if len(refs) == 2:
         assert [(o.title, o.value) for o in options[:-1]] == [
             ("PR #5 — a.json, b.json", 5),
@@ -92,8 +95,8 @@ def test_offer_outbox_binding_pick_number_and_single_ref_still_asks(
 def test_offer_outbox_binding_pick_new_pr_returns_none(tmp_path, mocker):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
-        "jailbee.prompting._select_question",
-        side_effect=lambda question, options: options[-1].value,
+        "jailbee.prompting._select",
+        side_effect=lambda noun, options, **kw: options[-1].value,
     )
     assert (
         pr_flow.offer_outbox_binding(
@@ -105,7 +108,7 @@ def test_offer_outbox_binding_pick_new_pr_returns_none(tmp_path, mocker):
 
 def test_offer_outbox_binding_cancel_aborts(tmp_path, mocker):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("jailbee.prompting._select_question", return_value=None)
+    mocker.patch("jailbee.prompting._select", return_value=None)
     with pytest.raises(typer.Abort):
         pr_flow.offer_outbox_binding(
             _super_scope(tmp_path), {5: ("a.json",)}, yes=False, short="c1"
@@ -1869,6 +1872,8 @@ def _fake_select(mocker, index):
     captured: dict[str, list] = {}
 
     class _Question:
+        application = types.SimpleNamespace(key_bindings=None)
+
         def ask(self):
             return captured["choices"][index].value
 

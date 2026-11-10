@@ -9776,12 +9776,24 @@ def submodule_pr_cmd(
         # a submodule with nothing to publish no longer has to be typed from
         # memory. Off a TTY `select_target` below keeps today's exact
         # behaviour, messages and exit codes.
+        from jailbee.submodule_pr import describe_candidate
         from jailbee.tui import pick_submodule
 
-        chosen = pick_submodule(submodule_pr.order_candidates(subs))
-        if chosen is None:
-            raise typer.Abort()
-        path = chosen
+        ordered = submodule_pr.order_candidates(subs)
+        width = max((len(c.path) for c in ordered), default=0)
+        try:
+            path = prompting.choose_one(
+                "submodule",
+                [
+                    prompting.Option(c.path, describe_candidate(c, width=width), c.path)
+                    for c in ordered
+                ],
+                question="Which submodule should the PR be for?",
+                always_ask=True,
+                picker=lambda _opts: pick_submodule(ordered),
+            )
+        except prompting.Cancelled:
+            raise typer.Abort() from None
 
     try:
         target = submodule_pr.select_target(subs, path)
@@ -14301,9 +14313,15 @@ def _resolve_review_container(
             f"(or run in a TTY): {names}"
         )
         raise typer.Exit(2)
-    picked = pick_container(pending)
-    if picked is None:
-        raise typer.Exit(1)
+    try:
+        picked = prompting.choose_one(
+            "container",
+            [prompting.Option(c.name, c.display_name, c.display_name) for c in pending],
+            question="Select a container:",
+            picker=lambda _opts: pick_container(pending),
+        )
+    except prompting.Cancelled:
+        raise typer.Exit(1) from None
     return incus, picked
 
 

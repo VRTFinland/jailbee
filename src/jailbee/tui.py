@@ -341,6 +341,7 @@ def choose_shared_credential(
         side = prompting.choose_one(
             "login",
             options,
+            question=question,
             picker=lambda opts: _render_choice(question, opts),
         )
     except prompting.Cancelled:

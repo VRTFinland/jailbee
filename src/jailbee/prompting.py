@@ -52,6 +52,10 @@ T = TypeVar("T")
 # questionary answers a Choice whose value is None with its *title*; a unique
 # object can never be mistaken for a real answer.
 _CANCEL = object()
+# Pass as `choose_one(default=CANCEL_ROW)` to start the terminal cursor on the
+# cancel row, so a bare Enter backs out (an optional, consequential choice).
+# Over the channel it names no option: the prompt has no default.
+CANCEL_ROW: Any = _CANCEL
 
 
 def is_interactive() -> bool:
@@ -578,27 +582,9 @@ def _select(  # noqa: UP047
     header = f"Select {noun}:" if question is None else question
     preselect = next((c for c in choices if default is not None and c.value == default), None)
     extra: dict[str, Any] = {} if preselect is None else {"default": preselect}
-    result = questionary.select(
-        header, choices=choices, use_shortcuts=len(choices) <= 36, **extra
-    ).ask()
-    if result is None or result is _CANCEL:
-        return None
-    return result  # type: ignore[no-any-return]  # questionary is untyped; values are ours
-
-
-def _select_question(question: str, options: Sequence[Option[T]]) -> T | None:  # noqa: UP047
-    """An optional choice, initially pointing at Cancel rather than consent."""
-    import questionary
     from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent, merge_key_bindings
 
-    choices = [
-        questionary.Choice(title=o.title, value=_CANCEL if o.value is None else o.value)
-        for o in options
-    ]
-    if not any(o.value is None for o in options):
-        choices.append(questionary.Choice(title="Cancel", value=_CANCEL))
-    cancel_choice = next(choice for choice in choices if choice.value is _CANCEL)
-    prompt = questionary.select(question, choices=choices, default=cancel_choice)
+    prompt = questionary.select(header, choices=choices, use_shortcuts=len(choices) <= 36, **extra)
     bindings = KeyBindings()
 
     @bindings.add("escape")
@@ -613,11 +599,6 @@ def _select_question(question: str, options: Sequence[Option[T]]) -> T | None:  
     if result is None or result is _CANCEL:
         return None
     return result  # type: ignore[no-any-return]  # questionary is untyped; values are ours
-
-
-def choose(question: str, options: Sequence[Option[T]]) -> T | None:  # noqa: UP047
-    """Ask an optional question; callers own interactive policy. Cancel is the default."""
-    return _select_question(question, options)
 
 
 def _ask(
@@ -703,7 +684,8 @@ def choose_one(  # noqa: UP047
     is_interactive: Callable[[], bool] | None = None,
     context: PromptContext | None = None,
     question: str | None = None,
-    default: T | None = None,
+    default: Any = None,
+    always_ask: bool = False,
 ) -> T:
     """Resolve a missing value from its candidates.
 
@@ -716,12 +698,14 @@ def choose_one(  # noqa: UP047
     channel's question); without it the header is "Select <noun>:".
     `default` is the value to preselect (terminal: the cursor row; channel: the
     prompt's `default` option id); the non-interactive backend ignores it.
+    `always_ask` asks even a lone candidate (as `destructive` does) without the
+    destructive meaning: a picker that shows every row, such as the submodule list.
 
     Cancel (Ctrl-C / Esc / the picker's cancel row) -> `Cancelled`.
     """
     if not options:
         raise MissingValue(noun, reason=empty_reason or f"no {noun} to choose from")
-    if len(options) == 1 and not destructive:
+    if len(options) == 1 and not (destructive or always_ask):
         _note(f"Using {noun} {options[0].label}")
         return options[0].value
     chosen = _backend_for(is_interactive).choose_one(
@@ -856,19 +840,6 @@ def ask_confirm(
         context=context,
         alternative=alternative,
     )
-    if answer is None:
-        raise Cancelled()
-    return answer
-
-
-def confirm(question: str, *, default: bool = True) -> bool:
-    """Ask a yes/no question on the terminal; Ctrl-C / Esc is `Cancelled`.
-
-    Legacy form, kept until call sites move to `ask_confirm`. Unlike it, this
-    is not a missing-value resolver: the caller decides what a non-interactive
-    run means and checks `is_interactive()` before asking.
-    """
-    answer = _confirm(question, default)
     if answer is None:
         raise Cancelled()
     return answer

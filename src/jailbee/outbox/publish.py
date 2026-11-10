@@ -57,7 +57,7 @@ def ask_publish_mode(total: int, preview: pr_outbox.DraftPreview) -> pr_outbox.P
         if preview.draft_total is not None
         else preview.pending + int(preview.description)
     )
-    options: list[prompting.Option[pr_outbox.PublishMode | None]] = [
+    options: list[prompting.Option[pr_outbox.PublishMode]] = [
         prompting.Option("publish", "Publish", "publish"),
         prompting.Option(
             "draft",
@@ -65,9 +65,16 @@ def ask_publish_mode(total: int, preview: pr_outbox.DraftPreview) -> pr_outbox.P
             f" ({draft_total} pending actions; {preview.held_back} general comments held back)",
             "draft",
         ),
-        prompting.Option(None, "Cancel", "cancel"),
     ]
-    return prompting.choose(f"Publish {total} pending actions?", options)
+    try:
+        return prompting.choose_one(
+            "publish mode",
+            options,
+            question=f"Publish {total} pending actions?",
+            default=prompting.CANCEL_ROW,
+        )
+    except prompting.Cancelled:
+        return None
 
 
 def _checked(

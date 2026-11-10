@@ -1027,7 +1027,7 @@ def test_review_apply_draft_off_tty_refuses(mocker, tmp_path):
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
     mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target(text=text))
     applied = mocker.patch("jailbee.pr_outbox.apply_manifest")
-    picker = mocker.patch("jailbee.prompting.choose", side_effect=AssertionError("picker"))
+    picker = mocker.patch("jailbee.prompting._select", side_effect=AssertionError("picker"))
     result = runner.invoke(app, ["review", "apply", "feat-foo", "--draft"])
     assert result.exit_code == 2, result.output
     assert "-y" in result.output
