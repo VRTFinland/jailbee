@@ -23,7 +23,7 @@ from textual.widgets import Button, Input, OptionList, SelectionList, Static
 from textual.widgets.option_list import Option
 from textual.widgets.selection_list import Selection
 
-from jailbee.prompt_channel import Prompt
+from jailbee.prompt_channel import Prompt, WireOption
 
 _CSS = """
 PromptModal { align: center middle; background: ansi_default 40%; }
@@ -37,6 +37,7 @@ PromptModal.destructive .title { color: ansi_red; }
 PromptModal .context { color: ansi_bright_black; }
 PromptModal .hint { color: ansi_bright_black; }
 PromptModal .error { color: ansi_red; }
+PromptModal .detail { margin: 1 0; }
 PromptModal .buttons { height: auto; align-horizontal: right; }
 PromptModal OptionList, PromptModal SelectionList { height: auto; max-height: 16; }
 PromptModal Input { margin: 1 0 0 0; }
@@ -48,6 +49,15 @@ OutputScreen .title { text-style: bold; }
 OutputScreen.failed .title { color: ansi_red; }
 OutputScreen VerticalScroll { height: 1fr; }
 """
+
+
+def _row_text(option: WireOption) -> Text:
+    """An option's row as the terminal shows it: the title, then its description.
+
+    `title` is the row the terminal prints; `label` is only the short name used
+    in errors, and stands in when a peer sent no title."""
+    row = option.title or option.label
+    return Text(row + (f"  {option.description}" if option.description else ""))
 
 
 class PromptModal(ModalScreen[Any]):
@@ -76,7 +86,11 @@ class PromptModal(ModalScreen[Any]):
             if context is not None and (context.repo or context.container):
                 where = " / ".join(part for part in (context.repo, context.container) if part)
                 yield Static(Text(where), classes="context", markup=False)
+            if self.prompt.detail:
+                yield Static(Text(self.prompt.detail), classes="detail", markup=False)
             yield from self.body()
+            if self.prompt.error:
+                yield Static(Text(self.prompt.error), classes="error", markup=False)
             yield Static(self.hint, classes="hint", markup=False)
 
     def heading(self) -> str:
@@ -123,15 +137,7 @@ class ChooseOneModal(PromptModal):
     hint = "Up/Down move, Enter chooses, Esc cancels"
 
     def body(self) -> ComposeResult:
-        yield OptionList(
-            *[
-                Option(
-                    Text(o.label + (f"  {o.description}" if o.description else "")),
-                    id=o.id,
-                )
-                for o in self.prompt.options
-            ]
-        )
+        yield OptionList(*[Option(_row_text(o), id=o.id) for o in self.prompt.options])
 
     def on_mount(self) -> None:
         widget = self.query_one(OptionList)
@@ -156,11 +162,9 @@ class ChooseManyModal(PromptModal):
     hint = "Space toggles, Enter confirms, Esc cancels"
 
     def body(self) -> ComposeResult:
+        ticked = self.prompt.default if isinstance(self.prompt.default, tuple) else ()
         yield SelectionList[str](
-            *[
-                Selection(Text(o.label + (f"  {o.description}" if o.description else "")), o.id)
-                for o in self.prompt.options
-            ]
+            *[Selection(_row_text(o), o.id, o.id in ticked) for o in self.prompt.options]
         )
 
     def on_mount(self) -> None:
@@ -180,6 +184,8 @@ class TextModal(PromptModal):
     def __init__(self, prompt: Prompt) -> None:
         super().__init__(prompt)
         self.secret = prompt.kind == "secret"
+        if prompt.clear_shortcut:
+            self.hint = "Enter confirms, Ctrl-R clears, Esc cancels"
 
     def body(self) -> ComposeResult:
         default = self.prompt.default
@@ -199,10 +205,19 @@ class TextModal(PromptModal):
     def on_mount(self) -> None:
         self.query_one(Input).focus()
 
+    def on_key(self, event: events.Key) -> None:
+        # The terminal's Ctrl-R: the only way to answer "" under `clear_shortcut`.
+        if event.key == "ctrl+r" and self.prompt.clear_shortcut:
+            event.stop()
+            self.dismiss("")
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
-        if not event.value and not self.prompt.clear_shortcut:
-            self.query_one("#problem", Static).update("An answer is required")
+        # As at the terminal: an empty answer is an ordinary answer (the command's
+        # validator decides), except where Ctrl-R exists to say "clear" and a
+        # blank line is blocked.
+        if self.prompt.clear_shortcut and not event.value.strip():
+            self.query_one("#problem", Static).update("Type an answer, or Ctrl-R to clear")
             return
         self.dismiss(event.value)
 
