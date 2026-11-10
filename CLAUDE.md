@@ -51,6 +51,8 @@ isolated per-branch development environments using Incus system containers. See
 - **`cli.py` is thin** — argument parsing + delegation only. Business logic
   lives in module functions accepting `Config` + `Incus` as inputs.
 - **No global state.** All command functions accept dependencies explicitly.
+  The one named exception is `prompting._CHANNELS`: a process has exactly one
+  prompt channel (adopted from `JAILBEE_PROMPT_FD`), reused by every question.
 - **Shelling out to non-incus binaries is intentional** and stays one module
   per concern: `services/local_proc.py` (`tmux`, `bash`, inside a container only),
   `container_outbox/gh.py` (`gh`, read-only GitHub metadata inside a container),
@@ -214,10 +216,31 @@ always_prompt=True)`), which always show the picker. Listing commands (`ls`,
 order is unchanged — only trailing omitted values are asked. Declare such a
 positional `= None` and resolve it in the body, container first.
 `prompting.is_interactive()` is the only TTY test for prompts (it honours
-`JAILBEE_NONINTERACTIVE`); tests patch `jailbee.prompting.is_interactive`,
-`jailbee.prompting._select` and `jailbee.prompting._ask`.
-`tests/test_cli_prompt_policy.py` fails on any required positional and on any
-`stdin.isatty` outside `prompting.py` (bar the few non-prompt uses it names).
+`JAILBEE_NONINTERACTIVE`, and is true under a prompt channel);
+`tests/test_cli_prompt_policy.py` fails on any required positional, on any
+direct prompt library (typer/click confirm, questionary, Rich prompt, `input()`)
+outside `prompting.py`, on any `stdin.isatty` outside it (bar the few non-prompt uses
+it names), and on a `tui` picker used anywhere but as a `picker=`.
+
+Every question goes through one `prompting` function and one backend, chosen by
+`prompting.select_backend()` (the only place): terminal, non-interactive, or the
+**prompt channel**. A command run by a dashboard (`dashboard/runner.py`) inherits
+one end of a socketpair named by `JAILBEE_PROMPT_FD`; the entry point adopts it
+once (`prompting.adopt_channel`, then unsets the variable), and its questions
+travel to the UI (`prompt_channel.py`, ADR 0003) instead of a terminal. A site
+whose terminal picker draws its own header, rows or pre-ticked defaults passes
+`question=`, the rows' titles and `default=` too, so the modal asks what the
+terminal asks; `prompting.displayed_question` is the one builder of that text.
+A yes/no is `typer.confirm` at the terminal (Ctrl-C is typer's `Abort`, also for a
+channel cancel); the other kinds raise `Cancelled`.
+Tests patch `jailbee.prompting.is_interactive` and the terminal seams
+(`prompting._confirm`, `_select`, `_select_many`, `_ask`, `_ask_secret`), or
+monkeypatch `prompting.select_backend` with a fake; a confirmation is answered by
+`CliRunner(input="y\n")`. A channel is tested with a socketpair, `JAILBEE_PROMPT_FD`
+set to the command end and a `prompt_channel.UiEnd(...).serve(handler)` thread
+(`tests/test_prompt_channel.py`); `prompting.drop_channel()` ends it.
+`tests/test_prompt_channel_commands.py` runs a command at the terminal and at a
+dashboard and compares what each actually renders.
 
 ### Follow the existing import style
 - Lazy imports inside command functions in `cli.py` keep `jailbee --help` fast.
