@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from unittest.mock import ANY
 
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.hit import Hit
@@ -11,6 +12,17 @@ from jailbee.dashboard.overlays import Picker
 from jailbee.dashboard.tui.menu_state import MenuState
 from tests.dashboard_fixtures import ci
 from tests.dashboard_pilot import bare_session, drive, patch_pause
+
+
+def _runs(mocker, session, rc):
+    """Replace the command run: it ends at once with ``rc`` (None = it did not run)."""
+
+    def fake(*_args, then=None, **_kw):
+        if then is not None:
+            then(rc)
+
+    return mocker.patch.object(session, "run_dashboard_command", side_effect=fake)
+
 
 Row = dmodel.Row
 
@@ -245,7 +257,7 @@ def test_space_twice_on_one_row_unmarks_it(mocker, tmp_path):
 
 def test_merge_mode_space_marks_and_enter_runs_all_targets(mocker, tmp_path):
     session, _ = _session(mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"), ci("r-c", "r"))
-    run = mocker.patch.object(session, "run_dashboard_command", return_value=0)
+    run = _runs(mocker, session, 0)
     session.begin_merge_pick(["r-b"])
 
     session.handle_key("space")  # r-a
@@ -259,20 +271,25 @@ def test_merge_mode_space_marks_and_enter_runs_all_targets(mocker, tmp_path):
         "container",
         ["merge", "r-b", "--into", "r-a", "--into", "r-c", "--no-confirm"],
         style="report",
+        then=ANY,
     )
     assert session.merge_pick is None
 
 
 def test_merge_mode_enter_without_marks_uses_cursor_row(mocker, tmp_path):
     session, _ = _session(mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"))
-    run = mocker.patch.object(session, "run_dashboard_command", return_value=0)
+    run = _runs(mocker, session, 0)
     session.begin_merge_pick(["r-b"])
 
     session.handle_key("enter")
     _confirm(session)
 
     run.assert_called_once_with(
-        "r-b", "container", ["merge", "r-b", "--into", "r-a", "--no-confirm"], style="report"
+        "r-b",
+        "container",
+        ["merge", "r-b", "--into", "r-a", "--no-confirm"],
+        style="report",
+        then=ANY,
     )
     assert session.merge_pick is None
     assert session.notice == "Merged b into a"
@@ -281,7 +298,7 @@ def test_merge_mode_enter_without_marks_uses_cursor_row(mocker, tmp_path):
 def test_enter_on_an_ineligible_cursor_row_with_no_marks_runs_nothing(mocker, tmp_path):
     group = _group(tmp_path, ci("r-a", "r"), ci("r-b", "r"))
     session, _ = bare_session(mocker, [group])
-    run = mocker.patch.object(session, "run_dashboard_command", return_value=0)
+    run = _runs(mocker, session, 0)
     session.begin_merge_pick(["r-b"])
     group.containers[0] = ci("r-a", "r", "Stopped")  # the only target stops
     session.tick()
@@ -297,7 +314,7 @@ def test_a_successful_bulk_merge_unmarks_the_sources_only(mocker, tmp_path):
     session, _ = _session(
         mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"), ci("r-c", "r"), ci("r-d", "r")
     )
-    mocker.patch.object(session, "run_dashboard_command", return_value=0)
+    _runs(mocker, session, 0)
     session.marked = frozenset({"r-b", "r-c"})
     session.begin_bulk("merge")
     session.handle_key("enter")
@@ -308,7 +325,7 @@ def test_a_successful_bulk_merge_unmarks_the_sources_only(mocker, tmp_path):
 
 def test_a_failed_merge_keeps_the_bulk_marks(mocker, tmp_path):
     session, _ = _session(mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"), ci("r-c", "r"))
-    mocker.patch.object(session, "run_dashboard_command", return_value=1)
+    _runs(mocker, session, 1)
     session.marked = frozenset({"r-b", "r-c"})
     session.begin_bulk("merge")
     session.handle_key("enter")
@@ -324,7 +341,7 @@ def test_a_successful_bulk_merge_keeps_a_mark_that_was_not_a_source(mocker, tmp_
     session, _ = _session(
         mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"), ci("r-s", "r", "Stopped")
     )
-    mocker.patch.object(session, "run_dashboard_command", return_value=0)
+    _runs(mocker, session, 0)
     session.marked = frozenset({"r-b", "r-s"})
     session.begin_bulk("merge")
     assert session.merge_pick is not None
@@ -338,7 +355,7 @@ def test_a_successful_bulk_merge_keeps_a_mark_that_was_not_a_source(mocker, tmp_
 
 def test_merge_targets_marked_out_of_listing_order_run_in_listing_order(mocker, tmp_path):
     session, _ = _session(mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"), ci("r-c", "r"))
-    run = mocker.patch.object(session, "run_dashboard_command", return_value=0)
+    run = _runs(mocker, session, 0)
     session.begin_merge_pick(["r-b"])
 
     session.click(Hit("row", ("r-c",)), toggle=True)  # c first ...
@@ -351,6 +368,7 @@ def test_merge_targets_marked_out_of_listing_order_run_in_listing_order(mocker, 
         "container",
         ["merge", "r-b", "--into", "r-a", "--into", "r-c", "--no-confirm"],
         style="report",
+        then=ANY,
     )
 
 
@@ -359,7 +377,7 @@ def test_a_merge_that_never_ran_restores_the_marks_untouched(mocker, tmp_path):
     # (e.g. the remote policy refused it): nothing succeeded, so nothing is
     # unmarked, the sources included.
     session, _ = _session(mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"), ci("r-c", "r"))
-    mocker.patch.object(session, "run_dashboard_command", return_value=None)
+    _runs(mocker, session, None)
     session.marked = frozenset({"r-b", "r-c"})
     session.begin_bulk("merge")
 
@@ -542,7 +560,7 @@ def test_a_bulk_batch_ending_while_picking_unmarks_its_successes_on_restore(mock
 
 def test_the_merge_asks_in_the_dashboard_and_runs_nothing_until_yes(mocker, tmp_path):
     session, _ = _session(mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"))
-    run = mocker.patch.object(session, "run_dashboard_command", return_value=0)
+    run = _runs(mocker, session, 0)
     session.begin_merge_pick(["r-b"])
 
     session.handle_key("enter")
@@ -556,7 +574,7 @@ def test_the_merge_asks_in_the_dashboard_and_runs_nothing_until_yes(mocker, tmp_
 
 def test_declining_the_merge_question_returns_to_picking(mocker, tmp_path):
     session, _ = _session(mocker, tmp_path, ci("r-a", "r"), ci("r-b", "r"))
-    run = mocker.patch.object(session, "run_dashboard_command", return_value=0)
+    run = _runs(mocker, session, 0)
     session.begin_merge_pick(["r-b"])
     session.handle_key("enter")
     picker = session.overlay

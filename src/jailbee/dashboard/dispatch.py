@@ -188,6 +188,46 @@ def _run_paged(argv: list[str], pager: list[str], cwd: Path) -> int:
     return producer.wait()
 
 
+def action_cli_argv(
+    target: RepoTarget, verb: str, name: str, *, transport: Transport = "none"
+) -> list[str]:
+    """The ``jailbee`` argument list (without the program name) for ``<verb> <name>``.
+
+    Addressed at ``target`` (``--config``) only for the local transport, and
+    carrying ``--force`` for the attach verbs and registry apps, which are the
+    only commands that mean something by it.
+    """
+    argv = [*verb.split(), name, *(target.flags() if transport == "none" else [])]
+    if verb in ATTACH_VERBS or verb.startswith(APPS_RUN_PREFIX):
+        argv.append("--force")
+    return argv
+
+
+def action_style(
+    verb: str,
+    *,
+    remote: bool = False,
+    transport: Transport = "none",
+    ssh_policy: RemotePolicy | None = None,
+) -> DispatchStyle:
+    """:func:`dispatch_style` with the remote adjustments of :func:`_dispatch_action`."""
+    style = dispatch_style(verb)
+    if (
+        transport != "none"
+        and ssh_policy is not None
+        and ssh_policy.rdp
+        and _is_gui_verb(verb)
+        and waypipe_session() is None
+    ):
+        # The launch prints how to reach the shared RDP display; "plain" would
+        # throw that away the moment the dashboard repaints. A waypipe session
+        # has nothing to show: the window simply opens on the laptop.
+        style = "output"
+    if style == "paged" and remote:
+        style = "output"
+    return style
+
+
 def _dispatch_action(
     target: RepoTarget,
     verb: str,
@@ -235,23 +275,8 @@ def _dispatch_action(
         verb, name, force=verb in ATTACH_VERBS or verb.startswith(APPS_RUN_PREFIX)
     )
     check_dashboard_command(action_argv, ssh_policy, transport=transport)
-    argv = ["jailbee", *verb.split(), name, *(target.flags() if transport == "none" else [])]
-    if verb in ATTACH_VERBS or verb.startswith(APPS_RUN_PREFIX):
-        argv.append("--force")
-    style = dispatch_style(verb)
-    if (
-        transport != "none"
-        and ssh_policy is not None
-        and ssh_policy.rdp
-        and _is_gui_verb(verb)
-        and waypipe_session() is None
-    ):
-        # The launch prints how to reach the shared RDP display; "plain" would
-        # throw that away the moment the dashboard repaints. A waypipe session
-        # has nothing to show: the window simply opens on the laptop.
-        style = "output"
-    if style == "paged" and remote:
-        style = "output"
+    argv = ["jailbee", *action_cli_argv(target, verb, name, transport=transport)]
+    style = action_style(verb, remote=remote, transport=transport, ssh_policy=ssh_policy)
     if style == "paged":
         pager = pager_argv()
         if pager is not None:

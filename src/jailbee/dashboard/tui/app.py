@@ -6,12 +6,14 @@ the session holds.
 
 from __future__ import annotations
 
+import asyncio
 import sys
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from textual import events
 from textual.app import App, ComposeResult
@@ -19,6 +21,7 @@ from textual.geometry import Size
 from textual.message import Message
 
 from jailbee.config.models_remote import RemotePolicy
+from jailbee.dashboard import runner as drunner
 from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.tui import scrollbar
@@ -38,9 +41,12 @@ from jailbee.dashboard.tui.native import (
 )
 from jailbee.dashboard.tui.outbox_box import OutboxBox
 from jailbee.dashboard.tui.overlay import overlay_key
+from jailbee.dashboard.tui.prompt_modals import OutputScreen, modal_for
 from jailbee.dashboard.tui.session import (
     DOUBLE_CLICK_KINDS,
     OVERLAY_GLOBAL_TOKENS,
+    ActionOutcome,
+    ActionRun,
     DashboardSession,
     Outcome,
     Startup,
@@ -54,6 +60,7 @@ if TYPE_CHECKING:
     from textual.driver import Driver
 
     from jailbee.incus import Incus
+    from jailbee.prompt_channel import Prompt
 
 TICK_SECONDS = 0.25
 
@@ -136,6 +143,14 @@ class DashboardApp(App[int], inherit_bindings=False):
         self.quit_requested = False
         self.mouse_on = startup.mouse
         self._last_click: Hit | None = None
+        # Test seams: the runner (swap in a fake) and whether actions run on a
+        # worker thread (False runs them inline, for runners that never ask).
+        self.action_runner: Callable[..., drunner.RunResult] = drunner.run_action
+        self.action_spawn: drunner.Spawner | None = None
+        self.threaded_actions = True
+        self._ui_thread = threading.get_ident()
+        self._pending_prompts: set[asyncio.Future[Any]] = set()
+        self._prompts_closed = False
 
     # --- Terminal protocol -------------------------------------------------
 
@@ -169,6 +184,95 @@ class DashboardApp(App[int], inherit_bindings=False):
             self._last_title = None
             self._painted = None
 
+    # --- action runner -----------------------------------------------------
+
+    @property
+    def modal_open(self) -> bool:
+        """Whether a question or an output screen is on top of the dashboard."""
+        return self._is_mounted and len(self.screen_stack) > 1
+
+    def run_actions(self, runs: Sequence[ActionRun], done: Callable[[ActionOutcome], None]) -> None:
+        """Run the actions on a worker thread; ``done`` is called on the app thread."""
+        session = self.session
+        extra: dict[str, Any] = {"spawn": self.action_spawn} if self.action_spawn else {}
+
+        def work() -> None:
+            chunks: list[str] = []
+            results: list[drunner.RunResult] = []
+            try:
+                for run in runs:
+                    if len(runs) > 1:
+                        chunks.append(f"── jailbee {' '.join(run.argv[:2])} ──\n")
+                    result = self.action_runner(
+                        run.argv,
+                        transport=session.transport,
+                        policy=session.ssh_policy,
+                        cwd=run.cwd,
+                        on_prompt=self._ask_from_worker,
+                        on_output=chunks.append,
+                        **extra,
+                    )
+                    results.append(result)
+                    if result.error is not None or result.refused is not None:
+                        break
+            except Exception as exc:
+                results.append(drunner.RunResult(error=str(exc)))
+            outcome = ActionOutcome(results, "".join(chunks))
+            self._on_app_thread(lambda: done(outcome))
+
+        if self.threaded_actions:
+            self.run_worker(work, thread=True, exit_on_error=False)
+        else:
+            work()
+
+    def show_output(self, title: str, text: str, *, failed: bool) -> None:
+        self.push_screen(OutputScreen(title, text, failed=failed))
+
+    def _on_app_thread(self, fn: Callable[[], None]) -> None:
+        if threading.get_ident() == self._ui_thread:
+            fn()
+            return
+        try:
+            self.call_from_thread(fn)
+        except (Exception, asyncio.CancelledError):
+            pass  # the dashboard is gone: nobody is left to tell
+
+    def _ask_from_worker(self, prompt: Prompt) -> Any:
+        """The runner's ``on_prompt``: blocks the worker until a modal is answered."""
+        if self._prompts_closed or threading.get_ident() == self._ui_thread:
+            return None
+        try:
+            return self.call_from_thread(self._ask, prompt)
+        except (Exception, asyncio.CancelledError):
+            return None  # the dashboard is closing: cancel the question
+
+    async def _ask(self, prompt: Prompt) -> Any:
+        if self._prompts_closed:
+            return None
+        answer: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._pending_prompts.add(answer)
+
+        def resolve(value: Any) -> None:
+            if not answer.done():
+                answer.set_result(value)
+
+        self.push_screen(modal_for(prompt), resolve)
+        try:
+            return await answer
+        finally:
+            self._pending_prompts.discard(answer)
+
+    def _cancel_pending_prompts(self) -> None:
+        """Answer every open question with a cancel, so no child waits on a dead UI."""
+        self._prompts_closed = True
+        for answer in list(self._pending_prompts):
+            if not answer.done():
+                answer.set_result(None)
+
+    def exit(self, result: int | None = None, return_code: int = 0, message: Any = None) -> None:
+        self._cancel_pending_prompts()
+        super().exit(result, return_code, message)
+
     # --- Textual -----------------------------------------------------------
 
     def compose(self) -> ComposeResult:
@@ -197,7 +301,10 @@ class DashboardApp(App[int], inherit_bindings=False):
         # Keys and pastes are routed here, one at a time, never through the focus chain:
         # Textual would pick a key's widget on arrival, before the keys ahead of it in
         # the same read had opened or closed anything.
-        if isinstance(event, events.Key) and not event.is_forwarded:
+        if self.modal_open and isinstance(event, (events.Key, events.Paste)):
+            # A question or output screen has the keyboard: Textual's own routing.
+            await super().on_event(event)
+        elif isinstance(event, events.Key) and not event.is_forwarded:
             self.app_focus = True  # what Textual's own handler does for a key
             await self._route_key(event)
         elif isinstance(event, events.Paste) and not event.is_forwarded:
@@ -360,7 +467,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         self.refresh_frame()
 
     def on_click(self, event: events.Click) -> None:
-        if not self.mouse_on:
+        if not self.mouse_on or self.modal_open:
             return
         box = self.frame.native_box
         if box is not None and event.widget is not None and box in event.widget.ancestors_with_self:
@@ -385,7 +492,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         self.refresh_frame()
 
     def on_mouse_move(self, event: events.MouseMove) -> None:
-        if not self.mouse_on:
+        if not self.mouse_on or self.modal_open:
             return
         self._set_hover(Hit.of(event.style.meta))
 

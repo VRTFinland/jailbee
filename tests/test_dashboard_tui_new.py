@@ -252,21 +252,22 @@ def test_new_container_runs_detached_without_taking_the_terminal(mocker, tmp_pat
     wait.assert_not_called()  # `foreground` always ends in the "press Enter" stop
 
 
-def test_new_container_that_wants_an_answer_is_rerun_in_the_foreground(mocker, tmp_path):
+def test_new_container_that_wants_an_answer_is_rerun_through_the_runner(mocker, tmp_path):
     group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-x", "alpha")])
     detached = mocker.Mock(returncode=2, stderr="error: ... no terminal to ask on. Re-run")
     attended = mocker.Mock(returncode=0, stderr=None)
     child = mocker.patch.object(tsession.subprocess, "run", side_effect=[detached, attended])
-    wait = patch_pause(mocker)
 
-    assert drive(mocker, _NEW_PR_KEYS, [group]).rc == 0
+    run = drive(mocker, _NEW_PR_KEYS, [group])
+    assert run.rc == 0
 
     argv = ["jailbee", "new", "--background", "--pr", "123"]
     assert child.call_args_list == [
         mocker.call(argv, check=False, cwd=tmp_path),
         mocker.call(argv, check=False, cwd=tmp_path),
     ]
-    wait.assert_called_once()  # the second run is the attended one
+    # The second run is the one whose questions are modals; its output is shown.
+    assert len(run.app.outputs) == 1
 
 
 def test_new_container_real_failure_is_noticed_not_rerun(mocker, tmp_path):

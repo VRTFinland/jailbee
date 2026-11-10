@@ -118,7 +118,15 @@ def test_missing_policy_refuses(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "argv", [["shell", "a"], ["tmux", "a"], ["apps", "run", "gimp", "a"], ["ide", "a"]]
+    "argv",
+    [
+        ["shell", "a"],
+        ["tmux", "a"],
+        ["apps", "run", "gimp", "a"],
+        ["ide", "a"],
+        ["orphan", "tmux", "a"],
+        ["orphan", "shell", "a"],
+    ],
 )
 def test_attach_style_is_never_spawned(argv: list[str], tmp_path: Path) -> None:
     spawn = Spawns()

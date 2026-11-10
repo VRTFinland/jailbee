@@ -92,7 +92,10 @@ class SessionOutboxRunner:
         )
 
     def hand_off(self, argv: Sequence[str]) -> int | None:
-        return self.session.run_dashboard_command(self.container, "container", list(argv))
+        # Foreground: the publish flow needs the exit code before it goes on.
+        return self.session.run_dashboard_command(
+            self.container, "container", list(argv), foreground=True
+        )
 
     def hand_off_diagnostic(self, argv: Sequence[str]) -> tuple[int | None, str | None]:
         import tempfile
