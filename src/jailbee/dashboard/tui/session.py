@@ -75,9 +75,10 @@ from jailbee.dashboard.commands import (
 from jailbee.dashboard.dispatch import (
     DispatchStyle,
     _dispatch_action,
-    _run_bulk_foreground,
     _run_cli_foreground,
     _wait_for_return,
+    action_cli_argv,
+    action_style,
     command_needs_pause,
     dispatch_style,
 )
@@ -136,6 +137,7 @@ from jailbee.dashboard.overlays import (
     parse_pr_number,
     validate_answer,
 )
+from jailbee.dashboard.runner import RunResult, is_attach_style
 from jailbee.dashboard.settings import (
     SettingsState,
     Tab,
@@ -239,6 +241,7 @@ _PUBLISH_ISSUE_KINDS = ("create", "edit", "comment", "labels", "state", "assign_
 GRANT_PATCH_SECONDS = 15.0  # how long a local grant edit outlasts a snapshot that lacks it
 NOTICE_SECONDS = 2.5  # how long a transient subtitle message stays up
 FAILURE_NOTICE_SECONDS = 8.0  # a refused account command's reason, long enough to read
+RUNNING_NOTICE_SECONDS = 3600.0  # an action in flight: replaced the moment it ends
 STARTUP_NOTICE_SECONDS = 10.0  # a config-migration notice shown at launch
 
 Outcome = Literal["quit", "toggle-mouse"] | None
@@ -268,6 +271,17 @@ class MergePick:
     sources: tuple[str, ...]  # full names, listing order
     targets: frozenset[str] = frozenset()
     saved_marks: frozenset[str] = frozenset()  # bulk marks to restore on Esc
+
+
+def _last_line(text: str, style: DispatchStyle) -> str:
+    """``": <last output line>"`` for a failed bare action, whose output has no screen."""
+    if style != "plain":
+        return ""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    line = lines[-1]
+    return ": " + (line if len(line) <= 100 else line[:99] + "…")
 
 
 def _now() -> datetime:
@@ -303,6 +317,34 @@ class Terminal(Protocol):
     def hand_off(self, fn: Callable[[], int]) -> int:
         """Give the real terminal to ``fn`` (a child command), take it back, return its result."""
         ...
+
+    def run_actions(self, runs: Sequence[ActionRun], done: Callable[[ActionOutcome], None]) -> None:
+        """Run each action through the action runner without taking the terminal.
+
+        The child's questions are asked by the frontend itself. Returns at once;
+        ``done`` is called on the frontend's own thread when the last run ended.
+        """
+        ...
+
+    def show_output(self, title: str, text: str, *, failed: bool) -> None:
+        """Show an action's captured ``text`` until the user dismisses it."""
+        ...
+
+
+@dataclass(frozen=True)
+class ActionRun:
+    """One action for :meth:`Terminal.run_actions`: ``jailbee <argv>`` in ``cwd``."""
+
+    argv: list[str]  # without the program name, already addressed at its repo
+    cwd: Path
+
+
+@dataclass(frozen=True)
+class ActionOutcome:
+    """How the runs of :meth:`Terminal.run_actions` ended, and what they printed."""
+
+    results: list[RunResult]  # one per run that was started, in order
+    output: str
 
 
 @dataclass(frozen=True)
@@ -704,6 +746,87 @@ class DashboardSession:
         self.set_notice(f"'{repo.repo_root}' no longer exists")
         self.client.refresh()
 
+    def run_action(
+        self,
+        repo: RepoTarget,
+        argv: list[str],
+        *,
+        style: DispatchStyle,
+        label: str,
+        then: Callable[[int | None], None] | None = None,
+    ) -> None:
+        """Run ``jailbee <argv>`` through the action runner, in the dashboard.
+
+        ``argv`` is the command without the program name, already addressed at
+        ``repo`` and policy-checked by the caller. Returns at once: the result
+        is settled on the frontend's thread by :meth:`_settle_actions`, which
+        then calls ``then`` with the exit code (None when nothing ran).
+        """
+        self._start_actions([ActionRun(argv, repo.cwd())], [repo], style, label, then)
+
+    def _start_actions(
+        self,
+        runs: list[ActionRun],
+        repos: list[RepoTarget],
+        style: DispatchStyle,
+        label: str,
+        then: Callable[[int | None], None] | None,
+        *,
+        settled: Callable[[ActionOutcome], None] | None = None,
+    ) -> None:
+        self.set_notice(f"running 'jailbee {label}'…", RUNNING_NOTICE_SECONDS)
+
+        def finished(outcome: ActionOutcome) -> None:
+            self.notice_until = 0.0  # the running notice is over
+            if settled is not None:
+                settled(outcome)
+            else:
+                rc = self._settle_actions(repos[0], label, style, outcome)
+                if then is not None:
+                    then(rc)
+
+        self.terminal.run_actions(runs, finished)
+
+    def _settle_actions(
+        self, repo: RepoTarget, label: str, style: DispatchStyle, outcome: ActionOutcome
+    ) -> int | None:
+        """Notice how one action ended and present its output; return its exit code."""
+        result = outcome.results[-1] if outcome.results else RunResult(error="nothing ran")
+        if result.refused is not None:
+            self.set_notice(result.refused, FAILURE_NOTICE_SECONDS)
+            return None
+        if result.error is not None:
+            if not repo.repo_root.is_dir():
+                self._report_vanished_repo(repo)
+            else:
+                self.set_notice(
+                    f"could not start 'jailbee {label}': {result.error}", FAILURE_NOTICE_SECONDS
+                )
+            return None
+        rc = result.status if result.status is not None else 1
+        text = outcome.output
+        self._present_output(label, style, rc, text)
+        if rc != 0:
+            self.set_notice(f"'jailbee {label}' exited {rc}{_last_line(text, style)}")
+        elif style == "report":
+            # A clean run shows nothing, so this is all that says it ran.
+            self.set_notice(f"'jailbee {label}' done")
+        self.client.refresh()  # an action likely changed state — refresh ASAP
+        return rc
+
+    def _present_output(self, label: str, style: DispatchStyle, rc: int, text: str) -> None:
+        """What the old pause/pager/bare styles become: an output screen or nothing.
+
+        ``output`` and ``paged`` always show what the command printed;
+        ``report`` only when it failed; ``plain`` never (a failure's last line
+        goes in the notice).
+        """
+        if not text.strip():
+            return
+        shows = style in ("output", "paged") or (style == "report" and rc != 0)
+        if shows:
+            self.terminal.show_output(f"jailbee {label}", text, failed=rc != 0)
+
     def dispatchable(self, target: str, verb: str) -> RepoTarget | None:
         """The repo to run ``verb`` on ``target`` in, or None after noticing why not.
 
@@ -749,6 +872,16 @@ class DashboardSession:
     def dispatch(self, target: str, verb: str) -> None:
         repo = self.dispatchable(target, verb)
         if repo is None:
+            return
+        if not is_attach_style([*verb.split(), target]) and not verb.endswith("--follow"):
+            # (`--follow` streams until Ctrl-C: it keeps the terminal, as before.)
+            style = action_style(
+                verb, remote=self.remote, transport=self.transport, ssh_policy=self.ssh_policy
+            )
+            argv = action_cli_argv(repo, verb, target, transport=self.transport)
+            if style == "paged":
+                argv.append("--color")  # the output screen renders it; a pipe would turn it off
+            self.run_action(repo, argv, style=style, label=f"{verb} {target}")
             return
         try:
             rc = self.terminal.hand_off(
@@ -998,26 +1131,15 @@ class DashboardSession:
             self.set_notice(str(exc))
             return
 
-        def spawn() -> int:
-            rc = subprocess.run(argv, check=False, cwd=repo.cwd()).returncode
-            _wait_for_return()
-            return rc
-
-        def run_in_foreground() -> None:
-            try:
-                rc = self.terminal.hand_off(spawn)
-            except OSError:
-                self._report_vanished_repo(repo)
-                return
-            if rc != 0:
-                self.set_notice(f"'{command}' exited {rc}")
-            self.client.refresh()  # the new container should appear on the next frame
+        def run_with_questions() -> None:
+            # `argv` starts with the program name; the runner adds its own.
+            self.run_action(repo, argv[1:], style="output", label=command.removeprefix("jailbee "))
 
         def finish(result: JobResult) -> None:
             if needs_terminal(result):
-                # It stopped to ask something; the question needs the
-                # real terminal, so ask it there, as before.
-                run_in_foreground()
+                # It stopped to ask something: run it again where its
+                # questions are asked as dashboard modals.
+                run_with_questions()
                 return
             if result.returncode != 0:
                 reason = result.failure_line() or f"exited {result.returncode}"
@@ -1040,10 +1162,16 @@ class DashboardSession:
         style: DispatchStyle = "output",
         diagnostic_path: Path | None = None,
         allow_orphan: bool = False,
+        then: Callable[[int | None], None] | None = None,
+        foreground: bool = False,
     ) -> int | None:
-        """Hand the terminal to one dashboard-built `jailbee` command; notice a failure.
+        """Run one dashboard-built `jailbee` command; notice a failure.
 
-        Returns its exit code, or None when it was not run.
+        Runs through the action runner: returns None at once, and the exit
+        code (None when nothing ran) goes to ``then`` when it ends. With
+        ``foreground`` (or a ``diagnostic_path``) it instead hands the real
+        terminal to the command and returns its exit code, or None when it
+        was not run: the outbox flow needs the answer synchronously.
 
         ``target`` is re-resolved here because the row may have vanished
         while a picker was open. The policy is checked before `foreground`
@@ -1061,6 +1189,15 @@ class DashboardSession:
             check_dashboard_command(argv, self.ssh_policy, transport=self.transport)
         except RouteError as exc:
             self.set_notice(str(exc), seconds=FAILURE_NOTICE_SECONDS)
+            return None
+        if not foreground and diagnostic_path is None and not is_attach_style(argv):
+            self.run_action(
+                repo,
+                dact.addressed(argv, repo.flags(), transport=self.transport),
+                style=style,
+                label=dact.command_label(argv),
+                then=then,
+            )
             return None
         try:
             rc = self.terminal.hand_off(
@@ -1083,6 +1220,8 @@ class DashboardSession:
         if rc != 0:
             self.set_notice(f"'jailbee {dact.command_label(argv)}' exited {rc}")
         self.client.refresh()  # the command likely changed state: refresh now
+        if then is not None:
+            then(rc)
         return rc
 
     def open_container_entry(self, container: str, verb: str) -> Overlay | None:
@@ -2930,6 +3069,11 @@ class DashboardSession:
         except (ValueError, RouteError) as exc:
             self.set_notice(str(exc))
             return
+        if not is_attach_style(argv):
+            # Everything the line can run that is not an attach verb: its output
+            # stays on screen until read (the old pause), its questions are modals.
+            self.run_action(repo, argv, style="output", label=" ".join(argv))
+            return
         try:
 
             def execute_command() -> int:
@@ -3834,36 +3978,44 @@ class DashboardSession:
         are the CLI's. A repo whose run exits 0 has its names unmarked.
         """
         runs = foreground_runs(self.groups, action)
-        codes: list[int] = []
-
-        def run_all() -> int:
-            _run_bulk_foreground(
-                [(run.target, run.argv) for run in runs],
-                transport=self.transport,
-                ssh_policy=self.ssh_policy,
-                codes=codes,
-            )
-            return max(codes, default=0)
-
-        failed: dict[str, str] = {}
         try:
-            self.terminal.hand_off(run_all)
+            for run in runs:
+                check_dashboard_command(list(run.argv), self.ssh_policy, transport=self.transport)
         except RouteError as exc:
             self.set_notice(str(exc))
             return
-        except OSError as exc:
-            # Runs before the one that could not start did finish: honour them.
-            detail = exc.strerror or str(exc)
-            if exc.filename is not None:
-                detail = f"{detail}: {exc.filename}"
-            if len(codes) < len(runs):
-                failed[runs[len(codes)].prefix] = detail
-        ok = [n for run, c in zip(runs, codes, strict=False) if c == 0 for n in run.names]
-        failed.update({r.prefix: f"exited {c}" for r, c in zip(runs, codes, strict=False) if c})
-        self.marked -= frozenset(ok)
-        batch = BulkBatch(action.verb, ok=ok, failed=failed, skipped=dict(action.skipped))
-        self.set_notice(batch.summary(), FAILURE_NOTICE_SECONDS if failed else NOTICE_SECONDS)
-        self.client.refresh()
+        full = [
+            ActionRun(
+                dact.addressed(list(run.argv), run.target.flags(), transport=self.transport),
+                run.target.cwd(),
+            )
+            for run in runs
+        ]
+
+        def settled(outcome: ActionOutcome) -> None:
+            codes = [r.status if r.status is not None else 1 for r in outcome.results]
+            failed: dict[str, str] = {}
+            # A run that could not start or was refused ends the sequence; the
+            # runs before it did finish: honour them.
+            last = outcome.results[-1] if outcome.results else None
+            if last is not None and (last.error is not None or last.refused is not None):
+                codes.pop()
+                if len(codes) < len(runs):
+                    failed[runs[len(codes)].prefix] = last.error or last.refused or "not run"
+            ok = [n for run, c in zip(runs, codes, strict=False) if c == 0 for n in run.names]
+            failed.update({r.prefix: f"exited {c}" for r, c in zip(runs, codes, strict=False) if c})
+            self.marked -= frozenset(ok)
+            batch = BulkBatch(action.verb, ok=ok, failed=failed, skipped=dict(action.skipped))
+            if failed or outcome.output.strip():
+                self.terminal.show_output(
+                    f"jailbee {action.verb}", outcome.output, failed=bool(failed)
+                )
+            self.set_notice(batch.summary(), FAILURE_NOTICE_SECONDS if failed else NOTICE_SECONDS)
+            self.client.refresh()
+
+        self._start_actions(
+            full, [r.target for r in runs], "output", action.verb, None, settled=settled
+        )
 
     def toggle_mark(self, name: str) -> None:
         """Mark ``name`` for a bulk action, or unmark it."""
@@ -4301,12 +4453,17 @@ class DashboardSession:
         self.marked = pick.saved_marks
         # "report": a clean merge returns straight to the table, so the notice
         # is what says it happened; a warning or failure keeps the output up.
-        if self.run_dashboard_command(pick.sources[0], "container", argv, style="report") == 0:
-            # As a foreground bulk run does: what succeeded is unmarked.
-            self.marked -= frozenset(pick.sources)
-            self.set_notice(
-                f"Merged {self._merge_display(pick.sources)} into {self._merge_display(ordered)}"
-            )
+
+        def merged(rc: int | None) -> None:
+            if rc == 0:
+                # As a foreground bulk run does: what succeeded is unmarked.
+                self.marked -= frozenset(pick.sources)
+                self.set_notice(
+                    f"Merged {self._merge_display(pick.sources)} into "
+                    f"{self._merge_display(ordered)}"
+                )
+
+        self.run_dashboard_command(pick.sources[0], "container", argv, style="report", then=merged)
 
     def _prune_merge_pick(self, listed: set[str]) -> None:
         """After a refresh: drop vanished sources and targets, or end the mode with none left."""

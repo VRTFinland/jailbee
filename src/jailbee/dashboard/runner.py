@@ -76,10 +76,18 @@ class RunResult:
         return self.refused is None and self.error is None and self.status == 0
 
 
+# The orphan rows' own attach verbs (terminal dashboard only, never remote).
+_ORPHAN_ATTACH_VERBS: frozenset[str] = frozenset({"orphan tmux", "orphan shell"})
+
+
 def is_attach_style(argv: Sequence[str]) -> bool:
     """True for actions that must own the client's terminal or display."""
     label = _command_path(argv)
-    return label in ATTACH_VERBS or (label + " ").startswith(APPS_RUN_PREFIX)
+    return (
+        label in ATTACH_VERBS
+        or label in _ORPHAN_ATTACH_VERBS
+        or (label + " ").startswith(APPS_RUN_PREFIX)
+    )
 
 
 def _command_path(argv: Sequence[str]) -> str:

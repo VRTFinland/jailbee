@@ -47,19 +47,19 @@ def test_repo_header_enter_opens_menu_without_folding(mocker, tmp_path):
 
 
 @pytest.mark.parametrize("root", ["present", "missing", "orphan"])
-def test_remove_repo_menu_runs_foreground_for_every_group(mocker, tmp_path, root):
+def test_remove_repo_menu_runs_the_cli_for_every_group(mocker, tmp_path, root):
     from tests.dashboard_pilot import bare_session
 
     repo_root = {"present": str(tmp_path), "missing": str(tmp_path / "gone"), "orphan": None}[root]
     group = dmodel.RepoGroup("alpha", repo_root, None, [])
-    session, _ = bare_session(mocker, [group])
-    child = mocker.patch.object(tsession, "_run_cli_foreground", return_value=0)
+    mocker.patch.object(tsession.subprocess, "run").return_value.returncode = 0
+    session, terminal = bare_session(mocker, [group])
     session.overlay = tmenu.open_repo_menu([group], "alpha", frozenset())
     assert ("Remove repo…", "repo-remove") in session.overlay.actions
     session.menu_chosen("repo-remove", None, 0)
-    repo, argv = child.call_args.args
-    assert argv == ["repo", "rm", "alpha"]
-    assert repo.cwd() == (tmp_path if root == "present" else Path.home())
+    (ran,) = terminal.ran  # through the action runner: the CLI's questions are modals
+    assert ran.argv == ["repo", "rm", "alpha"]
+    assert ran.cwd == (tmp_path if root == "present" else Path.home())
 
 
 @pytest.mark.parametrize("allowed", [True, False])
@@ -109,13 +109,10 @@ def test_remove_repo_hotkey_runs_foreground(mocker, tmp_path):
 @pytest.mark.parametrize(
     ("downs", "tail"), [(0, []), (1, ["--no-restart"])], ids=["restart", "no-restart"]
 )
-def test_repo_apply_runs_in_the_terminal_with_the_chosen_restart_policy(
-    mocker, tmp_path, downs, tail
-):
+def test_repo_apply_runs_with_the_chosen_restart_policy(mocker, tmp_path, downs, tail):
     group = cfg_group(tmp_path)
     child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
-    wait = patch_pause(mocker)
 
     steps = [*repo_menu_keys(group, "apply"), *["j"] * downs, "enter"]
     run = drive(mocker, steps, [group])
@@ -126,7 +123,7 @@ def test_repo_apply_runs_in_the_terminal_with_the_chosen_restart_policy(
     child.assert_called_once_with(
         ["jailbee", "apply", *tail, "--config", str(group.config_path)], check=False, cwd=tmp_path
     )
-    wait.assert_called_once()
+    assert len(run.app.outputs) == 1
 
 
 @pytest.mark.parametrize("key", ["escape", "ctrl+c"], ids=["escape", "ctrl-c"])
@@ -293,35 +290,32 @@ def test_edit_config_reports_a_vanished_repo_root_instead_of_crashing(mocker, tm
 # --- diagnostics and prune ----------------------------------------------------
 
 
-def test_repo_doctor_is_paged_locally(mocker, tmp_path):
+def test_repo_doctor_output_is_shown_on_a_scrollable_screen(mocker, tmp_path):
     group = cfg_group(tmp_path)
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    paged = mocker.patch.object(ddispatch, "_run_paged", return_value=0)
-    child = mocker.patch.object(tsession.subprocess, "run")
-
-    assert drive(mocker, repo_menu_keys(group, "doctor"), [group]).rc == 0
-
-    paged.assert_called_once_with(
-        ["jailbee", "doctor", "--config", str(group.config_path)], ["less", "-R"], tmp_path
-    )
-    child.assert_not_called()
-
-
-def test_repo_doctor_over_ssh_pauses_instead_of_paging_and_sends_no_config(mocker, tmp_path):
-    group = cfg_group(tmp_path)
-    policy = RemoteSSHConfig()
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    paged = mocker.patch.object(ddispatch, "_run_paged")
     child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
-    wait = patch_pause(mocker)
+
+    run = drive(mocker, repo_menu_keys(group, "doctor"), [group])
+
+    assert run.rc == 0
+    child.assert_called_once_with(
+        ["jailbee", "doctor", "--config", str(group.config_path)], check=False, cwd=tmp_path
+    )
+    assert len(run.app.outputs) == 1  # the paged style: a scrollable output screen
+
+
+def test_repo_doctor_over_ssh_sends_no_config(mocker, tmp_path):
+    group = cfg_group(tmp_path)
+    policy = RemoteSSHConfig()
+    child = mocker.patch.object(tsession.subprocess, "run")
+    child.return_value.returncode = 0
 
     steps = repo_menu_keys(group, "doctor", ssh_policy=policy, transport="ssh")
-    assert drive(mocker, steps, [group], remote=True, transport="ssh", ssh_policy=policy).rc == 0
+    run = drive(mocker, steps, [group], remote=True, transport="ssh", ssh_policy=policy)
+    assert run.rc == 0
 
-    paged.assert_not_called()
     child.assert_called_once_with(["jailbee", "doctor"], check=False, cwd=tmp_path)
-    wait.assert_called_once()
+    assert len(run.app.outputs) == 1
 
 
 @pytest.mark.parametrize(
@@ -330,14 +324,11 @@ def test_repo_doctor_over_ssh_pauses_instead_of_paging_and_sends_no_config(mocke
     ids=["disk-usage", "prune"],
 )
 @pytest.mark.parametrize("over_ssh", [False, True], ids=["local", "ssh-default"])
-def test_repo_disk_usage_and_prune_run_in_the_terminal_with_a_pause(
-    mocker, tmp_path, verb, argv, over_ssh
-):
+def test_repo_disk_usage_and_prune_show_their_output(mocker, tmp_path, verb, argv, over_ssh):
     group = cfg_group(tmp_path)
     policy = RemoteSSHConfig() if over_ssh else None
     child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
-    wait = patch_pause(mocker)
 
     steps = repo_menu_keys(
         group, verb, ssh_policy=policy, transport=("ssh" if over_ssh else "none")
@@ -355,7 +346,7 @@ def test_repo_disk_usage_and_prune_run_in_the_terminal_with_a_pause(
     flags = [] if over_ssh else ["--config", str(group.config_path)]
     child.assert_called_once_with(["jailbee", *argv, *flags], check=False, cwd=tmp_path)
     assert "--yes-to-all" not in child.call_args.args[0]
-    wait.assert_called_once()
+    assert len(run.app.outputs) == 1
 
 
 def test_repo_doctor_failure_is_a_notice(mocker, tmp_path):

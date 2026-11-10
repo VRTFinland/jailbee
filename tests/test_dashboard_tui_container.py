@@ -96,7 +96,6 @@ def test_rerun_open_select_confirm_executes_exact_detached_argv(
     )
     child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
-    patch_pause(mocker)
     session, terminal = bare_session(mocker, [group])
     picker = session.open_container_entry("alpha-x", "autostart-rerun")
     assert isinstance(picker, tsession.Picker)
@@ -112,7 +111,8 @@ def test_rerun_open_select_confirm_executes_exact_detached_argv(
         check=False,
         cwd=tmp_path,
     )
-    assert len(terminal.handed) == 1
+    assert terminal.handed == []  # run by the action runner, not on the real terminal
+    assert len(terminal.ran) == 1
     listing.assert_called_once_with(
         ["autostart", "run", "alpha-x", "--list", "--json", "--config", str(group.config_path)],
         cwd=tmp_path,
@@ -243,17 +243,17 @@ def test_autostart_status_runs_in_the_terminal(mocker, tmp_path, over_ssh):
     policy = RemoteSSHConfig() if over_ssh else None
     child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
-    wait = patch_pause(mocker)
     kwargs = _kwargs(over_ssh, policy)
 
     steps = container_menu_keys(group, "autostart-status", **kwargs)
-    assert drive(mocker, steps, [group], **kwargs).rc == 0
+    run = drive(mocker, steps, [group], **kwargs)
+    assert run.rc == 0
 
     flags = [] if over_ssh else ["--config", str(group.config_path)]
     child.assert_called_once_with(
         ["jailbee", "autostart", "status", "alpha-x", *flags], check=False, cwd=tmp_path
     )
-    wait.assert_called_once()
+    assert len(run.app.outputs) == 1  # its output is shown by the dashboard
 
 
 def test_cancel_autostart_asks_first_and_no_runs_nothing(mocker, tmp_path):
@@ -391,17 +391,17 @@ def test_snapshot_create_with_a_timestamp_runs_in_the_terminal(mocker, tmp_path,
     _fake_snapshot_ls(mocker)
     child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
-    wait = patch_pause(mocker)
     kwargs = _kwargs(over_ssh, policy)
 
     steps = [*container_menu_keys(group, "snapshots", **kwargs), "enter"]
-    assert drive(mocker, steps, [group], **kwargs).rc == 0
+    run = drive(mocker, steps, [group], **kwargs)
+    assert run.rc == 0
 
     flags = [] if over_ssh else ["--config", str(group.config_path)]
     child.assert_called_once_with(
         ["jailbee", "snapshot", "create", *flags, "--", "alpha-x"], check=False, cwd=tmp_path
     )
-    wait.assert_called_once()
+    assert len(run.app.outputs) == 1  # its output is shown by the dashboard
 
 
 def test_snapshot_create_named_takes_an_option_like_tag_as_a_tag(mocker, tmp_path):
@@ -631,7 +631,6 @@ def test_snapshot_restore_and_delete_run_after_a_yes(
     _fake_snapshot_ls(mocker)
     child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
-    wait = patch_pause(mocker)
     kwargs = _kwargs(over_ssh, policy)
 
     steps = [
@@ -642,7 +641,8 @@ def test_snapshot_restore_and_delete_run_after_a_yes(
         "j",  # "Yes, …"
         "enter",
     ]
-    assert drive(mocker, steps, [group], **kwargs).rc == 0
+    run = drive(mocker, steps, [group], **kwargs)
+    assert run.rc == 0
 
     flags = [] if over_ssh else ["--config", str(group.config_path)]
     child.assert_called_once_with(
@@ -650,7 +650,7 @@ def test_snapshot_restore_and_delete_run_after_a_yes(
         check=False,
         cwd=tmp_path,
     )
-    wait.assert_called_once()
+    assert len(run.app.outputs) == 1  # its output is shown by the dashboard
 
 
 @pytest.mark.parametrize("action_downs", [0, 1], ids=["restore", "delete"])
@@ -1496,6 +1496,18 @@ def test_an_orphan_row_has_no_menu_in_a_remote_session():
 
 def test_an_orphan_action_runs_from_home_with_no_config_flag(mocker):
     group = dmodel.RepoGroup("gamma", None, None, [ci("gamma-x", "gamma")])
+    child = mocker.patch.object(tsession.subprocess, "run")
+    child.return_value.returncode = 0
+
+    drive(mocker, container_menu_keys(group, "orphan stop"), groups=[group])
+
+    child.assert_called_once_with(
+        ["jailbee", "orphan", "stop", "gamma-x"], cwd=dmodel.RepoTarget.orphan().cwd(), check=False
+    )
+
+
+def test_an_orphan_tmux_keeps_the_terminal(mocker):
+    group = dmodel.RepoGroup("gamma", None, None, [ci("gamma-x", "gamma")])
     dispatch = mocker.patch.object(tsession, "_dispatch_action", return_value=0)
 
     drive(mocker, container_menu_keys(group, "orphan tmux"), groups=[group])
@@ -1506,12 +1518,14 @@ def test_an_orphan_action_runs_from_home_with_no_config_flag(mocker):
 
 
 def test_an_orphan_destroy_is_dispatched_so_the_cli_asks(mocker):
+    """The CLI asks its own confirmation; the dashboard shows it as a modal."""
     group = dmodel.RepoGroup("gamma", None, None, [ci("gamma-x", "gamma")])
-    dispatch = mocker.patch.object(tsession, "_dispatch_action", return_value=0)
+    child = mocker.patch.object(tsession.subprocess, "run")
+    child.return_value.returncode = 0
 
     drive(mocker, container_menu_keys(group, "orphan destroy"), groups=[group])
 
-    assert dispatch.call_args.args[1] == "orphan destroy"
+    assert child.call_args.args[0] == ["jailbee", "orphan", "destroy", "gamma-x"]
 
 
 def test_the_dispatcher_runs_an_orphan_verb_as_a_plain_cli_child(mocker):

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from jailbee.dashboard import dispatch as ddispatch
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.bulk import BulkAction, plan_bulk
 from jailbee.dashboard.overlays import Picker, PickerEntry
@@ -785,9 +784,8 @@ def test_the_loose_ttl_submit_with_nothing_left_says_so(mocker, tmp_path):
     assert session.notice
 
 
-def test_bulk_push_runs_once_in_the_terminal_over_all_names(mocker, tmp_path):
+def test_bulk_push_runs_once_through_the_runner_over_all_names(mocker, tmp_path):
     child = _children(mocker)
-    pause = patch_pause(mocker)
     session, terminal, _ = _session(mocker, tmp_path, "Running", "Running")
     session.marked = frozenset({"alpha-a", "alpha-b"})
     session.handle_key("down")
@@ -795,11 +793,11 @@ def test_bulk_push_runs_once_in_the_terminal_over_all_names(mocker, tmp_path):
     _bulk_key(session, "u")
     session.picker_chosen(PickerEntry("Yes, 2", "yes"))
 
-    assert len(terminal.handed) == 1
+    assert terminal.handed == []  # the dashboard keeps the terminal; questions are modals
+    assert len(terminal.ran) == 1
     assert [c.args[0] for c in child.call_args_list] == [
         ["jailbee", "git", "push", "alpha-a", "alpha-b", "--no-confirm"]
     ]
-    pause.assert_not_called()  # a clean run returns straight to the table
 
 
 def test_bulk_merge_picks_its_targets_in_the_table_before_running(mocker, tmp_path):
@@ -818,7 +816,6 @@ def test_bulk_merge_picks_its_targets_in_the_table_before_running(mocker, tmp_pa
 
 def test_two_repos_get_one_run_each(mocker, tmp_path):
     child = _children(mocker)
-    pause = patch_pause(mocker)
     (tmp_path / "a").mkdir()
     (tmp_path / "b").mkdir()
     alpha = dmodel.RepoGroup("alpha", str(tmp_path / "a"), None, [ci("alpha-a", "alpha")])
@@ -830,7 +827,8 @@ def test_two_repos_get_one_run_each(mocker, tmp_path):
 
     session.begin_bulk("git pull", confirmed=True)
 
-    assert len(terminal.handed) == 1
+    assert terminal.handed == []
+    assert len(terminal.ran) == 2
     calls = [(c.args[0], c.kwargs["cwd"]) for c in child.call_args_list]
     assert calls == [
         (["jailbee", "git", "pull", "alpha-a", "--no-confirm"], tmp_path / "a"),
@@ -847,26 +845,23 @@ def test_two_repos_get_one_run_each(mocker, tmp_path):
             tmp_path / "b",
         ),
     ]
-    pause.assert_not_called()
 
 
-@pytest.mark.parametrize(("failing", "warning"), [(("beta-a",), ()), ((), ("alpha-a",))])
-def test_one_failed_or_warning_run_pauses_once_after_the_last(mocker, tmp_path, failing, warning):
-    child = _children(mocker, failing=failing, warning=warning)
-    pause = patch_pause(mocker)
+def test_one_failed_run_shows_the_output_of_all_runs_once_after_the_last(mocker, tmp_path):
+    child = _children(mocker, failing=("beta-a",))
     session = _two_repos(mocker, tmp_path)
 
     session.begin_bulk("git pull", confirmed=True)
 
     assert child.call_count == 2
-    pause.assert_called_once()
-    envs = {c.kwargs["env"][DIAGNOSTICS_ENV] for c in child.call_args_list}
-    assert len(envs) == 1  # one marker shared by every run
+    ((_title, text, failed),) = session.terminal.shown
+    assert failed
+    assert "alpha-a" in text and "beta-a" in text  # one screen for both runs
 
 
 def test_a_clean_single_pull_says_it_is_done(mocker, tmp_path):
     session, _, _ = _session(mocker, tmp_path, "Running")
-    mocker.patch.object(tsession, "_dispatch_action", return_value=0)
+    _children(mocker)
 
     session.dispatch("alpha-a", "git pull")
 
@@ -901,22 +896,19 @@ def _two_repos(mocker, tmp_path):
 
 def test_a_refused_argv_runs_nothing_for_any_repo(mocker, tmp_path):
     child = _children(mocker)
-    pause = patch_pause(mocker)
     session = _two_repos(mocker, tmp_path)
     mocker.patch.object(
-        ddispatch, "check_dashboard_command", side_effect=[None, RouteError("not allowed here")]
+        tsession, "check_dashboard_command", side_effect=[None, RouteError("not allowed here")]
     )
 
     session.begin_bulk("git push", confirmed=True)
 
     child.assert_not_called()
-    pause.assert_not_called()
     assert "not allowed here" in session.notice
     assert session.marked == frozenset({"alpha-a", "beta-a"})
 
 
-def test_a_run_that_cannot_start_still_pauses_once_and_keeps_earlier_results(mocker, tmp_path):
-    pause = patch_pause(mocker)
+def test_a_run_that_cannot_start_keeps_earlier_results(mocker, tmp_path):
     session = _two_repos(mocker, tmp_path)
 
     def run(argv, **_kw):
@@ -928,9 +920,8 @@ def test_a_run_that_cannot_start_still_pauses_once_and_keeps_earlier_results(moc
 
     session.begin_bulk("git push", confirmed=True)
 
-    pause.assert_called_once()
     assert session.marked == frozenset({"beta-a"})
-    assert "No such file or directory: jailbee" in session.notice
+    assert "No such file or directory" in session.notice
     assert "directory no longer exists" not in session.notice
     assert "1 ok" in session.notice
 
