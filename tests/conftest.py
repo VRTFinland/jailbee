@@ -546,6 +546,21 @@ def _block_real_incus(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         )
 
 
+@pytest.fixture
+def short_tmp_path() -> Iterator[Path]:
+    """A temp dir directly under /tmp, for tests that bind AF_UNIX sockets.
+
+    A socket path may be at most 107 bytes. pytest's `tmp_path` sits under a
+    basetemp whose length depends on the user name, run number and xdist
+    worker, so a socket a few levels below it binds on one machine and fails
+    with "AF_UNIX path too long" — or is refused by Jailbee's own length
+    check — on another.
+    """
+    short = Path(tempfile.mkdtemp(prefix="jb-", dir="/tmp"))
+    yield short
+    shutil.rmtree(short, ignore_errors=True)
+
+
 # Names the per-test isolation dirs. A counter rather than pytest's own
 # numbering, which costs a directory listing per call — see `_isolation_root`.
 _ISOLATION_COUNTER = itertools.count()

@@ -38,6 +38,20 @@ SOURCE = ("192.0.2.10", 43123)
 
 
 @pytest.fixture
+def tmp_path(short_tmp_path: Path) -> Path:
+    """`short_tmp_path`: the waypipe link and gpg forward sockets this module
+    creates live under it, and the server refuses a forward whose socket path
+    exceeds the AF_UNIX limit."""
+    return short_tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _short_state_home(monkeypatch, tmp_path):
+    """Point XDG_STATE_HOME (the waypipe link dir's root) at the short dir."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+
+
+@pytest.fixture
 def connection():
     extra = {"peername": SOURCE}
     conn = Mock(spec=asyncssh.SSHServerConnection)
