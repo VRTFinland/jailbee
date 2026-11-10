@@ -80,7 +80,7 @@ def test_inline_command_refuses_ssh_policy_before_foreground_or_spawn(mocker, tm
         ["j", "!", *keys("merge"), "enter", "ctrl+c"],
         [group],
         remote=True,
-        over_ssh=True,
+        transport="ssh",
         ssh_policy=policy,
     )
 

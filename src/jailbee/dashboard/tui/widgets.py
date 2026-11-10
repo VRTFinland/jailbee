@@ -372,12 +372,12 @@ def _advisory_links(view: DashboardView) -> AdvisoryLinks:
 
     Dismissing writes the local state DB, not a ``jb`` command, so never over SSH.
     """
-    policy, ssh = view.ssh_policy, view.over_ssh
+    policy, transport = view.ssh_policy, view.transport
     return AdvisoryLinks(
-        run_base_build=permitted(dact.base_build_argv(), policy, over_ssh=ssh),
-        run_apply=permitted(dact.apply_argv(no_restart=False), policy, over_ssh=ssh),
-        dismiss=not ssh,
-        upgrade_all=permitted(dact.upgrade_all_argv(), policy, over_ssh=ssh),
+        run_base_build=permitted(dact.base_build_argv(), policy, transport=transport),
+        run_apply=permitted(dact.apply_argv(no_restart=False), policy, transport=transport),
+        dismiss=transport == "none",
+        upgrade_all=permitted(dact.upgrade_all_argv(), policy, transport=transport),
     )
 
 

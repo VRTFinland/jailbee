@@ -19,9 +19,10 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Literal
 
-from jailbee.config.models_remote import RemoteSSHConfig
+from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard import actions as dact
 from jailbee.dashboard.commands import (
+    Transport,
     check_dashboard_command,
     dashboard_action_argv,
 )
@@ -193,8 +194,8 @@ def _dispatch_action(
     name: str,
     *,
     remote: bool = False,
-    over_ssh: bool = False,
-    ssh_policy: RemoteSSHConfig | None = None,
+    transport: Transport = "none",
+    ssh_policy: RemotePolicy | None = None,
 ) -> int:
     """Run ``jailbee <verb> <name>`` against ``target``; return its exit code.
 
@@ -233,13 +234,13 @@ def _dispatch_action(
     action_argv = dashboard_action_argv(
         verb, name, force=verb in ATTACH_VERBS or verb.startswith(APPS_RUN_PREFIX)
     )
-    check_dashboard_command(action_argv, ssh_policy, over_ssh=over_ssh)
-    argv = ["jailbee", *verb.split(), name, *(target.flags() if not over_ssh else [])]
+    check_dashboard_command(action_argv, ssh_policy, transport=transport)
+    argv = ["jailbee", *verb.split(), name, *(target.flags() if transport == "none" else [])]
     if verb in ATTACH_VERBS or verb.startswith(APPS_RUN_PREFIX):
         argv.append("--force")
     style = dispatch_style(verb)
     if (
-        over_ssh
+        transport != "none"
         and ssh_policy is not None
         and ssh_policy.rdp
         and _is_gui_verb(verb)
@@ -272,8 +273,8 @@ def _run_cli_foreground(
     *,
     style: DispatchStyle,
     remote: bool = False,
-    over_ssh: bool = False,
-    ssh_policy: RemoteSSHConfig | None = None,
+    transport: Transport = "none",
+    ssh_policy: RemotePolicy | None = None,
     diagnostic_path: Path | None = None,
 ) -> int:
     """Run a dashboard-built ``jailbee <argv>`` against ``target``; return its exit code.
@@ -297,9 +298,9 @@ def _run_cli_foreground(
     ``argv``, and ``OSError`` when ``target.cwd()`` has vanished (the caller
     turns that into a notice).
     """
-    check_dashboard_command(argv, ssh_policy, over_ssh=over_ssh)
-    full = ["jailbee", *dact.addressed(argv, target.flags(), over_ssh=over_ssh)]
-    if style == "paged" and (remote or over_ssh):
+    check_dashboard_command(argv, ssh_policy, transport=transport)
+    full = ["jailbee", *dact.addressed(argv, target.flags(), transport=transport)]
+    if style == "paged" and (remote or transport != "none"):
         style = "output"
     if style == "paged":
         pager = pager_argv()
@@ -327,8 +328,8 @@ def _run_cli_foreground(
 def _run_bulk_foreground(
     runs: Sequence[tuple[RepoTarget, Sequence[str]]],
     *,
-    over_ssh: bool = False,
-    ssh_policy: RemoteSSHConfig | None = None,
+    transport: Transport = "none",
+    ssh_policy: RemotePolicy | None = None,
     codes: list[int] | None = None,
 ) -> list[int]:
     """Run each ``(repo, argv)`` in the terminal, in order; return the exit codes.
@@ -346,7 +347,7 @@ def _run_bulk_foreground(
     exception still knows the runs that completed before it.
     """
     for _target, argv in runs:
-        check_dashboard_command(list(argv), ssh_policy, over_ssh=over_ssh)
+        check_dashboard_command(list(argv), ssh_policy, transport=transport)
     done = codes if codes is not None else []
     clean = False
     with _diagnostics_marker() as marker:
@@ -356,7 +357,7 @@ def _run_bulk_foreground(
                     subprocess.run(
                         [
                             "jailbee",
-                            *dact.addressed(list(argv), target.flags(), over_ssh=over_ssh),
+                            *dact.addressed(list(argv), target.flags(), transport=transport),
                         ],
                         check=False,
                         cwd=target.cwd(),

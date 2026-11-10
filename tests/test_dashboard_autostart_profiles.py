@@ -43,7 +43,7 @@ def test_gathered_services_control_menu_without_frontend_collection(
     menu = open_menu(
         snapshot.groups,
         "alpha-x",
-        over_ssh=over_ssh,
+        transport=("ssh" if over_ssh else "none"),
         ssh_policy=RemoteSSHConfig() if over_ssh else None,
     )
     assert ("services" in [verb for _, verb in menu.actions]) is configured
@@ -221,7 +221,7 @@ def test_autostart_submenu_has_fixed_unique_mnemonics_and_does_not_change_qt(tmp
         )
     assert menus.group_menu_actions(leaves) == leaves  # Qt does not opt in.
     c = ContainerInfo("alpha-x", "Running", None, None, None)
-    extras = actions.container_extras(c, (), None, over_ssh=False)
+    extras = actions.container_extras(c, (), None, transport="none")
     empty = menu_state.MenuState("alpha-x", list(extras.after_job))
     assert menu_state.menu_entries(empty) == []
 
@@ -266,7 +266,7 @@ def test_create_always_ends_with_choice_and_preserves_addressing(
         mocker,
         [*before, not_yet, *(["down"] if profile == "none" else []), "enter"],
         [group],
-        over_ssh=over_ssh,
+        transport=("ssh" if over_ssh else "none"),
         ssh_policy=RemoteSSHConfig(),
     )
     picker = next(p for p in result.of_type(ts.Picker) if p.purpose == "new-autostart")
@@ -297,7 +297,11 @@ def test_restart_choice_profile_resets_services_and_dispatches_final_argv(
         steps += ["enter"]
         extra = ["--services", "db" if selection == "db" else ""]
     result = drive(
-        mocker, steps, [_choice_group(tmp_path)], over_ssh=over_ssh, ssh_policy=RemoteSSHConfig()
+        mocker,
+        steps,
+        [_choice_group(tmp_path)],
+        transport=("ssh" if over_ssh else "none"),
+        ssh_policy=RemoteSSHConfig(),
     )
     pickers = result.of_type(ts.Picker)
     assert any(p.purpose == "restart-autostart" for p in pickers)
@@ -341,11 +345,11 @@ def test_denied_final_autostart_argv_never_executes(
     original = ts.check_dashboard_command
     checked = []
 
-    def deny_selected(argv, policy, *, over_ssh=False):
+    def deny_selected(argv, policy, *, transport="none"):
         checked.append(list(argv))
         if "--autostart-profile" in argv or "--services" in argv:
             raise ts.RouteError("final selection denied")
-        return original(argv, policy, over_ssh=over_ssh)
+        return original(argv, policy, transport=("ssh" if over_ssh else "none"))
 
     mocker.patch.object(ts, "check_dashboard_command", side_effect=deny_selected)
     before = {
@@ -364,7 +368,7 @@ def test_denied_final_autostart_argv_never_executes(
         mocker,
         [*before, *select],
         [group],
-        over_ssh=over_ssh,
+        transport=("ssh" if over_ssh else "none"),
         ssh_policy=RemoteSSHConfig(),
     )
     option = "--services" if custom else "--autostart-profile"
@@ -459,7 +463,7 @@ def test_restart_with_rechecks_open_permission(mocker, tmp_path, state):
     policy = RemoteSSHConfig.model_validate({"commands": {"mode": "allowlist", "allow": ["shell"]}})
     group = _choice_group(tmp_path)
     group.containers[0] = replace(group.containers[0], state=state)
-    result = drive(mocker, [_restart_with], [group], over_ssh=True, ssh_policy=policy)
+    result = drive(mocker, [_restart_with], [group], transport="ssh", ssh_policy=policy)
     assert not any(p.purpose == "restart-autostart" for p in result.of_type(ts.Picker))
     child.assert_not_called()
 
@@ -507,7 +511,9 @@ def test_stopped_restart_with_full_menu_to_final_argv(mocker, tmp_path, over_ssh
 
     group = _choice_group(tmp_path)
     group.containers[0] = replace(group.containers[0], state="Stopped")
-    menu = tm.open_menu([group], "alpha-x", over_ssh=over_ssh, ssh_policy=RemoteSSHConfig())
+    menu = tm.open_menu(
+        [group], "alpha-x", transport=("ssh" if over_ssh else "none"), ssh_policy=RemoteSSHConfig()
+    )
     verbs = [v for _, v in menu.actions]
     assert verbs[verbs.index("start") + 1] == "restart-with"
     assert "restart" not in verbs  # Shared/plain restart remains running-only.
@@ -521,7 +527,7 @@ def test_stopped_restart_with_full_menu_to_final_argv(mocker, tmp_path, over_ssh
         mocker,
         ["j", "enter", "l", "W", *select],
         [group],
-        over_ssh=over_ssh,
+        transport=("ssh" if over_ssh else "none"),
         ssh_policy=RemoteSSHConfig(),
     )
     assert any(p.purpose == "restart-autostart" for p in result.of_type(ts.Picker))
@@ -553,7 +559,7 @@ def test_restart_with_rechecks_final_availability(mocker, tmp_path, over_ssh, ch
         mocker,
         [_restart_with, disappear, "enter"],
         [group],
-        over_ssh=over_ssh,
+        transport=("ssh" if over_ssh else "none"),
         ssh_policy=RemoteSSHConfig(),
     )
     child.assert_not_called()
@@ -567,11 +573,11 @@ def test_stopped_restart_with_requires_restart_permission_not_start(mocker, tmp_
     policy = RemoteSSHConfig.model_validate(
         {"commands": {"mode": "allowlist", "allow": ["restart"]}}
     )
-    menu = tm.open_menu([group], "alpha-x", over_ssh=True, ssh_policy=policy)
+    menu = tm.open_menu([group], "alpha-x", transport="ssh", ssh_policy=policy)
     assert "start" not in [verb for _, verb in menu.actions]
     assert "restart-with" in [verb for _, verb in menu.actions]
     child = mocker.patch.object(ts.subprocess, "run", return_value=mocker.Mock(returncode=0))
-    drive(mocker, ["j", "enter", "l", "W", "enter"], [group], over_ssh=True, ssh_policy=policy)
+    drive(mocker, ["j", "enter", "l", "W", "enter"], [group], transport="ssh", ssh_policy=policy)
     child.assert_called_once_with(
         [
             "jailbee",
@@ -602,7 +608,13 @@ def test_restart_with_busy_gate(mocker, tmp_path, state, when, over_ssh):
     steps = (
         [become_busy, _restart_with] if when == "open" else [_restart_with, become_busy, "enter"]
     )
-    result = drive(mocker, steps, [group], over_ssh=over_ssh, ssh_policy=RemoteSSHConfig())
+    result = drive(
+        mocker,
+        steps,
+        [group],
+        transport=("ssh" if over_ssh else "none"),
+        ssh_policy=RemoteSSHConfig(),
+    )
     child.assert_not_called()
     assert any("busy" in str(n) for n in result.notices())
     if when == "open":

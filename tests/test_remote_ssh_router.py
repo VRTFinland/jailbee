@@ -789,7 +789,7 @@ def test_clear_snapshot_options_share_clear_policy_and_never_unlock_host_paths(o
     argv = ("outbox", "clear", "box", *options)
     policy = RemoteCommandPolicy(mode="allowlist", allow=["outbox clear"])
     assert policy_allows(argv, policy) == "outbox clear"
-    check_dashboard_command(list(argv), RemoteSSHConfig(commands=policy), over_ssh=True)
+    check_dashboard_command(list(argv), RemoteSSHConfig(commands=policy), transport="ssh")
     with pytest.raises(RouteError, match="not allowed"):
         policy_allows(argv, RemoteCommandPolicy(mode="allowlist", allow=["outbox ls"]))
     with pytest.raises(RouteError, match="config"):
@@ -803,7 +803,7 @@ def test_clear_snapshot_options_share_clear_policy_and_never_unlock_host_paths(o
 def test_outbox_clear_yes_is_allowed():
     argv = ("outbox", "clear", "box", "-y")
     assert policy_allows(argv, FULL) == "outbox clear"
-    check_dashboard_command(list(argv), RemoteSSHConfig(commands=FULL), over_ssh=True)
+    check_dashboard_command(list(argv), RemoteSSHConfig(commands=FULL), transport="ssh")
 
 
 @pytest.mark.parametrize(
@@ -1339,10 +1339,10 @@ def test_dashboard_new_net_loose_follows_the_network_switch(monkeypatch) -> None
     off = RemoteSSHConfig(commands=FULL)
     on = off.model_copy(update={"network": True})
     argv = ["new", "feat", "--net", "loose"]
-    assert not permitted(argv, off, over_ssh=True)
-    assert permitted(argv, on, over_ssh=True)
-    assert permitted(["new", "feat", "--net", "strict"], off, over_ssh=True)
-    assert permitted(argv, off, over_ssh=False)
+    assert not permitted(argv, off, transport="ssh")
+    assert permitted(argv, on, transport="ssh")
+    assert permitted(["new", "feat", "--net", "strict"], off, transport="ssh")
+    assert permitted(argv, off, transport="none")
 
 
 @pytest.mark.parametrize(

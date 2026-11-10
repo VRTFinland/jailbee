@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import shlex
 from collections.abc import Sequence
+from typing import Literal
 
 from typer._click.core import ParameterSource
 
-from jailbee.config.models_remote import RemoteSSHConfig
+from jailbee.config.models_remote import RemotePolicy
 from jailbee.remote_ssh import router
 from jailbee.remote_ssh.router import RouteError
+
+# Where a dashboard runs: ``none`` is the local keyboard, ``ssh`` and ``web`` are
+# remote transports, each checked against that transport's own `RemotePolicy`.
+Transport = Literal["none", "ssh", "web"]
 
 
 def dashboard_action_argv(verb: str, name: str, *, force: bool = False) -> list[str]:
@@ -31,14 +36,25 @@ _CONTAINER_POSITIONALS: dict[str, str] = {
 }
 
 
+def remote_unlocks(policy: RemotePolicy | None, transport: Transport) -> router.RemoteUnlocks:
+    """The unlock switches of ``policy`` for ``transport`` (refusals name it)."""
+    if policy is None or transport == "none":
+        return router.RemoteUnlocks()
+    return router.RemoteUnlocks.of(policy, transport=transport)
+
+
 def check_dashboard_command(
-    argv: Sequence[str], policy: RemoteSSHConfig | None, *, over_ssh: bool
+    argv: Sequence[str], policy: RemotePolicy | None, *, transport: Transport
 ) -> None:
-    """Refuse dashboard-launched SSH commands outside the effective policy."""
-    if not over_ssh:
+    """Refuse dashboard-launched remote commands outside the transport's policy.
+
+    ``none`` is local and always passes; ``ssh`` and ``web`` are checked against
+    ``policy``, which must be that transport's `RemotePolicy`.
+    """
+    if transport == "none":
         return
     if policy is None:
-        raise RouteError("remote SSH dashboard has no server policy")
+        raise RouteError(f"remote {transport} dashboard has no server policy")
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope, scope_for_session
 
     snapshot_scope = scope_for_session()
@@ -47,19 +63,19 @@ def check_dashboard_command(
         policy.commands,
         restrict_host=policy.restrict_host,
         scope=RemoteRepoScope(snapshot_scope.excluded | frozenset(policy.excluded_repos)),
-        unlocks=router.RemoteUnlocks.of(policy),
+        unlocks=remote_unlocks(policy, transport),
     )
 
 
-def permitted(argv: Sequence[str], policy: RemoteSSHConfig | None, *, over_ssh: bool) -> bool:
-    """Whether the dashboard may run ``jailbee <argv>`` under the session's SSH policy.
+def permitted(argv: Sequence[str], policy: RemotePolicy | None, *, transport: Transport) -> bool:
+    """Whether the dashboard may run ``jailbee <argv>`` under the transport's policy.
 
     The visibility twin of :func:`check_dashboard_command`: a dashboard entry
     is offered exactly when its command would pass, so a session never sees an
-    entry that can only fail. Always true locally (``over_ssh`` false).
+    entry that can only fail. Always true locally (``transport`` is ``none``).
     """
     try:
-        check_dashboard_command(argv, policy, over_ssh=over_ssh)
+        check_dashboard_command(argv, policy, transport=transport)
     except RouteError:
         return False
     return True

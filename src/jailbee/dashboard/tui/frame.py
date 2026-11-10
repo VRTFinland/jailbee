@@ -10,9 +10,10 @@ from rich.markup import escape
 from rich.style import Style
 from rich.text import Text
 
-from jailbee.config.models_remote import RemoteSSHConfig
+from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard import accounts as da
 from jailbee.dashboard import hit as dhit
+from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.egress import EgressState
 from jailbee.dashboard.model import RepoGroup, Row
 from jailbee.dashboard.outbox import OutboxState, outbox_hint
@@ -218,8 +219,8 @@ class DashboardView:
     # A newer jailbee release to advertise on a row of its own (`update_line`).
     update: UpdateNotice | None = None
     # Remote SSH session facts, so the details panel offers only permitted links.
-    over_ssh: bool = False
-    ssh_policy: RemoteSSHConfig | None = None
+    transport: Transport = "none"
+    ssh_policy: RemotePolicy | None = None
     # Every repo, hidden ones too (None: `groups`), for the upgrade-all decision.
     all_groups: list[RepoGroup] | None = None
     # The host status line above the table; drawn only while `show_system` and known.

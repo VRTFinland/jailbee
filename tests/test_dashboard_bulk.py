@@ -246,7 +246,7 @@ def test_a_policy_refusal_is_its_own_skip_reason(tmp_path, mocker):
         side_effect=RouteError("not allowed"),
     )
 
-    action = bulk.plan_bulk(groups, ["alpha-a"], "stop", ssh_policy=policy, over_ssh=True)
+    action = bulk.plan_bulk(groups, ["alpha-a"], "stop", ssh_policy=policy, transport="ssh")
 
     assert action.skipped == (("alpha-a", "not permitted by the SSH policy"),)
 
@@ -544,7 +544,7 @@ def test_bulk_mount_follows_the_ssh_policy(tmp_path):
     groups = [_mount_group(tmp_path, _attached("alpha-a", "aws"), kinds=("aws",))]
     policy = RemoteSSHConfig.model_validate({})
 
-    plans = bulk.bulk_mounts(groups, ["alpha-a"], ssh_policy=policy, over_ssh=True)
+    plans = bulk.bulk_mounts(groups, ["alpha-a"], ssh_policy=policy, transport="ssh")
 
     # `mount` is a host command the default policy refuses; `unmount` stays
     assert [(p.kind, p.remove) for p in plans] == [("aws", True)]
@@ -585,10 +585,10 @@ def test_a_kind_not_remote_mountable_says_so_in_a_restricted_session(tmp_path, m
     policy = RemoteSSHConfig.model_validate({"mounts": True})
 
     plan = bulk.plan_bulk_mount(
-        [group], ["alpha-a"], "aws", remove=False, ssh_policy=policy, over_ssh=True
+        [group], ["alpha-a"], "aws", remove=False, ssh_policy=policy, transport="ssh"
     )
 
     assert plan.skipped == (("alpha-a", "not mountable over SSH"),)
     assert bulk.plan_bulk_mount(
-        [group], ["alpha-a"], "gcp", remove=False, ssh_policy=policy, over_ssh=True
+        [group], ["alpha-a"], "gcp", remove=False, ssh_policy=policy, transport="ssh"
     ).eligible == ("alpha-a",)

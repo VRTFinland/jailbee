@@ -1055,10 +1055,10 @@ def test_advisory_links_follow_ssh_state() -> None:
         {"restrict_host": False, "commands": {"mode": "allowlist", "allow": ["upgrade"]}}
     )
     assert _advisory_links(view_of([])) == dd.AdvisoryLinks(True, True, True, True)
-    over = view_of([], over_ssh=True, ssh_policy=policy)
+    over = view_of([], transport="ssh", ssh_policy=policy)
     assert _advisory_links(over) == dd.AdvisoryLinks(False, False, False, True)
     denied = RemoteSSHConfig.model_validate({"commands": {"mode": "allowlist", "allow": ["ls"]}})
-    assert not _advisory_links(view_of([], over_ssh=True, ssh_policy=denied)).upgrade_all
+    assert not _advisory_links(view_of([], transport="ssh", ssh_policy=denied)).upgrade_all
 
 
 def test_advisory_run_links_follow_the_policy_per_action() -> None:
@@ -1069,7 +1069,7 @@ def test_advisory_run_links_follow_the_policy_per_action() -> None:
     policy = RemoteSSHConfig.model_validate(
         {"restrict_host": False, "commands": {"mode": "allowlist", "allow": ["base build"]}}
     )
-    links = _advisory_links(view_of([], over_ssh=True, ssh_policy=policy))
+    links = _advisory_links(view_of([], transport="ssh", ssh_policy=policy))
     assert (links.run_base_build, links.run_apply) == (True, False)
     assert not links.dismiss
     assert links.run("base_build") and not links.run("apply") and not links.run(None)
