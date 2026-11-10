@@ -431,7 +431,9 @@ class ChannelBackend:
         *,
         context: PromptContext | None,
         alternative: str | None,
+        picker: Callable[[Sequence[Option[Any]]], list[Any] | None] | None,
     ) -> list[Any] | None:
+        # `picker` is a terminal renderer; the channel sends the question instead.
         wire = _wire_options(options)
         reply = self._ask(
             lambda i: pc.Prompt(
