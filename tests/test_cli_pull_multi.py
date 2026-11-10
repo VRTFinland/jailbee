@@ -223,7 +223,9 @@ def _fake_pull_plan():
     )
 
 
-def test_pull_confirms_when_the_single_container_was_auto_selected(mocker, tmp_path):
+def test_pull_confirms_when_the_single_container_was_auto_selected(
+    mocker, tmp_path, typed_confirmations
+):
     cfg_mock = _wire(mocker, tmp_path, containers=[_info("myrepo-feat-only")], picked=None)
     cfg_mock.confirm.auto_target = True
     mocker.patch("jailbee.sync.plan_pull", return_value=_fake_pull_plan())
@@ -328,7 +330,7 @@ def test_pull_off_tty_mount_mode_auto_selected_skips_the_confirmation(mocker, tm
     do_pull.assert_called_once()
 
 
-def test_pull_confirm_flag_overrides_a_disabled_config(mocker, tmp_path):
+def test_pull_confirm_flag_overrides_a_disabled_config(mocker, tmp_path, typed_confirmations):
     cfg_mock = _wire(mocker, tmp_path, containers=[_info("myrepo-feat-only")], picked=None)
     cfg_mock.confirm.auto_target = False
     mocker.patch("jailbee.sync.plan_pull", return_value=_fake_pull_plan())

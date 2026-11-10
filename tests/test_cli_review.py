@@ -216,7 +216,7 @@ def test_apply_reports_nothing_pending(mocker, tmp_path):
     assert "nothing pending" in result.output.lower()
 
 
-def test_apply_prints_the_plan_and_stops_at_no(mocker, tmp_path):
+def test_apply_prints_the_plan_and_stops_at_no(mocker, tmp_path, typed_confirmations):
     _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
     mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target())
     apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
@@ -228,7 +228,7 @@ def test_apply_prints_the_plan_and_stops_at_no(mocker, tmp_path):
     apply_mock.assert_not_called()  # and nothing was published
 
 
-def test_apply_publishes_on_yes(mocker, tmp_path):
+def test_apply_publishes_on_yes(mocker, tmp_path, typed_confirmations):
     from jailbee.pr_outbox import ApplyOutcome
 
     _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
@@ -247,7 +247,7 @@ def test_apply_publishes_on_yes(mocker, tmp_path):
     assert "https://x/c" in result.output
 
 
-def test_apply_exits_1_when_publishing_fails(mocker, tmp_path):
+def test_apply_exits_1_when_publishing_fails(mocker, tmp_path, typed_confirmations):
     from jailbee.pr_outbox import ApplyOutcome
 
     _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
@@ -379,7 +379,7 @@ def test_apply_reports_every_failure_before_the_plan(mocker, tmp_path):
     apply_mock.assert_not_called()
 
 
-def test_apply_reports_a_finalize_failure_and_exits_1(mocker, tmp_path):
+def test_apply_reports_a_finalize_failure_and_exits_1(mocker, tmp_path, typed_confirmations):
     from jailbee.pr_outbox import ApplyOutcome, FinalizeError
 
     _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
@@ -445,7 +445,7 @@ def test_apply_admits_a_foreign_pr_only_when_someone_consents(
     assert resolve.call_args.kwargs["allow_foreign"] is allowed
 
 
-def test_apply_warns_about_a_foreign_pr_before_asking(mocker, tmp_path):
+def test_apply_warns_about_a_foreign_pr_before_asking(mocker, tmp_path, typed_confirmations):
     _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
     mocker.patch("jailbee.pr_outbox.resolve_target", return_value=_a_target(foreign=True))
     apply_mock = mocker.patch("jailbee.pr_outbox.apply_manifest")
@@ -916,7 +916,7 @@ def test_drop_deletes_without_publishing(mocker, tmp_path):
     assert stored_names() == []
 
 
-def test_drop_asks_first_and_keeps_the_manifest_on_no(mocker, tmp_path):
+def test_drop_asks_first_and_keeps_the_manifest_on_no(mocker, tmp_path, typed_confirmations):
     _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
 
     result = runner.invoke(app, ["review", "drop", "feat-foo"], input="n\n")
@@ -960,18 +960,18 @@ def test_drop_reports_nothing_to_drop(mocker, tmp_path):
     assert "nothing pending" in result.output.lower()
 
 
-def test_drop_replacement_during_confirmation_never_deletes(mocker, tmp_path):
+def test_drop_replacement_during_confirmation_never_deletes(mocker, tmp_path, typed_confirmations):
     files = {
         "one.json": _manifest_text(actions=[{"type": "comment", "body_file": "body.md"}]),
         "body.md": "same body",
     }
     _, incus = _setup(mocker, tmp_path, files=files)
 
-    def confirm(question):
+    def confirm(question, default):
         incus.list_containers.return_value[0]["created_at"] = "replacement"
         return True
 
-    mocker.patch("jailbee.cli.typer.confirm", side_effect=confirm)
+    mocker.patch("jailbee.prompting._confirm", side_effect=confirm)
     result = runner.invoke(app, ["review", "drop", "feat-foo"])
     assert result.exit_code == 1, result.output
     assert "refresh" in result.output
@@ -998,13 +998,15 @@ def test_drop_multiple_preserves_preview_identity(mocker, tmp_path):
         (False, [], False, False),
     ],
 )
-def test_review_apply_draft_wiring(mocker, tmp_path, interactive, flags, draft, chooser):
+def test_review_apply_draft_wiring(
+    mocker, tmp_path, interactive, flags, draft, chooser, typed_confirmations
+):
     from jailbee.outbox.publish import ask_publish_mode
 
     _setup(mocker, tmp_path, files={"001-x.json": _manifest_text()})
     mocker.patch("jailbee.prompting.is_interactive", return_value=interactive)
     offer = mocker.patch("jailbee.pr_outbox.offer_pending_comments", return_value=0)
-    confirm = mocker.patch("typer.confirm", return_value=False)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=False)
     result = runner.invoke(app, ["review", "apply", "feat-foo", *flags])
     assert result.exit_code == 0, result.output
     kw = offer.call_args.kwargs
@@ -1014,7 +1016,7 @@ def test_review_apply_draft_wiring(mocker, tmp_path, interactive, flags, draft, 
         assert kw["confirm"](3) is ("-y" in flags)
         if "-y" not in flags:
             assert confirm.call_args.args[0] == "Publish 3 actions as a draft review?"
-            assert confirm.call_args.kwargs["default"] is False
+            assert confirm.call_args.args[1] is False
 
 
 def test_review_apply_draft_off_tty_refuses(mocker, tmp_path):

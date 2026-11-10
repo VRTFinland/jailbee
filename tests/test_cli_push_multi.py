@@ -445,7 +445,9 @@ def _fake_plan():
     )
 
 
-def test_push_confirms_when_the_single_container_was_auto_selected(mocker, tmp_path):
+def test_push_confirms_when_the_single_container_was_auto_selected(
+    mocker, tmp_path, typed_confirmations
+):
     cfg_mock = _wire(
         mocker,
         tmp_path,
@@ -488,7 +490,7 @@ def test_push_declined_confirmation_does_not_push(mocker, tmp_path):
     do_push.assert_not_called()
 
 
-def test_push_bare_enter_proceeds(mocker, tmp_path):
+def test_push_bare_enter_proceeds(mocker, tmp_path, typed_confirmations):
     cfg_mock = _wire(
         mocker,
         tmp_path,
@@ -527,7 +529,7 @@ def test_push_no_confirm_flag_skips_the_prompt(mocker, tmp_path):
     assert do_push.call_args.kwargs["fetch"] is None
 
 
-def test_push_confirm_flag_overrides_a_disabled_config(mocker, tmp_path):
+def test_push_confirm_flag_overrides_a_disabled_config(mocker, tmp_path, typed_confirmations):
     cfg_mock = _wire(
         mocker,
         tmp_path,

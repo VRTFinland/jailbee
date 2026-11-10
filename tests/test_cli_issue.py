@@ -257,7 +257,7 @@ def test_apply_refuses_off_a_tty_rather_than_showing_the_picker(mocker, tmp_path
     assert "feat-a" in result.output and "feat-b" in result.output
 
 
-def test_apply_prints_the_plan_and_stops_at_no(mocker, tmp_path):
+def test_apply_prints_the_plan_and_stops_at_no(mocker, tmp_path, typed_confirmations):
     _setup(mocker, tmp_path, files={"001.json": _manifest_text()})
     batch = _prepared_batch(tmp_path)
     mocker.patch("jailbee.issue_outbox.prepare_batch", return_value=batch)
@@ -323,7 +323,7 @@ def test_apply_yes_skips_only_the_prompt_never_the_stale_pass(mocker, tmp_path):
     apply_batch.assert_called_once()
 
 
-def test_apply_executes_in_exact_order(mocker, tmp_path):
+def test_apply_executes_in_exact_order(mocker, tmp_path, typed_confirmations):
     """prepare -> plan -> confirm -> stale pass -> mutation, in that order."""
     from jailbee.issue_outbox import ApplyReport
 
@@ -704,7 +704,7 @@ def test_resolve_create_action_requires_issue_off_a_tty(mocker, tmp_path):
     assert "issue number" in panel_text(result.output)
 
 
-def test_resolve_renders_the_action_before_confirming(mocker, tmp_path):
+def test_resolve_renders_the_action_before_confirming(mocker, tmp_path, typed_confirmations):
     text = _manifest_text(
         actions=[{"type": "comment", "repo": ".", "issue": 42, "body": "the pending comment"}]
     )
@@ -1154,7 +1154,9 @@ def test_apply_help_shows_foreign():
 
 
 @pytest.mark.parametrize(("answer", "applied"), [("n\n", False), ("y\n", True)])
-def test_apply_asks_one_question_naming_foreign_repositories(mocker, tmp_path, answer, applied):
+def test_apply_asks_one_question_naming_foreign_repositories(
+    mocker, tmp_path, answer, applied, typed_confirmations
+):
     revalidate, apply_batch = _patch_apply(mocker, tmp_path)
 
     result = runner.invoke(app, ["issue", "apply", "feat-foo"], input=answer)
@@ -1195,7 +1197,7 @@ def test_apply_yes_with_foreign_publishes_without_asking(mocker, tmp_path):
 
 def test_apply_dry_run_with_foreign_asks_nothing(mocker, tmp_path):
     revalidate, apply_batch = _patch_apply(mocker, tmp_path)
-    confirm = mocker.patch("typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = runner.invoke(app, ["issue", "apply", "feat-foo", "--dry-run"])
 
