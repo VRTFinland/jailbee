@@ -420,6 +420,6 @@ def test_action_detail_marks_a_foreign_repository(env, tmp_path, mocker, qtbot):
 def test_direct_native_window_refuses_any_ssh(qtbot, monkeypatch, tmp_path):
     from jailbee.qtui.outbox import OutboxDialog
 
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
     with pytest.raises(ValueError, match="SSH"):
         OutboxDialog(RepoTarget(tmp_path, None), IDENTITY.full_name)

@@ -2516,7 +2516,7 @@ def test_remote_transport_skips_a_new_submodule_without_touching_the_host_tree(
     """Creating new host sub-repos is forbidden over remote SSH. The new
     submodule is skipped with a warning — not a fatal error that would sink
     the ref-only transfer of everything else — and no directory is made."""
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
     cfg = _cfg_repo(tmp_path)
     incus = MagicMock()
     incus.exec.return_value = " 1111 libs/new (v1)\n"

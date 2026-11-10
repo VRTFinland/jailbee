@@ -113,7 +113,7 @@ def test_restart_approves_services_of_new_branch_profile(tmp_path, make_cfg, moc
     mocker.patch("jailbee.egress_proxy.sync_container")
     mocker.patch("jailbee.cli._post_create_gui_launches")
     mocker.patch("jailbee.autostart.run_autostart", return_value=_NO_DETACHED)
-    mocker.patch("jailbee.remote_ssh.session.is_remote_session", return_value=False)
+    mocker.patch("jailbee.remote_ssh.session.is_restricted_session", return_value=False)
 
     result = runner.invoke(app, ["restart", "box", "--yes", "--autostart-profile", "new"])
 

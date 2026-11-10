@@ -51,9 +51,9 @@ def validate_windows(cfg: Config, block: Autostart) -> None:
 def validate_remote(block: Autostart) -> None:
     """Remote container commands cannot borrow host network/mount authority."""
     from jailbee.autostart_plan import normalize_stages
-    from jailbee.remote_ssh.session import is_remote_session
+    from jailbee.remote_ssh.session import is_restricted_session
 
-    if not is_remote_session():
+    if not is_restricted_session():
         return
     for trigger in TRIGGER_ORDER:
         for stage in normalize_stages(getattr(block, trigger.value)):

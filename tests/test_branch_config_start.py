@@ -116,7 +116,7 @@ def test_widening_requires_local_approval(
     mocker.patch("jailbee.git.remote_ref_exists", return_value=True)
     mocker.patch("jailbee.prompting.is_interactive", return_value=interactive)
     confirm = mocker.patch("jailbee.tui.default_confirm", return_value=answer)
-    mocker.patch("jailbee.remote_ssh.session.is_remote_session", return_value=remote)
+    mocker.patch("jailbee.remote_ssh.session.is_restricted_session", return_value=remote)
     result = branch_config.effective_autostart_config(
         cfg, incus, "box", assume_yes=yes, allow_prompt=allow
     )
@@ -152,7 +152,7 @@ def test_requested_profile_respects_override_and_invalid_does_not_write(
         "services:\n  web:\n    run: serve\n"
         "    prepare:\n      - run: setup\n        network: loose\n"
     )
-    mocker.patch("jailbee.remote_ssh.session.is_remote_session", return_value=False)
+    mocker.patch("jailbee.remote_ssh.session.is_restricted_session", return_value=False)
 
     branch_config.effective_autostart_config(
         cfg, incus, "box", assume_yes=True, approval_profile=requested
@@ -193,7 +193,7 @@ def test_service_widening_updates_approval_only_when_accepted(
     mocker.patch("jailbee.git.remote_ref_exists", return_value=True)
     mocker.patch("jailbee.prompting.is_interactive", return_value=interactive)
     mocker.patch("jailbee.tui.default_confirm", return_value=answer)
-    mocker.patch("jailbee.remote_ssh.session.is_remote_session", return_value=remote)
+    mocker.patch("jailbee.remote_ssh.session.is_restricted_session", return_value=remote)
 
     result = branch_config.effective_autostart_config(
         cfg, incus, "box", assume_yes=yes, allow_prompt=True
