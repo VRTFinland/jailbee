@@ -332,7 +332,7 @@ def test_launch_autostart_apps_continues_after_one_raises(tmp_path, mocker):
     assert "'a'" in error_mock.call_args.args[0]
 
 
-_SESSION_VARS = ("JAILBEE_SSH_SESSION", "JAILBEE_SSH_GUI")
+_SESSION_VARS = ("JAILBEE_REMOTE_TRANSPORT", "JAILBEE_REMOTE_GUI_PORT")
 
 
 def _plain_spec():
@@ -366,8 +366,8 @@ def test_launch_from_a_gui_ssh_session_prepares_and_uses_the_shared_display(
 
     from jailbee.apps import launch
 
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
-    monkeypatch.setenv("JAILBEE_SSH_GUI", "8022")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_GUI_PORT", "8022")
     prepare = mocker.patch("jailbee.remote_display.prepare_shared_display")
     detached = mocker.patch("jailbee.gui.launch_detached")
     incus = MagicMock()
@@ -388,8 +388,8 @@ def test_a_failed_preparation_launches_nothing(tmp_path, mocker, monkeypatch, ca
     from jailbee.apps import launch
     from jailbee.remote_display import DisplayError
 
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
-    monkeypatch.setenv("JAILBEE_SSH_GUI", "8022")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_GUI_PORT", "8022")
     mocker.patch(
         "jailbee.remote_display.prepare_shared_display", side_effect=DisplayError("no client")
     )
@@ -438,7 +438,11 @@ def _waypipe_env(monkeypatch, *, attach: bool) -> None:
     from jailbee.remote_ssh.session import WaypipeSession, child_environment
 
     env = child_environment(
-        {}, gui_port=2222, waypipe=WaypipeSession("0a1b2c3d", "lz4"), waypipe_attach=attach
+        {},
+        transport="ssh",
+        gui_port=2222,
+        waypipe=WaypipeSession("0a1b2c3d", "lz4"),
+        waypipe_attach=attach,
     )
     for k, v in env.items():
         monkeypatch.setenv(k, v)
@@ -544,9 +548,9 @@ def test_launch_env_on_a_shared_display_does_not_attach_the_host_display(
 
     from jailbee.apps import launch_env
 
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
-    monkeypatch.setenv("JAILBEE_SSH_GUI", "8022")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_GUI_PORT", "8022")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     mocker.patch("jailbee.remote_display.prepare_shared_display")
     ensure = mocker.patch("jailbee.runtime_mounts.ensure_host_display")
 

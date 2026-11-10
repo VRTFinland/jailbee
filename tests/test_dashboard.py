@@ -4418,8 +4418,8 @@ def test_dashboard_command_survives_an_unreadable_cwd_repo_config(mocker):
 def test_remote_dashboard_never_loads_the_cwd_and_runs_restricted(mocker, monkeypatch) -> None:
     """A remote SSH session: registered repos only, no setup offer (its steps
     run on the host), and `run` told it is remote."""
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", '["snapshot"]')
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", '["snapshot"]')
     load = mocker.patch("jailbee.config.load_repo_config")
     advise = mocker.patch("jailbee.cli._advise_setup")
     run = mocker.patch("jailbee.dashboard.tui.app.run", return_value=0)
@@ -4446,8 +4446,8 @@ def test_remote_dashboard_never_loads_the_cwd_and_runs_restricted(mocker, monkey
 
 @pytest.mark.parametrize("policy_json", [None, "not-json"])
 def test_ssh_dashboard_fails_closed_without_valid_policy(mocker, monkeypatch, policy_json):
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     run = mocker.patch("jailbee.dashboard.tui.app.run")
     popen = mocker.patch("subprocess.Popen")
     argv = ["dashboard"]
@@ -4463,7 +4463,7 @@ def test_ssh_dashboard_fails_closed_without_valid_policy(mocker, monkeypatch, po
 
 
 def test_local_dashboard_is_not_remote(mocker, monkeypatch) -> None:
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     mocker.patch("jailbee.config.load_repo_config", side_effect=OSError("no repo"))
     mocker.patch("jailbee.cli._advise_setup")
     run = mocker.patch("jailbee.dashboard.tui.app.run", return_value=0)
@@ -4478,8 +4478,8 @@ def test_local_dashboard_is_not_remote(mocker, monkeypatch) -> None:
 @pytest.mark.parametrize("argv", [["dashboard", "--gui"], ["gui"], ["gui", "--foreground"]])
 def test_remote_session_never_gets_the_qt_dashboard(mocker, monkeypatch, argv) -> None:
     """A Qt window would open on the host's display, not the SSH client's."""
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     mocker.patch("jailbee.cli._advise_setup")
     mocker.patch("jailbee.incus.Incus")
     preflight = mocker.patch("jailbee.qtui.app.preflight", return_value=[Path("/tmp/x")])
@@ -5417,9 +5417,9 @@ def test_unrestricted_ssh_dashboard_is_registered_only_but_not_restricted(mocker
     """`restrict_host: false` lifts the restrictions, not the facts of being
     remote: the server's cwd is still no repo, the setup offer is still for
     someone at the host, and a Qt window would still open on its display."""
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     load = mocker.patch("jailbee.config.load_repo_config")
     advise = mocker.patch("jailbee.cli._advise_setup")
     run = mocker.patch("jailbee.dashboard.tui.app.run", return_value=0)
@@ -6124,7 +6124,9 @@ def test_dispatch_action_does_not_pause_after_a_gui_launch_in_a_waypipe_session(
     """A waypipe session has no RDP recipe to read: the window opens on the laptop."""
     from jailbee.remote_ssh.session import WaypipeSession, child_environment
 
-    env = child_environment({}, gui_port=2222, waypipe=WaypipeSession("0a1b2c3d", "lz4"))
+    env = child_environment(
+        {}, transport="ssh", gui_port=2222, waypipe=WaypipeSession("0a1b2c3d", "lz4")
+    )
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     run = mocker.patch.object(tsession.subprocess, "run")
@@ -7427,8 +7429,8 @@ def test_waypipe_session_offers_gui_actions_without_rdp(monkeypatch, in_waypipe)
 
     for name in ("JAILBEE_WAYPIPE_SESSION", "JAILBEE_WAYPIPE_COMPRESS"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     if in_waypipe:
         monkeypatch.setenv("JAILBEE_WAYPIPE_SESSION", "0a1b2c3d")
         monkeypatch.setenv("JAILBEE_WAYPIPE_COMPRESS", "lz4")

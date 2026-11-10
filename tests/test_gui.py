@@ -142,10 +142,12 @@ def test_a_waypipe_session_targets_waypipe_before_the_shared_display():
     from jailbee.gui import display_target
     from jailbee.remote_ssh.session import WaypipeSession, child_environment
 
-    env = child_environment({}, gui_port=2222, waypipe=WaypipeSession("0a1b2c3d", "lz4"))
+    env = child_environment(
+        {}, transport="ssh", gui_port=2222, waypipe=WaypipeSession("0a1b2c3d", "lz4")
+    )
 
     assert display_target(env) == "waypipe"
-    assert display_target(child_environment({}, gui_port=2222)) == "shared"
+    assert display_target(child_environment({}, transport="ssh", gui_port=2222)) == "shared"
     assert display_target({}) == "host"
 
 

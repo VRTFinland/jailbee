@@ -376,7 +376,7 @@ def test_remote_fork_net_loose_needs_the_network_switch(argv, monkeypatch):
     from jailbee.config.models_remote import RemoteCommandPolicy
     from jailbee.remote_ssh.router import RemoteUnlocks, RouteError, policy_allows
 
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     full = RemoteCommandPolicy(mode="full")
     with pytest.raises(RouteError, match=r"remote\.ssh\.network"):
         policy_allows(argv, full)
