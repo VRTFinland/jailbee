@@ -3411,12 +3411,6 @@ def switch_network(
     egress_proxy.sync_container(cfg, incus, name, mode)
 
 
-def _default_picker(containers: list[ContainerInfo]) -> str | None:
-    from jailbee.tui import pick_container
-
-    return pick_container(containers)
-
-
 @dataclass(frozen=True)
 class ResolvedContainer:
     """A resolved container name plus how it was chosen.
@@ -3437,7 +3431,7 @@ def resolve_container_for_interactive_detailed(
     incus: Incus,
     name: str | None,
     *,
-    picker: Callable[[list[ContainerInfo]], str | None] = _default_picker,
+    picker: Callable[[list[ContainerInfo]], str | None] | None = None,
     is_interactive: Callable[[], bool] | None = None,
     with_background: bool = False,
     always_prompt: bool = False,
@@ -3488,7 +3482,7 @@ def resolve_container_for_interactive_detailed(
             answers.append(interactive())
         return answers[0]
 
-    from jailbee.tui import container_options
+    from jailbee.tui import container_options, pick_container
 
     asks = always_prompt and tty()
     chosen = prompting.choose_one(
@@ -3497,7 +3491,7 @@ def resolve_container_for_interactive_detailed(
         question="Select a container:",
         destructive=always_prompt,
         empty_reason=f"no managed containers found for repo '{cfg.container_prefix}'",
-        picker=lambda _opts: picker(list(by_name.values())),
+        picker=lambda _opts: (picker or pick_container)(list(by_name.values())),
         is_interactive=tty,
     )
     return ResolvedContainer(name=chosen, auto_selected=len(containers) == 1 and not asks)
@@ -3508,7 +3502,7 @@ def resolve_container_for_interactive(
     incus: Incus,
     name: str | None,
     *,
-    picker: Callable[[list[ContainerInfo]], str | None] = _default_picker,
+    picker: Callable[[list[ContainerInfo]], str | None] | None = None,
     is_interactive: Callable[[], bool] | None = None,
     with_background: bool = False,
     always_prompt: bool = False,
