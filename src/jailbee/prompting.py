@@ -209,7 +209,12 @@ class TerminalBackend:
         picker: Callable[[Sequence[Option[Any]]], Any | None] | None,
         question: str | None,
     ) -> Any | None:
-        return (picker or (lambda opts: _select(noun, opts, question=question)))(options)
+        if picker is not None:
+            return picker(options)
+        # Keep the documented two-argument seam when no question is given.
+        if question is None:
+            return _select(noun, options)
+        return _select(noun, options, question=question)
 
     def choose_many(
         self,
@@ -221,7 +226,11 @@ class TerminalBackend:
         picker: Callable[[Sequence[Option[Any]]], list[Any] | None] | None,
         question: str | None,
     ) -> list[Any] | None:
-        return (picker or (lambda opts: _select_many(noun, opts, question=question)))(options)
+        if picker is not None:
+            return picker(options)
+        if question is None:
+            return _select_many(noun, options)
+        return _select_many(noun, options, question=question)
 
     def text(
         self,
