@@ -4059,11 +4059,10 @@ def _run_dashboard(
     from jailbee.config.models_remote import RemoteSSHConfig
     from jailbee.dashboard.commands import Transport
     from jailbee.incus import Incus
-    from jailbee.remote_ssh.session import is_remote_session, is_restricted_session
+    from jailbee.remote_ssh.session import is_remote_session, is_restricted_session, policy_transport
 
     remote = is_restricted_session()
-    # The terminal dashboard is only ever started over SSH (the web one has its own server).
-    transport: Transport = "ssh" if is_remote_session() else "none"
+    transport: Transport = policy_transport() if is_remote_session() else "none"
     if transport != "none" and gui:
         error("The graphical dashboard is not available over remote SSH.")
         return 2
@@ -12784,12 +12783,9 @@ def _remote_session_policy() -> "RemotePolicy | None":
     Read from `global.yaml` on every call, so a root removed there stops the
     next `mount` even inside an SSH session that opened before the edit.
     """
-    from jailbee.remote_ssh.session import TRANSPORT_WEB, is_restricted_session, policy_transport
+    from jailbee.remote_ssh.session import remote_session_policy
 
-    if not is_restricted_session():
-        return None
-    remote = _load_global().remote
-    return remote.web if policy_transport() == TRANSPORT_WEB else remote.ssh
+    return remote_session_policy(lambda: _load_global().remote)
 
 
 @app.command("mount")

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from jailbee.config import Config
-    from jailbee.config.models_remote import RemoteMountRoot, RemotePolicy
+    from jailbee.config.models_remote import RemoteMountRoot, RemotePolicy, RemoteTransport
 
 
 @dataclass(frozen=True)
@@ -65,7 +65,7 @@ def _root_for(policy: RemotePolicy, resolved: Path) -> RemoteMountRoot | None:
 
 
 def remote_mount_grant(
-    policy: RemotePolicy, cfg: Config, kind: str, *, transport: str = "ssh"
+    policy: RemotePolicy, cfg: Config, kind: str, *, transport: RemoteTransport = "ssh"
 ) -> MountGrant | str:
     """The grant for attaching ``kind`` in a restricted session, or why not."""
     mount = cfg.optional_mounts.get(kind)
@@ -109,7 +109,7 @@ def remote_mount_grant(
 
 
 def grantable_kinds(
-    policy: RemotePolicy, cfg: Config, *, transport: str = "ssh"
+    policy: RemotePolicy, cfg: Config, *, transport: RemoteTransport = "ssh"
 ) -> tuple[str, ...]:
     """The kinds ``remote_mount_grant`` grants, in config order."""
     return tuple(

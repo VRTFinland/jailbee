@@ -81,3 +81,36 @@ def test_repo_scope_reads_the_policy_excluded_repos() -> None:
     scope = RemoteRepoScope.of(RemotePolicy(excluded_repos=["secret"]))
     assert not scope.allows("secret")
     assert scope.allows("other")
+
+
+# ---- one transport type, and the session policy lives outside cli.py ----------------
+
+
+def test_remote_transport_only_names_known_transports():
+    from jailbee.remote_ssh import session
+
+    assert session.remote_transport({session.REMOTE_TRANSPORT_ENV: "web"}) == "web"
+    assert session.remote_transport({session.REMOTE_TRANSPORT_ENV: "ssh"}) == "ssh"
+    assert session.remote_transport({session.REMOTE_TRANSPORT_ENV: "carrier-pigeon"}) is None
+    assert session.policy_transport({session.REMOTE_TRANSPORT_ENV: "carrier-pigeon"}) == "ssh"
+
+
+def test_remote_session_policy_picks_the_policy_of_the_sessions_transport():
+    from types import SimpleNamespace
+
+    from jailbee.remote_ssh import session
+
+    remote = SimpleNamespace(ssh="ssh-policy", web="web-policy")
+    restricted = {session.REMOTE_RESTRICTED_ENV: "1"}
+    assert session.remote_session_policy(lambda: remote, restricted) == "ssh-policy"
+    web = {**restricted, session.REMOTE_TRANSPORT_ENV: "web"}
+    assert session.remote_session_policy(lambda: remote, web) == "web-policy"
+
+
+def test_remote_session_policy_is_none_and_unread_when_unrestricted():
+    from jailbee.remote_ssh import session
+
+    def boom():
+        raise AssertionError("global.yaml must not be read for a local session")
+
+    assert session.remote_session_policy(boom, {}) is None

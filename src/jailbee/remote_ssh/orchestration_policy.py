@@ -17,7 +17,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from jailbee.config.models_remote import RemotePolicy
+from jailbee.config.models_remote import RemotePolicy, RemoteTransport
 from jailbee.orchestration.grant import Grant, egress_covered
 
 if TYPE_CHECKING:
@@ -62,7 +62,7 @@ def grant_bound(
 
 
 def grant_excess(
-    new: Grant, current: Grant | None, bound: GrantBound, *, transport: str = "ssh"
+    new: Grant, current: Grant | None, bound: GrantBound, *, transport: RemoteTransport = "ssh"
 ) -> list[str]:
     """One message per grantable element of `new` beyond `bound` and not already in `current`."""
     have = current.grantable if current is not None else None
