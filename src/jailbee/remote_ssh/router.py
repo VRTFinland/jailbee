@@ -908,7 +908,8 @@ def policy_allows(
                 )
             if path in _ORCHESTRATION_COMMANDS and not unlocks.orchestration:
                 raise RouteError(
-                    f"remote.{unlocks.transport}.orchestration is off: `{path}` manages the host itself"
+                    f"remote.{unlocks.transport}.orchestration is off: "
+                    f"`{path}` manages the host itself"
                 )
             raise RouteError(
                 f"`{path}` manages the host itself, which a restricted remote session never does"

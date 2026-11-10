@@ -75,7 +75,10 @@ def remote_mount_grant(
         return MountGrant(Path(mount.host), mount.readonly)
     prefix = cfg.container_prefix
     if prefix in policy.excluded_repos:
-        return f"Repo '{prefix}' is excluded from remote {transport} (remote.{transport}.excluded_repos)."
+        return (
+            f"Repo '{prefix}' is excluded from remote {transport} "
+            f"(remote.{transport}.excluded_repos)."
+        )
     resolved = _resolved(mount.host)
     root = _root_for(policy, resolved)
     if root is None:
@@ -85,7 +88,10 @@ def remote_mount_grant(
             "Attach it on the host, or list it in ~/.config/jailbee/global.yaml."
         )
     if root.repos and prefix not in root.repos:
-        return f"remote.{transport}.mount_roots allows {root.path} for {root.repos}, not for '{prefix}'."
+        return (
+            f"remote.{transport}.mount_roots allows {root.path} for {root.repos}, "
+            f"not for '{prefix}'."
+        )
     try:
         mode = os.stat(root.path).st_mode
     except OSError:

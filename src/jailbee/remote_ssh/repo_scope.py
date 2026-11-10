@@ -18,9 +18,9 @@ from jailbee.remote_ssh.session import REMOTE_EXCLUDED_REPOS_ENV, is_remote_sess
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from jailbee.config.models_remote import RemotePolicy
-
     from sqlalchemy.engine import Engine
+
+    from jailbee.config.models_remote import RemotePolicy
 
 _PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 

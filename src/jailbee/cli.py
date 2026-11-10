@@ -4170,7 +4170,7 @@ if TYPE_CHECKING:
     from jailbee.config import Autostart, Config, LooseAutoRevert
     from jailbee.config.models_agents import AutostartStep
     from jailbee.config.models_behaviour import FfPolicy, TagPolicy
-    from jailbee.config.models_remote import RemotePolicy, RemoteSSHConfig
+    from jailbee.config.models_remote import RemotePolicy
     from jailbee.dashboard.columns import TableWindow
     from jailbee.db.models import BackgroundJob
     from jailbee.docker_seed import SeedOutcome
@@ -12770,7 +12770,7 @@ def _pick_mount_kind(
 
 
 def _remote_session_policy() -> "RemotePolicy | None":
-    """The `remote.<transport>` policy a command answers to in a restricted remote session; None locally.
+    """The `remote.<transport>` policy a command answers to when restricted; None locally.
 
     Used by `mount` and `orchestrate grant`.
 

@@ -32,9 +32,7 @@ def test_default_web_policy_refuses_every_command() -> None:
         == frozenset()
     )
     with pytest.raises(RouteError):
-        policy_allows(
-            ("ls",), policy.commands, restrict_host=policy.restrict_host, unlocks=unlocks
-        )
+        policy_allows(("ls",), policy.commands, restrict_host=policy.restrict_host, unlocks=unlocks)
 
 
 def test_default_web_policy_refuses_host_access() -> None:
