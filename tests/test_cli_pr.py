@@ -122,7 +122,9 @@ def source_choice(mocker, tmp_path):
         ],
     )
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    select = mocker.patch("jailbee.prompting._select", side_effect=lambda noun, opts: opts[0].value)
+    select = mocker.patch(
+        "jailbee.prompting._select", side_effect=lambda noun, opts, **_: opts[0].value
+    )
     source = mocker.patch("jailbee.branch_pr.publish_source_manifest", return_value=0)
     own = mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
     create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
@@ -131,7 +133,7 @@ def source_choice(mocker, tmp_path):
 
 def test_pr_push_picker_publishes_picked_manifest(source_choice):
     p = source_choice
-    p["select"].side_effect = lambda noun, opts: opts[2].value
+    p["select"].side_effect = lambda noun, opts, **_: opts[2].value
     result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--yes", "--force"])
     assert result.exit_code == 0, result.output
     from unittest.mock import ANY

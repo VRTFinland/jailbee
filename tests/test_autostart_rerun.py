@@ -94,7 +94,7 @@ def test_collision_list_and_picker_offer_only_safe_steps(tmp_path, mocker, step_
     incus.list_containers.return_value = [{"name": "c", "status": "Running"}]
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     picker = mocker.patch(
-        "jailbee.prompting._select", side_effect=lambda noun, options: options[0].value
+        "jailbee.prompting._select", side_effect=lambda noun, options, **_: options[0].value
     )
     spawn = mocker.MagicMock()
     command(
