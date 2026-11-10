@@ -59,7 +59,9 @@ class Peer:
 
 
 @pytest.fixture
-def channel(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[Callable[[pc.Prompt], Any]], Peer]]:
+def channel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[Callable[[Callable[[pc.Prompt], Any]], Peer]]:
     """Open a socketpair, export one end's fd, return a peer factory."""
     cmd_sock, ui_sock = socket.socketpair()
     monkeypatch.setenv("JAILBEE_PROMPT_FD", str(cmd_sock.fileno()))
@@ -237,9 +239,7 @@ def test_is_interactive_true_with_channel_even_without_tty(
 
 
 @pytest.mark.parametrize("value", ["abc", "999", "1", "-4", ""])
-def test_invalid_fd_falls_back_as_if_absent(
-    monkeypatch: pytest.MonkeyPatch, value: str
-) -> None:
+def test_invalid_fd_falls_back_as_if_absent(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
     monkeypatch.setenv("JAILBEE_PROMPT_FD", value)
     monkeypatch.setattr("sys.stdin.isatty", lambda: False, raising=False)
     assert prompting.is_interactive() is False
@@ -304,7 +304,9 @@ def test_version_mismatch_fails_clearly_on_command_side(
 
 def test_version_mismatch_raises_on_ui_side() -> None:
     cmd_sock, ui_sock = socket.socketpair()
-    cmd_sock.sendall(json.dumps({"type": "hello", "version": 0, "role": "command"}).encode() + b"\n")
+    cmd_sock.sendall(
+        json.dumps({"type": "hello", "version": 0, "role": "command"}).encode() + b"\n"
+    )
     ui = pc.UiEnd(ui_sock)
     with pytest.raises(pc.ProtocolVersionError):
         ui.next_prompt()
