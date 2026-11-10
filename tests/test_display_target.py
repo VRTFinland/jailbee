@@ -14,7 +14,7 @@ from jailbee.gui import (
     gui_env,
 )
 from jailbee.remote_ssh.session import (
-    SSH_GUI_ENV,
+    REMOTE_GUI_PORT_ENV,
     WaypipeSession,
     child_environment,
     is_shared_display_session,
@@ -57,9 +57,11 @@ def test_shared_target_points_at_the_shared_socket_and_has_no_x11(
 
 def test_display_target_is_host_unless_the_session_is_marked() -> None:
     assert display_target({}) == "host"
-    assert display_target({"JAILBEE_REMOTE_SSH": "1"}) == "host"
-    assert display_target({SSH_GUI_ENV: "8022"}) == "host"  # not an SSH session
-    assert display_target({"JAILBEE_SSH_SESSION": "1", SSH_GUI_ENV: "8022"}) == "shared"
+    assert display_target({"JAILBEE_REMOTE_RESTRICTED": "1"}) == "host"
+    assert display_target({REMOTE_GUI_PORT_ENV: "8022"}) == "host"  # not an SSH session
+    assert (
+        display_target({"JAILBEE_REMOTE_TRANSPORT": "ssh", REMOTE_GUI_PORT_ENV: "8022"}) == "shared"
+    )
 
 
 def test_display_state_dir_lives_under_the_jailbee_state_dir(
@@ -70,35 +72,38 @@ def test_display_state_dir_lives_under_the_jailbee_state_dir(
 
 
 def test_child_environment_marks_a_gui_session_with_its_port() -> None:
-    env = child_environment({}, gui_port=8022)
+    env = child_environment({}, transport="ssh", gui_port=8022)
 
-    assert env[SSH_GUI_ENV] == "8022"
+    assert env[REMOTE_GUI_PORT_ENV] == "8022"
     assert is_shared_display_session(env) is True
     assert shared_display_port(env) == 8022
 
 
 def test_child_environment_never_inherits_the_gui_markers() -> None:
     """A marker in the server's own environment must not leak."""
-    env = child_environment({SSH_GUI_ENV: "8022"})
+    env = child_environment({REMOTE_GUI_PORT_ENV: "8022"}, transport="ssh")
 
-    assert SSH_GUI_ENV not in env
+    assert REMOTE_GUI_PORT_ENV not in env
     assert is_shared_display_session(env) is False
     assert shared_display_port(env) is None
 
 
 def test_a_non_numeric_gui_marker_is_not_a_session() -> None:
-    assert shared_display_port({SSH_GUI_ENV: "yes"}) is None
-    assert is_shared_display_session({"JAILBEE_SSH_SESSION": "1", SSH_GUI_ENV: "yes"}) is False
+    assert shared_display_port({REMOTE_GUI_PORT_ENV: "yes"}) is None
+    assert (
+        is_shared_display_session({"JAILBEE_REMOTE_TRANSPORT": "ssh", REMOTE_GUI_PORT_ENV: "yes"})
+        is False
+    )
 
 
 def test_a_unicode_digit_marker_is_not_a_port() -> None:
     """`"²".isdigit()` is True but `int("²")` raises."""
-    assert shared_display_port({SSH_GUI_ENV: "²"}) is None
+    assert shared_display_port({REMOTE_GUI_PORT_ENV: "²"}) is None
 
 
 def test_a_waypipe_session_needs_no_shared_display_port():
     env = {
-        "JAILBEE_SSH_SESSION": "1",
+        "JAILBEE_REMOTE_TRANSPORT": "ssh",
         "JAILBEE_WAYPIPE_SESSION": "0a1b2c3d",
         "JAILBEE_WAYPIPE_COMPRESS": "lz4",
     }

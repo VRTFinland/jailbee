@@ -83,9 +83,9 @@ def test_exec_detach_gui_from_a_gui_session_prepares_the_shared_display(
     from jailbee.incus import Incus
     from tests.conftest import make_cfg
 
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
-    monkeypatch.setenv("JAILBEE_SSH_GUI", "8022")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_GUI_PORT", "8022")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(tmp_path))
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="c1")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
@@ -103,9 +103,9 @@ def test_exec_foreground_never_prepares_the_display(tmp_path, mocker, monkeypatc
     from jailbee.incus import Incus
     from tests.conftest import make_cfg
 
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
-    monkeypatch.setenv("JAILBEE_SSH_GUI", "8022")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_GUI_PORT", "8022")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(tmp_path))
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="c1")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
@@ -119,9 +119,9 @@ def test_exec_detach_gui_reports_a_display_error_cleanly(tmp_path, mocker, monke
     from jailbee.remote_display import DisplayError
     from tests.conftest import make_cfg
 
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
-    monkeypatch.setenv("JAILBEE_SSH_GUI", "8022")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_GUI_PORT", "8022")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(tmp_path))
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="c1")
     mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/home/dev/repo")
@@ -140,9 +140,9 @@ def test_exec_detach_without_gui_never_prepares_the_display(tmp_path, mocker, mo
     """A detached `make test` in a GUI SSH session must run, not wait for RDP."""
     from tests.conftest import make_cfg
 
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
-    monkeypatch.setenv("JAILBEE_SSH_GUI", "8022")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_GUI_PORT", "8022")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
     mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(tmp_path))
     mocker.patch("jailbee.lifecycle.resolve_container_name", return_value="c1")
@@ -177,7 +177,7 @@ def test_exec_detach_gui_on_the_host_uses_the_host_environment(
 ) -> None:
     from tests.conftest import make_cfg
 
-    for name in ("JAILBEE_SSH_SESSION", "JAILBEE_SSH_GUI"):
+    for name in ("JAILBEE_REMOTE_TRANSPORT", "JAILBEE_REMOTE_GUI_PORT"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
     mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(tmp_path))

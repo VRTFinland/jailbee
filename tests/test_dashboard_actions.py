@@ -545,8 +545,8 @@ def test_mount_choice_reads_the_direction_back():
 
 
 def test_mount_entries_over_restricted_ssh_offer_only_remote_mountable(monkeypatch):
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     info = _container(optional_mounts=())
     entries = dact.mount_entries(
         info, ("aws", "data"), _policy({"mounts": True}), over_ssh=True, remote_mountable=("data",)
@@ -555,8 +555,8 @@ def test_mount_entries_over_restricted_ssh_offer_only_remote_mountable(monkeypat
 
 
 def test_mount_entries_over_restricted_ssh_keep_unmount_for_ungranted_kinds(monkeypatch):
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     info = _container(optional_mounts=("aws",))
     entries = dact.mount_entries(
         info, ("aws", "data"), _policy({"mounts": True}), over_ssh=True, remote_mountable=()
@@ -565,7 +565,7 @@ def test_mount_entries_over_restricted_ssh_keep_unmount_for_ungranted_kinds(monk
 
 
 def test_mount_entries_without_the_marker_ignore_remote_mountable(monkeypatch):
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     info = _container(optional_mounts=())
     entries = dact.mount_entries(info, ("aws",), None, over_ssh=False, remote_mountable=())
     assert [e.value for e in entries] == ["mount:aws"]
