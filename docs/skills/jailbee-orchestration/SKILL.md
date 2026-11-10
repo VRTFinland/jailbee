@@ -87,7 +87,9 @@ Run `jailbee inbox grant` to inspect your grant before planning requests.
 - `operations` lists the manifest types you may use. `spawn` and `message`
   are always there; `import`, `restart`, `stop`, `destroy` and `rights` may not be.
 - `grantable` is the most you may give a child: mounts by name, whether
-  `loose` networking is allowed, and egress hosts.
+  `loose` networking is allowed, and egress hosts. `grantable loose: yes`
+  also lets you grant any single egress host within the repo cap, even when
+  the egress list is empty; prefer that single host over loose.
 
 If `jailbee inbox grant` reports no grant yet, wait briefly and retry once;
 if it remains unavailable, tell the human. A grant may be revoked while the

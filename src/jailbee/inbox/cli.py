@@ -280,6 +280,13 @@ def render_grant(grant: dict[str, Any], *, as_json: bool) -> int:
     print("max_running_children: " + text(grant.get("max_running_children")))
     print("grantable mounts: " + mounts_text)
     print("grantable loose: " + ("yes" if grantable.get("loose") is True else "no"))
+    if not egress_text:
+        egress_text = "none"
+    if grantable.get("loose") is True:
+        # The broker lets loose permission cover any narrower egress host
+        # (`orchestration.grant.egress_grantable`), so an empty list here does
+        # not mean single hosts are refused.
+        egress_text += "; any host within the repo cap (via loose)"
     print("grantable egress: " + egress_text)
     print("publish issues: " + issue_text)
     print("publish foreign issues: " + foreign_text)

@@ -717,6 +717,24 @@ def test_grant(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
     assert "default runner: claude-jb -P p opus" in r.stdout
 
 
+def test_grant_egress_line_names_hosts_covered_by_loose(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path
+) -> None:
+    grant = {**GRANT, "grantable": {"mounts": [], "loose": True, "egress": ["pypi.org"]}}
+    broker.on("grant", grant)
+    r = run(sockdir, "grant", tmp=tmp_path)
+    assert r.returncode == 0
+    assert "grantable egress: pypi.org; any host within the repo cap (via loose)" in r.stdout
+
+
+def test_grant_egress_line_without_loose_lists_only_hosts(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path
+) -> None:
+    broker.on("grant", GRANT)
+    r = run(sockdir, "grant", tmp=tmp_path)
+    assert "grantable egress: none\n" in r.stdout
+
+
 def test_grant_not_orchestrated(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
     broker.on("grant", error=(wire.NOT_ORCHESTRATED, "no"))
     r = run(sockdir, "grant", tmp=tmp_path)
