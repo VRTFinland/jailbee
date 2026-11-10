@@ -75,6 +75,9 @@ isolated per-branch development environments using Incus system containers. See
   dashboard state service. `create_flow.py` is a fourth: `launch_background`
   starts the detached `python -m jailbee _new-worker` (`subprocess.Popen`)
   for a background `jailbee new`.
+  `dashboard/runner.py` is a fifth: `popen_spawn` starts JailBee's own CLI
+  (`python -m jailbee`, `subprocess.Popen`) with a prompt-channel socket end
+  passed via `pass_fds`, for the shared dashboard action runner.
   The terminal dashboard's open-in-browser calls Textual `App.open_url`
   (stdlib `webbrowser`, which may start `xdg-open`), only locally with a display.
   `gui.py` is the one module that runs `incus` outside `incus.py`: a *detached*
