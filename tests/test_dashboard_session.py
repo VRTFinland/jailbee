@@ -227,7 +227,7 @@ def test_memory_ssh_denial_never_opens_picker(mocker, tmp_path):
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 
     session, quiet = _memory_session(mocker, tmp_path)
-    session.transport = True
+    session.transport = "ssh"
     session.ssh_policy = RemoteSSHConfig(
         commands=RemoteCommandPolicy(mode="allowlist", allow=["shell"])
     )
@@ -797,7 +797,7 @@ def test_ssh_topology_only_opens_container_menu_and_picker(mocker, tmp_path, act
     if action == "release":
         row = dataclasses.replace(row, child=ChildView("alpha-one", "working", (), False, ()))
     session.groups[0].containers.append(row)
-    session.transport = True
+    session.transport = "ssh"
     session.ssh_policy = RemoteSSHConfig.model_validate(
         {
             "commands": {"mode": "allowlist", "allow": [f"orchestrate {action}"]},
@@ -828,7 +828,7 @@ def test_ssh_topology_does_not_offer_other_repo_candidates(mocker, tmp_path):
     session.groups.append(
         dmodel.RepoGroup("beta", str(tmp_path / "beta"), None, [ci("beta-free", "beta")])
     )
-    session.transport = True
+    session.transport = "ssh"
     session.ssh_policy = RemoteSSHConfig.model_validate(
         {
             "commands": {"mode": "allowlist", "allow": ["orchestrate adopt"]},
@@ -866,7 +866,7 @@ def test_orchestration_topology_empty_and_ssh_gates(mocker, tmp_path):
     menu = session.open_orchestration("alpha-one")
     picker = session.submit_picker(menu, next(e for e in menu.entries if e.value == "release"))
     assert [e.value for e in picker.entries] == ["alpha-child"]
-    session.transport = True
+    session.transport = "ssh"
     session.ssh_policy = RemoteSSHConfig.model_validate(
         {
             "commands": {"mode": "allowlist", "allow": ["orchestrate grant"]},
@@ -1480,7 +1480,7 @@ def _ssh_orchestration_session(mocker, tmp_path, *, level, grant_kw=None, kinds=
     if grant_kw:
         info = dataclasses.replace(info, grant=dataclasses.replace(info.grant, **grant_kw))
         group.containers[0] = info
-    session.transport = True
+    session.transport = "ssh"
     session.ssh_policy = RemoteSSHConfig(orchestration=level)
     return session
 
@@ -1651,7 +1651,7 @@ def test_services_menu_order_and_ssh_action_gates(mocker, tmp_path):
     assert labels.index("Mounts…") < labels.index("Services…") < labels.index("Network →")
     assert tmenu.menu_hotkeys(entries)[labels.index("Services…")] == "V"
     session, _ = bare_session(mocker, [group])
-    session.transport = True
+    session.transport = "ssh"
     session.ssh_policy = RemoteSSHConfig()
     result = mocker.patch("jailbee.dashboard.accounts.run_cli_quiet").return_value
     result.ok = True
@@ -1877,7 +1877,7 @@ def _ssh_publish_session(mocker, tmp_path, allow, publish=None):
     from jailbee.config.models_remote import RemoteSSHConfig
 
     session, quiet = _orchestration_session(mocker, tmp_path, grant=True, publish=publish)
-    session.transport = True
+    session.transport = "ssh"
     session.ssh_policy = RemoteSSHConfig.model_validate(
         {
             "commands": {"mode": "allowlist", "allow": ["orchestrate grant", *allow]},

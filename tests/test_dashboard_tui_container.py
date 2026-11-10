@@ -201,7 +201,7 @@ def test_rerun_confirmation_no_and_stale_ssh_policy_spawn_nothing(mocker, tmp_pa
     confirm = session.submit_picker(picker, picker.entries[0])
     session.submit_picker(confirm, confirm.entries[0])
     child.assert_not_called()
-    session.transport = True
+    session.transport = "ssh"
     session.ssh_policy = _allowlist("autostart status")
     session.submit_picker(confirm, confirm.entries[1])
     child.assert_not_called()
