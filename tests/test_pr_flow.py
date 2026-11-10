@@ -6,10 +6,9 @@ import types
 from pathlib import Path
 
 import pytest
-from jailbee import prompting
 import typer
 
-from jailbee import pr_flow
+from jailbee import pr_flow, prompting
 
 
 @pytest.fixture(autouse=True)
@@ -37,9 +36,7 @@ def test_offer_outbox_binding_without_picker_prints_scoped_advice(
     tmp_path, mocker, yes, interactive, submodule
 ):
     mocker.patch("jailbee.prompting.is_interactive", return_value=interactive)
-    select = mocker.patch(
-        "jailbee.prompting._select", side_effect=AssertionError("must not ask")
-    )
+    select = mocker.patch("jailbee.prompting._select", side_effect=AssertionError("must not ask"))
     legacy_select = mocker.patch(
         "jailbee.prompting._select", side_effect=AssertionError("must not ask")
     )
@@ -81,7 +78,10 @@ def test_offer_outbox_binding_pick_number_and_single_ref_still_asks(
         == selection
     )
     options = select.call_args.args[1]
-    assert select.call_args.kwargs["question"] == "Outbox manifests reference existing PRs. Publish to:"
+    assert (
+        select.call_args.kwargs["question"]
+        == "Outbox manifests reference existing PRs. Publish to:"
+    )
     assert select.call_args.kwargs["default"] is prompting.CANCEL_ROW
     if len(refs) == 2:
         assert [(o.title, o.value) for o in options[:-1]] == [

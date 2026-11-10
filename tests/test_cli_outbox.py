@@ -499,8 +499,7 @@ def test_apply_at_a_terminal_warns_and_asks_about_an_unowned_pr(publication_env,
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch(
         "jailbee.prompting._select",
-        side_effect=lambda noun, options, question=None, default=None: print(question)
-        or "publish",
+        side_effect=lambda noun, options, question=None, default=None: print(question) or "publish",
     )
 
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json"])

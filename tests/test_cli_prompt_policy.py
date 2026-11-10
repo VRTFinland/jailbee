@@ -155,8 +155,8 @@ class _PromptFinder(ast.NodeVisitor):
         self.generic_visit(node)
         self._scope.pop()
 
-    visit_FunctionDef = _function
-    visit_AsyncFunctionDef = _function
+    visit_FunctionDef = _function  # noqa: N815  (ast.NodeVisitor dispatch name)
+    visit_AsyncFunctionDef = _function  # noqa: N815
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
@@ -191,11 +191,7 @@ class _PromptFinder(ast.NodeVisitor):
                 and owner.id in {"typer", "click"}
             ):
                 self._hit(node, f"{owner.id}.{func.attr}()")
-            if (
-                func.attr == "ask"
-                and isinstance(owner, ast.Name)
-                and owner.id in _PROMPT_NAMES
-            ):
+            if func.attr == "ask" and isinstance(owner, ast.Name) and owner.id in _PROMPT_NAMES:
                 self._hit(node, f"{owner.id}.ask()")
         self.generic_visit(node)
 
@@ -236,9 +232,7 @@ def test_direct_prompt_libraries_only_in_prompting() -> None:
         "prompt channel. Found: " + ", ".join(offenders)
     )
     # Directory entries are standing exemptions; file and function entries must still match.
-    stale = sorted(
-        key for key in set(_DIRECT_PROMPT_ALLOWED) - used if not key.endswith("/")
-    )
+    stale = sorted(key for key in set(_DIRECT_PROMPT_ALLOWED) - used if not key.endswith("/"))
     assert stale == [], "remove allow-list entries that no longer match anything: " + ", ".join(
         stale
     )
@@ -329,4 +323,7 @@ def test_tui_renderers_are_only_called_as_prompting_pickers() -> None:
 def test_the_renderer_checker_allows_a_picker_lambda_only() -> None:
     assert _direct_renderer_calls("x = pick_container(c)\n") == [1]
     assert _direct_renderer_calls("x = tui.pick_submodule(c)\n") == [1]
-    assert _direct_renderer_calls("choose_one('n', o, picker=lambda _o: tui.pick_container(c))\n") == []
+    assert (
+        _direct_renderer_calls("choose_one('n', o, picker=lambda _o: tui.pick_container(c))\n")
+        == []
+    )

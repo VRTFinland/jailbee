@@ -843,4 +843,3 @@ def ask_confirm(
     if answer is None:
         raise Cancelled()
     return answer
-

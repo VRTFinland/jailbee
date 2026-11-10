@@ -4,9 +4,8 @@ import json
 from dataclasses import replace
 
 import pytest
-from jailbee import prompting
 
-from jailbee import issue_github, issue_outbox, pr
+from jailbee import issue_github, issue_outbox, pr, prompting
 from jailbee.outbox import io, service
 from jailbee.outbox.inspect import build_views
 from jailbee.outbox.io import PrManagement
