@@ -196,6 +196,35 @@ def test_select_returns_the_chosen_options_value(mocker):
     assert prompting._select("container", [A, B]) == "b-full"
 
 
+def test_select_preselects_the_default_row(mocker):
+    seen = _fake_select(mocker, lambda choices: choices[0].value)
+    prompting._select("container", [A, B], default="b-full")
+    assert seen["kwargs"]["default"].title == B.title
+
+
+def test_select_without_a_default_preselects_nothing(mocker):
+    seen = _fake_select(mocker, lambda choices: choices[0].value)
+    prompting._select("container", [A, B])
+    assert "default" not in seen["kwargs"]
+
+
+def test_choose_one_hands_the_default_to_the_terminal_picker(mocker):
+    select = mocker.patch("jailbee.prompting._select", return_value="b-full")
+    assert choose_one("container", [A, B], is_interactive=_yes, default="b-full") == "b-full"
+    assert select.call_args.kwargs["default"] == "b-full"
+
+
+def test_choose_one_without_default_keeps_the_two_argument_seam(mocker):
+    select = mocker.patch("jailbee.prompting._select", return_value="b-full")
+    choose_one("container", [A, B], is_interactive=_yes)
+    select.assert_called_once_with("container", [A, B])
+
+
+def test_choose_one_default_is_ignored_off_a_terminal():
+    with pytest.raises(MissingValue):
+        choose_one("container", [A, B], is_interactive=lambda: False, default="b-full")
+
+
 def test_select_escape_is_none(mocker):
     _fake_select(mocker, lambda choices: None)
     assert prompting._select("container", [A, B]) is None
