@@ -355,7 +355,7 @@ End-to-end smoke-test recipes (require a real Incus daemon) live in
 
 ### Issue tracker
 
-GitHub Issues on `VRTFinland/jailbee`; read with `gh`, write through the JailBee issue outbox (an orchestrator may self-publish within its grant). See `docs/agents/issue-tracker.md`.
+GitHub Issues on `VRTFinland/jailbee` for umbrella issues and specs; read with `gh`, write through the JailBee issue outbox (an orchestrator may self-publish within its grant). Tickets split from a spec live as files in the shared `.local/tickets/`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

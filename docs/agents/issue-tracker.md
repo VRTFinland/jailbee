@@ -41,6 +41,31 @@ it). Never run `gh issue create|edit|comment|close|reopen` or a mutating
 - **Child containers never publish**; they send the exact content to the
   orchestrator.
 
+## Local tickets
+
+Umbrella issues and specs live on GitHub. The implementable tickets that
+`/to-tickets` splits a spec into live in `.local/tickets/`, so a breakdown of a
+dozen or more tickets does not flood the tracker or need host-side label
+publishing. `.local/` is the host repo's directory, mounted into every
+container of the repo, so the tickets are shared across containers.
+`.local/tickets/` is its own local-only git repository: never add a remote.
+
+- **Layout**: one directory per spec, `<spec-issue>-<slug>/`, holding a
+  `README.md` index (parent issue, ticket table) and one file per ticket,
+  `NN-<slug>.md`, numbered from `01` in dependency order (blockers first).
+- **Ticket file**: the `/to-tickets` local template, plus a `**Parent:** #N`
+  line naming the spec issue. `**Blocked by:**` lists ticket numbers in the
+  same directory.
+- **Status**: the `**Status:**` line is `ready-for-agent`,
+  `in-progress (<container>)` or `done (<commit>)`, where `<commit>` is the
+  jailbee commit that completes it.
+- **Frontier**: every `ready-for-agent` ticket whose blockers are all `done`.
+- **Claim / finish**: edit the status line, then commit inside
+  `.local/tickets/` with `git commit -- <path>`. Several containers share the
+  repository; if the index lock is held, wait and retry.
+- **When the spec is done**: close the spec issue on GitHub as in
+  **Publishing** below; the ticket files stay as the record.
+
 ## Pull requests as a triage surface
 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_
@@ -57,7 +82,13 @@ Stage a `jailbee issue create`, then publish it as in **Publishing** above.
 
 ## When a skill says "fetch the relevant ticket"
 
-Read it as in **Read an issue** above.
+A spec or umbrella issue: read it as in **Read an issue** above. A ticket from
+`/to-tickets`: read its file under `.local/tickets/` (see **Local tickets**).
+
+## When `/to-tickets` says "publish the tickets"
+
+Use its local-files form, under `.local/tickets/<spec-issue>-<slug>/` as in
+**Local tickets** above, not GitHub issues.
 
 ## Wayfinding operations
 
