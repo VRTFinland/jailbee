@@ -693,11 +693,11 @@ def test_remote_actions_filter_against_canonical_policy_and_argv():
     assert [
         verb
         for _, verb in dmenus.actions_for_container(
-            groups, "alpha-1", over_ssh=True, ssh_policy=policy
+            groups, "alpha-1", transport="ssh", ssh_policy=policy
         )
     ] == ["merge"]
     assert dmenus.group_menu_actions(
-        dmenus.actions_for_container(groups, "alpha-1", over_ssh=True, ssh_policy=policy)
+        dmenus.actions_for_container(groups, "alpha-1", transport="ssh", ssh_policy=policy)
     ) == [dmenus.MenuGroup("Git →", (("Merge into…", "merge"),))]
     assert dashboard_action_argv("tmux", "alpha-1", force=True) == ["tmux", "alpha-1", "--force"]
     assert "--config" not in dashboard_action_argv("git push --pr", "alpha-1")
@@ -709,7 +709,7 @@ def test_remote_policy_filters_all_git_leaves_without_hiding_other_actions():
     groups = [dmodel.RepoGroup("alpha", "/alpha", None, [_ci("alpha-1", "alpha")])]
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=["shell"]))
 
-    permitted = dmenus.actions_for_container(groups, "alpha-1", over_ssh=True, ssh_policy=policy)
+    permitted = dmenus.actions_for_container(groups, "alpha-1", transport="ssh", ssh_policy=policy)
 
     assert permitted == [("Open shell", "shell")]
     assert dmenus.group_menu_actions(permitted) == [("Open shell", "shell")]
@@ -725,14 +725,16 @@ def test_remote_full_and_disabled_actions_follow_policy():
     full_verbs = [
         verb
         for _, verb in dmenus.actions_for_container(
-            groups, "alpha-1", over_ssh=True, ssh_policy=full
+            groups, "alpha-1", transport="ssh", ssh_policy=full
         )
     ]
     assert {"merge", "shell", "tmux"} <= set(full_verbs)
-    assert dmenus.actions_for_container(groups, "alpha-1", over_ssh=True, ssh_policy=disabled) == []
+    assert (
+        dmenus.actions_for_container(groups, "alpha-1", transport="ssh", ssh_policy=disabled) == []
+    )
     assert (
         dmenus.group_menu_actions(
-            dmenus.actions_for_container(groups, "alpha-1", over_ssh=True, ssh_policy=disabled)
+            dmenus.actions_for_container(groups, "alpha-1", transport="ssh", ssh_policy=disabled)
         )
         == []
     )
@@ -1129,13 +1131,15 @@ def test_egress_view_remote_policy_is_independent():
     view_only = RemoteSSHConfig(
         commands=RemoteCommandPolicy(mode="allowlist", allow=["net egress ls"])
     )
-    actions = dmenus.actions_for_container([group], "alpha-1", over_ssh=True, ssh_policy=view_only)
+    actions = dmenus.actions_for_container(
+        [group], "alpha-1", transport="ssh", ssh_policy=view_only
+    )
     assert [(label, verb) for label, verb in actions if verb.startswith("net ")] == [
         ("Egress…", "net egress ls")
     ]
     restricted_full = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"), restrict_host=True)
     actions = dmenus.actions_for_container(
-        [group], "alpha-1", over_ssh=True, ssh_policy=restricted_full
+        [group], "alpha-1", transport="ssh", ssh_policy=restricted_full
     )
     assert "net egress ls" in [verb for _, verb in actions]
     assert "net egress add" not in [verb for _, verb in actions]
@@ -1164,10 +1168,10 @@ def test_repo_menu_egress_respects_ssh_read_permission():
     )
     denied = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="disabled"))
     allowed_menu = tmenu.open_repo_menu(
-        [group], "alpha", frozenset(), ssh_policy=allowed, over_ssh=True
+        [group], "alpha", frozenset(), ssh_policy=allowed, transport="ssh"
     )
     denied_menu = tmenu.open_repo_menu(
-        [group], "alpha", frozenset(), ssh_policy=denied, over_ssh=True
+        [group], "alpha", frozenset(), ssh_policy=denied, transport="ssh"
     )
     assert allowed_menu is not None and any(
         isinstance(item, dmenus.MenuGroup) and item.label == "Network →"
@@ -1197,7 +1201,7 @@ def test_repo_network_submenu_remains_gated_by_ssh_read_permission():
 
     group = dmodel.RepoGroup("alpha", "/alpha", None, [])
     denied = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="disabled"))
-    menu = tmenu.open_repo_menu([group], "alpha", frozenset(), ssh_policy=denied, over_ssh=True)
+    menu = tmenu.open_repo_menu([group], "alpha", frozenset(), ssh_policy=denied, transport="ssh")
     assert menu is not None
     assert all(not isinstance(item, dmenus.MenuGroup) for item in menu.actions)
 
@@ -1213,7 +1217,7 @@ def test_ssh_egress_permission_by_scope_and_network_switch(network: bool) -> Non
     repo = EgressState("alpha", None, ())
 
     def ok(state: EgressState, action: str) -> bool:
-        return permitted(egress_argv(state, action, "example.com"), policy, over_ssh=True)
+        return permitted(egress_argv(state, action, "example.com"), policy, transport="ssh")
 
     assert ok(container, "add") is network
     assert ok(container, "rm") is True
@@ -1232,7 +1236,7 @@ def test_ssh_action_menu_offers_loose_only_with_the_network_switch(network: bool
     verbs = [
         verb
         for _, verb in dmenus.actions_for_container(
-            [group], "alpha-1", over_ssh=True, ssh_policy=policy
+            [group], "alpha-1", transport="ssh", ssh_policy=policy
         )
     ]
     assert ("net loose" in verbs) is network
@@ -1349,7 +1353,7 @@ def test_clear_name_follows_the_remote_rename_policy(tmp_path, allowed):
     info = dataclasses.replace(_ci("alpha-x", "alpha"), alias="login")
     group = _cfg_group(tmp_path, (info,))
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=[allowed]))
-    actions = dmenus.actions_for_container([group], "alpha-x", over_ssh=True, ssh_policy=policy)
+    actions = dmenus.actions_for_container([group], "alpha-x", transport="ssh", ssh_policy=policy)
     assert (("Clear name", "rename --clear") in actions) == (allowed == "rename")
 
 
@@ -1805,7 +1809,7 @@ def test_open_menu_is_none_for_a_view_only_group():
     """
     group = dmodel.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")])
 
-    assert tmenu.open_menu([group], "gamma-x", remote=True, over_ssh=True) is None
+    assert tmenu.open_menu([group], "gamma-x", remote=True, transport="ssh") is None
 
 
 def test_open_menu_is_none_for_an_unknown_or_unset_container(tmp_path):
@@ -2211,7 +2215,7 @@ def test_dispatch_action_rechecks_remote_policy_before_subprocess(mocker, tmp_pa
             _dispatch_target(tmp_path),
             "stop",
             "alpha-x",
-            over_ssh=True,
+            transport="ssh",
             ssh_policy=policy,
         )
     run.assert_not_called()
@@ -2335,27 +2339,6 @@ def test_dispatch_action_omits_the_config_flag_for_a_scratch_repo(mocker, tmp_pa
     run.assert_called_once_with(["jailbee", "net", "loose", "alpha-x"], check=False, cwd=tmp_path)
 
 
-def test_dispatch_action_pages_a_scratch_repo_from_its_repo_root(mocker, tmp_path):
-    """The pager path spawns the command itself, so it needs the cwd too —
-    otherwise `jailbee git diff` in a scratch repo resolves the dashboard's own
-    directory instead of the row's."""
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    popen = mocker.patch.object(tsession.subprocess, "Popen")
-    popen.return_value.wait.return_value = 0
-    # Patching `Popen` alone is process-wide and takes `subprocess.run` with
-    # it too — mocked here (as the sibling non-scratch test already does) so
-    # a regression that reaches the plain `run` fallback fails with a
-    # readable assertion instead of a `TypeError` from the real subprocess API.
-    run = mocker.patch.object(tsession.subprocess, "run")
-
-    ddispatch._dispatch_action(dmodel.RepoTarget(tmp_path, None), "git diff", "alpha-x")
-
-    producer = popen.call_args_list[0]
-    assert producer.args[0] == ["jailbee", "git", "diff", "alpha-x", "--color"]
-    assert producer.kwargs["cwd"] == tmp_path
-    run.assert_not_called()  # the paged path replaces the plain run entirely
-
-
 def _report_child(marks: str | None):  # type: ignore[no-untyped-def]
     """A fake `subprocess.run` that writes ``marks`` where the env says, like `tui` does."""
 
@@ -2425,68 +2408,6 @@ def test_every_printing_verb_is_a_real_menu_verb():
         ddispatch._OUTPUT_VERBS | ddispatch._PAGED_VERBS | ddispatch._REPORT_VERBS
         == dmenus.PRINTING_VERBS
     )
-
-
-def test_pager_argv_prefers_the_environment(mocker):
-    mocker.patch.dict(ddispatch.os.environ, {"PAGER": "bat -p"}, clear=False)
-    assert ddispatch.pager_argv() == ["bat", "-p"]
-
-
-def test_pager_argv_falls_back_to_less_then_more(mocker):
-    mocker.patch.dict(ddispatch.os.environ, {}, clear=True)
-    which = mocker.patch.object(ddispatch.shutil, "which", return_value=None)
-    assert ddispatch.pager_argv() is None
-
-    which.side_effect = lambda n: "/usr/bin/more" if n == "more" else None
-    assert ddispatch.pager_argv() == ["more"]
-
-    which.side_effect = lambda n: f"/usr/bin/{n}"
-    assert ddispatch.pager_argv() == ["less", "-R"]
-
-
-def test_dispatch_action_pages_the_diff_and_forces_colour(mocker, tmp_path):
-    config_path = tmp_path / "config.yaml"
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    popen = mocker.patch.object(tsession.subprocess, "Popen")
-    popen.return_value.wait.return_value = 0
-    run = mocker.patch.object(tsession.subprocess, "run")
-
-    rc = ddispatch._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x")
-
-    assert rc == 0
-    producer, viewer = popen.call_args_list
-    assert producer.args[0] == [
-        "jailbee",
-        "git",
-        "diff",
-        "alpha-x",
-        "--config",
-        str(config_path),
-        "--color",
-    ]
-    assert producer.kwargs["cwd"] == tmp_path
-    assert viewer.args[0] == ["less", "-R"]
-    # The pager is a plain viewer on a pipe: it has no repo of its own, so it
-    # must not be pinned to one.
-    assert "cwd" not in viewer.kwargs
-    run.assert_not_called()  # the paged path replaces the plain run entirely
-
-
-def test_remote_dispatch_action_never_starts_a_pager(mocker, tmp_path):
-    """`less`'s `!`, `v` and `|` would run on the host. A remote diff is
-    printed and paused on instead, and no pager process exists at all."""
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    popen = mocker.patch.object(tsession.subprocess, "Popen")
-    run = mocker.patch.object(tsession.subprocess, "run")
-    run.return_value.returncode = 0
-    wait = patch_pause(mocker)
-
-    rc = ddispatch._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x", remote=True)
-
-    assert rc == 0
-    popen.assert_not_called()
-    assert run.call_args.args[0][:4] == ["jailbee", "git", "diff", "alpha-x"]
-    wait.assert_called_once_with()
 
 
 def test_pr_push_dispatch_inherits_terminal_streams(mocker, tmp_path):
@@ -2561,74 +2482,6 @@ def test_dispatch_action_does_not_pause_after_an_interactive_verb(mocker, tmp_pa
     ddispatch._dispatch_action(_dispatch_target(tmp_path), "tmux", "alpha-x")
 
     wait.assert_not_called()
-
-
-def test_dispatch_action_falls_back_to_a_pause_when_there_is_no_pager(mocker, tmp_path):
-    mocker.patch.object(ddispatch, "pager_argv", return_value=None)
-    run = mocker.patch.object(tsession.subprocess, "run")
-    run.return_value.returncode = 3
-    wait = patch_pause(mocker)
-
-    rc = ddispatch._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x")
-
-    assert rc == 3
-    wait.assert_called_once_with()
-    assert "--color" not in run.call_args.args[0]  # no pager, so no forced colour
-
-
-def test_dispatch_action_falls_back_when_the_pager_cannot_be_spawned(mocker, tmp_path):
-    """`which` said yes and `exec` said no. The command still has to run, and
-    its output still has to be readable."""
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    producer = mocker.MagicMock()
-    popen = mocker.patch.object(tsession.subprocess, "Popen")
-    popen.side_effect = [producer, OSError("no less")]
-    run = mocker.patch.object(tsession.subprocess, "run")
-    run.return_value.returncode = 0
-    wait = patch_pause(mocker)
-
-    rc = ddispatch._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x")
-
-    assert rc == 0
-    # Nothing will ever read the pipe, so the first process must not be left
-    # blocked on a full one.
-    producer.kill.assert_called_once_with()
-    run.assert_called_once()
-    wait.assert_called_once_with()
-
-
-def test_dispatch_action_does_not_mistake_a_vanished_repo_for_a_missing_pager(mocker, tmp_path):
-    """The producer itself can fail to start too — most notably when the
-    repo's directory has disappeared out from under the dispatch. That must
-    not be logged (or handled) as "pager failed": it has to surface as a bare
-    `OSError` so the caller (`run`'s `dispatch`) can tell the two apart and
-    report the real cause. Before the fix, this was swallowed by the same
-    `except OSError` that exists for a missing pager and then fell through to
-    the plain `subprocess.run` fallback — which would raise the identical
-    `OSError` uncaught, taking the whole TUI down.
-    """
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    popen = mocker.patch.object(tsession.subprocess, "Popen")
-    popen.side_effect = OSError("no such directory")
-    run = mocker.patch.object(tsession.subprocess, "run")
-
-    with pytest.raises(OSError):
-        ddispatch._dispatch_action(_dispatch_target(tmp_path), "git diff", "alpha-x")
-
-    run.assert_not_called()  # must not fall back to a doomed retry
-
-
-def test_dispatch_falls_back_to_a_pager_unavailable_when_the_pager_itself_fails(mocker, tmp_path):
-    """Sanity check alongside the test above: the pager-missing case is still
-    a `_PagerUnavailableError` (an `OSError` subclass), and `_run_paged` raising it
-    is what the call site's `except _PagerUnavailableError` actually catches."""
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    producer = mocker.MagicMock()
-    popen = mocker.patch.object(tsession.subprocess, "Popen")
-    popen.side_effect = [producer, OSError("no less")]
-
-    with pytest.raises(ddispatch._PagerUnavailableError):
-        ddispatch._run_paged(["jailbee", "git", "diff"], ["less", "-R"], tmp_path)
 
 
 def test_actions_for_container_matches_menu_actions():
@@ -4418,8 +4271,8 @@ def test_dashboard_command_survives_an_unreadable_cwd_repo_config(mocker):
 def test_remote_dashboard_never_loads_the_cwd_and_runs_restricted(mocker, monkeypatch) -> None:
     """A remote SSH session: registered repos only, no setup offer (its steps
     run on the host), and `run` told it is remote."""
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", '["snapshot"]')
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", '["snapshot"]')
     load = mocker.patch("jailbee.config.load_repo_config")
     advise = mocker.patch("jailbee.cli._advise_setup")
     run = mocker.patch("jailbee.dashboard.tui.app.run", return_value=0)
@@ -4439,15 +4292,15 @@ def test_remote_dashboard_never_loads_the_cwd_and_runs_restricted(mocker, monkey
     advise.assert_not_called()
     assert run.call_args.kwargs["cwd_root"] is None
     assert run.call_args.kwargs["remote"] is True
-    assert run.call_args.kwargs["over_ssh"] is True
+    assert run.call_args.kwargs["transport"] == "ssh"
     assert run.call_args.kwargs["ssh_policy"].model_dump_json() == policy_json
     assert run.call_args.kwargs["scope"].excluded == frozenset({"snapshot", "policy"})
 
 
 @pytest.mark.parametrize("policy_json", [None, "not-json"])
 def test_ssh_dashboard_fails_closed_without_valid_policy(mocker, monkeypatch, policy_json):
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     run = mocker.patch("jailbee.dashboard.tui.app.run")
     popen = mocker.patch("subprocess.Popen")
     argv = ["dashboard"]
@@ -4463,7 +4316,7 @@ def test_ssh_dashboard_fails_closed_without_valid_policy(mocker, monkeypatch, po
 
 
 def test_local_dashboard_is_not_remote(mocker, monkeypatch) -> None:
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     mocker.patch("jailbee.config.load_repo_config", side_effect=OSError("no repo"))
     mocker.patch("jailbee.cli._advise_setup")
     run = mocker.patch("jailbee.dashboard.tui.app.run", return_value=0)
@@ -4478,8 +4331,8 @@ def test_local_dashboard_is_not_remote(mocker, monkeypatch) -> None:
 @pytest.mark.parametrize("argv", [["dashboard", "--gui"], ["gui"], ["gui", "--foreground"]])
 def test_remote_session_never_gets_the_qt_dashboard(mocker, monkeypatch, argv) -> None:
     """A Qt window would open on the host's display, not the SSH client's."""
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     mocker.patch("jailbee.cli._advise_setup")
     mocker.patch("jailbee.incus.Incus")
     preflight = mocker.patch("jailbee.qtui.app.preflight", return_value=[Path("/tmp/x")])
@@ -4509,7 +4362,7 @@ def test_remote_merge_menu_refusal_does_not_spawn_command(mocker, tmp_path) -> N
             "merge",
             "alpha",
             remote=True,
-            over_ssh=True,
+            transport="ssh",
             ssh_policy=policy,
         )
 
@@ -5061,7 +4914,7 @@ def test_repo_menu_apply_follows_the_ssh_policy(tmp_path, over_ssh, policy_kwarg
         "alpha",
         frozenset(),
         ssh_policy=_ssh_policy(policy_kwargs),
-        over_ssh=over_ssh,
+        transport=("ssh" if over_ssh else "none"),
     )
     assert ("apply" in _repo_menu_verbs(menu)) is offered
 
@@ -5108,7 +4961,11 @@ def _ssh_policy(policy_kwargs):
 def test_repo_menu_credential_group_follows_the_ssh_policy(over_ssh, policy_kwargs, offered):
     group = dmodel.RepoGroup("alpha", "/alpha", None, [])
     menu = tmenu.open_repo_menu(
-        [group], "alpha", frozenset(), ssh_policy=_ssh_policy(policy_kwargs), over_ssh=over_ssh
+        [group],
+        "alpha",
+        frozenset(),
+        ssh_policy=_ssh_policy(policy_kwargs),
+        transport=("ssh" if over_ssh else "none"),
     )
     assert menu is not None
     verbs = [item[1] for item in menu.actions if not isinstance(item, dmenus.MenuGroup)]
@@ -5176,7 +5033,7 @@ def test_container_menu_credential_group_follows_the_ssh_policy(
         [group],
         "alpha-x",
         remote=over_ssh,
-        over_ssh=over_ssh,
+        transport=("ssh" if over_ssh else "none"),
         ssh_policy=_ssh_policy(policy_kwargs),
     )
     assert menu is not None
@@ -5417,9 +5274,9 @@ def test_unrestricted_ssh_dashboard_is_registered_only_but_not_restricted(mocker
     """`restrict_host: false` lifts the restrictions, not the facts of being
     remote: the server's cwd is still no repo, the setup offer is still for
     someone at the host, and a Qt window would still open on its display."""
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     load = mocker.patch("jailbee.config.load_repo_config")
     advise = mocker.patch("jailbee.cli._advise_setup")
     run = mocker.patch("jailbee.dashboard.tui.app.run", return_value=0)
@@ -5565,7 +5422,11 @@ def test_repo_menu_offers_accounts_after_the_credential_group():
 def test_repo_menu_accounts_follows_the_ssh_policy(over_ssh, policy_kwargs, offered):
     group = dmodel.RepoGroup("alpha", "/alpha", None, [])
     menu = tmenu.open_repo_menu(
-        [group], "alpha", frozenset(), ssh_policy=_ssh_policy(policy_kwargs), over_ssh=over_ssh
+        [group],
+        "alpha",
+        frozenset(),
+        ssh_policy=_ssh_policy(policy_kwargs),
+        transport=("ssh" if over_ssh else "none"),
     )
     assert menu is not None
     verbs = [item[1] for item in menu.actions if not isinstance(item, dmenus.MenuGroup)]
@@ -5626,7 +5487,7 @@ def test_run_cli_foreground_over_ssh_sends_no_config_flag(mocker, tmp_path):
         ["disk-usage"],
         style="output",
         remote=True,
-        over_ssh=True,
+        transport="ssh",
         ssh_policy=RemoteSSHConfig(),
     )
 
@@ -5638,71 +5499,18 @@ def test_run_cli_foreground_refuses_before_spawning(mocker, tmp_path):
     from jailbee.remote_ssh.router import RouteError
 
     run = mocker.patch.object(tsession.subprocess, "run")
-    paged = mocker.patch.object(ddispatch, "_run_paged")
 
     with pytest.raises(RouteError):
         ddispatch._run_cli_foreground(
             _target(tmp_path),
             ["apply"],
-            style="paged",
+            style="output",
             remote=True,
-            over_ssh=True,
+            transport="ssh",
             ssh_policy=RemoteSSHConfig(),
         )
 
     run.assert_not_called()
-    paged.assert_not_called()
-
-
-def test_run_cli_foreground_pages_locally(mocker, tmp_path):
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    paged = mocker.patch.object(ddispatch, "_run_paged", return_value=3)
-    run = mocker.patch.object(tsession.subprocess, "run")
-
-    rc = ddispatch._run_cli_foreground(_target(tmp_path), ["doctor"], style="paged")
-
-    assert rc == 3
-    paged.assert_called_once_with(
-        ["jailbee", "doctor", "--config", str(tmp_path / "c.yaml")], ["less", "-R"], tmp_path
-    )
-    run.assert_not_called()
-
-
-def test_run_cli_foreground_never_pages_a_remote_session(mocker, tmp_path):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    paged = mocker.patch.object(ddispatch, "_run_paged")
-    run = mocker.patch.object(tsession.subprocess, "run")
-    run.return_value.returncode = 0
-    wait = patch_pause(mocker)
-
-    ddispatch._run_cli_foreground(
-        _target(tmp_path),
-        ["doctor"],
-        style="paged",
-        remote=True,
-        over_ssh=True,
-        ssh_policy=RemoteSSHConfig(),
-    )
-
-    paged.assert_not_called()
-    run.assert_called_once_with(["jailbee", "doctor"], check=False, cwd=tmp_path)
-    wait.assert_called_once()
-
-
-def test_run_cli_foreground_falls_back_to_a_pause_when_the_pager_fails(mocker, tmp_path):
-    mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    mocker.patch.object(
-        ddispatch, "_run_paged", side_effect=ddispatch._PagerUnavailableError("gone")
-    )
-    run = mocker.patch.object(tsession.subprocess, "run")
-    run.return_value.returncode = 0
-    wait = patch_pause(mocker)
-
-    assert ddispatch._run_cli_foreground(_target(tmp_path), ["doctor"], style="paged") == 0
-    run.assert_called_once()
-    wait.assert_called_once()
 
 
 def test_run_cli_foreground_plain_does_not_pause(mocker, tmp_path):
@@ -5752,33 +5560,6 @@ def test_run_cli_foreground_report_pauses_on_a_failure(mocker, tmp_path):
     wait.assert_called_once()
 
 
-@pytest.mark.parametrize(("remote", "over_ssh"), [(False, True), (True, False)])
-def test_run_cli_foreground_either_remote_flag_alone_forbids_the_pager(
-    mocker, tmp_path, remote, over_ssh
-):
-    from jailbee.config.models_remote import RemoteSSHConfig
-
-    pager = mocker.patch.object(ddispatch, "pager_argv", return_value=["less", "-R"])
-    paged = mocker.patch.object(ddispatch, "_run_paged")
-    run = mocker.patch.object(tsession.subprocess, "run")
-    run.return_value.returncode = 0
-    wait = patch_pause(mocker)
-
-    ddispatch._run_cli_foreground(
-        _target(tmp_path),
-        ["doctor"],
-        style="paged",
-        remote=remote,
-        over_ssh=over_ssh,
-        ssh_policy=RemoteSSHConfig(),
-    )
-
-    pager.assert_not_called()
-    paged.assert_not_called()
-    run.assert_called_once()
-    wait.assert_called_once()
-
-
 def test_repo_menu_diagnostics_submenu_then_prune_before_fold(tmp_path):
     menu = tmenu.open_repo_menu([_cfg_group(tmp_path)], "alpha", frozenset())
     assert menu is not None
@@ -5820,7 +5601,7 @@ def test_repo_menu_diagnostics_and_prune_follow_the_ssh_policy(
         "alpha",
         frozenset(),
         ssh_policy=_ssh_policy(policy_kwargs),
-        over_ssh=over_ssh,
+        transport=("ssh" if over_ssh else "none"),
     )
     assert _repo_menu_verbs(menu) & {"doctor", "disk-usage", "prune"} == expected
     assert menu is not None
@@ -5902,7 +5683,7 @@ def test_container_menu_autostart_entries_follow_the_ssh_policy(
         [_cfg_group(tmp_path, (_autostart_ci(),))],
         "alpha-x",
         remote=over_ssh,
-        over_ssh=over_ssh,
+        transport=("ssh" if over_ssh else "none"),
         ssh_policy=_ssh_policy(policy_kwargs),
     )
     assert menu is not None
@@ -5955,7 +5736,7 @@ def test_container_menu_mount_entries_follow_the_ssh_policy(
         [_mount_group(tmp_path)],
         "alpha-x",
         remote=over_ssh,
-        over_ssh=over_ssh,
+        transport=("ssh" if over_ssh else "none"),
         ssh_policy=_ssh_policy(policy_kwargs),
     )
     assert menu is not None
@@ -5978,7 +5759,7 @@ def test_container_menu_survives_an_empty_shared_action_list(
     """No lifecycle or shell verb is permitted, yet a terminal-only entry may be."""
     policy = _ssh_policy({"commands": {"mode": "allowlist", "allow": allow}})
     group = group_factory(tmp_path)
-    kwargs = {"remote": True, "over_ssh": True, "ssh_policy": policy}
+    kwargs = {"remote": True, "transport": "ssh", "ssh_policy": policy}
     assert dmenus.actions_for_container([group], "alpha-x", **kwargs) == []
 
     menu = tmenu.open_menu([group], "alpha-x", **kwargs)
@@ -6017,7 +5798,11 @@ def test_outbox_dispatch_rechecks_ssh_policy(mocker, tmp_path):
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=["git merge"]))
     with pytest.raises(RouteError):
         ddispatch._dispatch_action(
-            _dispatch_target(tmp_path), "outbox browse", "alpha-x", over_ssh=True, ssh_policy=policy
+            _dispatch_target(tmp_path),
+            "outbox browse",
+            "alpha-x",
+            transport="ssh",
+            ssh_policy=policy,
         )
     child.assert_not_called()
 
@@ -6042,7 +5827,7 @@ def test_gui_remote_allowlist_without_chrome_does_not_offer_chrome():
     policy = RemoteSSHConfig(rdp=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"]))
 
     actions = dmenus.actions_for_container(
-        [group], "alpha-x", remote=True, ssh_policy=policy, over_ssh=True
+        [group], "alpha-x", remote=True, ssh_policy=policy, transport="ssh"
     )
 
     assert "chrome" not in {verb for _label, verb in actions}
@@ -6058,7 +5843,7 @@ def test_gui_remote_allowlist_naming_chrome_offers_chrome():
     )
 
     actions = dmenus.actions_for_container(
-        [group], "alpha-x", remote=True, ssh_policy=policy, over_ssh=True
+        [group], "alpha-x", remote=True, ssh_policy=policy, transport="ssh"
     )
 
     assert "chrome" in {verb for _label, verb in actions}
@@ -6081,7 +5866,7 @@ def test_remote_gui_dispatch_keeps_the_recipe_on_screen(mocker, tmp_path, verb, 
         verb,
         "alpha-x",
         remote=True,
-        over_ssh=True,
+        transport="ssh",
         ssh_policy=policy,
     )
 
@@ -6111,7 +5896,7 @@ def test_dispatch_action_pauses_after_a_gui_launch_over_ssh_when_gui_is_on(mocke
         _dispatch_target(tmp_path),
         "chrome",
         "alpha-x",
-        over_ssh=True,
+        transport="ssh",
         ssh_policy=_gui_dispatch_policy(gui=True),
     )
 
@@ -6124,7 +5909,9 @@ def test_dispatch_action_does_not_pause_after_a_gui_launch_in_a_waypipe_session(
     """A waypipe session has no RDP recipe to read: the window opens on the laptop."""
     from jailbee.remote_ssh.session import WaypipeSession, child_environment
 
-    env = child_environment({}, gui_port=2222, waypipe=WaypipeSession("0a1b2c3d", "lz4"))
+    env = child_environment(
+        {}, transport="ssh", gui_port=2222, waypipe=WaypipeSession("0a1b2c3d", "lz4")
+    )
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     run = mocker.patch.object(tsession.subprocess, "run")
@@ -6135,7 +5922,7 @@ def test_dispatch_action_does_not_pause_after_a_gui_launch_in_a_waypipe_session(
         _dispatch_target(tmp_path),
         "chrome",
         "alpha-x",
-        over_ssh=True,
+        transport="ssh",
         ssh_policy=_gui_dispatch_policy(gui=True),
     )
 
@@ -6151,7 +5938,7 @@ def test_dispatch_action_does_not_pause_after_a_gui_verb_when_gui_is_off(mocker,
         _dispatch_target(tmp_path),
         "chrome",
         "alpha-x",
-        over_ssh=True,
+        transport="ssh",
         ssh_policy=_gui_dispatch_policy(gui=False),
     )
 
@@ -7427,8 +7214,8 @@ def test_waypipe_session_offers_gui_actions_without_rdp(monkeypatch, in_waypipe)
 
     for name in ("JAILBEE_WAYPIPE_SESSION", "JAILBEE_WAYPIPE_COMPRESS"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("JAILBEE_SSH_SESSION", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_TRANSPORT", "ssh")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
     if in_waypipe:
         monkeypatch.setenv("JAILBEE_WAYPIPE_SESSION", "0a1b2c3d")
         monkeypatch.setenv("JAILBEE_WAYPIPE_COMPRESS", "lz4")
@@ -7437,7 +7224,7 @@ def test_waypipe_session_offers_gui_actions_without_rdp(monkeypatch, in_waypipe)
     policy = RemoteSSHConfig(rdp=False, waypipe=True, commands=RemoteCommandPolicy(mode="full"))
 
     actions = dmenus.actions_for_container(
-        [group], "alpha-x", remote=True, ssh_policy=policy, over_ssh=True
+        [group], "alpha-x", remote=True, ssh_policy=policy, transport="ssh"
     )
 
     assert ("chrome" in {verb for _label, verb in actions}) is in_waypipe
@@ -7463,7 +7250,7 @@ def test_orphan_actions_follow_the_state():
     assert [v for _, v in dmenus.orphan_actions("Frozen")] == ["orphan destroy"]
 
 
-@pytest.mark.parametrize("kwargs", [{"remote": True}, {"over_ssh": True}])
+@pytest.mark.parametrize("kwargs", [{"remote": True}, {"transport": "ssh"}])
 def test_orphan_actions_are_never_offered_to_a_remote_session(kwargs):
     """`orphan *` is a host command: no repo for the SSH scope to judge it by."""
     groups = [dmodel.RepoGroup("gamma", None, None, [_ci("gamma-x", "gamma")])]
@@ -7489,7 +7276,7 @@ def test_memory_menu_policy(tmp_path, state, override, limit, allowed):
     )
     group = _cfg_group(tmp_path, (info,))
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=[allowed]))
-    actions = dmenus.actions_for_container([group], "alpha-x", over_ssh=True, ssh_policy=policy)
+    actions = dmenus.actions_for_container([group], "alpha-x", transport="ssh", ssh_policy=policy)
     assert ((f"Memory: {limit}{'*' if override else ''}…", "mem") in actions) == (allowed == "mem")
 
 
@@ -7687,3 +7474,25 @@ def test_orphan_dashboard_gathers_failed_autostart(tmp_path, monkeypatch, mocker
     c = orphan.containers[0]
     fields = dcolumns.visible_fields(datetime.now(UTC), [c], ("job",))
     assert Text.from_markup(fields[0].cell(c)).plain == "autostart ✗1"
+
+
+def test_web_dashboard_with_the_default_policy_offers_no_container_action():
+    from jailbee.config.models_remote import RemotePolicy
+
+    groups = [dmodel.RepoGroup("alpha", "/alpha", None, [_ci("alpha-1", "alpha")])]
+
+    assert (
+        dmenus.actions_for_container(groups, "alpha-1", transport="web", ssh_policy=RemotePolicy())
+        == []
+    )
+
+
+def test_web_dashboard_offers_the_actions_its_own_policy_permits():
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemotePolicy
+
+    groups = [dmodel.RepoGroup("alpha", "/alpha", None, [_ci("alpha-1", "alpha")])]
+    policy = RemotePolicy(commands=RemoteCommandPolicy(mode="allowlist", allow=["shell"]))
+
+    assert dmenus.actions_for_container(groups, "alpha-1", transport="web", ssh_policy=policy) == [
+        ("Open shell", "shell")
+    ]

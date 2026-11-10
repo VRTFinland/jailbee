@@ -334,7 +334,7 @@ def _ls(mocker, *args, input=None):
     )
 
 
-def test_ls_offers_to_run_setup_on_a_terminal(mocker) -> None:
+def test_ls_offers_to_run_setup_on_a_terminal(mocker, typed_confirmations) -> None:
     _terminal(mocker)
     _stub_pending(mocker)
     run = _stub_run(mocker)
@@ -400,7 +400,7 @@ def test_shell_never_stops_to_ask(mocker) -> None:
     assert hint.call_count == 1
 
 
-def test_a_failing_step_does_not_take_down_the_command(mocker) -> None:
+def test_a_failing_step_does_not_take_down_the_command(mocker, typed_confirmations) -> None:
     _terminal(mocker)
     _stub_pending(mocker)
     mocker.patch("jailbee.setup_command.record_setup")
@@ -412,7 +412,7 @@ def test_a_failing_step_does_not_take_down_the_command(mocker) -> None:
     assert "systemctl exploded" in result.output
 
 
-def test_dashboard_offers_to_run_setup(mocker) -> None:
+def test_dashboard_offers_to_run_setup(mocker, typed_confirmations) -> None:
     from jailbee.cli import app
     from jailbee.config import ConfigNotFoundError
 

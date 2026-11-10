@@ -424,6 +424,51 @@ Frontend-independent models, columns, menus and dispatch live in the shared
 `dashboard/` package; the state service and Qt frontend do not depend on the
 terminal UI. This split keeps status collection separate from rendering.
 
+## Prompt channel and action runner
+
+Every question a command asks goes through `jailbee.prompting` (`confirm`,
+`choose_one`, `choose_many`, `ask_text`, secrets); no other module uses a
+prompt library, and `tests/test_cli_prompt_policy.py` fails on a direct one
+(an allow-list names each exception and why). `prompting` picks a backend:
+non-interactive (`JAILBEE_NONINTERACTIVE`), the **prompt channel**, or the
+terminal. See [ADR 0003](https://github.com/VRTFinland/jailbee/blob/main/docs/adr/0003-interactivity-belongs-to-the-running-ui.md)
+and the glossary entry *Prompt channel*.
+
+The channel is a socketpair. The UI that starts a command keeps one end and
+hands the other to the child as an inherited file descriptor, named by
+`JAILBEE_PROMPT_FD` (a value that is not an open socket above fd 2 is treated
+as absent). The protocol (`prompt_channel.py`, stdlib only, used by both ends)
+is JSON lines, one object per line with a `type`. Each side sends
+`hello` with its `version` and `role` first; a version mismatch fails the
+command with exit 2. The command sends `prompt` messages (`kind`, question,
+options, default, `destructive`, context) and the UI replies with `answer` or
+`cancel` for that prompt id. EOF counts as cancel, and there are no timeouts.
+`progress` and `output` event types are reserved and not emitted yet; unknown
+types are skipped. Answers to secret prompts are logged as `<redacted>` on both
+ends and never stored. Confirm defaults stay "no" for destructive actions, and
+a lone candidate is still asked when the action is destructive.
+
+`dashboard/runner.py` runs one action for any dashboard frontend (it imports no
+terminal code):
+
+1. The action is checked with `check_dashboard_command` against the
+   transport's `RemotePolicy` ([Remote policy](security.md#remote-policy))
+   before anything is spawned; a refusal starts no child.
+2. The child is `python -m jailbee <action>` with stdin on `/dev/null`, stdout
+   and stderr merged into one pipe, and the channel end inherited. Remote
+   transports get the transport-neutral session markers in its environment.
+3. Questions arrive through the channel and are relayed to the frontend's
+   `on_prompt` handler one at a time; its answer (or `None` for cancel) goes
+   back to the child.
+4. Output chunks are delivered to the frontend's output sink; all of it is
+   delivered before the run returns.
+5. Remote transports append an audit record per action; the local keyboard
+   does not.
+
+Attach-style actions (`shell`, `tmux`, `ide`, browsers, `apps run`) need a real
+terminal or window and are excluded: the runner refuses them and a frontend
+runs them in its own foreground path.
+
 ## Orchestration broker
 
 Container orchestration (a container starting and managing child containers)

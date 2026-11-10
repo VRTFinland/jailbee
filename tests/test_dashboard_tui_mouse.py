@@ -371,7 +371,7 @@ def test_the_view_carries_the_update_notice(mocker, tmp_path):
 def test_a_remote_ssh_dashboard_never_shows_the_update_notice(mocker, tmp_path):
     """Whoever is connected cannot upgrade the host's jailbee."""
     client = FakeStateClient([_two(tmp_path)], update=UPDATE)
-    run = drive(mocker, [], client=client, over_ssh=True)
+    run = drive(mocker, [], client=client, transport="ssh")
     assert run.trace[0].update is None
 
 
@@ -459,7 +459,7 @@ def test_click_dismiss_failure_is_reported(mocker, tmp_path):
 
 
 def test_click_dismiss_ignored_over_ssh(mocker, tmp_path):
-    session, _t = bare_session(mocker, [_owing(tmp_path, _adv("apply", "apply"))], over_ssh=True)
+    session, _t = bare_session(mocker, [_owing(tmp_path, _adv("apply", "apply"))], transport="ssh")
     dismiss = mocker.patch("jailbee.dashboard.advisories.dismiss_advisory")
     session.click(Hit("advisory-dismiss", ("alpha", "apply")))
     dismiss.assert_not_called()

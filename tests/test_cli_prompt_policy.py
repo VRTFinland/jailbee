@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import pytest
 import typer.main
 from typer._click import Context
 
@@ -104,3 +105,243 @@ def test_the_walk_sees_the_whole_tree() -> None:
         "jailbee account group create",
         "jailbee outbox show",
     } <= paths
+
+
+# ---- Direct prompt libraries: only `jailbee.prompting` may ask ---------------------
+#
+# Every question goes through `jailbee.prompting` so a dashboard can answer it over
+# the prompt channel (ADR 0003). A direct `typer.confirm`, questionary, Rich prompt or
+# `input()` would block on a terminal nobody is watching.
+
+# Allowed places, keyed by path relative to src/jailbee. A key is a file, a directory
+# (trailing "/") or "file::function" (the function's qualified name). Each names why.
+_DIRECT_PROMPT_ALLOWED = {
+    "prompting.py": "the one module that renders questions",
+    "config_edit/": "full-screen config editor: a terminal app of its own, not a question",
+    "qtui/": "deprecated Qt dashboard, out of scope of the prompt channel (spec #110)",
+    "macsetup/cli.py::_confirm": (
+        "`jailbee mac setup` runs on the Mac host before jailbee's prompt stack exists "
+        "(vendor setup flow, stdlib only)"
+    ),
+    "remote_ssh/console.py::_select_repo": (
+        "the remote console's own startup repository picker: the console holds the "
+        "terminal itself, there is no command to forward a question from"
+    ),
+    "tui.py::_render_choice": "terminal renderer behind prompting.choose_one(picker=)",
+    "tui.py::checkbox": "terminal renderer behind prompting.choose_many (forked questionary)",
+    "tui.py::pick_container": "terminal renderer passed as choose_one(picker=)",
+    "tui.py::pick_submodule": "terminal renderer passed as choose_one(picker=)",
+    "tui.py::pick_containers_multi": "terminal renderer passed as choose_many(picker=)",
+    "tui.py::pick_submodules_multi.render": "terminal renderer passed as choose_many(picker=)",
+    "tui.py::pick_account": "terminal renderer passed as choose_one(picker=) by tui.choose_account",
+}
+
+_PROMPT_NAMES = {"Prompt", "Confirm", "IntPrompt", "FloatPrompt"}
+
+
+class _PromptFinder(ast.NodeVisitor):
+    """Collects `(line, enclosing function, what)` for each direct prompt use."""
+
+    def __init__(self) -> None:
+        self.hits: list[tuple[int, str, str]] = []
+        self._scope: list[str] = []
+
+    def _hit(self, node: ast.AST, what: str) -> None:
+        self.hits.append((node.lineno, ".".join(self._scope), what))  # type: ignore[attr-defined]  # every node we pass has lineno
+
+    def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self._scope.append(node.name)
+        self.generic_visit(node)
+        self._scope.pop()
+
+    visit_FunctionDef = _function  # noqa: N815  (ast.NodeVisitor dispatch name)
+    visit_AsyncFunctionDef = _function  # noqa: N815
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            root = alias.name.split(".")[0]
+            if root == "questionary":
+                self._hit(node, f"import {alias.name}")
+            if alias.name == "rich.prompt":
+                self._hit(node, "import rich.prompt")
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        module = node.module or ""
+        if module.split(".")[0] == "questionary":
+            self._hit(node, f"from {module} import ...")
+        if module == "rich.prompt" or (
+            module == "rich" and any(a.name == "prompt" for a in node.names)
+        ):
+            self._hit(node, "from rich.prompt import ...")
+        if module in {"typer", "typer._click", "click"}:
+            for alias in node.names:
+                if alias.name in {"confirm", "prompt"}:
+                    self._hit(node, f"from {module} import {alias.name}")
+
+    def visit_Call(self, node: ast.Call) -> None:
+        func = node.func
+        if isinstance(func, ast.Name) and func.id == "input":
+            self._hit(node, "input()")
+        elif isinstance(func, ast.Attribute):
+            owner = func.value
+            if (
+                func.attr in {"confirm", "prompt"}
+                and isinstance(owner, ast.Name)
+                and owner.id in {"typer", "click"}
+            ):
+                self._hit(node, f"{owner.id}.{func.attr}()")
+            if func.attr == "ask" and isinstance(owner, ast.Name) and owner.id in _PROMPT_NAMES:
+                self._hit(node, f"{owner.id}.ask()")
+        self.generic_visit(node)
+
+
+def _direct_prompts(source: str) -> list[tuple[int, str, str]]:
+    finder = _PromptFinder()
+    finder.visit(ast.parse(source))
+    return finder.hits
+
+
+def _allowed(rel: str, scope: str) -> str | None:
+    """The allow-list key covering this hit, if any."""
+    for key in _DIRECT_PROMPT_ALLOWED:
+        path, _, function = key.partition("::")
+        if path.endswith("/"):
+            covered = rel.startswith(path)
+        else:
+            covered = rel == path
+        if covered and (not function or scope == function or scope.startswith(function + ".")):
+            return key
+    return None
+
+
+def test_direct_prompt_libraries_only_in_prompting() -> None:
+    offenders = []
+    used: set[str] = set()
+    for path in sorted(SRC.rglob("*.py")):
+        rel = path.relative_to(SRC).as_posix()
+        for line, scope, what in _direct_prompts(path.read_text()):
+            key = _allowed(rel, scope)
+            if key is None:
+                offenders.append(f"{rel}:{line} ({what})")
+            else:
+                used.add(key)
+    assert offenders == [], (
+        "ask through jailbee.prompting (ask_confirm / choose_one / choose_many / ask_text / "
+        "ask_secret), never a prompt library directly, so a dashboard can answer over the "
+        "prompt channel. Found: " + ", ".join(offenders)
+    )
+    # Directory entries are standing exemptions; file and function entries must still match.
+    stale = sorted(key for key in set(_DIRECT_PROMPT_ALLOWED) - used if not key.endswith("/"))
+    assert stale == [], "remove allow-list entries that no longer match anything: " + ", ".join(
+        stale
+    )
+
+
+@pytest.mark.parametrize(
+    "source, what",
+    [
+        ("import typer\ntyper.confirm('x')\n", "typer.confirm()"),
+        ("import typer\ntyper.prompt('x')\n", "typer.prompt()"),
+        ("from typer import confirm\n", "from typer import confirm"),
+        ("import questionary\n", "import questionary"),
+        ("def f():\n    from questionary import select\n", "from questionary import ..."),
+        ("from rich.prompt import Confirm\n", "from rich.prompt import ..."),
+        ("from rich.prompt import Confirm\nConfirm.ask('x')\n", "Confirm.ask()"),
+        ("IntPrompt.ask('x')\n", "IntPrompt.ask()"),
+        ("input('x')\n", "input()"),
+    ],
+)
+def test_the_direct_prompt_checker_flags_what_it_should(source: str, what: str) -> None:
+    assert what in [hit[2] for hit in _direct_prompts(source)]
+
+
+def test_the_direct_prompt_checker_ignores_look_alikes() -> None:
+    source = (
+        "import typer\n"
+        "typer.Option('--yes')\n"
+        "console.input\n"
+        "x.confirm('a')\n"
+        "prompting.ask_confirm('a')\n"
+        "def prompt(): ...\n"
+    )
+    assert _direct_prompts(source) == []
+
+
+def test_the_direct_prompt_checker_names_the_enclosing_function() -> None:
+    source = "def outer():\n    def inner():\n        input('x')\n"
+    assert _direct_prompts(source) == [(3, "outer.inner", "input()")]
+
+
+def test_the_allow_list_matches_files_directories_and_functions() -> None:
+    assert _allowed("config_edit/app.py", "") is not None
+    assert _allowed("tui.py", "checkbox") is not None
+    assert _allowed("tui.py", "pick_containers_multi.render") is not None
+    assert _allowed("tui.py", "some_new_prompt") is None
+    assert _allowed("cli.py", "") is None
+
+
+# `tui`'s pickers render a question on the terminal and nothing else. A renderer may
+# appear in a module only as the value of a `picker=` keyword: named directly
+# (`picker=pick_account`) or inside a lambda that is itself that value. Anywhere else
+# (a plain call, a positional argument, an assignment, an `async def`, a lambda that is
+# not a `picker=`) the question would bypass the prompt channel.
+#
+# Not listed: `pick_containers_multi` and `pick_submodules_multi`. They are not
+# renderers but prompting callers (`choose_many` with their own `picker=` inside), so
+# calling them directly is how a command asks.
+_RENDERERS = {"pick_container", "pick_submodule", "pick_account", "pick_container_for_group"}
+
+
+def _renderer_references(source: str) -> list[int]:
+    """Lines where a tui renderer is named outside a `picker=` keyword's value."""
+    tree = ast.parse(source)
+    allowed: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            for keyword in node.keywords:
+                if keyword.arg == "picker":
+                    allowed.update(id(child) for child in ast.walk(keyword.value))
+    lines: list[int] = []
+    for node in ast.walk(tree):
+        name = node.id if isinstance(node, ast.Name) else getattr(node, "attr", None)
+        if isinstance(node, ast.Name | ast.Attribute) and name in _RENDERERS:
+            if id(node) not in allowed:
+                lines.append(node.lineno)
+    return sorted(lines)
+
+
+def test_tui_renderers_are_only_called_as_prompting_pickers() -> None:
+    offenders = []
+    for path in sorted(SRC.rglob("*.py")):
+        rel = path.relative_to(SRC).as_posix()
+        if rel in {"tui.py", "prompting.py"} or rel.startswith("qtui/"):
+            continue
+        offenders += [f"{rel}:{line}" for line in _renderer_references(path.read_text())]
+    assert offenders == [], (
+        "a tui picker renders on the terminal only; pass it as "
+        "`picker=lambda opts: ...` to jailbee.prompting.choose_one so a dashboard can "
+        "answer over the prompt channel: " + ", ".join(offenders)
+    )
+
+
+def test_the_renderer_checker_allows_a_picker_value_only() -> None:
+    allowed = [
+        "choose_one('n', o, picker=lambda _o: tui.pick_container(c))\n",
+        "choose_one('n', o, picker=pick_account)\n",
+        "choose_one('n', o, picker=tui.pick_account)\n",
+        "choose_many('n', o, picker=lambda opts: [pick_container(c) for _ in opts])\n",
+    ]
+    for source in allowed:
+        assert _renderer_references(source) == [], source
+    flagged = {
+        "x = pick_container(c)\n": [1],
+        "x = tui.pick_submodule(c)\n": [1],
+        "x = pick_container\n": [1],  # named, not called: still escapes the channel
+        "run(pick_account)\n": [1],  # positional, not `picker=`
+        "f = lambda: pick_container(c)\n": [1],  # a lambda that is not a `picker=` value
+        "async def go():\n    return pick_container(c)\n": [2],
+        "def my_picker(o):\n    return pick_container(o)\n": [2],  # a name is no exemption
+        "choose_one('n', o, other=lambda: pick_container(c))\n": [1],
+    }
+    for source, lines in flagged.items():
+        assert _renderer_references(source) == lines, source

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Literal, assert_never
 
 from jailbee import git, prompting, submodules
 from jailbee.incus import IncusError
-from jailbee.remote_ssh.session import host_tree_refusal, is_remote_session
+from jailbee.remote_ssh.session import host_tree_refusal, is_restricted_session
 from jailbee.retry import confirm_retry_quiet, with_remote_retry
 
 if TYPE_CHECKING:
@@ -47,7 +47,7 @@ def _refuse_remote_tree_write(action: str, hint: str | None = None) -> None:
     user a message that names the command and what to run instead, rather
     than one about whichever primitive happened to be reached first.
     """
-    if is_remote_session():
+    if is_restricted_session():
         raise SyncError(host_tree_refusal(action, hint))
 
 
@@ -3782,7 +3782,7 @@ def run_post_merge_cleanup(
             prompt=(
                 f"Local branch '{target}' is fully merged into '{current}', "
                 f"so deleting it loses no commits.\n"
-                f"Delete merged local branch '{target}'? [y/N] "
+                f"Delete merged local branch '{target}'?"
             ),
             policy=branch_policy,
         )
@@ -3815,7 +3815,7 @@ def _should_run_cleanup_step(
     - ``policy="always"`` → run, no prompt.
     - ``policy="never"``  → skip, no prompt.
     - ``policy="prompt"`` + non-TTY → skip silently.
-    - ``policy="prompt"`` + TTY     → ask ``[y/N]``, default "no".
+    - ``policy="prompt"`` + TTY     → ask yes/no, default "no".
     """
     if policy == "always":
         return True
@@ -3823,8 +3823,7 @@ def _should_run_cleanup_step(
         return False
     if not prompting.is_interactive():
         return False
-    answer = input(prompt).strip().lower()
-    return answer in ("y", "yes")
+    return prompting.ask_confirm(prompt, default=False)
 
 
 _DIFF_STAT_SNIPPET = r"""

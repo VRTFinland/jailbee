@@ -1,6 +1,6 @@
 """The most a remote session may grant an orchestrator's children.
 
-A remote SSH session can ask for an orchestration grant, but only up to a
+A remote session can ask for an orchestration grant, but only up to a
 bound set by `remote.ssh.orchestration`: `ssh` bounds it by the session's own
 unlocks (`remote.ssh.network` for loose and egress, `remote.ssh.mounts` for
 optional-mount kinds), while `orchestrator` bounds it by the rights the
@@ -17,7 +17,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from jailbee.config.models_remote import RemoteSSHConfig
+from jailbee.config.models_remote import RemotePolicy, RemoteTransport
 from jailbee.orchestration.grant import Grant, egress_covered
 
 if TYPE_CHECKING:
@@ -42,7 +42,7 @@ class GrantBound:
 
 
 def grant_bound(
-    policy: RemoteSSHConfig,
+    policy: RemotePolicy,
     optional_mounts: Iterable[str],
     rights: OrchestratorRights | None,
 ) -> GrantBound | None:
@@ -61,10 +61,12 @@ def grant_bound(
     )
 
 
-def grant_excess(new: Grant, current: Grant | None, bound: GrantBound) -> list[str]:
+def grant_excess(
+    new: Grant, current: Grant | None, bound: GrantBound, *, transport: RemoteTransport = "ssh"
+) -> list[str]:
     """One message per grantable element of `new` beyond `bound` and not already in `current`."""
     have = current.grantable if current is not None else None
-    suffix = f"(remote.ssh.orchestration: {bound.level})"
+    suffix = f"(remote.{transport}.orchestration: {bound.level})"
     out: list[str] = []
     for mount in sorted(new.grantable.mounts):
         if mount in bound.mounts or (have is not None and mount in have.mounts):

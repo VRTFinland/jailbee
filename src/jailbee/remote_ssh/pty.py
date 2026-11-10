@@ -16,7 +16,7 @@ from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
-from jailbee.remote_ssh.session import WaypipeSession, child_environment
+from jailbee.remote_ssh.session import TRANSPORT_SSH, WaypipeSession, child_environment
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator
@@ -54,6 +54,8 @@ class ChildSpec:
     waypipe_attach: bool = False
     # The client's terminal identity (`session.terminal_identity`), as pairs.
     terminal: tuple[tuple[str, str], ...] = ()
+    # Who is connected (the SSH key fingerprint), for the audit of what the child does.
+    client: str | None = None
 
 
 class _Reader(Protocol):
@@ -365,6 +367,7 @@ async def _run_pty(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
     # chdir + execve + _exit.
     env = child_environment(
         os.environ,
+        transport=TRANSPORT_SSH,
         term=term,
         restricted=spec.restrict_host,
         excluded_repos=spec.excluded_repos,
@@ -372,6 +375,7 @@ async def _run_pty(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
         waypipe=spec.waypipe,
         waypipe_attach=spec.waypipe_attach,
         terminal=dict(spec.terminal),
+        client=spec.client,
     )
     pid, master = pty.fork()
     if pid == 0:
@@ -441,6 +445,7 @@ async def _run_pipes(process: SSHServerProcess[bytes], spec: ChildSpec) -> int:
             stderr=asyncio.subprocess.PIPE,
             env=child_environment(
                 os.environ,
+                transport=TRANSPORT_SSH,
                 restricted=spec.restrict_host,
                 excluded_repos=spec.excluded_repos,
                 gui_port=spec.gui_port,

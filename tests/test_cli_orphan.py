@@ -95,7 +95,7 @@ def test_destroy_without_force_off_tty_refuses(ctx, mocker):
 
 def test_destroy_asks_and_honours_no(ctx, mocker):
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("jailbee.prompting.confirm", return_value=False)
+    mocker.patch("jailbee.prompting._confirm", return_value=False)
     mocker.patch("jailbee.orphans.resolve_orphan", return_value=_ci("gamma-x"))
     destroy = mocker.patch("jailbee.orphans.destroy_orphan")
     result = CliRunner().invoke(app, ["orphan", "destroy", "gamma-x"])

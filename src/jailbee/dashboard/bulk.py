@@ -14,8 +14,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from jailbee.config.models_remote import RemoteSSHConfig
+from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard.actions import mount_argv, mount_directions, unmount_argv
+from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.jobs import JobResult, needs_terminal
 from jailbee.dashboard.menus import actions_for_container
 from jailbee.dashboard.model import RepoGroup, RepoTarget, _find_group
@@ -168,8 +169,8 @@ def _offered(
     name: str,
     *,
     remote: bool,
-    ssh_policy: RemoteSSHConfig | None,
-    over_ssh: bool,
+    ssh_policy: RemotePolicy | None,
+    transport: Transport,
     orphans: bool = False,
 ) -> set[str]:
     return {
@@ -179,7 +180,7 @@ def _offered(
             name,
             remote=remote,
             ssh_policy=ssh_policy,
-            over_ssh=over_ssh,
+            transport=transport,
             orphans=orphans,
         )
     }
@@ -230,8 +231,8 @@ def plan_bulk(
     verb: str,
     *,
     remote: bool = False,
-    ssh_policy: RemoteSSHConfig | None = None,
-    over_ssh: bool = False,
+    ssh_policy: RemotePolicy | None = None,
+    transport: Transport = "none",
     busy: frozenset[str] = frozenset(),
     orphans: bool = False,
 ) -> BulkAction:
@@ -249,15 +250,15 @@ def plan_bulk(
             skipped.append((name, "busy"))
             continue
         if verb in _offered(
-            groups, name, remote=remote, ssh_policy=ssh_policy, over_ssh=over_ssh, orphans=orphans
+            groups, name, remote=remote, ssh_policy=ssh_policy, transport=transport, orphans=orphans
         ):
             eligible.append(name)
             continue
         group = _find_group(list(groups), name)
         if group is not None and RepoTarget.of(group) is None:
             reason = "view-only"
-        elif over_ssh and verb in _offered(
-            groups, name, remote=remote, ssh_policy=ssh_policy, over_ssh=False
+        elif transport != "none" and verb in _offered(
+            groups, name, remote=remote, ssh_policy=ssh_policy, transport="none"
         ):
             reason = "not permitted by the SSH policy"
         else:
@@ -271,8 +272,8 @@ def bulk_actions(
     names: Sequence[str],
     *,
     remote: bool = False,
-    ssh_policy: RemoteSSHConfig | None = None,
-    over_ssh: bool = False,
+    ssh_policy: RemotePolicy | None = None,
+    transport: Transport = "none",
     busy: frozenset[str] = frozenset(),
     orphans: bool = False,
 ) -> list[BulkAction]:
@@ -284,7 +285,7 @@ def bulk_actions(
             verb,
             remote=remote,
             ssh_policy=ssh_policy,
-            over_ssh=over_ssh,
+            transport=transport,
             busy=busy,
             orphans=orphans,
         )
@@ -526,8 +527,8 @@ def plan_bulk_mount(
     kind: str,
     *,
     remove: bool,
-    ssh_policy: RemoteSSHConfig | None = None,
-    over_ssh: bool = False,
+    ssh_policy: RemotePolicy | None = None,
+    transport: Transport = "none",
     busy: frozenset[str] = frozenset(),
 ) -> BulkMount:
     """Split ``names`` into the containers that take this mount direction and the rest."""
@@ -560,12 +561,12 @@ def plan_bulk_mount(
             container,
             group.optional_mounts,
             ssh_policy,
-            over_ssh=over_ssh,
+            transport=transport,
             remote_mountable=group.remote_mountable,
         )
         if kind not in (removable if remove else addable):
             # `remote_mountable` gates a kind, the SSH policy the command.
-            granted = remove or not over_ssh or kind in group.remote_mountable
+            granted = remove or transport == "none" or kind in group.remote_mountable
             reason = "not permitted by the SSH policy" if granted else "not mountable over SSH"
             skipped.append((name, reason))
             continue
@@ -579,8 +580,8 @@ def bulk_mounts(
     groups: Sequence[RepoGroup],
     names: Sequence[str],
     *,
-    ssh_policy: RemoteSSHConfig | None = None,
-    over_ssh: bool = False,
+    ssh_policy: RemotePolicy | None = None,
+    transport: Transport = "none",
     busy: frozenset[str] = frozenset(),
 ) -> list[BulkMount]:
     """Every kind and direction at least one of ``names`` takes: config order, mount first."""
@@ -591,7 +592,13 @@ def bulk_mounts(
             kinds.update(dict.fromkeys(group.optional_mounts))
     plans = (
         plan_bulk_mount(
-            groups, names, kind, remove=remove, ssh_policy=ssh_policy, over_ssh=over_ssh, busy=busy
+            groups,
+            names,
+            kind,
+            remove=remove,
+            ssh_policy=ssh_policy,
+            transport=transport,
+            busy=busy,
         )
         for kind in kinds
         for remove in (False, True)

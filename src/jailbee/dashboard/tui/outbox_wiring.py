@@ -37,8 +37,8 @@ class SessionOutboxRunner:
         repo = session.repo_for(self.container, "container")
         if repo is None:
             raise RouteError(f"'{self.container}' is gone")
-        full = dact.addressed(argv, repo.flags(), over_ssh=session.over_ssh)
-        check_dashboard_command(full, session.ssh_policy, over_ssh=session.over_ssh)
+        full = dact.addressed(argv, repo.flags(), transport=session.transport)
+        check_dashboard_command(full, session.ssh_policy, transport=session.transport)
         return repo, full
 
     def refusal(self, argv: Sequence[str]) -> str | None:
@@ -50,7 +50,7 @@ class SessionOutboxRunner:
         return None
 
     def permitted(self, argv: Sequence[str]) -> bool:
-        return permitted(argv, self.session.ssh_policy, over_ssh=self.session.over_ssh)
+        return permitted(argv, self.session.ssh_policy, transport=self.session.transport)
 
     def run_quiet(self, argv: Sequence[str]) -> da.CliResult:
         try:
@@ -92,7 +92,10 @@ class SessionOutboxRunner:
         )
 
     def hand_off(self, argv: Sequence[str]) -> int | None:
-        return self.session.run_dashboard_command(self.container, "container", list(argv))
+        # Foreground: the publish flow needs the exit code before it goes on.
+        return self.session.run_dashboard_command(
+            self.container, "container", list(argv), foreground=True
+        )
 
     def hand_off_diagnostic(self, argv: Sequence[str]) -> tuple[int | None, str | None]:
         import tempfile

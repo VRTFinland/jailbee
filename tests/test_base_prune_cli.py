@@ -68,7 +68,7 @@ def test_prune_days_filters_recent_archives(mocker):
     assert deleted == {f"{alias}-{old.isoformat()}"}  # only the old one
 
 
-def test_prune_single_confirm_yes_deletes_all(mocker):
+def test_prune_single_confirm_yes_deletes_all(mocker, typed_confirmations):
     cfg = _cfg()
     alias = cfg.golden.alias
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
@@ -80,14 +80,14 @@ def test_prune_single_confirm_yes_deletes_all(mocker):
             ArchivedImage(f"{alias}-2026-07-18", date(2026, 7, 18), 300),
         ],
     )
-    mocker.patch("jailbee.cli.typer.confirm", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
     result = CliRunner().invoke(app, ["base", "prune"])
     assert result.exit_code == 0, result.stdout
     deleted = {c.args[0] for c in incus.image_delete.call_args_list}
     assert deleted == {f"{alias}-2026-07-20", f"{alias}-2026-07-18"}
 
 
-def test_prune_single_confirm_no_deletes_none(mocker):
+def test_prune_single_confirm_no_deletes_none(mocker, typed_confirmations):
     cfg = _cfg()
     alias = cfg.golden.alias
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
@@ -96,7 +96,7 @@ def test_prune_single_confirm_no_deletes_none(mocker):
         "jailbee.golden.find_archived_images",
         return_value=[ArchivedImage(f"{alias}-2026-07-20", date(2026, 7, 20), 500)],
     )
-    mocker.patch("jailbee.cli.typer.confirm", return_value=False)
+    mocker.patch("jailbee.prompting._confirm", return_value=False)
     result = CliRunner().invoke(app, ["base", "prune"])
     assert result.exit_code == 0, result.stdout
     incus.image_delete.assert_not_called()

@@ -118,38 +118,38 @@ def test_confirm_retry_is_false_off_tty_and_does_not_prompt(mocker):
     from jailbee import retry
 
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
-    prompt = mocker.patch("builtins.input")
+    prompt = mocker.patch("jailbee.prompting._confirm")
 
     assert retry.confirm_retry("pushing", RuntimeError("boom")) is False
     prompt.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    ("answer", "expected"),
-    [
-        ("y", True),
-        ("Y", True),
-        ("yes", True),
-        (" YES ", True),
-        ("", False),
-        ("n", False),
-        ("nope", False),
-    ],
-)
-def test_confirm_retry_reads_the_answer(mocker, answer, expected):
+@pytest.mark.parametrize("answer", [True, False])
+def test_confirm_retry_returns_the_answer(mocker, answer):
     from jailbee import retry
 
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value=answer)
+    mocker.patch("jailbee.prompting._confirm", return_value=answer)
 
-    assert retry.confirm_retry("pushing", RuntimeError("boom")) is expected
+    assert retry.confirm_retry("pushing", RuntimeError("boom")) is answer
+
+
+def test_confirm_retry_defaults_to_no(mocker):
+    from jailbee import retry
+
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    ask = mocker.patch("jailbee.prompting._confirm", return_value=False)
+
+    retry.confirm_retry("pushing", RuntimeError("boom"))
+
+    assert ask.call_args.args == ("Retry pushing?", False)
 
 
 def test_confirm_retry_reports_the_failure_with_a_capitalised_label(mocker):
     from jailbee import retry
 
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value="n")
+    mocker.patch("jailbee.prompting._confirm", return_value=False)
     reported = mocker.patch("jailbee.retry.error")
 
     retry.confirm_retry("fetching origin/main", RuntimeError("connection refused"))
@@ -164,7 +164,7 @@ def test_confirm_retry_reports_stderr_when_the_exception_carries_one(mocker):
     from jailbee import retry
 
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value="n")
+    mocker.patch("jailbee.prompting._confirm", return_value=False)
     reported = mocker.patch("jailbee.retry.error")
 
     class FakeFetchError(RuntimeError):
@@ -184,7 +184,7 @@ def test_confirm_retry_falls_back_to_str_when_stderr_is_blank(mocker, blank_stde
     from jailbee import retry
 
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value="n")
+    mocker.patch("jailbee.prompting._confirm", return_value=False)
     reported = mocker.patch("jailbee.retry.error")
 
     class FakeFetchError(RuntimeError):
@@ -206,7 +206,7 @@ def test_confirm_retry_falls_back_to_str_when_stderr_is_not_a_string(mocker):
     from jailbee import retry
 
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value="n")
+    mocker.patch("jailbee.prompting._confirm", return_value=False)
     reported = mocker.patch("jailbee.retry.error")
 
     exc = RuntimeError("connection refused")
@@ -221,7 +221,7 @@ def test_confirm_retry_quiet_prompts_without_reporting(mocker):
     from jailbee import retry
 
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    prompt = mocker.patch("builtins.input", return_value="y")
+    prompt = mocker.patch("jailbee.prompting._confirm", return_value=True)
     reported = mocker.patch("jailbee.retry.error")
 
     assert retry.confirm_retry_quiet("pushing 'x' to origin", RuntimeError("exit 128")) is True
@@ -234,7 +234,7 @@ def test_confirm_retry_quiet_is_false_off_tty_and_does_not_prompt(mocker):
     from jailbee import retry
 
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
-    prompt = mocker.patch("builtins.input")
+    prompt = mocker.patch("jailbee.prompting._confirm")
 
     assert retry.confirm_retry_quiet("pushing", RuntimeError("boom")) is False
     prompt.assert_not_called()

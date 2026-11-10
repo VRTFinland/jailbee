@@ -247,14 +247,29 @@ def test_fork_child_executes_literal_argv_cwd_and_only_trusted_env(spec, boundar
         {
             "PATH": "/bin",
             "TERM": "xterm",
-            "JAILBEE_SSH_SESSION": "1",
-            "JAILBEE_REMOTE_SSH": "1",
+            "JAILBEE_REMOTE_SESSION": "1",
+            "JAILBEE_REMOTE_TRANSPORT": "ssh",
+            "JAILBEE_REMOTE_RESTRICTED": "1",
             "LESSSECURE": "1",
-            "JAILBEE_SSH_EXCLUDED_REPOS": "[]",
+            "JAILBEE_REMOTE_EXCLUDED_REPOS": "[]",
         },
     )
     leave.assert_called_once_with(127)
     assert runner.os.environ["TERM"] == "old"
+
+
+def test_the_clients_identity_reaches_the_child_environment(spec, boundary, monkeypatch):
+    import dataclasses
+
+    boundary.fork.return_value = (0, -1)
+    monkeypatch.setattr(runner.os, "environ", {"PATH": "/bin", "JAILBEE_REMOTE_CLIENT": "stale"})
+    execute = Mock(side_effect=OSError("exec failed"))
+    monkeypatch.setattr(runner.os, "chdir", Mock())
+    monkeypatch.setattr(runner.os, "execvpe", execute)
+    monkeypatch.setattr(runner.os, "_exit", Mock(side_effect=ChildExited))
+    with pytest.raises(ChildExited):
+        asyncio.run(run_child(SSHProcess("xterm"), dataclasses.replace(spec, client="SHA256:abc")))
+    assert execute.call_args.args[2]["JAILBEE_REMOTE_CLIENT"] == "SHA256:abc"
 
 
 def test_child_env_is_built_before_fork_not_in_the_child(spec, boundary, monkeypatch):
@@ -382,10 +397,11 @@ def test_pipe_argv_env_and_separate_bounded_streams(spec, boundary, monkeypatch)
         stderr=asyncio.subprocess.PIPE,
         env={
             "PATH": "/bin",
-            "JAILBEE_SSH_SESSION": "1",
-            "JAILBEE_REMOTE_SSH": "1",
+            "JAILBEE_REMOTE_SESSION": "1",
+            "JAILBEE_REMOTE_TRANSPORT": "ssh",
+            "JAILBEE_REMOTE_RESTRICTED": "1",
             "LESSSECURE": "1",
-            "JAILBEE_SSH_EXCLUDED_REPOS": "[]",
+            "JAILBEE_REMOTE_EXCLUDED_REPOS": "[]",
         },
         start_new_session=True,
     )
@@ -984,8 +1000,9 @@ def test_unrestricted_pipe_child_is_left_unmarked(spec, boundary, monkeypatch):
 
     assert boundary.create.call_args.kwargs["env"] == {
         "PATH": "/bin",
-        "JAILBEE_SSH_SESSION": "1",
-        "JAILBEE_SSH_EXCLUDED_REPOS": "[]",
+        "JAILBEE_REMOTE_SESSION": "1",
+        "JAILBEE_REMOTE_TRANSPORT": "ssh",
+        "JAILBEE_REMOTE_EXCLUDED_REPOS": "[]",
     }
 
 
@@ -1003,8 +1020,9 @@ def test_unrestricted_pty_child_is_left_unmarked(spec, boundary, monkeypatch):
     assert execute.call_args.args[2] == {
         "PATH": "/bin",
         "TERM": "xterm",
-        "JAILBEE_SSH_SESSION": "1",
-        "JAILBEE_SSH_EXCLUDED_REPOS": "[]",
+        "JAILBEE_REMOTE_SESSION": "1",
+        "JAILBEE_REMOTE_TRANSPORT": "ssh",
+        "JAILBEE_REMOTE_EXCLUDED_REPOS": "[]",
     }
 
 
@@ -1015,7 +1033,7 @@ def test_pipe_child_receives_the_gui_marker(spec, boundary, monkeypatch):
     asyncio.run(run_child(SSHProcess(), replace(spec, gui_port=8022)))
 
     env = boundary.create.call_args.kwargs["env"]
-    assert env["JAILBEE_SSH_GUI"] == "8022"
+    assert env["JAILBEE_REMOTE_GUI_PORT"] == "8022"
 
 
 def test_pty_child_receives_the_gui_marker(spec, boundary, monkeypatch):
@@ -1030,7 +1048,7 @@ def test_pty_child_receives_the_gui_marker(spec, boundary, monkeypatch):
         asyncio.run(run_child(SSHProcess("xterm"), replace(spec, gui_port=8022)))
 
     env = execute.call_args.args[2]
-    assert env["JAILBEE_SSH_GUI"] == "8022"
+    assert env["JAILBEE_REMOTE_GUI_PORT"] == "8022"
 
 
 def test_pty_child_receives_the_client_terminal_identity(spec, boundary, monkeypatch):

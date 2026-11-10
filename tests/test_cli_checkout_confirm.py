@@ -48,7 +48,7 @@ def _wire(mocker, tmp_path, *, auto_selected: bool, auto_target: bool = True):
     return cfg_mock
 
 
-def test_checkout_confirms_an_auto_selected_container(mocker, tmp_path):
+def test_checkout_confirms_an_auto_selected_container(mocker, tmp_path, typed_confirmations):
     _wire(mocker, tmp_path, auto_selected=True)
     mocker.patch("jailbee.sync.plan_checkout", return_value=_fake_checkout_plan())
     checkout = mocker.patch("jailbee.sync.checkout_from_container")
@@ -95,7 +95,7 @@ def test_checkout_no_confirm_flag_skips_the_plan(mocker, tmp_path):
     plan_checkout.assert_not_called()
 
 
-def test_checkout_confirm_flag_overrides_a_disabled_config(mocker, tmp_path):
+def test_checkout_confirm_flag_overrides_a_disabled_config(mocker, tmp_path, typed_confirmations):
     _wire(mocker, tmp_path, auto_selected=True, auto_target=False)
     mocker.patch("jailbee.sync.plan_checkout", return_value=_fake_checkout_plan())
     checkout = mocker.patch("jailbee.sync.checkout_from_container")
@@ -158,7 +158,9 @@ def test_checkout_off_tty_prints_the_plan_and_proceeds(mocker, tmp_path):
     checkout.assert_called_once()
 
 
-def test_checkout_plan_block_prints_bracketed_branch_names_verbatim(mocker, tmp_path):
+def test_checkout_plan_block_prints_bracketed_branch_names_verbatim(
+    mocker, tmp_path, typed_confirmations
+):
     """Branch names may contain '[' (e.g. 'feat/[wip]'). `cli._confirm_bridge_plan`
     prints the block with `markup=False` specifically so Rich doesn't
     reinterpret that as a markup tag and silently swallow it. This test does

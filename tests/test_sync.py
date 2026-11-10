@@ -1285,7 +1285,7 @@ def test_cleanup_destroy_prompts_in_tty_yes(mocker, make_cfg, tmp_path):
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[])
-    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1314,7 +1314,7 @@ def test_cleanup_destroy_prompts_in_tty_no(mocker, make_cfg, tmp_path):
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[])
-    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=False)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1359,7 +1359,7 @@ def test_cleanup_always_policy_skips_the_destroy_guard(mocker, make_cfg, tmp_pat
     mock_destroy = mocker.patch("jailbee.lifecycle.destroy_container")
     list_containers = mocker.patch("jailbee.lifecycle.list_containers")
     probe = mocker.patch("jailbee.git_status.probe_container_git")
-    confirm = mocker.patch("jailbee.tui.typer.confirm")
+    confirm = mocker.patch("jailbee.prompting._confirm")
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1398,7 +1398,7 @@ def test_cleanup_destroy_guard_asks_once_when_clean(mocker, make_cfg, tmp_path):
         "jailbee.git_status.probe_container_git",
         return_value=GitStatus(wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok"),
     )
-    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1463,7 +1463,7 @@ def test_cleanup_destroy_guard_declined_keeps_container(mocker, make_cfg, tmp_pa
         return_value=GitStatus(wt="+3 -1", ahead_diff="clean", ahead_count="0", conflict="ok"),
     )
     mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
-    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=False)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=False)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1501,7 +1501,7 @@ def test_cleanup_destroy_guard_accepted_destroys_after_one_prompt(mocker, make_c
         return_value=GitStatus(wt="+3 -1", ahead_diff="clean", ahead_count="0", conflict="ok"),
     )
     mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
-    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1536,7 +1536,7 @@ def test_cleanup_destroy_guard_notes_unknown_for_stopped_container(
         return_value=[_guarded_container_info(full_name, cfg, state="Stopped")],
     )
     probe = mocker.patch("jailbee.git_status.probe_container_git")
-    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1570,7 +1570,7 @@ def test_cleanup_destroy_guard_notes_unknown_when_container_missing_from_listing
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[])
     probe = mocker.patch("jailbee.git_status.probe_container_git")
-    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -1621,7 +1621,7 @@ def test_cleanup_mount_mode_container_is_not_reported_as_unknown(
     )
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[mount_info])
     probe = mocker.patch("jailbee.git_status.probe_container_git")
-    confirm = mocker.patch("jailbee.tui.typer.confirm", return_value=True)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=True)
 
     result = run_post_merge_cleanup(
         cfg,
@@ -2182,7 +2182,7 @@ def test_merge_into_same_branch_proceeds_without_prompt(mocker, make_cfg, tmp_pa
     incus = mocker.MagicMock()
     _stub_fetch(mocker)
     mocker.patch("jailbee.sync.git.get_current_branch", return_value="feat/foo")
-    mock_input = mocker.patch("builtins.input")
+    mock_input = mocker.patch("jailbee.prompting._confirm")
     mock_merge = mocker.patch("jailbee.sync.git.merge_ref")
     mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
 
@@ -2199,7 +2199,7 @@ def test_merge_into_same_branch_ff_only_proceeds_without_prompt(mocker, make_cfg
     incus = mocker.MagicMock()
     _stub_fetch(mocker)
     mocker.patch("jailbee.sync.git.get_current_branch", return_value="feat/foo")
-    mock_input = mocker.patch("builtins.input")
+    mock_input = mocker.patch("jailbee.prompting._confirm")
     mock_merge = mocker.patch("jailbee.sync.git.merge_ref")
     mocker.patch("jailbee.sync.submodules.update_submodules_on_host")
 
@@ -4896,7 +4896,7 @@ def test_push_and_reset_not_running_refuses(mocker, make_cfg, tmp_path):
 def test_should_run_step_runs_when_always(mocker):
     from jailbee.sync import _should_run_cleanup_step
 
-    mock_input = mocker.patch("builtins.input")
+    mock_input = mocker.patch("jailbee.prompting._confirm")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
 
     result = _should_run_cleanup_step(prompt="x? ", policy="always")
@@ -4908,7 +4908,7 @@ def test_should_run_step_runs_when_always(mocker):
 def test_should_run_step_never_skips(mocker):
     from jailbee.sync import _should_run_cleanup_step
 
-    mock_input = mocker.patch("builtins.input")
+    mock_input = mocker.patch("jailbee.prompting._confirm")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
 
     result = _should_run_cleanup_step(prompt="x? ", policy="never")
@@ -4920,7 +4920,7 @@ def test_should_run_step_never_skips(mocker):
 def test_should_run_step_prompt_skips_in_non_tty(mocker):
     from jailbee.sync import _should_run_cleanup_step
 
-    mock_input = mocker.patch("builtins.input")
+    mock_input = mocker.patch("jailbee.prompting._confirm")
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
 
     result = _should_run_cleanup_step(prompt="x? ", policy="prompt")
@@ -4929,26 +4929,15 @@ def test_should_run_step_prompt_skips_in_non_tty(mocker):
     mock_input.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    "answer,expected",
-    [
-        ("y", True),
-        ("yes", True),
-        ("Y", True),
-        ("YES", True),
-        ("n", False),
-        ("", False),
-        ("no", False),
-        ("maybe", False),
-    ],
-)
-def test_should_run_step_prompt_in_tty_uses_input(mocker, answer, expected):
+@pytest.mark.parametrize("answer", [True, False])
+def test_should_run_step_prompt_in_tty_asks_yes_no_defaulting_to_no(mocker, answer):
     from jailbee.sync import _should_run_cleanup_step
 
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value=answer)
+    ask = mocker.patch("jailbee.prompting._confirm", return_value=answer)
 
-    assert _should_run_cleanup_step(prompt="x? ", policy="prompt") is expected
+    assert _should_run_cleanup_step(prompt="x?", policy="prompt") is answer
+    ask.assert_called_once_with("x?", False)
 
 
 def test_cleanup_destroy_only_branch_never(mocker, make_cfg, tmp_path):
@@ -6328,7 +6317,7 @@ def test_publish_retries_the_push_when_the_user_accepts(mocker, make_cfg, tmp_pa
         side_effect=[GitError("git push failed (exit 128)"), None],
     )
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
-    mocker.patch("builtins.input", return_value="y")
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
     reported = mocker.patch("jailbee.retry.error")
 
     result = publish_branch_from_container(cfg, incus, "feat-foo")
@@ -6357,7 +6346,7 @@ def test_publish_push_retry_is_not_offered_off_tty(mocker, make_cfg, tmp_path):
         side_effect=GitError("git push failed (exit 128)"),
     )
     mocker.patch("jailbee.prompting.is_interactive", return_value=False)
-    prompt = mocker.patch("builtins.input")
+    prompt = mocker.patch("jailbee.prompting._confirm")
 
     with pytest.raises(SyncError, match="force-with-lease"):
         publish_branch_from_container(cfg, incus, "feat-foo")
@@ -9361,8 +9350,8 @@ def test_every_tag_policy_value_is_handled_in_both_transports(mocker, tmp_path, 
 
 @pytest.fixture
 def remote_session(monkeypatch):
-    monkeypatch.setenv("JAILBEE_REMOTE_SSH", "1")
-    monkeypatch.setenv("JAILBEE_SSH_EXCLUDED_REPOS", "[]")
+    monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", "1")
+    monkeypatch.setenv("JAILBEE_REMOTE_EXCLUDED_REPOS", "[]")
 
 
 def test_remote_checkout_refuses_before_fetching(mocker, make_cfg, tmp_path, remote_session):

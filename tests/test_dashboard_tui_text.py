@@ -129,7 +129,7 @@ def test_command_submitted_closes_the_line_and_runs_the_text(mocker, tmp_path):
 
 
 def test_over_ssh_without_a_policy_nothing_is_offered(mocker, tmp_path):
-    session, _ = bare_session(mocker, [_group(tmp_path)], over_ssh=True)
+    session, _ = bare_session(mocker, [_group(tmp_path)], transport="ssh")
     assert session.command_candidates("sh") == ()
 
 

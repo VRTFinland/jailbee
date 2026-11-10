@@ -69,7 +69,9 @@ def test_clear_on_tty_asks_even_for_one_container(env, mocker):
 
 
 def test_clear_yes_skips_question(env, mocker):
-    confirm = mocker.patch("typer.confirm", side_effect=AssertionError("unexpected prompt"))
+    confirm = mocker.patch(
+        "jailbee.prompting._confirm", side_effect=AssertionError("unexpected prompt")
+    )
     result = CliRunner().invoke(app, ["outbox", "clear", "feature", "-y"])
     assert result.exit_code == 0, result.output
     confirm.assert_not_called()
@@ -84,15 +86,17 @@ def test_clear_yes_skips_question(env, mocker):
         (["feature", "other"], False, "Delete 4 proposals in 2 containers?"),
     ],
 )
-def test_clear_declined_question_exits_zero(env, mocker, names, singular, question):
+def test_clear_declined_question_exits_zero(
+    env, mocker, names, singular, question, typed_confirmations
+):
     incus, _, raw, snapshots = env
     incus.list_containers.return_value = [raw, {**raw, "name": "acme-other"}]
     if singular:
         snapshots["pr"] = store("pr", {})
-    confirm = mocker.patch("typer.confirm", return_value=False)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=False)
     result = CliRunner().invoke(app, ["outbox", "clear", *names])
     assert result.exit_code == 0, result.output
-    confirm.assert_called_once_with(question, default=False)
+    confirm.assert_called_once_with(question, False)
     assert "Nothing deleted." in result.output
     env[1].assert_not_called()
 
@@ -108,7 +112,9 @@ def test_missing_first_target_exits_one_and_still_clears_healthy(env):
 def test_clear_several_positionals(env, mocker):
     incus, mutation, raw, _ = env
     incus.list_containers.return_value = [raw, {**raw, "name": "acme-other"}]
-    confirm = mocker.patch("typer.confirm", side_effect=AssertionError("unexpected prompt"))
+    confirm = mocker.patch(
+        "jailbee.prompting._confirm", side_effect=AssertionError("unexpected prompt")
+    )
     result = CliRunner().invoke(app, ["outbox", "clear", "feature", "other", "-y"])
     assert result.exit_code == 0, result.output
     assert mutation.call_count == 4
@@ -117,7 +123,9 @@ def test_clear_several_positionals(env, mocker):
 
 
 def test_clear_dry_run_never_confirms_or_deletes(env, mocker):
-    confirm = mocker.patch("typer.confirm", side_effect=AssertionError("unexpected prompt"))
+    confirm = mocker.patch(
+        "jailbee.prompting._confirm", side_effect=AssertionError("unexpected prompt")
+    )
     result = CliRunner().invoke(app, ["outbox", "clear", "feature", "--dry-run"])
     assert result.exit_code == 0, result.output
     assert "issue/001.json" in result.output and "pr/001.json" in result.output
@@ -125,7 +133,7 @@ def test_clear_dry_run_never_confirms_or_deletes(env, mocker):
     env[1].assert_not_called()
 
 
-def test_clear_question_counts_only_delete_containers(env, mocker):
+def test_clear_question_counts_only_delete_containers(env, mocker, typed_confirmations):
     incus, mutation, raw, snapshots = env
     other = {**raw, "name": "acme-other", "config": {"volatile.uuid": "uuid-other"}}
     incus.list_containers.return_value = [raw, other]
@@ -148,10 +156,10 @@ def test_clear_question_counts_only_delete_containers(env, mocker):
         "pr_journals",
         side_effect=lambda uuid: {"001.json": journal} if uuid == "uuid-other" else {},
     )
-    confirm = mocker.patch("typer.confirm", return_value=False)
+    confirm = mocker.patch("jailbee.prompting._confirm", return_value=False)
     result = CliRunner().invoke(app, ["outbox", "clear", "feature", "other", "missing"])
     assert result.exit_code == 0, result.output
-    confirm.assert_called_once_with("Delete 2 proposals in 1 container?", default=False)
+    confirm.assert_called_once_with("Delete 2 proposals in 1 container?", False)
     mutation.assert_not_called()
 
 
@@ -160,7 +168,9 @@ def test_snapshot_prepare_and_clear_cli_bind_before_question(env, mocker):
 
     from jailbee.outbox.clear_snapshot import decode_snapshot
 
-    confirm = mocker.patch("typer.confirm", side_effect=AssertionError("second prompt"))
+    confirm = mocker.patch(
+        "jailbee.prompting._confirm", side_effect=AssertionError("second prompt")
+    )
     prepared = CliRunner().invoke(app, ["outbox", "clear", "acme-feature", "--prepare-snapshot"])
     assert prepared.exit_code == 0, prepared.output
     token = prepared.stdout.strip()
@@ -255,7 +265,9 @@ def test_dashboard_question_to_real_clear_child_preserves_snapshot(env, mocker, 
     files["001.json"] += "\n"
     env[3]["pr"] = store("pr", files)
     env[3]["issue"] = store("issue", issue_files() | {"002.json": issue_files()["001.json"]})
-    confirm = mocker.patch("typer.confirm", side_effect=AssertionError("second question"))
+    confirm = mocker.patch(
+        "jailbee.prompting._confirm", side_effect=AssertionError("second question")
+    )
     session.picker_chosen(session.overlay.entries[1])
     session.tick()
     assert len(children) == 2

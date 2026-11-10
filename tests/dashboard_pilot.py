@@ -25,8 +25,11 @@ from textual.widget import Widget
 
 from jailbee.dashboard import menus as dmenus
 from jailbee.dashboard import model as dmodel
+from jailbee.dashboard import runner as drunner
+from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.jobs import JobResult, JobRunner
+from jailbee.dashboard.runner import RunResult
 from jailbee.dashboard.settings import CURSOR_STYLE
 from jailbee.dashboard.tui import app as tapp
 from jailbee.dashboard.tui import menu_state as tmenu
@@ -67,6 +70,19 @@ class SyncJobs(JobRunner):
         value = fn()
         self._labels[key] = label
         self._finished.append((key, on_done, value))
+
+
+def subprocess_runner(argv, *, cwd, on_output=None, **_unused):  # type: ignore[no-untyped-def]  # test double
+    """Stands in for `runner.run_action`: the child is the mocked `subprocess.run`."""
+    try:
+        if not Path(cwd).is_dir():  # what `Popen` raises for a vanished cwd
+            raise FileNotFoundError(f"{cwd}: no such directory")
+        proc = subprocess.run(["jailbee", *argv], check=False, cwd=cwd)
+    except OSError as exc:
+        return RunResult(error=str(exc))
+    if on_output is not None:
+        on_output(f"output of jailbee {' '.join(argv)}\n")
+    return RunResult(status=proc.returncode)
 
 
 class FakeStateClient:
@@ -423,7 +439,7 @@ def make_app(  # type: ignore[no-untyped-def]
     groups=None,
     *,
     remote=False,
-    over_ssh=False,
+    transport: Transport = "none",
     ssh_policy=None,
     view_state=None,
     git_enabled=False,
@@ -434,6 +450,7 @@ def make_app(  # type: ignore[no-untyped-def]
     mouse: bool = True,
     jobs: type[JobRunner] = SyncJobs,
     auto_optimize: bool = False,
+    remote_client: str | None = None,
 ) -> tapp.DashboardApp:
     """Build the real app with the same isolated startup for pilots and snapshots.
 
@@ -457,17 +474,33 @@ def make_app(  # type: ignore[no-untyped-def]
         mocker.patch.object(tsession, "open_state_client", return_value=client)
         startup = tsession.open_dashboard(None)
     assert not isinstance(startup, int), "startup failed; use tapp.run for startup tests"
-    return tapp.DashboardApp(
+    app = tapp.DashboardApp(
         startup,
         incus=mocker.Mock(),
         cwd_root=cwd_root,
         remote=remote,
-        over_ssh=over_ssh,
+        transport=transport,
         ssh_policy=ssh_policy,
         scope=scope,
         tick_seconds=None,
         auto_optimize=auto_optimize,
+        remote_client=remote_client,
     )
+    # Actions run inline through the one (mocked) `subprocess.run`, so a test
+    # asserts on `["jailbee", *argv]` as it always did; real runner behaviour
+    # (prompts, threads) is covered by tests/test_dashboard_tui_runner.py.
+    app.threaded_actions = False
+    app.action_runner = subprocess_runner
+    # The output screens an action asked for: (title, text, failed).
+    app.outputs = []  # type: ignore[attr-defined]
+    show = app.show_output
+
+    def record(title, text, *, failed):  # type: ignore[no-untyped-def]
+        app.outputs.append((title, text, failed))  # type: ignore[attr-defined]
+        show(title, text, failed=failed)
+
+    app.show_output = record  # type: ignore[method-assign]
+    return app
 
 
 def drive(  # type: ignore[no-untyped-def]
@@ -476,7 +509,7 @@ def drive(  # type: ignore[no-untyped-def]
     groups=None,
     *,
     remote=False,
-    over_ssh=False,
+    transport: Transport = "none",
     ssh_policy=None,
     view_state=None,
     git_enabled=False,
@@ -500,7 +533,7 @@ def drive(  # type: ignore[no-untyped-def]
         mocker,
         groups,
         remote=remote,
-        over_ssh=over_ssh,
+        transport=transport,
         ssh_policy=ssh_policy,
         view_state=view_state,
         git_enabled=git_enabled,
@@ -569,6 +602,15 @@ class BareTerminal:
         self.handed.append(fn)
         return fn()
 
+    def run_actions(self, runs, done):  # type: ignore[no-untyped-def]
+        self.ran = [*getattr(self, "ran", []), *runs]
+        chunks: list[str] = []
+        results = [subprocess_runner(r.argv, cwd=r.cwd, on_output=chunks.append) for r in runs]
+        done(drunner.ActionOutcome(results, "".join(chunks)))
+
+    def show_output(self, title, text, *, failed):  # type: ignore[no-untyped-def]
+        self.shown = [*getattr(self, "shown", []), (title, text, failed)]
+
 
 def bare_session(mocker, groups, **kw):  # type: ignore[no-untyped-def]
     """A `DashboardSession` over a `BareClient` and `BareTerminal`, ticked once."""
@@ -600,7 +642,7 @@ def patch_in(mocker, name: str, *modules: object, **kwargs: Any):  # type: ignor
 def container_egress_keys(group: dmodel.RepoGroup, **menu_kwargs: Any) -> list[str]:
     """Keys that open the first container's Egress panel from the dashboard.
 
-    ``menu_kwargs`` (``remote``/``over_ssh``/``ssh_policy``) must match the
+    ``menu_kwargs`` (``remote``/``transport``/``ssh_policy``) must match the
     ``drive()`` call: the menu an SSH session sees has other entries.
     """
     menu = tmenu.open_menu([group], group.containers[0].name, **menu_kwargs)
@@ -621,7 +663,7 @@ def repo_menu_keys(group: dmodel.RepoGroup, verb: str, **menu_kwargs: Any) -> li
     """Keys that choose repo-menu ``verb`` from the first row (the repo header).
 
     Finds a top-level leaf or one inside a submenu, so no test counts entries.
-    ``menu_kwargs`` (``ssh_policy``/``over_ssh``) must match the ``drive()`` call.
+    ``menu_kwargs`` (``ssh_policy``/``transport``) must match the ``drive()`` call.
     """
     menu = tmenu.open_repo_menu([group], group.prefix, frozenset(), **menu_kwargs)
     assert menu is not None
@@ -638,7 +680,7 @@ def repo_menu_keys(group: dmodel.RepoGroup, verb: str, **menu_kwargs: Any) -> li
 def container_menu_keys(group: dmodel.RepoGroup, verb: str, **menu_kwargs: Any) -> list[str]:
     """Keys that choose top-level container-menu leaf ``verb`` for the first container.
 
-    ``menu_kwargs`` (``remote``/``over_ssh``/``ssh_policy``) must match the ``drive()`` call.
+    ``menu_kwargs`` (``remote``/``transport``/``ssh_policy``) must match the ``drive()`` call.
     """
     menu = tmenu.open_menu([group], group.containers[0].name, **menu_kwargs)
     assert menu is not None

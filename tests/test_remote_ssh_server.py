@@ -413,6 +413,7 @@ def test_dispatch_uses_current_python_literal_argv_and_selected_cwd(
             argv=expected_argv,
             cwd=repo if has_repo else fallback,
             requires_pty=requires_pty,
+            client=FINGERPRINT,
         ),
     )
     configured.assert_called_once_with(default_global_config_path())
@@ -424,7 +425,10 @@ def test_trailing_repo_dispatches_like_the_leading_form(child, configured, repo)
     child.assert_awaited_once_with(
         process,
         ChildSpec(
-            argv=(sys.executable, "-m", "jailbee", "ls", "--all"), cwd=repo, requires_pty=False
+            argv=(sys.executable, "-m", "jailbee", "ls", "--all"),
+            cwd=repo,
+            requires_pty=False,
+            client=FINGERPRINT,
         ),
     )
     channel.exit.assert_called_once_with(7)
@@ -450,6 +454,7 @@ def test_missing_repo_spawns_a_picking_child_in_the_state_dir(
             restrict_host=False,
             excluded_repos=tuple(excluded),
             gui_port=8022,
+            client=FINGERPRINT,
         ),
     )
     assert fallback.is_dir()
@@ -716,7 +721,7 @@ def test_default_dashboard_preserves_orchestration_policy_through_cli(
     channel.exit.assert_called_once_with(7)
     spec = child.await_args.args[1]
     assert spec.argv[3:5] == ("dashboard", "--remote-policy-json")
-    for key, value in child_environment({}, restricted=spec.restrict_host).items():
+    for key, value in child_environment({}, transport="ssh", restricted=spec.restrict_host).items():
         monkeypatch.setenv(key, value)
 
     dashboard, _ = _orchestration_session(mocker, tmp_path, grant=True)
@@ -727,9 +732,9 @@ def test_default_dashboard_preserves_orchestration_policy_through_cli(
 
     def run_dashboard(incus, **kwargs):
         dashboard.remote = kwargs["remote"]
-        dashboard.over_ssh = kwargs["over_ssh"]
+        dashboard.transport = kwargs["transport"]
         dashboard.ssh_policy = kwargs["ssh_policy"]
-        assert dashboard.remote and dashboard.over_ssh
+        assert dashboard.remote and dashboard.transport == "ssh"
         assert dashboard.ssh_policy.orchestration == "ssh"
         assert dashboard.ssh_policy.commands.mode == "full"
         values = {e.value for e in dashboard.open_orchestration("alpha-one").entries}
@@ -818,6 +823,11 @@ def test_client_terminal_identity_reaches_the_child_spec(child, configured, repo
     channel.exit.assert_called_once_with(7)
     spec = child.await_args.args[1]
     assert spec.terminal == (("LC_TERMINAL", "iTerm2"),)
+
+
+def test_the_clients_key_fingerprint_reaches_the_child_spec(child, configured, repo):
+    session("--repo project ls")
+    assert child.await_args.args[1].client == FINGERPRINT
 
 
 def test_client_environment_requests_do_not_block_commandless_help(child):
@@ -1483,9 +1493,9 @@ def test_startup_reports_host_restrictions(
     listener, caplog, monkeypatch, restrict_host, marker, want
 ):
     if marker is None:
-        monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+        monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     else:
-        monkeypatch.setenv("JAILBEE_REMOTE_SSH", marker)
+        monkeypatch.setenv("JAILBEE_REMOTE_RESTRICTED", marker)
 
     with caplog.at_level(logging.INFO, logger=server.__name__):
         asyncio.run(server.serve_async(RemoteSSHConfig(restrict_host=restrict_host)))
@@ -1494,7 +1504,7 @@ def test_startup_reports_host_restrictions(
 
 
 def test_startup_names_allowlisted_host_commands_that_stay_refused(listener, caplog, monkeypatch):
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     config = RemoteSSHConfig(
         exec=True,
         commands=RemoteCommandPolicy(mode="allowlist", allow=["ls", "config edit", "setup"]),
@@ -1511,7 +1521,7 @@ def test_startup_names_allowlisted_host_commands_that_stay_refused(listener, cap
 def test_startup_says_gui_launchers_are_refused_outside_waypipe_sessions(
     listener, caplog, monkeypatch
 ):
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     config = RemoteSSHConfig(
         exec=True,
         rdp=False,
@@ -1527,7 +1537,7 @@ def test_startup_says_gui_launchers_are_refused_outside_waypipe_sessions(
 
 
 def test_startup_does_not_call_a_gui_launcher_refused_when_gui_is_on(listener, caplog, monkeypatch):
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     config = RemoteSSHConfig(
         exec=True,
         rdp=True,
@@ -1541,7 +1551,7 @@ def test_startup_does_not_call_a_gui_launcher_refused_when_gui_is_on(listener, c
 
 
 def test_startup_reports_network_widening_when_on(listener, caplog, monkeypatch):
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
 
     with caplog.at_level(logging.INFO, logger=server.__name__):
         asyncio.run(server.serve_async(RemoteSSHConfig(exec=True, network=True)))
@@ -1550,7 +1560,7 @@ def test_startup_reports_network_widening_when_on(listener, caplog, monkeypatch)
 
 
 def test_startup_reports_optional_mounts(listener, caplog, monkeypatch, tmp_path):
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
 
     # mounts=True
     with caplog.at_level(logging.INFO, logger=server.__name__):
@@ -1577,7 +1587,7 @@ def test_startup_reports_optional_mounts(listener, caplog, monkeypatch, tmp_path
 
 
 def test_startup_does_not_call_net_loose_refused_when_network_is_on(listener, caplog, monkeypatch):
-    monkeypatch.delenv("JAILBEE_REMOTE_SSH", raising=False)
+    monkeypatch.delenv("JAILBEE_REMOTE_RESTRICTED", raising=False)
     config = RemoteSSHConfig(
         exec=True,
         network=True,

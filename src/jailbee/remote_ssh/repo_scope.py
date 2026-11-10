@@ -1,4 +1,4 @@
-"""Immutable repository visibility policy for an SSH session."""
+"""Immutable repository visibility policy for a remote session."""
 
 from __future__ import annotations
 
@@ -13,23 +13,30 @@ from sqlmodel import Session, select
 
 from jailbee.db import get_engine
 from jailbee.db.models import RegisteredRepo
-from jailbee.remote_ssh.session import SSH_EXCLUDED_REPOS_ENV, is_ssh_session
+from jailbee.remote_ssh.session import REMOTE_EXCLUDED_REPOS_ENV, is_remote_session
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from sqlalchemy.engine import Engine
 
+    from jailbee.config.models_remote import RemotePolicy
+
 _PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 class RepoScopeError(ValueError):
-    """An SSH child has no trustworthy repository policy snapshot."""
+    """A remote child has no trustworthy repository policy snapshot."""
 
 
 @dataclass(frozen=True)
 class RemoteRepoScope:
     excluded: frozenset[str]
+
+    @classmethod
+    def of(cls, policy: RemotePolicy) -> RemoteRepoScope:
+        """The scope `policy` (any transport's `remote.*` block) excludes."""
+        return cls(frozenset(policy.excluded_repos))
 
     def allows(self, prefix: str | None) -> bool:
         return prefix is None or prefix not in self.excluded
@@ -59,11 +66,11 @@ def registered_repos(
 
 
 def scope_for_session(environ: Mapping[str, str] | None = None) -> RemoteRepoScope:
-    """Read the server-created snapshot, requiring one for every SSH child."""
+    """Read the server-created snapshot, requiring one for every remote child."""
     env = os.environ if environ is None else environ
-    if not is_ssh_session(env):
+    if not is_remote_session(env):
         return RemoteRepoScope(frozenset())
-    raw = env.get(SSH_EXCLUDED_REPOS_ENV)
+    raw = env.get(REMOTE_EXCLUDED_REPOS_ENV)
     try:
         values = json.loads(raw) if raw is not None else None
     except (json.JSONDecodeError, TypeError) as exc:

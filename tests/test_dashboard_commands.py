@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+from jailbee.config.models_remote import RemoteCommandPolicy, RemotePolicy, RemoteSSHConfig
 from jailbee.dashboard.commands import (
     apply_completion,
     check_dashboard_command,
@@ -14,7 +14,7 @@ from jailbee.dashboard.commands import (
     permitted,
 )
 from jailbee.remote_ssh.router import RemoteUnlocks, RouteError
-from jailbee.remote_ssh.session import SSH_EXCLUDED_REPOS_ENV, SSH_SESSION_ENV
+from jailbee.remote_ssh.session import REMOTE_EXCLUDED_REPOS_ENV, REMOTE_TRANSPORT_ENV
 
 
 def test_completion_respects_default_and_disabled_remote_policy() -> None:
@@ -57,42 +57,42 @@ def test_ssh_dashboard_command_refuses_commands_outside_policy(
     argv: list[str], policy: RemoteSSHConfig
 ) -> None:
     with pytest.raises(RouteError):
-        check_dashboard_command(argv, policy, over_ssh=True)
+        check_dashboard_command(argv, policy, transport="ssh")
 
 
 def test_ssh_dashboard_merge_alias_uses_canonical_allowlist() -> None:
     policy = RemoteSSHConfig(
         exec=True, commands=RemoteCommandPolicy(mode="allowlist", allow=["git merge"])
     )
-    check_dashboard_command(["merge", "alpha"], policy, over_ssh=True)
+    check_dashboard_command(["merge", "alpha"], policy, transport="ssh")
 
 
 @pytest.mark.parametrize("snapshot", [None, "not-json"])
 def test_ssh_dashboard_fails_closed_without_valid_scope_snapshot(
     monkeypatch, snapshot: str | None
 ) -> None:
-    monkeypatch.setenv(SSH_SESSION_ENV, "1")
+    monkeypatch.setenv(REMOTE_TRANSPORT_ENV, "ssh")
     if snapshot is None:
-        monkeypatch.delenv(SSH_EXCLUDED_REPOS_ENV, raising=False)
+        monkeypatch.delenv(REMOTE_EXCLUDED_REPOS_ENV, raising=False)
     else:
-        monkeypatch.setenv(SSH_EXCLUDED_REPOS_ENV, snapshot)
+        monkeypatch.setenv(REMOTE_EXCLUDED_REPOS_ENV, snapshot)
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"))
 
     with pytest.raises(ValueError, match="Invalid SSH repository policy snapshot"):
-        check_dashboard_command(["git", "pull"], policy, over_ssh=True)
+        check_dashboard_command(["git", "pull"], policy, transport="ssh")
 
 
 def test_ssh_dashboard_exclusions_gate_aggregate_option(monkeypatch) -> None:
-    monkeypatch.setenv(SSH_SESSION_ENV, "1")
-    monkeypatch.setenv(SSH_EXCLUDED_REPOS_ENV, '["secret"]')
+    monkeypatch.setenv(REMOTE_TRANSPORT_ENV, "ssh")
+    monkeypatch.setenv(REMOTE_EXCLUDED_REPOS_ENV, '["secret"]')
     policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="full"))
 
-    check_dashboard_command(["ls", "--all"], policy, over_ssh=True)
+    check_dashboard_command(["ls", "--all"], policy, transport="ssh")
     # Canonical/hidden aliases are classified through the same remote policy.
-    check_dashboard_command(["merge", "--into=main"], policy, over_ssh=True)
+    check_dashboard_command(["merge", "--into=main"], policy, transport="ssh")
     # Value-form path options are parsed by Click and rejected by host policy.
     with pytest.raises(RouteError, match="--config"):
-        check_dashboard_command(["ls", "--config=/etc/passwd"], policy, over_ssh=True)
+        check_dashboard_command(["ls", "--config=/etc/passwd"], policy, transport="ssh")
 
 
 def test_ssh_dashboard_commands_policy_is_independent_of_exec_flag() -> None:
@@ -100,7 +100,7 @@ def test_ssh_dashboard_commands_policy_is_independent_of_exec_flag() -> None:
         exec=False,
         commands=RemoteCommandPolicy(mode="allowlist", allow=["git merge"]),
     )
-    check_dashboard_command(["merge", "alpha"], policy, over_ssh=True)
+    check_dashboard_command(["merge", "alpha"], policy, transport="ssh")
 
 
 def test_ssh_nested_dashboard_cannot_supply_server_policy_transport() -> None:
@@ -113,12 +113,12 @@ def test_ssh_nested_dashboard_cannot_supply_server_policy_transport() -> None:
         check_dashboard_command(
             ["dashboard", "--remote-policy-json", '{"exec":true,"commands":{"mode":"full"}}'],
             policy,
-            over_ssh=True,
+            transport="ssh",
         )
 
 
 def test_local_dashboard_command_does_not_apply_ssh_policy() -> None:
-    check_dashboard_command(["config", "edit"], None, over_ssh=False)
+    check_dashboard_command(["config", "edit"], None, transport="none")
 
 
 def test_merge_alias_gets_selected_source() -> None:
@@ -217,7 +217,7 @@ def test_unknown_local_command_is_not_rejected_by_preflight() -> None:
         "--mystery",
     ]
     with pytest.raises(RouteError):
-        check_dashboard_command(["unknown-command"], None, over_ssh=True)
+        check_dashboard_command(["unknown-command"], None, transport="ssh")
 
 
 def test_local_options_are_inserted_before_exec_separator() -> None:
@@ -260,7 +260,7 @@ def test_remote_completion_hides_options_and_containers_for_disallowed_leaf() ->
     ],
 )
 def test_permitted_mirrors_check_dashboard_command(argv, over_ssh, policy, expected) -> None:
-    assert permitted(argv, policy, over_ssh=over_ssh) is expected
+    assert permitted(argv, policy, transport=("ssh" if over_ssh else "none")) is expected
 
 
 def test_ssh_dashboard_gui_launchers_follow_the_gui_flag() -> None:
@@ -269,10 +269,10 @@ def test_ssh_dashboard_gui_launchers_follow_the_gui_flag() -> None:
     on = RemoteSSHConfig(exec=True, commands=full, rdp=True)
 
     with pytest.raises(RouteError, match="opens a window"):
-        check_dashboard_command(["chrome", "feat-1", "--force"], off, over_ssh=True)
-    check_dashboard_command(["chrome", "feat-1", "--force"], on, over_ssh=True)
+        check_dashboard_command(["chrome", "feat-1", "--force"], off, transport="ssh")
+    check_dashboard_command(["chrome", "feat-1", "--force"], on, transport="ssh")
     with pytest.raises(RouteError, match="manages the host"):
-        check_dashboard_command(["gui"], on, over_ssh=True)
+        check_dashboard_command(["gui"], on, transport="ssh")
 
 
 def test_gui_flag_adds_the_launchers_to_the_allowed_and_offered_paths() -> None:
@@ -288,3 +288,42 @@ def test_gui_flag_adds_the_launchers_to_the_allowed_and_offered_paths() -> None:
     assert "chrome" in completion_candidates(
         "chr", (), on, restrict_host=True, unlocks=RemoteUnlocks(gui=True)
     )
+
+
+def _web_policy(**commands: object) -> RemotePolicy:
+    return RemotePolicy(commands=RemoteCommandPolicy(**commands)) if commands else RemotePolicy()
+
+
+@pytest.mark.parametrize("argv", [["doctor"], ["ls"], ["shell", "alpha"], ["merge", "alpha"]])
+def test_web_default_policy_offers_no_command(argv) -> None:
+    policy = RemotePolicy()
+
+    assert permitted(argv, policy, transport="web") is False
+    with pytest.raises(RouteError):
+        check_dashboard_command(argv, policy, transport="web")
+
+
+def test_web_without_a_policy_fails_closed_naming_the_transport() -> None:
+    with pytest.raises(RouteError, match="remote web dashboard has no server policy"):
+        check_dashboard_command(["doctor"], None, transport="web")
+
+
+def test_web_follows_its_own_policy_when_commands_are_enabled() -> None:
+    policy = _web_policy(mode="allowlist", allow=["doctor"])
+
+    assert permitted(["doctor"], policy, transport="web") is True
+    assert permitted(["shell", "alpha"], policy, transport="web") is False
+    # restrict_host still applies: a host command passes only on the ssh-like gates.
+    assert permitted(["apply"], _web_policy(mode="full"), transport="web") is False
+
+
+def test_the_same_command_is_judged_by_the_policy_passed_not_the_transport_name() -> None:
+    open_policy = RemoteSSHConfig()
+
+    assert permitted(["doctor"], open_policy, transport="ssh") is True
+    assert permitted(["doctor"], open_policy, transport="web") is True
+    assert permitted(["doctor"], RemotePolicy(), transport="web") is False
+
+
+def test_local_transport_ignores_the_policy() -> None:
+    assert permitted(["apply"], RemotePolicy(), transport="none") is True

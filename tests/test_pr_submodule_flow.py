@@ -452,6 +452,7 @@ def test_multi_picker_checked_labels_and_answer(mocker, answer):
     from jailbee.submodule_pr import describe_candidate
 
     candidates = [_candidate("lib/a"), _candidate("lib/b")]
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     checkbox = mocker.patch("jailbee.tui.checkbox", return_value=answer)
     assert tui.pick_submodules_multi(candidates) == answer
     assert checkbox.call_args.args[0] == "Publish these submodule PRs first?"

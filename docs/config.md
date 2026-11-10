@@ -3448,6 +3448,11 @@ or broaden remote access. Installing JailBee does not start a listener. See
 and enable steps and [Security and limitations](security.md#remote-ssh) for
 the trust boundary.
 
+The permission keys (`commands`, `restrict_host`, `excluded_repos`,
+`mount_roots`, `mounts`, `orchestration`, `network`, `files`, `rdp`) form the
+shared [remote policy](security.md#remote-policy), which
+[`remote.web`](#remoteweb) also holds; the remaining keys are SSH-only.
+
 The built-in defaults enable all three entry points on IPv4 loopback. The
 command policy governs JailBee command execution in the console and dashboard;
 `exec` independently enables one-shot SSH execution. A disabled command policy
@@ -3517,12 +3522,12 @@ remote:
 |---|---|---|---|
 | `listen` | IP literal | `127.0.0.1` | Address to bind. DNS names and values with surrounding whitespace are invalid; IPv4 and IPv6 literals are accepted. Changing it requires `jb remote ssh restart`. Non-loopback deployment is outside JailBee's supported security boundary. |
 | `port` | int | `8022` | Listener port, from `1` through `65535`. Changing it requires a restart. |
-| `dashboard` | bool | `true` | Permit the reserved `dashboard` entry point. It always starts the terminal dashboard in its remote form — registered repos only, no config editor, no pager, no GUI app launches — and requires a PTY. |
+| `dashboard` | bool | `true` | Permit the reserved `dashboard` entry point. It always starts the terminal dashboard in its remote form — registered repos only, no config editor, no GUI app launches — and requires a PTY. |
 | `console` | bool | `true` | Permit the reserved `console [--repo PREFIX]` entry point: a restricted interactive JailBee console, not a host shell. Console-local navigation remains available when command execution is disabled. |
 | `exec` | bool | `true` | Permit one-shot `COMMAND [ARGS...] [--repo PREFIX]` execution and `repos`. This switch affects only the one-shot entry point. |
 | `default_entrypoint` | `help` \| `dashboard` \| `console` | `help` | Route a commandless SSH login to this entry point. `help` prints the enabled remote forms and allowed command paths; `dashboard` and `console` require their corresponding entry point to be enabled and a PTY. An explicit `ssh jailbee@host help` always prints the list, even with a different default. |
 | `commands.mode` | `disabled` \| `allowlist` \| `full` | `full` when the whole `commands` block is omitted; `disabled` when a `commands` block is written without `mode` | Policy for JailBee command execution in the console and dashboard. `disabled` blocks command-running dashboard actions while dashboard/console navigation remains available; `allowlist` accepts exact leaves from `commands.allow`; `full` accepts classified public leaves. In restricted sessions, unknown/unclassified command paths fail closed. While host restrictions apply, a remote command may not set a path-typed option or argument (such as `--config`) nor `new --mount`, regardless of command mode — see [Security](security.md#remote-ssh). |
-| `restrict_host` | bool | `true` | Keep remote sessions off the host itself: no path-typed arguments (`--config`, ...) or `new --mount` on any command; no config editor, diff pager or GUI app launches in the dashboard (with `rdp` on, or in a `waypipe ssh` session with `waypipe` on, app commands use the shared RDP display or the session's waypipe display); a git bridge that moves refs but never the host's checked-out tree; no `shell`/`tmux`/`exec` into a mount-mode container (it shares the host's working tree); no approving a branch's privilege-widening autostart config; and no host-management command (`config edit`, `remote ...`, `setup`, `apply`, `port to-container`, `gui`, ...) in any `commands.mode`, `full` included. GUI launches, network widening and optional mounts have the narrow opt-ins described below; these do not unlock general host management. `false` lifts all of these at once, so an allowed command behaves exactly as it does locally; the startup log then says `host restrictions: OFF`. A server started from inside a restricted session stays restricted whatever this says. See [Security](security.md#remote-ssh). |
+| `restrict_host` | bool | `true` | Keep remote sessions off the host itself: no path-typed arguments (`--config`, ...) or `new --mount` on any command; no config editor or GUI app launches in the dashboard (with `rdp` on, or in a `waypipe ssh` session with `waypipe` on, app commands use the shared RDP display or the session's waypipe display); a git bridge that moves refs but never the host's checked-out tree; no `shell`/`tmux`/`exec` into a mount-mode container (it shares the host's working tree); no approving a branch's privilege-widening autostart config; and no host-management command (`config edit`, `remote ...`, `setup`, `apply`, `port to-container`, `gui`, ...) in any `commands.mode`, `full` included. GUI launches, network widening and optional mounts have the narrow opt-ins described below; these do not unlock general host management. `false` lifts all of these at once, so an allowed command behaves exactly as it does locally; the startup log then says `host restrictions: OFF`. A server started from inside a restricted session stays restricted whatever this says. See [Security](security.md#remote-ssh). |
 | `rdp` | bool | `false` | Permit the shared RDP display: GUI launches over plain SSH draw on it, SSH may forward to its TCP port, and dev containers mount its socket directory (one screen and clipboard shared by every participating container). See [Remote GUI](remote-gui.md) and [Security](security.md#remote-gui). |
 | `waypipe` | bool | `true` | Permit `waypipe ssh` sessions: GUI launches in such a session open as native windows on the client. Each container reaches only its own waypipe server. Allows one constrained reverse Unix-socket forward per connection. See [Remote GUI](remote-gui.md). |
 | `gpg` | bool | `false` | Accept one client gpg-agent forward per authenticated SSH connection at the fixed marker `/jailbee/gpg-agent`. While connected, all `gpg.enabled` containers use the client's keys; the newest live forward wins, then the host agent resumes. Restart containers once to pick up the switch mounts. SSH authentication still uses the host agent. |
@@ -3607,6 +3612,27 @@ The old `shell` spelling of the remote entry point (`remote.ssh.shell`, `default
 above for that one foreground run, for trying out a different policy without
 editing this file — see [`serve`](commands.md#remote-ssh-service). Persistent
 settings still belong here; the systemd service never passes those flags.
+
+### `remote.web`
+
+Host-global remote policy for the web transport. Like `remote.ssh`, it is set
+only in `~/.config/jailbee/global.yaml`. It carries the shared permission
+settings and nothing else: the policy keys are the same as `remote.ssh`'s
+(`commands.mode`, `commands.allow`, `restrict_host`, `excluded_repos`,
+`mount_roots`, `mounts`, `orchestration`, `network`, `files`, `rdp`) and mean
+the same, see [`remote.ssh`](#remotessh) and
+[Remote policy](security.md#remote-policy). The defaults are the most
+restrictive policy:
+
+| Key | Default |
+|---|---|
+| `commands.mode` | `disabled` |
+| `restrict_host` | `true`, and `false` is a validation error |
+| `mounts`, `mount_roots` | off, empty |
+| `orchestration` | `off` |
+| `network` | `false` |
+| `files` | unset, which follows `commands.mode` (so off by default) |
+| `rdp` | `false` |
 
 ### `credentials`
 

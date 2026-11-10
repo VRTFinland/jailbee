@@ -9,7 +9,7 @@ and which argv each one runs.
 
 Visibility follows the remote-SSH policy exactly. An entry is offered only
 when `dashboard.commands.permitted` accepts the argv shape it will run, and
-the spawn re-checks the real argv anyway. Locally (`over_ssh` false) the
+the spawn re-checks the real argv anyway. Locally (`transport` is `none`) the
 policy is never consulted.
 
 Must not import `jailbee.dashboard.tui`, which imports this module.
@@ -23,11 +23,11 @@ from dataclasses import dataclass
 from itertools import takewhile
 from typing import TYPE_CHECKING
 
-from jailbee.dashboard.commands import insert_options_before_separator, permitted
+from jailbee.dashboard.commands import Transport, insert_options_before_separator, permitted
 from jailbee.dashboard.overlays import Picker, PickerEntry, TextPrompt
 
 if TYPE_CHECKING:
-    from jailbee.config.models_remote import RemoteSSHConfig
+    from jailbee.config.models_remote import RemotePolicy
     from jailbee.dashboard.model import RepoAdvisory, RepoGroup
     from jailbee.lifecycle import ContainerInfo
     from jailbee.orchestration.runner_model import Runner
@@ -100,11 +100,11 @@ class RepoExtras:
     prune: Leaf | None
 
 
-def repo_extras(ssh_policy: RemoteSSHConfig | None, *, over_ssh: bool) -> RepoExtras:
+def repo_extras(ssh_policy: RemotePolicy | None, *, transport: Transport) -> RepoExtras:
     """What an actionable repo's menu adds; each entry hidden when its command would be refused."""
 
     def offer(leaf: Leaf, argv: list[str]) -> Leaf | None:
-        return leaf if permitted(argv, ssh_policy, over_ssh=over_ssh) else None
+        return leaf if permitted(argv, ssh_policy, transport=transport) else None
 
     diagnostics = (
         offer(("Doctor", REPO_DOCTOR), doctor_argv()),
@@ -154,14 +154,14 @@ def dismiss_picker(prefix: str, advisories: Sequence[RepoAdvisory]) -> Picker:
     )
 
 
-def addressed(argv: Sequence[str], flags: Sequence[str], *, over_ssh: bool) -> list[str]:
+def addressed(argv: Sequence[str], flags: Sequence[str], *, transport: Transport) -> list[str]:
     """``argv`` pointed at its repo: ``flags`` (``--config``) go before any ``--``.
 
     Over SSH nothing is added. The child is addressed by its cwd alone, because
     a host config path is exactly the host-reaching argument the remote policy
     refuses (`router.check_arguments`).
     """
-    if over_ssh:
+    if transport != "none":
         return list(argv)
     return insert_options_before_separator(list(argv), flags)
 
@@ -636,17 +636,17 @@ def adoptable_rows(rows: Sequence[ContainerInfo], orchestrator: str) -> list[Con
 
 
 def orchestration_grant_permitted(
-    container: ContainerInfo, ssh_policy: RemoteSSHConfig | None, *, over_ssh: bool
+    container: ContainerInfo, ssh_policy: RemotePolicy | None, *, transport: Transport
 ) -> bool:
     """Whether ``orchestrate grant`` (every edit but revoke) may run for this container."""
-    return permitted(orchestrate_grant_argv(container.name), ssh_policy, over_ssh=over_ssh)
+    return permitted(orchestrate_grant_argv(container.name), ssh_policy, transport=transport)
 
 
 def orchestration_offered(
     container: ContainerInfo,
-    ssh_policy: RemoteSSHConfig | None,
+    ssh_policy: RemotePolicy | None,
     *,
-    over_ssh: bool,
+    transport: Transport,
     rows: Sequence[ContainerInfo] = (),
 ) -> bool:
     """Offer orchestration when a permitted action applies to this container."""
@@ -656,21 +656,23 @@ def orchestration_offered(
         and container.mode != "mount"
     ):
         return False
-    if orchestration_grant_permitted(container, ssh_policy, over_ssh=over_ssh):
+    if orchestration_grant_permitted(container, ssh_policy, transport=transport):
         return True
     if container.grant is None:
         return False
-    if permitted(orchestrate_revoke_argv(container.name), ssh_policy, over_ssh=over_ssh):
+    if permitted(orchestrate_revoke_argv(container.name), ssh_policy, transport=transport):
         return True
-    if permitted(orchestrate_profile_save_argv(container.name, "x"), ssh_policy, over_ssh=over_ssh):
+    if permitted(
+        orchestrate_profile_save_argv(container.name, "x"), ssh_policy, transport=transport
+    ):
         return True
     return any(
-        permitted(orchestrate_adopt_argv(container.name, row.name), ssh_policy, over_ssh=over_ssh)
+        permitted(orchestrate_adopt_argv(container.name, row.name), ssh_policy, transport=transport)
         for row in adoptable_rows(rows, container.name)
     ) or any(
         row.child is not None
         and row.child.orchestrator == container.name
-        and permitted(orchestrate_release_argv(row.name), ssh_policy, over_ssh=over_ssh)
+        and permitted(orchestrate_release_argv(row.name), ssh_policy, transport=transport)
         for row in rows
     )
 
@@ -701,9 +703,9 @@ class ContainerExtras:
 def container_extras(
     container: ContainerInfo,
     mount_kinds: Sequence[str],
-    ssh_policy: RemoteSSHConfig | None,
+    ssh_policy: RemotePolicy | None,
     *,
-    over_ssh: bool,
+    transport: Transport,
     remote_mountable: Sequence[str] = (),
     rows: Sequence[ContainerInfo] = (),
     services: Sequence[str] = (),
@@ -718,7 +720,7 @@ def container_extras(
     name = container.name
 
     def allowed(argv: list[str]) -> bool:
-        return permitted(argv, ssh_policy, over_ssh=over_ssh)
+        return permitted(argv, ssh_policy, transport=transport)
 
     after_job: list[Leaf] = []
     if (
@@ -739,12 +741,16 @@ def container_extras(
         if allowed(snapshot_ls_argv(name)):
             before.append(("Snapshots…", SNAPSHOTS))
         if mount_entries(
-            container, mount_kinds, ssh_policy, over_ssh=over_ssh, remote_mountable=remote_mountable
+            container,
+            mount_kinds,
+            ssh_policy,
+            transport=transport,
+            remote_mountable=remote_mountable,
         ):
             before.append(("Mounts…", MOUNTS))
     if services and container.state == "Running" and allowed(service_ls_argv(name)):
         before.append(("Services…", SERVICES))
-    if orchestration_offered(container, ssh_policy, over_ssh=over_ssh, rows=rows):
+    if orchestration_offered(container, ssh_policy, transport=transport, rows=rows):
         before.append(("Orchestration…", ORCHESTRATION))
     return ContainerExtras(tuple(after_job), tuple(before))
 
@@ -756,9 +762,9 @@ _UNMOUNT_VALUE = "unmount:"
 def mount_directions(
     container: ContainerInfo,
     kinds: Sequence[str],
-    ssh_policy: RemoteSSHConfig | None,
+    ssh_policy: RemotePolicy | None,
     *,
-    over_ssh: bool,
+    transport: Transport,
     remote_mountable: Sequence[str] = (),
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """The configured kinds ``container`` may mount, and those it may unmount.
@@ -770,11 +776,11 @@ def mount_directions(
     SSH session a kind is mountable only when `remote_mountable` names it, the
     same rule `jailbee mount` applies there.
     """
-    from jailbee.remote_ssh.session import is_remote_session
+    from jailbee.remote_ssh.session import is_restricted_session
 
-    can_add = permitted(mount_argv("kind", container.name), ssh_policy, over_ssh=over_ssh)
-    can_remove = permitted(unmount_argv("kind", container.name), ssh_policy, over_ssh=over_ssh)
-    restricted = over_ssh and is_remote_session()
+    can_add = permitted(mount_argv("kind", container.name), ssh_policy, transport=transport)
+    can_remove = permitted(unmount_argv("kind", container.name), ssh_policy, transport=transport)
+    restricted = transport != "none" and is_restricted_session()
     addable = tuple(
         kind for kind in kinds if can_add and (not restricted or kind in remote_mountable)
     )
@@ -785,14 +791,14 @@ def mount_directions(
 def mount_entries(
     container: ContainerInfo,
     kinds: Sequence[str],
-    ssh_policy: RemoteSSHConfig | None,
+    ssh_policy: RemotePolicy | None,
     *,
-    over_ssh: bool,
+    transport: Transport,
     remote_mountable: Sequence[str] = (),
 ) -> tuple[PickerEntry, ...]:
     """One entry per configured kind: attached ones unmount, the rest mount."""
     addable, removable = mount_directions(
-        container, kinds, ssh_policy, over_ssh=over_ssh, remote_mountable=remote_mountable
+        container, kinds, ssh_policy, transport=transport, remote_mountable=remote_mountable
     )
     entries: list[PickerEntry] = []
     for kind in kinds:

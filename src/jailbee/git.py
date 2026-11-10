@@ -644,9 +644,9 @@ def _refuse_host_tree_write(action: str) -> None:
     Guards every primitive here that writes the host's checked-out tree:
     `checkout_branch`, `merge_ref`, `submodule_update` and `init_subrepo_gitdir`.
     """
-    from jailbee.remote_ssh.session import host_tree_refusal, is_remote_session
+    from jailbee.remote_ssh.session import host_tree_refusal, is_restricted_session
 
-    if is_remote_session():
+    if is_restricted_session():
         raise HostTreeWriteRefusedError(host_tree_refusal(action))
 
 

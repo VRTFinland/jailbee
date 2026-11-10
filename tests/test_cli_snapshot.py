@@ -90,9 +90,16 @@ def test_delete_picks_the_container_destructively_then_the_tag(mocker, tmp_path,
     """Unmocked resolver: one container is still picked (not auto-taken), then the tag."""
     mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(tmp_path))
     mocker.patch("jailbee.incus.Incus", return_value=mocker.MagicMock())
-    info = mocker.MagicMock()
-    info.name = "app-x"
-    info.display_name = "x"
+    from jailbee.lifecycle import ContainerInfo
+
+    info = ContainerInfo(
+        name="app-x",
+        state="Running",
+        network="strict",
+        ip="10.0.0.5",
+        memory_limit="4GB",
+        repo="app",
+    )
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[info])
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     pick_container = mocker.patch("jailbee.tui.pick_container", return_value="app-x")

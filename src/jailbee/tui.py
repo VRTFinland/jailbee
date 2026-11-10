@@ -11,7 +11,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-import typer
 from rich.console import Console
 from rich.text import Text
 
@@ -24,6 +23,7 @@ if TYPE_CHECKING:
     from jailbee.destroy_guard import RiskSummary
     from jailbee.incus import Incus
     from jailbee.lifecycle import ContainerInfo
+    from jailbee.prompting import Option
     from jailbee.submodule_pr import SubCandidate, SubmodulePrPlan
     from jailbee.sync import BridgePlan, RefSummary
 
@@ -251,24 +251,17 @@ def default_confirm(msg: str) -> bool:
     The default `ConfirmFn` for modules that need to confirm a destructive or
     privilege-widening action. Callers inject their own in tests and in
     non-interactive contexts (e.g. the detached background worker, which must
-    never block on stdin).
+    never block on stdin); the callers that use this default check
+    `prompting.is_interactive()` first.
 
-    Returns the documented default — `False` — instead of raising when stdin is
-    closed or exhausted (`jailbee new < /dev/null`, CI, a script). There is no answer
-    to be had there, and "not confirmed" is the safe reading.
-
-    `KeyboardInterrupt` is deliberately *not* caught. Ctrl-C means "abandon this
-    command", not "answer no" — and the two differ: `run_apply` treats a `False`
-    answer as "skip the restart" and then finishes normally, so swallowing Ctrl-C
-    would make `jailbee apply` exit 0 having done half its job. Click converts an
-    escaping KeyboardInterrupt into `Abort`, which is the behaviour we want.
+    A thin call into `prompting.ask_confirm`: off a terminal it is
+    `MissingValue` (exit 2), never a silent "no"; Ctrl-C / Esc is `Cancelled`
+    (exit 1), never "no" either, so `run_apply` cannot finish normally having
+    skipped half its job.
     """
-    from rich.prompt import Confirm
+    from jailbee import prompting
 
-    try:
-        return Confirm.ask(msg, default=False)
-    except EOFError:
-        return False
+    return prompting.ask_confirm(msg, default=False)
 
 
 CredentialSide = Literal["group", "repo"]
@@ -308,8 +301,6 @@ def choose_shared_credential(
     if not prompting.is_interactive():
         return None
 
-    import questionary
-
     # warn_plain, not warn: the body is two filesystem paths, and `warn`
     # would read any square bracket in one as a Rich style tag and silently
     # delete it — leaving the user a path that does not exist.
@@ -330,31 +321,49 @@ def choose_shared_credential(
             "then re-run `jailbee apply`.",
         ]
     )
-    choices = [
-        questionary.Choice(
-            title=f"the group's login ({group_dir.name}) — delete this repo's copy",
-            value="group",
+    # The "cancel" row is an explicit value, not a cancel: it reads as a
+    # choice to the caller, and maps to the same None as Ctrl-C does below.
+    options = [
+        prompting.Option(
+            "group",
+            f"the group's login ({group_dir.name}) — delete this repo's copy",
+            "the group's login",
         ),
-        questionary.Choice(
-            title="this repo's login — replaces the group's for every member repo",
-            value="repo",
+        prompting.Option(
+            "repo",
+            "this repo's login — replaces the group's for every member repo",
+            "this repo's login",
         ),
-        # An explicit sentinel, not `value=None`: questionary falls back to
-        # the *title* when a Choice's value is None, so cancelling would
-        # return the label string and read as a valid answer.
-        questionary.Choice(title="cancel — change nothing", value="cancel"),
+        prompting.Option("cancel", "cancel — change nothing", "cancel"),
     ]
-    result = questionary.select(
-        "Which login should the group keep?",
-        choices=choices,
-    ).ask()
-    # `None` is questionary's own Ctrl-C / ESC answer, which means the same.
-    if result is None or result == "cancel":
+    question = "Which login should the group keep?"
+    try:
+        side = prompting.choose_one(
+            "login",
+            options,
+            question=question,
+            picker=lambda opts: _render_choice(question, opts),
+        )
+    except prompting.Cancelled:
         return None
-    # Spelled out rather than `return result`: `ask()` is typed `Any`, and
-    # narrowing here is what keeps the Literal return honest.
-    assert result in ("group", "repo"), f"unexpected picker answer: {result!r}"
-    return "group" if result == "group" else "repo"
+    if side == "cancel":
+        return None
+    # Spelled out rather than `return side`: the answer is typed `Any` by the
+    # backend, and narrowing here keeps the Literal return honest.
+    assert side in ("group", "repo"), f"unexpected picker answer: {side!r}"
+    return "group" if side == "group" else "repo"
+
+
+def _render_choice(question: str, options: Sequence[Any]) -> Any | None:
+    """Render a single-choice question as an arrow-key list; None on Ctrl-C / Esc.
+
+    The renderer behind `prompting.choose_one` for a question whose text is
+    not the generic "Select <noun>:". Each option's value is the answer.
+    """
+    import questionary
+
+    choices = [questionary.Choice(title=o.title, value=o.value) for o in options]
+    return questionary.select(question, choices=choices).ask()
 
 
 def confirm_destroy_risk(
@@ -386,19 +395,29 @@ def confirm_destroy_risk(
     anything is at risk — so a caller that has not asked yet never stacks
     its confirmation on top of this one.
     """
+    from jailbee import prompting
+
+    lines: list[str] = []
     if unknown:
         from jailbee.destroy_guard import unknown_status_warning
 
-        warn(unknown_status_warning(unknown))
-    for summary in summaries:
-        warn(summary.line)
-    if question is not None:
-        if summaries:
-            typer.echo("   Destroying loses this.")
-        return typer.confirm(question, default=False)
-    if not summaries:
+        lines.append(f"⚠ {unknown_status_warning(unknown)}")
+    lines.extend(f"⚠ {summary.line}" for summary in summaries)
+    if question is None and not summaries:
+        # Nothing to ask: the note, if any, is all there is.
+        for line in lines:
+            warn_plain(line.removeprefix("⚠ "))
         return True
-    return typer.confirm("   Destroying loses this. Continue?", default=False)
+    if question is not None and summaries:
+        lines.append("   Destroying loses this.")
+    # The summary travels with the question (`detail`): the terminal prints it
+    # above, a dashboard shows it in the confirmation itself.
+    return prompting.ask_confirm(
+        question or "   Destroying loses this. Continue?",
+        default=False,
+        destructive=True,
+        detail="\n".join(lines) or None,
+    )
 
 
 def _choice_base(c: ContainerInfo) -> str:
@@ -715,6 +734,21 @@ def checkbox(
     return list(result)
 
 
+def container_options(containers: Sequence[ContainerInfo]) -> list[Option[str]]:
+    """Prompt options for `containers`: the value is the full name and the title
+    is the table row `pick_container` draws, so a dashboard lists what a terminal
+    lists. Pair with `pick_container` as the `picker=`."""
+    from jailbee import prompting
+
+    if not containers:
+        return []
+    widths = _choice_widths(list(containers))
+    return [
+        prompting.Option(c.name, _format_choice_title(c, widths), c.display_name)
+        for c in containers
+    ]
+
+
 def pick_container(
     containers: list[ContainerInfo], *, message: str = "Select a container:"
 ) -> str | None:
@@ -786,18 +820,31 @@ def pick_submodule(candidates: list[SubCandidate]) -> str | None:
 
 def pick_submodules_multi(candidates: list[SubCandidate]) -> list[str] | None:
     """Select submodule PRs to publish before the superproject PR."""
-    import questionary
-
+    from jailbee import prompting
     from jailbee.submodule_pr import describe_candidate
 
     width = max((len(c.path) for c in candidates), default=0)
-    return checkbox(
-        "Publish these submodule PRs first?",
-        choices=[
-            questionary.Choice(title=describe_candidate(c, width=width), value=c.path, checked=True)
-            for c in candidates
-        ],
-    )
+    options = [
+        prompting.Option(c.path, describe_candidate(c, width=width), c.path) for c in candidates
+    ]
+
+    def render(opts: Sequence[prompting.Option[str]]) -> list[str] | None:
+        import questionary
+
+        # Every submodule starts ticked: publishing them first is the default.
+        choices = [questionary.Choice(title=o.title, value=o.value, checked=True) for o in opts]
+        return checkbox("Publish these submodule PRs first?", choices=choices)
+
+    try:
+        return prompting.choose_many(
+            "submodule",
+            options,
+            picker=render,
+            question="Publish these submodule PRs first?",
+            default=[c.path for c in candidates],
+        )
+    except prompting.Cancelled:
+        return None
 
 
 def pick_containers_multi(
@@ -818,16 +865,54 @@ def pick_containers_multi(
     Bare Enter (no space-toggles) selects the highlighted row — see
     :func:`checkbox`.
     """
-    import questionary
+    from jailbee import prompting
 
     widths = _choice_widths(containers)
-    choices = [
-        questionary.Choice(title=_format_choice_title(c, widths), value=c.name) for c in containers
+    options = [
+        prompting.Option(c.name, _format_choice_title(c, widths), c.shown_name) for c in containers
     ]
-    result = checkbox(message, choices=choices, initial_choice=initial)
-    if result is None:
+
+    def render(opts: Sequence[prompting.Option[str]]) -> list[str] | None:
+        import questionary
+
+        choices = [questionary.Choice(title=o.title, value=o.value) for o in opts]
+        return checkbox(message, choices=choices, initial_choice=initial)
+
+    try:
+        picked = prompting.choose_many("container", options, picker=render, question=message)
+    except prompting.Cancelled:
         return None
-    return [str(v) for v in result]
+    return [str(v) for v in picked]
+
+
+def choose_account(
+    choices: Sequence[tuple[AccountAdapter, Slot]], message: str
+) -> tuple[str, str] | None:
+    """Ask which stored login, through `prompting` so a dashboard is asked too.
+
+    Returns `(agent name, slot name)`, or None if the user cancels. The
+    terminal draws `pick_account`; both show the same rows and `message`.
+    """
+    from jailbee import prompting
+
+    widths = _account_choice_widths(choices)
+    options = [
+        prompting.Option(
+            (adapter.name, slot.name),
+            _account_choice_title((adapter, slot), widths),
+            f"{adapter.name} {slot.display_name}",
+        )
+        for adapter, slot in choices
+    ]
+    try:
+        return prompting.choose_one(
+            "login",
+            options,
+            question=message,
+            picker=lambda _opts: pick_account(choices, message),
+        )
+    except prompting.Cancelled:
+        return None
 
 
 def _account_choice_widths(choices: Sequence[tuple[AccountAdapter, Slot]]) -> dict[str, int]:
@@ -895,24 +980,30 @@ def pick_account(
     return str(agent), str(name)
 
 
-def pick_container_for_group(cfg: Config, incus: Incus, names: Sequence[str]) -> str | None:
-    """Arrow-key picker over this repo's containers. Returns the name.
+GROUP_PICKER_QUESTION = "Change the group of:"
 
-    Each row carries the container's current credential group, because
-    that is the fact the user is about to change. Returns None if the user
-    cancels; the caller does the TTY check.
-    """
-    import questionary
 
+def container_group_options(cfg: Config, incus: Incus, names: Sequence[str]) -> list[Option[str]]:
+    """Prompt options over this repo's containers, each row carrying the
+    container's current credential group: the fact the user is about to change."""
+    from jailbee import prompting
     from jailbee.accounts import groups
 
-    width = max(len(n) for n in names)
-    choices = []
+    width = max((len(n) for n in names), default=0)
+    options = []
     for name in names:
         group = groups.effective_group(cfg, incus, name)
         label = "no group" if group is None else group
-        choices.append(questionary.Choice(title=f"{name:<{width}}  {label}", value=name))
-    result = questionary.select("Change the group of:", choices=choices).ask()
+        options.append(prompting.Option(name, f"{name:<{width}}  {label}", name))
+    return options
+
+
+def pick_container_for_group(options: Sequence[Any]) -> str | None:
+    """Arrow-key picker over `container_group_options`. Returns the name.
+
+    Returns None if the user cancels; the caller does the TTY check.
+    """
+    result = _render_choice(GROUP_PICKER_QUESTION, options)
     return None if result is None else str(result)
 
 

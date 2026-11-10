@@ -488,7 +488,7 @@ def _no_container_binding_snapshot(
 
 
 @pytest.fixture(autouse=True)
-def _interactive_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def _interactive_by_default(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Keep a developer's `JAILBEE_NONINTERACTIVE` out of the suite.
 
     `prompting.is_interactive` reads it, so with it exported in the shell every
@@ -496,6 +496,28 @@ def _interactive_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     about the override set it themselves; this runs first.
     """
     monkeypatch.delenv("JAILBEE_NONINTERACTIVE", raising=False)
+    monkeypatch.delenv("JAILBEE_PROMPT_FD", raising=False)
+    yield
+    # A test that adopted a prompt channel must not leak it to the next one.
+    from jailbee import prompting
+
+    prompting.drop_channel()
+
+
+@pytest.fixture
+def typed_confirmations(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the process a terminal for `prompting`, whatever `is_interactive` says.
+
+    The terminal's yes/no is `typer.confirm`, which reads stdin, so
+    `CliRunner(input="y\n")` answers it as in production; this only pins the
+    terminal backend so a test can still pretend there is no TTY for the code's
+    own checks. Tests that patch `prompting._confirm` themselves override it.
+    """
+    from jailbee import prompting
+
+    monkeypatch.setattr(
+        prompting, "select_backend", lambda interactive=None: prompting.TerminalBackend()
+    )
 
 
 @pytest.fixture(autouse=True)

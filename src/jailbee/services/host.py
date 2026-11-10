@@ -123,7 +123,7 @@ def refresh(
                 "Agents you started by hand keep running during the elevated window: "
                 f"{', '.join(foreign)}. Continue?"
             )
-            if not prompting.is_interactive() or not prompting.confirm(message, default=False):
+            if not prompting.is_interactive() or not prompting.ask_confirm(message, default=False):
                 raise elevated.RefreshError(message + " Refresh refused.")
         owner = incus.config_get_checked(full, labels.SPAWNED_BY)
         prefix = ""

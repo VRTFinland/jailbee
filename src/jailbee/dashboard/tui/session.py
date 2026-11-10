@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from jailbee.accounts.groups import RESERVED_GROUP_NAMES
-from jailbee.config.models_remote import RemoteSSHConfig
+from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard import accounts as da
 from jailbee.dashboard import actions as dact
 from jailbee.dashboard import advisories as dadv
@@ -63,19 +63,22 @@ from jailbee.dashboard.columns import (
     settings_repo_prefixes,
 )
 from jailbee.dashboard.commands import (
+    Transport,
     check_dashboard_command,
     command_argv,
     completion_candidates,
     dashboard_action_argv,
     insert_options_before_separator,
     permitted,
+    remote_unlocks,
 )
 from jailbee.dashboard.dispatch import (
     DispatchStyle,
     _dispatch_action,
-    _run_bulk_foreground,
     _run_cli_foreground,
     _wait_for_return,
+    action_cli_argv,
+    action_style,
     command_needs_pause,
     dispatch_style,
 )
@@ -134,6 +137,7 @@ from jailbee.dashboard.overlays import (
     parse_pr_number,
     validate_answer,
 )
+from jailbee.dashboard.runner import ActionOutcome, ActionRun, RunResult, is_attach_style
 from jailbee.dashboard.settings import (
     SettingsState,
     Tab,
@@ -237,6 +241,7 @@ _PUBLISH_ISSUE_KINDS = ("create", "edit", "comment", "labels", "state", "assign_
 GRANT_PATCH_SECONDS = 15.0  # how long a local grant edit outlasts a snapshot that lacks it
 NOTICE_SECONDS = 2.5  # how long a transient subtitle message stays up
 FAILURE_NOTICE_SECONDS = 8.0  # a refused account command's reason, long enough to read
+RUNNING_NOTICE_SECONDS = 3600.0  # an action in flight: replaced the moment it ends
 STARTUP_NOTICE_SECONDS = 10.0  # a config-migration notice shown at launch
 
 Outcome = Literal["quit", "toggle-mouse"] | None
@@ -266,6 +271,17 @@ class MergePick:
     sources: tuple[str, ...]  # full names, listing order
     targets: frozenset[str] = frozenset()
     saved_marks: frozenset[str] = frozenset()  # bulk marks to restore on Esc
+
+
+def _last_line(text: str, style: DispatchStyle) -> str:
+    """``": <last output line>"`` for a failed bare action, whose output has no screen."""
+    if style != "plain":
+        return ""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    line = lines[-1]
+    return ": " + (line if len(line) <= 100 else line[:99] + "…")
 
 
 def _now() -> datetime:
@@ -300,6 +316,18 @@ class Terminal(Protocol):
 
     def hand_off(self, fn: Callable[[], int]) -> int:
         """Give the real terminal to ``fn`` (a child command), take it back, return its result."""
+        ...
+
+    def run_actions(self, runs: Sequence[ActionRun], done: Callable[[ActionOutcome], None]) -> None:
+        """Run each action through the action runner without taking the terminal.
+
+        The child's questions are asked by the frontend itself. Returns at once;
+        ``done`` is called on the frontend's own thread when the last run ended.
+        """
+        ...
+
+    def show_output(self, title: str, text: str, *, failed: bool) -> None:
+        """Show an action's captured ``text`` until the user dismisses it."""
         ...
 
 
@@ -387,8 +415,8 @@ class DashboardSession:
         cwd_root: Path | None,
         terminal: Terminal,
         remote: bool = False,
-        over_ssh: bool = False,
-        ssh_policy: RemoteSSHConfig | None = None,
+        transport: Transport = "none",
+        ssh_policy: RemotePolicy | None = None,
         scope: RemoteRepoScope | None = None,
         auto_optimize: bool = True,
     ) -> None:
@@ -396,7 +424,7 @@ class DashboardSession:
         self.cwd_root = cwd_root
         self.terminal = terminal
         self.remote = remote
-        self.over_ssh = over_ssh
+        self.transport: Transport = transport
         self.ssh_policy = ssh_policy
         self.scope = scope
         self.engine = startup.engine
@@ -451,7 +479,7 @@ class DashboardSession:
         self.presented: list[RepoGroup] = present(snapshot.groups, cwd_root, scope)
         self.all_groups: list[RepoGroup] = list(self.presented)
         self.git_enabled = snapshot.git_enabled
-        self.update = None if over_ssh else snapshot.update
+        self.update = None if transport != "none" else snapshot.update
         self.system = snapshot.system
         self.groups: list[RepoGroup] = visible_repo_groups(
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
@@ -482,7 +510,7 @@ class DashboardSession:
         self._apply_grant_patches()
         self.all_groups = self._sorted(self.presented)
         self.git_enabled = snapshot.git_enabled
-        self.update = None if self.over_ssh else snapshot.update
+        self.update = None if (self.transport != "none") else snapshot.update
         self.system = snapshot.system
         self.groups = visible_repo_groups(
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
@@ -585,7 +613,7 @@ class DashboardSession:
             running=self.bulk_running(),
             sources=sources,
             ineligible=ineligible,
-            over_ssh=self.over_ssh,
+            transport=self.transport,
             ssh_policy=self.ssh_policy,
         )
 
@@ -702,6 +730,87 @@ class DashboardSession:
         self.set_notice(f"'{repo.repo_root}' no longer exists")
         self.client.refresh()
 
+    def run_action(
+        self,
+        repo: RepoTarget,
+        argv: list[str],
+        *,
+        style: DispatchStyle,
+        label: str,
+        then: Callable[[int | None], None] | None = None,
+    ) -> None:
+        """Run ``jailbee <argv>`` through the action runner, in the dashboard.
+
+        ``argv`` is the command without the program name, already addressed at
+        ``repo`` and policy-checked by the caller. Returns at once: the result
+        is settled on the frontend's thread by :meth:`_settle_actions`, which
+        then calls ``then`` with the exit code (None when nothing ran).
+        """
+        self._start_actions([ActionRun(argv, repo.cwd())], [repo], style, label, then)
+
+    def _start_actions(
+        self,
+        runs: list[ActionRun],
+        repos: list[RepoTarget],
+        style: DispatchStyle,
+        label: str,
+        then: Callable[[int | None], None] | None,
+        *,
+        settled: Callable[[ActionOutcome], None] | None = None,
+    ) -> None:
+        self.set_notice(f"running 'jailbee {label}'…", RUNNING_NOTICE_SECONDS)
+
+        def finished(outcome: ActionOutcome) -> None:
+            self.notice_until = 0.0  # the running notice is over
+            if settled is not None:
+                settled(outcome)
+            else:
+                rc = self._settle_actions(repos[0], label, style, outcome)
+                if then is not None:
+                    then(rc)
+
+        self.terminal.run_actions(runs, finished)
+
+    def _settle_actions(
+        self, repo: RepoTarget, label: str, style: DispatchStyle, outcome: ActionOutcome
+    ) -> int | None:
+        """Notice how one action ended and present its output; return its exit code."""
+        result = outcome.results[-1] if outcome.results else RunResult(error="nothing ran")
+        if result.refused is not None:
+            self.set_notice(result.refused, FAILURE_NOTICE_SECONDS)
+            return None
+        if result.error is not None:
+            if not repo.repo_root.is_dir():
+                self._report_vanished_repo(repo)
+            else:
+                self.set_notice(
+                    f"could not start 'jailbee {label}': {result.error}", FAILURE_NOTICE_SECONDS
+                )
+            return None
+        rc = result.status if result.status is not None else 1
+        text = outcome.output
+        self._present_output(label, style, rc, text)
+        if rc != 0:
+            self.set_notice(f"'jailbee {label}' exited {rc}{_last_line(text, style)}")
+        elif style == "report":
+            # A clean run shows nothing, so this is all that says it ran.
+            self.set_notice(f"'jailbee {label}' done")
+        self.client.refresh()  # an action likely changed state — refresh ASAP
+        return rc
+
+    def _present_output(self, label: str, style: DispatchStyle, rc: int, text: str) -> None:
+        """What the old pause/pager/bare styles become: an output screen or nothing.
+
+        ``output`` and ``paged`` always show what the command printed;
+        ``report`` only when it failed; ``plain`` never (a failure's last line
+        goes in the notice).
+        """
+        if not text.strip():
+            return
+        shows = style in ("output", "paged") or (style == "report" and rc != 0)
+        if shows:
+            self.terminal.show_output(f"jailbee {label}", text, failed=rc != 0)
+
     def dispatchable(self, target: str, verb: str) -> RepoTarget | None:
         """The repo to run ``verb`` on ``target`` in, or None after noticing why not.
 
@@ -724,7 +833,7 @@ class DashboardSession:
                     force=verb in ATTACH_VERBS or verb.startswith(APPS_RUN_PREFIX),
                 ),
                 self.ssh_policy,
-                over_ssh=self.over_ssh,
+                transport=self.transport,
             )
         except RouteError as exc:
             self.set_notice(str(exc))
@@ -736,7 +845,7 @@ class DashboardSession:
                 target,
                 remote=self.remote,
                 ssh_policy=self.ssh_policy,
-                over_ssh=self.over_ssh,
+                transport=self.transport,
                 orphans=True,
             )
         }:
@@ -748,6 +857,16 @@ class DashboardSession:
         repo = self.dispatchable(target, verb)
         if repo is None:
             return
+        if not is_attach_style([*verb.split(), target]) and not verb.endswith("--follow"):
+            # (`--follow` streams until Ctrl-C: it keeps the terminal, as before.)
+            style = action_style(
+                verb, remote=self.remote, transport=self.transport, ssh_policy=self.ssh_policy
+            )
+            argv = action_cli_argv(repo, verb, target, transport=self.transport)
+            if style == "paged":
+                argv.append("--color")  # the output screen renders it; a pipe would turn it off
+            self.run_action(repo, argv, style=style, label=f"{verb} {target}")
+            return
         try:
             rc = self.terminal.hand_off(
                 lambda: _dispatch_action(
@@ -755,7 +874,7 @@ class DashboardSession:
                     verb,
                     target,
                     remote=self.remote,
-                    over_ssh=self.over_ssh,
+                    transport=self.transport,
                     ssh_policy=self.ssh_policy,
                 )
             )
@@ -783,7 +902,7 @@ class DashboardSession:
             return None
         argv = ["net", "egress", "ls", *([container] if container else ["--repo"])]
         try:
-            check_dashboard_command(argv, self.ssh_policy, over_ssh=self.over_ssh)
+            check_dashboard_command(argv, self.ssh_policy, transport=self.transport)
             rows = load_egress_rows(Path(group.repo_root or ""), self.incus, container)
         except Exception as exc:
             self.set_notice(f"could not load egress entries: {exc}")
@@ -801,7 +920,7 @@ class DashboardSession:
             check_dashboard_command(
                 egress_argv(state, action, "example.com"),
                 self.ssh_policy,
-                over_ssh=self.over_ssh,
+                transport=self.transport,
             )
         except RouteError:
             return False
@@ -884,10 +1003,10 @@ class DashboardSession:
             return state
         argv = [
             *egress_argv(state, action, entry),
-            *(target.flags() if not self.over_ssh else []),
+            *(target.flags() if self.transport == "none" else []),
         ]
         try:
-            check_dashboard_command(argv, self.ssh_policy, over_ssh=self.over_ssh)
+            check_dashboard_command(argv, self.ssh_policy, transport=self.transport)
         except RouteError as exc:
             self.set_notice(str(exc))
             return state
@@ -956,7 +1075,7 @@ class DashboardSession:
         accepting a network-widening branch config unseen.
         """
         try:
-            check_dashboard_command(["new"], self.ssh_policy, over_ssh=self.over_ssh)
+            check_dashboard_command(["new"], self.ssh_policy, transport=self.transport)
         except RouteError as exc:
             self.set_notice(str(exc))
             return None
@@ -991,31 +1110,20 @@ class DashboardSession:
         # command the user asked for.
         command = " ".join(argv[:2])
         try:
-            check_dashboard_command(argv[1:], self.ssh_policy, over_ssh=self.over_ssh)
+            check_dashboard_command(argv[1:], self.ssh_policy, transport=self.transport)
         except RouteError as exc:
             self.set_notice(str(exc))
             return
 
-        def spawn() -> int:
-            rc = subprocess.run(argv, check=False, cwd=repo.cwd()).returncode
-            _wait_for_return()
-            return rc
-
-        def run_in_foreground() -> None:
-            try:
-                rc = self.terminal.hand_off(spawn)
-            except OSError:
-                self._report_vanished_repo(repo)
-                return
-            if rc != 0:
-                self.set_notice(f"'{command}' exited {rc}")
-            self.client.refresh()  # the new container should appear on the next frame
+        def run_with_questions() -> None:
+            # `argv` starts with the program name; the runner adds its own.
+            self.run_action(repo, argv[1:], style="output", label=command.removeprefix("jailbee "))
 
         def finish(result: JobResult) -> None:
             if needs_terminal(result):
-                # It stopped to ask something; the question needs the
-                # real terminal, so ask it there, as before.
-                run_in_foreground()
+                # It stopped to ask something: run it again where its
+                # questions are asked as dashboard modals.
+                run_with_questions()
                 return
             if result.returncode != 0:
                 reason = result.failure_line() or f"exited {result.returncode}"
@@ -1038,10 +1146,16 @@ class DashboardSession:
         style: DispatchStyle = "output",
         diagnostic_path: Path | None = None,
         allow_orphan: bool = False,
+        then: Callable[[int | None], None] | None = None,
+        foreground: bool = False,
     ) -> int | None:
-        """Hand the terminal to one dashboard-built `jailbee` command; notice a failure.
+        """Run one dashboard-built `jailbee` command; notice a failure.
 
-        Returns its exit code, or None when it was not run.
+        Runs through the action runner: returns None at once, and the exit
+        code (None when nothing ran) goes to ``then`` when it ends. With
+        ``foreground`` (or a ``diagnostic_path``) it instead hands the real
+        terminal to the command and returns its exit code, or None when it
+        was not run: the outbox flow needs the answer synchronously.
 
         ``target`` is re-resolved here because the row may have vanished
         while a picker was open. The policy is checked before `foreground`
@@ -1056,9 +1170,18 @@ class DashboardSession:
             self.set_notice(f"'{target}' is gone")
             return None
         try:
-            check_dashboard_command(argv, self.ssh_policy, over_ssh=self.over_ssh)
+            check_dashboard_command(argv, self.ssh_policy, transport=self.transport)
         except RouteError as exc:
             self.set_notice(str(exc), seconds=FAILURE_NOTICE_SECONDS)
+            return None
+        if not foreground and diagnostic_path is None and not is_attach_style(argv):
+            self.run_action(
+                repo,
+                dact.addressed(argv, repo.flags(), transport=self.transport),
+                style=style,
+                label=dact.command_label(argv),
+                then=then,
+            )
             return None
         try:
             rc = self.terminal.hand_off(
@@ -1067,7 +1190,7 @@ class DashboardSession:
                     argv,
                     style=style,
                     remote=self.remote,
-                    over_ssh=self.over_ssh,
+                    transport=self.transport,
                     ssh_policy=self.ssh_policy,
                     **({"diagnostic_path": diagnostic_path} if diagnostic_path is not None else {}),
                 )
@@ -1081,6 +1204,8 @@ class DashboardSession:
         if rc != 0:
             self.set_notice(f"'jailbee {dact.command_label(argv)}' exited {rc}")
         self.client.refresh()  # the command likely changed state: refresh now
+        if then is not None:
+            then(rc)
         return rc
 
     def open_container_entry(self, container: str, verb: str) -> Overlay | None:
@@ -1112,7 +1237,7 @@ class DashboardSession:
             return None
         group, info = found
         if not dact.orchestration_offered(
-            info, self.ssh_policy, over_ssh=self.over_ssh, rows=group.containers
+            info, self.ssh_policy, transport=self.transport, rows=group.containers
         ):
             self.set_notice("Orchestration is not available for this container")
             return None
@@ -1122,14 +1247,14 @@ class DashboardSession:
 
         entries: list[PickerEntry] = []
         revoke_ok = permitted(
-            dact.orchestrate_revoke_argv(container), self.ssh_policy, over_ssh=self.over_ssh
+            dact.orchestrate_revoke_argv(container), self.ssh_policy, transport=self.transport
         )
-        if not dact.orchestration_grant_permitted(info, self.ssh_policy, over_ssh=self.over_ssh):
+        if not dact.orchestration_grant_permitted(info, self.ssh_policy, transport=self.transport):
             try:
                 check_dashboard_command(
                     dact.orchestrate_grant_argv(container),
                     self.ssh_policy,
-                    over_ssh=self.over_ssh,
+                    transport=self.transport,
                 )
             except RouteError as exc:
                 entries.append(PickerEntry(f"Grant edits unavailable: {exc}", "grant-unavailable"))
@@ -1138,7 +1263,7 @@ class DashboardSession:
             grant = info.grant
             kinds = info.configured_mounts or group.optional_mounts
             bound = None
-            if self.over_ssh and self.ssh_policy is not None:
+            if (self.transport != "none") and self.ssh_policy is not None:
                 from jailbee.remote_ssh.orchestration_policy import grant_bound, rights_from_info
 
                 bound = grant_bound(self.ssh_policy, kinds, rights_from_info(info))
@@ -1176,7 +1301,7 @@ class DashboardSession:
             if permitted(
                 dact.orchestrate_profile_save_argv(container, "x"),
                 self.ssh_policy,
-                over_ssh=self.over_ssh,
+                transport=self.transport,
             ):
                 entries.append(PickerEntry("Save as profile…", "save-profile"))
             if revoke_ok:
@@ -1188,13 +1313,13 @@ class DashboardSession:
             if candidates and permitted(
                 dact.orchestrate_adopt_argv(container, candidates[0].name),
                 self.ssh_policy,
-                over_ssh=self.over_ssh,
+                transport=self.transport,
             ):
                 entries.append(PickerEntry("Adopt container…", "adopt"))
             if children and permitted(
                 dact.orchestrate_release_argv(children[0].name),
                 self.ssh_policy,
-                over_ssh=self.over_ssh,
+                transport=self.transport,
             ):
                 entries.append(PickerEntry("Release child…", "release"))
         return Picker(
@@ -1248,7 +1373,7 @@ class DashboardSession:
                 if picker.purpose.endswith("adopt")
                 else dact.orchestrate_release_argv(entry.value)
             )
-            if permitted(argv, self.ssh_policy, over_ssh=self.over_ssh):
+            if permitted(argv, self.ssh_policy, transport=self.transport):
                 self.run_quiet_cli(repo, argv)
             return self.open_orchestration(container)
         if entry.value in ("adopt", "release") and info.grant is not None:
@@ -1265,7 +1390,7 @@ class DashboardSession:
                     if entry.value == "adopt"
                     else dact.orchestrate_release_argv(r.name),
                     self.ssh_policy,
-                    over_ssh=self.over_ssh,
+                    transport=self.transport,
                 )
             ]
             if not rows:
@@ -1286,7 +1411,7 @@ class DashboardSession:
             if found[1].grant is None or not permitted(
                 dact.orchestrate_profile_save_argv(container, "x"),
                 self.ssh_policy,
-                over_ssh=self.over_ssh,
+                transport=self.transport,
             ):
                 self.set_notice("Orchestration is not available for this container")
                 return None
@@ -1397,7 +1522,7 @@ class DashboardSession:
             "prs": ["pr", "push", container, "--source-manifest", "publish.json"],
             "reviews": ["review", "apply", container],
         }[right]
-        return permitted(argv, self.ssh_policy, over_ssh=self.over_ssh)
+        return permitted(argv, self.ssh_policy, transport=self.transport)
 
     def _publish_rate_raise_permitted(self, container: str, grant: GrantView) -> bool:
         """Whether a higher rate passes the CLI's remote check: every held right is publishable."""
@@ -1489,8 +1614,8 @@ class DashboardSession:
     def _orchestration_editable(self, info: ContainerInfo) -> bool:
         """Whether the menu applies to ``info`` and `orchestrate grant` may run for it."""
         return dact.orchestration_offered(
-            info, self.ssh_policy, over_ssh=self.over_ssh
-        ) and dact.orchestration_grant_permitted(info, self.ssh_policy, over_ssh=self.over_ssh)
+            info, self.ssh_policy, transport=self.transport
+        ) and dact.orchestration_grant_permitted(info, self.ssh_policy, transport=self.transport)
 
     def _orchestration_prompt(
         self, container: str, info: ContainerInfo, value: str
@@ -1608,7 +1733,7 @@ class DashboardSession:
             self.set_notice("Orchestration is not available for this container")
             return None
         argv = dact.orchestrate_profile_save_argv(container, name, force=force)
-        if not permitted(argv, self.ssh_policy, over_ssh=self.over_ssh):
+        if not permitted(argv, self.ssh_policy, transport=self.transport):
             self.set_notice("Orchestration is not available for this container")
             return None
         if not self.run_quiet_cli(repo, argv):
@@ -1893,7 +2018,7 @@ class DashboardSession:
             info,
             group.optional_mounts,
             self.ssh_policy,
-            over_ssh=self.over_ssh,
+            transport=self.transport,
             remote_mountable=group.remote_mountable,
         )
         if not entries:
@@ -1907,9 +2032,11 @@ class DashboardSession:
         if repo is None or found is None or found[1].state != "Running":
             self.set_notice(f"'{container}' is gone or not running")
             return None
-        argv = dact.addressed(dact.service_ls_argv(container), repo.flags(), over_ssh=self.over_ssh)
+        argv = dact.addressed(
+            dact.service_ls_argv(container), repo.flags(), transport=self.transport
+        )
         try:
-            check_dashboard_command(argv, self.ssh_policy, over_ssh=self.over_ssh)
+            check_dashboard_command(argv, self.ssh_policy, transport=self.transport)
             result = da.run_cli_quiet(argv, cwd=repo.cwd())
             if not result.ok:
                 raise ValueError(result.message)
@@ -1929,10 +2056,10 @@ class DashboardSession:
             self.set_notice(f"'{container}' is gone")
             return None
         argv = dact.addressed(
-            dact.autostart_list_argv(container), repo.flags(), over_ssh=self.over_ssh
+            dact.autostart_list_argv(container), repo.flags(), transport=self.transport
         )
         try:
-            check_dashboard_command(argv, self.ssh_policy, over_ssh=self.over_ssh)
+            check_dashboard_command(argv, self.ssh_policy, transport=self.transport)
             result = da.run_cli_quiet(argv, cwd=repo.cwd())
             if not result.ok:
                 raise dact.RerunLoadError(result.message)
@@ -1943,7 +2070,7 @@ class DashboardSession:
         choices = [
             (entry, command)
             for entry, command in zip(picker.entries, picker.carry, strict=True)
-            if permitted(json.loads(command), self.ssh_policy, over_ssh=self.over_ssh)
+            if permitted(json.loads(command), self.ssh_policy, transport=self.transport)
         ]
         if not choices:
             self.set_notice(f"No re-runnable autostart steps of '{container}' are permitted")
@@ -1963,10 +2090,10 @@ class DashboardSession:
             self.set_notice(f"'{container}' is gone")
             return None
         argv = dact.addressed(
-            dact.snapshot_ls_argv(container), repo.flags(), over_ssh=self.over_ssh
+            dact.snapshot_ls_argv(container), repo.flags(), transport=self.transport
         )
         try:
-            check_dashboard_command(argv, self.ssh_policy, over_ssh=self.over_ssh)
+            check_dashboard_command(argv, self.ssh_policy, transport=self.transport)
             result = da.run_cli_quiet(argv, cwd=repo.cwd())
             if not result.ok:
                 raise dact.SnapshotLoadError(result.message)
@@ -1978,7 +2105,9 @@ class DashboardSession:
             container,
             rows,
             can_create=permitted(
-                dact.snapshot_create_argv(container, None), self.ssh_policy, over_ssh=self.over_ssh
+                dact.snapshot_create_argv(container, None),
+                self.ssh_policy,
+                transport=self.transport,
             ),
         )
         if not picker.entries:
@@ -2067,7 +2196,7 @@ class DashboardSession:
         if not url:
             self.set_notice("This record has no URL")
             return
-        local = not self.over_ssh and bool(
+        local = self.transport == "none" and bool(
             os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
         )
         if local and self.url_opener is not None:
@@ -2141,12 +2270,12 @@ class DashboardSession:
                 can_restore=permitted(
                     dact.snapshot_restore_argv(container, tag),
                     self.ssh_policy,
-                    over_ssh=self.over_ssh,
+                    transport=self.transport,
                 ),
                 can_delete=permitted(
                     dact.snapshot_delete_argv(container, tag),
                     self.ssh_policy,
-                    over_ssh=self.over_ssh,
+                    transport=self.transport,
                 ),
             )
             if not actions.entries:
@@ -2192,9 +2321,9 @@ class DashboardSession:
         own message answers with `--force` — stays up long enough to
         read. There is no automatic retry with `--force`.
         """
-        full = dact.addressed(argv, repo.flags(), over_ssh=self.over_ssh)
+        full = dact.addressed(argv, repo.flags(), transport=self.transport)
         try:
-            check_dashboard_command(full, self.ssh_policy, over_ssh=self.over_ssh)
+            check_dashboard_command(full, self.ssh_policy, transport=self.transport)
         except RouteError as exc:
             self.set_notice(str(exc), seconds=FAILURE_NOTICE_SECONDS)
             return False
@@ -2210,9 +2339,9 @@ class DashboardSession:
         self, repo: RepoTarget, listing_argv: list[str], what: str
     ) -> tuple[da.AccountRow, ...] | None:
         """Rows of one `jailbee account … ls`, or None after noticing why not."""
-        argv = [*listing_argv, *(repo.flags() if not self.over_ssh else [])]
+        argv = [*listing_argv, *(repo.flags() if self.transport == "none" else [])]
         try:
-            check_dashboard_command(argv, self.ssh_policy, over_ssh=self.over_ssh)
+            check_dashboard_command(argv, self.ssh_policy, transport=self.transport)
             result = da.run_cli_quiet(argv, cwd=repo.cwd())
             if not result.ok:
                 raise da.AccountLoadError(result.message)
@@ -2306,7 +2435,7 @@ class DashboardSession:
             target,
             remote=self.remote,
             ssh_policy=self.ssh_policy,
-            over_ssh=self.over_ssh,
+            transport=self.transport,
         )
         if menu is None or not any(verb == "restart-with" for _, verb in menu.actions):
             self.set_notice(f"Action 'restart-with' is no longer available for '{target}'")
@@ -2333,10 +2462,10 @@ class DashboardSession:
 
         def build(repo: RepoTarget) -> list[str]:
             if flow == "pr":
-                if self.over_ssh:
+                if self.transport != "none":
                     return ["jailbee", "new", "--background", "--pr", first, *extra]
                 return new_pr_container_argv(repo, int(first), extra)
-            if self.over_ssh:
+            if self.transport != "none":
                 return ["jailbee", "new", "--background", *extra, "--", first, second]
             return new_container_argv(repo, first, second, extra)
 
@@ -2577,7 +2706,7 @@ class DashboardSession:
                 return None
 
             def fork_argv(repo: RepoTarget) -> list[str]:
-                if self.over_ssh:
+                if self.transport != "none":
                     return ["jailbee", "fork", "--background", "--", prompt.target, answer]
                 return fork_container_argv(repo, prompt.target, answer)
 
@@ -2630,7 +2759,7 @@ class DashboardSession:
                     if e.value == "logs"
                     else dact.service_op_argv(e.value, picker.target, name),
                     self.ssh_policy,
-                    over_ssh=self.over_ssh,
+                    transport=self.transport,
                 )
             )
             if not entries:
@@ -2735,7 +2864,7 @@ class DashboardSession:
                 return None
             index = picker.entries.index(entry)
             argv = json.loads(picker.carry[index])
-            if not permitted(argv, self.ssh_policy, over_ssh=self.over_ssh):
+            if not permitted(argv, self.ssh_policy, transport=self.transport):
                 self.set_notice("Autostart re-run is not permitted")
                 return None
             return dact.rerun_confirm_picker(picker.target, entry.label, argv)
@@ -2918,11 +3047,16 @@ class DashboardSession:
             return
         try:
             argv = command_argv(text, name)
-            if not self.over_ssh:
+            if self.transport == "none":
                 argv = insert_options_before_separator(argv, repo.flags())
-            check_dashboard_command(argv, self.ssh_policy, over_ssh=self.over_ssh)
+            check_dashboard_command(argv, self.ssh_policy, transport=self.transport)
         except (ValueError, RouteError) as exc:
             self.set_notice(str(exc))
+            return
+        if not is_attach_style(argv):
+            # Everything the line can run that is not an attach verb: its output
+            # stays on screen until read (the old pause), its questions are modals.
+            self.run_action(repo, argv, style="output", label=" ".join(argv))
             return
         try:
 
@@ -3112,7 +3246,7 @@ class DashboardSession:
             )
         )
         allowed_paths: frozenset[str] | None = None
-        if self.over_ssh:
+        if self.transport != "none":
             if self.ssh_policy is None:
                 allowed_paths = frozenset()
             else:
@@ -3120,18 +3254,18 @@ class DashboardSession:
                     self.ssh_policy.commands,
                     restrict_host=self.ssh_policy.restrict_host,
                     scope=self.scope,
-                    unlocks=ssh_router.RemoteUnlocks.of(self.ssh_policy),
+                    unlocks=remote_unlocks(self.ssh_policy, self.transport),
                 )
         return completion_candidates(
             text,
             tuple(c.name for c in selected_group.containers) if selected_group is not None else (),
             allowed_paths,
             restrict_host=bool(
-                self.over_ssh
+                (self.transport != "none")
                 and self.ssh_policy is not None
                 and host_restricted(self.ssh_policy.restrict_host)
             ),
-            unlocks=ssh_router.RemoteUnlocks.of(self.ssh_policy if self.over_ssh else None),
+            unlocks=remote_unlocks(self.ssh_policy, self.transport),
         )
 
     def command_submitted(self, text: str) -> None:
@@ -3419,7 +3553,7 @@ class DashboardSession:
             verb,
             remote=self.remote,
             ssh_policy=self.ssh_policy,
-            over_ssh=self.over_ssh,
+            transport=self.transport,
             busy=self.bulk_running(),
             orphans=True,
         )
@@ -3440,7 +3574,7 @@ class DashboardSession:
             names,
             remote=self.remote,
             ssh_policy=self.ssh_policy,
-            over_ssh=self.over_ssh,
+            transport=self.transport,
             busy=self.bulk_running(),
             orphans=True,
         )
@@ -3460,7 +3594,7 @@ class DashboardSession:
             self.groups,
             names,
             ssh_policy=self.ssh_policy,
-            over_ssh=self.over_ssh,
+            transport=self.transport,
             busy=self.bulk_running(),
         )
 
@@ -3486,7 +3620,7 @@ class DashboardSession:
             kind,
             remove=remove,
             ssh_policy=self.ssh_policy,
-            over_ssh=self.over_ssh,
+            transport=self.transport,
             busy=self.bulk_running(),
         )
 
@@ -3576,7 +3710,7 @@ class DashboardSession:
             verb,
             remote=self.remote,
             ssh_policy=self.ssh_policy,
-            over_ssh=self.over_ssh,
+            transport=self.transport,
             busy=self.bulk_running(),
             orphans=True,
         )
@@ -3662,8 +3796,11 @@ class DashboardSession:
             try:
                 if repo is None:
                     raise ValueError("repository unavailable")
-                check_dashboard_command(canonical, self.ssh_policy, over_ssh=self.over_ssh)
-                argv = ["jailbee", *dact.addressed(canonical, repo.flags(), over_ssh=self.over_ssh)]
+                check_dashboard_command(canonical, self.ssh_policy, transport=self.transport)
+                argv = [
+                    "jailbee",
+                    *dact.addressed(canonical, repo.flags(), transport=self.transport),
+                ]
                 self.jobs.start(
                     f"clear-snapshot:{name}",
                     f"reading outbox {name}…",
@@ -3695,7 +3832,7 @@ class DashboardSession:
             "outbox clear",
             remote=self.remote,
             ssh_policy=self.ssh_policy,
-            over_ssh=self.over_ssh,
+            transport=self.transport,
             busy=self.bulk_running(),
         )
         if not action.eligible:
@@ -3778,11 +3915,11 @@ class DashboardSession:
                 argv_for(name) if argv_for is not None else bulk_argv(action.verb, name, extra)
             )
             try:
-                check_dashboard_command(canonical, self.ssh_policy, over_ssh=self.over_ssh)
+                check_dashboard_command(canonical, self.ssh_policy, transport=self.transport)
             except RouteError as exc:
                 batch.failed[name] = str(exc)
                 continue
-            argv = ["jailbee", *dact.addressed(canonical, target.flags(), over_ssh=self.over_ssh)]
+            argv = ["jailbee", *dact.addressed(canonical, target.flags(), transport=self.transport)]
             batch.pending.add(name)
             try:
                 self.jobs.start(
@@ -3825,36 +3962,44 @@ class DashboardSession:
         are the CLI's. A repo whose run exits 0 has its names unmarked.
         """
         runs = foreground_runs(self.groups, action)
-        codes: list[int] = []
-
-        def run_all() -> int:
-            _run_bulk_foreground(
-                [(run.target, run.argv) for run in runs],
-                over_ssh=self.over_ssh,
-                ssh_policy=self.ssh_policy,
-                codes=codes,
-            )
-            return max(codes, default=0)
-
-        failed: dict[str, str] = {}
         try:
-            self.terminal.hand_off(run_all)
+            for run in runs:
+                check_dashboard_command(list(run.argv), self.ssh_policy, transport=self.transport)
         except RouteError as exc:
             self.set_notice(str(exc))
             return
-        except OSError as exc:
-            # Runs before the one that could not start did finish: honour them.
-            detail = exc.strerror or str(exc)
-            if exc.filename is not None:
-                detail = f"{detail}: {exc.filename}"
-            if len(codes) < len(runs):
-                failed[runs[len(codes)].prefix] = detail
-        ok = [n for run, c in zip(runs, codes, strict=False) if c == 0 for n in run.names]
-        failed.update({r.prefix: f"exited {c}" for r, c in zip(runs, codes, strict=False) if c})
-        self.marked -= frozenset(ok)
-        batch = BulkBatch(action.verb, ok=ok, failed=failed, skipped=dict(action.skipped))
-        self.set_notice(batch.summary(), FAILURE_NOTICE_SECONDS if failed else NOTICE_SECONDS)
-        self.client.refresh()
+        full = [
+            ActionRun(
+                dact.addressed(list(run.argv), run.target.flags(), transport=self.transport),
+                run.target.cwd(),
+            )
+            for run in runs
+        ]
+
+        def settled(outcome: ActionOutcome) -> None:
+            codes = [r.status if r.status is not None else 1 for r in outcome.results]
+            failed: dict[str, str] = {}
+            # A run that could not start or was refused ends the sequence; the
+            # runs before it did finish: honour them.
+            last = outcome.results[-1] if outcome.results else None
+            if last is not None and (last.error is not None or last.refused is not None):
+                codes.pop()
+                if len(codes) < len(runs):
+                    failed[runs[len(codes)].prefix] = last.error or last.refused or "not run"
+            ok = [n for run, c in zip(runs, codes, strict=False) if c == 0 for n in run.names]
+            failed.update({r.prefix: f"exited {c}" for r, c in zip(runs, codes, strict=False) if c})
+            self.marked -= frozenset(ok)
+            batch = BulkBatch(action.verb, ok=ok, failed=failed, skipped=dict(action.skipped))
+            if failed or outcome.output.strip():
+                self.terminal.show_output(
+                    f"jailbee {action.verb}", outcome.output, failed=bool(failed)
+                )
+            self.set_notice(batch.summary(), FAILURE_NOTICE_SECONDS if failed else NOTICE_SECONDS)
+            self.client.refresh()
+
+        self._start_actions(
+            full, [r.target for r in runs], "output", action.verb, None, settled=settled
+        )
 
     def toggle_mark(self, name: str) -> None:
         """Mark ``name`` for a bulk action, or unmark it."""
@@ -3908,7 +4053,7 @@ class DashboardSession:
                 self.selected.key,
                 self.folded,
                 ssh_policy=self.ssh_policy,
-                over_ssh=self.over_ssh,
+                transport=self.transport,
                 all_groups=self.all_groups,
             )
         return open_menu(
@@ -3916,7 +4061,7 @@ class DashboardSession:
             container_of(self.selected),
             remote=self.remote,
             ssh_policy=self.ssh_policy,
-            over_ssh=self.over_ssh,
+            transport=self.transport,
         )
 
     def open_menu_for_letter(self, char: str) -> bool:
@@ -4030,7 +4175,7 @@ class DashboardSession:
         Dismissal writes the local state DB and is not a ``jb`` command, so
         `check_dashboard_command` does not gate it: refuse it over SSH here.
         """
-        if self.over_ssh:
+        if self.transport != "none":
             return
         advisory = next(
             (a for g in self.groups if g.prefix == prefix for a in g.advisories if a.key == key),
@@ -4292,12 +4437,17 @@ class DashboardSession:
         self.marked = pick.saved_marks
         # "report": a clean merge returns straight to the table, so the notice
         # is what says it happened; a warning or failure keeps the output up.
-        if self.run_dashboard_command(pick.sources[0], "container", argv, style="report") == 0:
-            # As a foreground bulk run does: what succeeded is unmarked.
-            self.marked -= frozenset(pick.sources)
-            self.set_notice(
-                f"Merged {self._merge_display(pick.sources)} into {self._merge_display(ordered)}"
-            )
+
+        def merged(rc: int | None) -> None:
+            if rc == 0:
+                # As a foreground bulk run does: what succeeded is unmarked.
+                self.marked -= frozenset(pick.sources)
+                self.set_notice(
+                    f"Merged {self._merge_display(pick.sources)} into "
+                    f"{self._merge_display(ordered)}"
+                )
+
+        self.run_dashboard_command(pick.sources[0], "container", argv, style="report", then=merged)
 
     def _prune_merge_pick(self, listed: set[str]) -> None:
         """After a refresh: drop vanished sources and targets, or end the mode with none left."""

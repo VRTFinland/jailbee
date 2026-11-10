@@ -177,7 +177,9 @@ def remove_command(
                     warn(summary.line)
         elif not warn_before_destroy(plan.cfg, infos, question=question):
             raise typer.Exit(1)
-    elif not yes and not typer.confirm(question, default=False):
+    elif not yes and not prompting.ask_confirm(
+        question, default=False, destructive=True, alternative="--yes"
+    ):
         raise typer.Exit(1)
     results = repo_remove.execute_removal(
         plan,

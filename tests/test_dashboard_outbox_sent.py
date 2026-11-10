@@ -230,7 +230,7 @@ def test_open_only_shows_the_url_over_remote_ssh(mocker, tmp_path, monkeypatch):
     session, _ = bare_session(
         mocker,
         [_group(tmp_path)],
-        over_ssh=True,
+        transport="ssh",
         remote=True,
         ssh_policy=RemoteSSHConfig(),
     )

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from jailbee.config import Config
-    from jailbee.config.models_remote import RemoteMountRoot, RemoteSSHConfig
+    from jailbee.config.models_remote import RemoteMountRoot, RemotePolicy, RemoteTransport
 
 
 @dataclass(frozen=True)
@@ -60,11 +60,13 @@ def writable_cover(cfg: Config, root: Path, exclude: str | None = None) -> str |
     return None
 
 
-def _root_for(policy: RemoteSSHConfig, resolved: Path) -> RemoteMountRoot | None:
+def _root_for(policy: RemotePolicy, resolved: Path) -> RemoteMountRoot | None:
     return next((r for r in policy.mount_roots if r.path == resolved), None)
 
 
-def remote_mount_grant(policy: RemoteSSHConfig, cfg: Config, kind: str) -> MountGrant | str:
+def remote_mount_grant(
+    policy: RemotePolicy, cfg: Config, kind: str, *, transport: RemoteTransport = "ssh"
+) -> MountGrant | str:
     """The grant for attaching ``kind`` in a restricted session, or why not."""
     mount = cfg.optional_mounts.get(kind)
     if mount is None:
@@ -73,37 +75,45 @@ def remote_mount_grant(policy: RemoteSSHConfig, cfg: Config, kind: str) -> Mount
         return MountGrant(Path(mount.host), mount.readonly)
     prefix = cfg.container_prefix
     if prefix in policy.excluded_repos:
-        return f"Repo '{prefix}' is excluded from remote SSH (remote.ssh.excluded_repos)."
+        return (
+            f"Repo '{prefix}' is excluded from remote {transport} "
+            f"(remote.{transport}.excluded_repos)."
+        )
     resolved = _resolved(mount.host)
     root = _root_for(policy, resolved)
     if root is None:
         return (
-            f"'{kind}' mounts {resolved}, which is not listed in remote.ssh.mount_roots; "
-            "a remote SSH session may only attach a listed host directory itself. "
+            f"'{kind}' mounts {resolved}, which is not listed in remote.{transport}.mount_roots; "
+            f"a remote {transport} session may only attach a listed host directory itself. "
             "Attach it on the host, or list it in ~/.config/jailbee/global.yaml."
         )
     if root.repos and prefix not in root.repos:
-        return f"remote.ssh.mount_roots allows {root.path} for {root.repos}, not for '{prefix}'."
+        return (
+            f"remote.{transport}.mount_roots allows {root.path} for {root.repos}, "
+            f"not for '{prefix}'."
+        )
     try:
         mode = os.stat(root.path).st_mode
     except OSError:
-        return f"remote.ssh.mount_roots path {root.path} does not exist."
+        return f"remote.{transport}.mount_roots path {root.path} does not exist."
     if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
-        return f"remote.ssh.mount_roots path {root.path} is not a directory or a file."
+        return f"remote.{transport}.mount_roots path {root.path} is not a directory or a file."
     cover = writable_cover(cfg, root.path, exclude=kind)
     if cover is not None:
         return (
-            f"'{kind}' is not attachable over remote SSH: {cover} covers {root.path}, so a "
+            f"'{kind}' is not attachable over remote {transport}: {cover} covers {root.path}, so a "
             "container could replace it with a symlink before the mount lands."
         )
     readonly = mount.readonly or root.readonly
     return MountGrant(root.path, readonly, forced_readonly=readonly and not mount.readonly)
 
 
-def grantable_kinds(policy: RemoteSSHConfig, cfg: Config) -> tuple[str, ...]:
+def grantable_kinds(
+    policy: RemotePolicy, cfg: Config, *, transport: RemoteTransport = "ssh"
+) -> tuple[str, ...]:
     """The kinds ``remote_mount_grant`` grants, in config order."""
     return tuple(
         kind
         for kind in cfg.optional_mounts
-        if isinstance(remote_mount_grant(policy, cfg, kind), MountGrant)
+        if isinstance(remote_mount_grant(policy, cfg, kind, transport=transport), MountGrant)
     )

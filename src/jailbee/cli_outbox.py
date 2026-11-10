@@ -191,9 +191,9 @@ def browser_read_only() -> bool:
     This includes unrestricted SSH sessions. Mutations must use explicit
     drop/apply commands so the router checks each command's permissions.
     """
-    from jailbee.remote_ssh.session import is_ssh_session
+    from jailbee.remote_ssh.session import is_remote_session
 
-    return is_ssh_session()
+    return is_remote_session()
 
 
 @app.command()
@@ -320,13 +320,16 @@ def drop(
     config: ConfigOption = None,
 ) -> None:
     """Delete locally after displaying exact scope; selectors are zero-based."""
+    from jailbee import prompting
     from jailbee.outbox.commands import drop_selected
     from jailbee.outbox.delete import DeletePlan, DeleteSelection
     from jailbee.outbox.markdown_view import print_lines
 
     def confirm(plan: DeletePlan) -> bool:
         print_lines(plan.summary)
-        accepted = yes or typer.confirm("Delete this exact scope?", default=False)
+        accepted = yes or prompting.ask_confirm(
+            "Delete this exact scope?", default=False, destructive=True, alternative="--yes"
+        )
         if not accepted:
             print_lines(("Nothing deleted.",))
         return accepted
@@ -383,8 +386,11 @@ def clear(
         count = sum(bool(plan.delete) for plan in plans)
         proposal_word = "proposal" if total == 1 else "proposals"
         container_word = "container" if count == 1 else "containers"
-        return yes or typer.confirm(
-            f"Delete {total} {proposal_word} in {count} {container_word}?", default=False
+        return yes or prompting.ask_confirm(
+            f"Delete {total} {proposal_word} in {count} {container_word}?",
+            default=False,
+            destructive=True,
+            alternative="--yes",
         )
 
     def operation(cfg: Config, incus: Incus) -> int:
@@ -494,15 +500,16 @@ def apply(
             else None,
             confirm=lambda total: (
                 yes
-                or typer.confirm(
+                or prompting.ask_confirm(
                     f"Publish {total} pending actions{' as a draft review' if draft else ''}?",
                     default=False,
+                    alternative="--yes",
                 )
             ),
             confirm_foreign=(
                 None
                 if yes or as_json or not prompting.is_interactive()
-                else (lambda question: typer.confirm(question, default=False))
+                else (lambda question: prompting.ask_confirm(question, default=False))
             ),
             expected_revision=revision,
             plan_sink=(
@@ -688,8 +695,11 @@ def sent_clear(
             return 0
         when = f" sent before {cutoff.isoformat()}" if cutoff is not None else ""
         word = "record" if total == 1 else "records"
-        if not yes and not typer.confirm(
-            f"Delete {total} sent {word}{when} of {chosen}?", default=False
+        if not yes and not prompting.ask_confirm(
+            f"Delete {total} sent {word}{when} of {chosen}?",
+            default=False,
+            destructive=True,
+            alternative="--yes",
         ):
             typer.echo("Nothing deleted.")
             return 0
