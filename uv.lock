@@ -322,7 +322,7 @@ wheels = [
 
 [[package]]
 name = "jailbee"
-version = "1.8.6"
+version = "1.8.7"
 source = { editable = "." }
 dependencies = [
     { name = "prompt-toolkit" },
@@ -377,7 +377,7 @@ requires-dist = [
     { name = "ruamel-yaml", specifier = ">=0.19.1" },
     { name = "sqlmodel", specifier = ">=0.0.16" },
     { name = "textual", specifier = ">=8.2,<9" },
-    { name = "typer", specifier = ">=0.12" },
+    { name = "typer", specifier = ">=0.12,<0.29" },
 ]
 provides-extras = ["gui", "ssh"]
 

@@ -130,8 +130,14 @@ def test_names():
 WPS = WaypipeSession(id="0a1b2c3d", compress="zstd=5")
 
 
+@pytest.fixture
+def _short_state_home(monkeypatch, short_tmp_path):
+    """XDG_STATE_HOME short enough for `listening` to bind the links sockets."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(short_tmp_path))
+
+
 @pytest.fixture(autouse=True)
-def _live_session():
+def _live_session(_short_state_home):
     """The session's forward listener exists, as it does while the client is connected."""
     wp.links_dir().mkdir(parents=True, exist_ok=True)
     wp.links_socket(WPS.id).touch()

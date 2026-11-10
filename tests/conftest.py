@@ -568,6 +568,21 @@ def _block_real_incus(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         )
 
 
+@pytest.fixture
+def short_tmp_path() -> Iterator[Path]:
+    """A temp dir directly under /tmp, for tests that bind AF_UNIX sockets.
+
+    A socket path may be at most 107 bytes. pytest's `tmp_path` sits under a
+    basetemp whose length depends on the user name, run number and xdist
+    worker, so a socket a few levels below it binds on one machine and fails
+    with "AF_UNIX path too long" — or is refused by Jailbee's own length
+    check — on another.
+    """
+    short = Path(tempfile.mkdtemp(prefix="jb-", dir="/tmp"))
+    yield short
+    shutil.rmtree(short, ignore_errors=True)
+
+
 # Names the per-test isolation dirs. A counter rather than pytest's own
 # numbering, which costs a directory listing per call — see `_isolation_root`.
 _ISOLATION_COUNTER = itertools.count()
@@ -702,6 +717,12 @@ def _disable_cli_color(monkeypatch):
     ``CliRunner`` captures a plain, non-tty buffer, so the output has no colour
     and ``env={"COLUMNS": ...}`` decides the width. The colour env vars are
     neutralised too, for the Rich consoles jailbee builds itself.
+
+    ``COLUMNS`` defaults to 1000. Without it Rich asks ``os.get_terminal_size``
+    on the standard streams, so the width was the developer's terminal under
+    ``make release`` and 80 elsewhere, and a message carrying a ``tmp_path``
+    wrapped mid-path on hosts with a longer user name — asserting on the path
+    then failed only there. A test that needs a narrow layout sets its own.
     """
     monkeypatch.setattr("typer.rich_utils.FORCE_TERMINAL", None, raising=False)
     monkeypatch.delenv("FORCE_COLOR", raising=False)
@@ -709,6 +730,7 @@ def _disable_cli_color(monkeypatch):
     monkeypatch.delenv("PY_COLORS", raising=False)
     monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.setenv("TERM", "dumb")
+    monkeypatch.setenv("COLUMNS", "1000")
 
 
 @pytest.fixture(autouse=True)

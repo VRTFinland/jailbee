@@ -862,7 +862,8 @@ def test_install_host_skills_warns_and_continues_past_a_bad_target(
 
     written = agent_skills.install_host_skills([bad, good])
 
-    out = capsys.readouterr().out
+    # Rich wraps at the console width, which can split a long tmp path.
+    out = capsys.readouterr().out.replace("\n", "")
     assert str(bad) in out
     assert (good / "jailbee-usage" / "SKILL.md").is_file()
     assert len(written) == 2  # only the good target's two skills

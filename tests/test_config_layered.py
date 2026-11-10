@@ -7,6 +7,7 @@ import yaml
 
 from jailbee.config import ConfigError, load_config
 from jailbee.config.local_layer import local_config_path
+from tests.conftest import flat_output
 
 
 def _write(path: Path, data: dict) -> None:
@@ -269,7 +270,7 @@ def test_load_config_warns_on_insecure_global_yaml_with_tokens(repo_and_global, 
     cfg = load_config(repo_path)
 
     assert cfg.container_prefix == "sampleapp"
-    assert "insecure perms" in capsys.readouterr().err
+    assert "insecure perms" in flat_output(capsys.readouterr().err)
 
 
 def test_load_config_accepts_secure_global_yaml_with_tokens(repo_and_global):

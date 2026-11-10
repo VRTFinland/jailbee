@@ -114,13 +114,13 @@ def test_install_sh_writes_the_profile_d_snippet():
     assert "SSH_AUTH_SOCK" in _jailbee_env_snippet()
 
 
-def test_snippet_exports_socket_when_gpg_agent_is_mounted(tmp_path):
+def test_snippet_exports_socket_when_gpg_agent_is_mounted(short_tmp_path):
     """gpg enabled: the device is attached, so the socket is present and
     the login shell must pick it up.
     """
-    agent = _make_agent_socket(tmp_path)
+    agent = _make_agent_socket(short_tmp_path)
 
-    result = _run_snippet({"XDG_RUNTIME_DIR": str(tmp_path)})
+    result = _run_snippet({"XDG_RUNTIME_DIR": str(short_tmp_path)})
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == str(agent)
@@ -138,15 +138,15 @@ def test_snippet_leaves_ssh_auth_sock_unset_when_socket_is_absent(tmp_path):
     assert result.stdout == UNSET_MARKER
 
 
-def test_snippet_does_not_overwrite_an_existing_ssh_auth_sock(tmp_path):
+def test_snippet_does_not_overwrite_an_existing_ssh_auth_sock(short_tmp_path):
     """The base profile (and `container.env`, which is documented to be
     able to point SSH_AUTH_SOCK at a different agent) sets the variable
     before the login shell runs. The fallback must not clobber it.
     """
-    _make_agent_socket(tmp_path)
+    _make_agent_socket(short_tmp_path)
     preset = "/run/user/1000/keyring/ssh"
 
-    result = _run_snippet({"XDG_RUNTIME_DIR": str(tmp_path), "SSH_AUTH_SOCK": preset})
+    result = _run_snippet({"XDG_RUNTIME_DIR": str(short_tmp_path), "SSH_AUTH_SOCK": preset})
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == preset

@@ -1,5 +1,6 @@
 import importlib.metadata
 import json
+import re
 import tomllib
 from pathlib import Path
 
@@ -10,8 +11,10 @@ from jailbee import container_deps
 
 def test_requirements_mirror_pyproject() -> None:
     data = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
+    deps = data["project"]["dependencies"]
     for name, minimum in container_deps.CONTAINER_REQUIREMENTS.items():
-        assert f"{name}>={minimum}" in data["project"]["dependencies"]
+        # An upper bound may follow (`typer>=0.12,<0.29`); the minimum must match.
+        assert any(re.fullmatch(rf"{re.escape(name)}>={re.escape(minimum)}(,.*)?", d) for d in deps)
 
 
 def test_check_missing_stamp(tmp_path: Path) -> None:

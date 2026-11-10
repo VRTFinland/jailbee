@@ -241,17 +241,17 @@ def test_replace_with_no_existing_waiter(env: Env) -> None:
     assert len(env.memory.waiters) == 1
 
 
-def test_real_socket_replace_replies_to_both_connections(env: Env, tmp_path: Path) -> None:
+def test_real_socket_replace_replies_to_both_connections(env: Env, short_tmp_path: Path) -> None:
     env.memory.requests = queue.Queue()
     listener = Listener(env.memory.requests)
     env.memory.listener = listener
     listener.start()
-    listener.open_container(env.orch, tmp_path / "wait-sock")
+    listener.open_container(env.orch, short_tmp_path / "wait-sock")
     clients = [socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) for _ in range(2)]
     try:
         for client, replace in zip(clients, (False, True), strict=True):
             client.settimeout(2)
-            client.connect(str(tmp_path / "wait-sock" / "broker.sock"))
+            client.connect(str(short_tmp_path / "wait-sock" / "broker.sock"))
             client.sendall(wire.encode_request(wire.Request("next", {"replace": replace})))
             event = env.memory.requests.get(timeout=2)
             assert isinstance(event, RequestEvent)

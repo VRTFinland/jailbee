@@ -8,6 +8,18 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.8.7 - 2026-11-10
+
+### Fixed
+
+- Fresh installs and upgrades picked up typer 0.29.0 (released 2026-11-09),
+  which removed internals Jailbee relies on. Commands launched from a remote
+  SSH dashboard session crashed with
+  `ModuleNotFoundError: No module named 'typer._click.types'`. Jailbee now
+  requires `typer<0.29`. An existing install recovers with
+  `uv tool upgrade jailbee` once this release is out, or right away with
+  `uv tool install --force jailbee --with 'typer<0.29'`.
+
 ## 1.8.6 - 2026-11-09
 
 ### Added
