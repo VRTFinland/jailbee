@@ -58,6 +58,37 @@ Injected `GH_TOKEN` is also written into the container's
 `/etc/profile.d/jailbee-github.sh`; disabling the integration does not remove
 an existing copy. Revoke exposed credentials at the provider when needed.
 
+### Remote policy
+
+What a remote caller may do is one model, `RemotePolicy`, shared by every
+[remote transport](https://github.com/VRTFinland/jailbee/blob/main/GLOSSARY.md)
+(see [ADR 0006](https://github.com/VRTFinland/jailbee/blob/main/docs/adr/0006-remote-policy-shared-by-transports.md)).
+Its fields are `commands` (`mode`, `allow`), `restrict_host`, `excluded_repos`,
+`mount_roots`, `mounts`, `orchestration`, `network`, `files` and `rdp`. The
+`remote.ssh` and `remote.web` blocks of `~/.config/jailbee/global.yaml` each
+hold one, checked by the same code; the `remote.ssh` YAML keys are unchanged.
+SSH-only settings (`listen`, `port`, entry points, `waypipe`, `gpg`) stay under
+`remote.ssh`. Everything below about commands, `restrict_host`, exclusions,
+mounts, orchestration, network and files applies to both transports, with the
+transport's own block supplying the values (refusals name it, for example
+`remote.web.network`).
+
+`remote.web` defaults to the most restrictive policy: `commands.mode:
+disabled`, no mounts, orchestration `off`, `network`, `files` and `rdp` off.
+`restrict_host` is always on for it and `false` is a config error. A web
+session therefore starts with no commands at all, and each right is an explicit
+opt-in in `global.yaml` ([`remote.web`](config.md#remoteweb)). All logged-in web
+devices share the same rights, as all SSH keys do.
+
+Every command a remote dashboard runs goes through the same policy check
+before it is started, and menu entries are offered only when that check would
+pass. Remote actions (any transport other than the local keyboard) are
+appended to an audit log, `<state dir>/audit/remote-actions.jsonl` (mode
+`0600`): one JSON line per action with timestamp, transport, client, the
+command path (`git pull`, never its arguments or container names) and the
+outcome (`refused`, `exit:N` or `error`). Prompt answers, secrets included,
+are never logged.
+
 ### Remote SSH
 
 The optional SSH server is a capability boundary inside the current user's
@@ -137,7 +168,10 @@ session with `remote.ssh.waypipe` on, launches go to the shared RDP display or
 the client's display instead). The admitted `exec --gui` route is an exception to the
 named GUI-launcher restrictions, described below. Restricted child processes
 carry `JAILBEE_REMOTE_RESTRICTED=1` and `LESSSECURE=1`, inherited by their children.
-Every SSH session, restricted or not, also carries
+Every remote session, restricted or not, carries `JAILBEE_REMOTE_SESSION=1`
+and `JAILBEE_REMOTE_TRANSPORT` (`ssh` or `web`; the markers are
+transport-neutral, only the waypipe and GUI-port ones are SSH-only). An SSH
+session therefore carries
 `JAILBEE_REMOTE_TRANSPORT=ssh`, which keeps the dashboard to registered repos, the
 Qt dashboard refused and the post-install setup offer unmade: the one at the
 other end is not at this host.

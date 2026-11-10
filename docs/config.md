@@ -3448,6 +3448,11 @@ or broaden remote access. Installing JailBee does not start a listener. See
 and enable steps and [Security and limitations](security.md#remote-ssh) for
 the trust boundary.
 
+The permission keys (`commands`, `restrict_host`, `excluded_repos`,
+`mount_roots`, `mounts`, `orchestration`, `network`, `files`, `rdp`) form the
+shared [remote policy](security.md#remote-policy), which
+[`remote.web`](#remoteweb) also holds; the remaining keys are SSH-only.
+
 The built-in defaults enable all three entry points on IPv4 loopback. The
 command policy governs JailBee command execution in the console and dashboard;
 `exec` independently enables one-shot SSH execution. A disabled command policy
@@ -3615,8 +3620,9 @@ only in `~/.config/jailbee/global.yaml`. It carries the shared permission
 settings and nothing else: the policy keys are the same as `remote.ssh`'s
 (`commands.mode`, `commands.allow`, `restrict_host`, `excluded_repos`,
 `mount_roots`, `mounts`, `orchestration`, `network`, `files`, `rdp`) and mean
-the same, see [`remote.ssh`](#remotessh). The defaults are the most restrictive
-policy:
+the same, see [`remote.ssh`](#remotessh) and
+[Remote policy](security.md#remote-policy). The defaults are the most
+restrictive policy:
 
 | Key | Default |
 |---|---|

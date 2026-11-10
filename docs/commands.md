@@ -414,7 +414,9 @@ default. Off a terminal it prints the help text and exits 0.
 
 The optional SSH service exposes JailBee, not a host shell. Installation and
 startup are separate opt-ins; see [Installation](installation.md#optional-ssh-service)
-and [`remote.ssh` configuration](config.md#remotessh).
+and [`remote.ssh` configuration](config.md#remotessh). Its permission settings
+are a shared [remote policy](security.md#remote-policy); the web dashboard's
+[`remote.web`](config.md#remoteweb) holds another instance.
 
 Service and key commands:
 
@@ -652,6 +654,10 @@ config error (it is checked in `validate_runtime`, so only that command
 reports it — `jailbee doctor` and ordinary commands do not) rather than
 the app silently never being reachable that way. See
 [`apps`](config.md#apps).
+
+### Terminal dashboard actions
+
+<!-- TODO(ticket-12): dashboard actions -->
 
 ### `jailbee gui` / `jailbee dashboard --gui`
 
