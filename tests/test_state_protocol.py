@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -390,3 +392,47 @@ def test_snapshot_round_trips_sent_counts():
 
     assert restored.sent_count == 7
     assert restored.containers[0].sent_count == 3
+
+
+def test_wire_schema_names_every_field_that_crosses_the_wire():
+    schema = protocol.wire_schema()
+
+    memory = schema["snapshot"]["$defs"]["MemoryStatus"]["properties"]
+    assert {"swap_cached", "zswapped"} <= memory.keys()
+    assert schema["hello"]["properties"].keys() == {"protocol", "version", "cwd_root"}
+
+
+def test_wire_schema_leaves_out_docstrings_and_titles():
+    # Neither travels on the wire, so rewording a docstring is no protocol change.
+    # (A field named "title" maps to a schema dict, never a string.)
+    def keys(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(value, str):
+                    yield key
+                yield from keys(value)
+        elif isinstance(node, list):
+            for item in node:
+                yield from keys(item)
+
+    found = set(keys(protocol.wire_schema()))
+    assert not found & {"description", "title"}
+
+
+# The wire schema each protocol version shipped with. A schema change that
+# does not bump PROTOCOL fails below: a client of another version would
+# misread it. Add the new version's entry; never edit an old one. A pydantic
+# upgrade that only reshapes its schema output trips this too; a bump is then
+# harmless (dashboards restart the state service on a version mismatch).
+WIRE_SCHEMAS = {
+    22: "28ac3ce2c04b2606513e542d8cc20a865a817bd738871af4edb21c422d929d3f",
+}
+
+
+def test_a_wire_schema_change_bumps_the_protocol():
+    canonical = json.dumps(protocol.wire_schema(), sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(canonical.encode()).hexdigest()
+    assert WIRE_SCHEMAS.get(PROTOCOL) == digest, (
+        f"the wire schema changed under PROTOCOL {PROTOCOL}: bump PROTOCOL in "
+        f"state_service/protocol.py and add WIRE_SCHEMAS[{PROTOCOL + 1}] = {digest!r}"
+    )

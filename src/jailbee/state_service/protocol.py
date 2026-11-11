@@ -155,6 +155,31 @@ def _adapter(cls: type[Any]) -> TypeAdapter[Any]:
     return adapter
 
 
+def wire_schema() -> dict[str, Any]:
+    """The JSON schema of each message, keyed by its wire ``type`` name.
+
+    Docstring descriptions and class titles are left out: neither crosses the
+    wire, so only a change a client could misread changes the schema.
+    """
+    # cls is one of the Message union types, but mypy sees it as type[Any]
+    return {
+        name: _wire_only(_adapter(cls).json_schema())  # type: ignore[arg-type]
+        for cls, name in _NAMES.items()
+    }
+
+
+def _wire_only(node: Any) -> Any:
+    if isinstance(node, dict):
+        return {
+            key: _wire_only(value)
+            for key, value in node.items()
+            if not (key in ("title", "description") and isinstance(value, str))
+        }
+    if isinstance(node, list):
+        return [_wire_only(item) for item in node]
+    return node
+
+
 def encode(message: Message) -> bytes:
     """``message`` as one wire line, newline included."""
     # type(message) is one of the Message union types, but mypy sees it as type[Any]
