@@ -327,7 +327,15 @@ def test_snapshot_round_trips_system_status():
     from jailbee.sysstat import DiskStatus, LoadStatus, MemoryStatus
 
     system = SystemStatus(
-        memory=MemoryStatus(total=16 << 30, available=4 << 30, cache=1 << 30),
+        memory=MemoryStatus(
+            total=16 << 30,
+            available=4 << 30,
+            cache=1 << 30,
+            swap_total=8 << 30,
+            swap_free=1 << 30,
+            swap_cached=1 << 20,
+            zswapped=5 << 30,
+        ),
         pools=(PoolStatus("default", DiskStatus(total=100, available=40)),),
         root=DiskStatus(total=50, available=10),
         load=LoadStatus(load1=1.25, cpus=8),
