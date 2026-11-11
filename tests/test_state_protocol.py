@@ -292,7 +292,6 @@ def test_the_protocol_version_and_namespace_carry_the_activity_history():
     # Event ages require a server which supplies last_event_at; 8 added RepoGroup.advisories,
     # Snapshot.system and each container's top_cpu, top_mem and root_pool.
     # 15 added repo/container autostart profile state.
-    assert PROTOCOL == 22
     assert protocol._NAMESPACE["RepoAdvisory"] is RepoAdvisory
     # Pinned so the entry survives ActivityEvent ever moving to a module that
     # imports it under TYPE_CHECKING, where pydantic could no longer resolve it.
@@ -366,7 +365,6 @@ def test_combined_protocol_preserves_builtin_choices_and_rerun_state():
         snapshot.groups[0], autostart_profiles=("full", "light", "none", "all")
     )
     group = decode(encode(snapshot)).groups[0]
-    assert PROTOCOL == 22
     assert group.autostart_profiles == ("full", "light", "none", "all")
     assert group.autostart_services == ("db", "web")
     container = group.containers[0]
@@ -419,20 +417,23 @@ def test_wire_schema_leaves_out_docstrings_and_titles():
     assert not found & {"description", "title"}
 
 
-# The wire schema each protocol version shipped with. A schema change that
-# does not bump PROTOCOL fails below: a client of another version would
-# misread it. Add the new version's entry; never edit an old one. A pydantic
+# The wire schema PROTOCOL was last bumped for. A schema change under the same
+# PROTOCOL fails below: a client of another version would misread it. A pydantic
 # upgrade that only reshapes its schema output trips this too; a bump is then
-# harmless (dashboards restart the state service on a version mismatch).
-WIRE_SCHEMAS = {
-    22: "28ac3ce2c04b2606513e542d8cc20a865a817bd738871af4edb21c422d929d3f",
-}
+# harmless (a protocol mismatch makes the dashboard replace the state service).
+WIRE_SCHEMA = (22, "28ac3ce2c04b2606513e542d8cc20a865a817bd738871af4edb21c422d929d3f")
 
 
 def test_a_wire_schema_change_bumps_the_protocol():
     canonical = json.dumps(protocol.wire_schema(), sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(canonical.encode()).hexdigest()
-    assert WIRE_SCHEMAS.get(PROTOCOL) == digest, (
-        f"the wire schema changed under PROTOCOL {PROTOCOL}: bump PROTOCOL in "
-        f"state_service/protocol.py and add WIRE_SCHEMAS[{PROTOCOL + 1}] = {digest!r}"
-    )
+    pinned_protocol, pinned_digest = WIRE_SCHEMA
+    if PROTOCOL == pinned_protocol:
+        assert digest == pinned_digest, (
+            f"the wire schema changed under PROTOCOL {PROTOCOL}: bump PROTOCOL in "
+            f"state_service/protocol.py (and its history comment), then set "
+            f"WIRE_SCHEMA = ({PROTOCOL + 1}, {digest!r})"
+        )
+    else:
+        assert PROTOCOL > pinned_protocol, "PROTOCOL only goes up"
+        pytest.fail(f"PROTOCOL was bumped: set WIRE_SCHEMA = ({PROTOCOL}, {digest!r})")
