@@ -115,9 +115,7 @@ def test_swap_used_and_free_ratio() -> None:
 def test_swap_used_leaves_out_swap_cache_and_zswap() -> None:
     # As htop counts it: pages still in RAM (swap cache, zswap pool) are not
     # swapped-out memory, though they hold swap slots.
-    status = MemoryStatus(
-        100, 50, 0, swap_total=100, swap_free=10, swap_cached=5, zswapped=70
-    )
+    status = MemoryStatus(100, 50, 0, swap_total=100, swap_free=10, swap_cached=5, zswapped=70)
     assert status.swap_used == 15
     assert status.swap_free_ratio == 0.85
 
