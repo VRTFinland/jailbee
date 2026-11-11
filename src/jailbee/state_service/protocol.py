@@ -43,7 +43,8 @@ from jailbee.update_check import UpdateNotice
 # 19 combines these with service choices and built-in autostart profiles.
 # 20 adds the outbox Sent record counts: ContainerInfo and RepoGroup.sent_count.
 # 21 adds ContainerInfo.uuid: Sent records are keyed by the instance uuid.
-PROTOCOL = 21
+# 22 adds MemoryStatus.swap_cached and .zswapped: swap use leaves them out.
+PROTOCOL = 22
 
 
 class ProtocolError(ValueError):

@@ -290,7 +290,7 @@ def test_the_protocol_version_and_namespace_carry_the_activity_history():
     # Event ages require a server which supplies last_event_at; 8 added RepoGroup.advisories,
     # Snapshot.system and each container's top_cpu, top_mem and root_pool.
     # 15 added repo/container autostart profile state.
-    assert PROTOCOL == 21
+    assert PROTOCOL == 22
     assert protocol._NAMESPACE["RepoAdvisory"] is RepoAdvisory
     # Pinned so the entry survives ActivityEvent ever moving to a module that
     # imports it under TYPE_CHECKING, where pydantic could no longer resolve it.
@@ -364,7 +364,7 @@ def test_combined_protocol_preserves_builtin_choices_and_rerun_state():
         snapshot.groups[0], autostart_profiles=("full", "light", "none", "all")
     )
     group = decode(encode(snapshot)).groups[0]
-    assert PROTOCOL == 21
+    assert PROTOCOL == 22
     assert group.autostart_profiles == ("full", "light", "none", "all")
     assert group.autostart_services == ("db", "web")
     container = group.containers[0]

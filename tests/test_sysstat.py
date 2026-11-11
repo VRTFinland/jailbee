@@ -237,3 +237,18 @@ def test_same_filesystem(tmp_path: Path) -> None:
 
 def test_same_filesystem_missing_path_is_false(tmp_path: Path) -> None:
     assert same_filesystem(tmp_path, tmp_path / "nonexistent") is False
+
+
+def test_read_memory_without_zswap_lines_subtracts_only_swap_cache(tmp_path: Path) -> None:
+    # Kernels without zswap have no Zswapped line.
+    proc_root = _write_meminfo(
+        tmp_path / "proc",
+        "MemTotal: 1000 kB\nMemAvailable: 100 kB\nSwapCached: 3 kB\n"
+        "SwapTotal: 100 kB\nSwapFree: 10 kB\n",
+    )
+
+    status = read_memory(proc_root=proc_root)
+
+    assert status is not None
+    assert status.zswapped == 0
+    assert status.swap_used == 87 * 1024

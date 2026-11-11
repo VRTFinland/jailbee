@@ -54,6 +54,7 @@ class MemoryStatus:
 
     @property
     def swap_free_ratio(self) -> float:
+        """Share of swap not in `swap_used`, not the share of free swap slots."""
         if not self.swap_total:
             return 0.0
         return (self.swap_total - self.swap_used) / self.swap_total
