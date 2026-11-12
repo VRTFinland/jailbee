@@ -196,7 +196,7 @@ def issue_plan_json(
                     **(
                         {
                             "project": action.project,
-                            "project_title": resolved.project.title if resolved.project else None,
+                            "project_title": resolved.project.title if resolved.project else action.project_title,
                             "operation": action.kind.removeprefix("project_"),
                             "expected": {
                                 "present": action.expected_present,

@@ -141,6 +141,7 @@ def pr_body_refs(text: str) -> set[str]:
 
 
 ProjectReader = Callable[[str, str, int, str | None], ProjectExpectation]
+ProjectTitleReader = Callable[[str], str]
 
 
 def provisional_project(action: dict[str, Any], default_project: str | None) -> dict[str, Any]:
@@ -157,7 +158,8 @@ def provisional_project(action: dict[str, Any], default_project: str | None) -> 
 
 
 def capture_project(
-    action: dict[str, Any], reader: ProjectReader | None, default_project: str | None
+    action: dict[str, Any], reader: ProjectReader | None, default_project: str | None,
+    project_title_reader: ProjectTitleReader | None = None
 ) -> dict[str, Any]:
     """Host-owned expectations; the container's supplied membership is never trusted."""
     from jailbee.issue_github import IssueGithubReadError
@@ -168,8 +170,13 @@ def capture_project(
     project = action.get("project", default_project)
     if not isinstance(project, str) or not valid_project(project):
         raise bad_request("supply --project owner/number or configure github.project")
-    result = {**action, "project": project}
+    result = {**action, "project": project, "project_title": None}
     if "issue_ref" in action:
+        if project_title_reader is not None:
+            try:
+                result["project_title"] = project_title_reader(project)
+            except (IssueGithubReadError, ValueError) as exc:
+                raise wire.WireError(wire.REFUSED, str(exc)) from exc
         result["expected"] = {
             "present": False,
             **({"value": None} if action["type"] in ("project_set", "project_clear") else {}),
@@ -186,6 +193,7 @@ def capture_project(
             raise wire.WireError(wire.REFUSED, str(exc)) from exc
         if not isinstance(snapshot, ProjectExpectation) or type(snapshot.present) is not bool:
             raise wire.WireError(wire.REFUSED, "host Projects reader returned invalid membership")
+        result["project_title"] = snapshot.project_title
         result["expected"] = {
             "present": snapshot.present,
             **(
@@ -205,6 +213,7 @@ def handle_put(
     now: float,
     project_reader: ProjectReader | None = None,
     default_project: str | None = None,
+    project_title_reader: ProjectTitleReader | None = None,
 ) -> object:
     kind = kind_arg(args.get("kind"))
     slug = args.get("slug")
@@ -226,7 +235,7 @@ def handle_put(
         manifest = {
             **manifest,
             "actions": [
-                capture_project(a, project_reader, default_project) for a in provisional["actions"]
+                capture_project(a, project_reader, default_project, project_title_reader) for a in provisional["actions"]
             ],
         }
     parse(f"{slug}.json", manifest, bodies)
@@ -348,6 +357,7 @@ def handle(
     now: float,
     project_reader: ProjectReader | None = None,
     default_project: str | None = None,
+    project_title_reader: ProjectTitleReader | None = None,
 ) -> object:
     if op in wire.OUTBOX_DRAFT_OPS:
         from jailbee.outbox import draft_ops
@@ -360,6 +370,7 @@ def handle(
             now=now,
             project_reader=project_reader,
             default_project=default_project,
+            project_title_reader=project_title_reader,
         )
     if op == wire.OUTBOX_PUT:
         return handle_put(
@@ -369,6 +380,7 @@ def handle(
             now=now,
             project_reader=project_reader,
             default_project=default_project,
+            project_title_reader=project_title_reader,
         )
     if op == wire.OUTBOX_LIST:
         return handle_list(store, uuid, args)

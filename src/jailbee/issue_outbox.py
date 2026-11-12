@@ -880,7 +880,8 @@ def _action_lines(
     elif isinstance(action, AssigneesAction):
         lines.append(f"  {_assignee_changes(action, login)}")
     elif isinstance(action, (ProjectClearAction, ProjectRemoveAction)):
-        title = f' "{project.title}"' if project else ""
+        board_title = project.title if project else action.project_title
+        title = f' "{board_title}"' if board_title else ""
         change = (
             f"{action.field}: {action.expected_value!r} -> None"
             if isinstance(action, ProjectClearAction)
@@ -888,13 +889,15 @@ def _action_lines(
         )
         lines.append(f"  project {action.project}{title} · {target} · {change}")
     elif isinstance(action, ProjectSetAction):
-        title = f' "{project.title}"' if project else ""
+        board_title = project.title if project else action.project_title
+        title = f' "{board_title}"' if board_title else ""
         lines.append(
             f"  project {action.project}{title} · {target} · {action.field}: "
             f"{action.expected_value!r} -> {action.value!r}"
         )
     elif isinstance(action, ProjectAddAction):
-        title = f' "{project.title}"' if project else ""
+        board_title = project.title if project else action.project_title
+        title = f' "{board_title}"' if board_title else ""
         lines.append(f"  project {action.project}{title} · {target} · add")
         lines.append(f"  membership before: {'present' if action.expected_present else 'absent'}")
     elif isinstance(action, StateAction):
@@ -1281,7 +1284,7 @@ def _sent_action(
         content = _assignee_changes(action, login)
     elif isinstance(action, (ProjectClearAction, ProjectRemoveAction)):
         kind = action.kind
-        title = resolved.project.title if resolved.project else None
+        title = resolved.project.title if resolved.project else action.project_title
         change = (
             f"{action.field}: {action.expected_value!r} -> None"
             if isinstance(action, ProjectClearAction)
@@ -1290,7 +1293,7 @@ def _sent_action(
         content = f'project {action.project} "{title or ""}" · {change}'
     elif isinstance(action, ProjectSetAction):
         kind = action.kind
-        title = resolved.project.title if resolved.project else None
+        title = resolved.project.title if resolved.project else action.project_title
         content = (
             f'project {action.project} "{title or ""}" · {action.field}: '
             f"{action.expected_value!r} -> "
@@ -1298,7 +1301,7 @@ def _sent_action(
         )
     elif isinstance(action, ProjectAddAction):
         kind = action.kind
-        title = resolved.project.title if resolved.project else None
+        title = resolved.project.title if resolved.project else action.project_title
         content = (
             f'project {action.project} "{title or ""}" · add; '
             f"membership {action.expected_present} -> True"

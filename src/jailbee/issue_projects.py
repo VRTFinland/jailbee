@@ -41,6 +41,7 @@ ProjectValue = str | int | float | None
 class ProjectExpectation:
     present: bool
     value: ProjectValue = None
+    project_title: str | None = None
 
 
 @dataclass(frozen=True)

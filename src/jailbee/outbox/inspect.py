@@ -61,6 +61,8 @@ def _body_names(value: object) -> set[str]:
 
 def _issue_action(index: int, action: issues.IssueAction) -> ActionView:
     title: str | None = None
+    board_title = getattr(action, "project_title", None)
+    board = getattr(action, "project", "") + (f' "{board_title}"' if board_title else "")
     body: str | None
     markdown = True
     if isinstance(action, issues.CreateAction):
@@ -94,19 +96,19 @@ def _issue_action(index: int, action: issues.IssueAction) -> ActionView:
                 else "remove"
             )
             body, kind, markdown = (
-                f"project {action.project} · #{target} · {change}",
+                f"project {board} · #{target} · {change}",
                 action.kind,
                 False,
             )
         elif isinstance(action, issues.ProjectSetAction):
             body, kind, markdown = (
-                f"project {action.project} · #{target} · {action.field}: "
+                f"project {board} · #{target} · {action.field}: "
                 f"{action.expected_value!r} -> {action.value!r}",
                 action.kind,
                 False,
             )
         elif isinstance(action, issues.ProjectAddAction):
-            body, kind, markdown = f"project {action.project} · #{target} · add", action.kind, False
+            body, kind, markdown = f"project {board} · #{target} · add", action.kind, False
         elif isinstance(action, issues.StateAction):
             body = action.state + (f" ({action.reason})" if action.reason else "")
             kind, markdown = "state", False

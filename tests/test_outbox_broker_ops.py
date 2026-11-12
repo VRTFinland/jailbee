@@ -22,6 +22,8 @@ PLAIN = "proj-plain"
 
 @pytest.fixture
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Env]:
+    from jailbee import issue_projects
+    monkeypatch.setattr(issue_projects, "resolve_project", lambda root, board: issue_projects.Project(board, "P3", "Roadmap"))
     instance = Env(Rig(tmp_path, monkeypatch), monkeypatch)
     instance.store.set_recipient(PLAIN, PLAIN, now=1.0)
     instance.listener.open_container(PLAIN, instance.rig.root / PLAIN)
@@ -124,11 +126,23 @@ def test_project_staging_reads_membership_on_host_query_path(env: Env, monkeypat
                 "issue": 7,
                 "project": "acme/3",
                 "expected": {"present": False},
+                "project_title": "Untrusted title",
             }
         ),
     )
     assert response.ok, response
-    assert json.loads(stored(env)[0].manifest)["actions"][0]["expected"] == {"present": True}
+    from jailbee.issue_manifest import parse_manifest
+    from jailbee.issue_outbox import show_lines
+    from jailbee.outbox.inspect import build_views
+    from tests.outbox_support import IDENTITY, store as view_store
+    row = stored(env)[0]
+    staged = json.loads(row.manifest)["actions"][0]
+    assert staged["project_title"] == "Roadmap"
+    parsed = parse_manifest(row.name, row.manifest, row.bodies)
+    assert any('acme/3 "Roadmap"' in line for line in show_lines(parsed, None, PLAIN))
+    view = build_views(IDENTITY, (view_store("issue", {row.name: row.manifest}),))[0]
+    assert 'acme/3 "Roadmap"' in view.actions[0].body
+    assert staged["expected"] == {"present": True}
     assert reads == [(env.rig.cfg.repo_root, "acme/3", "acme/app", 7)]
 
 

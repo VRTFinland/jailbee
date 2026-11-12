@@ -164,7 +164,7 @@ class Queries:
 
             return broker_ops.handle_sent(PublicationStore(self._store), uuid, args)
         cfg = view.project_config
-        reader = None
+        reader = title_reader = None
         if cfg is not None:
             from jailbee import issue_outbox, issue_projects
 
@@ -182,7 +182,10 @@ class Queries:
                     fields = issue_projects.list_fields(cfg.repo_root, project)
                     resolved_field = issue_projects.find_field(fields, field)
                     value = issue_projects.get_field_value(cfg.repo_root, item, resolved_field)
-                return issue_projects.ProjectExpectation(item.present, value)
+                return issue_projects.ProjectExpectation(item.present, value, project.title)
+
+            def title_reader(board: str) -> str:
+                return issue_projects.resolve_project(cfg.repo_root, board).title
 
         return broker_ops.handle(
             OutboxStore(self._store),
@@ -191,6 +194,7 @@ class Queries:
             args,
             now=time.time(),
             project_reader=reader,
+            project_title_reader=title_reader,
             default_project=getattr(cfg.github, "project", None) if cfg else None,
         )
 

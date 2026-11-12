@@ -124,7 +124,7 @@ def test_draft_overwrites_ref_membership_without_project_reader(env, monkeypatch
     def unexpected(*args, **kwargs):
         raise AssertionError("a new issue must not require a project read")
 
-    monkeypatch.setattr(issue_projects, "resolve_project", unexpected)
+    monkeypatch.setattr(issue_projects, "resolve_project", lambda root, board: issue_projects.Project(board, "P3", "Roadmap"))
     monkeypatch.setattr(issue_projects, "get_target", unexpected)
     assert append(env, create()).ok
     assert append(env, on_ref("project_add", project="acme/3", expected={"present": True})).ok
@@ -135,7 +135,7 @@ def test_draft_overwrites_ref_field_expectation_without_project_reader(env, monk
     def unexpected(*args, **kwargs):
         raise AssertionError("a new issue must not require a project read")
 
-    monkeypatch.setattr(issue_projects, "resolve_project", unexpected)
+    monkeypatch.setattr(issue_projects, "resolve_project", lambda root, board: issue_projects.Project(board, "P3", "Roadmap"))
     monkeypatch.setattr(issue_projects, "get_target", unexpected)
     assert append(env, create()).ok
     assert append(

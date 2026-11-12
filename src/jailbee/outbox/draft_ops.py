@@ -27,6 +27,7 @@ from jailbee.orchestration import wire
 from jailbee.outbox.broker_ops import (
     MAX_PR_ACTIONS,
     ProjectReader,
+    ProjectTitleReader,
     bad_request,
     capture_project,
     kind_arg,
@@ -163,6 +164,7 @@ def handle_append(
     now: float,
     project_reader: ProjectReader | None = None,
     default_project: str | None = None,
+    project_title_reader: ProjectTitleReader | None = None,
 ) -> object:
     kind = kind_arg(args.get("kind"))
     name = _name(args)
@@ -202,7 +204,7 @@ def handle_append(
                 validate(
                     {**manifest, "actions": [*manifest["actions"], provisional]}, stored_bodies
                 )
-                return capture_project(provisional, project_reader, default_project)
+                return capture_project(provisional, project_reader, default_project, project_title_reader)
             return derived
 
     try:
@@ -419,6 +421,7 @@ def handle(
     now: float,
     project_reader: ProjectReader | None = None,
     default_project: str | None = None,
+    project_title_reader: ProjectTitleReader | None = None,
 ) -> object:
     if op == wire.OUTBOX_DRAFT_APPEND:
         return handle_append(
@@ -428,6 +431,7 @@ def handle(
             now=now,
             project_reader=project_reader,
             default_project=default_project,
+            project_title_reader=project_title_reader,
         )
     if op == wire.OUTBOX_DRAFT_LIST:
         return handle_list(store, uuid, args)

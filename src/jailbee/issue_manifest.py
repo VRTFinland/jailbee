@@ -105,6 +105,7 @@ class ProjectAddAction:
     target: IssueTarget
     project: str
     expected_present: bool
+    project_title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +118,7 @@ class ProjectSetAction:
     value: str | int | float
     expected_present: bool
     expected_value: str | int | float | None
+    project_title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +130,7 @@ class ProjectClearAction:
     field: str
     expected_present: bool
     expected_value: str | int | float | None
+    project_title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -137,6 +140,7 @@ class ProjectRemoveAction:
     target: IssueTarget
     project: str
     expected_present: bool
+    project_title: str | None = None
 
 
 ProjectAction = ProjectAddAction | ProjectSetAction | ProjectClearAction | ProjectRemoveAction
@@ -647,7 +651,7 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
         elif action_type in ("project_add", "project_set", "project_clear", "project_remove"):
             _reject_unknown(
                 item,
-                {"type", "repo", "issue", "issue_ref", "project", "expected"}
+                {"type", "repo", "issue", "issue_ref", "project", "expected", "project_title"}
                 | (
                     {"field", "value"}
                     if action_type == "project_set"
@@ -673,10 +677,11 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             if type(present) is not bool:
                 raise IssueManifestError(f"{context}: expected.present must be a boolean")
             target = _target(item, repo, refs, context)
+            project_title = _string_or_null(item.get("project_title"), "project_title", context)
             if action_type == "project_add":
-                action = ProjectAddAction(repo, target, project, present)
+                action = ProjectAddAction(repo, target, project, present, project_title)
             elif action_type == "project_remove":
-                action = ProjectRemoveAction(repo, target, project, present)
+                action = ProjectRemoveAction(repo, target, project, present, project_title)
             else:
                 field = _required_string(item, "field", context)
                 value = item.get("value")
@@ -701,10 +706,10 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
                         f"{context}: absent membership requires expected.value null"
                     )
                 if action_type == "project_clear":
-                    action = ProjectClearAction(repo, target, project, field, present, old)
+                    action = ProjectClearAction(repo, target, project, field, present, old, project_title)
                 else:
                     assert isinstance(value, (str, int, float))
-                    action = ProjectSetAction(repo, target, project, field, value, present, old)
+                    action = ProjectSetAction(repo, target, project, field, value, present, old, project_title)
         else:
             raise IssueManifestError(
                 f"{context}: type must be one of create, edit, comment, labels, assignees, "
