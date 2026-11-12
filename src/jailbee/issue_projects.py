@@ -64,6 +64,14 @@ class ProjectReceipt(MutationReceipt):
     item_id: str
 
 
+class ProjectMutationError(IssueGithubMutationError):
+    """A failed field update whose board membership has a definite receipt."""
+
+    def __init__(self, message: str, receipt: ProjectReceipt) -> None:
+        super().__init__(message, uncertain=True)
+        self.receipt = receipt
+
+
 def _graphql(
     root: Path, query: str, variables: dict[str, object], *, mutation: bool = False
 ) -> dict[str, Any]:
@@ -383,12 +391,14 @@ def set_field(
                 "GitHub Projects returned an unusable receipt", uncertain=True
             )
     except IssueGithubReadError:
+        if added:
+            raise ProjectMutationError("GitHub Projects returned an unusable receipt", receipt) from None
         raise IssueGithubMutationError(
             "GitHub Projects returned an unusable receipt", uncertain=True
         ) from None
     except IssueGithubMutationError as exc:
-        if added and not exc.uncertain:
-            raise IssueGithubMutationError(str(exc), uncertain=True) from exc
+        if added:
+            raise ProjectMutationError(str(exc), receipt) from exc
         raise
     return receipt
 

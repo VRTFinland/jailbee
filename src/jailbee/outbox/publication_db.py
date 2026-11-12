@@ -876,8 +876,8 @@ class PublicationStore:
                 action = replace(
                     current,
                     state="uncertain",
-                    url=None,
-                    issue=None,
+                    url=url,
+                    issue=issue,
                     detail=safe_mutation_detail(detail or ""),
                 )
             self._set_action(con, claim, digest, action, now)
@@ -1106,6 +1106,22 @@ def read_sent(
             )
     except _NoTableError:
         return []
+
+
+def read_partial_project_receipts(root: Path, uuid: str) -> dict[tuple[str, str, int], str]:
+    """Definite membership receipts retained across an explicit field-update retry."""
+    with _read_only(root) as con:
+        if con is None:
+            return {}
+        rows = con.execute(
+            "SELECT manifest, dedup_key, action_index, url FROM outbox_sent "
+            "WHERE uuid=? AND outbox='issue' AND action_kind='project_set' "
+            "AND state='uncertain' AND url IS NOT NULL", (uuid,),
+        ).fetchall()
+        return {
+            (str(name), str(key).rsplit("|", 2)[1], int(index)): str(url)
+            for name, key, index, url in rows
+        }
 
 
 def sent_counts(root: Path) -> tuple[dict[str, int], dict[str, int]]:

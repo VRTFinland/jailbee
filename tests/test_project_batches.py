@@ -319,6 +319,51 @@ def test_plain_applied_receipt_resolves_implicit_add_and_resumes_next_field(pipe
     assert report.skipped[0][1].url == url + "#project-item-ITEM"
 
 
+@pytest.mark.parametrize("foreign_item", [False, True])
+def test_retry_after_implicit_add_preserves_only_own_membership(pipeline, mocker, foreign_item):
+    prepare, apply, _, project_mutation, target = pipeline
+    mocker.stop(project_mutation)
+    url = "https://github.com/acme/app/issues/901"
+    state = {"item": None, "value": None}
+    target.side_effect = lambda *args: issue_projects.ProjectTarget("I901", url, state["item"])
+    field = issue_projects.ProjectField("F1", "Notes", "TEXT")
+    mocker.patch.object(issue_projects, "list_fields", return_value=(field,))
+    mocker.patch.object(issue_projects, "get_field_value", side_effect=lambda *args: state["value"])
+    requests = []
+
+    def graphql(root, query, variables, *, mutation=False):
+        requests.append(query)
+        if "addProjectV2ItemById" in query:
+            state["item"] = "OWN"
+            return {"addProjectV2ItemById": {"item": {"id": "OWN"}}}
+        if len(requests) == 2:
+            raise issue_github.IssueGithubMutationError("rejected", uncertain=False)
+        state["value"] = "Hello"
+        return {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "OWN"}}}
+
+    mocker.patch.object(issue_projects, "_graphql", side_effect=graphql)
+    action = {"type": "project_set", "repo": ".", "issue": 901, "project": "acme/3",
+              "field": "Notes", "value": "Hello", "expected": {"present": False, "value": None}}
+    seed({"batch.json": json.dumps({"version": 1, "actions": [action]})})
+    batch = prepare()
+    first = apply(batch)
+    assert first.failure is not None and first.failure.uncertain
+    assert state == {"item": "OWN", "value": None}
+    manifest = batch.manifests[0]
+    issue_outbox.reconcile_action(uuid=batch.uuid, index=0, repo=manifest.actions[0].repo,
+        manifest=manifest.manifest, digest=manifest.digest, resolution=issue_outbox.RetryResolution())
+    if foreign_item:
+        state["item"] = "SOMEONE-ELSE"
+        with pytest.raises(issue_outbox.IssueGateError, match="membership changed"):
+            prepare()
+        assert len(requests) == 2
+    else:
+        report = apply(prepare())
+        assert report.failure is None
+        assert state == {"item": "OWN", "value": "Hello"}
+        assert len(requests) == 3
+
+
 @pytest.mark.parametrize("kind", ["project_clear", "project_remove"])
 @pytest.mark.parametrize("resolution", ["retry", "applied"])
 def test_uncertain_pull_project_action_requires_resolution(pipeline, mocker, kind, resolution):

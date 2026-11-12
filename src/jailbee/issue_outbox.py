@@ -184,6 +184,7 @@ class ResolvedAction:
     project: issue_projects.Project | None = None
     project_target: issue_projects.ProjectTarget | None = None
     project_field: issue_projects.ResolvedField | None = None
+    established_item: str | None = None
 
 
 @dataclass(frozen=True)
@@ -511,11 +512,13 @@ def prepare_batch(
     """
     from jailbee.orchestration.store import StoreError
     from jailbee.outbox.service import instance_identity
+    from jailbee.outbox import publication_db
 
     try:
         identity, uuid = instance_identity(incus, container)
         outbox = store_outbox(uuid)
         journals = store_journals(identity, uuid)
+        partial_receipts = publication_db.read_partial_project_receipts(publication_db.default_root(), uuid)
     except (StoreError, JournalError, IncusError) as exc:
         raise IssueExecutionError(str(exc)) from exc
     refusals: list[str] = []
@@ -648,6 +651,11 @@ def prepare_batch(
                         )
                     mutations[mutation_key] = context
             project = project_target = project_field = None
+            own_item = None
+            if isinstance(action, ProjectSetAction) and status == "pending":
+                partial_url = partial_receipts.get((manifest.name, digest, index))
+                if partial_url:
+                    own_item = _receipt_item(partial_url)
             if isinstance(
                 action,
                 (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction),
@@ -666,6 +674,8 @@ def prepare_batch(
                     item = _receipt_item(receipt.url)
                     if item:
                         established[project_key] = item
+                if own_item:
+                    established[project_key] = own_item
                 if status == "pending":
                     try:
                         project = issue_projects.resolve_project(cfg.repo_root, action.project)
@@ -698,7 +708,7 @@ def prepare_batch(
                             else None
                         )
                         mismatch = _project_difference(
-                            action, project_target, value, established.get(project_key)
+                            action, project_target, value, own_item or established.get(project_key)
                         )
                         if mismatch:
                             refusals.append(f"{context}: {mismatch}")
@@ -718,6 +728,7 @@ def prepare_batch(
                     project,
                     project_target,
                     project_field,
+                    own_item,
                 )
             )
         prepared.append(PreparedManifest(manifest, digest, journal, tuple(actions)))
@@ -1520,6 +1531,10 @@ def apply_batch(
                             )
                         raise
 
+                if isinstance(resolved.action, ProjectSetAction) and resolved.established_item:
+                    number = resolved.issue.number or created_issue_numbers.get(resolved.issue.ref or "")
+                    if number:
+                        established_items[(resolved.repo.identity, number, resolved.action.project.casefold())] = resolved.established_item
                 try:
                     receipt = _execute_one(
                         batch.host_repo_root,
@@ -1535,14 +1550,17 @@ def apply_batch(
                             target = resolved.issue.number or created_issue_numbers.get(
                                 resolved.issue.ref or ""
                             )
+                            partial = exc.receipt if isinstance(exc, issue_projects.ProjectMutationError) else None
                             store.settle(
                                 claim,
                                 digest,
                                 resolved.index,
                                 outcome="uncertain",
+                                url=partial.url if partial else None,
+                                issue=partial.issue if partial else None,
                                 detail=str(exc),
                                 sent=_sent_entry(
-                                    batch, name, resolved, target, None, container_prefix, publisher
+                                    batch, name, resolved, target, partial.url if partial else None, container_prefix, publisher
                                 ),
                                 now=clock(),
                             )
