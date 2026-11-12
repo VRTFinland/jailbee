@@ -377,7 +377,9 @@ def project(
             if not field or field.casefold() in seen:
                 raise OutboxCommandError(f"duplicate or empty project field {field!r}", 2)
             seen.add(field.casefold())
-            actions.append({"type": "project_clear", "repo": repo, **_target(target), "field": field})
+            actions.append(
+                {"type": "project_clear", "repo": repo, **_target(target), "field": field}
+            )
         if remove:
             actions.append({"type": "project_remove", "repo": repo, **_target(target)})
         for action in actions:

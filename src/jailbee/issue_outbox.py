@@ -466,13 +466,19 @@ def _project_difference(
         not action.expected_present and present and own_add
     ):
         return "project membership changed since staging"
-    if isinstance(action, (ProjectSetAction, ProjectClearAction)) and value != action.expected_value:
+    if (
+        isinstance(action, (ProjectSetAction, ProjectClearAction))
+        and value != action.expected_value
+    ):
         return "project field value changed since staging"
     return None
 
 
 def _prior_project_item(batch: PreparedBatch, current: ResolvedAction) -> str | None:
-    assert isinstance(current.action, (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction))
+    assert isinstance(
+        current.action,
+        (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction),
+    )
     found = None
     for manifest in batch.manifests:
         receipts = {r.index: r for r in manifest.journal.actions} if manifest.journal else {}
@@ -579,7 +585,13 @@ def prepare_batch(
                     snapshot = created.get(issue.ref)
                 if snapshot is not None:
                     if snapshot.is_pull_request and not isinstance(
-                        action, (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction)
+                        action,
+                        (
+                            ProjectAddAction,
+                            ProjectSetAction,
+                            ProjectClearAction,
+                            ProjectRemoveAction,
+                        ),
                     ):
                         refusals.append(f"{context}: target is a pull request, not an issue")
                     refusals.extend(_differences(action, snapshot, context, login))
@@ -636,13 +648,21 @@ def prepare_batch(
                         )
                     mutations[mutation_key] = context
             project = project_target = project_field = None
-            if isinstance(action, (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction)):
+            if isinstance(
+                action,
+                (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction),
+            ):
                 project_key = (
                     repo.identity,
                     issue.number if issue.number is not None else f"{manifest.name}:{issue.ref}",
                     action.project.casefold(),
                 )
-                if status == "applied" and isinstance(action, (ProjectAddAction, ProjectSetAction)) and receipt and receipt.url:
+                if (
+                    status == "applied"
+                    and isinstance(action, (ProjectAddAction, ProjectSetAction))
+                    and receipt
+                    and receipt.url
+                ):
                     item = _receipt_item(receipt.url)
                     if item:
                         established[project_key] = item
@@ -656,7 +676,13 @@ def prepare_batch(
                                 action.value,
                             )
                         if isinstance(action, ProjectClearAction):
-                            project_field = issue_projects.ResolvedField(issue_projects.find_field(issue_projects.list_fields(cfg.repo_root, project), action.field), None, {})
+                            project_field = issue_projects.ResolvedField(
+                                issue_projects.find_field(
+                                    issue_projects.list_fields(cfg.repo_root, project), action.field
+                                ),
+                                None,
+                                {},
+                            )
                         project_target = (
                             issue_projects.get_target(
                                 cfg.repo_root, project, repo.slug, issue.number
@@ -720,7 +746,10 @@ def revalidate_batch(batch: PreparedBatch) -> None:
     for manifest in batch.manifests:
         for resolved in manifest.actions:
             if (
-                isinstance(resolved.action, (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction))
+                isinstance(
+                    resolved.action,
+                    (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction),
+                )
                 and resolved.status == "pending"
             ):
                 if resolved.issue.number is not None:
@@ -852,7 +881,11 @@ def _action_lines(
         lines.append(f"  {_assignee_changes(action, login)}")
     elif isinstance(action, (ProjectClearAction, ProjectRemoveAction)):
         title = f' "{project.title}"' if project else ""
-        change = f"{action.field}: {action.expected_value!r} -> None" if isinstance(action, ProjectClearAction) else "remove"
+        change = (
+            f"{action.field}: {action.expected_value!r} -> None"
+            if isinstance(action, ProjectClearAction)
+            else "remove"
+        )
         lines.append(f"  project {action.project}{title} · {target} · {change}")
     elif isinstance(action, ProjectSetAction):
         title = f' "{project.title}"' if project else ""
@@ -1162,7 +1195,9 @@ def _execute_one(
                 )
         assert last is not None, "a parsed assignees action changes at least one login"
         return last
-    if isinstance(action, (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction)):
+    if isinstance(
+        action, (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction)
+    ):
         try:
             project = resolved.project or issue_projects.resolve_project(
                 host_repo_root, action.project
@@ -1173,7 +1208,13 @@ def _execute_one(
                     issue_projects.list_fields(host_repo_root, project), action.field, action.value
                 )
             if isinstance(action, ProjectClearAction) and field is None:
-                field = issue_projects.ResolvedField(issue_projects.find_field(issue_projects.list_fields(host_repo_root, project), action.field), None, {})
+                field = issue_projects.ResolvedField(
+                    issue_projects.find_field(
+                        issue_projects.list_fields(host_repo_root, project), action.field
+                    ),
+                    None,
+                    {},
+                )
             target = issue_projects.get_target(host_repo_root, project, repo, number)
             value = (
                 issue_projects.get_field_value(host_repo_root, target, field.field)
@@ -1191,8 +1232,11 @@ def _execute_one(
         if isinstance(action, ProjectClearAction):
             assert field is not None
             return issue_projects.clear_field(host_repo_root, project, target, number, field.field)
-        return (issue_projects.set_field(host_repo_root, project, target, number, field)
-                if field else issue_projects.add_item(host_repo_root, project, target, number))
+        return (
+            issue_projects.set_field(host_repo_root, project, target, number, field)
+            if field
+            else issue_projects.add_item(host_repo_root, project, target, number)
+        )
     if isinstance(action, StateAction):
         return issue_github.set_state(
             host_repo_root, repo, number, state=action.state, reason=action.reason
@@ -1238,7 +1282,11 @@ def _sent_action(
     elif isinstance(action, (ProjectClearAction, ProjectRemoveAction)):
         kind = action.kind
         title = resolved.project.title if resolved.project else None
-        change = f"{action.field}: {action.expected_value!r} -> None" if isinstance(action, ProjectClearAction) else f"remove; membership {action.expected_present} -> False"
+        change = (
+            f"{action.field}: {action.expected_value!r} -> None"
+            if isinstance(action, ProjectClearAction)
+            else f"remove; membership {action.expected_present} -> False"
+        )
         content = f'project {action.project} "{title or ""}" · {change}'
     elif isinstance(action, ProjectSetAction):
         kind = action.kind
@@ -1710,7 +1758,12 @@ def reconcile_action(
 
         action = manifest.actions[index]
         url_number = _validated_receipt(
-            resolution.url, repo, project=isinstance(action, (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction))
+            resolution.url,
+            repo,
+            project=isinstance(
+                action,
+                (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction),
+            ),
         )
         if isinstance(action, CreateAction):
             if type(resolution.issue) is not int:

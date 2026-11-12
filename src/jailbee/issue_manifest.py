@@ -648,7 +648,13 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             _reject_unknown(
                 item,
                 {"type", "repo", "issue", "issue_ref", "project", "expected"}
-                | ({"field", "value"} if action_type == "project_set" else {"field"} if action_type == "project_clear" else set()),
+                | (
+                    {"field", "value"}
+                    if action_type == "project_set"
+                    else {"field"}
+                    if action_type == "project_clear"
+                    else set()
+                ),
                 context,
             )
             repo = _repo(item, context)
@@ -658,7 +664,9 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             expected = _expected(item, context)
             _reject_unknown(
                 expected,
-                {"present", "value"} if action_type in ("project_set", "project_clear") else {"present"},
+                {"present", "value"}
+                if action_type in ("project_set", "project_clear")
+                else {"present"},
                 f"{context} expected",
             )
             present = expected.get("present")

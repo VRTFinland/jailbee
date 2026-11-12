@@ -7,14 +7,39 @@ from jailbee import issue_projects
 from jailbee.issue_github import IssueGithubMutationError, IssueGithubReadError
 
 
-@pytest.mark.parametrize("operation,mutation", [("clear", "clearProjectV2ItemFieldValue"), ("remove", "deleteProjectV2Item")])
+@pytest.mark.parametrize(
+    "operation,mutation",
+    [("clear", "clearProjectV2ItemFieldValue"), ("remove", "deleteProjectV2Item")],
+)
 @pytest.mark.parametrize("present", [True, False])
-def test_clear_remove_exact_mutations_and_absent_noop(tmp_path, mocker, operation, mutation, present):
-    run = mocker.patch("jailbee.issue_projects.subprocess.run", return_value=subprocess.CompletedProcess([], 0, json.dumps({"data": {mutation: {"projectV2Item": {"id": "ITEM"}} if operation == "clear" else {"deletedItemId": "ITEM"}}}), ""))
+def test_clear_remove_exact_mutations_and_absent_noop(
+    tmp_path, mocker, operation, mutation, present
+):
+    run = mocker.patch(
+        "jailbee.issue_projects.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            [],
+            0,
+            json.dumps(
+                {
+                    "data": {
+                        mutation: {"projectV2Item": {"id": "ITEM"}}
+                        if operation == "clear"
+                        else {"deletedItemId": "ITEM"}
+                    }
+                }
+            ),
+            "",
+        ),
+    )
     board = issue_projects.Project("acme/3", "P3", "Roadmap")
-    target = issue_projects.ProjectTarget("I7", "https://github.com/acme/app/pull/7", "ITEM" if present else None)
+    target = issue_projects.ProjectTarget(
+        "I7", "https://github.com/acme/app/pull/7", "ITEM" if present else None
+    )
     if operation == "clear":
-        receipt = issue_projects.clear_field(tmp_path, board, target, 7, issue_projects.ProjectField("F1", "Status", "SINGLE_SELECT"))
+        receipt = issue_projects.clear_field(
+            tmp_path, board, target, 7, issue_projects.ProjectField("F1", "Status", "SINGLE_SELECT")
+        )
     else:
         receipt = issue_projects.remove_item(tmp_path, board, target, 7)
     assert receipt.url == target.url + ("#project-item-ITEM" if present else "")
@@ -23,7 +48,11 @@ def test_clear_remove_exact_mutations_and_absent_noop(tmp_path, mocker, operatio
         assert run.call_args.args[0] == ["gh", "api", "graphql", "--input", "-"]
         payload = json.loads(run.call_args.kwargs["input"])
         assert mutation in payload["query"]
-        assert payload["variables"] == {"project": "P3", "item": "ITEM", **({"field": "F1"} if operation == "clear" else {})}
+        assert payload["variables"] == {
+            "project": "P3",
+            "item": "ITEM",
+            **({"field": "F1"} if operation == "clear" else {}),
+        }
 
 
 def test_field_discovery_and_current_values_paginate(tmp_path, mocker):

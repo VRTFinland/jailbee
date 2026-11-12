@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from jailbee import issue_outbox, pr, pr_outbox, prompting
 from jailbee.incus import IncusError
-from jailbee.issue_manifest import ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction
+from jailbee.issue_manifest import (
+    ProjectAddAction,
+    ProjectClearAction,
+    ProjectRemoveAction,
+    ProjectSetAction,
+)
 from jailbee.orchestration.store import StoreError
 from jailbee.outbox import sent
 from jailbee.outbox.inspect import build_views, safe_text
@@ -209,10 +214,20 @@ def issue_plan_json(
                                     else action.value,
                                 }
                                 if isinstance(action, ProjectSetAction)
-                                else {"field": action.field, "value": None} if isinstance(action, ProjectClearAction) else {}
+                                else {"field": action.field, "value": None}
+                                if isinstance(action, ProjectClearAction)
+                                else {}
                             ),
                         }
-                        if isinstance(action, (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction))
+                        if isinstance(
+                            action,
+                            (
+                                ProjectAddAction,
+                                ProjectSetAction,
+                                ProjectClearAction,
+                                ProjectRemoveAction,
+                            ),
+                        )
                         else {}
                     ),
                 }

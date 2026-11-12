@@ -399,35 +399,50 @@ def set_field(
     return receipt
 
 
-def clear_field(root: Path, project: Project, target: ProjectTarget, number: int,
-                field: ProjectField) -> MutationReceipt:
+def clear_field(
+    root: Path, project: Project, target: ProjectTarget, number: int, field: ProjectField
+) -> MutationReceipt:
     """Clearing an absent item does not add it to the board."""
     if not target.present:
         return MutationReceipt(number, target.url)
-    data = _graphql(root,
+    data = _graphql(
+        root,
         "mutation($project:ID!,$item:ID!,$field:ID!){clearProjectV2ItemFieldValue("
         "input:{projectId:$project,itemId:$item,fieldId:$field}){projectV2Item{id}}}",
-        {"project": project.id, "item": target.item_id, "field": field.id}, mutation=True)
+        {"project": project.id, "item": target.item_id, "field": field.id},
+        mutation=True,
+    )
     try:
-        id = _object(_object(data.get("clearProjectV2ItemFieldValue")).get("projectV2Item")).get("id")
+        id = _object(_object(data.get("clearProjectV2ItemFieldValue")).get("projectV2Item")).get(
+            "id"
+        )
         if id != target.item_id:
             raise IssueGithubReadError("invalid item")
     except IssueGithubReadError:
-        raise IssueGithubMutationError("GitHub Projects returned an unusable receipt", uncertain=True) from None
+        raise IssueGithubMutationError(
+            "GitHub Projects returned an unusable receipt", uncertain=True
+        ) from None
     return MutationReceipt(number, f"{target.url}#project-item-{target.item_id}")
 
 
-def remove_item(root: Path, project: Project, target: ProjectTarget, number: int) -> MutationReceipt:
+def remove_item(
+    root: Path, project: Project, target: ProjectTarget, number: int
+) -> MutationReceipt:
     """A matching absent expectation settles without dispatching a mutation."""
     if not target.present:
         return MutationReceipt(number, target.url)
-    data = _graphql(root,
+    data = _graphql(
+        root,
         "mutation($project:ID!,$item:ID!){deleteProjectV2Item("
         "input:{projectId:$project,itemId:$item}){deletedItemId}}",
-        {"project": project.id, "item": target.item_id}, mutation=True)
+        {"project": project.id, "item": target.item_id},
+        mutation=True,
+    )
     try:
         if _object(data.get("deleteProjectV2Item")).get("deletedItemId") != target.item_id:
             raise IssueGithubReadError("invalid item")
     except IssueGithubReadError:
-        raise IssueGithubMutationError("GitHub Projects returned an unusable receipt", uncertain=True) from None
+        raise IssueGithubMutationError(
+            "GitHub Projects returned an unusable receipt", uncertain=True
+        ) from None
     return MutationReceipt(number, f"{target.url}#project-item-{target.item_id}")

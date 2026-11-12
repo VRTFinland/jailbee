@@ -188,7 +188,11 @@ def capture_project(
             raise wire.WireError(wire.REFUSED, "host Projects reader returned invalid membership")
         result["expected"] = {
             "present": snapshot.present,
-            **({"value": snapshot.value} if action["type"] in ("project_set", "project_clear") else {}),
+            **(
+                {"value": snapshot.value}
+                if action["type"] in ("project_set", "project_clear")
+                else {}
+            ),
         }
     return result
 
