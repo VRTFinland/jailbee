@@ -319,7 +319,7 @@ def test_plain_applied_receipt_resolves_implicit_add_and_resumes_next_field(pipe
     assert report.skipped[0][1].url == url + "#project-item-ITEM"
 
 
-@pytest.mark.parametrize("foreign_item", [False, True])
+@pytest.mark.parametrize("foreign_item", [False, True, "removed"])
 def test_retry_after_implicit_add_preserves_only_own_membership(pipeline, mocker, foreign_item):
     prepare, apply, _, project_mutation, target = pipeline
     mocker.stop(project_mutation)
@@ -366,12 +366,14 @@ def test_retry_after_implicit_add_preserves_only_own_membership(pipeline, mocker
         resolution=issue_outbox.RetryResolution(),
     )
     if foreign_item:
-        state["item"] = "SOMEONE-ELSE"
+        state["item"] = None if foreign_item == "removed" else "SOMEONE-ELSE"
         with pytest.raises(issue_outbox.IssueGateError, match="membership changed"):
             prepare()
         assert len(requests) == 2
     else:
-        report = apply(prepare())
+        retry = prepare()
+        issue_outbox.revalidate_batch(retry)
+        report = apply(retry)
         assert report.failure is None
         assert state == {"item": "OWN", "value": "Hello"}
         assert len(requests) == 3

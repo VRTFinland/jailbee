@@ -463,6 +463,8 @@ def _project_difference(
 ) -> str | None:
     present = target.present if target else False
     own_add = bool(target and target.item_id and target.item_id == established_item)
+    if established_item and not own_add:
+        return "project membership changed since staging"
     if present != action.expected_present and not (
         not action.expected_present and present and own_add
     ):
@@ -782,7 +784,8 @@ def revalidate_batch(batch: PreparedBatch) -> None:
                             else None
                         )
                         mismatch = _project_difference(
-                            resolved.action, target, value, _prior_project_item(batch, resolved)
+                            resolved.action, target, value,
+                            resolved.established_item or _prior_project_item(batch, resolved)
                         )
                         if mismatch:
                             refusals.append(
