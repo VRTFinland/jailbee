@@ -26,7 +26,6 @@ from jailbee.issue_manifest import (
     MAX_OFFER_ACTIONS,
     ME_LOGIN,
     AssigneesAction,
-    mutation_keys,
     CommentAction,
     CreateAction,
     CreatedIssue,
@@ -38,6 +37,7 @@ from jailbee.issue_manifest import (
     LabelsAction,
     StateAction,
     foreign_slug,
+    mutation_keys,
     parse_manifest,
 )
 from jailbee.outbox import publication_db, sent

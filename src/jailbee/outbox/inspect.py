@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from typing import assert_never
-
 import hashlib
 import json
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, replace
-from typing import TYPE_CHECKING, Literal, Union
+from typing import TYPE_CHECKING, Literal, Union, assert_never
 
 from jailbee import issue_manifest as issues
 from jailbee import pr_outbox as prs

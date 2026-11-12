@@ -7,7 +7,7 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
-from jailbee import issue_manifest, issue_outbox, pr, pr_outbox, prompting
+from jailbee import issue_outbox, pr, pr_outbox, prompting
 from jailbee.incus import IncusError
 from jailbee.orchestration.store import StoreError
 from jailbee.outbox import sent
