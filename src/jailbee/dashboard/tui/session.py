@@ -201,6 +201,9 @@ def _normalised(grant: GrantView | None) -> GrantView | None:
         publish_issues=tuple(sorted(set(grant.publish_issues))),
         publish_foreign_repos=tuple(sorted(set(grant.publish_foreign_repos))),
         publish_foreign_actions=tuple(sorted(set(grant.publish_foreign_actions))),
+        publish_projects=tuple(sorted(
+            (board, tuple(sorted(set(actions)))) for board, actions in grant.publish_projects
+        )),
     )
 
 
@@ -1302,6 +1305,18 @@ class DashboardSession:
             return None
         if entry.value == "pending":
             return self._reopen_orchestration(container, "pending")
+        if picker.purpose == "container-orchestration-projects":
+            if entry.value == "add":
+                granted = dict(info.grant.publish_projects) if info.grant else {}
+                default = found[0].default_project or ""
+                return TextPrompt(
+                    "container-orchestration-project-add", "Add project board", "owner/number",
+                    initial=default if default.casefold() not in granted else "",
+                    target=container, back=picker,
+                )
+            return self._project_actions_picker(container, entry.value)
+        if picker.purpose == "container-orchestration-project-actions":
+            return self._change_project_action(container, picker.carry[0], entry.value)
         if picker.purpose == "container-orchestration-runner":
             return self._submit_runner(container, entry.value)
         if picker.purpose == "container-orchestration-publish-issues":
@@ -1310,6 +1325,8 @@ class DashboardSession:
             return self._runner_picker(container)
         if entry.value == "publish-issues":
             return self._publish_issues_picker(container)
+        if entry.value == "publish-projects":
+            return self._publish_projects_picker(container)
         if entry.value in ("limit", "egress", "publish-rate", "publish-foreign"):
             return self._orchestration_prompt(container, found[1], entry.value)
         if entry.value.startswith(("op:", "mount:", "publish:")) or entry.value == "loose":
@@ -1402,7 +1419,8 @@ class DashboardSession:
     def _publish_rate_raise_permitted(self, container: str, grant: GrantView) -> bool:
         """Whether a higher rate passes the CLI's remote check: every held right is publishable."""
         held = []
-        if grant.publish_issues or (grant.publish_foreign_repos and grant.publish_foreign_actions):
+        if (grant.publish_issues or grant.publish_projects
+                or (grant.publish_foreign_repos and grant.publish_foreign_actions)):
             held.append("issues")
         if grant.publish_prs:
             held.append("prs")
@@ -1417,6 +1435,11 @@ class DashboardSession:
         if grant.publish_issues or issues_ok:
             listed = ", ".join(grant.publish_issues) or "none"
             entries.append(PickerEntry(f"Publish issues: {listed}…", "publish-issues"))
+        if grant.publish_projects or issues_ok:
+            projects = ", ".join(
+                f"{board} ({', '.join(actions)})" for board, actions in grant.publish_projects
+            ) or "none"
+            entries.append(PickerEntry(f"Publish projects: {projects}…", "publish-projects"))
         if grant.publish_foreign_repos or issues_ok:
             foreign = "none"
             if grant.publish_foreign_repos and grant.publish_foreign_actions:
@@ -1433,6 +1456,76 @@ class DashboardSession:
             entries.append(PickerEntry(f"Publish PR reviews: {state}", "publish:pr-reviews"))
         entries.append(PickerEntry(f"Publish rate: {grant.publish_rate}/hour…", "publish-rate"))
         return entries
+
+    def _publish_projects_picker(self, container: str) -> Picker | None:
+        found = self._listed_container(container)
+        if found is None or found[1].grant is None or not self._orchestration_editable(found[1]):
+            self.set_notice("Orchestration is not available for this container")
+            return None
+        entries = dact.scoped_rights_entries(
+            found[1].grant.publish_projects, add_label="+ Add board…",
+            widen=self._publish_widening_permitted(container, "issues"),
+        )
+        return Picker(
+            "container-orchestration-projects", "Publish projects", tuple(entries),
+            target=container, back=self.open_orchestration(container),
+        )
+
+    def _project_actions_picker(self, container: str, board: str) -> Picker | None:
+        found = self._listed_container(container)
+        if found is None or found[1].grant is None:
+            return None
+        rights = dict(found[1].grant.publish_projects).get(board)
+        if rights is None:
+            return self._publish_projects_picker(container)
+        entries = dact.scoped_action_entries(
+            rights, ("add", "set", "remove"),
+            widen=self._publish_widening_permitted(container, "issues"),
+            implications={"add": "set"}, remove_label="Remove board",
+        )
+        return Picker(
+            "container-orchestration-project-actions", f"Project {board}", tuple(entries),
+            target=container, carry=(board,), back=self._publish_projects_picker(container),
+        )
+
+    def _change_project_action(self, container: str, board: str, action: str) -> Picker | None:
+        found = self._listed_container(container)
+        if found is None or found[1].grant is None:
+            return None
+        rights = set(dict(found[1].grant.publish_projects).get(board, ()))
+        if action == "delete":
+            return self._set_project_actions(container, board, (), show_actions=False)
+        if action not in ("add", "set", "remove"):
+            return self._project_actions_picker(container, board)
+        if action == "add" and action not in rights and "set" in rights:
+            self.set_notice("add is implied by set; turn set off first")
+            return self._project_actions_picker(container, board)
+        if action not in rights and not self._publish_widening_permitted(container, "issues"):
+            self.set_notice("Adding project rights needs issue publish permission")
+            return self._project_actions_picker(container, board)
+        rights.symmetric_difference_update({action})
+        return self._set_project_actions(container, board, tuple(sorted(rights)), show_actions=True)
+
+    def _set_project_actions(
+        self, container: str, board: str, actions: tuple[str, ...], *, show_actions: bool
+    ) -> Picker | None:
+        found = self._listed_container(container)
+        repo = self.repo_for(container, "container")
+        if found is None or repo is None or found[1].grant is None:
+            self.set_notice(f"'{container}' is gone")
+            return None
+        grant = found[1].grant
+        argv = dact.orchestrate_grant_argv(container, publish_project=(board, actions))
+        if not self.run_quiet_cli(repo, argv):
+            return self._close_after_failure()
+        projects = dict(grant.publish_projects)
+        if actions:
+            projects[board] = actions
+        else:
+            projects.pop(board, None)
+        self._patch_grant(container, replace(grant, publish_projects=tuple(sorted(projects.items()))))
+        return (self._project_actions_picker(container, board) if show_actions and actions
+                else self._publish_projects_picker(container))
 
     def _publish_issues_picker(self, container: str, start_index: int = 0) -> Picker | None:
         found = self._listed_container(container)
@@ -1650,6 +1743,20 @@ class DashboardSession:
         if not self._orchestration_editable(found[1]):
             self.set_notice("Orchestration is not available for this container")
             return None
+        if prompt.purpose == "container-orchestration-project-add":
+            from jailbee.issue_manifest import valid_project
+
+            if not valid_project(answer):
+                self.set_notice("Project must be a valid owner/number")
+                return self._publish_projects_picker(container)
+            answer = answer.casefold()
+            if answer in dict(grant.publish_projects):
+                self.set_notice("Project board is already granted")
+                return self._publish_projects_picker(container)
+            if not self._publish_widening_permitted(container, "issues"):
+                self.set_notice("Adding project rights needs issue publish permission")
+                return self._publish_projects_picker(container)
+            return self._set_project_actions(container, answer, ("set",), show_actions=False)
         if prompt.purpose == "container-orchestration-limit":
             limit = int(answer)
             argv = dact.orchestrate_grant_argv(container, children=limit)
@@ -2563,6 +2670,7 @@ class DashboardSession:
             "container-orchestration-save-profile",
             "container-orchestration-publish-rate",
             "container-orchestration-publish-foreign",
+            "container-orchestration-project-add",
         ):
             return self._submit_orchestration_text(prompt, answer)
         if prompt.purpose == "container-retarget":
@@ -2769,6 +2877,8 @@ class DashboardSession:
             "container-orchestration-revoke",
             "container-orchestration-runner",
             "container-orchestration-publish-issues",
+            "container-orchestration-projects",
+            "container-orchestration-project-actions",
             "container-orchestration-overwrite-profile",
             "container-orchestration-adopt",
             "container-orchestration-release",

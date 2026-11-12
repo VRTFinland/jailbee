@@ -509,6 +509,33 @@ def unmount_argv(kind: str, name: str) -> list[str]:
     return ["unmount", "--", kind, name]
 
 
+def scoped_rights_entries(
+    scopes: Sequence[tuple[str, Sequence[str]]], *, add_label: str, widen: bool
+) -> tuple[PickerEntry, ...]:
+    """Build the outer list for a scoped-rights editor."""
+    entries = [PickerEntry(f"{name} ({', '.join(rights)})", name) for name, rights in scopes]
+    if widen:
+        entries.append(PickerEntry(add_label, "add"))
+    return tuple(entries)
+
+
+def scoped_action_entries(
+    rights: Sequence[str], kinds: Sequence[str], *, widen: bool,
+    implications: dict[str, str], remove_label: str,
+) -> tuple[PickerEntry, ...]:
+    """Build the inner action list, including rights implied by another right."""
+    entries = []
+    for kind in kinds:
+        implied_by = implications.get(kind)
+        implied = kind not in rights and implied_by is not None and implied_by in rights
+        if kind not in rights and not implied and not widen:
+            continue
+        state = f"on (via {implied_by})" if implied else "on" if kind in rights else "off"
+        entries.append(PickerEntry(f"{kind}: {state}", kind))
+    entries.append(PickerEntry(remove_label, "delete"))
+    return tuple(entries)
+
+
 def orchestrate_grant_argv(
     name: str,
     *,
@@ -522,6 +549,7 @@ def orchestrate_grant_argv(
     runner: Runner | None = None,
     clear_runner: bool = False,
     publish_issues: Sequence[str] | None = None,
+    publish_project: tuple[str, Sequence[str]] | None = None,
     publish_foreign: tuple[Sequence[str], Sequence[str]] | None = None,
     publish_prs: bool | None = None,
     publish_pr_reviews: bool | None = None,
@@ -559,6 +587,9 @@ def orchestrate_grant_argv(
         options.append("--clear-runner")
     if publish_issues is not None:
         options += ["--publish-issues", ",".join(publish_issues) or "none"]
+    if publish_project is not None:
+        board, actions = publish_project
+        options += ["--publish-project", f"{board}={','.join(actions) or 'none'}"]
     if publish_foreign is not None:
         repos, kinds = publish_foreign
         entries = [f"{repo}:{','.join(kinds)}" for repo in repos] or ["none"]
