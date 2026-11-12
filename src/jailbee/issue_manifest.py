@@ -107,7 +107,12 @@ class ProjectAddAction:
 
 
 IssueAction = (
-    CreateAction | EditAction | CommentAction | LabelsAction | AssigneesAction | StateAction
+    CreateAction
+    | EditAction
+    | CommentAction
+    | LabelsAction
+    | AssigneesAction
+    | StateAction
     | ProjectAddAction
 )
 
@@ -599,7 +604,9 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
         elif action_type == "state":
             action = _parse_state_action(item, refs, changed, context)
         elif action_type == "project_add":
-            _reject_unknown(item, {"type", "repo", "issue", "issue_ref", "project", "expected"}, context)
+            _reject_unknown(
+                item, {"type", "repo", "issue", "issue_ref", "project", "expected"}, context
+            )
             repo = _repo(item, context)
             project = _required_string(item, "project", context)
             if not valid_project(project):
@@ -612,7 +619,8 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             action = ProjectAddAction(repo, _target(item, repo, refs, context), project, present)
         else:
             raise IssueManifestError(
-                f"{context}: type must be one of create, edit, comment, labels, assignees, state, or project_add"
+                f"{context}: type must be one of create, edit, comment, labels, assignees, "
+                "state, or project_add"
             )
         if not isinstance(action, CreateAction):
             _record_mutations(changed, action.repo, action.target, mutation_keys(action), context)

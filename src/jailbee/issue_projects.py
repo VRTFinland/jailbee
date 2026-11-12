@@ -35,7 +35,9 @@ class ProjectReceipt(MutationReceipt):
     item_id: str
 
 
-def _graphql(root: Path, query: str, variables: dict[str, object], *, mutation: bool = False) -> dict[str, Any]:
+def _graphql(
+    root: Path, query: str, variables: dict[str, object], *, mutation: bool = False
+) -> dict[str, Any]:
     def fail(message: str, uncertain: bool = False) -> None:
         if mutation:
             raise IssueGithubMutationError(message, uncertain=uncertain)
@@ -43,16 +45,20 @@ def _graphql(root: Path, query: str, variables: dict[str, object], *, mutation: 
 
     try:
         proc = subprocess.run(
-            ["gh", "api", "graphql", "--input", "-"], cwd=root,
+            ["gh", "api", "graphql", "--input", "-"],
+            cwd=root,
             input=json.dumps({"query": query, "variables": variables}),
-            capture_output=True, text=True, check=False, timeout=60,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
         )
     except FileNotFoundError:
         fail("GitHub Projects requires 'gh'")
-        raise AssertionError
+        raise AssertionError from None
     except (OSError, UnicodeError, subprocess.SubprocessError, KeyboardInterrupt):
         fail("GitHub Projects transport failed", uncertain=True)
-        raise AssertionError
+        raise AssertionError from None
     try:
         response = json.loads(proc.stdout)
     except (ValueError, UnicodeError):
@@ -61,12 +67,21 @@ def _graphql(root: Path, query: str, variables: dict[str, object], *, mutation: 
     if errors:
         text = json.dumps(errors).lower()
         scope = any(word in text for word in ("scope", "permission", "resource not accessible"))
-        fail("GitHub Projects requires host authorization: gh auth refresh -s project" if scope
-             else "GitHub Projects GraphQL request was rejected")
+        fail(
+            "GitHub Projects requires host authorization: gh auth refresh -s project"
+            if scope
+            else "GitHub Projects GraphQL request was rejected"
+        )
     if proc.returncode:
-        scope = "scope" in proc.stderr.lower() or "project" in proc.stderr.lower() and "permission" in proc.stderr.lower()
-        fail("GitHub Projects requires host authorization: gh auth refresh -s project" if scope
-             else "GitHub Projects transport failed", uncertain=not scope)
+        scope = "scope" in proc.stderr.lower() or (
+            "project" in proc.stderr.lower() and "permission" in proc.stderr.lower()
+        )
+        fail(
+            "GitHub Projects requires host authorization: gh auth refresh -s project"
+            if scope
+            else "GitHub Projects transport failed",
+            uncertain=not scope,
+        )
     data = response.get("data") if isinstance(response, dict) else None
     if not isinstance(data, dict):
         fail("GitHub Projects returned an unreadable response", uncertain=True)
@@ -91,13 +106,19 @@ def resolve_project(root: Path, board: str) -> Project:
     if not valid_project(board):
         raise IssueGithubReadError("project must be owner/positive-number")
     owner, number = board.split("/")
-    data = _graphql(root, "query($owner:String!){repositoryOwner(login:$owner){__typename}}", {"owner": owner})
+    data = _graphql(
+        root, "query($owner:String!){repositoryOwner(login:$owner){__typename}}", {"owner": owner}
+    )
     kind = _object(data.get("repositoryOwner")).get("__typename")
     if kind not in ("Organization", "User"):
         raise IssueGithubReadError("GitHub project owner was not found")
     field = "organization" if kind == "Organization" else "user"
-    data = _graphql(root, f"query($owner:String!,$number:Int!){{{field}(login:$owner){{projectV2(number:$number){{id title}}}}}}",
-                    {"owner": owner, "number": int(number)})
+    data = _graphql(
+        root,
+        f"query($owner:String!,$number:Int!){{{field}(login:$owner)"
+        "{projectV2(number:$number){id title}}}",
+        {"owner": owner, "number": int(number)},
+    )
     project = _object(_object(data.get(field)).get("projectV2"))
     return Project(board, _string(project.get("id")), _string(project.get("title")))
 
@@ -110,9 +131,16 @@ def get_target(root: Path, project: Project, repo: str, number: int) -> ProjectT
     content_id = url = ""
     item_id = None
     while True:
-        data = _graphql(root,
-            "query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){issueOrPullRequest(number:$number){... on Issue{id url projectItems(first:100,after:$cursor){nodes{id project{id}} pageInfo{hasNextPage endCursor}}} ... on PullRequest{id url projectItems(first:100,after:$cursor){nodes{id project{id}} pageInfo{hasNextPage endCursor}}}}}}",
-            {"owner": owner, "name": name, "number": number, "cursor": cursor})
+        data = _graphql(
+            root,
+            "query($owner:String!,$name:String!,$number:Int!,$cursor:String){"
+            "repository(owner:$owner,name:$name){issueOrPullRequest(number:$number){"
+            "... on Issue{id url projectItems(first:100,after:$cursor){"
+            "nodes{id project{id}} pageInfo{hasNextPage endCursor}}} "
+            "... on PullRequest{id url projectItems(first:100,after:$cursor){"
+            "nodes{id project{id}} pageInfo{hasNextPage endCursor}}}}}}",
+            {"owner": owner, "name": name, "number": number, "cursor": cursor},
+        )
         target = _object(_object(data.get("repository")).get("issueOrPullRequest"))
         content_id, url = _string(target.get("id")), _string(target.get("url"))
         connection = _object(target.get("projectItems"))
@@ -139,11 +167,18 @@ def add_item(root: Path, project: Project, target: ProjectTarget, number: int) -
     """
     item_id = target.item_id
     if item_id is None:
-        data = _graphql(root,
+        data = _graphql(
+            root,
             "mutation($project:ID!,$content:ID!){addProjectV2ItemById(input:{projectId:$project,contentId:$content}){item{id}}}",
-            {"project": project.id, "content": target.content_id}, mutation=True)
+            {"project": project.id, "content": target.content_id},
+            mutation=True,
+        )
         try:
-            item_id = _string(_object(_object(data.get("addProjectV2ItemById")).get("item")).get("id"))
+            item_id = _string(
+                _object(_object(data.get("addProjectV2ItemById")).get("item")).get("id")
+            )
         except IssueGithubReadError:
-            raise IssueGithubMutationError("GitHub Projects returned an unusable receipt", uncertain=True) from None
+            raise IssueGithubMutationError(
+                "GitHub Projects returned an unusable receipt", uncertain=True
+            ) from None
     return ProjectReceipt(number, f"{target.url}#project-item-{item_id}", item_id)

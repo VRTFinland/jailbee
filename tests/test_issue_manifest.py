@@ -50,8 +50,15 @@ def _parse_action(action: object, files: dict[str, str] | None = None):
 
 
 def test_project_add_carries_board_and_host_membership() -> None:
-    action = _parse_action({"type": "project_add", "repo": ".", "issue": 12,
-                            "project": "acme/3", "expected": {"present": False}}).actions[0]
+    action = _parse_action(
+        {
+            "type": "project_add",
+            "repo": ".",
+            "issue": 12,
+            "project": "acme/3",
+            "expected": {"present": False},
+        }
+    ).actions[0]
     assert action.kind == "project_add"
     assert action.project == "acme/3"
     assert action.expected_present is False
@@ -60,8 +67,15 @@ def test_project_add_carries_board_and_host_membership() -> None:
 @pytest.mark.parametrize("expected", [{}, {"present": 1}, {"present": "false"}])
 def test_project_add_requires_boolean_membership(expected) -> None:
     with pytest.raises(IssueManifestError, match="present"):
-        _parse_action({"type": "project_add", "repo": ".", "issue": 12,
-                       "project": "acme/3", "expected": expected})
+        _parse_action(
+            {
+                "type": "project_add",
+                "repo": ".",
+                "issue": 12,
+                "project": "acme/3",
+                "expected": expected,
+            }
+        )
 
 
 def test_action_exposes_explicit_kind() -> None:

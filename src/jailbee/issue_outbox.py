@@ -590,15 +590,22 @@ def prepare_batch(
                 try:
                     project = issue_projects.resolve_project(cfg.repo_root, action.project)
                     if status == "pending":
-                        project_target = (issue_projects.get_target(cfg.repo_root, project, repo.slug, issue.number)
-                                          if issue.number is not None else None)
+                        project_target = (
+                            issue_projects.get_target(
+                                cfg.repo_root, project, repo.slug, issue.number
+                            )
+                            if issue.number is not None
+                            else None
+                        )
                         present = project_target.present if project_target else False
                         if present != action.expected_present:
                             refusals.append(f"{context}: project membership changed since staging")
                 except IssueGithubReadError as exc:
                     execution_errors.append(exc)
                     refusals.append(f"{context}: {exc}")
-            actions.append(ResolvedAction(index, action, repo, issue, status, labels, project, project_target))
+            actions.append(
+                ResolvedAction(index, action, repo, issue, status, labels, project, project_target)
+            )
         prepared.append(PreparedManifest(manifest, digest, journal, tuple(actions)))
     if execution_errors:
         raise IssueExecutionError("\n".join(refusals)) from execution_errors[0]
@@ -628,9 +635,17 @@ def revalidate_batch(batch: PreparedBatch) -> None:
                 if resolved.issue.number is not None:
                     assert resolved.project is not None
                     try:
-                        target = issue_projects.get_target(batch.host_repo_root, resolved.project, resolved.repo.slug, resolved.issue.number)
+                        target = issue_projects.get_target(
+                            batch.host_repo_root,
+                            resolved.project,
+                            resolved.repo.slug,
+                            resolved.issue.number,
+                        )
                         if target.present != resolved.action.expected_present:
-                            refusals.append(f"{manifest.manifest.name} action {resolved.index}: project membership changed since staging")
+                            refusals.append(
+                                f"{manifest.manifest.name} action {resolved.index}: "
+                                "project membership changed since staging"
+                            )
                     except IssueGithubReadError as exc:
                         execution_errors.append(exc)
                         refusals.append(str(exc))
@@ -1034,12 +1049,16 @@ def _execute_one(
         return last
     if isinstance(action, ProjectAddAction):
         try:
-            project = resolved.project or issue_projects.resolve_project(host_repo_root, action.project)
+            project = resolved.project or issue_projects.resolve_project(
+                host_repo_root, action.project
+            )
             target = issue_projects.get_target(host_repo_root, project, repo, number)
         except IssueGithubReadError as exc:
             raise IssueGithubMutationError(str(exc), uncertain=False) from exc
         if target.present != action.expected_present:
-            raise IssueGithubMutationError("project membership changed since staging", uncertain=False)
+            raise IssueGithubMutationError(
+                "project membership changed since staging", uncertain=False
+            )
         return issue_projects.add_item(host_repo_root, project, target, number)
     if isinstance(action, StateAction):
         return issue_github.set_state(
@@ -1086,7 +1105,10 @@ def _sent_action(
     elif isinstance(action, ProjectAddAction):
         kind = action.kind
         title = resolved.project.title if resolved.project else None
-        content = f'project {action.project} "{title or ""}" · add; membership {action.expected_present} -> True'
+        content = (
+            f'project {action.project} "{title or ""}" · add; '
+            f"membership {action.expected_present} -> True"
+        )
     elif isinstance(action, StateAction):
         kind = "state"
         content = f"state {action.state}" + (f" ({action.reason})" if action.reason else "")
@@ -1429,7 +1451,11 @@ def _validated_receipt(url: str, repo: RepoTarget, *, project: bool = False) -> 
     `repo` case-insensitively. No query string, no `pull`, no credentials in
     the authority, no host lookalike, no trailing garbage.
     """
-    pattern = re.compile(_RECEIPT_URL_RE.pattern.replace("/issues/", "/(?:issues|pull)/")) if project else _RECEIPT_URL_RE
+    pattern = (
+        re.compile(_RECEIPT_URL_RE.pattern.replace("/issues/", "/(?:issues|pull)/"))
+        if project
+        else _RECEIPT_URL_RE
+    )
     match = pattern.fullmatch(url)
     if match is None:
         raise JournalError(f"not a GitHub issue URL: {url!r}")
@@ -1510,7 +1536,9 @@ def reconcile_action(
             return False
 
         action = manifest.actions[index]
-        url_number = _validated_receipt(resolution.url, repo, project=isinstance(action, ProjectAddAction))
+        url_number = _validated_receipt(
+            resolution.url, repo, project=isinstance(action, ProjectAddAction)
+        )
         if isinstance(action, CreateAction):
             if type(resolution.issue) is not int:
                 raise JournalError("a create's resolution requires its GitHub issue number")

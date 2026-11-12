@@ -28,7 +28,22 @@ def pr_journal(name, files, applied, count=None, *, uncertain=()):
 
 
 def test_project_inspect_view_is_not_a_state_action():
-    files = {"001.json": json.dumps({"version": 1, "actions": [{"type": "project_add", "repo": ".", "issue": 7, "project": "acme/3", "expected": {"present": False}}]})}
+    files = {
+        "001.json": json.dumps(
+            {
+                "version": 1,
+                "actions": [
+                    {
+                        "type": "project_add",
+                        "repo": ".",
+                        "issue": 7,
+                        "project": "acme/3",
+                        "expected": {"present": False},
+                    }
+                ],
+            }
+        )
+    }
     (view,) = build_views(IDENTITY, (store("issue", files),))
     assert view.actions[0].kind == "project_add"
     assert view.actions[0].body == "project acme/3 · #7 · add"

@@ -174,10 +174,19 @@ class Queries:
                 if target is None:
                     raise ValueError(f"repo {repo!r} is not host-authorized")
                 project = issue_projects.resolve_project(cfg.repo_root, board)
-                return issue_projects.get_target(cfg.repo_root, project, target.slug, number).present
+                return issue_projects.get_target(
+                    cfg.repo_root, project, target.slug, number
+                ).present
 
-        return broker_ops.handle(OutboxStore(self._store), uuid, op, args, now=time.time(),
-                                 project_reader=reader, default_project=getattr(cfg.github, "project", None) if cfg else None)
+        return broker_ops.handle(
+            OutboxStore(self._store),
+            uuid,
+            op,
+            args,
+            now=time.time(),
+            project_reader=reader,
+            default_project=getattr(cfg.github, "project", None) if cfg else None,
+        )
 
     def put_refusal(self, uuid: str) -> wire.Response | None:
         """The answer an ``outbox.put`` from ``uuid`` gets for its role, if refused.
@@ -276,8 +285,13 @@ def publish_queries(memory: broker_state.BrokerMemory) -> None:
     empty_children = json.dumps({"children": [], "observed_at": None, "last_from_child": {}})
     try:
         snapshot = {
-            uuid: ContainerSnapshot(_fallback_role(memory, uuid), True, empty_children, None,
-                                    memory.project_configs.get(uuid))
+            uuid: ContainerSnapshot(
+                _fallback_role(memory, uuid),
+                True,
+                empty_children,
+                None,
+                memory.project_configs.get(uuid),
+            )
             for uuid in memory.store.recipients().values()
         }
     except Exception:

@@ -188,9 +188,16 @@ def issue_plan_json(
                     "target": target,
                     "will": will,
                     "will_draft": None,
-                    **({"project": action.project, "project_title": resolved.project.title if resolved.project else None,
-                        "operation": "add", "expected": {"present": action.expected_present}}
-                       if isinstance(action, ProjectAddAction) else {}),
+                    **(
+                        {
+                            "project": action.project,
+                            "project_title": resolved.project.title if resolved.project else None,
+                            "operation": "add",
+                            "expected": {"present": action.expected_present},
+                        }
+                        if isinstance(action, ProjectAddAction)
+                        else {}
+                    ),
                 }
             )
     return {

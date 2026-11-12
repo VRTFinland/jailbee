@@ -64,10 +64,16 @@ def test_project_draft_derives_ref_membership_without_reader(env: Env) -> None:
 def test_project_reader_failure_leaves_draft_and_put_unchanged(env: Env, monkeypatch) -> None:
     from jailbee import issue_outbox, issue_projects
     from jailbee.issue_github import IssueGithubReadError
-    monkeypatch.setattr(issue_outbox, "resolve_repo_targets", lambda cfg: {
-        ".": issue_outbox.RepoTarget(".", cfg.repo_root, "acme/app")})
+
+    monkeypatch.setattr(
+        issue_outbox,
+        "resolve_repo_targets",
+        lambda cfg: {".": issue_outbox.RepoTarget(".", cfg.repo_root, "acme/app")},
+    )
+
     def fail(*args):
         raise IssueGithubReadError("host project read failed")
+
     monkeypatch.setattr(issue_projects, "resolve_project", fail)
     action = {"type": "project_add", "repo": ".", "issue": 7, "project": "acme/3"}
     assert append(env, {**action, "unknown": True}).error_code == wire.BAD_REQUEST

@@ -103,7 +103,11 @@ def tick(
                 continue
             cfg = broker_state.owner_config(name, instance_config, early_configs)
             uuid = instance_config.get("volatile.uuid")
-            if cfg is not None and isinstance(uuid, str) and memory.listed_roles.get(uuid) == "plain":
+            if (
+                cfg is not None
+                and isinstance(uuid, str)
+                and memory.listed_roles.get(uuid) == "plain"
+            ):
                 memory.project_configs[uuid] = cfg
     socket_lifecycle.check_socket_devices(incus, raw, memory, root, others, managed)
     if early_configs is not None:

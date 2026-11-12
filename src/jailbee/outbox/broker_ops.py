@@ -142,7 +142,9 @@ def pr_body_refs(text: str) -> set[str]:
 ProjectReader = Callable[[str, str, int], bool]
 
 
-def capture_project(action: dict[str, Any], reader: ProjectReader | None, default_project: str | None) -> dict[str, Any]:
+def capture_project(
+    action: dict[str, Any], reader: ProjectReader | None, default_project: str | None
+) -> dict[str, Any]:
     """Host-owned expectations; the container's supplied membership is never trusted."""
     from jailbee.issue_github import IssueGithubReadError
     from jailbee.issue_manifest import valid_project
@@ -171,8 +173,15 @@ def capture_project(action: dict[str, Any], reader: ProjectReader | None, defaul
     return result
 
 
-def handle_put(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now: float,
-               project_reader: ProjectReader | None = None, default_project: str | None = None) -> object:
+def handle_put(
+    store: OutboxStore,
+    uuid: str,
+    args: Mapping[str, Any],
+    *,
+    now: float,
+    project_reader: ProjectReader | None = None,
+    default_project: str | None = None,
+) -> object:
     kind = kind_arg(args.get("kind"))
     slug = args.get("slug")
     if not isinstance(slug, str) or not _SLUG_RE.fullmatch(slug):
@@ -182,13 +191,22 @@ def handle_put(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now: f
     parse = parse_issue if kind == "issue" else parse_pr
     if kind == "issue" and isinstance(manifest, dict) and isinstance(manifest.get("actions"), list):
         # Validate the entire untrusted proposal and its caps before any host read.
-        provisional = {**manifest, "actions": [
-            {**a, "project": a.get("project", default_project), "expected": {"present": False}}
-            if isinstance(a, dict) and a.get("type") == "project_add" else a
-            for a in manifest["actions"]]}
+        provisional = {
+            **manifest,
+            "actions": [
+                {**a, "project": a.get("project", default_project), "expected": {"present": False}}
+                if isinstance(a, dict) and a.get("type") == "project_add"
+                else a
+                for a in manifest["actions"]
+            ],
+        }
         parse_issue(f"{slug}.json", provisional, bodies)
-        manifest = {**manifest, "actions": [capture_project(a, project_reader, default_project)
-                    for a in provisional["actions"]]}
+        manifest = {
+            **manifest,
+            "actions": [
+                capture_project(a, project_reader, default_project) for a in provisional["actions"]
+            ],
+        }
     parse(f"{slug}.json", manifest, bodies)
 
     def build(stem: str) -> tuple[str, dict[str, str]]:
@@ -300,15 +318,36 @@ def handle_drop(store: OutboxStore, uuid: str, args: Mapping[str, Any]) -> objec
 
 
 def handle(
-    store: OutboxStore, uuid: str, op: str, args: Mapping[str, Any], *, now: float,
-    project_reader: ProjectReader | None = None, default_project: str | None = None
+    store: OutboxStore,
+    uuid: str,
+    op: str,
+    args: Mapping[str, Any],
+    *,
+    now: float,
+    project_reader: ProjectReader | None = None,
+    default_project: str | None = None,
 ) -> object:
     if op in wire.OUTBOX_DRAFT_OPS:
         from jailbee.outbox import draft_ops
 
-        return draft_ops.handle(store, uuid, op, args, now=now, project_reader=project_reader, default_project=default_project)
+        return draft_ops.handle(
+            store,
+            uuid,
+            op,
+            args,
+            now=now,
+            project_reader=project_reader,
+            default_project=default_project,
+        )
     if op == wire.OUTBOX_PUT:
-        return handle_put(store, uuid, args, now=now, project_reader=project_reader, default_project=default_project)
+        return handle_put(
+            store,
+            uuid,
+            args,
+            now=now,
+            project_reader=project_reader,
+            default_project=default_project,
+        )
     if op == wire.OUTBOX_LIST:
         return handle_list(store, uuid, args)
     if op == wire.OUTBOX_SHOW:

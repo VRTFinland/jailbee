@@ -332,12 +332,17 @@ def labels(
 @issue_app.command("project")
 def project(
     issue: IssueArg = None,
-    project: Annotated[str | None, typer.Option(help="Project owner/number (host default if omitted).")] = None,
-    add: Annotated[bool, typer.Option("--add", help="Add the issue or pull request to the project.")] = False,
+    project: Annotated[
+        str | None, typer.Option(help="Project owner/number (host default if omitted).")
+    ] = None,
+    add: Annotated[
+        bool, typer.Option("--add", help="Add the issue or pull request to the project.")
+    ] = False,
     repo: RepoOpt = ".",
     batch: BatchOpt = None,
 ) -> None:
     """Stage a project membership change; the host captures the expectation."""
+
     def run() -> None:
         require_role()
         target = _parse_target(issue)
@@ -347,6 +352,7 @@ def project(
         if project is not None:
             action["project"] = project
         _stage(action, batch)
+
     _run(run)
 
 

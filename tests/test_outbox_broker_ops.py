@@ -97,15 +97,36 @@ def test_a_plain_container_stages_lists_and_shows_an_issue_proposal(env: Env) ->
 
 def test_project_staging_reads_membership_on_host_query_path(env: Env, monkeypatch) -> None:
     from jailbee import issue_outbox, issue_projects
-    monkeypatch.setattr(issue_outbox, "resolve_repo_targets", lambda cfg: {
-        ".": issue_outbox.RepoTarget(".", cfg.repo_root, "acme/app")})
+
+    monkeypatch.setattr(
+        issue_outbox,
+        "resolve_repo_targets",
+        lambda cfg: {".": issue_outbox.RepoTarget(".", cfg.repo_root, "acme/app")},
+    )
     reads = []
-    monkeypatch.setattr(issue_projects, "resolve_project", lambda root, board: issue_projects.Project(board, "P3", "Roadmap"))
+    monkeypatch.setattr(
+        issue_projects,
+        "resolve_project",
+        lambda root, board: issue_projects.Project(board, "P3", "Roadmap"),
+    )
+
     def read(root, board, repo, number):
         reads.append((root, board.board, repo, number))
         return issue_projects.ProjectTarget("I7", "https://github.com/acme/app/pull/7", "ITEM7")
+
     monkeypatch.setattr(issue_projects, "get_target", read)
-    response = put(env, manifest=manifest({"type": "project_add", "repo": ".", "issue": 7, "project": "acme/3", "expected": {"present": False}}))
+    response = put(
+        env,
+        manifest=manifest(
+            {
+                "type": "project_add",
+                "repo": ".",
+                "issue": 7,
+                "project": "acme/3",
+                "expected": {"present": False},
+            }
+        ),
+    )
     assert response.ok, response
     assert json.loads(stored(env)[0].manifest)["actions"][0]["expected"] == {"present": True}
     assert reads == [(env.rig.cfg.repo_root, "acme/3", "acme/app", 7)]
