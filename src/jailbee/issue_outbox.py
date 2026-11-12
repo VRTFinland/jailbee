@@ -490,13 +490,15 @@ def _prior_project_item(batch: PreparedBatch, current: ResolvedAction) -> str | 
                 return found
             if (
                 isinstance(previous.action, (ProjectAddAction, ProjectSetAction))
-                and previous.status == "applied"
+                and (previous.status == "applied" or previous.established_item)
                 and previous.repo.identity == current.repo.identity
                 and previous.issue == current.issue
                 and previous.action.project.casefold() == current.action.project.casefold()
             ):
                 receipt = receipts.get(previous.index)
-                if receipt and receipt.url:
+                if previous.established_item:
+                    found = previous.established_item
+                elif receipt and receipt.url:
                     found = _receipt_item(receipt.url)
     return found
 

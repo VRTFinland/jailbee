@@ -319,16 +319,17 @@ def test_plain_applied_receipt_resolves_implicit_add_and_resumes_next_field(pipe
     assert report.skipped[0][1].url == url + "#project-item-ITEM"
 
 
+@pytest.mark.parametrize("field_count", [1, 2])
 @pytest.mark.parametrize("foreign_item", [False, True, "removed"])
-def test_retry_after_implicit_add_preserves_only_own_membership(pipeline, mocker, foreign_item):
+def test_retry_after_implicit_add_preserves_only_own_membership(pipeline, mocker, foreign_item, field_count):
     prepare, apply, _, project_mutation, target = pipeline
     mocker.stop(project_mutation)
     url = "https://github.com/acme/app/issues/901"
     state = {"item": None, "value": None}
     target.side_effect = lambda *args: issue_projects.ProjectTarget("I901", url, state["item"])
     field = issue_projects.ProjectField("F1", "Notes", "TEXT")
-    mocker.patch.object(issue_projects, "list_fields", return_value=(field,))
-    mocker.patch.object(issue_projects, "get_field_value", side_effect=lambda *args: state["value"])
+    mocker.patch.object(issue_projects, "list_fields", return_value=(field, issue_projects.ProjectField("F2", "Priority", "TEXT")))
+    mocker.patch.object(issue_projects, "get_field_value", side_effect=lambda root, item, field: state["value"] if field.name == "Notes" else None)
     requests = []
 
     def graphql(root, query, variables, *, mutation=False):
@@ -351,7 +352,8 @@ def test_retry_after_implicit_add_preserves_only_own_membership(pipeline, mocker
         "value": "Hello",
         "expected": {"present": False, "value": None},
     }
-    seed({"batch.json": json.dumps({"version": 1, "actions": [action]})})
+    actions = [action] + ([{**action, "field": "Priority"}] if field_count == 2 else [])
+    seed({"batch.json": json.dumps({"version": 1, "actions": actions})})
     batch = prepare()
     first = apply(batch)
     assert first.failure is not None and first.failure.uncertain
@@ -376,7 +378,7 @@ def test_retry_after_implicit_add_preserves_only_own_membership(pipeline, mocker
         report = apply(retry)
         assert report.failure is None
         assert state == {"item": "OWN", "value": "Hello"}
-        assert len(requests) == 3
+        assert len(requests) == 2 + field_count
 
 
 @pytest.mark.parametrize("kind", ["project_clear", "project_remove"])
