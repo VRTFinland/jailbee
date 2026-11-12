@@ -95,11 +95,7 @@ def _graphql(
     errors = response.get("errors") if isinstance(response, dict) else None
     if errors:
         entries = errors if isinstance(errors, list) else []
-        types = {
-            str(entry.get("type", "")).upper()
-            for entry in entries
-            if isinstance(entry, dict)
-        }
+        types = {str(entry.get("type", "")).upper() for entry in entries if isinstance(entry, dict)}
         text = json.dumps(errors).lower()
         if "INSUFFICIENT_SCOPES" in types:
             fail("GitHub Projects requires host authorization: gh auth refresh -s project")

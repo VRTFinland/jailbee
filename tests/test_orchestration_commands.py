@@ -61,10 +61,8 @@ def test_build_grant_modifies_only_named_project_boards(cfg):
 
 
 def test_build_grant_refuses_repeated_project_board(cfg):
-    with pytest.raises(GrantError, match="(?i)(duplicate|repeated)"):
-        commands.build_grant(
-            cfg, None, GrantFlags(publish_project=("Org/3=set", "org/3=remove"))
-        )
+    with pytest.raises(GrantError, match=r"(?i)(duplicate|repeated)"):
+        commands.build_grant(cfg, None, GrantFlags(publish_project=("Org/3=set", "org/3=remove")))
 
 
 @pytest.mark.parametrize(

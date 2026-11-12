@@ -215,7 +215,10 @@ def test_scope_error_does_not_try_another_owner_type(tmp_path, mocker):
     run = mocker.patch(
         "jailbee.issue_projects.subprocess.run",
         return_value=subprocess.CompletedProcess(
-            [], 1, '{"errors":[{"type":"INSUFFICIENT_SCOPES","message":"requires project scope"}]}', ""
+            [],
+            1,
+            '{"errors":[{"type":"INSUFFICIENT_SCOPES","message":"requires project scope"}]}',
+            "",
         ),
     )
     with pytest.raises(IssueGithubReadError, match="gh auth refresh -s project"):
@@ -227,7 +230,10 @@ def test_project_permission_error_reports_write_access(tmp_path, mocker):
     mocker.patch(
         "jailbee.issue_projects.subprocess.run",
         return_value=subprocess.CompletedProcess(
-            [], 1, '{"errors":[{"type":"FORBIDDEN","message":"Resource not accessible by integration"}]}', ""
+            [],
+            1,
+            '{"errors":[{"type":"FORBIDDEN","message":"Resource not accessible by integration"}]}',
+            "",
         ),
     )
     with pytest.raises(IssueGithubMutationError, match="write access") as error:
