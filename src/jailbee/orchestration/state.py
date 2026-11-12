@@ -233,7 +233,9 @@ def cancellation_senders(root: Path) -> set[str]:
     from jailbee.orchestration.store import open_state_store
 
     raw = open_state_store(root).kv_get(CANCELLATIONS)
-    return {sender for sender, entries in raw.items() if entries} if isinstance(raw, dict) else set()
+    return (
+        {sender for sender, entries in raw.items() if entries} if isinstance(raw, dict) else set()
+    )
 
 
 def purge_cancellations(root: Path, sender: str) -> None:
