@@ -169,7 +169,9 @@ def test_vanished_instance_after_recipient_write_failure_closes_listener(tmp_pat
     with monkeypatch.context() as patch:
         patch.setattr(env.store, "set_recipient", MagicMock(side_effect=StoreError("disk full")))
         socket_lifecycle.ensure_socket(
-            env.rig.incus, env.rig.root, env.memory,
+            env.rig.incus,
+            env.rig.root,
+            env.memory,
             actions.Node(FULL, "gone", True, {"volatile.uuid": UUID}),
         )
     assert UUID in env.listener.open
