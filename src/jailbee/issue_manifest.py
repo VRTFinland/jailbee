@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -106,6 +107,21 @@ class ProjectAddAction:
     expected_present: bool
 
 
+@dataclass(frozen=True)
+class ProjectSetAction:
+    kind: ClassVar[Literal["project_set"]] = "project_set"
+    repo: str
+    target: IssueTarget
+    project: str
+    field: str
+    value: str | int | float
+    expected_present: bool
+    expected_value: str | int | float | None
+
+
+ProjectAction = ProjectAddAction | ProjectSetAction
+
+
 IssueAction = (
     CreateAction
     | EditAction
@@ -114,6 +130,7 @@ IssueAction = (
     | AssigneesAction
     | StateAction
     | ProjectAddAction
+    | ProjectSetAction
 )
 
 
@@ -133,6 +150,8 @@ def mutation_keys(action: IssueAction) -> set[str]:
         return {action.kind}
     if isinstance(action, ProjectAddAction):
         return {f"project:{action.project.casefold()}:membership"}
+    if isinstance(action, ProjectSetAction):
+        return {f"project:{action.project.casefold()}:field:{action.field.casefold()}"}
     if isinstance(action, (CreateAction, CommentAction)):
         return set()
     assert_never(action)
@@ -603,20 +622,34 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             action = _parse_assignees_action(item, refs, changed, context)
         elif action_type == "state":
             action = _parse_state_action(item, refs, changed, context)
-        elif action_type == "project_add":
+        elif action_type in ("project_add", "project_set"):
             _reject_unknown(
-                item, {"type", "repo", "issue", "issue_ref", "project", "expected"}, context
+                item, {"type", "repo", "issue", "issue_ref", "project", "expected"}
+                | ({"field", "value"} if action_type == "project_set" else set()), context
             )
             repo = _repo(item, context)
             project = _required_string(item, "project", context)
             if not valid_project(project):
                 raise IssueManifestError(f"{context}: project must be owner/positive-number")
             expected = _expected(item, context)
-            _reject_unknown(expected, {"present"}, f"{context} expected")
+            _reject_unknown(expected, {"present", "value"} if action_type == "project_set" else {"present"}, f"{context} expected")
             present = expected.get("present")
             if type(present) is not bool:
                 raise IssueManifestError(f"{context}: expected.present must be a boolean")
-            action = ProjectAddAction(repo, _target(item, repo, refs, context), project, present)
+            target = _target(item, repo, refs, context)
+            if action_type == "project_add":
+                action = ProjectAddAction(repo, target, project, present)
+            else:
+                field = _required_string(item, "field", context)
+                value = item.get("value")
+                if isinstance(value, bool) or not isinstance(value, (str, int, float)) or (isinstance(value, float) and not math.isfinite(value)):
+                    raise IssueManifestError(f"{context}: value must be a finite scalar")
+                old = expected.get("value")
+                if "value" not in expected or isinstance(old, bool) or not isinstance(old, (str, int, float, type(None))) or (isinstance(old, float) and not math.isfinite(old)):
+                    raise IssueManifestError(f"{context}: expected.value must be a finite scalar or null")
+                if not present and old is not None:
+                    raise IssueManifestError(f"{context}: absent membership requires expected.value null")
+                action = ProjectSetAction(repo, target, project, field, value, present, old)
         else:
             raise IssueManifestError(
                 f"{context}: type must be one of create, edit, comment, labels, assignees, "

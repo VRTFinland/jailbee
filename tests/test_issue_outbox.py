@@ -236,6 +236,28 @@ def _state():
     }
 
 
+def test_project_field_stale_and_unknown_option_are_refused_before_publish(preflight, mocker):
+    from jailbee import issue_outbox, issue_projects
+    from jailbee.outbox.publish import issue_plan_json
+    mocker.patch.object(issue_projects, "resolve_project", return_value=issue_projects.Project("acme/3", "P3", "Roadmap"))
+    mocker.patch.object(issue_projects, "get_target", return_value=issue_projects.ProjectTarget("I7", "https://github.com/acme/app/issues/7", "ITEM"))
+    mocker.patch.object(issue_projects, "list_fields", return_value=(issue_projects.ProjectField("F1", "Status", "SINGLE_SELECT", (("Todo", "O1"), ("Doing", "O2"))),))
+    read = mocker.patch.object(issue_projects, "get_field_value", return_value="Todo")
+    mutation = mocker.patch.object(issue_projects, "set_field")
+    action = {"type": "project_set", "repo": ".", "issue": 7, "project": "acme/3", "field": "Status", "value": "Doing", "expected": {"present": True, "value": "Todo"}}
+    batch = preflight["prepare"]({"a.json": [action]})
+    assert any("Status: 'Todo' -> 'Doing'" in line for line in issue_outbox.plan_lines(batch))
+    assert issue_plan_json(batch, proposal="issue/a.json", revision="r")["actions"][0]["value"] == "Doing"
+    read.return_value = "Doing"
+    with pytest.raises(issue_outbox.IssueStaleError, match="field value"):
+        issue_outbox.revalidate_batch(batch)
+    with pytest.raises(issue_outbox.IssueGateError, match="field value"):
+        preflight["prepare"]({"a.json": [action]})
+    with pytest.raises(issue_outbox.IssueGateError, match="valid options: Todo, Doing"):
+        preflight["prepare"]({"a.json": [{**action, "value": "Typo"}]})
+    mutation.assert_not_called()
+
+
 def test_project_add_prepare_allows_pr_and_revalidates_membership(preflight, mocker):
     from dataclasses import replace
 

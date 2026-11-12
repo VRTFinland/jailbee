@@ -44,6 +44,22 @@ def test_project_add_stages_without_container_github_reads(monkeypatch):
     }
 
 
+def test_project_set_expands_fields_into_one_proposal_without_reads(monkeypatch):
+    from jailbee.container_outbox import broker
+    staged = []
+    monkeypatch.setattr(gh, "issue_view", lambda *a: pytest.fail("container read"))
+    monkeypatch.setattr(broker, "put", lambda *args: staged.append(args) or "001-fields.json")
+    result = invoke("project", "7", "--set", "Status=Doing", "--set", "Priority=High")
+    assert result.exit_code == 0, result.output
+    assert staged[0][2]["actions"] == [
+        {"type": "project_set", "repo": ".", "issue": 7, "field": "Status", "value": "Doing"},
+        {"type": "project_set", "repo": ".", "issue": 7, "field": "Priority", "value": "High"},
+    ]
+    result = invoke("project", "7", "--set", "Status=Doing", "--set", "status=Todo")
+    assert result.exit_code == 2 and "duplicate" in result.output
+    assert len(staged) == 1
+
+
 def test_create_json_outputs_only_manifest_name(tmp_path, broker):
     result = invoke("create", "--title", "Bug", "--body", "body", "--json")
     assert result.exit_code == 0, result.output

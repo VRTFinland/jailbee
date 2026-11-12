@@ -139,7 +139,22 @@ def pr_body_refs(text: str) -> set[str]:
         raise bad_request(str(exc)) from exc
 
 
-ProjectReader = Callable[[str, str, int], bool]
+from jailbee.issue_projects import ProjectExpectation
+
+ProjectReader = Callable[[str, str, int, str | None], ProjectExpectation]
+
+
+def provisional_project(action: dict[str, Any], default_project: str | None) -> dict[str, Any]:
+    """Validate host-filled syntax before any project read."""
+    if action.get("type") not in ("project_add", "project_set"):
+        return action
+    project = action.get("project", default_project)
+    if project is None:
+        raise bad_request("supply --project owner/number or configure github.project")
+    expected: dict[str, Any] = {"present": False}
+    if action["type"] == "project_set":
+        expected["value"] = None
+    return {**action, "project": project, "expected": expected}
 
 
 def capture_project(
@@ -149,14 +164,14 @@ def capture_project(
     from jailbee.issue_github import IssueGithubReadError
     from jailbee.issue_manifest import valid_project
 
-    if action.get("type") != "project_add":
+    if action.get("type") not in ("project_add", "project_set"):
         return action
     project = action.get("project", default_project)
     if not isinstance(project, str) or not valid_project(project):
-        raise bad_request("project is required (owner/positive-number); supply --project")
+        raise bad_request("supply --project owner/number or configure github.project")
     result = {**action, "project": project}
     if "issue_ref" in action:
-        result["expected"] = {"present": False}
+        result["expected"] = {"present": False, **({"value": None} if action["type"] == "project_set" else {})}
     else:
         number, repo = action.get("issue"), action.get("repo")
         if type(number) is not int or number <= 0 or not isinstance(repo, str):
@@ -164,12 +179,12 @@ def capture_project(
         if reader is None:
             raise wire.WireError(wire.REFUSED, "host Projects reader is unavailable; retry shortly")
         try:
-            present = reader(project, repo, number)
+            snapshot = reader(project, repo, number, action.get("field"))
         except (IssueGithubReadError, ValueError) as exc:
             raise wire.WireError(wire.REFUSED, str(exc)) from exc
-        if type(present) is not bool:
+        if not isinstance(snapshot, ProjectExpectation) or type(snapshot.present) is not bool:
             raise wire.WireError(wire.REFUSED, "host Projects reader returned invalid membership")
-        result["expected"] = {"present": present}
+        result["expected"] = {"present": snapshot.present, **({"value": snapshot.value} if action["type"] == "project_set" else {})}
     return result
 
 
@@ -194,9 +209,7 @@ def handle_put(
         provisional = {
             **manifest,
             "actions": [
-                {**a, "project": a.get("project", default_project), "expected": {"present": False}}
-                if isinstance(a, dict) and a.get("type") == "project_add"
-                else a
+                provisional_project(a, default_project) if isinstance(a, dict) else a
                 for a in manifest["actions"]
             ],
         }

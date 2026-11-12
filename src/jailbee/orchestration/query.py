@@ -168,15 +168,23 @@ class Queries:
         if cfg is not None:
             from jailbee import issue_outbox, issue_projects
 
-            def reader(board: str, repo: str, number: int) -> bool:
+            def reader(board: str, repo: str, number: int, field: str | None) -> issue_projects.ProjectExpectation:
                 targets = issue_outbox.resolve_repo_targets(cfg)
                 target = issue_outbox.target_for(targets, repo, cfg.repo_root)
                 if target is None:
                     raise ValueError(f"repo {repo!r} is not host-authorized")
                 project = issue_projects.resolve_project(cfg.repo_root, board)
-                return issue_projects.get_target(
-                    cfg.repo_root, project, target.slug, number
-                ).present
+                item = issue_projects.get_target(cfg.repo_root, project, target.slug, number)
+                value = None
+                if field is not None:
+                    fields = issue_projects.list_fields(cfg.repo_root, project)
+                    matches = [f for f in fields if f.name.casefold() == field.casefold()]
+                    if len(matches) != 1:
+                        raise ValueError(f"unknown or ambiguous project field {field!r}; valid fields: " + ", ".join(f.name for f in fields))
+                    if matches[0].data_type not in ("TEXT", "NUMBER", "DATE", "SINGLE_SELECT"):
+                        raise ValueError(f"{field}: {matches[0].data_type.lower()} fields are not supported yet")
+                    value = issue_projects.get_field_value(cfg.repo_root, item, matches[0])
+                return issue_projects.ProjectExpectation(item.present, value)
 
         return broker_ops.handle(
             OutboxStore(self._store),

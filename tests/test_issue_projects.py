@@ -7,6 +7,23 @@ from jailbee import issue_projects
 from jailbee.issue_github import IssueGithubMutationError, IssueGithubReadError
 
 
+def test_field_discovery_and_current_values_paginate(tmp_path, mocker):
+    def response(connection, nodes, more=False, cursor="next"):
+        return subprocess.CompletedProcess([], 0, json.dumps({"data": {"node": {connection: {"nodes": nodes, "pageInfo": {"hasNextPage": more, "endCursor": cursor}}}}}), "")
+    run = mocker.patch("jailbee.issue_projects.subprocess.run", side_effect=[
+        response("fields", [{"id": "F1", "name": "Notes", "dataType": "TEXT"}], True),
+        response("fields", [{"id": "F2", "name": "Sprint", "dataType": "ITERATION"}]),
+        response("fieldValues", [{"field": {"id": "other"}, "text": "else"}], True),
+        response("fieldValues", [{"field": {"id": "F1"}, "text": ""}]),
+    ])
+    fields = issue_projects.list_fields(tmp_path, issue_projects.Project("acme/3", "P3", "Roadmap"))
+    assert [f.data_type for f in fields] == ["TEXT", "ITERATION"]
+    assert issue_projects.get_field_value(tmp_path, issue_projects.ProjectTarget("I7", "url", "ITEM"), fields[0]) == ""
+    assert json.loads(run.call_args_list[1].kwargs["input"])["variables"] == {"id": "P3", "cursor": "next"}
+    assert json.loads(run.call_args.kwargs["input"])["variables"] == {"id": "ITEM", "cursor": "next"}
+    assert "ProjectV2IterationField" in json.loads(run.call_args_list[0].kwargs["input"])["query"]
+
+
 def test_resolve_user_board_uses_explicit_owner_type(tmp_path, mocker):
     run = mocker.patch(
         "jailbee.issue_projects.subprocess.run",
@@ -29,6 +46,53 @@ def test_resolve_user_board_uses_explicit_owner_type(tmp_path, mocker):
     assert "user(login:" in payload["query"]
     assert payload["variables"] == {"owner": "acme", "number": 3}
     assert run.call_args.kwargs["cwd"] == tmp_path
+
+
+@pytest.mark.parametrize("kind,value,payload", [
+    ("SINGLE_SELECT", "High", {"singleSelectOptionId": "OPT"}),
+    ("TEXT", "", {"text": ""}), ("NUMBER", "1.25", {"number": 1.25}),
+    ("DATE", "2026-11-12", {"date": "2026-11-12"}),
+])
+def test_resolve_field_and_update_exact_typed_payload(tmp_path, mocker, kind, value, payload):
+    fields = (issue_projects.ProjectField("F1", "Priority", kind, (("High", "OPT"),)),)
+    resolved = issue_projects.resolve_field(fields, "priority", value)
+    run = mocker.patch("jailbee.issue_projects.subprocess.run", return_value=subprocess.CompletedProcess(
+        [], 0, '{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"ITEM"}}}}', ""))
+    receipt = issue_projects.set_field(tmp_path, issue_projects.Project("acme/3", "P3", "Roadmap"),
+                                     issue_projects.ProjectTarget("I7", "https://github.com/acme/app/issues/7", "ITEM"), 7, resolved)
+    assert receipt.item_id == "ITEM"
+    assert run.call_args.args[0] == ["gh", "api", "graphql", "--input", "-"]
+    request = json.loads(run.call_args.kwargs["input"])
+    assert request["variables"] == {"project": "P3", "item": "ITEM", "field": "F1", "value": payload}
+    assert "updateProjectV2ItemFieldValue" in request["query"]
+
+
+@pytest.mark.parametrize("kind,value,match", [
+    ("NUMBER", True, "number"), ("NUMBER", "NaN", "number"),
+    ("NUMBER", float("inf"), "number"), ("NUMBER", "bad", "number"),
+    ("TEXT", 3, "text"), ("DATE", "20261112", "YYYY-MM-DD"),
+    ("DATE", "2026-02-30", "YYYY-MM-DD"), ("ITERATION", "Sprint", "not supported yet"),
+    ("SINGLE_SELECT", "Urgent", "High"),
+])
+def test_resolve_field_refuses_invalid_values(kind, value, match):
+    fields = (issue_projects.ProjectField("F1", "Priority", kind, (("High", "OPT"),)),)
+    with pytest.raises(ValueError, match=match):
+        issue_projects.resolve_field(fields, "Priority", value)
+    with pytest.raises(ValueError, match="Priority"):
+        issue_projects.resolve_field(fields, "Unknown", value)
+
+
+def test_set_failure_after_implicit_add_is_uncertain(tmp_path, mocker):
+    run = mocker.patch("jailbee.issue_projects.subprocess.run", side_effect=[
+        subprocess.CompletedProcess([], 0, '{"data":{"addProjectV2ItemById":{"item":{"id":"ITEM"}}}}', ""),
+        subprocess.CompletedProcess([], 0, '{"errors":[{"message":"denied"}]}', ""),
+    ])
+    field = issue_projects.resolve_field((issue_projects.ProjectField("F1", "Notes", "TEXT"),), "Notes", "new")
+    with pytest.raises(IssueGithubMutationError) as error:
+        issue_projects.set_field(tmp_path, issue_projects.Project("acme/3", "P3", "Roadmap"),
+                                 issue_projects.ProjectTarget("I7", "https://github.com/acme/app/issues/7", None), 7, field)
+    assert error.value.uncertain is True
+    assert run.call_count == 2
 
 
 def test_scope_error_does_not_try_another_owner_type(tmp_path, mocker):

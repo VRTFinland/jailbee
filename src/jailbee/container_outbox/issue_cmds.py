@@ -338,20 +338,38 @@ def project(
     add: Annotated[
         bool, typer.Option("--add", help="Add the issue or pull request to the project.")
     ] = False,
+    set_values: Annotated[list[str] | None, typer.Option("--set", help="Field=value; repeatable.")] = None,
     repo: RepoOpt = ".",
     batch: BatchOpt = None,
 ) -> None:
-    """Stage a project membership change; the host captures the expectation."""
+    """Stage project membership or field changes; the host captures expectations."""
 
     def run() -> None:
         require_role()
         target = _parse_target(issue)
-        if not add:
-            raise OutboxCommandError("--add is required", 2)
-        action: dict[str, object] = {"type": "project_add", "repo": repo, **_target(target)}
-        if project is not None:
-            action["project"] = project
-        _stage(action, batch)
+        if add == bool(set_values):
+            raise OutboxCommandError("choose --add or --set Field=value", 2)
+        actions: list[dict[str, object]] = []
+        if add:
+            actions.append({"type": "project_add", "repo": repo, **_target(target)})
+        seen: set[str] = set()
+        for value in set_values or []:
+            field, sep, text = value.partition("=")
+            if not sep or not field:
+                raise OutboxCommandError("--set requires Field=value", 2)
+            if field.casefold() in seen:
+                raise OutboxCommandError(f"duplicate project field {field!r}", 2)
+            seen.add(field.casefold())
+            actions.append({"type": "project_set", "repo": repo, **_target(target), "field": field, "value": text})
+        for action in actions:
+            if project is not None:
+                action["project"] = project
+        if batch is not None:
+            for action in actions:
+                _stage(action, batch)
+        else:
+            name = broker.put("issue", "project-add" if add else "project-set", {"version": 1, "actions": actions}, {})
+            typer.echo(f"staged issue/{name}")
 
     _run(run)
 

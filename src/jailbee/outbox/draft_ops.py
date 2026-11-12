@@ -35,6 +35,7 @@ from jailbee.outbox.broker_ops import (
     parse_issue,
     parse_pr,
     pr_body_refs,
+    provisional_project,
     rename_refs,
 )
 from jailbee.outbox.store_db import (
@@ -178,12 +179,8 @@ def handle_append(
             manifest: dict[str, Any], stored_bodies: Mapping[str, str], added: dict[str, Any]
         ) -> dict[str, Any]:
             derived = _prepare(manifest, stored_bodies, added)
-            if derived.get("type") == "project_add":
-                provisional = {
-                    **derived,
-                    "project": derived.get("project", default_project),
-                    "expected": {"present": False},
-                }
+            if derived.get("type") in ("project_add", "project_set"):
+                provisional = provisional_project(derived, default_project)
                 validate(
                     {**manifest, "actions": [*manifest["actions"], provisional]}, stored_bodies
                 )

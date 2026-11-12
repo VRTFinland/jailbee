@@ -36,6 +36,7 @@ from jailbee.issue_manifest import (
     IssueManifestError,
     LabelsAction,
     ProjectAddAction,
+    ProjectSetAction,
     StateAction,
     foreign_slug,
     mutation_keys,
@@ -180,6 +181,7 @@ class ResolvedAction:
     labels: tuple[str, ...] | None = None
     project: issue_projects.Project | None = None
     project_target: issue_projects.ProjectTarget | None = None
+    project_field: issue_projects.ResolvedField | None = None
 
 
 @dataclass(frozen=True)
@@ -445,6 +447,41 @@ def _resolve_labels(
     )
 
 
+def _receipt_item(url: str) -> str | None:
+    marker = "#project-item-"
+    return url.split(marker, 1)[1] if marker in url else None
+
+
+def _project_difference(action: ProjectAddAction | ProjectSetAction,
+                        target: issue_projects.ProjectTarget | None,
+                        value: issue_projects.ProjectValue, established_item: str | None) -> str | None:
+    present = target.present if target else False
+    own_add = bool(target and target.item_id and target.item_id == established_item)
+    if present != action.expected_present and not (not action.expected_present and present and own_add):
+        return "project membership changed since staging"
+    if isinstance(action, ProjectSetAction) and value != action.expected_value:
+        return "project field value changed since staging"
+    return None
+
+
+def _prior_project_item(batch: PreparedBatch, current: ResolvedAction) -> str | None:
+    assert isinstance(current.action, (ProjectAddAction, ProjectSetAction))
+    found = None
+    for manifest in batch.manifests:
+        receipts = {r.index: r for r in manifest.journal.actions} if manifest.journal else {}
+        for previous in manifest.actions:
+            if previous is current:
+                return found
+            if (isinstance(previous.action, (ProjectAddAction, ProjectSetAction))
+                and previous.status == "applied" and previous.repo.identity == current.repo.identity
+                and previous.issue == current.issue
+                and previous.action.project.casefold() == current.action.project.casefold()):
+                receipt = receipts.get(previous.index)
+                if receipt and receipt.url:
+                    found = _receipt_item(receipt.url)
+    return found
+
+
 def prepare_batch(
     cfg: Config,
     incus: Incus,
@@ -488,6 +525,7 @@ def prepare_batch(
     label_errors: dict[str, str] = {}
     mutations: dict[tuple[str, int | str, str], str] = {}
     prepared = []
+    established: dict[tuple[str, int | str, str], str] = {}
     for manifest, digest, journal in proposals:
         receipts = {receipt.index: receipt for receipt in journal.actions} if journal else {}
         refs: dict[str, ResolvedIssue] = {}
@@ -530,7 +568,7 @@ def prepare_batch(
                 elif issue.ref is not None:
                     snapshot = created.get(issue.ref)
                 if snapshot is not None:
-                    if snapshot.is_pull_request and not isinstance(action, ProjectAddAction):
+                    if snapshot.is_pull_request and not isinstance(action, (ProjectAddAction, ProjectSetAction)):
                         refusals.append(f"{context}: target is a pull request, not an issue")
                     refusals.extend(_differences(action, snapshot, context, login))
 
@@ -585,27 +623,31 @@ def prepare_batch(
                             f"{context}: conflict on {field} with {mutations[mutation_key]}"
                         )
                     mutations[mutation_key] = context
-            project = project_target = None
-            if isinstance(action, ProjectAddAction) and status == "pending":
-                try:
-                    project = issue_projects.resolve_project(cfg.repo_root, action.project)
-                    if status == "pending":
-                        project_target = (
-                            issue_projects.get_target(
-                                cfg.repo_root, project, repo.slug, issue.number
-                            )
-                            if issue.number is not None
-                            else None
-                        )
-                        present = project_target.present if project_target else False
-                        if present != action.expected_present:
-                            refusals.append(f"{context}: project membership changed since staging")
-                except IssueGithubReadError as exc:
-                    execution_errors.append(exc)
-                    refusals.append(f"{context}: {exc}")
-            actions.append(
-                ResolvedAction(index, action, repo, issue, status, labels, project, project_target)
-            )
+            project = project_target = project_field = None
+            if isinstance(action, (ProjectAddAction, ProjectSetAction)):
+                project_key = (repo.identity, issue.number if issue.number is not None else f"{manifest.name}:{issue.ref}", action.project.casefold())
+                if status == "applied" and receipt and receipt.url:
+                    item = _receipt_item(receipt.url)
+                    if item:
+                        established[project_key] = item
+                if status == "pending":
+                    try:
+                        project = issue_projects.resolve_project(cfg.repo_root, action.project)
+                        if isinstance(action, ProjectSetAction):
+                            project_field = issue_projects.resolve_field(issue_projects.list_fields(cfg.repo_root, project), action.field, action.value)
+                        project_target = (issue_projects.get_target(cfg.repo_root, project, repo.slug, issue.number)
+                                          if issue.number is not None else None)
+                        value = (issue_projects.get_field_value(cfg.repo_root, project_target, project_field.field)
+                                 if project_target and project_field else None)
+                        mismatch = _project_difference(action, project_target, value, established.get(project_key))
+                        if mismatch:
+                            refusals.append(f"{context}: {mismatch}")
+                    except IssueGithubReadError as exc:
+                        execution_errors.append(exc)
+                        refusals.append(f"{context}: {exc}")
+                    except ValueError as exc:
+                        refusals.append(f"{context}: {exc}")
+            actions.append(ResolvedAction(index, action, repo, issue, status, labels, project, project_target, project_field))
         prepared.append(PreparedManifest(manifest, digest, journal, tuple(actions)))
     if execution_errors:
         raise IssueExecutionError("\n".join(refusals)) from execution_errors[0]
@@ -631,21 +673,16 @@ def revalidate_batch(batch: PreparedBatch) -> None:
     refusals = []
     for manifest in batch.manifests:
         for resolved in manifest.actions:
-            if isinstance(resolved.action, ProjectAddAction) and resolved.status == "pending":
+            if isinstance(resolved.action, (ProjectAddAction, ProjectSetAction)) and resolved.status == "pending":
                 if resolved.issue.number is not None:
                     assert resolved.project is not None
                     try:
-                        target = issue_projects.get_target(
-                            batch.host_repo_root,
-                            resolved.project,
-                            resolved.repo.slug,
-                            resolved.issue.number,
-                        )
-                        if target.present != resolved.action.expected_present:
-                            refusals.append(
-                                f"{manifest.manifest.name} action {resolved.index}: "
-                                "project membership changed since staging"
-                            )
+                        target = issue_projects.get_target(batch.host_repo_root, resolved.project, resolved.repo.slug, resolved.issue.number)
+                        value = (issue_projects.get_field_value(batch.host_repo_root, target, resolved.project_field.field)
+                                 if resolved.project_field else None)
+                        mismatch = _project_difference(resolved.action, target, value, _prior_project_item(batch, resolved))
+                        if mismatch:
+                            refusals.append(f"{manifest.manifest.name} action {resolved.index}: {mismatch}")
                     except IssueGithubReadError as exc:
                         execution_errors.append(exc)
                         refusals.append(str(exc))
@@ -750,6 +787,9 @@ def _action_lines(
             lines.append(f"  labels after: {', '.join(labels) or '[empty]'}")
     elif isinstance(action, AssigneesAction):
         lines.append(f"  {_assignee_changes(action, login)}")
+    elif isinstance(action, ProjectSetAction):
+        title = f' "{project.title}"' if project else ""
+        lines.append(f"  project {action.project}{title} · {target} · {action.field}: {action.expected_value!r} -> {action.value!r}")
     elif isinstance(action, ProjectAddAction):
         title = f' "{project.title}"' if project else ""
         lines.append(f"  project {action.project}{title} · {target} · add")
@@ -947,6 +987,7 @@ _SAFE_DEFINITE_DETAILS = frozenset(
         "GitHub mutation was rejected",
         "GitHub Projects requires host authorization: gh auth refresh -s project",
         "project membership changed since staging",
+        "project field value changed since staging",
         ASSIGN_NOT_APPLIED_DETAIL,
         UNASSIGN_NOT_APPLIED_DETAIL,
         "GitHub mutation could not start because 'gh' is unavailable",
@@ -979,7 +1020,8 @@ def _resolved_number(issue: ResolvedIssue, created: Mapping[str, int]) -> int:
 
 
 def _execute_one(
-    host_repo_root: Path, resolved: ResolvedAction, created: dict[str, int], login: str = ""
+    host_repo_root: Path, resolved: ResolvedAction, created: dict[str, int], login: str = "",
+    established: dict[tuple[str, int, str], str] | None = None
 ) -> MutationReceipt:
     """Dispatch one pending action's exact GitHub mutation; return its receipt.
 
@@ -1047,19 +1089,22 @@ def _execute_one(
                 )
         assert last is not None, "a parsed assignees action changes at least one login"
         return last
-    if isinstance(action, ProjectAddAction):
+    if isinstance(action, (ProjectAddAction, ProjectSetAction)):
         try:
-            project = resolved.project or issue_projects.resolve_project(
-                host_repo_root, action.project
-            )
+            project = resolved.project or issue_projects.resolve_project(host_repo_root, action.project)
+            field = resolved.project_field
+            if isinstance(action, ProjectSetAction) and field is None:
+                field = issue_projects.resolve_field(issue_projects.list_fields(host_repo_root, project), action.field, action.value)
             target = issue_projects.get_target(host_repo_root, project, repo, number)
-        except IssueGithubReadError as exc:
+            value = issue_projects.get_field_value(host_repo_root, target, field.field) if field else None
+        except (IssueGithubReadError, ValueError) as exc:
             raise IssueGithubMutationError(str(exc), uncertain=False) from exc
-        if target.present != action.expected_present:
-            raise IssueGithubMutationError(
-                "project membership changed since staging", uncertain=False
-            )
-        return issue_projects.add_item(host_repo_root, project, target, number)
+        key = (resolved.repo.identity, number, action.project.casefold())
+        mismatch = _project_difference(action, target, value, (established or {}).get(key))
+        if mismatch:
+            raise IssueGithubMutationError(mismatch, uncertain=False)
+        return (issue_projects.set_field(host_repo_root, project, target, number, field)
+                if field else issue_projects.add_item(host_repo_root, project, target, number))
     if isinstance(action, StateAction):
         return issue_github.set_state(
             host_repo_root, repo, number, state=action.state, reason=action.reason
@@ -1102,6 +1147,11 @@ def _sent_action(
     elif isinstance(action, AssigneesAction):
         kind = "assignees"
         content = _assignee_changes(action, login)
+    elif isinstance(action, ProjectSetAction):
+        kind = action.kind
+        title = resolved.project.title if resolved.project else None
+        content = (f'project {action.project} "{title or ""}" · {action.field}: '
+                   f"{action.expected_value!r} -> {resolved.project_field.value if resolved.project_field else action.value!r}")
     elif isinstance(action, ProjectAddAction):
         kind = action.kind
         title = resolved.project.title if resolved.project else None
@@ -1272,6 +1322,7 @@ def apply_batch(
                     )
             journals[name] = journal
 
+        established_items: dict[tuple[str, int, str], str] = {}
         for prepared in batch.manifests:
             name = prepared.manifest.name
             claim = claims[name]
@@ -1283,6 +1334,11 @@ def apply_batch(
                 current = receipts.get(resolved.index)
                 if current is not None:
                     skipped.append((name, current))
+                    if isinstance(resolved.action, (ProjectAddAction, ProjectSetAction)) and current.url:
+                        item = _receipt_item(current.url)
+                        number = resolved.issue.number or created_issue_numbers.get(resolved.issue.ref or "")
+                        if item and number:
+                            established_items[(resolved.repo.identity, number, resolved.action.project.casefold())] = item
                     if isinstance(resolved.action, CreateAction) and current.issue is not None:
                         created_issue_numbers[resolved.action.ref] = current.issue
                     continue
@@ -1307,7 +1363,7 @@ def apply_batch(
 
                 try:
                     receipt = _execute_one(
-                        batch.host_repo_root, resolved, created_issue_numbers, batch.login
+                        batch.host_repo_root, resolved, created_issue_numbers, batch.login, established_items
                     )
                 except IssueGithubMutationError as exc:
                     recorded = True
@@ -1337,6 +1393,10 @@ def apply_batch(
                         exc.uncertain or not recorded,
                         _apply_failure_detail(str(exc), uncertain=exc.uncertain),
                     )
+                if isinstance(resolved.action, (ProjectAddAction, ProjectSetAction)):
+                    item = _receipt_item(receipt.url)
+                    if item:
+                        established_items[(resolved.repo.identity, receipt.issue, resolved.action.project.casefold())] = item
                 try:
                     settled = store.settle(
                         claim,
@@ -1537,7 +1597,7 @@ def reconcile_action(
 
         action = manifest.actions[index]
         url_number = _validated_receipt(
-            resolution.url, repo, project=isinstance(action, ProjectAddAction)
+            resolution.url, repo, project=isinstance(action, (ProjectAddAction, ProjectSetAction))
         )
         if isinstance(action, CreateAction):
             if type(resolution.issue) is not int:
