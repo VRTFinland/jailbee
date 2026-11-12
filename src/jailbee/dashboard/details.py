@@ -408,6 +408,8 @@ def _publish_summary(g: GrantView) -> str:
     if g.publish_foreign_repos and g.publish_foreign_actions:
         repos = ", ".join(escape(r) for r in g.publish_foreign_repos)
         parts.append(f"foreign {repos} ({', '.join(escape(k) for k in g.publish_foreign_actions)})")
+    for board, actions in g.publish_projects:
+        parts.append(f"project {escape(board)} ({', '.join(escape(k) for k in actions)})")
     if g.publish_prs:
         parts.append("PRs")
     if g.publish_pr_reviews:

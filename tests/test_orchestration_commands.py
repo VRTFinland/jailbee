@@ -34,6 +34,31 @@ def test_build_grant_keeps_publish_without_flags(cfg):
     assert commands.build_grant(cfg, current, GrantFlags()).publish == current.publish
 
 
+def test_build_grant_modifies_only_named_project_boards(cfg):
+    current = commands.build_grant(cfg, None, GrantFlags(
+        publish_project=("Org/3=set,remove", "Org/7=add"), publish_issues=("comment",)
+    ))
+    assert commands.build_grant(cfg, current, GrantFlags()).publish == current.publish
+    updated = commands.build_grant(cfg, current, GrantFlags(
+        publish_project=("ORG/3=add", "org/8=set", "org/8=remove", "org/7=none")
+    ))
+    assert [(p.board, p.actions) for p in updated.publish.projects] == [
+        ("org/3", ("add",)), ("org/8", ("remove",))
+    ]
+    assert updated.publish.issues == ("comment",)
+    assert "org/3 (add)" in commands.publish_summary(updated.publish)
+    assert "org/8 (remove)" in commands.publish_summary(updated.publish)
+    assert commands.build_grant(cfg, updated, GrantFlags(no_publish=True)).publish.empty()
+    with pytest.raises(GrantError, match="exclusive"):
+        commands.build_grant(cfg, current, GrantFlags(no_publish=True, publish_project=("org/3=none",)))
+
+
+@pytest.mark.parametrize("entry", ["org/3", "org/3=", "*=set", "org/0=add", "org/3=clear", "org/3=none,add"])
+def test_build_grant_refuses_malformed_project_flags(cfg, entry):
+    with pytest.raises(GrantError):
+        commands.build_grant(cfg, None, GrantFlags(publish_project=(entry,)))
+
+
 def test_build_grant_sets_issue_kinds(cfg):
     assert commands.build_grant(
         cfg, None, GrantFlags(publish_issues=("state", "comment"))
@@ -226,6 +251,42 @@ def test_remote_publish_widening_still_requires_permission(cfg, incus, addition)
         commands._check_remote_bound(cfg, incus, "myrepo-a", new, current, remote)
 
 
+@pytest.mark.parametrize("change", ["board", "set", "remove", "rate"])
+def test_remote_project_widening_and_rate_require_issue_apply(cfg, incus, change):
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    remote = RemoteSSHConfig(
+        orchestration="ssh", commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"])
+    )
+    current = commands.build_grant(cfg, None, GrantFlags(publish_project=("org/3=add",)))
+    flags = {
+        "board": GrantFlags(publish_project=("org/7=add",)),
+        "set": GrantFlags(publish_project=("org/3=set",)),
+        "remove": GrantFlags(publish_project=("org/3=remove",)),
+        "rate": GrantFlags(publish_rate=31),
+    }[change]
+    wider = commands.build_grant(cfg, current, flags)
+    with pytest.raises(GrantError, match="permission"):
+        commands._check_remote_bound(cfg, incus, "myrepo-a", wider, current, remote)
+    allowed = remote.model_copy(update={
+        "commands": RemoteCommandPolicy(mode="allowlist", allow=["issue apply"])
+    })
+    commands._check_remote_bound(cfg, incus, "myrepo-a", wider, current, allowed)
+
+
+def test_remote_project_narrowing_preserves_semantic_implication(cfg, incus):
+    from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
+
+    remote = RemoteSSHConfig(
+        orchestration="ssh", commands=RemoteCommandPolicy(mode="allowlist", allow=["ls"])
+    )
+    current = commands.build_grant(cfg, None, GrantFlags(publish_project=("org/3=set,remove",)))
+    for flags in (GrantFlags(), GrantFlags(publish_project=("org/3=add",)),
+                  GrantFlags(publish_project=("org/3=none",), publish_rate=31)):
+        narrower = commands.build_grant(cfg, current, flags)
+        commands._check_remote_bound(cfg, incus, "myrepo-a", narrower, current, remote)
+
+
 def test_no_publish_clears_all(cfg):
     from jailbee.orchestration.grant import PublishRights
 
@@ -337,6 +398,7 @@ def test_save_profile_writes_global_block(cfg, incus_with_grant, tmp_path):
         "grantable": {"mounts": [], "loose": False, "egress": []},
         "publish": {
             "issues": [],
+            "projects": [],
             "foreign_issues": {"repos": [], "actions": []},
             "pull_requests": False,
             "pr_reviews": False,

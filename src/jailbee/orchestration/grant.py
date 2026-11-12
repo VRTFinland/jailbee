@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from jailbee.egress import WildcardSpec, validate_allow_entry
 from jailbee.orchestration.runner_model import Runner
+from jailbee.issue_manifest import valid_project
 
 Operation = Literal["spawn", "message", "import", "restart", "stop", "destroy", "rights", "refresh"]
 
@@ -153,6 +154,36 @@ class ForeignIssueRights(BaseModel):
         return tuple(sorted(set(values)))
 
 
+ProjectActionKind = Literal["add", "set", "remove"]
+PROJECT_ACTION_KINDS: tuple[ProjectActionKind, ...] = ("add", "remove", "set")
+
+
+def project_kind_granted(kind: str, granted: Iterable[str]) -> bool:
+    held = set(granted)
+    return kind in held or (kind in {"add", "clear"} and "set" in held)
+
+
+class ProjectRights(BaseModel):
+    """Offline, board-scoped publication rights; no repository permission implied."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    board: str
+    actions: tuple[ProjectActionKind, ...] = ()
+
+    @field_validator("board")
+    @classmethod
+    def _board(cls, value: str) -> str:
+        if not valid_project(value):
+            raise ValueError("project board must be owner/number (positive number, no wildcard)")
+        return value.casefold()
+
+    @field_validator("actions")
+    @classmethod
+    def _actions(cls, values: tuple[ProjectActionKind, ...]) -> tuple[ProjectActionKind, ...]:
+        return tuple(sorted(set(values)))
+
+
 class PublishRights(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -167,6 +198,9 @@ class PublishRights(BaseModel):
     foreign_issues: ForeignIssueRights = Field(
         default=ForeignIssueRights(),
         description="Additional issue rights for explicitly listed foreign repositories.",
+    )
+    projects: tuple[ProjectRights, ...] = Field(
+        default=(), description="Publication actions allowed on explicitly named project boards."
     )
     pull_requests: bool = Field(
         default=False,
@@ -187,9 +221,30 @@ class PublishRights(BaseModel):
     def _issues(cls, values: tuple[IssueActionKind, ...]) -> tuple[IssueActionKind, ...]:
         return tuple(sorted(set(values)))
 
+    @field_validator("projects")
+    @classmethod
+    def _projects(cls, values: tuple[ProjectRights, ...]) -> tuple[ProjectRights, ...]:
+        boards: dict[str, set[ProjectActionKind]] = {}
+        for entry in values:
+            boards.setdefault(entry.board, set()).update(entry.actions)
+        return tuple(
+            ProjectRights(board=board, actions=tuple(sorted(actions)))
+            for board, actions in sorted(boards.items()) if actions
+        )
+
+    def covers_project(self, kind: str, board: str) -> bool:
+        if kind not in {"project_add", "project_set", "project_clear", "project_remove"}:
+            return False
+        return any(
+            entry.board == board.casefold()
+            and project_kind_granted(kind.removeprefix("project_"), entry.actions)
+            for entry in self.projects
+        )
+
     def empty(self) -> bool:
         return not (
             self.issues
+            or self.projects
             or (self.foreign_issues.repos and self.foreign_issues.actions)
             or self.pull_requests
             or self.pr_reviews
@@ -211,7 +266,17 @@ class PublishRights(BaseModel):
             repos = f.repos
         else:
             repos = tuple(r for r in f.repos if r in c.repos)
+        caps = {entry.board: entry.actions for entry in cap.projects}
+        projects = []
+        for entry in self.projects:
+            allowed = caps.get(entry.board, ())
+            actions = {kind for kind in entry.actions if project_kind_granted(kind, allowed)}
+            if "set" in entry.actions and "set" not in allowed and "add" in allowed:
+                actions.add("add")
+            if actions:
+                projects.append(ProjectRights(board=entry.board, actions=tuple(sorted(actions))))
         return PublishRights(
+            projects=tuple(projects),
             issues=narrow_kinds(self.issues, cap.issues),
             foreign_issues=ForeignIssueRights(
                 repos=repos, actions=narrow_kinds(f.actions, c.actions)
@@ -333,6 +398,10 @@ def cap_excess(grant: Grant, cap: RepoCap) -> list[str]:
                     out.append(
                         f"publish right `foreign_issues: {repo}:{kind}` is above the repo cap"
                     )
+        for entry in requested.projects:
+            for project_kind in entry.actions:
+                if not narrowed.covers_project(f"project_{project_kind}", entry.board):
+                    out.append(f"publish right `projects: {entry.board}:{project_kind}` is above the repo cap")
         for name in ("pull_requests", "pr_reviews"):
             if getattr(requested, name) and not getattr(narrowed, name):
                 out.append(f"publish right `{name}` is above the repo cap")

@@ -16,6 +16,8 @@ from jailbee.orchestration.grant import (
     IMPLIED_OPERATIONS,
     ISSUE_ACTION_KINDS,
     OPERATIONS,
+    ProjectActionKind,
+    ProjectRights,
     PublishRights,
 )
 from jailbee.orchestration.runner_model import DefaultRunnerSource, Runner
@@ -90,6 +92,27 @@ def _publish_kinds(values: list[str]) -> list[str]:
     return sorted(set(values))
 
 
+class ProjectRightsConfig(BaseModel):
+    """Editor-friendly board entry, validated with the grant's offline rules."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    board: str = Field(description="Project board as owner/number; wildcards are not allowed.")
+    actions: list[ProjectActionKind] = Field(
+        default_factory=list, description="Allowed project actions: add, set (also add/clear), remove."
+    )
+
+    @field_validator("board")
+    @classmethod
+    def _board(cls, value: str) -> str:
+        return ProjectRights(board=value).board
+
+    @field_validator("actions")
+    @classmethod
+    def _actions(cls, values: list[ProjectActionKind]) -> list[ProjectActionKind]:
+        return sorted(set(values))
+
+
 class PublishRightsConfig(BaseModel):
     """Editor-friendly lists; frozen tuple grant models are built at the boundary."""
 
@@ -106,6 +129,9 @@ class PublishRightsConfig(BaseModel):
     foreign_issues: ForeignIssueRightsConfig = Field(
         default_factory=ForeignIssueRightsConfig,
         description="Additional rights on explicitly listed foreign repositories.",
+    )
+    projects: list[ProjectRightsConfig] = Field(
+        default_factory=list, description="Board-scoped project publication rights."
     )
     pull_requests: bool = Field(
         default=False,

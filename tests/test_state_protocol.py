@@ -162,6 +162,7 @@ def _full_snapshot() -> Snapshot:
                 publish_prs=True,
                 publish_pr_reviews=True,
                 publish_rate=12,
+                publish_projects=(("org/3", ("remove", "set")),),
             ),
             child=ChildView("alpha-orch", "done", ("data",), True, ("pypi.org",), "claude-jb opus"),
             running_children=2,
@@ -421,7 +422,7 @@ def test_wire_schema_leaves_out_docstrings_and_titles():
 # PROTOCOL fails below: a client of another version would misread it. A pydantic
 # upgrade that only reshapes its schema output trips this too; a bump is then
 # harmless (a protocol mismatch makes the dashboard replace the state service).
-WIRE_SCHEMA = (22, "28ac3ce2c04b2606513e542d8cc20a865a817bd738871af4edb21c422d929d3f")
+WIRE_SCHEMA = (23, "ab57952e895a9a861061bf34b6dc4a9477a4cd740e2ac7bde5b7eef94ff4de30")
 
 
 def test_a_wire_schema_change_bumps_the_protocol():

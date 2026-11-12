@@ -25,6 +25,7 @@ from jailbee.orchestration.grant import (
     GrantError,
     IssueActionKind,
     Operation,
+    ProjectRights,
     PublishRights,
     cap_excess,
     effective_grant,
@@ -69,6 +70,7 @@ class GrantFlags:
     publish_pr_reviews: bool | None = None
     publish_rate: int | None = None
     no_publish: bool = False
+    publish_project: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -210,6 +212,7 @@ def _issue_kinds(values: tuple[str, ...]) -> tuple[IssueActionKind, ...]:
 def _publish_rights(base: PublishRights, flags: GrantFlags) -> PublishRights:
     changes = {
         "issues": flags.publish_issues,
+        "projects": flags.publish_project,
         "foreign_issues": flags.publish_foreign_issues,
         "pull_requests": flags.publish_prs,
         "pr_reviews": flags.publish_pr_reviews,
@@ -220,6 +223,21 @@ def _publish_rights(base: PublishRights, flags: GrantFlags) -> PublishRights:
             raise GrantError("--no-publish is exclusive with all other publish flags")
         return PublishRights()
     data = base.model_dump()
+    if flags.publish_project is not None:
+        projects = {entry.board: entry for entry in base.projects}
+        for raw in flags.publish_project:
+            board, sep, kinds = raw.partition("=")
+            if not sep or not kinds:
+                raise GrantError("project rights must be owner/number=add,set,remove (or =none)")
+            project = ProjectRights.model_validate({
+                "board": board, "actions": [] if kinds == "none" else kinds.split(",")
+            })
+            # Each occurrence replaces that board; the last occurrence wins.
+            if project.actions:
+                projects[project.board] = project
+            else:
+                projects.pop(project.board, None)
+        data["projects"] = [entry.model_dump() for entry in projects.values()]
     if flags.publish_issues is not None:
         data["issues"] = _issue_kinds(flags.publish_issues)
     if flags.publish_foreign_issues == ("none",):
@@ -254,6 +272,8 @@ def publish_summary(rights: PublishRights) -> str:
     f = rights.foreign_issues
     if f.repos and f.actions:
         parts.append(f"foreign issues: {', '.join(f.repos)} ({', '.join(f.actions)})")
+    for entry in rights.projects:
+        parts.append(f"project {entry.board} ({', '.join(entry.actions)})")
     if rights.pull_requests:
         parts.append("PRs")
     if rights.pr_reviews:
@@ -380,6 +400,12 @@ def _check_remote_bound(
         for r in p.foreign_issues.repos
         for k in p.foreign_issues.actions
     )
+    project_added = any(
+        not had.covers_project(f"project_{kind}", entry.board)
+        for entry in p.projects for kind in entry.actions
+    )
+    if project_added or (rate_widened and p.projects):
+        required.append(("projects", ["issue", "apply", full]))
     if (
         issue_added
         or foreign_added

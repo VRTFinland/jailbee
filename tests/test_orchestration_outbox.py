@@ -28,6 +28,18 @@ def test_grant_json_has_publish():
     assert data["publish"]["issues"] == ["comment"]
 
 
+def test_grant_json_keeps_project_only_rights():
+    from jailbee.orchestration.grant import Grant, PublishRights
+
+    grant = Grant(publish=PublishRights.model_validate({"projects": [
+        {"board": "Org/3", "actions": ["set"]}
+    ]}))
+    data = json.loads(outbox.grant_json_text(grant, None, None))
+    assert data["publish"]["projects"] == [{"board": "org/3", "actions": ["set"]}]
+    data.pop("default_runner_source")
+    assert Grant.from_label(json.dumps(data)) == grant
+
+
 def _item(n: str) -> InboxStatus:
     return InboxStatus(version=1, id=f"h-{n}", type="status", ref="r", state="queued", detail="d")
 

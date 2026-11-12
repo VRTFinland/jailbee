@@ -58,6 +58,7 @@ def test_default_grant_label_is_the_spec_shape() -> None:
         "default_runner": None,
         "publish": {
             "issues": [],
+            "projects": [],
             "foreign_issues": {"repos": [], "actions": []},
             "pull_requests": False,
             "pr_reviews": False,
@@ -81,6 +82,65 @@ def test_grant_default_runner_round_trips() -> None:
 
 def test_grant_without_publish_parses_with_empty_rights():
     assert Grant.from_label('{"version":1}').publish.empty()
+
+
+def test_project_rights_are_board_scoped_and_survive_labels():
+    from jailbee.orchestration.grant import PublishRights
+
+    rights = PublishRights.model_validate({
+        "projects": [
+            {"board": "Org/3", "actions": ["set", "set"]},
+            {"board": "org/7", "actions": ["remove"]},
+            {"board": "ORG/3", "actions": ["remove"]},
+        ]
+    })
+    assert not rights.empty()
+    assert rights.covers_project("project_add", "ORG/3")
+    assert rights.covers_project("project_clear", "org/3")
+    assert rights.covers_project("project_remove", "org/3")
+    assert not rights.covers_project("project_set", "org/7")
+    assert not rights.covers_project("project_add", "org/4")
+    assert not rights.covers_project("comment", "org/3")
+    assert not rights.covers_issue("comment", "org/repo", foreign=False)
+    assert rights.model_dump(mode="json")["projects"] == [
+        {"board": "org/3", "actions": ["remove", "set"]},
+        {"board": "org/7", "actions": ["remove"]},
+    ]
+    grant = Grant(publish=rights)
+    assert Grant.from_label(grant.to_label()) == grant
+
+
+@pytest.mark.parametrize("board", ["*", "org/*", "org/0", "org/-1", "org/1/2", "org/repo", "org/01", "/1", "./1", "../1", "_org/1", "a" * 40 + "/1"])
+def test_project_board_syntax_is_validated_offline(board):
+    from jailbee.orchestration.grant import PublishRights
+
+    with pytest.raises(ValidationError):
+        PublishRights.model_validate({"projects": [{"board": board, "actions": ["add"]}]})
+
+
+def test_project_cap_intersects_per_board_and_degrades_set_to_add():
+    from jailbee.orchestration.grant import PublishRights
+
+    requested = PublishRights.model_validate({"projects": [
+        {"board": "org/3", "actions": ["set", "remove"]},
+        {"board": "org/7", "actions": ["set"]},
+    ]})
+    cap = PublishRights.model_validate({"projects": [
+        {"board": "org/3", "actions": ["add"]},
+        {"board": "org/9", "actions": ["set"]},
+    ]})
+    effective = effective_grant(Grant(publish=requested), RepoCap(publish=cap))
+    assert effective is not None
+    assert effective.publish.model_dump(mode="json")["projects"] == [
+        {"board": "org/3", "actions": ["add"]}
+    ]
+    assert effective.publish.covers_project("project_add", "org/3")
+    assert not effective.publish.covers_project("project_clear", "org/3")
+    assert not effective.publish.covers_project("project_set", "org/7")
+    errors = cap_excess(Grant(publish=requested), RepoCap(publish=cap))
+    assert any("org/3:set" in error for error in errors)
+    assert any("org/7:set" in error for error in errors)
+    assert effective_grant(Grant(publish=requested), RepoCap(publish=False)).publish.empty()
 
 
 def test_covers_issue_own_and_foreign():

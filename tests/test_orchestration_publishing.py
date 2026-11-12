@@ -368,6 +368,147 @@ def test_publish_started_then_done_with_urls(rig):
     publishing.settle(rig[0], lambda *a: pytest.fail("duplicate result"))
 
 
+def _project_action(kind="add", board="org/3", *, issue=12):
+    action = {"type": f"project_{kind}", "repo": ".", "issue": issue,
+              "project": board, "expected": {"present": False}}
+    if kind in {"set", "clear"}:
+        action["field"] = "Status"
+        action["expected"]["value"] = None
+    if kind == "set":
+        action["value"] = "In progress"
+    return action
+
+
+def _project_grant(ctx, *, actions=("set", "remove"), rate=30, issues=()):
+    rights = PublishRights.model_validate({"issues": issues, "projects": [
+        {"board": "org/3", "actions": actions}
+    ], "max_actions_per_hour": rate})
+    ctx.sender = replace(ctx.sender, config={labels.GRANT: Grant(publish=rights).to_label()})
+
+
+@pytest.mark.parametrize("kind", ["add", "set", "clear", "remove"])
+def test_project_only_grant_publishes_each_kind_for_one_slot(rig, kind):
+    ctx, m, files, _, publish = rig
+    _project_grant(ctx)
+    payload = _project_action(kind)
+    files["a.json"] = json.dumps({"version": 1, "actions": [payload]})
+
+    def execute(*args, **kw):
+        parsed = issue_outbox.parse_manifest("a.json", files["a.json"], files)
+        action = Mock(status="pending", action=parsed.actions[0],
+                      repo=issue_outbox.RepoTarget(".", ctx.root, "org/repo"))
+        kw["policy"](Mock(manifests=[Mock(actions=[action])]))
+        return 0
+
+    publish.side_effect = execute
+    accept(rig)
+    replies = []
+    publishing.settle(ctx, lambda ref, out: replies.append(out))
+    assert replies[0].state == "done"
+    assert len(open_state_store(ctx.root).kv_get("publish-budget.json")[ctx.sender.full]) == 1
+    assert publish.call_args.kwargs["action_limit"] == 1
+
+
+def test_project_board_right_does_not_require_foreign_repository_right(rig):
+    ctx, m, files, *_ = rig
+    _project_grant(ctx, actions=("add",))
+    action = _project_action()
+    action["repo"] = "github:foreign/lib"
+    files["a.json"] = json.dumps({"version": 1, "actions": [action]})
+    assert publishing.handle_publish(ctx, m).state == "started"
+
+
+@pytest.mark.parametrize("uncovered", ["board", "kind"])
+def test_one_uncovered_project_action_refuses_entire_mixed_publish(rig, uncovered):
+    ctx, m, files, threads, publish = rig
+    _project_grant(ctx, actions=("add",), issues=("comment",))
+    actions = json.loads(files["a.json"])["actions"] + [
+        _project_action(),
+        _project_action("add" if uncovered == "board" else "remove",
+                        "org/7" if uncovered == "board" else "org/3", issue=13),
+    ]
+    files["a.json"] = json.dumps({"version": 1, "actions": actions})
+    result = publishing.handle_publish(ctx, m)
+    assert result.state == "refused"
+    assert ("org/7" if uncovered == "board" else "project_remove") in result.detail
+    assert not threads
+    publish.assert_not_called()
+    assert not open_state_store(ctx.root).kv_get("publish-budget.json")
+
+
+def test_project_pending_count_reserves_one_slot_per_action_and_refuses_whole_at_cap(rig):
+    ctx, m, files, *_ = rig
+    _project_grant(ctx, actions=("add",), rate=1)
+    files["a.json"] = json.dumps({"version": 1, "actions": [
+        _project_action(issue=12), _project_action(issue=13),
+    ]})
+    result = publishing.handle_publish(ctx, m)
+    assert result.state == "refused" and "rate cap" in result.detail
+    assert not open_state_store(ctx.root).kv_get("publish-budget.json")
+
+
+def test_in_lock_project_board_swap_is_refused_and_budget_refunded(rig):
+    ctx, m, files, _, publish = rig
+    _project_grant(ctx, actions=("add",))
+    files["a.json"] = json.dumps({"version": 1, "actions": [_project_action()]})
+
+    def execute(*args, **kw):
+        from jailbee.issue_manifest import ExistingIssue, ProjectAddAction
+
+        action = Mock(status="pending", action=ProjectAddAction(".", ExistingIssue(12), "org/7", False),
+                      repo=issue_outbox.RepoTarget(".", ctx.root, "org/repo"))
+        kw["policy"](Mock(manifests=[Mock(actions=[action])]))
+
+    publish.side_effect = execute
+    accept(rig)
+    replies = []
+    publishing.settle(ctx, lambda ref, out: replies.append(out))
+    assert replies[0].state == "failed" and "org/7" in replies[0].detail
+    assert open_state_store(ctx.root).kv_get("publish-budget.json").get(ctx.sender.full, []) == []
+
+
+@pytest.mark.parametrize("state", ["applied", "uncertain"])
+def test_project_receipt_precheck_skips_applied_but_refuses_uncertain(rig, mocker, state):
+    from jailbee.outbox_io import ContainerIdentity, IssueJournal, JournalAction, proposal_digest
+
+    ctx, m, files, *_ = rig
+    _project_grant(ctx, actions=("add",))
+    files["a.json"] = json.dumps({"version": 1, "actions": [_project_action(board="org/7")]})
+    journal = IssueJournal(
+        ContainerIdentity(ctx.sender.full, ""), "a.json", proposal_digest("a.json", files["a.json"], {}), 1,
+        (JournalAction(0, state, "org/repo", "https://github.com/org/repo/issues/12", 12),),
+    )
+    mocker.patch.object(issue_outbox, "store_journals", return_value={"a.json": journal})
+    result = publishing.handle_publish(ctx, m)
+    if state == "applied":
+        assert result.state == "done" and "nothing pending" in result.detail
+    else:
+        assert result.state == "refused" and "uncertain" in result.detail
+    assert not open_state_store(ctx.root).kv_get("publish-budget.json")
+
+
+def test_in_lock_mixed_project_denial_refuses_whole_and_refunds(rig):
+    ctx, m, files, _, publish = rig
+    _project_grant(ctx, actions=("add",), issues=("comment",))
+    actions = json.loads(files["a.json"])["actions"] + [_project_action()]
+    files["a.json"] = json.dumps({"version": 1, "actions": actions})
+
+    def execute(*args, **kw):
+        changed = actions[:-1] + [_project_action(board="org/7")]
+        parsed = issue_outbox.parse_manifest("a.json", json.dumps({"version": 1, "actions": changed}), {})
+        resolved = [Mock(status="pending", action=a,
+                         repo=issue_outbox.RepoTarget(".", ctx.root, "org/repo")) for a in parsed.actions]
+        kw["policy"](Mock(manifests=[Mock(actions=resolved)]))
+        pytest.fail("uncovered mixed batch reached the mutation boundary")
+
+    publish.side_effect = execute
+    accept(rig)
+    replies = []
+    publishing.settle(ctx, lambda ref, out: replies.append(out))
+    assert replies[0].state == "failed" and "org/7" in replies[0].detail
+    assert open_state_store(ctx.root).kv_get("publish-budget.json").get(ctx.sender.full, []) == []
+
+
 def test_uncovered_issue_action_refused_whole(rig):
     ctx, m, files, threads, publish = rig
     files["a.json"] = (

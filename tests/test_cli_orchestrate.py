@@ -95,6 +95,13 @@ def test_show_prints_publish_rights(patched, enabled):
     assert ("publish: issues: comment" if enabled else "publish: none") in out
 
 
+def test_repeatable_project_grant_flags_reach_commands(patched):
+    res = runner.invoke(app, ["orchestrate", "grant", "a",
+        "--publish-project", "Org/3=set,remove", "--publish-project", "org/7=none"])
+    assert res.exit_code == 0, res.output
+    assert patched.grant.call_args.args[3].publish_project == ("Org/3=set,remove", "org/7=none")
+
+
 def test_publish_flags_reach_commands(patched):
     res = runner.invoke(
         app,
