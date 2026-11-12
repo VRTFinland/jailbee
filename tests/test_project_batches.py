@@ -321,15 +321,25 @@ def test_plain_applied_receipt_resolves_implicit_add_and_resumes_next_field(pipe
 
 @pytest.mark.parametrize("field_count", [1, 2])
 @pytest.mark.parametrize("foreign_item", [False, True, "removed"])
-def test_retry_after_implicit_add_preserves_only_own_membership(pipeline, mocker, foreign_item, field_count):
+def test_retry_after_implicit_add_preserves_only_own_membership(
+    pipeline, mocker, foreign_item, field_count
+):
     prepare, apply, _, project_mutation, target = pipeline
     mocker.stop(project_mutation)
     url = "https://github.com/acme/app/issues/901"
     state = {"item": None, "value": None}
     target.side_effect = lambda *args: issue_projects.ProjectTarget("I901", url, state["item"])
     field = issue_projects.ProjectField("F1", "Notes", "TEXT")
-    mocker.patch.object(issue_projects, "list_fields", return_value=(field, issue_projects.ProjectField("F2", "Priority", "TEXT")))
-    mocker.patch.object(issue_projects, "get_field_value", side_effect=lambda root, item, field: state["value"] if field.name == "Notes" else None)
+    mocker.patch.object(
+        issue_projects,
+        "list_fields",
+        return_value=(field, issue_projects.ProjectField("F2", "Priority", "TEXT")),
+    )
+    mocker.patch.object(
+        issue_projects,
+        "get_field_value",
+        side_effect=lambda root, item, field: state["value"] if field.name == "Notes" else None,
+    )
     requests = []
 
     def graphql(root, query, variables, *, mutation=False):
