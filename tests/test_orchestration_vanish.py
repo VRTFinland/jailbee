@@ -118,6 +118,28 @@ def test_idle_round_forgets_vanished_probe_and_diagnostic_state(tmp_path, monkey
     assert memory.reassert == set()
 
 
+def test_replacement_orchestrator_cannot_inherit_old_children(tmp_path, monkeypatch):
+    env = Env(Rig(tmp_path, monkeypatch))
+    node = actions.Node(FULL, "gone", False, {"volatile.uuid": UUID})
+    env.memory.contexts[UUID] = actions.ActionContext(env.rig.cfg, GlobalConfig(), env.rig.incus, env.rig.root, node, {}, NOW)
+    env.memory.children[FULL] = broker_state.ChildrenView(1.0, [{"name": "old-child"}])
+    from jailbee.orchestration import labels
+
+    env.set(_c(FULL, running=False, **{"volatile.uuid": "replacement", labels.GRANT: GRANT.to_label()}))
+    env.tick()
+    assert FULL not in env.memory.children
+
+
+def test_publisher_prune_keeps_live_state_but_not_a_reused_names_budget(tmp_path):
+    store = open_state_store(tmp_path)
+    store.kv_put("publish-known.json", {FULL: UUID, "proj-live": "uuid-live"})
+    store.kv_put("publish-accepted.json", {UUID: ["old"], "uuid-live": ["keep"]})
+    store.kv_put("publish-budget.json", {FULL: [NOW.isoformat()], "proj-live": [NOW.isoformat()]})
+    publishing.prune(tmp_path, {FULL: "replacement", "proj-live": "uuid-live"}, NOW)
+    assert store.kv_get("publish-accepted.json") == {"uuid-live": ["keep"]}
+    assert store.kv_get("publish-budget.json") == {"proj-live": [NOW.isoformat()]}
+
+
 def test_vanished_publisher_drops_dedup_and_rate_budget(tmp_path):
     store = open_state_store(tmp_path)
     store.kv_put("publish-accepted.json", {UUID: ["old-publish"]})
@@ -148,6 +170,7 @@ def test_every_memory_field_and_store_document_has_a_lifetime(tmp_path):
     source = Path(broker.__file__).parents[1]
     documents = set()
     sql_owners = set()
+    sql_sites = []
     # Generic store plumbing takes arbitrary names by design. All other callers
     # are inventoried below, including wrappers and direct SQL claim/result writes.
     indirect_keys = {
@@ -175,7 +198,19 @@ def test_every_memory_field_and_store_document_has_a_lifetime(tmp_path):
                     documents.add(node.value)
             if not isinstance(node, ast.Call):
                 continue
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "execute" and node.args:
+                sql = node.args[0]
+                if isinstance(sql, ast.Constant) and isinstance(sql.value, str) and re.search(r"(?:INTO|FROM|UPDATE)\s+state\b", sql.value, re.I):
+                    # Count and fingerprint each approved direct-SQL boundary:
+                    # adding a second write in an existing owner must fail too.
+                    sql_sites.append((relative, sql.value, ast.unparse(node.args[1])))
             name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+            if relative == "orchestration/publishing.py" and name in {"_load", "_save"}:
+                document_name = node.args[1]
+                assert isinstance(document_name, ast.Name)
+                definition = next(n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == document_name.id for t in n.targets))
+                assert isinstance(definition.value, ast.Constant)
+                documents.add(definition.value.value)
             index = 1 if name in {"import_json_document", "read_state_snapshot"} else 0
             if name not in {"kv_get", "kv_put", "kv_delete", "kv_keys", "update_documents", "import_json_document", "read_state_snapshot"}:
                 continue
@@ -194,6 +229,40 @@ def test_every_memory_field_and_store_document_has_a_lifetime(tmp_path):
                 else:
                     assert expression in allowed, (relative, expression)
     assert sql_owners == {"orchestration/publishing.py", "outbox/publication_db.py"}
+    assert sorted(sql_sites) == sorted([
+        ("orchestration/publishing.py", "INSERT OR IGNORE INTO state(key, value) VALUES (?, ?)", "(_RESULT_PREFIX + path.stem, json.dumps(value))"),
+        ("outbox/publication_db.py", "SELECT value FROM state WHERE key=?", "(key,)"),
+        ("outbox/publication_db.py", "SELECT value FROM state WHERE key=?", "(key,)"),
+        ("outbox/publication_db.py", "INSERT INTO state(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", "(key, value)"),
+        ("outbox/publication_db.py", "DELETE FROM state WHERE key=? AND json_extract(value, '$.token')=?", "(key, token)"),
+        ("outbox/publication_db.py", "SELECT json_extract(value, '$.token') FROM state WHERE key=?", "(_claim_key(claim.uuid, claim.kind, claim.name),)"),
+    ])
+    # Key builders themselves are part of these exceptional SQL boundaries.
+    # New names/prefixes cannot hide behind a newly introduced local variable.
+    from jailbee.outbox import publication_db
+
+    builders = [publishing._result_key, publication_db._claim_key]
+    import inspect
+
+    prefixes = {"publish-result:", "outbox.claim:"}
+    for builder in builders:
+        module_tree = ast.parse(Path(inspect.getfile(builder)).read_text())
+        function = next(n for n in module_tree.body if isinstance(n, ast.FunctionDef) and n.name == builder.__name__)
+        returns = [n.value for n in ast.walk(function) if isinstance(n, ast.Return)]
+        assert len(returns) == 1
+        returned = returns[0]
+        if isinstance(returned, ast.BinOp):
+            assert isinstance(returned.op, ast.Add)
+            prefix = returned.left
+        else:
+            assert isinstance(returned, ast.JoinedStr)
+            first = returned.values[0]
+            assert isinstance(first, ast.FormattedValue)
+            prefix = first.value
+        assert isinstance(prefix, ast.Name)
+        assignment = next(n for n in module_tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == prefix.id for t in n.targets))
+        assert isinstance(assignment.value, ast.Constant)
+        assert assignment.value.value in prefixes
     assert documents == set(DOCUMENT_LIFETIMES)
 
 

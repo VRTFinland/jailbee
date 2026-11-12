@@ -89,6 +89,9 @@ class BrokerMemory:
     def forget_vanished(self, names: set[str], keys: set[str]) -> None:
         """Prune instance caches even when the round has no work or config fails."""
         self.env_ensured.intersection_update(keys)
+        for key, ctx in list(self.contexts.items()):
+            if key not in keys:
+                self.children.pop(ctx.sender.full, None)
         for cache in (self.env_roles, self.contexts):
             for key in cache.keys() - keys:
                 del cache[key]
