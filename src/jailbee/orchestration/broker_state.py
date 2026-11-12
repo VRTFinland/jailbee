@@ -68,7 +68,8 @@ class BrokerMemory:
     # Container full name -> volatile.uuid whose socket device we attached.
     attached: dict[str, str] = field(default_factory=dict)
     # volatile.uuids whose sock dir this process created: the device must be
-    # re-asserted (remove + add) until that has succeeded once.
+    # re-asserted (remove + add) until that has succeeded once. Vanished uuids
+    # stay here until the socket lifecycle successfully closes their listener.
     reassert: set[str] = field(default_factory=set)
     # Parked `next` long-polls, answered by the executor.
     waiters: Waiters = field(default_factory=lambda: _new_waiters())
@@ -98,7 +99,7 @@ class BrokerMemory:
         for full in self.children.keys() - names:
             del self.children[full]
         self.status.prune(names, names)
-        self.reassert.intersection_update(keys)
+        # Socket lifecycle retains reassert entries until listener cleanup succeeds.
         # Repo warnings and security tombstones describe host resources, not instances.
         instance_warnings = {
             "env",
@@ -112,6 +113,8 @@ class BrokerMemory:
         }
         for key in list(self.warned):
             prefix, _, owner = key.partition(":")
+            if prefix == "socket-gone" and owner in self.reassert:
+                continue
             if prefix in instance_warnings and owner not in names | keys:
                 self.warned.remove(key)
         for key in list(self.failures):

@@ -59,7 +59,10 @@ MEMORY_LIFETIMES = {
     "queries": (GLOBAL, "service; publish_queries replaces its snapshot each round"),
     "requests": (PERSISTENT, "executor consumes events, including listener disconnects"),
     "attached": (INSTANCE, "check_socket_devices closes vanished sockets"),
-    "reassert": (INSTANCE, "tick inventory, even when attach never succeeded"),
+    "reassert": (
+        PERSISTENT,
+        "socket_lifecycle.check_socket_devices retries vanished listeners until close succeeds",
+    ),
     "waiters": (PERSISTENT, "executor consumes DisconnectEvent or evaluate answers the waiter"),
     "last_purge": (GLOBAL, "hourly retention clock"),
     "absent_uuids": (
@@ -135,7 +138,6 @@ def test_idle_round_forgets_vanished_probe_and_diagnostic_state(tmp_path, monkey
     memory.warn_once(f"env:{FULL}", "old instance failed")
     memory.warn_once("repo-load:proj", "repo config failed")
     memory.failures[f"serve:{FULL}"] = "old failure"
-    memory.reassert.add(UUID)  # bind/attach failed before attached was recorded
     incus = MagicMock()
     incus.list_containers.return_value = []
     monkeypatch.setattr(broker, "load_global_config", lambda _: (GlobalConfig(), []))
@@ -158,6 +160,32 @@ def test_vanished_instance_with_failed_attach_closes_its_listener(tmp_path, monk
     env.tick()
     assert UUID not in env.listener.open
     assert not env.memory.reassert
+
+
+def test_vanished_listener_close_is_retried_until_success(tmp_path, monkeypatch, caplog):
+    env = Env(Rig(tmp_path, monkeypatch))
+    env.memory.reassert.add(UUID)
+    env.listener.open_container(UUID, env.rig.root / "unattached-socket")
+    env.set()
+    close = MagicMock(
+        side_effect=[OSError("close failed"), OSError("close failed"), None]
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr(env.listener, "close_container", close)
+        env.tick()
+        assert UUID in env.listener.open
+        assert env.memory.reassert == {UUID}
+        assert f"socket-gone:{UUID}" in env.memory.warned
+        env.tick()
+        assert env.memory.reassert == {UUID}
+        assert close.call_count == 2
+        assert caplog.text.count("close failed") == 1
+
+    env.tick()
+    assert UUID not in env.listener.open
+    assert env.listener.closed == [UUID]
+    assert not env.memory.reassert
+    assert f"socket-gone:{UUID}" not in env.memory.warned
 
 
 def test_vanished_instance_after_recipient_write_failure_closes_listener(tmp_path, monkeypatch):
@@ -462,7 +490,6 @@ def test_vanished_container_has_no_unclassified_surviving_state(tmp_path, monkey
         "children",
         "contexts",
         "attached",
-        "reassert",
         "shared_uuids",
         "reusable_socket_dirs",
         "failures",
@@ -596,6 +623,7 @@ def test_vanished_container_has_no_unclassified_surviving_state(tmp_path, monkey
     assert not memory.warned
     assert not memory.queries.snapshot()
     assert not env.listener.open
+    assert not memory.reassert  # socket lifecycle owns successful listener cleanup
     assert not store.recipients()
     assert not pending.exists()
     assert state.load_queue(root) == {}
