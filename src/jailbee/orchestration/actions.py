@@ -666,15 +666,18 @@ def _handle_spawn_locked(ctx: ActionContext, m: Manifest) -> Outcome:
     grant = ctx.grant()
     if grant is None:
         return refused(NOT_ALLOWED)
-    from jailbee.orchestration.state import cancellation_senders, load_cancellations
+    from jailbee.orchestration.state import (
+        cancellation_senders,
+        load_cancellations,
+        purge_cancellations,
+    )
 
     _settle_cancellations_locked(ctx)
-    pending = [
-        entry
-        for sender in cancellation_senders(ctx.root)
-        if sender in ctx.nodes
-        for entry in load_cancellations(ctx.root, sender)
-    ]
+    # Discard dead owners before reusing a name, so their later namesakes
+    # cannot settle an old cancellation against the new request's pin.
+    for sender in cancellation_senders(ctx.root) - ctx.nodes.keys():
+        purge_cancellations(ctx.root, sender)
+    pending = load_cancellations(ctx.root)
     queued = _queued(ctx)
     plan = plan_spawn(
         ctx,

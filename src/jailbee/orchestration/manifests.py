@@ -201,6 +201,10 @@ def settle_queue(ctx: ActionContext, memory: broker_state.BrokerMemory) -> None:
     """Start what the queue can start, or drop it when the grant is gone; report each."""
     settle_cancellations(ctx)
     if ctx.grant() is None:
+        from jailbee.orchestration.state import purge_cancellations
+
+        # Settlement above is best-effort once the owner loses its grant.
+        purge_cancellations(ctx.root, ctx.sender.full)
         # A grant label still there means the repo cap forbids orchestration.
         reason = GRANT_REVOKED if ctx.raw_grant() is None else NOT_ALLOWED
         for req in drop_queue(ctx, reason):

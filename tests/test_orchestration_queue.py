@@ -744,6 +744,13 @@ def test_vanished_cancel_owner_does_not_reserve_name(tmp_path: Path, seams, monk
 
     assert actions.handle_spawn(rig.ctx(), _m(mid="other")).state == "started"
     seams["pin"].assert_called_once()
+    # A later namesake of the old owner must not delete this new spawn's pin.
+    rig.sender = Node("proj-orch", "orch", True, rig.sender.config)
+    unpin = MagicMock()
+    monkeypatch.setattr("jailbee.git.delete_ref_checked", unpin)
+    actions.settle_cancellations(rig.ctx())
+    unpin.assert_not_called()
+    assert state.load_cancellations(tmp_path) == []
 
 
 def test_cancel_reply_retry_uses_same_status_id(tmp_path: Path, seams, monkeypatch):

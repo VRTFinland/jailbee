@@ -905,9 +905,13 @@ def test_vanished_orchestrator_queue_is_discarded(rig: Rig) -> None:
 
 
 @pytest.mark.parametrize("present", [False, True])
-def test_pending_cancellation_without_queue_is_settled_or_purged(rig: Rig, present: bool) -> None:
+@pytest.mark.parametrize("delivery_error", [None, OSError("disk full"), ValueError("no uuid")])
+def test_pending_cancellation_without_queue_is_settled_or_purged(
+    rig: Rig, present: bool, delivery_error: Exception | None
+) -> None:
     from jailbee.orchestration.state import CancelledRequest, cancel_queued, load_cancellations
 
+    rig.deliver.side_effect = delivery_error
     if present:
         rig.incus.list_containers.return_value = [_c("proj-orch")]
     cancel_queued(
