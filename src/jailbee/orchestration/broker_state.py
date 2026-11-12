@@ -86,6 +86,29 @@ class BrokerMemory:
     # Per-container failure key -> signature of the failure last logged for it.
     failures: dict[str, str] = field(default_factory=dict)
 
+    def forget_vanished(self, names: set[str], keys: set[str]) -> None:
+        """Prune instance caches even when the round has no work or config fails."""
+        self.env_ensured.intersection_update(keys)
+        for cache in (self.env_roles, self.contexts):
+            for key in cache.keys() - keys:
+                del cache[key]
+        for full in self.children.keys() - names:
+            del self.children[full]
+        self.status.prune(names, names)
+        self.reassert.intersection_update(keys)
+        # Repo warnings and security tombstones describe host resources, not instances.
+        instance_warnings = {
+            "env", "socket", "socket-off", "socket-gone", "socket-shared",
+            "socket-rotate", "no-config", "bad-grant",
+        }
+        for key in list(self.warned):
+            prefix, _, owner = key.partition(":")
+            if prefix in instance_warnings and owner not in names | keys:
+                self.warned.remove(key)
+        for key in list(self.failures):
+            if key.partition(":")[2] not in names:
+                del self.failures[key]
+
     def warn_once(self, key: str, msg: str, *args: object) -> None:
         if key not in self.warned:
             self.warned.add(key)

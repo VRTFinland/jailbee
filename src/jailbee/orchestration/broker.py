@@ -116,11 +116,7 @@ def tick(
         for e in raw
         if isinstance(e.get("name"), str) and isinstance(e.get("config"), dict)
     }
-    memory.env_ensured.intersection_update(present_keys)
-    for key in memory.env_roles.keys() - present_keys:
-        del memory.env_roles[key]
-    for full in [f for f in memory.children if f not in present]:
-        del memory.children[full]
+    memory.forget_vanished({n for n in present if isinstance(n, str)}, present_keys)
     # Warn workers before deleting a vanished parent's queued finish reports.
     unnotified = finishing.notify_orphaned_finishes(
         incus,

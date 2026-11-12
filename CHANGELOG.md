@@ -18,6 +18,9 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- The broker now drops vanished containers' status probes, failed socket-attach
+  retries and diagnostic caches even during idle rounds. Reusing a name no longer
+  inherits probe delays or suppresses warnings from the new instance.
 - A plain container reusing a destroyed child's name could be refused as a child
   when staging issue or PR actions. The broker now keys its prepared-role cache
   by instance UUID and drops vanished instances, so a new container cannot
