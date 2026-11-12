@@ -8,6 +8,14 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- Orchestrators can cancel a queued spawn or restart with `jailbee inbox send
+  cancel --request ID` (or `--child SHORT`) before resending with a different
+  runner. Cancellation frees the name and settles the original request as
+  `refused`; already-started children still need `stop`/`destroy`
+  ([#113](https://github.com/VRTFinland/jailbee/issues/113)).
+
 ## 1.8.7 - 2026-11-10
 
 ### Fixed

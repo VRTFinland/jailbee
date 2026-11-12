@@ -1894,8 +1894,13 @@ its base."
 
 ## Orchestration grants
 
-A grant lets a container start and manage child containers. This change adds
-the grants only: storing, limiting and inspecting them.
+A grant lets a container start and manage child containers. Inside the
+orchestrator, `jailbee inbox send cancel (--request ID | --child SHORT)
+[--wait] [--timeout DUR]` removes its queued spawn or restart using the existing
+`spawn` permission. Exactly one selector is required. The cancel answers `done`,
+the original request gets final `refused`, and the name is free to resend with
+a different runner. If already started, use `send stop`/`send destroy` instead.
+See [orchestration](https://jailbee.gisgro.io/docs/orchestration/#lifecycle).
 
 | Command | Notes |
 |---|---|

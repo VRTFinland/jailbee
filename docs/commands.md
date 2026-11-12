@@ -94,7 +94,11 @@ is host-only:
 - `jailbee --version`
 - `jailbee config validate` ([configuration](config.md))
 - `jailbee service ...` ([Services](#services))
-- `jailbee inbox ...` ([orchestration](orchestration.md))
+- `jailbee inbox ...` ([orchestration](orchestration.md)), including
+  `inbox send cancel (--request ID | --child SHORT) [--wait] [--timeout DUR]`
+  for an orchestrator's queued spawn/restart. Uses the `spawn` permission;
+  answers `done` and settles the original request as `refused`. Already-started
+  requests need `stop`/`destroy` instead.
 - `jailbee issue ...`, `jailbee pr ...`, `jailbee outbox ...` ([outbox commands](#in-container-outbox-commands))
 
 The terminal dashboard container menu offers `Autostart →` (`u`): `Re-run…` (`r`), `Status` (`T`), `Cancel…` (`C`), and `Profile…` (`p`) when applicable. The re-run picker puts failures first and asks for confirmation; failed or interrupted outcomes also mark the container row. `Services…` (`V`) on running containers lists services and offers start or stop/restart as appropriate, refresh and logs; an empty list is reported. Entries honor remote SSH policy; elevated service refresh may require the host. These new menus are terminal-only; Qt is unchanged.

@@ -401,6 +401,34 @@ CLI: `jailbee inbox send update --child C [--ref REF | --base BRANCH] [--merge] 
 For example, use `--ref refs/jailbee/from/worker/fix` to reuse imported work,
 or `--base release/1` to deliver a host-resolved release branch.
 
+### `cancel`
+
+Remove one queued spawn (fork, new or PR) or restart belonging to the sender.
+Requires the existing `spawn` operation. Exactly one of `request` (the original
+request id) and `child` (the child's short name) must be present:
+
+<!-- kind: outbox -->
+```json
+{"version": 1, "id": "cancel-fix-12", "type": "cancel", "request": "spawn-fix-12"}
+```
+
+<!-- kind: outbox -->
+```json
+{"version": 1, "id": "cancel-fix-12-b", "type": "cancel", "child": "fix-issue-12"}
+```
+
+CLI: `jailbee inbox send cancel --request ID --wait` or
+`jailbee inbox send cancel --child C --wait`. `--ref` remains a source ref,
+not a cancellation selector. Cancellation frees the reserved name and releases
+the fork/PR pin. The original request receives final status `refused`, detail
+`cancelled by orchestrator (cancel request <id>)`; the cancel request receives
+`done`. No status enum or transport envelope changes.
+
+Unknown, foreign or already-dequeued requests are `refused`: cancellation
+cannot race a queue drain into starting the cancelled request. Already-started
+children require `stop`/`destroy`. A `destroy` or `restart` targeting a queued
+spawn is refused with a pointer to `send cancel --request ID`.
+
 ### `restart`
 
 Start a stopped child again with a new prompt (`prompt` or `prompt_file`).
