@@ -93,10 +93,12 @@ same `repo` value.
 ## Staging issue actions
 
 Use `jailbee issue create --title "Title" --body "Details"`, or `edit`,
-`comment`, `labels`, `assign` and `state` with an issue number. Use `--body-file PATH`
-for long text and `--repo PATH` to select a repository. Commands stage the
-proposal in the host outbox store; never write outbox files by hand. See the
-normative [output schema](references/manifest-schema.md).
+`comment`, `labels`, `assign`, `state` and `project` with an issue number. Use
+`jailbee issue project N --project OWNER/NUMBER --add` to stage adding an
+issue or pull request to a GitHub Projects v2 board. `--project` is required
+and uses the board owner's login and positive project number. Commands stage
+the proposal in the host outbox store; never write outbox files by hand. See
+the normative [output schema](references/manifest-schema.md).
 
 Assignment: `jailbee issue assign 42 --me` assigns the publishing account
 (`@me`, resolved on the host at publish time), `--unassign-me` removes it,

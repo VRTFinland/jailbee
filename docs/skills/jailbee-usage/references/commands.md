@@ -22,13 +22,16 @@ Common conventions:
 ## In-container outbox commands
 
 Inside a non-child container, stage GitHub proposals with `jailbee issue
-create|edit|comment|labels|assign|state` and `jailbee pr
+create|edit|comment|labels|assign|state|project` and `jailbee pr
 comment|reply|description|source`. `jailbee issue assign ISSUE|@REF` takes `--me`
 (the publishing account, `@me`), `--unassign-me`, and repeatable `--add LOGIN` /
 `--remove LOGIN`; at least one is required. Use `--body` or `--body-file`; issue
 commands accept `--repo` (default `.`), while PR source and new descriptions
 accept `--repo owner/name`. `jailbee pr source --ref REF --sha SHA` also
 accepts `--head` as an alias for `--ref`; new PRs need a description body.
+`jailbee issue project ISSUE|@REF --project OWNER/NUMBER --add` stages adding
+an issue or pull request to a Projects v2 board; the project owner and positive
+board number are required.
 
 Use `--batch NAME` to collect actions, `jailbee outbox ls [--json]` and
 `jailbee outbox show issue/NAME` or `pr/NAME` to inspect staged proposals,

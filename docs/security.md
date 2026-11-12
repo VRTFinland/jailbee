@@ -489,7 +489,9 @@ container also holds its own `GH_TOKEN` — see the limitation below.
 **GitHub token scope is a documentation contract, not an enforced one.**
 Configure the fine-grained PAT (`github.token`, injected as `GH_TOKEN`)
 with Contents, Issues, Pull requests and Metadata set to Read. This is a
-recommendation, not a permission JailBee assigns. With no other write
+recommendation, not a permission JailBee assigns. The independently
+authenticated host `gh` must have the GitHub Projects `project` scope to
+publish project actions; add it with `gh auth refresh -s project`. With no other write
 credential exposed, the intended publication path is the host's independently
 authenticated `gh`: `jailbee pr push` for PRs and the reviewed host-side outbox
 (`jailbee issue apply` / `jailbee review apply` / `jailbee outbox apply`) for

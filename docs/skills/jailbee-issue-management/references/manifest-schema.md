@@ -16,7 +16,9 @@ parsed by the host. Do not write manifests or outbox files by hand.
     {"type": "assignees", "repo": ".", "issue": 42, "add": ["@me"], "remove": [],
      "expected": {"assignees": []}},
     {"type": "state", "repo": ".", "issue": 42, "state": "closed", "reason": "completed",
-     "expected": {"state": "open"}}
+     "expected": {"state": "open"}},
+    {"type": "project_add", "repo": ".", "issue": 42, "project": "acme/7",
+     "expected": {"present": false}}
   ]
 }
 ```
@@ -158,6 +160,23 @@ Closes or reopens an issue.
 | `state` | `"open"` or `"closed"`. |
 | `reason` | Required, `"completed"` or `"not_planned"`, **only** when `state` is `"closed"`. Forbidden when reopening. |
 | `expected.state` | Required — the current state `gh issue view` showed. Must differ from `state` (an action that "changes" state to what it already is is refused). |
+
+## `type: "project_add"`
+
+Adds an issue or pull request to a GitHub Projects v2 board. Staged with
+`jailbee issue project N --project OWNER/NUMBER --add`. `project` is mandatory;
+use the board owner's login and a positive project number.
+
+| Field | Rule |
+|---|---|
+| `repo` | As above. |
+| `issue` / `issue_ref` | As above; the target may be an issue or pull request. |
+| `project` | Required `owner/number` identifier. |
+| `expected.present` | Required boolean recording whether the target was already a member when staged. For an `issue_ref` created in the same batch, it is `false`. |
+
+The host captures or derives this expectation when staging. At publication,
+`expected.present` must still match the board membership; adding an already
+present item is an applied no-op only when the expectation matched.
 
 ## One field, one action, per target
 

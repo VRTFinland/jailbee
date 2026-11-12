@@ -10,6 +10,9 @@ before editing `## Unreleased`.
 
 ### Added
 
+- In-container agents can stage adding issues and pull requests to a GitHub
+  Projects v2 board with `jailbee issue project`; host publication checks the
+  board membership captured when staging.
 - Orchestrators can cancel a queued spawn or restart with `jailbee inbox send
   cancel --request ID` (or `--child SHORT`) before resending with a different
   runner. Cancellation frees the name and settles the original request as
