@@ -44,9 +44,9 @@ def test_publish_config_blocks():
 
 
 def test_project_config_round_trips_and_validates_board_rights():
-    profile = OrchestrationProfile.model_validate({"publish": {"projects": [
-        {"board": "Org/3", "actions": ["set", "remove", "set"]}
-    ]}})
+    profile = OrchestrationProfile.model_validate(
+        {"publish": {"projects": [{"board": "Org/3", "actions": ["set", "remove", "set"]}]}}
+    )
     assert profile.publish is not None
     rights = profile.publish.to_rights()
     assert rights.covers_project("project_clear", "org/3")

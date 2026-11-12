@@ -87,13 +87,15 @@ def test_grant_without_publish_parses_with_empty_rights():
 def test_project_rights_are_board_scoped_and_survive_labels():
     from jailbee.orchestration.grant import PublishRights
 
-    rights = PublishRights.model_validate({
-        "projects": [
-            {"board": "Org/3", "actions": ["set", "set"]},
-            {"board": "org/7", "actions": ["remove"]},
-            {"board": "ORG/3", "actions": ["remove"]},
-        ]
-    })
+    rights = PublishRights.model_validate(
+        {
+            "projects": [
+                {"board": "Org/3", "actions": ["set", "set"]},
+                {"board": "org/7", "actions": ["remove"]},
+                {"board": "ORG/3", "actions": ["remove"]},
+            ]
+        }
+    )
     assert not rights.empty()
     assert rights.covers_project("project_add", "ORG/3")
     assert rights.covers_project("project_clear", "org/3")
@@ -110,7 +112,23 @@ def test_project_rights_are_board_scoped_and_survive_labels():
     assert Grant.from_label(grant.to_label()) == grant
 
 
-@pytest.mark.parametrize("board", ["*", "org/*", "org/0", "org/-1", "org/1/2", "org/repo", "org/01", "/1", "./1", "../1", "_org/1", "a" * 40 + "/1"])
+@pytest.mark.parametrize(
+    "board",
+    [
+        "*",
+        "org/*",
+        "org/0",
+        "org/-1",
+        "org/1/2",
+        "org/repo",
+        "org/01",
+        "/1",
+        "./1",
+        "../1",
+        "_org/1",
+        "a" * 40 + "/1",
+    ],
+)
 def test_project_board_syntax_is_validated_offline(board):
     from jailbee.orchestration.grant import PublishRights
 
@@ -121,14 +139,22 @@ def test_project_board_syntax_is_validated_offline(board):
 def test_project_cap_intersects_per_board_and_degrades_set_to_add():
     from jailbee.orchestration.grant import PublishRights
 
-    requested = PublishRights.model_validate({"projects": [
-        {"board": "org/3", "actions": ["set", "remove"]},
-        {"board": "org/7", "actions": ["set"]},
-    ]})
-    cap = PublishRights.model_validate({"projects": [
-        {"board": "org/3", "actions": ["add"]},
-        {"board": "org/9", "actions": ["set"]},
-    ]})
+    requested = PublishRights.model_validate(
+        {
+            "projects": [
+                {"board": "org/3", "actions": ["set", "remove"]},
+                {"board": "org/7", "actions": ["set"]},
+            ]
+        }
+    )
+    cap = PublishRights.model_validate(
+        {
+            "projects": [
+                {"board": "org/3", "actions": ["add"]},
+                {"board": "org/9", "actions": ["set"]},
+            ]
+        }
+    )
     effective = effective_grant(Grant(publish=requested), RepoCap(publish=cap))
     assert effective is not None
     assert effective.publish.model_dump(mode="json")["projects"] == [

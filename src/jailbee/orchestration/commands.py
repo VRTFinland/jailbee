@@ -229,9 +229,9 @@ def _publish_rights(base: PublishRights, flags: GrantFlags) -> PublishRights:
             board, sep, kinds = raw.partition("=")
             if not sep or not kinds:
                 raise GrantError("project rights must be owner/number=add,set,remove (or =none)")
-            project = ProjectRights.model_validate({
-                "board": board, "actions": [] if kinds == "none" else kinds.split(",")
-            })
+            project = ProjectRights.model_validate(
+                {"board": board, "actions": [] if kinds == "none" else kinds.split(",")}
+            )
             # Each occurrence replaces that board; the last occurrence wins.
             if project.actions:
                 projects[project.board] = project
@@ -402,7 +402,8 @@ def _check_remote_bound(
     )
     project_added = any(
         not had.covers_project(f"project_{kind}", entry.board)
-        for entry in p.projects for kind in entry.actions
+        for entry in p.projects
+        for kind in entry.actions
     )
     if project_added or (rate_widened and p.projects):
         required.append(("projects", ["issue", "apply", full]))

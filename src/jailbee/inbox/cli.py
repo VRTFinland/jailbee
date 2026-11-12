@@ -268,11 +268,15 @@ def render_grant(grant: dict[str, Any], *, as_json: bool) -> int:
         else "-"
     )
     projects = publish.get("projects")
-    project_text = "; ".join(
-        f"{text(entry.get('board'))} ({', '.join(text(a) for a in entry['actions'])})"
-        for entry in projects
-        if isinstance(entry, dict) and isinstance(entry.get("actions"), list)
-    ) if isinstance(projects, list) else "-"
+    project_text = (
+        "; ".join(
+            f"{text(entry.get('board'))} ({', '.join(text(a) for a in entry['actions'])})"
+            for entry in projects
+            if isinstance(entry, dict) and isinstance(entry.get("actions"), list)
+        )
+        if isinstance(projects, list)
+        else "-"
+    )
     default_runner = grant.get("default_runner")
     runner_text = "none"
     if isinstance(default_runner, dict):

@@ -38,9 +38,11 @@ def test_parse_grant_view_without_publish_has_no_publish_rights():
 def test_parse_grant_view_keeps_immutable_project_rights_and_old_defaults():
     from jailbee.orchestration.grant import Grant, PublishRights
 
-    grant = Grant(publish=PublishRights.model_validate({"projects": [
-        {"board": "Org/3", "actions": ["set", "remove"]}
-    ]}))
+    grant = Grant(
+        publish=PublishRights.model_validate(
+            {"projects": [{"board": "Org/3", "actions": ["set", "remove"]}]}
+        )
+    )
     view = parse_grant_view(grant.to_label())
     assert view is not None
     assert view.publish_projects == (("org/3", ("remove", "set")),)

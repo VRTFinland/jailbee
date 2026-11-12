@@ -54,9 +54,11 @@ def test_grant_renders_project_boards_in_text_and_json(capsys):
     from jailbee.inbox.cli import render_grant
     from jailbee.orchestration.grant import Grant, PublishRights
 
-    grant = Grant(publish=PublishRights.model_validate({"projects": [
-        {"board": "Org/3", "actions": ["set", "remove"]}
-    ]})).model_dump(mode="json")
+    grant = Grant(
+        publish=PublishRights.model_validate(
+            {"projects": [{"board": "Org/3", "actions": ["set", "remove"]}]}
+        )
+    ).model_dump(mode="json")
     assert render_grant(grant, as_json=False) == 0
     assert "publish projects: org/3 (remove, set)" in capsys.readouterr().out
     assert render_grant(grant, as_json=True) == 0

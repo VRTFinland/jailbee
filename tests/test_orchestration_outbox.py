@@ -31,9 +31,9 @@ def test_grant_json_has_publish():
 def test_grant_json_keeps_project_only_rights():
     from jailbee.orchestration.grant import Grant, PublishRights
 
-    grant = Grant(publish=PublishRights.model_validate({"projects": [
-        {"board": "Org/3", "actions": ["set"]}
-    ]}))
+    grant = Grant(
+        publish=PublishRights.model_validate({"projects": [{"board": "Org/3", "actions": ["set"]}]})
+    )
     data = json.loads(outbox.grant_json_text(grant, None, None))
     assert data["publish"]["projects"] == [{"board": "org/3", "actions": ["set"]}]
     data.pop("default_runner_source")

@@ -99,7 +99,8 @@ class ProjectRightsConfig(BaseModel):
 
     board: str = Field(description="Project board as owner/number; wildcards are not allowed.")
     actions: list[ProjectActionKind] = Field(
-        default_factory=list, description="Allowed project actions: add, set (also add/clear), remove."
+        default_factory=list,
+        description="Allowed project actions: add, set (also add/clear), remove.",
     )
 
     @field_validator("board")

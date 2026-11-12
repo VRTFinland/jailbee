@@ -134,17 +134,22 @@ def _needed_kind(action: issue_manifest.IssueAction, batch: issue_outbox.Prepare
 
 
 def _is_project(action: issue_manifest.IssueAction) -> TypeGuard[issue_manifest.ProjectAction]:
-    return isinstance(action, (
-        issue_manifest.ProjectAddAction,
-        issue_manifest.ProjectSetAction,
-        issue_manifest.ProjectClearAction,
-        issue_manifest.ProjectRemoveAction,
-    ))
+    return isinstance(
+        action,
+        (
+            issue_manifest.ProjectAddAction,
+            issue_manifest.ProjectSetAction,
+            issue_manifest.ProjectClearAction,
+            issue_manifest.ProjectRemoveAction,
+        ),
+    )
 
 
 def _action_coverage(
-    rights: PublishRights, action: issue_manifest.IssueAction,
-    kind: str, target: issue_outbox.RepoTarget,
+    rights: PublishRights,
+    action: issue_manifest.IssueAction,
+    kind: str,
+    target: issue_outbox.RepoTarget,
 ) -> None:
     if _is_project(action):
         if not rights.covers_project(kind, action.project):

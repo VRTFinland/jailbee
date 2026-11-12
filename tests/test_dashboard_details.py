@@ -1317,9 +1317,15 @@ def test_orchestrator_card_shows_publish_rights() -> None:
 
 
 def test_orchestrator_card_shows_project_only_publish_rights() -> None:
-    panel = dd.container_panel(_orch(publish={
-        "publish_projects": (("org/[x]", ("remove", "set")),), "publish_rate": 12,
-    }), NOW)
+    panel = dd.container_panel(
+        _orch(
+            publish={
+                "publish_projects": (("org/[x]", ("remove", "set")),),
+                "publish_rate": 12,
+            }
+        ),
+        NOW,
+    )
     assert panel.orchestration[4] == (
         r"[dim]publish:[/dim] project org/\[x] (remove, set) · 12/hour"
     )

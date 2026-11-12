@@ -13376,7 +13376,10 @@ def orchestrate_grant_cmd(
         list[str] | None,
         typer.Option(
             "--publish-project",
-            help="owner/number=add,set,remove; repeatable, replaces named board rights; =none clears.",
+            help=(
+                "owner/number=add,set,remove; repeatable, replaces named board rights; "
+                "=none clears."
+            ),
         ),
     ] = None,
     publish_foreign_issues: Annotated[

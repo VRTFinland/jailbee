@@ -11,8 +11,8 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from jailbee.egress import WildcardSpec, validate_allow_entry
-from jailbee.orchestration.runner_model import Runner
 from jailbee.issue_manifest import valid_project
+from jailbee.orchestration.runner_model import Runner
 
 Operation = Literal["spawn", "message", "import", "restart", "stop", "destroy", "rights", "refresh"]
 
@@ -229,7 +229,8 @@ class PublishRights(BaseModel):
             boards.setdefault(entry.board, set()).update(entry.actions)
         return tuple(
             ProjectRights(board=board, actions=tuple(sorted(actions)))
-            for board, actions in sorted(boards.items()) if actions
+            for board, actions in sorted(boards.items())
+            if actions
         )
 
     def covers_project(self, kind: str, board: str) -> bool:
@@ -401,7 +402,10 @@ def cap_excess(grant: Grant, cap: RepoCap) -> list[str]:
         for entry in requested.projects:
             for project_kind in entry.actions:
                 if not narrowed.covers_project(f"project_{project_kind}", entry.board):
-                    out.append(f"publish right `projects: {entry.board}:{project_kind}` is above the repo cap")
+                    out.append(
+                        f"publish right `projects: {entry.board}:{project_kind}` "
+                        "is above the repo cap"
+                    )
         for name in ("pull_requests", "pr_reviews"):
             if getattr(requested, name) and not getattr(narrowed, name):
                 out.append(f"publish right `{name}` is above the repo cap")
