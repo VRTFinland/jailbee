@@ -24,6 +24,7 @@ class SendRequest:
     loose: bool = False
     note: str = ""
     child: str = ""
+    request: str = ""
     force: bool = False
     autostart_profile: str = ""
     services: str | None = None
@@ -170,8 +171,12 @@ def validate(r: SendRequest) -> SendRequest:
     )
     if t in {"import", "update", "stop", "destroy", "restart", "refresh"}:
         require(bool(r.child), f"{t} needs --child")
-    elif t != "rights":
+    elif t not in {"rights", "cancel"}:
         require(not r.child, f"--child does not apply to {t}")
+    require(not r.request or t == "cancel", "--request only applies to cancel")
+    if t == "cancel":
+        require(bool(r.request) != bool(r.child), "cancel needs exactly one of --request or --child")
+        require(not r.request or bool(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", r.request)), "--request must be a request id")
     if t == "rights":
         granted = bool(r.loose or r.mounts or r.egress)
         revoked = bool(r.revoke_loose or r.revoke_mounts or r.revoke_egress)
@@ -222,6 +227,8 @@ def validate(r: SendRequest) -> SendRequest:
 
 def build_manifest(r: SendRequest, id_: str, body_name: str | None) -> dict[str, object]:
     m: dict[str, object] = {"version": 2 if r.type == "spawn" else 1, "id": id_, "type": r.type}
+    if r.type == "cancel":
+        return m | ({"request": r.request} if r.request else {"child": r.child})
     if r.type == "publish":
         return m | {"outbox": "issue" if r.issue else "pr", "manifest": r.issue or r.pr}
     runner: dict[str, object] = {}

@@ -102,6 +102,27 @@ def test_refresh_manifest_rejects(services: list[str]) -> None:
         )
 
 
+@pytest.mark.parametrize("selector", [{"request": "spawn-1"}, {"child": "kid"}])
+def test_cancel_manifest_selects_one_queued_request(selector):
+    raw = {"version": 1, "id": "cancel-1", "type": "cancel", **selector}
+    manifest = parse_manifest("cancel-1.json", json.dumps(raw), {})
+    assert manifest.type == "cancel"
+    assert manifest.model_dump(exclude_none=True) == raw
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [{}, {"request": "spawn-1", "child": "kid"}, {"request": "../bad"}, {"child": ""}],
+)
+def test_cancel_manifest_rejects_invalid_selector(selector):
+    with pytest.raises(ManifestError):
+        parse_manifest(
+            "cancel-1.json",
+            json.dumps({"version": 1, "id": "cancel-1", "type": "cancel", **selector}),
+            {},
+        )
+
+
 RIGHTS = {"version": 1, "mounts": [], "loose": False, "egress": []}
 
 

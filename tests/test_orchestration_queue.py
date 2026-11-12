@@ -477,6 +477,122 @@ def test_revoked_grant_drops_queue_with_status(tmp_path: Path, seams: dict[str, 
     assert actions.drain_queue(rig.ctx()) == []
 
 
+@pytest.mark.parametrize("kind", ["fork", "new", "pr", "restart"])
+@pytest.mark.parametrize("selector", [{"request": "m0"}, {"child": "fix-1"}])
+def test_cancel_removes_only_selected_request_and_replies(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch,
+    kind: str, selector: dict[str, str],
+) -> None:
+    from jailbee.orchestration.protocol import CancelManifest
+
+    rig = Rig(tmp_path, running=1)
+    _queue(rig, ["fix/1", "fix/2"], kind=kind)
+    deliver = MagicMock()
+    monkeypatch.setattr("jailbee.orchestration.broker_replies.deliver", deliver)
+    unpin = MagicMock()
+    monkeypatch.setattr("jailbee.git.delete_ref", unpin)
+    outcome = actions.dispatch(rig.ctx(), CancelManifest(version=1, id="cancel-1", type="cancel", **selector))
+    assert outcome is not None and outcome.state == "done"
+    assert [r.manifest_id for r in load_queue(tmp_path)["proj-orch"]] == ["m1"]
+    status = deliver.call_args.args[3]
+    assert (status.ref, status.state, status.detail) == (
+        "m0", "refused", "cancelled by orchestrator (cancel request cancel-1)"
+    )
+    assert unpin.call_count == (1 if kind in {"fork", "pr"} else 0)
+    # The cancelled name can be reused even while the other request stays queued.
+    assert actions.handle_spawn(rig.ctx(), _m("fix/1", kind="new", mid="again")).state == "queued"
+    seams["start"].assert_not_called()
+
+
+@pytest.mark.parametrize("selector", [{"request": "m0"}, {"child": "fix-1"}])
+def test_cancel_cannot_touch_another_orchestrators_queue(tmp_path: Path, seams, selector):
+    from jailbee.orchestration.protocol import CancelManifest
+
+    rig = Rig(tmp_path)
+    _queue(rig, ["fix/1"])
+    original = load_queue(tmp_path)["proj-orch"]
+    save_queue(tmp_path, {"proj-other": original})
+    out = actions.dispatch(rig.ctx(), CancelManifest(version=1, id="cancel-1", type="cancel", **selector))
+    assert out.state == "refused"
+    assert "not queued for this orchestrator" in out.detail
+    assert load_queue(tmp_path) == {"proj-other": original}
+
+
+def test_cancel_works_with_spawn_only_grant(tmp_path: Path, seams, monkeypatch):
+    from jailbee.orchestration.protocol import CancelManifest
+
+    rig = Rig(tmp_path)
+    _queue(rig, ["fix/1"])
+    _granted(rig, operations=["spawn", "message"])
+    monkeypatch.setattr("jailbee.orchestration.broker_replies.deliver", MagicMock())
+    monkeypatch.setattr("jailbee.git.delete_ref", MagicMock())
+    out = actions.dispatch(rig.ctx(), CancelManifest(version=1, id="cancel-1", type="cancel", request="m0"))
+    assert out.state == "done"
+    assert load_queue(tmp_path) == {}
+
+
+@pytest.mark.parametrize("selector", [{"request": "m0"}, {"child": "fix-1"}])
+def test_cancel_after_drain_pop_is_refused(tmp_path: Path, seams, selector):
+    from jailbee.orchestration.protocol import CancelManifest
+
+    rig = Rig(tmp_path)
+    _queue(rig, ["fix/1"], kind="new")
+    assert [o.state for _, o in actions.drain_queue(rig.ctx())] == ["started"]
+    out = actions.dispatch(rig.ctx(), CancelManifest(version=1, id="cancel-1", type="cancel", **selector))
+    assert out.state == "refused"
+    assert "stop" in out.detail and "destroy" in out.detail
+    assert load_queue(tmp_path) == {}
+    seams["start"].assert_called_once()
+
+
+@pytest.mark.parametrize("operation", ["destroy", "restart"])
+def test_queued_spawn_lifecycle_refusal_points_to_cancel(tmp_path: Path, seams, operation):
+    from jailbee.orchestration.protocol import DestroyManifest, RestartManifest
+
+    rig = Rig(tmp_path)
+    _queue(rig, ["fix/1"])
+    manifest = (DestroyManifest(version=1, id="d1", type="destroy", child="fix-1")
+                if operation == "destroy" else RestartManifest(version=1, id="r1", type="restart", child="fix-1", prompt="go"))
+    out = actions.dispatch(rig.ctx(), manifest)
+    assert out.state == "refused"
+    assert "send cancel --request m0" in out.detail
+    assert len(load_queue(tmp_path)["proj-orch"]) == 1
+
+
+def test_cancel_serializes_with_drain(tmp_path: Path, seams):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from jailbee.orchestration.protocol import CancelManifest
+
+    rig = Rig(tmp_path)
+    _queue(rig, ["fix/1"], kind="new")
+    entered, release, cancelling = Event(), Event(), Event()
+
+    def start(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return Outcome("started", "ok")
+
+    def cancel():
+        cancelling.set()
+        return actions.dispatch(rig.ctx(), CancelManifest(version=1, id="cancel-1", type="cancel", request="m0"))
+
+    seams["start"].side_effect = start
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        draining = pool.submit(actions.drain_queue, rig.ctx())
+        assert entered.wait(5)
+        cancellation = pool.submit(cancel)
+        try:
+            assert cancelling.wait(5)
+            assert not cancellation.done()
+        finally:
+            release.set()
+        assert [out.state for _, out in draining.result(5)] == ["started"]
+        assert cancellation.result(5).state == "refused"
+    assert load_queue(tmp_path) == {}
+
+
 def test_handler_registered() -> None:
     assert actions.HANDLERS["spawn"] is actions.handle_spawn
 

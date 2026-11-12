@@ -42,7 +42,7 @@ def status(ref: str, outcome: Outcome) -> InboxStatus:
 
 
 def reply(
-    ctx: ActionContext, ref: str, outcome: Outcome, memory: broker_state.BrokerMemory
+    ctx: ActionContext, ref: str, outcome: Outcome, memory: broker_state.BrokerMemory | None = None
 ) -> None:
     deliver(
         ctx.incus,
@@ -52,7 +52,7 @@ def reply(
         running=ctx.sender.running,
         uid=ctx.cfg.container_user.uid,
         now=ctx.now,
-        seq=next(memory.seq),
+        seq=next(memory.seq if memory is not None else ctx.seq),
         recipient_uuid=ctx.sender.config.get("volatile.uuid"),
     )
     clear_reply_path(ctx, ref)

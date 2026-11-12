@@ -22,6 +22,7 @@ from jailbee.orchestration.grant import (
 )
 from jailbee.orchestration.protocol import (
     CHILD_TYPES,
+    CancelManifest,
     DestroyManifest,
     Manifest,
     MessageManifest,
@@ -171,6 +172,7 @@ class ActionContext:
 
 OPERATION_OF: Mapping[str, str] = {
     "spawn": "spawn",
+    "cancel": "spawn",
     "message": "message",
     "import": "import",
     "update": "import",
@@ -632,6 +634,16 @@ def _queued(ctx: ActionContext) -> list[QueuedRequest]:
     return load_queue(ctx.root).get(ctx.sender.full, [])
 
 
+def _queued_spawn_refusal(ctx: ActionContext, short: str) -> Outcome | None:
+    for req in _queued(ctx):
+        if req.kind != "restart" and lifecycle.short_name(ctx.cfg, req.child_full) == short:
+            return refused(
+                f"`{short}` is a queued spawn, not a child yet; "
+                f"use jailbee inbox send cancel --request {req.manifest_id}"
+            )
+    return None
+
+
 def _store(ctx: ActionContext, entries: list[QueuedRequest]) -> None:
     queues = load_queue(ctx.root)
     queues[ctx.sender.full] = entries
@@ -639,6 +651,13 @@ def _store(ctx: ActionContext, entries: list[QueuedRequest]) -> None:
 
 
 def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
+    from jailbee.orchestration.watch import mutation_locked
+
+    with mutation_locked(ctx.root):
+        return _handle_spawn_locked(ctx, m)
+
+
+def _handle_spawn_locked(ctx: ActionContext, m: Manifest) -> Outcome:
     """Plan a spawn; start it when a slot is free, else queue it FIFO."""
     from jailbee import git
 
@@ -931,6 +950,13 @@ STARTERS: dict[str, Callable[[ActionContext, QueuedRequest], Outcome]] = {
 
 
 def drain_queue(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome]]:
+    from jailbee.orchestration.watch import mutation_locked
+
+    with mutation_locked(ctx.root):
+        return _drain_queue_locked(ctx)
+
+
+def _drain_queue_locked(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome]]:
     """Start queued requests FIFO while slots are free; a lowered limit starts nothing."""
     grant = ctx.grant()
     queued = _queued(ctx)
@@ -976,7 +1002,40 @@ def drop_queue(ctx: ActionContext, reason: str) -> list[QueuedRequest]:
     return queued
 
 
+def handle_cancel(ctx: ActionContext, m: Manifest) -> Outcome:
+    from jailbee import git
+    from jailbee.orchestration import broker_replies
+    from jailbee.orchestration.watch import mutation_locked
+
+    if not isinstance(m, CancelManifest):
+        return refused("not a cancel manifest")
+    with mutation_locked(ctx.root):
+        queued = _queued(ctx)
+        req = next(
+            (q for q in queued if (q.manifest_id == m.request if m.request is not None
+             else lifecycle.short_name(ctx.cfg, q.child_full) == m.child)),
+            None,
+        )
+        if req is None:
+            return refused(
+                "request is not queued for this orchestrator; "
+                "if already started, use send stop / send destroy --child instead"
+            )
+        _store(ctx, [q for q in queued if q.manifest_id != req.manifest_id])
+        if req.kind in {"fork", "pr"}:
+            try:
+                git.delete_ref(ctx.cfg.repo_root, forking.fork_pin_ref(ctx.cfg, req.child_full))
+            except git.GitError:
+                log.warning("could not release cancelled fork pin for %s", req.child_full, exc_info=True)
+        broker_replies.reply(
+            ctx, req.manifest_id,
+            refused(f"cancelled by orchestrator (cancel request {m.id})"),
+        )
+        return done(f"cancelled queued request {req.manifest_id}")
+
+
 HANDLERS["spawn"] = handle_spawn
+HANDLERS["cancel"] = handle_cancel
 
 
 def handle_stop(ctx: ActionContext, m: Manifest) -> Outcome:
@@ -1198,6 +1257,8 @@ def _handle_restart_locked(ctx: ActionContext, m: Manifest) -> Outcome:
     """Restart a stopped child with a fresh prompt; queue FIFO when no slot is free."""
     if not isinstance(m, RestartManifest):
         return refused("not a restart manifest")
+    if (queued_refusal := _queued_spawn_refusal(ctx, m.child)) is not None:
+        return queued_refusal
     if m.agent_only and m.autostart_profile is not None:
         return refused("autostart_profile cannot be combined with agent_only (no autostart runs)")
     if m.agent_only and m.services is not None:
@@ -1346,6 +1407,8 @@ def _handle_destroy_locked(ctx: ActionContext, m: Manifest) -> Outcome:
     # No drain here: the broker drains after every round and reports each outcome.
     if not isinstance(m, DestroyManifest):
         return refused("not a destroy manifest")
+    if (queued_refusal := _queued_spawn_refusal(ctx, m.child)) is not None:
+        return queued_refusal
     child = ctx.child(m.child)
     if isinstance(child, Outcome):
         return child

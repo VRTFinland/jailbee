@@ -109,6 +109,27 @@ def child(name: str = "kid") -> dict[str, object]:
     return {"name": name, "running": True, "session": "s1", "done": False}
 
 
+@pytest.mark.parametrize("option,value", [("--request", "spawn-1"), ("--child", "kid")])
+def test_send_cancel(broker: FakeBroker, sockdir: Path, tmp_path: Path, option: str, value: str) -> None:
+    broker.on("send", {"id": "cancel-1", "state": "done"})
+    result = run(sockdir, "send", "cancel", option, value, tmp=tmp_path)
+    assert result.returncode == 0, result.stderr
+    manifest = broker.requests[0].args["manifest"]
+    assert manifest["type"] == "cancel"
+    assert manifest[option.removeprefix("--")] == value
+    assert "ref" not in manifest
+
+
+@pytest.mark.parametrize("args", [[], ["--request", "spawn-1", "--child", "kid"]])
+def test_send_cancel_requires_exactly_one_selector(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path, args: list[str]
+) -> None:
+    result = run(sockdir, "send", "cancel", *args, tmp=tmp_path)
+    assert result.returncode == 2
+    assert "exactly one of --request or --child" in result.stderr
+    assert broker.requests == []
+
+
 def test_ls_prints_ls_lines(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
     broker.on(
         "list",
