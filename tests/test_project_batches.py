@@ -131,6 +131,26 @@ def test_draft_overwrites_ref_membership_without_project_reader(env, monkeypatch
     assert stored_actions(env)[1]["expected"] == {"present": False}
 
 
+def test_draft_overwrites_ref_field_expectation_without_project_reader(env, monkeypatch):
+    def unexpected(*args, **kwargs):
+        raise AssertionError("a new issue must not require a project read")
+
+    monkeypatch.setattr(issue_projects, "resolve_project", unexpected)
+    monkeypatch.setattr(issue_projects, "get_target", unexpected)
+    assert append(env, create()).ok
+    assert append(
+        env,
+        on_ref(
+            "project_set",
+            project="acme/3",
+            field="Status",
+            value="Todo",
+            expected={"present": True, "value": "Done"},
+        ),
+    ).ok
+    assert stored_actions(env)[1]["expected"] == {"present": False, "value": None}
+
+
 def test_mixed_ref_batch_prepares_and_publishes_in_order(pipeline):
     prepare, apply, calls, _, target = pipeline
     batch = prepare()
@@ -164,6 +184,75 @@ def test_project_failure_stops_batch_and_retry_preserves_prior_actions(pipeline)
     assert second.failure is None
     assert calls == ["create", "labels", "comment", "state", "comment"]
     assert project.call_count == 2
+
+
+def test_multiple_fields_on_new_issue_resume_after_failure(pipeline, mocker):
+    prepare, apply, calls, _, target = pipeline
+    fields = (
+        issue_projects.ProjectField("F1", "Status", "SINGLE_SELECT", (("Todo", "O1"),)),
+        issue_projects.ProjectField("F2", "Notes", "TEXT"),
+    )
+    mocker.patch.object(issue_projects, "list_fields", return_value=fields)
+    set_calls = []
+    field_values = {}
+    present = False
+    url = "https://github.com/acme/app/issues/901"
+
+    def get_target(*args):
+        return issue_projects.ProjectTarget("I901", url, "ITEM" if present else None)
+
+    def set_field(root, project, item, number, resolved):
+        nonlocal present
+        set_calls.append((resolved.field.name, resolved.value, item.present))
+        if len(set_calls) == 2:
+            raise issue_github.IssueGithubMutationError("rejected", uncertain=False)
+        present = True
+        field_values[resolved.field.name] = resolved.value
+        return issue_projects.ProjectReceipt(number, url + "#project-item-ITEM", "ITEM")
+
+    mocker.patch.object(
+        issue_projects,
+        "get_field_value",
+        side_effect=lambda root, item, field: field_values.get(field.name),
+    )
+    mocker.patch.object(issue_projects, "set_field", side_effect=set_field)
+    actions = [
+        {"type": "create", "repo": ".", "ref": "new", "title": "New", "body": "Body", "labels": []},
+        {
+            "type": "project_set",
+            "repo": ".",
+            "issue_ref": "new",
+            "project": "acme/3",
+            "field": "Status",
+            "value": "Todo",
+            "expected": {"present": False, "value": None},
+        },
+        {
+            "type": "project_set",
+            "repo": ".",
+            "issue_ref": "new",
+            "project": "acme/3",
+            "field": "Notes",
+            "value": "Hello",
+            "expected": {"present": False, "value": None},
+        },
+    ]
+    seed({"batch.json": json.dumps({"version": 1, "actions": actions})})
+    batch = prepare()
+    target.assert_not_called()
+    target.side_effect = get_target
+    first = apply(batch)
+    assert first.failure is not None and not first.failure.uncertain
+    assert [receipt.index for _, receipt in first.applied] == [0, 1]
+    assert set_calls == [("Status", "Todo", False), ("Notes", "Hello", True)]
+    resumed = apply(prepare())
+    assert resumed.failure is None
+    assert calls == ["create"]
+    assert set_calls == [
+        ("Status", "Todo", False),
+        ("Notes", "Hello", True),
+        ("Notes", "Hello", True),
+    ]
 
 
 @pytest.mark.parametrize("resolution", ["retry", "applied"])
