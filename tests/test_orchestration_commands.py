@@ -261,7 +261,7 @@ def test_remote_publish_widening_still_requires_permission(cfg, incus, addition)
 
 
 @pytest.mark.parametrize("change", ["board", "set", "remove", "rate"])
-def test_remote_project_widening_and_rate_require_issue_apply(cfg, incus, change):
+def test_remote_project_widening_and_rate_require_issue_apply(cfg, make_incus, change, ensure):
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 
     remote = RemoteSSHConfig(
@@ -274,16 +274,19 @@ def test_remote_project_widening_and_rate_require_issue_apply(cfg, incus, change
         "remove": GrantFlags(publish_project=("org/3=remove",)),
         "rate": GrantFlags(publish_rate=31),
     }[change]
-    wider = commands.build_grant(cfg, current, flags)
+    incus = make_incus(_stored(current))
     with pytest.raises(GrantError, match="permission"):
-        commands._check_remote_bound(cfg, incus, "myrepo-a", wider, current, remote)
+        commands.grant(cfg, incus, "myrepo-a", flags, remote=remote)
+    incus.config_set.assert_not_called()
     allowed = remote.model_copy(
         update={"commands": RemoteCommandPolicy(mode="allowlist", allow=["issue apply"])}
     )
-    commands._check_remote_bound(cfg, incus, "myrepo-a", wider, current, allowed)
+    granted = commands.grant(cfg, incus, "myrepo-a", flags, remote=allowed)
+    assert granted == commands.build_grant(cfg, current, flags)
+    incus.config_set.assert_called()
 
 
-def test_remote_project_narrowing_preserves_semantic_implication(cfg, incus):
+def test_remote_project_narrowing_preserves_semantic_implication(cfg, make_incus, ensure):
     from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 
     remote = RemoteSSHConfig(
@@ -295,8 +298,10 @@ def test_remote_project_narrowing_preserves_semantic_implication(cfg, incus):
         GrantFlags(publish_project=("org/3=add",)),
         GrantFlags(publish_project=("org/3=none",), publish_rate=31),
     ):
-        narrower = commands.build_grant(cfg, current, flags)
-        commands._check_remote_bound(cfg, incus, "myrepo-a", narrower, current, remote)
+        incus = make_incus(_stored(current))
+        narrower = commands.grant(cfg, incus, "myrepo-a", flags, remote=remote)
+        assert narrower == commands.build_grant(cfg, current, flags)
+        incus.config_set.assert_called()
 
 
 def test_no_publish_clears_all(cfg):
