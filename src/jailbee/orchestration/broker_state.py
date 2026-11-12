@@ -101,8 +101,14 @@ class BrokerMemory:
         self.reassert.intersection_update(keys)
         # Repo warnings and security tombstones describe host resources, not instances.
         instance_warnings = {
-            "env", "socket", "socket-off", "socket-gone", "socket-shared",
-            "socket-rotate", "no-config", "bad-grant",
+            "env",
+            "socket",
+            "socket-off",
+            "socket-gone",
+            "socket-shared",
+            "socket-rotate",
+            "no-config",
+            "bad-grant",
         }
         for key in list(self.warned):
             prefix, _, owner = key.partition(":")
