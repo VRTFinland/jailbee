@@ -35,15 +35,20 @@ repo config can narrow them, never add them:
 orchestration:
   publish:
     issues: [comment]             # intersect allowed own-repo/submodule actions
+    projects:
+      - board: acme/7
+        actions: [add, set]        # board-scoped; set implies add and covers clear
     pull_requests: false
     pr_reviews: false
     max_actions_per_hour: 10      # min with the grant's rate
 ```
 
 `publish: false` forbids all publication. Omitting the block imposes no extra
-cap, but still grants nothing. Foreign rights use the same
-`foreign_issues: {repos: [owner/name], actions: [comment]}` shape; caps
-intersect repos and kinds. See [publish grants](orchestration.md#publish-the-orchestrators-own-outboxes).
+cap, but still grants nothing. `projects` narrows board-specific action grants
+by matching both board and action; `set` also covers `add` and clearing fields.
+Foreign issue rights use the separate
+`foreign_issues: {repos: [owner/name], actions: [comment]}` shape; they do not
+grant project rights. See [publish grants](orchestration.md#publish-the-orchestrators-own-outboxes).
 Children never receive publish rights.
 
 ## 2. Set `container_prefix` if needed
