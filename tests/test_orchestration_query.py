@@ -70,6 +70,24 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Env]:
     instance.listener.stop()
 
 
+def test_plain_namesake_of_destroyed_child_can_stage_outbox(env: Env) -> None:
+    assert env.queries.snapshot()["proj-kid"].role == "child"
+    assert env.queries.put_refusal("proj-kid") is not None
+
+    env.rig.incus.list_containers.return_value = [_orch()]
+    env.rig.tick(env.memory)
+
+    env.rig.incus.config_device_get.return_value = ""
+    env.rig.incus.list_containers.return_value = [
+        _orch(),
+        _c("proj-kid", **{"volatile.uuid": "new-plain-uuid"}),
+    ]
+    env.rig.tick(env.memory)
+
+    assert env.queries.snapshot()["new-plain-uuid"].role == "plain"
+    assert env.queries.put_refusal("new-plain-uuid") is None
+
+
 def test_bulk_ack_through_query_socket_is_scoped(env: Env) -> None:
     env.put("child-message")
     for uuid in ("proj-orch", "proj-kid"):
