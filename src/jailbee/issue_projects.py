@@ -272,8 +272,8 @@ def _pages(
         seen.add(cursor)
 
 
-def resolve_field(fields: tuple[ProjectField, ...], name: str, value: object) -> ResolvedField:
-    """Resolve a name and scalar before publishing; invalid names list choices."""
+def find_field(fields: tuple[ProjectField, ...], name: str) -> ProjectField:
+    """Resolve a supported field without requiring a replacement value."""
     matches = [field for field in fields if field.name.casefold() == name.casefold()]
     if len(matches) != 1:
         raise ValueError(
@@ -281,6 +281,14 @@ def resolve_field(fields: tuple[ProjectField, ...], name: str, value: object) ->
             + ", ".join(field.name for field in fields)
         )
     field = matches[0]
+    if field.data_type not in ("SINGLE_SELECT", "TEXT", "NUMBER", "DATE"):
+        raise ValueError(f"{field.name}: {field.data_type.lower()} fields are not supported yet")
+    return field
+
+
+def resolve_field(fields: tuple[ProjectField, ...], name: str, value: object) -> ResolvedField:
+    """Resolve a name and scalar before publishing; invalid names list choices."""
+    field = find_field(fields, name)
     kind = field.data_type
     if kind == "SINGLE_SELECT":
         options = [
@@ -389,3 +397,37 @@ def set_field(
             raise IssueGithubMutationError(str(exc), uncertain=True) from exc
         raise
     return receipt
+
+
+def clear_field(root: Path, project: Project, target: ProjectTarget, number: int,
+                field: ProjectField) -> MutationReceipt:
+    """Clearing an absent item does not add it to the board."""
+    if not target.present:
+        return MutationReceipt(number, target.url)
+    data = _graphql(root,
+        "mutation($project:ID!,$item:ID!,$field:ID!){clearProjectV2ItemFieldValue("
+        "input:{projectId:$project,itemId:$item,fieldId:$field}){projectV2Item{id}}}",
+        {"project": project.id, "item": target.item_id, "field": field.id}, mutation=True)
+    try:
+        id = _object(_object(data.get("clearProjectV2ItemFieldValue")).get("projectV2Item")).get("id")
+        if id != target.item_id:
+            raise IssueGithubReadError("invalid item")
+    except IssueGithubReadError:
+        raise IssueGithubMutationError("GitHub Projects returned an unusable receipt", uncertain=True) from None
+    return MutationReceipt(number, f"{target.url}#project-item-{target.item_id}")
+
+
+def remove_item(root: Path, project: Project, target: ProjectTarget, number: int) -> MutationReceipt:
+    """A matching absent expectation settles without dispatching a mutation."""
+    if not target.present:
+        return MutationReceipt(number, target.url)
+    data = _graphql(root,
+        "mutation($project:ID!,$item:ID!){deleteProjectV2Item("
+        "input:{projectId:$project,itemId:$item}){deletedItemId}}",
+        {"project": project.id, "item": target.item_id}, mutation=True)
+    try:
+        if _object(data.get("deleteProjectV2Item")).get("deletedItemId") != target.item_id:
+            raise IssueGithubReadError("invalid item")
+    except IssueGithubReadError:
+        raise IssueGithubMutationError("GitHub Projects returned an unusable receipt", uncertain=True) from None
+    return MutationReceipt(number, f"{target.url}#project-item-{target.item_id}")

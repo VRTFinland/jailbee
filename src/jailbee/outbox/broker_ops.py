@@ -145,13 +145,13 @@ ProjectReader = Callable[[str, str, int, str | None], ProjectExpectation]
 
 def provisional_project(action: dict[str, Any], default_project: str | None) -> dict[str, Any]:
     """Validate host-filled syntax before any project read."""
-    if action.get("type") not in ("project_add", "project_set"):
+    if action.get("type") not in ("project_add", "project_set", "project_clear", "project_remove"):
         return action
     project = action.get("project", default_project)
     if project is None:
         raise bad_request("supply --project owner/number or configure github.project")
     expected: dict[str, Any] = {"present": False}
-    if action["type"] == "project_set":
+    if action["type"] in ("project_set", "project_clear"):
         expected["value"] = None
     return {**action, "project": project, "expected": expected}
 
@@ -163,7 +163,7 @@ def capture_project(
     from jailbee.issue_github import IssueGithubReadError
     from jailbee.issue_manifest import valid_project
 
-    if action.get("type") not in ("project_add", "project_set"):
+    if action.get("type") not in ("project_add", "project_set", "project_clear", "project_remove"):
         return action
     project = action.get("project", default_project)
     if not isinstance(project, str) or not valid_project(project):
@@ -172,7 +172,7 @@ def capture_project(
     if "issue_ref" in action:
         result["expected"] = {
             "present": False,
-            **({"value": None} if action["type"] == "project_set" else {}),
+            **({"value": None} if action["type"] in ("project_set", "project_clear") else {}),
         }
     else:
         number, repo = action.get("issue"), action.get("repo")
@@ -188,7 +188,7 @@ def capture_project(
             raise wire.WireError(wire.REFUSED, "host Projects reader returned invalid membership")
         result["expected"] = {
             "present": snapshot.present,
-            **({"value": snapshot.value} if action["type"] == "project_set" else {}),
+            **({"value": snapshot.value} if action["type"] in ("project_set", "project_clear") else {}),
         }
     return result
 

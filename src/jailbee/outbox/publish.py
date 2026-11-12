@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from jailbee import issue_outbox, pr, pr_outbox, prompting
 from jailbee.incus import IncusError
-from jailbee.issue_manifest import ProjectAddAction, ProjectSetAction
+from jailbee.issue_manifest import ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction
 from jailbee.orchestration.store import StoreError
 from jailbee.outbox import sent
 from jailbee.outbox.inspect import build_views, safe_text
@@ -192,12 +192,12 @@ def issue_plan_json(
                         {
                             "project": action.project,
                             "project_title": resolved.project.title if resolved.project else None,
-                            "operation": "set" if isinstance(action, ProjectSetAction) else "add",
+                            "operation": action.kind.removeprefix("project_"),
                             "expected": {
                                 "present": action.expected_present,
                                 **(
                                     {"value": action.expected_value}
-                                    if isinstance(action, ProjectSetAction)
+                                    if isinstance(action, (ProjectSetAction, ProjectClearAction))
                                     else {}
                                 ),
                             },
@@ -209,10 +209,10 @@ def issue_plan_json(
                                     else action.value,
                                 }
                                 if isinstance(action, ProjectSetAction)
-                                else {}
+                                else {"field": action.field, "value": None} if isinstance(action, ProjectClearAction) else {}
                             ),
                         }
-                        if isinstance(action, (ProjectAddAction, ProjectSetAction))
+                        if isinstance(action, (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction))
                         else {}
                     ),
                 }

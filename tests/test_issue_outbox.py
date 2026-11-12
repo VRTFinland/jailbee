@@ -236,6 +236,34 @@ def _state():
     }
 
 
+@pytest.mark.parametrize("kind", ["project_clear", "project_remove"])
+@pytest.mark.parametrize("present", [False, True])
+def test_project_clear_remove_publish_noop_stale_and_sent(preflight, mocker, kind, present):
+    from jailbee import issue_outbox, issue_projects
+    from jailbee.outbox.publish import issue_plan_json
+    mocker.patch.object(issue_projects, "resolve_project", return_value=issue_projects.Project("acme/3", "P3", "Roadmap"))
+    read = mocker.patch.object(issue_projects, "get_target", return_value=issue_projects.ProjectTarget("I7", "https://github.com/acme/app/pull/7", "ITEM" if present else None))
+    mocker.patch.object(issue_projects, "list_fields", return_value=(issue_projects.ProjectField("F1", "Priority", "SINGLE_SELECT", (("High", "OPT"),)),))
+    mocker.patch.object(issue_projects, "get_field_value", return_value="High" if present else None)
+    run = mocker.patch("jailbee.issue_projects.subprocess.run", return_value=subprocess.CompletedProcess([], 0, json.dumps({"data": {"clearProjectV2ItemFieldValue": {"projectV2Item": {"id": "ITEM"}}, "deleteProjectV2Item": {"deletedItemId": "ITEM"}}}), ""))
+    action = {"type": kind, "repo": ".", "issue": 7, "project": "acme/3", "expected": {"present": present}}
+    if kind == "project_clear":
+        action.update(field="Priority", expected={"present": present, "value": "High" if present else None})
+    batch = preflight["prepare"]({"a.json": [action]})
+    assert any("Roadmap" in line for line in issue_outbox.plan_lines(batch))
+    assert issue_plan_json(batch, proposal="issue/a.json", revision="r")["actions"][0]["operation"] == kind.removeprefix("project_")
+    issue_outbox.revalidate_batch(batch)
+    report = issue_outbox.apply_batch(batch, incus=preflight["incus"], container_prefix="app", publisher="user")
+    assert report.failure is None
+    assert run.call_count == int(present)
+    (row,) = _sent_rows()
+    assert row.kind == kind and "acme/3" in row.content and row.title == "Roadmap"
+    # A newly staged proposal must not silently accept changed membership.
+    read.return_value = issue_projects.ProjectTarget("I7", "https://github.com/acme/app/pull/7", None if present else "ITEM")
+    with pytest.raises(issue_outbox.IssueGateError, match="membership"):
+        preflight["prepare"]({"b.json": [action]})
+
+
 def test_project_field_stale_and_unknown_option_are_refused_before_publish(preflight, mocker):
     from jailbee import issue_outbox, issue_projects
     from jailbee.outbox.publish import issue_plan_json

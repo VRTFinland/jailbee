@@ -341,6 +341,8 @@ def project(
     set_values: Annotated[
         list[str] | None, typer.Option("--set", help="Field=value; repeatable.")
     ] = None,
+    clear: Annotated[list[str] | None, typer.Option(help="Field to clear; repeatable.")] = None,
+    remove: Annotated[bool, typer.Option(help="Remove the item from the project.")] = False,
     repo: RepoOpt = ".",
     batch: BatchOpt = None,
 ) -> None:
@@ -349,8 +351,8 @@ def project(
     def run() -> None:
         require_role()
         target = _parse_target(issue)
-        if add == bool(set_values):
-            raise OutboxCommandError("choose --add or --set Field=value", 2)
+        if int(add) + int(remove) + int(bool(set_values or clear)) != 1:
+            raise OutboxCommandError("choose --add, --remove, or --set/--clear fields", 2)
         actions: list[dict[str, object]] = []
         if add:
             actions.append({"type": "project_add", "repo": repo, **_target(target)})
@@ -371,6 +373,13 @@ def project(
                     "value": text,
                 }
             )
+        for field in clear or []:
+            if not field or field.casefold() in seen:
+                raise OutboxCommandError(f"duplicate or empty project field {field!r}", 2)
+            seen.add(field.casefold())
+            actions.append({"type": "project_clear", "repo": repo, **_target(target), "field": field})
+        if remove:
+            actions.append({"type": "project_remove", "repo": repo, **_target(target)})
         for action in actions:
             if project is not None:
                 action["project"] = project
@@ -380,7 +389,7 @@ def project(
         else:
             name = broker.put(
                 "issue",
-                "project-add" if add else "project-set",
+                str(actions[0]["type"]).replace("_", "-"),
                 {"version": 1, "actions": actions},
                 {},
             )

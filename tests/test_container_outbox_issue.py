@@ -44,6 +44,21 @@ def test_project_add_stages_without_container_github_reads(monkeypatch):
     }
 
 
+def test_project_clear_and_remove_flags_stage_explicit_actions(monkeypatch):
+    from jailbee.container_outbox import broker
+    staged = []
+    monkeypatch.setattr(broker, "put", lambda *args: staged.append(args) or "001-project.json")
+    result = invoke("project", "7", "--project", "acme/3", "--set", "Status=Doing", "--clear", "Priority")
+    assert result.exit_code == 0, result.output
+    assert [a["type"] for a in staged[-1][2]["actions"]] == ["project_set", "project_clear"]
+    assert staged[-1][2]["actions"][1] == {"type": "project_clear", "repo": ".", "issue": 7, "project": "acme/3", "field": "Priority"}
+    result = invoke("project", "7", "--remove")
+    assert result.exit_code == 0, result.output
+    assert staged[-1][2]["actions"] == [{"type": "project_remove", "repo": ".", "issue": 7}]
+    assert invoke("project", "7", "--remove", "--clear", "Priority").exit_code == 2
+    assert invoke("project", "7", "--set", "Priority=High", "--clear", "priority").exit_code == 2
+
+
 def test_project_set_expands_fields_into_one_proposal_without_reads(monkeypatch):
     from jailbee.container_outbox import broker
 

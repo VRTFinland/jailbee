@@ -87,6 +87,9 @@ def _issue_action(index: int, action: issues.IssueAction) -> ActionView:
                 "assignees",
                 False,
             )
+        elif isinstance(action, (issues.ProjectClearAction, issues.ProjectRemoveAction)):
+            change = f"{action.field}: {action.expected_value!r} -> None" if isinstance(action, issues.ProjectClearAction) else "remove"
+            body, kind, markdown = f"project {action.project} · #{target} · {change}", action.kind, False
         elif isinstance(action, issues.ProjectSetAction):
             body, kind, markdown = (
                 f"project {action.project} · #{target} · {action.field}: "

@@ -119,7 +119,27 @@ class ProjectSetAction:
     expected_value: str | int | float | None
 
 
-ProjectAction = ProjectAddAction | ProjectSetAction
+@dataclass(frozen=True)
+class ProjectClearAction:
+    kind: ClassVar[Literal["project_clear"]] = "project_clear"
+    repo: str
+    target: IssueTarget
+    project: str
+    field: str
+    expected_present: bool
+    expected_value: str | int | float | None
+
+
+@dataclass(frozen=True)
+class ProjectRemoveAction:
+    kind: ClassVar[Literal["project_remove"]] = "project_remove"
+    repo: str
+    target: IssueTarget
+    project: str
+    expected_present: bool
+
+
+ProjectAction = ProjectAddAction | ProjectSetAction | ProjectClearAction | ProjectRemoveAction
 
 
 IssueAction = (
@@ -131,6 +151,8 @@ IssueAction = (
     | StateAction
     | ProjectAddAction
     | ProjectSetAction
+    | ProjectClearAction
+    | ProjectRemoveAction
 )
 
 
@@ -148,9 +170,9 @@ def mutation_keys(action: IssueAction) -> set[str]:
         )
     if isinstance(action, (LabelsAction, AssigneesAction, StateAction)):
         return {action.kind}
-    if isinstance(action, ProjectAddAction):
+    if isinstance(action, (ProjectAddAction, ProjectRemoveAction)):
         return {f"project:{action.project.casefold()}:membership"}
-    if isinstance(action, ProjectSetAction):
+    if isinstance(action, (ProjectSetAction, ProjectClearAction)):
         return {f"project:{action.project.casefold()}:field:{action.field.casefold()}"}
     if isinstance(action, (CreateAction, CommentAction)):
         return set()
@@ -622,11 +644,11 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             action = _parse_assignees_action(item, refs, changed, context)
         elif action_type == "state":
             action = _parse_state_action(item, refs, changed, context)
-        elif action_type in ("project_add", "project_set"):
+        elif action_type in ("project_add", "project_set", "project_clear", "project_remove"):
             _reject_unknown(
                 item,
                 {"type", "repo", "issue", "issue_ref", "project", "expected"}
-                | ({"field", "value"} if action_type == "project_set" else set()),
+                | ({"field", "value"} if action_type == "project_set" else {"field"} if action_type == "project_clear" else set()),
                 context,
             )
             repo = _repo(item, context)
@@ -636,7 +658,7 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             expected = _expected(item, context)
             _reject_unknown(
                 expected,
-                {"present", "value"} if action_type == "project_set" else {"present"},
+                {"present", "value"} if action_type in ("project_set", "project_clear") else {"present"},
                 f"{context} expected",
             )
             present = expected.get("present")
@@ -645,10 +667,12 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             target = _target(item, repo, refs, context)
             if action_type == "project_add":
                 action = ProjectAddAction(repo, target, project, present)
+            elif action_type == "project_remove":
+                action = ProjectRemoveAction(repo, target, project, present)
             else:
                 field = _required_string(item, "field", context)
                 value = item.get("value")
-                if (
+                if action_type == "project_set" and (
                     isinstance(value, bool)
                     or not isinstance(value, (str, int, float))
                     or (isinstance(value, float) and not math.isfinite(value))
@@ -668,11 +692,15 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
                     raise IssueManifestError(
                         f"{context}: absent membership requires expected.value null"
                     )
-                action = ProjectSetAction(repo, target, project, field, value, present, old)
+                if action_type == "project_clear":
+                    action = ProjectClearAction(repo, target, project, field, present, old)
+                else:
+                    assert isinstance(value, (str, int, float))
+                    action = ProjectSetAction(repo, target, project, field, value, present, old)
         else:
             raise IssueManifestError(
                 f"{context}: type must be one of create, edit, comment, labels, assignees, "
-                "state, or project_add"
+                "state, project_add, project_set, project_clear, or project_remove"
             )
         if not isinstance(action, CreateAction):
             _record_mutations(changed, action.repo, action.target, mutation_keys(action), context)

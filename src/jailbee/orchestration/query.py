@@ -180,17 +180,8 @@ class Queries:
                 value = None
                 if field is not None:
                     fields = issue_projects.list_fields(cfg.repo_root, project)
-                    matches = [f for f in fields if f.name.casefold() == field.casefold()]
-                    if len(matches) != 1:
-                        raise ValueError(
-                            f"unknown or ambiguous project field {field!r}; valid fields: "
-                            + ", ".join(f.name for f in fields)
-                        )
-                    if matches[0].data_type not in ("TEXT", "NUMBER", "DATE", "SINGLE_SELECT"):
-                        raise ValueError(
-                            f"{field}: {matches[0].data_type.lower()} fields are not supported yet"
-                        )
-                    value = issue_projects.get_field_value(cfg.repo_root, item, matches[0])
+                    resolved_field = issue_projects.find_field(fields, field)
+                    value = issue_projects.get_field_value(cfg.repo_root, item, resolved_field)
                 return issue_projects.ProjectExpectation(item.present, value)
 
         return broker_ops.handle(
