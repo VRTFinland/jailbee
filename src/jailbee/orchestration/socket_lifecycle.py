@@ -233,6 +233,14 @@ def _forget_vanished(raw: list[dict[str, Any]], memory: broker_state.BrokerMemor
     except StoreError as exc:
         memory.warn_once("socket-recipients", "broker: cannot read the recipients: %s", exc)
         recipients = {}
+    # A listener can open successfully before device attachment/recipient
+    # recording fails. Such an instance has only a reassert entry to find it by.
+    for uuid in memory.reassert - {u for u in live.values() if u}:
+        try:
+            listener.close_container(uuid)
+            memory.reassert.discard(uuid)
+        except OSError as exc:
+            memory.warn_once(f"socket-gone:{uuid}", "broker: %s: %s", uuid, exc)
     for full in set(memory.attached) | set(recipients):
         current = live.get(full, "")  # "" -> the name is gone
         if current is None:

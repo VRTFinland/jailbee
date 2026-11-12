@@ -21,7 +21,7 @@ before editing `## Unreleased`.
 - Vanished publishers no longer leave accepted-request records indefinitely or
   pass their hourly publish budget to a new container with the same name.
 - The broker now drops vanished containers' status probes, failed socket-attach
-  retries and diagnostic caches even during idle rounds. Reusing a name no longer
+  retries, orphaned socket listeners and diagnostic caches even during idle rounds. Reusing a name no longer
   inherits probe delays or suppresses warnings from the new instance.
 - A plain container reusing a destroyed child's name could be refused as a child
   when staging issue or PR actions. The broker now keys its prepared-role cache

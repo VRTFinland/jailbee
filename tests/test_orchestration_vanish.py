@@ -118,6 +118,16 @@ def test_idle_round_forgets_vanished_probe_and_diagnostic_state(tmp_path, monkey
     assert memory.reassert == set()
 
 
+def test_vanished_instance_with_failed_attach_closes_its_listener(tmp_path, monkeypatch):
+    env = Env(Rig(tmp_path, monkeypatch))
+    env.memory.reassert.add(UUID)
+    env.listener.open_container(UUID, env.rig.root / "unattached-socket")
+    env.set()
+    env.tick()
+    assert UUID not in env.listener.open
+    assert not env.memory.reassert
+
+
 def test_replacement_orchestrator_cannot_inherit_old_children(tmp_path, monkeypatch):
     env = Env(Rig(tmp_path, monkeypatch))
     node = actions.Node(FULL, "gone", False, {"volatile.uuid": UUID})
@@ -263,6 +273,14 @@ def test_every_memory_field_and_store_document_has_a_lifetime(tmp_path):
         assignment = next(n for n in module_tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == prefix.id for t in n.targets))
         assert isinstance(assignment.value, ast.Constant)
         assert assignment.value.value in prefixes
+    # A local alias must still be fed by the classified builder, not by an
+    # unclassified prefix introduced without changing the SQL call itself.
+    claim_tree = ast.parse(Path(publication_db.__file__).read_text())
+    claim_function = next(n for n in ast.walk(claim_tree) if isinstance(n, ast.FunctionDef) and n.name == "claim")
+    claim_keys = [ast.unparse(n.value) for n in ast.walk(claim_function)
+        if isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+        and any(isinstance(t, ast.Name) and t.id == "key" for t in (n.targets if isinstance(n, ast.Assign) else [n.target]))]
+    assert claim_keys == ["_claim_key(uuid, kind, name)"]
     assert documents == set(DOCUMENT_LIFETIMES)
 
 
