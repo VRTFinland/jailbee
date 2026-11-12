@@ -23,11 +23,18 @@ def test_staging_uses_default_project(env: Env, op: str) -> None:
         return issue_projects.ProjectExpectation(present=True)
 
     args = (
-        {"kind": "issue", "slug": "test", "manifest": {"version": 1, "actions": [action]}, "bodies": {}}
+        {
+            "kind": "issue",
+            "slug": "test",
+            "manifest": {"version": 1, "actions": [action]},
+            "bodies": {},
+        }
         if op == wire.OUTBOX_PUT
         else {"kind": "issue", "name": "test", "action": action, "bodies": {}}
     )
-    broker_ops.handle(store, PLAIN, op, args, now=1, project_reader=reader, default_project="acme/42")
+    broker_ops.handle(
+        store, PLAIN, op, args, now=1, project_reader=reader, default_project="acme/42"
+    )
     if op == wire.OUTBOX_PUT:
         (row,) = store_db.read_proposals(env.rig.root, PLAIN, "issue")
     else:
@@ -44,7 +51,12 @@ def test_staging_without_project_names_configuration_key(env: Env, op: str) -> N
     store = store_db.OutboxStore(env.store)
     action = {"type": "project_add", "repo": ".", "issue": 7}
     args = (
-        {"kind": "issue", "slug": "test", "manifest": {"version": 1, "actions": [action]}, "bodies": {}}
+        {
+            "kind": "issue",
+            "slug": "test",
+            "manifest": {"version": 1, "actions": [action]},
+            "bodies": {},
+        }
         if op == wire.OUTBOX_PUT
         else {"kind": "issue", "name": "test", "action": action, "bodies": {}}
     )

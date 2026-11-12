@@ -846,9 +846,7 @@ class GithubConfig(BaseModel):
             "always installed in the golden image regardless."
         ),
     )
-    project: str | None = Field(
-        default=None, description="Default GitHub project as owner/number."
-    )
+    project: str | None = Field(default=None, description="Default GitHub project as owner/number.")
 
     @field_validator("project")
     @classmethod
