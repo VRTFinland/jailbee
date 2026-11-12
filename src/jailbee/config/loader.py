@@ -830,11 +830,14 @@ def load_config_from_layers(
     repo_github = repo_raw.get("github")
     if "github" in repo_raw and not (
         isinstance(repo_github, dict)
-        and list(repo_github) == ["enabled"]
-        and repo_github["enabled"] is False
+        and bool(repo_github)
+        and set(repo_github) <= {"enabled", "project"}
+        and ("enabled" not in repo_github or repo_github["enabled"] is False)
+        and ("project" not in repo_github or isinstance(repo_github["project"], str))
     ):
         raise ConfigError(
             "Only `github: {enabled: false}` is allowed in repo .jailbee/config.yaml; "
+            "github.project may also specify a default project; "
             "enable GitHub and keep legacy api_tokens in ~/.config/jailbee/global.yaml; "
             f"put github.token in the host-local {local_config_path('<container_prefix>')}."
         )

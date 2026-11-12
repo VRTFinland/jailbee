@@ -830,8 +830,8 @@ class GithubConfig(BaseModel):
 
     The token is per repo: `token`, in the host-local file. The deprecated
     `api_tokens` map may only be set in `~/.config/jailbee/global.yaml`.
-    A repo's committed `.jailbee/config.yaml` may only set `enabled: false`
-    to opt out; tokens and opt-in settings stay in the host-side layers.
+    A committed repo may set `enabled: false` and a default `project`;
+    tokens and opt-in settings stay in the host-side layers.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -839,13 +839,26 @@ class GithubConfig(BaseModel):
         default=False,
         description=(
             "Master switch. Off by default; opt in via ~/.config/jailbee/global.yaml. "
-            "A committed repo config may only set github: {enabled: false}, with no "
-            "other GitHub keys, to override the global switch for that repo. When "
+            "A committed repo config may set enabled: false and a default project "
+            "to override the global settings for that repo. When "
             "false, jailbee skips the api.github.com strict-mode egress add, the GH_TOKEN "
             "autostart injection, and the github doctor checks. The gh binary itself is "
             "always installed in the golden image regardless."
         ),
     )
+    project: str | None = Field(
+        default=None, description="Default GitHub project as owner/number."
+    )
+
+    @field_validator("project")
+    @classmethod
+    def validate_project(cls, value: str | None) -> str | None:
+        from jailbee.issue_manifest import valid_project
+
+        if value is not None and not valid_project(value):
+            raise ValueError("must be a GitHub project in owner/positive-number form")
+        return value
+
     api_tokens: dict[str, SecretStr] = Field(
         default_factory=dict,
         description=(

@@ -218,7 +218,10 @@ def disabled_reason(spec: FieldSpec, layer: LayerName) -> str | None:
     including computed and legacy names not shown by `repo_specs()`.
     GitHub permits only the safe disabled exception at the repo layer.
     """
-    if layer == "repo" and spec.path[0] == "github" and spec.path[1:] != ("enabled",):
+    if layer == "repo" and spec.path[0] == "github" and spec.path[1:] not in (
+        ("enabled",),
+        ("project",),
+    ):
         return (
             "Only `github: {enabled: false}` is allowed in a repo config — "
             "set api_tokens in ~/.config/jailbee/global.yaml and github.token "

@@ -147,6 +147,7 @@ def _spec(dotted):
 
 def test_repo_github_enabled_is_editable_but_secrets_are_not():
     assert layers.disabled_reason(_spec("github.enabled"), "repo") is None
+    assert layers.disabled_reason(_spec("github.project"), "repo") is None
 
     for field in ("github.token", "github.api_tokens"):
         reason = layers.disabled_reason(_spec(field), "repo")

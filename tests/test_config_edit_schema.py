@@ -302,7 +302,8 @@ def test_build_specs_covers_every_config_leaf():
 
     # Services add a model-map leaf; fork.warm_paths adds a string-list leaf;
     # golden.docker_seed contributes its four editable submodel leaves.
-    assert len(build_specs(Config)) == 121
+    # github.project adds one editable repo leaf.
+    assert len(build_specs(Config)) == 122
     # remote.ssh.gpg adds one opt-in global boolean.
     assert len(build_specs(GlobalConfig)) == 59
 
