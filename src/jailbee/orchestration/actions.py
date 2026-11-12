@@ -669,12 +669,12 @@ def _handle_spawn_locked(ctx: ActionContext, m: Manifest) -> Outcome:
     from jailbee.orchestration.state import load_cancellations
 
     _settle_cancellations_locked(ctx)
-    pending = load_cancellations(ctx.root, ctx.sender.full)
-    full = lifecycle.derive_container_name(ctx.cfg, m.branch)
-    if any(e.request.child_full == full for e in pending):
-        return refused("previous cancellation is still settling; try again")
+    pending = load_cancellations(ctx.root)
     queued = _queued(ctx)
-    plan = plan_spawn(ctx, m, queued_names={q.child_full for q in queued})
+    plan = plan_spawn(
+        ctx, m,
+        queued_names={q.child_full for q in queued} | {e.request.child_full for e in pending},
+    )
     if isinstance(plan, Outcome):
         return plan
     fork: ForkSource | None = None
@@ -1032,6 +1032,7 @@ def _settle_cancellations_locked(ctx: ActionContext) -> None:
             broker_replies.reply(
                 ctx, entry.request.manifest_id,
                 refused(f"cancelled by orchestrator (cancel request {entry.cancel_id})"),
+                status_id=entry.status_id,
             )
             finish_cancellation(ctx.root, ctx.sender.full, entry.cancel_id)
         except (OSError, git.GitError):
@@ -1039,6 +1040,7 @@ def _settle_cancellations_locked(ctx: ActionContext) -> None:
 
 
 def handle_cancel(ctx: ActionContext, m: Manifest) -> Outcome:
+    from jailbee.orchestration.protocol import new_host_id
     from jailbee.orchestration.state import CancelledRequest, cancel_queued
     from jailbee.orchestration.watch import mutation_locked
 
@@ -1056,7 +1058,7 @@ def handle_cancel(ctx: ActionContext, m: Manifest) -> Outcome:
                 "request is not queued for this orchestrator; "
                 "if already started, use send stop / send destroy --child instead"
             )
-        cancel_queued(ctx.root, ctx.sender.full, CancelledRequest(req, m.id, ctx.sender.key))
+        cancel_queued(ctx.root, ctx.sender.full, CancelledRequest(req, m.id, ctx.sender.key, new_host_id()))
         _settle_cancellations_locked(ctx)
         return done(f"cancelled queued request {req.manifest_id}")
 

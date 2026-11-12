@@ -42,13 +42,17 @@ def status(ref: str, outcome: Outcome) -> InboxStatus:
 
 
 def reply(
-    ctx: ActionContext, ref: str, outcome: Outcome, memory: broker_state.BrokerMemory | None = None
+    ctx: ActionContext, ref: str, outcome: Outcome, memory: broker_state.BrokerMemory | None = None,
+    *, status_id: str | None = None,
 ) -> None:
+    item = status(ref, outcome)
+    if status_id is not None:
+        item = item.model_copy(update={"id": status_id})
     deliver(
         ctx.incus,
         ctx.root,
         ctx.sender.full,
-        status(ref, outcome),
+        item,
         running=ctx.sender.running,
         uid=ctx.cfg.container_user.uid,
         now=ctx.now,

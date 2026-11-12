@@ -640,6 +640,38 @@ def test_failed_pin_cleanup_retries_before_name_reuse(tmp_path: Path, seams, mon
     unpin.assert_called_with(rig.cfg.repo_root, "refs/jailbee/fix-1/HEAD")
 
 
+def test_pending_cancel_protects_name_from_another_orchestrator(tmp_path: Path, seams, monkeypatch):
+    from jailbee.git import GitError
+    from jailbee.orchestration.protocol import CancelManifest
+
+    rig = Rig(tmp_path, running=1)
+    _queue(rig, ["fix/1"])
+    monkeypatch.setattr("jailbee.git.delete_ref_checked", MagicMock(side_effect=GitError("locked")))
+    actions.handle_cancel(rig.ctx(), CancelManifest(version=1, id="cancel-1", type="cancel", request="m0"))
+    rig.sender = Node("proj-other", "other", True, rig.sender.config)
+    assert actions.handle_spawn(rig.ctx(), _m(mid="other")).state == "refused"
+    seams["pin"].assert_not_called()
+
+
+def test_cancel_reply_retry_uses_same_status_id(tmp_path: Path, seams, monkeypatch):
+    from jailbee.orchestration.protocol import CancelManifest
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    rig = Rig(tmp_path, running=1)
+    rig.sender = Node("proj-orch", "orch", True, {**rig.sender.config, "volatile.uuid": "orch-uuid"})
+    _queue(rig, ["fix/1"], kind="new")
+    original = actions.settle_cancellations
+    from jailbee.orchestration import state as queue_state
+    finish = queue_state.finish_cancellation
+    monkeypatch.setattr(queue_state, "finish_cancellation", MagicMock(side_effect=OSError("crash after reply")))
+    actions.handle_cancel(rig.ctx(), CancelManifest(version=1, id="cancel-1", type="cancel", request="m0"))
+    monkeypatch.setattr(queue_state, "finish_cancellation", finish)
+    original(rig.ctx())
+    statuses = BrokerStore(store_path(tmp_path)).unacked("orch-uuid")
+    assert len(statuses) == 1
+    assert statuses[0].item["state"] == "refused"
+
+
 def test_handler_registered() -> None:
     assert actions.HANDLERS["spawn"] is actions.handle_spawn
 

@@ -187,6 +187,7 @@ class CancelledRequest:
     request: QueuedRequest
     cancel_id: str
     recipient_key: str
+    status_id: str
 
 
 CANCELLATIONS = "queue-cancellations"
@@ -210,14 +211,15 @@ def cancel_queued(root: Path, sender: str, entry: CancelledRequest) -> None:
     store.update_documents([QUEUE_FILE, CANCELLATIONS], mutate)
 
 
-def load_cancellations(root: Path, sender: str) -> list[CancelledRequest]:
+def load_cancellations(root: Path, sender: str | None = None) -> list[CancelledRequest]:
     from jailbee.orchestration.store import open_state_store
 
     raw = open_state_store(root).kv_get(CANCELLATIONS)
     if not isinstance(raw, dict):
         return []
-    return [CancelledRequest(QueuedRequest(**v["request"]), v["cancel_id"], v["recipient_key"])
-            for v in raw.get(sender, [])]
+    groups = [raw.get(sender, [])] if sender is not None else raw.values()
+    return [CancelledRequest(QueuedRequest(**v["request"]), v["cancel_id"], v["recipient_key"], v["status_id"])
+            for entries in groups for v in entries]
 
 
 def finish_cancellation(root: Path, sender: str, cancel_id: str) -> None:
