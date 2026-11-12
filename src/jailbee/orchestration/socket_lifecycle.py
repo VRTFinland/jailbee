@@ -29,9 +29,9 @@ def ensure_env(ctx: ActionContext, memory: broker_state.BrokerMemory) -> None:
 
     Fork children copy an ensured orchestrator; new children use the current
     golden image.
-    A vanished name is forgotten so a recreated older image is ensured again.
+    Cache by instance identity so a recreated container is ensured again.
     """
-    full = ctx.sender.full
+    full, key = ctx.sender.full, ctx.sender.key
     from jailbee.container_locks import locked as container_locked
 
     try:
@@ -43,22 +43,22 @@ def ensure_env(ctx: ActionContext, memory: broker_state.BrokerMemory) -> None:
             if role == "plain":
                 # The labels went away: no orchestration inbox any more, but
                 # every container keeps its broker socket.
-                memory.env_ensured.discard(full)
-                memory.env_roles.pop(full, None)
+                memory.env_ensured.discard(key)
+                memory.env_roles.pop(key, None)
                 _ensure_socket(ctx, memory)
                 return
-            if full in memory.env_ensured and memory.env_roles.get(full) == role:
+            if key in memory.env_ensured and memory.env_roles.get(key) == role:
                 _ensure_socket(ctx, memory)
                 return
             ensure_orchestration_env(ctx.incus, full, uid=ctx.cfg.container_user.uid)
             if role == "child":
                 labels.write_child_role(ctx.incus, full, uid=ctx.cfg.container_user.uid)
-            memory.env_ensured.add(full)
-            memory.env_roles[full] = role
+            memory.env_ensured.add(key)
+            memory.env_roles[key] = role
             _ensure_socket(ctx, memory)
     except (IncusError, OSError) as exc:
-        memory.env_ensured.discard(full)
-        memory.env_roles.pop(full, None)
+        memory.env_ensured.discard(key)
+        memory.env_roles.pop(key, None)
         memory.warn_once(
             f"env:{full}",
             "broker: %s: could not prepare the orchestration inbox: %s",

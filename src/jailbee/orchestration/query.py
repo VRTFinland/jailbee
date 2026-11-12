@@ -233,7 +233,7 @@ def publish_context(memory: broker_state.BrokerMemory, ctx: ActionContext) -> No
             log.exception("broker: publishing query view for %s failed", ctx.sender.key)
 
 
-def _fallback_role(memory: broker_state.BrokerMemory, uuid: str, full: str | None) -> str:
+def _fallback_role(memory: broker_state.BrokerMemory, uuid: str) -> str:
     """The role of a container without a context this round, failing closed.
 
     Its labels in the round's listing decide: a child (or one the broker last
@@ -243,7 +243,7 @@ def _fallback_role(memory: broker_state.BrokerMemory, uuid: str, full: str | Non
     ``none``, which may read its outbox but not change it.
     """
     listed = memory.listed_roles.get(uuid)
-    if listed == "child" or (full is not None and memory.env_roles.get(full) == "child"):
+    if listed == "child" or memory.env_roles.get(uuid) == "child":
         return "child"
     return "plain" if listed == "plain" else "none"
 
@@ -259,14 +259,14 @@ def publish_queries(memory: broker_state.BrokerMemory) -> None:
     empty_children = json.dumps({"children": [], "observed_at": None, "last_from_child": {}})
     try:
         snapshot = {
-            uuid: ContainerSnapshot(_fallback_role(memory, uuid, full), True, empty_children, None)
-            for full, uuid in memory.store.recipients().items()
+            uuid: ContainerSnapshot(_fallback_role(memory, uuid), True, empty_children, None)
+            for uuid in memory.store.recipients().values()
         }
     except Exception:
         log.exception("broker: publishing query recipients failed")
         snapshot = {
             uuid: ContainerSnapshot(
-                "none" if view.role == "none" else _fallback_role(memory, uuid, None),
+                "none" if view.role == "none" else _fallback_role(memory, uuid),
                 view.ready,
                 empty_children,
                 None,
