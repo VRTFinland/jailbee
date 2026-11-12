@@ -87,6 +87,8 @@ def _issue_action(index: int, action: issues.IssueAction) -> ActionView:
                 "assignees",
                 False,
             )
+        elif isinstance(action, issues.ProjectAddAction):
+            body, kind, markdown = f"project {action.project} · #{target} · add", action.kind, False
         elif isinstance(action, issues.StateAction):
             body = action.state + (f" ({action.reason})" if action.reason else "")
             kind, markdown = "state", False

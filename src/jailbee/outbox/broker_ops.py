@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from jailbee.issue_manifest import (
@@ -139,7 +139,40 @@ def pr_body_refs(text: str) -> set[str]:
         raise bad_request(str(exc)) from exc
 
 
-def handle_put(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now: float) -> object:
+ProjectReader = Callable[[str, str, int], bool]
+
+
+def capture_project(action: dict[str, Any], reader: ProjectReader | None, default_project: str | None) -> dict[str, Any]:
+    """Host-owned expectations; the container's supplied membership is never trusted."""
+    from jailbee.issue_github import IssueGithubReadError
+    from jailbee.issue_manifest import valid_project
+
+    if action.get("type") != "project_add":
+        return action
+    project = action.get("project", default_project)
+    if not isinstance(project, str) or not valid_project(project):
+        raise bad_request("project is required (owner/positive-number); supply --project")
+    result = {**action, "project": project}
+    if "issue_ref" in action:
+        result["expected"] = {"present": False}
+    else:
+        number, repo = action.get("issue"), action.get("repo")
+        if type(number) is not int or number <= 0 or not isinstance(repo, str):
+            raise bad_request("project action requires a positive issue number and repo")
+        if reader is None:
+            raise wire.WireError(wire.REFUSED, "host Projects reader is unavailable; retry shortly")
+        try:
+            present = reader(project, repo, number)
+        except (IssueGithubReadError, ValueError) as exc:
+            raise wire.WireError(wire.REFUSED, str(exc)) from exc
+        if type(present) is not bool:
+            raise wire.WireError(wire.REFUSED, "host Projects reader returned invalid membership")
+        result["expected"] = {"present": present}
+    return result
+
+
+def handle_put(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now: float,
+               project_reader: ProjectReader | None = None, default_project: str | None = None) -> object:
     kind = kind_arg(args.get("kind"))
     slug = args.get("slug")
     if not isinstance(slug, str) or not _SLUG_RE.fullmatch(slug):
@@ -147,6 +180,15 @@ def handle_put(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now: f
     manifest = args.get("manifest")
     bodies = parse_bodies(args.get("bodies"))
     parse = parse_issue if kind == "issue" else parse_pr
+    if kind == "issue" and isinstance(manifest, dict) and isinstance(manifest.get("actions"), list):
+        # Validate the entire untrusted proposal and its caps before any host read.
+        provisional = {**manifest, "actions": [
+            {**a, "project": a.get("project", default_project), "expected": {"present": False}}
+            if isinstance(a, dict) and a.get("type") == "project_add" else a
+            for a in manifest["actions"]]}
+        parse_issue(f"{slug}.json", provisional, bodies)
+        manifest = {**manifest, "actions": [capture_project(a, project_reader, default_project)
+                    for a in provisional["actions"]]}
     parse(f"{slug}.json", manifest, bodies)
 
     def build(stem: str) -> tuple[str, dict[str, str]]:
@@ -258,14 +300,15 @@ def handle_drop(store: OutboxStore, uuid: str, args: Mapping[str, Any]) -> objec
 
 
 def handle(
-    store: OutboxStore, uuid: str, op: str, args: Mapping[str, Any], *, now: float
+    store: OutboxStore, uuid: str, op: str, args: Mapping[str, Any], *, now: float,
+    project_reader: ProjectReader | None = None, default_project: str | None = None
 ) -> object:
     if op in wire.OUTBOX_DRAFT_OPS:
         from jailbee.outbox import draft_ops
 
-        return draft_ops.handle(store, uuid, op, args, now=now)
+        return draft_ops.handle(store, uuid, op, args, now=now, project_reader=project_reader, default_project=default_project)
     if op == wire.OUTBOX_PUT:
-        return handle_put(store, uuid, args, now=now)
+        return handle_put(store, uuid, args, now=now, project_reader=project_reader, default_project=default_project)
     if op == wire.OUTBOX_LIST:
         return handle_list(store, uuid, args)
     if op == wire.OUTBOX_SHOW:

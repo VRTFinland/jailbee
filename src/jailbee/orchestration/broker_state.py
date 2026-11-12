@@ -50,6 +50,8 @@ class BrokerMemory:
     # volatile.uuid -> the role its labels gave in the round's listing
     # (`listed_roles`); the fail-closed source for containers without a context.
     listed_roles: dict[str, str] = field(default_factory=dict)
+    # Host configurations for currently listed plain containers, captured per round.
+    project_configs: dict[str, Config] = field(default_factory=dict)
     # Keys of warnings already logged, so a standing problem is logged once.
     warned: set[str] = field(default_factory=set)
     # Host spool sequence: orders the items emitted within one second.

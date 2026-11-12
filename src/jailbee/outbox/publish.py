@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from jailbee import issue_outbox, pr, pr_outbox, prompting
 from jailbee.incus import IncusError
+from jailbee.issue_manifest import ProjectAddAction
 from jailbee.orchestration.store import StoreError
 from jailbee.outbox import sent
 from jailbee.outbox.inspect import build_views, safe_text
@@ -187,6 +188,9 @@ def issue_plan_json(
                     "target": target,
                     "will": will,
                     "will_draft": None,
+                    **({"project": action.project, "project_title": resolved.project.title if resolved.project else None,
+                        "operation": "add", "expected": {"present": action.expected_present}}
+                       if isinstance(action, ProjectAddAction) else {}),
                 }
             )
     return {

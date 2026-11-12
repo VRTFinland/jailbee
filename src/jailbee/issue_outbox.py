@@ -12,7 +12,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, assert_never
 
-from jailbee import git, issue_github, submodules
+from jailbee import git, issue_github, issue_projects, submodules
 from jailbee.github_repo import github_slug, resolve_submodule_url
 from jailbee.incus import Incus, IncusError
 from jailbee.issue_github import (
@@ -35,6 +35,7 @@ from jailbee.issue_manifest import (
     IssueManifest,
     IssueManifestError,
     LabelsAction,
+    ProjectAddAction,
     StateAction,
     foreign_slug,
     mutation_keys,
@@ -177,6 +178,8 @@ class ResolvedAction:
     issue: ResolvedIssue
     status: Literal["pending", "applied", "uncertain"]
     labels: tuple[str, ...] | None = None
+    project: issue_projects.Project | None = None
+    project_target: issue_projects.ProjectTarget | None = None
 
 
 @dataclass(frozen=True)
@@ -527,7 +530,7 @@ def prepare_batch(
                 elif issue.ref is not None:
                     snapshot = created.get(issue.ref)
                 if snapshot is not None:
-                    if snapshot.is_pull_request:
+                    if snapshot.is_pull_request and not isinstance(action, ProjectAddAction):
                         refusals.append(f"{context}: target is a pull request, not an issue")
                     refusals.extend(_differences(action, snapshot, context, login))
 
@@ -582,7 +585,20 @@ def prepare_batch(
                             f"{context}: conflict on {field} with {mutations[mutation_key]}"
                         )
                     mutations[mutation_key] = context
-            actions.append(ResolvedAction(index, action, repo, issue, status, labels))
+            project = project_target = None
+            if isinstance(action, ProjectAddAction) and status == "pending":
+                try:
+                    project = issue_projects.resolve_project(cfg.repo_root, action.project)
+                    if status == "pending":
+                        project_target = (issue_projects.get_target(cfg.repo_root, project, repo.slug, issue.number)
+                                          if issue.number is not None else None)
+                        present = project_target.present if project_target else False
+                        if present != action.expected_present:
+                            refusals.append(f"{context}: project membership changed since staging")
+                except IssueGithubReadError as exc:
+                    execution_errors.append(exc)
+                    refusals.append(f"{context}: {exc}")
+            actions.append(ResolvedAction(index, action, repo, issue, status, labels, project, project_target))
         prepared.append(PreparedManifest(manifest, digest, journal, tuple(actions)))
     if execution_errors:
         raise IssueExecutionError("\n".join(refusals)) from execution_errors[0]
@@ -608,6 +624,17 @@ def revalidate_batch(batch: PreparedBatch) -> None:
     refusals = []
     for manifest in batch.manifests:
         for resolved in manifest.actions:
+            if isinstance(resolved.action, ProjectAddAction) and resolved.status == "pending":
+                if resolved.issue.number is not None:
+                    assert resolved.project is not None
+                    try:
+                        target = issue_projects.get_target(batch.host_repo_root, resolved.project, resolved.repo.slug, resolved.issue.number)
+                        if target.present != resolved.action.expected_present:
+                            refusals.append(f"{manifest.manifest.name} action {resolved.index}: project membership changed since staging")
+                    except IssueGithubReadError as exc:
+                        execution_errors.append(exc)
+                        refusals.append(str(exc))
+                continue
             if (
                 resolved.status != "pending"
                 or resolved.issue.number is None
@@ -659,20 +686,9 @@ def _action_lines(
     labels: tuple[str, ...] | None,
     container: str,
     login: str = "",
+    project: issue_projects.Project | None = None,
 ) -> list[str]:
-    kind = (
-        "create"
-        if isinstance(action, CreateAction)
-        else "edit"
-        if isinstance(action, EditAction)
-        else "comment"
-        if isinstance(action, CommentAction)
-        else "labels"
-        if isinstance(action, LabelsAction)
-        else "assignees"
-        if isinstance(action, AssigneesAction)
-        else "state"
-    )
+    kind = action.kind
     target = f"#{issue.number}" if issue.number is not None else f"ref {issue.ref}"
     status = _status(receipt)
     display = "applied; skip" if status == "applied" else status
@@ -719,6 +735,10 @@ def _action_lines(
             lines.append(f"  labels after: {', '.join(labels) or '[empty]'}")
     elif isinstance(action, AssigneesAction):
         lines.append(f"  {_assignee_changes(action, login)}")
+    elif isinstance(action, ProjectAddAction):
+        title = f' "{project.title}"' if project else ""
+        lines.append(f"  project {action.project}{title} · {target} · add")
+        lines.append(f"  membership before: {'present' if action.expected_present else 'absent'}")
     elif isinstance(action, StateAction):
         lines.append(f"  state: {action.expected_state} -> {action.state}")
         if action.reason is not None:
@@ -798,6 +818,7 @@ def plan_lines(batch: PreparedBatch) -> list[str]:
                     resolved.labels,
                     batch.container,
                     batch.login,
+                    resolved.project,
                 )
             )
     return lines
@@ -909,6 +930,8 @@ Resolution = AppliedResolution | RetryResolution
 _SAFE_DEFINITE_DETAILS = frozenset(
     {
         "GitHub mutation was rejected",
+        "GitHub Projects requires host authorization: gh auth refresh -s project",
+        "project membership changed since staging",
         ASSIGN_NOT_APPLIED_DETAIL,
         UNASSIGN_NOT_APPLIED_DETAIL,
         "GitHub mutation could not start because 'gh' is unavailable",
@@ -1009,6 +1032,15 @@ def _execute_one(
                 )
         assert last is not None, "a parsed assignees action changes at least one login"
         return last
+    if isinstance(action, ProjectAddAction):
+        try:
+            project = resolved.project or issue_projects.resolve_project(host_repo_root, action.project)
+            target = issue_projects.get_target(host_repo_root, project, repo, number)
+        except IssueGithubReadError as exc:
+            raise IssueGithubMutationError(str(exc), uncertain=False) from exc
+        if target.present != action.expected_present:
+            raise IssueGithubMutationError("project membership changed since staging", uncertain=False)
+        return issue_projects.add_item(host_repo_root, project, target, number)
     if isinstance(action, StateAction):
         return issue_github.set_state(
             host_repo_root, repo, number, state=action.state, reason=action.reason
@@ -1051,6 +1083,10 @@ def _sent_action(
     elif isinstance(action, AssigneesAction):
         kind = "assignees"
         content = _assignee_changes(action, login)
+    elif isinstance(action, ProjectAddAction):
+        kind = action.kind
+        title = resolved.project.title if resolved.project else None
+        content = f'project {action.project} "{title or ""}" · add; membership {action.expected_present} -> True'
     elif isinstance(action, StateAction):
         kind = "state"
         content = f"state {action.state}" + (f" ({action.reason})" if action.reason else "")
@@ -1385,7 +1421,7 @@ _RECEIPT_URL_RE = re.compile(
 )
 
 
-def _validated_receipt(url: str, repo: RepoTarget) -> int:
+def _validated_receipt(url: str, repo: RepoTarget, *, project: bool = False) -> int:
     """Parse and validate a GitHub issue receipt URL; return its issue number.
 
     Deliberately strict: exactly `https://github.com/<owner>/<repo>/issues/<n>`,
@@ -1393,7 +1429,8 @@ def _validated_receipt(url: str, repo: RepoTarget) -> int:
     `repo` case-insensitively. No query string, no `pull`, no credentials in
     the authority, no host lookalike, no trailing garbage.
     """
-    match = _RECEIPT_URL_RE.fullmatch(url)
+    pattern = re.compile(_RECEIPT_URL_RE.pattern.replace("/issues/", "/(?:issues|pull)/")) if project else _RECEIPT_URL_RE
+    match = pattern.fullmatch(url)
     if match is None:
         raise JournalError(f"not a GitHub issue URL: {url!r}")
     slug = f"{match['owner']}/{match['repo']}"
@@ -1473,7 +1510,7 @@ def reconcile_action(
             return False
 
         action = manifest.actions[index]
-        url_number = _validated_receipt(resolution.url, repo)
+        url_number = _validated_receipt(resolution.url, repo, project=isinstance(action, ProjectAddAction))
         if isinstance(action, CreateAction):
             if type(resolution.issue) is not int:
                 raise JournalError("a create's resolution requires its GitHub issue number")

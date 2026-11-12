@@ -329,6 +329,27 @@ def labels(
     _run(run)
 
 
+@issue_app.command("project")
+def project(
+    issue: IssueArg = None,
+    project: Annotated[str | None, typer.Option(help="Project owner/number (host default if omitted).")] = None,
+    add: Annotated[bool, typer.Option("--add", help="Add the issue or pull request to the project.")] = False,
+    repo: RepoOpt = ".",
+    batch: BatchOpt = None,
+) -> None:
+    """Stage a project membership change; the host captures the expectation."""
+    def run() -> None:
+        require_role()
+        target = _parse_target(issue)
+        if not add:
+            raise OutboxCommandError("--add is required", 2)
+        action: dict[str, object] = {"type": "project_add", "repo": repo, **_target(target)}
+        if project is not None:
+            action["project"] = project
+        _stage(action, batch)
+    _run(run)
+
+
 @issue_app.command("assign")
 def assign(
     issue: IssueArg = None,

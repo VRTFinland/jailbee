@@ -15,6 +15,7 @@ from jailbee.orchestration.outbox import grant_json_text
 from jailbee.orchestration.store import StoreError
 
 if TYPE_CHECKING:
+    from jailbee.config import Config
     from jailbee.orchestration import broker_state
     from jailbee.orchestration.actions import ActionContext
     from jailbee.orchestration.store import BrokerStore
@@ -37,6 +38,7 @@ class ContainerSnapshot:
     ready: bool
     children_json: str
     grant_json: str | None
+    project_config: Config | None = None
 
 
 class Queries:
@@ -161,7 +163,21 @@ class Queries:
             from jailbee.outbox.publication_db import PublicationStore
 
             return broker_ops.handle_sent(PublicationStore(self._store), uuid, args)
-        return broker_ops.handle(OutboxStore(self._store), uuid, op, args, now=time.time())
+        cfg = view.project_config
+        reader = None
+        if cfg is not None:
+            from jailbee import issue_outbox, issue_projects
+
+            def reader(board: str, repo: str, number: int) -> bool:
+                targets = issue_outbox.resolve_repo_targets(cfg)
+                target = issue_outbox.target_for(targets, repo, cfg.repo_root)
+                if target is None:
+                    raise ValueError(f"repo {repo!r} is not host-authorized")
+                project = issue_projects.resolve_project(cfg.repo_root, board)
+                return issue_projects.get_target(cfg.repo_root, project, target.slug, number).present
+
+        return broker_ops.handle(OutboxStore(self._store), uuid, op, args, now=time.time(),
+                                 project_reader=reader, default_project=getattr(cfg.github, "project", None) if cfg else None)
 
     def put_refusal(self, uuid: str) -> wire.Response | None:
         """The answer an ``outbox.put`` from ``uuid`` gets for its role, if refused.
@@ -221,6 +237,7 @@ def _context_snapshot(memory: broker_state.BrokerMemory, ctx: ActionContext) -> 
         ready=ready,
         children_json=json.dumps(children),
         grant_json=grant_json_text(grant, *ctx.default_runner()) if grant is not None else None,
+        project_config=ctx.cfg,
     )
 
 
@@ -259,7 +276,8 @@ def publish_queries(memory: broker_state.BrokerMemory) -> None:
     empty_children = json.dumps({"children": [], "observed_at": None, "last_from_child": {}})
     try:
         snapshot = {
-            uuid: ContainerSnapshot(_fallback_role(memory, uuid), True, empty_children, None)
+            uuid: ContainerSnapshot(_fallback_role(memory, uuid), True, empty_children, None,
+                                    memory.project_configs.get(uuid))
             for uuid in memory.store.recipients().values()
         }
     except Exception:

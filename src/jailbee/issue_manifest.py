@@ -97,9 +97,25 @@ class StateAction:
     expected_state: Literal["open", "closed"]
 
 
+@dataclass(frozen=True)
+class ProjectAddAction:
+    kind: ClassVar[Literal["project_add"]] = "project_add"
+    repo: str
+    target: IssueTarget
+    project: str
+    expected_present: bool
+
+
 IssueAction = (
     CreateAction | EditAction | CommentAction | LabelsAction | AssigneesAction | StateAction
+    | ProjectAddAction
 )
+
+
+def valid_project(value: str) -> bool:
+    """A Projects v2 board identifier, not a URL or repository slug."""
+    owner, sep, number = value.partition("/")
+    return bool(sep and LOGIN_RE.fullmatch(owner) and re.fullmatch(r"[1-9][0-9]*", number))
 
 
 def mutation_keys(action: IssueAction) -> set[str]:
@@ -110,6 +126,8 @@ def mutation_keys(action: IssueAction) -> set[str]:
         )
     if isinstance(action, (LabelsAction, AssigneesAction, StateAction)):
         return {action.kind}
+    if isinstance(action, ProjectAddAction):
+        return {f"project:{action.project.casefold()}:membership"}
     if isinstance(action, (CreateAction, CommentAction)):
         return set()
     assert_never(action)
@@ -580,9 +598,21 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             action = _parse_assignees_action(item, refs, changed, context)
         elif action_type == "state":
             action = _parse_state_action(item, refs, changed, context)
+        elif action_type == "project_add":
+            _reject_unknown(item, {"type", "repo", "issue", "issue_ref", "project", "expected"}, context)
+            repo = _repo(item, context)
+            project = _required_string(item, "project", context)
+            if not valid_project(project):
+                raise IssueManifestError(f"{context}: project must be owner/positive-number")
+            expected = _expected(item, context)
+            _reject_unknown(expected, {"present"}, f"{context} expected")
+            present = expected.get("present")
+            if type(present) is not bool:
+                raise IssueManifestError(f"{context}: expected.present must be a boolean")
+            action = ProjectAddAction(repo, _target(item, repo, refs, context), project, present)
         else:
             raise IssueManifestError(
-                f"{context}: type must be one of create, edit, comment, labels, assignees, or state"
+                f"{context}: type must be one of create, edit, comment, labels, assignees, state, or project_add"
             )
         if not isinstance(action, CreateAction):
             _record_mutations(changed, action.repo, action.target, mutation_keys(action), context)

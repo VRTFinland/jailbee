@@ -30,6 +30,16 @@ def submit(name):
     return result
 
 
+def test_project_add_stages_without_container_github_reads(monkeypatch):
+    from jailbee.container_outbox import broker
+    staged = []
+    monkeypatch.setattr(gh, "issue_view", lambda *a: pytest.fail("container read"))
+    monkeypatch.setattr(broker, "put", lambda *args: staged.append(args) or "001-project-add.json")
+    result = invoke("project", "7", "--project", "acme/3", "--add")
+    assert result.exit_code == 0, result.output
+    assert staged[0][2] == {"version": 1, "actions": [{"type": "project_add", "repo": ".", "issue": 7, "project": "acme/3"}]}
+
+
 def test_create_json_outputs_only_manifest_name(tmp_path, broker):
     result = invoke("create", "--title", "Bug", "--body", "body", "--json")
     assert result.exit_code == 0, result.output

@@ -64,6 +64,7 @@ UNASSIGN_NOT_APPLIED_DETAIL = "GitHub did not unassign every requested assignee"
 _SAFE_UNCERTAIN_DETAILS = frozenset(
     {
         _DEFAULT_UNCERTAIN_DETAIL,
+        "GitHub Projects requires host authorization: gh auth refresh -s project",
         ASSIGN_NOT_APPLIED_DETAIL,
         UNASSIGN_NOT_APPLIED_DETAIL,
         "GitHub mutation was interrupted after dispatch",

@@ -55,6 +55,31 @@ def stored_actions(env: Env, name: str = "b") -> list[dict[str, Any]]:
     return json.loads(found.manifest)["actions"]
 
 
+def test_project_draft_derives_ref_membership_without_reader(env: Env) -> None:
+    assert append(env, create()).ok
+    assert append(env, on_ref("project_add", project="acme/3", expected={"present": True})).ok
+    assert stored_actions(env)[1]["expected"] == {"present": False}
+
+
+def test_project_reader_failure_leaves_draft_and_put_unchanged(env: Env, monkeypatch) -> None:
+    from jailbee import issue_outbox, issue_projects
+    from jailbee.issue_github import IssueGithubReadError
+    monkeypatch.setattr(issue_outbox, "resolve_repo_targets", lambda cfg: {
+        ".": issue_outbox.RepoTarget(".", cfg.repo_root, "acme/app")})
+    def fail(*args):
+        raise IssueGithubReadError("host project read failed")
+    monkeypatch.setattr(issue_projects, "resolve_project", fail)
+    action = {"type": "project_add", "repo": ".", "issue": 7, "project": "acme/3"}
+    assert append(env, {**action, "unknown": True}).error_code == wire.BAD_REQUEST
+    assert append(env, create()).ok
+    before = draft(env)
+    response = append(env, action)
+    assert response.error_code == wire.REFUSED
+    assert draft(env) == before
+    assert not put(env, manifest={"version": 1, "actions": [action]}).ok
+    assert store_db.read_proposals(env.rig.root, PLAIN, "issue") == []
+
+
 def test_append_builds_a_draft_and_submit_publishes_one_proposal(env: Env) -> None:
     assert append(env, create(), bodies={}).ok
     assert append(env, {"type": "comment", "repo": ".", "issue_ref": "bug", "body": "hi"}).ok

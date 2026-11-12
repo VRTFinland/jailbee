@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -233,6 +234,25 @@ def _state():
         "reason": "completed",
         "expected": {"state": "open"},
     }
+
+
+def test_project_add_prepare_allows_pr_and_revalidates_membership(preflight, mocker):
+    from dataclasses import replace
+    from jailbee import issue_outbox, issue_projects
+    preflight["fetch"].return_value = replace(preflight["snapshot"], is_pull_request=True)
+    mocker.patch.object(issue_projects, "resolve_project", return_value=issue_projects.Project("acme/3", "P3", "Roadmap"))
+    read = mocker.patch.object(issue_projects, "get_target", return_value=issue_projects.ProjectTarget("I7", "https://github.com/acme/app/pull/7", None))
+    batch = preflight["prepare"]({"001-board.json": [{"type": "project_add", "repo": ".", "issue": 7, "project": "acme/3", "expected": {"present": False}}]})
+    assert any('project acme/3 "Roadmap"' in line for line in issue_outbox.plan_lines(batch))
+    from jailbee.outbox.publish import issue_plan_json
+    plan = issue_plan_json(batch, proposal="issue/001-board.json", revision="r1")
+    assert plan["actions"][0]["project_title"] == "Roadmap"
+    assert plan["actions"][0]["expected"] == {"present": False}
+    read.return_value = issue_projects.ProjectTarget("I7", "https://github.com/acme/app/pull/7", "ITEM")
+    with pytest.raises(issue_outbox.IssueStaleError, match="membership"):
+        issue_outbox.revalidate_batch(batch)
+    with pytest.raises(issue_outbox.IssueGateError, match="membership"):
+        preflight["prepare"]({"001-board.json": [{"type": "project_add", "repo": ".", "issue": 7, "project": "acme/3", "expected": {"present": False}}]})
 
 
 @pytest.fixture
@@ -1642,6 +1662,47 @@ def _sent_rows():
     from jailbee.outbox import sent
 
     return sorted(sent.list_records(), key=lambda r: (r.manifest, r.index))
+
+
+@pytest.mark.parametrize("present", [False, True])
+def test_project_apply_and_noop_keep_board_title_and_durable_item(execution, mocker, present):
+    from dataclasses import replace
+    from jailbee import issue_projects
+    board = issue_projects.Project("acme/3", "P3", "Roadmap")
+    mocker.patch.object(issue_projects, "resolve_project", return_value=board)
+    mocker.patch.object(issue_projects, "get_target", return_value=issue_projects.ProjectTarget("I7", "https://github.com/acme/app/pull/7", "ITEM7" if present else None))
+    run = mocker.patch("jailbee.issue_projects.subprocess.run", return_value=subprocess.CompletedProcess([], 0, '{"data":{"addProjectV2ItemById":{"item":{"id":"ITEM7"}}}}', ""))
+    batch = execution["batch"]({"a.json": [{"type": "project_add", "repo": ".", "issue": 7, "project": "acme/3", "expected": {"present": present}}]})
+    prepared = batch.manifests[0]
+    batch = replace(batch, manifests=(replace(prepared, actions=(replace(prepared.actions[0], project=board),)),))
+    report = _apply(execution, batch)
+    assert report.failure is None
+    assert report.applied[0][1].url == "https://github.com/acme/app/pull/7#project-item-ITEM7"
+    assert run.call_count == (0 if present else 1)
+    (row,) = _sent_rows()
+    assert row.kind == "project_add"
+    assert row.title == "Roadmap"
+    assert "acme/3" in row.content and "add" in row.content
+    assert row.url.endswith("#project-item-ITEM7")
+
+
+def test_project_uncertain_resolves_pull_receipt_and_retry(execution, mocker):
+    from jailbee import issue_outbox, issue_projects
+    from jailbee.issue_github import IssueGithubMutationError
+    mocker.patch.object(issue_projects, "resolve_project", return_value=issue_projects.Project("acme/3", "P3", "Roadmap"))
+    mocker.patch.object(issue_projects, "get_target", return_value=issue_projects.ProjectTarget("I7", "https://github.com/acme/app/pull/7", None))
+    mutation = mocker.patch.object(issue_projects, "add_item", side_effect=IssueGithubMutationError("GitHub Projects transport failed", uncertain=True))
+    actions = [{"type": "project_add", "repo": ".", "issue": 7, "project": "acme/3", "expected": {"present": False}}]
+    batch = execution["batch"]({"a.json": actions})
+    assert _apply(execution, batch).failure.uncertain
+    prepared = batch.manifests[0]
+    args = dict(uuid=batch.uuid, index=0, repo=prepared.actions[0].repo, manifest=prepared.manifest, digest=prepared.digest)
+    assert not issue_outbox.reconcile_action(**args, resolution=issue_outbox.RetryResolution())
+    assert _apply(execution, execution["batch"]({"a.json": actions})).failure.uncertain
+    assert mutation.call_count == 2
+    assert issue_outbox.reconcile_action(**args, resolution=issue_outbox.AppliedResolution("https://github.com/acme/app/pull/7#project-item-ITEM7", None))
+    (row,) = _sent_rows()
+    assert row.state == "applied" and row.url.endswith("#project-item-ITEM7")
 
 
 def test_apply_records_every_issue_action_in_sent_log(execution):
