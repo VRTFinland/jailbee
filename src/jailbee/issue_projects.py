@@ -6,9 +6,9 @@ import json
 import math
 import re
 import subprocess
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -215,27 +215,48 @@ def add_item(root: Path, project: Project, target: ProjectTarget, number: int) -
 def list_fields(root: Path, project: Project) -> tuple[ProjectField, ...]:
     """Read every board field, including unsupported types for actionable errors."""
     result = []
-    for node in _pages(root, project.id, "ProjectV2", "fields",
+    for node in _pages(
+        root,
+        project.id,
+        "ProjectV2",
+        "fields",
         "... on ProjectV2Field{id name dataType} "
         "... on ProjectV2SingleSelectField{id name dataType options{id name}} "
-        "... on ProjectV2IterationField{id name dataType}"):
+        "... on ProjectV2IterationField{id name dataType}",
+    ):
         options = node.get("options", [])
         if not isinstance(options, list):
             raise IssueGithubReadError("GitHub Projects returned invalid field options")
-        result.append(ProjectField(_string(node.get("id")), _string(node.get("name")),
-            _string(node.get("dataType")), tuple((_string(_object(o).get("name")),
-            _string(_object(o).get("id"))) for o in options)))
+        result.append(
+            ProjectField(
+                _string(node.get("id")),
+                _string(node.get("name")),
+                _string(node.get("dataType")),
+                tuple(
+                    (_string(_object(o).get("name")), _string(_object(o).get("id")))
+                    for o in options
+                ),
+            )
+        )
     return tuple(result)
 
 
-def _pages(root: Path, id: str, node_type: str, connection: str, selection: str) -> list[dict[str, Any]]:
+def _pages(
+    root: Path, id: str, node_type: str, connection: str, selection: str
+) -> list[dict[str, Any]]:
     cursor = None
     seen: set[str] = set()
     result: list[dict[str, Any]] = []
     while True:
-        query = ("query($id:ID!,$cursor:String){node(id:$id){... on " + node_type + "{" +
-                 connection + "(first:100,after:$cursor){nodes{" + selection +
-                 "} pageInfo{hasNextPage endCursor}}}}}")
+        query = (
+            "query($id:ID!,$cursor:String){node(id:$id){... on "
+            + node_type
+            + "{"
+            + connection
+            + "(first:100,after:$cursor){nodes{"
+            + selection
+            + "} pageInfo{hasNextPage endCursor}}}}}"
+        )
         data = _graphql(root, query, {"id": id, "cursor": cursor})
         page_data = _object(_object(data.get("node")).get(connection))
         nodes = page_data.get("nodes")
@@ -255,16 +276,23 @@ def resolve_field(fields: tuple[ProjectField, ...], name: str, value: object) ->
     """Resolve a name and scalar before publishing; invalid names list choices."""
     matches = [field for field in fields if field.name.casefold() == name.casefold()]
     if len(matches) != 1:
-        raise ValueError(f"unknown or ambiguous project field {name!r}; valid fields: "
-                         + ", ".join(field.name for field in fields))
+        raise ValueError(
+            f"unknown or ambiguous project field {name!r}; valid fields: "
+            + ", ".join(field.name for field in fields)
+        )
     field = matches[0]
     kind = field.data_type
     if kind == "SINGLE_SELECT":
-        options = [(label, id) for label, id in field.options
-                   if isinstance(value, str) and label.casefold() == value.casefold()]
+        options = [
+            (label, id)
+            for label, id in field.options
+            if isinstance(value, str) and label.casefold() == value.casefold()
+        ]
         if len(options) != 1:
-            raise ValueError(f"unknown option {value!r} for {field.name}; valid options: "
-                             + ", ".join(label for label, _ in field.options))
+            raise ValueError(
+                f"unknown option {value!r} for {field.name}; valid options: "
+                + ", ".join(label for label, _ in field.options)
+            )
         label, id = options[0]
         return ResolvedField(field, label, {"singleSelectOptionId": id})
     if kind == "TEXT":
@@ -297,15 +325,22 @@ def get_field_value(root: Path, target: ProjectTarget, field: ProjectField) -> P
     if not target.present:
         return None
     assert target.item_id is not None
-    nodes = _pages(root, target.item_id, "ProjectV2Item", "fieldValues",
+    nodes = _pages(
+        root,
+        target.item_id,
+        "ProjectV2Item",
+        "fieldValues",
         "... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2FieldCommon{id}}} "
         "... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2FieldCommon{id}}} "
         "... on ProjectV2ItemFieldDateValue{date field{... on ProjectV2FieldCommon{id}}} "
-        "... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2FieldCommon{id}}}")
+        "... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2FieldCommon{id}}}",
+    )
     for item in nodes:
         if not item or _object(item.get("field")).get("id") != field.id:
             continue
-        key = {"TEXT": "text", "NUMBER": "number", "DATE": "date", "SINGLE_SELECT": "name"}.get(field.data_type)
+        key = {"TEXT": "text", "NUMBER": "number", "DATE": "date", "SINGLE_SELECT": "name"}.get(
+            field.data_type
+        )
         if key is None or key not in item:
             raise IssueGithubReadError("GitHub Projects returned an invalid field value")
         value = item[key]
@@ -318,23 +353,37 @@ def get_field_value(root: Path, target: ProjectTarget, field: ProjectField) -> P
     return None
 
 
-def set_field(root: Path, project: Project, target: ProjectTarget, number: int,
-              resolved: ResolvedField) -> ProjectReceipt:
+def set_field(
+    root: Path, project: Project, target: ProjectTarget, number: int, resolved: ResolvedField
+) -> ProjectReceipt:
     """Implicit add plus field update is uncertain if only the add succeeded."""
     added = not target.present
     receipt = add_item(root, project, target, number)
     try:
-        data = _graphql(root,
+        data = _graphql(
+            root,
             "mutation($project:ID!,$item:ID!,$field:ID!,$value:ProjectV2FieldValue!){"
             "updateProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,"
             "fieldId:$field,value:$value}){projectV2Item{id}}}",
-            {"project": project.id, "item": receipt.item_id, "field": resolved.field.id,
-             "value": resolved.payload}, mutation=True)
-        returned_id = _object(_object(data.get("updateProjectV2ItemFieldValue")).get("projectV2Item")).get("id")
+            {
+                "project": project.id,
+                "item": receipt.item_id,
+                "field": resolved.field.id,
+                "value": resolved.payload,
+            },
+            mutation=True,
+        )
+        returned_id = _object(
+            _object(data.get("updateProjectV2ItemFieldValue")).get("projectV2Item")
+        ).get("id")
         if returned_id != receipt.item_id:
-            raise IssueGithubMutationError("GitHub Projects returned an unusable receipt", uncertain=True)
+            raise IssueGithubMutationError(
+                "GitHub Projects returned an unusable receipt", uncertain=True
+            )
     except IssueGithubReadError:
-        raise IssueGithubMutationError("GitHub Projects returned an unusable receipt", uncertain=True) from None
+        raise IssueGithubMutationError(
+            "GitHub Projects returned an unusable receipt", uncertain=True
+        ) from None
     except IssueGithubMutationError as exc:
         if added and not exc.uncertain:
             raise IssueGithubMutationError(str(exc), uncertain=True) from exc

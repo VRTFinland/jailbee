@@ -193,8 +193,24 @@ def issue_plan_json(
                             "project": action.project,
                             "project_title": resolved.project.title if resolved.project else None,
                             "operation": "set" if isinstance(action, ProjectSetAction) else "add",
-                            "expected": {"present": action.expected_present, **({"value": action.expected_value} if isinstance(action, ProjectSetAction) else {})},
-                            **({"field": action.field, "value": resolved.project_field.value if resolved.project_field else action.value} if isinstance(action, ProjectSetAction) else {}),
+                            "expected": {
+                                "present": action.expected_present,
+                                **(
+                                    {"value": action.expected_value}
+                                    if isinstance(action, ProjectSetAction)
+                                    else {}
+                                ),
+                            },
+                            **(
+                                {
+                                    "field": action.field,
+                                    "value": resolved.project_field.value
+                                    if resolved.project_field
+                                    else action.value,
+                                }
+                                if isinstance(action, ProjectSetAction)
+                                else {}
+                            ),
                         }
                         if isinstance(action, (ProjectAddAction, ProjectSetAction))
                         else {}

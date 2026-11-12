@@ -624,15 +624,21 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             action = _parse_state_action(item, refs, changed, context)
         elif action_type in ("project_add", "project_set"):
             _reject_unknown(
-                item, {"type", "repo", "issue", "issue_ref", "project", "expected"}
-                | ({"field", "value"} if action_type == "project_set" else set()), context
+                item,
+                {"type", "repo", "issue", "issue_ref", "project", "expected"}
+                | ({"field", "value"} if action_type == "project_set" else set()),
+                context,
             )
             repo = _repo(item, context)
             project = _required_string(item, "project", context)
             if not valid_project(project):
                 raise IssueManifestError(f"{context}: project must be owner/positive-number")
             expected = _expected(item, context)
-            _reject_unknown(expected, {"present", "value"} if action_type == "project_set" else {"present"}, f"{context} expected")
+            _reject_unknown(
+                expected,
+                {"present", "value"} if action_type == "project_set" else {"present"},
+                f"{context} expected",
+            )
             present = expected.get("present")
             if type(present) is not bool:
                 raise IssueManifestError(f"{context}: expected.present must be a boolean")
@@ -642,13 +648,26 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             else:
                 field = _required_string(item, "field", context)
                 value = item.get("value")
-                if isinstance(value, bool) or not isinstance(value, (str, int, float)) or (isinstance(value, float) and not math.isfinite(value)):
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, (str, int, float))
+                    or (isinstance(value, float) and not math.isfinite(value))
+                ):
                     raise IssueManifestError(f"{context}: value must be a finite scalar")
                 old = expected.get("value")
-                if "value" not in expected or isinstance(old, bool) or not isinstance(old, (str, int, float, type(None))) or (isinstance(old, float) and not math.isfinite(old)):
-                    raise IssueManifestError(f"{context}: expected.value must be a finite scalar or null")
+                if (
+                    "value" not in expected
+                    or isinstance(old, bool)
+                    or not isinstance(old, (str, int, float, type(None)))
+                    or (isinstance(old, float) and not math.isfinite(old))
+                ):
+                    raise IssueManifestError(
+                        f"{context}: expected.value must be a finite scalar or null"
+                    )
                 if not present and old is not None:
-                    raise IssueManifestError(f"{context}: absent membership requires expected.value null")
+                    raise IssueManifestError(
+                        f"{context}: absent membership requires expected.value null"
+                    )
                 action = ProjectSetAction(repo, target, project, field, value, present, old)
         else:
             raise IssueManifestError(

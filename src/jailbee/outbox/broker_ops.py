@@ -20,6 +20,7 @@ from jailbee.issue_manifest import (
     IssueManifestError,
     parse_manifest,
 )
+from jailbee.issue_projects import ProjectExpectation
 from jailbee.orchestration import wire
 from jailbee.outbox.store_db import (
     Kind,
@@ -139,8 +140,6 @@ def pr_body_refs(text: str) -> set[str]:
         raise bad_request(str(exc)) from exc
 
 
-from jailbee.issue_projects import ProjectExpectation
-
 ProjectReader = Callable[[str, str, int, str | None], ProjectExpectation]
 
 
@@ -171,7 +170,10 @@ def capture_project(
         raise bad_request("supply --project owner/number or configure github.project")
     result = {**action, "project": project}
     if "issue_ref" in action:
-        result["expected"] = {"present": False, **({"value": None} if action["type"] == "project_set" else {})}
+        result["expected"] = {
+            "present": False,
+            **({"value": None} if action["type"] == "project_set" else {}),
+        }
     else:
         number, repo = action.get("issue"), action.get("repo")
         if type(number) is not int or number <= 0 or not isinstance(repo, str):
@@ -184,7 +186,10 @@ def capture_project(
             raise wire.WireError(wire.REFUSED, str(exc)) from exc
         if not isinstance(snapshot, ProjectExpectation) or type(snapshot.present) is not bool:
             raise wire.WireError(wire.REFUSED, "host Projects reader returned invalid membership")
-        result["expected"] = {"present": snapshot.present, **({"value": snapshot.value} if action["type"] == "project_set" else {})}
+        result["expected"] = {
+            "present": snapshot.present,
+            **({"value": snapshot.value} if action["type"] == "project_set" else {}),
+        }
     return result
 
 

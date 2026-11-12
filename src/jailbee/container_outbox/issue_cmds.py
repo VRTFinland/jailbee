@@ -338,7 +338,9 @@ def project(
     add: Annotated[
         bool, typer.Option("--add", help="Add the issue or pull request to the project.")
     ] = False,
-    set_values: Annotated[list[str] | None, typer.Option("--set", help="Field=value; repeatable.")] = None,
+    set_values: Annotated[
+        list[str] | None, typer.Option("--set", help="Field=value; repeatable.")
+    ] = None,
     repo: RepoOpt = ".",
     batch: BatchOpt = None,
 ) -> None:
@@ -360,7 +362,15 @@ def project(
             if field.casefold() in seen:
                 raise OutboxCommandError(f"duplicate project field {field!r}", 2)
             seen.add(field.casefold())
-            actions.append({"type": "project_set", "repo": repo, **_target(target), "field": field, "value": text})
+            actions.append(
+                {
+                    "type": "project_set",
+                    "repo": repo,
+                    **_target(target),
+                    "field": field,
+                    "value": text,
+                }
+            )
         for action in actions:
             if project is not None:
                 action["project"] = project
@@ -368,7 +378,12 @@ def project(
             for action in actions:
                 _stage(action, batch)
         else:
-            name = broker.put("issue", "project-add" if add else "project-set", {"version": 1, "actions": actions}, {})
+            name = broker.put(
+                "issue",
+                "project-add" if add else "project-set",
+                {"version": 1, "actions": actions},
+                {},
+            )
             typer.echo(f"staged issue/{name}")
 
     _run(run)

@@ -46,6 +46,7 @@ def test_project_add_stages_without_container_github_reads(monkeypatch):
 
 def test_project_set_expands_fields_into_one_proposal_without_reads(monkeypatch):
     from jailbee.container_outbox import broker
+
     staged = []
     monkeypatch.setattr(gh, "issue_view", lambda *a: pytest.fail("container read"))
     monkeypatch.setattr(broker, "put", lambda *args: staged.append(args) or "001-fields.json")
