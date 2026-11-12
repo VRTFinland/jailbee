@@ -44,7 +44,7 @@ Builder = Callable[[str], tuple[str, Mapping[str, str]]]
 # return the final manifest text and bodies, as a `Builder` does.
 DraftBuilder = Callable[[str, str, Mapping[str, str]], tuple[str, Mapping[str, str]]]
 # Given the draft manifest and its bodies and the action being appended, return
-# the action to store. Called under the draft's row lock.
+# the action to store. Called outside transactions; it may be retried.
 DraftPrepare = Callable[[dict[str, Any], Mapping[str, str], dict[str, Any]], dict[str, Any]]
 # Given the draft's would-be manifest and bodies; raising aborts the append.
 DraftValidate = Callable[[dict[str, Any], Mapping[str, str]], None]
@@ -250,9 +250,7 @@ class OutboxStore:
         return found[0] if found else None
 
     # -- draft batches -------------------------------------------------
-    # Every draft write is one BEGIN IMMEDIATE transaction that reads the row,
-    # derives from it and writes it back, so concurrent appends to one draft
-    # serialise on the database write lock and none is lost.
+    # Prepare outside transactions, then retry if the snapshot changed.
 
     def draft_append(
         self,
@@ -271,16 +269,9 @@ class OutboxStore:
     ) -> Draft:
         """Append one action (and its new bodies) to the draft, creating it."""
         kind = _kind(kind)
-        with self._store.transaction() as con:
-            current = _load_draft(con, uuid, kind, name)
+        while True:
+            current = self.get_draft(uuid, kind, name)
             if current is None:
-                (open_drafts,) = con.execute(
-                    "SELECT COUNT(*) FROM outbox_draft WHERE uuid=? AND kind=?", (uuid, kind)
-                ).fetchone()
-                if open_drafts >= max_drafts:
-                    raise DraftCapError(
-                        f"{kind} outbox already has the cap of {max_drafts} open drafts"
-                    )
                 manifest: dict[str, Any] = {"version": 1, "actions": []}
                 existing: dict[str, str] = {}
             else:
@@ -297,21 +288,32 @@ class OutboxStore:
             if validate is not None:
                 validate(manifest, combined)
             text = json.dumps(manifest, ensure_ascii=False)
-            if current is None:
-                con.execute(
-                    f"INSERT INTO outbox_draft({_DRAFT_COLS}) VALUES(?,?,?,?,?,?,?,1)",
-                    (uuid, kind, name, text, json.dumps(combined), now, now),
-                )
-                revision = 1
-            else:
-                revision = current.revision + 1
-                con.execute(
-                    "UPDATE outbox_draft SET manifest=?, bodies=?, updated_at=?, revision=? "
-                    "WHERE uuid=? AND kind=? AND name=?",
-                    (text, json.dumps(combined), now, revision, uuid, kind, name),
-                )
-            created = now if current is None else current.created_at
-        return Draft(uuid, kind, name, text, combined, created, now, revision)
+            with self._store.transaction() as con:
+                latest = _load_draft(con, uuid, kind, name)
+                if latest != current:
+                    continue
+                if current is None:
+                    (open_drafts,) = con.execute(
+                        "SELECT COUNT(*) FROM outbox_draft WHERE uuid=? AND kind=?", (uuid, kind)
+                    ).fetchone()
+                    if open_drafts >= max_drafts:
+                        raise DraftCapError(
+                            f"{kind} outbox already has the cap of {max_drafts} open drafts"
+                        )
+                    con.execute(
+                        f"INSERT INTO outbox_draft({_DRAFT_COLS}) VALUES(?,?,?,?,?,?,?,1)",
+                        (uuid, kind, name, text, json.dumps(combined), now, now),
+                    )
+                    revision = 1
+                else:
+                    revision = current.revision + 1
+                    con.execute(
+                        "UPDATE outbox_draft SET manifest=?, bodies=?, updated_at=?, revision=? "
+                        "WHERE uuid=? AND kind=? AND name=?",
+                        (text, json.dumps(combined), now, revision, uuid, kind, name),
+                    )
+                created = now if current is None else current.created_at
+            return Draft(uuid, kind, name, text, combined, created, now, revision)
 
     def get_draft(self, uuid: str, kind: Kind, name: str) -> Draft | None:
         with self._store.transaction(write=False) as con:

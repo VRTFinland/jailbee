@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -124,56 +123,77 @@ def test_a_refused_submit_keeps_the_draft(ob: OutboxStore) -> None:
     assert len(ob.list_proposals("u1", "issue")) == 2
 
 
-def test_concurrent_appends_to_one_draft_do_not_overlap_or_lose_actions(
-    ob: OutboxStore,
+@pytest.mark.parametrize("existing", [False, True])
+def test_concurrent_append_retries_against_changed_snapshot(
+    ob: OutboxStore, existing: bool
 ) -> None:
-    """The first append stalls inside its transaction; the second must wait for it
-    (a lost update would show as one action) and then see its result."""
-    inside = threading.Event()
+    if existing:
+        ob.draft_append("u1", "issue", "b", comment(0), {}, now=0)
+    entered = threading.Event()
     release = threading.Event()
-    active = 0
-    overlap = False
-    guard = threading.Lock()
-    seen_by_second: list[int] = []
-
-    def prepare(manifest: dict[str, Any], bodies: Any, action: dict[str, Any]) -> dict[str, Any]:
-        nonlocal active, overlap
-        with guard:
-            active += 1
-            overlap = overlap or active > 1
-        if action["issue"] == 1:
-            inside.set()
-            assert release.wait(5)
-        else:
-            seen_by_second.append(len(manifest["actions"]))
-        with guard:
-            active -= 1
-        return action
-
+    seen: list[list[int]] = []
     errors: list[BaseException] = []
 
-    def run(n: int) -> None:
+    def prepare(manifest: dict[str, Any], bodies: Any, action: dict[str, Any]) -> dict[str, Any]:
+        seen.append([item["issue"] for item in manifest["actions"]])
+        if len(seen) == 1:
+            entered.set()
+            assert release.wait(5)
+        return action
+
+    def append() -> None:
         try:
-            ob.draft_append("u1", "issue", "b", comment(n), {}, now=float(n), prepare=prepare)
+            ob.draft_append("u1", "issue", "b", comment(1), {}, now=1, prepare=prepare)
         except BaseException as exc:
             errors.append(exc)
 
-    first = threading.Thread(target=run, args=(1,))
-    second = threading.Thread(target=run, args=(2,))
-    first.start()
-    assert inside.wait(5)
-    second.start()
-    time.sleep(0.3)  # the second append is now blocked on the write lock
-    assert second.is_alive()
-    release.set()
-    first.join(10)
-    second.join(10)
+    thread = threading.Thread(target=append)
+    thread.start()
+    try:
+        assert entered.wait(5)
+        ob.draft_append("u1", "issue", "b", comment(2), {}, now=2)
+    finally:
+        release.set()
+        thread.join(10)
+    assert not thread.is_alive()
     assert not errors
-    assert not overlap
-    assert seen_by_second == [1]
+    initial = [0] if existing else []
+    assert seen == [initial, [*initial, 2]]
     draft = ob.get_draft("u1", "issue", "b")
-    assert draft is not None and draft.revision == 2
-    assert [a["issue"] for a in json.loads(draft.manifest)["actions"]] == [1, 2]
+    assert draft is not None
+    assert [item["issue"] for item in json.loads(draft.manifest)["actions"]] == [*initial, 2, 1]
+
+
+def test_another_store_can_write_while_prepare_waits(tmp_path: Path) -> None:
+    path = store_path(tmp_path)
+    first_store = OutboxStore(BrokerStore(path))
+    second_store = OutboxStore(BrokerStore(path))
+    entered = threading.Event()
+    release = threading.Event()
+    errors: list[BaseException] = []
+
+    def prepare(manifest: dict[str, Any], bodies: Any, action: dict[str, Any]) -> dict[str, Any]:
+        entered.set()
+        assert release.wait(10)
+        return action
+
+    def append() -> None:
+        try:
+            first_store.draft_append("u1", "issue", "b", comment(1), {}, now=1, prepare=prepare)
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=append)
+    thread.start()
+    try:
+        assert entered.wait(5)
+        second_store.draft_append("u1", "issue", "other", comment(2), {}, now=2)
+    finally:
+        release.set()
+        thread.join(10)
+    assert not thread.is_alive()
+    assert not errors
+    assert second_store.get_draft("u1", "issue", "other") is not None
 
 
 def test_many_threads_appending_lose_nothing(ob: OutboxStore) -> None:
