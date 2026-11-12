@@ -1080,6 +1080,17 @@ def list_base_candidates(repo_root: Path) -> list[str]:
     return [*local, *(b for b in list_remote_branches(repo_root, remote) if b not in seen)]
 
 
+def delete_ref_checked(repo_root: Path, ref: str) -> None:
+    """Delete a ref, raising on failure so durable cleanup can retry."""
+    try:
+        subprocess.run(
+            ["git", "update-ref", "-d", ref], cwd=repo_root,
+            capture_output=True, text=True, check=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise GitError(f"could not delete ref {ref}") from exc
+
+
 def delete_ref(repo_root: Path, ref: str) -> None:
     """Delete a ref via `git update-ref -d`. Never raises."""
     try:

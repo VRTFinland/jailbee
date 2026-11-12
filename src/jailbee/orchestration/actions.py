@@ -666,6 +666,13 @@ def _handle_spawn_locked(ctx: ActionContext, m: Manifest) -> Outcome:
     grant = ctx.grant()
     if grant is None:
         return refused(NOT_ALLOWED)
+    from jailbee.orchestration.state import load_cancellations
+
+    _settle_cancellations_locked(ctx)
+    pending = load_cancellations(ctx.root, ctx.sender.full)
+    full = lifecycle.derive_container_name(ctx.cfg, m.branch)
+    if any(e.request.child_full == full for e in pending):
+        return refused("previous cancellation is still settling; try again")
     queued = _queued(ctx)
     plan = plan_spawn(ctx, m, queued_names={q.child_full for q in queued})
     if isinstance(plan, Outcome):
@@ -1002,9 +1009,37 @@ def drop_queue(ctx: ActionContext, reason: str) -> list[QueuedRequest]:
     return queued
 
 
-def handle_cancel(ctx: ActionContext, m: Manifest) -> Outcome:
+def settle_cancellations(ctx: ActionContext) -> None:
+    from jailbee.orchestration.watch import mutation_locked
+
+    with mutation_locked(ctx.root):
+        _settle_cancellations_locked(ctx)
+
+
+def _settle_cancellations_locked(ctx: ActionContext) -> None:
+    """Retry durable cancellation replies/cleanup before allowing a name to be reused."""
     from jailbee import git
     from jailbee.orchestration import broker_replies
+    from jailbee.orchestration.state import finish_cancellation, load_cancellations
+
+    for entry in load_cancellations(ctx.root, ctx.sender.full):
+        if entry.recipient_key != ctx.sender.key:
+            finish_cancellation(ctx.root, ctx.sender.full, entry.cancel_id)
+            continue
+        try:
+            if entry.request.kind in {"fork", "pr"}:
+                git.delete_ref_checked(ctx.cfg.repo_root, forking.fork_pin_ref(ctx.cfg, entry.request.child_full))
+            broker_replies.reply(
+                ctx, entry.request.manifest_id,
+                refused(f"cancelled by orchestrator (cancel request {entry.cancel_id})"),
+            )
+            finish_cancellation(ctx.root, ctx.sender.full, entry.cancel_id)
+        except (OSError, git.GitError):
+            log.exception("could not settle cancelled request %s", entry.request.manifest_id)
+
+
+def handle_cancel(ctx: ActionContext, m: Manifest) -> Outcome:
+    from jailbee.orchestration.state import CancelledRequest, cancel_queued
     from jailbee.orchestration.watch import mutation_locked
 
     if not isinstance(m, CancelManifest):
@@ -1021,16 +1056,8 @@ def handle_cancel(ctx: ActionContext, m: Manifest) -> Outcome:
                 "request is not queued for this orchestrator; "
                 "if already started, use send stop / send destroy --child instead"
             )
-        _store(ctx, [q for q in queued if q.manifest_id != req.manifest_id])
-        if req.kind in {"fork", "pr"}:
-            try:
-                git.delete_ref(ctx.cfg.repo_root, forking.fork_pin_ref(ctx.cfg, req.child_full))
-            except git.GitError:
-                log.warning("could not release cancelled fork pin for %s", req.child_full, exc_info=True)
-        broker_replies.reply(
-            ctx, req.manifest_id,
-            refused(f"cancelled by orchestrator (cancel request {m.id})"),
-        )
+        cancel_queued(ctx.root, ctx.sender.full, CancelledRequest(req, m.id, ctx.sender.key))
+        _settle_cancellations_locked(ctx)
         return done(f"cancelled queued request {req.manifest_id}")
 
 

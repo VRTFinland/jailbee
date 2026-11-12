@@ -27,6 +27,7 @@ from jailbee.orchestration.actions import (
     drain_queue,
     drop_queue,
     refused,
+    settle_cancellations,
 )
 from jailbee.orchestration.outbox import flush_pending
 from jailbee.orchestration.protocol import (
@@ -198,6 +199,7 @@ def serve(ctx: ActionContext, journal: Journal, memory: broker_state.BrokerMemor
 
 def settle_queue(ctx: ActionContext, memory: broker_state.BrokerMemory) -> None:
     """Start what the queue can start, or drop it when the grant is gone; report each."""
+    settle_cancellations(ctx)
     if ctx.grant() is None:
         # A grant label still there means the repo cap forbids orchestration.
         reason = GRANT_REVOKED if ctx.raw_grant() is None else NOT_ALLOWED
