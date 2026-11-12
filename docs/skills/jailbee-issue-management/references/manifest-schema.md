@@ -189,8 +189,8 @@ number for numeric fields, or `null` for an unset field. A newly created
 ```
 
 The expectation is captured on the host; container commands never need project
-permissions. The host
-checks expectations before applying changes and refuses stale actions. Adding
+permissions. The host checks expectations before applying changes and refuses
+stale actions. Adding
 an existing member and removing a non-member are no-ops only when the recorded
 membership expectation still matches. A `project_set` adds a missing item
 before setting its field. Each `--set` and `--clear` becomes a separate action;
