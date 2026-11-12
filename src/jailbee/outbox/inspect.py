@@ -90,26 +90,31 @@ def _issue_action(index: int, action: issues.IssueAction) -> ActionView:
                 False,
             )
         elif isinstance(action, (issues.ProjectClearAction, issues.ProjectRemoveAction)):
-            change = (
-                f"{action.field}: {action.expected_value if action.expected_value is not None else '(empty)'} → (empty)"
-                if isinstance(action, issues.ProjectClearAction)
-                else f"membership: {'on board' if action.expected_present else 'not on board'} → not on board"
-            )
+            if isinstance(action, issues.ProjectClearAction):
+                before = action.expected_value if action.expected_value is not None else "(empty)"
+                change = f"{action.field}: {before} → (empty)"
+            else:
+                before = "on board" if action.expected_present else "not on board"
+                change = f"membership: {before} → not on board"
             body, kind, markdown = (
                 f"project {board} · #{target} · {change}",
                 action.kind,
                 False,
             )
         elif isinstance(action, issues.ProjectSetAction):
+            before = action.expected_value if action.expected_value is not None else "(empty)"
             body, kind, markdown = (
-                f"project {board} · #{target} · {action.field}: "
-                f"{action.expected_value if action.expected_value is not None else '(empty)'} → {action.value}",
+                f"project {board} · #{target} · {action.field}: {before} → {action.value}",
                 action.kind,
                 False,
             )
         elif isinstance(action, issues.ProjectAddAction):
             before = "on board" if action.expected_present else "not on board"
-            body, kind, markdown = f"project {board} · #{target} · membership: {before} → on board", action.kind, False
+            body, kind, markdown = (
+                f"project {board} · #{target} · membership: {before} → on board",
+                action.kind,
+                False,
+            )
         elif isinstance(action, issues.StateAction):
             body = action.state + (f" ({action.reason})" if action.reason else "")
             kind, markdown = "state", False

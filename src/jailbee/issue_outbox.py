@@ -784,8 +784,10 @@ def revalidate_batch(batch: PreparedBatch) -> None:
                             else None
                         )
                         mismatch = _project_difference(
-                            resolved.action, target, value,
-                            resolved.established_item or _prior_project_item(batch, resolved)
+                            resolved.action,
+                            target,
+                            value,
+                            resolved.established_item or _prior_project_item(batch, resolved),
                         )
                         if mismatch:
                             refusals.append(
