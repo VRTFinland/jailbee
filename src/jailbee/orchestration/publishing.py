@@ -11,7 +11,7 @@ import threading
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 from jailbee import branch_pr, git, issue_manifest, issue_outbox, pr_outbox
 from jailbee.github_repo import github_slug
@@ -113,7 +113,7 @@ def inflight(root: Path) -> dict[str, Any]:
 
 
 def _kind(action: issue_manifest.IssueAction) -> str:
-    return type(action).__name__.removesuffix("Action").lower()
+    return action.kind
 
 
 def _needed_kind(action: issue_manifest.IssueAction, batch: issue_outbox.PreparedBatch) -> str:
@@ -133,6 +133,33 @@ def _needed_kind(action: issue_manifest.IssueAction, batch: issue_outbox.Prepare
     return "assign_self" if logins and all(x.casefold() == mine for x in logins) else "assign"
 
 
+def _is_project(action: issue_manifest.IssueAction) -> TypeGuard[issue_manifest.ProjectAction]:
+    return isinstance(
+        action,
+        (
+            issue_manifest.ProjectAddAction,
+            issue_manifest.ProjectSetAction,
+            issue_manifest.ProjectClearAction,
+            issue_manifest.ProjectRemoveAction,
+        ),
+    )
+
+
+def _action_coverage(
+    rights: PublishRights,
+    action: issue_manifest.IssueAction,
+    kind: str,
+    target: issue_outbox.RepoTarget,
+) -> None:
+    if _is_project(action):
+        if not rights.covers_project(kind, action.project):
+            raise issue_outbox.IssueGateError(
+                f"project action `{kind}` on `{action.project}` is not granted"
+            )
+        return
+    _coverage(rights, kind, target)
+
+
 def _coverage(rights: PublishRights, kind: str, target: issue_outbox.RepoTarget) -> None:
     if not rights.covers_issue(kind, target.slug, foreign=target.foreign):
         raise issue_outbox.IssueGateError(
@@ -146,7 +173,7 @@ def _issue_policy(
     def check(batch: issue_outbox.PreparedBatch) -> None:
         pending = [a for m in batch.manifests for a in m.actions if a.status != "applied"]
         for action in pending:
-            _coverage(rights, _needed_kind(action.action, batch), action.repo)
+            _action_coverage(rights, action.action, _needed_kind(action.action, batch), action.repo)
         if len(pending) > count:
             raise issue_outbox.IssueGateError("pending actions exceed the reserved publish budget")
 
@@ -230,8 +257,11 @@ def _precheck(
                 # The login is only known on the host in the locked policy
                 # check, which is strict; this early check needs any assign right.
                 needed = "assign_self" if _kind(action) == "assignees" else _kind(action)
-                _coverage(rights, needed, target)
-                actions.append({"kind": _kind(action), "repo": target.slug})
+                _action_coverage(rights, action, needed, target)
+                record = {"kind": _kind(action), "repo": target.slug}
+                if _is_project(action):
+                    record["project"] = action.project
+                actions.append(record)
                 foreign |= target.foreign
         return "issue", actions, foreign
     # PR source proposals live in the host outbox store, keyed by the sender's

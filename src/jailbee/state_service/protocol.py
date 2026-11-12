@@ -44,7 +44,9 @@ from jailbee.update_check import UpdateNotice
 # 20 adds the outbox Sent record counts: ContainerInfo and RepoGroup.sent_count.
 # 21 adds ContainerInfo.uuid: Sent records are keyed by the instance uuid.
 # 22 adds MemoryStatus.swap_cached and .zswapped: swap use leaves them out.
-PROTOCOL = 22
+# 23 adds immutable board-scoped GrantView.publish_projects.
+# 24 adds RepoGroup.default_project for the board picker.
+PROTOCOL = 24
 
 
 class ProtocolError(ValueError):

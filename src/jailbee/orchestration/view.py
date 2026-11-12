@@ -48,6 +48,7 @@ class GrantView:
     publish_prs: bool = False
     publish_pr_reviews: bool = False
     publish_rate: int = 30
+    publish_projects: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,7 @@ def parse_grant_view(raw: object) -> GrantView | None:
         publish_prs=g.publish.pull_requests,
         publish_pr_reviews=g.publish.pr_reviews,
         publish_rate=g.publish.max_actions_per_hour,
+        publish_projects=tuple((entry.board, tuple(entry.actions)) for entry in g.publish.projects),
     )
 
 

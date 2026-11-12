@@ -567,7 +567,7 @@ GLOBAL_ONLY_KEYS: frozenset[str] = frozenset(
 Tokens and credential-group names are host-local: a repo config is
 typically committed, so a value here would leak or would name a group
 that exists on one machine only. GitHub is intentionally not included:
-the loader permits the single safe exception `github: {enabled: false}`.
+the loader permits `github.enabled: false` and `github.project`.
 The editor keeps all these fields in its tree and disables the forbidden
 ones with a reason rather than hiding them.
 

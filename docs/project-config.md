@@ -26,6 +26,32 @@ file does not exist yet, `jailbee config init --global` creates it. The
 repo template is a starting point, not a dump of the effective config:
 global settings can still enable integrations.
 
+Set the committed `github.project` value to choose the default GitHub Projects
+v2 board for `jailbee issue project`; container commands can then omit
+`--project`. Use the board owner's login and positive project number:
+
+```yaml
+github:
+  project: acme/7
+```
+
+This is a non-secret repo setting; keep `github.token` in the host-local
+repository override, never in the committed config. See the [`github` config
+reference](config.md#github).
+
+Staging may read only that default board and extra boards listed in the
+host-local `~/.config/jailbee/repos/<container_prefix>.yaml`:
+
+```yaml
+github:
+  projects: [acme/8, partner/3]
+```
+
+`github.projects` is host-local only: neither the committed config nor
+`global.yaml` may set it. An orchestrator may also stage boards in its
+`publish.projects` grant. Unlisted boards are refused before any host GitHub
+read; adding a board here allows staging, not autonomous publication.
+
 ### Limit orchestrator publication
 
 Only host/global profiles or a host grant confer publish rights. A committed
@@ -35,15 +61,20 @@ repo config can narrow them, never add them:
 orchestration:
   publish:
     issues: [comment]             # intersect allowed own-repo/submodule actions
+    projects:
+      - board: acme/7
+        actions: [add, set]        # board-scoped; set implies add and covers clear
     pull_requests: false
     pr_reviews: false
     max_actions_per_hour: 10      # min with the grant's rate
 ```
 
 `publish: false` forbids all publication. Omitting the block imposes no extra
-cap, but still grants nothing. Foreign rights use the same
-`foreign_issues: {repos: [owner/name], actions: [comment]}` shape; caps
-intersect repos and kinds. See [publish grants](orchestration.md#publish-the-orchestrators-own-outboxes).
+cap, but still grants nothing. `projects` narrows board-specific action grants
+by matching both board and action; `set` also covers `add` and clearing fields.
+Foreign issue rights use the separate
+`foreign_issues: {repos: [owner/name], actions: [comment]}` shape; they do not
+grant project rights. See [publish grants](orchestration.md#publish-the-orchestrators-own-outboxes).
 Children never receive publish rights.
 
 ## 2. Set `container_prefix` if needed

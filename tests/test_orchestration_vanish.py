@@ -46,6 +46,7 @@ MEMORY_LIFETIMES = {
     "env_ensured": (INSTANCE, "tick inventory"),
     "env_roles": (INSTANCE, "tick inventory"),
     "listed_roles": (INSTANCE, "rebuilt from each listing"),
+    "project_configs": (INSTANCE, "rebuilt from each listing before idle return"),
     "warned": (
         PERSISTENT,
         "tick prunes instance warnings; repo/security warnings last until restart",
@@ -138,6 +139,7 @@ def test_idle_round_forgets_vanished_probe_and_diagnostic_state(tmp_path, monkey
     memory.warn_once(f"env:{FULL}", "old instance failed")
     memory.warn_once("repo-load:proj", "repo config failed")
     memory.failures[f"serve:{FULL}"] = "old failure"
+    memory.project_configs[UUID] = MagicMock()
     incus = MagicMock()
     incus.list_containers.return_value = []
     monkeypatch.setattr(broker, "load_global_config", lambda _: (GlobalConfig(), []))
@@ -150,6 +152,7 @@ def test_idle_round_forgets_vanished_probe_and_diagnostic_state(tmp_path, monkey
     assert memory.warned == {"repo-load:proj"}
     assert memory.failures == {}
     assert memory.reassert == set()
+    assert memory.project_configs == {}
 
 
 def test_vanished_instance_with_failed_attach_closes_its_listener(tmp_path, monkeypatch):
@@ -467,6 +470,7 @@ def test_vanished_container_has_no_unclassified_surviving_state(tmp_path, monkey
     memory.env_ensured.add(UUID)
     memory.env_roles[UUID] = "child"
     memory.listed_roles[UUID] = "child"
+    memory.project_configs[UUID] = env.rig.cfg
     memory.children[FULL] = broker_state.ChildrenView(1.0, [{"name": "child"}])
     memory.status.host_due(FULL, 1.0)
     memory.status.exec_due(FULL, 1.0)
@@ -485,6 +489,7 @@ def test_vanished_container_has_no_unclassified_surviving_state(tmp_path, monkey
         "env_ensured",
         "env_roles",
         "listed_roles",
+        "project_configs",
         "children",
         "contexts",
         "attached",
@@ -499,7 +504,9 @@ def test_vanished_container_has_no_unclassified_surviving_state(tmp_path, monkey
     assert set(STATUS_LIFETIMES) == {
         f.name for f in fields(memory.status) if getattr(memory.status, f.name)
     }
-    memory.queries.publish_container(UUID, query.ContainerSnapshot("child", True, "{}", None))
+    memory.queries.publish_container(
+        UUID, query.ContainerSnapshot("plain", True, "{}", None, env.rig.cfg)
+    )
     env.listener.open_container(UUID, root / "old-socket")
     store.set_recipient(FULL, UUID, now=1.0)
     memory.waiters.add(socket_ops.Waiter(UUID, 7, None, 0, 0, None))

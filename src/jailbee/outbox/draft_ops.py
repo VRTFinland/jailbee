@@ -26,13 +26,17 @@ from jailbee.issue_manifest import (
 from jailbee.orchestration import wire
 from jailbee.outbox.broker_ops import (
     MAX_PR_ACTIONS,
+    ProjectReader,
+    ProjectTitleReader,
     bad_request,
+    capture_project,
     kind_arg,
     optional_kind_arg,
     parse_bodies,
     parse_issue,
     parse_pr,
     pr_body_refs,
+    provisional_project,
     rename_refs,
 )
 from jailbee.outbox.store_db import (
@@ -152,20 +156,79 @@ def _validate(name: str) -> DraftValidate:
     return check
 
 
-def handle_append(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now: float) -> object:
+def handle_append(
+    store: OutboxStore,
+    uuid: str,
+    args: Mapping[str, Any],
+    *,
+    now: float,
+    project_reader: ProjectReader | None = None,
+    default_project: str | None = None,
+    project_title_reader: ProjectTitleReader | None = None,
+) -> object:
     kind = kind_arg(args.get("kind"))
     name = _name(args)
     action = args.get("action")
+    added = args.get("actions")
+    if "actions" in args:
+        if (
+            "action" in args
+            or kind != "issue"
+            or not isinstance(added, list)
+            or not added
+            or not all(isinstance(a, dict) for a in added)
+        ):
+            raise bad_request("supply action or a non-empty issue actions list")
+        action = added[0]
     if not isinstance(action, dict):
         raise bad_request("action must be a JSON object")
+    prevalidate = None
+    if kind == "issue":
+
+        def prevalidate(manifest: dict[str, Any], all_bodies: Mapping[str, str]) -> None:
+            provisional: dict[str, Any] = {**manifest, "actions": []}
+            for entry in manifest["actions"]:
+                derived = _prepare(provisional, all_bodies, entry)
+                provisional["actions"].append(provisional_project(derived, default_project))
+            _validate(name)(provisional, all_bodies)
+
     bodies = parse_bodies(args.get("bodies"))
     if kind == "pr":
         prepare, validate = _pr_prepare(_pr_envelope(args.get("envelope"))), _pr_validate(name)
     else:
-        prepare, validate = _prepare, _validate(name)
+        validate = _validate(name)
+
+        def prepare(
+            manifest: dict[str, Any], stored_bodies: Mapping[str, str], added: dict[str, Any]
+        ) -> dict[str, Any]:
+            derived = _prepare(manifest, stored_bodies, added)
+            if derived.get("type") in (
+                "project_add",
+                "project_set",
+                "project_clear",
+                "project_remove",
+            ):
+                provisional = provisional_project(derived, default_project)
+                validate(
+                    {**manifest, "actions": [*manifest["actions"], provisional]}, stored_bodies
+                )
+                return capture_project(
+                    provisional, project_reader, default_project, project_title_reader
+                )
+            return derived
+
     try:
         draft = store.draft_append(
-            uuid, kind, name, action, bodies, now=now, prepare=prepare, validate=validate
+            uuid,
+            kind,
+            name,
+            action,
+            bodies,
+            now=now,
+            prepare=prepare,
+            validate=validate,
+            actions=added,
+            prevalidate=prevalidate,
         )
     except DraftCapError as exc:
         raise bad_request(str(exc)) from exc
@@ -368,10 +431,26 @@ def _submit_pr(
 
 
 def handle(
-    store: OutboxStore, uuid: str, op: str, args: Mapping[str, Any], *, now: float
+    store: OutboxStore,
+    uuid: str,
+    op: str,
+    args: Mapping[str, Any],
+    *,
+    now: float,
+    project_reader: ProjectReader | None = None,
+    default_project: str | None = None,
+    project_title_reader: ProjectTitleReader | None = None,
 ) -> object:
     if op == wire.OUTBOX_DRAFT_APPEND:
-        return handle_append(store, uuid, args, now=now)
+        return handle_append(
+            store,
+            uuid,
+            args,
+            now=now,
+            project_reader=project_reader,
+            default_project=default_project,
+            project_title_reader=project_title_reader,
+        )
     if op == wire.OUTBOX_DRAFT_LIST:
         return handle_list(store, uuid, args)
     if op == wire.OUTBOX_DRAFT_SHOW:

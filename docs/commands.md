@@ -34,13 +34,18 @@ The height is remembered with the rest of the view.
 ## In-container outbox commands
 
 Inside a non-child container, stage GitHub proposals with `jailbee issue
-create|edit|comment|labels|assign|state` and `jailbee pr
+create|edit|comment|labels|assign|state|project` and `jailbee pr
 comment|reply|description|source`. `jailbee issue assign ISSUE|@REF` takes `--me`
 (the publishing account, `@me`), `--unassign-me`, and repeatable `--add LOGIN` /
 `--remove LOGIN`; at least one is required. Use `--body` or `--body-file`; issue
 commands accept `--repo` (default `.`), while PR source and new descriptions
 accept `--repo owner/name`. `jailbee pr source --ref REF --sha SHA` also
 accepts `--head` as an alias for `--ref`; new PRs need a description body.
+`jailbee issue project ISSUE|@REF --project OWNER/NUMBER --add` stages adding
+an issue or pull request to a Projects v2 board; the project owner and positive
+board number are required. Omit `--project` to use committed `github.project`;
+repeat `--set FIELD=VALUE` or `--clear FIELD` to change fields. A set adds a
+missing item, and `--remove` removes it. Batch `@REF` targets a prior create.
 
 An omitted PR selects exactly one actual container binding (primary, stacked,
 imported-head or submodule), independent of the checkout branch or detached HEAD.

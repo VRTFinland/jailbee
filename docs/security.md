@@ -522,7 +522,9 @@ container also holds its own `GH_TOKEN` — see the limitation below.
 **GitHub token scope is a documentation contract, not an enforced one.**
 Configure the fine-grained PAT (`github.token`, injected as `GH_TOKEN`)
 with Contents, Issues, Pull requests and Metadata set to Read. This is a
-recommendation, not a permission JailBee assigns. With no other write
+recommendation, not a permission JailBee assigns. The independently
+authenticated host `gh` must have the GitHub Projects `project` scope to
+publish project actions; add it with `gh auth refresh -s project`. With no other write
 credential exposed, the intended publication path is the host's independently
 authenticated `gh`: `jailbee pr push` for PRs and the reviewed host-side outbox
 (`jailbee issue apply` / `jailbee review apply` / `jailbee outbox apply`) for
@@ -534,6 +536,14 @@ to GitHub directly with the container's own `gh`, bypassing the outbox
 review gate entirely — the same trust boundary the read-only recommendation
 in [`config.md`](config.md#github) and [`git-bridge.md`](git-bridge.md#github-cli-gh-inside-containers)
 exists to hold.
+
+**Projects staging is board-allowlisted.** The broker reads Projects metadata
+with the host token only for the repo's `github.project` default, the host-local
+`github.projects` list (`repos/<container_prefix>.yaml`), or an orchestrator's
+`publish.projects` grant. Other boards are refused before any host read, so
+their titles, fields, options and values are not returned to the container.
+The extra-board list cannot be supplied by committed repo config or global
+config. Staging permission does not confer autonomous publish rights.
 
 Proposals, draft batches and the publication journals (what was prepared,
 applied or left uncertain) live host-side in the outbox store (`broker.db`),

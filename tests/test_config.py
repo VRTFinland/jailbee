@@ -551,6 +551,23 @@ def test_repo_rejects_other_github_forms(tmp_path, monkeypatch, github):
     assert "host-local" in str(exc.value)
 
 
+@pytest.mark.parametrize("github", ["{project: acme/42}", "{enabled: false, project: acme/42}"])
+def test_repo_accepts_default_project(tmp_path, monkeypatch, github):
+    _write_global(tmp_path, monkeypatch)
+    repo = _write_repo(tmp_path, name="myrepo", config_yaml=f"github: {github}\n")
+    assert load_config(repo / ".jailbee" / "config.yaml").github.project == "acme/42"
+
+
+@pytest.mark.parametrize(
+    "project", ["null", "''", "acme/0", "acme/-1", "acme/nope", "acme/1/2", "42"]
+)
+def test_repo_rejects_invalid_default_project(tmp_path, monkeypatch, project):
+    _write_global(tmp_path, monkeypatch)
+    repo = _write_repo(tmp_path, name="myrepo", config_yaml=f"github: {{project: {project}}}\n")
+    with pytest.raises(ConfigError):
+        load_config(repo / ".jailbee" / "config.yaml")
+
+
 def test_repo_layer_accepts_github_disabled(tmp_path):
     from jailbee.config.repo_layer import load_repo_layer
 

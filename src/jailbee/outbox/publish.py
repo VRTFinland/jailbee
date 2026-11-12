@@ -7,8 +7,14 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
-from jailbee import issue_manifest, issue_outbox, pr, pr_outbox, prompting
+from jailbee import issue_outbox, pr, pr_outbox, prompting
 from jailbee.incus import IncusError
+from jailbee.issue_manifest import (
+    ProjectAddAction,
+    ProjectClearAction,
+    ProjectRemoveAction,
+    ProjectSetAction,
+)
 from jailbee.orchestration.store import StoreError
 from jailbee.outbox import sent
 from jailbee.outbox.inspect import build_views, safe_text
@@ -178,19 +184,7 @@ def issue_plan_json(
     for prepared in batch.manifests:
         for resolved in prepared.actions:
             action = resolved.action
-            kind = (
-                "create"
-                if isinstance(action, issue_manifest.CreateAction)
-                else "edit"
-                if isinstance(action, issue_manifest.EditAction)
-                else "comment"
-                if isinstance(action, issue_manifest.CommentAction)
-                else "labels"
-                if isinstance(action, issue_manifest.LabelsAction)
-                else "assignees"
-                if isinstance(action, issue_manifest.AssigneesAction)
-                else "state"
-            )
+            kind = action.kind
             if resolved.issue.number is not None:
                 target = f"{resolved.repo.slug}#{resolved.issue.number}"
             else:
@@ -206,6 +200,45 @@ def issue_plan_json(
                     "target": target,
                     "will": will,
                     "will_draft": None,
+                    **(
+                        {
+                            "project": action.project,
+                            "project_title": resolved.project.title
+                            if resolved.project
+                            else action.project_title,
+                            "operation": action.kind.removeprefix("project_"),
+                            "expected": {
+                                "present": action.expected_present,
+                                **(
+                                    {"value": action.expected_value}
+                                    if isinstance(action, (ProjectSetAction, ProjectClearAction))
+                                    else {}
+                                ),
+                            },
+                            **(
+                                {
+                                    "field": action.field,
+                                    "value": resolved.project_field.value
+                                    if resolved.project_field
+                                    else action.value,
+                                }
+                                if isinstance(action, ProjectSetAction)
+                                else {"field": action.field, "value": None}
+                                if isinstance(action, ProjectClearAction)
+                                else {}
+                            ),
+                        }
+                        if isinstance(
+                            action,
+                            (
+                                ProjectAddAction,
+                                ProjectSetAction,
+                                ProjectClearAction,
+                                ProjectRemoveAction,
+                            ),
+                        )
+                        else {}
+                    ),
                 }
             )
     return {

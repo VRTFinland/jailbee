@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -233,6 +234,191 @@ def _state():
         "reason": "completed",
         "expected": {"state": "open"},
     }
+
+
+@pytest.mark.parametrize("kind", ["project_clear", "project_remove"])
+@pytest.mark.parametrize("present", [False, True])
+def test_project_clear_remove_publish_noop_stale_and_sent(preflight, mocker, kind, present):
+    from jailbee import issue_outbox, issue_projects
+    from jailbee.outbox.publish import issue_plan_json
+
+    mocker.patch.object(
+        issue_projects,
+        "resolve_project",
+        return_value=issue_projects.Project("acme/3", "P3", "Roadmap"),
+    )
+    read = mocker.patch.object(
+        issue_projects,
+        "get_target",
+        return_value=issue_projects.ProjectTarget(
+            "I7", "https://github.com/acme/app/pull/7", "ITEM" if present else None
+        ),
+    )
+    mocker.patch.object(
+        issue_projects,
+        "list_fields",
+        return_value=(
+            issue_projects.ProjectField("F1", "Priority", "SINGLE_SELECT", (("High", "OPT"),)),
+        ),
+    )
+    mocker.patch.object(issue_projects, "get_field_value", return_value="High" if present else None)
+    run = mocker.patch(
+        "jailbee.issue_projects.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            [],
+            0,
+            json.dumps(
+                {
+                    "data": {
+                        "clearProjectV2ItemFieldValue": {"projectV2Item": {"id": "ITEM"}},
+                        "deleteProjectV2Item": {"deletedItemId": "ITEM"},
+                    }
+                }
+            ),
+            "",
+        ),
+    )
+    action = {
+        "type": kind,
+        "repo": ".",
+        "issue": 7,
+        "project": "acme/3",
+        "expected": {"present": present},
+    }
+    if kind == "project_clear":
+        action.update(
+            field="Priority", expected={"present": present, "value": "High" if present else None}
+        )
+    batch = preflight["prepare"]({"a.json": [action]})
+    assert any("Roadmap" in line for line in issue_outbox.plan_lines(batch))
+    assert issue_plan_json(batch, proposal="issue/a.json", revision="r")["actions"][0][
+        "operation"
+    ] == kind.removeprefix("project_")
+    issue_outbox.revalidate_batch(batch)
+    report = issue_outbox.apply_batch(
+        batch, incus=preflight["incus"], container_prefix="app", publisher="user"
+    )
+    assert report.failure is None
+    assert run.call_count == int(present)
+    (row,) = _sent_rows()
+    assert row.kind == kind and "acme/3" in row.content and row.title == "Roadmap"
+    # A newly staged proposal must not silently accept changed membership.
+    read.return_value = issue_projects.ProjectTarget(
+        "I7", "https://github.com/acme/app/pull/7", None if present else "ITEM"
+    )
+    with pytest.raises(issue_outbox.IssueGateError, match="membership"):
+        preflight["prepare"]({"b.json": [action]})
+
+
+def test_project_field_stale_and_unknown_option_are_refused_before_publish(preflight, mocker):
+    from jailbee import issue_outbox, issue_projects
+    from jailbee.outbox.publish import issue_plan_json
+
+    mocker.patch.object(
+        issue_projects,
+        "resolve_project",
+        return_value=issue_projects.Project("acme/3", "P3", "Roadmap"),
+    )
+    mocker.patch.object(
+        issue_projects,
+        "get_target",
+        return_value=issue_projects.ProjectTarget(
+            "I7", "https://github.com/acme/app/issues/7", "ITEM"
+        ),
+    )
+    mocker.patch.object(
+        issue_projects,
+        "list_fields",
+        return_value=(
+            issue_projects.ProjectField(
+                "F1", "Status", "SINGLE_SELECT", (("Todo", "O1"), ("Doing", "O2"))
+            ),
+        ),
+    )
+    read = mocker.patch.object(issue_projects, "get_field_value", return_value="Todo")
+    mutation = mocker.patch.object(issue_projects, "set_field")
+    action = {
+        "type": "project_set",
+        "repo": ".",
+        "issue": 7,
+        "project": "acme/3",
+        "field": "Status",
+        "value": "Doing",
+        "expected": {"present": True, "value": "Todo"},
+    }
+    batch = preflight["prepare"]({"a.json": [action]})
+    assert any("Status: Todo → Doing" in line for line in issue_outbox.plan_lines(batch))
+    assert (
+        issue_plan_json(batch, proposal="issue/a.json", revision="r")["actions"][0]["value"]
+        == "Doing"
+    )
+    read.return_value = "Doing"
+    with pytest.raises(issue_outbox.IssueStaleError, match="field value"):
+        issue_outbox.revalidate_batch(batch)
+    with pytest.raises(issue_outbox.IssueGateError, match="field value"):
+        preflight["prepare"]({"a.json": [action]})
+    with pytest.raises(issue_outbox.IssueGateError, match="valid options: Todo, Doing"):
+        preflight["prepare"]({"a.json": [{**action, "value": "Typo"}]})
+    mutation.assert_not_called()
+
+
+def test_project_add_prepare_allows_pr_and_revalidates_membership(preflight, mocker):
+    from dataclasses import replace
+
+    from jailbee import issue_outbox, issue_projects
+
+    preflight["fetch"].return_value = replace(preflight["snapshot"], is_pull_request=True)
+    mocker.patch.object(
+        issue_projects,
+        "resolve_project",
+        return_value=issue_projects.Project("acme/3", "P3", "Roadmap"),
+    )
+    read = mocker.patch.object(
+        issue_projects,
+        "get_target",
+        return_value=issue_projects.ProjectTarget("I7", "https://github.com/acme/app/pull/7", None),
+    )
+    batch = preflight["prepare"](
+        {
+            "001-board.json": [
+                {
+                    "type": "project_add",
+                    "repo": ".",
+                    "issue": 7,
+                    "project": "acme/3",
+                    "expected": {"present": False},
+                }
+            ]
+        }
+    )
+    assert any(
+        'project acme/3 "Roadmap" · #7 · membership: not on board → on board' in line
+        for line in issue_outbox.plan_lines(batch)
+    )
+    from jailbee.outbox.publish import issue_plan_json
+
+    plan = issue_plan_json(batch, proposal="issue/001-board.json", revision="r1")
+    assert plan["actions"][0]["project_title"] == "Roadmap"
+    assert plan["actions"][0]["expected"] == {"present": False}
+    read.return_value = issue_projects.ProjectTarget(
+        "I7", "https://github.com/acme/app/pull/7", "ITEM"
+    )
+    with pytest.raises(issue_outbox.IssueStaleError, match="membership"):
+        issue_outbox.revalidate_batch(batch)
+    with pytest.raises(issue_outbox.IssueGateError, match="membership"):
+        preflight["prepare"](
+            {
+                "001-board.json": [
+                    {
+                        "type": "project_add",
+                        "repo": ".",
+                        "issue": 7,
+                        "project": "acme/3",
+                        "expected": {"present": False},
+                    }
+                ]
+            }
+        )
 
 
 @pytest.fixture
@@ -1642,6 +1828,108 @@ def _sent_rows():
     from jailbee.outbox import sent
 
     return sorted(sent.list_records(), key=lambda r: (r.manifest, r.index))
+
+
+@pytest.mark.parametrize("present", [False, True])
+def test_project_apply_and_noop_keep_board_title_and_durable_item(execution, mocker, present):
+    from dataclasses import replace
+
+    from jailbee import issue_projects
+
+    board = issue_projects.Project("acme/3", "P3", "Roadmap")
+    mocker.patch.object(issue_projects, "resolve_project", return_value=board)
+    mocker.patch.object(
+        issue_projects,
+        "get_target",
+        return_value=issue_projects.ProjectTarget(
+            "I7", "https://github.com/acme/app/pull/7", "ITEM7" if present else None
+        ),
+    )
+    run = mocker.patch(
+        "jailbee.issue_projects.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            [], 0, '{"data":{"addProjectV2ItemById":{"item":{"id":"ITEM7"}}}}', ""
+        ),
+    )
+    batch = execution["batch"](
+        {
+            "a.json": [
+                {
+                    "type": "project_add",
+                    "repo": ".",
+                    "issue": 7,
+                    "project": "acme/3",
+                    "expected": {"present": present},
+                }
+            ]
+        }
+    )
+    prepared = batch.manifests[0]
+    batch = replace(
+        batch,
+        manifests=(replace(prepared, actions=(replace(prepared.actions[0], project=board),)),),
+    )
+    report = _apply(execution, batch)
+    assert report.failure is None
+    assert report.applied[0][1].url == "https://github.com/acme/app/pull/7#project-item-ITEM7"
+    assert run.call_count == (0 if present else 1)
+    (row,) = _sent_rows()
+    assert row.kind == "project_add"
+    assert row.title == "Roadmap"
+    before = "on board" if present else "not on board"
+    assert f"membership: {before} → on board" in row.content
+    assert row.url.endswith("#project-item-ITEM7")
+
+
+def test_project_uncertain_resolves_pull_receipt_and_retry(execution, mocker):
+    from jailbee import issue_outbox, issue_projects
+    from jailbee.issue_github import IssueGithubMutationError
+
+    mocker.patch.object(
+        issue_projects,
+        "resolve_project",
+        return_value=issue_projects.Project("acme/3", "P3", "Roadmap"),
+    )
+    mocker.patch.object(
+        issue_projects,
+        "get_target",
+        return_value=issue_projects.ProjectTarget("I7", "https://github.com/acme/app/pull/7", None),
+    )
+    mutation = mocker.patch.object(
+        issue_projects,
+        "add_item",
+        side_effect=IssueGithubMutationError("GitHub Projects transport failed", uncertain=True),
+    )
+    actions = [
+        {
+            "type": "project_add",
+            "repo": ".",
+            "issue": 7,
+            "project": "acme/3",
+            "expected": {"present": False},
+        }
+    ]
+    batch = execution["batch"]({"a.json": actions})
+    assert _apply(execution, batch).failure.uncertain
+    prepared = batch.manifests[0]
+    args = dict(
+        uuid=batch.uuid,
+        index=0,
+        repo=prepared.actions[0].repo,
+        manifest=prepared.manifest,
+        digest=prepared.digest,
+    )
+    assert not issue_outbox.reconcile_action(**args, resolution=issue_outbox.RetryResolution())
+    assert _apply(execution, execution["batch"]({"a.json": actions})).failure.uncertain
+    assert mutation.call_count == 2
+    assert issue_outbox.reconcile_action(
+        **args,
+        resolution=issue_outbox.AppliedResolution(
+            "https://github.com/acme/app/pull/7#project-item-ITEM7", None
+        ),
+    )
+    (row,) = _sent_rows()
+    assert row.state == "applied" and row.url.endswith("#project-item-ITEM7")
 
 
 def test_apply_records_every_issue_action_in_sent_log(execution):

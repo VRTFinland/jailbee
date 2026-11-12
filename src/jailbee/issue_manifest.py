@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final, Literal, cast
+from typing import ClassVar, Final, Literal, assert_never, cast
 
 from jailbee.github_repo import is_github_slug
 
@@ -35,6 +36,7 @@ IssueTarget = ExistingIssue | CreatedIssue
 
 @dataclass(frozen=True)
 class CreateAction:
+    kind: ClassVar[Literal["create"]] = "create"
     repo: str
     ref: str
     title: str
@@ -44,6 +46,7 @@ class CreateAction:
 
 @dataclass(frozen=True)
 class EditAction:
+    kind: ClassVar[Literal["edit"]] = "edit"
     repo: str
     target: IssueTarget
     title: str | None
@@ -56,6 +59,7 @@ class EditAction:
 
 @dataclass(frozen=True)
 class CommentAction:
+    kind: ClassVar[Literal["comment"]] = "comment"
     repo: str
     target: IssueTarget
     body: str
@@ -63,6 +67,7 @@ class CommentAction:
 
 @dataclass(frozen=True)
 class LabelsAction:
+    kind: ClassVar[Literal["labels"]] = "labels"
     repo: str
     target: IssueTarget
     add: tuple[str, ...]
@@ -74,6 +79,8 @@ class LabelsAction:
 class AssigneesAction:
     """Add and remove issue assignees; ``@me`` in add/remove is the publisher's login."""
 
+    kind: ClassVar[Literal["assignees"]] = "assignees"
+
     repo: str
     target: IssueTarget
     add: tuple[str, ...]
@@ -83,6 +90,7 @@ class AssigneesAction:
 
 @dataclass(frozen=True)
 class StateAction:
+    kind: ClassVar[Literal["state"]] = "state"
     repo: str
     target: IssueTarget
     state: Literal["open", "closed"]
@@ -90,9 +98,89 @@ class StateAction:
     expected_state: Literal["open", "closed"]
 
 
+@dataclass(frozen=True)
+class ProjectAddAction:
+    kind: ClassVar[Literal["project_add"]] = "project_add"
+    repo: str
+    target: IssueTarget
+    project: str
+    expected_present: bool
+    project_title: str | None = None
+
+
+@dataclass(frozen=True)
+class ProjectSetAction:
+    kind: ClassVar[Literal["project_set"]] = "project_set"
+    repo: str
+    target: IssueTarget
+    project: str
+    field: str
+    value: str | int | float
+    expected_present: bool
+    expected_value: str | int | float | None
+    project_title: str | None = None
+
+
+@dataclass(frozen=True)
+class ProjectClearAction:
+    kind: ClassVar[Literal["project_clear"]] = "project_clear"
+    repo: str
+    target: IssueTarget
+    project: str
+    field: str
+    expected_present: bool
+    expected_value: str | int | float | None
+    project_title: str | None = None
+
+
+@dataclass(frozen=True)
+class ProjectRemoveAction:
+    kind: ClassVar[Literal["project_remove"]] = "project_remove"
+    repo: str
+    target: IssueTarget
+    project: str
+    expected_present: bool
+    project_title: str | None = None
+
+
+ProjectAction = ProjectAddAction | ProjectSetAction | ProjectClearAction | ProjectRemoveAction
+
+
 IssueAction = (
-    CreateAction | EditAction | CommentAction | LabelsAction | AssigneesAction | StateAction
+    CreateAction
+    | EditAction
+    | CommentAction
+    | LabelsAction
+    | AssigneesAction
+    | StateAction
+    | ProjectAddAction
+    | ProjectSetAction
+    | ProjectClearAction
+    | ProjectRemoveAction
 )
+
+
+def valid_project(value: str) -> bool:
+    """A Projects v2 board identifier, not a URL or repository slug."""
+    owner, sep, number = value.partition("/")
+    return bool(sep and LOGIN_RE.fullmatch(owner) and re.fullmatch(r"[1-9][0-9]*", number))
+
+
+def mutation_keys(action: IssueAction) -> set[str]:
+    """Fields whose values this action changes, for conflict detection."""
+    if isinstance(action, EditAction):
+        return ({"title"} if action.title is not None else set()) | (
+            {"body"} if action.body is not None else set()
+        )
+    if isinstance(action, (LabelsAction, AssigneesAction, StateAction)):
+        return {action.kind}
+    if isinstance(action, (ProjectAddAction, ProjectRemoveAction)):
+        return {f"project:{action.project.casefold()}:membership"}
+    if isinstance(action, (ProjectSetAction, ProjectClearAction)):
+        return {f"project:{action.project.casefold()}:field:{action.field.casefold()}"}
+    if isinstance(action, (CreateAction, CommentAction)):
+        return set()
+    assert_never(action)
 
 
 @dataclass(frozen=True)
@@ -385,8 +473,6 @@ def _parse_edit(
     )
     if expected_body is not None:
         _validate_body_size(expected_body, "expected.body", context)
-    fields = ({"title"} if has_title else set()) | ({"body"} if has_body else set())
-    _record_mutations(changed, repo, target, fields, context)
     return EditAction(
         repo=repo,
         target=target,
@@ -441,7 +527,6 @@ def _parse_label_action(
     if "labels" not in expected:
         raise IssueManifestError(f"{context}: expected.labels is required")
     expected_labels = _labels(expected["labels"], "expected.labels", context)
-    _record_mutations(changed, repo, target, {"labels"}, context)
     return LabelsAction(
         repo=repo, target=target, add=add, remove=remove, expected_labels=expected_labels
     )
@@ -473,7 +558,6 @@ def _parse_assignees_action(
     expected_assignees = _logins(
         expected["assignees"], "expected.assignees", context, allow_me=False
     )
-    _record_mutations(changed, repo, target, {"assignees"}, context)
     return AssigneesAction(
         repo=repo,
         target=target,
@@ -522,7 +606,6 @@ def _parse_state_action(
     expected_state = _state(expected["state"], "expected.state", context)
     if state == expected_state:
         raise IssueManifestError(f"{context}: state must differ from expected.state")
-    _record_mutations(changed, repo, target, {"state"}, context)
     return StateAction(
         repo=repo, target=target, state=state, reason=reason, expected_state=expected_state
     )
@@ -565,10 +648,79 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             action = _parse_assignees_action(item, refs, changed, context)
         elif action_type == "state":
             action = _parse_state_action(item, refs, changed, context)
+        elif action_type in ("project_add", "project_set", "project_clear", "project_remove"):
+            _reject_unknown(
+                item,
+                {"type", "repo", "issue", "issue_ref", "project", "expected", "project_title"}
+                | (
+                    {"field", "value"}
+                    if action_type == "project_set"
+                    else {"field"}
+                    if action_type == "project_clear"
+                    else set()
+                ),
+                context,
+            )
+            repo = _repo(item, context)
+            project = _required_string(item, "project", context)
+            if not valid_project(project):
+                raise IssueManifestError(f"{context}: project must be owner/positive-number")
+            expected = _expected(item, context)
+            _reject_unknown(
+                expected,
+                {"present", "value"}
+                if action_type in ("project_set", "project_clear")
+                else {"present"},
+                f"{context} expected",
+            )
+            present = expected.get("present")
+            if type(present) is not bool:
+                raise IssueManifestError(f"{context}: expected.present must be a boolean")
+            target = _target(item, repo, refs, context)
+            project_title = _string_or_null(item.get("project_title"), "project_title", context)
+            if action_type == "project_add":
+                action = ProjectAddAction(repo, target, project, present, project_title)
+            elif action_type == "project_remove":
+                action = ProjectRemoveAction(repo, target, project, present, project_title)
+            else:
+                field = _required_string(item, "field", context)
+                value = item.get("value")
+                if action_type == "project_set" and (
+                    isinstance(value, bool)
+                    or not isinstance(value, (str, int, float))
+                    or (isinstance(value, float) and not math.isfinite(value))
+                ):
+                    raise IssueManifestError(f"{context}: value must be a finite scalar")
+                old = expected.get("value")
+                if (
+                    "value" not in expected
+                    or isinstance(old, bool)
+                    or not isinstance(old, (str, int, float, type(None)))
+                    or (isinstance(old, float) and not math.isfinite(old))
+                ):
+                    raise IssueManifestError(
+                        f"{context}: expected.value must be a finite scalar or null"
+                    )
+                if not present and old is not None:
+                    raise IssueManifestError(
+                        f"{context}: absent membership requires expected.value null"
+                    )
+                if action_type == "project_clear":
+                    action = ProjectClearAction(
+                        repo, target, project, field, present, old, project_title
+                    )
+                else:
+                    assert isinstance(value, (str, int, float))
+                    action = ProjectSetAction(
+                        repo, target, project, field, value, present, old, project_title
+                    )
         else:
             raise IssueManifestError(
-                f"{context}: type must be one of create, edit, comment, labels, assignees, or state"
+                f"{context}: type must be one of create, edit, comment, labels, assignees, "
+                "state, project_add, project_set, project_clear, or project_remove"
             )
+        if not isinstance(action, CreateAction):
+            _record_mutations(changed, action.repo, action.target, mutation_keys(action), context)
         actions.append(action)
 
     return IssueManifest(

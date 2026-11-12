@@ -12,7 +12,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, assert_never
 
-from jailbee import git, issue_github, submodules
+from jailbee import git, issue_github, issue_projects, submodules
 from jailbee.github_repo import github_slug, resolve_submodule_url
 from jailbee.incus import Incus, IncusError
 from jailbee.issue_github import (
@@ -35,8 +35,13 @@ from jailbee.issue_manifest import (
     IssueManifest,
     IssueManifestError,
     LabelsAction,
+    ProjectAddAction,
+    ProjectClearAction,
+    ProjectRemoveAction,
+    ProjectSetAction,
     StateAction,
     foreign_slug,
+    mutation_keys,
     parse_manifest,
 )
 from jailbee.outbox import publication_db, sent
@@ -176,6 +181,10 @@ class ResolvedAction:
     issue: ResolvedIssue
     status: Literal["pending", "applied", "uncertain"]
     labels: tuple[str, ...] | None = None
+    project: issue_projects.Project | None = None
+    project_target: issue_projects.ProjectTarget | None = None
+    project_field: issue_projects.ResolvedField | None = None
+    established_item: str | None = None
 
 
 @dataclass(frozen=True)
@@ -441,6 +450,59 @@ def _resolve_labels(
     )
 
 
+def _receipt_item(url: str) -> str | None:
+    marker = "#project-item-"
+    return url.split(marker, 1)[1] if marker in url else None
+
+
+def _project_difference(
+    action: ProjectAddAction | ProjectSetAction | ProjectClearAction | ProjectRemoveAction,
+    target: issue_projects.ProjectTarget | None,
+    value: issue_projects.ProjectValue,
+    established_item: str | None,
+) -> str | None:
+    present = target.present if target else False
+    own_add = bool(target and target.item_id and target.item_id == established_item)
+    if established_item and not own_add:
+        return "project membership changed since staging"
+    if present != action.expected_present and not (
+        not action.expected_present and present and own_add
+    ):
+        return "project membership changed since staging"
+    if (
+        isinstance(action, (ProjectSetAction, ProjectClearAction))
+        and value != action.expected_value
+    ):
+        return "project field value changed since staging"
+    return None
+
+
+def _prior_project_item(batch: PreparedBatch, current: ResolvedAction) -> str | None:
+    assert isinstance(
+        current.action,
+        (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction),
+    )
+    found = None
+    for manifest in batch.manifests:
+        receipts = {r.index: r for r in manifest.journal.actions} if manifest.journal else {}
+        for previous in manifest.actions:
+            if previous is current:
+                return found
+            if (
+                isinstance(previous.action, (ProjectAddAction, ProjectSetAction))
+                and (previous.status == "applied" or previous.established_item)
+                and previous.repo.identity == current.repo.identity
+                and previous.issue == current.issue
+                and previous.action.project.casefold() == current.action.project.casefold()
+            ):
+                receipt = receipts.get(previous.index)
+                if previous.established_item:
+                    found = previous.established_item
+                elif receipt and receipt.url:
+                    found = _receipt_item(receipt.url)
+    return found
+
+
 def prepare_batch(
     cfg: Config,
     incus: Incus,
@@ -453,12 +515,16 @@ def prepare_batch(
     resolves the instance's identity and uuid.
     """
     from jailbee.orchestration.store import StoreError
+    from jailbee.outbox import publication_db
     from jailbee.outbox.service import instance_identity
 
     try:
         identity, uuid = instance_identity(incus, container)
         outbox = store_outbox(uuid)
         journals = store_journals(identity, uuid)
+        partial_receipts = publication_db.read_partial_project_receipts(
+            publication_db.default_root(), uuid
+        )
     except (StoreError, JournalError, IncusError) as exc:
         raise IssueExecutionError(str(exc)) from exc
     refusals: list[str] = []
@@ -484,6 +550,7 @@ def prepare_batch(
     label_errors: dict[str, str] = {}
     mutations: dict[tuple[str, int | str, str], str] = {}
     prepared = []
+    established: dict[tuple[str, int | str, str], str] = {}
     for manifest, digest, journal in proposals:
         receipts = {receipt.index: receipt for receipt in journal.actions} if journal else {}
         refs: dict[str, ResolvedIssue] = {}
@@ -526,7 +593,15 @@ def prepare_batch(
                 elif issue.ref is not None:
                     snapshot = created.get(issue.ref)
                 if snapshot is not None:
-                    if snapshot.is_pull_request:
+                    if snapshot.is_pull_request and not isinstance(
+                        action,
+                        (
+                            ProjectAddAction,
+                            ProjectSetAction,
+                            ProjectClearAction,
+                            ProjectRemoveAction,
+                        ),
+                    ):
                         refusals.append(f"{context}: target is a pull request, not an issue")
                     refusals.extend(_differences(action, snapshot, context, login))
 
@@ -570,7 +645,7 @@ def prepare_batch(
                 if _assignee_overlap(action, login):
                     refusals.append(f"{context}: a login cannot appear in both add and remove")
             if status == "pending":
-                for field in _expected_fields(action):
+                for field in mutation_keys(action):
                     mutation_key = (
                         (repo.identity, issue.number, field)
                         if issue.number is not None
@@ -581,7 +656,87 @@ def prepare_batch(
                             f"{context}: conflict on {field} with {mutations[mutation_key]}"
                         )
                     mutations[mutation_key] = context
-            actions.append(ResolvedAction(index, action, repo, issue, status, labels))
+            project = project_target = project_field = None
+            own_item = None
+            if isinstance(action, ProjectSetAction) and status == "pending":
+                partial_url = partial_receipts.get((manifest.name, digest, index))
+                if partial_url:
+                    own_item = _receipt_item(partial_url)
+            if isinstance(
+                action,
+                (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction),
+            ):
+                project_key = (
+                    repo.identity,
+                    issue.number if issue.number is not None else f"{manifest.name}:{issue.ref}",
+                    action.project.casefold(),
+                )
+                if (
+                    status == "applied"
+                    and isinstance(action, (ProjectAddAction, ProjectSetAction))
+                    and receipt
+                    and receipt.url
+                ):
+                    item = _receipt_item(receipt.url)
+                    if item:
+                        established[project_key] = item
+                if own_item:
+                    established[project_key] = own_item
+                if status == "pending":
+                    try:
+                        project = issue_projects.resolve_project(cfg.repo_root, action.project)
+                        if isinstance(action, ProjectSetAction):
+                            project_field = issue_projects.resolve_field(
+                                issue_projects.list_fields(cfg.repo_root, project),
+                                action.field,
+                                action.value,
+                            )
+                        if isinstance(action, ProjectClearAction):
+                            project_field = issue_projects.ResolvedField(
+                                issue_projects.find_field(
+                                    issue_projects.list_fields(cfg.repo_root, project), action.field
+                                ),
+                                None,
+                                {},
+                            )
+                        project_target = (
+                            issue_projects.get_target(
+                                cfg.repo_root, project, repo.slug, issue.number
+                            )
+                            if issue.number is not None
+                            else None
+                        )
+                        value = (
+                            issue_projects.get_field_value(
+                                cfg.repo_root, project_target, project_field.field
+                            )
+                            if project_target and project_field
+                            else None
+                        )
+                        mismatch = _project_difference(
+                            action, project_target, value, own_item or established.get(project_key)
+                        )
+                        if mismatch:
+                            refusals.append(f"{context}: {mismatch}")
+                    except IssueGithubReadError as exc:
+                        execution_errors.append(exc)
+                        refusals.append(f"{context}: {exc}")
+                    except ValueError as exc:
+                        refusals.append(f"{context}: {exc}")
+            actions.append(
+                ResolvedAction(
+                    index,
+                    action,
+                    repo,
+                    issue,
+                    status,
+                    labels,
+                    project,
+                    project_target,
+                    project_field,
+                    own_item,
+                )
+            )
         prepared.append(PreparedManifest(manifest, digest, journal, tuple(actions)))
     if execution_errors:
         raise IssueExecutionError("\n".join(refusals)) from execution_errors[0]
@@ -607,6 +762,43 @@ def revalidate_batch(batch: PreparedBatch) -> None:
     refusals = []
     for manifest in batch.manifests:
         for resolved in manifest.actions:
+            if (
+                isinstance(
+                    resolved.action,
+                    (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction),
+                )
+                and resolved.status == "pending"
+            ):
+                if resolved.issue.number is not None:
+                    assert resolved.project is not None
+                    try:
+                        target = issue_projects.get_target(
+                            batch.host_repo_root,
+                            resolved.project,
+                            resolved.repo.slug,
+                            resolved.issue.number,
+                        )
+                        value = (
+                            issue_projects.get_field_value(
+                                batch.host_repo_root, target, resolved.project_field.field
+                            )
+                            if resolved.project_field
+                            else None
+                        )
+                        mismatch = _project_difference(
+                            resolved.action,
+                            target,
+                            value,
+                            resolved.established_item or _prior_project_item(batch, resolved),
+                        )
+                        if mismatch:
+                            refusals.append(
+                                f"{manifest.manifest.name} action {resolved.index}: {mismatch}"
+                            )
+                    except IssueGithubReadError as exc:
+                        execution_errors.append(exc)
+                        refusals.append(str(exc))
+                continue
             if (
                 resolved.status != "pending"
                 or resolved.issue.number is None
@@ -658,20 +850,9 @@ def _action_lines(
     labels: tuple[str, ...] | None,
     container: str,
     login: str = "",
+    project: issue_projects.Project | None = None,
 ) -> list[str]:
-    kind = (
-        "create"
-        if isinstance(action, CreateAction)
-        else "edit"
-        if isinstance(action, EditAction)
-        else "comment"
-        if isinstance(action, CommentAction)
-        else "labels"
-        if isinstance(action, LabelsAction)
-        else "assignees"
-        if isinstance(action, AssigneesAction)
-        else "state"
-    )
+    kind = action.kind
     target = f"#{issue.number}" if issue.number is not None else f"ref {issue.ref}"
     status = _status(receipt)
     display = "applied; skip" if status == "applied" else status
@@ -718,10 +899,37 @@ def _action_lines(
             lines.append(f"  labels after: {', '.join(labels) or '[empty]'}")
     elif isinstance(action, AssigneesAction):
         lines.append(f"  {_assignee_changes(action, login)}")
-    else:
+    elif isinstance(action, (ProjectClearAction, ProjectRemoveAction)):
+        board_title = project.title if project else action.project_title
+        title = f' "{board_title}"' if board_title else ""
+        if isinstance(action, ProjectClearAction):
+            before = action.expected_value if action.expected_value is not None else "(empty)"
+            change = f"{action.field}: {before} → (empty)"
+        else:
+            before = "on board" if action.expected_present else "not on board"
+            change = f"membership: {before} → not on board"
+        lines.append(f"  project {action.project}{title} · {target} · {change}")
+    elif isinstance(action, ProjectSetAction):
+        board_title = project.title if project else action.project_title
+        title = f' "{board_title}"' if board_title else ""
+        before = action.expected_value if action.expected_value is not None else "(empty)"
+        lines.append(
+            f"  project {action.project}{title} · {target} · {action.field}: "
+            f"{before} → {action.value}"
+        )
+    elif isinstance(action, ProjectAddAction):
+        board_title = project.title if project else action.project_title
+        title = f' "{board_title}"' if board_title else ""
+        before = "on board" if action.expected_present else "not on board"
+        lines.append(
+            f"  project {action.project}{title} · {target} · membership: {before} → on board"
+        )
+    elif isinstance(action, StateAction):
         lines.append(f"  state: {action.expected_state} -> {action.state}")
         if action.reason is not None:
             lines.append(f"  reason: {action.reason}")
+    else:
+        assert_never(action)
     return lines
 
 
@@ -795,6 +1003,7 @@ def plan_lines(batch: PreparedBatch) -> list[str]:
                     resolved.labels,
                     batch.container,
                     batch.login,
+                    resolved.project,
                 )
             )
     return lines
@@ -906,6 +1115,9 @@ Resolution = AppliedResolution | RetryResolution
 _SAFE_DEFINITE_DETAILS = frozenset(
     {
         "GitHub mutation was rejected",
+        "GitHub Projects requires host authorization: gh auth refresh -s project",
+        "project membership changed since staging",
+        "project field value changed since staging",
         ASSIGN_NOT_APPLIED_DETAIL,
         UNASSIGN_NOT_APPLIED_DETAIL,
         "GitHub mutation could not start because 'gh' is unavailable",
@@ -938,7 +1150,11 @@ def _resolved_number(issue: ResolvedIssue, created: Mapping[str, int]) -> int:
 
 
 def _execute_one(
-    host_repo_root: Path, resolved: ResolvedAction, created: dict[str, int], login: str = ""
+    host_repo_root: Path,
+    resolved: ResolvedAction,
+    created: dict[str, int],
+    login: str = "",
+    established: dict[tuple[str, int, str], str] | None = None,
 ) -> MutationReceipt:
     """Dispatch one pending action's exact GitHub mutation; return its receipt.
 
@@ -1006,6 +1222,48 @@ def _execute_one(
                 )
         assert last is not None, "a parsed assignees action changes at least one login"
         return last
+    if isinstance(
+        action, (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction)
+    ):
+        try:
+            project = resolved.project or issue_projects.resolve_project(
+                host_repo_root, action.project
+            )
+            field = resolved.project_field
+            if isinstance(action, ProjectSetAction) and field is None:
+                field = issue_projects.resolve_field(
+                    issue_projects.list_fields(host_repo_root, project), action.field, action.value
+                )
+            if isinstance(action, ProjectClearAction) and field is None:
+                field = issue_projects.ResolvedField(
+                    issue_projects.find_field(
+                        issue_projects.list_fields(host_repo_root, project), action.field
+                    ),
+                    None,
+                    {},
+                )
+            target = issue_projects.get_target(host_repo_root, project, repo, number)
+            value = (
+                issue_projects.get_field_value(host_repo_root, target, field.field)
+                if field
+                else None
+            )
+        except (IssueGithubReadError, ValueError) as exc:
+            raise IssueGithubMutationError(str(exc), uncertain=False) from exc
+        key = (resolved.repo.identity, number, action.project.casefold())
+        mismatch = _project_difference(action, target, value, (established or {}).get(key))
+        if mismatch:
+            raise IssueGithubMutationError(mismatch, uncertain=False)
+        if isinstance(action, ProjectRemoveAction):
+            return issue_projects.remove_item(host_repo_root, project, target, number)
+        if isinstance(action, ProjectClearAction):
+            assert field is not None
+            return issue_projects.clear_field(host_repo_root, project, target, number, field.field)
+        return (
+            issue_projects.set_field(host_repo_root, project, target, number, field)
+            if field
+            else issue_projects.add_item(host_repo_root, project, target, number)
+        )
     if isinstance(action, StateAction):
         return issue_github.set_state(
             host_repo_root, repo, number, state=action.state, reason=action.reason
@@ -1048,6 +1306,31 @@ def _sent_action(
     elif isinstance(action, AssigneesAction):
         kind = "assignees"
         content = _assignee_changes(action, login)
+    elif isinstance(action, (ProjectClearAction, ProjectRemoveAction)):
+        kind = action.kind
+        title = resolved.project.title if resolved.project else action.project_title
+        if isinstance(action, ProjectClearAction):
+            before = action.expected_value if action.expected_value is not None else "(empty)"
+            change = f"{action.field}: {before} → (empty)"
+        else:
+            before = "on board" if action.expected_present else "not on board"
+            change = f"membership: {before} → not on board"
+        content = f'project {action.project} "{title or ""}" · {change}'
+    elif isinstance(action, ProjectSetAction):
+        kind = action.kind
+        title = resolved.project.title if resolved.project else action.project_title
+        content = (
+            f'project {action.project} "{title or ""}" · {action.field}: '
+            f"{action.expected_value if action.expected_value is not None else '(empty)'} → "
+            f"{resolved.project_field.value if resolved.project_field else action.value}"
+        )
+    elif isinstance(action, ProjectAddAction):
+        kind = action.kind
+        title = resolved.project.title if resolved.project else action.project_title
+        content = (
+            f'project {action.project} "{title or ""}" · membership: '
+            f"{'on board' if action.expected_present else 'not on board'} → on board"
+        )
     elif isinstance(action, StateAction):
         kind = "state"
         content = f"state {action.state}" + (f" ({action.reason})" if action.reason else "")
@@ -1211,6 +1494,7 @@ def apply_batch(
                     )
             journals[name] = journal
 
+        established_items: dict[tuple[str, int, str], str] = {}
         for prepared in batch.manifests:
             name = prepared.manifest.name
             claim = claims[name]
@@ -1222,6 +1506,18 @@ def apply_batch(
                 current = receipts.get(resolved.index)
                 if current is not None:
                     skipped.append((name, current))
+                    if (
+                        isinstance(resolved.action, (ProjectAddAction, ProjectSetAction))
+                        and current.url
+                    ):
+                        item = _receipt_item(current.url)
+                        number = resolved.issue.number or created_issue_numbers.get(
+                            resolved.issue.ref or ""
+                        )
+                        if item and number:
+                            established_items[
+                                (resolved.repo.identity, number, resolved.action.project.casefold())
+                            ] = item
                     if isinstance(resolved.action, CreateAction) and current.issue is not None:
                         created_issue_numbers[resolved.action.ref] = current.issue
                     continue
@@ -1244,9 +1540,21 @@ def apply_batch(
                             )
                         raise
 
+                if isinstance(resolved.action, ProjectSetAction) and resolved.established_item:
+                    number = resolved.issue.number or created_issue_numbers.get(
+                        resolved.issue.ref or ""
+                    )
+                    if number:
+                        established_items[
+                            (resolved.repo.identity, number, resolved.action.project.casefold())
+                        ] = resolved.established_item
                 try:
                     receipt = _execute_one(
-                        batch.host_repo_root, resolved, created_issue_numbers, batch.login
+                        batch.host_repo_root,
+                        resolved,
+                        created_issue_numbers,
+                        batch.login,
+                        established_items,
                     )
                 except IssueGithubMutationError as exc:
                     recorded = True
@@ -1255,14 +1563,27 @@ def apply_batch(
                             target = resolved.issue.number or created_issue_numbers.get(
                                 resolved.issue.ref or ""
                             )
+                            partial = (
+                                exc.receipt
+                                if isinstance(exc, issue_projects.ProjectMutationError)
+                                else None
+                            )
                             store.settle(
                                 claim,
                                 digest,
                                 resolved.index,
                                 outcome="uncertain",
+                                url=partial.url if partial else None,
+                                issue=partial.issue if partial else None,
                                 detail=str(exc),
                                 sent=_sent_entry(
-                                    batch, name, resolved, target, None, container_prefix, publisher
+                                    batch,
+                                    name,
+                                    resolved,
+                                    target,
+                                    partial.url if partial else None,
+                                    container_prefix,
+                                    publisher,
                                 ),
                                 now=clock(),
                             )
@@ -1276,6 +1597,16 @@ def apply_batch(
                         exc.uncertain or not recorded,
                         _apply_failure_detail(str(exc), uncertain=exc.uncertain),
                     )
+                if isinstance(resolved.action, (ProjectAddAction, ProjectSetAction)):
+                    item = _receipt_item(receipt.url)
+                    if item:
+                        established_items[
+                            (
+                                resolved.repo.identity,
+                                receipt.issue,
+                                resolved.action.project.casefold(),
+                            )
+                        ] = item
                 try:
                     settled = store.settle(
                         claim,
@@ -1382,7 +1713,7 @@ _RECEIPT_URL_RE = re.compile(
 )
 
 
-def _validated_receipt(url: str, repo: RepoTarget) -> int:
+def _validated_receipt(url: str, repo: RepoTarget, *, project: bool = False) -> int:
     """Parse and validate a GitHub issue receipt URL; return its issue number.
 
     Deliberately strict: exactly `https://github.com/<owner>/<repo>/issues/<n>`,
@@ -1390,7 +1721,12 @@ def _validated_receipt(url: str, repo: RepoTarget) -> int:
     `repo` case-insensitively. No query string, no `pull`, no credentials in
     the authority, no host lookalike, no trailing garbage.
     """
-    match = _RECEIPT_URL_RE.fullmatch(url)
+    pattern = (
+        re.compile(_RECEIPT_URL_RE.pattern.replace("/issues/", "/(?:issues|pull)/"))
+        if project
+        else _RECEIPT_URL_RE
+    )
+    match = pattern.fullmatch(url)
     if match is None:
         raise JournalError(f"not a GitHub issue URL: {url!r}")
     slug = f"{match['owner']}/{match['repo']}"
@@ -1470,7 +1806,14 @@ def reconcile_action(
             return False
 
         action = manifest.actions[index]
-        url_number = _validated_receipt(resolution.url, repo)
+        url_number = _validated_receipt(
+            resolution.url,
+            repo,
+            project=isinstance(
+                action,
+                (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction),
+            ),
+        )
         if isinstance(action, CreateAction):
             if type(resolution.issue) is not int:
                 raise JournalError("a create's resolution requires its GitHub issue number")
@@ -1490,11 +1833,28 @@ def reconcile_action(
             if expected is not None and expected != url_number:
                 raise JournalError("receipt URL does not match this action's issue")
 
+        receipt_url = resolution.url
+        if isinstance(action, (ProjectAddAction, ProjectSetAction)) and not _receipt_item(
+            receipt_url
+        ):
+            try:
+                project = issue_projects.resolve_project(repo.repo_root, action.project)
+                target = issue_projects.get_target(repo.repo_root, project, repo.slug, url_number)
+            except IssueGithubReadError as exc:
+                raise JournalError(str(exc)) from exc
+            if (
+                not target.present
+                or target.url != receipt_url.split("#", 1)[0]
+                or _validated_receipt(target.url, repo, project=True) != url_number
+            ):
+                raise JournalError("project receipt does not identify a current board item")
+            receipt_url = f"{target.url}#project-item-{target.item_id}"
+
         settled = store.resolve(
             claim,
             digest,
             index,
-            applied=(resolution.url, resolution.issue),
+            applied=(receipt_url, resolution.issue),
             sent_outbox="issue",
             sent_target=url_number,
             now=clock(),

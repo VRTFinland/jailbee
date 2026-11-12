@@ -213,6 +213,7 @@ class RepoGroup:
     default_runner: str | None = None
     default_runner_source: str | None = None
     runner_profiles: tuple[str, ...] = ()
+    default_project: str | None = None
     # Outbox "Sent" log records of every container of this repo (destroyed ones
     # included); set by the state service's gatherer, 0 = none.
     sent_count: int = 0
@@ -554,6 +555,7 @@ def _gather_rows(
                 autostart_services=tuple(cfg.services),
                 autostart_default_profile=cfg.autostart.default_profile or "all",
                 orchestration_profiles=tuple(sorted(orch_view.profiles)),
+                default_project=cfg.github.project,
                 default_runner=runner.describe() if runner else None,
                 default_runner_source=orch_view.default_runner_source,
                 runner_profiles=tuple(sorted(litellm_config.effective_profiles()))

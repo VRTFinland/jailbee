@@ -49,6 +49,42 @@ def _parse_action(action: object, files: dict[str, str] | None = None):
     return parse_manifest("001-work.json", _manifest(action), files or {})
 
 
+def test_project_add_carries_board_and_host_membership() -> None:
+    action = _parse_action(
+        {
+            "type": "project_add",
+            "repo": ".",
+            "issue": 12,
+            "project": "acme/3",
+            "expected": {"present": False},
+        }
+    ).actions[0]
+    assert action.kind == "project_add"
+    assert action.project == "acme/3"
+    assert action.expected_present is False
+
+
+@pytest.mark.parametrize("expected", [{}, {"present": 1}, {"present": "false"}])
+def test_project_add_requires_boolean_membership(expected) -> None:
+    with pytest.raises(IssueManifestError, match="present"):
+        _parse_action(
+            {
+                "type": "project_add",
+                "repo": ".",
+                "issue": 12,
+                "project": "acme/3",
+                "expected": expected,
+            }
+        )
+
+
+def test_action_exposes_explicit_kind() -> None:
+    action = _parse_action(_comment()).actions[0]
+    assert action.kind == "comment"
+    assert _parse_action(_create()).actions[0].kind == "create"
+    assert _parse_action(_assignees()).actions[0].kind == "assignees"
+
+
 def test_parse_mixed_manifest_into_immutable_actions() -> None:
     payload = {
         "version": 1,

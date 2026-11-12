@@ -147,11 +147,19 @@ def _spec(dotted):
 
 def test_repo_github_enabled_is_editable_but_secrets_are_not():
     assert layers.disabled_reason(_spec("github.enabled"), "repo") is None
+    assert layers.disabled_reason(_spec("github.project"), "repo") is None
 
     for field in ("github.token", "github.api_tokens"):
         reason = layers.disabled_reason(_spec(field), "repo")
         assert reason is not None
         assert "global.yaml" in reason
+
+
+def test_extra_boards_are_editable_only_in_local_layer():
+    spec = _spec("github.projects")
+    assert layers.disabled_reason(spec, "repo")
+    assert "--local" in (layers.disabled_reason(spec, "global") or "")
+    assert layers.disabled_reason(spec, "local") is None
 
 
 def test_github_is_editable_in_the_global_layer():

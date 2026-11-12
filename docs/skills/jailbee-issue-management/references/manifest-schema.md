@@ -16,7 +16,11 @@ parsed by the host. Do not write manifests or outbox files by hand.
     {"type": "assignees", "repo": ".", "issue": 42, "add": ["@me"], "remove": [],
      "expected": {"assignees": []}},
     {"type": "state", "repo": ".", "issue": 42, "state": "closed", "reason": "completed",
-     "expected": {"state": "open"}}
+     "expected": {"state": "open"}},
+    {"type": "project_add", "repo": ".", "issue": 42, "project": "acme/7",
+     "expected": {"present": false}},
+    {"type": "project_remove", "repo": ".", "issue": 43, "project": "acme/7",
+     "expected": {"present": true}}
   ]
 }
 ```
@@ -158,6 +162,49 @@ Closes or reopens an issue.
 | `state` | `"open"` or `"closed"`. |
 | `reason` | Required, `"completed"` or `"not_planned"`, **only** when `state` is `"closed"`. Forbidden when reopening. |
 | `expected.state` | Required — the current state `gh issue view` showed. Must differ from `state` (an action that "changes" state to what it already is is refused). |
+
+## Project actions
+
+All project actions require `repo`, one of `issue` / `issue_ref`, and
+`project` (`owner/positive-number`). Project actions may target issues or pull
+requests. `issue_ref` references a preceding `create` in the same manifest and
+repo; its project membership is initially absent. The host also records
+`project_title` as display-only metadata; it never changes which board is
+authorized or resolved at publication.
+
+| Type | Additional fields | Expected state |
+|---|---|---|
+| `project_add` | none | `expected.present`: whether the item was already a member. |
+| `project_set` | `field`, `value` | `expected.present` records membership; `expected.value` is the prior field value or `null`. |
+| `project_clear` | `field` | `expected.present` records membership; `expected.value` is the prior field value or `null`. |
+| `project_remove` | none | `expected.present`: whether the item was a member. |
+
+A set or clear expectation records both membership and the field's previous
+value. `expected.value` is a string for text, date and single-select names, a
+number for numeric fields, or `null` for an unset field. A newly created
+`issue_ref` starts with `{"present": false, "value": null}`. For example:
+
+```json
+{"type": "project_set", "repo": ".", "issue": 42, "project": "acme/7",
+ "field": "Status", "value": "In progress",
+ "expected": {"present": true, "value": "Todo"}}
+```
+
+The expectation is captured on the host; container commands never need project
+permissions. The host checks expectations before applying changes and refuses
+stale actions. Adding
+an existing member and removing a non-member are no-ops only when the recorded
+membership expectation still matches. A `project_set` adds a missing item
+before setting its field. Each `--set` and `--clear` becomes a separate action;
+only a given project field may be changed once per target in a manifest.
+
+Fields supported by project mutations are single-select, text, number and date.
+Iteration fields are not supported. Single-select values are option names,
+dates use `YYYY-MM-DD`, and numbers are decimal. The host resolves field and
+option names and validates the value type before publishing.
+
+`project_add` stores membership in `expected.present`; the host captures it
+when staging (or derives `false` for a new `issue_ref`).
 
 ## One field, one action, per target
 

@@ -55,6 +55,30 @@ def test_local_layer_can_disable_docker_seed(tmp_path):
     assert cfg.golden.docker_seed.images == ["app:*"]
 
 
+def test_extra_project_boards_are_host_local_only(tmp_path):
+    def load(global_raw, repo_raw, local_raw):
+        return load_config_from_layers(
+            global_raw,
+            {"container_prefix": "boards", **repo_raw},
+            tmp_path / ".jailbee" / "config.yaml",
+            origin="repo config",
+            local_raw=local_raw,
+            local_origin="local config",
+            skip_git=True,
+        )
+
+    boards = {"github": {"projects": ["acme/3", "Other/7"]}}
+    cfg = load({}, {"github": {"project": "acme/1"}}, boards)
+    assert cfg.github.project == "acme/1"
+    assert cfg.github.projects == ["acme/3", "Other/7"]
+    with pytest.raises(ConfigError, match="github"):
+        load({}, boards, {})
+    with pytest.raises(ConfigError, match=r"github\.projects"):
+        load(boards, {}, {})
+    with pytest.raises(ConfigError, match="owner/positive-number"):
+        load({}, {}, {"github": {"projects": ["acme/0"]}})
+
+
 def test_local_dir_sits_next_to_global_yaml():
     from jailbee.global_config import default_global_config_path
 

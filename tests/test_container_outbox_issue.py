@@ -30,6 +30,90 @@ def submit(name):
     return result
 
 
+def test_project_batch_sends_one_atomic_request_and_reports_reader_failure(monkeypatch):
+    from jailbee.container_outbox import broker
+    from jailbee.container_outbox.common import OutboxCommandError
+
+    calls = []
+
+    def append_many(*args):
+        calls.append(args)
+        raise OutboxCommandError("second host reader failed", 1)
+
+    monkeypatch.setattr(broker, "draft_append_many", append_many)
+    monkeypatch.setattr(broker, "draft_append", lambda *a: pytest.fail("non-atomic append"))
+    result = invoke(
+        "project",
+        "7",
+        "--project",
+        "acme/3",
+        "--set",
+        "Status=Doing",
+        "--set",
+        "Priority=High",
+        "--batch",
+        "b",
+    )
+    assert result.exit_code == 1
+    assert "second host reader failed" in result.output
+    assert len(calls) == 1 and len(calls[0][2]) == 2
+
+
+def test_project_add_stages_without_container_github_reads(monkeypatch):
+    from jailbee.container_outbox import broker
+
+    staged = []
+    monkeypatch.setattr(gh, "issue_view", lambda *a: pytest.fail("container read"))
+    monkeypatch.setattr(broker, "put", lambda *args: staged.append(args) or "001-project-add.json")
+    result = invoke("project", "7", "--project", "acme/3", "--add")
+    assert result.exit_code == 0, result.output
+    assert staged[0][2] == {
+        "version": 1,
+        "actions": [{"type": "project_add", "repo": ".", "issue": 7, "project": "acme/3"}],
+    }
+
+
+def test_project_clear_and_remove_flags_stage_explicit_actions(monkeypatch):
+    from jailbee.container_outbox import broker
+
+    staged = []
+    monkeypatch.setattr(broker, "put", lambda *args: staged.append(args) or "001-project.json")
+    result = invoke(
+        "project", "7", "--project", "acme/3", "--set", "Status=Doing", "--clear", "Priority"
+    )
+    assert result.exit_code == 0, result.output
+    assert [a["type"] for a in staged[-1][2]["actions"]] == ["project_set", "project_clear"]
+    assert staged[-1][2]["actions"][1] == {
+        "type": "project_clear",
+        "repo": ".",
+        "issue": 7,
+        "project": "acme/3",
+        "field": "Priority",
+    }
+    result = invoke("project", "7", "--remove")
+    assert result.exit_code == 0, result.output
+    assert staged[-1][2]["actions"] == [{"type": "project_remove", "repo": ".", "issue": 7}]
+    assert invoke("project", "7", "--remove", "--clear", "Priority").exit_code == 2
+    assert invoke("project", "7", "--set", "Priority=High", "--clear", "priority").exit_code == 2
+
+
+def test_project_set_expands_fields_into_one_proposal_without_reads(monkeypatch):
+    from jailbee.container_outbox import broker
+
+    staged = []
+    monkeypatch.setattr(gh, "issue_view", lambda *a: pytest.fail("container read"))
+    monkeypatch.setattr(broker, "put", lambda *args: staged.append(args) or "001-fields.json")
+    result = invoke("project", "7", "--set", "Status=Doing", "--set", "Priority=High")
+    assert result.exit_code == 0, result.output
+    assert staged[0][2]["actions"] == [
+        {"type": "project_set", "repo": ".", "issue": 7, "field": "Status", "value": "Doing"},
+        {"type": "project_set", "repo": ".", "issue": 7, "field": "Priority", "value": "High"},
+    ]
+    result = invoke("project", "7", "--set", "Status=Doing", "--set", "status=Todo")
+    assert result.exit_code == 2 and "duplicate" in result.output
+    assert len(staged) == 1
+
+
 def test_create_json_outputs_only_manifest_name(tmp_path, broker):
     result = invoke("create", "--title", "Bug", "--body", "body", "--json")
     assert result.exit_code == 0, result.output

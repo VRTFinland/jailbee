@@ -13391,6 +13391,16 @@ def orchestrate_grant_cmd(
             ),
         ),
     ] = None,
+    publish_project: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--publish-project",
+            help=(
+                "owner/number=add,set,remove; repeatable, replaces named board rights; "
+                "=none clears."
+            ),
+        ),
+    ] = None,
     publish_foreign_issues: Annotated[
         list[str] | None,
         typer.Option(
@@ -13464,6 +13474,7 @@ def orchestrate_grant_cmd(
         runner=selected,
         clear_runner=clear_runner,
         publish_issues=tuple(publish_issues.split(",")) if publish_issues is not None else None,
+        publish_project=tuple(publish_project) if publish_project is not None else None,
         publish_foreign_issues=tuple(publish_foreign_issues)
         if publish_foreign_issues is not None
         else None,

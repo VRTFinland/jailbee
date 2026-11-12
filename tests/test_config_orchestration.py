@@ -43,6 +43,25 @@ def test_publish_config_blocks():
         OrchestrationProfile.model_validate({"publish": {"unknown": True}})
 
 
+def test_project_config_round_trips_and_validates_board_rights():
+    profile = OrchestrationProfile.model_validate(
+        {"publish": {"projects": [{"board": "Org/3", "actions": ["set", "remove", "set"]}]}}
+    )
+    assert profile.publish is not None
+    rights = profile.publish.to_rights()
+    assert rights.covers_project("project_clear", "org/3")
+    assert rights.covers_project("project_remove", "org/3")
+    assert OrchestrationProfile.model_validate(profile.model_dump()).publish.to_rights() == rights
+    repo = RepoOrchestration.model_validate({"publish": profile.publish.model_dump()})
+    assert repo.publish.to_rights() == rights
+    for entry in [
+        {"board": "org/*", "actions": ["set"]},
+        {"board": "org/3", "actions": ["clear"]},
+    ]:
+        with pytest.raises(ValidationError):
+            OrchestrationProfile.model_validate({"publish": {"projects": [entry]}})
+
+
 def test_profile_defaults_match_grant_defaults():
     p = OrchestrationProfile()
     assert (p.max_running_children, p.operations, p.grantable.mounts) == (

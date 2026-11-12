@@ -7,7 +7,7 @@ import json
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, replace
-from typing import TYPE_CHECKING, Literal, Union
+from typing import TYPE_CHECKING, Literal, Union, assert_never
 
 from jailbee import issue_manifest as issues
 from jailbee import pr_outbox as prs
@@ -61,6 +61,8 @@ def _body_names(value: object) -> set[str]:
 
 def _issue_action(index: int, action: issues.IssueAction) -> ActionView:
     title: str | None = None
+    board_title = getattr(action, "project_title", None)
+    board = getattr(action, "project", "") + (f' "{board_title}"' if board_title else "")
     body: str | None
     markdown = True
     if isinstance(action, issues.CreateAction):
@@ -87,9 +89,37 @@ def _issue_action(index: int, action: issues.IssueAction) -> ActionView:
                 "assignees",
                 False,
             )
-        else:
+        elif isinstance(action, (issues.ProjectClearAction, issues.ProjectRemoveAction)):
+            if isinstance(action, issues.ProjectClearAction):
+                before = action.expected_value if action.expected_value is not None else "(empty)"
+                change = f"{action.field}: {before} → (empty)"
+            else:
+                before = "on board" if action.expected_present else "not on board"
+                change = f"membership: {before} → not on board"
+            body, kind, markdown = (
+                f"project {board} · #{target} · {change}",
+                action.kind,
+                False,
+            )
+        elif isinstance(action, issues.ProjectSetAction):
+            before = action.expected_value if action.expected_value is not None else "(empty)"
+            body, kind, markdown = (
+                f"project {board} · #{target} · {action.field}: {before} → {action.value}",
+                action.kind,
+                False,
+            )
+        elif isinstance(action, issues.ProjectAddAction):
+            before = "on board" if action.expected_present else "not on board"
+            body, kind, markdown = (
+                f"project {board} · #{target} · membership: {before} → on board",
+                action.kind,
+                False,
+            )
+        elif isinstance(action, issues.StateAction):
             body = action.state + (f" ({action.reason})" if action.reason else "")
             kind, markdown = "state", False
+        else:
+            assert_never(action)
     return ActionView(index, kind, action.repo, target, title, body, markdown, "pending", None, ())
 
 

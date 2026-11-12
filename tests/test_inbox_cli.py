@@ -48,6 +48,30 @@ def _cells(line: str) -> list[str]:
     return re.split(r"\s{2,}", line.strip())
 
 
+def test_grant_renders_project_boards_in_text_and_json(capsys):
+    import json
+
+    from jailbee.inbox.cli import render_grant
+    from jailbee.orchestration.grant import Grant, PublishRights
+
+    grant = Grant(
+        publish=PublishRights.model_validate(
+            {"projects": [{"board": "Org/3", "actions": ["set", "remove"]}]}
+        )
+    ).model_dump(mode="json")
+    assert render_grant(grant, as_json=False) == 0
+    assert "publish projects: org/3 (remove, set)" in capsys.readouterr().out
+    assert render_grant(grant, as_json=True) == 0
+    assert json.loads(capsys.readouterr().out)["publish"]["projects"] == [
+        {"board": "org/3", "actions": ["remove", "set"]}
+    ]
+    grant["publish"]["projects"] = [{"board": "org/3\u001b", "actions": ["set\u0085"]}]
+    render_grant(grant, as_json=False)
+    output = capsys.readouterr().out
+    assert "org/3? (set?)" in output
+    assert "\u001b" not in output and "\u0085" not in output
+
+
 def test_status_table_running_child():
     from jailbee.inbox.render import render_status
 

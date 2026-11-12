@@ -218,7 +218,15 @@ def disabled_reason(spec: FieldSpec, layer: LayerName) -> str | None:
     including computed and legacy names not shown by `repo_specs()`.
     GitHub permits only the safe disabled exception at the repo layer.
     """
-    if layer == "repo" and spec.path[0] == "github" and spec.path[1:] != ("enabled",):
+    if (
+        layer == "repo"
+        and spec.path[0] == "github"
+        and spec.path[1:]
+        not in (
+            ("enabled",),
+            ("project",),
+        )
+    ):
         return (
             "Only `github: {enabled: false}` is allowed in a repo config — "
             "set api_tokens in ~/.config/jailbee/global.yaml and github.token "
@@ -234,9 +242,9 @@ def disabled_reason(spec: FieldSpec, layer: LayerName) -> str | None:
             "`git.user` is personal and is rejected in a repo config — set it in "
             "~/.config/jailbee/global.yaml or `jailbee config edit --local`."
         )
-    if layer == "global" and spec.path == ("github", "token"):
+    if layer == "global" and spec.path in (("github", "token"), ("github", "projects")):
         return (
-            "`github.token` is per-repo — set it in the repo's host-local file "
+            f"`{'.'.join(spec.path)}` is per-repo — set it in the repo's host-local file "
             "(`jailbee config edit --local`)."
         )
     if layer == "local" and spec.path[0] == "container_prefix":

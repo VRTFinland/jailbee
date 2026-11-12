@@ -15,6 +15,7 @@ from jailbee.orchestration.outbox import grant_json_text
 from jailbee.orchestration.store import StoreError
 
 if TYPE_CHECKING:
+    from jailbee.config import Config
     from jailbee.orchestration import broker_state
     from jailbee.orchestration.actions import ActionContext
     from jailbee.orchestration.store import BrokerStore
@@ -37,6 +38,7 @@ class ContainerSnapshot:
     ready: bool
     children_json: str
     grant_json: str | None
+    project_config: Config | None = None
 
 
 class Queries:
@@ -161,7 +163,73 @@ class Queries:
             from jailbee.outbox.publication_db import PublicationStore
 
             return broker_ops.handle_sent(PublicationStore(self._store), uuid, args)
-        return broker_ops.handle(OutboxStore(self._store), uuid, op, args, now=time.time())
+        cfg = view.project_config
+        reader = title_reader = None
+        allowed_boards: set[str] = set()
+        if cfg is not None:
+            allowed_boards.update(board.casefold() for board in cfg.github.projects)
+            if cfg.github.project:
+                allowed_boards.add(cfg.github.project.casefold())
+        if view.role == "orchestrator" and view.grant_json is not None:
+            grant = json.loads(view.grant_json)
+            allowed_boards.update(
+                entry["board"].casefold() for entry in grant.get("publish", {}).get("projects", [])
+            )
+        if op in (wire.OUTBOX_PUT, wire.OUTBOX_DRAFT_APPEND):
+            manifest = args.get("manifest")
+            entries = (
+                (manifest.get("actions", []) if isinstance(manifest, dict) else [])
+                if op == wire.OUTBOX_PUT
+                else args.get("actions", [args.get("action")])
+            )
+            if isinstance(entries, list):
+                for entry in entries:
+                    if isinstance(entry, dict) and entry.get("type") in (
+                        "project_add",
+                        "project_set",
+                        "project_clear",
+                        "project_remove",
+                    ):
+                        board = entry.get("project", cfg.github.project if cfg else None)
+                        if isinstance(board, str) and board.casefold() not in allowed_boards:
+                            raise wire.WireError(
+                                wire.REFUSED,
+                                f"project {board!r} is not allowed for staging; add it to "
+                                "github.projects in the host-local repos/<container_prefix>.yaml "
+                                "or the orchestrator's publish.projects grant",
+                            )
+        if cfg is not None:
+            from jailbee import issue_outbox, issue_projects
+
+            def reader(
+                board: str, repo: str, number: int, field: str | None
+            ) -> issue_projects.ProjectExpectation:
+                targets = issue_outbox.resolve_repo_targets(cfg)
+                target = issue_outbox.target_for(targets, repo, cfg.repo_root)
+                if target is None:
+                    raise ValueError(f"repo {repo!r} is not host-authorized")
+                project = issue_projects.resolve_project(cfg.repo_root, board)
+                item = issue_projects.get_target(cfg.repo_root, project, target.slug, number)
+                value = None
+                if field is not None:
+                    fields = issue_projects.list_fields(cfg.repo_root, project)
+                    resolved_field = issue_projects.find_field(fields, field)
+                    value = issue_projects.get_field_value(cfg.repo_root, item, resolved_field)
+                return issue_projects.ProjectExpectation(item.present, value, project.title)
+
+            def title_reader(board: str) -> str:
+                return issue_projects.resolve_project(cfg.repo_root, board).title
+
+        return broker_ops.handle(
+            OutboxStore(self._store),
+            uuid,
+            op,
+            args,
+            now=time.time(),
+            project_reader=reader,
+            project_title_reader=title_reader,
+            default_project=getattr(cfg.github, "project", None) if cfg else None,
+        )
 
     def put_refusal(self, uuid: str) -> wire.Response | None:
         """The answer an ``outbox.put`` from ``uuid`` gets for its role, if refused.
@@ -221,6 +289,7 @@ def _context_snapshot(memory: broker_state.BrokerMemory, ctx: ActionContext) -> 
         ready=ready,
         children_json=json.dumps(children),
         grant_json=grant_json_text(grant, *ctx.default_runner()) if grant is not None else None,
+        project_config=ctx.cfg,
     )
 
 
@@ -259,7 +328,13 @@ def publish_queries(memory: broker_state.BrokerMemory) -> None:
     empty_children = json.dumps({"children": [], "observed_at": None, "last_from_child": {}})
     try:
         snapshot = {
-            uuid: ContainerSnapshot(_fallback_role(memory, uuid), True, empty_children, None)
+            uuid: ContainerSnapshot(
+                _fallback_role(memory, uuid),
+                True,
+                empty_children,
+                None,
+                memory.project_configs.get(uuid),
+            )
             for uuid in memory.store.recipients().values()
         }
     except Exception:

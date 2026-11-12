@@ -267,6 +267,16 @@ def render_grant(grant: dict[str, Any], *, as_json: bool) -> int:
         if isinstance(repos, list) and isinstance(actions, list)
         else "-"
     )
+    projects = publish.get("projects")
+    project_text = (
+        "; ".join(
+            f"{text(entry.get('board'))} ({', '.join(text(a) for a in entry['actions'])})"
+            for entry in projects
+            if isinstance(entry, dict) and isinstance(entry.get("actions"), list)
+        )
+        if isinstance(projects, list)
+        else "-"
+    )
     default_runner = grant.get("default_runner")
     runner_text = "none"
     if isinstance(default_runner, dict):
@@ -290,6 +300,7 @@ def render_grant(grant: dict[str, Any], *, as_json: bool) -> int:
     print("grantable egress: " + egress_text)
     print("publish issues: " + issue_text)
     print("publish foreign issues: " + foreign_text)
+    print("publish projects: " + project_text)
     print("publish pull_requests: " + ("yes" if publish.get("pull_requests") is True else "no"))
     print("publish pr_reviews: " + ("yes" if publish.get("pr_reviews") is True else "no"))
     print("publish max_actions_per_hour: " + text(publish.get("max_actions_per_hour")))

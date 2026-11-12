@@ -27,6 +27,46 @@ def pr_journal(name, files, applied, count=None, *, uncertain=()):
     return Journal("uuid", "pr", name, digest, IDENTITY.full_name, total, actions)
 
 
+@pytest.mark.parametrize(
+    "kind, fields, change",
+    [
+        ("project_add", {}, "membership: not on board → on board"),
+        ("project_remove", {}, "membership: not on board → not on board"),
+        (
+            "project_set",
+            {"field": "Notes", "value": "Hello", "expected": {"present": False, "value": None}},
+            "Notes: (empty) → Hello",
+        ),
+        (
+            "project_clear",
+            {"field": "Notes", "expected": {"present": True, "value": "Hello"}},
+            "Notes: Hello → (empty)",
+        ),
+    ],
+)
+def test_project_inspect_view_is_not_a_state_action(kind, fields, change):
+    files = {
+        "001.json": json.dumps(
+            {
+                "version": 1,
+                "actions": [
+                    {
+                        "type": kind,
+                        "repo": ".",
+                        "issue": 7,
+                        "project": "acme/3",
+                        "expected": {"present": False},
+                        **fields,
+                    }
+                ],
+            }
+        )
+    }
+    (view,) = build_views(IDENTITY, (store("issue", files),))
+    assert view.actions[0].kind == kind
+    assert view.actions[0].body == f"project acme/3 · #7 · {change}"
+
+
 def test_same_filename_is_two_proposals(tmp_path):
     views = build_views(
         IDENTITY,

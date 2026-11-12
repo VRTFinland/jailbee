@@ -1316,6 +1316,21 @@ def test_orchestrator_card_shows_publish_rights() -> None:
     )
 
 
+def test_orchestrator_card_shows_project_only_publish_rights() -> None:
+    panel = dd.container_panel(
+        _orch(
+            publish={
+                "publish_projects": (("org/[x]", ("remove", "set")),),
+                "publish_rate": 12,
+            }
+        ),
+        NOW,
+    )
+    assert panel.orchestration[4] == (
+        r"[dim]publish:[/dim] project org/\[x] (remove, set) · 12/hour"
+    )
+
+
 def test_orchestrator_card_shows_unread_inbox_and_escapes_values() -> None:
     p = dd.container_panel(_orch(unread=3, egress=("[x]",), loose=True), NOW)
     assert p.orchestration[0].endswith(" · inbox 3 unread")
