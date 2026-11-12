@@ -520,8 +520,12 @@ def scoped_rights_entries(
 
 
 def scoped_action_entries(
-    rights: Sequence[str], kinds: Sequence[str], *, widen: bool,
-    implications: dict[str, str], remove_label: str,
+    rights: Sequence[str],
+    kinds: Sequence[str],
+    *,
+    widen: bool,
+    implications: dict[str, str],
+    remove_label: str,
 ) -> tuple[PickerEntry, ...]:
     """Build the inner action list, including rights implied by another right."""
     entries = []

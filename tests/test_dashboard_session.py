@@ -612,7 +612,9 @@ def _orchestration_session(
 
 def test_project_grants_show_in_orchestration_menu(mocker, tmp_path):
     session, _ = _orchestration_session(
-        mocker, tmp_path, grant=True,
+        mocker,
+        tmp_path,
+        grant=True,
         publish={"publish_projects": (("org/3", ("set", "remove")),)},
     )
     menu = session.open_orchestration("alpha-one")
@@ -627,19 +629,42 @@ def test_project_grants_show_in_orchestration_menu(mocker, tmp_path):
 def test_project_board_add_toggle_and_remove(mocker, tmp_path):
     session, quiet = _orchestration_session(mocker, tmp_path, grant=True)
     menu = session.open_orchestration("alpha-one")
-    boards = session.submit_picker(menu, next(e for e in menu.entries if e.value == "publish-projects"))
+    boards = session.submit_picker(
+        menu, next(e for e in menu.entries if e.value == "publish-projects")
+    )
     prompt = session.submit_picker(boards, next(e for e in boards.entries if e.value == "add"))
     boards = session.submit_prompt(prompt, "org/3")
-    assert quiet.call_args.args[1] == ["orchestrate", "grant", "--publish-project", "org/3=set", "--", "alpha-one"]
+    assert quiet.call_args.args[1] == [
+        "orchestrate",
+        "grant",
+        "--publish-project",
+        "org/3=set",
+        "--",
+        "alpha-one",
+    ]
     board = session.submit_picker(boards, next(e for e in boards.entries if e.value == "org/3"))
     add = next(e for e in board.entries if e.value == "add")
     assert "on (via set)" in add.label
     session.submit_picker(board, add)
     assert "turn set off first" in session.notice
     board = session.submit_picker(board, next(e for e in board.entries if e.value == "remove"))
-    assert quiet.call_args.args[1] == ["orchestrate", "grant", "--publish-project", "org/3=remove,set", "--", "alpha-one"]
+    assert quiet.call_args.args[1] == [
+        "orchestrate",
+        "grant",
+        "--publish-project",
+        "org/3=remove,set",
+        "--",
+        "alpha-one",
+    ]
     boards = session.submit_picker(board, next(e for e in board.entries if e.value == "delete"))
-    assert quiet.call_args.args[1] == ["orchestrate", "grant", "--publish-project", "org/3=none", "--", "alpha-one"]
+    assert quiet.call_args.args[1] == [
+        "orchestrate",
+        "grant",
+        "--publish-project",
+        "org/3=none",
+        "--",
+        "alpha-one",
+    ]
     assert not any(e.value == "org/3" for e in boards.entries)
 
 
@@ -651,7 +676,9 @@ def test_project_add_prefills_only_ungranted_default(mocker, tmp_path, existing,
     )
     session.groups[0].default_project = "Org/3"
     menu = session.open_orchestration("alpha-one")
-    boards = session.submit_picker(menu, next(e for e in menu.entries if e.value == "publish-projects"))
+    boards = session.submit_picker(
+        menu, next(e for e in menu.entries if e.value == "publish-projects")
+    )
     prompt = session.submit_picker(boards, next(e for e in boards.entries if e.value == "add"))
     assert prompt.initial == expected
 
@@ -662,7 +689,9 @@ def test_project_add_refuses_invalid_or_duplicate_board(mocker, tmp_path, answer
         mocker, tmp_path, grant=True, publish={"publish_projects": (("org/3", ("set",)),)}
     )
     menu = session.open_orchestration("alpha-one")
-    boards = session.submit_picker(menu, next(e for e in menu.entries if e.value == "publish-projects"))
+    boards = session.submit_picker(
+        menu, next(e for e in menu.entries if e.value == "publish-projects")
+    )
     prompt = session.submit_picker(boards, next(e for e in boards.entries if e.value == "add"))
     session.submit_prompt(prompt, answer)
     quiet.assert_not_called()
@@ -673,7 +702,9 @@ def test_project_rights_remote_can_narrow_but_not_widen_or_raise_rate(mocker, tm
     from jailbee.config.models_remote import RemoteSSHConfig
 
     session = _ssh_orchestration_session(
-        mocker, tmp_path, level="ssh",
+        mocker,
+        tmp_path,
+        level="ssh",
         grant_kw={"publish_projects": (("org/3", ("set",)),)},
     )
     session.ssh_policy = RemoteSSHConfig.model_validate(
@@ -681,7 +712,9 @@ def test_project_rights_remote_can_narrow_but_not_widen_or_raise_rate(mocker, tm
     )
     quiet = mocker.patch.object(session, "run_quiet_cli", return_value=True)
     menu = session.open_orchestration("alpha-one")
-    boards = session.submit_picker(menu, next(e for e in menu.entries if e.value == "publish-projects"))
+    boards = session.submit_picker(
+        menu, next(e for e in menu.entries if e.value == "publish-projects")
+    )
     assert not any(e.value == "add" for e in boards.entries)
     board = session.submit_picker(boards, boards.entries[0])
     assert [e.value for e in board.entries] == ["add", "set", "delete"]
