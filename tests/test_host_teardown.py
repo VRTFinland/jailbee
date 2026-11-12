@@ -141,6 +141,21 @@ def test_queue_entries_for_exact_child_only() -> None:
     assert ostate.pending_dir(root, "foo-bar").exists()
 
 
+def test_destroyed_orchestrator_pending_cancellations_are_purged() -> None:
+    root = ostate.state_root()
+    for sender in ("foo", "foo-bar"):
+        ostate.cancel_queued(
+            root,
+            sender,
+            ostate.CancelledRequest(_req("future", kind="fork"), "cancel-1", sender, "status-1"),
+        )
+    host_teardown.cleanup(host_teardown.snapshot(_incus("foo"), "foo"))
+    host_teardown.cleanup(host_teardown.snapshot(_incus("foo"), "foo"))
+
+    assert ostate.load_cancellations(root, "foo") == []
+    assert len(ostate.load_cancellations(root, "foo-bar")) == 1
+
+
 def test_reservations_dead_dropped_live_kept(monkeypatch) -> None:
     root = ostate.state_root()
     ostate.save_reservations(

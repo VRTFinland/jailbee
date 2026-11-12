@@ -666,10 +666,15 @@ def _handle_spawn_locked(ctx: ActionContext, m: Manifest) -> Outcome:
     grant = ctx.grant()
     if grant is None:
         return refused(NOT_ALLOWED)
-    from jailbee.orchestration.state import load_cancellations
+    from jailbee.orchestration.state import cancellation_senders, load_cancellations
 
     _settle_cancellations_locked(ctx)
-    pending = load_cancellations(ctx.root)
+    pending = [
+        entry
+        for sender in cancellation_senders(ctx.root)
+        if sender in ctx.nodes
+        for entry in load_cancellations(ctx.root, sender)
+    ]
     queued = _queued(ctx)
     plan = plan_spawn(
         ctx,
@@ -1025,14 +1030,14 @@ def _settle_cancellations_locked(ctx: ActionContext) -> None:
     from jailbee.orchestration.state import finish_cancellation, load_cancellations
 
     for entry in load_cancellations(ctx.root, ctx.sender.full):
-        if entry.recipient_key != ctx.sender.key:
-            finish_cancellation(ctx.root, ctx.sender.full, entry.cancel_id)
-            continue
         try:
             if entry.request.kind in {"fork", "pr"}:
                 git.delete_ref_checked(
                     ctx.cfg.repo_root, forking.fork_pin_ref(ctx.cfg, entry.request.child_full)
                 )
+            if entry.recipient_key != ctx.sender.key:
+                finish_cancellation(ctx.root, ctx.sender.full, entry.cancel_id)
+                continue
             broker_replies.reply(
                 ctx,
                 entry.request.manifest_id,
@@ -1040,7 +1045,7 @@ def _settle_cancellations_locked(ctx: ActionContext) -> None:
                 status_id=entry.status_id,
             )
             finish_cancellation(ctx.root, ctx.sender.full, entry.cancel_id)
-        except (OSError, git.GitError):
+        except (OSError, ValueError, git.GitError):
             log.exception("could not settle cancelled request %s", entry.request.manifest_id)
 
 

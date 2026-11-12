@@ -904,6 +904,28 @@ def test_vanished_orchestrator_queue_is_discarded(rig: Rig) -> None:
     rig.deliver.assert_not_called()
 
 
+@pytest.mark.parametrize("present", [False, True])
+def test_pending_cancellation_without_queue_is_settled_or_purged(rig: Rig, present: bool) -> None:
+    from jailbee.orchestration.state import CancelledRequest, cancel_queued, load_cancellations
+
+    if present:
+        rig.incus.list_containers.return_value = [_c("proj-orch")]
+    cancel_queued(
+        rig.root,
+        "proj-orch",
+        CancelledRequest(_req("q1"), "cancel-1", "proj-orch", "status-1"),
+    )
+    assert load_queue(rig.root) == {}
+
+    rig.tick()
+
+    assert load_cancellations(rig.root) == []
+    if present:
+        assert [(s.ref, s.state) for _, s in rig.statuses()] == [("q1", "refused")]
+    else:
+        rig.deliver.assert_not_called()
+
+
 def _sigterm() -> None:
     handler = signal.getsignal(signal.SIGTERM)
     assert callable(handler)

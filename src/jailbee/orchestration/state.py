@@ -229,6 +229,23 @@ def load_cancellations(root: Path, sender: str | None = None) -> list[CancelledR
     ]
 
 
+def cancellation_senders(root: Path) -> set[str]:
+    from jailbee.orchestration.store import open_state_store
+
+    raw = open_state_store(root).kv_get(CANCELLATIONS)
+    return {sender for sender, entries in raw.items() if entries} if isinstance(raw, dict) else set()
+
+
+def purge_cancellations(root: Path, sender: str) -> None:
+    """Forget replies/cleanup owed by a destroyed orchestrator."""
+    from jailbee.orchestration.store import open_state_store
+
+    def mutate(docs: dict[str, dict[str, Any]]) -> bool:
+        return docs[CANCELLATIONS].pop(sender, None) is not None
+
+    open_state_store(root).update_documents([CANCELLATIONS], mutate)
+
+
 def finish_cancellation(root: Path, sender: str, cancel_id: str) -> None:
     from jailbee.orchestration.store import open_state_store
 

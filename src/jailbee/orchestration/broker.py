@@ -40,7 +40,9 @@ from jailbee.orchestration.outbox import (
     has_pending,
 )
 from jailbee.orchestration.state import (
+    cancellation_senders,
     load_queue,
+    purge_cancellations,
     purge_vanished_pending,
     save_queue,
     state_root,
@@ -132,6 +134,7 @@ def tick(
     for full in purge_vanished_pending(root, keep):
         log.info("broker: dropped parked messages of vanished %s", full)
     queues = load_queue(root)
+    cancelling = cancellation_senders(root)
     identities = {
         str(e["name"]): str((e.get("config") or {}).get("volatile.uuid") or e["name"])
         for e in raw
@@ -157,6 +160,7 @@ def tick(
     if (
         not candidates
         and not queues
+        and not cancelling
         and not parked
         and not publishes
         and not (former_publishers & present)
@@ -328,7 +332,7 @@ def tick(
             except Exception:
                 log.exception("broker: child inbox state of %s failed", ctx.sender.full)
     memory.status.prune(set(nodes), seen)
-    for full in queues:
+    for full in set(queues) | cancelling:
         if full in seen:
             continue
         try:
@@ -342,6 +346,7 @@ def tick(
                 current = load_queue(root)
                 current.pop(full, None)
                 save_queue(root, current)
+                purge_cancellations(root, full)
         except Exception:
             log.exception("broker: queue of %s failed", full)
     # Queue launches can finish before watch settlement; the earlier snapshot
