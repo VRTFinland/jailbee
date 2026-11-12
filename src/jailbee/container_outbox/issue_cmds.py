@@ -386,8 +386,8 @@ def project(
             if project is not None:
                 action["project"] = project
         if batch is not None:
-            for action in actions:
-                _stage(action, batch)
+            broker.draft_append_many("issue", batch, actions, {})
+            typer.echo(f"staged issue draft {batch}")
         else:
             name = broker.put(
                 "issue",

@@ -167,8 +167,21 @@ def handle_append(
     kind = kind_arg(args.get("kind"))
     name = _name(args)
     action = args.get("action")
+    added = args.get("actions")
+    if "actions" in args:
+        if "action" in args or kind != "issue" or not isinstance(added, list) or not added or not all(isinstance(a, dict) for a in added):
+            raise bad_request("supply action or a non-empty issue actions list")
+        action = added[0]
     if not isinstance(action, dict):
         raise bad_request("action must be a JSON object")
+    prevalidate = None
+    if kind == "issue":
+        def prevalidate(manifest: dict[str, Any], all_bodies: Mapping[str, str]) -> None:
+            provisional: dict[str, Any] = {**manifest, "actions": []}
+            for entry in manifest["actions"]:
+                derived = _prepare(provisional, all_bodies, entry)
+                provisional["actions"].append(provisional_project(derived, default_project))
+            _validate(name)(provisional, all_bodies)
     bodies = parse_bodies(args.get("bodies"))
     if kind == "pr":
         prepare, validate = _pr_prepare(_pr_envelope(args.get("envelope"))), _pr_validate(name)
@@ -194,7 +207,8 @@ def handle_append(
 
     try:
         draft = store.draft_append(
-            uuid, kind, name, action, bodies, now=now, prepare=prepare, validate=validate
+            uuid, kind, name, action, bodies, now=now, prepare=prepare, validate=validate,
+            actions=added, prevalidate=prevalidate
         )
     except DraftCapError as exc:
         raise bad_request(str(exc)) from exc

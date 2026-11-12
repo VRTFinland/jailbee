@@ -265,6 +265,8 @@ class OutboxStore:
         now: float,
         prepare: DraftPrepare | None = None,
         validate: DraftValidate | None = None,
+        actions: list[dict[str, Any]] | None = None,
+        prevalidate: DraftValidate | None = None,
         max_drafts: int = MAX_DRAFTS,
     ) -> Draft:
         """Append one action (and its new bodies) to the draft, creating it."""
@@ -284,10 +286,14 @@ class OutboxStore:
             else:
                 manifest = json.loads(current.manifest)
                 existing = dict(current.bodies)
-            if prepare is not None:
-                action = prepare(manifest, existing, action)
-            manifest = {**manifest, "actions": [*manifest["actions"], action]}
+            added = [action] if actions is None else actions
             combined = {**existing, **bodies}
+            if prevalidate is not None:
+                prevalidate({**manifest, "actions": [*manifest["actions"], *added]}, combined)
+            for next_action in added:
+                if prepare is not None:
+                    next_action = prepare(manifest, combined, next_action)
+                manifest = {**manifest, "actions": [*manifest["actions"], next_action]}
             if validate is not None:
                 validate(manifest, combined)
             text = json.dumps(manifest, ensure_ascii=False)

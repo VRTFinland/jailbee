@@ -86,6 +86,29 @@ def test_project_reader_failure_leaves_draft_and_put_unchanged(env: Env, monkeyp
     assert store_db.read_proposals(env.rig.root, PLAIN, "issue") == []
 
 
+def test_multi_field_append_rolls_back_on_second_read_failure(env: Env, monkeypatch) -> None:
+    from jailbee import issue_outbox, issue_projects
+    from jailbee.issue_github import IssueGithubReadError
+    monkeypatch.setattr(issue_outbox, "resolve_repo_targets", lambda cfg: {".": issue_outbox.RepoTarget(".", cfg.repo_root, "acme/app")})
+    monkeypatch.setattr(issue_projects, "resolve_project", lambda *a: issue_projects.Project("acme/3", "P3", "Roadmap"))
+    monkeypatch.setattr(issue_projects, "get_target", lambda *a: issue_projects.ProjectTarget("I7", "https://github.com/acme/app/issues/7", "ITEM"))
+    monkeypatch.setattr(issue_projects, "list_fields", lambda *a: (issue_projects.ProjectField("F1", "Status", "TEXT"), issue_projects.ProjectField("F2", "Priority", "TEXT")))
+    reads = []
+    def read(*args):
+        reads.append(args)
+        if len(reads) == 2:
+            raise IssueGithubReadError("second read failed")
+        return "old"
+    monkeypatch.setattr(issue_projects, "get_field_value", read)
+    assert append(env, create()).ok
+    before = draft(env)
+    actions = [{"type": "project_set", "repo": ".", "issue": 7, "project": "acme/3", "field": field, "value": "new"} for field in ("Status", "Priority")]
+    response = env.call(wire.OUTBOX_DRAFT_APPEND, uuid=PLAIN, kind="issue", name="b", actions=actions, bodies={})
+    assert response.error_code == wire.REFUSED
+    assert len(reads) == 2
+    assert draft(env) == before
+
+
 def test_append_builds_a_draft_and_submit_publishes_one_proposal(env: Env) -> None:
     assert append(env, create(), bodies={}).ok
     assert append(env, {"type": "comment", "repo": ".", "issue_ref": "bug", "body": "hi"}).ok

@@ -30,6 +30,21 @@ def submit(name):
     return result
 
 
+def test_project_batch_sends_one_atomic_request_and_reports_reader_failure(monkeypatch):
+    from jailbee.container_outbox import broker
+    from jailbee.container_outbox.common import OutboxCommandError
+    calls = []
+    def append_many(*args):
+        calls.append(args)
+        raise OutboxCommandError("second host reader failed", 1)
+    monkeypatch.setattr(broker, "draft_append_many", append_many)
+    monkeypatch.setattr(broker, "draft_append", lambda *a: pytest.fail("non-atomic append"))
+    result = invoke("project", "7", "--project", "acme/3", "--set", "Status=Doing", "--set", "Priority=High", "--batch", "b")
+    assert result.exit_code == 1
+    assert "second host reader failed" in result.output
+    assert len(calls) == 1 and len(calls[0][2]) == 2
+
+
 def test_project_add_stages_without_container_github_reads(monkeypatch):
     from jailbee.container_outbox import broker
 
