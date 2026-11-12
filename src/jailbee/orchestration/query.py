@@ -178,12 +178,17 @@ class Queries:
         if op in (wire.OUTBOX_PUT, wire.OUTBOX_DRAFT_APPEND):
             manifest = args.get("manifest")
             entries = (
-                manifest.get("actions", []) if isinstance(manifest, dict) else []
-            ) if op == wire.OUTBOX_PUT else args.get("actions", [args.get("action")])
+                (manifest.get("actions", []) if isinstance(manifest, dict) else [])
+                if op == wire.OUTBOX_PUT
+                else args.get("actions", [args.get("action")])
+            )
             if isinstance(entries, list):
                 for entry in entries:
                     if isinstance(entry, dict) and entry.get("type") in (
-                        "project_add", "project_set", "project_clear", "project_remove"
+                        "project_add",
+                        "project_set",
+                        "project_clear",
+                        "project_remove",
                     ):
                         board = entry.get("project", cfg.github.project if cfg else None)
                         if isinstance(board, str) and board.casefold() not in allowed_boards:

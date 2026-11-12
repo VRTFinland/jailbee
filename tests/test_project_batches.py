@@ -342,16 +342,29 @@ def test_retry_after_implicit_add_preserves_only_own_membership(pipeline, mocker
         return {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": "OWN"}}}
 
     mocker.patch.object(issue_projects, "_graphql", side_effect=graphql)
-    action = {"type": "project_set", "repo": ".", "issue": 901, "project": "acme/3",
-              "field": "Notes", "value": "Hello", "expected": {"present": False, "value": None}}
+    action = {
+        "type": "project_set",
+        "repo": ".",
+        "issue": 901,
+        "project": "acme/3",
+        "field": "Notes",
+        "value": "Hello",
+        "expected": {"present": False, "value": None},
+    }
     seed({"batch.json": json.dumps({"version": 1, "actions": [action]})})
     batch = prepare()
     first = apply(batch)
     assert first.failure is not None and first.failure.uncertain
     assert state == {"item": "OWN", "value": None}
     manifest = batch.manifests[0]
-    issue_outbox.reconcile_action(uuid=batch.uuid, index=0, repo=manifest.actions[0].repo,
-        manifest=manifest.manifest, digest=manifest.digest, resolution=issue_outbox.RetryResolution())
+    issue_outbox.reconcile_action(
+        uuid=batch.uuid,
+        index=0,
+        repo=manifest.actions[0].repo,
+        manifest=manifest.manifest,
+        digest=manifest.digest,
+        resolution=issue_outbox.RetryResolution(),
+    )
     if foreign_item:
         state["item"] = "SOMEONE-ELSE"
         with pytest.raises(issue_outbox.IssueGateError, match="membership changed"):

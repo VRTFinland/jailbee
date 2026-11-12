@@ -511,14 +511,16 @@ def prepare_batch(
     resolves the instance's identity and uuid.
     """
     from jailbee.orchestration.store import StoreError
-    from jailbee.outbox.service import instance_identity
     from jailbee.outbox import publication_db
+    from jailbee.outbox.service import instance_identity
 
     try:
         identity, uuid = instance_identity(incus, container)
         outbox = store_outbox(uuid)
         journals = store_journals(identity, uuid)
-        partial_receipts = publication_db.read_partial_project_receipts(publication_db.default_root(), uuid)
+        partial_receipts = publication_db.read_partial_project_receipts(
+            publication_db.default_root(), uuid
+        )
     except (StoreError, JournalError, IncusError) as exc:
         raise IssueExecutionError(str(exc)) from exc
     refusals: list[str] = []
@@ -1532,9 +1534,13 @@ def apply_batch(
                         raise
 
                 if isinstance(resolved.action, ProjectSetAction) and resolved.established_item:
-                    number = resolved.issue.number or created_issue_numbers.get(resolved.issue.ref or "")
+                    number = resolved.issue.number or created_issue_numbers.get(
+                        resolved.issue.ref or ""
+                    )
                     if number:
-                        established_items[(resolved.repo.identity, number, resolved.action.project.casefold())] = resolved.established_item
+                        established_items[
+                            (resolved.repo.identity, number, resolved.action.project.casefold())
+                        ] = resolved.established_item
                 try:
                     receipt = _execute_one(
                         batch.host_repo_root,
@@ -1550,7 +1556,11 @@ def apply_batch(
                             target = resolved.issue.number or created_issue_numbers.get(
                                 resolved.issue.ref or ""
                             )
-                            partial = exc.receipt if isinstance(exc, issue_projects.ProjectMutationError) else None
+                            partial = (
+                                exc.receipt
+                                if isinstance(exc, issue_projects.ProjectMutationError)
+                                else None
+                            )
                             store.settle(
                                 claim,
                                 digest,
@@ -1560,7 +1570,13 @@ def apply_batch(
                                 issue=partial.issue if partial else None,
                                 detail=str(exc),
                                 sent=_sent_entry(
-                                    batch, name, resolved, target, partial.url if partial else None, container_prefix, publisher
+                                    batch,
+                                    name,
+                                    resolved,
+                                    target,
+                                    partial.url if partial else None,
+                                    container_prefix,
+                                    publisher,
                                 ),
                                 now=clock(),
                             )

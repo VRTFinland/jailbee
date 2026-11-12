@@ -1116,7 +1116,8 @@ def read_partial_project_receipts(root: Path, uuid: str) -> dict[tuple[str, str,
         rows = con.execute(
             "SELECT manifest, dedup_key, action_index, url FROM outbox_sent "
             "WHERE uuid=? AND outbox='issue' AND action_kind='project_set' "
-            "AND state='uncertain' AND url IS NOT NULL", (uuid,),
+            "AND state='uncertain' AND url IS NOT NULL",
+            (uuid,),
         ).fetchall()
         return {
             (str(name), str(key).rsplit("|", 2)[1], int(index)): str(url)

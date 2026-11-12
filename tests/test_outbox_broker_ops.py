@@ -30,7 +30,9 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Env]:
         lambda root, board: issue_projects.Project(board, "P3", "Roadmap"),
     )
     rig = Rig(tmp_path, monkeypatch)
-    rig.cfg = rig.cfg.model_copy(update={"github": rig.cfg.github.model_copy(update={"project": "acme/3"})})
+    rig.cfg = rig.cfg.model_copy(
+        update={"github": rig.cfg.github.model_copy(update={"project": "acme/3"})}
+    )
     rig.configs.return_value = {"proj": rig.cfg}
     instance = Env(rig, monkeypatch)
     instance.store.set_recipient(PLAIN, PLAIN, now=1.0)
@@ -158,16 +160,35 @@ def test_project_staging_reads_membership_on_host_query_path(env: Env, monkeypat
 
 @pytest.mark.parametrize("operation", [wire.OUTBOX_PUT, wire.OUTBOX_DRAFT_APPEND])
 @pytest.mark.parametrize("target", [{"issue": 7}, {"issue_ref": "new"}])
-def test_unlisted_board_is_refused_before_any_host_read(env: Env, monkeypatch, operation, target) -> None:
+def test_unlisted_board_is_refused_before_any_host_read(
+    env: Env, monkeypatch, operation, target
+) -> None:
     from jailbee import issue_projects
 
-    monkeypatch.setattr(issue_projects, "resolve_project", lambda *args: pytest.fail("unlisted board read"))
+    monkeypatch.setattr(
+        issue_projects, "resolve_project", lambda *args: pytest.fail("unlisted board read")
+    )
     action = {"type": "project_add", "repo": ".", "project": "private/9", **target}
-    create = {"type": "create", "repo": ".", "title": "New", "body": "body", "labels": [], "ref": "new"}
+    create = {
+        "type": "create",
+        "repo": ".",
+        "title": "New",
+        "body": "body",
+        "labels": [],
+        "ref": "new",
+    }
     if operation == wire.OUTBOX_PUT:
         response = put(env, manifest=manifest(create, action))
     else:
-        response = env.call(operation, uuid=PLAIN, kind="issue", name="b", actions=[create, action], bodies={}, manifest={"actions": []})
+        response = env.call(
+            operation,
+            uuid=PLAIN,
+            kind="issue",
+            name="b",
+            actions=[create, action],
+            bodies={},
+            manifest={"actions": []},
+        )
     assert response.error_code == wire.REFUSED
     assert "github.projects" in response.error_detail
     assert stored(env) == []
@@ -183,15 +204,36 @@ def test_host_known_boards_may_be_staged(env: Env, source, operation) -> None:
     view = env.queries.snapshot()[uuid]
     cfg = view.project_config
     assert cfg is not None
-    github = cfg.github.model_copy(update={"project": "Acme/3" if source == "default" else None, "projects": ["Acme/3"] if source == "local" else []})
-    grant = json.dumps({"publish": {"projects": [{"board": "Acme/3", "actions": ["set"]}]}}) if source == "grant" else view.grant_json
-    env.queries.publish_container(uuid, replace(view, project_config=cfg.model_copy(update={"github": github}), grant_json=grant))
-    create = {"type": "create", "repo": ".", "title": "New", "body": "body", "labels": [], "ref": "new"}
+    github = cfg.github.model_copy(
+        update={
+            "project": "Acme/3" if source == "default" else None,
+            "projects": ["Acme/3"] if source == "local" else [],
+        }
+    )
+    grant = (
+        json.dumps({"publish": {"projects": [{"board": "Acme/3", "actions": ["set"]}]}})
+        if source == "grant"
+        else view.grant_json
+    )
+    env.queries.publish_container(
+        uuid,
+        replace(view, project_config=cfg.model_copy(update={"github": github}), grant_json=grant),
+    )
+    create = {
+        "type": "create",
+        "repo": ".",
+        "title": "New",
+        "body": "body",
+        "labels": [],
+        "ref": "new",
+    }
     action = {"type": "project_add", "repo": ".", "issue_ref": "new", "project": "acme/3"}
     if operation == wire.OUTBOX_PUT:
         response = put(env, uuid=uuid, manifest=manifest(create, action))
     else:
-        response = env.call(operation, uuid=uuid, kind="issue", name="b", actions=[create, action], bodies={})
+        response = env.call(
+            operation, uuid=uuid, kind="issue", name="b", actions=[create, action], bodies={}
+        )
     assert response.ok, response
 
 

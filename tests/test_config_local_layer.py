@@ -58,8 +58,13 @@ def test_local_layer_can_disable_docker_seed(tmp_path):
 def test_extra_project_boards_are_host_local_only(tmp_path):
     def load(global_raw, repo_raw, local_raw):
         return load_config_from_layers(
-            global_raw, {"container_prefix": "boards", **repo_raw}, tmp_path / ".jailbee" / "config.yaml",
-            origin="repo config", local_raw=local_raw, local_origin="local config", skip_git=True,
+            global_raw,
+            {"container_prefix": "boards", **repo_raw},
+            tmp_path / ".jailbee" / "config.yaml",
+            origin="repo config",
+            local_raw=local_raw,
+            local_origin="local config",
+            skip_git=True,
         )
 
     boards = {"github": {"projects": ["acme/3", "Other/7"]}}

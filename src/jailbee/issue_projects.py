@@ -392,7 +392,9 @@ def set_field(
             )
     except IssueGithubReadError:
         if added:
-            raise ProjectMutationError("GitHub Projects returned an unusable receipt", receipt) from None
+            raise ProjectMutationError(
+                "GitHub Projects returned an unusable receipt", receipt
+            ) from None
         raise IssueGithubMutationError(
             "GitHub Projects returned an unusable receipt", uncertain=True
         ) from None
