@@ -44,6 +44,7 @@ class BrokerMemory:
     """What the broker remembers between rounds (in memory only)."""
 
     publish_threads: list[threading.Thread] = field(default_factory=list)
+    # Prepared environment caches use instance keys (volatile.uuid, else name).
     env_ensured: set[str] = field(default_factory=set)
     env_roles: dict[str, str | None] = field(default_factory=dict)
     # volatile.uuid -> the role its labels gave in the round's listing
@@ -67,7 +68,8 @@ class BrokerMemory:
     # Container full name -> volatile.uuid whose socket device we attached.
     attached: dict[str, str] = field(default_factory=dict)
     # volatile.uuids whose sock dir this process created: the device must be
-    # re-asserted (remove + add) until that has succeeded once.
+    # re-asserted (remove + add) until that has succeeded once. Vanished uuids
+    # stay here until the socket lifecycle successfully closes their listener.
     reassert: set[str] = field(default_factory=set)
     # Parked `next` long-polls, answered by the executor.
     waiters: Waiters = field(default_factory=lambda: _new_waiters())
@@ -84,6 +86,40 @@ class BrokerMemory:
 
     # Per-container failure key -> signature of the failure last logged for it.
     failures: dict[str, str] = field(default_factory=dict)
+
+    def forget_vanished(self, names: set[str], keys: set[str]) -> None:
+        """Prune instance caches even when the round has no work or config fails."""
+        self.env_ensured.intersection_update(keys)
+        for key, ctx in list(self.contexts.items()):
+            if key not in keys:
+                self.children.pop(ctx.sender.full, None)
+        for cache in (self.env_roles, self.contexts):
+            for key in cache.keys() - keys:
+                del cache[key]
+        for full in self.children.keys() - names:
+            del self.children[full]
+        self.status.prune(names, names)
+        # Socket lifecycle retains reassert entries until listener cleanup succeeds.
+        # Repo warnings and security tombstones describe host resources, not instances.
+        instance_warnings = {
+            "env",
+            "socket",
+            "socket-off",
+            "socket-gone",
+            "socket-shared",
+            "socket-rotate",
+            "no-config",
+            "bad-grant",
+        }
+        for key in list(self.warned):
+            prefix, _, owner = key.partition(":")
+            if prefix == "socket-gone" and owner in self.reassert:
+                continue
+            if prefix in instance_warnings and owner not in names | keys:
+                self.warned.remove(key)
+        for key in list(self.failures):
+            if key.partition(":")[2] not in names:
+                del self.failures[key]
 
     def warn_once(self, key: str, msg: str, *args: object) -> None:
         if key not in self.warned:

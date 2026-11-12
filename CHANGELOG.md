@@ -8,6 +8,27 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- Orchestrators can cancel a queued spawn or restart with `jailbee inbox send
+  cancel --request ID` (or `--child SHORT`) before resending with a different
+  runner. Cancellation frees the name and settles the original request as
+  `refused`; already-started children still need `stop`/`destroy`
+  ([#113](https://github.com/VRTFinland/jailbee/issues/113)).
+
+### Fixed
+
+- Vanished publishers no longer leave accepted-request records indefinitely or
+  pass their hourly publish budget to a new container with the same name.
+- The broker now drops vanished containers' status probes, failed socket-attach
+  retries, orphaned socket listeners and diagnostic caches even during idle rounds. Reusing a name no longer
+  inherits probe delays or suppresses warnings from the new instance.
+- A plain container reusing a destroyed child's name could be refused as a child
+  when staging issue or PR actions. The broker now keys its prepared-role cache
+  by instance UUID and drops vanished instances, so a new container cannot
+  inherit the old child's role
+  ([#114](https://github.com/VRTFinland/jailbee/issues/114)).
+
 ## 1.8.7 - 2026-11-10
 
 ### Fixed

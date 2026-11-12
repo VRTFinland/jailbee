@@ -38,6 +38,20 @@ class Spawner:
         self.servers: list[StateServer] = []
         self.threads: list[threading.Thread] = []
 
+    def start(self):
+        """Start a pre-existing service before connecting a client."""
+        self()
+        _until(self._socket_accepts_connections)
+
+    def _socket_accepts_connections(self):
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+                probe.settimeout(0.1)
+                probe.connect(str(paths.socket_path()))
+        except (FileNotFoundError, ConnectionRefusedError):
+            return False
+        return True
+
     def __call__(self):
         paths.ensure_runtime_dir()
         server = StateServer(self.gatherer_factory(), version=self.version)
@@ -75,6 +89,61 @@ def _until(predicate, timeout=3.0):
     while not predicate():
         assert time.monotonic() < deadline
         time.sleep(0.02)
+
+
+def test_spawner_start_waits_until_the_socket_listens(runtime_dir, monkeypatch):
+    listen_entered = threading.Event()
+    release_listen = threading.Event()
+    readiness_checked = threading.Event()
+    readiness_results = []
+    startup_errors = []
+    real_listen = socket.socket.listen
+    real_until = _until
+    path = paths.socket_path()
+
+    def gated_listen(sock, backlog):
+        if sock.family == socket.AF_UNIX and sock.getsockname() == str(path):
+            listen_entered.set()
+            if not release_listen.wait(5):
+                raise TimeoutError("the test did not release listen")
+        return real_listen(sock, backlog)
+
+    def observed_until(predicate, timeout=3.0):
+        def observed_predicate():
+            assert listen_entered.wait(3), "the server never reached listen"
+            result = predicate()
+            readiness_results.append(result)
+            readiness_checked.set()
+            return result
+
+        return real_until(observed_predicate, timeout)
+
+    spawner = Spawner()
+
+    def start():
+        try:
+            spawner.start()
+        except BaseException as exc:
+            startup_errors.append(exc)
+
+    monkeypatch.setattr(socket.socket, "listen", gated_listen)
+    monkeypatch.setitem(globals(), "_until", observed_until)
+    startup = threading.Thread(target=start)
+    startup.start()
+    try:
+        assert readiness_checked.wait(3), "startup never checked socket readiness"
+        assert readiness_results and not readiness_results[0], (
+            "startup accepted a bound but non-listening socket"
+        )
+    finally:
+        release_listen.set()
+        startup.join(timeout=5)
+
+    assert not startup.is_alive(), "startup outlived the test"
+    assert not startup_errors, f"startup failed: {startup_errors!r}"
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+        probe.settimeout(1)
+        probe.connect(str(path))
 
 
 def test_the_first_client_spawns_the_server(runtime_dir):
@@ -251,8 +320,7 @@ def test_client_survives_a_server_killed_with_a_stale_socket_left_behind(runtime
 
 def test_client_replaces_a_server_of_another_version(runtime_dir):
     old = Spawner(version="v0")
-    old()
-    _until(paths.socket_path().exists)
+    old.start()
     new = Spawner(version="v1")
     client = _client(new)
     try:
@@ -266,8 +334,7 @@ def test_client_replaces_a_server_of_another_version(runtime_dir):
 
 def test_a_stale_client_leaves_a_newer_server_alone_and_stops(runtime_dir, monkeypatch):
     newer = Spawner(version="1.7.0")
-    newer()
-    _until(paths.socket_path().exists)
+    newer.start()
     connects: list[int] = []
     real_ensure = client_module.ensure_runtime_dir
 
@@ -295,8 +362,7 @@ def test_a_stale_client_leaves_a_newer_server_alone_and_stops(runtime_dir, monke
 
 def test_client_replaces_an_older_server_even_with_parseable_versions(runtime_dir):
     old = Spawner(version="1.6.0")
-    old()
-    _until(paths.socket_path().exists)
+    old.start()
     new = Spawner(version="1.7.0")
     client = _client(new)
     try:

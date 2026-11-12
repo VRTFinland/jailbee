@@ -84,8 +84,9 @@ Run `jailbee inbox grant` to inspect your grant before planning requests.
   Stopped children do not count. A spawn over the limit waits as `queued`.
   During creation, a child counts from the `started` reply until it is
   running and its create has finished, or its create has failed.
-- `operations` lists the manifest types you may use. `spawn` and `message`
-  are always there; `import`, `restart`, `stop`, `destroy` and `rights` may not be.
+- `operations` lists the permissions you may use. `spawn` (including `cancel`)
+  and `message` are always there; `import`, `restart`, `stop`, `destroy` and
+  `rights` may not be.
 - `grantable` is the most you may give a child: mounts by name, whether
   `loose` networking is allowed, and egress hosts. `grantable loose: yes`
   also lets you grant any single egress host within the repo cap, even when
@@ -229,6 +230,25 @@ outbox proposals make the broker keep the child on done, even with `keep`
 already configured; inspect and resolve the leftovers. A broker stop records a
 pending count; an externally stopped child without that record has unknown
 outbox state and is conservatively kept.
+
+## Cancelling a queued spawn
+
+To change the runner or prompt before a queued spawn or restart starts, cancel
+it first, then resend under a new request id:
+
+```bash
+jailbee inbox send cancel --request spawn-20261025101500-a1b2 --wait
+# Alternatively, select the queued entry by its child's short name:
+jailbee inbox send cancel --child fix-issue-12 --wait
+```
+
+Supply exactly one of `--request` and `--child`. Cancellation uses the `spawn`
+permission, frees the reserved name and releases any fork/PR commit pin. The
+cancel request answers `done`; the original request gets a final `refused` with
+`cancelled by orchestrator (cancel request <id>)`. Wait for cancellation before
+resending. If it is no longer queued, cancellation is refused; an already-started
+child needs `send stop` or `send destroy` instead. A queued spawn has no child
+container yet, so `destroy` and `restart` point here rather than acting on it.
 
 ## One PR per child
 
@@ -464,8 +484,8 @@ Every manifest you send gets a `status` reply whose `ref` is its id:
   removed`, ` — the child was kept, stopped`, or `` — the child was kept
   running; `stop` it before a `restart` ``; a running child refuses `restart`
   until you `stop` it. The broker log on the host names the worker's log.
-- `refused`: final. Read `detail`, fix the request, and send it again under a
-  new id.
+- `refused`: final, including an original queued request cancelled by `cancel`.
+  Read `detail`, fix the request, and send it again under a new id.
 
 Use `send --wait` for `spawn`, `update` and `destroy`. It prints and marks
 only the matching status read: exit 0 for done/queued/started, 1 for

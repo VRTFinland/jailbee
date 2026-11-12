@@ -477,6 +477,319 @@ def test_revoked_grant_drops_queue_with_status(tmp_path: Path, seams: dict[str, 
     assert actions.drain_queue(rig.ctx()) == []
 
 
+@pytest.mark.parametrize("kind", ["fork", "new", "pr", "restart"])
+@pytest.mark.parametrize("selector", [{"request": "m0"}, {"child": "fix-1"}])
+def test_cancel_removes_only_selected_request_and_replies(
+    tmp_path: Path,
+    seams: dict[str, MagicMock],
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    selector: dict[str, str],
+) -> None:
+    from jailbee.orchestration.protocol import CancelManifest
+
+    rig = Rig(tmp_path, running=1)
+    _queue(rig, ["fix/1", "fix/2"], kind=kind)
+    deliver = MagicMock()
+    monkeypatch.setattr("jailbee.orchestration.broker_replies.deliver", deliver)
+    unpin = MagicMock()
+    monkeypatch.setattr("jailbee.git.delete_ref_checked", unpin)
+    outcome = actions.dispatch(
+        rig.ctx(), CancelManifest(version=1, id="cancel-1", type="cancel", **selector)
+    )
+    assert outcome is not None and outcome.state == "done"
+    assert [r.manifest_id for r in load_queue(tmp_path)["proj-orch"]] == ["m1"]
+    status = deliver.call_args.args[3]
+    assert (status.ref, status.state, status.detail) == (
+        "m0",
+        "refused",
+        "cancelled by orchestrator (cancel request cancel-1)",
+    )
+    assert unpin.call_count == (1 if kind in {"fork", "pr"} else 0)
+    # The cancelled name can be reused even while the other request stays queued.
+    assert actions.handle_spawn(rig.ctx(), _m("fix/1", kind="new", mid="again")).state == "queued"
+    seams["start"].assert_not_called()
+
+
+@pytest.mark.parametrize("selector", [{"request": "m0"}, {"child": "fix-1"}])
+def test_cancel_cannot_touch_another_orchestrators_queue(tmp_path: Path, seams, selector):
+    from jailbee.orchestration.protocol import CancelManifest
+
+    rig = Rig(tmp_path)
+    _queue(rig, ["fix/1"])
+    original = load_queue(tmp_path)["proj-orch"]
+    save_queue(tmp_path, {"proj-other": original})
+    out = actions.dispatch(
+        rig.ctx(), CancelManifest(version=1, id="cancel-1", type="cancel", **selector)
+    )
+    assert out.state == "refused"
+    assert "not queued for this orchestrator" in out.detail
+    assert load_queue(tmp_path) == {"proj-other": original}
+
+
+def test_cancel_works_with_spawn_only_grant(tmp_path: Path, seams, monkeypatch):
+    from jailbee.orchestration.protocol import CancelManifest
+
+    rig = Rig(tmp_path)
+    _queue(rig, ["fix/1"])
+    _granted(rig, operations=["spawn", "message"])
+    monkeypatch.setattr("jailbee.orchestration.broker_replies.deliver", MagicMock())
+    monkeypatch.setattr("jailbee.git.delete_ref_checked", MagicMock())
+    out = actions.dispatch(
+        rig.ctx(), CancelManifest(version=1, id="cancel-1", type="cancel", request="m0")
+    )
+    assert out.state == "done"
+    assert load_queue(tmp_path) == {}
+
+
+@pytest.mark.parametrize("selector", [{"request": "m0"}, {"child": "fix-1"}])
+def test_cancel_after_drain_pop_is_refused(tmp_path: Path, seams, selector):
+    from jailbee.orchestration.protocol import CancelManifest
+
+    rig = Rig(tmp_path)
+    _queue(rig, ["fix/1"], kind="new")
+    assert [o.state for _, o in actions.drain_queue(rig.ctx())] == ["started"]
+    out = actions.dispatch(
+        rig.ctx(), CancelManifest(version=1, id="cancel-1", type="cancel", **selector)
+    )
+    assert out.state == "refused"
+    assert "stop" in out.detail and "destroy" in out.detail
+    assert load_queue(tmp_path) == {}
+    seams["start"].assert_called_once()
+
+
+@pytest.mark.parametrize("operation", ["destroy", "restart"])
+def test_queued_spawn_lifecycle_refusal_points_to_cancel(tmp_path: Path, seams, operation):
+    from jailbee.orchestration.protocol import DestroyManifest, RestartManifest
+
+    rig = Rig(tmp_path)
+    _queue(rig, ["fix/1"])
+    manifest = (
+        DestroyManifest(version=1, id="d1", type="destroy", child="fix-1")
+        if operation == "destroy"
+        else RestartManifest(version=1, id="r1", type="restart", child="fix-1", prompt="go")
+    )
+    out = actions.dispatch(rig.ctx(), manifest)
+    assert out.state == "refused"
+    assert "send cancel --request m0" in out.detail
+    assert len(load_queue(tmp_path)["proj-orch"]) == 1
+
+
+def test_cancel_serializes_with_drain(tmp_path: Path, seams):
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FutureTimeout
+    from threading import Event
+
+    from jailbee.orchestration.protocol import CancelManifest
+
+    rig = Rig(tmp_path)
+    _queue(rig, ["fix/1"], kind="new")
+    entered, release, cancelling = Event(), Event(), Event()
+
+    def start(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return Outcome("started", "ok")
+
+    def cancel():
+        cancelling.set()
+        return actions.dispatch(
+            rig.ctx(), CancelManifest(version=1, id="cancel-1", type="cancel", request="m0")
+        )
+
+    seams["start"].side_effect = start
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        draining = pool.submit(actions.drain_queue, rig.ctx())
+        assert entered.wait(5)
+        cancellation = pool.submit(cancel)
+        try:
+            assert cancelling.wait(5)
+            with pytest.raises(FutureTimeout):
+                cancellation.result(timeout=0.2)
+        finally:
+            release.set()
+        assert [out.state for _, out in draining.result(5)] == ["started"]
+        assert cancellation.result(5).state == "refused"
+    assert load_queue(tmp_path) == {}
+
+
+def test_cancel_retries_original_reply_after_delivery_failure(tmp_path: Path, seams, monkeypatch):
+    from jailbee.orchestration import manifests
+    from jailbee.orchestration.broker_state import BrokerMemory
+    from jailbee.orchestration.protocol import CancelManifest
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    rig = Rig(tmp_path, running=1)
+    rig.sender = Node(
+        "proj-orch", "orch", True, {**rig.sender.config, "volatile.uuid": "orch-uuid"}
+    )
+    _queue(rig, ["fix/1"], kind="new")
+    reply = actions.handle_cancel
+    from jailbee.orchestration import broker_replies
+
+    original_reply = broker_replies.reply
+    monkeypatch.setattr(broker_replies, "reply", MagicMock(side_effect=OSError("disk full")))
+    reply(rig.ctx(), CancelManifest(version=1, id="cancel-1", type="cancel", request="m0"))
+    assert load_queue(tmp_path) == {}
+    # A later round (also after a broker restart) owes the cancelled request a final reply.
+    monkeypatch.setattr(broker_replies, "reply", original_reply)
+    manifests.settle_queue(rig.ctx(), BrokerMemory())
+    terminal = BrokerStore(store_path(tmp_path)).terminal_status("orch-uuid", "m0")
+    assert terminal is not None
+    assert terminal.item["state"] == "refused"
+    assert terminal.item["detail"] == "cancelled by orchestrator (cancel request cancel-1)"
+    seams["start"].assert_not_called()
+
+
+def test_failed_pin_cleanup_retries_before_name_reuse(tmp_path: Path, seams, monkeypatch):
+    from jailbee.git import GitError
+    from jailbee.orchestration.protocol import CancelManifest
+
+    rig = Rig(tmp_path, running=1)
+    _queue(rig, ["fix/1"])
+    unpin = MagicMock(side_effect=GitError("locked"))
+    monkeypatch.setattr("jailbee.git.delete_ref_checked", unpin)
+    deliver = MagicMock()
+    monkeypatch.setattr("jailbee.orchestration.broker_replies.deliver", deliver)
+    out = actions.dispatch(
+        rig.ctx(), CancelManifest(version=1, id="cancel-1", type="cancel", request="m0")
+    )
+    assert out.state == "done"
+    assert load_queue(tmp_path) == {}
+    assert actions.handle_spawn(rig.ctx(), _m(kind="new", mid="again")).state == "refused"
+    deliver.assert_not_called()
+    unpin.side_effect = None
+    assert actions.handle_spawn(rig.ctx(), _m(kind="new", mid="retry")).state == "queued"
+    assert deliver.call_args.args[3].state == "refused"
+    unpin.assert_called_with(rig.cfg.repo_root, "refs/jailbee/fix-1/HEAD")
+
+
+def test_bad_cancel_recipient_does_not_block_other_settlements(tmp_path: Path, seams, monkeypatch):
+    from jailbee.orchestration import manifests
+    from jailbee.orchestration.broker_state import BrokerMemory
+
+    rig = Rig(tmp_path)
+    _queue(rig, ["fix/1", "fix/2"], kind="new")
+    for i, req in enumerate(load_queue(tmp_path)["proj-orch"]):
+        state.cancel_queued(
+            tmp_path,
+            "proj-orch",
+            state.CancelledRequest(req, f"cancel-{i}", rig.sender.key, f"status-{i}"),
+        )
+    deliver = MagicMock(side_effect=[ValueError("missing volatile.uuid"), None])
+    monkeypatch.setattr("jailbee.orchestration.broker_replies.deliver", deliver)
+
+    manifests.settle_queue(rig.ctx(), BrokerMemory())
+
+    assert deliver.call_count == 2
+    assert [e.request.manifest_id for e in state.load_cancellations(tmp_path)] == ["m0"]
+    deliver.side_effect = None
+    manifests.settle_queue(rig.ctx(), BrokerMemory())
+    assert state.load_cancellations(tmp_path) == []
+
+
+@pytest.mark.parametrize("kind", ["fork", "pr"])
+def test_cancel_for_replaced_orchestrator_releases_pin(tmp_path: Path, seams, monkeypatch, kind):
+    from jailbee.orchestration import manifests
+    from jailbee.orchestration.broker_state import BrokerMemory
+
+    rig = Rig(tmp_path)
+    _queue(rig, ["fix/1"], kind=kind)
+    req = load_queue(tmp_path)["proj-orch"][0]
+    state.cancel_queued(
+        tmp_path, "proj-orch", state.CancelledRequest(req, "cancel-1", "old-uuid", "status-1")
+    )
+    unpin = MagicMock()
+    monkeypatch.setattr("jailbee.git.delete_ref_checked", unpin)
+    deliver = MagicMock()
+    monkeypatch.setattr("jailbee.orchestration.broker_replies.deliver", deliver)
+
+    manifests.settle_queue(rig.ctx(), BrokerMemory())
+
+    unpin.assert_called_once_with(rig.cfg.repo_root, "refs/jailbee/fix-1/HEAD")
+    assert state.load_cancellations(tmp_path) == []
+    deliver.assert_not_called()
+
+
+def test_pending_cancel_protects_name_from_another_orchestrator(tmp_path: Path, seams, monkeypatch):
+    from jailbee.git import GitError
+    from jailbee.orchestration.protocol import CancelManifest
+
+    rig = Rig(tmp_path, running=1)
+    _queue(rig, ["fix/1"])
+    monkeypatch.setattr("jailbee.git.delete_ref_checked", MagicMock(side_effect=GitError("locked")))
+    actions.handle_cancel(
+        rig.ctx(), CancelManifest(version=1, id="cancel-1", type="cancel", request="m0")
+    )
+    rig.children.append(rig.sender)
+    rig.sender = Node("proj-other", "other", True, rig.sender.config)
+    assert actions.handle_spawn(rig.ctx(), _m(mid="other")) == Outcome(
+        "refused", "a request for `fix-1` is already queued"
+    )
+    seams["pin"].assert_not_called()
+
+
+def test_vanished_cancel_owner_does_not_reserve_name(tmp_path: Path, seams, monkeypatch):
+    from jailbee.git import GitError
+    from jailbee.orchestration.protocol import CancelManifest
+
+    rig = Rig(tmp_path, running=1)
+    _queue(rig, ["fix/1"])
+    monkeypatch.setattr("jailbee.git.delete_ref_checked", MagicMock(side_effect=GitError("locked")))
+    actions.handle_cancel(
+        rig.ctx(), CancelManifest(version=1, id="cancel-1", type="cancel", request="m0")
+    )
+    assert state.load_cancellations(tmp_path)
+    rig.sender = Node("proj-other", "other", True, rig.sender.config)
+
+    assert actions.handle_spawn(rig.ctx(), _m(mid="other")).state == "started"
+    seams["pin"].assert_called_once()
+    # A later namesake of the old owner must not delete this new spawn's pin.
+    rig.sender = Node("proj-orch", "orch", True, rig.sender.config)
+    unpin = MagicMock()
+    monkeypatch.setattr("jailbee.git.delete_ref_checked", unpin)
+    actions.settle_cancellations(rig.ctx())
+    unpin.assert_not_called()
+    assert state.load_cancellations(tmp_path) == []
+
+
+def test_cancel_reply_retry_uses_same_status_id(tmp_path: Path, seams, monkeypatch):
+    from jailbee.orchestration.protocol import CancelManifest
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    rig = Rig(tmp_path, running=1)
+    rig.sender = Node(
+        "proj-orch", "orch", True, {**rig.sender.config, "volatile.uuid": "orch-uuid"}
+    )
+    _queue(rig, ["fix/1"], kind="new")
+    original = actions.settle_cancellations
+    from jailbee.orchestration import state as queue_state
+
+    finish = queue_state.finish_cancellation
+    monkeypatch.setattr(
+        queue_state, "finish_cancellation", MagicMock(side_effect=OSError("crash after reply"))
+    )
+    actions.handle_cancel(
+        rig.ctx(), CancelManifest(version=1, id="cancel-1", type="cancel", request="m0")
+    )
+    monkeypatch.setattr(queue_state, "finish_cancellation", finish)
+    original(rig.ctx())
+    statuses = BrokerStore(store_path(tmp_path)).unacked("orch-uuid")
+    assert len(statuses) == 1
+    assert statuses[0].item["state"] == "refused"
+
+
+def test_queued_name_cannot_be_pinned_by_another_orchestrator(tmp_path: Path, seams):
+    rig = Rig(tmp_path, running=1)
+    assert actions.handle_spawn(rig.ctx(), _m()).state == "queued"
+    rig.sender = Node("proj-other", "other", True, rig.sender.config)
+    assert actions.handle_spawn(rig.ctx(), _m(mid="other")) == Outcome(
+        "refused", "a request for `fix-1` is already queued"
+    )
+    assert seams["pin"].call_count == 1
+    assert list(load_queue(tmp_path)) == ["proj-orch"]
+
+
 def test_handler_registered() -> None:
     assert actions.HANDLERS["spawn"] is actions.handle_spawn
 

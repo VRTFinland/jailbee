@@ -961,6 +961,17 @@ merged state.
   Beyond the limit the spawn is queued in order, reported as
   `queued at position N`, and started when a slot frees. A queued fork pins
   its source commit when it is queued.
+- **Cancel queued work.** `jailbee inbox send cancel --request ID --wait`
+  removes a queued spawn or restart; alternatively use `--child SHORT` (exactly
+  one selector). It uses the existing `spawn` permission, frees the reserved
+  name and releases any fork/PR pin. The cancel request answers `done`; the
+  original request gets final `refused` with detail
+  `cancelled by orchestrator (cancel request <id>)`. Wait for cancellation, then
+  resend with the desired runner or prompt under a new id. If draining already
+  started the request, cancel is refused: use `stop`/`destroy` for a live child.
+  Unknown requests and another orchestrator's queue entries are refused too.
+  `destroy`/`restart` on a queued spawn point to `send cancel`, since no child
+  container exists yet.
 - **Done.** A child reports `done` when finished. If its work tree is dirty or
   its HEAD is detached, the broker refuses with `uncommitted changes` (or
   `detached HEAD`) and does not relay it. Otherwise the broker fetches the

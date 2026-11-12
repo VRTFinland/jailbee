@@ -29,9 +29,9 @@ def ensure_env(ctx: ActionContext, memory: broker_state.BrokerMemory) -> None:
 
     Fork children copy an ensured orchestrator; new children use the current
     golden image.
-    A vanished name is forgotten so a recreated older image is ensured again.
+    Cache by instance identity so a recreated container is ensured again.
     """
-    full = ctx.sender.full
+    full, key = ctx.sender.full, ctx.sender.key
     from jailbee.container_locks import locked as container_locked
 
     try:
@@ -43,22 +43,22 @@ def ensure_env(ctx: ActionContext, memory: broker_state.BrokerMemory) -> None:
             if role == "plain":
                 # The labels went away: no orchestration inbox any more, but
                 # every container keeps its broker socket.
-                memory.env_ensured.discard(full)
-                memory.env_roles.pop(full, None)
+                memory.env_ensured.discard(key)
+                memory.env_roles.pop(key, None)
                 _ensure_socket(ctx, memory)
                 return
-            if full in memory.env_ensured and memory.env_roles.get(full) == role:
+            if key in memory.env_ensured and memory.env_roles.get(key) == role:
                 _ensure_socket(ctx, memory)
                 return
             ensure_orchestration_env(ctx.incus, full, uid=ctx.cfg.container_user.uid)
             if role == "child":
                 labels.write_child_role(ctx.incus, full, uid=ctx.cfg.container_user.uid)
-            memory.env_ensured.add(full)
-            memory.env_roles[full] = role
+            memory.env_ensured.add(key)
+            memory.env_roles[key] = role
             _ensure_socket(ctx, memory)
     except (IncusError, OSError) as exc:
-        memory.env_ensured.discard(full)
-        memory.env_roles.pop(full, None)
+        memory.env_ensured.discard(key)
+        memory.env_roles.pop(key, None)
         memory.warn_once(
             f"env:{full}",
             "broker: %s: could not prepare the orchestration inbox: %s",
@@ -146,9 +146,9 @@ def ensure_socket(
         if live is None:
             raise OSError(f"no socket directory for {uuid}")
         socket_device.attach(incus, full, live, reassert=uuid in memory.reassert)
-        memory.reassert.discard(uuid)
         store.set_recipient(full, uuid, now=time.time())
         memory.attached[full] = uuid
+        memory.reassert.discard(uuid)
     except (IncusError, OSError, StoreError) as exc:
         memory.attached.pop(full, None)
         memory.warn_once(
@@ -233,6 +233,14 @@ def _forget_vanished(raw: list[dict[str, Any]], memory: broker_state.BrokerMemor
     except StoreError as exc:
         memory.warn_once("socket-recipients", "broker: cannot read the recipients: %s", exc)
         recipients = {}
+    # A listener can open successfully before device attachment/recipient
+    # recording fails. Such an instance has only a reassert entry to find it by.
+    for uuid in memory.reassert - {u for u in live.values() if u}:
+        try:
+            listener.close_container(uuid)
+            memory.reassert.discard(uuid)
+        except OSError as exc:
+            memory.warn_once(f"socket-gone:{uuid}", "broker: %s: %s", uuid, exc)
     for full in set(memory.attached) | set(recipients):
         current = live.get(full, "")  # "" -> the name is gone
         if current is None:

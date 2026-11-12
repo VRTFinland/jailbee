@@ -22,6 +22,7 @@ from jailbee.orchestration.grant import (
 )
 from jailbee.orchestration.protocol import (
     CHILD_TYPES,
+    CancelManifest,
     DestroyManifest,
     Manifest,
     MessageManifest,
@@ -171,6 +172,7 @@ class ActionContext:
 
 OPERATION_OF: Mapping[str, str] = {
     "spawn": "spawn",
+    "cancel": "spawn",
     "message": "message",
     "import": "import",
     "update": "import",
@@ -632,6 +634,16 @@ def _queued(ctx: ActionContext) -> list[QueuedRequest]:
     return load_queue(ctx.root).get(ctx.sender.full, [])
 
 
+def _queued_spawn_refusal(ctx: ActionContext, short: str) -> Outcome | None:
+    for req in _queued(ctx):
+        if req.kind != "restart" and lifecycle.short_name(ctx.cfg, req.child_full) == short:
+            return refused(
+                f"`{short}` is a queued spawn, not a child yet; "
+                f"use jailbee inbox send cancel --request {req.manifest_id}"
+            )
+    return None
+
+
 def _store(ctx: ActionContext, entries: list[QueuedRequest]) -> None:
     queues = load_queue(ctx.root)
     queues[ctx.sender.full] = entries
@@ -639,6 +651,13 @@ def _store(ctx: ActionContext, entries: list[QueuedRequest]) -> None:
 
 
 def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
+    from jailbee.orchestration.watch import mutation_locked
+
+    with mutation_locked(ctx.root):
+        return _handle_spawn_locked(ctx, m)
+
+
+def _handle_spawn_locked(ctx: ActionContext, m: Manifest) -> Outcome:
     """Plan a spawn; start it when a slot is free, else queue it FIFO."""
     from jailbee import git
 
@@ -647,8 +666,25 @@ def handle_spawn(ctx: ActionContext, m: Manifest) -> Outcome:
     grant = ctx.grant()
     if grant is None:
         return refused(NOT_ALLOWED)
+    from jailbee.orchestration.state import (
+        cancellation_senders,
+        load_cancellations,
+        purge_cancellations,
+    )
+
+    _settle_cancellations_locked(ctx)
+    # Discard dead owners before reusing a name, so their later namesakes
+    # cannot settle an old cancellation against the new request's pin.
+    for sender in cancellation_senders(ctx.root) - ctx.nodes.keys():
+        purge_cancellations(ctx.root, sender)
+    pending = load_cancellations(ctx.root)
     queued = _queued(ctx)
-    plan = plan_spawn(ctx, m, queued_names={q.child_full for q in queued})
+    plan = plan_spawn(
+        ctx,
+        m,
+        queued_names={q.child_full for entries in load_queue(ctx.root).values() for q in entries}
+        | {e.request.child_full for e in pending},
+    )
     if isinstance(plan, Outcome):
         return plan
     fork: ForkSource | None = None
@@ -931,6 +967,13 @@ STARTERS: dict[str, Callable[[ActionContext, QueuedRequest], Outcome]] = {
 
 
 def drain_queue(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome]]:
+    from jailbee.orchestration.watch import mutation_locked
+
+    with mutation_locked(ctx.root):
+        return _drain_queue_locked(ctx)
+
+
+def _drain_queue_locked(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome]]:
     """Start queued requests FIFO while slots are free; a lowered limit starts nothing."""
     grant = ctx.grant()
     queued = _queued(ctx)
@@ -976,7 +1019,74 @@ def drop_queue(ctx: ActionContext, reason: str) -> list[QueuedRequest]:
     return queued
 
 
+def settle_cancellations(ctx: ActionContext) -> None:
+    from jailbee.orchestration.watch import mutation_locked
+
+    with mutation_locked(ctx.root):
+        _settle_cancellations_locked(ctx)
+
+
+def _settle_cancellations_locked(ctx: ActionContext) -> None:
+    """Retry durable cancellation replies/cleanup before allowing a name to be reused."""
+    from jailbee import git
+    from jailbee.orchestration import broker_replies
+    from jailbee.orchestration.state import finish_cancellation, load_cancellations
+
+    for entry in load_cancellations(ctx.root, ctx.sender.full):
+        try:
+            if entry.request.kind in {"fork", "pr"}:
+                git.delete_ref_checked(
+                    ctx.cfg.repo_root, forking.fork_pin_ref(ctx.cfg, entry.request.child_full)
+                )
+            if entry.recipient_key != ctx.sender.key:
+                finish_cancellation(ctx.root, ctx.sender.full, entry.cancel_id)
+                continue
+            broker_replies.reply(
+                ctx,
+                entry.request.manifest_id,
+                refused(f"cancelled by orchestrator (cancel request {entry.cancel_id})"),
+                status_id=entry.status_id,
+            )
+            finish_cancellation(ctx.root, ctx.sender.full, entry.cancel_id)
+        except (OSError, ValueError, git.GitError):
+            log.exception("could not settle cancelled request %s", entry.request.manifest_id)
+
+
+def handle_cancel(ctx: ActionContext, m: Manifest) -> Outcome:
+    from jailbee.orchestration.protocol import new_host_id
+    from jailbee.orchestration.state import CancelledRequest, cancel_queued
+    from jailbee.orchestration.watch import mutation_locked
+
+    if not isinstance(m, CancelManifest):
+        return refused("not a cancel manifest")
+    with mutation_locked(ctx.root):
+        queued = _queued(ctx)
+        req = next(
+            (
+                q
+                for q in queued
+                if (
+                    q.manifest_id == m.request
+                    if m.request is not None
+                    else lifecycle.short_name(ctx.cfg, q.child_full) == m.child
+                )
+            ),
+            None,
+        )
+        if req is None:
+            return refused(
+                "request is not queued for this orchestrator; "
+                "if already started, use send stop / send destroy --child instead"
+            )
+        cancel_queued(
+            ctx.root, ctx.sender.full, CancelledRequest(req, m.id, ctx.sender.key, new_host_id())
+        )
+        _settle_cancellations_locked(ctx)
+        return done(f"cancelled queued request {req.manifest_id}")
+
+
 HANDLERS["spawn"] = handle_spawn
+HANDLERS["cancel"] = handle_cancel
 
 
 def handle_stop(ctx: ActionContext, m: Manifest) -> Outcome:
@@ -1198,6 +1308,8 @@ def _handle_restart_locked(ctx: ActionContext, m: Manifest) -> Outcome:
     """Restart a stopped child with a fresh prompt; queue FIFO when no slot is free."""
     if not isinstance(m, RestartManifest):
         return refused("not a restart manifest")
+    if (queued_refusal := _queued_spawn_refusal(ctx, m.child)) is not None:
+        return queued_refusal
     if m.agent_only and m.autostart_profile is not None:
         return refused("autostart_profile cannot be combined with agent_only (no autostart runs)")
     if m.agent_only and m.services is not None:
@@ -1346,6 +1458,8 @@ def _handle_destroy_locked(ctx: ActionContext, m: Manifest) -> Outcome:
     # No drain here: the broker drains after every round and reports each outcome.
     if not isinstance(m, DestroyManifest):
         return refused("not a destroy manifest")
+    if (queued_refusal := _queued_spawn_refusal(ctx, m.child)) is not None:
+        return queued_refusal
     child = ctx.child(m.child)
     if isinstance(child, Outcome):
         return child

@@ -492,6 +492,19 @@ def test_ensure_env_rerun_after_container_vanishes(rig: Rig) -> None:
     assert rig.ensure_env.call_count == 2
 
 
+@pytest.mark.parametrize("child", [False, True])
+def test_recreated_instance_is_prepared_even_without_an_absent_round(rig: Rig, child: bool) -> None:
+    entry = _child() if child else _orch()
+    entry["config"]["volatile.uuid"] = "old-uuid"
+    rig.incus.list_containers.return_value = [entry]
+    rig.tick()
+    assert rig.ensure_env.call_count == 1
+
+    entry["config"]["volatile.uuid"] = "new-uuid"
+    rig.tick()
+    assert rig.ensure_env.call_count == 2
+
+
 def test_tick_prunes_reservations(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
     from jailbee.orchestration.state import Reservation, load_reservations, save_reservations
 
@@ -902,6 +915,32 @@ def test_vanished_orchestrator_queue_is_discarded(rig: Rig) -> None:
     rig.tick()
     assert load_queue(rig.root) == {}
     rig.deliver.assert_not_called()
+
+
+@pytest.mark.parametrize("present", [False, True])
+@pytest.mark.parametrize("delivery_error", [None, OSError("disk full"), ValueError("no uuid")])
+def test_pending_cancellation_without_queue_is_settled_or_purged(
+    rig: Rig, present: bool, delivery_error: Exception | None
+) -> None:
+    from jailbee.orchestration.state import CancelledRequest, cancel_queued, load_cancellations
+
+    rig.deliver.side_effect = delivery_error
+    if present:
+        rig.incus.list_containers.return_value = [_c("proj-orch")]
+    cancel_queued(
+        rig.root,
+        "proj-orch",
+        CancelledRequest(_req("q1"), "cancel-1", "proj-orch", "status-1"),
+    )
+    assert load_queue(rig.root) == {}
+
+    rig.tick()
+
+    assert load_cancellations(rig.root) == []
+    if present:
+        assert [(s.ref, s.state) for _, s in rig.statuses()] == [("q1", "refused")]
+    else:
+        rig.deliver.assert_not_called()
 
 
 def _sigterm() -> None:

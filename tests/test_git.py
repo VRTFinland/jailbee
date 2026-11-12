@@ -14,6 +14,16 @@ from jailbee.git import (
 )
 
 
+def test_delete_ref_checked_reports_failure(mocker, tmp_path):
+    run = mocker.patch(
+        "jailbee.git.subprocess.run",
+        side_effect=subprocess.CalledProcessError(1, ["git", "update-ref"]),
+    )
+    with pytest.raises(git.GitError, match="could not delete ref"):
+        git.delete_ref_checked(tmp_path, "refs/jailbee/kid/HEAD")
+    assert run.call_args.kwargs["check"] is True
+
+
 def test_detect_default_branch_main(mocker, tmp_path):
     mock_run = mocker.patch("jailbee.git.subprocess.run")
     mock_run.return_value = CompletedProcess(

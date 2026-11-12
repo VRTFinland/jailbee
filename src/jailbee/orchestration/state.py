@@ -182,6 +182,87 @@ def load_queue(root: Path) -> dict[str, list[QueuedRequest]]:
         return {}
 
 
+@dataclass(frozen=True)
+class CancelledRequest:
+    request: QueuedRequest
+    cancel_id: str
+    recipient_key: str
+    status_id: str
+
+
+CANCELLATIONS = "queue-cancellations"
+
+
+def cancel_queued(root: Path, sender: str, entry: CancelledRequest) -> None:
+    """Remove from the queue and persist the owed reply/cleanup in one transaction."""
+    store = import_json_document(root, QUEUE_FILE, _validate_queue, for_write=True)
+
+    def mutate(docs: dict[str, dict[str, Any]]) -> bool:
+        queues = docs[QUEUE_FILE].get("queues", {})
+        remaining = [
+            q for q in queues.get(sender, []) if q["manifest_id"] != entry.request.manifest_id
+        ]
+        if remaining:
+            queues[sender] = remaining
+        else:
+            queues.pop(sender, None)
+        docs[QUEUE_FILE] = {"version": _QUEUE_VERSION, "queues": queues}
+        docs[CANCELLATIONS].setdefault(sender, []).append(asdict(entry))
+        return True
+
+    store.update_documents([QUEUE_FILE, CANCELLATIONS], mutate)
+
+
+def load_cancellations(root: Path, sender: str | None = None) -> list[CancelledRequest]:
+    from jailbee.orchestration.store import open_state_store
+
+    raw = open_state_store(root).kv_get(CANCELLATIONS)
+    if not isinstance(raw, dict):
+        return []
+    groups = [raw.get(sender, [])] if sender is not None else raw.values()
+    return [
+        CancelledRequest(
+            QueuedRequest(**v["request"]), v["cancel_id"], v["recipient_key"], v["status_id"]
+        )
+        for entries in groups
+        for v in entries
+    ]
+
+
+def cancellation_senders(root: Path) -> set[str]:
+    from jailbee.orchestration.store import open_state_store
+
+    raw = open_state_store(root).kv_get(CANCELLATIONS)
+    return (
+        {sender for sender, entries in raw.items() if entries} if isinstance(raw, dict) else set()
+    )
+
+
+def purge_cancellations(root: Path, sender: str) -> None:
+    """Forget replies/cleanup owed by a destroyed orchestrator."""
+    from jailbee.orchestration.store import open_state_store
+
+    def mutate(docs: dict[str, dict[str, Any]]) -> bool:
+        return docs[CANCELLATIONS].pop(sender, None) is not None
+
+    open_state_store(root).update_documents([CANCELLATIONS], mutate)
+
+
+def finish_cancellation(root: Path, sender: str, cancel_id: str) -> None:
+    from jailbee.orchestration.store import open_state_store
+
+    def mutate(docs: dict[str, dict[str, Any]]) -> bool:
+        entries = docs[CANCELLATIONS].get(sender, [])
+        remaining = [v for v in entries if v["cancel_id"] != cancel_id]
+        if remaining:
+            docs[CANCELLATIONS][sender] = remaining
+        else:
+            docs[CANCELLATIONS].pop(sender, None)
+        return True
+
+    open_state_store(root).update_documents([CANCELLATIONS], mutate)
+
+
 def _validate_reservations(raw: object) -> None:
     if not isinstance(raw, dict) or not isinstance(raw.get("reservations"), dict):
         raise ValueError("invalid reservations document")

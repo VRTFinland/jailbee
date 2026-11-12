@@ -111,6 +111,7 @@ def _drop_orchestration(snap: TeardownSnapshot) -> None:
     name = snap.name
     root = state.state_root()
     state.purge_pending(root, name)
+    state.purge_cancellations(root, name)
 
     # Queues are keyed by the requesting orchestrator. A destroyed
     # orchestrator's own queue is dead (the broker drops it for vanished

@@ -34,6 +34,7 @@ FINISH_SUFFIX = ".finish.json"
 ORCHESTRATOR_TYPES = frozenset(
     {
         "spawn",
+        "cancel",
         "message",
         "import",
         "update",
@@ -345,6 +346,23 @@ def restart_sets_runner(m: RestartManifest) -> bool:
     return "runner" in m.model_fields_set
 
 
+class CancelManifest(_Manifest):
+    version: Literal[1]
+    type: Literal["cancel"]
+    request: str | None = None
+    child: str | None = None
+
+    @model_validator(mode="after")
+    def _selector(self) -> Self:
+        if (self.request is None) == (self.child is None):
+            raise ValueError("cancel needs exactly one of request or child")
+        if self.request is not None:
+            _checked_id(self.request)
+        if self.child is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", self.child):
+            raise ValueError("child must be a container short name")
+        return self
+
+
 class StopManifest(_Manifest):
     version: Literal[1]
     type: Literal["stop"]
@@ -382,6 +400,7 @@ Manifest = (
     | RestartManifest
     | RefreshManifest
     | StopManifest
+    | CancelManifest
     | DestroyManifest
     | RightsManifest
     | PublishManifest

@@ -40,7 +40,9 @@ from jailbee.orchestration.outbox import (
     has_pending,
 )
 from jailbee.orchestration.state import (
+    cancellation_senders,
     load_queue,
+    purge_cancellations,
     purge_vanished_pending,
     save_queue,
     state_root,
@@ -109,9 +111,12 @@ def tick(
     ]
     active = any(e.get("status") == "Running" for e in candidates)
     present = {e.get("name") for e in raw}
-    memory.env_ensured.intersection_update(present)
-    for full in [f for f in memory.children if f not in present]:
-        del memory.children[full]
+    present_keys = {
+        str(e["config"].get("volatile.uuid") or e["name"])
+        for e in raw
+        if isinstance(e.get("name"), str) and isinstance(e.get("config"), dict)
+    }
+    memory.forget_vanished({n for n in present if isinstance(n, str)}, present_keys)
     # Warn workers before deleting a vanished parent's queued finish reports.
     unnotified = finishing.notify_orphaned_finishes(
         incus,
@@ -132,6 +137,7 @@ def tick(
     for full in purge_vanished_pending(root, keep):
         log.info("broker: dropped parked messages of vanished %s", full)
     queues = load_queue(root)
+    cancelling = cancellation_senders(root)
     identities = {
         str(e["name"]): str((e.get("config") or {}).get("volatile.uuid") or e["name"])
         for e in raw
@@ -157,6 +163,7 @@ def tick(
     if (
         not candidates
         and not queues
+        and not cancelling
         and not parked
         and not publishes
         and not (former_publishers & present)
@@ -328,7 +335,7 @@ def tick(
             except Exception:
                 log.exception("broker: child inbox state of %s failed", ctx.sender.full)
     memory.status.prune(set(nodes), seen)
-    for full in queues:
+    for full in set(queues) | cancelling:
         if full in seen:
             continue
         try:
@@ -342,6 +349,7 @@ def tick(
                 current = load_queue(root)
                 current.pop(full, None)
                 save_queue(root, current)
+                purge_cancellations(root, full)
         except Exception:
             log.exception("broker: queue of %s failed", full)
     # Queue launches can finish before watch settlement; the earlier snapshot

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -290,7 +292,6 @@ def test_the_protocol_version_and_namespace_carry_the_activity_history():
     # Event ages require a server which supplies last_event_at; 8 added RepoGroup.advisories,
     # Snapshot.system and each container's top_cpu, top_mem and root_pool.
     # 15 added repo/container autostart profile state.
-    assert PROTOCOL == 21
     assert protocol._NAMESPACE["RepoAdvisory"] is RepoAdvisory
     # Pinned so the entry survives ActivityEvent ever moving to a module that
     # imports it under TYPE_CHECKING, where pydantic could no longer resolve it.
@@ -327,7 +328,15 @@ def test_snapshot_round_trips_system_status():
     from jailbee.sysstat import DiskStatus, LoadStatus, MemoryStatus
 
     system = SystemStatus(
-        memory=MemoryStatus(total=16 << 30, available=4 << 30, cache=1 << 30),
+        memory=MemoryStatus(
+            total=16 << 30,
+            available=4 << 30,
+            cache=1 << 30,
+            swap_total=8 << 30,
+            swap_free=1 << 30,
+            swap_cached=1 << 20,
+            zswapped=5 << 30,
+        ),
         pools=(PoolStatus("default", DiskStatus(total=100, available=40)),),
         root=DiskStatus(total=50, available=10),
         load=LoadStatus(load1=1.25, cpus=8),
@@ -356,7 +365,6 @@ def test_combined_protocol_preserves_builtin_choices_and_rerun_state():
         snapshot.groups[0], autostart_profiles=("full", "light", "none", "all")
     )
     group = decode(encode(snapshot)).groups[0]
-    assert PROTOCOL == 21
     assert group.autostart_profiles == ("full", "light", "none", "all")
     assert group.autostart_services == ("db", "web")
     container = group.containers[0]
@@ -382,3 +390,50 @@ def test_snapshot_round_trips_sent_counts():
 
     assert restored.sent_count == 7
     assert restored.containers[0].sent_count == 3
+
+
+def test_wire_schema_names_every_field_that_crosses_the_wire():
+    schema = protocol.wire_schema()
+
+    memory = schema["snapshot"]["$defs"]["MemoryStatus"]["properties"]
+    assert {"swap_cached", "zswapped"} <= memory.keys()
+    assert schema["hello"]["properties"].keys() == {"protocol", "version", "cwd_root"}
+
+
+def test_wire_schema_leaves_out_docstrings_and_titles():
+    # Neither travels on the wire, so rewording a docstring is no protocol change.
+    # (A field named "title" maps to a schema dict, never a string.)
+    def keys(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(value, str):
+                    yield key
+                yield from keys(value)
+        elif isinstance(node, list):
+            for item in node:
+                yield from keys(item)
+
+    found = set(keys(protocol.wire_schema()))
+    assert not found & {"description", "title"}
+
+
+# The wire schema PROTOCOL was last bumped for. A schema change under the same
+# PROTOCOL fails below: a client of another version would misread it. A pydantic
+# upgrade that only reshapes its schema output trips this too; a bump is then
+# harmless (a protocol mismatch makes the dashboard replace the state service).
+WIRE_SCHEMA = (22, "28ac3ce2c04b2606513e542d8cc20a865a817bd738871af4edb21c422d929d3f")
+
+
+def test_a_wire_schema_change_bumps_the_protocol():
+    canonical = json.dumps(protocol.wire_schema(), sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(canonical.encode()).hexdigest()
+    pinned_protocol, pinned_digest = WIRE_SCHEMA
+    if PROTOCOL == pinned_protocol:
+        assert digest == pinned_digest, (
+            f"the wire schema changed under PROTOCOL {PROTOCOL}: bump PROTOCOL in "
+            f"state_service/protocol.py (and its history comment), then set "
+            f"WIRE_SCHEMA = ({PROTOCOL + 1}, {digest!r})"
+        )
+    else:
+        assert PROTOCOL > pinned_protocol, "PROTOCOL only goes up"
+        pytest.fail(f"PROTOCOL was bumped: set WIRE_SCHEMA = ({PROTOCOL}, {digest!r})")

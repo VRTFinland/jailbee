@@ -43,7 +43,8 @@ from jailbee.update_check import UpdateNotice
 # 19 combines these with service choices and built-in autostart profiles.
 # 20 adds the outbox Sent record counts: ContainerInfo and RepoGroup.sent_count.
 # 21 adds ContainerInfo.uuid: Sent records are keyed by the instance uuid.
-PROTOCOL = 21
+# 22 adds MemoryStatus.swap_cached and .zswapped: swap use leaves them out.
+PROTOCOL = 22
 
 
 class ProtocolError(ValueError):
@@ -152,6 +153,31 @@ def _adapter(cls: type[Any]) -> TypeAdapter[Any]:
     adapter: TypeAdapter[Any] = TypeAdapter(cls)
     adapter.rebuild(_types_namespace=_NAMESPACE)
     return adapter
+
+
+def wire_schema() -> dict[str, Any]:
+    """The JSON schema of each message, keyed by its wire ``type`` name.
+
+    Docstring descriptions and class titles are left out: neither crosses the
+    wire, so only a change a client could misread changes the schema.
+    """
+    # cls is one of the Message union types, but mypy sees it as type[Any]
+    return {
+        name: _wire_only(_adapter(cls).json_schema())  # type: ignore[arg-type]
+        for cls, name in _NAMES.items()
+    }
+
+
+def _wire_only(node: Any) -> Any:
+    if isinstance(node, dict):
+        return {
+            key: _wire_only(value)
+            for key, value in node.items()
+            if not (key in ("title", "description") and isinstance(value, str))
+        }
+    if isinstance(node, list):
+        return [_wire_only(item) for item in node]
+    return node
 
 
 def encode(message: Message) -> bytes:

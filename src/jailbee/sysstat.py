@@ -29,6 +29,8 @@ class MemoryStatus:
     cache: int  # reclaimable page cache, capped at `available`
     swap_total: int = 0  # 0 when the host has no swap
     swap_free: int = 0
+    swap_cached: int = 0  # swapped-in pages still holding their swap slot
+    zswapped: int = 0  # uncompressed size of the pages in the zswap pool
 
     @property
     def used(self) -> int:
@@ -40,11 +42,22 @@ class MemoryStatus:
 
     @property
     def swap_used(self) -> int:
-        return self.swap_total - self.swap_free
+        """Memory actually swapped out, as htop counts it.
+
+        A slot taken is not a page on the swap device: the swap cache and
+        the zswap pool both live in RAM while holding swap slots, so with
+        zswap on, SwapTotal - SwapFree can read near-full while little has
+        left memory.
+        """
+        taken = self.swap_total - self.swap_free
+        return max(0, taken - self.swap_cached - self.zswapped)
 
     @property
     def swap_free_ratio(self) -> float:
-        return self.swap_free / self.swap_total if self.swap_total else 0.0
+        """Share of swap not in `swap_used`, not the share of free swap slots."""
+        if not self.swap_total:
+            return 0.0
+        return (self.swap_total - self.swap_used) / self.swap_total
 
 
 @dataclass(frozen=True)
@@ -135,6 +148,8 @@ def read_memory(*, proc_root: Path = PROC_ROOT) -> MemoryStatus | None:
         cache=min(cache, available),
         swap_total=swap_total,
         swap_free=min(fields.get("SwapFree", 0), swap_total),
+        swap_cached=fields.get("SwapCached", 0),
+        zswapped=fields.get("Zswapped", 0),
     )
 
 
