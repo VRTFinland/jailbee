@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import assert_never
+
 import hashlib
 import json
 import unicodedata
@@ -87,9 +89,11 @@ def _issue_action(index: int, action: issues.IssueAction) -> ActionView:
                 "assignees",
                 False,
             )
-        else:
+        elif isinstance(action, issues.StateAction):
             body = action.state + (f" ({action.reason})" if action.reason else "")
             kind, markdown = "state", False
+        else:
+            assert_never(action)
     return ActionView(index, kind, action.repo, target, title, body, markdown, "pending", None, ())
 
 

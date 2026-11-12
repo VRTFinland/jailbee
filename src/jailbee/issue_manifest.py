@@ -6,7 +6,7 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final, Literal, cast
+from typing import ClassVar, Final, Literal, assert_never, cast
 
 from jailbee.github_repo import is_github_slug
 
@@ -35,6 +35,7 @@ IssueTarget = ExistingIssue | CreatedIssue
 
 @dataclass(frozen=True)
 class CreateAction:
+    kind: ClassVar[Literal["create"]] = "create"
     repo: str
     ref: str
     title: str
@@ -44,6 +45,7 @@ class CreateAction:
 
 @dataclass(frozen=True)
 class EditAction:
+    kind: ClassVar[Literal["edit"]] = "edit"
     repo: str
     target: IssueTarget
     title: str | None
@@ -56,6 +58,7 @@ class EditAction:
 
 @dataclass(frozen=True)
 class CommentAction:
+    kind: ClassVar[Literal["comment"]] = "comment"
     repo: str
     target: IssueTarget
     body: str
@@ -63,6 +66,7 @@ class CommentAction:
 
 @dataclass(frozen=True)
 class LabelsAction:
+    kind: ClassVar[Literal["labels"]] = "labels"
     repo: str
     target: IssueTarget
     add: tuple[str, ...]
@@ -74,6 +78,8 @@ class LabelsAction:
 class AssigneesAction:
     """Add and remove issue assignees; ``@me`` in add/remove is the publisher's login."""
 
+    kind: ClassVar[Literal["assignees"]] = "assignees"
+
     repo: str
     target: IssueTarget
     add: tuple[str, ...]
@@ -83,6 +89,7 @@ class AssigneesAction:
 
 @dataclass(frozen=True)
 class StateAction:
+    kind: ClassVar[Literal["state"]] = "state"
     repo: str
     target: IssueTarget
     state: Literal["open", "closed"]
@@ -93,6 +100,19 @@ class StateAction:
 IssueAction = (
     CreateAction | EditAction | CommentAction | LabelsAction | AssigneesAction | StateAction
 )
+
+
+def mutation_keys(action: IssueAction) -> set[str]:
+    """Fields whose values this action changes, for conflict detection."""
+    if isinstance(action, EditAction):
+        return ({"title"} if action.title is not None else set()) | (
+            {"body"} if action.body is not None else set()
+        )
+    if isinstance(action, (LabelsAction, AssigneesAction, StateAction)):
+        return {action.kind}
+    if isinstance(action, (CreateAction, CommentAction)):
+        return set()
+    assert_never(action)
 
 
 @dataclass(frozen=True)
@@ -385,8 +405,6 @@ def _parse_edit(
     )
     if expected_body is not None:
         _validate_body_size(expected_body, "expected.body", context)
-    fields = ({"title"} if has_title else set()) | ({"body"} if has_body else set())
-    _record_mutations(changed, repo, target, fields, context)
     return EditAction(
         repo=repo,
         target=target,
@@ -441,7 +459,6 @@ def _parse_label_action(
     if "labels" not in expected:
         raise IssueManifestError(f"{context}: expected.labels is required")
     expected_labels = _labels(expected["labels"], "expected.labels", context)
-    _record_mutations(changed, repo, target, {"labels"}, context)
     return LabelsAction(
         repo=repo, target=target, add=add, remove=remove, expected_labels=expected_labels
     )
@@ -473,7 +490,6 @@ def _parse_assignees_action(
     expected_assignees = _logins(
         expected["assignees"], "expected.assignees", context, allow_me=False
     )
-    _record_mutations(changed, repo, target, {"assignees"}, context)
     return AssigneesAction(
         repo=repo,
         target=target,
@@ -522,7 +538,6 @@ def _parse_state_action(
     expected_state = _state(expected["state"], "expected.state", context)
     if state == expected_state:
         raise IssueManifestError(f"{context}: state must differ from expected.state")
-    _record_mutations(changed, repo, target, {"state"}, context)
     return StateAction(
         repo=repo, target=target, state=state, reason=reason, expected_state=expected_state
     )
@@ -569,6 +584,8 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             raise IssueManifestError(
                 f"{context}: type must be one of create, edit, comment, labels, assignees, or state"
             )
+        if not isinstance(action, CreateAction):
+            _record_mutations(changed, action.repo, action.target, mutation_keys(action), context)
         actions.append(action)
 
     return IssueManifest(

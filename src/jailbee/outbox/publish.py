@@ -171,19 +171,7 @@ def issue_plan_json(
     for prepared in batch.manifests:
         for resolved in prepared.actions:
             action = resolved.action
-            kind = (
-                "create"
-                if isinstance(action, issue_manifest.CreateAction)
-                else "edit"
-                if isinstance(action, issue_manifest.EditAction)
-                else "comment"
-                if isinstance(action, issue_manifest.CommentAction)
-                else "labels"
-                if isinstance(action, issue_manifest.LabelsAction)
-                else "assignees"
-                if isinstance(action, issue_manifest.AssigneesAction)
-                else "state"
-            )
+            kind = action.kind
             if resolved.issue.number is not None:
                 target = f"{resolved.repo.slug}#{resolved.issue.number}"
             else:

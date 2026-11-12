@@ -49,6 +49,13 @@ def _parse_action(action: object, files: dict[str, str] | None = None):
     return parse_manifest("001-work.json", _manifest(action), files or {})
 
 
+def test_action_exposes_explicit_kind() -> None:
+    action = _parse_action(_comment()).actions[0]
+    assert action.kind == "comment"
+    assert _parse_action(_create()).actions[0].kind == "create"
+    assert _parse_action(_assignees()).actions[0].kind == "assignees"
+
+
 def test_parse_mixed_manifest_into_immutable_actions() -> None:
     payload = {
         "version": 1,

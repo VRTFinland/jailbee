@@ -113,7 +113,7 @@ def inflight(root: Path) -> dict[str, Any]:
 
 
 def _kind(action: issue_manifest.IssueAction) -> str:
-    return type(action).__name__.removesuffix("Action").lower()
+    return action.kind
 
 
 def _needed_kind(action: issue_manifest.IssueAction, batch: issue_outbox.PreparedBatch) -> str:

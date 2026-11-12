@@ -26,6 +26,7 @@ from jailbee.issue_manifest import (
     MAX_OFFER_ACTIONS,
     ME_LOGIN,
     AssigneesAction,
+    mutation_keys,
     CommentAction,
     CreateAction,
     CreatedIssue,
@@ -570,7 +571,7 @@ def prepare_batch(
                 if _assignee_overlap(action, login):
                     refusals.append(f"{context}: a login cannot appear in both add and remove")
             if status == "pending":
-                for field in _expected_fields(action):
+                for field in mutation_keys(action):
                     mutation_key = (
                         (repo.identity, issue.number, field)
                         if issue.number is not None
@@ -718,10 +719,12 @@ def _action_lines(
             lines.append(f"  labels after: {', '.join(labels) or '[empty]'}")
     elif isinstance(action, AssigneesAction):
         lines.append(f"  {_assignee_changes(action, login)}")
-    else:
+    elif isinstance(action, StateAction):
         lines.append(f"  state: {action.expected_state} -> {action.state}")
         if action.reason is not None:
             lines.append(f"  reason: {action.reason}")
+    else:
+        assert_never(action)
     return lines
 
 
