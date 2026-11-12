@@ -255,6 +255,35 @@ def test_multiple_fields_on_new_issue_resume_after_failure(pipeline, mocker):
     ]
 
 
+def test_plain_applied_receipt_resolves_implicit_add_and_resumes_next_field(pipeline, mocker):
+    prepare, apply, _, _, target = pipeline
+    url = "https://github.com/acme/app/issues/901"
+    state = {"present": False, "Status": None, "Notes": None}
+    target.side_effect = lambda *a: issue_projects.ProjectTarget("I901", url, "ITEM" if state["present"] else None)
+    fields = (issue_projects.ProjectField("F1", "Status", "TEXT"), issue_projects.ProjectField("F2", "Notes", "TEXT"))
+    mocker.patch.object(issue_projects, "list_fields", return_value=fields)
+    mocker.patch.object(issue_projects, "get_field_value", side_effect=lambda root, item, field: state[field.name])
+    calls = []
+    def mutate(root, project, item, number, resolved):
+        calls.append(resolved.field.name)
+        state["present"] = True
+        state[resolved.field.name] = resolved.value
+        if len(calls) == 1:
+            raise issue_github.IssueGithubMutationError("timeout", uncertain=True)
+        return issue_projects.ProjectReceipt(number, url + "#project-item-ITEM", "ITEM")
+    mocker.patch.object(issue_projects, "set_field", side_effect=mutate)
+    actions = [{"type": "project_set", "repo": ".", "issue": 901, "project": "acme/3", "field": field, "value": value, "expected": {"present": False, "value": None}} for field, value in (("Status", "Doing"), ("Notes", "Hello"))]
+    seed({"batch.json": json.dumps({"version": 1, "actions": actions})})
+    batch = prepare()
+    assert apply(batch).failure.uncertain
+    manifest = batch.manifests[0]
+    assert not issue_outbox.reconcile_action(uuid=batch.uuid, index=0, repo=manifest.actions[0].repo, manifest=manifest.manifest, digest=manifest.digest, resolution=issue_outbox.AppliedResolution(url, None))
+    report = apply(prepare())
+    assert report.failure is None
+    assert calls == ["Status", "Notes"]
+    assert report.skipped[0][1].url == url + "#project-item-ITEM"
+
+
 @pytest.mark.parametrize("kind", ["project_clear", "project_remove"])
 @pytest.mark.parametrize("resolution", ["retry", "applied"])
 def test_uncertain_pull_project_action_requires_resolution(pipeline, mocker, kind, resolution):

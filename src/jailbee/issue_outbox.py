@@ -1784,11 +1784,23 @@ def reconcile_action(
             if expected is not None and expected != url_number:
                 raise JournalError("receipt URL does not match this action's issue")
 
+        receipt_url = resolution.url
+        if isinstance(action, (ProjectAddAction, ProjectSetAction)) and not _receipt_item(receipt_url):
+            try:
+                project = issue_projects.resolve_project(repo.repo_root, action.project)
+                target = issue_projects.get_target(repo.repo_root, project, repo.slug, url_number)
+            except IssueGithubReadError as exc:
+                raise JournalError(str(exc)) from exc
+            if (not target.present or target.url != receipt_url.split("#", 1)[0]
+                or _validated_receipt(target.url, repo, project=True) != url_number):
+                raise JournalError("project receipt does not identify a current board item")
+            receipt_url = f"{target.url}#project-item-{target.item_id}"
+
         settled = store.resolve(
             claim,
             digest,
             index,
-            applied=(resolution.url, resolution.issue),
+            applied=(receipt_url, resolution.issue),
             sent_outbox="issue",
             sent_target=url_number,
             now=clock(),
