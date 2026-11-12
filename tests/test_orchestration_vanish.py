@@ -160,6 +160,26 @@ def test_vanished_instance_with_failed_attach_closes_its_listener(tmp_path, monk
     assert not env.memory.reassert
 
 
+def test_vanished_instance_after_recipient_write_failure_closes_listener(tmp_path, monkeypatch):
+    from jailbee.orchestration import socket_lifecycle
+    from jailbee.orchestration.store import StoreError
+
+    env = Env(Rig(tmp_path, monkeypatch))
+    env.set(_c(FULL, **{"volatile.uuid": UUID}))
+    with monkeypatch.context() as patch:
+        patch.setattr(env.store, "set_recipient", MagicMock(side_effect=StoreError("disk full")))
+        socket_lifecycle.ensure_socket(
+            env.rig.incus, env.rig.root, env.memory,
+            actions.Node(FULL, "gone", True, {"volatile.uuid": UUID}),
+        )
+    assert UUID in env.listener.open
+    assert not env.memory.attached
+    assert not env.store.recipients()
+    env.set()
+    env.tick()
+    assert UUID not in env.listener.open
+
+
 def test_replacement_orchestrator_cannot_inherit_old_children(tmp_path, monkeypatch):
     env = Env(Rig(tmp_path, monkeypatch))
     node = actions.Node(FULL, "gone", False, {"volatile.uuid": UUID})

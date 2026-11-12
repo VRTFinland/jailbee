@@ -146,9 +146,9 @@ def ensure_socket(
         if live is None:
             raise OSError(f"no socket directory for {uuid}")
         socket_device.attach(incus, full, live, reassert=uuid in memory.reassert)
-        memory.reassert.discard(uuid)
         store.set_recipient(full, uuid, now=time.time())
         memory.attached[full] = uuid
+        memory.reassert.discard(uuid)
     except (IncusError, OSError, StoreError) as exc:
         memory.attached.pop(full, None)
         memory.warn_once(
