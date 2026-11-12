@@ -455,6 +455,25 @@ def test_vanished_container_has_no_unclassified_surviving_state(tmp_path, monkey
     memory.unsafe_socket_dirs.add("retired-path")
     memory.absent_uuids.add(UUID)
     memory.last_purge = broker_state.monotonic()  # retention is deliberately not due
+    populated_memory = {
+        "env_ensured",
+        "env_roles",
+        "listed_roles",
+        "children",
+        "contexts",
+        "attached",
+        "reassert",
+        "shared_uuids",
+        "reusable_socket_dirs",
+        "failures",
+    }
+    assert populated_memory | {"status"} == {
+        name for name, (kind, _) in MEMORY_LIFETIMES.items() if kind == INSTANCE
+    }
+    assert all(getattr(memory, name) for name in populated_memory)
+    assert set(STATUS_LIFETIMES) == {
+        f.name for f in fields(memory.status) if getattr(memory.status, f.name)
+    }
     memory.queries.publish_container(UUID, query.ContainerSnapshot("child", True, "{}", None))
     env.listener.open_container(UUID, root / "old-socket")
     store.set_recipient(FULL, UUID, now=1.0)
@@ -472,6 +491,7 @@ def test_vanished_container_has_no_unclassified_surviving_state(tmp_path, monkey
         "spawn-1", "proj-child", "new", None, NOW.isoformat(), "branch", None, "task", {}
     )
     state.save_queue(root, {FULL: [request]})
+    assert state.load_queue(root)[FULL] == [request]
     state.cancel_queued(root, FULL, state.CancelledRequest(request, "cancel-1", UUID, "status-1"))
     if queued:
         state.save_queue(root, {FULL: [request]})
@@ -501,6 +521,22 @@ def test_vanished_container_has_no_unclassified_surviving_state(tmp_path, monkey
     store.kv_put("publish-accepted.json", {UUID: ["publish-1"]})
     store.kv_put("publish-budget.json", {FULL: [NOW.timestamp()]})
     store.kv_put(result_key, {"state": "done", "ref": "publish-1"})
+    document_expectations = {
+        "queue.json": ("queue.json", {"version": 1, "queues": {}}),
+        "queue-cancellations": ("queue-cancellations", {}),
+        "watch.json": ("watch.json", {"version": 1, "watches": {}}),
+        "publish-inflight.json": ("publish-inflight.json", {}),
+        "publish-known.json": ("publish-known.json", {}),
+        "publish-accepted.json": ("publish-accepted.json", {}),
+        "publish-budget.json": ("publish-budget.json", {}),
+        "publish-result:": (result_key, None),
+    }
+    assert set(document_expectations) == {
+        name for name, (kind, _) in DOCUMENT_LIFETIMES.items() if kind == INSTANCE
+    }
+    for name, (key, expected) in document_expectations.items():
+        if name != "queue.json" or queued:  # cancellation already removed this queue
+            assert store.kv_get(key) not in (None, expected), name
     store.kv_put("socket-retired:retired-path", True)
     item = {
         "version": 1,
@@ -553,18 +589,7 @@ def test_vanished_container_has_no_unclassified_surviving_state(tmp_path, monkey
         assert not broker.tick(env.rig.incus, root=root, journal=journal, now=NOW, memory=memory)
         assert store.kv_get(claim_keys[0]) == claim_before  # live external publisher owns it
 
-    for name in (
-        "env_ensured",
-        "env_roles",
-        "listed_roles",
-        "children",
-        "contexts",
-        "attached",
-        "reassert",
-        "shared_uuids",
-        "reusable_socket_dirs",
-        "failures",
-    ):
+    for name in populated_memory:
         assert not getattr(memory, name), name
     for name in STATUS_LIFETIMES:
         assert not getattr(memory.status, name), name
@@ -576,14 +601,8 @@ def test_vanished_container_has_no_unclassified_surviving_state(tmp_path, monkey
     assert state.load_queue(root) == {}
     assert state.load_cancellations(root) == []
     assert watch.load_watch(root) == {}
-    for name in (
-        "publish-inflight.json",
-        "publish-known.json",
-        "publish-accepted.json",
-        "publish-budget.json",
-    ):
-        assert store.kv_get(name) == {}, name
-    assert store.kv_get(result_key) is None
+    for name, (key, expected) in document_expectations.items():
+        assert store.kv_get(key) == expected, name
     assert "abandoned" in (root / "publish-log.jsonl").read_text()
     assert state.load_reservations(root)[FULL][0].pid == 123  # still creating a child
     assert memory.publish_threads == [worker]
