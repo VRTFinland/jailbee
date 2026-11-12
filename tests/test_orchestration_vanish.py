@@ -167,9 +167,7 @@ def test_vanished_listener_close_is_retried_until_success(tmp_path, monkeypatch,
     env.memory.reassert.add(UUID)
     env.listener.open_container(UUID, env.rig.root / "unattached-socket")
     env.set()
-    close = MagicMock(
-        side_effect=[OSError("close failed"), OSError("close failed"), None]
-    )
+    close = MagicMock(side_effect=[OSError("close failed"), OSError("close failed"), None])
     with monkeypatch.context() as patch:
         patch.setattr(env.listener, "close_container", close)
         env.tick()
