@@ -112,9 +112,17 @@ def draft_append(
     return cast(dict[str, Any], call(wire.OUTBOX_DRAFT_APPEND, args))
 
 
-def draft_append_many(kind: Kind, name: str, actions: list[dict[str, object]], bodies: dict[str, str]) -> dict[str, Any]:
+def draft_append_many(
+    kind: Kind, name: str, actions: list[dict[str, object]], bodies: dict[str, str]
+) -> dict[str, Any]:
     """Append one command's issue actions atomically in one broker request."""
-    return cast(dict[str, Any], call(wire.OUTBOX_DRAFT_APPEND, {"kind": kind, "name": name, "actions": actions, "bodies": bodies}))
+    return cast(
+        dict[str, Any],
+        call(
+            wire.OUTBOX_DRAFT_APPEND,
+            {"kind": kind, "name": name, "actions": actions, "bodies": bodies},
+        ),
+    )
 
 
 def draft_list(kind: Kind) -> list[dict[str, Any]]:

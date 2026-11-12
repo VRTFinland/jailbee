@@ -158,8 +158,10 @@ def provisional_project(action: dict[str, Any], default_project: str | None) -> 
 
 
 def capture_project(
-    action: dict[str, Any], reader: ProjectReader | None, default_project: str | None,
-    project_title_reader: ProjectTitleReader | None = None
+    action: dict[str, Any],
+    reader: ProjectReader | None,
+    default_project: str | None,
+    project_title_reader: ProjectTitleReader | None = None,
 ) -> dict[str, Any]:
     """Host-owned expectations; the container's supplied membership is never trusted."""
     from jailbee.issue_github import IssueGithubReadError
@@ -235,7 +237,8 @@ def handle_put(
         manifest = {
             **manifest,
             "actions": [
-                capture_project(a, project_reader, default_project, project_title_reader) for a in provisional["actions"]
+                capture_project(a, project_reader, default_project, project_title_reader)
+                for a in provisional["actions"]
             ],
         }
     parse(f"{slug}.json", manifest, bodies)

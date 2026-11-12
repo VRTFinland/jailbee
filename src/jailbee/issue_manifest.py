@@ -706,10 +706,14 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
                         f"{context}: absent membership requires expected.value null"
                     )
                 if action_type == "project_clear":
-                    action = ProjectClearAction(repo, target, project, field, present, old, project_title)
+                    action = ProjectClearAction(
+                        repo, target, project, field, present, old, project_title
+                    )
                 else:
                     assert isinstance(value, (str, int, float))
-                    action = ProjectSetAction(repo, target, project, field, value, present, old, project_title)
+                    action = ProjectSetAction(
+                        repo, target, project, field, value, present, old, project_title
+                    )
         else:
             raise IssueManifestError(
                 f"{context}: type must be one of create, edit, comment, labels, assignees, "

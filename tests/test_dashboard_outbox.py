@@ -166,7 +166,24 @@ def test_staged_project_title_survives_shared_inspect_to_dashboard_listing():
     from jailbee.outbox.inspect import build_views, overview_json
     from jailbee.outbox.models import ContainerView
     from tests.outbox_support import IDENTITY, store
-    files = {"001.json": json.dumps({"version": 1, "actions": [{"type": "project_add", "repo": ".", "issue": 7, "project": "acme/3", "project_title": "Roadmap", "expected": {"present": False}}]})}
+
+    files = {
+        "001.json": json.dumps(
+            {
+                "version": 1,
+                "actions": [
+                    {
+                        "type": "project_add",
+                        "repo": ".",
+                        "issue": 7,
+                        "project": "acme/3",
+                        "project_title": "Roadmap",
+                        "expected": {"present": False},
+                    }
+                ],
+            }
+        )
+    }
     views = build_views(IDENTITY, (store("issue", files),))
     container = ContainerView(IDENTITY, "alpha-x", True, None, (), views)
     parsed = dob.parse_outbox_listing(json.dumps(overview_json((container,))))

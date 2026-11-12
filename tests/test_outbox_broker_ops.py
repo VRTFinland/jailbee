@@ -23,7 +23,12 @@ PLAIN = "proj-plain"
 @pytest.fixture
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Env]:
     from jailbee import issue_projects
-    monkeypatch.setattr(issue_projects, "resolve_project", lambda root, board: issue_projects.Project(board, "P3", "Roadmap"))
+
+    monkeypatch.setattr(
+        issue_projects,
+        "resolve_project",
+        lambda root, board: issue_projects.Project(board, "P3", "Roadmap"),
+    )
     instance = Env(Rig(tmp_path, monkeypatch), monkeypatch)
     instance.store.set_recipient(PLAIN, PLAIN, now=1.0)
     instance.listener.open_container(PLAIN, instance.rig.root / PLAIN)
@@ -134,7 +139,9 @@ def test_project_staging_reads_membership_on_host_query_path(env: Env, monkeypat
     from jailbee.issue_manifest import parse_manifest
     from jailbee.issue_outbox import show_lines
     from jailbee.outbox.inspect import build_views
-    from tests.outbox_support import IDENTITY, store as view_store
+    from tests.outbox_support import IDENTITY
+    from tests.outbox_support import store as view_store
+
     row = stored(env)[0]
     staged = json.loads(row.manifest)["actions"][0]
     assert staged["project_title"] == "Roadmap"

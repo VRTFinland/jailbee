@@ -124,7 +124,11 @@ def test_draft_overwrites_ref_membership_without_project_reader(env, monkeypatch
     def unexpected(*args, **kwargs):
         raise AssertionError("a new issue must not require a project read")
 
-    monkeypatch.setattr(issue_projects, "resolve_project", lambda root, board: issue_projects.Project(board, "P3", "Roadmap"))
+    monkeypatch.setattr(
+        issue_projects,
+        "resolve_project",
+        lambda root, board: issue_projects.Project(board, "P3", "Roadmap"),
+    )
     monkeypatch.setattr(issue_projects, "get_target", unexpected)
     assert append(env, create()).ok
     assert append(env, on_ref("project_add", project="acme/3", expected={"present": True})).ok
@@ -135,7 +139,11 @@ def test_draft_overwrites_ref_field_expectation_without_project_reader(env, monk
     def unexpected(*args, **kwargs):
         raise AssertionError("a new issue must not require a project read")
 
-    monkeypatch.setattr(issue_projects, "resolve_project", lambda root, board: issue_projects.Project(board, "P3", "Roadmap"))
+    monkeypatch.setattr(
+        issue_projects,
+        "resolve_project",
+        lambda root, board: issue_projects.Project(board, "P3", "Roadmap"),
+    )
     monkeypatch.setattr(issue_projects, "get_target", unexpected)
     assert append(env, create()).ok
     assert append(
@@ -259,11 +267,19 @@ def test_plain_applied_receipt_resolves_implicit_add_and_resumes_next_field(pipe
     prepare, apply, _, _, target = pipeline
     url = "https://github.com/acme/app/issues/901"
     state = {"present": False, "Status": None, "Notes": None}
-    target.side_effect = lambda *a: issue_projects.ProjectTarget("I901", url, "ITEM" if state["present"] else None)
-    fields = (issue_projects.ProjectField("F1", "Status", "TEXT"), issue_projects.ProjectField("F2", "Notes", "TEXT"))
+    target.side_effect = lambda *a: issue_projects.ProjectTarget(
+        "I901", url, "ITEM" if state["present"] else None
+    )
+    fields = (
+        issue_projects.ProjectField("F1", "Status", "TEXT"),
+        issue_projects.ProjectField("F2", "Notes", "TEXT"),
+    )
     mocker.patch.object(issue_projects, "list_fields", return_value=fields)
-    mocker.patch.object(issue_projects, "get_field_value", side_effect=lambda root, item, field: state[field.name])
+    mocker.patch.object(
+        issue_projects, "get_field_value", side_effect=lambda root, item, field: state[field.name]
+    )
     calls = []
+
     def mutate(root, project, item, number, resolved):
         calls.append(resolved.field.name)
         state["present"] = True
@@ -271,13 +287,32 @@ def test_plain_applied_receipt_resolves_implicit_add_and_resumes_next_field(pipe
         if len(calls) == 1:
             raise issue_github.IssueGithubMutationError("timeout", uncertain=True)
         return issue_projects.ProjectReceipt(number, url + "#project-item-ITEM", "ITEM")
+
     mocker.patch.object(issue_projects, "set_field", side_effect=mutate)
-    actions = [{"type": "project_set", "repo": ".", "issue": 901, "project": "acme/3", "field": field, "value": value, "expected": {"present": False, "value": None}} for field, value in (("Status", "Doing"), ("Notes", "Hello"))]
+    actions = [
+        {
+            "type": "project_set",
+            "repo": ".",
+            "issue": 901,
+            "project": "acme/3",
+            "field": field,
+            "value": value,
+            "expected": {"present": False, "value": None},
+        }
+        for field, value in (("Status", "Doing"), ("Notes", "Hello"))
+    ]
     seed({"batch.json": json.dumps({"version": 1, "actions": actions})})
     batch = prepare()
     assert apply(batch).failure.uncertain
     manifest = batch.manifests[0]
-    assert not issue_outbox.reconcile_action(uuid=batch.uuid, index=0, repo=manifest.actions[0].repo, manifest=manifest.manifest, digest=manifest.digest, resolution=issue_outbox.AppliedResolution(url, None))
+    assert not issue_outbox.reconcile_action(
+        uuid=batch.uuid,
+        index=0,
+        repo=manifest.actions[0].repo,
+        manifest=manifest.manifest,
+        digest=manifest.digest,
+        resolution=issue_outbox.AppliedResolution(url, None),
+    )
     report = apply(prepare())
     assert report.failure is None
     assert calls == ["Status", "Notes"]
