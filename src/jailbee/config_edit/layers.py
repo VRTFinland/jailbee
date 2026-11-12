@@ -242,9 +242,9 @@ def disabled_reason(spec: FieldSpec, layer: LayerName) -> str | None:
             "`git.user` is personal and is rejected in a repo config — set it in "
             "~/.config/jailbee/global.yaml or `jailbee config edit --local`."
         )
-    if layer == "global" and spec.path == ("github", "token"):
+    if layer == "global" and spec.path in (("github", "token"), ("github", "projects")):
         return (
-            "`github.token` is per-repo — set it in the repo's host-local file "
+            f"`{'.'.join(spec.path)}` is per-repo — set it in the repo's host-local file "
             "(`jailbee config edit --local`)."
         )
     if layer == "local" and spec.path[0] == "container_prefix":

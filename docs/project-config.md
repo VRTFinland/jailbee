@@ -39,6 +39,19 @@ This is a non-secret repo setting; keep `github.token` in the host-local
 repository override, never in the committed config. See the [`github` config
 reference](config.md#github).
 
+Staging may read only that default board and extra boards listed in the
+host-local `~/.config/jailbee/repos/<container_prefix>.yaml`:
+
+```yaml
+github:
+  projects: [acme/8, partner/3]
+```
+
+`github.projects` is host-local only: neither the committed config nor
+`global.yaml` may set it. An orchestrator may also stage boards in its
+`publish.projects` grant. Unlisted boards are refused before any host GitHub
+read; adding a board here allows staging, not autonomous publication.
+
 ### Limit orchestrator publication
 
 Only host/global profiles or a host grant confer publish rights. A committed

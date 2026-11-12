@@ -848,6 +848,18 @@ class GithubConfig(BaseModel):
     )
     project: str | None = Field(default=None, description="Default GitHub project as owner/number.")
 
+    projects: list[str] = Field(
+        default_factory=list,
+        description="Extra boards allowed for staging, set only in the host-local repo config.",
+    )
+
+    @field_validator("projects")
+    @classmethod
+    def validate_projects(cls, value: list[str]) -> list[str]:
+        for board in value:
+            cls.validate_project(board)
+        return value
+
     @field_validator("project")
     @classmethod
     def validate_project(cls, value: str | None) -> str | None:

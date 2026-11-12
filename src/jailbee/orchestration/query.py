@@ -165,6 +165,34 @@ class Queries:
             return broker_ops.handle_sent(PublicationStore(self._store), uuid, args)
         cfg = view.project_config
         reader = title_reader = None
+        allowed_boards: set[str] = set()
+        if cfg is not None:
+            allowed_boards.update(board.casefold() for board in cfg.github.projects)
+            if cfg.github.project:
+                allowed_boards.add(cfg.github.project.casefold())
+        if view.role == "orchestrator" and view.grant_json is not None:
+            grant = json.loads(view.grant_json)
+            allowed_boards.update(
+                entry["board"].casefold() for entry in grant.get("publish", {}).get("projects", [])
+            )
+        if op in (wire.OUTBOX_PUT, wire.OUTBOX_DRAFT_APPEND):
+            manifest = args.get("manifest")
+            entries = (
+                manifest.get("actions", []) if isinstance(manifest, dict) else []
+            ) if op == wire.OUTBOX_PUT else args.get("actions", [args.get("action")])
+            if isinstance(entries, list):
+                for entry in entries:
+                    if isinstance(entry, dict) and entry.get("type") in (
+                        "project_add", "project_set", "project_clear", "project_remove"
+                    ):
+                        board = entry.get("project", cfg.github.project if cfg else None)
+                        if isinstance(board, str) and board.casefold() not in allowed_boards:
+                            raise wire.WireError(
+                                wire.REFUSED,
+                                f"project {board!r} is not allowed for staging; add it to "
+                                "github.projects in the host-local repos/<container_prefix>.yaml "
+                                "or the orchestrator's publish.projects grant",
+                            )
         if cfg is not None:
             from jailbee import issue_outbox, issue_projects
 

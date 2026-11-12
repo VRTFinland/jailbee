@@ -504,6 +504,14 @@ review gate entirely — the same trust boundary the read-only recommendation
 in [`config.md`](config.md#github) and [`git-bridge.md`](git-bridge.md#github-cli-gh-inside-containers)
 exists to hold.
 
+**Projects staging is board-allowlisted.** The broker reads Projects metadata
+with the host token only for the repo's `github.project` default, the host-local
+`github.projects` list (`repos/<container_prefix>.yaml`), or an orchestrator's
+`publish.projects` grant. Other boards are refused before any host read, so
+their titles, fields, options and values are not returned to the container.
+The extra-board list cannot be supplied by committed repo config or global
+config. Staging permission does not confer autonomous publish rights.
+
 Proposals, draft batches and the publication journals (what was prepared,
 applied or left uncertain) live host-side in the outbox store (`broker.db`),
 outside the container's filesystem. The agent can only stage proposals through

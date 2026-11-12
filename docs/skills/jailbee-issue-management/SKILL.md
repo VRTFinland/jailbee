@@ -102,6 +102,12 @@ is set. A `--set` also adds the item when needed. Commands stage
 the proposal in the host outbox store; never write outbox files by hand. See
 the normative [output schema](references/manifest-schema.md).
 
+Stage only host-known boards: the `github.project` default, extras in the
+host-local `github.projects` list (`repos/<container_prefix>.yaml`), or an
+orchestrator's `publish.projects` grant. An unlisted board is refused before
+any host read. Ask the host user to add an extra board; the committed config
+cannot set `github.projects`. Staging rights do not grant publish rights.
+
 Assignment: `jailbee issue assign 42 --me` assigns the publishing account
 (`@me`, resolved on the host at publish time), `--unassign-me` removes it,
 and `--add LOGIN` / `--remove LOGIN` (repeatable) name other users. Give at
@@ -114,7 +120,8 @@ For related actions use `--batch NAME`, then `jailbee outbox submit NAME
 --kind issue`. A project command with several `--set` or `--clear` flags
 appends its actions atomically: a failed host read leaves the draft unchanged. A create may set `--ref REF`; later actions in that same
 batch target `@REF`. For edits, labels, assign and state on `@REF`, expected values
-are derived automatically from the earlier create under the draft lock.
+are derived automatically from the earlier create; a revision check keeps
+concurrent draft appends atomic without holding the write lock during host reads.
 Inspect with `jailbee outbox ls` and `jailbee outbox show issue/NAME`;
 discard a draft with `jailbee outbox discard NAME --kind issue`.
 

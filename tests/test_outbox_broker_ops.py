@@ -29,7 +29,10 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Env]:
         "resolve_project",
         lambda root, board: issue_projects.Project(board, "P3", "Roadmap"),
     )
-    instance = Env(Rig(tmp_path, monkeypatch), monkeypatch)
+    rig = Rig(tmp_path, monkeypatch)
+    rig.cfg = rig.cfg.model_copy(update={"github": rig.cfg.github.model_copy(update={"project": "acme/3"})})
+    rig.configs.return_value = {"proj": rig.cfg}
+    instance = Env(rig, monkeypatch)
     instance.store.set_recipient(PLAIN, PLAIN, now=1.0)
     instance.listener.open_container(PLAIN, instance.rig.root / PLAIN)
     instance.rig.incus.list_containers.return_value.append(_c(PLAIN, **{"volatile.uuid": PLAIN}))
@@ -151,6 +154,45 @@ def test_project_staging_reads_membership_on_host_query_path(env: Env, monkeypat
     assert 'acme/3 "Roadmap"' in view.actions[0].body
     assert staged["expected"] == {"present": True}
     assert reads == [(env.rig.cfg.repo_root, "acme/3", "acme/app", 7)]
+
+
+@pytest.mark.parametrize("operation", [wire.OUTBOX_PUT, wire.OUTBOX_DRAFT_APPEND])
+@pytest.mark.parametrize("target", [{"issue": 7}, {"issue_ref": "new"}])
+def test_unlisted_board_is_refused_before_any_host_read(env: Env, monkeypatch, operation, target) -> None:
+    from jailbee import issue_projects
+
+    monkeypatch.setattr(issue_projects, "resolve_project", lambda *args: pytest.fail("unlisted board read"))
+    action = {"type": "project_add", "repo": ".", "project": "private/9", **target}
+    create = {"type": "create", "repo": ".", "title": "New", "body": "body", "labels": [], "ref": "new"}
+    if operation == wire.OUTBOX_PUT:
+        response = put(env, manifest=manifest(create, action))
+    else:
+        response = env.call(operation, uuid=PLAIN, kind="issue", name="b", actions=[create, action], bodies={}, manifest={"actions": []})
+    assert response.error_code == wire.REFUSED
+    assert "github.projects" in response.error_detail
+    assert stored(env) == []
+    assert store_db.OutboxStore(env.store).get_draft(PLAIN, "issue", "b") is None
+
+
+@pytest.mark.parametrize("source", ["default", "local", "grant"])
+@pytest.mark.parametrize("operation", [wire.OUTBOX_PUT, wire.OUTBOX_DRAFT_APPEND])
+def test_host_known_boards_may_be_staged(env: Env, source, operation) -> None:
+    from dataclasses import replace
+
+    uuid = "proj-orch" if source == "grant" else PLAIN
+    view = env.queries.snapshot()[uuid]
+    cfg = view.project_config
+    assert cfg is not None
+    github = cfg.github.model_copy(update={"project": "Acme/3" if source == "default" else None, "projects": ["Acme/3"] if source == "local" else []})
+    grant = json.dumps({"publish": {"projects": [{"board": "Acme/3", "actions": ["set"]}]}}) if source == "grant" else view.grant_json
+    env.queries.publish_container(uuid, replace(view, project_config=cfg.model_copy(update={"github": github}), grant_json=grant))
+    create = {"type": "create", "repo": ".", "title": "New", "body": "body", "labels": [], "ref": "new"}
+    action = {"type": "project_add", "repo": ".", "issue_ref": "new", "project": "acme/3"}
+    if operation == wire.OUTBOX_PUT:
+        response = put(env, uuid=uuid, manifest=manifest(create, action))
+    else:
+        response = env.call(operation, uuid=uuid, kind="issue", name="b", actions=[create, action], bodies={})
+    assert response.ok, response
 
 
 def test_an_orchestrator_may_stage_too(env: Env) -> None:

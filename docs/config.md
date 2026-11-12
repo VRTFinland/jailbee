@@ -3285,6 +3285,7 @@ Field defaults:
 | `enabled` | bool | `false` | Master switch. Opt in via global.yaml; committed repo config may only set `false`. |
 | `token` | SecretStr | unset | This repo's GitHub PAT; set only in the host-local file. Masked in output and read-only in the interactive config editor. |
 | `project` | `owner/positive-number` | unset | Default Projects v2 board for issue project actions; a committed repo config may set this non-secret value. |
+| `projects` | list[owner/positive-number] | `[]` | Extra boards allowed for staging; host-local `repos/<container_prefix>.yaml` only. The default and orchestrator-granted boards are also allowed. |
 | `api_tokens` | dict[str, SecretStr] | `{}` | **Deprecated; removed in 2.0.0.** Legacy map from `container_prefix` to PAT; migrate to local `github.token` with `jailbee config migrate`. |
 
 `enabled: true` requires this repo's local token or a non-empty legacy

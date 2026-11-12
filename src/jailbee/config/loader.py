@@ -879,11 +879,13 @@ def load_config_from_layers(
         )
 
     global_github = global_for_merge.get("github")
-    if isinstance(global_github, dict) and "token" in global_github:
-        raise ConfigError(
-            f"`github.token` in {global_from} is per-repo — set it in "
-            f"{local_config_path('<container_prefix>')}."
-        )
+    if isinstance(global_github, dict):
+        for key in ("token", "projects"):
+            if key in global_github:
+                raise ConfigError(
+                    f"`github.{key}` in {global_from} is per-repo — set it in "
+                    f"{local_config_path('<container_prefix>')}."
+                )
 
     repo_raw = dict(repo_raw)
     repo_orch_raw = repo_raw.pop("orchestration", None)
