@@ -674,7 +674,8 @@ def _handle_spawn_locked(ctx: ActionContext, m: Manifest) -> Outcome:
     plan = plan_spawn(
         ctx,
         m,
-        queued_names={q.child_full for q in queued} | {e.request.child_full for e in pending},
+        queued_names={q.child_full for entries in load_queue(ctx.root).values() for q in entries}
+        | {e.request.child_full for e in pending},
     )
     if isinstance(plan, Outcome):
         return plan

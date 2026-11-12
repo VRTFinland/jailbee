@@ -705,6 +705,15 @@ def test_cancel_reply_retry_uses_same_status_id(tmp_path: Path, seams, monkeypat
     assert statuses[0].item["state"] == "refused"
 
 
+def test_queued_name_cannot_be_pinned_by_another_orchestrator(tmp_path: Path, seams):
+    rig = Rig(tmp_path, running=1)
+    assert actions.handle_spawn(rig.ctx(), _m()).state == "queued"
+    rig.sender = Node("proj-other", "other", True, rig.sender.config)
+    assert actions.handle_spawn(rig.ctx(), _m(mid="other")).state == "refused"
+    assert seams["pin"].call_count == 1
+    assert list(load_queue(tmp_path)) == ["proj-orch"]
+
+
 def test_handler_registered() -> None:
     assert actions.HANDLERS["spawn"] is actions.handle_spawn
 
