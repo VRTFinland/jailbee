@@ -175,8 +175,13 @@ def validate(r: SendRequest) -> SendRequest:
         require(not r.child, f"--child does not apply to {t}")
     require(not r.request or t == "cancel", "--request only applies to cancel")
     if t == "cancel":
-        require(bool(r.request) != bool(r.child), "cancel needs exactly one of --request or --child")
-        require(not r.request or bool(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", r.request)), "--request must be a request id")
+        require(
+            bool(r.request) != bool(r.child), "cancel needs exactly one of --request or --child"
+        )
+        require(
+            not r.request or bool(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", r.request)),
+            "--request must be a request id",
+        )
     if t == "rights":
         granted = bool(r.loose or r.mounts or r.egress)
         revoked = bool(r.revoke_loose or r.revoke_mounts or r.revoke_egress)

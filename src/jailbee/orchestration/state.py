@@ -199,7 +199,9 @@ def cancel_queued(root: Path, sender: str, entry: CancelledRequest) -> None:
 
     def mutate(docs: dict[str, dict[str, Any]]) -> bool:
         queues = docs[QUEUE_FILE].get("queues", {})
-        remaining = [q for q in queues.get(sender, []) if q["manifest_id"] != entry.request.manifest_id]
+        remaining = [
+            q for q in queues.get(sender, []) if q["manifest_id"] != entry.request.manifest_id
+        ]
         if remaining:
             queues[sender] = remaining
         else:
@@ -218,8 +220,13 @@ def load_cancellations(root: Path, sender: str | None = None) -> list[CancelledR
     if not isinstance(raw, dict):
         return []
     groups = [raw.get(sender, [])] if sender is not None else raw.values()
-    return [CancelledRequest(QueuedRequest(**v["request"]), v["cancel_id"], v["recipient_key"], v["status_id"])
-            for entries in groups for v in entries]
+    return [
+        CancelledRequest(
+            QueuedRequest(**v["request"]), v["cancel_id"], v["recipient_key"], v["status_id"]
+        )
+        for entries in groups
+        for v in entries
+    ]
 
 
 def finish_cancellation(root: Path, sender: str, cancel_id: str) -> None:

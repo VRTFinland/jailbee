@@ -672,7 +672,8 @@ def _handle_spawn_locked(ctx: ActionContext, m: Manifest) -> Outcome:
     pending = load_cancellations(ctx.root)
     queued = _queued(ctx)
     plan = plan_spawn(
-        ctx, m,
+        ctx,
+        m,
         queued_names={q.child_full for q in queued} | {e.request.child_full for e in pending},
     )
     if isinstance(plan, Outcome):
@@ -1028,9 +1029,12 @@ def _settle_cancellations_locked(ctx: ActionContext) -> None:
             continue
         try:
             if entry.request.kind in {"fork", "pr"}:
-                git.delete_ref_checked(ctx.cfg.repo_root, forking.fork_pin_ref(ctx.cfg, entry.request.child_full))
+                git.delete_ref_checked(
+                    ctx.cfg.repo_root, forking.fork_pin_ref(ctx.cfg, entry.request.child_full)
+                )
             broker_replies.reply(
-                ctx, entry.request.manifest_id,
+                ctx,
+                entry.request.manifest_id,
                 refused(f"cancelled by orchestrator (cancel request {entry.cancel_id})"),
                 status_id=entry.status_id,
             )
@@ -1049,8 +1053,15 @@ def handle_cancel(ctx: ActionContext, m: Manifest) -> Outcome:
     with mutation_locked(ctx.root):
         queued = _queued(ctx)
         req = next(
-            (q for q in queued if (q.manifest_id == m.request if m.request is not None
-             else lifecycle.short_name(ctx.cfg, q.child_full) == m.child)),
+            (
+                q
+                for q in queued
+                if (
+                    q.manifest_id == m.request
+                    if m.request is not None
+                    else lifecycle.short_name(ctx.cfg, q.child_full) == m.child
+                )
+            ),
             None,
         )
         if req is None:
@@ -1058,7 +1069,9 @@ def handle_cancel(ctx: ActionContext, m: Manifest) -> Outcome:
                 "request is not queued for this orchestrator; "
                 "if already started, use send stop / send destroy --child instead"
             )
-        cancel_queued(ctx.root, ctx.sender.full, CancelledRequest(req, m.id, ctx.sender.key, new_host_id()))
+        cancel_queued(
+            ctx.root, ctx.sender.full, CancelledRequest(req, m.id, ctx.sender.key, new_host_id())
+        )
         _settle_cancellations_locked(ctx)
         return done(f"cancelled queued request {req.manifest_id}")
 

@@ -42,8 +42,12 @@ def status(ref: str, outcome: Outcome) -> InboxStatus:
 
 
 def reply(
-    ctx: ActionContext, ref: str, outcome: Outcome, memory: broker_state.BrokerMemory | None = None,
-    *, status_id: str | None = None,
+    ctx: ActionContext,
+    ref: str,
+    outcome: Outcome,
+    memory: broker_state.BrokerMemory | None = None,
+    *,
+    status_id: str | None = None,
 ) -> None:
     item = status(ref, outcome)
     if status_id is not None:

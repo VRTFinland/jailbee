@@ -110,7 +110,9 @@ def child(name: str = "kid") -> dict[str, object]:
 
 
 @pytest.mark.parametrize("option,value", [("--request", "spawn-1"), ("--child", "kid")])
-def test_send_cancel(broker: FakeBroker, sockdir: Path, tmp_path: Path, option: str, value: str) -> None:
+def test_send_cancel(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path, option: str, value: str
+) -> None:
     broker.on("send", {"id": "cancel-1", "state": "done"})
     result = run(sockdir, "send", "cancel", option, value, tmp=tmp_path)
     assert result.returncode == 0, result.stderr

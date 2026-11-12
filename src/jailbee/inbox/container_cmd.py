@@ -525,7 +525,9 @@ def restart(
 
 @send_app.command(help="Cancel a queued spawn or restart before it starts.")
 def cancel(
-    request: Annotated[str, typer.Option("--request", callback=_nonempty, help="Queued request id.")] = "",
+    request: Annotated[
+        str, typer.Option("--request", callback=_nonempty, help="Queued request id.")
+    ] = "",
     child: Child = "",
     wait: Wait = False,
     timeout: Timeout = "",
