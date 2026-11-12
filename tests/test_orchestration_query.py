@@ -70,6 +70,52 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Env]:
     instance.listener.stop()
 
 
+@pytest.mark.parametrize("observed_disappearance", [True, False])
+def test_plain_namesake_of_destroyed_child_can_stage_outbox(
+    env: Env, observed_disappearance: bool
+) -> None:
+    child = _child()
+    child["config"]["volatile.uuid"] = "old-child-uuid"
+    env.rig.incus.config_device_get.return_value = ""
+    env.store.set_recipient("proj-kid", "old-child-uuid", now=2.0)
+    env.rig.incus.list_containers.return_value = [_orch(), child]
+    env.rig.tick(env.memory)
+    assert env.queries.snapshot()["old-child-uuid"].role == "child"
+    assert env.queries.put_refusal("old-child-uuid") is not None
+
+    if observed_disappearance:
+        env.rig.incus.list_containers.return_value = [_orch()]
+        env.rig.tick(env.memory)
+
+    env.rig.incus.config_device_get.return_value = ""
+    env.rig.incus.list_containers.return_value = [
+        _orch(),
+        _c("proj-kid", **{"volatile.uuid": "new-plain-uuid"}),
+    ]
+    env.rig.tick(env.memory)
+
+    assert "old-child-uuid" not in env.memory.env_ensured
+    assert "old-child-uuid" not in env.memory.env_roles
+    assert env.queries.snapshot()["new-plain-uuid"].role == "plain"
+    assert env.queries.put_refusal("new-plain-uuid") is None
+    response = env.queries.answer(
+        "new-plain-uuid",
+        wire.Request(
+            wire.OUTBOX_PUT,
+            {
+                "kind": "issue",
+                "slug": "namesake",
+                "manifest": {
+                    "version": 1,
+                    "actions": [{"type": "comment", "repo": ".", "issue": 114, "body": "Fixed"}],
+                },
+                "bodies": {},
+            },
+        ),
+    )
+    assert response.ok, response
+
+
 def test_bulk_ack_through_query_socket_is_scoped(env: Env) -> None:
     env.put("child-message")
     for uuid in ("proj-orch", "proj-kid"):

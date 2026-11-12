@@ -111,7 +111,14 @@ def tick(
     ]
     active = any(e.get("status") == "Running" for e in candidates)
     present = {e.get("name") for e in raw}
-    memory.env_ensured.intersection_update(present)
+    present_keys = {
+        str(e["config"].get("volatile.uuid") or e["name"])
+        for e in raw
+        if isinstance(e.get("name"), str) and isinstance(e.get("config"), dict)
+    }
+    memory.env_ensured.intersection_update(present_keys)
+    for key in memory.env_roles.keys() - present_keys:
+        del memory.env_roles[key]
     for full in [f for f in memory.children if f not in present]:
         del memory.children[full]
     # Warn workers before deleting a vanished parent's queued finish reports.

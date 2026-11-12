@@ -107,8 +107,8 @@ def test_release_racing_stale_broker_does_not_reinstall_marker(cfg, rig, tmp_pat
     marker = [True]
     memory = broker_state.BrokerMemory()
     if cached:
-        memory.env_ensured.add("myrepo-a")
-        memory.env_roles["myrepo-a"] = "child"
+        memory.env_ensured.add("uuid-myrepo-a")
+        memory.env_roles["uuid-myrepo-a"] = "child"
 
     def stale_broker():
         started.set()
@@ -145,7 +145,8 @@ def test_release_racing_stale_broker_does_not_reinstall_marker(cfg, rig, tmp_pat
         pending[0].result(timeout=5)
     assert labels.SPAWNED_BY not in config
     assert marker == [False]
-    assert "myrepo-a" not in memory.env_ensured
+    assert "uuid-myrepo-a" not in memory.env_ensured
+    assert "uuid-myrepo-a" not in memory.env_roles
 
 
 def test_adoption_discards_stale_child_outbox_record(cfg, rig):

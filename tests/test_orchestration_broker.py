@@ -492,6 +492,19 @@ def test_ensure_env_rerun_after_container_vanishes(rig: Rig) -> None:
     assert rig.ensure_env.call_count == 2
 
 
+@pytest.mark.parametrize("child", [False, True])
+def test_recreated_instance_is_prepared_even_without_an_absent_round(rig: Rig, child: bool) -> None:
+    entry = _child() if child else _orch()
+    entry["config"]["volatile.uuid"] = "old-uuid"
+    rig.incus.list_containers.return_value = [entry]
+    rig.tick()
+    assert rig.ensure_env.call_count == 1
+
+    entry["config"]["volatile.uuid"] = "new-uuid"
+    rig.tick()
+    assert rig.ensure_env.call_count == 2
+
+
 def test_tick_prunes_reservations(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
     from jailbee.orchestration.state import Reservation, load_reservations, save_reservations
 

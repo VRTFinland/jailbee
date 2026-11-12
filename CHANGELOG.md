@@ -16,6 +16,14 @@ before editing `## Unreleased`.
   `refused`; already-started children still need `stop`/`destroy`
   ([#113](https://github.com/VRTFinland/jailbee/issues/113)).
 
+### Fixed
+
+- A plain container reusing a destroyed child's name could be refused as a child
+  when staging issue or PR actions. The broker now keys its prepared-role cache
+  by instance UUID and drops vanished instances, so a new container cannot
+  inherit the old child's role
+  ([#114](https://github.com/VRTFinland/jailbee/issues/114)).
+
 ## 1.8.7 - 2026-11-10
 
 ### Fixed

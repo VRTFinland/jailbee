@@ -44,6 +44,7 @@ class BrokerMemory:
     """What the broker remembers between rounds (in memory only)."""
 
     publish_threads: list[threading.Thread] = field(default_factory=list)
+    # Prepared environment caches use instance keys (volatile.uuid, else name).
     env_ensured: set[str] = field(default_factory=set)
     env_roles: dict[str, str | None] = field(default_factory=dict)
     # volatile.uuid -> the role its labels gave in the round's listing
