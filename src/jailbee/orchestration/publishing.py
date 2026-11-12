@@ -372,6 +372,19 @@ def prune(root: Path, identities: dict[str, str], now: datetime) -> None:
         _KNOWN,
         {full: key for full, key in known.items() if identities.get(full) == key},
     )
+    live_keys = set(identities.values())
+    accepted = _load(root, _ACCEPTED)
+    _save(root, _ACCEPTED, {key: refs for key, refs in accepted.items() if key in live_keys})
+    budget = _load(root, _BUDGET)
+    _save(
+        root,
+        _BUDGET,
+        {
+            full: stamps
+            for full, stamps in budget.items()
+            if full in identities and known.get(full, identities[full]) == identities[full]
+        },
+    )
 
 
 def handle_publish(ctx: ActionContext, m: Manifest) -> Outcome:
