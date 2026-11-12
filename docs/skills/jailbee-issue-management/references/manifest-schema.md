@@ -173,12 +173,23 @@ repo; its project membership is initially absent.
 | Type | Additional fields | Expected state |
 |---|---|---|
 | `project_add` | none | `expected.present`: whether the item was already a member. |
-| `project_set` | `field`, `value` | `expected.present` records membership; the host captures the prior field value at staging. |
-| `project_clear` | `field` | `expected.present` records membership; the host captures the prior field value at staging. |
+| `project_set` | `field`, `value` | `expected.present` records membership; `expected.value` is the prior field value or `null`. |
+| `project_clear` | `field` | `expected.present` records membership; `expected.value` is the prior field value or `null`. |
 | `project_remove` | none | `expected.present`: whether the item was a member. |
 
 A set or clear expectation records both membership and the field's previous
-value; a newly created `issue_ref` starts with absent membership. The host
+value. `expected.value` is a string for text, date and single-select names, a
+number for numeric fields, or `null` for an unset field. A newly created
+`issue_ref` starts with `{"present": false, "value": null}`. For example:
+
+```json
+{"type": "project_set", "repo": ".", "issue": 42, "project": "acme/7",
+ "field": "Status", "value": "In progress",
+ "expected": {"present": true, "value": "Todo"}}
+```
+
+The expectation is captured on the host; container commands never need project
+permissions. The host
 checks expectations before applying changes and refuses stale actions. Adding
 an existing member and removing a non-member are no-ops only when the recorded
 membership expectation still matches. A `project_set` adds a missing item
