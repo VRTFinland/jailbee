@@ -26,6 +26,19 @@ file does not exist yet, `jailbee config init --global` creates it. The
 repo template is a starting point, not a dump of the effective config:
 global settings can still enable integrations.
 
+Set the committed `github.project` value to choose the default GitHub Projects
+v2 board for `jailbee issue project`; container commands can then omit
+`--project`. Use the board owner's login and positive project number:
+
+```yaml
+github:
+  project: acme/7
+```
+
+This is a non-secret repo setting; keep `github.token` in the host-local
+repository override, never in the committed config. See the [`github` config
+reference](config.md#github).
+
 ### Limit orchestrator publication
 
 Only host/global profiles or a host grant confer publish rights. A committed

@@ -19,7 +19,7 @@ parsed by the host. Do not write manifests or outbox files by hand.
      "expected": {"state": "open"}},
     {"type": "project_add", "repo": ".", "issue": 42, "project": "acme/7",
      "expected": {"present": false}},
-    {"type": "project_remove", "repo": ".", "issue": 42, "project": "acme/7",
+    {"type": "project_remove", "repo": ".", "issue": 43, "project": "acme/7",
      "expected": {"present": true}}
   ]
 }
