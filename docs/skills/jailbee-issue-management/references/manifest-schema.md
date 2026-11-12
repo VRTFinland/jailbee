@@ -168,7 +168,9 @@ Closes or reopens an issue.
 All project actions require `repo`, one of `issue` / `issue_ref`, and
 `project` (`owner/positive-number`). Project actions may target issues or pull
 requests. `issue_ref` references a preceding `create` in the same manifest and
-repo; its project membership is initially absent.
+repo; its project membership is initially absent. The host also records
+`project_title` as display-only metadata; it never changes which board is
+authorized or resolved at publication.
 
 | Type | Additional fields | Expected state |
 |---|---|---|

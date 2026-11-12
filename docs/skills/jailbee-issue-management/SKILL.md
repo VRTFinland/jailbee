@@ -111,7 +111,8 @@ assigned on `--remove`, is refused before anything is staged. `--me` and
 resolve `@me` to a login.
 
 For related actions use `--batch NAME`, then `jailbee outbox submit NAME
---kind issue`. A create may set `--ref REF`; later actions in that same
+--kind issue`. A project command with several `--set` or `--clear` flags
+appends its actions atomically: a failed host read leaves the draft unchanged. A create may set `--ref REF`; later actions in that same
 batch target `@REF`. For edits, labels, assign and state on `@REF`, expected values
 are derived automatically from the earlier create under the draft lock.
 Inspect with `jailbee outbox ls` and `jailbee outbox show issue/NAME`;
