@@ -255,6 +255,84 @@ def test_multiple_fields_on_new_issue_resume_after_failure(pipeline, mocker):
     ]
 
 
+@pytest.mark.parametrize("kind", ["project_clear", "project_remove"])
+@pytest.mark.parametrize("resolution", ["retry", "applied"])
+def test_uncertain_pull_project_action_requires_resolution(pipeline, mocker, kind, resolution):
+    prepare, apply, _, _, target = pipeline
+    url = "https://github.com/acme/app/pull/901"
+    state = {"present": True, "value": "High"}
+    mocker.patch.object(
+        issue_github,
+        "get_issue",
+        return_value=issue_github.IssueSnapshot(901, "New", "Body", (), "open", url, True),
+    )
+    target.side_effect = lambda *args: issue_projects.ProjectTarget(
+        "I901", url, "ITEM" if state["present"] else None
+    )
+    field = issue_projects.ProjectField("F1", "Priority", "SINGLE_SELECT", (("High", "OPT"),))
+    mocker.patch.object(issue_projects, "list_fields", return_value=(field,))
+    mocker.patch.object(issue_projects, "get_field_value", side_effect=lambda *args: state["value"])
+    attempts = []
+
+    def mutate(*args):
+        attempts.append(args)
+        if len(attempts) == 1:
+            raise issue_github.IssueGithubMutationError("timeout", uncertain=True)
+        if kind == "project_clear":
+            state["value"] = None
+        else:
+            state["present"] = False
+        return issue_github.MutationReceipt(901, url + "#project-item-ITEM")
+
+    mocker.patch.object(
+        issue_projects,
+        "clear_field" if kind == "project_clear" else "remove_item",
+        side_effect=mutate,
+    )
+    action = {
+        "type": kind,
+        "repo": ".",
+        "issue": 901,
+        "project": "acme/3",
+        "expected": {"present": True},
+    }
+    if kind == "project_clear":
+        action.update(field="Priority", expected={"present": True, "value": "High"})
+    seed({"batch.json": json.dumps({"version": 1, "actions": [action]})})
+    batch = prepare()
+    failure = apply(batch).failure
+    assert failure is not None and failure.uncertain
+    blocked = apply(prepare()).failure
+    assert blocked is not None and blocked.uncertain
+    assert len(attempts) == 1
+    manifest = batch.manifests[0]
+    decision = (
+        issue_outbox.RetryResolution()
+        if resolution == "retry"
+        else issue_outbox.AppliedResolution(url + "#project-item-ITEM", None)
+    )
+    issue_outbox.reconcile_action(
+        uuid=batch.uuid,
+        index=0,
+        repo=manifest.actions[0].repo,
+        manifest=manifest.manifest,
+        digest=manifest.digest,
+        resolution=decision,
+    )
+    if resolution == "retry":
+        report = apply(prepare())
+        assert report.failure is None
+        assert len(attempts) == 2
+        assert report.applied[0][1].url == url + "#project-item-ITEM"
+    else:
+        assert len(attempts) == 1
+        from jailbee.outbox import sent
+
+        rows = sent.list_records()
+        assert len(rows) == 1 and rows[0].state == "applied"
+        assert rows[0].url == url + "#project-item-ITEM"
+
+
 @pytest.mark.parametrize("resolution", ["retry", "applied"])
 def test_uncertain_project_blocks_retry_until_resolved(pipeline, resolution):
     prepare, apply, calls, project, _ = pipeline
