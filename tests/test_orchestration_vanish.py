@@ -9,6 +9,7 @@ import pytest
 
 from jailbee.global_config import GlobalConfig
 from jailbee.orchestration import broker, broker_state
+from jailbee.orchestration.store import open_state_store
 from jailbee.orchestration.journal import Journal
 
 NOW = datetime(2026, 11, 12, 12, tzinfo=UTC)
@@ -38,3 +39,17 @@ def test_idle_round_forgets_vanished_probe_and_diagnostic_state(tmp_path, monkey
     assert memory.warned == {"repo-load:proj"}
     assert memory.failures == {}
     assert memory.reassert == set()
+
+
+def test_vanished_publisher_drops_dedup_and_rate_budget(tmp_path):
+    store = open_state_store(tmp_path)
+    store.kv_put("publish-accepted.json", {UUID: ["old-publish"]})
+    store.kv_put("publish-budget.json", {FULL: [NOW.timestamp()]})
+    incus = MagicMock()
+    incus.list_containers.return_value = []
+    memory = broker_state.BrokerMemory()
+
+    assert not broker.tick(incus, root=tmp_path, journal=Journal(tmp_path), now=NOW, memory=memory)
+
+    assert store.kv_get("publish-accepted.json") == {}
+    assert store.kv_get("publish-budget.json") == {}
