@@ -18,7 +18,9 @@ parsed by the host. Do not write manifests or outbox files by hand.
     {"type": "state", "repo": ".", "issue": 42, "state": "closed", "reason": "completed",
      "expected": {"state": "open"}},
     {"type": "project_add", "repo": ".", "issue": 42, "project": "acme/7",
-     "expected": {"present": false}}
+     "expected": {"present": false}},
+    {"type": "project_remove", "repo": ".", "issue": 42, "project": "acme/7",
+     "expected": {"present": true}}
   ]
 }
 ```
@@ -161,22 +163,35 @@ Closes or reopens an issue.
 | `reason` | Required, `"completed"` or `"not_planned"`, **only** when `state` is `"closed"`. Forbidden when reopening. |
 | `expected.state` | Required — the current state `gh issue view` showed. Must differ from `state` (an action that "changes" state to what it already is is refused). |
 
-## `type: "project_add"`
+## Project actions
 
-Adds an issue or pull request to a GitHub Projects v2 board. Staged with
-`jailbee issue project N --project OWNER/NUMBER --add`. `project` is mandatory;
-use the board owner's login and a positive project number.
+All project actions require `repo`, one of `issue` / `issue_ref`, and
+`project` (`owner/positive-number`). Project actions may target issues or pull
+requests. `issue_ref` references a preceding `create` in the same manifest and
+repo; its project membership is initially absent.
 
-| Field | Rule |
-|---|---|
-| `repo` | As above. |
-| `issue` / `issue_ref` | As above; the target may be an issue or pull request. |
-| `project` | Required `owner/number` identifier. |
-| `expected.present` | Required boolean recording whether the target was already a member when staged. For an `issue_ref` created in the same batch, it is `false`. |
+| Type | Additional fields | Expected state |
+|---|---|---|
+| `project_add` | none | `expected.present`: whether the item was already a member. |
+| `project_set` | `field`, `value` | `expected.present` records membership; the host captures the prior field value at staging. |
+| `project_clear` | `field` | `expected.present` records membership; the host captures the prior field value at staging. |
+| `project_remove` | none | `expected.present`: whether the item was a member. |
 
-The host captures or derives this expectation when staging. At publication,
-`expected.present` must still match the board membership; adding an already
-present item is an applied no-op only when the expectation matched.
+A set or clear expectation records both membership and the field's previous
+value; a newly created `issue_ref` starts with absent membership. The host
+checks expectations before applying changes and refuses stale actions. Adding
+an existing member and removing a non-member are no-ops only when the recorded
+membership expectation still matches. A `project_set` adds a missing item
+before setting its field. Each `--set` and `--clear` becomes a separate action;
+only a given project field may be changed once per target in a manifest.
+
+Fields supported by project mutations are single-select, text, number and date.
+Iteration fields are not supported. Single-select values are option names,
+dates use `YYYY-MM-DD`, and numbers are decimal. The host resolves field and
+option names and validates the value type before publishing.
+
+`project_add` stores membership in `expected.present`; the host captures it
+when staging (or derives `false` for a new `issue_ref`).
 
 ## One field, one action, per target
 

@@ -18,6 +18,7 @@ it). Never run `gh issue create|edit|comment|close|reopen` or a mutating
 - **Apply / remove labels**: `jailbee issue labels <number> --add LABEL` / `--remove LABEL`.
 - **Assign yourself**: `jailbee issue assign <number> --me` (`--unassign-me` to undo).
 - **Close / reopen**: `jailbee issue state <number> closed --reason completed` / `jailbee issue state <number> open`.
+- **Project board**: `jailbee issue project <number> [--project owner/number] --add`; `--set FIELD=VALUE` and `--clear FIELD` update fields, and `--remove` removes membership. An omitted board uses the committed `github.project` default.
 - **Related actions**: stage them in one batch with `--batch NAME`; a create may
   set `--ref REF` and later actions in the batch target `@REF`. Submit with
   `jailbee outbox submit NAME --kind issue`.
@@ -31,8 +32,8 @@ it). Never run `gh issue create|edit|comment|close|reopen` or a mutating
 ## Publishing
 
 - **Orchestrator with a grant**: if `jailbee inbox grant` reports that
-  `publish.issues` covers every pending action kind in the manifest (currently
-  `create`, `comment`, `state`, `assign_self` — **not** labels), run
+  `publish.issues` covers every pending issue action kind, or the project's
+  `owner/number` is covered by `publish.projects` for each project action, run
   `jailbee inbox send publish --issue NAME.json --wait` and read the final
   `done`/`failed` status for the created issue numbers. `started` is not
   success; an uncertain result goes to the human, never an automatic retry.

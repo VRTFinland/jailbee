@@ -112,6 +112,9 @@ jailbee inbox send publish --pr b.json --wait --until done
 
 Issue kinds use `publish.issues` for the own repo/submodules, or
 `publish.foreign_issues.actions` plus its repo list for foreign issues.
+Project actions are separate: `publish.projects` grants actions per board
+(`owner/number`), with `set` also covering `add` and `clear`; it does not grant
+foreign issue rights or other boards.
 Assignment is an issue kind too: `assign_self` covers only assigning or
 unassigning the publisher's own login (so it can also unassign the host user
 from issues the user claimed by hand), `assign` covers any login and implies

@@ -31,7 +31,10 @@ accept `--repo owner/name`. `jailbee pr source --ref REF --sha SHA` also
 accepts `--head` as an alias for `--ref`; new PRs need a description body.
 `jailbee issue project ISSUE|@REF --project OWNER/NUMBER --add` stages adding
 an issue or pull request to a Projects v2 board; the project owner and positive
-board number are required.
+board number are required. Omit `--project` to use committed `github.project`.
+Repeat `--set FIELD=VALUE` or `--clear FIELD` to change fields; set adds an
+item if absent, while `--remove` removes it. Batch actions may target a prior
+create with `@REF`.
 
 Use `--batch NAME` to collect actions, `jailbee outbox ls [--json]` and
 `jailbee outbox show issue/NAME` or `pr/NAME` to inspect staged proposals,

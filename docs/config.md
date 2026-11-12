@@ -3227,12 +3227,24 @@ PAT is scoped to its owner and selected repositories.
 
 **Placement constraint:** enable the integration in `global.yaml`, and put
 `github.token` in the host-local per-repo file. A committed
-`.jailbee/config.yaml` may opt this repo out of a globally enabled integration
-with exactly:
+`.jailbee/config.yaml` may set `github.project` to the default GitHub Projects
+v2 board (`owner/positive-number`) used by `jailbee issue project` when
+`--project` is omitted, or opt this repo out of a globally enabled integration
+with `enabled: false`. Project identifiers are non-secret; the repo layer still
+rejects tokens and unrecognized GitHub keys. For example:
+
+```yaml
+github:
+  project: acme/7
+```
+
+Or combine the default board with opt-out only when deliberately disabling
+container `gh`:
 
 ```yaml
 github:
   enabled: false
+  project: acme/7
 ```
 
 This skips GitHub token injection, the integration's automatic
@@ -3241,9 +3253,9 @@ hosts added by other features (such as Claude plugins) or explicit egress
 entries. The normal layer order still applies: a host-local override takes
 precedence over the committed repo setting.
 
-Every other `github` form in the committed file is rejected, including
-`enabled: true`, empty blocks, tokens, and additional keys, to keep secrets
-and opt-in settings on the host.
+Committed `github` settings allow only the non-secret `project` board and
+`enabled: false`; tokens and other keys are rejected so credentials remain
+host-local.
 
 **Permissions:** use mode `0600` for a local file containing `github.token`.
 Loading warns if group or other permissions are present; it does not reject
@@ -3270,8 +3282,9 @@ Field defaults:
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `enabled` | bool | `false` | Master switch. Opt in via global.yaml; a committed repo config may only contain `github: {enabled: false}` to opt out. |
+| `enabled` | bool | `false` | Master switch. Opt in via global.yaml; committed repo config may only set `false`. |
 | `token` | SecretStr | unset | This repo's GitHub PAT; set only in the host-local file. Masked in output and read-only in the interactive config editor. |
+| `project` | `owner/positive-number` | unset | Default Projects v2 board for issue project actions; a committed repo config may set this non-secret value. |
 | `api_tokens` | dict[str, SecretStr] | `{}` | **Deprecated; removed in 2.0.0.** Legacy map from `container_prefix` to PAT; migrate to local `github.token` with `jailbee config migrate`. |
 
 `enabled: true` requires this repo's local token or a non-empty legacy

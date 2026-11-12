@@ -128,6 +128,9 @@ expected fields, receipts and journals as manual publication.
 ```yaml
 publish:
   issues: [create, edit, comment, labels, assign_self, state]  # own repo and declared submodules
+  projects:
+    - board: acme/7
+      actions: [add, set, remove]                    # set implies add; set covers clear
   foreign_issues:
     repos: [someorg/upstream-lib]               # case-insensitive owner/name, or ["*"]
     actions: [comment]
@@ -138,10 +141,20 @@ publish:
 
 ```bash
 jb orchestrate grant bugs --publish-issues comment,state --publish-prs
+jb orchestrate grant bugs --publish-project acme/7=add,set
+jb orchestrate grant bugs --publish-project acme/7=none  # remove this board's rights
 jb orchestrate grant bugs --publish-foreign-issues someorg/upstream-lib:comment
 jb orchestrate grant bugs --publish-pr-reviews --publish-rate 10
 jb orchestrate grant bugs --no-publish
 ```
+
+Project rights are board-scoped and separate from issue rights: `projects`
+contains `{board: owner/number, actions: [add|set|remove]}` entries. No
+wildcard applies. `set` implies `add` and covers clearing a field; each project
+action uses one publish-rate slot. Foreign issue grants do not grant project
+rights, and project grants do not grant rights to foreign issue actions. The
+terminal dashboard exposes **Publish projects** beside the other publish-rights
+editors; its board picker supports adding a board and editing its action rights.
 
 Assignment has two kinds. `assign_self` covers only assignees changes whose
 logins all equal the publishing account, compared case-insensitively after

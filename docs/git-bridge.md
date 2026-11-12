@@ -1424,9 +1424,14 @@ section covers the host-side workflow the schema is applied through.
 
 ### Reading, triaging, and writing the manifest
 
-Inside the container, use `jailbee issue create|edit|comment|labels|assign|state`
+Inside the container, use `jailbee issue create|edit|comment|labels|assign|state|project`
 to stage proposals; `--body-file` accepts long text and `--repo` selects the
-target. Commands fetch expected current values for existing issue edits,
+target. `jailbee issue project N [--project OWNER/NUMBER]` stages `--add`,
+repeatable `--set FIELD=VALUE`, repeatable `--clear FIELD`, or `--remove`;
+omitting `--project` uses committed `github.project`. Set and clear produce
+one action per field, set adds an item if needed, and same-batch `@REF` targets
+an earlier create. Project actions may target issues and pull requests.
+Commands fetch expected current values for existing issue edits,
 labels, assignees and state; for an `@REF` in a batch they derive expected values from
 the earlier create.
 
@@ -1526,8 +1531,11 @@ and open state; there is no live issue to read yet.
 
 After confirmation (or immediately under `--yes`), JailBee re-reads pending
 actions that have a known issue number and declared expected fields. A
-mismatch aborts before any mutation. Unrelated fields and already-applied
-actions are not rechecked. This reduces the approval-time race; it is not
+mismatch aborts before any mutation. For project actions this includes board
+membership and the prior field value for set/clear. The host resolves board,
+field and option names; unsupported iteration fields and wrong-typed values
+are refused before publication. Unrelated fields and already-applied actions
+are not rechecked. This reduces the approval-time race; it is not
 an atomic GitHub transaction, and changes after the last read remain possible.
 
 ### Stop/resume behavior and manifest-local `ref`s

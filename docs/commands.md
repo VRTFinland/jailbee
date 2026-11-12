@@ -43,7 +43,9 @@ accept `--repo owner/name`. `jailbee pr source --ref REF --sha SHA` also
 accepts `--head` as an alias for `--ref`; new PRs need a description body.
 `jailbee issue project ISSUE|@REF --project OWNER/NUMBER --add` stages adding
 an issue or pull request to a Projects v2 board; the project owner and positive
-board number are required.
+board number are required. Omit `--project` to use committed `github.project`;
+repeat `--set FIELD=VALUE` or `--clear FIELD` to change fields. A set adds a
+missing item, and `--remove` removes it. Batch `@REF` targets a prior create.
 
 An omitted PR selects exactly one actual container binding (primary, stacked,
 imported-head or submodule), independent of the checkout branch or detached HEAD.
