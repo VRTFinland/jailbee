@@ -85,7 +85,7 @@ def _graphql(
     except FileNotFoundError:
         fail("GitHub Projects requires 'gh'")
         raise AssertionError from None
-    except (OSError, UnicodeError, subprocess.SubprocessError, KeyboardInterrupt):
+    except (OSError, UnicodeError, subprocess.SubprocessError):
         fail("GitHub Projects transport failed", uncertain=True)
         raise AssertionError from None
     try:
@@ -94,23 +94,20 @@ def _graphql(
         response = None
     errors = response.get("errors") if isinstance(response, dict) else None
     if errors:
+        entries = errors if isinstance(errors, list) else []
+        types = {
+            str(entry.get("type", "")).upper()
+            for entry in entries
+            if isinstance(entry, dict)
+        }
         text = json.dumps(errors).lower()
-        scope = any(word in text for word in ("scope", "permission", "resource not accessible"))
-        fail(
-            "GitHub Projects requires host authorization: gh auth refresh -s project"
-            if scope
-            else "GitHub Projects GraphQL request was rejected"
-        )
+        if "INSUFFICIENT_SCOPES" in types:
+            fail("GitHub Projects requires host authorization: gh auth refresh -s project")
+        if "FORBIDDEN" in types or "permission" in text or "resource not accessible" in text:
+            fail("GitHub token lacks write access to the project board")
+        fail("GitHub Projects GraphQL request was rejected")
     if proc.returncode:
-        scope = "scope" in proc.stderr.lower() or (
-            "project" in proc.stderr.lower() and "permission" in proc.stderr.lower()
-        )
-        fail(
-            "GitHub Projects requires host authorization: gh auth refresh -s project"
-            if scope
-            else "GitHub Projects transport failed",
-            uncertain=not scope,
-        )
+        fail("GitHub Projects transport failed", uncertain=True)
     data = response.get("data") if isinstance(response, dict) else None
     if not isinstance(data, dict):
         fail("GitHub Projects returned an unreadable response", uncertain=True)

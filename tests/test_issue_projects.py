@@ -215,12 +215,35 @@ def test_scope_error_does_not_try_another_owner_type(tmp_path, mocker):
     run = mocker.patch(
         "jailbee.issue_projects.subprocess.run",
         return_value=subprocess.CompletedProcess(
-            [], 1, '{"errors":[{"message":"requires project scope"}]}', ""
+            [], 1, '{"errors":[{"type":"INSUFFICIENT_SCOPES","message":"requires project scope"}]}', ""
         ),
     )
     with pytest.raises(IssueGithubReadError, match="gh auth refresh -s project"):
         issue_projects.resolve_project(tmp_path, "acme/3")
     assert run.call_count == 1
+
+
+def test_project_permission_error_reports_write_access(tmp_path, mocker):
+    mocker.patch(
+        "jailbee.issue_projects.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            [], 1, '{"errors":[{"type":"FORBIDDEN","message":"Resource not accessible by integration"}]}', ""
+        ),
+    )
+    with pytest.raises(IssueGithubMutationError, match="write access") as error:
+        issue_projects.add_item(
+            tmp_path,
+            issue_projects.Project("acme/3", "P3", "Roadmap"),
+            issue_projects.ProjectTarget("I7", "https://github.com/acme/app/issues/7", None),
+            7,
+        )
+    assert not error.value.uncertain
+
+
+def test_project_transport_propagates_keyboard_interrupt(tmp_path, mocker):
+    mocker.patch("jailbee.issue_projects.subprocess.run", side_effect=KeyboardInterrupt)
+    with pytest.raises(KeyboardInterrupt):
+        issue_projects.resolve_project(tmp_path, "acme/3")
 
 
 @pytest.mark.parametrize(

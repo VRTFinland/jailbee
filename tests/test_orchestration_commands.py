@@ -44,7 +44,7 @@ def test_build_grant_modifies_only_named_project_boards(cfg):
     updated = commands.build_grant(
         cfg,
         current,
-        GrantFlags(publish_project=("ORG/3=add", "org/8=set", "org/8=remove", "org/7=none")),
+        GrantFlags(publish_project=("ORG/3=add", "org/8=remove", "org/7=none")),
     )
     assert [(p.board, p.actions) for p in updated.publish.projects] == [
         ("org/3", ("add",)),
@@ -57,6 +57,13 @@ def test_build_grant_modifies_only_named_project_boards(cfg):
     with pytest.raises(GrantError, match="exclusive"):
         commands.build_grant(
             cfg, current, GrantFlags(no_publish=True, publish_project=("org/3=none",))
+        )
+
+
+def test_build_grant_refuses_repeated_project_board(cfg):
+    with pytest.raises(GrantError, match="(?i)(duplicate|repeated)"):
+        commands.build_grant(
+            cfg, None, GrantFlags(publish_project=("Org/3=set", "org/3=remove"))
         )
 
 

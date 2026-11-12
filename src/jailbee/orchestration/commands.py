@@ -225,6 +225,7 @@ def _publish_rights(base: PublishRights, flags: GrantFlags) -> PublishRights:
     data = base.model_dump()
     if flags.publish_project is not None:
         projects = {entry.board: entry for entry in base.projects}
+        seen_boards: set[str] = set()
         for raw in flags.publish_project:
             board, sep, kinds = raw.partition("=")
             if not sep or not kinds:
@@ -232,7 +233,9 @@ def _publish_rights(base: PublishRights, flags: GrantFlags) -> PublishRights:
             project = ProjectRights.model_validate(
                 {"board": board, "actions": [] if kinds == "none" else kinds.split(",")}
             )
-            # Each occurrence replaces that board; the last occurrence wins.
+            if project.board in seen_boards:
+                raise GrantError(f"repeated --publish-project board: {project.board}")
+            seen_boards.add(project.board)
             if project.actions:
                 projects[project.board] = project
             else:

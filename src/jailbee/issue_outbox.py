@@ -883,9 +883,9 @@ def _action_lines(
         board_title = project.title if project else action.project_title
         title = f' "{board_title}"' if board_title else ""
         change = (
-            f"{action.field}: {action.expected_value!r} -> None"
+            f"{action.field}: {action.expected_value if action.expected_value is not None else '(empty)'} → (empty)"
             if isinstance(action, ProjectClearAction)
-            else "remove"
+            else f"membership: {'on board' if action.expected_present else 'not on board'} → not on board"
         )
         lines.append(f"  project {action.project}{title} · {target} · {change}")
     elif isinstance(action, ProjectSetAction):
@@ -893,13 +893,13 @@ def _action_lines(
         title = f' "{board_title}"' if board_title else ""
         lines.append(
             f"  project {action.project}{title} · {target} · {action.field}: "
-            f"{action.expected_value!r} -> {action.value!r}"
+            f"{action.expected_value if action.expected_value is not None else '(empty)'} → {action.value}"
         )
     elif isinstance(action, ProjectAddAction):
         board_title = project.title if project else action.project_title
         title = f' "{board_title}"' if board_title else ""
-        lines.append(f"  project {action.project}{title} · {target} · add")
-        lines.append(f"  membership before: {'present' if action.expected_present else 'absent'}")
+        before = 'on board' if action.expected_present else 'not on board'
+        lines.append(f"  project {action.project}{title} · {target} · membership: {before} → on board")
     elif isinstance(action, StateAction):
         lines.append(f"  state: {action.expected_state} -> {action.state}")
         if action.reason is not None:
@@ -1286,9 +1286,9 @@ def _sent_action(
         kind = action.kind
         title = resolved.project.title if resolved.project else action.project_title
         change = (
-            f"{action.field}: {action.expected_value!r} -> None"
+            f"{action.field}: {action.expected_value if action.expected_value is not None else '(empty)'} → (empty)"
             if isinstance(action, ProjectClearAction)
-            else f"remove; membership {action.expected_present} -> False"
+            else f"membership: {'on board' if action.expected_present else 'not on board'} → not on board"
         )
         content = f'project {action.project} "{title or ""}" · {change}'
     elif isinstance(action, ProjectSetAction):
@@ -1296,15 +1296,15 @@ def _sent_action(
         title = resolved.project.title if resolved.project else action.project_title
         content = (
             f'project {action.project} "{title or ""}" · {action.field}: '
-            f"{action.expected_value!r} -> "
-            f"{resolved.project_field.value if resolved.project_field else action.value!r}"
+            f"{action.expected_value if action.expected_value is not None else '(empty)'} → "
+            f"{resolved.project_field.value if resolved.project_field else action.value}"
         )
     elif isinstance(action, ProjectAddAction):
         kind = action.kind
         title = resolved.project.title if resolved.project else action.project_title
         content = (
-            f'project {action.project} "{title or ""}" · add; '
-            f"membership {action.expected_present} -> True"
+            f'project {action.project} "{title or ""}" · membership: '
+            f"{'on board' if action.expected_present else 'not on board'} → on board"
         )
     elif isinstance(action, StateAction):
         kind = "state"

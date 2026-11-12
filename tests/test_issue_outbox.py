@@ -347,7 +347,7 @@ def test_project_field_stale_and_unknown_option_are_refused_before_publish(prefl
         "expected": {"present": True, "value": "Todo"},
     }
     batch = preflight["prepare"]({"a.json": [action]})
-    assert any("Status: 'Todo' -> 'Doing'" in line for line in issue_outbox.plan_lines(batch))
+    assert any("Status: Todo → Doing" in line for line in issue_outbox.plan_lines(batch))
     assert (
         issue_plan_json(batch, proposal="issue/a.json", revision="r")["actions"][0]["value"]
         == "Doing"
@@ -391,7 +391,10 @@ def test_project_add_prepare_allows_pr_and_revalidates_membership(preflight, moc
             ]
         }
     )
-    assert any('project acme/3 "Roadmap"' in line for line in issue_outbox.plan_lines(batch))
+    assert any(
+        'project acme/3 "Roadmap" · #7 · membership: not on board → on board' in line
+        for line in issue_outbox.plan_lines(batch)
+    )
     from jailbee.outbox.publish import issue_plan_json
 
     plan = issue_plan_json(batch, proposal="issue/001-board.json", revision="r1")
@@ -1873,7 +1876,8 @@ def test_project_apply_and_noop_keep_board_title_and_durable_item(execution, moc
     (row,) = _sent_rows()
     assert row.kind == "project_add"
     assert row.title == "Roadmap"
-    assert "acme/3" in row.content and "add" in row.content
+    before = "on board" if present else "not on board"
+    assert f"membership: {before} → on board" in row.content
     assert row.url.endswith("#project-item-ITEM7")
 
 
