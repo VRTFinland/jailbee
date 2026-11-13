@@ -25,13 +25,15 @@ before editing `## Unreleased`.
   runner. Cancellation frees the name and settles the original request as
   `refused`; already-started children still need `stop`/`destroy`
   ([#113](https://github.com/VRTFinland/jailbee/issues/113)).
+- `jailbee inbox send stop` accepts `--until done` and `--json`, like `spawn`
+  and `restart`, for scripted waits
+  ([#122](https://github.com/VRTFinland/jailbee/issues/122)).
 
 ### Fixed
 
 - An immediate `jailbee inbox send restart` after a successful `send stop --wait`
   no longer reads the broker's stale running state and refuses with "stop it
-  first". `send stop` also accepts `--until done` and `--json` for consistent
-  scripted waits
+  first"
   ([#122](https://github.com/VRTFinland/jailbee/issues/122)).
 - Container PR and issue staging commands now print a valid single-proposal
   publish hint: `jb outbox apply <container> pr/<name>` or `issue/<name>`,
