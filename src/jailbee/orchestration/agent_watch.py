@@ -244,7 +244,7 @@ def advance_idle(
 
 # Read /proc identity as well as kill(0): a reused PID or a zombie is not our agent.
 _PROBE = r"""
-import json, os, pathlib, pwd, re, shlex, sys
+import json, pathlib, re, shlex, sys
 runtime, exit_path = map(pathlib.Path, sys.argv[1:3])
 
 def waiter(argv):
@@ -266,40 +266,108 @@ def waiter(argv):
         args = args[1:]
     return args[:1] == ['wait']
 
+def strip_redirects(script):
+    return re.sub(r'(?:[ \t]+(?:> ?/dev/null|2>&1|2> ?/dev/null|< ?/dev/null))+$', '', script)
+
 def plain_waiter(script):
-    script = re.sub(r'(?:[ \t]+(?:>/dev/null|2>&1|2>/dev/null))+$', '', script)
+    script = strip_redirects(script)
     # A single invocation: no expansion, control operators, or other redirects,
     # even inside quotes. shlex validates quoting but never executes anything.
     if re.fullmatch(r'''[A-Za-z0-9_./: ,='"-]+''', script) is None:
         return False
     return waiter(shlex.split(script))
 
-def claude_waiter(script):
-    # Recognise only the Bash tool's known setup grammar, not arbitrary eval.
-    # incus exec --user does not derive HOME from the selected uid.
-    home = re.escape(pwd.getpwuid(os.getuid()).pw_dir)
-    identifier = r'[A-Za-z_][A-Za-z0-9_]*'
-    prefix = re.compile(
-        r'(?:source ' + home + r'/\.claude/shell-snapshots/'
-        r'snapshot-[A-Za-z0-9_-]+-[0-9]+-[A-Za-z0-9]+\.sh'
-        r'|shopt -[us] ' + identifier +
-        r"|\{ \\builtin unalias -- '(" + identifier + r")'; "
-        r"\\builtin unset -f -- '\1'; \})"
-        r'(?: 2>/dev/null| >/dev/null 2>&1)?(?: \|\| true)? && '
-    )
-    while not script.startswith('eval '):
-        match = prefix.match(script)
-        if match is None:
-            return False
-        script = script[match.end():]
-    match = re.fullmatch(r'''eval ('(?:[^']|'"'"')*')(.*)''', script)
+def statements(script):
+    # Retain raw quotes for eval decoding. Split only at unquoted, top-level
+    # operators; completed brace/subshell prefixes are opaque, not candidates.
+    result, stack = [], []
+    quote, start, index = None, 0, 0
+    while index < len(script):
+        char = script[index]
+        if quote:
+            if char == quote:
+                quote = None
+            elif quote == '"' and char in '$`':
+                return None
+            elif quote == '"' and char == '\\':
+                index += 1
+        elif char == '\\':
+            index += 1
+            if index == len(script):
+                return None
+        elif char in "'\"":
+            quote = char
+        elif char in '$`#' or script.startswith('<<', index):
+            return None
+        elif script.startswith(('2>&1', '>&1', '>|'), index):
+            redirect = next(value for value in ('2>&1', '>&1', '>|')
+                            if script.startswith(value, index))
+            index += len(redirect) - 1
+        elif char in '{(':
+            stack.append('}' if char == '{' else ')')
+        elif char in '})':
+            if not stack or stack.pop() != char:
+                return None
+        elif char in '&|;':
+            operator = char
+            if script.startswith(('&&', '||'), index):
+                operator *= 2
+                index += 1
+            elif char == '&':
+                return None
+            if not stack:
+                result.append((script[start:index + 1 - len(operator)].strip(), operator))
+                start = index + 1
+        index += 1
+    if quote or stack:
+        return None
+    result.append((script[start:].strip(), ''))
+    # Keyword compounds are not parsed; refusing them also prevents an inner
+    # waiter from being mistaken for a top-level command after a semicolon.
+    reserved = {'while', 'until', 'for', 'select', 'if', 'then', 'elif', 'else',
+                'fi', 'do', 'done', 'case', 'esac', 'function', '!'}
+    for statement, operator in result:
+        words = shlex.split(statement)
+        if not words or words[0] in reserved or operator == '|':
+            return None
+    return result
+
+def waiter_statement(script):
+    script = strip_redirects(script)
+    if plain_waiter(script):
+        return True
+    match = re.fullmatch(r'''eval ('(?:[^']|'"'"')*')''', script)
     if match is None:
         return False
-    quoted, suffix = match.groups()
-    if suffix and re.fullmatch(r' && pwd -P >\| /tmp/claude-[0-9a-f]+-cwd', suffix) is None:
-        return False
-    inner = quoted[1:-1].replace("'\"'\"'", "'")
+    inner = match[1][1:-1].replace("'\"'\"'", "'")
     return plain_waiter(inner)
+
+def claude_waiter(script):
+    parts = statements(script)
+    if parts is None:
+        return False
+    candidates = [index for index, (statement, _) in enumerate(parts)
+                  if waiter_statement(statement)]
+    if len(candidates) != 1:
+        return False
+    index = candidates[0]
+    # A syntactically earlier compound/eval may itself be the active waiter.
+    # Refuse waiter-like prefix text rather than guess which instance runs.
+    for prefix, _ in parts[:index]:
+        unquoted = prefix.translate(str.maketrans('', '', "'\"\\"))
+        if re.search(r'\b(?:jailbee|jb)\b', unquoted):
+            return False
+    statement, operator = parts[index]
+    if index and parts[index - 1][1] not in ('&&', ';'):
+        return False
+    if index == len(parts) - 1:
+        return operator == ''
+    if index != len(parts) - 2 or operator not in ('&&', ';'):
+        return False
+    tail, final_operator = parts[-1]
+    return (not final_operator and re.fullmatch(
+        r'''pwd(?: -P)? >\|? (?:[A-Za-z0-9_./-]+|'[A-Za-z0-9_./ -]+')''', tail
+    ) is not None)
 
 def waiter_shell(argv):
     # Unknown harness wrappers must refuse rather than hide queued work.

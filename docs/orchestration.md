@@ -510,13 +510,17 @@ idle. Live-agent acceptance requires a matching session in `idle` with no
 background processes, or `shell` with only exact `jailbee inbox wait ...`
 commands below its background shells. Python module entry points, including the
 container's `python -P -m jailbee.container_main inbox wait ...` wrapper, are
-recognised. A parent shell is accepted only as `bash`, `sh` or `dash` with
-exactly `-c` and a single plain waiter invocation (optional `/dev/null`
-output redirections only): no command lists, loops, expansions or `cd`.
-Claude Code's own Bash-tool wrapper is recognised strictly (known snapshot,
-`shopt` and builtin cleanup prefixes, one quoted waiter `eval`, optional cwd
-capture); unknown wrappers refuse even when their current child is a waiter,
-since they can hide queued work. Each waiter must have no descendants, and both cases
+recognised. Plain `bash`, `sh` or `dash -c` waiter invocations remain supported.
+Claude Code's Bash-tool wrappers (`bash` or `sh` with exactly `-c SCRIPT`) are
+recognised semantically: completed top-level prefix statements are ignored;
+exactly one top-level plain waiter or single-quoted waiter `eval` is required.
+The waiter may redirect only to/from `/dev/null` or merge stderr into stdout.
+After it, only one cwd capture (`&& pwd [-P] >| PATH` or `; pwd [-P] > PATH`)
+is permitted; queued work, compound-command waiters, ambiguous backgrounding,
+expansions and unparseable wrappers refuse. Prefixes can vary between Claude
+versions without a whitelist update. Residual trust: a user shell-snapshot
+function named `jailbee` could hide work after the waiter; the probe does not
+inspect sourced function bodies. Each waiter must have no descendants, and both cases
 require readable activity proving no subagents remain. Process identities,
 child sets, commands and matching session/activity evidence are checked again
 immediately before killing the old window; changed or unreadable evidence

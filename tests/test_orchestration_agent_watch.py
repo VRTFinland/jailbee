@@ -309,6 +309,12 @@ def claude_script(inner):
 
 
 CLAUDE_CASES = {
+    "claude-current-wrapper": (
+        CLAUDE_SCRIPT.replace("shopt -u", r"\builtin shopt -u").replace(
+            "'" + CLAUDE_SUFFIX, "' < /dev/null" + CLAUDE_SUFFIX
+        ),
+        True,
+    ),
     "claude-semicolon": (claude_script(CLAUDE_WAITER + "; make deploy"), False),
     "claude-and": (claude_script(CLAUDE_WAITER + " && git push"), False),
     "claude-or": (claude_script(CLAUDE_WAITER + " || git push"), False),
@@ -320,10 +326,10 @@ CLAUDE_CASES = {
     "claude-inner-eval": (claude_script("eval '" + CLAUDE_WAITER + "'"), False),
     "claude-second-eval": (CLAUDE_SCRIPT + " && eval 'make deploy'", False),
     "claude-unknown-prefix": ("curl x | " + CLAUDE_SCRIPT, False),
-    "claude-source-outside": (CLAUDE_SCRIPT.replace("/home/dev/.claude", "/tmp/.claude"), False),
+    "claude-source-outside": (CLAUDE_SCRIPT.replace("/home/dev/.claude", "/tmp/.claude"), True),
     "claude-source-traversal": (
         CLAUDE_SCRIPT.replace("/snapshot-bash", "/../snapshot-bash"),
-        False,
+        True,
     ),
     "claude-trailing": (CLAUDE_SCRIPT + " && make deploy", False),
     "claude-broken-quote": (CLAUDE_PREFIX + "eval '" + CLAUDE_WAITER, False),
@@ -352,13 +358,39 @@ CLAUDE_CASES = {
         "eval '" + CLAUDE_WAITER + "'",
         True,
     ),
-    "claude-invalid-name": (CLAUDE_SCRIPT.replace("'which'", "'which; deploy'"), False),
+    "claude-prefix-name": (CLAUDE_SCRIPT.replace("'which'", "'which; deploy'"), True),
     "claude-mismatched-name": (
         CLAUDE_SCRIPT.replace("unset -f -- 'which'", "unset -f -- 'other'"),
+        True,
+    ),
+    "claude-prefix-statements": (CLAUDE_SCRIPT.replace("extglob", "extglob; make deploy"), True),
+    "claude-other-cwd": (CLAUDE_SCRIPT.replace("d404-cwd", "nothex-cwd"), True),
+    "claude-future-prefix": (r"\builtin set +o something || true && " + CLAUDE_SCRIPT, True),
+    "claude-plain-prefix": ("custom_setup && " + CLAUDE_WAITER, True),
+    "claude-cwd-semicolon": ("eval '" + CLAUDE_WAITER + "'; pwd -P > /tmp/cwd", True),
+    "claude-cwd-no-P": (CLAUDE_SCRIPT.replace("pwd -P", "pwd"), True),
+    "claude-two-waiters": (CLAUDE_SCRIPT + " && jailbee inbox wait", False),
+    "claude-trailing-or": ("eval '" + CLAUDE_WAITER + "' || x", False),
+    "claude-trailing-pipe": ("eval '" + CLAUDE_WAITER + "' | tee /tmp/log", False),
+    "claude-top-while": ("while :; do " + CLAUDE_WAITER + "; done", False),
+    "claude-top-for": ("for x in a; do " + CLAUDE_WAITER + "; done", False),
+    "claude-top-if": ("if true; then " + CLAUDE_WAITER + "; fi", False),
+    "claude-top-brace": ("{ " + CLAUDE_WAITER + "; }", False),
+    "claude-top-subshell": ("(" + CLAUDE_WAITER + ")", False),
+    "claude-top-function": ("f() { " + CLAUDE_WAITER + "; }; f", False),
+    "claude-prefix-compound-waiter": ("{ " + CLAUDE_WAITER + "; }; " + CLAUDE_SCRIPT, False),
+    "claude-prefix-quoted-waiter": ("{ 'jailbee' 'inbox' 'wait'; }; " + CLAUDE_SCRIPT, False),
+    "claude-prefix-eval-waiter": (
+        "eval 'jailbee inbox wait; make deploy' && " + CLAUDE_SCRIPT,
         False,
     ),
-    "claude-invalid-shopt": (CLAUDE_SCRIPT.replace("extglob", "extglob; make deploy"), False),
-    "claude-invalid-pwd": (CLAUDE_SCRIPT.replace("d404-cwd", "nothex-cwd"), False),
+    "claude-prefix-background": ("sleep 1 & " + CLAUDE_SCRIPT, False),
+    "claude-prefix-heredoc": ("cat << EOF && " + CLAUDE_SCRIPT, False),
+    "claude-prefix-substitution": ("x=$(echo '" + CLAUDE_WAITER + "') && " + CLAUDE_SCRIPT, False),
+    "claude-prefix-unbalanced": ("{ true && " + CLAUDE_SCRIPT, False),
+    "claude-cwd-extra": (CLAUDE_SCRIPT + " > /tmp/other", False),
+    "claude-eval-input": ("eval '" + CLAUDE_WAITER + "' < /dev/null", True),
+    "claude-input-other": ("eval '" + CLAUDE_WAITER + "' < /tmp/input", False),
     "claude-revalidated": (CLAUDE_SCRIPT, None),
 }
 
@@ -397,7 +429,7 @@ CLAUDE_CASES = {
         ("jailbee inbox wait", "queued-semicolon", False),
         ("jailbee inbox wait", "queued-and", False),
         ("jailbee inbox wait", "queued-loop", False),
-        ("jailbee inbox wait", "eval-wrapper", False),
+        ("jailbee inbox wait", "eval-wrapper", True),
         ("jailbee inbox wait", "shell-unreadable", None),
         ("jailbee inbox wait", "shell-exec-changed", None),
         *[("jailbee inbox wait", label, expected) for label, (_, expected) in CLAUDE_CASES.items()],
@@ -409,12 +441,6 @@ def test_probe_checks_real_waiter_command_and_descendants(
     from pathlib import Path
 
     from jailbee.orchestration.agent_watch import probe
-
-    monkeypatch.setenv("HOME", "/home/dev")
-    monkeypatch.setattr("os.getuid", lambda: 1000)
-    monkeypatch.setattr("pwd.getpwuid", lambda uid: MagicMock(pw_dir="/home/dev"))
-    if extra == "claude-home-not-exported":
-        monkeypatch.setenv("HOME", "/root")
 
     def stat(pid, parent):
         parent_name = {"make-parent": "make", "python-parent": "python"}.get(extra, "bash")

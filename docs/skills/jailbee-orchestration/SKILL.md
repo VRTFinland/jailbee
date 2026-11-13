@@ -616,12 +616,15 @@ or freshly proven live-agent idleness permits relaunch. For a live agent, the
 broker checks the matching session and process tree under the mutation lock:
 `idle` requires no background processes; `shell` permits only exact
 `jailbee inbox wait ...` commands (including the Python module wrapper), each
-without descendants. A parent shell must be `bash`, `sh` or `dash` with exactly
-`-c` and one plain waiter invocation (optional `/dev/null` output redirections
-only). Claude Code's own Bash-tool wrapper is recognised strictly (known setup
-prefixes, one quoted waiter `eval`, optional cwd capture); unknown wrappers
-refuse. Command lists, loops, expansions and `cd` refuse: a waiter child does
-not prove its shell has no queued work. Both paths require readable
+without descendants. Plain `bash`, `sh` or `dash -c` waiters remain supported.
+Claude Code's `bash`/`sh -c SCRIPT` wrapper is recognised semantically: completed
+prefix statements are ignored; exactly one top-level plain waiter or quoted
+waiter `eval` is required, with only `/dev/null` redirections or stderr merged
+into stdout, and at most one following cwd capture (`pwd [-P]` redirected to a
+path). Queued work, compound-command waiters, ambiguous backgrounding and
+unparseable wrappers refuse. Prefix changes across versions need no whitelist
+update. Residual trust: a user shell-snapshot function named `jailbee` could hide
+work after the waiter; sourced function bodies are not inspected. Both paths require readable
 activity proving no subagents remain. Immediately before the old window is
 killed, the broker rechecks process identities, child sets, commands and
 session/activity evidence; any change or unreadable evidence refuses relaunch.
