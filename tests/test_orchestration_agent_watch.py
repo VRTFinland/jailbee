@@ -379,6 +379,13 @@ CLAUDE_CASES = {
     "claude-alias-rebind": ("alias jailbee=hidden_helper; " + CLAUDE_SCRIPT, False),
     "claude-export-path": ("export PATH=/tmp/e && " + CLAUDE_SCRIPT, False),
     **{
+        f"claude-keyword-environment-rebind-{setup}": (
+            "set -o posix; set -k; " + setup + "; python3 -P -m jailbee inbox wait",
+            False,
+        )
+        for setup in (": PYTHONPATH=/tmp/e", "cd PATH=/tmp/e", "set PYTHONPATH=/tmp/e")
+    },
+    **{
         f"claude-environment-rebind-{prefix}-{setup}": (
             prefix + setup + " && " + CLAUDE_SCRIPT,
             False,

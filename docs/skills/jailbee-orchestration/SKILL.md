@@ -625,6 +625,8 @@ via `builtin`/`command`, source a file directly under `.claude/shell-snapshots/`
 in the user's home, or group those commands in braces. Nonbuiltin calls, other
 sources, prefix `eval`/`exec`/`trap`, command rebinding (`hash -p`, alias
 definitions), subshells, substitutions, pipes and backgrounding refuse.
+Setup arguments containing `=` refuse for every builtin, including `:`/`cd`/`set`,
+since shell keyword/POSIX modes can turn them into environment assignments.
 `export`/`declare`/`typeset` accept only bare names and `-r`/`-x`/`-p` flags
 (or combinations), never assignments or function/nameref flags. Even bare names
 refuse for `PATH`, `LD_*`, `PYTHON*`, `BASH_ENV`, `ENV`, `IFS`, `CDPATH`,

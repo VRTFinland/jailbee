@@ -517,6 +517,8 @@ recognised semantically: prefix commands may use a fixed set of setup builtins
 `true`/`false`, `:`, `umask`, `hash`, `alias`), optionally via `builtin` or
 `command`, or source a file directly under the user's `.claude/shell-snapshots/`.
 Explicit command rebinding (`hash -p`, alias definitions) is refused.
+Setup arguments containing `=` refuse for every builtin: shell keyword/POSIX
+modes can turn even `: NAME=value` into a persistent environment assignment.
 `export`/`declare`/`typeset` accept only bare variable names and `-r`/`-x`/`-p`
 flags (or combinations); assignments and function/nameref flags refuse.
 Even bare names refuse for `PATH`, `LD_*`, `PYTHON*`, `BASH_ENV`, `ENV`, `IFS`,

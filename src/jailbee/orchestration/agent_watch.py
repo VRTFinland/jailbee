@@ -372,7 +372,10 @@ def builtin_prefix(script):
     # Setup must not install a different implementation of a later command.
     if words[0] == 'hash' and any(word.startswith('-') and 'p' in word for word in words[1:]):
         return False
-    if words[0] == 'alias' and any('=' in word for word in words[1:]):
+    # With `set -k` and POSIX mode even `: NAME=value` can export NAME.
+    # Refuse assignment-shaped arguments for every setup builtin, not just
+    # declarations; this also excludes alias definitions.
+    if any('=' in word for word in words[1:]):
         return False
     if words[0] in ('export', 'declare', 'typeset'):
         # Bare names only: assignments and function/nameref flags can rebind
