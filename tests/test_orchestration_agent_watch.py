@@ -326,10 +326,10 @@ CLAUDE_CASES = {
     "claude-inner-eval": (claude_script("eval '" + CLAUDE_WAITER + "'"), False),
     "claude-second-eval": (CLAUDE_SCRIPT + " && eval 'make deploy'", False),
     "claude-unknown-prefix": ("curl x | " + CLAUDE_SCRIPT, False),
-    "claude-source-outside": (CLAUDE_SCRIPT.replace("/home/dev/.claude", "/tmp/.claude"), True),
+    "claude-source-outside": (CLAUDE_SCRIPT.replace("/home/dev/.claude", "/tmp/.claude"), False),
     "claude-source-traversal": (
         CLAUDE_SCRIPT.replace("/snapshot-bash", "/../snapshot-bash"),
-        True,
+        False,
     ),
     "claude-trailing": (CLAUDE_SCRIPT + " && make deploy", False),
     "claude-broken-quote": (CLAUDE_PREFIX + "eval '" + CLAUDE_WAITER, False),
@@ -363,10 +363,33 @@ CLAUDE_CASES = {
         CLAUDE_SCRIPT.replace("unset -f -- 'which'", "unset -f -- 'other'"),
         True,
     ),
-    "claude-prefix-statements": (CLAUDE_SCRIPT.replace("extglob", "extglob; make deploy"), True),
+    "claude-prefix-statements": (CLAUDE_SCRIPT.replace("extglob", "extglob; make deploy"), False),
     "claude-other-cwd": (CLAUDE_SCRIPT.replace("d404-cwd", "nothex-cwd"), True),
     "claude-future-prefix": (r"\builtin set +o something || true && " + CLAUDE_SCRIPT, True),
-    "claude-plain-prefix": ("custom_setup && " + CLAUDE_WAITER, True),
+    "claude-plain-prefix": ("custom_setup && " + CLAUDE_WAITER, False),
+    "claude-external-prefix": ("make prep && " + CLAUDE_WAITER, False),
+    "claude-other-source": ("source ./other.sh && " + CLAUDE_WAITER, False),
+    "claude-trap-prefix": ("trap 'deploy' EXIT && " + CLAUDE_WAITER, False),
+    "claude-exec-prefix": ("exec sleep 1 && " + CLAUDE_WAITER, False),
+    "claude-subshell-prefix": ("( cd /tmp ) && " + CLAUDE_WAITER, False),
+    "claude-command-prefix": (r"\command shopt -s nullglob && " + CLAUDE_SCRIPT, True),
+    "claude-dot-prefix": (
+        ". '/home/dev/.claude/shell-snapshots/future-snapshot.sh' && " + CLAUDE_SCRIPT,
+        True,
+    ),
+    "claude-prefix-redirect": ("set +o > /tmp/other && " + CLAUDE_SCRIPT, False),
+    "claude-prefix-arithmetic": ("declare -i 'x=a[$(deploy)]' && " + CLAUDE_SCRIPT, False),
+    "claude-group-external": ("{ make prep; }; " + CLAUDE_SCRIPT, False),
+    "claude-group-trap": ("{ trap 'deploy' EXIT; }; " + CLAUDE_SCRIPT, False),
+    "claude-group-source": ("{ source /tmp/x.sh; }; " + CLAUDE_SCRIPT, False),
+    "claude-prefix-eval": ("eval 'true' && " + CLAUDE_SCRIPT, False),
+    "claude-command-external": ("command make prep && " + CLAUDE_SCRIPT, False),
+    "claude-builtin-empty": ("builtin && " + CLAUDE_SCRIPT, False),
+    "claude-prefix-process-substitution": ("source <(make prep) && " + CLAUDE_SCRIPT, False),
+    "claude-builtin-prefix": (
+        r"\builtin set +o histexpand || true && export TEST=value && " + CLAUDE_SCRIPT,
+        True,
+    ),
     "claude-cwd-semicolon": ("eval '" + CLAUDE_WAITER + "'; pwd -P > /tmp/cwd", True),
     "claude-cwd-no-P": (CLAUDE_SCRIPT.replace("pwd -P", "pwd"), True),
     "claude-two-waiters": (CLAUDE_SCRIPT + " && jailbee inbox wait", False),
@@ -429,7 +452,7 @@ CLAUDE_CASES = {
         ("jailbee inbox wait", "queued-semicolon", False),
         ("jailbee inbox wait", "queued-and", False),
         ("jailbee inbox wait", "queued-loop", False),
-        ("jailbee inbox wait", "eval-wrapper", True),
+        ("jailbee inbox wait", "eval-wrapper", False),
         ("jailbee inbox wait", "shell-unreadable", None),
         ("jailbee inbox wait", "shell-exec-changed", None),
         *[("jailbee inbox wait", label, expected) for label, (_, expected) in CLAUDE_CASES.items()],
@@ -441,6 +464,9 @@ def test_probe_checks_real_waiter_command_and_descendants(
     from pathlib import Path
 
     from jailbee.orchestration.agent_watch import probe
+
+    monkeypatch.setattr("os.getuid", lambda: 1000)
+    monkeypatch.setattr("pwd.getpwuid", lambda uid: MagicMock(pw_dir="/home/dev"))
 
     def stat(pid, parent):
         parent_name = {"make-parent": "make", "python-parent": "python"}.get(extra, "bash")

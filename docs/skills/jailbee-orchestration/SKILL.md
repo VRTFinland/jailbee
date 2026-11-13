@@ -617,14 +617,19 @@ broker checks the matching session and process tree under the mutation lock:
 `idle` requires no background processes; `shell` permits only exact
 `jailbee inbox wait ...` commands (including the Python module wrapper), each
 without descendants. Plain `bash`, `sh` or `dash -c` waiters remain supported.
-Claude Code's `bash`/`sh -c SCRIPT` wrapper is recognised semantically: completed
-prefix statements are ignored; exactly one top-level plain waiter or quoted
-waiter `eval` is required, with only `/dev/null` redirections or stderr merged
-into stdout, and at most one following cwd capture (`pwd [-P]` redirected to a
-path). Queued work, compound-command waiters, ambiguous backgrounding and
-unparseable wrappers refuse. Prefix changes across versions need no whitelist
-update. Residual trust: a user shell-snapshot function named `jailbee` could hide
-work after the waiter; sourced function bodies are not inspected. Both paths require readable
+Claude Code's `bash`/`sh -c SCRIPT` wrapper is recognised semantically: prefixes
+may use setup builtins (`shopt`, `set`, `unalias`, `unset`, `export`,
+`declare`/`typeset`, `cd`, `true`/`false`, `:`, `umask`, `hash`, `alias`), optionally
+via `builtin`/`command`, source a file directly under `.claude/shell-snapshots/`
+in the user's home, or group those commands in braces. Nonbuiltin calls, other
+sources, prefix `eval`/`exec`/`trap`, subshells, substitutions, pipes and
+backgrounding refuse. Exactly one top-level plain waiter or quoted waiter
+`eval` is required, with only `/dev/null` redirections or stderr merged into
+stdout, and at most one following cwd capture (`pwd [-P]` redirected to a path).
+Queued work, compound-command waiters and unparseable wrappers refuse; setup
+text may vary across Claude versions. Residual trust: Claude's shell-snapshot
+contents are trusted, including functions/aliases shadowing `jailbee` or `eval`
+that could hide work after the waiter; sourced function bodies are not inspected. Both paths require readable
 activity proving no subagents remain. Immediately before the old window is
 killed, the broker rechecks process identities, child sets, commands and
 session/activity evidence; any change or unreadable evidence refuses relaunch.

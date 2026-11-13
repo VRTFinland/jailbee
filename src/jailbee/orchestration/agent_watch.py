@@ -244,7 +244,7 @@ def advance_idle(
 
 # Read /proc identity as well as kill(0): a reused PID or a zombie is not our agent.
 _PROBE = r"""
-import json, pathlib, re, shlex, sys
+import json, os, pathlib, pwd, re, shlex, sys
 runtime, exit_path = map(pathlib.Path, sys.argv[1:3])
 
 def waiter(argv):
@@ -342,6 +342,33 @@ def waiter_statement(script):
     inner = match[1][1:-1].replace("'\"'\"'", "'")
     return plain_waiter(inner)
 
+def builtin_prefix(script):
+    script = re.sub(r'\s+\|\|\s+(?:true|false)$', '', script)
+    script = strip_redirects(script)
+    if script.startswith('{ '):
+        if not script.endswith('}'):
+            return False
+        body = script[2:-1].strip().removesuffix(';').strip()
+        parts = statements(body)
+        return parts is not None and all(builtin_prefix(part) for part, _ in parts)
+    if any(char in script for char in '(){}$`<>'):
+        return False
+    words = shlex.split(script)
+    if not words:
+        return False
+    if words[0] in ('builtin', 'command'):
+        words = words[1:]
+    if not words:
+        return False
+    if words[0] in ('source', '.'):
+        # Trust only Claude-generated snapshots, using the exec uid's home.
+        home = pathlib.Path(pwd.getpwuid(os.getuid()).pw_dir)
+        folder = home / '.claude' / 'shell-snapshots'
+        return (len(words) == 2 and pathlib.Path(words[1]).parent == folder
+                and re.fullmatch(r'[A-Za-z0-9_.-]+\.sh', pathlib.Path(words[1]).name) is not None)
+    return words[0] in {'shopt', 'set', 'unalias', 'unset', 'export', 'declare',
+                        'typeset', 'cd', 'true', 'false', ':', 'umask', 'hash', 'alias'}
+
 def claude_waiter(script):
     parts = statements(script)
     if parts is None:
@@ -351,12 +378,10 @@ def claude_waiter(script):
     if len(candidates) != 1:
         return False
     index = candidates[0]
-    # A syntactically earlier compound/eval may itself be the active waiter.
-    # Refuse waiter-like prefix text rather than guess which instance runs.
-    for prefix, _ in parts[:index]:
-        unquoted = prefix.translate(str.maketrans('', '', "'\"\\"))
-        if re.search(r'\b(?:jailbee|jb)\b', unquoted):
-            return False
+    # Nonbuiltin calls could still be running an earlier waiter with queued
+    # work. Only known setup builtins and trusted snapshots can precede it.
+    if not all(builtin_prefix(prefix) for prefix, _ in parts[:index]):
+        return False
     statement, operator = parts[index]
     if index and parts[index - 1][1] not in ('&&', ';'):
         return False

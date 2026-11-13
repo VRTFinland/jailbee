@@ -512,15 +512,20 @@ commands below its background shells. Python module entry points, including the
 container's `python -P -m jailbee.container_main inbox wait ...` wrapper, are
 recognised. Plain `bash`, `sh` or `dash -c` waiter invocations remain supported.
 Claude Code's Bash-tool wrappers (`bash` or `sh` with exactly `-c SCRIPT`) are
-recognised semantically: completed top-level prefix statements are ignored;
-exactly one top-level plain waiter or single-quoted waiter `eval` is required.
+recognised semantically: prefix commands may use a fixed set of setup builtins
+(`shopt`, `set`, `unalias`, `unset`, `export`, `declare`/`typeset`, `cd`,
+`true`/`false`, `:`, `umask`, `hash`, `alias`), optionally via `builtin` or
+`command`, or source a file directly under the user's `.claude/shell-snapshots/`.
+Brace groups of those commands are allowed; nonbuiltin calls, other sources,
+`eval`/`exec`/`trap`, subshells, substitutions, pipes and backgrounding refuse.
+Exactly one top-level plain waiter or single-quoted waiter `eval` is required.
 The waiter may redirect only to/from `/dev/null` or merge stderr into stdout.
 After it, only one cwd capture (`&& pwd [-P] >| PATH` or `; pwd [-P] > PATH`)
-is permitted; queued work, compound-command waiters, ambiguous backgrounding,
-expansions and unparseable wrappers refuse. Prefixes can vary between Claude
-versions without a whitelist update. Residual trust: a user shell-snapshot
-function named `jailbee` could hide work after the waiter; the probe does not
-inspect sourced function bodies. Each waiter must have no descendants, and both cases
+is permitted; queued work, compound-command waiters and unparseable wrappers
+refuse. Setup text can vary across Claude versions without an exact-text update.
+Residual trust: Claude's shell-snapshot contents are trusted; snapshot-defined
+functions or aliases named `jailbee` or `eval` could hide work after the waiter.
+The probe does not inspect sourced function bodies. Each waiter must have no descendants, and both cases
 require readable activity proving no subagents remain. Process identities,
 child sets, commands and matching session/activity evidence are checked again
 immediately before killing the old window; changed or unreadable evidence
