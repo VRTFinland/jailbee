@@ -101,8 +101,14 @@ def test_agent_only_relaunches_only_proven_idle_agent(
     monkeypatch.setattr(agent_session, "relaunch", session)
     monkeypatch.setattr(agent_watch, "probe", agent_watch_probe)
     rig.incus.exec.return_value = json.dumps(
-        {"alive": True, "agent": "claude", "pid": 123, "proc_start": 42,
-         "waiters_only": waiters, "processes_clear": processes_clear}
+        {
+            "alive": True,
+            "agent": "claude",
+            "pid": 123,
+            "proc_start": 42,
+            "waiters_only": waiters,
+            "processes_clear": processes_clear,
+        }
     )
     adapter = MagicMock()
     adapter.read_sessions.return_value = (

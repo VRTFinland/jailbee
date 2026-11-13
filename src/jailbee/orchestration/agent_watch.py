@@ -354,9 +354,14 @@ def probe(incus: Incus, name: str, *, uid: int, background: bool = False) -> Age
         ):
             return None
         waiters_only, processes_clear = data.get("waiters_only"), data.get("processes_clear")
-        if any(value is not None and type(value) is not bool for value in (waiters_only, processes_clear)):
+        if any(
+            value is not None and type(value) is not bool
+            for value in (waiters_only, processes_clear)
+        ):
             return None
-        return AgentStatus(data["alive"], agent, rc, recorded, pid, start, waiters_only, processes_clear)
+        return AgentStatus(
+            data["alive"], agent, rc, recorded, pid, start, waiters_only, processes_clear
+        )
     except (IncusError, ValueError, TypeError):
         return None
 

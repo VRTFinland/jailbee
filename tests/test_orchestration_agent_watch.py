@@ -294,7 +294,11 @@ def test_probe_script_checks_process_identity(
 @pytest.mark.parametrize(
     "command,extra,expected",
     [
-        ("python -P -m jailbee.container_main inbox wait --wake-on message --timeout none", None, True),
+        (
+            "python -P -m jailbee.container_main inbox wait --wake-on message --timeout none",
+            None,
+            True,
+        ),
         ("/opt/venv/bin/python -P -m jailbee.container_main wait --timeout none", None, True),
         ("jailbee inbox wait --timeout none", None, True),
         ("jailbee inbox send message --wait", None, False),
@@ -309,7 +313,9 @@ def test_probe_script_checks_process_identity(
         ("jailbee inbox wait", "changed", None),
     ],
 )
-def test_probe_checks_real_waiter_command_and_descendants(monkeypatch, capsys, command, extra, expected):
+def test_probe_checks_real_waiter_command_and_descendants(
+    monkeypatch, capsys, command, extra, expected
+):
     from pathlib import Path
 
     from jailbee.orchestration.agent_watch import probe
