@@ -45,7 +45,9 @@ def relaunch(
         status = agent_watch.probe(incus, child, uid=cfg.container_user.uid, background=True)
         evidence = agent_watch.restart_idle_evidence(cfg, child, status, now=datetime.now(UTC))
         if evidence != idle_evidence:
-            raise RuntimeError("agent idle evidence changed before relaunch; refusing to interrupt work")
+            raise RuntimeError(
+                "agent idle evidence changed before relaunch; refusing to interrupt work"
+            )
     tmux.kill_window(incus, child, tmux.window_for(old_agent), checked=True)
     if target != old_agent:
         tmux.kill_window(incus, child, tmux.window_for(step.name), checked=True)

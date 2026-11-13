@@ -127,7 +127,9 @@ def test_agent_only_relaunches_only_proven_idle_agent(
     seams["boot"].assert_not_called()
 
 
-@pytest.mark.parametrize("change", ["busy", "session", "activity", "process", "snapshot", "unknown", "none"])
+@pytest.mark.parametrize(
+    "change", ["busy", "session", "activity", "process", "snapshot", "unknown", "none"]
+)
 def test_agent_only_rechecks_after_relaunch_preparation(
     tmp_path, seams, session, monkeypatch, change
 ):
@@ -137,8 +139,15 @@ def test_agent_only_rechecks_after_relaunch_preparation(
     from jailbee.orchestration import agent_session
 
     rig = Rig(tmp_path, running=True)
-    original = agent_watch.AgentStatus(True, "claude", pid=123, proc_start=42,
-                                       waiters_only=True, processes_clear=False, process_snapshot="stable")
+    original = agent_watch.AgentStatus(
+        True,
+        "claude",
+        pid=123,
+        proc_start=42,
+        waiters_only=True,
+        processes_clear=False,
+        process_snapshot="stable",
+    )
     live = [original]
     adapter = MagicMock()
     current = AgentSession("claude", 123, 42, "shell", None, rig.ctx().now, 1)
