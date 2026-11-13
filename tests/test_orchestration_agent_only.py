@@ -128,6 +128,74 @@ def test_agent_only_relaunches_only_proven_idle_agent(
 agent_watch_probe = agent_watch.probe
 
 
+@pytest.mark.parametrize(
+    "command,extra,allowed",
+    [
+        ("python -P -m jailbee.container_main inbox wait --timeout none", None, True),
+        ("python -P -m jailbee.container_main inbox wait", "sleep 600", False),
+        ("python -P -m jailbee.container_main inbox wait", "pytest", False),
+        ("jailbee service logs x --wait ready", None, False),
+    ],
+)
+def test_agent_only_restart_uses_live_process_probe(
+    tmp_path, seams, session, monkeypatch, capsys, command, extra, allowed
+):
+    import json
+    from pathlib import Path
+
+    from jailbee.accounts.models import AgentActivity, AgentSession
+    from jailbee.orchestration import agent_session
+
+    def stat(pid, parent, comm):
+        return f"{pid} ({comm}) " + " ".join(["S", str(parent)] + ["0"] * 17 + ["42"])
+
+    files = {
+        "/proc/123/stat": stat(123, 1, "claude"),
+        "/proc/124/stat": stat(124, 123, "bash"),
+        "/proc/125/stat": stat(125, 124, "python"),
+        "/proc/125/cmdline": ("\0".join(command.split()) + "\0").encode(),
+        "/proc/sys/kernel/random/boot_id": "boot",
+    }
+    pids = [123, 124, 125]
+    if extra:
+        pids.append(126)
+        files["/proc/126/stat"] = stat(126, 124, "sleep")
+        files["/proc/126/cmdline"] = ("\0".join(extra.split()) + "\0").encode()
+
+    def read(path, *args, **kwargs):
+        if str(path) in files:
+            return files[str(path)]
+        raise FileNotFoundError(str(path))
+
+    rig = Rig(tmp_path, running=True)
+    adapter = MagicMock()
+    adapter.read_sessions.return_value = [
+        AgentSession("claude", 123, 42, "shell", None, rig.ctx().now, 1)
+    ]
+    adapter.read_activity.return_value = AgentActivity(None, None, background_clear=True)
+    monkeypatch.setattr("jailbee.accounts.adapters.base.get_adapter", lambda name: adapter)
+    monkeypatch.setattr(agent_session, "relaunch", session)
+    monkeypatch.setattr(agent_watch, "probe", agent_watch_probe)
+
+    def execute(name, argv, **kwargs):
+        # Execute the production probe, replacing only its /proc filesystem.
+        with monkeypatch.context() as patch:
+            files[argv[3]] = json.dumps(
+                {"pid": 123, "start": "42", "boot": "boot", "agent": "claude"}
+            )
+            patch.setattr(Path, "read_text", read)
+            patch.setattr(Path, "read_bytes", read)
+            patch.setattr(Path, "iterdir", lambda path: iter(Path(f"/proc/{pid}") for pid in pids))
+            patch.setattr("sys.argv", ["probe", *argv[3:]])
+            exec(compile(argv[2], "probe", "exec"), {})
+            return capsys.readouterr().out
+
+    rig.incus.exec.side_effect = execute
+    out = actions.handle_restart(rig.ctx(), restart())
+    assert out.state == ("started" if allowed else "refused"), out.detail
+    assert session.called is allowed
+
+
 @pytest.mark.parametrize("mode", ["keep", "change", "default"])
 def test_agent_only_relaunch_at_capacity_without_boot_or_queue(
     tmp_path, seams, session, monkeypatch, mode

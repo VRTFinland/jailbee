@@ -650,7 +650,8 @@ per repo with `orchestration.idle_after_seconds` (positive seconds, default
 idle duration, last accepted child message kind and first line (at most 240
 characters, or `none`), plus the same bounded tmux tail as `blocked` when
 available. Read that message and answer the child; this is not completion
-and does not authorize restarting an agent that is still alive.
+or restart authorization. Agent-only restart independently checks the stricter
+[live-agent idle conditions](#reuse-a-running-worker-without-autostart).
 
 The broker matches its prompted PID and process start to the account
 adapter's session, currently Claude. `waiting` is input required; `idle`

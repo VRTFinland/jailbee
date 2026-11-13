@@ -311,6 +311,9 @@ def test_probe_script_checks_process_identity(
         ("jailbee inbox wait", "unreadable", None),
         ("jailbee inbox wait", "missing", None),
         ("jailbee inbox wait", "changed", None),
+        ("jailbee inbox wait", "new-descendant", None),
+        ("jailbee inbox wait", "new-sibling", None),
+        ("jailbee inbox wait", "exec-changed", None),
     ],
 )
 def test_probe_checks_real_waiter_command_and_descendants(
@@ -340,11 +343,19 @@ def test_probe_checks_real_waiter_command_and_descendants(
         files["/proc/126/stat"] = stat(126, 124 if extra == "sibling" else 125)
         files["/proc/126/cmdline"] = b"sleep\0" + b"600\0"
     reads = 0
+    cmd_reads = 0
 
     def read(path, *args, **kwargs):
-        nonlocal reads
+        nonlocal reads, cmd_reads
         key = str(path)
         if key == "/proc/125/cmdline":
+            cmd_reads += 1
+            if extra == "exec-changed" and cmd_reads > 1:
+                return b"sleep\0" + b"600\0"
+            if extra in ("new-descendant", "new-sibling") and 126 not in pids:
+                pids.append(126)
+                files["/proc/126/stat"] = stat(126, 125 if extra == "new-descendant" else 123)
+                files["/proc/126/cmdline"] = b"sleep\0" + b"600\0"
             if extra == "unreadable":
                 raise PermissionError(key)
             if extra == "missing":

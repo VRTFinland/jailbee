@@ -256,7 +256,7 @@ def waiter(argv):
         args = args[1:]
     return args[:1] == ['wait']
 
-def background(pid):
+def process_tree():
     procs = {}
     for path in pathlib.Path('/proc').iterdir():
         if not path.name.isdigit():
@@ -270,10 +270,14 @@ def background(pid):
             procs[int(path.name)] = (int(tail[1]), tail[19], raw.split('(', 1)[1].rsplit(')', 1)[0])
     children = {}
     for child, (parent, _, _) in procs.items():
-        children.setdefault(parent, []).append(child)
-    roots = children.get(pid, [])
-    if not roots:
-        return False, True
+        children.setdefault(parent, set()).add(child)
+    return procs, children
+
+def background(pid, start):
+    procs, children = process_tree()
+    if pid not in procs or procs[pid][1] != start:
+        return None, None
+    roots = children.get(pid, set())
     leaves = []
     for child in roots:
         descendants = children.get(child, [])
@@ -283,6 +287,7 @@ def background(pid):
             leaves.extend(descendants)
         else:
             leaves.append(child)
+    commands = {}
     for child in leaves:
         if children.get(child):
             return False, False
@@ -290,12 +295,17 @@ def background(pid):
         argv = raw.rstrip(b'\0').decode('utf-8').split('\0')
         if not waiter(argv):
             return False, False
-    # Changed/disappeared processes make this snapshot unsafe to act on.
-    for child in [pid, *roots, *leaves]:
-        tail = pathlib.Path('/proc', str(child), 'stat').read_text().rsplit(')', 1)[1].split()
-        if tail[0] in ('Z', 'X') or (int(tail[1]), tail[19]) != procs[child][:2]:
+        commands[child] = raw
+    # Revalidate child sets too: stable identities alone miss a new fork.
+    current, current_children = process_tree()
+    for child in {pid, *roots, *leaves}:
+        if (current.get(child) != procs.get(child)
+                or current_children.get(child, set()) != children.get(child, set())):
             return None, None
-    return True, False
+    for child, raw in commands.items():
+        if pathlib.Path('/proc', str(child), 'cmdline').read_bytes() != raw:
+            return None, None
+    return bool(leaves), not roots
 
 result = dict(alive=False, agent='agent', rc=None, recorded=False)
 try:
@@ -312,7 +322,7 @@ try:
         result['proc_start'] = int(stat[19])
         if sys.argv[3:] == ['--background']:
             try:
-                result['waiters_only'], result['processes_clear'] = background(pid)
+                result['waiters_only'], result['processes_clear'] = background(pid, data['start'])
             except (OSError, ValueError, KeyError, TypeError, IndexError):
                 pass
 except (OSError, ValueError, KeyError, TypeError, IndexError):
