@@ -333,6 +333,11 @@ CLAUDE_CASES = {
     "claude-quiet": (claude_script(CLAUDE_WAITER + " >/dev/null 2>&1"), True),
     "claude-stderr": (claude_script(CLAUDE_WAITER + " 2>/dev/null"), True),
     "claude-home-not-exported": (CLAUDE_SCRIPT, True),
+    "claude-extra-argv": (CLAUDE_SCRIPT, False),
+    "claude-wrong-option": (CLAUDE_SCRIPT, False),
+    "claude-dash": (CLAUDE_SCRIPT, False),
+    "claude-sh": (CLAUDE_SCRIPT, True),
+    "claude-zsh": (CLAUDE_SCRIPT, False),
     "claude-no-prefix": ("eval '" + CLAUDE_WAITER + "'", True),
     "claude-no-suffix": (CLAUDE_SCRIPT.removesuffix(CLAUDE_SUFFIX), True),
     "claude-other-prefix": (
@@ -426,7 +431,12 @@ def test_probe_checks_real_waiter_command_and_descendants(
         "eval-wrapper": "source snapshot.sh || true && eval 'jailbee inbox wait' && pwd -P > cwd",
     }
     if extra in scripts:
-        files["/proc/124/cmdline"] = ("bash\0-c\0" + scripts[extra] + "\0").encode()
+        shell = {"claude-dash": "dash", "claude-sh": "/bin/sh", "claude-zsh": "zsh"}.get(extra, "/bin/bash")
+        option = "-x" if extra == "claude-wrong-option" else "-c"
+        argv = [shell, option, scripts[extra]]
+        if extra == "claude-extra-argv":
+            argv.append("ignored")
+        files["/proc/124/cmdline"] = ("\0".join(argv) + "\0").encode()
     shell_reads = 0
     pids = [123] if extra == "no-children" else [123, 124, 125]
     if extra in ("sibling", "descendant"):
