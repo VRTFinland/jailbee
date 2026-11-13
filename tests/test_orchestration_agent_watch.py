@@ -321,11 +321,17 @@ CLAUDE_CASES = {
     "claude-second-eval": (CLAUDE_SCRIPT + " && eval 'make deploy'", False),
     "claude-unknown-prefix": ("curl x | " + CLAUDE_SCRIPT, False),
     "claude-source-outside": (CLAUDE_SCRIPT.replace("/home/dev/.claude", "/tmp/.claude"), False),
-    "claude-source-traversal": (CLAUDE_SCRIPT.replace("/snapshot-bash", "/../snapshot-bash"), False),
+    "claude-source-traversal": (
+        CLAUDE_SCRIPT.replace("/snapshot-bash", "/../snapshot-bash"),
+        False,
+    ),
     "claude-trailing": (CLAUDE_SCRIPT + " && make deploy", False),
     "claude-broken-quote": (CLAUDE_PREFIX + "eval '" + CLAUDE_WAITER, False),
     "claude-double-quote": (CLAUDE_PREFIX + 'eval "' + CLAUDE_WAITER + '"', False),
-    "claude-quote-injection": (CLAUDE_PREFIX + "eval '" + CLAUDE_WAITER + "'$(make deploy)''", False),
+    "claude-quote-injection": (
+        CLAUDE_PREFIX + "eval '" + CLAUDE_WAITER + "'$(make deploy)''",
+        False,
+    ),
     "claude-newline": (claude_script(CLAUDE_WAITER + "\nmake deploy"), False),
     "claude-redirect": (claude_script(CLAUDE_WAITER + " > /tmp/file"), False),
     "claude-inner-cd": (claude_script("cd /tmp && " + CLAUDE_WAITER), False),
@@ -347,7 +353,10 @@ CLAUDE_CASES = {
         True,
     ),
     "claude-invalid-name": (CLAUDE_SCRIPT.replace("'which'", "'which; deploy'"), False),
-    "claude-mismatched-name": (CLAUDE_SCRIPT.replace("unset -f -- 'which'", "unset -f -- 'other'"), False),
+    "claude-mismatched-name": (
+        CLAUDE_SCRIPT.replace("unset -f -- 'which'", "unset -f -- 'other'"),
+        False,
+    ),
     "claude-invalid-shopt": (CLAUDE_SCRIPT.replace("extglob", "extglob; make deploy"), False),
     "claude-invalid-pwd": (CLAUDE_SCRIPT.replace("d404-cwd", "nothex-cwd"), False),
     "claude-revalidated": (CLAUDE_SCRIPT, None),
@@ -431,7 +440,9 @@ def test_probe_checks_real_waiter_command_and_descendants(
         "eval-wrapper": "source snapshot.sh || true && eval 'jailbee inbox wait' && pwd -P > cwd",
     }
     if extra in scripts:
-        shell = {"claude-dash": "dash", "claude-sh": "/bin/sh", "claude-zsh": "zsh"}.get(extra, "/bin/bash")
+        shell = {"claude-dash": "dash", "claude-sh": "/bin/sh", "claude-zsh": "zsh"}.get(
+            extra, "/bin/bash"
+        )
         option = "-x" if extra == "claude-wrong-option" else "-c"
         argv = [shell, option, scripts[extra]]
         if extra == "claude-extra-argv":
