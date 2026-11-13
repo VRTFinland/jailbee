@@ -611,10 +611,17 @@ For an idle RUNNING child, launch another session without repeating heavy startu
 jailbee inbox send restart --child fix-issue-12 --agent-only --agent claude --model haiku --on-done keep --text "Merge the imported ref, then implement the next task."
 ```
 
-Only accepted `done` or an ended monitored agent (reported/reportable as
-`blocked`) permits relaunch. A working child, uncertain liveness or active
-startup worker is refused; never interrupt work or retry with force. The old
-agent window ends; the fresh session gets the child preamble and new prompt.
+Accepted `done`, an ended monitored agent (reported/reportable as `blocked`),
+or freshly proven live-agent idleness permits relaunch. For a live agent, the
+broker checks the matching session and process tree under the mutation lock:
+`idle` requires no background processes; `shell` permits only exact
+`jailbee inbox wait ...` commands (including the Python module wrapper), each
+without descendants. Both require readable activity proving no subagents remain.
+`busy`, `waiting` (including permission prompts), any other background command
+(including `inbox send --wait` or `service logs --wait`), unreadable evidence and
+active startup workers are refused with a reason. Never interrupt work or retry
+with force. The old agent window and its inbox waiter end; the fresh session
+gets the child preamble and new prompt.
 Container boot, setup and every `on_start` action are skipped; services remain
 running. Runner omission keeps the previous choice, explicit flags replace it,
 and `--default-runner` selects the current default. `--on-done` is allowed;

@@ -31,6 +31,11 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- `jailbee inbox send restart --agent-only` accepts a live idle agent whose only
+  background commands are childless inbox waiters, including the container's
+  Python wrapper. Other work, subagents, permission prompts and unreadable
+  state still refuse relaunch with a reason
+  ([#121](https://github.com/VRTFinland/jailbee/issues/121)).
 - An immediate `jailbee inbox send restart` after a successful `send stop --wait`
   no longer reads the broker's stale running state and refuses with "stop it
   first"

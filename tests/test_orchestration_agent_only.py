@@ -75,6 +75,53 @@ def test_agent_only_refusal(tmp_path, seams, session, running, extra, detail):
     assert load_queue(tmp_path) == {}
 
 
+@pytest.mark.parametrize(
+    "state,clear,waiters,processes_clear,allowed,reason",
+    [
+        ("shell", True, True, False, True, ""),
+        ("idle", True, False, True, True, ""),
+        ("shell", True, False, False, False, "background commands"),
+        ("shell", True, None, None, False, "process state unknown"),
+        ("waiting", True, True, False, False, "waiting"),
+        ("busy", True, True, False, False, "busy"),
+        ("idle", False, False, True, False, "subagents"),
+        ("shell", False, True, False, False, "subagents"),
+        (None, True, True, False, False, "unreadable session"),
+    ],
+)
+def test_agent_only_relaunches_only_proven_idle_agent(
+    tmp_path, seams, session, monkeypatch, state, clear, waiters, processes_clear, allowed, reason
+):
+    import json
+
+    from jailbee.accounts.models import AgentActivity, AgentSession
+    from jailbee.orchestration import agent_session
+
+    rig = Rig(tmp_path, running=True)
+    monkeypatch.setattr(agent_session, "relaunch", session)
+    monkeypatch.setattr(agent_watch, "probe", agent_watch_probe)
+    rig.incus.exec.return_value = json.dumps(
+        {"alive": True, "agent": "claude", "pid": 123, "proc_start": 42,
+         "waiters_only": waiters, "processes_clear": processes_clear}
+    )
+    adapter = MagicMock()
+    adapter.read_sessions.return_value = (
+        [AgentSession("claude", 123, 42, state, None, rig.ctx().now, 1)] if state else []
+    )
+    adapter.read_activity.return_value = AgentActivity(None, None, background_clear=clear)
+    monkeypatch.setattr("jailbee.accounts.adapters.base.get_adapter", lambda name: adapter)
+    out = actions.handle_restart(rig.ctx(), restart())
+    assert out.state == ("started" if allowed else "refused"), out.detail
+    assert session.called is allowed
+    if not allowed:
+        assert reason in out.detail
+        rig.incus.config_unset_checked.assert_not_called()
+    seams["boot"].assert_not_called()
+
+
+agent_watch_probe = agent_watch.probe
+
+
 @pytest.mark.parametrize("mode", ["keep", "change", "default"])
 def test_agent_only_relaunch_at_capacity_without_boot_or_queue(
     tmp_path, seams, session, monkeypatch, mode

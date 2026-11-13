@@ -74,6 +74,8 @@ class AgentStatus:
     recorded: bool = False
     pid: int | None = None
     proc_start: int | None = None
+    waiters_only: bool | None = None
+    processes_clear: bool | None = None
 
 
 def _matched_session(
@@ -135,6 +137,32 @@ def idle_signal(cfg: Config, name: str, status: AgentStatus, *, now: datetime) -
     except Exception:
         # Adapter formats are undocumented; a broken reader must not stall supervision.
         return None
+
+
+def restart_idle_problem(
+    cfg: Config, name: str, status: AgentStatus | None, *, now: datetime
+) -> str | None:
+    """Fail closed unless this exact agent is idle with no background work."""
+    if status is None or not status.alive:
+        return "unknown agent state"
+    try:
+        matched = _matched_session(cfg, name, status)
+        if matched is None:
+            return "unreadable session state"
+        adapter, session = matched
+        if session.state not in ("idle", "shell"):
+            return f"session state is {session.state}"
+        paths = adapter.locate_activity(adapter.config_home(cfg), session)
+        activity = adapter.read_activity(paths, now=now.timestamp()) if paths is not None else None
+        if activity is None or activity.background_clear is not True:
+            return "subagents running or background activity unknown"
+        if session.state == "idle" and status.processes_clear is True:
+            return None
+        if session.state == "shell" and status.waiters_only is True:
+            return None
+        return "background commands running or process state unknown"
+    except Exception:
+        return "unreadable session or activity state"
 
 
 def agent_snapshot(
@@ -207,7 +235,68 @@ def advance_idle(
 # Read /proc identity as well as kill(0): a reused PID or a zombie is not our agent.
 _PROBE = r"""
 import json, pathlib, sys
-runtime, exit_path = map(pathlib.Path, sys.argv[1:])
+runtime, exit_path = map(pathlib.Path, sys.argv[1:3])
+
+def waiter(argv):
+    # Match entry points, never a process name or an argument containing 'wait'.
+    if not argv:
+        return False
+    entry = pathlib.Path(argv[0]).name
+    args = argv[1:]
+    if entry in ('python', 'python3') or entry.startswith('python3.'):
+        if args[:1] == ['-P']:
+            args = args[1:]
+        if len(args) < 2 or args[0] != '-m' or args[1] not in (
+            'jailbee', 'jailbee.container_main', 'jailbee.inbox'):
+            return False
+        args = args[2:]
+    elif entry not in ('jailbee', 'jb'):
+        return False
+    if args[:1] == ['inbox']:
+        args = args[1:]
+    return args[:1] == ['wait']
+
+def background(pid):
+    procs = {}
+    for path in pathlib.Path('/proc').iterdir():
+        if not path.name.isdigit():
+            continue
+        try:
+            raw = (path / 'stat').read_text()
+        except FileNotFoundError:
+            continue
+        tail = raw.rsplit(')', 1)[1].split()
+        if tail[0] not in ('Z', 'X'):
+            procs[int(path.name)] = (int(tail[1]), tail[19], raw.split('(', 1)[1].rsplit(')', 1)[0])
+    children = {}
+    for child, (parent, _, _) in procs.items():
+        children.setdefault(parent, []).append(child)
+    roots = children.get(pid, [])
+    if not roots:
+        return False, True
+    leaves = []
+    for child in roots:
+        descendants = children.get(child, [])
+        if descendants:
+            if procs[child][2] not in ('bash', 'sh', 'dash', 'zsh', 'fish'):
+                return False, False
+            leaves.extend(descendants)
+        else:
+            leaves.append(child)
+    for child in leaves:
+        if children.get(child):
+            return False, False
+        raw = pathlib.Path('/proc', str(child), 'cmdline').read_bytes()
+        argv = raw.rstrip(b'\0').decode('utf-8').split('\0')
+        if not waiter(argv):
+            return False, False
+    # Changed/disappeared processes make this snapshot unsafe to act on.
+    for child in [pid, *roots, *leaves]:
+        tail = pathlib.Path('/proc', str(child), 'stat').read_text().rsplit(')', 1)[1].split()
+        if tail[0] in ('Z', 'X') or (int(tail[1]), tail[19]) != procs[child][:2]:
+            return None, None
+    return True, False
+
 result = dict(alive=False, agent='agent', rc=None, recorded=False)
 try:
     data = json.loads(runtime.read_text())
@@ -221,6 +310,11 @@ try:
     if result['alive']:
         result['pid'] = pid
         result['proc_start'] = int(stat[19])
+        if sys.argv[3:] == ['--background']:
+            try:
+                result['waiters_only'], result['processes_clear'] = background(pid)
+            except (OSError, ValueError, KeyError, TypeError, IndexError):
+                pass
 except (OSError, ValueError, KeyError, TypeError, IndexError):
     pass
 try:
@@ -232,12 +326,13 @@ print(json.dumps(result))
 """
 
 
-def probe(incus: Incus, name: str, *, uid: int) -> AgentStatus | None:
+def probe(incus: Incus, name: str, *, uid: int, background: bool = False) -> AgentStatus | None:
     """Return None for a transport/protocol error, not a false death report."""
     try:
         raw = incus.exec(
             name,
-            ["python3", "-c", _PROBE, AGENT_PID_PATH, AGENT_EXIT_PATH],
+            ["python3", "-c", _PROBE, AGENT_PID_PATH, AGENT_EXIT_PATH]
+            + (["--background"] if background else []),
             uid=uid,
             timeout=15,
         )
@@ -258,7 +353,10 @@ def probe(incus: Incus, name: str, *, uid: int) -> AgentStatus | None:
             value is not None and (type(value) is not int or value < 0) for value in (pid, start)
         ):
             return None
-        return AgentStatus(data["alive"], agent, rc, recorded, pid, start)
+        waiters_only, processes_clear = data.get("waiters_only"), data.get("processes_clear")
+        if any(value is not None and type(value) is not bool for value in (waiters_only, processes_clear)):
+            return None
+        return AgentStatus(data["alive"], agent, rc, recorded, pid, start, waiters_only, processes_clear)
     except (IncusError, ValueError, TypeError):
         return None
 

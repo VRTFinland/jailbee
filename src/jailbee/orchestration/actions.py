@@ -1223,7 +1223,9 @@ def _restart_agent(
         return refused(f"child `{child.short}` must be running for agent_only")
     if child.full in creating_children(ctx) or live_job_kind(child.full) is not None:
         return refused(f"child `{child.short}` is working (startup is still running)")
-    status = agent_watch.probe(ctx.incus, child.full, uid=ctx.cfg.container_user.uid)
+    status = agent_watch.probe(
+        ctx.incus, child.full, uid=ctx.cfg.container_user.uid, background=True
+    )
     previous = next(
         (e for e in load_watch(ctx.root).get(ctx.sender.full, []) if e.child_full == child.full),
         None,
@@ -1246,7 +1248,12 @@ def _restart_agent(
         )
     )
     if not finished and not ended:
-        return refused(f"child `{child.short}` is working; wait for accepted done or agent exit")
+        problem = agent_watch.restart_idle_problem(ctx.cfg, child.full, status, now=ctx.now)
+        if problem is not None:
+            return refused(
+                f"child `{child.short}` is working ({problem}); "
+                "wait for accepted done, idle agent or agent exit"
+            )
     problem = initial_prompt.prompt_problem(ctx.cfg, runner)
     if problem is not None:
         return refused(problem)

@@ -291,6 +291,83 @@ def test_probe_script_checks_process_identity(
     assert json.loads(capsys.readouterr().out)["alive"] is expected
 
 
+@pytest.mark.parametrize(
+    "command,extra,expected",
+    [
+        ("python -P -m jailbee.container_main inbox wait --wake-on message --timeout none", None, True),
+        ("/opt/venv/bin/python -P -m jailbee.container_main wait --timeout none", None, True),
+        ("jailbee inbox wait --timeout none", None, True),
+        ("jailbee inbox send message --wait", None, False),
+        ("jailbee service logs x --wait ready", None, False),
+        ("python -m unrelated inbox wait", None, False),
+        ("sleep 600", None, False),
+        ("pytest", None, False),
+        ("jailbee inbox wait", "sibling", False),
+        ("jailbee inbox wait", "descendant", False),
+        ("jailbee inbox wait", "unreadable", None),
+        ("jailbee inbox wait", "missing", None),
+        ("jailbee inbox wait", "changed", None),
+    ],
+)
+def test_probe_checks_real_waiter_command_and_descendants(monkeypatch, capsys, command, extra, expected):
+    from pathlib import Path
+
+    from jailbee.orchestration.agent_watch import probe
+
+    def stat(pid, parent):
+        comm = "bash" if pid == 124 else "process"
+        return f"{pid} ({comm}) " + " ".join(["S", str(parent)] + ["0"] * 17 + ["42"])
+
+    files = {
+        "runtime": json.dumps({"pid": 123, "start": "42", "boot": "boot", "agent": "claude"}),
+        "/proc/123/stat": stat(123, 1),
+        "/proc/124/stat": stat(124, 123),
+        "/proc/125/stat": stat(125, 124),
+        "/proc/124/cmdline": b"bash\0-c\0command\0",
+        "/proc/125/cmdline": ("\0".join(command.split()) + "\0").encode(),
+        "/proc/sys/kernel/random/boot_id": "boot",
+    }
+
+    pids = [123, 124, 125]
+    if extra in ("sibling", "descendant"):
+        pids.append(126)
+        files["/proc/126/stat"] = stat(126, 124 if extra == "sibling" else 125)
+        files["/proc/126/cmdline"] = b"sleep\0" + b"600\0"
+    reads = 0
+
+    def read(path, *args, **kwargs):
+        nonlocal reads
+        key = str(path)
+        if key == "/proc/125/cmdline":
+            if extra == "unreadable":
+                raise PermissionError(key)
+            if extra == "missing":
+                raise FileNotFoundError(key)
+        if key == "/proc/125/stat":
+            reads += 1
+            if extra == "changed" and reads > 1:
+                return stat(125, 999)
+        try:
+            return files[key]
+        except KeyError:
+            raise FileNotFoundError(key) from None
+
+    monkeypatch.setattr(Path, "read_text", read)
+    monkeypatch.setattr(Path, "read_bytes", read)
+    monkeypatch.setattr(Path, "iterdir", lambda path: iter(Path(f"/proc/{pid}") for pid in pids))
+    incus = MagicMock()
+
+    def execute(name, command, **kwargs):
+        monkeypatch.setattr("sys.argv", ["probe", "runtime", "exit", *command[5:]])
+        exec(compile(command[2], "probe", "exec"), {})
+        return capsys.readouterr().out
+
+    incus.exec.side_effect = execute
+    status = probe(incus, "kid", uid=1000, background=True)
+    assert status is not None and status.alive
+    assert status.waiters_only is expected
+
+
 def test_output_tail_is_bounded_and_best_effort() -> None:
     from jailbee.orchestration.agent_watch import output_tail
 

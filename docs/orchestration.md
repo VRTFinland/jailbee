@@ -503,10 +503,18 @@ Durability across host power loss is not guaranteed.
 
 Use `jailbee inbox send restart --child C --agent-only --text "Next task"`
 (or manifest `"agent_only": true`) for a persistent worker kept with
-`on_done: "keep"`. The child must be RUNNING and idle: either its `done`
-was accepted, or its previous monitored agent has ended (the broker reported,
-or would report, `blocked`). A working child or uncertain agent liveness is
-refused; there is no force option. Active startup workers also prevent relaunch.
+`on_done: "keep"`. The child must be RUNNING. Relaunch is allowed after accepted
+`done`, after its previous monitored agent has ended (reported/reportable as
+`blocked`), or when a fresh probe under the mutation lock proves the live agent
+idle. Live-agent acceptance requires a matching session in `idle` with no
+background processes, or `shell` with only exact `jailbee inbox wait ...`
+commands below its background shells. Python module entry points, including the
+container's `python -P -m jailbee.container_main inbox wait ...` wrapper, are
+recognised. Each waiter must have no descendants, and both cases require readable
+activity proving no subagents remain. `busy`, `waiting` (including permission
+prompts), other background commands, and unknown/unreadable evidence are refused
+with a reason. `inbox send --wait` and `service logs --wait` are not idle waiters.
+There is no force option. Active startup workers also prevent relaunch.
 Without the flag, a running child is still refused with "stop it first".
 A kept worker's agent keeps `jailbee inbox wait --timeout none` in the
 background between tasks, re-arming it after handling messages.
