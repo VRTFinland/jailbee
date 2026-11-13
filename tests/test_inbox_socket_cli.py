@@ -470,7 +470,15 @@ def test_stop_until_done_json_cli(broker: FakeBroker, sockdir: Path, tmp_path: P
     status = send_status("done")
     broker.on("send", status)
     result = run(
-        sockdir, "send", "stop", "--child", "kid", "--wait", "--until", "done", "--json",
+        sockdir,
+        "send",
+        "stop",
+        "--child",
+        "kid",
+        "--wait",
+        "--until",
+        "done",
+        "--json",
         tmp=tmp_path,
     )
     assert result.returncode == 0, result.stderr

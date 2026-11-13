@@ -565,8 +565,12 @@ def stop(
 ) -> None:
     _send(
         send.SendRequest(
-            type="stop", child=child, wait=wait, timeout=timeout,
-            until=until, json_output=json_output,
+            type="stop",
+            child=child,
+            wait=wait,
+            timeout=timeout,
+            until=until,
+            json_output=json_output,
         )
     )
 

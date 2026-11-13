@@ -1149,9 +1149,7 @@ def _handle_stop_locked(ctx: ActionContext, m: Manifest) -> Outcome:
             stopped_config.pop(labels.STOPPED_DIRTY, None)
         else:
             stopped_config[labels.STOPPED_DIRTY] = "1"
-        ctx.nodes = {
-            **ctx.nodes, child.full: replace(child, running=False, config=stopped_config)
-        }
+        ctx.nodes = {**ctx.nodes, child.full: replace(child, running=False, config=stopped_config)}
     else:
         forced = False
     from jailbee.orchestration.watch import cancel
