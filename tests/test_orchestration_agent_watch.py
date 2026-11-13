@@ -291,6 +291,64 @@ def test_probe_script_checks_process_identity(
     assert json.loads(capsys.readouterr().out)["alive"] is expected
 
 
+CLAUDE_PREFIX = (
+    "source /home/dev/.claude/shell-snapshots/snapshot-bash-1794338962781-3c64dq.sh"
+    " 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && "
+    r"{ \builtin unalias -- 'which'; \builtin unset -f -- 'which'; }"
+    " >/dev/null 2>&1 || true && "
+    r"{ \builtin unalias -- 'unsetenv'; \builtin unset -f -- 'unsetenv'; }"
+    " >/dev/null 2>&1 || true && "
+)
+CLAUDE_WAITER = "jailbee inbox wait --wake-on msg:done,question --quiet-after 60m --timeout none"
+CLAUDE_SUFFIX = " && pwd -P >| /tmp/claude-d404-cwd"
+CLAUDE_SCRIPT = CLAUDE_PREFIX + "eval '" + CLAUDE_WAITER + "'" + CLAUDE_SUFFIX
+
+
+def claude_script(inner):
+    return CLAUDE_PREFIX + "eval '" + inner.replace("'", "'\"'\"'") + "'" + CLAUDE_SUFFIX
+
+
+CLAUDE_CASES = {
+    "claude-semicolon": (claude_script(CLAUDE_WAITER + "; make deploy"), False),
+    "claude-and": (claude_script(CLAUDE_WAITER + " && git push"), False),
+    "claude-or": (claude_script(CLAUDE_WAITER + " || git push"), False),
+    "claude-pipe": (claude_script(CLAUDE_WAITER + " | cat"), False),
+    "claude-background": (claude_script(CLAUDE_WAITER + " &"), False),
+    "claude-loop": (claude_script("while :; do jailbee inbox wait; done"), False),
+    "claude-substitution": (claude_script(CLAUDE_WAITER + " $(make deploy)"), False),
+    "claude-backtick": (claude_script(CLAUDE_WAITER + " `make deploy`"), False),
+    "claude-inner-eval": (claude_script("eval '" + CLAUDE_WAITER + "'"), False),
+    "claude-second-eval": (CLAUDE_SCRIPT + " && eval 'make deploy'", False),
+    "claude-unknown-prefix": ("curl x | " + CLAUDE_SCRIPT, False),
+    "claude-source-outside": (CLAUDE_SCRIPT.replace("/home/dev/.claude", "/tmp/.claude"), False),
+    "claude-source-traversal": (CLAUDE_SCRIPT.replace("/snapshot-bash", "/../snapshot-bash"), False),
+    "claude-trailing": (CLAUDE_SCRIPT + " && make deploy", False),
+    "claude-broken-quote": (CLAUDE_PREFIX + "eval '" + CLAUDE_WAITER, False),
+    "claude-double-quote": (CLAUDE_PREFIX + 'eval "' + CLAUDE_WAITER + '"', False),
+    "claude-quote-injection": (CLAUDE_PREFIX + "eval '" + CLAUDE_WAITER + "'$(make deploy)''", False),
+    "claude-newline": (claude_script(CLAUDE_WAITER + "\nmake deploy"), False),
+    "claude-redirect": (claude_script(CLAUDE_WAITER + " > /tmp/file"), False),
+    "claude-inner-cd": (claude_script("cd /tmp && " + CLAUDE_WAITER), False),
+    "claude-escaped-quote": (claude_script("jailbee inbox wait --timeout 'none'"), True),
+    "claude-quiet": (claude_script(CLAUDE_WAITER + " >/dev/null 2>&1"), True),
+    "claude-stderr": (claude_script(CLAUDE_WAITER + " 2>/dev/null"), True),
+    "claude-home-not-exported": (CLAUDE_SCRIPT, True),
+    "claude-no-prefix": ("eval '" + CLAUDE_WAITER + "'", True),
+    "claude-no-suffix": (CLAUDE_SCRIPT.removesuffix(CLAUDE_SUFFIX), True),
+    "claude-other-prefix": (
+        "shopt -s nullglob && "
+        r"{ \builtin unalias -- '_name2'; \builtin unset -f -- '_name2'; } && "
+        "eval '" + CLAUDE_WAITER + "'",
+        True,
+    ),
+    "claude-invalid-name": (CLAUDE_SCRIPT.replace("'which'", "'which; deploy'"), False),
+    "claude-mismatched-name": (CLAUDE_SCRIPT.replace("unset -f -- 'which'", "unset -f -- 'other'"), False),
+    "claude-invalid-shopt": (CLAUDE_SCRIPT.replace("extglob", "extglob; make deploy"), False),
+    "claude-invalid-pwd": (CLAUDE_SCRIPT.replace("d404-cwd", "nothex-cwd"), False),
+    "claude-revalidated": (CLAUDE_SCRIPT, None),
+}
+
+
 @pytest.mark.parametrize(
     "command,extra,expected",
     [
@@ -301,6 +359,11 @@ def test_probe_script_checks_process_identity(
         ),
         ("/opt/venv/bin/python -P -m jailbee.container_main wait --timeout none", None, True),
         ("jailbee inbox wait --timeout none", None, True),
+        (
+            "/opt/jailbee/venv/bin/python -P -m jailbee.container_main inbox wait --timeout 20s",
+            "claude-wrapper",
+            True,
+        ),
         ("jailbee inbox wait", "no-children", False),
         ("jailbee inbox wait", "make-parent", False),
         ("jailbee inbox wait", "python-parent", False),
@@ -323,6 +386,7 @@ def test_probe_script_checks_process_identity(
         ("jailbee inbox wait", "eval-wrapper", False),
         ("jailbee inbox wait", "shell-unreadable", None),
         ("jailbee inbox wait", "shell-exec-changed", None),
+        *[("jailbee inbox wait", label, expected) for label, (_, expected) in CLAUDE_CASES.items()],
     ],
 )
 def test_probe_checks_real_waiter_command_and_descendants(
@@ -331,6 +395,12 @@ def test_probe_checks_real_waiter_command_and_descendants(
     from pathlib import Path
 
     from jailbee.orchestration.agent_watch import probe
+
+    monkeypatch.setenv("HOME", "/home/dev")
+    monkeypatch.setattr("os.getuid", lambda: 1000)
+    monkeypatch.setattr("pwd.getpwuid", lambda uid: MagicMock(pw_dir="/home/dev"))
+    if extra == "claude-home-not-exported":
+        monkeypatch.setenv("HOME", "/root")
 
     def stat(pid, parent):
         parent_name = {"make-parent": "make", "python-parent": "python"}.get(extra, "bash")
@@ -348,6 +418,8 @@ def test_probe_checks_real_waiter_command_and_descendants(
     }
 
     scripts = {
+        "claude-wrapper": CLAUDE_SCRIPT,
+        **{label: script for label, (script, _) in CLAUDE_CASES.items()},
         "queued-semicolon": "jailbee inbox wait --timeout none; make deploy",
         "queued-and": "jailbee inbox wait && git push",
         "queued-loop": "while :; do jailbee inbox wait; ./handle.sh; done",
@@ -371,7 +443,7 @@ def test_probe_checks_real_waiter_command_and_descendants(
             shell_reads += 1
             if extra == "shell-unreadable":
                 raise PermissionError(key)
-            if extra == "shell-exec-changed" and shell_reads > 1:
+            if extra in ("shell-exec-changed", "claude-revalidated") and shell_reads > 1:
                 return b"bash\0-c\0jailbee inbox wait; make deploy\0"
         if key == "/proc/125/cmdline":
             cmd_reads += 1

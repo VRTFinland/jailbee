@@ -33,8 +33,9 @@ before editing `## Unreleased`.
 
 - `jailbee inbox send restart --agent-only` accepts a live idle agent whose only
   background commands are childless inbox waiters, including the container's
-  Python wrapper. Parent shells must contain a single plain waiter invocation;
-  queued commands and unrecognised shell wrappers refuse. Process and session
+  Python wrapper. Parent shells must contain a single waiter invocation.
+  Claude Code's own Bash-tool wrapper is recognised strictly; queued commands
+  and unknown wrappers refuse. Process and session
   evidence is rechecked immediately before replacing the agent window. Other
   work, subagents, permission prompts and changed/unreadable state still refuse
   relaunch with a reason

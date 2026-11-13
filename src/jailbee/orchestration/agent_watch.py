@@ -244,7 +244,7 @@ def advance_idle(
 
 # Read /proc identity as well as kill(0): a reused PID or a zombie is not our agent.
 _PROBE = r"""
-import json, pathlib, re, shlex, sys
+import json, os, pathlib, pwd, re, shlex, sys
 runtime, exit_path = map(pathlib.Path, sys.argv[1:3])
 
 def waiter(argv):
@@ -266,13 +266,49 @@ def waiter(argv):
         args = args[1:]
     return args[:1] == ['wait']
 
+def plain_waiter(script):
+    script = re.sub(r'(?:[ \t]+(?:>/dev/null|2>&1|2>/dev/null))+$', '', script)
+    # A single invocation: no expansion, control operators, or other redirects,
+    # even inside quotes. shlex validates quoting but never executes anything.
+    if re.fullmatch(r'''[A-Za-z0-9_./: ,='"-]+''', script) is None:
+        return False
+    return waiter(shlex.split(script))
+
+def claude_waiter(script):
+    # Recognise only the Bash tool's known setup grammar, not arbitrary eval.
+    # incus exec --user does not derive HOME from the selected uid.
+    home = re.escape(pwd.getpwuid(os.getuid()).pw_dir)
+    identifier = r'[A-Za-z_][A-Za-z0-9_]*'
+    prefix = re.compile(
+        r'(?:source ' + home + r'/\.claude/shell-snapshots/'
+        r'snapshot-[A-Za-z0-9_-]+-[0-9]+-[A-Za-z0-9]+\.sh'
+        r'|shopt -[us] ' + identifier +
+        r"|\{ \\builtin unalias -- '(" + identifier + r")'; "
+        r"\\builtin unset -f -- '\1'; \})"
+        r'(?: 2>/dev/null| >/dev/null 2>&1)?(?: \|\| true)? && '
+    )
+    while not script.startswith('eval '):
+        match = prefix.match(script)
+        if match is None:
+            return False
+        script = script[match.end():]
+    match = re.fullmatch(r'''eval ('(?:[^']|'"'"')*')(.*)''', script)
+    if match is None:
+        return False
+    quoted, suffix = match.groups()
+    if suffix and re.fullmatch(r' && pwd -P >\| /tmp/claude-[0-9a-f]+-cwd', suffix) is None:
+        return False
+    inner = quoted[1:-1].replace("'\"'\"'", "'")
+    return plain_waiter(inner)
+
 def waiter_shell(argv):
-    # Deliberately no eval, sourcing, expansion, redirects or command lists.
     # Unknown harness wrappers must refuse rather than hide queued work.
     if (len(argv) != 3 or pathlib.Path(argv[0]).name not in ('bash', 'sh', 'dash')
-            or argv[1] != '-c' or re.fullmatch(r'[A-Za-z0-9_./: -]+', argv[2]) is None):
+            or argv[1] != '-c' or '\n' in argv[2] or '\r' in argv[2]):
         return False
-    return waiter(shlex.split(argv[2]))
+    if plain_waiter(argv[2]):
+        return True
+    return pathlib.Path(argv[0]).name in ('bash', 'sh') and claude_waiter(argv[2])
 
 def process_tree():
     procs = {}
