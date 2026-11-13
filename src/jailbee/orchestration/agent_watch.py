@@ -14,7 +14,7 @@ from jailbee.initial_prompt import AGENT_EXIT_PATH, AGENT_PID_PATH
 
 if TYPE_CHECKING:
     from jailbee.accounts.adapters.base import AccountAdapter
-    from jailbee.accounts.models import AgentSession
+    from jailbee.accounts.models import AgentActivity, AgentSession
     from jailbee.config import Config
     from jailbee.incus import Incus
     from jailbee.orchestration.actions import Node, Outcome
@@ -76,6 +76,7 @@ class AgentStatus:
     proc_start: int | None = None
     waiters_only: bool | None = None
     processes_clear: bool | None = None
+    process_snapshot: str | None = None
 
 
 def _matched_session(
@@ -139,12 +140,21 @@ def idle_signal(cfg: Config, name: str, status: AgentStatus, *, now: datetime) -
         return None
 
 
-def restart_idle_problem(
+@dataclass(frozen=True)
+class RestartIdleEvidence:
+    status: AgentStatus
+    session: AgentSession
+    activity: AgentActivity
+
+
+def restart_idle_evidence(
     cfg: Config, name: str, status: AgentStatus | None, *, now: datetime
-) -> str | None:
+) -> RestartIdleEvidence | str:
     """Fail closed unless this exact agent is idle with no background work."""
     if status is None or not status.alive:
         return "unknown agent state"
+    if not status.process_snapshot:
+        return "process state unknown"
     try:
         matched = _matched_session(cfg, name, status)
         if matched is None:
@@ -157,9 +167,9 @@ def restart_idle_problem(
         if activity is None or activity.background_clear is not True:
             return "subagents running or background activity unknown"
         if session.state == "idle" and status.processes_clear is True:
-            return None
+            return RestartIdleEvidence(status, session, activity)
         if session.state == "shell" and status.waiters_only is True:
-            return None
+            return RestartIdleEvidence(status, session, activity)
         return "background commands running or process state unknown"
     except Exception:
         return "unreadable session or activity state"
@@ -234,7 +244,7 @@ def advance_idle(
 
 # Read /proc identity as well as kill(0): a reused PID or a zombie is not our agent.
 _PROBE = r"""
-import json, pathlib, sys
+import json, pathlib, re, shlex, sys
 runtime, exit_path = map(pathlib.Path, sys.argv[1:3])
 
 def waiter(argv):
@@ -256,6 +266,14 @@ def waiter(argv):
         args = args[1:]
     return args[:1] == ['wait']
 
+def waiter_shell(argv):
+    # Deliberately no eval, sourcing, expansion, redirects or command lists.
+    # Unknown harness wrappers must refuse rather than hide queued work.
+    if (len(argv) != 3 or pathlib.Path(argv[0]).name not in ('bash', 'sh', 'dash')
+            or argv[1] != '-c' or re.fullmatch(r'[A-Za-z0-9_./: -]+', argv[2]) is None):
+        return False
+    return waiter(shlex.split(argv[2]))
+
 def process_tree():
     procs = {}
     for path in pathlib.Path('/proc').iterdir():
@@ -276,36 +294,43 @@ def process_tree():
 def background(pid, start):
     procs, children = process_tree()
     if pid not in procs or procs[pid][1] != start:
-        return None, None
+        return None, None, None
     roots = children.get(pid, set())
     leaves = []
+    commands = {}
     for child in roots:
         descendants = children.get(child, [])
         if descendants:
             if procs[child][2] not in ('bash', 'sh', 'dash', 'zsh', 'fish'):
-                return False, False
+                return False, False, None
+            raw = pathlib.Path('/proc', str(child), 'cmdline').read_bytes()
+            if not waiter_shell(raw.rstrip(b'\0').decode('utf-8').split('\0')):
+                return False, False, None
+            commands[child] = raw
             leaves.extend(descendants)
         else:
             leaves.append(child)
-    commands = {}
     for child in leaves:
         if children.get(child):
-            return False, False
+            return False, False, None
         raw = pathlib.Path('/proc', str(child), 'cmdline').read_bytes()
         argv = raw.rstrip(b'\0').decode('utf-8').split('\0')
         if not waiter(argv):
-            return False, False
+            return False, False, None
         commands[child] = raw
     # Revalidate child sets too: stable identities alone miss a new fork.
     current, current_children = process_tree()
     for child in {pid, *roots, *leaves}:
         if (current.get(child) != procs.get(child)
                 or current_children.get(child, set()) != children.get(child, set())):
-            return None, None
+            return None, None, None
     for child, raw in commands.items():
         if pathlib.Path('/proc', str(child), 'cmdline').read_bytes() != raw:
-            return None, None
-    return bool(leaves), not roots
+            return None, None, None
+    snapshot = json.dumps([(child, procs[child], sorted(children.get(child, set())),
+                            commands[child].hex() if child in commands else None)
+                           for child in sorted({pid, *roots, *leaves})])
+    return bool(leaves), not roots, snapshot
 
 result = dict(alive=False, agent='agent', rc=None, recorded=False)
 try:
@@ -322,7 +347,8 @@ try:
         result['proc_start'] = int(stat[19])
         if sys.argv[3:] == ['--background']:
             try:
-                result['waiters_only'], result['processes_clear'] = background(pid, data['start'])
+                (result['waiters_only'], result['processes_clear'],
+                 result['process_snapshot']) = background(pid, data['start'])
             except (OSError, ValueError, KeyError, TypeError, IndexError):
                 pass
 except (OSError, ValueError, KeyError, TypeError, IndexError):
@@ -369,8 +395,11 @@ def probe(incus: Incus, name: str, *, uid: int, background: bool = False) -> Age
             for value in (waiters_only, processes_clear)
         ):
             return None
+        snapshot = data.get("process_snapshot")
+        if snapshot is not None and not isinstance(snapshot, str):
+            return None
         return AgentStatus(
-            data["alive"], agent, rc, recorded, pid, start, waiters_only, processes_clear
+            data["alive"], agent, rc, recorded, pid, start, waiters_only, processes_clear, snapshot
         )
     except (IncusError, ValueError, TypeError):
         return None

@@ -616,7 +616,13 @@ or freshly proven live-agent idleness permits relaunch. For a live agent, the
 broker checks the matching session and process tree under the mutation lock:
 `idle` requires no background processes; `shell` permits only exact
 `jailbee inbox wait ...` commands (including the Python module wrapper), each
-without descendants. Both require readable activity proving no subagents remain.
+without descendants. A parent shell must be `bash`, `sh` or `dash` with exactly
+`-c` and one plain waiter invocation. Command lists, loops, expansions,
+redirections, `cd`, `eval` and sourced snapshot wrappers refuse: a waiter child
+does not prove its shell has no queued work. Both paths require readable
+activity proving no subagents remain. Immediately before the old window is
+killed, the broker rechecks process identities, child sets, commands and
+session/activity evidence; any change or unreadable evidence refuses relaunch.
 `busy`, `waiting` (including permission prompts), any other background command
 (including `inbox send --wait` or `service logs --wait`), unreadable evidence and
 active startup workers are refused with a reason. Never interrupt work or retry

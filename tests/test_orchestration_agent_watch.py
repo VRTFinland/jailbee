@@ -301,6 +301,9 @@ def test_probe_script_checks_process_identity(
         ),
         ("/opt/venv/bin/python -P -m jailbee.container_main wait --timeout none", None, True),
         ("jailbee inbox wait --timeout none", None, True),
+        ("jailbee inbox wait", "no-children", False),
+        ("jailbee inbox wait", "make-parent", False),
+        ("jailbee inbox wait", "python-parent", False),
         ("jailbee inbox send message --wait", None, False),
         ("jailbee service logs x --wait ready", None, False),
         ("python -m unrelated inbox wait", None, False),
@@ -314,6 +317,12 @@ def test_probe_script_checks_process_identity(
         ("jailbee inbox wait", "new-descendant", None),
         ("jailbee inbox wait", "new-sibling", None),
         ("jailbee inbox wait", "exec-changed", None),
+        ("jailbee inbox wait", "queued-semicolon", False),
+        ("jailbee inbox wait", "queued-and", False),
+        ("jailbee inbox wait", "queued-loop", False),
+        ("jailbee inbox wait", "eval-wrapper", False),
+        ("jailbee inbox wait", "shell-unreadable", None),
+        ("jailbee inbox wait", "shell-exec-changed", None),
     ],
 )
 def test_probe_checks_real_waiter_command_and_descendants(
@@ -324,7 +333,8 @@ def test_probe_checks_real_waiter_command_and_descendants(
     from jailbee.orchestration.agent_watch import probe
 
     def stat(pid, parent):
-        comm = "bash" if pid == 124 else "process"
+        parent_name = {"make-parent": "make", "python-parent": "python"}.get(extra, "bash")
+        comm = parent_name if pid == 124 else "process"
         return f"{pid} ({comm}) " + " ".join(["S", str(parent)] + ["0"] * 17 + ["42"])
 
     files = {
@@ -332,12 +342,21 @@ def test_probe_checks_real_waiter_command_and_descendants(
         "/proc/123/stat": stat(123, 1),
         "/proc/124/stat": stat(124, 123),
         "/proc/125/stat": stat(125, 124),
-        "/proc/124/cmdline": b"bash\0-c\0command\0",
+        "/proc/124/cmdline": b"bash\0-c\0jailbee inbox wait --timeout none\0",
         "/proc/125/cmdline": ("\0".join(command.split()) + "\0").encode(),
         "/proc/sys/kernel/random/boot_id": "boot",
     }
 
-    pids = [123, 124, 125]
+    scripts = {
+        "queued-semicolon": "jailbee inbox wait --timeout none; make deploy",
+        "queued-and": "jailbee inbox wait && git push",
+        "queued-loop": "while :; do jailbee inbox wait; ./handle.sh; done",
+        "eval-wrapper": "source snapshot.sh || true && eval 'jailbee inbox wait' && pwd -P > cwd",
+    }
+    if extra in scripts:
+        files["/proc/124/cmdline"] = ("bash\0-c\0" + scripts[extra] + "\0").encode()
+    shell_reads = 0
+    pids = [123] if extra == "no-children" else [123, 124, 125]
     if extra in ("sibling", "descendant"):
         pids.append(126)
         files["/proc/126/stat"] = stat(126, 124 if extra == "sibling" else 125)
@@ -346,8 +365,14 @@ def test_probe_checks_real_waiter_command_and_descendants(
     cmd_reads = 0
 
     def read(path, *args, **kwargs):
-        nonlocal reads, cmd_reads
+        nonlocal reads, cmd_reads, shell_reads
         key = str(path)
+        if key == "/proc/124/cmdline":
+            shell_reads += 1
+            if extra == "shell-unreadable":
+                raise PermissionError(key)
+            if extra == "shell-exec-changed" and shell_reads > 1:
+                return b"bash\0-c\0jailbee inbox wait; make deploy\0"
         if key == "/proc/125/cmdline":
             cmd_reads += 1
             if extra == "exec-changed" and cmd_reads > 1:
@@ -383,6 +408,10 @@ def test_probe_checks_real_waiter_command_and_descendants(
     status = probe(incus, "kid", uid=1000, background=True)
     assert status is not None and status.alive
     assert status.waiters_only is expected
+    if expected is not None:
+        assert status.processes_clear is (extra == "no-children")
+    if expected is True or extra == "no-children":
+        assert isinstance(status.process_snapshot, str) and status.process_snapshot
 
 
 def test_output_tail_is_bounded_and_best_effort() -> None:

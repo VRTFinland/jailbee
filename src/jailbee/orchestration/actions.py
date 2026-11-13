@@ -1247,13 +1247,15 @@ def _restart_agent(
             or (previous is not None and previous.confirmed)
         )
     )
+    idle_evidence = None
     if not finished and not ended:
-        problem = agent_watch.restart_idle_problem(ctx.cfg, child.full, status, now=ctx.now)
-        if problem is not None:
+        evidence = agent_watch.restart_idle_evidence(ctx.cfg, child.full, status, now=ctx.now)
+        if isinstance(evidence, str):
             return refused(
-                f"child `{child.short}` is working ({problem}); "
+                f"child `{child.short}` is working ({evidence}); "
                 "wait for accepted done, idle agent or agent exit"
             )
+        idle_evidence = evidence
     problem = initial_prompt.prompt_problem(ctx.cfg, runner)
     if problem is not None:
         return refused(problem)
@@ -1309,6 +1311,7 @@ def _restart_agent(
             runner=runner,
             old_agent=old_agent,
             resume=resume,
+            **({"idle_evidence": idle_evidence} if idle_evidence is not None else {}),
         )
     except Exception as exc:
         _drop_watch(ctx, child.full)

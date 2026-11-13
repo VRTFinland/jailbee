@@ -80,6 +80,7 @@ def test_agent_only_refusal(tmp_path, seams, session, running, extra, detail):
     [
         ("shell", True, True, False, True, ""),
         ("idle", True, False, True, True, ""),
+        ("idle", True, False, False, False, "background commands"),
         ("shell", True, False, False, False, "background commands"),
         ("shell", True, None, None, False, "process state unknown"),
         ("waiting", True, True, False, False, "waiting"),
@@ -108,6 +109,7 @@ def test_agent_only_relaunches_only_proven_idle_agent(
             "proc_start": 42,
             "waiters_only": waiters,
             "processes_clear": processes_clear,
+            "process_snapshot": "stable",
         }
     )
     adapter = MagicMock()
@@ -123,6 +125,61 @@ def test_agent_only_relaunches_only_proven_idle_agent(
         assert reason in out.detail
         rig.incus.config_unset_checked.assert_not_called()
     seams["boot"].assert_not_called()
+
+
+@pytest.mark.parametrize("change", ["busy", "session", "activity", "process", "snapshot", "unknown", "none"])
+def test_agent_only_rechecks_after_relaunch_preparation(
+    tmp_path, seams, session, monkeypatch, change
+):
+    from dataclasses import replace
+
+    from jailbee.accounts.models import AgentActivity, AgentSession
+    from jailbee.orchestration import agent_session
+
+    rig = Rig(tmp_path, running=True)
+    original = agent_watch.AgentStatus(True, "claude", pid=123, proc_start=42,
+                                       waiters_only=True, processes_clear=False, process_snapshot="stable")
+    live = [original]
+    adapter = MagicMock()
+    current = AgentSession("claude", 123, 42, "shell", None, rig.ctx().now, 1)
+    adapter.read_sessions.return_value = [current]
+    activity = AgentActivity(None, None, background_clear=True)
+    adapter.read_activity.return_value = activity
+    monkeypatch.setattr("jailbee.accounts.adapters.base.get_adapter", lambda name: adapter)
+    monkeypatch.setattr(agent_watch, "probe", lambda *a, **kw: live[0])
+
+    def prepare(*args):
+        # This happens inside relaunch, after labels and launch environment reads.
+        if change == "busy":
+            adapter.read_sessions.return_value = [replace(current, state="busy")]
+        elif change == "session":
+            adapter.read_sessions.return_value = [replace(current, updated_at=2)]
+        elif change == "activity":
+            adapter.read_activity.return_value = replace(activity, modified=2)
+        elif change == "process":
+            live[0] = replace(original, waiters_only=False)
+        elif change == "snapshot":
+            live[0] = replace(original, process_snapshot="changed")
+        elif change == "unknown":
+            live[0] = None
+        return "/repo"
+
+    monkeypatch.setattr(agent_session.lifecycle, "container_repo_dir", prepare)
+    kill = MagicMock()
+    write = MagicMock()
+    launch = MagicMock()
+    monkeypatch.setattr(agent_session.tmux, "kill_window", kill)
+    monkeypatch.setattr(agent_session.tmux, "ensure_session", MagicMock())
+    monkeypatch.setattr(agent_session.initial_prompt, "write_prompt", write)
+    monkeypatch.setattr(agent_session.tmux, "launch_step", launch)
+    out = actions.handle_restart(rig.ctx(), restart())
+    allowed = change == "none"
+    assert out.state == ("started" if allowed else "refused"), out.detail
+    assert kill.called is allowed
+    assert write.called is allowed
+    assert launch.called is allowed
+    if not allowed:
+        assert load_watch(tmp_path) == {}
 
 
 agent_watch_probe = agent_watch.probe
@@ -153,6 +210,7 @@ def test_agent_only_restart_uses_live_process_probe(
         "/proc/123/stat": stat(123, 1, "claude"),
         "/proc/124/stat": stat(124, 123, "bash"),
         "/proc/125/stat": stat(125, 124, "python"),
+        "/proc/124/cmdline": b"bash\0-c\0jailbee inbox wait --timeout none\0",
         "/proc/125/cmdline": ("\0".join(command.split()) + "\0").encode(),
         "/proc/sys/kernel/random/boot_id": "boot",
     }
