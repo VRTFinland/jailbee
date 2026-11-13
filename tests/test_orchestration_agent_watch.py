@@ -341,6 +341,9 @@ CLAUDE_CASES = {
     "claude-newline": (claude_script(CLAUDE_WAITER + "\nmake deploy"), False),
     "claude-redirect": (claude_script(CLAUDE_WAITER + " > /tmp/file"), False),
     "claude-inner-cd": (claude_script("cd /tmp && " + CLAUDE_WAITER), False),
+    "claude-python-cwd": ("cd /tmp/e && python3 -m jailbee inbox wait", False),
+    "claude-python-inner-unsafe": (claude_script("python3 -m jailbee inbox wait"), False),
+    "claude-python-inner-safe": (claude_script("python3 -P -m jailbee inbox wait"), True),
     "claude-escaped-quote": (claude_script("jailbee inbox wait --timeout 'none'"), True),
     "claude-quiet": (claude_script(CLAUDE_WAITER + " >/dev/null 2>&1"), True),
     "claude-stderr": (claude_script(CLAUDE_WAITER + " 2>/dev/null"), True),
@@ -374,6 +377,43 @@ CLAUDE_CASES = {
     "claude-subshell-prefix": ("( cd /tmp ) && " + CLAUDE_WAITER, False),
     "claude-hash-rebind": ("hash -p /tmp/hidden-helper jailbee; " + CLAUDE_SCRIPT, False),
     "claude-alias-rebind": ("alias jailbee=hidden_helper; " + CLAUDE_SCRIPT, False),
+    "claude-export-path": ("export PATH=/tmp/e && " + CLAUDE_SCRIPT, False),
+    **{
+        f"claude-environment-rebind-{prefix}-{setup}": (
+            prefix + setup + " && " + CLAUDE_SCRIPT,
+            False,
+        )
+        for prefix in ("", r"\builtin ", "command ")
+        for setup in (
+            "export PYTHONPATH=x",
+            "declare -x LD_PRELOAD=x",
+            "typeset -x PATH=/tmp/e",
+            "readonly PATH=/tmp/e",
+            "local PATH=/tmp/e",
+            "export -f jailbee",
+            "declare -fx jailbee",
+            "declare -Fx jailbee",
+            "typeset -n PATH=other",
+            "export TEST=value",
+            *(
+                f"{builtin} -x {name}"
+                for builtin in ("export", "declare", "typeset")
+                for name in (
+                    "PATH",
+                    "LD_LIBRARY_PATH",
+                    "PYTHONHOME",
+                    "BASH_ENV",
+                    "ENV",
+                    "IFS",
+                    "CDPATH",
+                    "SHELLOPTS",
+                    "BASHOPTS",
+                    "PS4",
+                    "PROMPT_COMMAND",
+                )
+            ),
+        )
+    },
     "claude-cwd-compact": ("eval '" + CLAUDE_WAITER + "'; pwd >/tmp/cwd", True),
     "claude-command-prefix": (r"\command shopt -s nullglob && " + CLAUDE_SCRIPT, True),
     "claude-dot-prefix": (
@@ -390,7 +430,7 @@ CLAUDE_CASES = {
     "claude-builtin-empty": ("builtin && " + CLAUDE_SCRIPT, False),
     "claude-prefix-process-substitution": ("source <(make prep) && " + CLAUDE_SCRIPT, False),
     "claude-builtin-prefix": (
-        r"\builtin set +o histexpand || true && export TEST=value && " + CLAUDE_SCRIPT,
+        r"\builtin set +o histexpand || true && export TEST && " + CLAUDE_SCRIPT,
         True,
     ),
     "claude-cwd-semicolon": ("eval '" + CLAUDE_WAITER + "'; pwd -P > /tmp/cwd", True),
@@ -446,6 +486,12 @@ CLAUDE_CASES = {
         ("jailbee inbox send message --wait", None, False),
         ("jailbee service logs x --wait ready", None, False),
         ("python -m unrelated inbox wait", None, False),
+        *[
+            (f"{python} -m {module} inbox wait", None, False)
+            for python in ("python", "python3", "/opt/venv/bin/python3.13")
+            for module in ("jailbee", "jailbee.container_main", "jailbee.inbox")
+        ],
+        ("python3 -m jailbee inbox wait", "claude-python-cwd", False),
         ("sleep 600", None, False),
         ("pytest", None, False),
         ("jailbee inbox wait", "sibling", False),

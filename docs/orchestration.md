@@ -510,13 +510,18 @@ idle. Live-agent acceptance requires a matching session in `idle` with no
 background processes, or `shell` with only exact `jailbee inbox wait ...`
 commands below its background shells. Python module entry points, including the
 container's `python -P -m jailbee.container_main inbox wait ...` wrapper, are
-recognised. Plain `bash`, `sh` or `dash -c` waiter invocations remain supported.
+recognised only with `-P` (safe-path mode), in both shell text and process leaves. Plain `bash`, `sh` or `dash -c` waiter invocations remain supported.
 Claude Code's Bash-tool wrappers (`bash` or `sh` with exactly `-c SCRIPT`) are
 recognised semantically: prefix commands may use a fixed set of setup builtins
 (`shopt`, `set`, `unalias`, `unset`, `export`, `declare`/`typeset`, `cd`,
 `true`/`false`, `:`, `umask`, `hash`, `alias`), optionally via `builtin` or
 `command`, or source a file directly under the user's `.claude/shell-snapshots/`.
 Explicit command rebinding (`hash -p`, alias definitions) is refused.
+`export`/`declare`/`typeset` accept only bare variable names and `-r`/`-x`/`-p`
+flags (or combinations); assignments and function/nameref flags refuse.
+Even bare names refuse for `PATH`, `LD_*`, `PYTHON*`, `BASH_ENV`, `ENV`, `IFS`,
+`CDPATH`, `SHELLOPTS`, `BASHOPTS`, `PS4` and `PROMPT_COMMAND`.
+`readonly` and `local` are not allowed setup commands.
 Brace groups of those commands are allowed; nonbuiltin calls, other sources,
 `eval`/`exec`/`trap`, subshells, substitutions, pipes and backgrounding refuse.
 Exactly one top-level plain waiter or single-quoted waiter `eval` is required.
@@ -526,8 +531,10 @@ is permitted; queued work, compound-command waiters and unparseable wrappers
 refuse. Setup text can vary across Claude versions without an exact-text update.
 Residual trust: Claude's shell-snapshot contents are trusted; snapshot-defined
 functions or aliases named `jailbee` or `eval` could hide work after the waiter.
-The probe does not inspect sourced function bodies. Each waiter must have no descendants, and both cases
-require readable activity proving no subagents remain. Process identities,
+The probe does not inspect sourced function bodies, verify executable paths or
+symlink targets named `jailbee`/`python*`, or detect processes forging their own
+command lines. Each waiter must have no descendants, and both cases require
+readable activity proving no subagents remain. Process identities,
 child sets, commands and matching session/activity evidence are checked again
 immediately before killing the old window; changed or unreadable evidence
 refuses relaunch. `busy`, `waiting` (including permission

@@ -254,8 +254,11 @@ def waiter(argv):
     entry = pathlib.Path(argv[0]).name
     args = argv[1:]
     if entry in ('python', 'python3') or entry.startswith('python3.'):
-        if args[:1] == ['-P']:
-            args = args[1:]
+        # The container entry point uses safe-path mode; without it, -m can
+        # import a different jailbee from the wrapper's working directory.
+        if args[:1] != ['-P']:
+            return False
+        args = args[1:]
         if len(args) < 2 or args[0] != '-m' or args[1] not in (
             'jailbee', 'jailbee.container_main', 'jailbee.inbox'):
             return False
@@ -371,6 +374,17 @@ def builtin_prefix(script):
         return False
     if words[0] == 'alias' and any('=' in word for word in words[1:]):
         return False
+    if words[0] in ('export', 'declare', 'typeset'):
+        # Bare names only: assignments and function/nameref flags can rebind
+        # later commands even when the observed leaf still looks like a waiter.
+        sensitive = {'PATH', 'BASH_ENV', 'ENV', 'IFS', 'CDPATH', 'SHELLOPTS',
+                     'BASHOPTS', 'PS4', 'PROMPT_COMMAND'}
+        for word in words[1:]:
+            if word == '--' or re.fullmatch(r'-[rxp]+', word):
+                continue
+            if (re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', word) is None
+                    or word in sensitive or word.startswith(('LD_', 'PYTHON'))):
+                return False
     return words[0] in {'shopt', 'set', 'unalias', 'unset', 'export', 'declare',
                         'typeset', 'cd', 'true', 'false', ':', 'umask', 'hash', 'alias'}
 
