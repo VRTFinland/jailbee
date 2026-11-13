@@ -270,6 +270,25 @@ def test_socket_restart_immediately_after_stop_is_accepted(
     seams["boot"].assert_called_once()
 
 
+@pytest.mark.parametrize(
+    ("head", "dirty", "reason"),
+    [("bbb", False, "never imported"), ("aaa", True, "uncommitted changes"),
+     (None, False, "restart")],
+)
+def test_stop_then_destroy_keeps_current_safety_labels(tmp_path, seams, monkeypatch, head, dirty, reason):
+    rig = Rig(
+        tmp_path, running=True,
+        config={labels.LAST_IMPORT: "aaa", labels.STOPPED_HEAD: "aaa"},
+    )
+    seams["head"].return_value = head
+    monkeypatch.setattr(actions.sync, "_container_dirty_quiet", lambda *a, **kw: dirty)
+    ctx = rig.ctx()
+    assert actions.handle_stop(ctx, _stop()).state == "done"
+    outcome = actions.handle_destroy(ctx, _destroy())
+    assert outcome.state == "refused" and reason in outcome.detail, outcome
+    seams["destroy"].assert_not_called()
+
+
 def _restart(child: str = "c1") -> RestartManifest:
     return RestartManifest.model_validate(
         {"version": 1, "id": "r1", "type": "restart", "child": child, "prompt": "go on"}

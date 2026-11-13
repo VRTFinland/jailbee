@@ -1140,7 +1140,18 @@ def _handle_stop_locked(ctx: ActionContext, m: Manifest) -> Outcome:
             return refused(f"child `{child.short}` could not be stopped: {e}")
         # The blocking stop succeeded. Do not depend on a best-effort inventory
         # refresh to make an immediate restart see the completed transition.
-        ctx.nodes = {**ctx.nodes, child.full: replace(child, running=False)}
+        stopped_config = dict(child.config)
+        if head is not None:
+            stopped_config[labels.STOPPED_HEAD] = head
+        else:
+            stopped_config.pop(labels.STOPPED_HEAD, None)
+        if dirty is False:
+            stopped_config.pop(labels.STOPPED_DIRTY, None)
+        else:
+            stopped_config[labels.STOPPED_DIRTY] = "1"
+        ctx.nodes = {
+            **ctx.nodes, child.full: replace(child, running=False, config=stopped_config)
+        }
     else:
         forced = False
     from jailbee.orchestration.watch import cancel
