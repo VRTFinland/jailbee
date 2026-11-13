@@ -64,6 +64,24 @@ def seed_draft(broker, name, action, *, pr=1234, head_sha="old-head", repo="acme
     )
 
 
+@pytest.mark.parametrize("review", [False, True], ids=["comment", "review-submit"])
+def test_staging_prints_single_proposal_host_publish_command(monkeypatch, broker, review):
+    import socket
+
+    monkeypatch.setattr(socket, "gethostname", lambda: "test-container")
+    if review:
+        added = invoke("review", "add", "1234", "--file", "a.py", "--line", "1", "--body", "Note")
+        assert added.exit_code == 0, added.output
+        result = invoke("review", "submit", "1234")
+    else:
+        result = invoke("comment", "1234", "--body", "Note")
+    assert result.exit_code == 0, result.output
+    (proposal,) = broker.proposals("pr")
+    assert result.output.split("publish on the host: ", 1)[1].strip() == (
+        f"jb outbox apply test-container pr/{proposal.name}"
+    )
+
+
 def test_three_comments_one_review_preserves_anchor_and_body_files(monkeypatch, tmp_path, broker):
     body_file = tmp_path / "input.md"
     body_file.write_text("Keep this multiline\ncomment intact.\n")

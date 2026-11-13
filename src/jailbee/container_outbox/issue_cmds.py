@@ -212,7 +212,7 @@ def _stage(
         else:
             typer.echo(
                 f"staged issue/{name} — publish on the host: "
-                f"jb issue apply {socket.gethostname()} {name}"
+                f"jb outbox apply {socket.gethostname()} issue/{name}"
             )
 
 

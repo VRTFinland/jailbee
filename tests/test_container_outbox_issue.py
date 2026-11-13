@@ -114,6 +114,18 @@ def test_project_set_expands_fields_into_one_proposal_without_reads(monkeypatch)
     assert len(staged) == 1
 
 
+def test_staging_prints_single_proposal_host_publish_command(monkeypatch, broker):
+    import socket
+
+    monkeypatch.setattr(socket, "gethostname", lambda: "test-container")
+    result = invoke("create", "--title", "Bug", "--body", "body")
+    assert result.exit_code == 0, result.output
+    (proposal,) = broker.proposals("issue")
+    assert result.output.split("publish on the host: ", 1)[1].strip() == (
+        f"jb outbox apply test-container issue/{proposal.name}"
+    )
+
+
 def test_create_json_outputs_only_manifest_name(tmp_path, broker):
     result = invoke("create", "--title", "Bug", "--body", "body", "--json")
     assert result.exit_code == 0, result.output

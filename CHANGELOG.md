@@ -28,6 +28,11 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- Container PR and issue staging commands now print a valid single-proposal
+  publish hint: `jb outbox apply <container> pr/<name>` or `issue/<name>`,
+  instead of a positional manifest argument rejected by `jb review apply`
+  and `jb issue apply`
+  ([#112](https://github.com/VRTFinland/jailbee/issues/112)).
 - Vanished publishers no longer leave accepted-request records indefinitely or
   pass their hourly publish budget to a new container with the same name.
 - The broker now drops vanished containers' status probes, failed socket-attach
