@@ -61,6 +61,7 @@ def handle_send(
     if ctx.role() in ("none", "plain"):
         raise wire.WireError(wire.NOT_ORCHESTRATED, "this container has no orchestration role")
 
+    cached_ctx = ctx
     ctx = dataclasses.replace(ctx, now=datetime.now(UTC))
 
     def deliver_status(status: dict[str, object]) -> None:
@@ -134,6 +135,9 @@ def handle_send(
         )
 
     def reply(ref: str, outcome: Outcome) -> None:
+        # Publish lifecycle refreshes back to the round's context before the
+        # reply; the next socket request must not reuse its old inventory.
+        cached_ctx.nodes = ctx.nodes
         assert item is not None
         deliver_status(item)
         try:

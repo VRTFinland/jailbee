@@ -1022,7 +1022,11 @@ merged state.
   once to a forced stop, and the outcome says so; if the forced stop fails
   too, the stop is refused); **restart** a stopped child with a new prompt (it counts
   against the limit and is queued if the limit is full). A running child is
-  refused ("stop it first").
+  refused ("stop it first"). Once `send stop --child SHORT --wait` reports
+  `done`, an immediate restart sees the child as stopped. Stop also accepts
+  `--wait --until done --json`: its single final status makes `--until done`
+  equivalent to `--wait`, and `--json` prints one JSON status object on stdout
+  with the request ID on stderr.
 - **Destroy** (needs `destroy` in the grant) works on a running or stopped
   child; a done `keep` child needs only `destroy`, not `stop` first. It is
   refused for uncommitted changes or commits never imported: HEAD must equal

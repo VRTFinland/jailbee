@@ -28,6 +28,11 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- An immediate `jailbee inbox send restart` after a successful `send stop --wait`
+  no longer reads the broker's stale running state and refuses with "stop it
+  first". `send stop` also accepts `--until done` and `--json` for consistent
+  scripted waits
+  ([#122](https://github.com/VRTFinland/jailbee/issues/122)).
 - Container PR and issue staging commands now print a valid single-proposal
   publish hint: `jb outbox apply <container> pr/<name>` or `issue/<name>`,
   instead of a positional manifest argument rejected by `jb review apply`

@@ -522,6 +522,13 @@ slot. One `--timeout` covers acceptance and readiness (default `30m`; `none` is
 unlimited). Exit 1 means failed/refused, 3 means timeout; inspect the inbox before
 retrying a timed-out request. Plain `--wait` still returns the first status.
 Add `--json` for one JSON status object.
+
+Before replacing a running child's brief, use `send stop --child SHORT --wait
+--until done --json` and check its exit code. Stop has one final status, so
+`--until done` is equivalent to `--wait`; stdout is one JSON status object
+and stderr carries the request ID. After stop reports `done`, send restart
+immediately; no broker-round delay is needed.
+
 A `message` to an already-ready but stopped child is answered `queued` and
 delivered when it runs again.
 

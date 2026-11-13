@@ -219,6 +219,57 @@ def test_stop_records_stopped_dirty(
         rig.incus.config_set.assert_any_call(rig.child.full, labels.STOPPED_DIRTY, "1")
 
 
+@pytest.mark.parametrize("refresh_fails", [False, True])
+def test_socket_restart_immediately_after_stop_is_accepted(
+    tmp_path, seams, monkeypatch, refresh_fails
+):
+    from jailbee.orchestration import broker_state, executor, inbox_state, wire
+    from jailbee.orchestration.listener import RequestEvent
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    rig = Rig(tmp_path, running=True)
+    ctx = rig.ctx()
+    inventory = [
+        {
+            "name": node.full,
+            "status": "Running" if node.running else "Stopped",
+            "config": dict(node.config),
+        }
+        for node in ctx.nodes.values()
+    ]
+    rig.incus.list_containers.return_value = inventory
+    if refresh_fails:
+        rig.incus.list_containers.side_effect = IncusError("inventory unavailable")
+    monkeypatch.setattr(broker_state, "repo_configs", lambda memory: {"proj": rig.cfg})
+    monkeypatch.setattr(inbox_state, "sync_children", lambda *args: [])
+
+    def stop(*args, **kwargs):
+        inventory[1]["status"] = "Stopped"
+        return False
+
+    seams["stop"].side_effect = stop
+    memory = broker_state.BrokerMemory()
+    memory.contexts[rig.sender.key] = ctx
+    memory.store = BrokerStore(store_path(rig.root))
+    memory.store.set_recipient(rig.sender.full, rig.sender.key, now=1)
+    memory.listener = MagicMock()
+
+    for conn_id, manifest in enumerate((_stop(), _restart()), start=1):
+        executor.handle_event(
+            memory,
+            RequestEvent(
+                rig.sender.key,
+                conn_id,
+                wire.Request("send", {"manifest": manifest.model_dump(), "wait": True}),
+            ),
+        )
+
+    responses = [call.args[1] for call in memory.listener.respond.call_args_list]
+    assert responses[0].ok and responses[0].result["state"] == "done"
+    assert responses[1].ok and responses[1].result["state"] == "started", responses[1]
+    seams["boot"].assert_called_once()
+
+
 def _restart(child: str = "c1") -> RestartManifest:
     return RestartManifest.model_validate(
         {"version": 1, "id": "r1", "type": "restart", "child": child, "prompt": "go on"}
