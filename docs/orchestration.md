@@ -516,6 +516,7 @@ recognised semantically: prefix commands may use a fixed set of setup builtins
 (`shopt`, `set`, `unalias`, `unset`, `export`, `declare`/`typeset`, `cd`,
 `true`/`false`, `:`, `umask`, `hash`, `alias`), optionally via `builtin` or
 `command`, or source a file directly under the user's `.claude/shell-snapshots/`.
+Explicit command rebinding (`hash -p`, alias definitions) is refused.
 Brace groups of those commands are allowed; nonbuiltin calls, other sources,
 `eval`/`exec`/`trap`, subshells, substitutions, pipes and backgrounding refuse.
 Exactly one top-level plain waiter or single-quoted waiter `eval` is required.

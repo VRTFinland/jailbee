@@ -622,8 +622,8 @@ may use setup builtins (`shopt`, `set`, `unalias`, `unset`, `export`,
 `declare`/`typeset`, `cd`, `true`/`false`, `:`, `umask`, `hash`, `alias`), optionally
 via `builtin`/`command`, source a file directly under `.claude/shell-snapshots/`
 in the user's home, or group those commands in braces. Nonbuiltin calls, other
-sources, prefix `eval`/`exec`/`trap`, subshells, substitutions, pipes and
-backgrounding refuse. Exactly one top-level plain waiter or quoted waiter
+sources, prefix `eval`/`exec`/`trap`, command rebinding (`hash -p`, alias
+definitions), subshells, substitutions, pipes and backgrounding refuse. Exactly one top-level plain waiter or quoted waiter
 `eval` is required, with only `/dev/null` redirections or stderr merged into
 stdout, and at most one following cwd capture (`pwd [-P]` redirected to a path).
 Queued work, compound-command waiters and unparseable wrappers refuse; setup

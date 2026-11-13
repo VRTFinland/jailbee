@@ -366,6 +366,11 @@ def builtin_prefix(script):
         folder = home / '.claude' / 'shell-snapshots'
         return (len(words) == 2 and pathlib.Path(words[1]).parent == folder
                 and re.fullmatch(r'[A-Za-z0-9_.-]+\.sh', pathlib.Path(words[1]).name) is not None)
+    # Setup must not install a different implementation of a later command.
+    if words[0] == 'hash' and any(word.startswith('-') and 'p' in word for word in words[1:]):
+        return False
+    if words[0] == 'alias' and any('=' in word for word in words[1:]):
+        return False
     return words[0] in {'shopt', 'set', 'unalias', 'unset', 'export', 'declare',
                         'typeset', 'cd', 'true', 'false', ':', 'umask', 'hash', 'alias'}
 
@@ -391,7 +396,7 @@ def claude_waiter(script):
         return False
     tail, final_operator = parts[-1]
     return (not final_operator and re.fullmatch(
-        r'''pwd(?: -P)? >\|? (?:[A-Za-z0-9_./-]+|'[A-Za-z0-9_./ -]+')''', tail
+        r'''pwd(?: -P)?[ \t]*>\|?[ \t]*(?:[A-Za-z0-9_./-]+|'[A-Za-z0-9_./ -]+')''', tail
     ) is not None)
 
 def waiter_shell(argv):
