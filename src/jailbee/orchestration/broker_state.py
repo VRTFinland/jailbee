@@ -13,12 +13,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from jailbee.config import load_repo_config
-from jailbee.orchestration import labels
+from jailbee.orchestration import labels, wire
 from jailbee.orchestration.actions import Node
 from jailbee.orchestration.child_status import StatusCache
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Callable, Iterator, Mapping
     from types import FrameType
 
     from jailbee.config import Config
@@ -75,6 +75,8 @@ class BrokerMemory:
     reassert: set[str] = field(default_factory=set)
     # Parked `next` long-polls, answered by the executor.
     waiters: Waiters = field(default_factory=lambda: _new_waiters())
+    # Monotonic clock behind `pulse` (injected by tests).
+    clock: Callable[[], float] = field(default_factory=lambda: time.monotonic)
     # `monotonic()` of the last retention purge; None until the first round.
     last_purge: float | None = None
     # Store uuids the previous purge did not find in the listing.
@@ -88,6 +90,24 @@ class BrokerMemory:
 
     # Per-container failure key -> signature of the failure last logged for it.
     failures: dict[str, str] = field(default_factory=dict)
+
+    def pulse(self) -> None:
+        """Keep parked waiters alive from inside a long round (#123).
+
+        A round runs on the loop thread and can block for minutes (imports,
+        destroys, inventory calls); the executor's keepalives only flow between
+        rounds, so the round calls this between its steps. It touches no store
+        and answers no request, so it never overlaps a handler. Running on the
+        loop thread, it still proves that thread makes progress: a hung broker
+        stops pulsing and its waiters still hit the client's outage bound.
+        """
+        listener = self.listener
+        if listener is None or not len(self.waiters):
+            return
+        lead = wire.KEEPALIVE_INTERVAL - wire.KEEPALIVE_PULSE_SPACING
+        for conn_id in self.waiters.due_keepalives(self.clock(), lead=lead):
+            if listener.is_connected(conn_id):
+                listener.keepalive(conn_id)
 
     def forget_vanished(self, names: set[str], keys: set[str]) -> None:
         """Prune instance caches even when the round has no work or config fails."""

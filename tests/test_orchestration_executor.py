@@ -36,6 +36,9 @@ class FakeListener:
     def release(self, conn_id: int) -> None:
         self.released.append(conn_id)
 
+    def close_container(self, uuid: str) -> None:
+        pass
+
 
 class Env:
     def __init__(self, rig: Rig) -> None:
@@ -512,3 +515,55 @@ def test_real_send_disconnect_during_delivery_stays_unread(
     finally:
         client.close()
         listener.stop()
+
+
+def test_a_long_broker_round_keeps_parked_waiters_alive(env: Env) -> None:
+    """#123: a round that blocks the loop thread must not starve a parked waiter.
+
+    The client drops a connection that sees no keepalive for
+    `transport._KEEPALIVE_TIMEOUT`; its reconnect is only served after the round,
+    so a round longer than the outage bound ended `inbox wait` with exit 4.
+    """
+    from jailbee.inbox import transport
+
+    now = [0.0]
+    sent: list[float] = []
+    env.memory.clock = lambda: now[0]
+    real_keepalive = env.listener.keepalive
+
+    def keepalive(conn_id: int) -> None:
+        sent.append(now[0])
+        real_keepalive(conn_id)
+
+    env.listener.keepalive = keepalive  # type: ignore[method-assign]
+    executor.handle_event(
+        env.memory,
+        RequestEvent(env.orch, 3, wire.Request("next", {"keepalive": True})),
+        clock=lambda: now[0],
+    )
+    env.rig.incus.list_containers.return_value = [
+        _orch(),
+        *(_child(f"proj-kid{n}") for n in range(3)),
+    ]
+
+    def slow_node(ctx: object, memory: object) -> None:
+        now[0] += 35.0  # one node's imports and incus calls
+
+    env.rig.serve_requests.side_effect = slow_node
+    env.rig.tick(env.memory)
+    assert now[0] > transport._UNREACHABLE_LIMIT  # the round outlasts the client bound
+    gaps = [b - a for a, b in zip(sent, [*sent[1:], now[0]], strict=True)]
+    assert max(gaps) < transport._KEEPALIVE_TIMEOUT
+
+
+def test_reconnected_next_parks_after_its_dropped_predecessor(env: Env) -> None:
+    """#123 hypothesis B: a client reconnect (``replace`` forced off) is parked and
+    answered with a keepalive at once, not refused by its own stale waiter."""
+    for event in (
+        RequestEvent(env.orch, 3, wire.Request("next", {"keepalive": True})),
+        DisconnectEvent(env.orch, 3),
+        RequestEvent(env.orch, 4, wire.Request("next", {"keepalive": True, "replace": False})),
+    ):
+        executor.handle_event(env.memory, event)
+    assert env.listener.responses[-1] == (4, wire.ok({"kind": "keepalive"}))
+    assert len(env.memory.waiters) == 1

@@ -501,14 +501,19 @@ class Waiters:
             if current.uuid == uuid and current.conn_id == conn_id:
                 del self._by_uuid[key]
 
-    def due_keepalives(self, mono: float) -> list[int]:
-        """Return due parked connections and advance their next keepalive time."""
+    def due_keepalives(self, mono: float, *, lead: float = 0.0) -> list[int]:
+        """Return due parked connections and advance their next keepalive time.
+
+        ``lead`` counts a keepalive due that much early: a round's pulse (#123)
+        sends whenever one is not too recent, since it cannot know when the
+        loop thread will next get the chance.
+        """
         due: list[int] = []
         for waiter in self._by_uuid.values():
             if (
                 waiter.keepalive
                 and waiter.next_keepalive is not None
-                and mono >= waiter.next_keepalive
+                and mono + lead >= waiter.next_keepalive
             ):
                 due.append(waiter.conn_id)
                 waiter.next_keepalive = mono + wire.KEEPALIVE_INTERVAL

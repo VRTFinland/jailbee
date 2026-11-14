@@ -31,6 +31,11 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- A `jailbee inbox wait --timeout none` no longer exits 4 ("the host broker is
+  not reachable") while the broker is merely busy: a long broker round
+  (child imports, destroys, inventory calls) now keeps sending keepalives
+  between its steps, so only a dead or hung broker ends the wait
+  ([#123](https://github.com/VRTFinland/jailbee/issues/123)).
 - `jailbee inbox send restart --agent-only` accepts a live idle agent whose only
   background commands are childless inbox waiters, including the container's
   Python wrapper. Parent shells must contain a single waiter invocation.

@@ -50,6 +50,7 @@ def serve_requests(
         except queue.Empty:
             event = None
         if event is not None:
+            memory.pulse()  # a slow handler must not starve parked waiters (#123)
             handle_event(memory, event, clock=clock)
         evaluate_waiters(memory, clock=clock)
         if wake is not None and wake():

@@ -108,7 +108,8 @@ finish.
 
 `next` accepts optional `keepalive: true` (default false). A parked opted-in
 request receives `{"v":1,"ok":true,"result":{"kind":"keepalive"}}` on
-registration and every 30 s from the executor, in addition to its eventual
+registration and every 30 s from the executor, and between the steps of a
+broker round once the last one is 5 s old, in addition to its eventual
 final response. These frames leave the request in flight, retain its waiter
 slot, and neither satisfy a wake nor acknowledge an item. Clients ignore them
 and enforce a 40 s whole-frame read watchdog. See

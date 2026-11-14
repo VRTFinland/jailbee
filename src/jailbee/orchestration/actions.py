@@ -119,6 +119,10 @@ def failed(detail: str) -> Outcome:
     return Outcome("failed", detail)
 
 
+def _no_pulse() -> None:
+    """`ActionContext.pulse` outside a broker round."""
+
+
 @dataclass
 class ActionContext:
     cfg: Config
@@ -130,6 +134,9 @@ class ActionContext:
     now: datetime
     # Shared with the broker's memory so handlers keep one emission order.
     seq: Iterator[int] = field(default_factory=itertools.count)
+    # The broker's keepalive pulse (`BrokerMemory.pulse`), called between the
+    # slow steps of a handler so a long round keeps parked waiters alive (#123).
+    pulse: Callable[[], None] = field(default_factory=lambda: _no_pulse)
 
     def role(self) -> Role:
         if self.sender.config.get(labels.SPAWNED_BY):
