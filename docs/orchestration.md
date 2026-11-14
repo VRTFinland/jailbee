@@ -894,8 +894,8 @@ New waiters opt into no-op keepalive frames, sent when registered and every
 30 s by the broker executor. A broker round (imports, destroys, inventory
 calls) can block the executor for minutes, so the round also sends a keepalive
 between its steps once the last one is 5 s old: a busy broker keeps its
-waiters armed, while a hung one sends none. A 40 s read watchdog treats a missing keepalive
-as a drop and reconnects. Keepalives neither satisfy a wake nor consume an
+waiters armed, while a hung one sends none. A 40 s read watchdog treats a
+missing keepalive as a drop and reconnects. Keepalives neither satisfy a wake nor consume an
 inbox message, and cannot extend a finite caller timeout. A broker predating
 keepalives may accept the request but leave it silent: the same watchdog and
 outage bound end that wait with exit 4. Upgrade/restart the broker rather than

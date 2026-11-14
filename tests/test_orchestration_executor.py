@@ -535,7 +535,8 @@ def test_a_long_broker_round_keeps_parked_waiters_alive(env: Env) -> None:
         sent.append(now[0])
         real_keepalive(conn_id)
 
-    env.listener.keepalive = keepalive  # type: ignore[method-assign]
+    # Record when each keepalive leaves; the fake has no hook for that.
+    env.listener.keepalive = keepalive  # type: ignore[method-assign]  # wrap the fake to timestamp
     executor.handle_event(
         env.memory,
         RequestEvent(env.orch, 3, wire.Request("next", {"keepalive": True})),
@@ -567,3 +568,30 @@ def test_reconnected_next_parks_after_its_dropped_predecessor(env: Env) -> None:
         executor.handle_event(env.memory, event)
     assert env.listener.responses[-1] == (4, wire.ok({"kind": "keepalive"}))
     assert len(env.memory.waiters) == 1
+
+
+def test_a_slow_handler_is_preceded_by_a_keepalive_pulse(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#123: a queued handler (a `done` import) may block for tens of seconds;
+    a parked waiter gets its keepalive before it starts, not 30 s after the last."""
+    now = [0.0]
+    env.memory.clock = lambda: now[0]
+    executor.handle_event(
+        env.memory,
+        RequestEvent(env.orch, 3, wire.Request("next", {"keepalive": True})),
+        clock=lambda: now[0],
+    )
+    now[0] = 25.0
+    seen: list[int] = []
+
+    def slow_handler(memory: Any, event: Any, **kwargs: Any) -> None:
+        seen.append(len(env.listener.responses))
+        now[0] += 30.0
+
+    monkeypatch.setattr(executor, "handle_event", slow_handler)
+    env.memory.requests.put(RequestEvent(env.kid, 9, wire.Request("list")))
+    stop = broker_state.StopFlag()
+    executor.serve_requests(env.memory, until=26.0, stop=stop, clock=lambda: now[0])
+    assert seen == [2]  # registration keepalive + the pulse at 25 s
+    assert env.listener.responses[1] == (3, wire.ok({"kind": "keepalive"}))
