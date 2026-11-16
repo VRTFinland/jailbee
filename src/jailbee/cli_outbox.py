@@ -329,7 +329,8 @@ def attachments(
 
     def operation(cfg: Config, incus: Incus) -> int:
         name = (
-            container if container is not None
+            container
+            if container is not None
             else prompting.ask_text(
                 "container", validate=lambda value: None if value.strip() else "enter a container"
             )
