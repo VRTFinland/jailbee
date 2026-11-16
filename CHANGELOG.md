@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.8.8 - 2026-11-16
+
 The LiteLLM proxy pin remains at 1.106.0. Custom Azure deployments may be
 exposed to
 [GHSA-2rwg-2wh4-7c4f](https://github.com/BerriAI/litellm/security/advisories/GHSA-2rwg-2wh4-7c4f);
