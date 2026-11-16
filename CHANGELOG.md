@@ -8,6 +8,14 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+The LiteLLM proxy pin remains at 1.106.0. Custom Azure deployments may be
+exposed to
+[GHSA-2rwg-2wh4-7c4f](https://github.com/BerriAI/litellm/security/advisories/GHSA-2rwg-2wh4-7c4f);
+the built-in ChatGPT routes do not meet the advisory's prerequisites. See the
+[security guidance](docs/litellm.md#security-and-limitations) before using an
+Azure route. The upstream fix in 1.106.9 still needs the required age and
+artifact review before the pin can move.
+
 ### Added
 
 - In-container agents can stage adding issues and pull requests to GitHub
