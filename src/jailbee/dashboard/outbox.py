@@ -761,7 +761,8 @@ def preview_lines(state: OutboxState, key: RowKey | None, width: int) -> tuple[T
         for upload in found[1].uploads:
             lines.append(
                 Text(
-                    f"Upload {_clean(upload.blob)} to {_clean(upload.host)}/{upload.repository_id}: "
+                    f"Upload {_clean(upload.blob)} to "
+                    f"{_clean(upload.host)}/{upload.repository_id}: "
                     f"{_clean(upload.state)}; URL: {_clean(upload.url or '-')}"
                 )
             )

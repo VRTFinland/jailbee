@@ -55,7 +55,9 @@ def _run(
 ) -> subprocess.CompletedProcess[bytes]:
     try:
         proc = pr.attachment_request(
-            repo_root, args, timeout=_TIMEOUT_SECONDS,
+            repo_root,
+            args,
+            timeout=_TIMEOUT_SECONDS,
             env={
                 **{key: value for key, value in os.environ.items() if key not in _IGNORED_GH_ENV},
                 "GH_HOST": "github.com",

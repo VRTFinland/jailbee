@@ -60,15 +60,26 @@ def test_stage_can_append_images_to_an_existing_issue_draft(monkeypatch, tmp_pat
     monkeypatch.delenv("JAILBEE_ROLE", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     path = tmp_path / "append.json"
-    path.write_text(json.dumps({"version": 1, "actions": [
-        {"type": "comment", "repo": ".", "issue": 7, "body": "![x](attachment:screen)"}
-    ]}))
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "actions": [
+                    {"type": "comment", "repo": ".", "issue": 7, "body": "![x](attachment:screen)"}
+                ],
+            }
+        )
+    )
     monkeypatch.setattr(attachments, "capture_inputs", lambda value, base: value)
     monkeypatch.setattr(broker, "draft_list", lambda kind: [{"name": "evidence"}])
     monkeypatch.setattr(broker, "draft_show", lambda *args: {"revision": 3})
     calls = []
-    monkeypatch.setattr(broker, "draft_append_many", lambda *args, **kwargs: calls.append((args, kwargs)))
-    result = CliRunner().invoke(container_app, ["outbox", "stage", "issue", str(path), "--batch", "evidence"])
+    monkeypatch.setattr(
+        broker, "draft_append_many", lambda *args, **kwargs: calls.append((args, kwargs))
+    )
+    result = CliRunner().invoke(
+        container_app, ["outbox", "stage", "issue", str(path), "--batch", "evidence"]
+    )
     assert result.exit_code == 0, result.output
     assert calls[0][1]["expected_revision"] == 3
     assert calls[0][0][1] == "evidence"

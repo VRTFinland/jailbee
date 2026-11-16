@@ -143,8 +143,12 @@ def attachment_request(
 ) -> subprocess.CompletedProcess[bytes]:
     """Run one image request; the attachment module owns validation and recovery."""
     return subprocess.run(
-        ["gh", "api", *args], cwd=repo_root, capture_output=True,
-        check=False, timeout=timeout, env=env,
+        ["gh", "api", *args],
+        cwd=repo_root,
+        capture_output=True,
+        check=False,
+        timeout=timeout,
+        env=env,
     )
 
 

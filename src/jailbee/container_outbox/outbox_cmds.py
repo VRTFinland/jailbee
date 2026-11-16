@@ -123,23 +123,34 @@ def stage(
             raise OutboxCommandError(f"cannot capture proposal inputs: {exc}", 2) from exc
         if batch is not None:
             actions = converted.get("actions")
-            if not isinstance(actions, list) or not actions or not all(
-                isinstance(action, dict) for action in actions
+            if (
+                not isinstance(actions, list)
+                or not actions
+                or not all(isinstance(action, dict) for action in actions)
             ):
                 raise OutboxCommandError("draft input must have a nonempty actions list", 2)
             declarations = cast(dict[str, object], converted.get("attachments", {}))
             if kind == "issue":
                 broker.draft_append_many(
-                    "issue", batch, actions, bodies,
-                    attachments=declarations, expected_revision=revision,
+                    "issue",
+                    batch,
+                    actions,
+                    bodies,
+                    attachments=declarations,
+                    expected_revision=revision,
                 )
             else:
                 if len(actions) != 1:
                     raise OutboxCommandError("append one PR action per draft command", 2)
                 envelope = {key: converted.get(key) for key in ("repo", "pr", "head_sha")}
                 broker.draft_append(
-                    "pr", batch, actions[0], bodies, envelope=envelope,
-                    attachments=declarations, expected_revision=revision,
+                    "pr",
+                    batch,
+                    actions[0],
+                    bodies,
+                    envelope=envelope,
+                    attachments=declarations,
+                    expected_revision=revision,
                 )
             typer.echo(f"staged {kind} draft {batch}")
         else:

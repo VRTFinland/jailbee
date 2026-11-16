@@ -35,8 +35,12 @@ def handle(
         if op == wire.OUTBOX_ATTACHMENT_BEGIN:
             captures.collect(now)
             blob = captures.begin(
-                uuid, _string(args, "name"), _string(args, "content_type"),
-                _integer(args, "size"), _string(args, "sha256"), now=now,
+                uuid,
+                _string(args, "name"),
+                _string(args, "content_type"),
+                _integer(args, "size"),
+                _string(args, "sha256"),
+                now=now,
             )
             return {"blob": blob}
         blob = _string(args, "blob")

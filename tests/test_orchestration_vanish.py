@@ -129,16 +129,17 @@ TABLE_LIFETIMES = {
     "outbox_journal_action": (PERSISTENT, "publication resolution/archive; retain audit history"),
     "outbox_sent": (PERSISTENT, "PublicationStore.clear_sent is explicit operator cleanup"),
     "outbox_attachment": (
-        PERSISTENT, "last reference release or hourly collection after 24 hours unreferenced"
+        PERSISTENT,
+        "last reference release or hourly collection after 24 hours unreferenced",
     ),
-    "outbox_attachment_chunk": (
-        PERSISTENT, "removed atomically with its unreferenced attachment"
-    ),
+    "outbox_attachment_chunk": (PERSISTENT, "removed atomically with its unreferenced attachment"),
     "outbox_attachment_ref": (
-        PERSISTENT, "proposal/draft discard, completion or destroy; uncertainty retains refs"
+        PERSISTENT,
+        "proposal/draft discard, completion or destroy; uncertainty retains refs",
     ),
     "outbox_attachment_upload": (
-        PERSISTENT, "durable upload metadata and canonical URLs retained for audit/recovery"
+        PERSISTENT,
+        "durable upload metadata and canonical URLs retained for audit/recovery",
     ),
 }
 

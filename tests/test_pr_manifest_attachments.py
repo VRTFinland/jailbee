@@ -4,7 +4,6 @@ import pytest
 
 from jailbee.pr_manifest import ManifestError, parse_manifest
 
-
 ATTACHMENT = {
     "blob": "a" * 32,
     "name": "image.png",
