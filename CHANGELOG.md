@@ -10,16 +10,16 @@ before editing `## Unreleased`.
 
 ### Added
 
-- In-container agents can stage adding, updating fields on, and removing issues
-  and pull requests from GitHub Projects v2 boards with `jailbee issue project`.
-  Field changes stage individually, may target a same-batch `@REF`, and use the
-  committed `github.project` default when no board is specified. Host publication
-  checks the staged membership and field state; orchestrators can receive
-  board-scoped publish rights, editable in the terminal dashboard. Staging reads
-  only the default board, host-local `github.projects` extras, or boards in the
-  orchestrator's grant, refusing all others before any host read. Multi-field
-  staging is atomic without holding the broker write lock during GitHub reads;
-  explicit retries preserve membership from a partial implicit add.
+- In-container agents can stage adding issues and pull requests to GitHub
+  Projects v2 boards, changing their fields, and removing them with
+  `jailbee issue project`. Commands use the committed `github.project` default
+  when no board is specified, support same-batch `@REF` targets, and stage
+  multi-field changes atomically. Publication checks for changed membership and
+  field values before applying a proposal; retries retain partial progress.
+  Staging can read only configured or explicitly granted boards. Orchestrators
+  can receive board-scoped publish rights, editable in the terminal dashboard
+  ([#115](https://github.com/VRTFinland/jailbee/issues/115),
+  [#116](https://github.com/VRTFinland/jailbee/issues/116)).
 - Orchestrators can cancel a queued spawn or restart with `jailbee inbox send
   cancel --request ID` (or `--child SHORT`) before resending with a different
   runner. Cancellation frees the name and settles the original request as
@@ -31,17 +31,21 @@ before editing `## Unreleased`.
 
 ### Fixed
 
-- A `jailbee inbox wait --timeout none` no longer exits 4 ("the host broker is
-  not reachable") while the broker is merely busy: a long broker round
-  (child imports, destroys, inventory calls) now keeps sending keepalives
-  between its steps, so only a dead or hung broker ends the wait
+- The dashboard swap meter excludes swap-cached and zswap-resident pages,
+  reporting memory actually swapped out rather than all occupied swap slots.
+- `jailbee inbox wait --timeout none` no longer mistakes a long broker round
+  (child imports, destroys, inventory calls) for an unreachable broker when
+  its individual steps finish within the watchdog timeout. Keepalives are
+  sent between steps; a single step that blocks longer than the watchdog can
+  still interrupt the wait with exit 4
   ([#123](https://github.com/VRTFinland/jailbee/issues/123)).
 - `jailbee inbox send restart --agent-only` accepts a live idle agent whose only
   background commands are childless inbox waiters, including the container's
   Python wrapper. Parent shells must contain a single waiter invocation.
   Claude Code's Bash-tool wrapper is recognised across setup-prefix changes;
-  queued work, compound-command waiters and unparseable wrappers refuse. Process and session
-  evidence is rechecked immediately before replacing the agent window. Other
+  queued work, compound-command waiters and unparseable wrappers refuse.
+  Process and session evidence is rechecked immediately before replacing the
+  agent window. Other
   work, subagents, permission prompts and changed/unreadable state still refuse
   relaunch with a reason
   ([#121](https://github.com/VRTFinland/jailbee/issues/121)).
@@ -56,9 +60,10 @@ before editing `## Unreleased`.
   ([#112](https://github.com/VRTFinland/jailbee/issues/112)).
 - Vanished publishers no longer leave accepted-request records indefinitely or
   pass their hourly publish budget to a new container with the same name.
-- The broker now drops vanished containers' status probes, failed socket-attach
-  retries, orphaned socket listeners and diagnostic caches even during idle rounds. Reusing a name no longer
-  inherits probe delays or suppresses warnings from the new instance.
+- The broker drops vanished containers' status probes, failed socket-attach
+  retries, orphaned socket listeners and diagnostic caches even during idle
+  rounds. Reusing a name no longer inherits probe delays or suppresses warnings
+  from the new instance.
 - A plain container reusing a destroyed child's name could be refused as a child
   when staging issue or PR actions. The broker now keys its prepared-role cache
   by instance UUID and drops vanished instances, so a new container cannot
