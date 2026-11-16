@@ -119,6 +119,10 @@ def failed(detail: str) -> Outcome:
     return Outcome("failed", detail)
 
 
+def _no_pulse() -> None:
+    """`ActionContext.pulse` outside a broker round."""
+
+
 @dataclass
 class ActionContext:
     cfg: Config
@@ -130,6 +134,9 @@ class ActionContext:
     now: datetime
     # Shared with the broker's memory so handlers keep one emission order.
     seq: Iterator[int] = field(default_factory=itertools.count)
+    # The broker's keepalive pulse (`BrokerMemory.pulse`), called between the
+    # slow steps of a handler so a long round keeps parked waiters alive (#123).
+    pulse: Callable[[], None] = field(default_factory=lambda: _no_pulse)
 
     def role(self) -> Role:
         if self.sender.config.get(labels.SPAWNED_BY):
@@ -1138,6 +1145,18 @@ def _handle_stop_locked(ctx: ActionContext, m: Manifest) -> Outcome:
             )
         except Exception as e:
             return refused(f"child `{child.short}` could not be stopped: {e}")
+        # The blocking stop succeeded. Do not depend on a best-effort inventory
+        # refresh to make an immediate restart see the completed transition.
+        stopped_config = dict(child.config)
+        if head is not None:
+            stopped_config[labels.STOPPED_HEAD] = head
+        else:
+            stopped_config.pop(labels.STOPPED_HEAD, None)
+        if dirty is False:
+            stopped_config.pop(labels.STOPPED_DIRTY, None)
+        else:
+            stopped_config[labels.STOPPED_DIRTY] = "1"
+        ctx.nodes = {**ctx.nodes, child.full: replace(child, running=False, config=stopped_config)}
     else:
         forced = False
     from jailbee.orchestration.watch import cancel
@@ -1211,7 +1230,9 @@ def _restart_agent(
         return refused(f"child `{child.short}` must be running for agent_only")
     if child.full in creating_children(ctx) or live_job_kind(child.full) is not None:
         return refused(f"child `{child.short}` is working (startup is still running)")
-    status = agent_watch.probe(ctx.incus, child.full, uid=ctx.cfg.container_user.uid)
+    status = agent_watch.probe(
+        ctx.incus, child.full, uid=ctx.cfg.container_user.uid, background=True
+    )
     previous = next(
         (e for e in load_watch(ctx.root).get(ctx.sender.full, []) if e.child_full == child.full),
         None,
@@ -1233,8 +1254,15 @@ def _restart_agent(
             or (previous is not None and previous.confirmed)
         )
     )
+    idle_evidence = None
     if not finished and not ended:
-        return refused(f"child `{child.short}` is working; wait for accepted done or agent exit")
+        evidence = agent_watch.restart_idle_evidence(ctx.cfg, child.full, status, now=ctx.now)
+        if isinstance(evidence, str):
+            return refused(
+                f"child `{child.short}` is working ({evidence}); "
+                "wait for accepted done, idle agent or agent exit"
+            )
+        idle_evidence = evidence
     problem = initial_prompt.prompt_problem(ctx.cfg, runner)
     if problem is not None:
         return refused(problem)
@@ -1290,6 +1318,7 @@ def _restart_agent(
             runner=runner,
             old_agent=old_agent,
             resume=resume,
+            **({"idle_evidence": idle_evidence} if idle_evidence is not None else {}),
         )
     except Exception as exc:
         _drop_watch(ctx, child.full)

@@ -8,31 +8,72 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.8.8 - 2026-11-16
+
+The LiteLLM proxy pin remains at 1.106.0. Custom Azure deployments may be
+exposed to
+[GHSA-2rwg-2wh4-7c4f](https://github.com/BerriAI/litellm/security/advisories/GHSA-2rwg-2wh4-7c4f);
+the built-in ChatGPT routes do not meet the advisory's prerequisites. See the
+[security guidance](docs/litellm.md#security-and-limitations) before using an
+Azure route. The upstream fix in 1.106.9 still needs the required age and
+artifact review before the pin can move.
+
 ### Added
 
-- In-container agents can stage adding, updating fields on, and removing issues
-  and pull requests from GitHub Projects v2 boards with `jailbee issue project`.
-  Field changes stage individually, may target a same-batch `@REF`, and use the
-  committed `github.project` default when no board is specified. Host publication
-  checks the staged membership and field state; orchestrators can receive
-  board-scoped publish rights, editable in the terminal dashboard. Staging reads
-  only the default board, host-local `github.projects` extras, or boards in the
-  orchestrator's grant, refusing all others before any host read. Multi-field
-  staging is atomic without holding the broker write lock during GitHub reads;
-  explicit retries preserve membership from a partial implicit add.
+- In-container agents can stage adding issues and pull requests to GitHub
+  Projects v2 boards, changing their fields, and removing them with
+  `jailbee issue project`. Commands use the committed `github.project` default
+  when no board is specified, support same-batch `@REF` targets, and stage
+  multi-field changes atomically. Publication checks for changed membership and
+  field values before applying a proposal; retries retain partial progress.
+  Staging can read only configured or explicitly granted boards. Orchestrators
+  can receive board-scoped publish rights, editable in the terminal dashboard
+  ([#115](https://github.com/VRTFinland/jailbee/issues/115),
+  [#116](https://github.com/VRTFinland/jailbee/issues/116)).
 - Orchestrators can cancel a queued spawn or restart with `jailbee inbox send
   cancel --request ID` (or `--child SHORT`) before resending with a different
   runner. Cancellation frees the name and settles the original request as
   `refused`; already-started children still need `stop`/`destroy`
   ([#113](https://github.com/VRTFinland/jailbee/issues/113)).
+- `jailbee inbox send stop` accepts `--until done` and `--json`, like `spawn`
+  and `restart`, for scripted waits
+  ([#122](https://github.com/VRTFinland/jailbee/issues/122)).
 
 ### Fixed
 
+- The dashboard swap meter excludes swap-cached and zswap-resident pages,
+  reporting memory actually swapped out rather than all occupied swap slots.
+- `jailbee inbox wait --timeout none` no longer mistakes a long broker round
+  (child imports, destroys, inventory calls) for an unreachable broker when
+  its individual steps finish within the watchdog timeout. Keepalives are
+  sent between steps; a single step that blocks longer than the watchdog can
+  still interrupt the wait with exit 4
+  ([#123](https://github.com/VRTFinland/jailbee/issues/123)).
+- `jailbee inbox send restart --agent-only` accepts a live idle agent whose only
+  background commands are childless inbox waiters, including the container's
+  Python wrapper. Parent shells must contain a single waiter invocation.
+  Claude Code's Bash-tool wrapper is recognised across setup-prefix changes;
+  queued work, compound-command waiters and unparseable wrappers refuse.
+  Process and session evidence is rechecked immediately before replacing the
+  agent window. Other
+  work, subagents, permission prompts and changed/unreadable state still refuse
+  relaunch with a reason
+  ([#121](https://github.com/VRTFinland/jailbee/issues/121)).
+- An immediate `jailbee inbox send restart` after a successful `send stop --wait`
+  no longer reads the broker's stale running state and refuses with "stop it
+  first"
+  ([#122](https://github.com/VRTFinland/jailbee/issues/122)).
+- Container PR and issue staging commands now print a valid single-proposal
+  publish hint: `jb outbox apply <container> pr/<name>` or `issue/<name>`,
+  instead of a positional manifest argument rejected by `jb review apply`
+  and `jb issue apply`
+  ([#112](https://github.com/VRTFinland/jailbee/issues/112)).
 - Vanished publishers no longer leave accepted-request records indefinitely or
   pass their hourly publish budget to a new container with the same name.
-- The broker now drops vanished containers' status probes, failed socket-attach
-  retries, orphaned socket listeners and diagnostic caches even during idle rounds. Reusing a name no longer
-  inherits probe delays or suppresses warnings from the new instance.
+- The broker drops vanished containers' status probes, failed socket-attach
+  retries, orphaned socket listeners and diagnostic caches even during idle
+  rounds. Reusing a name no longer inherits probe delays or suppresses warnings
+  from the new instance.
 - A plain container reusing a destroyed child's name could be refused as a child
   when staging issue or PR actions. The broker now keys its prepared-role cache
   by instance UUID and drops vanished instances, so a new container cannot

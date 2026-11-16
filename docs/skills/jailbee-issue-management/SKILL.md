@@ -122,8 +122,9 @@ appends its actions atomically: a failed host read leaves the draft unchanged. A
 batch target `@REF`. For edits, labels, assign and state on `@REF`, expected values
 are derived automatically from the earlier create; a revision check keeps
 concurrent draft appends atomic without holding the write lock during host reads.
-Inspect with `jailbee outbox ls` and `jailbee outbox show issue/NAME`;
-discard a draft with `jailbee outbox discard NAME --kind issue`.
+Inspect with `jailbee outbox ls` and `jailbee outbox show issue/NAME`.
+Remove a staged, unpublished proposal with `jailbee outbox drop issue/NAME`;
+discard an unsubmitted draft batch with `jailbee outbox discard NAME --kind issue`.
 
 ## Human inspection and approval
 

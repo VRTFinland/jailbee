@@ -14,7 +14,7 @@ from jailbee.initial_prompt import AGENT_EXIT_PATH, AGENT_PID_PATH
 
 if TYPE_CHECKING:
     from jailbee.accounts.adapters.base import AccountAdapter
-    from jailbee.accounts.models import AgentSession
+    from jailbee.accounts.models import AgentActivity, AgentSession
     from jailbee.config import Config
     from jailbee.incus import Incus
     from jailbee.orchestration.actions import Node, Outcome
@@ -74,6 +74,9 @@ class AgentStatus:
     recorded: bool = False
     pid: int | None = None
     proc_start: int | None = None
+    waiters_only: bool | None = None
+    processes_clear: bool | None = None
+    process_snapshot: str | None = None
 
 
 def _matched_session(
@@ -135,6 +138,41 @@ def idle_signal(cfg: Config, name: str, status: AgentStatus, *, now: datetime) -
     except Exception:
         # Adapter formats are undocumented; a broken reader must not stall supervision.
         return None
+
+
+@dataclass(frozen=True)
+class RestartIdleEvidence:
+    status: AgentStatus
+    session: AgentSession
+    activity: AgentActivity
+
+
+def restart_idle_evidence(
+    cfg: Config, name: str, status: AgentStatus | None, *, now: datetime
+) -> RestartIdleEvidence | str:
+    """Fail closed unless this exact agent is idle with no background work."""
+    if status is None or not status.alive:
+        return "unknown agent state"
+    if not status.process_snapshot:
+        return "process state unknown"
+    try:
+        matched = _matched_session(cfg, name, status)
+        if matched is None:
+            return "unreadable session state"
+        adapter, session = matched
+        if session.state not in ("idle", "shell"):
+            return f"session state is {session.state}"
+        paths = adapter.locate_activity(adapter.config_home(cfg), session)
+        activity = adapter.read_activity(paths, now=now.timestamp()) if paths is not None else None
+        if activity is None or activity.background_clear is not True:
+            return "subagents running or background activity unknown"
+        if session.state == "idle" and status.processes_clear is True:
+            return RestartIdleEvidence(status, session, activity)
+        if session.state == "shell" and status.waiters_only is True:
+            return RestartIdleEvidence(status, session, activity)
+        return "background commands running or process state unknown"
+    except Exception:
+        return "unreadable session or activity state"
 
 
 def agent_snapshot(
@@ -206,8 +244,245 @@ def advance_idle(
 
 # Read /proc identity as well as kill(0): a reused PID or a zombie is not our agent.
 _PROBE = r"""
-import json, pathlib, sys
-runtime, exit_path = map(pathlib.Path, sys.argv[1:])
+import json, os, pathlib, pwd, re, shlex, sys
+runtime, exit_path = map(pathlib.Path, sys.argv[1:3])
+
+def waiter(argv):
+    # Match entry points, never a process name or an argument containing 'wait'.
+    if not argv:
+        return False
+    entry = pathlib.Path(argv[0]).name
+    args = argv[1:]
+    if entry in ('python', 'python3') or entry.startswith('python3.'):
+        # The container entry point uses safe-path mode; without it, -m can
+        # import a different jailbee from the wrapper's working directory.
+        if args[:1] != ['-P']:
+            return False
+        args = args[1:]
+        if len(args) < 2 or args[0] != '-m' or args[1] not in (
+            'jailbee', 'jailbee.container_main', 'jailbee.inbox'):
+            return False
+        args = args[2:]
+    elif entry not in ('jailbee', 'jb'):
+        return False
+    if args[:1] == ['inbox']:
+        args = args[1:]
+    return args[:1] == ['wait']
+
+def strip_redirects(script):
+    return re.sub(r'(?:[ \t]+(?:> ?/dev/null|2>&1|2> ?/dev/null|< ?/dev/null))+$', '', script)
+
+def plain_waiter(script):
+    script = strip_redirects(script)
+    # A single invocation: no expansion, control operators, or other redirects,
+    # even inside quotes. shlex validates quoting but never executes anything.
+    if re.fullmatch(r'''[A-Za-z0-9_./: ,='"-]+''', script) is None:
+        return False
+    return waiter(shlex.split(script))
+
+def statements(script):
+    # Retain raw quotes for eval decoding. Split only at unquoted, top-level
+    # operators; completed brace/subshell prefixes are opaque, not candidates.
+    result, stack = [], []
+    quote, start, index = None, 0, 0
+    while index < len(script):
+        char = script[index]
+        if quote:
+            if char == quote:
+                quote = None
+            elif quote == '"' and char in '$`':
+                return None
+            elif quote == '"' and char == '\\':
+                index += 1
+        elif char == '\\':
+            index += 1
+            if index == len(script):
+                return None
+        elif char in "'\"":
+            quote = char
+        elif char in '$`#' or script.startswith('<<', index):
+            return None
+        elif script.startswith(('2>&1', '>&1', '>|'), index):
+            redirect = next(value for value in ('2>&1', '>&1', '>|')
+                            if script.startswith(value, index))
+            index += len(redirect) - 1
+        elif char in '{(':
+            stack.append('}' if char == '{' else ')')
+        elif char in '})':
+            if not stack or stack.pop() != char:
+                return None
+        elif char in '&|;':
+            operator = char
+            if script.startswith(('&&', '||'), index):
+                operator *= 2
+                index += 1
+            elif char == '&':
+                return None
+            if not stack:
+                result.append((script[start:index + 1 - len(operator)].strip(), operator))
+                start = index + 1
+        index += 1
+    if quote or stack:
+        return None
+    result.append((script[start:].strip(), ''))
+    # Keyword compounds are not parsed; refusing them also prevents an inner
+    # waiter from being mistaken for a top-level command after a semicolon.
+    reserved = {'while', 'until', 'for', 'select', 'if', 'then', 'elif', 'else',
+                'fi', 'do', 'done', 'case', 'esac', 'function', '!'}
+    for statement, operator in result:
+        words = shlex.split(statement)
+        if not words or words[0] in reserved or operator == '|':
+            return None
+    return result
+
+def waiter_statement(script):
+    script = strip_redirects(script)
+    if plain_waiter(script):
+        return True
+    match = re.fullmatch(r'''eval ('(?:[^']|'"'"')*')''', script)
+    if match is None:
+        return False
+    inner = match[1][1:-1].replace("'\"'\"'", "'")
+    return plain_waiter(inner)
+
+def builtin_prefix(script):
+    script = re.sub(r'\s+\|\|\s+(?:true|false)$', '', script)
+    script = strip_redirects(script)
+    if script.startswith('{ '):
+        if not script.endswith('}'):
+            return False
+        body = script[2:-1].strip().removesuffix(';').strip()
+        parts = statements(body)
+        return parts is not None and all(builtin_prefix(part) for part, _ in parts)
+    if any(char in script for char in '(){}$`<>'):
+        return False
+    words = shlex.split(script)
+    if not words:
+        return False
+    if words[0] in ('builtin', 'command'):
+        words = words[1:]
+    if not words:
+        return False
+    if words[0] in ('source', '.'):
+        # Trust only Claude-generated snapshots, using the exec uid's home.
+        home = pathlib.Path(pwd.getpwuid(os.getuid()).pw_dir)
+        folder = home / '.claude' / 'shell-snapshots'
+        return (len(words) == 2 and pathlib.Path(words[1]).parent == folder
+                and re.fullmatch(r'[A-Za-z0-9_.-]+\.sh', pathlib.Path(words[1]).name) is not None)
+    # Setup must not install a different implementation of a later command.
+    if words[0] == 'hash' and any(word.startswith('-') and 'p' in word for word in words[1:]):
+        return False
+    # With `set -k` and POSIX mode even `: NAME=value` can export NAME.
+    # Refuse assignment-shaped arguments for every setup builtin, not just
+    # declarations; this also excludes alias definitions.
+    if any('=' in word for word in words[1:]):
+        return False
+    if words[0] in ('export', 'declare', 'typeset'):
+        # Bare names only: assignments and function/nameref flags can rebind
+        # later commands even when the observed leaf still looks like a waiter.
+        sensitive = {'PATH', 'BASH_ENV', 'ENV', 'IFS', 'CDPATH', 'SHELLOPTS',
+                     'BASHOPTS', 'PS4', 'PROMPT_COMMAND'}
+        for word in words[1:]:
+            if word == '--' or re.fullmatch(r'-[rxp]+', word):
+                continue
+            if (re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', word) is None
+                    or word in sensitive or word.startswith(('LD_', 'PYTHON'))):
+                return False
+    return words[0] in {'shopt', 'set', 'unalias', 'unset', 'export', 'declare',
+                        'typeset', 'cd', 'true', 'false', ':', 'umask', 'hash', 'alias'}
+
+def claude_waiter(script):
+    parts = statements(script)
+    if parts is None:
+        return False
+    candidates = [index for index, (statement, _) in enumerate(parts)
+                  if waiter_statement(statement)]
+    if len(candidates) != 1:
+        return False
+    index = candidates[0]
+    # Nonbuiltin calls could still be running an earlier waiter with queued
+    # work. Only known setup builtins and trusted snapshots can precede it.
+    if not all(builtin_prefix(prefix) for prefix, _ in parts[:index]):
+        return False
+    statement, operator = parts[index]
+    if index and parts[index - 1][1] not in ('&&', ';'):
+        return False
+    if index == len(parts) - 1:
+        return operator == ''
+    if index != len(parts) - 2 or operator not in ('&&', ';'):
+        return False
+    tail, final_operator = parts[-1]
+    return (not final_operator and re.fullmatch(
+        r'''pwd(?: -P)?[ \t]*>\|?[ \t]*(?:[A-Za-z0-9_./-]+|'[A-Za-z0-9_./ -]+')''', tail
+    ) is not None)
+
+def waiter_shell(argv):
+    # Unknown harness wrappers must refuse rather than hide queued work.
+    if (len(argv) != 3 or pathlib.Path(argv[0]).name not in ('bash', 'sh', 'dash')
+            or argv[1] != '-c' or '\n' in argv[2] or '\r' in argv[2]):
+        return False
+    if plain_waiter(argv[2]):
+        return True
+    return pathlib.Path(argv[0]).name in ('bash', 'sh') and claude_waiter(argv[2])
+
+def process_tree():
+    procs = {}
+    for path in pathlib.Path('/proc').iterdir():
+        if not path.name.isdigit():
+            continue
+        try:
+            raw = (path / 'stat').read_text()
+        except FileNotFoundError:
+            continue
+        tail = raw.rsplit(')', 1)[1].split()
+        if tail[0] not in ('Z', 'X'):
+            procs[int(path.name)] = (int(tail[1]), tail[19], raw.split('(', 1)[1].rsplit(')', 1)[0])
+    children = {}
+    for child, (parent, _, _) in procs.items():
+        children.setdefault(parent, set()).add(child)
+    return procs, children
+
+def background(pid, start):
+    procs, children = process_tree()
+    if pid not in procs or procs[pid][1] != start:
+        return None, None, None
+    roots = children.get(pid, set())
+    leaves = []
+    commands = {}
+    for child in roots:
+        descendants = children.get(child, [])
+        if descendants:
+            if procs[child][2] not in ('bash', 'sh', 'dash', 'zsh', 'fish'):
+                return False, False, None
+            raw = pathlib.Path('/proc', str(child), 'cmdline').read_bytes()
+            if not waiter_shell(raw.rstrip(b'\0').decode('utf-8').split('\0')):
+                return False, False, None
+            commands[child] = raw
+            leaves.extend(descendants)
+        else:
+            leaves.append(child)
+    for child in leaves:
+        if children.get(child):
+            return False, False, None
+        raw = pathlib.Path('/proc', str(child), 'cmdline').read_bytes()
+        argv = raw.rstrip(b'\0').decode('utf-8').split('\0')
+        if not waiter(argv):
+            return False, False, None
+        commands[child] = raw
+    # Revalidate child sets too: stable identities alone miss a new fork.
+    current, current_children = process_tree()
+    for child in {pid, *roots, *leaves}:
+        if (current.get(child) != procs.get(child)
+                or current_children.get(child, set()) != children.get(child, set())):
+            return None, None, None
+    for child, raw in commands.items():
+        if pathlib.Path('/proc', str(child), 'cmdline').read_bytes() != raw:
+            return None, None, None
+    snapshot = json.dumps([(child, procs[child], sorted(children.get(child, set())),
+                            commands[child].hex() if child in commands else None)
+                           for child in sorted({pid, *roots, *leaves})])
+    return bool(leaves), not roots, snapshot
+
 result = dict(alive=False, agent='agent', rc=None, recorded=False)
 try:
     data = json.loads(runtime.read_text())
@@ -221,6 +496,12 @@ try:
     if result['alive']:
         result['pid'] = pid
         result['proc_start'] = int(stat[19])
+        if sys.argv[3:] == ['--background']:
+            try:
+                (result['waiters_only'], result['processes_clear'],
+                 result['process_snapshot']) = background(pid, data['start'])
+            except (OSError, ValueError, KeyError, TypeError, IndexError):
+                pass
 except (OSError, ValueError, KeyError, TypeError, IndexError):
     pass
 try:
@@ -232,12 +513,13 @@ print(json.dumps(result))
 """
 
 
-def probe(incus: Incus, name: str, *, uid: int) -> AgentStatus | None:
+def probe(incus: Incus, name: str, *, uid: int, background: bool = False) -> AgentStatus | None:
     """Return None for a transport/protocol error, not a false death report."""
     try:
         raw = incus.exec(
             name,
-            ["python3", "-c", _PROBE, AGENT_PID_PATH, AGENT_EXIT_PATH],
+            ["python3", "-c", _PROBE, AGENT_PID_PATH, AGENT_EXIT_PATH]
+            + (["--background"] if background else []),
             uid=uid,
             timeout=15,
         )
@@ -258,7 +540,18 @@ def probe(incus: Incus, name: str, *, uid: int) -> AgentStatus | None:
             value is not None and (type(value) is not int or value < 0) for value in (pid, start)
         ):
             return None
-        return AgentStatus(data["alive"], agent, rc, recorded, pid, start)
+        waiters_only, processes_clear = data.get("waiters_only"), data.get("processes_clear")
+        if any(
+            value is not None and type(value) is not bool
+            for value in (waiters_only, processes_clear)
+        ):
+            return None
+        snapshot = data.get("process_snapshot")
+        if snapshot is not None and not isinstance(snapshot, str):
+            return None
+        return AgentStatus(
+            data["alive"], agent, rc, recorded, pid, start, waiters_only, processes_clear, snapshot
+        )
     except (IncusError, ValueError, TypeError):
         return None
 

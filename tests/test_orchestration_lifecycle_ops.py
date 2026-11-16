@@ -219,6 +219,82 @@ def test_stop_records_stopped_dirty(
         rig.incus.config_set.assert_any_call(rig.child.full, labels.STOPPED_DIRTY, "1")
 
 
+@pytest.mark.parametrize("refresh_fails", [False, True])
+def test_socket_restart_immediately_after_stop_is_accepted(
+    tmp_path, seams, monkeypatch, refresh_fails
+):
+    from jailbee.orchestration import broker_state, executor, inbox_state, wire
+    from jailbee.orchestration.listener import RequestEvent
+    from jailbee.orchestration.store import BrokerStore, store_path
+
+    rig = Rig(tmp_path, running=True)
+    ctx = rig.ctx()
+    inventory = [
+        {
+            "name": node.full,
+            "status": "Running" if node.running else "Stopped",
+            "config": dict(node.config),
+        }
+        for node in ctx.nodes.values()
+    ]
+    rig.incus.list_containers.return_value = inventory
+    if refresh_fails:
+        rig.incus.list_containers.side_effect = IncusError("inventory unavailable")
+    monkeypatch.setattr(broker_state, "repo_configs", lambda memory: {"proj": rig.cfg})
+    monkeypatch.setattr(inbox_state, "sync_children", lambda *args: [])
+
+    def stop(*args, **kwargs):
+        inventory[1]["status"] = "Stopped"
+        return False
+
+    seams["stop"].side_effect = stop
+    memory = broker_state.BrokerMemory()
+    memory.contexts[rig.sender.key] = ctx
+    memory.store = BrokerStore(store_path(rig.root))
+    memory.store.set_recipient(rig.sender.full, rig.sender.key, now=1)
+    memory.listener = MagicMock()
+
+    for conn_id, manifest in enumerate((_stop(), _restart()), start=1):
+        executor.handle_event(
+            memory,
+            RequestEvent(
+                rig.sender.key,
+                conn_id,
+                wire.Request("send", {"manifest": manifest.model_dump(), "wait": True}),
+            ),
+        )
+
+    responses = [call.args[1] for call in memory.listener.respond.call_args_list]
+    assert responses[0].ok and responses[0].result["state"] == "done"
+    assert responses[1].ok and responses[1].result["state"] == "started", responses[1]
+    seams["boot"].assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("head", "dirty", "reason"),
+    [
+        ("bbb", False, "never imported"),
+        ("aaa", True, "uncommitted changes"),
+        (None, False, "restart"),
+    ],
+)
+def test_stop_then_destroy_keeps_current_safety_labels(
+    tmp_path, seams, monkeypatch, head, dirty, reason
+):
+    rig = Rig(
+        tmp_path,
+        running=True,
+        config={labels.LAST_IMPORT: "aaa", labels.STOPPED_HEAD: "aaa"},
+    )
+    seams["head"].return_value = head
+    monkeypatch.setattr(actions.sync, "_container_dirty_quiet", lambda *a, **kw: dirty)
+    ctx = rig.ctx()
+    assert actions.handle_stop(ctx, _stop()).state == "done"
+    outcome = actions.handle_destroy(ctx, _destroy())
+    assert outcome.state == "refused" and reason in outcome.detail, outcome
+    seams["destroy"].assert_not_called()
+
+
 def _restart(child: str = "c1") -> RestartManifest:
     return RestartManifest.model_validate(
         {"version": 1, "id": "r1", "type": "restart", "child": child, "prompt": "go on"}

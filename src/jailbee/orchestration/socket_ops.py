@@ -61,6 +61,7 @@ def handle_send(
     if ctx.role() in ("none", "plain"):
         raise wire.WireError(wire.NOT_ORCHESTRATED, "this container has no orchestration role")
 
+    cached_ctx = ctx
     ctx = dataclasses.replace(ctx, now=datetime.now(UTC))
 
     def deliver_status(status: dict[str, object]) -> None:
@@ -134,6 +135,9 @@ def handle_send(
         )
 
     def reply(ref: str, outcome: Outcome) -> None:
+        # Publish lifecycle refreshes back to the round's context before the
+        # reply; the next socket request must not reuse its old inventory.
+        cached_ctx.nodes = ctx.nodes
         assert item is not None
         deliver_status(item)
         try:
@@ -497,14 +501,19 @@ class Waiters:
             if current.uuid == uuid and current.conn_id == conn_id:
                 del self._by_uuid[key]
 
-    def due_keepalives(self, mono: float) -> list[int]:
-        """Return due parked connections and advance their next keepalive time."""
+    def due_keepalives(self, mono: float, *, lead: float = 0.0) -> list[int]:
+        """Return due parked connections and advance their next keepalive time.
+
+        ``lead`` counts a keepalive due that much early: a round's pulse (#123)
+        sends whenever one is not too recent, since it cannot know when the
+        loop thread will next get the chance.
+        """
         due: list[int] = []
         for waiter in self._by_uuid.values():
             if (
                 waiter.keepalive
                 and waiter.next_keepalive is not None
-                and mono >= waiter.next_keepalive
+                and mono + lead >= waiter.next_keepalive
             ):
                 due.append(waiter.conn_id)
                 waiter.next_keepalive = mono + wire.KEEPALIVE_INTERVAL

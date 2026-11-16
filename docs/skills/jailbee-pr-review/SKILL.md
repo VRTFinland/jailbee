@@ -143,7 +143,9 @@ Title-only staging is refused because replaying a fetched body could overwrite
 later edits at publication time. Supply the intended replacement body explicitly.
 Use `--batch NAME` for related actions and `jailbee outbox submit NAME
 --kind pr` to stage them. Inspect with `jailbee outbox ls` and `jailbee
-outbox show pr/NAME`; discard with `jailbee outbox discard NAME --kind pr`.
+outbox show pr/NAME`. Remove a staged, unpublished proposal with `jailbee outbox
+drop pr/NAME`; discard an unsubmitted draft batch with `jailbee outbox
+discard NAME --kind pr`.
 The commands stage every proposal and draft through the host broker into the
 host's outbox store; nothing is kept in the container's filesystem. When the
 broker cannot be reached they exit 4 with nothing staged. The

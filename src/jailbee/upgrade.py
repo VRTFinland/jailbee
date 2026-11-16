@@ -612,6 +612,15 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "skills to query grants through `jailbee inbox grant`"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 8),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs skills describing GitHub Projects actions and "
+            "board-scoped grants, queued request cancellation, and updated stop "
+            "and agent-only restart behavior"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

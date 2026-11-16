@@ -556,8 +556,23 @@ def refresh(
 
 
 @send_app.command(help="Stop a child container.")
-def stop(child: Child = "", wait: Wait = False, timeout: Timeout = "") -> None:
-    _send(send.SendRequest(type="stop", child=child, wait=wait, timeout=timeout))
+def stop(
+    child: Child = "",
+    wait: Wait = False,
+    timeout: Timeout = "",
+    until: Until = "",
+    json_output: SendJson = False,
+) -> None:
+    _send(
+        send.SendRequest(
+            type="stop",
+            child=child,
+            wait=wait,
+            timeout=timeout,
+            until=until,
+            json_output=json_output,
+        )
+    )
 
 
 @send_app.command(help="Destroy a child container.")
