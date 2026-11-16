@@ -57,6 +57,32 @@ def _body_names(kind: Kind, raw: dict[str, Any]) -> set[str]:
     return {item["body_file"] for item in items if isinstance(item.get("body_file"), str)}
 
 
+def _prune_attachments(kind: Kind, raw: dict[str, Any], files: dict[str, str]) -> None:
+    from jailbee.attachments import references
+
+    declarations = raw.get("attachments")
+    if not declarations:
+        return
+    used: set[str] = set()
+    for action in raw["actions"]:
+        items = []
+        if kind == "pr" or action["type"] in ("create", "edit", "comment"):
+            items.append(action)
+        if kind == "pr" and action["type"] == "review":
+            items.extend(action["comments"])
+        for item in items:
+            body = item.get("body")
+            if "body_file" in item:
+                body = files.get(item["body_file"])
+            if isinstance(body, str):
+                used.update(ref.id for ref in references(body))
+    remaining = {key: value for key, value in declarations.items() if key in used}
+    if remaining:
+        raw["attachments"] = remaining
+    else:
+        raw.pop("attachments", None)
+
+
 def _whole_names(store: StoreSnapshot, name: str, raw: dict[str, Any] | None) -> tuple[str, ...]:
     # Rejected entries may conceal references, including non-addressable manifests.
     if raw is None or store.rejected:
@@ -175,14 +201,17 @@ def plan_delete(
                 surviving = [a for i, a in enumerate(actions) if i not in removed_actions]
             updated["actions"] = surviving
             if surviving:
+                _prune_attachments(proposal.kind, updated, store.as_dict())
                 new_text = json.dumps(updated, ensure_ascii=True, indent=2) + "\n"
                 _parse(proposal.kind, proposal.name, new_text, store.as_dict())
     delete_names = _whole_names(store, proposal.name, raw) if new_text is None else ()
-    summary = (
+    summary: tuple[str, ...] = (
         f"Delete {proposal}" if new_text is None else f"Edit {proposal}",
         f"Removed actions: {removed_actions}; removed comments: {removed_comments}",
         f"Delete files: {delete_names}",
     )
+    if new_text is None and any(upload.state == "applied" for upload in view.uploads):
+        summary += ("Uploaded remote assets cannot be deleted by clearing the local proposal.",)
     return DeletePlan(
         proposal,
         view.revision,
@@ -232,6 +261,11 @@ def plan_clear(container: ContainerView) -> ContainerClearPlan:
         if view.id.name in rejected.get(view.id.kind, set()):
             continue
         selection = DeleteSelection()
+        if any(upload.state == "applied" for upload in view.uploads):
+            warnings.append(
+                f"{view.id}: uploaded remote assets cannot be deleted "
+                "by clearing the local proposal"
+            )
         try:
             plan_delete(container, view.id, selection)
         except OutboxError as exc:

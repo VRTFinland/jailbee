@@ -328,13 +328,18 @@ def attachments(
     from jailbee.outbox.service import parse_retained_ref
 
     def operation(cfg: Config, incus: Incus) -> int:
-        name = container if container is not None else prompting.ask_text("container")
+        name = (
+            container if container is not None
+            else prompting.ask_text(
+                "container", validate=lambda value: None if value.strip() else "enter a container"
+            )
+        )
         retained = parse_retained_ref(name)
         if retained is None:
             _, uuid = resolve_incarnation(cfg, incus, name)
         else:
             _, uuid = retained
-        rows = []
+        rows: list[dict[str, object]] = []
         if uuid is not None:
             for kind in ("issue", "pr"):
                 rows.extend(

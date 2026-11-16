@@ -69,7 +69,10 @@ upload occurs before approval, and dropping a proposal cannot retract a
 published image. For uncertain uploads, the host operator can run
 `jb outbox attachment-resolve CONTAINER PROPOSAL BLOB REPOSITORY_ID --url URL`
 to attest an upload, or use `--retry-duplicate` only after considering that a
-duplicate may leave a permanent orphan. None of the container commands publish
+duplicate may leave a permanent orphan. Inspect all retained upload receipts with
+`jb outbox attachments CONTAINER --json`, including receipts whose proposals and
+local bytes are already gone; a destroyed instance uses `full-name@uuid`.
+None of the container commands publish
 to GitHub; a human inspects and applies on the host. Do not write outbox files
 or create outbox directories by hand. Children cannot stage GitHub writes: send
 the orchestrator exact content using `jailbee inbox send message --text "..."`,

@@ -621,6 +621,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
             "and agent-only restart behavior"
         ),
     ),
+    UpgradeNote(
+        version=(1, 8, 9),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs issue, PR-review and usage skills for immutable "
+            "image attachments, exact Markdown placement and uncertain-upload recovery"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

@@ -61,7 +61,8 @@ def test_invalid_metadata_rejected(change):
 def test_unused_declarations_rejected_without_an_attachment_count_quota():
     with pytest.raises(IssueManifestError):
         manifest("plain", {"img": descriptor()})
-    declarations = {f"i{i}": descriptor() for i in range(15)}
+    # Simulated declared accounting exceeds 100 MB without allocating image bytes.
+    declarations = {f"i{i}": descriptor(size=10_000_000) for i in range(15)}
     body = " ".join(f"![x](attachment:i{i})" for i in range(15))
     assert len(manifest(body, declarations).attachments) == 15
 
