@@ -250,7 +250,7 @@ def handle_put(
 
     try:
         proposal = store.put_proposal(uuid, kind, slug, build, now=now, cap=MAX_MANIFESTS)
-    except ProposalCapError as exc:
+    except (ProposalCapError, ValueError) as exc:
         raise bad_request(str(exc)) from exc
     return {"kind": proposal.kind, "name": proposal.name}
 
@@ -362,6 +362,10 @@ def handle(
     default_project: str | None = None,
     project_title_reader: ProjectTitleReader | None = None,
 ) -> object:
+    if op in wire.OUTBOX_ATTACHMENT_OPS:
+        from jailbee.outbox import attachment_ops
+
+        return attachment_ops.handle(store, uuid, op, args, now=now)
     if op in wire.OUTBOX_DRAFT_OPS:
         from jailbee.outbox import draft_ops
 

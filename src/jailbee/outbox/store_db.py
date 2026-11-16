@@ -28,6 +28,8 @@ from jailbee.orchestration.wire import OUTBOX_KINDS, OutboxKind, outbox_kind
 
 if TYPE_CHECKING:
     from jailbee.orchestration.store import BrokerStore
+    from jailbee.outbox.attachment_store import AttachmentStore
+    from jailbee.outbox.models import AttachmentUploadView
 
 Kind = OutboxKind
 KINDS = OUTBOX_KINDS
@@ -175,6 +177,43 @@ def _select(
     return result
 
 
+def _attachments(manifest: str) -> list[Any]:
+    from jailbee.attachment_manifest import parse_attachments
+
+    return list(parse_attachments(json.loads(manifest).get("attachments", {})).values())
+
+
+def _release_attachments(
+    con: sqlite3.Connection, uuid: str, kind: str, name: str, manifest: str | None
+) -> None:
+    from jailbee.outbox.attachment_store import AttachmentStore
+
+    old = [
+        row[0]
+        for row in con.execute(
+            "SELECT id FROM outbox_attachment_ref WHERE uuid=? AND kind=? AND proposal=?",
+            (uuid, kind, name),
+        )
+    ]
+    con.execute(
+        "DELETE FROM outbox_attachment_ref WHERE uuid=? AND kind=? AND proposal=?",
+        (uuid, kind, name),
+    )
+    if manifest is not None:
+        for descriptor in _attachments(manifest):
+            AttachmentStore.pin(
+                con, uuid, kind, name, descriptor.blob, expected=descriptor.to_dict()
+            )
+    for blob in old:
+        params = (uuid, blob, uuid, blob)
+        condition = (
+            "uuid=? AND id=? AND NOT EXISTS "
+            "(SELECT 1 FROM outbox_attachment_ref WHERE uuid=? AND id=?)"
+        )
+        con.execute(f"DELETE FROM outbox_attachment_chunk WHERE {condition}", params)
+        con.execute(f"DELETE FROM outbox_attachment WHERE {condition} AND state='ready'", params)
+
+
 def _insert_proposal(
     con: sqlite3.Connection,
     uuid: str,
@@ -202,6 +241,10 @@ def _insert_proposal(
     stem = f"{seq:03d}-{slug}"
     name = f"{stem}.json"
     manifest, bodies = build(stem)
+    from jailbee.outbox.attachment_store import AttachmentStore
+
+    for descriptor in _attachments(manifest):
+        AttachmentStore.pin(con, uuid, kind, name, descriptor.blob, expected=descriptor.to_dict())
     con.execute(
         "INSERT INTO outbox_counter(uuid, kind, last_seq) VALUES(?,?,?) "
         "ON CONFLICT(uuid, kind) DO UPDATE SET last_seq=excluded.last_seq",
@@ -223,6 +266,13 @@ class OutboxStore:
 
     def __init__(self, store: BrokerStore) -> None:
         self._store = store
+
+    @property
+    def attachments(self) -> AttachmentStore:
+        """Image captures share the broker database and authenticated ownership."""
+        from jailbee.outbox.attachment_store import AttachmentStore
+
+        return AttachmentStore(self._store)
 
     def put_proposal(
         self,
@@ -266,6 +316,8 @@ class OutboxStore:
         actions: list[dict[str, Any]] | None = None,
         prevalidate: DraftValidate | None = None,
         max_drafts: int = MAX_DRAFTS,
+        attachments: Mapping[str, Any] | None = None,
+        expected_revision: int | None = None,
     ) -> Draft:
         """Append one action (and its new bodies) to the draft, creating it."""
         kind = _kind(kind)
@@ -277,6 +329,19 @@ class OutboxStore:
             else:
                 manifest = json.loads(current.manifest)
                 existing = dict(current.bodies)
+            if attachments and current is not None and expected_revision is None:
+                raise ValueError("expected_revision is required when adding draft attachments")
+            if expected_revision is not None and (
+                current is None or current.revision != expected_revision
+            ):
+                raise ValueError("draft revision changed or draft is missing")
+            declarations = dict(manifest.get("attachments", {}))
+            for identifier, descriptor in (attachments or {}).items():
+                if identifier in declarations and declarations[identifier] != descriptor:
+                    raise ValueError(f"attachment {identifier!r} already has different metadata")
+                declarations[identifier] = descriptor
+            if declarations:
+                manifest["attachments"] = declarations
             added = [action] if actions is None else actions
             combined = {**existing, **bodies}
             if prevalidate is not None:
@@ -312,6 +377,7 @@ class OutboxStore:
                         "WHERE uuid=? AND kind=? AND name=?",
                         (text, json.dumps(combined), now, revision, uuid, kind, name),
                     )
+                _release_attachments(con, uuid, kind, f"draft:{name}", text)
                 created = now if current is None else current.created_at
             return Draft(uuid, kind, name, text, combined, created, now, revision)
 
@@ -336,8 +402,9 @@ class OutboxStore:
                 "DELETE FROM outbox_draft WHERE uuid=? AND kind=? AND name=?",
                 (uuid, _kind(kind), name),
             ).rowcount
-        if not removed:
-            raise DraftNotFoundError(name)
+            if not removed:
+                raise DraftNotFoundError(name)
+            _release_attachments(con, uuid, kind, f"draft:{name}", None)
 
     def submit_draft(
         self,
@@ -366,6 +433,7 @@ class OutboxStore:
                 return build(stem, found.manifest, found.bodies)
 
             proposal = _insert_proposal(con, uuid, kind, slug, builder, now=now, cap=cap)
+            _release_attachments(con, uuid, kind, f"draft:{name}", None)
             con.execute(
                 "DELETE FROM outbox_draft WHERE uuid=? AND kind=? AND name=?", (uuid, kind, name)
             )
@@ -410,6 +478,12 @@ class OutboxStore:
                 raise ProposalChangedError(f"{kind}/{name} changed or is gone")
             if publication_db.claim_is_live(con, uuid, kind, name):
                 raise ProposalLockedError(f"{kind}/{name} is being published; retry afterwards")
+            if con.execute(
+                "SELECT 1 FROM outbox_attachment_upload WHERE uuid=? AND kind=? "
+                "AND proposal_name=? AND state IN ('prepared','uncertain') LIMIT 1",
+                (uuid, kind, name),
+            ).fetchone():
+                raise ProposalLockedError(f"{kind}/{name}: attachment upload outcome is uncertain")
             journal = publication_db.active_journal(con, uuid, kind, name)
             if journal is not None and journal.actions:
                 if manifest is not None or not archive_journal:
@@ -429,6 +503,7 @@ class OutboxStore:
                     (uuid, kind, name),
                 )
             key = (uuid, kind, name)
+            _release_attachments(con, uuid, kind, name, manifest)
             if manifest is None:
                 publication_db.forget_dropped_sent(con, uuid, kind, name)
                 con.execute(
@@ -462,7 +537,7 @@ class OutboxStore:
         with self._store.transaction() as con:
             kept = {
                 (str(kind), str(name))
-                for kind, name in con.execute(_UNCERTAIN_PROPOSALS_SQL, (uuid,)).fetchall()
+                for kind, name in con.execute(_UNCERTAIN_PROPOSALS_SQL, (uuid, uuid)).fetchall()
             }
             rows = con.execute(
                 "SELECT kind, name FROM outbox_proposal WHERE uuid=?", (uuid,)
@@ -471,6 +546,7 @@ class OutboxStore:
             # Same as a drop: a deleted proposal's actions resolved for retry
             # would otherwise leave their `uncertain` Sent rows forever.
             for _uuid, kind, name in doomed:
+                _release_attachments(con, uuid, kind, name, None)
                 publication_db.forget_dropped_sent(con, uuid, kind, name)
             con.executemany(
                 "DELETE FROM outbox_body WHERE uuid=? AND kind=? AND proposal_name=?", doomed
@@ -478,7 +554,12 @@ class OutboxStore:
             con.executemany(
                 "DELETE FROM outbox_proposal WHERE uuid=? AND kind=? AND name=?", doomed
             )
+            drafts = con.execute(
+                "SELECT kind, name FROM outbox_draft WHERE uuid=?", (uuid,)
+            ).fetchall()
             con.execute("DELETE FROM outbox_draft WHERE uuid=?", (uuid,))
+            for kind, name in drafts:
+                _release_attachments(con, uuid, str(kind), f"draft:{name}", None)
         return len(doomed)
 
 
@@ -492,7 +573,38 @@ _UNCERTAIN_PROPOSALS_SQL = (
     " AND a.proposal_name=j.proposal_name AND a.digest=j.digest"
     " AND a.state IN ('prepared', 'uncertain')"
     " WHERE p.uuid=?"
+    " UNION SELECT p.kind, p.name FROM outbox_proposal p"
+    " JOIN outbox_attachment_upload u ON u.uuid=p.uuid AND u.kind=p.kind"
+    " AND u.proposal_name=p.name AND u.state IN ('prepared', 'uncertain')"
+    " WHERE p.uuid=?"
 )
+
+
+def read_uploads(root: Path, uuid: str, kind: Kind) -> tuple[tuple[str, AttachmentUploadView], ...]:
+    """Read upload evidence without creating or migrating the store."""
+    from jailbee.outbox.models import AttachmentUploadView
+
+    path = store_path(root)
+    if not path.exists():
+        return ()
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=_BUSY_TIMEOUT_S)
+        try:
+            rows = con.execute(
+                "SELECT proposal_name,digest,blob,host,repository_id,name,content_type,"
+                "size,sha256,state,url FROM outbox_attachment_upload "
+                "WHERE uuid=? AND kind=? ORDER BY proposal_name,digest,blob,host,repository_id",
+                (uuid, kind),
+            ).fetchall()
+            return tuple((str(row[0]), AttachmentUploadView(*row[1:])) for row in rows)
+        finally:
+            con.close()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc):
+            return ()
+        raise StoreError(str(exc)) from exc
+    except sqlite3.Error as exc:
+        raise StoreError(str(exc)) from exc
 
 
 def read_retained(root: Path) -> dict[str, str]:

@@ -167,6 +167,33 @@ _MIGRATIONS: list[str] = [
     CREATE INDEX outbox_sent_by_time ON outbox_sent(sent_at);
     CREATE INDEX outbox_sent_by_uuid ON outbox_sent(uuid, sent_at);
     """,
+    """
+    CREATE TABLE outbox_attachment (
+        uuid TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL,
+        content_type TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL,
+        state TEXT NOT NULL, received INTEGER NOT NULL DEFAULT 0,
+        revision INTEGER NOT NULL DEFAULT 0, last_activity REAL NOT NULL,
+        PRIMARY KEY(uuid, id)
+    );
+    CREATE TABLE outbox_attachment_chunk (
+        uuid TEXT NOT NULL, id TEXT NOT NULL, offset INTEGER NOT NULL, data BLOB NOT NULL,
+        PRIMARY KEY(uuid, id, offset)
+    );
+    CREATE TABLE outbox_attachment_ref (
+        uuid TEXT NOT NULL, kind TEXT NOT NULL, proposal TEXT NOT NULL, id TEXT NOT NULL,
+        PRIMARY KEY(uuid, kind, proposal, id)
+    );
+    """,
+    """
+    CREATE TABLE outbox_attachment_upload (
+        uuid TEXT NOT NULL, kind TEXT NOT NULL, proposal_name TEXT NOT NULL,
+        digest TEXT NOT NULL, blob TEXT NOT NULL, host TEXT NOT NULL,
+        repository_id INTEGER NOT NULL, name TEXT NOT NULL, content_type TEXT NOT NULL,
+        size INTEGER NOT NULL, sha256 TEXT NOT NULL, state TEXT NOT NULL,
+        url TEXT,
+        PRIMARY KEY(uuid, kind, proposal_name, digest, blob, host, repository_id)
+    );
+    """,
 ]
 
 

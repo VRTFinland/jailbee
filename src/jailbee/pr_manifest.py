@@ -6,7 +6,11 @@ import json
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
+
+from jailbee.attachment_manifest import Attachment, parse_attachments
+from jailbee.attachments import AttachmentError, validate_references
 
 MAX_MANIFEST_BYTES = 256 * 1024
 MAX_BODY_BYTES = 64 * 1024
@@ -87,6 +91,7 @@ class Manifest:
     source: str | None = None
     source_sha: str | None = None
     base: str | None = None
+    attachments: Mapping[str, Attachment] = field(default_factory=lambda: MappingProxyType({}))
 
 
 def is_source_manifest(manifest: Manifest) -> bool:
@@ -400,6 +405,18 @@ def parse_manifest(
         base = base_val
 
     actions = _parse_actions(name, raw, bodies, pr, source=source)
+    try:
+        attachments = parse_attachments(raw.get("attachments", {}))
+        active_bodies = [action.body for action in actions]
+        active_bodies.extend(
+            comment.body
+            for action in actions
+            if isinstance(action, ReviewAction)
+            for comment in action.comments
+        )
+        validate_references(active_bodies, attachments)
+    except AttachmentError as exc:
+        raise ManifestError(f"{name}: attachments: {exc}") from exc
 
     return Manifest(
         name=name,
@@ -410,4 +427,5 @@ def parse_manifest(
         source=source,
         source_sha=source_sha,
         base=base,
+        attachments=attachments,
     )

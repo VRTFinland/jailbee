@@ -99,8 +99,26 @@ issue or pull request to a GitHub Projects v2 board. Use `--set FIELD=VALUE`
 (repeatable) to set fields or `--clear FIELD` (repeatable) to clear them;
 `--project` may be omitted when the repo's committed `github.project` default
 is set. A `--set` also adds the item when needed. Commands stage
-the proposal in the host outbox store; never write outbox files by hand. See
-the normative [output schema](references/manifest-schema.md).
+the proposal in the host outbox store; never write outbox files by hand. For
+image evidence on a new issue, write a local JSON manifest and stage it with
+`jailbee outbox stage issue proposal.json --slug evidence`; add `--batch NAME`
+to append it to a draft for later `jailbee outbox submit NAME --kind issue`.
+See the [image-evidence workflow](references/manifest-schema.md#image-evidence)
+and normative [output schema](references/manifest-schema.md).
+
+Image staging supports issue proposals and PR review drafts. Ordinary issue
+commands do not upload local files; use `jailbee outbox stage issue` for issue
+evidence and `jailbee pr review add|submit --attach ID=PATH` for review images.
+PR source manifests and initial or updated PR descriptions support image
+attachments. When an explicit `--body` or `--body-file` is supplied, it takes
+precedence over a staged description and its attachments are not consumed.
+Attachments are captured as exact bytes; inspect images
+for secrets or sensitive metadata and clean them before staging. There is no
+automatic redaction. The host asks for one approval covering the proposal text
+and its files; nothing uploads to GitHub before approval. Once uploaded,
+dropping a proposal cannot retract the GitHub asset. If publication is
+uncertain, use `jb outbox attachment-resolve` to reconcile its host journal;
+never retry blindly, since a duplicate upload can leave a permanent orphan.
 
 Stage only host-known boards: the `github.project` default, extras in the
 host-local `github.projects` list (`repos/<container_prefix>.yaml`), or an

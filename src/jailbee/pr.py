@@ -138,6 +138,16 @@ class PrEditError(PrError):
     """`gh pr edit` / `gh pr ready` failed: gh missing, not authed, etc."""
 
 
+def attachment_request(
+    repo_root: Path, args: list[str], *, env: dict[str, str], timeout: int
+) -> subprocess.CompletedProcess[bytes]:
+    """Run one image request; the attachment module owns validation and recovery."""
+    return subprocess.run(
+        ["gh", "api", *args], cwd=repo_root, capture_output=True,
+        check=False, timeout=timeout, env=env,
+    )
+
+
 def resolve_pr(repo_root: Path, number: int, *, remote: str, repo: str | None = None) -> PrInfo:
     """Resolve PR metadata via `gh pr view`.
 

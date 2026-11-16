@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Literal
 
 from rich.text import Text
 
+from jailbee.outbox.models import AttachmentUploadView, AttachmentUse, AttachmentView
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -128,6 +130,8 @@ class ProposalItem:
     foreign_repos: tuple[str, ...]
     raw_text: str
     actions: tuple[ActionItem, ...]
+    attachments: tuple[AttachmentView, ...] = ()
+    uploads: tuple[AttachmentUploadView, ...] = ()
 
     @property
     def publishable(self) -> bool:
@@ -265,6 +269,58 @@ def _action_item(item: object) -> ActionItem:
     )
 
 
+def _attachment_item(item: object) -> AttachmentView:
+    if not isinstance(item, dict):
+        raise _bad_listing()
+    uses = item.get("uses")
+    size = _opt_int(item.get("size"))
+    fields = [item.get(key) for key in ("id", "name", "content_type", "sha256")]
+    if (
+        not all(isinstance(value, str) for value in fields)
+        or size is None
+        or not isinstance(uses, list)
+    ):
+        raise _bad_listing()
+    parsed = []
+    for use in uses:
+        if not isinstance(use, dict):
+            raise _bad_listing()
+        action, line = _opt_int(use.get("action_index")), _opt_int(use.get("line"))
+        if action is None or line is None:
+            raise _bad_listing()
+        comment = use.get("comment_index")
+        if comment is not None and _opt_int(comment) is None:
+            raise _bad_listing()
+        parsed.append(AttachmentUse(action, line, _opt_int(comment)))
+    return AttachmentView(
+        _str(fields[0]), _str(fields[1]), _str(fields[2]), size, _str(fields[3]), tuple(parsed)
+    )
+
+
+def _upload_item(item: object) -> AttachmentUploadView:
+    if not isinstance(item, dict):
+        raise _bad_listing()
+    keys = ("digest", "blob", "host", "name", "content_type", "sha256", "state")
+    if not all(isinstance(item.get(key), str) for key in keys):
+        raise _bad_listing()
+    repository_id, size = _opt_int(item.get("repository_id")), _opt_int(item.get("size"))
+    url = item.get("url")
+    if repository_id is None or size is None or (url is not None and not isinstance(url, str)):
+        raise _bad_listing()
+    return AttachmentUploadView(
+        _str(item["digest"]),
+        _str(item["blob"]),
+        _str(item["host"]),
+        repository_id,
+        _str(item["name"]),
+        _str(item["content_type"]),
+        size,
+        _str(item["sha256"]),
+        _str(item["state"]),
+        url,
+    )
+
+
 def _proposal_item(item: object) -> ProposalItem:
     if not isinstance(item, dict):
         raise _bad_listing()
@@ -282,6 +338,10 @@ def _proposal_item(item: object) -> ProposalItem:
         and isinstance(actions, list)
     ):
         raise _bad_listing()
+    attachments = item.get("attachments", [])
+    uploads = item.get("uploads", [])
+    if not isinstance(attachments, list) or not isinstance(uploads, list):
+        raise _bad_listing()
     return ProposalItem(
         pid,
         _str(item.get("kind")) or pid.split("/", 1)[0],
@@ -297,6 +357,8 @@ def _proposal_item(item: object) -> ProposalItem:
         _foreign_repos(actions),
         _str(item.get("raw_text")),
         tuple(_action_item(a) for a in actions),
+        tuple(_attachment_item(a) for a in attachments),
+        tuple(_upload_item(u) for u in uploads),
     )
 
 
@@ -679,6 +741,30 @@ def preview_lines(state: OutboxState, key: RowKey | None, width: int) -> tuple[T
                 comment = next((c for c in target.comments if c.index == key[3]), None)
                 if comment is not None:
                     lines.extend(_comment_preview(comment, width))
+    if found is not None and key is not None and state.question is None and not state.raw:
+        for attachment in found[1].attachments:
+            if key[2] is not None and not any(u.action_index == key[2] for u in attachment.uses):
+                continue
+            uses = ", ".join(
+                f"action {u.action_index}"
+                + (f" comment {u.comment_index}" if u.comment_index is not None else "")
+                + f" line {u.line}"
+                for u in attachment.uses
+            )
+            lines.append(
+                Text(
+                    f"Attachment {_clean(attachment.id)}: {_clean(attachment.name)} "
+                    f"({_clean(attachment.content_type)}, {attachment.size} bytes)"
+                )
+            )
+            lines.append(Text(f"SHA256: {_clean(attachment.sha256)}; uses: {uses}"))
+        for upload in found[1].uploads:
+            lines.append(
+                Text(
+                    f"Upload {_clean(upload.blob)} to {_clean(upload.host)}/{upload.repository_id}: "
+                    f"{_clean(upload.state)}; URL: {_clean(upload.url or '-')}"
+                )
+            )
     if state.status:
         if lines:
             lines.append(Text(""))

@@ -1,7 +1,10 @@
 # Issue outbox — manifest schema v1 (normative)
 
-This normative schema describes output produced by the container commands and
-parsed by the host. Do not write manifests or outbox files by hand.
+This normative schema describes the proposal stored in the host outbox and
+parsed by the host. Local staging inputs (including the JSON file passed to
+`jailbee outbox stage`) may be authored by hand; the staging command validates
+and captures them into the immutable host-owned proposal. Never write or edit
+the host outbox's stored proposal files by hand.
 
 ```json
 {
@@ -37,6 +40,59 @@ any number of declared submodules.
 | `actions` | Non-empty list, applied in order. |
 
 No other top-level field is allowed; an unknown key is refused, naming it.
+
+## Image evidence
+
+For an issue proposal containing screenshots, use `jailbee outbox stage issue
+proposal.json --slug evidence` rather than the ordinary `jailbee issue` commands.
+The command reads referenced files relative to the JSON manifest's directory,
+captures their exact bytes, and stages the complete proposal in the host outbox
+for human inspection. It supports issue proposals; PR images are attached to review drafts with
+`jailbee pr review add|submit --attach ID=PATH`. Source-manifest proposals can
+carry images; initial and updated PR descriptions support them too. An
+explicit `--body` or `--body-file` passed to PR publication takes precedence
+over a staged description and leaves its attachments unused. To collect the
+issue proposal in a draft batch, pass `--batch NAME`; submit it
+later with `jailbee outbox submit NAME --kind issue`.
+
+At the manifest top level, `attachments` maps stable identifiers to local file
+paths. Reference them in a Markdown body with an inline image link, and reuse
+an identifier when the same captured image appears more than once:
+
+```json
+{
+  "version": 1,
+  "attachments": {
+    "screen": {"file": "captures/error.png"}
+  },
+  "actions": [
+    {
+      "type": "create",
+      "repo": ".",
+      "ref": "repro",
+      "title": "Error screen is blank after refresh",
+      "body": "The failing screen is shown here:\\n\\n![Blank screen after refresh](attachment:screen)"
+    }
+  ]
+}
+```
+
+Paths are relative to the manifest file, not the shell's current directory.
+Supported files are PNG, JPEG, GIF and WebP raster images, up to 10 MB per
+file. There is no fixed attachment-count or aggregate-byte quota in JailBee;
+existing manifest and body size limits still apply and are not lifted by image
+staging. GitHub may impose additional limits.
+The file's extension and image signature must agree. Staging preserves the
+captured bytes; it does not crop, recompress, strip metadata, or redact secrets.
+Review screenshots and remove sensitive content or metadata before staging.
+The host's single approval covers both proposal text and attached files; no
+file is uploaded before that approval. Removing a staged proposal does not
+retract an asset already uploaded to GitHub. If publication becomes uncertain,
+reconcile the host journal before taking action; never blindly retry an upload.
+
+Reference-style Markdown images are not part of the supported syntax; use an
+inline image destination exactly as shown above. Keep code literals and other
+non-image references unchanged.
 
 ## `repo` (every action)
 

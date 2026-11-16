@@ -17,7 +17,7 @@ PR and a submodule PR:
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -1676,6 +1676,50 @@ def _outbox_repo(scope: PrScope) -> str:
     return repo
 
 
+def image_description_creator(
+    cfg: Config,
+    incus: IncusType,
+    container: str,
+    source: OutboxPrText | None,
+    body: str,
+    *,
+    title: str,
+    explicit_body: bool,
+    confirm: Callable[[str], bool],
+    operation: str = "Create",
+) -> Callable[[Callable[[str], PrCreated]], PrCreated] | None:
+    """Select the attachment-aware create path only for the winning body."""
+    from jailbee.attachments import references
+
+    if source is None or explicit_body or source.text.body != body or not references(body):
+        return None
+    from jailbee.outbox.pr_description import create_with_description
+
+    def publish(create: Callable[[str], PrCreated]) -> PrCreated:
+        from jailbee.orchestration.store import StoreError
+        from jailbee.outbox.attachment_publication import AttachmentPublicationError
+        from jailbee.outbox.models import OutboxError
+        from jailbee.outbox_io import JournalError
+
+        try:
+            return create_with_description(
+                cfg,
+                incus,
+                container,
+                source,
+                body,
+                create,
+                confirm,
+                publisher="user",
+                title=title,
+                operation=operation,
+            )
+        except (AttachmentPublicationError, JournalError, StoreError) as exc:
+            raise OutboxError(str(exc)) from exc
+
+    return publish
+
+
 def create_or_view_pr(
     scope: PrScope,
     state: PrState,
@@ -1689,6 +1733,7 @@ def create_or_view_pr(
     label: str,
     record_context: str | None = None,
     use_outbox: bool = False,
+    create_description: Callable[[Callable[[str], PrCreated]], PrCreated] | None = None,
 ) -> PrCreated:
     """Return the container's PR: an existing one on update, else a new one.
 
@@ -1714,17 +1759,20 @@ def create_or_view_pr(
     if is_update:
         return pr_module.view_existing_pr(scope.repo_root, head, **repo_args)
 
-    created = pr_module.create_pr(
-        scope.repo_root,
-        head=head,
-        base=base,
-        title=title,
-        body=body,
-        remote=scope.remote,
-        draft=draft,
-        label=label,
-        **repo_args,
-    )
+    def create(rendered_body: str) -> PrCreated:
+        return pr_module.create_pr(
+            scope.repo_root,
+            head=head,
+            base=base,
+            title=title,
+            body=rendered_body,
+            remote=scope.remote,
+            draft=draft,
+            label=label,
+            **repo_args,
+        )
+
+    created = create_description(create) if create_description is not None else create(body)
     if record_context is not None:
         state.record(
             head=head,
@@ -1840,9 +1888,30 @@ def apply_pr_updates(
             try:
                 bind_outbox_source(manager, edit.source)
                 validate_outbox_source(cfg, incus, full, edit.source)
-                pr_module.edit_pr(
-                    scope.repo_root, number, title=edit.title, body=edit.body, **repo_args
+                image_edit = image_description_creator(
+                    cfg,
+                    incus,
+                    full,
+                    edit.source,
+                    edit.body or "",
+                    title=edit.title or "",
+                    explicit_body=edit.source is None,
+                    confirm=lambda question: typer.confirm(question, default=False),
+                    operation="Update",
                 )
+                if image_edit is None:
+                    pr_module.edit_pr(
+                        scope.repo_root, number, title=edit.title, body=edit.body, **repo_args
+                    )
+                else:
+
+                    def dispatch(rendered: str) -> PrCreated:
+                        pr_module.edit_pr(
+                            scope.repo_root, number, title=edit.title, body=rendered, **repo_args
+                        )
+                        return pr_module.PrCreated(number, url, False)
+
+                    image_edit(dispatch)
                 title_changed = edit.title is not None
                 body_changed = edit.body is not None
             except pr_module.PrError as exc:
@@ -1853,7 +1922,8 @@ def apply_pr_updates(
                 # After the edit landed, and never before it: a `FinalizeError` in
                 # here is reported and swallowed, so a bookkeeping failure cannot
                 # turn a successful `gh pr edit` into a failed command.
-                record_outbox_consumption(cfg, incus, full, edit.source, url, announce=False)
+                if image_edit is None:
+                    record_outbox_consumption(cfg, incus, full, edit.source, url, announce=False)
 
         state_note = ""
         if ready is not None:

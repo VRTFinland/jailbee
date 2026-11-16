@@ -40,6 +40,12 @@ OUTBOX_SHOW = "outbox.show"
 OUTBOX_DROP = "outbox.drop"
 # The calling container's own sent records, from the host outbox store.
 OUTBOX_SENT = "outbox.sent"
+OUTBOX_ATTACHMENT_BEGIN = "outbox.attachment.begin"
+OUTBOX_ATTACHMENT_CHUNK = "outbox.attachment.chunk"
+OUTBOX_ATTACHMENT_FINISH = "outbox.attachment.finish"
+OUTBOX_ATTACHMENT_OPS = frozenset(
+    {OUTBOX_ATTACHMENT_BEGIN, OUTBOX_ATTACHMENT_CHUNK, OUTBOX_ATTACHMENT_FINISH}
+)
 OUTBOX_OPS: frozenset[str] = frozenset(
     {OUTBOX_PUT, OUTBOX_LIST, OUTBOX_SHOW, OUTBOX_DROP, OUTBOX_SENT}
 )
@@ -56,7 +62,7 @@ OUTBOX_DRAFT_OPS: frozenset[str] = OUTBOX_DRAFT_READ_OPS | {
     OUTBOX_DRAFT_SUBMIT,
     OUTBOX_DRAFT_DISCARD,
 }
-OUTBOX_OPS = OUTBOX_OPS | OUTBOX_DRAFT_OPS
+OUTBOX_OPS = OUTBOX_OPS | OUTBOX_DRAFT_OPS | OUTBOX_ATTACHMENT_OPS
 # The exact prefix `encode_request` writes for an outbox put: the listener reads
 # it before the whole line is in, to know which cap the line gets.
 _OUTBOX_PUT_PREFIX = b'{"v":%d,"op":"%s",' % (VERSION, OUTBOX_PUT.encode())

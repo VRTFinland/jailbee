@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -324,7 +324,9 @@ wheels = [
 name = "jailbee"
 version = "1.8.8"
 source = { editable = "." }
+default-groups = ["dev", "docs"]
 dependencies = [
+    { name = "markdown-it-py" },
     { name = "prompt-toolkit" },
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -368,6 +370,7 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "asyncssh", marker = "extra == 'ssh'", specifier = ">=2.24" },
+    { name = "markdown-it-py", specifier = ">=4.0,<5" },
     { name = "prompt-toolkit", specifier = ">=3.0" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "pyside6", marker = "extra == 'gui'", specifier = ">=6.7" },

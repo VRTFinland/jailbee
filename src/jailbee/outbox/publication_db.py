@@ -50,6 +50,7 @@ from jailbee.outbox_io import (
 
 if TYPE_CHECKING:
     from jailbee.orchestration.store import BrokerStore
+    from jailbee.outbox.attachment_publication import AttachmentPublisher
 
 _BUSY_TIMEOUT_S = 5.0
 _CLAIM_PREFIX = "outbox.claim:"
@@ -592,6 +593,9 @@ def _stored_digest(con: sqlite3.Connection, uuid: str, kind: str, name: str) -> 
 
 
 def _remove_proposal(con: sqlite3.Connection, uuid: str, kind: str, name: str) -> None:
+    from jailbee.outbox.store_db import _release_attachments
+
+    _release_attachments(con, uuid, kind, name, None)
     con.execute(
         "DELETE FROM outbox_body WHERE uuid=? AND kind=? AND proposal_name=?", (uuid, kind, name)
     )
@@ -628,6 +632,13 @@ class PublicationStore:
 
     def __init__(self, store: BrokerStore) -> None:
         self._store = store
+
+    @property
+    def image_publisher(self) -> AttachmentPublisher:
+        """Claim-bound image uploads share this publication journal's store."""
+        from jailbee.outbox.attachment_publication import AttachmentPublisher
+
+        return AttachmentPublisher(self._store, self)
 
     # claims
 

@@ -475,10 +475,21 @@ def publish_submodule_pr(
             if not is_update:
                 pr_flow.bind_outbox_source(management, plan.outbox_source)
                 pr_flow.validate_outbox_source(cfg, incus, full, plan.outbox_source)
+            image_creator = pr_flow.image_description_creator(
+                cfg,
+                incus,
+                full,
+                plan.outbox_source,
+                resolved_body,
+                title=resolved_title,
+                explicit_body=opts.body is not None or is_update,
+                confirm=lambda question: typer.confirm(question, default=False),
+            )
             try:
                 created = pr_flow.create_or_view_pr(
                     scope,
                     state,
+                    create_description=image_creator,
                     use_outbox=not opts.no_outbox,
                     is_update=is_update,
                     head=published.publish_name,
@@ -549,7 +560,7 @@ def publish_submodule_pr(
                 ready=opts.ready,
                 update=update,
             )
-            if not did_update:
+            if not did_update and opts.body is None and image_creator is None:
                 pr_flow.record_outbox_consumption(cfg, incus, full, plan.outbox_source, created.url)
             if opts.note_merge_order and incus.config_get(full, "user.jailbee.pr"):
                 info(

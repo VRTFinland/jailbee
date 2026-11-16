@@ -1,15 +1,19 @@
 # ruff: noqa: F811
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from jailbee.config.models_orchestration import OrchestrationView, RepoOrchestration
 from jailbee.incus import IncusError
-from jailbee.orchestration import broker_state, labels
+from jailbee.orchestration import broker_state, labels, retention
+from jailbee.outbox.attachment_store import AttachmentError, AttachmentStore
 from tests.test_orchestration_broker import GRANT, NOW, _c
 from tests.test_orchestration_socket_device import Env, env  # noqa: F401
 
 DAY = 86400.0
+ATTACHMENT_DATA = b"\x89PNG\r\n\x1a\nblob"
 
 
 def _orch(name: str, uuid: str) -> dict:
@@ -69,6 +73,27 @@ def test_purge_waits_an_hour_and_uses_per_repo_days(env: Env, clock: Clock) -> N
     _put(env, "u-a", "proj-orch", "older", 9)
     env.tick()
     assert "older" in _ids(env, "u-a")
+
+
+def test_periodic_purge_collects_abandoned_uploads_without_orchestration(
+    env: Env, clock: Clock
+) -> None:
+    attachments = AttachmentStore(env.store)
+    digest = hashlib.sha256(ATTACHMENT_DATA).hexdigest()
+    old = attachments.begin("plain-uuid", "old.png", "image/png", len(ATTACHMENT_DATA), digest, 0)
+    pinned = attachments.begin(
+        "plain-uuid", "pinned.png", "image/png", len(ATTACHMENT_DATA), digest, 0
+    )
+    attachments.append("plain-uuid", pinned, 0, ATTACHMENT_DATA, 1)
+    attachments.finish("plain-uuid", pinned, 2)
+    with attachments.transaction() as con:
+        attachments.pin(con, "plain-uuid", "issue", "proposal", pinned)
+
+    retention.purge_messages(env.memory, [], NOW)
+
+    with pytest.raises(AttachmentError):
+        attachments.append("plain-uuid", old, 0, ATTACHMENT_DATA, NOW.timestamp())
+    assert attachments.metadata("plain-uuid", pinned)["blob"] == pinned
 
 
 def test_default_days_without_config(env: Env, clock: Clock) -> None:

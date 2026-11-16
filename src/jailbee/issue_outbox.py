@@ -7,7 +7,7 @@ import re
 import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, assert_never
@@ -980,11 +980,32 @@ def foreign_question(batch: PreparedBatch) -> str | None:
     return f"Publish {total} pending {noun}, {count} of them to foreign repositories {names}?"
 
 
+def _attachment_lines(manifest: IssueManifest) -> list[str]:
+    if not manifest.attachments:
+        return []
+    from jailbee.attachments import references
+
+    lines = ["Attachments:"]
+    for identifier, attachment in manifest.attachments.items():
+        lines.append(
+            f"  attachment:{identifier}: {attachment.name} ({attachment.content_type}, "
+            f"{attachment.size} bytes, sha256 {attachment.sha256})"
+        )
+        for index, action in enumerate(manifest.actions):
+            if isinstance(action, (CreateAction, EditAction, CommentAction)) and action.body:
+                for reference in references(action.body):
+                    if reference.id == identifier:
+                        line = action.body.count("\n", 0, reference.start) + 1
+                        lines.append(f"    action {index}, line {line}, repository {action.repo}")
+    return lines
+
+
 def plan_lines(batch: PreparedBatch) -> list[str]:
     """Return the complete approval text in execution order, without markup."""
     lines = [f"Host GitHub login: {batch.login}", f"Container: {batch.container}"]
     for prepared in batch.manifests:
         lines.append(f"Manifest: {prepared.manifest.name}")
+        lines.extend(_attachment_lines(prepared.manifest))
         receipts = {r.index: r for r in prepared.journal.actions} if prepared.journal else {}
         previous = None
         for resolved in prepared.actions:
@@ -1012,6 +1033,7 @@ def plan_lines(batch: PreparedBatch) -> list[str]:
 def show_lines(manifest: IssueManifest, journal: IssueJournal | None, container: str) -> list[str]:
     """Show proposal text and host progress without needing GitHub reads."""
     lines = [f"Manifest: {manifest.name}"]
+    lines.extend(_attachment_lines(manifest))
     receipts = {r.index: r for r in journal.actions} if journal else {}
     refs: dict[str, ResolvedIssue] = {}
     previous = None
@@ -1384,8 +1406,10 @@ def apply_batch(
     commits leaves `prepared`, read back as `uncertain`. The run stops at the
     first action it cannot durably resolve one way or the other.
     """
+    from jailbee.attachment_github import UploadError
     from jailbee.orchestration.store import StoreError
     from jailbee.outbox import publication_db
+    from jailbee.outbox.attachment_publication import AttachmentPublicationError
     from jailbee.outbox.service import instance_identity
 
     store = publications if publications is not None else publication_db.open_publications()
@@ -1522,23 +1546,55 @@ def apply_batch(
                         created_issue_numbers[resolved.action.ref] = current.issue
                     continue
 
+                if before_action is not None:
+                    before_action()
+                action = resolved.action
+                if (
+                    prepared.manifest.attachments
+                    and isinstance(action, (CreateAction, EditAction, CommentAction))
+                    and action.body is not None
+                ):
+                    try:
+                        body = store.image_publisher.resolve_body(
+                            claim,
+                            digest,
+                            action.body,
+                            prepared.manifest.attachments,
+                            resolved.repo.repo_root,
+                            resolved.repo.slug,
+                        )
+                    except AttachmentPublicationError as exc:
+                        return failed(name, resolved.index, exc.uncertain, str(exc))
+                    except (JournalError, StoreError, UploadError) as exc:
+                        return failed(name, resolved.index, False, str(exc))
+                    if isinstance(action, EditAction) and resolved.issue.number is not None:
+                        context = f"{name} action {resolved.index}"
+                        try:
+                            snapshot = issue_github.get_issue(
+                                batch.host_repo_root, resolved.repo.slug, resolved.issue.number
+                            )
+                        except IssueGithubReadError as exc:
+                            return failed(name, resolved.index, False, f"{context}: {exc}")
+                        differences = _differences(action, snapshot, context, batch.login)
+                        if snapshot.is_pull_request:
+                            differences.insert(
+                                0, f"{context}: target is a pull request, not an issue"
+                            )
+                        if differences:
+                            return failed(
+                                name,
+                                resolved.index,
+                                False,
+                                "\n".join(differences),
+                                kind="validation",
+                            )
+                    resolved = replace(resolved, action=replace(action, body=body))
                 try:
                     store.mark_prepared(
                         claim, digest, resolved.index, repo=resolved.repo.slug, now=clock()
                     )
                 except (JournalError, StoreError) as exc:
                     return failed(name, resolved.index, False, str(exc))
-                if before_action is not None:
-                    try:
-                        before_action()
-                    except BaseException as exc:
-                        try:
-                            store.clear_prepared(claim, digest, resolved.index)
-                        except (JournalError, StoreError) as cleanup_error:
-                            exc.add_note(
-                                f"Could not clear prepared journal marker: {cleanup_error}"
-                            )
-                        raise
 
                 if isinstance(resolved.action, ProjectSetAction) and resolved.established_item:
                     number = resolved.issue.number or created_issue_numbers.get(

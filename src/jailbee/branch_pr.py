@@ -245,6 +245,8 @@ def publish_source_manifest(
     from jailbee.incus import IncusError
     from jailbee.orchestration.store import StoreError
     from jailbee.outbox import publication_db, sent
+    from jailbee.outbox.attachment_publication import AttachmentPublicationError
+    from jailbee.outbox.inspect import safe_text
     from jailbee.outbox.models import OutboxChanged, OutboxError, ProposalId
     from jailbee.outbox.service import instance_identity
     from jailbee.outbox_io import JournalError
@@ -377,6 +379,17 @@ def publish_source_manifest(
                 f"source {manifest.source} @ {manifest.source_sha[:7]} → {head} "
                 f"(base {base}, {count} commits)"
             )
+            if action is not None and manifest.attachments:
+                info_plain(
+                    safe_text(f"Title: {action.title or '(default)'}\nDescription:\n{action.body}")
+                )
+                for identifier, attachment in manifest.attachments.items():
+                    info_plain(
+                        safe_text(
+                            f"Image {identifier}: {attachment.name} ({attachment.content_type}, "
+                            f"{attachment.size} bytes, sha256 {attachment.sha256})"
+                        )
+                    )
             if not yes and not confirm("Publish?"):
                 return 1
 
@@ -451,9 +464,14 @@ def publish_source_manifest(
                     publisher=publisher,
                 )
 
-            store.mark_prepared(claim, digest, 0, repo=repo, now=clock())
             title = action.title if action else None
             body = action.body if action else None
+            if body is not None and manifest.attachments:
+                body = store.image_publisher.resolve_body(
+                    claim, digest, body, manifest.attachments, cfg.repo_root, repo
+                )
+                validate()
+            store.mark_prepared(claim, digest, 0, repo=repo, now=clock())
             cleared = False
             try:
                 if target is None:
@@ -488,9 +506,7 @@ def publish_source_manifest(
                     number = target.number
                     url = f"https://github.com/{repo}/pull/{number}"
                     if action is not None:
-                        pr.edit_pr(
-                            cfg.repo_root, number, title=action.title, body=action.body, repo=repo
-                        )
+                        pr.edit_pr(cfg.repo_root, number, title=title, body=body, repo=repo)
                     authored = own_branches_only
             except Exception as exc:
                 if not cleared:
@@ -539,6 +555,7 @@ def publish_source_manifest(
             return 0
     except (
         IncusError,
+        AttachmentPublicationError,
         JournalError,
         StoreError,
         OutboxError,

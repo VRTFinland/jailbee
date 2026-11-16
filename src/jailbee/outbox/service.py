@@ -99,6 +99,7 @@ def issue_snapshot(container: str, uuid: str | None) -> StoreSnapshot:
         raise JournalError(f"{container}: instance uuid is unavailable")
     try:
         rows = store_db.read_proposals(state_dir() / "orchestration", uuid, "issue")
+        uploads = store_db.read_uploads(state_dir() / "orchestration", uuid, "issue")
     except StoreError as exc:
         raise OutboxExecutionError(f"outbox store is unreadable: {exc}") from exc
     files: list[tuple[str, str]] = []
@@ -106,7 +107,7 @@ def issue_snapshot(container: str, uuid: str | None) -> StoreSnapshot:
         files.append((row.name, row.manifest))
         files.extend(row.bodies.items())
     versions = tuple((row.name, row.revision) for row in rows)
-    return StoreSnapshot("issue", tuple(sorted(files)), (), (), versions)
+    return StoreSnapshot("issue", tuple(sorted(files)), (), (), versions, uploads)
 
 
 def issue_journals(
@@ -141,6 +142,7 @@ def pr_snapshot(container: str, uuid: str | None) -> StoreSnapshot:
         raise JournalError(f"{container}: instance uuid is unavailable")
     try:
         rows = store_db.read_proposals(publication_db.default_root(), uuid, "pr")
+        uploads = store_db.read_uploads(publication_db.default_root(), uuid, "pr")
     except StoreError as exc:
         raise OutboxExecutionError(f"outbox store is unreadable: {exc}") from exc
     files: list[tuple[str, str]] = []
@@ -148,7 +150,7 @@ def pr_snapshot(container: str, uuid: str | None) -> StoreSnapshot:
         files.append((row.name, row.manifest))
         files.extend(row.bodies.items())
     versions = tuple((row.name, row.revision) for row in rows)
-    return StoreSnapshot("pr", tuple(sorted(files)), (), (), versions)
+    return StoreSnapshot("pr", tuple(sorted(files)), (), (), versions, uploads)
 
 
 def pr_journals(uuid: str | None) -> dict[str, Journal]:

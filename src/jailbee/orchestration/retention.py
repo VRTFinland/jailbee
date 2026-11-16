@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from jailbee.orchestration import broker_state
+from jailbee.outbox.attachment_store import AttachmentStore
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -47,6 +48,10 @@ def purge_messages(
     if memory.last_purge is not None and mono - memory.last_purge < PURGE_INTERVAL:
         return
     memory.last_purge = mono
+    try:
+        AttachmentStore(store).collect(now.timestamp())
+    except Exception:
+        log.exception("broker: attachment purge failed")
     configs: dict[str, Config | None] | None = None
     try:
         entry_config: dict[str, dict[str, str]] = {}

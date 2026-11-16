@@ -331,6 +331,8 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "browser",
         "apps run",
         "console",
+        "outbox attachment-resolve",
+        "outbox attachments",
         "orphan",
     }
 )
