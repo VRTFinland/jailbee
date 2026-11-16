@@ -524,6 +524,13 @@ slot. One `--timeout` covers acceptance and readiness (default `30m`; `none` is
 unlimited). Exit 1 means failed/refused, 3 means timeout; inspect the inbox before
 retrying a timed-out request. Plain `--wait` still returns the first status.
 Add `--json` for one JSON status object.
+
+Before replacing a running child's brief, use `send stop --child SHORT --wait
+--until done --json` and check its exit code. Stop has one final status, so
+`--until done` is equivalent to `--wait`; stdout is one JSON status object
+and stderr carries the request ID. After stop reports `done`, send restart
+immediately; no broker-round delay is needed.
+
 A `message` to an already-ready but stopped child is answered `queued` and
 delivered when it runs again.
 
@@ -606,10 +613,43 @@ For an idle RUNNING child, launch another session without repeating heavy startu
 jailbee inbox send restart --child fix-issue-12 --agent-only --agent claude --model haiku --on-done keep --text "Merge the imported ref, then implement the next task."
 ```
 
-Only accepted `done` or an ended monitored agent (reported/reportable as
-`blocked`) permits relaunch. A working child, uncertain liveness or active
-startup worker is refused; never interrupt work or retry with force. The old
-agent window ends; the fresh session gets the child preamble and new prompt.
+Accepted `done`, an ended monitored agent (reported/reportable as `blocked`),
+or freshly proven live-agent idleness permits relaunch. For a live agent, the
+broker checks the matching session and process tree under the mutation lock:
+`idle` requires no background processes; `shell` permits only exact
+`jailbee inbox wait ...` commands (including the Python module wrapper), each
+without descendants. Python `-m` waiters require `-P` (safe-path mode) in shell
+text and process leaves. Plain `bash`, `sh` or `dash -c` waiters remain supported.
+Claude Code's `bash`/`sh -c SCRIPT` wrapper is recognised semantically: prefixes
+may use setup builtins (`shopt`, `set`, `unalias`, `unset`, `export`,
+`declare`/`typeset`, `cd`, `true`/`false`, `:`, `umask`, `hash`, `alias`), optionally
+via `builtin`/`command`, source a file directly under `.claude/shell-snapshots/`
+in the user's home, or group those commands in braces. Nonbuiltin calls, other
+sources, prefix `eval`/`exec`/`trap`, command rebinding (`hash -p`, alias
+definitions), subshells, substitutions, pipes and backgrounding refuse.
+Setup arguments containing `=` refuse for every builtin, including `:`/`cd`/`set`,
+since shell keyword/POSIX modes can turn them into environment assignments.
+`export`/`declare`/`typeset` accept only bare names and `-r`/`-x`/`-p` flags
+(or combinations), never assignments or function/nameref flags. Even bare names
+refuse for `PATH`, `LD_*`, `PYTHON*`, `BASH_ENV`, `ENV`, `IFS`, `CDPATH`,
+`SHELLOPTS`, `BASHOPTS`, `PS4` and `PROMPT_COMMAND`; `readonly`/`local` refuse.
+Exactly one top-level plain waiter or quoted waiter
+`eval` is required, with only `/dev/null` redirections or stderr merged into
+stdout, and at most one following cwd capture (`pwd [-P]` redirected to a path).
+Queued work, compound-command waiters and unparseable wrappers refuse; setup
+text may vary across Claude versions. Residual trust: Claude's shell-snapshot
+contents are trusted, including functions/aliases shadowing `jailbee` or `eval`
+that could hide work after the waiter; sourced function bodies are not inspected.
+Executable paths/symlink targets named `jailbee`/`python*` and processes forging
+their own command lines are also outside the probe's guarantees. Both paths
+require readable activity proving no subagents remain. Immediately before the old window is
+killed, the broker rechecks process identities, child sets, commands and
+session/activity evidence; any change or unreadable evidence refuses relaunch.
+`busy`, `waiting` (including permission prompts), any other background command
+(including `inbox send --wait` or `service logs --wait`), unreadable evidence and
+active startup workers are refused with a reason. Never interrupt work or retry
+with force. The old agent window and its inbox waiter end; the fresh session
+gets the child preamble and new prompt.
 Container boot, setup and every `on_start` action are skipped; services remain
 running. Runner omission keeps the previous choice, explicit flags replace it,
 and `--default-runner` selects the current default. `--on-done` is allowed;

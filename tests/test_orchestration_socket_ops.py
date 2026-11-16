@@ -440,3 +440,14 @@ def test_paged_list_rejects_a_bad_cursor(env: Env) -> None:
         with pytest.raises(wire.WireError) as exc:
             socket_ops.handle_list(env.store, env.orch, after=bad)
         assert exc.value.code == wire.BAD_REQUEST
+
+
+def test_pulse_lead_sends_early_but_not_back_to_back(env: Env) -> None:
+    """#123: a round's pulse sends once the last keepalive is `lead` short of due."""
+    ws = Waiters()
+    ws.add(env.waiter(conn_id=1, keepalive=True, next_keepalive=30.0))
+    lead = wire.KEEPALIVE_INTERVAL - wire.KEEPALIVE_PULSE_SPACING
+    assert ws.due_keepalives(4.9, lead=lead) == []
+    assert ws.due_keepalives(5.0, lead=lead) == [1]
+    assert ws.due_keepalives(9.9, lead=lead) == []  # next due at 35.0
+    assert ws.due_keepalives(35.0) == [1]

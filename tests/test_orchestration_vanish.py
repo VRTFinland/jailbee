@@ -65,6 +65,7 @@ MEMORY_LIFETIMES = {
         "socket_lifecycle.check_socket_devices retries vanished listeners until close succeeds",
     ),
     "waiters": (PERSISTENT, "executor consumes DisconnectEvent or evaluate answers the waiter"),
+    "clock": (GLOBAL, "injected monotonic clock behind the keepalive pulse; no state"),
     "last_purge": (GLOBAL, "hourly retention clock"),
     "absent_uuids": (
         PERSISTENT,

@@ -6,11 +6,15 @@ To splice in the issue body, write the brief in pieces: quoted heredocs for your
 
 ---
 
+`/mattpocock-skills:implement` is user-only: the child may run it only when the command stands alone at the start of a line, so it goes on line 1. Mid-sentence, the child's Skill tool refuses it.
+
 ```text
+[Change:] /mattpocock-skills:implement GitHub issue #N
+
 Task: <one sentence: fix GitHub issue #N — symptom / requested change>.
 
 [Bug:] Start with `/mattpocock-skills:diagnosing-bugs`. Build the fix with the mattpocock `tdd` skill, and run `code-review` before you finish.
-[Change:] Use `/mattpocock-skills:implement`, built with `tdd`, and run `code-review` before you finish.
+[Change:] Build it with `tdd`, and run `code-review` before you finish.
 
 Choose your test seams yourself, from the existing public boundaries (<candidate seams from the investigation>). Say which ones you chose in your `done` message. Do not ask for confirmation first.
 

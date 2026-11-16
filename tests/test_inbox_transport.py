@@ -832,3 +832,30 @@ def test_reconnect_retry_window_is_capped_by_outage_bound(path):
     finally:
         srv.close()
     assert now[0] == pytest.approx(transport._UNREACHABLE_LIMIT)
+
+
+def test_outage_bound_counts_from_the_last_keepalive():
+    """#123 hypothesis C: the 120 s bound starts at the last broker progress."""
+    now = [0.0]
+
+    class Stub:
+        connected = True
+        calls = 0
+
+        def call(self, op, args, *, timeout):
+            Stub.calls += 1
+            if Stub.calls == 1:
+                now[0] = 50.0
+                timeout = self.on_keepalive()
+            now[0] += timeout
+            raise TimeoutError
+
+        def close(self):
+            pass
+
+    def sleep(seconds):
+        now[0] += seconds
+
+    with pytest.raises(BrokerUnreachable):
+        call_next(Stub, {}, timeout=None, clock=lambda: now[0], sleep=sleep)
+    assert now[0] == 50.0 + transport._UNREACHABLE_LIMIT

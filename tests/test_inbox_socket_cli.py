@@ -466,6 +466,36 @@ def test_send_wait_status(
     assert broker.requests[-1].args["wait"] is True
 
 
+def test_stop_until_done_json_cli(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
+    status = send_status("done")
+    broker.on("send", status)
+    result = run(
+        sockdir,
+        "send",
+        "stop",
+        "--child",
+        "kid",
+        "--wait",
+        "--until",
+        "done",
+        "--json",
+        tmp=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == status
+    assert result.stderr.strip().startswith("stop-")
+    assert [request.op for request in broker.requests] == ["send"]
+    assert broker.requests[0].args["wait"] is True
+
+
+@pytest.mark.parametrize("options", [["--until", "done"], ["--wait", "--until", "started"]])
+def test_stop_until_requires_wait_and_done(broker, sockdir, tmp_path, options):
+    result = run(sockdir, "send", "stop", "--child", "kid", *options, tmp=tmp_path)
+    assert result.returncode == 2
+    assert "--until" in result.stderr
+    assert broker.requests == []
+
+
 def test_send_validation_unchanged(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
     r = run(sockdir, "send", "message", tmp=tmp_path)
     assert r.returncode == 2
@@ -1075,7 +1105,7 @@ def test_child_readiness_until_requires_wait_and_done(broker, sockdir, tmp_path,
 def test_publish_until_without_wait_is_usage_error(broker, sockdir, tmp_path):
     result = run(sockdir, "send", "publish", "--issue", "a.json", "--until", "done", tmp=tmp_path)
     assert result.returncode == 2
-    assert "--until needs spawn, restart or publish with --wait" in result.stderr
+    assert "--until needs spawn, restart, stop or publish with --wait" in result.stderr
     assert broker.requests == []
 
 

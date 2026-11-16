@@ -95,7 +95,7 @@ def _review_actions(manifest: dict[str, object]) -> list[dict[str, object]]:
 
 def _announce(name: str) -> None:
     typer.echo(
-        f"staged pr/{name} - publish on the host: jb review apply {socket.gethostname()} {name}"
+        f"staged pr/{name} - publish on the host: jb outbox apply {socket.gethostname()} pr/{name}"
     )
 
 

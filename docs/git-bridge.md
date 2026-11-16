@@ -1164,6 +1164,11 @@ jb outbox drop smoke pr/001-review.json --action 0 --comment 1
 jb outbox drop smoke issue/001-triage.json --action 0 --with-dependents
 ```
 
+Container staging commands print `jb outbox apply <container> pr/<filename>.json`
+or `jb outbox apply <container> issue/<filename>.json` so the host publishes only
+that proposal. PR source proposals are the exception: their hint uses
+`jb pr push <container> --source-manifest <filename>.json` to push the source ref.
+
 Logical IDs are `pr/<filename>.json` and `issue/<filename>.json`, not paths
 and not GitHub IDs. Action and inline review-comment selectors are
 **zero-based**. `--comment` requires `--action` on a PR `review` action.

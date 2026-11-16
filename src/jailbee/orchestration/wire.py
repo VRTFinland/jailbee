@@ -13,6 +13,8 @@ from typing import IO, Any, Literal, cast
 VERSION = 1
 MAX_LINE_BYTES = 1024 * 1024  # 1 MiB, newline included
 KEEPALIVE_INTERVAL = 30.0
+#: Inside a broker round, a pulse sends a keepalive once the last one is this old (#123).
+KEEPALIVE_PULSE_SPACING = 5.0
 # One outbox proposal (manifest plus bodies) can exceed MAX_LINE_BYTES; its put
 # request and the show reply get a larger cap of their own. No chunking.
 OUTBOX_MAX_LINE_BYTES = 8 * 1024 * 1024

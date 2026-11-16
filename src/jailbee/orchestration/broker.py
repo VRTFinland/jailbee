@@ -110,6 +110,7 @@ def tick(
             ):
                 memory.project_configs[uuid] = cfg
     socket_lifecycle.check_socket_devices(incus, raw, memory, root, others, managed)
+    memory.pulse()
     if early_configs is not None:
         try:
             socket_lifecycle.serve_plain(incus, raw, memory, root, early_configs)
@@ -213,6 +214,7 @@ def tick(
             nodes=nodes,
             now=now,
             seq=memory.seq,
+            pulse=memory.pulse,
         )
 
     # Before anything is served, so a `stop` handled later in this round keeps
@@ -239,6 +241,8 @@ def tick(
     serve_failed: set[str] = set()
     flush_failed: set[str] = set()
     for node in nodes.values():
+        # Each node may block for a while (imports, incus calls): keep waiters alive.
+        memory.pulse()
         memory.contexts.pop(node.key, None)
         if not broker_state.labelled(node.config):
             try:
@@ -325,10 +329,12 @@ def tick(
     # Handlers changed labels and may have stopped children after our initial
     # snapshot. Refresh once before cleanup; share deletions with queue drain.
     if orchestrators:
+        memory.pulse()
         nodes = broker_state.nodes(incus.list_containers(), configs)
         for ctx in orchestrators:
             ctx.nodes = nodes
             ctx.sender = nodes.get(ctx.sender.full, ctx.sender)
+            memory.pulse()
             try:
                 finishing.settle_destroys(ctx)
             except Exception:
@@ -337,6 +343,7 @@ def tick(
     # After every round: queues move whenever a slot may have freed up.
     seen = {ctx.sender.full for ctx in orchestrators}
     for ctx in orchestrators:
+        memory.pulse()
         try:
             manifests.settle_queue(ctx, memory)
         except Exception:
@@ -352,6 +359,7 @@ def tick(
     for full in set(queues) | cancelling:
         if full in seen:
             continue
+        memory.pulse()
         try:
             queued_node = nodes.get(full)
             ctx = context(queued_node) if queued_node is not None else None
@@ -369,10 +377,12 @@ def tick(
     # Queue launches can finish before watch settlement; the earlier snapshot
     # may still say Stopped even though the agent is already running.
     if orchestrators and any(watch.load_watch(root).values()):
+        memory.pulse()
         nodes = broker_state.nodes(incus.list_containers(), configs)
         for ctx in orchestrators:
             ctx.nodes = nodes
             ctx.sender = nodes.get(ctx.sender.full, ctx.sender)
+    memory.pulse()
     broker_replies.settle_all_watches(root, orchestrators, present, memory)
     query.publish_queries(memory)
     return active

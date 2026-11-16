@@ -79,6 +79,7 @@ def complete(
         except (sync.SyncError, GitError, IncusError) as exc:
             error = str(exc)
         if error is None:
+            ctx.pulse()
             imported = importing.import_child(ctx, child=child, orchestrator=orchestrator)
             if isinstance(imported, str):
                 error = imported
@@ -200,6 +201,7 @@ def _settle_destroys_locked(ctx: ActionContext) -> None:
             )
             return
     for child in ctx.children():
+        ctx.pulse()  # each destroy may take a while (#123)
         if child.full in quarantined:
             continue
         marker = child.config.get(labels.PENDING_DESTROY)

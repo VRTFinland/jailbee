@@ -503,10 +503,46 @@ Durability across host power loss is not guaranteed.
 
 Use `jailbee inbox send restart --child C --agent-only --text "Next task"`
 (or manifest `"agent_only": true`) for a persistent worker kept with
-`on_done: "keep"`. The child must be RUNNING and idle: either its `done`
-was accepted, or its previous monitored agent has ended (the broker reported,
-or would report, `blocked`). A working child or uncertain agent liveness is
-refused; there is no force option. Active startup workers also prevent relaunch.
+`on_done: "keep"`. The child must be RUNNING. Relaunch is allowed after accepted
+`done`, after its previous monitored agent has ended (reported/reportable as
+`blocked`), or when a fresh probe under the mutation lock proves the live agent
+idle. Live-agent acceptance requires a matching session in `idle` with no
+background processes, or `shell` with only exact `jailbee inbox wait ...`
+commands below its background shells. Python module entry points, including the
+container's `python -P -m jailbee.container_main inbox wait ...` wrapper, are
+recognised only with `-P` (safe-path mode), in both shell text and process leaves. Plain `bash`, `sh` or `dash -c` waiter invocations remain supported.
+Claude Code's Bash-tool wrappers (`bash` or `sh` with exactly `-c SCRIPT`) are
+recognised semantically: prefix commands may use a fixed set of setup builtins
+(`shopt`, `set`, `unalias`, `unset`, `export`, `declare`/`typeset`, `cd`,
+`true`/`false`, `:`, `umask`, `hash`, `alias`), optionally via `builtin` or
+`command`, or source a file directly under the user's `.claude/shell-snapshots/`.
+Explicit command rebinding (`hash -p`, alias definitions) is refused.
+Setup arguments containing `=` refuse for every builtin: shell keyword/POSIX
+modes can turn even `: NAME=value` into a persistent environment assignment.
+`export`/`declare`/`typeset` accept only bare variable names and `-r`/`-x`/`-p`
+flags (or combinations); assignments and function/nameref flags refuse.
+Even bare names refuse for `PATH`, `LD_*`, `PYTHON*`, `BASH_ENV`, `ENV`, `IFS`,
+`CDPATH`, `SHELLOPTS`, `BASHOPTS`, `PS4` and `PROMPT_COMMAND`.
+`readonly` and `local` are not allowed setup commands.
+Brace groups of those commands are allowed; nonbuiltin calls, other sources,
+`eval`/`exec`/`trap`, subshells, substitutions, pipes and backgrounding refuse.
+Exactly one top-level plain waiter or single-quoted waiter `eval` is required.
+The waiter may redirect only to/from `/dev/null` or merge stderr into stdout.
+After it, only one cwd capture (`&& pwd [-P] >| PATH` or `; pwd [-P] > PATH`)
+is permitted; queued work, compound-command waiters and unparseable wrappers
+refuse. Setup text can vary across Claude versions without an exact-text update.
+Residual trust: Claude's shell-snapshot contents are trusted; snapshot-defined
+functions or aliases named `jailbee` or `eval` could hide work after the waiter.
+The probe does not inspect sourced function bodies, verify executable paths or
+symlink targets named `jailbee`/`python*`, or detect processes forging their own
+command lines. Each waiter must have no descendants, and both cases require
+readable activity proving no subagents remain. Process identities,
+child sets, commands and matching session/activity evidence are checked again
+immediately before killing the old window; changed or unreadable evidence
+refuses relaunch. `busy`, `waiting` (including permission
+prompts), other background commands, and unknown/unreadable evidence are refused
+with a reason. `inbox send --wait` and `service logs --wait` are not idle waiters.
+There is no force option. Active startup workers also prevent relaunch.
 Without the flag, a running child is still refused with "stop it first".
 A kept worker's agent keeps `jailbee inbox wait --timeout none` in the
 background between tasks, re-arming it after handling messages.
@@ -642,7 +678,8 @@ per repo with `orchestration.idle_after_seconds` (positive seconds, default
 idle duration, last accepted child message kind and first line (at most 240
 characters, or `none`), plus the same bounded tmux tail as `blocked` when
 available. Read that message and answer the child; this is not completion
-and does not authorize restarting an agent that is still alive.
+or restart authorization. Agent-only restart independently checks the stricter
+[live-agent idle conditions](#reuse-a-running-worker-without-autostart).
 
 The broker matches its prompted PID and process start to the account
 adapter's session, currently Claude. `waiting` is input required; `idle`
@@ -854,8 +891,11 @@ A successful keepalive resets the outage bound; accepting a socket without
 answering does not.
 
 New waiters opt into no-op keepalive frames, sent when registered and every
-30 s by the broker executor. A 40 s read watchdog treats a missing keepalive
-as a drop and reconnects. Keepalives neither satisfy a wake nor consume an
+30 s by the broker executor. A broker round (imports, destroys, inventory
+calls) can block the executor for minutes, so the round also sends a keepalive
+between its steps once the last one is 5 s old: a busy broker keeps its
+waiters armed, while a hung one sends none. A 40 s read watchdog treats a
+missing keepalive as a drop and reconnects. Keepalives neither satisfy a wake nor consume an
 inbox message, and cannot extend a finite caller timeout. A broker predating
 keepalives may accept the request but leave it silent: the same watchdog and
 outage bound end that wait with exit 4. Upgrade/restart the broker rather than
@@ -1022,7 +1062,11 @@ merged state.
   once to a forced stop, and the outcome says so; if the forced stop fails
   too, the stop is refused); **restart** a stopped child with a new prompt (it counts
   against the limit and is queued if the limit is full). A running child is
-  refused ("stop it first").
+  refused ("stop it first"). Once `send stop --child SHORT --wait` reports
+  `done`, an immediate restart sees the child as stopped. Stop also accepts
+  `--wait --until done --json`: its single final status makes `--until done`
+  equivalent to `--wait`, and `--json` prints one JSON status object on stdout
+  with the request ID on stderr.
 - **Destroy** (needs `destroy` in the grant) works on a running or stopped
   child; a done `keep` child needs only `destroy`, not `stop` first. It is
   refused for uncommitted changes or commits never imported: HEAD must equal

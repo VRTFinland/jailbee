@@ -1843,7 +1843,7 @@ gh pr view <N> --json headRefOid   # copy the sha — this is the manifest's hea
 jailbee shell feat-outboxsmoke
 jailbee pr review add <N> --file outbox.txt --line 1 --body "manual outbox smoke comment"
 jailbee pr review submit <N> --body "Smoke-testing the outbox."
-# expect: "staged pr/<name> - publish on the host: jb review apply ..."
+# expect: "staged pr/<name> - publish on the host: jb outbox apply <container> pr/<name>"
 exit
 
 # 3. Inspect without publishing.

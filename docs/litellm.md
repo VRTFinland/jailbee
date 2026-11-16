@@ -729,6 +729,20 @@ back on; that is your choice.
   lock and emits a warning. Prompt/message logging and the remote model-cost
   map fetch are disabled. Treat this as risk reduction, not a guarantee that
   vendor traffic or the running service cannot expose sensitive prompts.
+- **Known Azure credential-disclosure risk in the pinned version:**
+  [GHSA-2rwg-2wh4-7c4f](https://github.com/BerriAI/litellm/security/advisories/GHSA-2rwg-2wh4-7c4f)
+  affects proxies serving an `azure/` or `azure_ai/` model when neither
+  `AZURE_API_KEY` nor `AZURE_OPENAI_API_KEY` is set in the proxy environment.
+  An authenticated client can make an Azure authentication error disclose
+  proxy environment values, including provider secrets. JailBee's built-in
+  ChatGPT routes do not meet those prerequisites, but custom routes and
+  `extra` configurations may. Egress restrictions do not prevent disclosure
+  in a response. Avoid affected Azure configurations until a verified fix is
+  installed, or enforce the advisory's request-body filtering at a gateway;
+  JailBee does not install that filter. Upstream fixes the issue in 1.106.9,
+  uploaded on 2026-11-12. That release first meets this project's mandatory
+  seven-day review threshold on 2026-11-19; age alone does not complete the
+  required artifact review.
 - Earlier integration checks found non-streaming ChatGPT requests failed;
   Claude Code uses streaming. Tool-call quality depends on the model, and
   large tool arguments have been reported to corrupt on Codex routes. Treat
