@@ -8,6 +8,8 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+## 1.8.9 - 2026-11-17
+
 Run `jailbee apply` after upgrading to refresh the installed issue, PR-review
 and usage skills with the image-staging and upload-recovery workflows.
 
