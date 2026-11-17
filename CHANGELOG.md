@@ -8,6 +8,24 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+Run `jailbee apply` after upgrading to refresh the installed issue, PR-review
+and usage skills with the image-staging and upload-recovery workflows.
+
+The LiteLLM proxy pin remains at 1.106.0; the Azure credential warning in
+[1.8.8](#188---2026-11-16) still applies. The upstream fix in 1.106.9 has not
+met the required seven-day minimum age or artifact review.
+
+### Added
+
+- GitHub issue and pull-request proposals can include PNG, JPEG, GIF and WebP
+  images. Stage images with issue manifests or `--attach ID=PATH` on supported
+  PR commands, then place them in Markdown with `attachment:ID`. Staging
+  captures immutable copies; the host uploads them only after approval covering
+  both the text and files. Upload receipts survive retries, and uncertain
+  uploads must be reconciled with `jailbee outbox attachment-resolve` before
+  retrying. Images are published as-is: remove sensitive content and metadata
+  before staging. Dropping a proposal cannot retract an uploaded GitHub asset.
+
 ## 1.8.8 - 2026-11-16
 
 The LiteLLM proxy pin remains at 1.106.0. Custom Azure deployments may be
