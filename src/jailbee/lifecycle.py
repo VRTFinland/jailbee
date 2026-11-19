@@ -1971,6 +1971,9 @@ def _new_container(
 
     container_app.stage()
     sync_global_instructions(cfg)
+    from jailbee.claude_plugin import stage as stage_claude_plugin
+
+    stage_claude_plugin(cfg)
 
     # Before `incus.init`, deliberately. `profile_assign` below is the first
     # thing that fails on a repo that never ran `jailbee init`, and by then the
@@ -3006,6 +3009,9 @@ def boot_container(
 
     sync_agent_skills(cfg)
     sync_global_instructions(cfg)
+    from jailbee.claude_plugin import stage as stage_claude_plugin
+
+    stage_claude_plugin(cfg)
     missing = missing_staging_dirs(cfg)
     if missing:
         raise ValueError(

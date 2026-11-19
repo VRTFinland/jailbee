@@ -158,6 +158,8 @@ def sync_global_instructions(cfg: Config) -> None:
         target = directory / gi.file
         try:
             directory.mkdir(parents=True, exist_ok=True)
+            if cfg.claude.enabled and posixpath.normpath(gi.dir) == "/etc/claude-code":
+                (directory / "managed-settings.d").mkdir(exist_ok=True)
             try:
                 current = target.read_bytes()
             except FileNotFoundError:

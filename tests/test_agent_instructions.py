@@ -144,7 +144,10 @@ def test_changed_content_is_replaced_atomically(homes, claude_cfg):
     ai.sync_global_instructions(claude_cfg)
     assert staged(data_home).read_bytes().endswith(b"\nnew")
     assert staged(data_home).stat().st_ino != before_ino
-    assert [p.name for p in staged(data_home).parent.iterdir()] == ["CLAUDE.md"]
+    assert {p.name for p in staged(data_home).parent.iterdir()} == {
+        "CLAUDE.md",
+        "managed-settings.d",
+    }
 
 
 def test_symlinked_source_stages_the_target(homes, claude_cfg, tmp_path):
@@ -307,7 +310,11 @@ def test_instruction_mount_rejects_overlapping_host_policy(claude_cfg, destinati
     with pytest.raises(ConfigError, match=r"host.*policy.*agent_instructions: false"):
         binds_profile_yaml(cfg)
     cfg._agent_instructions = False
-    assert "agent-instructions-claude" not in binds_profile_yaml(cfg)
+    if destination == "/etc/claude-code/managed-settings.json":
+        assert "agent-instructions-claude" not in binds_profile_yaml(cfg)
+    else:
+        with pytest.raises(ConfigError, match="claude-managed-settings"):
+            binds_profile_yaml(cfg)
 
 
 def test_instruction_mount_rejects_normalized_shared_overlap(claude_cfg):
@@ -368,7 +375,10 @@ def test_other_repos_file_name_never_reaches_this_repos_mount(homes, claude_cfg)
     )
     ai.sync_global_instructions(odd)
     ai.sync_global_instructions(claude_cfg)
-    assert [p.name for p in staged(data_home).parent.iterdir()] == ["CLAUDE.md"]
+    assert {p.name for p in staged(data_home).parent.iterdir()} == {
+        "CLAUDE.md",
+        "managed-settings.d",
+    }
     assert ai.profile_devices(claude_cfg)["agent-instructions-claude"]["source"] == str(
         staged(data_home).parent
     )

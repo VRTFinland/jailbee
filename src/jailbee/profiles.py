@@ -472,6 +472,9 @@ def binds_profile_yaml(cfg: Config) -> str:
     from jailbee.agent_instructions import profile_devices
 
     devices.update(profile_devices(cfg))
+    from jailbee.claude_plugin import profile_devices as claude_plugin_devices
+
+    devices.update(claude_plugin_devices(cfg))
 
     profile = {
         "name": profile_names(cfg).binds,

@@ -360,6 +360,9 @@ def run_apply(
     from jailbee.agent_instructions import sync_global_instructions
 
     sync_global_instructions(cfg)
+    from jailbee.claude_plugin import stage as stage_claude_plugin
+
+    stage_claude_plugin(cfg)
 
     names = profile_names(cfg)
     profile_yamls = {

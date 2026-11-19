@@ -93,6 +93,11 @@ class UpgradeNote:
 
 UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
     UpgradeNote(
+        version=(1, 8, 10),
+        actions=frozenset({"apply"}),
+        reason="Claude's JailBee inbox plugin needs a managed settings mount",
+    ),
+    UpgradeNote(
         version=(1, 2, 0),
         actions=frozenset({"base_build"}),
         reason=(
