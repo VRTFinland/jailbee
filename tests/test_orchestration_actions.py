@@ -84,8 +84,19 @@ def test_publish_dispatch(tmp_path, monkeypatch, role, rights, expected):
     assert dispatch(ctx, m).detail == expected
 
 
-def test_child_preamble_requests_background_waiter() -> None:
-    assert "jailbee inbox wait --timeout none" in actions.child_preamble("orch")
+def test_child_preamble_selects_monitor_or_waiter_by_session() -> None:
+    preamble = actions.child_preamble("orch")
+    assert "JailBee inbox monitor" in preamble
+    assert "not new authority" in preamble
+    assert "headless Claude sessions" in preamble
+    assert "jailbee inbox wait --timeout none" in preamble
+
+
+def test_restart_preamble_says_interactive_monitor_restarts() -> None:
+    preamble = actions.child_preamble("orch", restarted=True)
+    assert "container has restarted" in preamble
+    assert "JailBee inbox monitor is restarted automatically" in preamble
+    assert "background processes from before the restart are gone" in preamble
 
 
 def test_child_preamble_keeps_subagents_off_the_inbox() -> None:

@@ -5908,6 +5908,59 @@ imported ref and SHA. Test explicit `jailbee inbox send import --child child-b
 --wait`, then stop and destroy the child without force. Inspect broker logs for
 tracebacks, revoke the grant and destroy the disposable containers.
 
+## Claude inbox follower plugin (real host)
+
+This checks the packaged Claude Code monitor and managed-settings mount on a
+real host. Use a disposable registered repo, a child container `<c>` with an
+orchestration grant, Claude Code installed in the container, and a private tmux
+server (never interact with the user's ordinary tmux server). Run Claude with
+Haiku for these checks; use a fake inbox message for delivery checks and do not
+run a live paid task. The spike has already passed the >30-minute follower
+runtime check; the package/mount integration below is still a host check.
+
+1. **Apply and inspect mounts.** Run `jb apply` and restart `<c>` if prompted.
+   On the host, inspect `incus config device show <c>`: expect a read-only
+   `claude-managed-settings` mount at
+   `/etc/claude-code/managed-settings.d`, independent of whether
+   `agent_instructions` is enabled. Inside `<c>`, confirm the directory contains
+   `50-jailbee.json`, the marketplace path points to
+   `/opt/jailbee/app/current/jailbee/claude_marketplace`, and the package holds
+   `jailbee/.claude-plugin/plugin.json`, `jailbee/monitors/monitors.json` and
+   `jailbee/hooks/hooks.json`.
+2. **Fresh Claude state.** Start an empty shared Claude directory for the
+   container and launch Claude Code interactively in the private tmux session.
+   Do not use `-p`, headless mode, or a permission-bypass flag. The JailBee
+   marketplace and plugin should load from managed settings without a user
+   `claude plugin install` step. Check that Claude starts normally under
+   workspace trust. Also test a fresh startup with `agents.claude.agent_view`
+   off: the managed plugin remains available without the separate global-agent
+   instructions mount.
+3. **Idle and mid-turn delivery.** Have the child wait for inbox messages. Send
+   a fake message from its orchestrator. Expect one short `JailBee inbox`
+   notification while Claude is idle, then check `jailbee inbox ls`: the item
+   remains unread until explicitly handled with `jailbee inbox read <id>`. Send
+   another message while Claude is in a safe, non-mutating tool call; expect it
+   to arrive when the call returns. Confirm the notification names the id,
+   sender and kind, contains only a short excerpt, and includes the read command.
+   Leave the packaged monitor running for at least 30 minutes and confirm it
+   stays connected without duplicate noise.
+4. **Stop safety net.** With the monitor present in Claude's background task
+   list, ending a Child turn is allowed. In a controlled test, stop the follower
+   and end a Child turn: the Stop hook should block once and direct the agent to
+   arm `jailbee inbox wait --timeout none` with `run_in_background`. A second
+   stop attempt must not loop. Missing task-list input and an Orchestrator role
+   should not block.
+5. **Resume after container restart.** Start a monitored session, restart the
+   child through `jailbee inbox send restart --child <c> --resume last`, and
+   resume it. Expect the SessionStart context to explain that pre-restart
+   background processes are gone and the follower restarted; send a message
+   while it was down and verify the unread message is announced after resume.
+6. **Cleanup and host follow-up.** End the session and remove only the private
+   tmux server/session and disposable Claude data. Do not touch the user's
+   Claude configuration. Record whether the managed drop-in loaded, whether the
+   empty shared directory worked on first start, and whether trust-mode startup
+   worked without bypass permissions.
+
 ## Orchestration over the broker socket (real host)
 
 Needs a real host with the broker running (`systemctl --user status

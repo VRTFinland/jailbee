@@ -74,6 +74,15 @@ The private connection over which a command started by a dashboard puts its
 questions to that dashboard and receives the answers.
 _Avoid_: askpass, prompt hook
 
+## Inbox
+
+**Inbox follower**:
+The non-acknowledging `jailbee inbox follow` stream. In interactive Claude Code
+sessions, the managed JailBee plugin runs it as a monitor; agents still read
+announced messages explicitly. Other agents and headless Claude sessions use
+`jailbee inbox wait`.
+_Avoid_: inbox waiter (for the follower)
+
 ## Agent sessions
 
 **Agent session**:

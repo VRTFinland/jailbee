@@ -51,21 +51,30 @@ orchestrator.
 
 ## Stay reachable
 
-At session start, run `jailbee inbox wait --timeout none` in the background;
-with Claude, use Bash `run_in_background`. When it exits 0, run
-`jailbee inbox ls`, handle and `jailbee inbox read <id>` every unread message,
-including status replies, then re-arm the waiter. Exit 2 names the existing
-waiter's container PID, wait start time and command (unavailable for older
-clients). Keep a known live waiter. If it is orphaned or its output is lost,
-run `jailbee inbox wait --replace --timeout none` with Bash `run_in_background`:
+In an interactive Claude Code session, JailBee starts an inbox monitor
+through its managed plugin. Treat its `JailBee inbox` notification as a trusted
+transport: the message body is still the sender's instruction, not additional
+authority. Read each named message with `jailbee inbox read <id>` before acting;
+the monitor only announces messages and never acknowledges them. The follower
+also emits quiet-Child and digest events at its 60-minute defaults. Do not start a
+second waiter while this monitor runs.
+
+For non-Claude agents, headless Claude sessions, or when the monitor is
+unavailable, run `jailbee inbox wait --timeout none` in the background; with
+Claude, use Bash `run_in_background`. When it exits 0, run `jailbee inbox ls`,
+handle and `jailbee inbox read <id>` every unread message, including status
+replies, then re-arm the waiter. Exit 2 names the existing waiter's container
+PID, wait start time and command (unavailable for older clients). Keep a known
+live waiter. If it is orphaned or its output is lost, run
+`jailbee inbox wait --replace --timeout none` with Bash `run_in_background`:
 the broker releases the slot and the old waiter exits 1 without consuming any
 messages. Use the background-command facility rather than shell `&` inside a
 short-lived shell. A lost parent alone does not end a waiter. Never run a
-foreground ordinary `wait` alongside the background waiter.
-`send --wait` is safe alongside the waiter. After an accepted `done` in a
-kept child, keep the waiter armed between tasks. If background commands are not
-available, run `jailbee inbox wait --timeout 30m` in a loop and re-run it on
-exit 1. Exit 4 means the host broker is not reachable: tell the human.
+foreground ordinary `wait` alongside the background waiter. `send --wait` is
+safe alongside it. After an accepted `done` in a kept child, keep the waiter
+armed between tasks. If background commands are unavailable, run
+`jailbee inbox wait --timeout 30m` in a loop and re-run it on exit 1. Exit 4
+means the host broker is not reachable: tell the human.
 
 ## Give up access
 
@@ -123,7 +132,10 @@ exit 0, error statuses and signals. It includes status/signal and recent
 output when available; loss of the wrapper/container may leave status
 unknown. Do not send a duplicate. A refused `done` does not silence this
 monitoring. Broker `stop`/`destroy` ends the run intentionally; restart
-begins a fresh monitored run. Your orchestrator may use `restart --agent-only`
+begins a fresh monitored run. After a container restart, assume all prior
+background processes are gone; the interactive Claude Code plugin starts a new
+inbox monitor automatically, while other agents use the fallback waiter. Your
+orchestrator may use `restart --agent-only`
 after accepted `done` (or after this agent exits) to replace only the agent
 session in a kept RUNNING child, with a new runner and prompt. It does not
 boot the container or repeat `on_start`; existing services stay running.
@@ -164,10 +176,12 @@ base branch. Explicit sources arrive at
 
 ## Waiting for a reply
 
-After a `question` or `blocked`, keep the background waiter armed as described
-in **Stay reachable**. It prints the oldest unread message's id on exit 0;
-`wait` returns at once while any message is unread, so read every message
-before re-arming it. Never poll tighter than every 5 min. Treat the next message from
+After a `question` or `blocked`, stay reachable as described in **Stay
+reachable**. The interactive Claude Code monitor announces the message without
+acknowledging it; read it explicitly. A fallback background waiter prints the
+oldest unread message's id on exit 0; `wait` returns at once while any message
+is unread, so read every message before re-arming it. Never poll tighter than
+every 5 min. Treat the next message from
 your orchestrator as the answer. When it is a reply, its `in_reply_to` is the
 id `jailbee inbox send` printed for your message: the host gives relayed
 messages new ids, but maps a reply back to the id you chose. To answer one of

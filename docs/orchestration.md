@@ -544,8 +544,10 @@ prompts), other background commands, and unknown/unreadable evidence are refused
 with a reason. `inbox send --wait` and `service logs --wait` are not idle waiters.
 There is no force option. Active startup workers also prevent relaunch.
 Without the flag, a running child is still refused with "stop it first".
-A kept worker's agent keeps `jailbee inbox wait --timeout none` in the
-background between tasks, re-arming it after handling messages.
+A kept worker stays reachable between tasks. Interactive Claude Code sessions
+receive the automatic JailBee inbox monitor; non-Claude agents, headless Claude
+sessions and sessions without the monitor keep `jailbee inbox wait --timeout
+none` in the background, re-arming it after handling messages.
 
 Only the agent tmux window is replaced. Container boot, setup stages and all
 `on_start` actions are skipped; existing services stay running. The fresh
@@ -706,11 +708,18 @@ spool entries appear there after successful processing. The recipient can read
 them when it runs again and connects to the broker, including after a restart.
 
 Orchestrators and children use `jailbee inbox` to communicate with the broker.
-`jailbee inbox grant` shows the effective grant; `jailbee inbox children [--json]`
-shows each child's running and done state and latest agent session. After `wait`,
-run `ls` and handle every unread message with `read <id>`. `wait` uses a broker
-socket long-poll and returns immediately when a matching unread message is
-already present.
+In interactive Claude Code sessions, the managed JailBee plugin starts the
+`jailbee inbox follow` monitor; it announces unread and new items without
+acknowledging them, with quiet-Child and digest events enabled by default at
+60-minute intervals. `jailbee inbox wait` keeps both options disabled by default.
+Read each notification with `jailbee inbox read <id>` and treat the body as
+sender instructions, not new authority. Headless Claude
+sessions and other agents use `jailbee inbox wait` instead. `jailbee inbox grant`
+shows the effective grant; `jailbee inbox children [--json]` shows each child's
+running and done state and latest agent session. After `wait`, run `ls` and
+handle every unread message with `read <id>`. `wait` uses a broker socket
+long-poll and returns immediately when a matching unread message is already
+present.
 Use `send --wait` for spawn, update and destroy, and always for a child's done
 report: it consumes only that manifest's first status, returning 0 for
 done/queued/started, 1 for refused/failed and 2 for usage errors. A first-state

@@ -60,7 +60,7 @@ defaults to 300 seconds (`0` is unlimited). Exit codes: 0 match, 1 timeout, 2
 invalid input, 3 unusable pane. See service config for named filters and the
 session-wide scrollback limit.
 
-The in-container CLI offers `service` (including `ls`, `start`, `stop`, `restart`, `refresh`, `plan`, `logs`), `config validate [--config <path>]`, `inbox`, `version` and `--version`. Other JailBee management commands run on the host, not here.
+The in-container CLI offers `service` (including `ls`, `start`, `stop`, `restart`, `refresh`, `plan`, `logs`), `config validate [--config <path>]`, `inbox`, `version` and `--version`. Inbox notification commands include `jailbee inbox follow` (a non-acknowledging stream) and Claude hook handlers `jailbee inbox hook session-start` / `jailbee inbox hook stop`. In interactive Claude Code sessions the managed JailBee plugin starts the follower automatically; headless sessions and other agents use `jailbee inbox wait` as their fallback. The plugin marketplace ships in `jailbee/claude_marketplace`; its read-only managed-settings drop-in is mounted at `/etc/claude-code/managed-settings.d`, independently of the host-wide agent-instructions mount. Other JailBee management commands run on the host, not here.
 
 ### Health and waiting
 
