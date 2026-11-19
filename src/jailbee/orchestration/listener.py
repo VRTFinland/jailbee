@@ -499,6 +499,8 @@ class Listener:
             with contextlib.suppress(OSError):
                 server.path.unlink()
             with contextlib.suppress(OSError):
+                (server.path.parent / "role").unlink(missing_ok=True)
+            with contextlib.suppress(OSError):
                 server.path.parent.rmdir()
 
     def _shutdown_all(self) -> None:

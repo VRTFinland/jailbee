@@ -51,12 +51,14 @@ class FakeListener:
         self.open.discard(uuid)
         old = self.dirs.pop(uuid, None)
         if old is not None and old.exists():
+            (old / "role").unlink(missing_ok=True)
             old.rmdir()
         self.closed.append(uuid)
 
     def rotate_container(self, uuid: str, sock_dir: Path) -> None:
         if self.fail_rotate or uuid not in self.open:
             raise OSError("rotate failed")
+        sock_dir.mkdir(parents=True, exist_ok=True)
         self.dirs[uuid] = sock_dir
         self.rotated.append((uuid, sock_dir))
 
@@ -121,6 +123,25 @@ class Env:
 @pytest.fixture
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Env:
     return Env(Rig(tmp_path, monkeypatch))
+
+
+def test_socket_role_tracks_grant_and_revocation(env: Env) -> None:
+    env.set(orch())
+    env.tick()
+    directory = env.listener.socket_dir(UUID)
+    assert directory is not None
+    assert (directory / "role").read_text() == "orchestrator"
+    env.set(_c("proj-orch", **{"volatile.uuid": UUID}))
+    env.tick()
+    assert (directory / "role").read_text() == "plain"
+
+
+def test_socket_role_tracks_child(env: Env) -> None:
+    env.set(orch(), kid())
+    env.tick()
+    directory = env.listener.socket_dir("uuid-kid")
+    assert directory is not None
+    assert (directory / "role").read_text() == "child"
 
 
 def orch(uuid: str = UUID, **extra: str) -> dict[str, Any]:

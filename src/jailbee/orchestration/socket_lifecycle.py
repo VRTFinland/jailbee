@@ -45,17 +45,17 @@ def ensure_env(ctx: ActionContext, memory: broker_state.BrokerMemory) -> None:
                 # every container keeps its broker socket.
                 memory.env_ensured.discard(key)
                 memory.env_roles.pop(key, None)
-                _ensure_socket(ctx, memory)
+                _ensure_socket(ctx, memory, role)
                 return
             if key in memory.env_ensured and memory.env_roles.get(key) == role:
-                _ensure_socket(ctx, memory)
+                _ensure_socket(ctx, memory, role)
                 return
             ensure_orchestration_env(ctx.incus, full, uid=ctx.cfg.container_user.uid)
             if role == "child":
                 labels.write_child_role(ctx.incus, full, uid=ctx.cfg.container_user.uid)
             memory.env_ensured.add(key)
             memory.env_roles[key] = role
-            _ensure_socket(ctx, memory)
+            _ensure_socket(ctx, memory, role)
     except (IncusError, OSError) as exc:
         memory.env_ensured.discard(key)
         memory.env_roles.pop(key, None)
@@ -67,8 +67,23 @@ def ensure_env(ctx: ActionContext, memory: broker_state.BrokerMemory) -> None:
         )
 
 
-def _ensure_socket(ctx: ActionContext, memory: broker_state.BrokerMemory) -> None:
-    ensure_socket(ctx.incus, ctx.root, memory, ctx.sender)
+def _write_role(directory: Path, role: str) -> None:
+    marker = directory / "role"
+    try:
+        if marker.read_text(encoding="utf-8") == role:
+            return
+    except FileNotFoundError:
+        pass
+    temporary = directory / ".role.tmp"
+    try:
+        temporary.write_text(role, encoding="utf-8")
+        os.replace(temporary, marker)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _ensure_socket(ctx: ActionContext, memory: broker_state.BrokerMemory, role: str) -> None:
+    ensure_socket(ctx.incus, ctx.root, memory, ctx.sender, role=role)
 
 
 def serve_plain(
@@ -100,7 +115,12 @@ def serve_plain(
 
 
 def ensure_socket(
-    incus: Incus, root: Path, memory: broker_state.BrokerMemory, sender: Node
+    incus: Incus,
+    root: Path,
+    memory: broker_state.BrokerMemory,
+    sender: Node,
+    *,
+    role: str = "plain",
 ) -> None:
     """Open the listener, attach the device and record the recipient (idempotent)."""
     listener, store = memory.listener, memory.store
@@ -110,9 +130,12 @@ def ensure_socket(
     full = sender.full
     if uuid in memory.shared_uuids:
         return  # check_socket_devices warned and tore down
-    if listener.has_container(uuid) and memory.attached.get(full) == uuid:
-        return
     try:
+        if listener.has_container(uuid) and memory.attached.get(full) == uuid:
+            live = listener.socket_dir(uuid)
+            if live is not None:
+                _write_role(live, role)
+            return
         if not listener.has_container(uuid):
             recorded = incus.config_device_get(full, ORCHESTRATION_DEVICE, "source")
             directory_key = str(Path(recorded).resolve()) if recorded else ""
@@ -145,6 +168,7 @@ def ensure_socket(
         live = listener.socket_dir(uuid)
         if live is None:
             raise OSError(f"no socket directory for {uuid}")
+        _write_role(live, role)
         socket_device.attach(incus, full, live, reassert=uuid in memory.reassert)
         store.set_recipient(full, uuid, now=time.time())
         memory.attached[full] = uuid
