@@ -21,6 +21,10 @@ when the request is answered or released (:meth:`Listener.release`), never
 on a disconnect, so open/send/close loops cannot grow the executor's queue. A
 disconnect is queued only for an executor request in flight; query workers
 release their own slots when they finish, even after the connection drops.
+Follow subscriptions have a separate bounded budget and do not consume the
+transient connection or in-flight request budgets. Unclassified connections
+expire after a short deadline, so idle sockets cannot permanently occupy those
+transient slots. Disconnected subscriptions retain their budget until released.
 SQLite inbox queries additionally share ``MAX_STORE_QUERIES_PER_CONTAINER``
 queued or running slots per container. Excess queries wait unconsumed in the
 connection's input buffer; snapshot and executor requests do not use these
@@ -76,6 +80,8 @@ log = logging.getLogger(__name__)
 
 SOCKET_NAME = "broker.sock"
 MAX_CONNECTIONS_PER_CONTAINER = 8
+MAX_FOLLOWERS_PER_CONTAINER = 32
+_CLASSIFICATION_TIMEOUT = 5.0
 MAX_INFLIGHT_PER_CONTAINER = MAX_CONNECTIONS_PER_CONTAINER  # queued, unanswered requests
 MAX_STORE_QUERIES_PER_CONTAINER = 2  # queued or running SQLite inbox queries
 _ACCEPT_PAUSE = 1.0  # seconds a listening socket rests after EMFILE/ENFILE
@@ -115,6 +121,8 @@ class _Conn:
     conn_id: int
     uuid: str
     sock: socket.socket
+    accepted_at: float = field(default_factory=time.monotonic)
+    classified: bool = False
     inbuf: bytearray = field(default_factory=bytearray)
     outbuf: bytearray = field(default_factory=bytearray)
     close_after_flush: bool = False
@@ -194,6 +202,7 @@ class Listener:
         # Requests queued and not yet answered or released: conn id -> uuid,
         # and their count per uuid. A disconnect frees nothing (H2).
         self._pending: dict[int, str] = {}
+        self._followers: set[int] = set()
         self._inflight: dict[str, int] = {}
         self._store_queries: dict[str, int] = {}  # queued or running, listener-owned
         self._store_pending: set[int] = set()  # request classification survives disconnects
@@ -241,6 +250,7 @@ class Listener:
             except queue.Empty:
                 break
         self._pending.clear()
+        self._followers.clear()
         self._inflight.clear()
         self._query_pending.clear()
         self._store_queries.clear()
@@ -408,6 +418,10 @@ class Listener:
     def _run(self) -> None:
         while self._running:
             timeout = self._resume_paused()
+            now = time.monotonic()
+            for conn in list(self._conns.values()):
+                if not conn.classified and now - conn.accepted_at >= _CLASSIFICATION_TIMEOUT:
+                    self._drop_conn(conn.conn_id, event=True)
             try:
                 events = self._sel.select(timeout=timeout)
             except Exception:
@@ -526,7 +540,7 @@ class Listener:
                     log.exception("accept failed for %s", uuid)
                 return
             sock.setblocking(False)
-            if len(server.conns) >= MAX_CONNECTIONS_PER_CONTAINER:
+            if sum(cid not in self._followers for cid in server.conns) >= MAX_CONNECTIONS_PER_CONTAINER:
                 with contextlib.suppress(OSError):
                     sock.send(wire.encode_response(wire.fail(wire.BUSY, "too many connections")))
                 sock.close()
@@ -626,6 +640,13 @@ class Listener:
                 if conn.conn_id not in self._conns:
                     return  # dropped while replying (e.g. EPIPE)
                 continue
+            conn.classified = True
+            if request.op == "follow" and sum(
+                self._pending.get(cid) == conn.uuid for cid in self._followers
+            ) >= MAX_FOLLOWERS_PER_CONTAINER:
+                del conn.inbuf[: nl + 1]
+                self._send(conn.conn_id, wire.encode_response(wire.fail(wire.BUSY, "too many followers")))
+                continue
             store_query = (
                 self._queries is not None
                 and request.op in QUERY_OPS
@@ -648,7 +669,10 @@ class Listener:
                 self._store_queries[conn.uuid] = self._store_queries.get(conn.uuid, 0) + 1
             conn.in_flight = True
             self._pending[conn.conn_id] = conn.uuid
-            self._inflight[conn.uuid] = self._inflight.get(conn.uuid, 0) + 1
+            if request.op == "follow":
+                self._followers.add(conn.conn_id)
+            else:
+                self._inflight[conn.uuid] = self._inflight.get(conn.uuid, 0) + 1
             event = RequestEvent(conn.uuid, conn.conn_id, request)
             if self._queries is not None and request.op in QUERY_OPS:
                 self._query_pending.add(conn.conn_id)
@@ -726,11 +750,14 @@ class Listener:
                 self._store_queries[uuid] = store_left
             else:
                 self._store_queries.pop(uuid)
-        left = self._inflight.get(uuid, 0) - 1
-        if left > 0:
-            self._inflight[uuid] = left
+        if conn_id in self._followers:
+            self._followers.remove(conn_id)
         else:
-            self._inflight.pop(uuid, None)
+            left = self._inflight.get(uuid, 0) - 1
+            if left > 0:
+                self._inflight[uuid] = left
+            else:
+                self._inflight.pop(uuid, None)
         if self._outbox_slots.get(uuid) == conn_id:
             conn = self._conns.get(conn_id)
             if conn is None or not conn.slot_line:  # the answered put's slot

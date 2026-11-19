@@ -1066,3 +1066,31 @@ def test_a_non_outbox_line_over_the_ordinary_cap_is_still_refused(
     assert c.recv(1) == b""
     with pytest.raises(queue.Empty):
         q.get(timeout=0.3)
+
+
+def test_followers_leave_capacity_for_wait_and_requests(env):
+    lis, q, root = env
+    lis.open_container("u", root / "u")
+    clients = []
+    try:
+        for _ in range(8):
+            c = connect(root / "u")
+            clients.append(c)
+            c.sendall(req("follow"))
+            event = q.get(timeout=2)
+            assert isinstance(event, RequestEvent) and event.request.op == "follow"
+        waiter = connect(root / "u")
+        clients.append(waiter)
+        waiter.sendall(req("next"))
+        assert q.get(timeout=2).request.op == "next"
+        for op in ("read", "send"):
+            c = connect(root / "u")
+            clients.append(c)
+            c.sendall(req(op))
+            event = q.get(timeout=2)
+            assert isinstance(event, RequestEvent) and event.request.op == op
+            lis.respond(event.conn_id, wire.ok())
+            assert wire.decode_response(recv_line(c)).ok
+    finally:
+        for c in clients:
+            c.close()

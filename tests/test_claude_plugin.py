@@ -1,4 +1,7 @@
 import json
+import shlex
+
+import typer
 from pathlib import Path
 
 import yaml
@@ -22,6 +25,36 @@ def test_packaged_plugin_manifests():
             "when": "always",
         }
     ]
+
+
+def test_plugin_commands_resolve_in_container_cli():
+    from jailbee.container_cli import container_app
+
+    plugin = Path(claude_plugin.__file__).parent / "claude_marketplace/jailbee"
+    hooks = json.loads((plugin / "hooks/hooks.json").read_text())
+    assert set(hooks) == {"hooks"}
+    assert set(hooks["hooks"]) == {"SessionStart", "Stop"}
+    commands = []
+    for entries in hooks["hooks"].values():
+        assert isinstance(entries, list) and entries
+        for entry in entries:
+            assert set(entry) == {"hooks"}
+            assert isinstance(entry["hooks"], list) and entry["hooks"]
+            for hook in entry["hooks"]:
+                assert set(hook) == {"type", "command"}
+                assert hook["type"] == "command"
+                commands.append(hook["command"])
+    monitors = json.loads((plugin / "monitors/monitors.json").read_text())
+    commands.extend(monitor["command"] for monitor in monitors)
+    for command in commands:
+        executable, *parts = shlex.split(command)
+        assert executable == "jailbee"
+        node = typer.main.get_command(container_app)
+        for part in parts:
+            assert isinstance(node, typer.core.TyperGroup), command
+            assert part in node.commands, command
+            node = node.commands[part]
+        assert not isinstance(node, typer.core.TyperGroup), command
 
 
 def test_instruction_mount_contains_empty_dropin_mountpoint(make_cfg, tmp_path, monkeypatch):
