@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import socket
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from types import TracebackType
 from typing import IO, Any
@@ -177,6 +177,27 @@ class Client:
             if not data:
                 return None
             buffer.extend(data)
+
+    def follow(self) -> Iterator[dict[str, Any]]:
+        """Yield non-final follower frames until the connection closes."""
+        sock = self._connect()
+        try:
+            sock.settimeout(None)
+            sock.sendall(wire.encode_request(wire.Request(op="follow", args={})))
+            assert self._reader is not None
+            while True:
+                line = wire.read_line(self._reader)
+                if line is None:
+                    raise BrokerUnreachable()
+                response = wire.decode_response(line)
+                if not response.ok:
+                    raise BrokerError(
+                        response.error_code or wire.BAD_REQUEST, response.error_detail
+                    )
+                if response.result != {"kind": "keepalive"}:
+                    yield response.result
+        except (OSError, wire.WireError) as exc:
+            raise BrokerUnreachable() from exc
 
     def call(self, op: str, args: dict[str, Any], *, timeout: float | None) -> Any:
         try:

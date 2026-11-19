@@ -105,6 +105,24 @@ def cmd_read(ident: str, *, keep: bool = False) -> int:
     return 0
 
 
+def cmd_follow() -> int:
+    with _factory() as client:
+        for event in client.follow():
+            if event.get("kind") != "message":
+                continue
+            item = event["item"]
+            ident = clean_c0c1(str(item.get("id", "")))
+            sender = clean_c0c1(str(item.get("from", "")))
+            kind = clean_c0c1(str(item.get("kind", item.get("state", ""))))
+            excerpt = clean_c0c1(str(item.get("body", item.get("detail", ""))))[:80]
+            print(
+                f"JailBee inbox: {ident} from {sender} ({kind}): {excerpt} "
+                f"— read it with: jailbee inbox read {ident}",
+                flush=True,
+            )
+    return 0
+
+
 def cmd_wait(
     *,
     timeout: str = "30m",

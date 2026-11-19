@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import os
 import queue
+import select
 import socket
+import subprocess
+import sys
 import sqlite3
 import threading
 from typing import TYPE_CHECKING, Any
@@ -25,6 +29,9 @@ class FakeListener:
         self.released: list[int] = []
 
     def respond(self, conn_id: int, response: wire.Response) -> None:
+        self.responses.append((conn_id, response))
+
+    def stream(self, conn_id: int, response: wire.Response) -> None:
         self.responses.append((conn_id, response))
 
     def is_connected(self, conn_id: int) -> bool:
@@ -99,6 +106,31 @@ def test_send_with_context_answers_status(env: Env) -> None:
     resp = env.last()
     assert resp.ok and resp.result["type"] == "status" and resp.result["ref"] == "m1"
     env.rig.dispatch.assert_called_once()
+
+
+def test_followers_receive_unread_and_new_messages_without_ack_or_exclusion(env: Env) -> None:
+    env.put("first")
+    env.ask(env.orch, "follow", conn=1)
+    env.ask(env.orch, "follow", conn=2)
+    env.ask(env.orch, "next", conn=3)
+    executor.evaluate_waiters(env.memory)
+    for conn in (1, 2):
+        assert (
+            conn,
+            wire.ok(
+                {"kind": "message", "item": {"type": "message", "id": "first", "kind": "note"}}
+            ),
+        ) in env.listener.responses
+    env.put("second")
+    executor.evaluate_waiters(env.memory)
+    for conn in (1, 2):
+        assert (
+            conn,
+            wire.ok(
+                {"kind": "message", "item": {"type": "message", "id": "second", "kind": "note"}}
+            ),
+        ) in env.listener.responses
+    assert [item.id for item in env.store.unacked(env.orch)] == ["first", "second"]
 
 
 def test_next_with_unread_item_answers_at_once(env: Env) -> None:
@@ -272,6 +304,101 @@ def test_real_socket_replace_replies_to_both_connections(env: Env, short_tmp_pat
         for client in clients:
             client.close()
         listener.stop()
+
+
+def test_follow_real_socket_coexists_with_replaced_waiter(env: Env, short_tmp_path: Path) -> None:
+    env.memory.requests = queue.Queue()
+    listener = Listener(env.memory.requests)
+    env.memory.listener = listener
+    listener.start()
+    listener.open_container(env.orch, short_tmp_path / "follow-sock")
+    clients = [socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) for _ in range(4)]
+    readers = []
+    try:
+        for client, op, args in zip(
+            clients,
+            ("follow", "follow", "next", "next"),
+            ({}, {}, {}, {"replace": True}),
+            strict=True,
+        ):
+            client.settimeout(3)
+            client.connect(str(short_tmp_path / "follow-sock" / "broker.sock"))
+            client.sendall(wire.encode_request(wire.Request(op, args)))
+            executor.handle_event(env.memory, env.memory.requests.get(timeout=3))
+            readers.append(client.makefile("rb"))
+        for reader in readers[:2]:
+            assert wire.decode_response(wire.read_line(reader)).result == {"kind": "keepalive"}
+        assert wire.decode_response(wire.read_line(readers[2])).result == {"kind": "replaced"}
+        env.put("a")
+        env.put("b")
+        executor.evaluate_waiters(env.memory)
+        for reader in readers[:2]:
+            assert [
+                wire.decode_response(wire.read_line(reader)).result["item"]["id"] for _ in range(2)
+            ] == ["a", "b"]
+        assert wire.decode_response(wire.read_line(readers[3])).result == {
+            "kind": "message",
+            "id": "a",
+        }
+        assert [item.id for item in env.store.unacked(env.orch)] == ["a", "b"]
+    finally:
+        for reader in readers:
+            reader.close()
+        for client in clients:
+            client.close()
+        listener.stop()
+
+
+def test_follow_cli_against_broker_flushes_and_leaves_unread(
+    env: Env, short_tmp_path: Path
+) -> None:
+    env.memory.requests = queue.Queue()
+    listener = Listener(env.memory.requests)
+    env.memory.listener = listener
+    listener.start()
+    listener.open_container(env.orch, short_tmp_path / "cli-sock")
+    env.store.insert_item(
+        env.orch,
+        "proj-orch",
+        {"id": "m1", "type": "message", "from": "kid", "kind": "note", "body": "hello\nworld"},
+        now=1,
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "jailbee.inbox", "follow"],
+        env={
+            **os.environ,
+            "JAILBEE_ORCHESTRATION_SOCKET": str(short_tmp_path / "cli-sock" / "broker.sock"),
+        },
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        executor.handle_event(env.memory, env.memory.requests.get(timeout=5))
+        executor.evaluate_waiters(env.memory)
+        assert proc.stdout is not None
+        assert select.select([proc.stdout], [], [], 5)[0]
+        assert (
+            proc.stdout.readline().decode()
+            == "JailBee inbox: m1 from kid (note): hello?world — read it with: jailbee inbox read m1\n"
+        )
+        assert [item.id for item in env.store.unacked(env.orch)] == ["m1"]
+    finally:
+        proc.terminate()
+        proc.communicate(timeout=5)
+        listener.stop()
+
+
+def test_follower_keepalive_and_disconnect(env: Env) -> None:
+    ticks = [0.0]
+    executor.handle_event(
+        env.memory, RequestEvent(env.orch, 7, wire.Request("follow", {})), clock=lambda: ticks[0]
+    )
+    assert env.listener.responses == [(7, wire.ok({"kind": "keepalive"}))]
+    ticks[0] = wire.KEEPALIVE_INTERVAL
+    executor.evaluate_waiters(env.memory, clock=lambda: ticks[0])
+    assert env.listener.responses[-1] == (7, wire.ok({"kind": "keepalive"}))
+    executor.handle_event(env.memory, DisconnectEvent(env.orch, 7))
+    assert len(env.memory.waiters) == 0
 
 
 def test_disconnect_drops_waiter(env: Env) -> None:

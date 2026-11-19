@@ -331,7 +331,11 @@ class Listener:
 
     def keepalive(self, conn_id: int) -> None:
         """Send a non-final frame without finishing the parked request."""
-        data = wire.encode_response(wire.ok({"kind": "keepalive"}))
+        self.stream(conn_id, wire.ok({"kind": "keepalive"}))
+
+    def stream(self, conn_id: int, response: wire.Response) -> None:
+        """Send a bounded non-final frame on a parked request."""
+        data = wire.encode_response(response)
 
         def send() -> None:
             conn = self._conns.get(conn_id)

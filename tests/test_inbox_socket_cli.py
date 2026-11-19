@@ -132,6 +132,30 @@ def test_send_cancel_requires_exactly_one_selector(
     assert broker.requests == []
 
 
+def test_follow_prints_safe_message_without_ack(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path
+) -> None:
+    broker.on(
+        "follow",
+        {
+            "kind": "message",
+            "item": {
+                "id": "m1",
+                "type": "message",
+                "from": "kid",
+                "kind": "note",
+                "body": "hello\n\x1b[31mworld",
+            },
+        },
+    )
+    result = run(sockdir, "follow", tmp=tmp_path)
+    assert (
+        result.stdout
+        == "JailBee inbox: m1 from kid (note): hello??[31mworld — read it with: jailbee inbox read m1\n"
+    )
+    assert [req.op for req in broker.requests] == ["follow"]
+
+
 def test_ls_prints_ls_lines(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
     broker.on(
         "list",

@@ -471,20 +471,22 @@ class Waiter:
     info: WaiterInfo | None = None
     keepalive: bool = False
     next_keepalive: float | None = None
+    follow: bool = False
+    after: int = 0
 
 
 class Waiters:
     """Parked `next` long-polls: one ordinary wait plus request-specific waits."""
 
     def __init__(self) -> None:
-        self._by_uuid: dict[tuple[str, str | None], Waiter] = {}
+        self._by_uuid: dict[tuple[str, str | None | int], Waiter] = {}
 
     def __len__(self) -> int:
         return len(self._by_uuid)
 
     def add(self, waiter: Waiter, *, replace: bool = False) -> Waiter | None:
         """Park `waiter`; with `replace`, displace and return the one on the same key."""
-        key = (waiter.uuid, waiter.ref)
+        key = (waiter.uuid, waiter.conn_id if waiter.follow else waiter.ref)
         current = self._by_uuid.get(key)
         if current is not None and not replace:
             identity = current.info.describe() if current.info else "PID unavailable (older client)"
@@ -526,6 +528,11 @@ class Waiters:
         answered: list[tuple[Waiter, dict[str, object] | wire.WireError]] = []
         for key, waiter in list(self._by_uuid.items()):
             try:
+                if waiter.follow:
+                    for item in store.unacked(waiter.uuid, after=waiter.after):
+                        waiter.after = item.seq
+                        answered.append((waiter, {"kind": "message", "item": item.item}))
+                    continue
                 outcome = _evaluate_one(waiter, memory, store, now=now, mono=mono)
             except StoreError as e:
                 outcome = wire.WireError(wire.STORE, str(e))

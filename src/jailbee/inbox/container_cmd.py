@@ -11,6 +11,7 @@ from typer.core import TyperGroup
 
 from jailbee.inbox import cli, send, socket_cli
 from jailbee.inbox.errors import InboxBadUsage, InboxUsage
+from jailbee.inbox.hook_cmd import register_hooks
 
 
 class InboxGroup(TyperGroup):
@@ -48,6 +49,7 @@ send_app = typer.Typer(
     ),
 )
 inbox_app.add_typer(send_app, name="send")
+register_hooks(inbox_app)
 
 
 def _run(command: Callable[[], int]) -> None:
@@ -156,6 +158,12 @@ def _send(request: send.SendRequest, source: str | None = None) -> None:
     if source is not None and source != "-":
         raise typer.BadParameter("the text source argument must be -")
     _run(lambda: socket_cli.cmd_send(request))
+
+
+@inbox_app.command()
+def follow() -> None:
+    """Announce unread and new inbox items without marking them read."""
+    _run(socket_cli.cmd_follow)
 
 
 @inbox_app.command(

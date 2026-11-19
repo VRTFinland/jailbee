@@ -88,7 +88,9 @@ def handle_event(
 
 
 _PARKED = object()
-_INBOX_OPS = frozenset({"send", "list", "read", "ack", "children", "status", "grant", "next"})
+_INBOX_OPS = frozenset(
+    {"send", "list", "read", "ack", "children", "status", "grant", "next", "follow"}
+)
 
 
 def _dispatch(
@@ -137,6 +139,24 @@ def _dispatch(
         return socket_ops.handle_status(memory, store, uuid, child=args.get("child"))
     if op == "grant":
         return socket_ops.handle_grant(memory, uuid)
+    if op == "follow":
+        mono = clock()
+        memory.waiters.add(
+            socket_ops.Waiter(
+                uuid=uuid,
+                conn_id=event.conn_id,
+                wake=None,
+                quiet=0,
+                digest=0,
+                deadline=None,
+                follow=True,
+                keepalive=True,
+                next_keepalive=mono + wire.KEEPALIVE_INTERVAL,
+            )
+        )
+        assert memory.listener is not None
+        memory.listener.keepalive(event.conn_id)
+        return _PARKED
     if op == "next":
         parsed = socket_ops.handle_next_args(args)
         socket_ops.validate_next_context(memory, uuid, parsed, now=time.time())
@@ -181,6 +201,8 @@ def evaluate_waiters(memory: BrokerMemory, *, clock: Callable[[], float] = time.
     for waiter, outcome in answered:
         if isinstance(outcome, wire.WireError):
             listener.respond(waiter.conn_id, wire.fail(outcome.code, outcome.detail))
+        elif waiter.follow:
+            listener.stream(waiter.conn_id, wire.ok(outcome))
         else:
             listener.respond(waiter.conn_id, wire.ok(outcome))
     for conn_id in memory.waiters.due_keepalives(mono):
