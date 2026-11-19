@@ -14,12 +14,14 @@ def register_hooks(inbox_app: typer.Typer) -> None:
 
     @app.command("session-start")
     def session_start() -> None:
+        """Provide context when a session resumes or forks."""
         result = hooks.session_start(hooks.read_input(), local_role())
         if result is not None:
             print(json.dumps(result))
 
     @app.command("stop")
     def stop() -> None:
+        """Keep a child inbox waiter armed before stopping."""
         result = hooks.stop(hooks.read_input(), local_role())
         if result is not None:
             print(json.dumps(result))

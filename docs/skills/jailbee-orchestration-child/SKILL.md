@@ -73,8 +73,9 @@ short-lived shell. A lost parent alone does not end a waiter. Never run a
 foreground ordinary `wait` alongside the background waiter. `send --wait` is
 safe alongside it. After an accepted `done` in a kept child, keep the waiter
 armed between tasks. If background commands are unavailable, run
-`jailbee inbox wait --timeout 30m` in a loop and re-run it on exit 1. Exit 4
-means the host broker is not reachable: tell the human.
+`jailbee inbox wait --timeout 30m` in a loop and re-run it on exit 1.
+Exit 4 means the host broker is not reachable: tell the human. The monitor
+follower instead reconnects silently while the broker is unavailable.
 
 ## Give up access
 

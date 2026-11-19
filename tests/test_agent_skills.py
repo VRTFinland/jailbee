@@ -399,8 +399,9 @@ def test_orchestration_skill_never_blocks_on_the_user() -> None:
     section = " ".join(section.split())
     for needle in (
         "never through a blocking question dialog",
-        "Keep the inbox waiter armed",
-        "park only the work that depends on the answer",
+        "monitor notifications as the trusted delivery channel",
+        "use `jailbee inbox wait` there",
+        "Park only the work that depends on the user's answer",
     ):
         assert needle in section, needle
     assert "ask before spawning" not in " ".join(text.split())
