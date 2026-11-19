@@ -78,6 +78,15 @@ or create outbox directories by hand. Children cannot stage GitHub writes: send
 the orchestrator exact content using `jailbee inbox send message --text "..."`,
 or `--kind question` when a result is needed.
 
+For interactive Claude Code, the managed JailBee plugin automatically runs
+`jailbee inbox follow`, a non-acknowledging notification stream; read announced
+items with `jailbee inbox read ID`. Its handlers are
+`jailbee inbox hook session-start` and `jailbee inbox hook stop`. Headless Claude
+sessions and other agents use `jailbee inbox wait`. The packaged marketplace
+lives in `jailbee/claude_marketplace`; its read-only managed-settings drop-in
+mounts at `/etc/claude-code/managed-settings.d` independently of
+`agent_instructions`.
+
 ## Services
 
 In a container: `jailbee service [ls] [--json]`, `jailbee service

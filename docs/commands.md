@@ -100,10 +100,18 @@ is host-only:
 - `jailbee config validate` ([configuration](config.md))
 - `jailbee service ...` ([Services](#services))
 - `jailbee inbox ...` ([orchestration](orchestration.md)), including
+  `inbox follow` (interactive Claude Code's managed plugin runs this
+  non-acknowledging notification stream; read each announced id with
+  `inbox read ID`), `inbox hook session-start|stop` (plugin hook handlers), and
   `inbox send cancel (--request ID | --child SHORT) [--wait] [--timeout DUR]`
-  for an orchestrator's queued spawn/restart. Uses the `spawn` permission;
-  answers `done` and settles the original request as `refused`. Already-started
-  requests need `stop`/`destroy` instead.
+  for an orchestrator's queued spawn/restart. Follow is automatic only in
+  interactive Claude Code; headless Claude sessions and other agents use
+  `inbox wait`. The plugin marketplace ships in
+  `jailbee/claude_marketplace`; the read-only managed-settings drop-in is
+  mounted at `/etc/claude-code/managed-settings.d` independently of
+  `agent_instructions`. Cancel uses the `spawn` permission; it answers `done`
+  and settles the original request as `refused`. Already-started requests need
+  `stop`/`destroy` instead.
 - `jailbee issue ...`, `jailbee pr ...`, `jailbee outbox ...` ([outbox commands](#in-container-outbox-commands))
 
 The terminal dashboard container menu offers `Autostart →` (`u`): `Re-run…` (`r`), `Status` (`T`), `Cancel…` (`C`), and `Profile…` (`p`) when applicable. The re-run picker puts failures first and asks for confirmation; failed or interrupted outcomes also mark the container row. `Services…` (`V`) on running containers lists services and offers start or stop/restart as appropriate, refresh and logs; an empty list is reported. Entries honor remote SSH policy; elevated service refresh may require the host. These new menus are terminal-only; Qt is unchanged.
