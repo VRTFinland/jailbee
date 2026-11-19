@@ -1,9 +1,8 @@
 import json
 import shlex
-
-import typer
 from pathlib import Path
 
+import typer
 import yaml
 
 from jailbee import claude_plugin

@@ -4,9 +4,9 @@ import os
 import queue
 import select
 import socket
+import sqlite3
 import subprocess
 import sys
-import sqlite3
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -378,8 +378,8 @@ def test_follow_cli_against_broker_flushes_and_leaves_unread(
         assert proc.stdout is not None
         assert select.select([proc.stdout], [], [], 5)[0]
         assert (
-            proc.stdout.readline().decode()
-            == "JailBee inbox: m1 from kid (note): hello?world — read it with: jailbee inbox read m1\n"
+            proc.stdout.readline().decode() == "JailBee inbox: m1 from kid (note): hello?world "
+            "— read it with: jailbee inbox read m1\n"
         )
         assert [item.id for item in env.store.unacked(env.orch)] == ["m1"]
     finally:

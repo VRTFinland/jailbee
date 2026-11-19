@@ -167,8 +167,8 @@ def test_follow_prints_safe_message_without_ack(
         ready, _, _ = select.select([proc.stdout], [], [], 10)
         assert ready, "follower did not announce the message"
         assert (
-            proc.stdout.readline()
-            == "JailBee inbox: m1 from kid (note): hello??[31mworld — read it with: jailbee inbox read m1\n"
+            proc.stdout.readline() == "JailBee inbox: m1 from kid (note): hello??[31mworld "
+            "— read it with: jailbee inbox read m1\n"
         )
         assert all(req.op == "follow" for req in broker.requests)
         assert broker.requests
@@ -182,7 +182,8 @@ def test_follow_prints_safe_message_without_ack(
     [
         (
             {"kind": "quiet-child", "child": "kid"},
-            "JailBee inbox: child kid has been quiet for 60m — check it with jailbee inbox children",
+            "JailBee inbox: child kid has been quiet for 60m "
+            "— check it with jailbee inbox children",
         ),
         (
             {"kind": "digest"},

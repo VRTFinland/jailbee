@@ -86,9 +86,7 @@ def _is_waiter(comm: str, cmdline: str | None) -> bool:
             continue
         if rest[:1] == ["inbox"]:
             rest = rest[1:]
-        if rest[:1] in (["wait"], ["follow"]) or (
-            rest[:1] == ["send"] and "--wait" in rest
-        ):
+        if rest[:1] in (["wait"], ["follow"]) or (rest[:1] == ["send"] and "--wait" in rest):
             return True
     return False
 

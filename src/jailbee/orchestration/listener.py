@@ -540,7 +540,10 @@ class Listener:
                     log.exception("accept failed for %s", uuid)
                 return
             sock.setblocking(False)
-            if sum(cid not in self._followers for cid in server.conns) >= MAX_CONNECTIONS_PER_CONTAINER:
+            if (
+                sum(cid not in self._followers for cid in server.conns)
+                >= MAX_CONNECTIONS_PER_CONTAINER
+            ):
                 with contextlib.suppress(OSError):
                     sock.send(wire.encode_response(wire.fail(wire.BUSY, "too many connections")))
                 sock.close()
@@ -641,11 +644,15 @@ class Listener:
                     return  # dropped while replying (e.g. EPIPE)
                 continue
             conn.classified = True
-            if request.op == "follow" and sum(
-                self._pending.get(cid) == conn.uuid for cid in self._followers
-            ) >= MAX_FOLLOWERS_PER_CONTAINER:
+            if (
+                request.op == "follow"
+                and sum(self._pending.get(cid) == conn.uuid for cid in self._followers)
+                >= MAX_FOLLOWERS_PER_CONTAINER
+            ):
                 del conn.inbuf[: nl + 1]
-                self._send(conn.conn_id, wire.encode_response(wire.fail(wire.BUSY, "too many followers")))
+                self._send(
+                    conn.conn_id, wire.encode_response(wire.fail(wire.BUSY, "too many followers"))
+                )
                 continue
             store_query = (
                 self._queries is not None

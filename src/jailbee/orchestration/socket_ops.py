@@ -481,7 +481,7 @@ class Waiters:
     """Parked `next` long-polls: one ordinary wait plus request-specific waits."""
 
     def __init__(self) -> None:
-        self._by_uuid: dict[tuple[str, str | None | int], Waiter] = {}
+        self._by_uuid: dict[tuple[str, str | int | None], Waiter] = {}
 
     def __len__(self) -> int:
         return len(self._by_uuid)

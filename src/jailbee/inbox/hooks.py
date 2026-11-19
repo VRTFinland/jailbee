@@ -15,7 +15,12 @@ _WAITER = re.compile(r"\b(?:jailbee|jb)\s+inbox\s+(?:follow|wait)\b")
 
 def session_start(data: dict[str, Any], role: str) -> dict[str, Any] | None:
     if data.get("source") in ("resume", "fork") and role != "plain":
-        return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": _RESUME_CONTEXT}}
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": _RESUME_CONTEXT,
+            }
+        }
     return None
 
 
@@ -23,11 +28,20 @@ def stop(data: dict[str, Any], role: str) -> dict[str, Any] | None:
     tasks = data.get("background_tasks")
     if role != "child" or data.get("stop_hook_active") or not isinstance(tasks, list):
         return None
-    if any(isinstance(task, dict) and task.get("status") == "running"
-           and isinstance(task.get("command"), str) and _WAITER.search(task["command"])
-           for task in tasks):
+    if any(
+        isinstance(task, dict)
+        and task.get("status") == "running"
+        and isinstance(task.get("command"), str)
+        and _WAITER.search(task["command"])
+        for task in tasks
+    ):
         return None
-    return {"decision": "block", "reason": "Run jailbee inbox wait --timeout none with Bash run_in_background before stopping."}
+    return {
+        "decision": "block",
+        "reason": (
+            "Run jailbee inbox wait --timeout none with Bash run_in_background before stopping."
+        ),
+    }
 
 
 def read_input() -> dict[str, Any]:

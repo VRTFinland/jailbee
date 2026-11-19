@@ -10,7 +10,7 @@ from jailbee.inbox import container_cmd, socket_cli
 from jailbee.orchestration import wire
 
 
-class StopFollowing(Exception):
+class StopFollowingError(Exception):
     pass
 
 
@@ -22,11 +22,11 @@ def test_missing_socket_sleeps_silently_and_caps_backoff(monkeypatch, tmp_path):
     def sleep(seconds):
         pauses.append(seconds)
         if len(pauses) == 8:
-            raise StopFollowing
+            raise StopFollowingError
 
     monkeypatch.setattr(socket_cli.time, "sleep", sleep)
     result = CliRunner().invoke(container_cmd.inbox_app, ["follow"])
-    assert isinstance(result.exception, StopFollowing)
+    assert isinstance(result.exception, StopFollowingError)
     assert result.output == ""
     assert pauses == [0.5, 1, 2, 4, 8, 16, 30, 30]
 
@@ -62,11 +62,11 @@ def test_follow_recovers_after_role_refusal_and_disconnect(monkeypatch, tmp_path
             thread = threading.Thread(target=serve, daemon=True)
             thread.start()
         elif len(pauses) == 4:
-            raise StopFollowing
+            raise StopFollowingError
 
     monkeypatch.setattr(socket_cli.time, "sleep", sleep)
     result = CliRunner().invoke(container_cmd.inbox_app, ["follow"])
-    assert isinstance(result.exception, StopFollowing)
+    assert isinstance(result.exception, StopFollowingError)
     assert result.output.count("JailBee inbox: m1 from kid (note): hello") == 2
     assert "no role" not in result.output
     assert pauses == [0.5, 1, 0.5, 0.5]
@@ -88,17 +88,19 @@ def test_follow_retries_protocol_errors_silently(monkeypatch, tmp_path, response
             conn, _ = server.accept()
             with conn, conn.makefile("rb") as reader:
                 wire.read_line(reader)
-                conn.sendall(response if isinstance(response, bytes) else wire.encode_response(response))
+                conn.sendall(
+                    response if isinstance(response, bytes) else wire.encode_response(response)
+                )
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
 
     def sleep(seconds):
-        raise StopFollowing
+        raise StopFollowingError
 
     monkeypatch.setattr(socket_cli.time, "sleep", sleep)
     result = CliRunner().invoke(container_cmd.inbox_app, ["follow"])
-    assert isinstance(result.exception, StopFollowing)
+    assert isinstance(result.exception, StopFollowingError)
     assert result.output == ""
     thread.join(timeout=1)
     assert not thread.is_alive()

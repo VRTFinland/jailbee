@@ -332,10 +332,15 @@ def test_restart_boot_prompt_warns_that_background_processes_are_gone(
             "jailbee.agents.primary_agent", lambda _cfg: type("Agent", (), {"name": "claude"})()
         )
 
-    assert actions.handle_restart(rig.ctx(), _restart().model_copy(update={"resume": resume})).state == "started"
+    assert (
+        actions.handle_restart(rig.ctx(), _restart().model_copy(update={"resume": resume})).state
+        == "started"
+    )
 
     prompt = seams["boot"].call_args.kwargs["initial_prompt"]
-    assert prompt.startswith("You are a child container of orchestrator `orch`. The container has restarted.")
+    assert prompt.startswith(
+        "You are a child container of orchestrator `orch`. The container has restarted."
+    )
     assert "All background processes" in prompt
     assert "inbox waiter" in prompt and "servers" in prompt and "render jobs" in prompt
     assert prompt.endswith("\n\ngo on")
