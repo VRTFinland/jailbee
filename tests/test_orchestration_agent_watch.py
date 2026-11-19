@@ -309,6 +309,11 @@ def claude_script(inner):
 
 
 CLAUDE_CASES = {
+    "claude-follow": (CLAUDE_SCRIPT.replace("inbox wait", "inbox follow"), True),
+    "claude-follow-queued": (
+        claude_script("jailbee inbox follow; make deploy"),
+        False,
+    ),
     "claude-current-wrapper": (
         CLAUDE_SCRIPT.replace("shopt -u", r"\builtin shopt -u").replace(
             "'" + CLAUDE_SUFFIX, "' < /dev/null" + CLAUDE_SUFFIX
@@ -482,6 +487,9 @@ CLAUDE_CASES = {
         ),
         ("/opt/venv/bin/python -P -m jailbee.container_main wait --timeout none", None, True),
         ("jailbee inbox wait --timeout none", None, True),
+        ("jailbee inbox follow", None, True),
+        ("python -P -m jailbee.container_main inbox follow", None, True),
+        ("python -m jailbee.container_main inbox follow", None, False),
         (
             "/opt/jailbee/venv/bin/python -P -m jailbee.container_main inbox wait --timeout 20s",
             "claude-wrapper",

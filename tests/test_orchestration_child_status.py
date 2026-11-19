@@ -70,6 +70,8 @@ WAITER_CMDLINES = [
     "python3 /usr/local/bin/jailbee inbox wait --quiet-after 5m",
     "/usr/bin/python3 /usr/local/bin/jailbee inbox wait --digest 1h",
     "python3 -m jailbee.inbox send --wait m.json",
+    "jailbee inbox follow",
+    "python -P -m jailbee.container_main inbox follow",
 ]
 
 

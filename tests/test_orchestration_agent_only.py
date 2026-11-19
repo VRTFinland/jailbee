@@ -198,6 +198,7 @@ agent_watch_probe = agent_watch.probe
     "command,extra,allowed",
     [
         ("python -P -m jailbee.container_main inbox wait --timeout none", None, True),
+        ("python -P -m jailbee.container_main inbox follow", None, True),
         ("python -P -m jailbee.container_main inbox wait", "sleep 600", False),
         ("python -P -m jailbee.container_main inbox wait", "pytest", False),
         ("jailbee service logs x --wait ready", None, False),

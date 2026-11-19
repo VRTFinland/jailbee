@@ -248,7 +248,7 @@ import json, os, pathlib, pwd, re, shlex, sys
 runtime, exit_path = map(pathlib.Path, sys.argv[1:3])
 
 def waiter(argv):
-    # Match entry points, never a process name or an argument containing 'wait'.
+    # Match inbox listener entry points, not arguments that mention wait or follow.
     if not argv:
         return False
     entry = pathlib.Path(argv[0]).name
@@ -267,7 +267,7 @@ def waiter(argv):
         return False
     if args[:1] == ['inbox']:
         args = args[1:]
-    return args[:1] == ['wait']
+    return args[:1] in (['wait'], ['follow'])
 
 def strip_redirects(script):
     return re.sub(r'(?:[ \t]+(?:> ?/dev/null|2>&1|2> ?/dev/null|< ?/dev/null))+$', '', script)

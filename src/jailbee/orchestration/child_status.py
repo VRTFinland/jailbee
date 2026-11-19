@@ -63,14 +63,14 @@ _WAITER_MODULES = frozenset({"jailbee", "jailbee.container_main", "jailbee.inbox
 
 
 def _is_waiter(comm: str, cmdline: str | None) -> bool:
-    """True for `inbox wait` and `inbox send --wait`, however they were started.
+    """True for inbox waiters and `inbox send --wait`, however they were started.
 
     In a container `jailbee` is a wrapper that execs
     `python -P -m jailbee.container_main ...`, so the real process is named
     `python` and only its command line says what it is. Matches an entry point
     (`jailbee` or `-m <jailbee module>`) anywhere in the
-    words, followed by an optional `inbox` and then `wait`, or `send` with
-    `--wait`. A tool such as `python -m pytest` never matches.
+    words, followed by an optional `inbox` and then `wait` or `follow`, or
+    `send` with `--wait`. A tool such as `python -m pytest` never matches.
     """
     if comm in WAITER_COMMS:
         return True
@@ -86,7 +86,9 @@ def _is_waiter(comm: str, cmdline: str | None) -> bool:
             continue
         if rest[:1] == ["inbox"]:
             rest = rest[1:]
-        if rest[:1] == ["wait"] or (rest[:1] == ["send"] and "--wait" in rest):
+        if rest[:1] in (["wait"], ["follow"]) or (
+            rest[:1] == ["send"] and "--wait" in rest
+        ):
             return True
     return False
 
