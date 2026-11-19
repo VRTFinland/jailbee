@@ -76,6 +76,23 @@ def test_plain_full_text_and_zero_based_children(env):
     assert "all pending" in dialog.publish_button.text().lower()
 
 
+def test_attachment_metadata_is_plain_text(env, qtbot):
+    from jailbee.outbox.models import AttachmentUse, AttachmentView
+
+    dialog, view, read, *_ = env
+    attachment = AttachmentView(
+        "screen", "evidence.png", "image/png", 123, "abc123", (AttachmentUse(0, 4),)
+    )
+    proposal = replace(view.proposals[0], attachments=(attachment,))
+    read.return_value = replace(view, proposals=(proposal,))
+    dialog.refresh()
+    qtbot.waitUntil(lambda: not dialog.busy)
+    select(dialog)
+    text = dialog.details.toPlainText()
+    for value in ("screen", "evidence.png", "image/png", "123", "abc123", "action 0 line 4"):
+        assert value in text
+
+
 def test_long_html_like_body_is_literal_and_not_truncated(env, qtbot):
     dialog, view, read, *_ = env
     text = "<b>literal & [red]</b>\n" + "full text\n" * 6000

@@ -28,6 +28,9 @@ PrArg = Annotated[
     typer.Argument(help="PR number; omit to use the PR bound to this container."),
 ]
 RepoOpt = Annotated[str | None, typer.Option(help="Repository as OWNER/NAME.")]
+AttachOpt = Annotated[
+    list[str] | None, typer.Option("--attach", help="Attach an image as ID=PATH (repeatable).")
+]
 pr_app.add_typer(review_app, name="review")
 
 
@@ -228,6 +231,24 @@ def description(
     _run(run)
 
 
+def _capture_options(options: list[str] | None) -> dict[str, object]:
+    from jailbee.container_outbox.attachments import capture_inputs
+
+    declarations: dict[str, object] = {}
+    for option in options or []:
+        key, sep, path = option.partition("=")
+        if not sep or not key or not path or key in declarations:
+            raise OutboxCommandError("--attach requires a unique ID=PATH", 2)
+        declarations[key] = {"file": path}
+    if not declarations:
+        return {}
+    try:
+        captured = capture_inputs({"attachments": declarations}, Path.cwd())
+        return cast(dict[str, object], captured["attachments"])
+    except (OSError, ValueError) as exc:
+        raise OutboxCommandError(f"cannot capture attachment inputs: {exc}", 2) from exc
+
+
 @review_app.command("add")
 def review_add(
     pr: PrArg = None,
@@ -239,6 +260,7 @@ def review_add(
     side: Annotated[str, typer.Option(help="Diff side: RIGHT (new) or LEFT (old).")] = "RIGHT",
     body: BodyOpt = None,
     body_file: BodyFileOpt = None,
+    attach: AttachOpt = None,
 ) -> None:
     """Add an inline comment to the review draft for a PR."""
 
@@ -267,7 +289,20 @@ def review_add(
         }
         # The broker merges the comment into the draft's one review action and
         # refuses it when the PR head moved since the draft was started.
-        broker.draft_append("pr", f"review-{view.number}", review, bodies, envelope=envelope)
+        name = f"review-{view.number}"
+        revision = None
+        if attach and any(row["name"] == name for row in broker.draft_list("pr")):
+            revision = broker.draft_show("pr", name)["revision"]
+        declarations = _capture_options(attach)
+        broker.draft_append(
+            "pr",
+            name,
+            review,
+            bodies,
+            envelope=envelope,
+            attachments=declarations or None,
+            expected_revision=revision,
+        )
         typer.echo(f"staged pr review-{view.number}")
 
     _run(run)
@@ -280,6 +315,7 @@ def review_submit(
     body_file: Annotated[
         Path | None, typer.Option(help="Read the review summary from a file.")
     ] = None,
+    attach: AttachOpt = None,
 ) -> None:
     """Stage the review draft with an optional summary body."""
 
@@ -295,7 +331,14 @@ def review_submit(
             "head_sha": view.head_sha,
             **summary,
         }
-        name = broker.draft_submit("pr", f"review-{view.number}", review=review, bodies=bodies)
+        declarations = _capture_options(attach)
+        name = broker.draft_submit(
+            "pr",
+            f"review-{view.number}",
+            review=review,
+            bodies=bodies,
+            attachments=declarations or None,
+        )
         _announce(name)
 
     _run(run)

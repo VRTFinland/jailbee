@@ -17,7 +17,9 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus
     from jailbee.outbox.models import ProposalId
 
-_COMMANDS = frozenset(("browse", "ls", "show", "drop", "clear", "apply", "sent"))
+_COMMANDS = frozenset(
+    ("browse", "ls", "show", "drop", "clear", "apply", "sent", "attachments", "attachment-resolve")
+)
 
 
 def _normalize_local(argv: Sequence[str]) -> list[str]:
@@ -117,10 +119,13 @@ def group(ctx: typer.Context, config: ConfigOption = None) -> None:
 def _run(
     ctx: typer.Context, config: Path | None, operation: Callable[[Config, Incus], int]
 ) -> None:
+    from jailbee.attachments import AttachmentError
     from jailbee.config import ConfigError, load_config, load_repo_config
     from jailbee.incus import Incus, IncusError
+    from jailbee.outbox.attachment_publication import AttachmentPublicationError
     from jailbee.outbox.inspect import safe_text
     from jailbee.outbox.models import OutboxError, OutboxExecutionError
+    from jailbee.outbox_io import JournalError
     from jailbee.remote_ssh.repo_scope import RepoScopeError
     from jailbee.repo_option import RepoOptionError, check_config_selection
     from jailbee.tui import error_plain
@@ -130,7 +135,15 @@ def _run(
         check_config_selection(path)
         cfg = load_config(path) if path is not None else load_repo_config(Path.cwd())
         status = operation(cfg, Incus())
-    except (ConfigError, OutboxError, RepoScopeError, RepoOptionError) as exc:
+    except (
+        ConfigError,
+        OutboxError,
+        RepoScopeError,
+        RepoOptionError,
+        AttachmentError,
+        AttachmentPublicationError,
+        JournalError,
+    ) as exc:
         error_plain(safe_text(str(exc)))
         raise typer.Exit(2) from exc
     except (OutboxExecutionError, IncusError, OSError) as exc:
@@ -294,6 +307,135 @@ def show(
     def operation(cfg: Config, incus: Incus) -> int:
         name, pid = _pick_target(cfg, incus, container, proposal, destructive=False)
         return show_selected(cfg, incus, name, pid, output=output.value, color=color)
+
+    _run(ctx, config, operation)
+
+
+@app.command("attachments")
+def attachments(
+    ctx: typer.Context,
+    container: ContainerArgument = None,
+    json_output: Annotated[bool, typer.Option("--json", help="Output JSON.")] = False,
+    config: ConfigOption = None,
+) -> None:
+    """List durable image upload outcomes, including completed proposals."""
+    from dataclasses import asdict
+
+    from jailbee import prompting
+    from jailbee.outbox import publication_db, store_db
+    from jailbee.outbox.commands import resolve_incarnation
+    from jailbee.outbox.inspect import safe_text
+    from jailbee.outbox.service import parse_retained_ref
+
+    def operation(cfg: Config, incus: Incus) -> int:
+        name = (
+            container
+            if container is not None
+            else prompting.ask_text(
+                "container", validate=lambda value: None if value.strip() else "enter a container"
+            )
+        )
+        retained = parse_retained_ref(name)
+        if retained is None:
+            _, uuid = resolve_incarnation(cfg, incus, name)
+        else:
+            _, uuid = retained
+        rows: list[dict[str, object]] = []
+        if uuid is not None:
+            for kind in ("issue", "pr"):
+                rows.extend(
+                    {"kind": kind, "proposal": proposal, **asdict(upload)}
+                    for proposal, upload in store_db.read_uploads(
+                        publication_db.default_root(), uuid, kind
+                    )
+                )
+        if json_output:
+            typer.echo(json.dumps(rows, ensure_ascii=True))
+        elif not rows:
+            typer.echo("No attachment uploads.")
+        else:
+            for row in rows:
+                typer.echo(safe_text(json.dumps(row, ensure_ascii=True)))
+        return 0
+
+    _run(ctx, config, operation)
+
+
+@app.command("attachment-resolve")
+def attachment_resolve(
+    ctx: typer.Context,
+    container: ContainerArgument = None,
+    proposal: ProposalArgument = None,
+    blob: Annotated[str | None, typer.Argument(help="Attachment blob identifier.")] = None,
+    repository_id: Annotated[int | None, typer.Argument(help="GitHub repository ID.")] = None,
+    url: Annotated[str | None, typer.Option("--url", help="Attest the uploaded image URL.")] = None,
+    retry_duplicate: Annotated[
+        bool, typer.Option("--retry-duplicate", help="Authorize another upload.")
+    ] = False,
+    yes: YesOption = False,
+    revision: RevisionOption = None,
+    config: ConfigOption = None,
+) -> None:
+    """Reconcile an uncertain image upload on the host."""
+    from jailbee import prompting
+    from jailbee.outbox.attachment_recovery import recover
+    from jailbee.outbox.inspect import safe_text
+
+    def operation(cfg: Config, incus: Incus) -> int:
+        name, pid = _pick_target(cfg, incus, container, proposal, destructive=True)
+        blob_id = (
+            blob
+            if blob is not None
+            else prompting.ask_text(
+                "blob", validate=lambda value: None if value.strip() else "enter a blob identifier"
+            )
+        )
+        repo_id = repository_id
+        if repo_id is None:
+            repo_id = int(
+                prompting.ask_text(
+                    "repository ID",
+                    validate=lambda s: (
+                        None if s.isdigit() and int(s) > 0 else "enter a positive repository ID"
+                    ),
+                )
+            )
+
+        def confirm(outcome: object) -> bool:
+            from jailbee.outbox.attachment_publication import UploadOutcome
+
+            assert isinstance(outcome, UploadOutcome)
+            item = outcome.attachment
+            typer.echo(
+                safe_text(
+                    f"Image: {item.name} ({item.content_type}, {item.size} bytes)\n"
+                    f"SHA-256: {item.sha256}\nBlob: {item.blob}\n"
+                    f"Repository: {outcome.host} / {outcome.repository_id}\n"
+                    f"State: {outcome.state}"
+                )
+            )
+            if retry_duplicate:
+                typer.echo("Warning: another upload may leave a permanent orphaned image.")
+            else:
+                typer.echo(
+                    safe_text(
+                        f"Attest this URL belongs to the recorded image and repository: {url}"
+                    )
+                )
+            return yes or typer.confirm("Resolve this upload?", default=False)
+
+        return recover(
+            cfg,
+            incus,
+            name,
+            pid,
+            blob_id,
+            repo_id,
+            url=url,
+            allow_duplicate=retry_duplicate,
+            confirm=confirm,
+            expected_revision=revision,
+        )
 
     _run(ctx, config, operation)
 

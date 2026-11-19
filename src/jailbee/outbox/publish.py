@@ -381,6 +381,7 @@ def publish_selected(
                 snapshot.rejected,
                 (),
                 snapshot.versions,
+                snapshot.attachment_uploads,
             )
             prepared = next(
                 (

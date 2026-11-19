@@ -34,7 +34,10 @@ _UNCERTAIN = (
 )
 # Ops whose retry after a dropped reply could repeat the effect (a second proposal
 # or draft action); they get the "check before trying again" message.
-_WRITE_OPS = frozenset({wire.OUTBOX_PUT, wire.OUTBOX_DRAFT_APPEND, wire.OUTBOX_DRAFT_SUBMIT})
+_WRITE_OPS = (
+    frozenset({wire.OUTBOX_PUT, wire.OUTBOX_DRAFT_APPEND, wire.OUTBOX_DRAFT_SUBMIT})
+    | wire.OUTBOX_ATTACHMENT_OPS
+)
 _VERSION = "container and broker versions differ; ask the human to run `jb apply` on the host"
 
 
@@ -101,6 +104,8 @@ def draft_append(
     bodies: dict[str, str],
     *,
     envelope: dict[str, object] | None = None,
+    attachments: dict[str, object] | None = None,
+    expected_revision: int | None = None,
 ) -> dict[str, Any]:
     """Append one action to the draft batch NAME; the host derives @REF expectations.
 
@@ -109,20 +114,29 @@ def draft_append(
     args: dict[str, Any] = {"kind": kind, "name": name, "action": action, "bodies": bodies}
     if envelope is not None:
         args["envelope"] = envelope
+    if attachments is not None:
+        args["attachments"] = attachments
+    if expected_revision is not None:
+        args["expected_revision"] = expected_revision
     return cast(dict[str, Any], call(wire.OUTBOX_DRAFT_APPEND, args))
 
 
 def draft_append_many(
-    kind: Kind, name: str, actions: list[dict[str, object]], bodies: dict[str, str]
+    kind: Kind,
+    name: str,
+    actions: list[dict[str, object]],
+    bodies: dict[str, str],
+    *,
+    attachments: dict[str, object] | None = None,
+    expected_revision: int | None = None,
 ) -> dict[str, Any]:
     """Append one command's issue actions atomically in one broker request."""
-    return cast(
-        dict[str, Any],
-        call(
-            wire.OUTBOX_DRAFT_APPEND,
-            {"kind": kind, "name": name, "actions": actions, "bodies": bodies},
-        ),
-    )
+    args: dict[str, Any] = {"kind": kind, "name": name, "actions": actions, "bodies": bodies}
+    if attachments is not None:
+        args["attachments"] = attachments
+    if expected_revision is not None:
+        args["expected_revision"] = expected_revision
+    return cast(dict[str, Any], call(wire.OUTBOX_DRAFT_APPEND, args))
 
 
 def draft_list(kind: Kind) -> list[dict[str, Any]]:
@@ -140,6 +154,7 @@ def draft_submit(
     *,
     review: dict[str, object] | None = None,
     bodies: dict[str, str] | None = None,
+    attachments: dict[str, object] | None = None,
 ) -> str:
     """Stage the draft as a proposal and remove it; return the proposal name.
 
@@ -150,6 +165,8 @@ def draft_submit(
         args["review"] = review
     if bodies:
         args["bodies"] = bodies
+    if attachments is not None:
+        args["attachments"] = attachments
     result = call(wire.OUTBOX_DRAFT_SUBMIT, args)
     return str(cast(dict[str, Any], result)["name"])
 

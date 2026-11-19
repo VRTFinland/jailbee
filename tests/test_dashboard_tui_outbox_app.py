@@ -97,6 +97,8 @@ async def listed(app: OutboxApp, pilot) -> None:  # type: ignore[no-untyped-def]
     """Wait for the background listing (it arrives on the app's poll timer)."""
     for _ in range(100):
         if app.controller.state.busy != LOADING:
+            # The poll clears busy before OptionList has laid out the new rows.
+            await pilot.pause()
             return
         await pilot.pause(0.05)
     raise AssertionError("the outbox listing never arrived")
@@ -116,7 +118,7 @@ def test_app_lists_and_quits(quiet):
         return text
 
     text = drive(app, scenario)
-    assert "PR  o/r#42" in text and "ISS o/r#42" in text
+    assert "PR  o/r#42" in text and "ISS o/r#42" in text, text
     assert app.return_value == 0
     assert quiet[0] == [
         "outbox", "ls", "-o", "json", "--config", "/repos/alpha/.jailbee/config.yaml",

@@ -193,6 +193,12 @@ def handle_append(
             _validate(name)(provisional, all_bodies)
 
     bodies = parse_bodies(args.get("bodies"))
+    attachments = args.get("attachments", {})
+    if not isinstance(attachments, dict):
+        raise bad_request("attachments must be an object")
+    revision = args.get("expected_revision")
+    if revision is not None and (type(revision) is not int or revision < 1):
+        raise bad_request("expected_revision must be a positive integer")
     if kind == "pr":
         prepare, validate = _pr_prepare(_pr_envelope(args.get("envelope"))), _pr_validate(name)
     else:
@@ -229,8 +235,10 @@ def handle_append(
             validate=validate,
             actions=added,
             prevalidate=prevalidate,
+            attachments=attachments,
+            expected_revision=revision,
         )
-    except DraftCapError as exc:
+    except (DraftCapError, ValueError) as exc:
         raise bad_request(str(exc)) from exc
     return _row(draft)
 
@@ -293,7 +301,7 @@ def handle_submit(store: OutboxStore, uuid: str, args: Mapping[str, Any], *, now
         proposal = store.submit_draft(uuid, kind, name, name, build, now=now, cap=MAX_MANIFESTS)
     except DraftNotFoundError as exc:
         raise wire.WireError(wire.NOT_FOUND, f"no {kind} draft {name}") from exc
-    except ProposalCapError as exc:
+    except (ProposalCapError, ValueError) as exc:
         raise bad_request(str(exc)) from exc
     return {"kind": proposal.kind, "name": proposal.name}
 
@@ -377,6 +385,9 @@ def _submit_pr(
     if review is not None and not isinstance(review, dict):
         raise bad_request("review must be a JSON object")
     extra = parse_bodies(args.get("bodies"))
+    attachments = args.get("attachments", {})
+    if not isinstance(attachments, dict):
+        raise bad_request("attachments must be an object")
     is_review = any(_is_review(a) for a in json.loads(current.manifest).get("actions", []))
     if is_review and review is None:
         raise bad_request(
@@ -389,6 +400,13 @@ def _submit_pr(
         stem: str, manifest_text: str, bodies: Mapping[str, str]
     ) -> tuple[str, dict[str, str]]:
         manifest = json.loads(manifest_text)
+        declarations = dict(manifest.get("attachments", {}))
+        for identifier, descriptor in attachments.items():
+            if identifier in declarations and declarations[identifier] != descriptor:
+                raise bad_request(f"attachment {identifier!r} already has different metadata")
+            declarations[identifier] = descriptor
+        if declarations:
+            manifest["attachments"] = declarations
         actions = manifest.get("actions", [])
         if review is not None:
             if len(actions) != 1 or not _is_review(actions[0]):
@@ -425,7 +443,7 @@ def _submit_pr(
         proposal = store.submit_draft(uuid, "pr", name, slug, build, now=now, cap=MAX_MANIFESTS)
     except DraftNotFoundError as exc:
         raise wire.WireError(wire.NOT_FOUND, f"no pr draft {name}") from exc
-    except ProposalCapError as exc:
+    except (ProposalCapError, ValueError) as exc:
         raise bad_request(str(exc)) from exc
     return {"kind": proposal.kind, "name": proposal.name}
 

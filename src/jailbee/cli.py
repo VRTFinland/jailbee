@@ -9207,10 +9207,21 @@ def pr_push_cmd(
             if not is_update_path:
                 pr_flow.bind_outbox_source(management, plan.outbox_source)
                 pr_flow.validate_outbox_source(cfg, incus, full, plan.outbox_source)
+            image_creator = pr_flow.image_description_creator(
+                cfg,
+                incus,
+                full,
+                plan.outbox_source,
+                resolved_body,
+                title=resolved_title,
+                explicit_body=body is not None or is_update_path,
+                confirm=lambda question: typer.confirm(question, default=False),
+            )
             try:
                 created = pr_flow.create_or_view_pr(
                     scope,
                     active_state,
+                    create_description=image_creator,
                     use_outbox=not no_outbox,
                     is_update=is_update_path,
                     head=publish.publish_name,
@@ -9264,7 +9275,7 @@ def pr_push_cmd(
                 ready=ready,
                 update=update,
             )
-            if not is_update:
+            if not is_update and body is None and image_creator is None:
                 # Only the create path published *this* text. When `gh pr create` found
                 # a PR that already existed, this run's create-path text never landed:
                 # `apply_pr_updates` above decided the description instead, did its own

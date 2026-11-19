@@ -152,16 +152,38 @@ broker cannot be reached they exit 4 with nothing staged. The
 [schema](references/manifest-schema.md) describes their normative output.
 
 For inline reviews, use `jailbee pr review add N --file PATH --line LINE
---body "..."`, then `jailbee pr review submit N --body "..."`. Generic
-`jailbee outbox submit` refuses review drafts. Review add and submit refuse a
-head change since the first comment; submit preserves that original anchor.
-If the head changed, discard with `jailbee pr review discard N`, re-read the diff,
-and add newly anchored comments.
+--body "..."`, then `jailbee pr review submit N --body "..."`. Attach images to
+either step with repeatable `--attach ID=PATH` (for example,
+`--attach screen=captures/error.png`); refer to each image in the comment or
+summary as `![Meaningful alt](attachment:screen)`. Use a unique ID per image and
+reuse it to place that image more than once. Generic `jailbee outbox submit`
+refuses review drafts. Review add and submit refuse a head change since the
+first comment; submit preserves that original anchor. If the head changed,
+discard with `jailbee pr review discard N`, re-read the diff, and add newly
+anchored comments.
+
+Images are captured from the current working directory as exact bytes. PNG,
+JPEG, GIF and WebP raster images are supported, up to 10 MB per file; videos,
+including MP4, are not supported. Remove secrets and sensitive metadata before
+staging; there is no automatic redaction. The host's one approval covers both
+review text and files, and no upload happens before approval. A published image
+cannot be retracted by dropping its proposal. For an uncertain upload, reconcile
+with the host's `jb outbox attachment-resolve` before retrying.
+
+Initial and updated PR descriptions also support attachments when their text
+comes from a staged manifest. An explicit `--body` or `--body-file` passed to
+`jb pr push` or `jb submodule pr push` takes precedence over the staged
+description; its attachments are not consumed. Known upload receipts are reused
+when the same image is published again. If PR creation has an uncertain outcome,
+inspect and reconcile it on the host before retrying; do not blindly repeat PR
+creation.
 
 For imported branches, use `jailbee pr source --ref REF --sha SHA --base BASE
 --repo owner/name --title "..." --body-file PATH`; `--head` aliases `--ref`.
-For an existing PR, supply `--pr N`. The host publishes with `jb pr push
-<container> --source-manifest <file>`.
+For an existing PR, supply `--pr N`. A source manifest may include captured
+image attachments using the top-level `attachments` map; see the
+[manifest schema](references/manifest-schema.md#image-attachments). The host
+publishes with `jb pr push <container> --source-manifest <file>`.
 
 ## Human inspection and approval
 

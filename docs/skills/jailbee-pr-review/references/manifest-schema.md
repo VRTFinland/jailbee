@@ -1,7 +1,10 @@
 # PR review outbox — manifest schema v1 (normative)
 
-This normative schema describes output produced by the container commands and
-parsed by the host. Do not write manifests or outbox files by hand.
+This normative schema describes the proposal stored in the host outbox and
+parsed by the host. Local staging inputs (including the JSON file passed to
+`jailbee outbox stage`) may be authored by hand; the staging command validates
+and captures them into the immutable host-owned proposal. Never write or edit
+the host outbox's stored proposal files by hand.
 
 ```json
 {
@@ -84,6 +87,35 @@ isolated from ordinary automatic description publishing. If a publication was
 interrupted while the PR was being created or updated, the proposal shows
 `uncertain`: check the PR on GitHub, then rerun the same push, which asks before
 publishing again.
+
+## Image attachments
+
+PR review draft `add` and `submit` commands accept repeatable `--attach
+ID=PATH` options. The ID is a unique identifier for an image in that command;
+reference it from Markdown with an inline image destination such as
+`![Failure after refresh](attachment:refresh)`. Reuse the identifier to show
+the same image more than once. Paths are relative to the current working
+directory. Source manifests can also contain captured images using the same
+manifest-level `attachments` map and `attachment:ID` body references.
+
+The captured file must be a PNG, JPEG, GIF or WebP raster image, with a
+matching extension/signature, and no larger than 10 MB. There is no fixed
+attachment-count or aggregate-byte quota in JailBee; existing manifest and body
+size limits still apply and are not lifted by image staging. GitHub may impose
+additional limits. Videos, including MP4, are unsupported. Capture preserves
+bytes exactly; it does not crop, recompress, remove metadata, or redact secrets.
+Review and sanitize files before staging. The host's approval includes attached
+files, and upload starts only after approval. Dropping a proposal cannot retract
+an uploaded image. On an uncertain upload, reconcile through the host's
+`jb outbox attachment-resolve` command before retrying.
+
+Initial and updated PR descriptions support attachments when their body comes
+from a staged manifest. An explicit `--body` or `--body-file` passed to `jb pr
+push` or `jb submodule pr push` takes precedence over the staged description;
+its attachments are not consumed. A known upload receipt for the same image and
+repository is reused instead of uploading again. If PR creation has an uncertain
+outcome, reconcile its host journal before retrying; never blindly repeat
+creation.
 
 ## Body fields
 

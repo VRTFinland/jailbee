@@ -14,6 +14,8 @@ from jailbee import pr_outbox as prs
 from jailbee.outbox import delete
 from jailbee.outbox.models import (
     ActionView,
+    AttachmentUse,
+    AttachmentView,
     CommentView,
     ContainerView,
     OutboxError,
@@ -30,6 +32,7 @@ from jailbee.outbox_io import (
 )
 
 if TYPE_CHECKING:
+    from jailbee.attachment_manifest import Attachment
     from jailbee.outbox.publication_db import Journal
 
 # A store-held publication journal of either kind (``prepared`` read as uncertain).
@@ -158,6 +161,35 @@ def _pr_actions(manifest: prs.Manifest, recorded_pr: int | None) -> tuple[Action
     return tuple(result)
 
 
+def _attachment_views(
+    attachments: Mapping[str, Attachment], actions: tuple[ActionView, ...]
+) -> tuple[AttachmentView, ...]:
+    if not attachments:
+        return ()
+    from jailbee.attachments import references
+
+    uses: dict[str, list[AttachmentUse]] = {key: [] for key in attachments}
+    for action in actions:
+        bodies: list[tuple[int | None, str | None]] = [
+            (None, action.body if action.markdown else None)
+        ]
+        bodies.extend((comment.index, comment.text) for comment in action.comments)
+        for comment_index, body in bodies:
+            if body:
+                for ref in references(body):
+                    uses[ref.id].append(
+                        AttachmentUse(
+                            action.index, body.count("\n", 0, ref.start) + 1, comment_index
+                        )
+                    )
+    return tuple(
+        AttachmentView(
+            key, value.name, value.content_type, value.size, value.sha256, tuple(uses[key])
+        )
+        for key, value in attachments.items()
+    )
+
+
 def _state(actions: tuple[ActionView, ...]) -> State:
     if any(a.state == "uncertain" for a in actions):
         return "uncertain"
@@ -182,6 +214,7 @@ def _build_view(
     actions: tuple[ActionView, ...] = ()
     state: State = "pending"
     body_names: set[str] = set()
+    attachment_views: tuple[AttachmentView, ...] = ()
     is_source = False
     try:
         try:
@@ -193,6 +226,7 @@ def _build_view(
         if store.kind == "pr":
             manifest = prs.parse_manifest(name, raw, files)
             actions = _pr_actions(manifest, None if manifest.source else recorded_pr)
+            attachment_views = _attachment_views(manifest.attachments, actions)
             is_source = manifest.source is not None
             if manifest.source is not None:
                 state = "awaiting-push"
@@ -202,6 +236,7 @@ def _build_view(
             issue = issues.parse_manifest(name, raw, files)
             body_names = set(issue.body_files)
             actions = tuple(_issue_action(i, a) for i, a in enumerate(issue.actions))
+            attachment_views = _attachment_views(issue.attachments, actions)
     except RecursionError:
         error, state = "manifest JSON nesting exceeds the supported depth", "invalid"
     except (prs.ManifestError, issues.IssueManifestError, OutboxError) as exc:
@@ -242,6 +277,13 @@ def _build_view(
         error = "; ".join(v for v in (error, str(exc)) if v)
         if state != "invalid":
             state = "uncertain"
+    uploads = tuple(
+        upload for proposal_name, upload in store.attachment_uploads if proposal_name == name
+    )
+    if any(upload.state in ("prepared", "uncertain") for upload in uploads):
+        if state != "invalid":
+            state = "uncertain"
+        block = "uncertain attachment upload prevents editing"
     relevant_rejected = sorted(n for n in store.rejected if n in body_names or n == name)
     inputs: dict[str, object] = {
         "identity": asdict(identity),
@@ -250,13 +292,24 @@ def _build_view(
         "raw": raw,
         "bodies": [(n, files.get(n)) for n in sorted(body_names)],
         "progress": evidence,
+        "uploads": [asdict(upload) for upload in uploads],
         "rejected": relevant_rejected,
     }
     if store.versions:
         # Host-store proposals: the row version is part of what the view was built from.
         inputs["row_version"] = dict(store.versions).get(name)
     revision = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
-    return ProposalView(ProposalId(store.kind, name), revision, raw, actions, state, error, block)
+    return ProposalView(
+        ProposalId(store.kind, name),
+        revision,
+        raw,
+        actions,
+        state,
+        error,
+        block,
+        attachment_views,
+        uploads,
+    )
 
 
 def build_views(
@@ -352,7 +405,7 @@ def _proposal_json(
                 ],
             }
         )
-    return {
+    result: dict[str, object] = {
         "id": str(proposal.id),
         "kind": proposal.id.kind,
         "name": proposal.id.name,
@@ -367,6 +420,13 @@ def _proposal_json(
         "delete_block": item.reason if item is not None and not deletable else None,
         "actions": actions,
     }
+    if proposal.uploads:
+        result["uploads"] = [asdict(upload) for upload in proposal.uploads]
+    if proposal.attachments:
+        result["attachments"] = [
+            asdict(a) | {"uses": [asdict(use) for use in a.uses]} for a in proposal.attachments
+        ]
+    return result
 
 
 def _container_json(container: ContainerView) -> dict[str, object]:

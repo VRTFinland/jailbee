@@ -94,6 +94,7 @@ if TYPE_CHECKING:
     from collections.abc import Collection, Iterable, Mapping, Sequence
 
     from jailbee.config import Config
+    from jailbee.outbox.models import AttachmentUploadView
     from jailbee.outbox.publication_db import Journal, PublicationStore
     from jailbee.pr import PrInfo
     from jailbee.pr_draft import DraftSession
@@ -132,6 +133,7 @@ class Outbox:
     uuid: str | None = None
     journals: Mapping[str, Journal] = field(default_factory=dict)
     versions: tuple[tuple[str, int], ...] = ()
+    attachment_uploads: tuple[tuple[str, AttachmentUploadView], ...] = ()
 
     @property
     def manifest_names(self) -> list[str]:
@@ -141,7 +143,7 @@ class Outbox:
     def snapshot(self) -> StoreSnapshot:
         """The proposals as `jb outbox` inspects them (the same view revisions)."""
         files = tuple(sorted(self.files.items()))
-        return StoreSnapshot("pr", files, self.rejected, (), self.versions)
+        return StoreSnapshot("pr", files, self.rejected, (), self.versions, self.attachment_uploads)
 
 
 def store_outbox(
@@ -157,7 +159,13 @@ def store_outbox(
     except (JournalError, OutboxExecutionError) as exc:
         raise OutboxReadError(f"{container or uuid}: outbox store unavailable ({exc})") from exc
     return Outbox(
-        snapshot.as_dict(), snapshot.rejected, identity, uuid, journals or {}, snapshot.versions
+        snapshot.as_dict(),
+        snapshot.rejected,
+        identity,
+        uuid,
+        journals or {},
+        snapshot.versions,
+        snapshot.attachment_uploads,
     )
 
 
@@ -461,6 +469,18 @@ def _comment_anchor(comment: LineComment) -> str:
     return f"{comment.path}:{comment.line}"
 
 
+def _attachment_lines(manifest: Manifest) -> list[str]:
+    if not manifest.attachments:
+        return []
+    lines = ["Attachments (not automatically previewed):"]
+    for identifier, item in sorted(manifest.attachments.items()):
+        lines.append(
+            f"  {identifier}: {item.name} ({item.content_type}, {item.size} bytes, "
+            f"sha256 {item.sha256})"
+        )
+    return lines
+
+
 def plan_lines(
     target: Target, current_body: str | None, *, indices: frozenset[int] | None = None
 ) -> list[str]:
@@ -477,7 +497,7 @@ def plan_lines(
     answers, so it must show what will actually be published and nothing else.
     `None` renders the manifest whole.
     """
-    lines: list[str] = []
+    lines: list[str] = _attachment_lines(target.manifest)
     for index, action in enumerate(target.manifest.actions):
         if indices is not None and index not in indices:
             continue
@@ -533,6 +553,7 @@ def show_lines(manifest: Manifest) -> list[str]:
         f"{manifest.name}  {manifest.repo}  "
         + (f"PR #{manifest.pr}" if manifest.pr is not None else "no PR yet")
     ]
+    lines.extend(_attachment_lines(manifest))
     for index, action in enumerate(manifest.actions):
         lines.append("")
         if isinstance(action, ReviewAction):
@@ -1007,8 +1028,10 @@ def apply_manifest(
     """
     import contextlib
 
+    from jailbee.attachments import references
     from jailbee.orchestration.store import StoreError
     from jailbee.outbox import publication_db
+    from jailbee.outbox.attachment_publication import AttachmentPublicationError
 
     if is_source_manifest(target.manifest):
         raise OutboxError(
@@ -1037,9 +1060,9 @@ def apply_manifest(
 
         session = DraftSession(target)
 
-    def entry(index: int, url: str) -> publication_db.SentEntry | None:
+    def entry(index: int, url: str, rendered: Action) -> publication_db.SentEntry | None:
         try:
-            action = _sent_action(manifest, digest, index, manifest.actions[index], url, pr_number)
+            action = _sent_action(manifest, digest, index, rendered, url, pr_number)
         except Exception:  # the outcome is recorded without it rather than lost
             return None
         return sent.entry(
@@ -1083,11 +1106,64 @@ def apply_manifest(
                 or (indices is not None and index not in indices)
             ):
                 continue
+            if before_action is not None:
+                before_action()
+            action = manifest.actions[index]
+            try:
+
+                def resolve(body: str) -> str:
+                    return store.image_publisher.resolve_body(
+                        claim,
+                        digest,
+                        body,
+                        manifest.attachments,
+                        target.scope.repo_root,
+                        manifest.repo,
+                    )
+
+                rendered = replace(action, body=resolve(action.body))
+                if isinstance(rendered, ReviewAction):
+                    rendered = replace(
+                        rendered,
+                        comments=tuple(replace(c, body=resolve(c.body)) for c in rendered.comments),
+                    )
+            except AttachmentPublicationError as e:
+                failure = str(e)
+                break
+            bodies: tuple[str, ...] = (action.body,)
+            if isinstance(action, ReviewAction):
+                bodies += tuple(c.body for c in action.comments)
+            if any(references(body) for body in bodies):
+                try:
+                    refreshed = resolve_target(
+                        cfg,
+                        incus,
+                        container,
+                        manifest,
+                        force=target.stale,
+                        allow_foreign=target.foreign,
+                        allow_foreign_repo=target.foreign_repo,
+                    )
+                    if (
+                        refreshed.pr is None
+                        or refreshed.pr.number != pr_number
+                        or refreshed.scope != target.scope
+                        or refreshed.foreign != target.foreign
+                        or refreshed.foreign_repo != target.foreign_repo
+                        or (
+                            isinstance(action, ReviewAction)
+                            and refreshed.pr.head_sha != target.pr.head_sha
+                        )
+                    ):
+                        raise OutboxChanged(
+                            "PR target or head changed during image upload; refresh required"
+                        )
+                except (GateError, OutboxError, pr.PrError, IncusError) as e:
+                    failure = str(e)
+                    break
             store.mark_prepared(claim, digest, index, repo=manifest.repo, now=clock())
             try:
-                if before_action is not None:
-                    before_action()
-                url = _apply_one(target, manifest.actions[index], session)
+                url = _apply_one(target, rendered, session)
             except pr.PrError as e:
                 with contextlib.suppress(JournalError, StoreError):
                     store.clear_prepared(claim, digest, index)
@@ -1102,7 +1178,7 @@ def apply_manifest(
                         index,
                         outcome="uncertain",
                         detail=str(e),
-                        sent=entry(index, ""),
+                        sent=entry(index, "", rendered),
                         now=clock(),
                     )
                 raise
@@ -1117,7 +1193,7 @@ def apply_manifest(
                     outcome="applied",
                     url=receipt,
                     issue=pr_number,
-                    sent=entry(index, url),
+                    sent=entry(index, url, rendered),
                     now=clock(),
                 )
             except (JournalError, StoreError) as e:

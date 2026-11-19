@@ -305,6 +305,24 @@ class OutboxDialog(QDialog):
                 proposal.edit_block or "",
                 "Raw manifest:\n" + proposal.raw_text,
             ]
+            for attachment in proposal.attachments:
+                uses = ", ".join(
+                    f"action {use.action_index}"
+                    + (f" comment {use.comment_index}" if use.comment_index is not None else "")
+                    + f" line {use.line}"
+                    for use in attachment.uses
+                )
+                texts.append(
+                    f"Attachment {safe_text(attachment.id)}: {safe_text(attachment.name)}\n"
+                    f"{safe_text(attachment.content_type)}, {attachment.size} bytes, "
+                    f"sha256 {safe_text(attachment.sha256)}\nUses: {uses or 'none'}"
+                )
+            for upload in proposal.uploads:
+                texts.append(
+                    f"Upload {safe_text(upload.blob)} to {safe_text(upload.host)}/"
+                    f"{upload.repository_id}: {safe_text(upload.state)}; "
+                    f"URL: {safe_text(upload.url or '-')}"
+                )
             for entry in proposal.actions:
                 mark = " ⚠ foreign repository" if foreign_slug(entry.repo) else ""
                 texts.append(

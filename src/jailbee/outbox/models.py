@@ -92,6 +92,20 @@ class ActionView:
 
 
 @dataclass(frozen=True)
+class AttachmentUploadView:
+    digest: str
+    blob: str
+    host: str
+    repository_id: int
+    name: str
+    content_type: str
+    size: int
+    sha256: str
+    state: str
+    url: str | None
+
+
+@dataclass(frozen=True)
 class StoreSnapshot:
     kind: Kind
     files: tuple[tuple[str, str], ...]
@@ -99,10 +113,28 @@ class StoreSnapshot:
     warnings: tuple[str, ...]
     # Row versions of the host-store proposals (issue kind): (name, version).
     versions: tuple[tuple[str, int], ...] = ()
+    attachment_uploads: tuple[tuple[str, AttachmentUploadView], ...] = ()
 
     def as_dict(self) -> dict[str, str]:
         """Return content only; retain this snapshot for strict progress interpretation."""
         return dict(self.files)
+
+
+@dataclass(frozen=True)
+class AttachmentUse:
+    action_index: int
+    line: int
+    comment_index: int | None = None
+
+
+@dataclass(frozen=True)
+class AttachmentView:
+    id: str
+    name: str
+    content_type: str
+    size: int
+    sha256: str
+    uses: tuple[AttachmentUse, ...]
 
 
 @dataclass(frozen=True)
@@ -114,6 +146,8 @@ class ProposalView:
     state: State
     error: str | None
     edit_block: str | None
+    attachments: tuple[AttachmentView, ...] = ()
+    uploads: tuple[AttachmentUploadView, ...] = ()
 
 
 @dataclass(frozen=True)

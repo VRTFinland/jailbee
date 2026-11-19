@@ -6,9 +6,12 @@ import json
 import math
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import ClassVar, Final, Literal, assert_never, cast
 
+from jailbee.attachment_manifest import Attachment, parse_attachments
+from jailbee.attachments import AttachmentError, validate_references
 from jailbee.github_repo import is_github_slug
 
 MAX_MANIFEST_BYTES = 256 * 1024
@@ -189,6 +192,7 @@ class IssueManifest:
     version: Literal[1]
     actions: tuple[IssueAction, ...]
     body_files: frozenset[str]
+    attachments: Mapping[str, Attachment] = field(default_factory=lambda: MappingProxyType({}))
 
 
 def _context(name: str, index: int | None = None) -> str:
@@ -620,7 +624,11 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise IssueManifestError(f"{name}: invalid JSON: {exc}") from exc
     root = _object(decoded, name)
-    _reject_unknown(root, {"version", "actions"}, name)
+    _reject_unknown(root, {"version", "actions", "attachments"}, name)
+    try:
+        attachments = parse_attachments(root.get("attachments", {}))
+    except AttachmentError as exc:
+        raise IssueManifestError(f"{name}: attachments: {exc}") from exc
     if type(root.get("version")) is not int or root["version"] != 1:
         raise IssueManifestError(f"{name}: version must be exactly 1")
     raw_actions = root.get("actions")
@@ -723,6 +731,19 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             _record_mutations(changed, action.repo, action.target, mutation_keys(action), context)
         actions.append(action)
 
+    bodies = [
+        action.body
+        for action in actions
+        if isinstance(action, (CreateAction, EditAction, CommentAction)) and action.body is not None
+    ]
+    try:
+        validate_references(bodies, attachments)
+    except AttachmentError as exc:
+        raise IssueManifestError(f"{name}: attachment references: {exc}") from exc
     return IssueManifest(
-        name=name, version=1, actions=tuple(actions), body_files=frozenset(body_files)
+        name=name,
+        version=1,
+        actions=tuple(actions),
+        body_files=frozenset(body_files),
+        attachments=attachments,
     )

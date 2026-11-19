@@ -618,6 +618,23 @@ def show_selected(
         for comment in action.comments:
             lines.append(f"Comment {comment.index}: {comment.label}")
             lines.extend(body(comment.text, True))
+    for attachment in view.attachments:
+        uses = ", ".join(
+            f"action {use.action_index}"
+            + (f" comment {use.comment_index}" if use.comment_index is not None else "")
+            + f" line {use.line}"
+            for use in attachment.uses
+        )
+        lines.append(
+            f"Attachment {attachment.id}: {attachment.name} "
+            f"({attachment.content_type}, {attachment.size} bytes)"
+        )
+        lines.append(f"SHA256: {attachment.sha256}; uses: {uses}")
+    for upload in view.uploads:
+        lines.append(
+            f"Upload {upload.blob} to {upload.host}/{upload.repository_id}: "
+            f"{upload.state}; URL: {upload.url or '-'}"
+        )
     lines.extend(("Raw manifest:", view.raw_text))
     print_lines(lines, color=bool(color))
     return 0

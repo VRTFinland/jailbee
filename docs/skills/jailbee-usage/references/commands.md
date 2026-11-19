@@ -48,12 +48,34 @@ current state for host staleness checks. `jailbee outbox sent [--json]
 container (its own Sent log records only), newest first.
 
 Inline reviews use `jailbee pr review add N --file PATH --line LINE --body
-TEXT` followed by `jailbee pr review submit N`; generic outbox submit refuses
-review drafts, because review submit fetches a fresh PR head. Discard with
-`jailbee pr review discard N`. None of these commands publish to GitHub; a
-human inspects and applies on the host. Do not write outbox files or create
-outbox directories by hand. Children cannot stage GitHub writes: send the
-orchestrator exact content using `jailbee inbox send message --text "..."`,
+TEXT` followed by `jailbee pr review submit N`; either command accepts repeatable
+`--attach ID=PATH` options for PNG/JPEG/GIF/WebP images (up to 10 MB each).
+There is no fixed attachment-count or aggregate-byte quota; existing manifest
+and body size limits still apply. Use Markdown `![alt](attachment:ID)` references. Generic
+outbox submit refuses review drafts, because review submit fetches a fresh PR
+head. Discard with `jailbee pr review discard N`.
+
+For issue proposal images, stage a JSON manifest and its referenced files with
+`jailbee outbox stage issue proposal.json --slug NAME`; image paths are relative
+to the manifest file. PR source manifests and initial or updated PR descriptions can also carry
+image attachments. An explicit `--body` or `--body-file` passed to `jb pr push`
+or `jb submodule pr push` takes precedence over staged text; those staged
+attachments are not consumed. Known upload receipts are reused for the same
+image and repository. If PR creation is uncertain, inspect and reconcile with the
+host operator before retrying; never blindly repeat creation. Uploads preserve
+bytes without redaction or metadata removal, so sanitize files
+before staging. Human approval covers the text and attachments together; no
+upload occurs before approval, and dropping a proposal cannot retract a
+published image. For uncertain uploads, the host operator can run
+`jb outbox attachment-resolve CONTAINER PROPOSAL BLOB REPOSITORY_ID --url URL`
+to attest an upload, or use `--retry-duplicate` only after considering that a
+duplicate may leave a permanent orphan. Inspect all retained upload receipts with
+`jb outbox attachments CONTAINER --json`, including receipts whose proposals and
+local bytes are already gone; a destroyed instance uses `full-name@uuid`.
+None of the container commands publish
+to GitHub; a human inspects and applies on the host. Do not write outbox files
+or create outbox directories by hand. Children cannot stage GitHub writes: send
+the orchestrator exact content using `jailbee inbox send message --text "..."`,
 or `--kind question` when a result is needed.
 
 ## Services
