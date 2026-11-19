@@ -275,9 +275,17 @@ def _note_delivery(ctx: ActionContext, manifest: Manifest, outcome: Outcome, rol
         log.exception("could not record delivery to %s", child.full)
 
 
-def child_preamble(orchestrator_short: str) -> str:
+def child_preamble(orchestrator_short: str, *, restarted: bool = False) -> str:
+    restart_notice = (
+        " The container has restarted. All background processes from before the restart are gone, "
+        "including inbox waiters, servers and render jobs. To stay reachable, keep "
+        "`jailbee inbox wait --timeout none` running in the background and re-arm it after "
+        "handling messages."
+        if restarted
+        else ""
+    )
     return (
-        f"You are a child container of orchestrator `{orchestrator_short}`. "
+        f"You are a child container of orchestrator `{orchestrator_short}`.{restart_notice} "
         "Use the `jailbee-orchestration-child` skill. "
         "Do not stage GitHub writes; send the orchestrator the exact repository, "
         "target, title, body and action content using `jailbee inbox send message --text`; "
@@ -1375,7 +1383,7 @@ def _handle_restart_locked(ctx: ActionContext, m: Manifest) -> Outcome:
     resume = _resolve_resume(ctx, child, m.resume, agent)
     if isinstance(resume, Outcome):
         return resume
-    prompt = f"{child_preamble(ctx.sender.short)}\n\n{m.prompt}"
+    prompt = f"{child_preamble(ctx.sender.short, restarted=not m.agent_only)}\n\n{m.prompt}"
     queued = _queued(ctx)
     if any(q.child_full == child.full for q in queued):
         return refused(f"a request for `{child.short}` is already queued")

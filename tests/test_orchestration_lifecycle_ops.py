@@ -318,6 +318,29 @@ def test_restart_sets_on_done_label_only_when_given(
     assert calls == ([] if policy is None else [(rig.child.full, labels.ON_DONE, policy)])
 
 
+@pytest.mark.parametrize("resume", [None, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"])
+def test_restart_boot_prompt_warns_that_background_processes_are_gone(
+    tmp_path: Path, seams: dict[str, MagicMock], monkeypatch: pytest.MonkeyPatch, resume: str | None
+) -> None:
+    rig = Rig(tmp_path, config={labels.AGENT_SESSIONS: '["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"]'})
+    if resume is not None:
+        adapter = MagicMock()
+        adapter.resume_args.return_value = "--resume"
+        adapter.session_exists.return_value = True
+        monkeypatch.setattr("jailbee.accounts.adapters.base.get_adapter", lambda _name: adapter)
+        monkeypatch.setattr(
+            "jailbee.agents.primary_agent", lambda _cfg: type("Agent", (), {"name": "claude"})()
+        )
+
+    assert actions.handle_restart(rig.ctx(), _restart().model_copy(update={"resume": resume})).state == "started"
+
+    prompt = seams["boot"].call_args.kwargs["initial_prompt"]
+    assert prompt.startswith("You are a child container of orchestrator `orch`. The container has restarted.")
+    assert "All background processes" in prompt
+    assert "inbox waiter" in prompt and "servers" in prompt and "render jobs" in prompt
+    assert prompt.endswith("\n\ngo on")
+
+
 def test_restart_clears_pending_destroy_and_stopped_dirty(
     tmp_path: Path, seams: dict[str, MagicMock]
 ) -> None:
@@ -446,7 +469,7 @@ def test_restart_boots_with_preambled_prompt(
     launch.assert_called_once_with(
         rig.cfg,
         container_name="proj-c1",
-        initial_prompt=actions.child_preamble("orch") + "\n\ngo on",
+        initial_prompt=actions.child_preamble("orch", restarted=True) + "\n\ngo on",
         config_path=None,
     )
     seams["boot"].assert_not_called()

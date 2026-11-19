@@ -306,6 +306,25 @@ def test_agent_only_relaunch_at_capacity_without_boot_or_queue(
         rig.incus.config_set.assert_any_call(rig.child.full, labels.RUNNER, selected.to_label())
 
 
+def test_agent_only_restart_relaunch_prompt_has_no_restart_notice(
+    tmp_path, seams, session, monkeypatch
+):
+    rig = Rig(tmp_path, running=True)
+    monkeypatch.setattr("jailbee.orchestration.agent_session.relaunch", session)
+    monkeypatch.setattr(
+        agent_watch, "probe", MagicMock(return_value=agent_watch.AgentStatus(False, "claude", 0))
+    )
+    monkeypatch.setattr(actions, "live_job_kind", MagicMock(return_value=None))
+    rig.incus.config_get_checked.return_value = ""
+
+    assert actions.handle_restart(rig.ctx(), restart()).state == "started"
+
+    prompt = session.call_args.args[3]
+    assert prompt == f"{actions.child_preamble('orch')}\n\nnew task"
+    assert "container has restarted" not in prompt
+    seams["boot"].assert_not_called()
+
+
 def test_agent_only_restart_resume_passes_id_to_relaunch(tmp_path, seams, session, monkeypatch):
     import json
 
