@@ -60,6 +60,48 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Env:
     return Env(Rig(tmp_path, monkeypatch))
 
 
+def test_follower_quiet_and_digest_are_per_subscription_and_rearm(env: Env) -> None:
+    ws = Waiters()
+    ws.add(env.waiter(conn_id=1, follow=True))
+    ws.add(env.waiter(conn_id=2, follow=True))
+    assert env.evaluate(ws, now=1000) == []
+    events = env.evaluate(ws, now=4600)
+    assert [(w.conn_id, result["kind"]) for w, result in events] == [
+        (1, "quiet-child"),
+        (1, "digest"),
+        (2, "quiet-child"),
+        (2, "digest"),
+    ]
+    assert env.evaluate(ws, now=4601) == []
+    env.memory.children["proj-orch"].children[0]["status"] = {"activity_at": 4602.0}
+    assert env.evaluate(ws, now=4602) == []
+    events = env.evaluate(ws, now=8202)
+    assert [(w.conn_id, result["kind"]) for w, result in events] == [
+        (1, "quiet-child"),
+        (1, "digest"),
+        (2, "quiet-child"),
+        (2, "digest"),
+    ]
+
+
+def test_child_follower_never_gets_orchestrator_events(env: Env) -> None:
+    ws = Waiters()
+    ws.add(env.waiter(uuid=env.kid, follow=True))
+    assert env.evaluate(ws, now=1000) == []
+    assert env.evaluate(ws, now=10000) == []
+
+
+def test_follower_losing_role_stops_before_delivering(env: Env) -> None:
+    ws = Waiters()
+    ws.add(env.waiter(follow=True))
+    del env.memory.contexts[env.orch]
+    env.put("secret")
+    result = env.evaluate(ws)
+    assert len(result) == 1 and isinstance(result[0][1], wire.WireError)
+    assert result[0][1].code == wire.NOT_ORCHESTRATED
+    assert len(ws) == 0
+
+
 def test_list_in_seq_order_and_unacked_only(env: Env) -> None:
     env.put("b")
     env.put("a")

@@ -7,7 +7,7 @@ import json
 import logging
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -473,6 +473,8 @@ class Waiter:
     next_keepalive: float | None = None
     follow: bool = False
     after: int = 0
+    follow_digest_at: float | None = None
+    quiet_children: set[str] = field(default_factory=set)
 
 
 class Waiters:
@@ -527,19 +529,83 @@ class Waiters:
         """Answer every waiter that is ready; the answered ones are removed."""
         answered: list[tuple[Waiter, dict[str, object] | wire.WireError]] = []
         for key, waiter in list(self._by_uuid.items()):
+            outcome: dict[str, object] | wire.WireError | None
             try:
                 if waiter.follow:
-                    for item in store.unacked(waiter.uuid, after=waiter.after):
-                        waiter.after = item.seq
-                        answered.append((waiter, {"kind": "message", "item": item.item}))
-                    continue
-                outcome = _evaluate_one(waiter, memory, store, now=now, mono=mono)
+                    ctx = memory.contexts.get(waiter.uuid)
+                    if ctx is None:
+                        outcome = wire.WireError(
+                            wire.NOT_ORCHESTRATED, "this container has no orchestration role"
+                        )
+                    else:
+                        for item in store.unacked(waiter.uuid, after=waiter.after):
+                            waiter.after = item.seq
+                            answered.append((waiter, {"kind": "message", "item": item.item}))
+                        if ctx.role() == "orchestrator":
+                            answered.extend(
+                                (waiter, event)
+                                for event in _follow_events(waiter, memory, store, now)
+                            )
+                        continue
+                else:
+                    outcome = _evaluate_one(waiter, memory, store, now=now, mono=mono)
             except StoreError as e:
                 outcome = wire.WireError(wire.STORE, str(e))
             if outcome is not None:
                 del self._by_uuid[key]
                 answered.append((waiter, outcome))
         return answered
+
+
+FOLLOW_EVENT_INTERVAL = 60 * 60
+
+
+def _follow_events(
+    waiter: Waiter, memory: broker_state.BrokerMemory, store: BrokerStore, now: float
+) -> list[dict[str, object]]:
+    ctx = memory.contexts[waiter.uuid]
+    view = memory.children.get(ctx.sender.full)
+    if view is None:
+        return []
+    history = store.history_meta(waiter.uuid)
+    events: list[dict[str, object]] = []
+    quiet_now: set[str] = set()
+    try:
+        for child in view.children:
+            found, _ = wake.select_wakeup(
+                [],
+                history,
+                [child],
+                children_observed_at=view.observed_at,
+                wake=None,
+                quiet=FOLLOW_EVENT_INTERVAL,
+                digest=0,
+                digest_at=None,
+                now=now,
+            )
+            if isinstance(found, wake.QuietChildWake):
+                quiet_now.add(found.child)
+                if found.child not in waiter.quiet_children:
+                    events.append({"kind": "quiet-child", "child": found.child})
+        found, stamp = wake.select_wakeup(
+            [],
+            history,
+            view.children,
+            children_observed_at=view.observed_at,
+            wake=None,
+            quiet=0,
+            digest=FOLLOW_EVENT_INTERVAL,
+            digest_at=waiter.follow_digest_at,
+            now=now,
+        )
+    except wake.WakeUsage:
+        return events
+    waiter.quiet_children = quiet_now
+    if stamp is not None:
+        waiter.follow_digest_at = stamp
+    if isinstance(found, wake.DigestWake):
+        events.append({"kind": "digest"})
+    return events
 
 
 def _evaluate_one(

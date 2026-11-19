@@ -180,18 +180,32 @@ def test_follow_prints_safe_message_without_ack(
 @pytest.mark.parametrize(
     ("event", "expected"),
     [
-        ({"kind": "quiet-child", "child": "kid"}, "JailBee inbox: child kid has been quiet for 60m — check it with jailbee inbox children"),
-        ({"kind": "digest"}, "JailBee inbox: child status digest — check it with jailbee inbox children"),
+        (
+            {"kind": "quiet-child", "child": "kid"},
+            "JailBee inbox: child kid has been quiet for 60m — check it with jailbee inbox children",
+        ),
+        (
+            {"kind": "digest"},
+            "JailBee inbox: child status digest — check it with jailbee inbox children",
+        ),
     ],
 )
-def test_follow_prints_event(broker: FakeBroker, sockdir: Path, tmp_path: Path, event: dict, expected: str) -> None:
+def test_follow_prints_event(
+    broker: FakeBroker, sockdir: Path, tmp_path: Path, event: dict, expected: str
+) -> None:
     broker.on("follow", event)
     # The fake broker closes after one frame; the follower stays alive and flushes first.
     env = {**os.environ, "JAILBEE_ORCHESTRATION_SOCKET": str(sockdir / "broker.sock")}
-    proc = subprocess.Popen([sys.executable, "-m", "jailbee.inbox", "follow"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "jailbee.inbox", "follow"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     try:
         assert proc.stdout is not None
         import select
+
         assert select.select([proc.stdout], [], [], 5)[0]
         assert proc.stdout.readline().decode().rstrip("\n") == expected
     finally:
