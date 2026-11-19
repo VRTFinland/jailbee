@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import Any
 
-from jailbee.inbox import cli
+from jailbee.inbox import cli, follow_render
 from jailbee.inbox.cli import PROG
 from jailbee.inbox.errors import InboxUsage
 from jailbee.inbox.render import clean_c0c1, ls_line, pretty, render_status
@@ -106,21 +106,20 @@ def cmd_read(ident: str, *, keep: bool = False) -> int:
 
 
 def cmd_follow() -> int:
-    with _factory() as client:
-        for event in client.follow():
-            if event.get("kind") != "message":
-                continue
-            item = event["item"]
-            ident = clean_c0c1(str(item.get("id", "")))
-            sender = clean_c0c1(str(item.get("from", "")))
-            kind = clean_c0c1(str(item.get("kind", item.get("state", ""))))
-            excerpt = clean_c0c1(str(item.get("body", item.get("detail", ""))))[:80]
-            print(
-                f"JailBee inbox: {ident} from {sender} ({kind}): {excerpt} "
-                f"— read it with: jailbee inbox read {ident}",
-                flush=True,
-            )
-    return 0
+    backoff = 0.5
+    while True:
+        try:
+            with _factory() as client:
+                client.retry_for = 0
+                for event in client.follow():
+                    backoff = 0.5
+                    line = follow_render.render_event(event)
+                    if line is not None:
+                        print(line, flush=True)
+        except (BrokerError, BrokerUnreachable, OSError):
+            pass
+        time.sleep(backoff)
+        backoff = min(backoff * 2, 30.0)
 
 
 def cmd_wait(
