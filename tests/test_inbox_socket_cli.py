@@ -3,6 +3,7 @@
 import contextlib
 import json
 import os
+import select
 import shutil
 import socket
 import subprocess
@@ -148,12 +149,54 @@ def test_follow_prints_safe_message_without_ack(
             },
         },
     )
-    result = run(sockdir, "follow", tmp=tmp_path)
-    assert (
-        result.stdout
-        == "JailBee inbox: m1 from kid (note): hello??[31mworld — read it with: jailbee inbox read m1\n"
+    env = {
+        **os.environ,
+        "JAILBEE_ORCHESTRATION_SOCKET": str(sockdir / "broker.sock"),
+        "JAILBEE_ORCHESTRATION_DIR": str(tmp_path / "nofiles"),
+        "JAILBEE_NO_UPDATE_CHECK": "1",
+    }
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "jailbee.inbox", "follow"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
     )
-    assert [req.op for req in broker.requests] == ["follow"]
+    try:
+        assert proc.stdout is not None
+        ready, _, _ = select.select([proc.stdout], [], [], 10)
+        assert ready, "follower did not announce the message"
+        assert (
+            proc.stdout.readline()
+            == "JailBee inbox: m1 from kid (note): hello??[31mworld — read it with: jailbee inbox read m1\n"
+        )
+        assert all(req.op == "follow" for req in broker.requests)
+        assert broker.requests
+    finally:
+        proc.terminate()
+        proc.communicate(timeout=10)
+
+
+@pytest.mark.parametrize(
+    ("event", "expected"),
+    [
+        ({"kind": "quiet-child", "child": "kid"}, "JailBee inbox: child kid has been quiet for 60m — check it with jailbee inbox children"),
+        ({"kind": "digest"}, "JailBee inbox: child status digest — check it with jailbee inbox children"),
+    ],
+)
+def test_follow_prints_event(broker: FakeBroker, sockdir: Path, tmp_path: Path, event: dict, expected: str) -> None:
+    broker.on("follow", event)
+    # The fake broker closes after one frame; the follower stays alive and flushes first.
+    env = {**os.environ, "JAILBEE_ORCHESTRATION_SOCKET": str(sockdir / "broker.sock")}
+    proc = subprocess.Popen([sys.executable, "-m", "jailbee.inbox", "follow"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        assert proc.stdout is not None
+        import select
+        assert select.select([proc.stdout], [], [], 5)[0]
+        assert proc.stdout.readline().decode().rstrip("\n") == expected
+    finally:
+        proc.terminate()
+        proc.communicate(timeout=5)
 
 
 def test_ls_prints_ls_lines(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
