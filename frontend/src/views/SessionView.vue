@@ -18,6 +18,15 @@ const router = useRouter()
 const prefix = computed(() => String(route.params.prefix))
 const agent = computed(() => String(route.params.agent))
 const sessionId = computed(() => String(route.params.sessionId))
+/** Set on the subagent route: this view then shows that subagent's transcript. */
+const agentId = computed(() =>
+    route.params.agentId === undefined ? null : String(route.params.agentId),
+)
+const sessionRef = computed(() => ({
+    prefix: prefix.value,
+    agent: agent.value,
+    sessionId: sessionId.value,
+}))
 
 const transcript = ref<TranscriptView | null>(null)
 const error = ref<string | null>(null)
@@ -72,7 +81,13 @@ function jumpToLatest() {
 }
 
 onMounted(async () => {
-    const path = [prefix.value, "sessions", agent.value, sessionId.value]
+    const path = [
+        prefix.value,
+        "sessions",
+        agent.value,
+        sessionId.value,
+        ...(agentId.value === null ? [] : ["subagents", agentId.value]),
+    ]
         .map(encodeURIComponent)
         .join("/")
     try {
@@ -82,7 +97,7 @@ onMounted(async () => {
         if (e instanceof Unauthorized) {
             await router.push({name: "login"})
         } else if (e instanceof Error && e.message.startsWith("API error 404")) {
-            error.value = "Session not found."
+            error.value = agentId.value === null ? "Session not found." : "Subagent not found."
         } else {
             error.value = "The session could not be loaded."
         }
@@ -93,7 +108,14 @@ onMounted(async () => {
 <template>
     <div class="page">
         <header class="bar">
-            <router-link class="back" :to="{name: 'repo', params: {prefix}}">
+            <router-link
+                v-if="agentId !== null"
+                class="back back-to-session"
+                :to="{name: 'session', params: sessionRef}"
+            >
+                &larr; Parent session
+            </router-link>
+            <router-link v-else class="back" :to="{name: 'repo', params: {prefix}}">
                 &larr; {{ prefix }}
             </router-link>
             <label class="toggle">
@@ -109,7 +131,7 @@ onMounted(async () => {
         <p v-if="error" class="notice">{{ error }}</p>
         <p v-else-if="transcript === null" class="muted">Loading…</p>
         <template v-else>
-            <h1>{{ transcript.title || "Untitled session" }}</h1>
+            <h1>{{ transcript.title || (agentId === null ? "Untitled session" : "Subagent") }}</h1>
             <p class="session-meta muted">
                 <span>{{ transcript.agent }}</span>
                 <span v-if="transcript.models.length" class="mono">{{
@@ -150,6 +172,7 @@ onMounted(async () => {
                         :call="e"
                         :result="byCall.results.get(e.call_id) ?? null"
                         :subagents="byCall.subagents.get(e.call_id) ?? []"
+                        :session-ref="sessionRef"
                     />
                     <section
                         v-else-if="e.kind === 'tool_result'"
@@ -162,7 +185,11 @@ onMounted(async () => {
                         :id="entryDomId(e.id)"
                         class="entry orphan muted"
                     >
-                        Subagent: {{ e.description || e.agent_id }}
+                        <router-link
+                            :to="{name: 'subagent', params: {...sessionRef, agentId: e.agent_id}}"
+                        >
+                            Subagent: {{ e.description || e.agent_id }}
+                        </router-link>
                     </section>
                 </template>
             </article>

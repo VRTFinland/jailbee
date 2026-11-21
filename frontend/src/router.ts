@@ -18,6 +18,11 @@ export const routes: RouteRecordRaw[] = [
     {path: "/repos/:prefix", name: "repo", component: RepoView},
     {path: "/containers/:name", name: "container", component: ContainerView},
     {path: "/repos/:prefix/sessions/:agent/:sessionId", name: "session", component: SessionView},
+    {
+        path: "/repos/:prefix/sessions/:agent/:sessionId/subagents/:agentId",
+        name: "subagent",
+        component: SessionView,
+    },
     {path: "/:pathMatch(.*)*", redirect: "/"},
 ]
 

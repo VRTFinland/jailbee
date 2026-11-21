@@ -10,8 +10,10 @@ const props = withDefaults(
         call: RenderedToolCall
         result: RenderedToolResult | null
         subagents?: RenderedSubagent[]
+        /** The session this call belongs to; subagents link to their own view when given. */
+        sessionRef?: {prefix: string; agent: string; sessionId: string}
     }>(),
-    {subagents: () => []},
+    {subagents: () => [], sessionRef: undefined},
 )
 
 const open = ref(false)
@@ -31,7 +33,14 @@ const open = ref(false)
         </button>
         <ul v-if="props.subagents.length" class="subagents">
             <li v-for="s in props.subagents" :key="s.id" class="tool-subagent">
-                Subagent: {{ s.description || s.agent_id }}
+                <router-link
+                    v-if="props.sessionRef"
+                    class="subagent-link"
+                    :to="{name: 'subagent', params: {...props.sessionRef, agentId: s.agent_id}}"
+                >
+                    Subagent: {{ s.description || s.agent_id }}
+                </router-link>
+                <template v-else>Subagent: {{ s.description || s.agent_id }}</template>
                 <span v-if="s.agent_type" class="muted">({{ s.agent_type }})</span>
             </li>
         </ul>
