@@ -167,6 +167,7 @@ def table_model(
         )
         if group.prefix not in folded:
             layout = fork_layout(group.containers)
+            phases = {c.name: row_phase(c) for c in group.containers}
             entries.extend(
                 Entry(
                     Row("container", container.name),
@@ -176,8 +177,8 @@ def table_model(
                     running=container.name in running,
                     source=container.name in sources,
                     dim=container.name in ineligible
-                    or (container.state == "Stopped" and row_phase(container) is None),
-                    phase=row_phase(container),
+                    or (container.state == "Stopped" and phases[container.name] is None),
+                    phase=phases[container.name],
                     fork_prefix=name_prefix(layout, container.name),
                 )
                 for container in group.containers
@@ -352,9 +353,9 @@ def entry_line(
         _underline_on_hover(cells[index], indented=index == 0)
     # The whole row is clickable, but only the name is underlined on hover.
     hit = dhit.hit_style("row", entry.container.name) + dhit.no_hover_style()
-    base = MARKED_STYLE + hit if entry.marked else hit
-    if entry.phase is not None:
-        base += Style.parse(ROW_PHASE_STYLES[entry.phase])
+    base = Style.parse(ROW_PHASE_STYLES[entry.phase]) + hit if entry.phase else hit
+    if entry.marked:
+        base = base + MARKED_STYLE  # a mark's blue wins over the phase colour
     if entry.dim:
         base += Style(dim=True)
     # The cursor's band wins over a mark's blue; the row's `●` still shows the mark.

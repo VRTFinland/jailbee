@@ -10,7 +10,7 @@ before editing `## Unreleased`.
 
 ### Added
 
-- The dashboard colours a whole container row by its non-normal phase: yellow
+- The terminal dashboard colours a whole container row by its non-normal phase: yellow
   while booting, cyan during autostart, magenta for other live jobs and red for
   a dead job or failed autostart. A Stopped row stays dim.
 - Interactive Claude Code sessions receive managed, non-acknowledging inbox

@@ -515,7 +515,7 @@ def test_a_capped_name_keeps_its_failed_autostart_mark(tmp_path):  # type: ignor
     assert len(line.plain.rstrip()) == NAME_MAX_WIDTH + 2
 
 
-def _phase_lines(tmp_path, *containers):  # type: ignore[no-untyped-def]
+def _phase_lines(tmp_path, *containers):  # type: ignore[no-untyped-def]  # test helper
     group = dmodel.RepoGroup("r", str(tmp_path), None, list(containers))
     model = fleet.table_model(
         [group],
@@ -535,7 +535,7 @@ def _phase_lines(tmp_path, *containers):  # type: ignore[no-untyped-def]
     ]
 
 
-def _job(name, kind, phase, state="Running", pid=None, failed=0):  # type: ignore[no-untyped-def]
+def _job(name, kind, phase, state="Running", pid=None, failed=0):  # type: ignore[no-untyped-def]  # test helper
     c = ci(name, "r", state, job_phase=phase, job_pid=pid)
     c.job_kind = kind
     c.job_live = pid is not None and phase != "failed"

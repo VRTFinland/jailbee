@@ -76,7 +76,7 @@ ROW_PHASE_STYLES = {
     "job": "magenta",
     "failed": "red",
 }
-"""Row colour per non-normal phase: the one palette every frontend reads."""
+"""Row colour per non-normal phase (Rich names), shared by terminal-dashboard code."""
 
 
 def row_phase(container: ContainerInfo) -> str | None:
