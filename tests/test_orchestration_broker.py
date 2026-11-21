@@ -831,6 +831,135 @@ def test_grant_changes_are_visible_without_container_files(rig: Rig) -> None:
     rig.incus.exec_with_input.assert_not_called()
 
 
+@pytest.mark.parametrize("operation", ["spawn", "restart"])
+def test_queued_launch_obeys_grant_lowered_after_inventory(
+    rig: Rig, monkeypatch, operation
+) -> None:
+    from copy import deepcopy
+
+    from jailbee.create_flow import CreateStarted
+
+    monkeypatch.setattr(manifests, "dispatch", actions.dispatch)
+    monkeypatch.setattr(manifests, "drain_queue", actions.drain_queue)
+    monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
+    if operation == "spawn":
+        start = MagicMock(return_value=Outcome("started", "ok"))
+        monkeypatch.setattr(actions, "start_child", start)
+        request = _spawn_raw()
+        stopped = []
+    else:
+        start = MagicMock(return_value=CreateStarted("proj-kid", 777, rig.root / "boot.log"))
+        monkeypatch.setattr("jailbee.create_flow.launch_boot_background", start)
+        text = json.dumps(
+            {"version": 1, "id": "s1", "type": "restart", "child": "kid", "prompt": "go"}
+        )
+        request = Request("s1.json", text, {"s1.json": text})
+        stopped = [_child(running=False)]
+    grant = Grant(max_running_children=6)
+    live = [_orch(grant=grant), *stopped, *[_child(f"proj-c{i}") for i in range(6)]]
+    rig.incus.list_containers.return_value = live
+    rig.requests["proj-orch"] = [request]
+    rig.tick()
+    assert [req.manifest_id for req in load_queue(rig.root)["proj-orch"]] == ["s1"]
+    start.assert_not_called()
+    rig.requests.clear()
+
+    live.pop()  # One child finished; five are still running.
+    inventories = 0
+
+    def inventory():
+        nonlocal inventories
+        snapshot = deepcopy(live)
+        inventories += 1
+        if inventories == 2:
+            # The host changes the grant after the pre-drain inventory was read.
+            live[0]["config"][labels.GRANT] = Grant(max_running_children=3).to_label()
+        return snapshot
+
+    rig.incus.list_containers.side_effect = inventory
+    rig.incus.config_get_checked.side_effect = lambda full, key: next(
+        row["config"].get(key) for row in live if row["name"] == full
+    )
+    rig.tick()
+    start.assert_not_called()
+    assert len(load_queue(rig.root)["proj-orch"]) == 1
+    rig.incus.stop.assert_not_called()
+
+    del live[-2:]  # At the new limit: still no free slot.
+    rig.tick()
+    start.assert_not_called()
+    live.pop()  # Below the new limit: dispatch the queued spawn.
+    rig.tick()
+    start.assert_called_once()
+    assert load_queue(rig.root) == {}
+
+
+def test_queued_spawns_obey_grant_changes_between_launches(rig: Rig, monkeypatch) -> None:
+    monkeypatch.setattr(manifests, "dispatch", actions.dispatch)
+    monkeypatch.setattr(manifests, "drain_queue", actions.drain_queue)
+    monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
+    live = [_orch(grant=Grant(max_running_children=1)), _child()]
+    rig.incus.list_containers.return_value = live
+    first = _spawn_raw("s1")
+    second_data = json.loads(_spawn_raw("s2").text)
+    second_data["branch"] = "fix/2"
+    second_text = json.dumps(second_data)
+    rig.requests["proj-orch"] = [
+        first,
+        Request("s2.json", second_text, {"s2.json": second_text, "s2.md": "go"}),
+    ]
+    rig.tick()
+    assert len(load_queue(rig.root)["proj-orch"]) == 2
+    rig.requests.clear()
+    inventories = 0
+
+    def inventory():
+        nonlocal inventories
+        snapshot = json.loads(json.dumps(live))
+        inventories += 1
+        if inventories == 2:
+            live[0]["config"][labels.GRANT] = Grant(max_running_children=3).to_label()
+        return snapshot
+
+    def launch(*args, **kwargs):
+        # A slow launch overlaps a second grant edit. The next dequeue must
+        # re-read it, while still counting this round's first launch.
+        live[0]["config"][labels.GRANT] = Grant(max_running_children=1).to_label()
+        return Outcome("started", "ok")
+
+    start = MagicMock(side_effect=launch)
+    monkeypatch.setattr(actions, "start_child", start)
+    rig.incus.list_containers.side_effect = inventory
+    rig.incus.config_get_checked.side_effect = lambda full, key: next(
+        row["config"].get(key) for row in live if row["name"] == full
+    )
+    rig.tick()
+    start.assert_called_once()
+    assert [req.manifest_id for req in load_queue(rig.root)["proj-orch"]] == ["s2"]
+
+
+def test_grant_read_failure_preserves_earlier_queued_launch_reply(rig: Rig, monkeypatch) -> None:
+    monkeypatch.setattr(manifests, "drain_queue", actions.drain_queue)
+    monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
+    start = MagicMock(return_value=Outcome("started", "ok"))
+    monkeypatch.setattr(actions, "start_child", start)
+    rig.incus.list_containers.return_value = [_orch()]
+    save_queue(rig.root, {"proj-orch": [_req("q1"), _req("q2", "proj-fix-3")]})
+
+    def read(full, key):
+        if key != labels.GRANT:
+            return None
+        if start.called:
+            raise IncusError("unavailable")
+        return GRANT.to_label()
+
+    rig.incus.config_get_checked.side_effect = read
+    rig.tick()
+    assert [(s.ref, s.state) for _, s in rig.statuses()] == [("q1", "started")]
+    assert [req.manifest_id for req in load_queue(rig.root)["proj-orch"]] == ["q2"]
+    start.assert_called_once()
+
+
 def _req(mid: str, child: str = "proj-fix-2") -> QueuedRequest:
     return QueuedRequest(
         manifest_id=mid,

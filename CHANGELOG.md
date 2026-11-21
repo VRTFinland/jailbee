@@ -8,6 +8,14 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Fixed
+
+- Queued child spawns and ordinary restarts check the current orchestration
+  grant before each dispatch. Lowering `max_running_children` leaves running
+  children untouched and holds queued work until the count falls below the
+  new limit; raising it makes the additional slots available
+  ([#142](https://github.com/VRTFinland/jailbee/issues/142)).
+
 ## 1.8.9 - 2026-11-17
 
 Run `jailbee apply` after upgrading to refresh the installed issue, PR-review
