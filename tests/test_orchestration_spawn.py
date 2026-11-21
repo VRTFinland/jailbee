@@ -41,6 +41,7 @@ def _ctx(
     )
     incus = MagicMock()
     incus.exists.return_value = exists
+    incus.config_get_checked.side_effect = lambda full, key: sender.config.get(key)
     return ActionContext(
         cfg=cfg,
         gcfg=GlobalConfig(),

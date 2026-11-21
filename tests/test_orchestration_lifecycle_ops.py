@@ -48,6 +48,7 @@ class Rig:
         self.stranger = Node("proj-x", "x", True, {})
         self.incus = MagicMock()
         self.incus.config_get.return_value = ""
+        self.incus.config_get_checked.side_effect = lambda full, key: self.sender.config.get(key)
         self.root = tmp_path
 
     def ctx(self) -> ActionContext:
