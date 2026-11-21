@@ -1022,7 +1022,10 @@ merged state.
   it is running and its create has finished, or its create has failed.
   Beyond the limit the spawn is queued in order, reported as
   `queued at position N`, and started when a slot frees. A queued fork pins
-  its source commit when it is queued.
+  its source commit when it is queued. Queued spawns and ordinary restarts
+  check the current grant before each dispatch: lowering the limit leaves
+  running children untouched and holds the queue until the running count is
+  below the new limit. Raising the limit makes the extra slots available.
 - **Cancel queued work.** `jailbee inbox send cancel --request ID --wait`
   removes a queued spawn or restart; alternatively use `--child SHORT` (exactly
   one selector). It uses the existing `spawn` permission, frees the reserved

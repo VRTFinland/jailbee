@@ -87,7 +87,10 @@ Run `jailbee inbox grant` to inspect your grant before planning requests.
 - `max_running_children` is the limit on children **running** at once.
   Stopped children do not count. A spawn over the limit waits as `queued`.
   During creation, a child counts from the `started` reply until it is
-  running and its create has finished, or its create has failed.
+  running and its create has finished, or its create has failed. Queued spawns
+  and ordinary restarts use the current grant before each dispatch. Lowering
+  the limit leaves running children untouched; the queue waits until their
+  count is below the new limit. Raising it makes the extra slots available.
 - `operations` lists the permissions you may use. `spawn` (including `cancel`)
   and `message` are always there; `import`, `restart`, `stop`, `destroy` and
   `rights` may not be.

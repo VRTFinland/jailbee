@@ -996,18 +996,30 @@ def drain_queue(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome]]:
 
 def _drain_queue_locked(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome]]:
     """Start queued requests FIFO while slots are free; a lowered limit starts nothing."""
-    grant = ctx.grant()
     queued = _queued(ctx)
-    if grant is None or not queued:
+    if not queued:
         return []
     try:
         counts = count_breakdown(ctx)
     except PendingImportError as exc:
         log.warning("queue not drained, slot accounting unavailable: %s", exc)
         return []
-    free = grant.max_running_children - counts[-1]
     results: list[tuple[QueuedRequest, Outcome]] = []
-    while queued and free > 0:
+    while queued:
+        # Inventory can predate a host grant edit or a slow starter. Read again
+        # before each dequeue, and give the starter the same current grant.
+        raw = ctx.incus.config_get_checked(ctx.sender.full, labels.GRANT)
+        config = dict(ctx.sender.config)
+        config[labels.GRANT] = raw or ""
+        ctx = replace(ctx, sender=replace(ctx.sender, config=config))
+        grant = ctx.grant()
+        if grant is None:
+            break
+        if counts[-1] >= grant.max_running_children:
+            _log_spawn_decision(
+                ctx, queued[0].child_full, counts, grant.max_running_children, "queued"
+            )
+            break
         req = queued.pop(0)
         # At most once: the pop is on disk before anything starts, so a crash
         # inside the starter never starts the same request again.
@@ -1018,7 +1030,7 @@ def _drain_queue_locked(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome
         )
         _log_spawn_decision(ctx, req.child_full, counts, grant.max_running_children, outcome.state)
         if outcome.state == "started":
-            free -= 1
+            counts = (*counts[:3], counts[-1] + 1)
         results.append((req, outcome))
         # The nodes snapshot is unchanged this round; keep the drain's slot accounting.
         try:
@@ -1026,9 +1038,7 @@ def _drain_queue_locked(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome
         except PendingImportError as exc:
             log.warning("queue drain stopped, slot accounting unavailable: %s", exc)
             break
-        counts = (*fresh[:3], grant.max_running_children - free)
-    if queued:
-        _log_spawn_decision(ctx, queued[0].child_full, counts, grant.max_running_children, "queued")
+        counts = (*fresh[:3], counts[-1])
     return results
 
 
