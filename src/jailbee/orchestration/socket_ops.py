@@ -537,6 +537,13 @@ class Waiters:
                 if waiter.follow:
                     ctx = memory.contexts.get(waiter.uuid)
                     if ctx is None:
+                        # The tick drops the context when the GRANT label goes: say so
+                        # before the error, or the stream never shows the revoke.
+                        if waiter.grant_baselined and waiter.grant_seen is not None:
+                            answered.append(
+                                (waiter, {"kind": "grant-changed", "changes": ["grant revoked"]})
+                            )
+                            memory.grants_seen[waiter.uuid] = None
                         outcome = wire.WireError(
                             wire.NOT_ORCHESTRATED, "this container has no orchestration role"
                         )
@@ -545,10 +552,17 @@ class Waiters:
                             waiter.after = item.seq
                             if matches_wake_filter(item.type, item.kind_or_state, waiter.wake):
                                 answered.append((waiter, {"kind": "message", "item": item.item}))
+                        failure_key = f"grant-change:{ctx.sender.full}"
                         try:
-                            change = _grant_change(waiter, ctx)
-                        except Exception:  # a bad config or label must not stall other waiters
-                            log.exception("broker: grant change check for %s failed", waiter.uuid)
+                            change = _grant_change(waiter, ctx, memory)
+                            memory.failures.pop(failure_key, None)
+                        except Exception as exc:  # a bad config must not stall other waiters
+                            memory.report_failure(
+                                failure_key,
+                                exc,
+                                "broker: grant change check for %s failed",
+                                ctx.sender.full,
+                            )
                             change = None
                         if change is not None:
                             answered.append((waiter, change))
@@ -596,8 +610,17 @@ def grant_diff(before: dict[str, object] | None, after: dict[str, object] | None
     ]
 
 
-def _grant_change(waiter: Waiter, ctx: ActionContext) -> dict[str, object] | None:
-    """One ``grant-changed`` event when the effective grant differs from the last one seen."""
+def _grant_change(
+    waiter: Waiter, ctx: ActionContext, memory: broker_state.BrokerMemory
+) -> dict[str, object] | None:
+    """One ``grant-changed`` event when the effective grant differs from the last one seen.
+
+    A new connection starts from what the broker last saw for the container, so a
+    change landing between two connections is still announced.
+    """
+    if not waiter.grant_baselined and waiter.uuid in memory.grants_seen:
+        waiter.grant_seen = memory.grants_seen[waiter.uuid]
+        waiter.grant_baselined = True
     grant = ctx.grant()
     current: dict[str, object] | None = (
         json.loads(grant_json_text(grant, *ctx.default_runner())) if grant is not None else None
@@ -606,6 +629,7 @@ def _grant_change(waiter: Waiter, ctx: ActionContext) -> dict[str, object] | Non
     baselined = waiter.grant_baselined
     waiter.grant_seen = current
     waiter.grant_baselined = True
+    memory.grants_seen[waiter.uuid] = current
     if not baselined:
         return None
     changes = grant_diff(previous, current)

@@ -62,6 +62,9 @@ class BrokerMemory:
     children: dict[str, ChildrenView] = field(default_factory=dict)
     # Container key (volatile.uuid) -> the context built for it in the last round.
     contexts: dict[str, ActionContext] = field(default_factory=dict)
+    # volatile.uuid -> the effective grant last seen by an inbox follower (None =
+    # none); lets a reconnecting follower announce a change from its gap.
+    grants_seen: dict[str, dict[str, object] | None] = field(default_factory=dict)
     # Socket transport (None in tests that do not exercise it).
     listener: Listener | None = None
     store: BrokerStore | None = None
@@ -115,6 +118,8 @@ class BrokerMemory:
         for key, ctx in list(self.contexts.items()):
             if key not in keys:
                 self.children.pop(ctx.sender.full, None)
+        for uuid in self.grants_seen.keys() - keys:
+            del self.grants_seen[uuid]
         for cache in (self.env_roles, self.contexts):
             for key in cache.keys() - keys:
                 del cache[key]
