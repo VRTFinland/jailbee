@@ -62,8 +62,8 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Env:
 
 def test_follower_quiet_and_digest_are_per_subscription_and_rearm(env: Env) -> None:
     ws = Waiters()
-    ws.add(env.waiter(conn_id=1, follow=True))
-    ws.add(env.waiter(conn_id=2, follow=True))
+    ws.add(env.waiter(conn_id=1, follow=True, quiet=3600, digest=3600))
+    ws.add(env.waiter(conn_id=2, follow=True, quiet=3600, digest=3600))
     assert env.evaluate(ws, now=1000) == []
     events = env.evaluate(ws, now=4600)
     assert [(w.conn_id, result["kind"]) for w, result in events] == [

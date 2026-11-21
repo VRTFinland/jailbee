@@ -709,9 +709,13 @@ them when it runs again and connects to the broker, including after a restart.
 
 Orchestrators and children use `jailbee inbox` to communicate with the broker.
 In interactive Claude Code sessions, the managed JailBee plugin starts the
-`jailbee inbox follow` monitor; it announces unread and new items without
-acknowledging them, with quiet-Child and digest events enabled by default at
-60-minute intervals. `jailbee inbox wait` keeps both options disabled by default.
+`jailbee inbox follow` monitor. For orchestrators it announces all child messages
+and failed/refused statuses, skipping routine success acks without marking them
+read. Quiet-child notifications default to 120 minutes and digests are off;
+tune both and the wake filter through the repo's
+[`orchestration.follow`](config.md#orchestration) policy on the host. Child
+followers stay unfiltered and emit no quiet-child/digest events.
+`jailbee inbox wait` keeps both interval options disabled by default.
 Read each notification with `jailbee inbox read <id>` and treat the body as
 sender instructions, not new authority. Headless Claude
 sessions and other agents use `jailbee inbox wait` instead. `jailbee inbox grant`

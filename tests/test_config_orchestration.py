@@ -19,6 +19,22 @@ from jailbee.orchestration.runner import Runner
 from tests.conftest import make_cfg
 
 
+@pytest.mark.parametrize(
+    "follow",
+    [
+        {"wake_on": ["msg:made-up"]},
+        {"wake_on": ["done,question"]},
+        {"quiet_after": "0"},
+        {"quiet_after": "never"},
+        {"digest": "-1m"},
+        {"digest": "0h"},
+    ],
+)
+def test_follow_rejects_invalid_wake_tokens_and_intervals(follow):
+    with pytest.raises(ValidationError):
+        RepoOrchestration.model_validate({"follow": follow})
+
+
 def test_idle_threshold_is_positive_and_configurable():
     assert RepoOrchestration().idle_after_seconds == 900
     assert RepoOrchestration(idle_after_seconds=60).idle_after_seconds == 60
@@ -223,6 +239,45 @@ def test_repo_layer_narrows(repo_and_global):
         ["data"],
         False,
     )
+
+
+def test_repo_follow_policy_loads_and_round_trips(repo_and_global):
+    _, repo_path, _ = repo_and_global
+    _write(
+        repo_path,
+        {
+            "orchestration": {
+                "follow": {
+                    "wake_on": ["done", "status:failed"],
+                    "quiet_after": "off",
+                    "digest": "55m",
+                }
+            }
+        },
+    )
+    policy = load_config(repo_path).orchestration_view().repo.follow
+    assert policy.model_dump() == {
+        "wake_on": ["done", "status:failed"],
+        "quiet_after": "off",
+        "digest": "55m",
+    }
+    assert RepoOrchestration.model_validate({"follow": policy.model_dump()}).follow == policy
+
+
+@pytest.mark.parametrize(
+    "quiet, digest, expected",
+    [
+        ("off", "off", ("off", "off")),
+        ("120", "55m", ("120", "55m")),
+    ],
+)
+def test_repo_follow_accepts_yaml_intervals(repo_and_global, quiet, digest, expected):
+    _, repo_path, _ = repo_and_global
+    repo_path.write_text(
+        f"orchestration:\n  follow:\n    quiet_after: {quiet}\n    digest: {digest}\n"
+    )
+    policy = load_config(repo_path).orchestration_view().repo.follow
+    assert (policy.quiet_after, policy.digest) == expected
 
 
 def test_invalid_repo_block_names_origin(repo_and_global):

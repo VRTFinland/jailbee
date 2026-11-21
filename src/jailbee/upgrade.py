@@ -634,6 +634,14 @@ UPGRADE_NOTES: tuple[UpgradeNote, ...] = (
         actions=frozenset({"apply"}),
         reason="Claude's JailBee inbox plugin needs a managed settings mount",
     ),
+    UpgradeNote(
+        version=(1, 8, 10),
+        actions=frozenset({"apply"}),
+        reason=(
+            "`jailbee apply` syncs orchestration skills describing configurable "
+            "low-noise inbox followers"
+        ),
+    ),
 )
 """What each release requires, ascending by version. Maintained by hand.
 

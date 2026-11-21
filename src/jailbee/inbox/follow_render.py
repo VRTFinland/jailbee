@@ -10,7 +10,7 @@ def render_event(event: dict[str, Any]) -> str | None:
     if kind == "quiet-child":
         child = clean_c0c1(str(event.get("child", "")))
         return (
-            f"JailBee inbox: child {child} has been quiet for 60m "
+            f"JailBee inbox: child {child} has reached the quiet threshold "
             "— check it with jailbee inbox children"
         )
     if kind == "digest":

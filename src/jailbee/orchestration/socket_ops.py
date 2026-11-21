@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from jailbee.inbox.render import jq_tostring
+from jailbee.inbox.waiting import matches_wake_filter
 from jailbee.orchestration import broker_replies, broker_state, manifests, publishing, wake, wire
 from jailbee.orchestration.actions import Outcome, refused
 from jailbee.orchestration.outbox import acknowledge_delivery, deliver, grant_json_text
@@ -540,7 +541,8 @@ class Waiters:
                     else:
                         for item in store.unacked(waiter.uuid, after=waiter.after):
                             waiter.after = item.seq
-                            answered.append((waiter, {"kind": "message", "item": item.item}))
+                            if matches_wake_filter(item.type, item.kind_or_state, waiter.wake):
+                                answered.append((waiter, {"kind": "message", "item": item.item}))
                         if ctx.role() == "orchestrator":
                             answered.extend(
                                 (waiter, event)
@@ -555,9 +557,6 @@ class Waiters:
                 del self._by_uuid[key]
                 answered.append((waiter, outcome))
         return answered
-
-
-FOLLOW_EVENT_INTERVAL = 60 * 60
 
 
 def _follow_events(
@@ -578,7 +577,7 @@ def _follow_events(
                 [child],
                 children_observed_at=view.observed_at,
                 wake=None,
-                quiet=FOLLOW_EVENT_INTERVAL,
+                quiet=waiter.quiet,
                 digest=0,
                 digest_at=None,
                 now=now,
@@ -594,7 +593,7 @@ def _follow_events(
             children_observed_at=view.observed_at,
             wake=None,
             quiet=0,
-            digest=FOLLOW_EVENT_INTERVAL,
+            digest=waiter.digest,
             digest_at=waiter.follow_digest_at,
             now=now,
         )
