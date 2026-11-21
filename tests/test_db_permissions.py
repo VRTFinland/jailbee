@@ -30,10 +30,9 @@ def test_a_new_state_database_is_private_to_its_owner(state_home: Path) -> None:
 
     assert mode(state_home) == 0o700
     assert mode(state_home / "state.sqlite") == 0o600
-    for suffix in ("-wal", "-shm"):
-        sidecar = state_home / f"state.sqlite{suffix}"
-        if sidecar.exists():
-            assert mode(sidecar) == 0o600
+    # WAL mode: the bootstrap leaves both sidecars behind while the pool is open.
+    assert mode(state_home / "state.sqlite-wal") == 0o600
+    assert mode(state_home / "state.sqlite-shm") == 0o600
 
 
 def test_an_existing_loose_state_database_is_tightened_on_open(state_home: Path) -> None:

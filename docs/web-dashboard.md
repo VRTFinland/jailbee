@@ -110,7 +110,8 @@ a flood of them cannot push earlier PIN or TOTP failures out of the log.
 
 Logins, TOTP secrets and sessions live in the JailBee state database
 (`~/.local/state/jailbee/state.sqlite`). Its directory is kept `0700` and the
-database `0600`, tightened on every start, so other local users cannot read
+database `0600` (each JailBee process tightens them when it first opens
+the database), so other local users cannot read
 the TOTP secrets.
 
 ### FIDO2 setup mode
