@@ -19,6 +19,21 @@ before editing `## Unreleased`.
   minutes and digests are off; both intervals can be tuned or disabled.
   Filtered items stay unread and ackable, and child followers stay unfiltered
   ([#141](https://github.com/VRTFinland/jailbee/issues/141)).
+- Web dashboard: `jailbee remote web serve` (alias `jailbee serve`) runs a
+  host-side, read-only browser dashboard, installed with the `web` extra
+  ([#109](https://github.com/VRTFinland/jailbee/issues/109)). The front page
+  shows repositories and containers with the terminal dashboard's core columns
+  and agent state; a container or repository opens its agent sessions, and a
+  session opens as a typeset transcript with rendered Markdown, folded tool
+  calls, optional thinking, subagent transcripts and live updates. Themes
+  (light, dark, e-ink) and an e-ink display profile with page turns are chosen
+  per device, and the app installs as a PWA with no CDN assets. Login uses a
+  one-time PIN, TOTP or a FIDO2 key (registered in a CLI-started setup mode),
+  with 30-day device sessions managed only through `jailbee remote web auth`;
+  `jailbee remote web open` logs the local browser in through a one-time link.
+  `remote.web` sets the listen address, port, auth and excluded repositories,
+  and `enable|disable|status` manage a systemd user unit that restarts the
+  server when JailBee is upgraded.
 
 ### Fixed
 
