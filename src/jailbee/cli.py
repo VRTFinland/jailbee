@@ -428,35 +428,13 @@ _WebPortOption = Annotated[
 
 
 def _remote_web_serve(listen: str | None, port: int | None, *, setup: bool = False) -> None:
-    from pydantic import ValidationError
+    from jailbee.web import launch
+    from jailbee.web.errors import SERVICE_UPDATED_EXIT, ServiceUpdatedError, WebServeError
 
-    from jailbee.config.models_remote import RemoteWebConfig
-    from jailbee.web.errors import (
-        SERVICE_UPDATED_EXIT,
-        ServiceUpdatedError,
-        WebDependencyError,
-        WebServeError,
-        is_missing_web_extra,
-    )
-
-    configured = _load_global().remote.web
-    overrides = {k: v for k, v in (("listen", listen), ("port", port)) if v is not None}
     try:
-        effective = RemoteWebConfig.model_validate({**configured.model_dump(), **overrides})
-    except ValidationError as exc:
-        error_plain(f"Invalid override: {exc}")
-        raise typer.Exit(1) from exc
-    try:
-        try:
-            from jailbee.web import server, setup_server
-        except ModuleNotFoundError as exc:
-            if not is_missing_web_extra(exc):
-                raise
-            raise WebDependencyError() from exc
-        if setup:
-            setup_server.serve_setup(effective, echo=typer.echo)
-        else:
-            server.serve(effective, echo=typer.echo)
+        launch.serve(
+            _load_global().remote.web, listen=listen, port=port, setup=setup, echo=typer.echo
+        )
     except ServiceUpdatedError as exc:
         # Non-zero on purpose: the unit's Restart=on-failure brings it back on the new version.
         error_plain(str(exc))
@@ -569,17 +547,13 @@ web_auth_app.add_typer(web_auth_sessions_app)
 def _web_auth_errors() -> Iterator[None]:
     """Map refused actions and a missing `web` extra to a message and exit 1."""
     from jailbee.web.auth_admin import AuthAdminError
-    from jailbee.web.errors import WebDependencyError, is_missing_web_extra
+    from jailbee.web.errors import WebDependencyError, web_extra_required
 
     try:
-        yield
-    except AuthAdminError as exc:
+        with web_extra_required():
+            yield
+    except (AuthAdminError, WebDependencyError) as exc:
         error_plain(str(exc))
-        raise typer.Exit(1) from exc
-    except ModuleNotFoundError as exc:
-        if not is_missing_web_extra(exc):
-            raise
-        error_plain(str(WebDependencyError()))
         raise typer.Exit(1) from exc
 
 

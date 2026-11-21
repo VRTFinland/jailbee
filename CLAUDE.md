@@ -83,6 +83,8 @@ isolated per-branch development environments using Incus system containers. See
   passed via `pass_fds`, for the shared dashboard action runner.
   The terminal dashboard's open-in-browser calls Textual `App.open_url`
   (stdlib `webbrowser`, which may start `xdg-open`), only locally with a display.
+  `web/open_link.py` (`jailbee remote web open`) likewise calls stdlib
+  `webbrowser.open`, which may start `xdg-open`.
   `gui.py` is the one module that runs `incus` outside `incus.py`: a *detached*
   `subprocess.Popen` of `incus exec` (`launch_detached`), so a GUI app outlives
   the CLI, or — for a `waypipe ssh` session's own command — `launch_attached`,

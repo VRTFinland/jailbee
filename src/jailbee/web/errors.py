@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 WEB_EXTRA_MODULES = frozenset({"fastapi", "starlette", "uvicorn", "websockets", "pyotp", "qrcode"})
 
 
@@ -48,6 +51,17 @@ class FrontendNotBuiltError(WebServeError):
 def is_missing_web_extra(exc: ModuleNotFoundError) -> bool:
     """Whether ``exc`` is a module of the `web` extra failing to import."""
     return (exc.name or "").split(".")[0] in WEB_EXTRA_MODULES
+
+
+@contextmanager
+def web_extra_required() -> Iterator[None]:
+    """Turn a missing `web` extra module, imported inside the block, into `WebDependencyError`."""
+    try:
+        yield
+    except ModuleNotFoundError as exc:
+        if not is_missing_web_extra(exc):
+            raise
+        raise WebDependencyError() from exc
 
 
 class UnauthenticatedBindError(WebServeError):
