@@ -346,4 +346,6 @@ def test_committed_highlight_stylesheet_is_current() -> None:
     assert committed.read_text() == stylesheet(), (
         "regenerate: uv run python -m jailbee.web.highlight > frontend/src/styles/highlight.css"
     )
-    assert "@media (prefers-color-scheme: dark)" in committed.read_text()
+    css = committed.read_text()
+    for theme in ("light", "dark", "eink"):
+        assert f':root[data-theme="{theme}"] .highlight' in css

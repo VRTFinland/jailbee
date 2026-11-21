@@ -19,27 +19,56 @@
     --space-3: 1rem;
     --space-4: 1.5rem;
     --radius: 6px;
+    --font-size-body: 16px;
+    --font-size-code: 14px;
 }
 
-@media (prefers-color-scheme: dark) {
-    :root {
-        --bg: #161615;
-        --surface: #1f1f1e;
-        --text: #e9e9e4;
-        --muted: #9a9a93;
-        --border: #2f2f2d;
-        --border-strong: #4a4a46;
-        --accent: #6fb1e0;
-        --accent-text: #0d1a24;
-        --danger: #f08a7f;
-        --notice-bg: #3a3420;
-    }
+/* Themes: startSettings() sets data-theme on <html> (light, dark, eink); the
+   default follows prefers-color-scheme. Dark is JailBee's amber-on-charcoal. */
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0b0c0e;
+    --surface: #14161a;
+    --text: #e8e6e3;
+    --muted: #a2a7b0;
+    --border: #262a32;
+    --border-strong: #3d424c;
+    --accent: #f0a92b;
+    --accent-text: #1a1204;
+    --danger: #e06c6c;
+    --notice-bg: #3a3420;
+}
+
+/* E-ink: pure black on white, no greys for text, hairline borders only,
+   underlined links, no shadows or tints. */
+:root[data-theme="eink"] {
+    color-scheme: light;
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --text: #000000;
+    --muted: #000000;
+    --border: #000000;
+    --border-strong: #000000;
+    --accent: #000000;
+    --accent-text: #ffffff;
+    --danger: #000000;
+    --notice-bg: #ffffff;
+}
+:root[data-theme="eink"] a {
+    text-decoration: underline;
+}
+:root[data-theme="eink"] .notice {
+    border: 1px solid #000;
 }
 
 *,
 *::before,
 *::after {
     box-sizing: border-box;
+}
+
+html {
+    font-size: var(--font-size-body);
 }
 
 html,

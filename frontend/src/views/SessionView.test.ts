@@ -4,7 +4,8 @@ import {createMemoryHistory} from "vue-router"
 import {setToken} from "../api"
 import type {TranscriptView} from "../protocol"
 import {createAppRouter} from "../router"
-import {readItem, removeItem} from "../storage"
+import {reloadSettings, updateSettings} from "../settings"
+import {removeItem} from "../storage"
 import SessionView from "./SessionView.vue"
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -105,17 +106,15 @@ describe("SessionView", () => {
         expect(wrapper.find(".entry.user.meta").exists()).toBe(true)
     })
 
-    it("hides thinking by default and remembers the choice per device", async () => {
+    it("hides thinking until the device setting turns it on", async () => {
+        reloadSettings()
         const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
         expect(wrapper.find(".entry.thinking").exists()).toBe(false)
 
-        await wrapper.get("input.show-thinking").setValue(true)
+        updateSettings({showThinking: true})
+        await wrapper.vm.$nextTick()
         expect(wrapper.get(".entry.thinking").html()).toContain("Hmm, auth")
-        expect(readItem("jailbee.showThinking")).toBe("1")
-        wrapper.unmount()
-
-        const again = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
-        expect(again.wrapper.find(".entry.thinking").exists()).toBe(true)
+        updateSettings({showThinking: false})
     })
 
     it("jumps to the latest answer", async () => {

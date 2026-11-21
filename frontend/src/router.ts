@@ -10,6 +10,7 @@ import FrontPage from "./views/FrontPage.vue"
 import RepoView from "./views/RepoView.vue"
 import ContainerView from "./views/ContainerView.vue"
 import SessionView from "./views/SessionView.vue"
+import SettingsView from "./views/SettingsView.vue"
 import LoginView from "./views/LoginView.vue"
 
 export const routes: RouteRecordRaw[] = [
@@ -23,6 +24,7 @@ export const routes: RouteRecordRaw[] = [
         name: "subagent",
         component: SessionView,
     },
+    {path: "/settings", name: "settings", component: SettingsView},
     {path: "/:pathMatch(.*)*", redirect: "/"},
 ]
 

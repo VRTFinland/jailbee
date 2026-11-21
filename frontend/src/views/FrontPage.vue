@@ -41,6 +41,7 @@ async function signOut() {
         <header class="bar">
             <h1>JailBee</h1>
             <span class="device" v-if="device">{{ device }}</span>
+            <router-link class="link" :to="{name: 'settings'}">Settings</router-link>
             <button class="link" type="button" @click="signOut">Log out</button>
         </header>
 

@@ -11,7 +11,7 @@ import type {
     RenderedToolResult,
     TranscriptView,
 } from "../protocol"
-import {setShowThinking, showThinking} from "../settings"
+import {settings} from "../settings"
 
 const route = useRoute()
 const router = useRouter()
@@ -30,12 +30,7 @@ const sessionRef = computed(() => ({
 
 const transcript = ref<TranscriptView | null>(null)
 const error = ref<string | null>(null)
-const thinking = ref(showThinking())
-
-function toggleThinking(event: Event) {
-    thinking.value = (event.target as HTMLInputElement).checked
-    setShowThinking(thinking.value)
-}
+const thinking = computed(() => settings.showThinking)
 
 /** Tool results and subagent refs, by the call they belong to. */
 const byCall = computed(() => {
@@ -118,15 +113,7 @@ onMounted(async () => {
             <router-link v-else class="back" :to="{name: 'repo', params: {prefix}}">
                 &larr; {{ prefix }}
             </router-link>
-            <label class="toggle">
-                <input
-                    type="checkbox"
-                    class="show-thinking"
-                    :checked="thinking"
-                    @change="toggleThinking"
-                />
-                Show thinking
-            </label>
+            <router-link class="toggle" :to="{name: 'settings'}">Settings</router-link>
         </header>
         <p v-if="error" class="notice">{{ error }}</p>
         <p v-else-if="transcript === null" class="muted">Loading…</p>
@@ -227,6 +214,7 @@ onMounted(async () => {
 .toggle {
     display: flex;
     align-items: center;
+    text-decoration: none;
     gap: var(--space-2);
     min-height: 2.5rem;
     color: var(--muted);
@@ -345,7 +333,7 @@ h1 {
     overflow-x: auto;
     line-height: 1.45;
     font-family: var(--font-mono);
-    font-size: 0.85rem;
+    font-size: var(--font-size-code);
 }
 .prose :deep(pre code) {
     padding: 0;

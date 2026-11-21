@@ -6,7 +6,9 @@ fake clock, deterministic PINs and the per-test temporary state database.
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -193,3 +195,32 @@ def test_static_frontend_is_served_at_the_root(tmp_path, clock: FakeClock, pin: 
 
     assert "JailBee" in client.get("/").text
     assert client.get("/api/session").status_code == 401, "static mount must not shadow /api"
+
+
+def test_pwa_manifest_and_icons_are_reachable_without_login(
+    tmp_path, clock: FakeClock, pin: PinHolder
+) -> None:
+    public = Path(__file__).parents[1] / "frontend" / "public"
+    manifest = json.loads((public / "manifest.webmanifest").read_text())
+    (tmp_path / "index.html").write_text("<!doctype html>")
+    for entry in manifest["icons"]:
+        (tmp_path / entry["src"]).write_bytes((public / entry["src"]).read_bytes())
+    (tmp_path / "manifest.webmanifest").write_text((public / "manifest.webmanifest").read_text())
+    deps = WebDeps(
+        snapshot_source=FakeSourceFactory(),
+        engine=get_engine(),
+        clock=clock,
+        monotonic=clock.monotonic,
+        pin=pin,
+        static_dir=tmp_path,
+    )
+    client = TestClient(create_app(deps))
+
+    served = client.get("/manifest.webmanifest")
+    assert served.status_code == 200
+    assert served.json()["name"] == "JailBee"
+    sizes = {entry["sizes"] for entry in manifest["icons"]}
+    assert {"192x192", "512x512"} <= sizes
+    for entry in manifest["icons"]:
+        icon = client.get("/" + entry["src"])
+        assert icon.status_code == 200 and icon.content.startswith(b"\x89PNG")
