@@ -88,6 +88,42 @@ non-Claude agents: use `jailbee inbox wait` there. Park only the work that
 depends on the user's answer, and carry on with everything else. When the
 answer arrives, resume the parked work.
 
+## Keep a state file
+
+An orchestration session outlives your context: it gets compacted or
+restarted while children run. The broker remembers children and messages,
+and git remembers merges, but nothing else remembers the in-between state.
+Keep it in one Markdown state file from the first spawn on, and re-read it
+first after a compaction or restart.
+
+Put it where it survives and stays out of the tracked tree: a git-ignored
+notes directory of the repo (a shared one such as `.local/` when the repo
+has it) or your home directory, never a tracked path (an untracked file in
+the work tree makes a `fork` spawn refused). If the directory is its own git
+repository, commit after each update.
+
+Record:
+
+- **User guidance for this session**: the runner per kind of work (agent,
+  LiteLLM profile, model tier, e.g. "opus for hard tickets, sonnet
+  otherwise, never codex"), branch and note naming, `on_done` policy,
+  review and gate routine, how much to queue, what not to touch, where the
+  work lands, PR or no PR. Anything the user said about how to run the
+  session belongs here, not only in your context.
+- **Children**: running and queued, in queue order, with branch, runner and
+  the task each one carries.
+- **Merged but not finished**: work merged that still waits for a review,
+  rework or gate, with the merge commit.
+- **Done**: each unit with its commits and what was published (issue
+  comments, closes, manifests).
+- **Review verdicts**: findings rejected, with the reason, for the final
+  report.
+- **Open questions** to the user, numbered as asked, and their answers.
+- **Host checks owed** and **flakes seen**.
+
+Update it after every spawn, merge, gate, publish and user decision. Keep
+it short: point at commits, tickets and refs instead of copying them.
+
 ## Read your grant first
 
 Run `jailbee inbox grant` to inspect your grant before planning requests.
