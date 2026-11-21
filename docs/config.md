@@ -3656,14 +3656,30 @@ settings still belong here; the systemd service never passes those flags.
 
 ### `remote.web`
 
-Host-global remote policy for the web transport. Like `remote.ssh`, it is set
-only in `~/.config/jailbee/global.yaml`. It carries the shared permission
-settings and nothing else: the policy keys are the same as `remote.ssh`'s
+Settings for the [web dashboard](web-dashboard.md) and its remote policy for
+the web transport. Like `remote.ssh`, it is set only in
+`~/.config/jailbee/global.yaml`. Besides the server keys below, the policy
+keys are the same as `remote.ssh`'s
 (`commands.mode`, `commands.allow`, `restrict_host`, `excluded_repos`,
 `mount_roots`, `mounts`, `orchestration`, `network`, `files`, `rdp`) and mean
 the same, see [`remote.ssh`](#remotessh) and
 [Remote policy](security.md#remote-policy). The defaults are the most
-restrictive policy:
+restrictive policy.
+
+Server keys:
+
+| Key | Default | Description |
+|---|---|---|
+| `listen` | `127.0.0.1` | IP address literal the server binds to. |
+| `port` | `8910` | TCP port (1-65535). |
+| `auth.enabled` | `true` | Require a login. `false` serves everything without one; never relaxed based on the request's source address, because a proxy or tunnel makes every request local. |
+| `auth.allow_unauthenticated_remote` | `false` | With `auth.enabled: false`, allow a non-loopback `listen`. Otherwise the server refuses to start. |
+
+`jb remote web serve --listen/--port` override the first two for one run.
+Login methods are managed with `jb remote web auth`, not in YAML; see
+[Web dashboard](web-dashboard.md).
+
+Policy keys:
 
 | Key | Default |
 |---|---|

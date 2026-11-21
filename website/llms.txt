@@ -115,6 +115,7 @@ scope.
 - [Container orchestration](https://jailbee.gisgro.io/docs/orchestration/): an agent coordinator spawns child containers, exchanges messages with them and imports and merges their commits under a host-side grant
 - [Claude Code through LiteLLM](https://jailbee.gisgro.io/docs/litellm/): routing Claude Code to other providers' models through a LiteLLM proxy container
 - [Remote GUI over SSH](https://jailbee.gisgro.io/docs/remote-gui/): running a container's GUI apps on another machine's desktop over `waypipe ssh`
+- [Web dashboard](https://jailbee.gisgro.io/docs/web-dashboard/): the optional browser view of repos, containers and live agent transcripts, its logins and reverse-proxy setup
 
 ## Optional
 

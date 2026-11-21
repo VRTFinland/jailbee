@@ -89,6 +89,39 @@ command path (`git pull`, never its arguments or container names) and the
 outcome (`refused`, `exit:N` or `error`). Prompt answers, secrets included,
 are never logged.
 
+### Web dashboard authentication
+
+The [web dashboard](web-dashboard.md) is a second remote transport. It runs as
+the same Unix user as the CLI and, today, only reads: front page, session
+lists and transcripts. Treat anyone who can log in as able to read every
+transcript of every non-excluded repo (`remote.web.excluded_repos` hides
+repos), which can contain secrets an agent saw.
+
+Login is a one-time PIN, TOTP, FIDO2 security keys, or a one-time localhost
+link from `jb remote web open`; browsers hold a 30-day sliding session, and
+`jb remote web auth sessions revoke` ends one, including its open live view.
+Every login, failure, logout and revocation is audited
+(`jb remote web auth log`).
+
+- **Auth enabled (default).** Nothing is served without a login. The server
+  binds `127.0.0.1:8910`. To reach it remotely put a TLS reverse proxy or an
+  SSH tunnel in front of it, and keep auth on.
+- **Auth disabled (`remote.web.auth.enabled: false`).** Everything is served
+  without a login. The server refuses a non-loopback `listen` unless
+  `remote.web.auth.allow_unauthenticated_remote: true` is also set.
+- **Proxy and tunnel caveat.** Behind a reverse proxy or an SSH tunnel every
+  request arrives from localhost, so disabled auth plus a proxy or tunnel
+  exposes the dashboard to whoever can reach that proxy or tunnel, even with
+  a loopback `listen`.
+- **Source addresses are never trusted.** There is no "skip auth for
+  localhost" rule, precisely because of the previous point
+  ([ADR 0005](https://github.com/VRTFinland/jailbee/blob/main/docs/adr/0005-web-dashboard-auth.md)).
+  Local convenience comes from the one-time link or from disabling auth
+  outright, never from the address a request came from.
+- **FIDO2 domains.** A key is bound to the HTTPS domain it was registered at,
+  taken from the request's `Origin` (else `Host`); the proxy must pass both
+  through.
+
 ### Remote SSH
 
 The optional SSH server is a capability boundary inside the current user's
