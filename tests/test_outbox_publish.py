@@ -1214,7 +1214,9 @@ def test_plan_cannot_interpret_terminal_controls(env, kind, capsys):
 
 
 @pytest.mark.parametrize("mode", ["failed", "uncertain", "batch", "cleanup", "success"])
-def test_issue_apply_alias_renders_the_selected_publication_outcome_then_exits(env, mocker, capsys, mode):
+def test_issue_apply_alias_renders_the_selected_publication_outcome_then_exits(
+    env, mocker, capsys, mode
+):
     from typer.testing import CliRunner
 
     from jailbee.cli import app

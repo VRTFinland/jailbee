@@ -1520,7 +1520,10 @@ def test_issue_apply_takes_the_manifest_as_argument_or_option(env, mocker, args,
 @pytest.mark.parametrize(
     ("args", "message"),
     [
-        (["issue", "apply", "feature", "001.json", "--manifest", "002.json"], "give the manifest once"),
+        (
+            ["issue", "apply", "feature", "001.json", "--manifest", "002.json"],
+            "give the manifest once",
+        ),
         (["issue", "apply", "feature", "pr/001.json"], "not an issue proposal"),
         (["review", "apply", "feature", "issue/001.json"], "not a pr proposal"),
     ],
