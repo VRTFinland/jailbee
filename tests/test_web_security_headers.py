@@ -42,9 +42,7 @@ def dashboard(static: Path) -> TestClient:
 
 
 def setup(static: Path) -> TestClient:
-    deps = SetupDeps(
-        engine=get_engine(), pin=PinHolder(generate=pin_sequence()), static_dir=static
-    )
+    deps = SetupDeps(engine=get_engine(), pin=PinHolder(generate=pin_sequence()), static_dir=static)
     return TestClient(create_setup_app(deps))
 
 

@@ -7,7 +7,8 @@ Chrome binary; talks to a server such as `scripts/web_smoke_server.py`.
 
 Checks: login (skipped with --no-auth) -> front page lists the repo and
 container -> repo page lists the fixture sessions -> session view renders the
-transcript -> the walk hit no Content-Security-Policy violation. Exits 0 when every check passes, 1 otherwise.
+transcript -> the walk hit no Content-Security-Policy violation. Exits 0 when
+every check passes, 1 otherwise.
 """
 
 from __future__ import annotations

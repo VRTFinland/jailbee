@@ -345,9 +345,7 @@ def record_event(
             .order_by(col(WebAuthEvent.id).desc())
             .limit(budget)
         )
-        s.exec(
-            delete(WebAuthEvent).where(same_class, col(WebAuthEvent.id).not_in(keep))
-        )
+        s.exec(delete(WebAuthEvent).where(same_class, col(WebAuthEvent.id).not_in(keep)))
         s.commit()
 
 

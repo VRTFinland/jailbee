@@ -173,9 +173,7 @@ def test_the_repo_list_marks_each_session_with_its_container_or_none(home: Path)
         }
 
 
-@pytest.mark.parametrize(
-    ("newer", "older"), [("alpha-1", "alpha-2"), ("alpha-2", "alpha-1")]
-)
+@pytest.mark.parametrize(("newer", "older"), [("alpha-1", "alpha-2"), ("alpha-2", "alpha-1")])
 def test_a_session_two_containers_saw_belongs_to_the_one_that_saw_it_last(
     home: Path, newer: str, older: str
 ) -> None:
