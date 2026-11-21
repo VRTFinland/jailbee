@@ -128,8 +128,7 @@ aggregates such as `ls --all`, `job ls --all-repos`, `base usage --all`, and
 repo summaries such as `net status` operate only on visible repos; filtering
 is applied before probing, rendering, totals, or actions. The unified
 `outbox` commands, `outbox ls --all-repos` included, are refused outright
-while any repo is excluded (the deprecated `review ls --all-repos` is still a
-filtered aggregate). Unknown and excluded repo selections give the same error. This is one
+while any repo is excluded. Unknown and excluded repo selections give the same error. This is one
 host-wide visibility boundary for all keys, not per-key authorization, and it
 does not alter local CLI, TUI, or Qt behavior. Each new command channel takes
 a routing/repo-scope policy snapshot; a running channel keeps that snapshot.

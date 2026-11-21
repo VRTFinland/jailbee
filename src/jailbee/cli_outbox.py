@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -15,7 +16,7 @@ from typer.core import TyperGroup
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
-    from jailbee.outbox.models import ProposalId
+    from jailbee.outbox.models import Kind, ProposalId
 
 _COMMANDS = frozenset(
     ("browse", "ls", "show", "drop", "clear", "apply", "sent", "attachments", "attachment-resolve")
@@ -117,7 +118,7 @@ def group(ctx: typer.Context, config: ConfigOption = None) -> None:
 
 
 def _run(
-    ctx: typer.Context, config: Path | None, operation: Callable[[Config, Incus], int]
+    ctx: typer.Context | None, config: Path | None, operation: Callable[[Config, Incus], int]
 ) -> None:
     from jailbee.attachments import AttachmentError
     from jailbee.config import ConfigError, load_config, load_repo_config
@@ -131,7 +132,7 @@ def _run(
     from jailbee.tui import error_plain
 
     try:
-        path = config if config is not None else ctx.obj
+        path = config if config is not None or ctx is None else ctx.obj
         check_config_selection(path)
         cfg = load_config(path) if path is not None else load_repo_config(Path.cwd())
         status = operation(cfg, Incus())
@@ -160,15 +161,24 @@ def _pick_target(
     proposal: str | None,
     *,
     destructive: bool,
+    kind: Kind | None = None,
 ) -> tuple[str, ProposalId]:
-    """The container and proposal a command acts on, asking for what is missing."""
+    """The container and proposal a command acts on, asking for what is missing.
+
+    With ``kind`` only that kind's proposals are candidates, and a bare
+    manifest name stands for ``<kind>/<name>``.
+    """
     from jailbee import prompting
     from jailbee.outbox.commands import discover
-    from jailbee.outbox.models import ProposalId
 
     if container is not None and proposal is not None:
-        return container, ProposalId.parse(proposal)
+        return container, _parse_proposal(proposal, kind)
     discovered = discover(cfg, incus, container, all_repos=False)
+    if kind is not None:
+        discovered = tuple(
+            replace(v, proposals=tuple(p for p in v.proposals if p.id.kind == kind))
+            for v in discovered
+        )
     views = [v for v in discovered if v.proposals]
     if container is not None:
         # Named, so nothing to ask: `discover` already resolved it to one container.
@@ -188,7 +198,7 @@ def _pick_target(
         )
         view = next(v for v in views if v.name == chosen)
     if proposal is not None:
-        return view.name, ProposalId.parse(proposal)
+        return view.name, _parse_proposal(proposal, kind)
     pid = prompting.choose_one(
         "proposal",
         [prompting.Option(p.id, f"{p.id}  {p.state}", str(p.id)) for p in view.proposals],
@@ -196,6 +206,18 @@ def _pick_target(
         empty_reason=f"no pending proposals in {view.name}",
     )
     return view.name, pid
+
+
+def _parse_proposal(value: str, kind: Kind | None) -> ProposalId:
+    """``kind/name`` always; a bare ``name`` too when the command is kind-scoped."""
+    from jailbee.outbox.models import OutboxError, ProposalId
+
+    if kind is None or "/" in value:
+        pid = ProposalId.parse(value)
+        if kind is not None and pid.kind != kind:
+            raise OutboxError(f"{value}: not a {kind} proposal")
+        return pid
+    return ProposalId(kind, value)
 
 
 def browser_read_only() -> bool:
@@ -224,7 +246,7 @@ def browse(
     from jailbee.outbox.commands import show_overview
     from jailbee.outbox.models import OutboxError
 
-    path = config if config is not None else ctx.obj
+    path = config if config is not None or ctx is None else ctx.obj
 
     def operation(cfg: Config, incus: Incus) -> int:
         if not prompting.is_interactive():
@@ -609,20 +631,53 @@ def apply(
     `-o json` (with `--dry-run` only) prints the plan as one JSON object and
     never prompts.
     """
-    import json
+    run_apply(
+        config if config is not None else ctx.obj,
+        container,
+        proposal,
+        dry_run=dry_run,
+        force=force,
+        foreign=foreign,
+        draft=draft,
+        yes=yes,
+        revision=revision,
+        as_json=output is Output.json,
+    )
 
+
+def run_apply(
+    config: Path | None,
+    container: str | None,
+    proposal: str | None,
+    *,
+    kind: Kind | None = None,
+    dry_run: bool = False,
+    force: bool = False,
+    foreign: bool = False,
+    draft: bool = False,
+    yes: bool = False,
+    revision: str | None = None,
+    as_json: bool = False,
+) -> None:
+    """The one host publish path for a staged proposal, shared by every spelling.
+
+    `jailbee outbox apply` and its kind-scoped aliases (`jailbee review
+    apply`, `jailbee issue apply`) all end here, so their prompts, output
+    and exit codes cannot drift apart. ``kind`` narrows the candidates and
+    lets ``proposal`` be a bare manifest name.
+    """
     from jailbee import prompting
     from jailbee.outbox.commands import apply_selected
     from jailbee.outbox.markdown_view import print_lines
     from jailbee.outbox.models import OutboxError
     from jailbee.outbox.publish import PublishOptions, ask_publish_mode
 
-    as_json = output is Output.json
-
     def operation(cfg: Config, incus: Incus) -> int:
         if as_json and not dry_run:
             raise OutboxError("JSON output requires --dry-run")
-        name, pid = _pick_target(cfg, incus, container, proposal, destructive=not as_json)
+        name, pid = _pick_target(
+            cfg, incus, container, proposal, destructive=not as_json, kind=kind
+        )
         return apply_selected(
             cfg,
             incus,
@@ -663,7 +718,7 @@ def apply(
             ),
         )
 
-    _run(ctx, config, operation)
+    _run(None, config, operation)
 
 
 def _run_sent(

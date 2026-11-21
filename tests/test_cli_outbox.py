@@ -1421,3 +1421,82 @@ def test_apply_source_exits_two_with_push_hint(env):
     result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/source.json", "-y"])
     assert result.exit_code == 2, result.output
     assert "jailbee pr push acme-feature --source-manifest source.json" in panel_text(result.output)
+
+
+# `jb review apply` / `jb issue apply` are kind-scoped aliases of `jb outbox apply`:
+# one publish path, so the same proposal must yield the same output, exit code,
+# prompts and GitHub effects whichever spelling published it.
+
+_ALIAS = {"pr": "review", "issue": "issue"}
+
+
+@pytest.mark.parametrize("kind", ["issue", "pr"])
+@pytest.mark.parametrize(
+    ("flags", "answer"), [(["-y"], ""), ([], "n\n"), ([], "y\n"), (["--dry-run"], "")]
+)
+def test_kind_alias_apply_matches_outbox_apply(
+    publication_env, mocker, kind, flags, answer, typed_confirmations
+):
+    env, create, comment, review = publication_env
+    originals = {k: env[2][k].as_dict() for k in ("pr", "issue")}
+
+    def run(args):
+        # Each spelling starts from the same store: proposals and no journals.
+        with broker().transaction() as con:
+            for table in ("outbox_journal", "outbox_journal_action"):
+                con.execute(f"DELETE FROM {table} WHERE uuid=?", (UUID,))
+        for k, files in originals.items():
+            env[2][k] = store(k, files)
+        for mock in (create, comment, review):
+            mock.reset_mock()
+        prompt = mocker.spy(prompting, "_confirm")
+        result = CliRunner().invoke(app, args, input=answer, env={"COLUMNS": "200"})
+        effects = (
+            result.exit_code,
+            result.output,
+            [c.args for c in prompt.call_args_list],
+            create.call_count,
+            comment.call_count,
+            review.call_count,
+            sorted(env[2][kind].as_dict()),
+        )
+        mocker.stop(prompt)
+        return effects
+
+    unified = run(["outbox", "apply", "feature", f"{kind}/001.json", *flags])
+    alias = run([_ALIAS[kind], "apply", "feature", "001.json", *flags])
+    assert alias == unified
+
+
+@pytest.mark.parametrize("kind", ["issue", "pr"])
+def test_kind_alias_apply_offers_only_its_own_kind(env, mocker, kind):
+    _on_tty(mocker)
+    select = mocker.patch("jailbee.prompting._select", return_value=ProposalId(kind, "001.json"))
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
+    result = CliRunner().invoke(app, [_ALIAS[kind], "apply", "feature", "-y"])
+    assert result.exit_code == 0, result.output
+    (call,) = select.call_args_list
+    offered = [o.value for o in call.args[1]]
+    assert offered and all(p.kind == kind for p in offered)
+    assert applied.call_args.args[3] == ProposalId(kind, "001.json")
+
+
+@pytest.mark.parametrize("kind", ["issue", "pr"])
+def test_kind_alias_apply_without_its_kind_pending_is_a_reason(env, mocker, kind):
+    _on_tty(mocker)
+    env[2][kind] = store(kind, {})
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
+    result = CliRunner().invoke(app, [_ALIAS[kind], "apply"])
+    assert result.exit_code == 2, result.output
+    assert "no container has pending proposals" in panel_text(result.output)
+    applied.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "args",
+    [["review", "ls"], ["review", "show"], ["review", "drop"], ["issue", "show"]],
+)
+def test_deprecated_review_and_issue_leaves_are_removed(args):
+    result = CliRunner().invoke(app, [*args, "--help"])
+    assert result.exit_code == 2
+    assert "No such command" in result.output

@@ -125,12 +125,6 @@ def _outbox_publish(cfg: Any, incus: Any) -> object:
     )
 
 
-def _drop(cfg: Any, incus: Any) -> object:
-    name = stage(manifest(COMMENT))
-    outbox = pr_outbox.read_outbox(incus, FULL, uid=1000)
-    return pr_outbox.drop_manifest(incus, FULL, outbox, name, uid=1000)
-
-
 def _outbox_view_and_delete(cfg: Any, incus: Any) -> object:
     name = stage(manifest(COMMENT))
     view = service.load_container(cfg, incus, FULL)
@@ -368,16 +362,15 @@ def _review_policy(cfg: Any, incus: Any, mocker: Any = None) -> object:
 
 
 ENTRY_POINTS: dict[str, Callable[[Any, Any], object]] = {
-    "jb review apply": _review_apply,
+    "pr_outbox publish (outbox apply, PR)": _review_apply,
     "jb pr offer after push": _offer_after_pr,
     "jb outbox apply": _outbox_publish,
-    "jb review drop": _drop,
     "jb outbox ls/drop": _outbox_view_and_delete,
     "jb pr description from the outbox": _record_consumed,
     "jb pr outbox references": _references,
     "jb pr push source list": _pending_sources,
     "jb review resolve": _resolve,
-    "jb issue apply": _issue_apply,
+    "issue_outbox apply_batch (outbox apply, issue)": _issue_apply,
     "jb outbox apply (issue)": _outbox_publish_issue,
     "jb outbox ls/drop (issue)": _outbox_view_and_delete_issue,
     "orchestrator stop/destroy/finish outbox count": _child_outbox_count,

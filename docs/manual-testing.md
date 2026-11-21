@@ -1815,7 +1815,7 @@ jailbee pr push --force 2>&1 | grep "explicit container name"   # picker refused
 jailbee destroy dev-7 --force
 ```
 
-## `jailbee review apply/ls/show/drop` smoke test
+## `jailbee review apply` and `jailbee outbox ls/show` smoke test
 
 > Host-only. Requires `gh auth login` on the host, push access to origin, and
 > a real PR — nothing about the outbox parser or the gates has ever run
@@ -1839,7 +1839,8 @@ jailbee pr push feat-outboxsmoke
 gh pr view <N> --json headRefOid   # copy the sha — this is the manifest's head_sha
 
 # 2. Stage a review through the container commands — no agent involved, this
-#    is exactly what `jailbee review ls`/`show`/`apply` must parse and gate.
+#    is exactly what `jailbee outbox ls`/`show` and `review apply` must parse and
+#    gate.
 jailbee shell feat-outboxsmoke
 jailbee pr review add <N> --file outbox.txt --line 1 --body "manual outbox smoke comment"
 jailbee pr review submit <N> --body "Smoke-testing the outbox."
@@ -1847,14 +1848,14 @@ jailbee pr review submit <N> --body "Smoke-testing the outbox."
 exit
 
 # 3. Inspect without publishing.
-jailbee review ls
+jailbee outbox ls feat-outboxsmoke
 # expect: one row — CONTAINER feat-outboxsmoke, PR #<N>, MANIFEST
 #         001-review.json, ACTIONS "review:1", STATE ok
-jailbee review show feat-outboxsmoke
+jailbee outbox show feat-outboxsmoke pr/001-review.json
 # expect: "Smoke-testing the outbox." and "manual outbox smoke comment"
 #         printed in full (this is `show`'s whole job: no truncation, no
 #         hidden text; on a terminal the Markdown is rendered, piped it is raw)
-jailbee review apply feat-outboxsmoke --dry-run
+jailbee review apply feat-outboxsmoke 001-review.json --dry-run
 # expect: the plan (PR #<N>, repo, head sha, the one comment), then
 #         "1 action will be published to GitHub as <your-gh-login>.",
 #         then "Dry run: nothing was published." — exit 0, nothing posted.
@@ -1862,7 +1863,7 @@ gh api repos/<owner>/<repo>/pulls/<N>/reviews
 # expect: [] — the dry run posted nothing.
 
 # 4. Publish for real.
-jailbee review apply feat-outboxsmoke -y
+jailbee review apply feat-outboxsmoke 001-review.json -y
 # expect: the same plan, then
 #         "  ✓ 001-review.json action 0: https://github.com/<owner>/<repo>/pull/<N>#..."
 gh api repos/<owner>/<repo>/pulls/<N>/reviews
@@ -1874,7 +1875,8 @@ jailbee outbox ls feat-outboxsmoke          # expect: the review manifest is GON
 jailbee outbox sent ls feat-outboxsmoke
 # expect exactly one applied record for PR #<N> with the review URL
 jailbee review apply feat-outboxsmoke -y
-# expect: "Nothing pending: no container in this repo has PR actions waiting."
+# expect: exit 2, "no pending proposals in feat-outboxsmoke" (without the
+#         container argument: "no container has pending proposals")
 #         — confirms the re-run found nothing left to post.
 gh api repos/<owner>/<repo>/pulls/<N>/reviews
 # expect: still exactly one review — no duplicate.
@@ -1891,16 +1893,17 @@ jailbee pr push feat-outboxsmoke   # pushes the new commit; the PR head moves
 #   "held back: manifest 002-review.json: PR #<N>'s head moved <old-sha> →
 #    <new-sha>; re-anchor the comments (ask the agent to re-read the diff) or
 #    pass --force
-#      `jailbee review apply --force feat-outboxsmoke` posts them as outdated
+#      `jailbee review apply --force feat-outboxsmoke 002-review.json` posts
+#      them as outdated
 #    comments."
 #   (the offer finds nothing publishable, so no "Post N pending..." prompt)
-jailbee review apply feat-outboxsmoke
+jailbee review apply feat-outboxsmoke 002-review.json
 # expect: refused with "manifest 002-review.json: PR #<N>'s head moved
 #         <old-sha> → <new-sha>; ... or pass --force" (the raw gate error,
 #         no "held back" wrapper this time — `apply`'s own mode treats it as
 #         a refusal) — exit non-zero, WITHOUT even asking to confirm, since
 #         there is nothing left to plan.
-jailbee review apply --force feat-outboxsmoke -y
+jailbee review apply --force feat-outboxsmoke 002-review.json -y
 # expect: the plan now shows "the PR head has moved since this was written",
 #         then publishes normally.
 gh api repos/<owner>/<repo>/pulls/<N>/comments
@@ -1929,10 +1932,10 @@ git push origin --delete feat/outboxsmoke   # requires explicit user approval
    general `comment` action, and a `description` action. Keep the manifest's
    `head_sha` equal to the PR head. See the jailbee-pr-review skill's manifest
    schema for exact field names.
-3. On the host, run `jailbee review apply <name> --dry-run --draft`. Confirm
+3. On the host, run `jailbee review apply <name> <manifest> --dry-run --draft`. Confirm
    the plan labels review/reply actions pending, the general comment held back,
    and the description published; GitHub must remain unchanged. Then run
-   `jailbee review apply <name>` and choose **Publish as draft review**.
+   `jailbee review apply <name> <manifest>` and choose **Publish as draft review**.
 4. In the GitHub UI, verify that the pending review contains the review body,
    inline comment and reply, and is visible only to the host user's account.
    Confirm the general comment was not posted and the PR description changed.
@@ -1954,7 +1957,7 @@ git push origin --delete feat/outboxsmoke   # requires explicit user approval
 6. For reply-only creation, use a fresh scratch PR with an existing review
    comment to reply to, and verify the host account has no pending review on
    that PR. Stage a manifest containing only a `reply` action. Run
-   `jailbee review apply <name> --draft -y`; verify GitHub shows a new pending
+   `jailbee review apply <name> <manifest> --draft -y`; verify GitHub shows a new pending
    review with an empty summary and the reply, visible only to the host account.
    Confirm no public reply was posted. This specifically tests whether GitHub
    accepts creating an empty pending review before attaching a reply.
@@ -1963,7 +1966,7 @@ git push origin --delete feat/outboxsmoke   # requires explicit user approval
    `gh api repos/<owner>/<repo>/pulls/<N>/reviews --method POST -f commit_id=<A> -f body=''`). Advance the PR head to B and record B; pushing
    that commit to the scratch PR requires separate approval. Stage a fresh
    manifest with `head_sha` B and a review comment. `jailbee review apply <name>
-   --draft -y` must refuse because the existing pending review is on A. Verify
+   <manifest> --draft -y` must refuse because the existing pending review is on A. Verify
    the pending review and its comments are unchanged.
 
 A pending reply uses GraphQL `addPullRequestReviewComment` with the pending
@@ -1972,7 +1975,7 @@ REST comment database ID via `GET repos/{owner}/{repo}/pulls/comments/{id}` to
 obtain that node ID. This mutation remains documented in GitHub's current
 schema but is deprecated; live verification on a real host PR is still owed.
 
-## `jailbee issue show/apply/resolve` smoke test
+## `jailbee issue apply/resolve` smoke test
 
 > Host-only. Requires `gh auth login` on the host with write access to a
 > real, disposable test repository (Issues enabled) and a declared test
@@ -2016,10 +2019,11 @@ stage_issue decline <<'JSON'
 JSON
 exit
 
-jailbee issue apply feat-issuesmoke
-# expect: the plan (one create action, [pending]), then "Proceed? [y/N]"
+jailbee issue apply feat-issuesmoke 001-decline.json
+# expect: the plan (one create action, [pending]), then
+#         "Publish 1 pending actions? [y/N]"
 # answer n:
-# expect: "Nothing applied." — exit 0
+# expect: nothing published — exit 0
 gh issue list --repo <owner>/<repo> --search "Should never exist in:title"
 # expect: empty — nothing was created
 jailbee outbox ls feat-issuesmoke
@@ -2049,7 +2053,7 @@ stage_issue batch <<'JSON'
 JSON
 exit
 
-jailbee issue apply feat-issuesmoke -y
+jailbee issue apply feat-issuesmoke 002-batch.json -y
 # expect: two "create" lines then one "comment" line in the plan, then three
 #         "... action N: applied (https://github.com/...)" lines, then
 #         "002-batch.json: fully applied and removed from the outbox"
@@ -2085,7 +2089,7 @@ stage_issue triage <<'JSON'
 JSON
 exit
 
-jailbee issue apply feat-issuesmoke -y
+jailbee issue apply feat-issuesmoke 003-triage.json -y
 gh issue view <N> --repo <owner>/<repo> --json title,labels,state
 # expect: the new title, labels ["bug"], state CLOSED
 ```
@@ -2108,7 +2112,7 @@ stage_issue submodule <<'JSON'
 JSON
 exit
 
-jailbee issue apply feat-issuesmoke -y
+jailbee issue apply feat-issuesmoke 004-submodule.json -y
 # expect: "Repository: <submodule-path> (<sub-owner>/<sub-repo>)" in the plan —
 #         never the superproject's own slug
 gh issue list --repo <sub-owner>/<sub-repo> --search "Submodule smoke-test issue in:title" --json number
@@ -2140,10 +2144,10 @@ exit
 # copied from is now stale.
 gh issue edit <N> --repo <owner>/<repo> --title "<old-title> (retitled by hand)"
 
-jailbee issue apply feat-issuesmoke
+jailbee issue apply feat-issuesmoke 005-stale.json
 # expect: refused BEFORE any confirmation —
 #   "005-stale.json action 0: expected.title differs from the current issue"
-#   — exit 1, no "Proceed?" prompt at all
+#   — exit 1, no confirmation prompt at all
 gh issue view <N> --repo <owner>/<repo> --json title
 # expect: "<old-title> (retitled by hand)" — the manifest's title was NEVER written
 jailbee outbox ls feat-issuesmoke
@@ -2179,7 +2183,7 @@ stage_issue stops <<'JSON'
 JSON
 exit
 
-jailbee issue apply feat-issuesmoke -y
+jailbee issue apply feat-issuesmoke 006-stops.json -y
 # expect: "006-stops.json action 0: applied (...)" then
 #         "006-stops.json action 1: failed — GitHub mutation was rejected" then
 #         "006-stops.json action 2: pending"  — never attempted
@@ -2191,7 +2195,7 @@ gh issue view <sub-bug-number> --repo <sub-owner>/<sub-repo> --json comments -q 
 
 # Un-archive, then retry the SAME manifest.
 gh api -X PATCH repos/<sub-owner>/<sub-repo> -f archived=false
-jailbee issue apply feat-issuesmoke -y
+jailbee issue apply feat-issuesmoke 006-stops.json -y
 # expect: "006-stops.json action 0: applied (...)" — SKIPPED, no new issue created
 gh issue list --repo <owner>/<repo> --search "Lands before the failure in:title" --json number
 # expect: still exactly ONE issue — the retry did not create a duplicate
@@ -2225,14 +2229,14 @@ exit
 # firewall DROP (hangs until gh's own timeout) and a bogus /etc/hosts entry
 # (fails fast on connection refused) exercise the two different messages
 # below, both safe, both `uncertain` — never `failed` or `applied`:
-jailbee issue apply feat-issuesmoke -y
+jailbee issue apply feat-issuesmoke 007-uncertain.json -y
 # expect (with the block in place): the plan, then one of
 #   "007-uncertain.json action 0: uncertain — GitHub mutation transport failed after dispatch"
 #   "007-uncertain.json action 0: uncertain — GitHub mutation outcome is uncertain"
 # restore connectivity
 jailbee outbox ls feat-issuesmoke
 # expect: 007-uncertain.json STATE=uncertain
-jailbee issue apply feat-issuesmoke -y
+jailbee issue apply feat-issuesmoke 007-uncertain.json -y
 # expect: refused — "a previous run's outcome is uncertain ... must be
 #         reconciled before this batch can proceed" — exit 1, no silent retry
 
@@ -2243,7 +2247,7 @@ gh issue list --repo <owner>/<repo> --search "Uncertain outcome smoke test in:ti
 jailbee issue resolve feat-issuesmoke 007-uncertain.json 0 --retry -y
 # expect: "007-uncertain.json action 0: retried"
 jailbee outbox ls feat-issuesmoke   # STATE=pending again
-jailbee issue apply feat-issuesmoke -y   # now actually creates it
+jailbee issue apply feat-issuesmoke 007-uncertain.json -y   # now creates it
 gh issue list --repo <owner>/<repo> --search "Uncertain outcome smoke test in:title"
 # expect: exactly one issue
 
@@ -2253,8 +2257,8 @@ gh issue list --repo <owner>/<repo> --search "Uncertain outcome smoke test in:ti
 jailbee issue resolve feat-issuesmoke <manifest> 0 --applied --issue <the-number-that-appeared> \
   --url https://github.com/<owner>/<repo>/issues/<the-number-that-appeared> -y
 # expect: "<manifest> action 0: marked applied" — no duplicate issue created,
-#         and re-running `jailbee issue apply feat-issuesmoke` finds nothing
-#         left pending for that manifest.
+#         and re-running `jailbee issue apply feat-issuesmoke <manifest>` finds
+#         nothing left pending for that manifest.
 ```
 
 ### 8. A write-capable host login vs. the container's read-only PAT
@@ -2262,7 +2266,7 @@ jailbee issue resolve feat-issuesmoke <manifest> 0 --applied --issue <the-number
 ```bash
 # Host: your own, normally-scoped login.
 gh auth status
-jailbee issue apply feat-issuesmoke --dry-run
+jailbee issue apply feat-issuesmoke <manifest> --dry-run
 # expect: "Host GitHub login: <your-login>" as the FIRST line of the plan —
 #         this is the identity that actually performs every mutation.
 
@@ -2342,11 +2346,11 @@ jailbee pr push feat-descoutbox
 # Answer n:
 # expect: "Nothing published. `jailbee review apply feat-descoutbox` posts
 #         them later." — the reply is still pending, nothing lost.
-jailbee review ls
+jailbee outbox ls feat-descoutbox
 # expect: one row, feat-descoutbox, MANIFEST 002-reply.json, ACTIONS
 #         "reply:1", STATE ok
 
-jailbee review apply feat-descoutbox -y
+jailbee review apply feat-descoutbox 002-reply.json -y
 gh api repos/<owner>/<repo>/pulls/<N>/comments/<id>/replies
 # expect: a reply reading "Fixed, thanks." now on GitHub
 jailbee outbox ls feat-descoutbox      # expect: the reply proposal is gone

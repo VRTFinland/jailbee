@@ -156,8 +156,9 @@ For human approval on the host, `jb outbox apply <container>
 issue/NNN-topic.json --revision TOKEN` publishes all pending actions in that
 one manifest, preserving the existing `expected`, journal and recovery
 gates. `TOKEN` comes from inspection; a changed proposal requires refresh
-and renewed inspection. The original `jb issue apply <container>` remains
-available. These are instructions to the human, **not permission for you
+and renewed inspection. The issue-only alias `jb issue apply <container>
+[<manifest>]` also works; like `outbox apply` it publishes one manifest per run
+and asks for what is omitted. These are instructions to the human, **not permission for you
 to run host publication commands**. Stage with the commands only. Without
 matching orchestrator publish rights, stop there. With those rights, use
 `send publish` as described above; never call host apply or direct `gh`
@@ -168,8 +169,8 @@ mutations yourself.
 If a broker `done` confirms publication, report its issue numbers and URLs.
 If there is no final result yet, say publication is pending. For manifests
 not sent through a granted orchestrator publish request, tell the user to
-run `jb issue apply <container>` on the host: **nothing has been published
-yet.** Everything still queued is a proposal
+run `jb issue apply <container> <manifest>` on the host (once per manifest):
+**nothing has been published yet.** Everything still queued is a proposal
 sitting in the host outbox store until then. `jailbee outbox sent` lists what
 was published. The host also sees the
 pending count without being told: `jb ls`'s ISSUES column shows `✉N` for

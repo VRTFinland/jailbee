@@ -597,23 +597,6 @@ _ACTION_LABELS: tuple[tuple[str, type[Action]], ...] = (
 _ACTION_LABEL_BY_TYPE: dict[type[Action], str] = {cls: label for label, cls in _ACTION_LABELS}
 
 
-def action_summary(manifest: Manifest) -> str:
-    """One manifest's action counts by type: ``review:1 reply:2``. Pure.
-
-    The one-cell counterpart of `plan_lines`, for `jb review ls`. It lives
-    here rather than in `cli.py` because `Action` is a closed union defined
-    in this module: a fifth variant needs a label here, and adding one to
-    `_ACTION_LABELS` is a visible edit next to the union itself, where the
-    same summary spelled out in the CLI would silently under-count.
-    """
-    parts = [
-        f"{label}:{count}"
-        for label, cls in _ACTION_LABELS
-        if (count := sum(isinstance(a, cls) for a in manifest.actions))
-    ]
-    return " ".join(parts)
-
-
 # --------------------------------------------------------------------------
 # Applying a manifest
 #
@@ -1300,56 +1283,6 @@ def finalize(
         )
 
 
-def drop_manifest(
-    incus: Incus,
-    container: str,
-    outbox: Outbox,
-    name: str,
-    *,
-    uid: int | None,
-    management: PrManagement | None = None,
-) -> list[str]:
-    """Delete proposal `name` from the host outbox store without applying it.
-
-    Guarded by the row version `outbox` was read at and the instance identity;
-    the store refuses a proposal being published or with recorded publication
-    progress. Nothing is posted to GitHub and nothing is recorded as sent.
-    Returns the names removed (the manifest and its bodies). Raises
-    `FinalizeError` if the deletion fails; the proposal is then still pending.
-    """
-    from jailbee.orchestration.store import StoreError
-    from jailbee.outbox import publication_db, store_db
-
-    try:
-        ProposalId("pr", name)
-        if outbox.identity is None or outbox.uuid is None:
-            raise OutboxChanged("preview identity is unavailable; refresh required")
-        from jailbee.outbox.service import instance_identity
-
-        if instance_identity(incus, container) != (outbox.identity, outbox.uuid):
-            raise OutboxChanged("container changed; refresh required")
-        version = dict(outbox.versions).get(name)
-        if version is None:
-            raise OutboxChanged(f"{name}: proposal unavailable; refresh required")
-        removed = store_db.host_store(publication_db.default_root()).drop_proposal(
-            outbox.uuid, "pr", name, version
-        )
-    except store_db.ProposalChangedError as e:
-        raise FinalizeError(f"manifest {name} changed; refresh and retry") from e
-    except (
-        IncusError,
-        JournalError,
-        OutboxError,
-        OutboxExecutionError,
-        StoreError,
-        store_db.ProposalLockedError,
-    ) as e:
-        raise FinalizeError(
-            f"manifest {name} could not be deleted ({e}); it is still pending"
-        ) from e
-    return [name, *sorted(removed.bodies)]
-
-
 def uncertain_actions(outbox: Outbox, name: str) -> list[int]:
     """Indices of proposal `name` whose publication outcome is uncertain."""
     journal = outbox.journals.get(name)
@@ -1764,7 +1697,7 @@ def pending_pr_text(
             warn(
                 f"{container} has more than one pending PR description "
                 f"({', '.join(names)}); using none of them. Read them with "
-                f"`jailbee review show`, drop the stale one with `jailbee review "
+                f"`jailbee outbox show`, drop the stale one with `jailbee outbox "
                 f"drop`, or re-run `{scope.command}` on a terminal to choose."
             )
             return None

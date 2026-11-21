@@ -758,8 +758,8 @@ def record_outbox_consumption(
         # No claim about what the manifest now looks like: `record_consumed`
         # fails at three different steps and only the first leaves the action
         # unrecorded. `FinalizeError`'s message names the step that failed;
-        # `jailbee review ls` is what actually answers "so what is left?".
-        warn(f"{exc}. Check what is left with `jailbee review ls`.")
+        # `jailbee outbox ls` is what actually answers "so what is left?".
+        warn(f"{exc}. Check what is left with `jailbee outbox ls`.")
 
 
 @dataclass(frozen=True)
