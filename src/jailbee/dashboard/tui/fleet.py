@@ -353,9 +353,13 @@ def entry_line(
         _underline_on_hover(cells[index], indented=index == 0)
     # The whole row is clickable, but only the name is underlined on hover.
     hit = dhit.hit_style("row", entry.container.name) + dhit.no_hover_style()
-    base = Style.parse(ROW_PHASE_STYLES[entry.phase]) + hit if entry.phase else hit
+    # A marked row drops the phase foreground: coloured text would sit on the mark's blue.
+    if entry.phase and not entry.marked:
+        base = Style.parse(ROW_PHASE_STYLES[entry.phase]) + hit
+    else:
+        base = hit
     if entry.marked:
-        base = base + MARKED_STYLE  # a mark's blue wins over the phase colour
+        base = base + MARKED_STYLE
     if entry.dim:
         base += Style(dim=True)
     # The cursor's band wins over a mark's blue; the row's `●` still shows the mark.

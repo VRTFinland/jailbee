@@ -71,12 +71,16 @@ def autostart_failed(container: ContainerInfo) -> bool:
 
 
 ROW_PHASE_STYLES = {
-    "booting": "yellow",
-    "autostart": "cyan",
+    "booting": "orange3",
+    "autostart": "dark_cyan",
     "job": "magenta",
     "failed": "red",
 }
-"""Row colour per non-normal phase (Rich names), shared by terminal-dashboard code."""
+"""Row colour per non-normal phase (Rich names), shared by terminal-dashboard code.
+
+Hues are picked to stay legible on both dark and light terminal backgrounds,
+so no plain ``yellow`` or ``cyan`` (near-invisible on white).
+"""
 
 
 def row_phase(container: ContainerInfo) -> str | None:
@@ -91,11 +95,20 @@ def row_phase(container: ContainerInfo) -> str | None:
         dead = container.job_phase in background.TERMINAL_PHASES
     else:
         dead = background.clearable(container.job_phase, container.job_pid)
-    if dead or (container.autostart_failed and not container.job_live):
+    old_failure = (
+        container.autostart_failed
+        and not container.job_live
+        and container.state != "Stopped"  # the outcomes file survives a stop
+    )
+    if dead or old_failure:
         return "failed"
     if container.job_phase is None:
         return None
-    if container.job_kind == background.JOB_AUTOSTART:
+    # Boot and create jobs sit in the autostart phase before being re-kinded.
+    if (
+        container.job_kind == background.JOB_AUTOSTART
+        or container.job_phase == background.PHASE_AUTOSTART
+    ):
         return "autostart"
     if container.job_kind == background.JOB_BOOT:
         return "booting"
