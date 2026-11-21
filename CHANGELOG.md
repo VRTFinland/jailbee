@@ -10,9 +10,11 @@ before editing `## Unreleased`.
 
 ### Added
 
-- The terminal dashboard colours a whole container row by its non-normal phase: yellow
-  while booting, cyan during autostart, magenta for other live jobs and red for
-  a dead job or failed autostart. A Stopped row stays dim.
+- The terminal dashboard colours a whole container row by its non-normal phase: orange
+  while booting, teal during autostart, magenta for other live jobs and red for
+  a dead job or failed autostart, in hues legible on light and dark terminals
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)). A Stopped row stays dim
+  and a marked row keeps the mark's blue background without the phase colour.
 - Interactive Claude Code sessions receive managed, non-acknowledging inbox
   notifications through `jailbee inbox follow`
   ([#135](https://github.com/VRTFinland/jailbee/issues/135)). The repo's

@@ -555,10 +555,65 @@ def test_phase_rows_get_distinct_styles(tmp_path, monkeypatch):  # type: ignore[
     afail.job_phase = None
     lines = _phase_lines(tmp_path, boot, auto, other, dead, afail)
     colours = [line.style.color.name for line in lines]
-    assert colours == ["yellow", "cyan", "magenta", "red", "red"]
+    assert colours == ["orange3", "dark_cyan", "magenta", "red", "red"]
     assert not any(line.style.dim for line in lines)  # a booting Stopped row is not dim
 
 
 def test_a_row_at_rest_has_no_phase_colour(tmp_path):  # type: ignore[no-untyped-def]
     (line,) = _phase_lines(tmp_path, ci("r-run", "r"))
     assert line.style.color is None
+
+
+@pytest.mark.parametrize("kind", ["boot", "create"])
+def test_a_job_in_the_autostart_phase_is_an_autostart_row(tmp_path, monkeypatch, kind):  # type: ignore[no-untyped-def]
+    from jailbee import background
+    from jailbee.dashboard.format import row_phase
+
+    monkeypatch.setattr(background, "worker_alive", lambda pid: True)
+    c = _job("r-x", getattr(background, f"JOB_{kind.upper()}"), background.PHASE_AUTOSTART, pid=1)
+    assert row_phase(c) == "autostart"
+
+
+def test_a_stopped_row_with_an_old_autostart_failure_stays_dim(tmp_path):  # type: ignore[no-untyped-def]
+    from jailbee.dashboard.format import row_phase
+
+    c = _job("r-s", None, None, state="Stopped", failed=2)
+    assert row_phase(c) is None
+    (line,) = _phase_lines(tmp_path, c)
+    assert line.style.dim
+    assert line.style.color is None
+
+
+def test_a_running_row_with_an_autostart_failure_is_still_red(tmp_path):  # type: ignore[no-untyped-def]
+    (line,) = _phase_lines(tmp_path, _job("r-f", None, None, failed=2))
+    assert line.style.color.name == "red"
+
+
+def test_a_marked_phase_row_drops_the_phase_foreground(tmp_path):  # type: ignore[no-untyped-def]
+    from jailbee import background
+
+    dead = _job("r-dead", background.JOB_CREATE, "failed")
+    group = dmodel.RepoGroup("r", str(tmp_path), None, [dead])
+    model = fleet.table_model(
+        [group],
+        now=NOW,
+        enabled=("name",),
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+        column_offset=0,
+        hidden_by_preferences=False,
+        width=80,
+        marked=frozenset({"r-dead"}),
+    )
+    (entry,) = (e for e in model.entries if e.container)
+    line = fleet.entry_line(entry, model.geometry, frozenset(), selected=False, width=80)
+    assert line.style.bgcolor == fleet.MARKED_STYLE.bgcolor
+    assert line.style.color is None
+
+
+def test_phase_styles_are_distinct_and_avoid_plain_yellow():
+    from jailbee.dashboard.format import ROW_PHASE_STYLES
+
+    assert len(set(ROW_PHASE_STYLES.values())) == len(ROW_PHASE_STYLES)
+    assert "yellow" not in ROW_PHASE_STYLES.values()
