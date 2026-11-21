@@ -267,3 +267,23 @@ def test_totp_guessing_is_limited_on_its_own(
     assert [totp_login(client, wrong) for _ in range(6)] == [401] * 5 + [429]
     body = {"method": "pin", "pin": pin.current, "device_name": "x"}
     assert client.post("/api/auth", json=body).status_code == 200
+
+
+@pytest.mark.parametrize("method", ["link", "fido2"])
+def test_a_flood_of_unlimited_method_failures_keeps_the_guessing_trail(
+    client: TestClient, pin: PinHolder, monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    monkeypatch.setattr(auth_admin, "AUDIT_KEEP", 20)
+    assert bad_pins(client, pin, 5) == [401] * 5
+    bogus = {
+        "link": {"method": "link", "token": "x"},
+        "fido2": {"method": "fido2", "challenge_id": "x", "credential": {}},
+    }[method]
+
+    for _ in range(25):
+        assert client.post("/api/auth", json={**bogus, "device_name": "flood"}).status_code == 401
+
+    events = auth_admin.recent_events(get_engine(), limit=1000)
+    pin_failures = [e for e in events if e.event == "login_failed" and e.method == "pin"]
+    assert len(pin_failures) == 5
+    assert any(e.method == method for e in events)

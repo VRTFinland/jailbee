@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Literal
 
+from sqlalchemy import and_, not_
 from sqlmodel import Session, col, delete, select
 
 from jailbee.db.models import WebAuthEvent, WebAuthSetting, WebFido2Key, WebSession, WebTotpKey
@@ -32,7 +33,21 @@ if TYPE_CHECKING:
 log = logging.getLogger("jailbee.web.audit")
 
 AUDIT_KEEP = 1000
-"""How many audit rows are kept; older ones are pruned on each write."""
+"""How many audit rows are kept; older ones are pruned on each write.
+
+Failed logins by an `UNLIMITED_METHODS` method are counted apart (see
+`UNLIMITED_FAILURES_KEEP`): nothing limits how many an attacker sends, so
+sharing this budget would let a flood of them prune the PIN and TOTP guesses
+the log is there to show."""
+
+UNLIMITED_FAILURES_KEEP = 100
+"""How many failed logins by an `UNLIMITED_METHODS` method are kept, on their own budget."""
+
+UNLIMITED_METHODS = frozenset({"link", "fido2"})
+"""Login methods no attempt limit applies to: a link token is single-use,
+high-entropy and lives 60 s; a FIDO2 login is a signature over a fresh
+challenge. Guessing either is hopeless, and limiting them would let a PIN or
+TOTP guesser lock the owner out. PIN and TOTP each have their own bucket."""
 
 TOTP_REPLAY_WINDOW = timedelta(seconds=90)
 """How long a used code stays refused: the accepted window (±1 step of 30 s) and then some."""
@@ -294,7 +309,12 @@ def record_event(
     device_name: str = "",
     source: str = "",
 ) -> None:
-    """Write one audit row (pruning the oldest past `AUDIT_KEEP`) and log it."""
+    """Write one audit row and log it.
+
+    Prunes the oldest rows of the written row's class past its budget: failed
+    logins by an `UNLIMITED_METHODS` method past `UNLIMITED_FAILURES_KEEP`,
+    every other row past `AUDIT_KEEP`. A write never evicts the other class.
+    """
     at = clock()
     level = logging.WARNING if event == "login_failed" else logging.INFO
     log.log(
@@ -311,8 +331,23 @@ def record_event(
             WebAuthEvent(at=at, event=event, method=method, device_name=device_name, source=source)
         )
         s.commit()
-        keep = select(WebAuthEvent.id).order_by(col(WebAuthEvent.id).desc()).limit(AUDIT_KEEP)
-        s.exec(delete(WebAuthEvent).where(col(WebAuthEvent.id).not_in(keep)))
+        unlimited_failure = and_(
+            col(WebAuthEvent.event) == "login_failed",
+            col(WebAuthEvent.method).in_(UNLIMITED_METHODS),
+        )
+        if event == "login_failed" and method in UNLIMITED_METHODS:
+            same_class, budget = unlimited_failure, UNLIMITED_FAILURES_KEEP
+        else:
+            same_class, budget = not_(unlimited_failure), AUDIT_KEEP
+        keep = (
+            select(WebAuthEvent.id)
+            .where(same_class)
+            .order_by(col(WebAuthEvent.id).desc())
+            .limit(budget)
+        )
+        s.exec(
+            delete(WebAuthEvent).where(same_class, col(WebAuthEvent.id).not_in(keep))
+        )
         s.commit()
 
 
