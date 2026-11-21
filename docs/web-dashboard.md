@@ -123,7 +123,7 @@ allowed, so the current dashboard only reads.
 
 ## Themes and display profile
 
-Open the settings page (the Settings link on the front page, or `/settings`) to choose
+Open the settings page (the Settings link on the front page) to choose
 a theme (light, dark, e-ink), body and code font sizes, and whether thinking
 blocks are shown. These choices are stored in the browser on that device only.
 

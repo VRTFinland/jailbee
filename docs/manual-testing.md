@@ -5867,6 +5867,39 @@ pgrep -a tmux                                          # no stray -L outbox-rig 
 
 Never `tmux kill-server`. The private socket vanishes with its last session.
 
+## Web dashboard headless smoke test
+
+Checks that the built browser app logs in, lists a repo and container, lists
+sessions and renders a transcript, against fixture data and without Incus.
+Needs Node.js (for `make web`), the `web` extra and Chrome
+(`/opt/google/chrome/chrome` by default, `--chrome PATH` otherwise). It is not
+part of `uv run pytest`.
+
+```bash
+make web                                   # build the browser app once
+T=$(mktemp -d)
+export XDG_STATE_HOME=$T/state XDG_CONFIG_HOME=$T/config XDG_DATA_HOME=$T/data
+
+# 1. The real app over a fake snapshot (repo "work", container "work-main")
+#    and tests/fixtures/transcripts/claude/ as its Claude home.
+uv run --extra web python scripts/web_smoke_server.py --port 8919 &
+SERVER=$!
+sleep 5
+
+# 2. Headless Chrome over CDP: PIN login -> front page -> repo -> session.
+uv run --extra web python scripts/web_smoke_check.py --screenshots "$T"
+echo "exit $?"
+
+kill $SERVER
+```
+
+Expected: four `ok` lines and exit 0; `front.png`, `repo.png` and
+`session.png` land in `$T` for a visual check. Add `--no-auth` to both
+scripts to run the same walk with login disabled. The throwaway `XDG_*`
+directories keep the login database away from the real one; the server
+only binds `127.0.0.1`. Use another `--port` (and `--url` for the check) if
+8919 is taken.
+
 ## Orchestration broker (real host)
 
 Use a disposable rig, a registered repo, a running container `<c>`, and an
