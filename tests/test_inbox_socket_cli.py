@@ -182,7 +182,7 @@ def test_follow_prints_safe_message_without_ack(
     [
         (
             {"kind": "quiet-child", "child": "kid"},
-            "JailBee inbox: child kid has been quiet for 60m "
+            "JailBee inbox: child kid has reached the quiet threshold "
             "— check it with jailbee inbox children",
         ),
         (
