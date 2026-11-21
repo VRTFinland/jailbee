@@ -21,6 +21,10 @@
     --radius: 6px;
     --font-size-body: 16px;
     --font-size-code: 14px;
+    /* Bottom guard: nothing interactive in the lowest strip, so Android's
+       gesture area and screen-edge swipes never trigger a control. */
+    --guard-bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+    --page-nav-height: 56px;
 }
 
 /* Themes: startSettings() sets data-theme on <html> (light, dark, eink); the
@@ -92,4 +96,39 @@ button.link {
     color: var(--accent);
     cursor: pointer;
     padding: var(--space-2);
+}
+
+/* The guard itself: a fixed strip that swallows taps and holds no controls;
+   the page leaves room for it. Both display profiles. */
+body {
+    padding-bottom: var(--guard-bottom);
+}
+body::after {
+    content: "";
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: var(--guard-bottom);
+    background: var(--bg);
+    z-index: 20;
+}
+
+/* E-ink profile: the screen repaints slowly, so nothing moves by itself. The
+   page-turn bar needs room under the content and the tap zones need side
+   margins clear of links. */
+:root[data-profile="eink"] *,
+:root[data-profile="eink"] *::before,
+:root[data-profile="eink"] *::after {
+    transition: none !important;
+    animation: none !important;
+    scroll-behavior: auto !important;
+}
+:root[data-profile="eink"] html,
+:root[data-profile="eink"] {
+    scroll-behavior: auto !important;
+}
+:root[data-profile="eink"] body {
+    padding-inline: 8vw;
+    padding-bottom: calc(var(--guard-bottom) + var(--page-nav-height) + var(--space-3));
 }

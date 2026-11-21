@@ -3,11 +3,24 @@ import {computed} from "vue"
 import {useRouter} from "vue-router"
 import {logout} from "../api"
 import RepoList from "../components/RepoList.vue"
+import PageNav from "../components/PageNav.vue"
+import {usePager} from "../composables/usePager"
+import {useSlowView} from "../composables/useSlowView"
 import {useDashboard} from "../dashboard"
+import {settings} from "../settings"
+
+const props = withDefaults(defineProps<{refreshMs?: number}>(), {refreshMs: 60_000})
 
 const router = useRouter()
 const dashboard = useDashboard()
-const view = computed(() => dashboard?.state.view ?? null)
+const pager = usePager()
+const eink = computed(() => settings.displayProfile === "eink")
+// E-ink: the list is a displayed copy refreshed slowly or on demand.
+const {shown: view, refresh} = useSlowView(
+    () => dashboard?.state.view ?? null,
+    () => eink.value,
+    () => props.refreshMs,
+)
 const status = computed(() => dashboard?.state.status ?? null)
 const connected = computed(() => dashboard?.state.connected ?? false)
 const device = computed(() => dashboard?.state.device ?? "")
@@ -24,6 +37,9 @@ async function signOut() {
         <header class="bar">
             <h1>JailBee</h1>
             <span class="device" v-if="device">{{ device }}</span>
+            <button v-if="eink" class="refresh link" type="button" @click="refresh">
+                Refresh
+            </button>
             <router-link class="link" :to="{name: 'settings'}">Settings</router-link>
             <button class="link" type="button" @click="signOut">Log out</button>
         </header>
@@ -35,6 +51,7 @@ async function signOut() {
             <p v-if="view === null" class="muted">Waiting for the first update…</p>
             <RepoList v-else :view="view" />
         </main>
+        <PageNav :pager="pager" />
     </div>
 </template>
 

@@ -71,4 +71,18 @@ describe("settings", () => {
         updateSettings({theme: "dark"})
         expect(settings.theme).toBe("dark")
     })
+
+    it("keeps the display profile separate from the theme", () => {
+        startSettings(document.documentElement)
+        expect(settings.displayProfile).toBe("normal")
+        updateSettings({displayProfile: "eink"})
+        expect(document.documentElement.dataset.profile).toBe("eink")
+        expect(readItem("jailbee.displayProfile")).toBe("eink")
+        updateSettings({theme: "dark"})
+        expect(document.documentElement.dataset.profile).toBe("eink")
+        expect(document.documentElement.dataset.theme).toBe("dark")
+        updateSettings({displayProfile: "normal"})
+        reloadSettings()
+        expect(settings.displayProfile).toBe("normal")
+    })
 })

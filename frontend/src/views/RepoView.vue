@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import {computed, onMounted, ref} from "vue"
+import {computed, nextTick, onMounted, ref} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
+import PageNav from "../components/PageNav.vue"
+import {usePager} from "../composables/usePager"
 import type {SessionList, SessionSummary} from "../protocol"
 
+const pager = usePager()
 const route = useRoute()
 const router = useRouter()
 const prefix = computed(() => String(route.params.prefix))
@@ -22,6 +25,8 @@ onMounted(async () => {
             `/api/repos/${encodeURIComponent(prefix.value)}/sessions`,
         )
         sessions.value = list.sessions
+        await nextTick()
+        pager.measure()
     } catch (e) {
         if (e instanceof Unauthorized) {
             await router.push({name: "login"})
@@ -65,6 +70,7 @@ onMounted(async () => {
                 </router-link>
             </li>
         </ul>
+        <PageNav :pager="pager" />
     </div>
 </template>
 

@@ -1,8 +1,21 @@
 <script setup lang="ts">
 // Per-device display settings. Nothing here goes to the server.
-import {FONT_SIZE_RANGE, settings, THEMES, updateSettings, type Theme} from "../settings"
+import {
+    DISPLAY_PROFILES,
+    FONT_SIZE_RANGE,
+    settings,
+    THEMES,
+    updateSettings,
+    type DisplayProfile,
+    type Theme,
+} from "../settings"
 
 const THEME_LABELS: Record<Theme, string> = {light: "Light", dark: "Dark", eink: "E-ink"}
+
+const PROFILE_LABELS: Record<DisplayProfile, string> = {
+    normal: "Normal (scrolling)",
+    eink: "E-ink (page turns, no animation, slow refresh)",
+}
 
 function number(event: Event): number {
     return Number((event.target as HTMLInputElement).value)
@@ -28,6 +41,20 @@ function number(event: Event): number {
                     @change="updateSettings({theme: t})"
                 />
                 {{ THEME_LABELS[t] }}
+            </label>
+        </fieldset>
+
+        <fieldset>
+            <legend>Display profile</legend>
+            <label v-for="p in DISPLAY_PROFILES" :key="p" class="choice">
+                <input
+                    type="radio"
+                    name="profile"
+                    :value="p"
+                    :checked="settings.displayProfile === p"
+                    @change="updateSettings({displayProfile: p})"
+                />
+                {{ PROFILE_LABELS[p] }}
             </label>
         </fieldset>
 

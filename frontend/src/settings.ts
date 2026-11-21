@@ -3,17 +3,21 @@
 // ./storage, so with storage blocked the app runs on defaults and keeps
 // choices in memory for the session.
 //
-// To add a setting (ticket 10 adds `displayProfile`): extend `Settings`,
+// To add a setting: extend `Settings`,
 // give it a key, a default and a parser in `FIELDS`.
 import {reactive, watch} from "vue"
 import {readItem, writeItem} from "./storage"
 
 export type Theme = "light" | "dark" | "eink"
 export const THEMES: readonly Theme[] = ["light", "dark", "eink"]
+/** How the UI behaves: "eink" pages instead of scrolling and never animates. */
+export type DisplayProfile = "normal" | "eink"
+export const DISPLAY_PROFILES: readonly DisplayProfile[] = ["normal", "eink"]
 export const FONT_SIZE_RANGE = {min: 12, max: 28} as const
 
 export interface Settings {
     theme: Theme
+    displayProfile: DisplayProfile
     bodyFontSize: number
     codeFontSize: number
     showThinking: boolean
@@ -58,6 +62,12 @@ const FIELDS: {[K in keyof Settings]: Field<K>} = {
         serialize: String,
         fallback: () => (prefersDark() ? "dark" : "light"),
     },
+    displayProfile: {
+        key: "jailbee.displayProfile",
+        parse: (raw) => DISPLAY_PROFILES.find((p) => p === raw),
+        serialize: String,
+        fallback: () => "normal",
+    },
     bodyFontSize: sizeField<"bodyFontSize">("jailbee.bodyFontSize", 16),
     codeFontSize: sizeField<"codeFontSize">("jailbee.codeFontSize", 14),
     showThinking: {
@@ -76,6 +86,7 @@ function load<K extends keyof Settings>(name: K): Settings[K] {
 function loadAll(): Settings {
     return {
         theme: load("theme"),
+        displayProfile: load("displayProfile"),
         bodyFontSize: load("bodyFontSize"),
         codeFontSize: load("codeFontSize"),
         showThinking: load("showThinking"),
@@ -102,12 +113,13 @@ export function updateSettings(patch: Partial<Settings>): void {
     }
 }
 
-/** Mirror `settings` onto `root` (theme attribute, font-size variables). */
+/** Mirror `settings` onto `root` (theme and profile attributes, font-size variables). */
 export function startSettings(root: HTMLElement = document.documentElement): void {
     watch(
         () => ({...settings}),
         (s) => {
             root.dataset.theme = s.theme
+            root.dataset.profile = s.displayProfile
             root.style.setProperty("--font-size-body", `${s.bodyFontSize}px`)
             root.style.setProperty("--font-size-code", `${s.codeFontSize}px`)
         },

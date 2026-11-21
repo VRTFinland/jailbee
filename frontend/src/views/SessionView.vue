@@ -1,10 +1,12 @@
 <script setup lang="ts">
 // One agent session as a readable document. Every `html` field is rendered
 // and sanitised by the server; it is inserted as is.
-import {computed, nextTick, onBeforeUnmount, onMounted, ref} from "vue"
+import {computed, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
+import PageNav from "../components/PageNav.vue"
 import ToolCall from "../components/ToolCall.vue"
+import {usePager} from "../composables/usePager"
 import {useDashboard} from "../dashboard"
 import type {
     RenderedEntry,
@@ -13,6 +15,11 @@ import type {
     TranscriptView,
 } from "../protocol"
 import {settings} from "../settings"
+
+const pager = usePager()
+const eink = computed(() => settings.displayProfile === "eink")
+/** E-ink: live entries wait here until the reader taps the notice. */
+const pending = ref<RenderedEntry[]>([])
 
 const route = useRoute()
 const router = useRouter()
@@ -85,20 +92,35 @@ function atEnd(): boolean {
 }
 
 /**
- * New entries from the live subscription. Normal display profile: append in
- * place, and scroll along only if the reader was already at the end.
- *
- * Ticket 10 hook (e-ink profile): instead of appending, hold `entries` in a
- * pending list and show a "new entries" notice the reader taps to apply them,
- * so the screen does not repaint under them. Branch on the display profile here.
+ * New entries from the live subscription. Normal profile: append in place,
+ * and scroll along only if the reader was already at the end. E-ink: hold
+ * them back and raise a notice, so the screen does not repaint under the
+ * reader; `applyPending` shows them.
  */
 async function onLiveAppend(entries: RenderedEntry[]) {
     if (transcript.value === null) return
+    if (eink.value) {
+        pending.value.push(...entries)
+        return
+    }
     const follow = atEnd()
     transcript.value.entries.push(...entries)
     await nextTick()
     if (follow) window.scrollTo({top: document.documentElement.scrollHeight})
 }
+
+/** Show the held entries (no scrolling: the reader stays on their page). */
+async function applyPending() {
+    if (transcript.value === null || pending.value.length === 0) return
+    transcript.value.entries.push(...pending.value)
+    pending.value = []
+    await nextTick()
+    pager.measure()
+}
+
+watch(eink, (on) => {
+    if (!on) void applyPending()
+})
 
 function startFollowing(view: TranscriptView) {
     if (unmounted) return // left before the transcript arrived
@@ -122,7 +144,10 @@ onBeforeUnmount(() => {
 
 function jumpToLatest() {
     if (latestAnswer.value === null) return
-    document.getElementById(entryDomId(latestAnswer.value))?.scrollIntoView({block: "start"})
+    const el = document.getElementById(entryDomId(latestAnswer.value))
+    if (el === null) return
+    if (eink.value) pager.goToElement(el)
+    else el.scrollIntoView({block: "start"})
 }
 
 onMounted(async () => {
@@ -140,6 +165,7 @@ onMounted(async () => {
         transcript.value = view
         startFollowing(view)
         await nextTick()
+        pager.measure()
     } catch (e) {
         if (e instanceof Unauthorized) {
             await router.push({name: "login"})
@@ -233,6 +259,14 @@ onMounted(async () => {
                 </template>
             </article>
             <button
+                v-if="pending.length > 0"
+                type="button"
+                class="new-messages"
+                @click="applyPending"
+            >
+                {{ pending.length }} new {{ pending.length === 1 ? "message" : "messages" }} &mdash; tap to show
+            </button>
+            <button
                 v-if="latestAnswer"
                 type="button"
                 class="jump-latest"
@@ -241,6 +275,7 @@ onMounted(async () => {
                 Latest answer &darr;
             </button>
         </template>
+        <PageNav :pager="pager" />
     </div>
 </template>
 
@@ -418,7 +453,8 @@ h1 {
 .jump-latest {
     position: fixed;
     right: var(--space-3);
-    bottom: var(--space-3);
+    bottom: calc(var(--guard-bottom) + var(--space-3));
+    z-index: 11;
     min-height: 2.75rem;
     padding: var(--space-2) var(--space-3);
     font: inherit;
@@ -427,5 +463,24 @@ h1 {
     border: none;
     border-radius: var(--radius);
     cursor: pointer;
+}
+.new-messages {
+    position: fixed;
+    left: var(--space-3);
+    bottom: calc(var(--guard-bottom) + var(--space-3));
+    z-index: 11;
+    min-height: 2.75rem;
+    padding: var(--space-2) var(--space-3);
+    font: inherit;
+    color: var(--text);
+    background: var(--notice-bg);
+    border: 2px solid var(--border-strong);
+    border-radius: var(--radius);
+    cursor: pointer;
+}
+/* In e-ink the bar owns the bottom edge: the buttons sit above it. */
+:root[data-profile="eink"] .jump-latest,
+:root[data-profile="eink"] .new-messages {
+    bottom: calc(var(--guard-bottom) + var(--page-nav-height) + var(--space-3));
 }
 </style>

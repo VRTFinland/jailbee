@@ -27,4 +27,14 @@ describe("SettingsView", () => {
         expect(settings.codeFontSize).toBe(13)
         expect(settings.showThinking).toBe(true)
     })
+
+    it("chooses the display profile independently of the theme", async () => {
+        const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true}}})
+        await wrapper.get("input[name=profile][value=eink]").setValue(true)
+        expect(document.documentElement.dataset.profile).toBe("eink")
+        await wrapper.get("input[name=theme][value=dark]").setValue(true)
+        expect(document.documentElement.dataset.profile).toBe("eink")
+        await wrapper.get("input[name=profile][value=normal]").setValue(true)
+        expect(document.documentElement.dataset.profile).toBe("normal")
+    })
 })

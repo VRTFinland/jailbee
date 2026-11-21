@@ -1,8 +1,9 @@
 import {flushPromises, mount} from "@vue/test-utils"
-import {describe, expect, it, vi} from "vitest"
+import {afterEach, describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"
 import {setToken} from "../api"
 import {createAppRouter} from "../router"
+import {updateSettings} from "../settings"
 import RepoView from "./RepoView.vue"
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -43,6 +44,15 @@ async function mountRepo(fetchMock: ReturnType<typeof vi.fn>) {
 }
 
 describe("RepoView", () => {
+    afterEach(() => updateSettings({displayProfile: "normal"}))
+
+    it("offers page turns instead of scrolling in the e-ink profile", async () => {
+        updateSettings({displayProfile: "eink"})
+        const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, {sessions}))
+        const {wrapper} = await mountRepo(fetchMock)
+        expect(wrapper.find(".page-indicator").exists()).toBe(true)
+    })
+
     it("lists the repository's sessions with title, time and models", async () => {
         const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, {sessions}))
         const {wrapper} = await mountRepo(fetchMock)

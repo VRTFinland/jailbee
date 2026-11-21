@@ -11,6 +11,7 @@ import {
     type TranscriptView,
 } from "../protocol"
 import {createAppRouter} from "../router"
+import {reloadSettings, updateSettings} from "../settings"
 import type {SocketHandlers} from "../socket"
 import SessionView from "./SessionView.vue"
 
@@ -80,6 +81,7 @@ function setPageGeometry(scrollHeight: number, scrollY: number) {
 }
 
 afterEach(() => {
+    updateSettings({displayProfile: "normal"})
     document.body.innerHTML = ""
     vi.restoreAllMocks()
 })
@@ -133,5 +135,63 @@ describe("SessionView live follow", () => {
                 offset: 420,
             },
         ])
+    })
+})
+
+describe("SessionView in the e-ink profile", () => {
+    const second: RenderedEntry = {...answer, id: "a2", html: "<p>Done</p>"}
+
+    it("holds live entries back behind a new-messages notice", async () => {
+        const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {})
+        setPageGeometry(1000, 200)
+        updateSettings({displayProfile: "eink"})
+        const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        await append(sessionKey, [answer, second])
+        expect(wrapper.findAll(".entry.assistant")).toHaveLength(0)
+        expect(wrapper.get(".new-messages").text()).toContain("2 new messages")
+        expect(scrollTo).not.toHaveBeenCalled()
+
+        await append(sessionKey, [{...answer, id: "a3"}])
+        expect(wrapper.get(".new-messages").text()).toContain("3 new messages")
+    })
+
+    it("renders the held entries only when the notice is tapped", async () => {
+        updateSettings({displayProfile: "eink"})
+        const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        await append(sessionKey, [answer])
+        await wrapper.get(".new-messages").trigger("click")
+        expect(wrapper.findAll(".entry.assistant")).toHaveLength(1)
+        expect(wrapper.find(".new-messages").exists()).toBe(false)
+    })
+
+    it("applies held entries when switching back to the normal profile", async () => {
+        updateSettings({displayProfile: "eink"})
+        const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        await append(sessionKey, [answer])
+        updateSettings({displayProfile: "normal"})
+        await flushPromises()
+        expect(wrapper.findAll(".entry.assistant")).toHaveLength(1)
+        expect(wrapper.find(".new-messages").exists()).toBe(false)
+    })
+
+    it("has page turns on the subagent route too", async () => {
+        updateSettings({displayProfile: "eink"})
+        const {wrapper} = await mountLive("/repos/alpha/sessions/claude/s-1/subagents/a1b2c3")
+        expect(wrapper.find(".page-indicator").exists()).toBe(true)
+    })
+
+    it("jumps to the page that holds the latest answer", async () => {
+        reloadSettings()
+        updateSettings({displayProfile: "eink"})
+        setPageGeometry(3000, 0) // pages of 800 - 88 = 712px
+        const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {})
+        const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        await append(sessionKey, [answer])
+        await wrapper.get(".new-messages").trigger("click")
+        const el = document.getElementById("entry-a1")!
+        vi.spyOn(el, "getBoundingClientRect").mockReturnValue({top: 1500} as DOMRect)
+        await wrapper.get(".jump-latest").trigger("click")
+        expect(scrollTo).toHaveBeenLastCalledWith(0, 2 * 712)
+        expect(wrapper.get(".page-indicator").text()).toContain("Page 3 /")
     })
 })
