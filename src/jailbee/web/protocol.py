@@ -102,6 +102,8 @@ class SessionView(BaseModel):
     title: str
     last_activity: datetime | None
     models: list[str]
+    container: str | None = None
+    """The container the session was seen in, or None when unattributed."""
 
 
 class SessionListView(BaseModel):
