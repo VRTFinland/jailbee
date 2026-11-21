@@ -55,6 +55,11 @@ class WebDeps:
     auth_enabled: bool = True
     """False serves every route without a session (`remote.web.auth.enabled: false`).
     Never derived from the request's source address."""
+    listen: str | None = None
+    """The configured listen address. With login off, a request's `Host` must
+    be loopback or this address (`web.origin_guard`)."""
+    allow_unauthenticated_remote: bool = False
+    """`remote.web.auth.allow_unauthenticated_remote`: with login off, answer any `Host`."""
     snapshot_wait_seconds: float = DEFAULT_SNAPSHOT_WAIT_SECONDS
     """How long a REST route waits for the first snapshot when no WebSocket
     holds the state-service connection (a deep link or a reload)."""

@@ -79,6 +79,8 @@ def serve(
         engine=get_engine(),
         pin=pin,
         auth_enabled=config.auth.enabled,
+        listen=config.listen,
+        allow_unauthenticated_remote=config.auth.allow_unauthenticated_remote,
         static_dir=directory,
         repo_scope=RemoteRepoScope.of(config),
     )

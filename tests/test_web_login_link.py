@@ -122,18 +122,22 @@ def test_auth_methods_do_not_offer_the_link(client: TestClient) -> None:
 
 # --- auth disabled ----------------------------------------------------------
 
+LOCAL = {"host": "localhost:8910"}
+"""With login off only a loopback `Host` is served (`web.origin_guard`)."""
+
 
 def test_auth_disabled_serves_the_api_without_a_session(clock: FakeClock) -> None:
     client = make_client(clock, auth_enabled=False)
 
-    assert client.get("/api/session").status_code == 200
-    assert client.get("/api/auth/methods").json()["auth_disabled"] is True
+    assert client.get("/api/session", headers=LOCAL).status_code == 200
+    assert client.get("/api/auth/methods", headers=LOCAL).json()["auth_disabled"] is True
+
 
 
 def test_auth_disabled_serves_the_websocket_without_a_session(clock: FakeClock) -> None:
     client = make_client(clock, auth_enabled=False)
 
-    with client.websocket_connect("/api/ws") as ws:
+    with client.websocket_connect("/api/ws", headers=LOCAL) as ws:
         ws.send_text(hello("anonymous"))
         assert ws.receive_json()["type"] == "hello"
 
