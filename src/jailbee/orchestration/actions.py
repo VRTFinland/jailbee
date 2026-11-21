@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal
 from jailbee import forking, lifecycle, stopping, sync
 from jailbee.create_flow import CreateError, Interaction, NeedsOperator, start_create
 from jailbee.forking import ForkError, ForkSource
+from jailbee.incus import IncusError
 from jailbee.lifecycle import NewContainerOptions
 from jailbee.orchestration import labels, profiles
 from jailbee.orchestration.grant import (
@@ -1008,7 +1009,11 @@ def _drain_queue_locked(ctx: ActionContext) -> list[tuple[QueuedRequest, Outcome
     while queued:
         # Inventory can predate a host grant edit or a slow starter. Read again
         # before each dequeue, and give the starter the same current grant.
-        raw = ctx.incus.config_get_checked(ctx.sender.full, labels.GRANT)
+        try:
+            raw = ctx.incus.config_get_checked(ctx.sender.full, labels.GRANT)
+        except IncusError as exc:
+            log.warning("queue drain stopped, current grant unavailable: %s", exc)
+            break
         config = dict(ctx.sender.config)
         config[labels.GRANT] = raw or ""
         ctx = replace(ctx, sender=replace(ctx.sender, config=config))

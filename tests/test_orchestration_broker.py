@@ -936,6 +936,27 @@ def test_queued_spawns_obey_grant_changes_between_launches(rig: Rig, monkeypatch
     assert [req.manifest_id for req in load_queue(rig.root)["proj-orch"]] == ["s2"]
 
 
+def test_grant_read_failure_preserves_earlier_queued_launch_reply(rig: Rig, monkeypatch) -> None:
+    monkeypatch.setattr(manifests, "drain_queue", actions.drain_queue)
+    monkeypatch.setattr(actions, "live_create_jobs", lambda prefix: set())
+    start = MagicMock(return_value=Outcome("started", "ok"))
+    monkeypatch.setattr(actions, "start_child", start)
+    rig.incus.list_containers.return_value = [_orch()]
+    save_queue(rig.root, {"proj-orch": [_req("q1"), _req("q2", "proj-fix-3")]})
+    def read(full, key):
+        if key != labels.GRANT:
+            return None
+        if start.called:
+            raise IncusError("unavailable")
+        return GRANT.to_label()
+
+    rig.incus.config_get_checked.side_effect = read
+    rig.tick()
+    assert [(s.ref, s.state) for _, s in rig.statuses()] == [("q1", "started")]
+    assert [req.manifest_id for req in load_queue(rig.root)["proj-orch"]] == ["q2"]
+    start.assert_called_once()
+
+
 def _req(mid: str, child: str = "proj-fix-2") -> QueuedRequest:
     return QueuedRequest(
         manifest_id=mid,
