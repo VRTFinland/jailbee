@@ -140,6 +140,35 @@ def render_entry(entry: Entry, cache: RenderCache) -> RenderedEntry:
             )
 
 
+def subagent_descriptions(entries: Iterable[Entry]) -> dict[str, str]:
+    """Subagent id → what it was asked to do.
+
+    A reference carries its own description when the agent logged one; otherwise
+    it is the ``description`` argument of the tool call that started it.
+    """
+    entries = tuple(entries)
+    asked = {
+        e.call_id: d
+        for e in entries
+        if isinstance(e, ToolCall) and isinstance(d := e.input.get("description"), str) and d
+    }
+    found: dict[str, str] = {}
+    for e in entries:
+        if isinstance(e, SubagentRef):
+            text = e.description or asked.get(e.call_id)
+            if text:
+                found[e.agent_id] = text
+    return found
+
+
 def render_entries(entries: Iterable[Entry], cache: RenderCache) -> list[RenderedEntry]:
     """Every entry in order, rendered; HTML reused from ``cache`` where it can be."""
-    return [render_entry(e, cache) for e in entries]
+    entries = tuple(entries)
+    described = subagent_descriptions(entries)
+    rendered: list[RenderedEntry] = []
+    for e in entries:
+        r = render_entry(e, cache)
+        if isinstance(r, RenderedSubagent) and r.description is None:
+            r = r.model_copy(update={"description": described.get(r.agent_id)})
+        rendered.append(r)
+    return rendered

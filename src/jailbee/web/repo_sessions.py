@@ -8,12 +8,20 @@ snapshot, tests point it at a temporary directory.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from jailbee.transcripts.base import Entry, SessionInfo, SessionInfoCache, get_source
+from jailbee.transcripts.base import (
+    Entry,
+    SessionFiles,
+    SessionInfo,
+    SessionInfoCache,
+    TranscriptSource,
+    get_source,
+)
+from jailbee.web.transcript_render import subagent_descriptions
 
 if TYPE_CHECKING:
     from jailbee.state_service.protocol import Snapshot
@@ -94,6 +102,41 @@ class RepoSessions:
         ``agent`` must be one of the repository's own agents, and the source's
         `locate` validates ``session_id``, so neither reaches a path unchecked.
         """
+        found = self._locate(prefix, agent, session_id)
+        if found is None:
+            return None
+        source, _home, files, info = found
+        return SessionTranscript(agent, info, source.read(files.transcript).entries)
+
+    def subagent_transcript(
+        self, prefix: str, agent: str, session_id: str, agent_id: str
+    ) -> SessionTranscript | None:
+        """A subagent's own transcript, titled by what the parent asked of it.
+
+        None for anything `transcript` would not find, and for an ``agent_id``
+        the source rejects or that has no transcript.
+        """
+        found = self._locate(prefix, agent, session_id)
+        if found is None:
+            return None
+        source, home, files, parent_info = found
+        path = source.subagent_transcript(home, session_id, agent_id)
+        if path is None:
+            return None
+        info = source.session_info(session_id, path, self._cache)
+        if info is None:
+            return None
+        entries = source.read(files.transcript).entries
+        description = subagent_descriptions(entries).get(agent_id)
+        return SessionTranscript(
+            agent,
+            replace(info, title=description or info.title or parent_info.title),
+            source.read(path).entries,
+        )
+
+    def _locate(
+        self, prefix: str, agent: str, session_id: str
+    ) -> tuple[TranscriptSource, Path, SessionFiles, SessionInfo] | None:
         homes = self._homes(prefix)
         if homes is None:
             return None
@@ -110,5 +153,5 @@ class RepoSessions:
             info = source.session_info(session_id, files.transcript, self._cache)
             if info is None:
                 return None
-            return SessionTranscript(agent, info, source.read(files.transcript).entries)
+            return source, home, files, info
         return None

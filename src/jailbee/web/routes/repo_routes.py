@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from fastapi import APIRouter, HTTPException
 from starlette.concurrency import run_in_threadpool
 
 from jailbee.web.container_sessions import session_containers
 from jailbee.web.deps import Context, RequireSession
 from jailbee.web.protocol import SessionListView, SessionView, TranscriptView
+from jailbee.web.repo_sessions import SessionTranscript
 from jailbee.web.transcript_render import render_entries
 
 router = APIRouter()
@@ -17,6 +20,8 @@ router = APIRouter()
 async def repo_sessions(prefix: str, ctx: Context, _auth: RequireSession) -> SessionListView:
     # An excluded repository answers exactly as an unknown one does, and its
     # homes are never resolved.
+    if ctx.scope.allows(prefix):
+        await ctx.homes_ready()
     rows = (
         await run_in_threadpool(ctx.repo_sessions.list, prefix)
         if ctx.scope.allows(prefix)
@@ -42,17 +47,17 @@ async def repo_sessions(prefix: str, ctx: Context, _auth: RequireSession) -> Ses
     )
 
 
-@router.get("/api/repos/{prefix}/sessions/{agent}/{session_id}")
-async def session_transcript(
-    prefix: str, agent: str, session_id: str, ctx: Context, _auth: RequireSession
+async def _transcript_view(
+    ctx: Context, prefix: str, load: Callable[[], SessionTranscript | None]
 ) -> TranscriptView:
-    # Unknown and excluded repositories, agents and sessions all answer the
-    # same 404, so the answer reveals nothing about what exists.
+    # Unknown and excluded repositories, agents, sessions and subagents all
+    # answer the same 404, so the answer reveals nothing about what exists.
     if not ctx.scope.allows(prefix):
         raise HTTPException(status_code=404, detail="Unknown session")
+    await ctx.homes_ready()
 
-    def load() -> TranscriptView | None:
-        found = ctx.repo_sessions.transcript(prefix, agent, session_id)
+    def build() -> TranscriptView | None:
+        found = load()
         if found is None:
             return None
         return TranscriptView(
@@ -64,7 +69,27 @@ async def session_transcript(
             entries=render_entries(found.entries, ctx.render_cache),
         )
 
-    view = await run_in_threadpool(load)
+    view = await run_in_threadpool(build)
     if view is None:
         raise HTTPException(status_code=404, detail="Unknown session")
     return view
+
+
+@router.get("/api/repos/{prefix}/sessions/{agent}/{session_id}")
+async def session_transcript(
+    prefix: str, agent: str, session_id: str, ctx: Context, _auth: RequireSession
+) -> TranscriptView:
+    return await _transcript_view(
+        ctx, prefix, lambda: ctx.repo_sessions.transcript(prefix, agent, session_id)
+    )
+
+
+@router.get("/api/repos/{prefix}/sessions/{agent}/{session_id}/subagents/{agent_id}")
+async def subagent_transcript(
+    prefix: str, agent: str, session_id: str, agent_id: str, ctx: Context, _auth: RequireSession
+) -> TranscriptView:
+    return await _transcript_view(
+        ctx,
+        prefix,
+        lambda: ctx.repo_sessions.subagent_transcript(prefix, agent, session_id, agent_id),
+    )
