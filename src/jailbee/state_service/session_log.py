@@ -5,7 +5,7 @@ session (`AgentSummary.session_ids`) becomes a `ContainerSession` row keyed
 by the container's Incus instance uuid, so a container recreated under the
 same name does not inherit the old one's sessions. Writes are throttled:
 a session already written in the last `write_interval` seconds costs no
-database round trip.
+database round trip. Only sessions the latest gather reported are remembered.
 """
 
 from __future__ import annotations
@@ -52,14 +52,19 @@ class SessionRecorder:
     def record(self, groups: Iterable[RepoGroup]) -> None:
         now = self._clock()
         due: list[tuple[str, str, str, str]] = []
+        seen: set[tuple[str, str, str, str]] = set()
         for group in groups:
             for c in group.containers:
                 for summary in c.agent_status:
                     for sid in summary.session_ids:
                         key = (c.name, c.uuid or "", summary.agent, sid)
+                        seen.add(key)
                         last = self._written.get(key)
                         if last is None or (now - last).total_seconds() >= self._interval:
                             due.append(key)
+        # Forget sessions this gather no longer reports: the throttle's memory
+        # stays bounded by the live sessions over a long-running server.
+        self._written = {k: v for k, v in self._written.items() if k in seen}
         if not due:
             return
         with Session(self._engine) as s:

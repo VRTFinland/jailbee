@@ -452,6 +452,27 @@ def test_a_later_gather_moves_last_seen_and_keeps_first_seen(mocker):
     assert (row.first_seen, row.last_seen) == (first, now[0])
 
 
+def test_a_session_that_comes_back_is_written_again_at_once(mocker):
+    # The throttle forgets sessions a gather no longer reports, so its memory
+    # stays bounded by the live sessions, not by every session ever seen.
+    from jailbee.state_service.session_log import SessionRecorder, recorded_sessions
+
+    engine = get_engine()
+    now = [datetime(2026, 11, 1, 10, tzinfo=UTC)]
+    recorder = SessionRecorder(engine, clock=lambda: now[0], write_interval=60.0)
+    first = now[0]
+    live = RepoGroup("alpha", "/a", None, [_ci_live("alpha-1", "u-1", "s-1")])
+
+    recorder.record([live])
+    now[0] = first + timedelta(seconds=10)
+    recorder.record([RepoGroup("alpha", "/a", None, [_ci("alpha-1")])])
+    now[0] = first + timedelta(seconds=20)
+    recorder.record([live])
+
+    (row,) = recorded_sessions(engine, "alpha-1", "u-1")
+    assert row.last_seen == now[0]
+
+
 def test_a_recreated_container_has_its_own_recorded_sessions(mocker):
     from jailbee.state_service.session_log import SessionRecorder, recorded_sessions
 

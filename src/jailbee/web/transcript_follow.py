@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -23,6 +24,8 @@ if TYPE_CHECKING:
     from jailbee.transcripts.base import Entry, TranscriptSource
     from jailbee.web.file_watch import FileWatch, WatchFactory
     from jailbee.web.protocol import FollowKey, RenderedEntry
+
+log = logging.getLogger(__name__)
 
 Render = Callable[[Sequence["Entry"]], list["RenderedEntry"]]
 Deliver = Callable[[list["RenderedEntry"], int], Awaitable[None]]
@@ -62,14 +65,19 @@ class Follower:
             self._task.cancel()
 
     async def _pump(self) -> None:
-        while True:
-            self._again = False
-            entries, offset = await asyncio.to_thread(self._read)
-            self.offset = offset
-            if entries:
-                await self._deliver(entries, offset)
-            if not self._again:
-                return
+        """Read until no wake-up is pending. A failure is logged (a task's
+        exception is otherwise lost); the next wake-up tries again."""
+        try:
+            while True:
+                self._again = False
+                entries, offset = await asyncio.to_thread(self._read)
+                self.offset = offset
+                if entries:
+                    await self._deliver(entries, offset)
+                if not self._again:
+                    return
+        except Exception:
+            log.exception("following %s failed", self.path)
 
     def _read(self) -> tuple[list[RenderedEntry], int]:
         read = self._source.read_from(self.path, self.offset)

@@ -11,6 +11,7 @@ import shutil
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -361,3 +362,36 @@ def test_subscriptions_per_socket_are_capped(
         # Re-subscribing an existing key is not a new subscription.
         subscribe(ws, 0, session_id=ids[0])
         assert ws.receive_json()["type"] == "append"
+
+
+def test_a_failing_read_is_logged_not_lost(
+    tmp_path: Path, watches: FakeWatchFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    import asyncio
+
+    from jailbee.web.protocol import FollowKey
+    from jailbee.web.transcript_follow import TranscriptFollows
+
+    class Broken:
+        def read_from(self, path: Path, offset: int) -> object:
+            raise OSError("disk on fire")
+
+    async def run() -> None:
+        follows = TranscriptFollows(watches, lambda entries: [])
+
+        async def deliver(entries: object, offset: int) -> None:
+            raise AssertionError("nothing to deliver")
+
+        key = FollowKey(prefix="alpha", agent="claude", session_id=SESSION)
+        broken: Any = Broken()  # a source that only fails
+        follower = follows.follow(key, broken, tmp_path / "t.jsonl", 0, deliver)
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if caplog.records:
+                break
+        follows.unfollow(follower)
+
+    with caplog.at_level("ERROR", logger="jailbee.web.transcript_follow"):
+        asyncio.run(run())
+
+    assert any(r.exc_info and "disk on fire" in str(r.exc_info[1]) for r in caplog.records)
