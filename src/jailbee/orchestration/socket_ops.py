@@ -476,6 +476,8 @@ class Waiter:
     after: int = 0
     follow_digest_at: float | None = None
     quiet_children: set[str] = field(default_factory=set)
+    grant_seen: dict[str, object] | None = None
+    grant_baselined: bool = False
 
 
 class Waiters:
@@ -543,6 +545,9 @@ class Waiters:
                             waiter.after = item.seq
                             if matches_wake_filter(item.type, item.kind_or_state, waiter.wake):
                                 answered.append((waiter, {"kind": "message", "item": item.item}))
+                        change = _grant_change(waiter, ctx)
+                        if change is not None:
+                            answered.append((waiter, change))
                         if ctx.role() == "orchestrator":
                             answered.extend(
                                 (waiter, event)
@@ -557,6 +562,55 @@ class Waiters:
                 del self._by_uuid[key]
                 answered.append((waiter, outcome))
         return answered
+
+
+def _flatten(data: object, prefix: str = "") -> dict[str, object]:
+    if isinstance(data, dict):
+        out: dict[str, object] = {}
+        for key, value in data.items():
+            out.update(_flatten(value, f"{prefix}{key}."))
+        return out
+    return {prefix[:-1]: data}
+
+
+MAX_GRANT_CHANGES = 8
+
+
+def grant_diff(before: dict[str, object] | None, after: dict[str, object] | None) -> list[str]:
+    """Readable lines naming what differs between two grant views (None = no grant)."""
+    if before is None and after is None:
+        return []
+    if before is None:
+        return ["grant added"]
+    if after is None:
+        return ["grant revoked"]
+    old, new = _flatten(before), _flatten(after)
+    return [
+        f"{key}: {json.dumps(old.get(key))} -> {json.dumps(new.get(key))}"
+        for key in sorted(old.keys() | new.keys())
+        if old.get(key) != new.get(key)
+    ]
+
+
+def _grant_change(waiter: Waiter, ctx: ActionContext) -> dict[str, object] | None:
+    """One ``grant-changed`` event when the effective grant differs from the last one seen."""
+    grant = ctx.grant()
+    current: dict[str, object] | None = (
+        json.loads(grant_json_text(grant, *ctx.default_runner())) if grant is not None else None
+    )
+    previous = waiter.grant_seen
+    baselined = waiter.grant_baselined
+    waiter.grant_seen = current
+    waiter.grant_baselined = True
+    if not baselined:
+        return None
+    changes = grant_diff(previous, current)
+    if not changes:
+        return None
+    if len(changes) > MAX_GRANT_CHANGES:
+        extra = len(changes) - MAX_GRANT_CHANGES
+        changes = [*changes[:MAX_GRANT_CHANGES], f"... and {extra} more"]
+    return {"kind": "grant-changed", "changes": changes}
 
 
 def _follow_events(

@@ -19,6 +19,10 @@ before editing `## Unreleased`.
   minutes and digests are off; both intervals can be tuned or disabled.
   Filtered items stay unread and ackable, and child followers stay unfiltered
   ([#141](https://github.com/VRTFinland/jailbee/issues/141)).
+- The inbox follower announces a change of the container's orchestration grant
+  (granted, revoked, or a field such as `max_running_children`) once, naming
+  what changed, so an orchestrator agent can adapt
+  ([#147](https://github.com/VRTFinland/jailbee/issues/147)).
 
 ### Changed
 

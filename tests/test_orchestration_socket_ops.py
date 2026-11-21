@@ -5,8 +5,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from jailbee.orchestration import broker_state, socket_ops, wire
+from jailbee.orchestration import broker_state, labels, socket_ops, wire
 from jailbee.orchestration.actions import Outcome
+from jailbee.orchestration.grant import Grant
 from jailbee.orchestration.socket_ops import NextArgs, Waiter, Waiters
 from jailbee.orchestration.store import BrokerStore, StoreError
 from tests.test_orchestration_broker import Rig, _child, _orch
@@ -493,3 +494,51 @@ def test_pulse_lead_sends_early_but_not_back_to_back(env: Env) -> None:
     assert ws.due_keepalives(5.0, lead=lead) == [1]
     assert ws.due_keepalives(9.9, lead=lead) == []  # next due at 35.0
     assert ws.due_keepalives(35.0) == [1]
+
+
+def _set_grant(env: Env, grant: object | None) -> None:
+    ctx = env.memory.contexts[env.orch]
+    if grant is None:
+        ctx.sender.config.pop(labels.GRANT, None)
+    else:
+        ctx.sender.config[labels.GRANT] = grant.to_label()  # type: ignore[attr-defined]
+
+
+def test_follower_unchanged_grant_republish_emits_nothing(env: Env) -> None:
+    ws = Waiters()
+    ws.add(env.waiter(follow=True))
+    assert env.evaluate(ws) == []
+    assert env.evaluate(ws, now=1001) == []
+    _set_grant(env, Grant.from_label(env.memory.contexts[env.orch].sender.config[labels.GRANT]))
+    assert env.evaluate(ws, now=1002) == []
+
+
+def test_follower_grant_field_change_emits_one_readable_event(env: Env) -> None:
+    ws = Waiters()
+    ws.add(env.waiter(follow=True))
+    env.evaluate(ws)
+    old = env.memory.contexts[env.orch].grant()
+    assert old is not None
+    new = old.model_copy(update={"max_running_children": old.max_running_children + 2})
+    _set_grant(env, new)
+    events = env.evaluate(ws, now=1001)
+    assert len(events) == 1
+    event = events[0][1]
+    assert isinstance(event, dict) and event["kind"] == "grant-changed"
+    assert event["changes"] == [
+        f"max_running_children: {old.max_running_children} -> {new.max_running_children}"
+    ]
+    assert env.evaluate(ws, now=1002) == []
+
+
+def test_follower_grant_revoked_and_added_each_emit(env: Env) -> None:
+    ws = Waiters()
+    ws.add(env.waiter(follow=True))
+    env.evaluate(ws)
+    original = Grant.from_label(env.memory.contexts[env.orch].sender.config[labels.GRANT])
+    _set_grant(env, None)
+    revoked = env.evaluate(ws, now=1001)
+    assert [r[1] for r in revoked] == [{"kind": "grant-changed", "changes": ["grant revoked"]}]
+    _set_grant(env, original)
+    added = env.evaluate(ws, now=1002)
+    assert [r[1] for r in added] == [{"kind": "grant-changed", "changes": ["grant added"]}]

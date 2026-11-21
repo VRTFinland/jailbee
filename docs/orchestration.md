@@ -715,6 +715,10 @@ read. Quiet-child notifications default to 120 minutes and digests are off;
 tune both and the wake filter through the repo's
 [`orchestration.follow`](config.md#orchestration) policy on the host. Child
 followers stay unfiltered and emit no quiet-child/digest events.
+Every follower also gets one `grant-changed` notification when its effective
+grant changes (granted, revoked or a field such as `max_running_children`),
+naming the changed fields; an unchanged republish stays silent, and the first
+connection only records the baseline.
 `jailbee inbox wait` keeps both interval options disabled by default.
 Read each notification with `jailbee inbox read <id>` and treat the body as
 sender instructions, not new authority. Headless Claude
