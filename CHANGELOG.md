@@ -33,7 +33,12 @@ before editing `## Unreleased`.
   `jailbee remote web open` logs the local browser in through a one-time link.
   `remote.web` sets the listen address, port, auth and excluded repositories,
   and `enable|disable|status` manage a systemd user unit that restarts the
-  server when JailBee is upgraded.
+  server when JailBee is upgraded. Every response carries a strict
+  Content-Security-Policy, `frame-ancestors 'none'` and `nosniff`; the audit
+  log keeps unthrottled link and FIDO2 failures on their own budget so they
+  cannot evict PIN or TOTP failures; and because the state database now holds
+  TOTP secrets, JailBee keeps its state directory `0700` and `state.sqlite`
+  `0600`, tightening existing ones on first use.
 
 ### Changed
 

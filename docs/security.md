@@ -135,6 +135,19 @@ Every login, failure, logout and revocation is audited
 - **Attempt limits.** PIN and TOTP attempts are limited to five a minute per
   method; one-time links (single use, 60 seconds, high entropy) and FIDO2
   signatures are not limited, so a PIN guesser cannot lock the owner out.
+  The limits slow guessing but do not stop it: at the full rate a TOTP code
+  has even odds of being guessed in about a month
+  ([the numbers](web-dashboard.md#logging-in)). Use FIDO2 keys with the PIN
+  off for an internet-facing dashboard, or do not expose it.
+- **Audit retention.** Failed link and FIDO2 logins are pruned on their own
+  budget, so an unthrottled flood of them cannot evict the PIN and TOTP
+  failures that show a guessing run.
+- **Secrets at rest.** TOTP secrets are stored in plaintext in the state
+  database; its directory is `0700` and the database files `0600`.
+- **Browser hardening.** Responses carry a strict `Content-Security-Policy`
+  (same-origin only, no inline script or style, `frame-ancestors 'none'`),
+  `X-Frame-Options: DENY`, `nosniff` and `no-referrer`, which limits what a
+  rendering bug in transcript HTML could do with the token in `localStorage`.
 - **Session attribution is best-effort.** Which container ran a session is
   recorded only while the state service runs, i.e. while some dashboard is
   connected; sessions run with no dashboard open stay unattributed.
