@@ -182,14 +182,14 @@ def image_pr_command(request, mocker, monkeypatch, tmp_path):
     read_outbox = pr_outbox.read_outbox
     pending_pr_text = pr_outbox.pending_pr_text
     if request.param == "submodule":
-        cfg, incus, _ = submodule_setup(mocker, tmp_path)
+        _cfg, incus, _ = submodule_setup(mocker, tmp_path)
         create = _happy(mocker)
         mocker.patch("jailbee.pr_outbox.read_outbox", side_effect=read_outbox)
         argv = ["submodule", "pr", "push", "feat-foo", "lib/a", "--yes", "--no-ai"]
         repo = "acme/lib-a"
     else:
         setup = _update_setup if request.param == "update" else _setup
-        cfg, incus = setup(mocker, tmp_path)
+        _cfg, incus = setup(mocker, tmp_path)
         mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
         mocker.patch("jailbee.pr_submodule_flow.publish_submodule_prs_first", return_value=[])
         create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
@@ -275,12 +275,20 @@ def uncertain_upload_command(source_publisher, monkeypatch, mocker):
     )
     with pytest.raises(AttachmentPublicationError):
         create_with_description(
-            p["cfg"], p["incus"], "full", source, source.text.body,
-            p["create"], lambda _: True, publisher="user"
+            p["cfg"],
+            p["incus"],
+            "full",
+            source,
+            source.text.body,
+            p["create"],
+            lambda _: True,
+            publisher="user",
         )
     mocker.patch("jailbee.config.load_repo_config", return_value=p["cfg"])
     mocker.patch("jailbee.incus.Incus", return_value=p["incus"])
-    mocker.patch("jailbee.outbox.attachment_recovery.resolve_target", return_value=(p["cfg"], "full"))
+    mocker.patch(
+        "jailbee.outbox.attachment_recovery.resolve_target", return_value=(p["cfg"], "full")
+    )
     argv = ["outbox", "attachment-resolve", "full", "pr/m.json", descriptor["blob"], "1"]
     return argv, descriptor, URL
 
