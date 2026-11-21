@@ -268,3 +268,17 @@ def test_setup_mode_sends_the_browser_to_the_setup_view(
 
     assert root.headers["location"] == "index.html#/setup"
     assert "JailBee" in page.text
+
+
+def test_pin_guessing_does_not_lock_out_a_security_key(
+    setup_client: TestClient, setup_pin: PinHolder, client: TestClient
+) -> None:
+    key = SoftAuthenticator(ORIGIN)
+    register(setup_client, setup_pin, key)
+    for _ in range(6):
+        last = client.post(
+            "/api/auth", json={"method": "pin", "pin": "x", "device_name": "x"}, headers=proxied()
+        )
+    assert last.status_code == 429
+
+    assert login(client, key).status_code == 200

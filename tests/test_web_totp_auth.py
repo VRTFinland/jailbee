@@ -226,3 +226,44 @@ def test_an_open_socket_of_a_revoked_session_gets_no_more_pages(
             with pytest.raises(WebSocketDisconnect) as closed:
                 ws.receive_json()
     assert closed.value.code == CLOSE_UNAUTHORIZED
+
+
+def bad_pins(client: TestClient, pin: PinHolder, count: int = 5) -> list[int]:
+    def guess() -> int:
+        wrong = "000000" if pin.current != "000000" else "999999"
+        body = {"method": "pin", "pin": wrong, "device_name": "x"}
+        return client.post("/api/auth", json=body).status_code
+
+    return [guess() for _ in range(count)]
+
+
+def test_pin_guessing_does_not_lock_out_totp(
+    client: TestClient, pin: PinHolder, clock: FakeClock
+) -> None:
+    secret = add_key(clock)
+    assert bad_pins(client, pin, 6) == [401] * 5 + [429]
+
+    assert totp_login(client, code(secret, clock)) == 200
+
+
+def test_pin_guessing_does_not_lock_out_a_login_link(
+    client: TestClient, pin: PinHolder, clock: FakeClock
+) -> None:
+    from jailbee.web import login_link
+
+    assert bad_pins(client, pin, 6)[-1] == 429
+    token = login_link.mint(get_engine(), clock=clock)
+
+    body = {"method": "link", "token": token, "device_name": "laptop"}
+    assert client.post("/api/auth", json=body).status_code == 200
+
+
+def test_totp_guessing_is_limited_on_its_own(
+    client: TestClient, pin: PinHolder, clock: FakeClock
+) -> None:
+    secret = add_key(clock)
+    wrong = wrong_code(secret, clock)
+
+    assert [totp_login(client, wrong) for _ in range(6)] == [401] * 5 + [429]
+    body = {"method": "pin", "pin": pin.current, "device_name": "x"}
+    assert client.post("/api/auth", json=body).status_code == 200

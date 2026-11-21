@@ -169,9 +169,10 @@ class SessionStore:
 
 
 class RateLimiter:
-    """At most ``max_attempts`` login attempts per sliding ``window`` seconds.
+    """At most ``max_attempts`` attempts per sliding ``window`` seconds, per bucket.
 
-    Shared by every login method. A refused attempt is not counted, so the
+    Each bucket (a login method, say) counts on its own, so guessing one
+    method never locks out another. A refused attempt is not counted, so the
     window drains on its own. Rotation already makes each PIN guess a
     one-in-a-million shot; this bounds how many such shots an hour allows.
     """
@@ -186,15 +187,16 @@ class RateLimiter:
         self._monotonic = monotonic
         self._max = max_attempts
         self._window = window
-        self._attempts: deque[float] = deque()
+        self._attempts: dict[str, deque[float]] = {}
         self._lock = threading.Lock()
 
-    def allow(self) -> bool:
+    def allow(self, bucket: str = "") -> bool:
         now = self._monotonic()
         with self._lock:
-            while self._attempts and self._attempts[0] <= now - self._window:
-                self._attempts.popleft()
-            if len(self._attempts) >= self._max:
+            attempts = self._attempts.setdefault(bucket, deque())
+            while attempts and attempts[0] <= now - self._window:
+                attempts.popleft()
+            if len(attempts) >= self._max:
                 return False
-            self._attempts.append(now)
+            attempts.append(now)
             return True
