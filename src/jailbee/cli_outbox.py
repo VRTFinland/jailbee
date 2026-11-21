@@ -215,7 +215,8 @@ def _parse_proposal(value: str, kind: Kind | None) -> ProposalId:
     if kind is None or "/" in value:
         pid = ProposalId.parse(value)
         if kind is not None and pid.kind != kind:
-            raise OutboxError(f"{value}: not a {kind} proposal")
+            article = "an" if kind[0] in "aeiou" else "a"
+            raise OutboxError(f"{value}: not {article} {kind} proposal")
         return pid
     return ProposalId(kind, value)
 

@@ -1337,8 +1337,7 @@ there is the consent (`--foreign` is passed only then). Publication asks exactly
 plan. `jb pr push`'s post-push
 offer never publishes to
 another PR: it holds such a manifest back and names
-`jb review apply --foreign <container> <manifest>`. `jb outbox ls` lists it with
-the state `not bound`.
+`jb review apply --foreign <container> <manifest>`.
 
 On a terminal, `jb outbox` (or `jb outbox browse [<container>]`) opens the
 **outbox manager** full screen: every container of the current repository

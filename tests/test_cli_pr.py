@@ -3044,7 +3044,7 @@ def test_declining_the_offer_leaves_everything_pending(mocker, tmp_path, typed_c
     # true of the off-TTY hint, which asks nothing, so the prompt is the pin.
     assert "Post 1 pending PR comment now?" in result.output
     assert "Nothing published." in result.output
-    assert "jailbee review apply" in result.output
+    assert "jailbee outbox apply feat-foo pr/001-x.json" in result.output
 
 
 def test_a_stale_review_is_held_back_with_a_reason(mocker, tmp_path):
@@ -3149,7 +3149,8 @@ def test_no_offer_off_tty_just_a_hint(mocker, tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     apply_mock.assert_not_called()
-    assert "1 pending PR comment" in result.output and "jailbee review apply" in result.output
+    assert "1 pending PR comment" in result.output
+    assert "jailbee outbox apply feat-foo pr/001-x.json" in " ".join(result.output.split())
 
 
 def test_no_outbox_suppresses_the_offer(mocker, tmp_path):

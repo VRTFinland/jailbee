@@ -1518,17 +1518,18 @@ def test_issue_apply_takes_the_manifest_as_argument_or_option(env, mocker, args,
 
 
 @pytest.mark.parametrize(
-    "args",
+    ("args", "message"),
     [
-        ["issue", "apply", "feature", "001.json", "--manifest", "002.json"],
-        ["issue", "apply", "feature", "pr/001.json"],
-        ["review", "apply", "feature", "issue/001.json"],
+        (["issue", "apply", "feature", "001.json", "--manifest", "002.json"], "give the manifest once"),
+        (["issue", "apply", "feature", "pr/001.json"], "not an issue proposal"),
+        (["review", "apply", "feature", "issue/001.json"], "not a pr proposal"),
     ],
 )
-def test_kind_alias_apply_refuses_an_ambiguous_or_other_kind_manifest(env, mocker, args):
+def test_kind_alias_apply_refuses_an_ambiguous_or_other_kind_manifest(env, mocker, args, message):
     applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
     result = CliRunner().invoke(app, [*args, "-y"])
     assert result.exit_code == 2, result.output
+    assert message in " ".join(result.output.split())
     applied.assert_not_called()
 
 
