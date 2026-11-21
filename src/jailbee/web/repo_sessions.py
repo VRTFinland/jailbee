@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from jailbee.transcripts.base import SessionInfoCache, get_source
+from jailbee.transcripts.base import Entry, SessionInfo, SessionInfoCache, get_source
 
 if TYPE_CHECKING:
     from jailbee.state_service.protocol import Snapshot
@@ -49,6 +49,15 @@ class SessionRow:
     models: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class SessionTranscript:
+    """One session's list row and every entry of its transcript."""
+
+    agent: str
+    info: SessionInfo
+    entries: tuple[Entry, ...]
+
+
 class RepoSessions:
     """Lists sessions across a repository's agents; owns the info cache."""
 
@@ -78,3 +87,28 @@ class RepoSessions:
             key=lambda r: r.last_activity.timestamp() if r.last_activity else 0.0, reverse=True
         )
         return rows
+
+    def transcript(self, prefix: str, agent: str, session_id: str) -> SessionTranscript | None:
+        """One session read whole; None for an unknown repository, agent or session.
+
+        ``agent`` must be one of the repository's own agents, and the source's
+        `locate` validates ``session_id``, so neither reaches a path unchecked.
+        """
+        homes = self._homes(prefix)
+        if homes is None:
+            return None
+        for name, home in homes:
+            if name != agent:
+                continue
+            try:
+                source = get_source(name)
+            except KeyError:
+                return None
+            files = source.locate(home, session_id)
+            if files is None:
+                continue
+            info = source.session_info(session_id, files.transcript, self._cache)
+            if info is None:
+                return None
+            return SessionTranscript(agent, info, source.read(files.transcript).entries)
+        return None

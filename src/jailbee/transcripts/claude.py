@@ -419,6 +419,11 @@ class ClaudeSource:
         oldest = datetime.min.replace(tzinfo=UTC)
         return sorted(sessions, key=lambda s: s.last_activity or oldest, reverse=True)
 
+    def session_info(
+        self, session_id: str, path: Path, cache: SessionInfoCache | None = None
+    ) -> SessionInfo | None:
+        return _cached_info(session_id, path, cache)
+
     def subagent_transcript(self, config_home: Path, session_id: str, agent_id: str) -> Path | None:
         if AGENT_ID.fullmatch(agent_id) is None:
             return None

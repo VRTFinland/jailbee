@@ -1,4 +1,4 @@
-"""`/api/repos/{prefix}/sessions`: the session list of one repository."""
+"""`/api/repos/{prefix}/sessions`: a repository's sessions, and one session."""
 
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ from starlette.concurrency import run_in_threadpool
 
 from jailbee.web.container_sessions import session_containers
 from jailbee.web.deps import Context, RequireSession
-from jailbee.web.protocol import SessionListView, SessionView
+from jailbee.web.protocol import SessionListView, SessionView, TranscriptView
+from jailbee.web.transcript_render import render_entries
 
 router = APIRouter()
 
@@ -39,3 +40,31 @@ async def repo_sessions(prefix: str, ctx: Context, _auth: RequireSession) -> Ses
             for r in rows
         ]
     )
+
+
+@router.get("/api/repos/{prefix}/sessions/{agent}/{session_id}")
+async def session_transcript(
+    prefix: str, agent: str, session_id: str, ctx: Context, _auth: RequireSession
+) -> TranscriptView:
+    # Unknown and excluded repositories, agents and sessions all answer the
+    # same 404, so the answer reveals nothing about what exists.
+    if not ctx.scope.allows(prefix):
+        raise HTTPException(status_code=404, detail="Unknown session")
+
+    def load() -> TranscriptView | None:
+        found = ctx.repo_sessions.transcript(prefix, agent, session_id)
+        if found is None:
+            return None
+        return TranscriptView(
+            session_id=found.info.session_id,
+            agent=found.agent,
+            title=found.info.title,
+            last_activity=found.info.last_activity,
+            models=list(found.info.models),
+            entries=render_entries(found.entries, ctx.render_cache),
+        )
+
+    view = await run_in_threadpool(load)
+    if view is None:
+        raise HTTPException(status_code=404, detail="Unknown session")
+    return view

@@ -182,6 +182,12 @@ class TranscriptSource(Protocol):
         With a `cache`, a transcript unchanged since the last call is not read."""
         ...
 
+    def session_info(
+        self, session_id: str, path: Path, cache: SessionInfoCache | None = None
+    ) -> SessionInfo | None:
+        """One session's list row, from the transcript `locate` found."""
+        ...
+
     def subagent_transcript(self, config_home: Path, session_id: str, agent_id: str) -> Path | None:
         """The transcript a `SubagentRef.agent_id` names, or None."""
         ...

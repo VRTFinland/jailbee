@@ -113,6 +113,96 @@ class SessionListView(BaseModel):
     sessions: list[SessionView]
 
 
+class _Rendered(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    id: str
+    """The transcript entry's id: stable across reads, unique in a session."""
+    timestamp: datetime | None
+
+
+class RenderedUser(_Rendered):
+    """A prompt. ``meta`` marks an agent's own wrapper text (``<command-name>``,
+    ``<system-reminder>``, ...), shown verbatim and muted."""
+
+    kind: Literal["user"] = "user"
+    html: str
+    meta: bool = False
+
+
+class RenderedAssistant(_Rendered):
+    kind: Literal["assistant"] = "assistant"
+    html: str
+    model: str | None
+
+
+class RenderedThinking(_Rendered):
+    """``html`` is empty when the agent stored the thinking redacted."""
+
+    kind: Literal["thinking"] = "thinking"
+    html: str
+    model: str | None
+
+
+class RenderedToolCall(_Rendered):
+    """One tool call: ``summary`` is the folded one-liner, ``input_html`` the
+    arguments as highlighted JSON. Its result is a separate `RenderedToolResult`
+    with the same ``call_id``, which may arrive in a later read."""
+
+    kind: Literal["tool_call"] = "tool_call"
+    call_id: str
+    name: str
+    summary: str
+    input_html: str
+    model: str | None
+
+
+class RenderedToolResult(_Rendered):
+    """What a tool returned, escaped into ``html``; cut at the source's limit
+    when ``truncated`` (``full_length`` is the untruncated length)."""
+
+    kind: Literal["tool_result"] = "tool_result"
+    call_id: str
+    html: str
+    truncated: bool
+    full_length: int
+    is_error: bool
+
+
+class RenderedSubagent(_Rendered):
+    """A subagent started by the tool call ``call_id``; ``agent_id`` opens it."""
+
+    kind: Literal["subagent"] = "subagent"
+    call_id: str
+    agent_id: str
+    agent_type: str | None
+    description: str | None
+
+
+RenderedEntry = Annotated[
+    RenderedUser
+    | RenderedAssistant
+    | RenderedThinking
+    | RenderedToolCall
+    | RenderedToolResult
+    | RenderedSubagent,
+    Field(discriminator="kind"),
+]
+"""One transcript entry, ready to display. The REST session view and the
+WebSocket's live appends carry the same shape."""
+
+
+class TranscriptView(BaseModel):
+    """`GET /api/repos/{prefix}/sessions/{agent}/{session_id}`: a whole session."""
+
+    model_config = ConfigDict(frozen=True)
+    session_id: str
+    agent: str
+    title: str
+    last_activity: datetime | None
+    models: list[str]
+    entries: list[RenderedEntry]
+
+
 class FrontPageView(BaseModel):
     """The whole front page, sent in full on every snapshot."""
 

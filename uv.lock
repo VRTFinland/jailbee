@@ -453,6 +453,8 @@ ssh = [
 ]
 web = [
     { name = "fastapi" },
+    { name = "markdown" },
+    { name = "pygments" },
     { name = "pyotp" },
     { name = "qrcode" },
     { name = "uvicorn" },
@@ -464,7 +466,9 @@ dev = [
     { name = "asyncssh" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "markdown" },
     { name = "mypy" },
+    { name = "pygments" },
     { name = "pyotp" },
     { name = "pyside6" },
     { name = "pytest" },
@@ -475,6 +479,8 @@ dev = [
     { name = "pytest-xdist" },
     { name = "qrcode" },
     { name = "ruff" },
+    { name = "types-markdown" },
+    { name = "types-pygments" },
     { name = "types-pyyaml" },
     { name = "uvicorn" },
     { name = "websockets" },
@@ -490,9 +496,11 @@ docs = [
 requires-dist = [
     { name = "asyncssh", marker = "extra == 'ssh'", specifier = ">=2.24" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115" },
+    { name = "markdown", marker = "extra == 'web'", specifier = ">=3.5" },
     { name = "markdown-it-py", specifier = ">=4.0,<5" },
     { name = "prompt-toolkit", specifier = ">=3.0" },
     { name = "pydantic", specifier = ">=2.6" },
+    { name = "pygments", marker = "extra == 'web'", specifier = ">=2.17" },
     { name = "pyotp", marker = "extra == 'web'", specifier = ">=2.9" },
     { name = "pyside6", marker = "extra == 'gui'", specifier = ">=6.7" },
     { name = "pyyaml", specifier = ">=6.0" },
@@ -513,7 +521,9 @@ dev = [
     { name = "asyncssh", specifier = ">=2.24" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "markdown", specifier = ">=3.5" },
     { name = "mypy", specifier = ">=1.10" },
+    { name = "pygments", specifier = ">=2.17" },
     { name = "pyotp", specifier = ">=2.9" },
     { name = "pyside6", specifier = ">=6.7" },
     { name = "pytest", specifier = ">=8.0" },
@@ -524,6 +534,8 @@ dev = [
     { name = "pytest-xdist", specifier = ">=3.6" },
     { name = "qrcode", specifier = ">=7.4" },
     { name = "ruff", specifier = ">=0.5" },
+    { name = "types-markdown", specifier = ">=3.11.3.20261108" },
+    { name = "types-pygments", specifier = ">=2.21.0.20261115" },
     { name = "types-pyyaml", specifier = ">=6.0" },
     { name = "uvicorn", specifier = ">=0.30" },
     { name = "websockets", specifier = ">=13" },
@@ -1450,6 +1462,24 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/03/51/d33db42cc72ffd8c30777547b42d01f0cbf9d95a770457698d0174b3ed71/typer-0.27.3.tar.gz", hash = "sha256:d0396f770a560ab1b0a8504e13b5f254b728cedb05c61cf0359e944e50ce8901", size = 205303, upload-time = "2026-10-06T17:24:16.61Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/07/ea/2e31b67051e91a133189e9c000c222502ddc6969856416de0d095de4c0b0/typer-0.27.3-py3-none-any.whl", hash = "sha256:e50022f28b82a86313e54501317a1db64bf8f8d036ff8cfe5ca7e47675454aff", size = 123312, upload-time = "2026-10-06T17:24:15.054Z" },
+]
+
+[[package]]
+name = "types-markdown"
+version = "3.11.3.20261108"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/49/b7e71464ac2a88112202cc19885169703897be958801ddc13d6f6b911e52/types_markdown-3.11.3.20261108.tar.gz", hash = "sha256:eac0188fc8dacbf9bbbea68a0aee98c7d3b0008f8b1def1a141cd669dd7c708a", size = 21043, upload-time = "2026-11-08T08:12:43.96Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/01/c8/d6538cf551ca721782891de6455a129679eab0d2fedd39570e66e5057c77/types_markdown-3.11.3.20261108-py3-none-any.whl", hash = "sha256:f906be98f35c745906ce2b88bd803f5e2af78d2f2f146d700110152ac20ffc38", size = 26452, upload-time = "2026-11-08T08:12:43.074Z" },
+]
+
+[[package]]
+name = "types-pygments"
+version = "2.21.0.20261115"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9c/08/24586d80224f2ec635254df6d9fa8c6910eba35c893f04f9223ddfc37cd6/types_pygments-2.21.0.20261115.tar.gz", hash = "sha256:cecb86ae5d6d9d06184f6f2f71a23a88242606ae54c52673d949bb6e5592a606", size = 21770, upload-time = "2026-11-15T08:33:27.549Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7d/2f/c0336c0bee671708ed0e3762fac94170de595461523598dfa470a888d3c5/types_pygments-2.21.0.20261115-py3-none-any.whl", hash = "sha256:6179c0d8460f32491b60294f6e4c340811a97e229a9738327c9d33ea0bb5ad59", size = 29248, upload-time = "2026-11-15T08:33:26.429Z" },
 ]
 
 [[package]]
