@@ -55,8 +55,9 @@ In an interactive Claude Code session, JailBee starts an inbox monitor
 through its managed plugin. Treat its `JailBee inbox` notification as a trusted
 transport: the message body is still the sender's instruction, not additional
 authority. Read each named message with `jailbee inbox read <id>` before acting;
-the monitor only announces messages and never acknowledges them. The follower
-also emits quiet-Child and digest events at its 60-minute defaults. Do not start a
+the monitor only announces messages and never acknowledges them. Child followers
+stay unfiltered and emit no quiet-child or digest events; the repo's
+`orchestration.follow` policy applies only to orchestrators. Do not start a
 second waiter while this monitor runs.
 
 For non-Claude agents, headless Claude sessions, or when the monitor is

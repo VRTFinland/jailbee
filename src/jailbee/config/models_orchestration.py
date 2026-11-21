@@ -10,6 +10,9 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from jailbee.egress import validate_allow_entry
+from jailbee.inbox.cli import parse_duration
+from jailbee.inbox.errors import InboxUsage
+from jailbee.inbox.waiting import valid_wake_token
 from jailbee.orchestration.grant import (
     DEFAULT_MAX_RUNNING_CHILDREN,
     DEFAULT_OPERATIONS,
@@ -236,6 +239,42 @@ class OrchestrationHostConfig(BaseModel):
         return self
 
 
+class FollowConfig(BaseModel):
+    """Notification policy for an orchestrator's managed inbox follower."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    wake_on: list[str] | None = Field(
+        default_factory=lambda: [
+            "msg:done", "msg:question", "msg:blocked", "msg:idle", "msg:note",
+            "status:failed", "status:refused",
+        ],
+        description="Wait wake tokens; null announces every unread item.",
+    )
+    quiet_after: str = Field(default="120m", description="Quiet-child interval, or off.")
+    digest: str = Field(default="off", description="Status digest interval, or off.")
+
+    @field_validator("wake_on")
+    @classmethod
+    def _wake_tokens(cls, values: list[str] | None) -> list[str] | None:
+        if values is not None and not all(valid_wake_token(token) for token in values):
+            raise ValueError("wake_on must contain valid inbox wait wake tokens")
+        return values
+
+    @field_validator("quiet_after", "digest")
+    @classmethod
+    def _interval(cls, value: str) -> str:
+        if value == "off":
+            return value
+        try:
+            seconds = parse_duration(value)
+        except InboxUsage as exc:
+            raise ValueError(str(exc)) from exc
+        if seconds <= 0:
+            raise ValueError("follow interval must be positive, or off")
+        return value
+
+
 class RepoOrchestration(BaseModel):
     """A repo's `orchestration:` block: it can only narrow what the host grants."""
 
@@ -244,6 +283,11 @@ class RepoOrchestration(BaseModel):
     publish: PublishRightsConfig | Literal[False] | None = Field(
         default=None,
         description="Narrow the host's publish rights; false forbids all publishing in this repo.",
+    )
+
+    follow: FollowConfig = Field(
+        default_factory=FollowConfig,
+        description="Managed inbox follower policy for orchestrators; children stay unfiltered.",
     )
 
     idle_after_seconds: int = Field(

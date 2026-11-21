@@ -13,6 +13,7 @@ import queue
 import time
 from typing import TYPE_CHECKING
 
+from jailbee.inbox.cli import parse_duration
 from jailbee.orchestration import socket_ops, wire
 from jailbee.orchestration.listener import DisconnectEvent, RequestEvent
 from jailbee.orchestration.store import StoreError
@@ -140,14 +141,26 @@ def _dispatch(
     if op == "grant":
         return socket_ops.handle_grant(memory, uuid)
     if op == "follow":
+        ctx = memory.contexts[uuid]
+        policy = ctx.cfg.orchestration_view().repo.follow
+        orchestrator = ctx.role() == "orchestrator"
         mono = clock()
         memory.waiters.add(
             socket_ops.Waiter(
                 uuid=uuid,
                 conn_id=event.conn_id,
-                wake=None,
-                quiet=0,
-                digest=0,
+                wake=(
+                    frozenset(policy.wake_on)
+                    if orchestrator and policy.wake_on is not None else None
+                ),
+                quiet=(
+                    parse_duration(policy.quiet_after)
+                    if orchestrator and policy.quiet_after != "off" else 0
+                ),
+                digest=(
+                    parse_duration(policy.digest)
+                    if orchestrator and policy.digest != "off" else 0
+                ),
                 deadline=None,
                 follow=True,
                 keepalive=True,

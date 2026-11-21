@@ -8,6 +8,18 @@ before editing `## Unreleased`.
 
 ## Unreleased
 
+### Added
+
+- Interactive Claude Code sessions receive managed, non-acknowledging inbox
+  notifications through `jailbee inbox follow`
+  ([#135](https://github.com/VRTFinland/jailbee/issues/135)). The repo's
+  `orchestration.follow` policy uses the `inbox wait` wake-token grammar;
+  orchestrators default to every child message and failed/refused statuses,
+  skipping routine success acks. Quiet-child notifications default to 120
+  minutes and digests are off; both intervals can be tuned or disabled.
+  Filtered items stay unread and ackable, and child followers stay unfiltered
+  ([#141](https://github.com/VRTFinland/jailbee/issues/141)).
+
 ## 1.8.9 - 2026-11-17
 
 Run `jailbee apply` after upgrading to refresh the installed issue, PR-review

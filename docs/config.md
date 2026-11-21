@@ -3108,12 +3108,15 @@ host-local default, the repo default, and finally the global default. It is a
 preference, not a right, and does not grant orchestration permissions.
 
 **Per repo** (`.jailbee/config.yaml`): rights may only be narrowed; the repo
-may set `default_runner` and the idle-report threshold freely.
+may set `default_runner`, idle-report thresholds and follower notifications freely.
 
 | Key | Default | Effect |
 |---|---|---|
 | `idle_after_seconds` | `900` | Positive seconds a live prompted child must await input before a broker `idle` message; also the repeat interval. Requires an adapter session signal (currently Claude); see [idle monitoring](orchestration.md#the-broker). |
 | `message_retention_days` | `30` | Minimum `1`. Days the broker keeps a container's read (acked) orchestration messages in its message store before deleting them. Unread messages are never purged by this setting. |
+| `follow.wake_on` | all message kinds plus `status:failed`, `status:refused` | List of the same tokens as `inbox wait --wake-on`. `null` announces everything; `[]` suppresses item notifications. Applies only to orchestrator followers. |
+| `follow.quiet_after` | `120m` | Quiet-child notification threshold: positive seconds or `<n>s\|m\|h`, or `off`. |
+| `follow.digest` | `off` | Periodic child-status digest: positive seconds or `<n>s\|m\|h`, or `off`. |
 | `allowed` | `true` | `false`: containers of this repo cannot be granted and existing grants have no effect |
 | `max_running_children` | none | Lowers the grant's limit |
 | `mounts` | none | Mounts children may be given; others are dropped |
@@ -3121,6 +3124,30 @@ may set `default_runner` and the idle-report threshold freely.
 | `loose` | none | `false` forbids handing loose network to children |
 | `publish` | none | Same block as a profile: intersect actions/repos/booleans and take the smaller rate; `false` forbids all publishing. Never grants new rights. |
 | `default_runner` | none | Preferred runner, with the same `{agent, profile?, model?}` shape as the host setting |
+
+The managed `jailbee inbox follow` monitor uses this repo policy:
+
+```yaml
+orchestration:
+  follow:
+    wake_on: [msg:done, msg:question, msg:blocked, msg:idle, msg:note, status:failed, status:refused]
+    quiet_after: 120m
+    digest: off
+```
+
+The host broker applies the policy when the follower connects, using the host's
+registered repo config, not the container's working copy. Reconnect the monitor
+(or start a new agent session) after the broker has loaded a config change.
+No plugin arguments or container config imports are needed. Children remain
+unfiltered and receive no quiet-child/digest events. Bare tokens match a message
+kind or status state; `msg:<kind>` and `status:<state>` restrict the record type.
+Unlike `wait`, a configured follower filter has no first-child-message bypass.
+Quiet-child and digest notifications are independent of `wake_on`.
+
+The default skips delivered, queued, started and spawn-ready success statuses.
+Skipped items stay unread and can still be read individually or acknowledged
+with `jailbee inbox read --ok-statuses`. The policy changes notifications only;
+it never deletes messages or changes `inbox wait` behavior.
 
 `profiles` and `default_profile` are refused in a repo's config. A profile
 grants rights, and a repo file arrives with the repo (a clone, a pull
