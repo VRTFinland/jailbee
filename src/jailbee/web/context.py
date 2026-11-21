@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from jailbee.web.auth import Clock, PinHolder, RateLimiter, SessionStore, utcnow
+from jailbee.web.auth_admin import TotpVerifier
 from jailbee.web.state import DEFAULT_GRACE_SECONDS, SnapshotSourceFactory, StateHub
 
 if TYPE_CHECKING:
@@ -44,6 +45,7 @@ class WebContext:
     deps: WebDeps
     sessions: SessionStore = field(init=False)
     limiter: RateLimiter = field(init=False)
+    totp: TotpVerifier = field(init=False)
     hub: StateHub = field(init=False)
 
     @property
@@ -56,4 +58,5 @@ class WebContext:
     def __post_init__(self) -> None:
         self.sessions = SessionStore(self.deps.engine, self.deps.clock)
         self.limiter = RateLimiter(self.deps.monotonic)
+        self.totp = TotpVerifier(self.deps.engine, self.deps.clock)
         self.hub = StateHub(self.deps.snapshot_source, grace_seconds=self.deps.grace_seconds)

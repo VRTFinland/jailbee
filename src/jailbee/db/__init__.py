@@ -28,7 +28,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 23
+CURRENT_SCHEMA_VERSION = 24
 
 
 def state_dir() -> Path:
@@ -309,6 +309,11 @@ def _migrate_to_v23(conn: Connection) -> None:
     return None
 
 
+def _migrate_to_v24(conn: Connection) -> None:
+    """v23 -> v24 adds `web_auth_setting`, `web_totp_key` and `web_auth_event` via create_all."""
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -333,6 +338,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     21: _migrate_to_v21,
     22: _migrate_to_v22,
     23: _migrate_to_v23,
+    24: _migrate_to_v24,
 }
 
 

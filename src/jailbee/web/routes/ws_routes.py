@@ -36,7 +36,7 @@ router = APIRouter()
 AUTH_TIMEOUT_SECONDS = 10.0
 
 
-async def _authenticate(ws: WebSocket, ctx: WebContext) -> SessionInfo | None:
+async def _authenticate(ws: WebSocket, ctx: WebContext) -> tuple[str, SessionInfo] | None:
     """Read the first message; close the socket and return None unless it logs in."""
     try:
         first = await asyncio.wait_for(ws.receive_text(), AUTH_TIMEOUT_SECONDS)
@@ -53,14 +53,19 @@ async def _authenticate(ws: WebSocket, ctx: WebContext) -> SessionInfo | None:
     session = await run_in_threadpool(ctx.sessions.validate, message.token)
     if session is None:
         await ws.close(code=CLOSE_UNAUTHORIZED, reason="Invalid token")
-    return session
+        return None
+    return message.token, session
 
 
-async def _push(ws: WebSocket, ctx: WebContext, subscriber: Subscriber) -> None:
+async def _push(ws: WebSocket, ctx: WebContext, subscriber: Subscriber, token: str) -> None:
+    """Send what changed on each wake-up; close instead once the session is revoked."""
     last_seq: int | None = None
     last_status: str | None = None
     while True:
         await subscriber.wait()
+        if not await run_in_threadpool(ctx.sessions.is_active, token):
+            await ws.close(code=CLOSE_UNAUTHORIZED, reason="Session revoked")
+            return
         status = ctx.hub.status()
         if status != last_status:
             last_status = status
@@ -88,13 +93,14 @@ async def _receive(ws: WebSocket) -> None:
 async def websocket_endpoint(ws: WebSocket) -> None:
     ctx = get_context(ws)
     await ws.accept()
-    session = await _authenticate(ws, ctx)
-    if session is None:
+    authed = await _authenticate(ws, ctx)
+    if authed is None:
         return
+    token, session = authed
     await ws.send_text(encode(ServerHello(device_name=session.device_name)))
     subscriber = ctx.hub.attach()
     tasks = [
-        asyncio.create_task(_push(ws, ctx, subscriber)),
+        asyncio.create_task(_push(ws, ctx, subscriber, token)),
         asyncio.create_task(_receive(ws)),
     ]
     try:

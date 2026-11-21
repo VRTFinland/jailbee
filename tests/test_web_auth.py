@@ -114,7 +114,7 @@ def test_login_needs_a_sensible_device_name(
 
 
 def test_unknown_auth_method_is_refused(client: TestClient) -> None:
-    response = client.post("/api/auth", json={"method": "totp", "code": "1", "device_name": "x"})
+    response = client.post("/api/auth", json={"method": "fido2", "code": "1", "device_name": "x"})
 
     assert response.status_code == 422
 

@@ -404,3 +404,51 @@ class WebSession(SQLModel, table=True):
     device_name: str
     created_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
     last_used_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+
+
+class WebAuthSetting(SQLModel, table=True):
+    """One web dashboard login setting, as a key/value row (#109).
+
+    Only `pin_enabled` so far ("true"/"false"; a missing row means on).
+    Written by `jailbee remote web auth`, read by the server on every login,
+    so a change takes effect without a restart.
+    """
+
+    __tablename__ = "web_auth_setting"
+
+    key: str = Field(primary_key=True)
+    value: str
+
+
+class WebTotpKey(SQLModel, table=True):
+    """One authenticator-app key the web dashboard accepts TOTP codes from (#109).
+
+    `secret` is the base32 TOTP secret in the clear: verifying a code needs
+    it, so unlike a session token it cannot be stored as a hash.
+    """
+
+    __tablename__ = "web_totp_key"
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    secret: str
+    created_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+
+
+class WebAuthEvent(SQLModel, table=True):
+    """One entry of the web dashboard's login audit log (#109).
+
+    `event` is login, login_failed, logout or revoke; `method` the login
+    method tried (pin, totp) or "cli" for a revocation from the command line;
+    `source` the client address when there was one. Pruned to the newest
+    rows by `jailbee.web.auth_admin`.
+    """
+
+    __tablename__ = "web_auth_event"
+
+    id: int | None = Field(default=None, primary_key=True)
+    at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False, index=True))
+    event: str
+    method: str = ""
+    device_name: str = ""
+    source: str = ""

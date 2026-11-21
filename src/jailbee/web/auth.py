@@ -145,6 +145,17 @@ class SessionStore:
             s.refresh(row)
             return _info(row)
 
+    def is_active(self, token: str) -> bool:
+        """Whether ``token`` still names a live session, without sliding its expiry.
+
+        An open WebSocket asks this before each send, so a session revoked
+        from the CLI (another process) stops receiving data.
+        """
+        cutoff = self._clock() - self._ttl
+        with Session(self._engine) as s:
+            row = s.exec(select(WebSession).where(WebSession.token_hash == _hash(token))).first()
+            return row is not None and row.last_used_at >= cutoff
+
     def revoke(self, token: str) -> None:
         with Session(self._engine) as s:
             s.exec(delete(WebSession).where(col(WebSession.token_hash) == _hash(token)))
