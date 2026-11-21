@@ -250,6 +250,19 @@ def test_repo_follow_policy_loads_and_round_trips(repo_and_global):
     assert RepoOrchestration.model_validate({"follow": policy.model_dump()}).follow == policy
 
 
+@pytest.mark.parametrize("quiet, digest, expected", [
+    ("off", "off", ("off", "off")),
+    ("120", "55m", ("120", "55m")),
+])
+def test_repo_follow_accepts_yaml_intervals(repo_and_global, quiet, digest, expected):
+    _, repo_path, _ = repo_and_global
+    repo_path.write_text(
+        f"orchestration:\n  follow:\n    quiet_after: {quiet}\n    digest: {digest}\n"
+    )
+    policy = load_config(repo_path).orchestration_view().repo.follow
+    assert (policy.quiet_after, policy.digest) == expected
+
+
 def test_invalid_repo_block_names_origin(repo_and_global):
     _, repo_path, _ = repo_and_global
     _write(repo_path, {"orchestration": {"max_running_children": 0}})

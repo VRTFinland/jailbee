@@ -261,6 +261,14 @@ class FollowConfig(BaseModel):
             raise ValueError("wake_on must contain valid inbox wait wake tokens")
         return values
 
+    @field_validator("quiet_after", "digest", mode="before")
+    @classmethod
+    def _yaml_interval(cls, value: object) -> object:
+        # YAML 1.1 reads unquoted off as false and bare seconds as integers.
+        if value is False:
+            return "off"
+        return str(value) if type(value) is int else value
+
     @field_validator("quiet_after", "digest")
     @classmethod
     def _interval(cls, value: str) -> str:
