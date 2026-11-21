@@ -72,8 +72,9 @@ def test_serve_without_a_built_frontend_says_make_web(
     argv: list[str], global_config: GlobalConfig, tmp_path: Path, mocker: MockerFixture
 ) -> None:
     pytest.importorskip("fastapi")
+    uvicorn = pytest.importorskip("uvicorn")
     mocker.patch("jailbee.web.assets.default_static_dir", return_value=tmp_path)
-    run = mocker.patch("uvicorn.run")
+    run = mocker.patch.object(uvicorn.Server, "run", autospec=True)
 
     result = CliRunner().invoke(app, argv)
 
@@ -87,7 +88,8 @@ def test_serve_prints_url_and_pin_then_runs_the_server(
     argv: list[str], global_config: GlobalConfig, built_frontend: Path, mocker: MockerFixture
 ) -> None:
     pytest.importorskip("fastapi")
-    run = mocker.patch("uvicorn.run")
+    uvicorn = pytest.importorskip("uvicorn")
+    run = mocker.patch.object(uvicorn.Server, "run", autospec=True)
 
     result = CliRunner().invoke(app, argv)
 
@@ -96,28 +98,31 @@ def test_serve_prints_url_and_pin_then_runs_the_server(
     assert "http://127.0.0.1:8910/" in output
     assert re.search(r"PIN: \d{6}\b", output)
     run.assert_called_once()
-    assert run.call_args.kwargs["host"] == "127.0.0.1"
-    assert run.call_args.kwargs["port"] == 8910
+    config = run.call_args.args[0].config
+    assert (config.host, config.port) == ("127.0.0.1", 8910)
 
 
 def test_serve_listen_and_port_override_config_for_one_run(
     global_config: GlobalConfig, built_frontend: Path, mocker: MockerFixture
 ) -> None:
     pytest.importorskip("fastapi")
-    run = mocker.patch("uvicorn.run")
+    uvicorn = pytest.importorskip("uvicorn")
+    run = mocker.patch.object(uvicorn.Server, "run", autospec=True)
 
     result = CliRunner().invoke(app, ["serve", "--listen", "::1", "--port", "9123"])
 
     assert result.exit_code == 0, result.output
     assert "http://[::1]:9123/" in flat_output(result.stdout)
-    assert (run.call_args.kwargs["host"], run.call_args.kwargs["port"]) == ("::1", 9123)
+    config = run.call_args.args[0].config
+    assert (config.host, config.port) == ("::1", 9123)
 
 
 def test_serve_rejects_a_listen_address_that_is_not_an_ip(
     global_config: GlobalConfig, built_frontend: Path, mocker: MockerFixture
 ) -> None:
     pytest.importorskip("fastapi")
-    run = mocker.patch("uvicorn.run")
+    uvicorn = pytest.importorskip("uvicorn")
+    run = mocker.patch.object(uvicorn.Server, "run", autospec=True)
 
     result = CliRunner().invoke(app, ["serve", "--listen", "example.org"])
 

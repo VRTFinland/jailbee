@@ -9,6 +9,22 @@ class WebServeError(Exception):
     """A user-facing reason the web server cannot start; the message is shown as is."""
 
 
+class ServiceUpdatedError(WebServeError):
+    """The server stopped because the installed JailBee version changed.
+
+    The unit's `Restart=on-failure` starts it again on the new code, so the
+    CLI exits non-zero (`SERVICE_UPDATED_EXIT`, EX_TEMPFAIL) on purpose.
+    """
+
+    def __init__(self, running: str, installed: str) -> None:
+        super().__init__(f"JailBee was updated from {running} to {installed}; restarting")
+        self.running = running
+        self.installed = installed
+
+
+SERVICE_UPDATED_EXIT = 75
+
+
 class WebDependencyError(WebServeError):
     """The optional `web` extra is not installed."""
 

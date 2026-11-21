@@ -64,7 +64,8 @@ isolated per-branch development environments using Incus system containers. See
   `macsetup/` call no `container` of their own), `macsetup/steps_wiring.py`
   (`ssh-keygen`), `macsetup/steps_gui.py` (`brew`), `cswap.py` (`cswap`),
   `remote_ssh/service.py` (`systemctl`, to install/enable/disable/restart/
-  inspect the SSH user unit), `orchestration/service.py` (`systemctl`, to
+  inspect the SSH user unit), `web/service.py` (`systemctl`, to
+  install/enable/disable/inspect the web dashboard user unit), `orchestration/service.py` (`systemctl`, to
   install/enable/inspect the broker user unit; the broker itself starts
   creation workers only through `create_flow`, i.e. its `launch_background`,
   and calls no `subprocess` of its own). `remote_ssh/console.py` and `remote_ssh/pty.py`

@@ -431,7 +431,13 @@ def _remote_web_serve(listen: str | None, port: int | None) -> None:
     from pydantic import ValidationError
 
     from jailbee.config.models_remote import RemoteWebConfig
-    from jailbee.web.errors import WebDependencyError, WebServeError, is_missing_web_extra
+    from jailbee.web.errors import (
+        SERVICE_UPDATED_EXIT,
+        ServiceUpdatedError,
+        WebDependencyError,
+        WebServeError,
+        is_missing_web_extra,
+    )
 
     configured = _load_global().remote.web
     overrides = {k: v for k, v in (("listen", listen), ("port", port)) if v is not None}
@@ -448,9 +454,51 @@ def _remote_web_serve(listen: str | None, port: int | None) -> None:
                 raise
             raise WebDependencyError() from exc
         server.serve(effective, echo=typer.echo)
+    except ServiceUpdatedError as exc:
+        # Non-zero on purpose: the unit's Restart=on-failure brings it back on the new version.
+        error_plain(str(exc))
+        raise typer.Exit(SERVICE_UPDATED_EXIT) from exc
     except (WebServeError, OSError) as exc:
         error_plain(str(exc))
         raise typer.Exit(1) from exc
+
+
+def _remote_web_service_action(name: Literal["enable", "disable"]) -> None:
+    from jailbee.web import service
+
+    try:
+        getattr(service, name)()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        error_plain(str(exc))
+        raise typer.Exit(1) from exc
+
+
+@web_remote_app.command("enable")
+def remote_web_enable_cmd() -> None:
+    """Install, enable, and start the web dashboard service."""
+    _remote_web_service_action("enable")
+
+
+@web_remote_app.command("disable")
+def remote_web_disable_cmd() -> None:
+    """Disable and stop the web dashboard service."""
+    _remote_web_service_action("disable")
+
+
+@web_remote_app.command("status")
+def remote_web_status_cmd() -> None:
+    """Show the web dashboard service state and address."""
+    from jailbee.setup_command import linger_tip
+    from jailbee.web import service
+
+    status = service.status()
+    typer.echo(f"installed: {'yes' if status.installed else 'no'}")
+    typer.echo(f"enabled: {'yes' if status.enabled else 'no'}")
+    typer.echo(f"active: {'yes' if status.active else 'no'}")
+    typer.echo(f"listen: {status.listen}:{status.port}")
+    for problem in status.problems:
+        typer.echo(f"problem: {problem.message}")
+    linger_tip()
 
 
 @web_remote_app.command("serve")
