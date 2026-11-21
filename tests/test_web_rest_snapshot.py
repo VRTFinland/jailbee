@@ -86,7 +86,7 @@ def test_a_deep_link_gets_data_and_the_source_closes_after_the_grace(home: Path,
         assert res.status_code == 200, res.text
         source = factory.only
         assert source.started
-        wait_until(lambda: source.closed)
+        wait_until(lambda: factory.only.closed)
 
 
 def test_a_snapshot_arriving_late_is_waited_for(home: Path) -> None:
