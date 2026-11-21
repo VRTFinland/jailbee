@@ -1,5 +1,5 @@
 .PHONY: install install-gui install-skill check build publish-testpypi \
-        changelog release site site-check docs-serve
+        changelog release site site-check docs-serve web web-test
 
 # Use bash for recipe lines — the `release` target relies on bash features
 # (`set -euo pipefail`, `read -r -p`) that /bin/sh does not provide.
@@ -47,6 +47,17 @@ install-gui: install
 # installed wheel carries the copy from whenever it was last built.
 install-skill:
 	uv run jailbee setup --yes --only skills
+
+# Build the web dashboard's browser app (frontend/) into the package's
+# static directory, src/jailbee/web/static/, which `jailbee remote web serve`
+# serves. That directory is gitignored: built assets are never committed.
+# `npm ci` installs exactly what frontend/package-lock.json pins.
+web:
+	cd frontend && npm ci && npm run build
+
+# The browser app's unit tests (Vitest).
+web-test:
+	cd frontend && npm ci && npm test
 
 # Run the full CI gate locally: lint, format check, type check, tests.
 check:
