@@ -545,7 +545,11 @@ class Waiters:
                             waiter.after = item.seq
                             if matches_wake_filter(item.type, item.kind_or_state, waiter.wake):
                                 answered.append((waiter, {"kind": "message", "item": item.item}))
-                        change = _grant_change(waiter, ctx)
+                        try:
+                            change = _grant_change(waiter, ctx)
+                        except Exception:  # a bad config or label must not stall other waiters
+                            log.exception("broker: grant change check for %s failed", waiter.uuid)
+                            change = None
                         if change is not None:
                             answered.append((waiter, change))
                         if ctx.role() == "orchestrator":
