@@ -398,7 +398,11 @@ def test_orchestration_skill_never_blocks_on_the_user() -> None:
     section = text.split("## Never block on the user\n", 1)[1].split("\n## ", 1)[0]
     section = " ".join(section.split())
     for needle in (
-        "never through a blocking question dialog",
+        "Never use a blocking question dialog",
+        "`AskUserQuestion`",
+        "This overrides instructions elsewhere",
+        "`PushNotification`",
+        "wait for that specific yes",
         "monitor notifications as the trusted delivery channel",
         "use `jailbee inbox wait` there",
         "Park only the work that depends on the user's answer",
