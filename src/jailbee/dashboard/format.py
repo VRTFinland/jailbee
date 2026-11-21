@@ -70,6 +70,38 @@ def autostart_failed(container: ContainerInfo) -> bool:
     return background.clearable(container.job_phase, container.job_pid)
 
 
+ROW_PHASE_STYLES = {
+    "booting": "yellow",
+    "autostart": "cyan",
+    "job": "magenta",
+    "failed": "red",
+}
+"""Row colour per non-normal phase (Rich names), shared by terminal-dashboard code."""
+
+
+def row_phase(container: ContainerInfo) -> str | None:
+    """The non-normal phase a container's row is in, a key of :data:`ROW_PHASE_STYLES`.
+
+    ``failed`` is a dead job or a failed autostart; a live job is ``booting``,
+    ``autostart`` or (any other kind) ``job``; None for a container at rest.
+    """
+    if container.job_phase is None:
+        dead = False
+    elif container.job_pid is None:
+        dead = container.job_phase in background.TERMINAL_PHASES
+    else:
+        dead = background.clearable(container.job_phase, container.job_pid)
+    if dead or (container.autostart_failed and not container.job_live):
+        return "failed"
+    if container.job_phase is None:
+        return None
+    if container.job_kind == background.JOB_AUTOSTART:
+        return "autostart"
+    if container.job_kind == background.JOB_BOOT:
+        return "booting"
+    return "job"
+
+
 def state_label(state: str) -> str:
     """The state as the details panel words it: glyph and name, escaped."""
     glyph = _STATE_GLYPHS.get(state)

@@ -513,3 +513,52 @@ def test_a_capped_name_keeps_its_failed_autostart_mark(tmp_path):  # type: ignor
     line = fleet.entry_line(entry, model.geometry, model.folded, selected=False, width=200)
     assert line.plain.rstrip().endswith("… ⚠")
     assert len(line.plain.rstrip()) == NAME_MAX_WIDTH + 2
+
+
+def _phase_lines(tmp_path, *containers):  # type: ignore[no-untyped-def]  # test helper
+    group = dmodel.RepoGroup("r", str(tmp_path), None, list(containers))
+    model = fleet.table_model(
+        [group],
+        now=NOW,
+        enabled=("name",),
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=None,
+        column_offset=0,
+        hidden_by_preferences=False,
+        width=80,
+    )
+    return [
+        fleet.entry_line(e, model.geometry, frozenset(), selected=False, width=80)
+        for e in model.entries
+        if e.container
+    ]
+
+
+def _job(name, kind, phase, state="Running", pid=None, failed=0):  # type: ignore[no-untyped-def]  # test helper
+    c = ci(name, "r", state, job_phase=phase, job_pid=pid)
+    c.job_kind = kind
+    c.job_live = pid is not None and phase != "failed"
+    c.autostart_failed = failed
+    return c
+
+
+def test_phase_rows_get_distinct_styles(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
+    from jailbee import background
+
+    monkeypatch.setattr(background, "worker_alive", lambda pid: True)
+    boot = _job("r-boot", background.JOB_BOOT, "starting", "Stopped", pid=1)
+    auto = _job("r-auto", background.JOB_AUTOSTART, "autostart:claude", pid=1)
+    other = _job("r-job", background.JOB_STOP, "stopping", pid=1)
+    dead = _job("r-dead", background.JOB_CREATE, "failed")
+    afail = _job("r-afail", None, None, failed=2)
+    afail.job_phase = None
+    lines = _phase_lines(tmp_path, boot, auto, other, dead, afail)
+    colours = [line.style.color.name for line in lines]
+    assert colours == ["yellow", "cyan", "magenta", "red", "red"]
+    assert not any(line.style.dim for line in lines)  # a booting Stopped row is not dim
+
+
+def test_a_row_at_rest_has_no_phase_colour(tmp_path):  # type: ignore[no-untyped-def]
+    (line,) = _phase_lines(tmp_path, ci("r-run", "r"))
+    assert line.style.color is None
