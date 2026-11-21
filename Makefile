@@ -1,4 +1,4 @@
-.PHONY: install install-gui install-skill check build publish-testpypi \
+.PHONY: install install-gui install-web install-skill check build publish-testpypi \
         changelog release site site-check docs-serve web web-test
 
 # Use bash for recipe lines — the `release` target relies on bash features
@@ -37,6 +37,16 @@ install:
 # Alias for `make install` — kept for back-compat and discoverability now that
 # `make install` includes the optional Qt GUI and SSH extras by default.
 install-gui: install
+
+# `make install` plus the web dashboard: builds the browser app first (needs
+# Node.js and npm) so the installed wheel carries it, adds the `web` extra and
+# restarts the dashboard service if it runs.
+install-web: web
+	uv tool install '.[gui,ssh,web]' --force --reinstall
+	jailbee setup --yes
+	@if command -v systemctl >/dev/null 2>&1; then \
+		systemctl --user try-restart jailbee-web.service; \
+	fi
 
 # Just the bundled agent skills, for when only they changed and host-level
 # `install_host_skills` is on (off by default). `make install` does this too,
@@ -93,8 +103,10 @@ docs-serve:
 	python3 scripts/docs_site.py stage
 	$(ZENSICAL) serve
 
-# Build a clean sdist + wheel and validate the packaged metadata.
-build:
+# Build a clean sdist + wheel and validate the packaged metadata. `web` runs
+# first: the built browser app is gitignored, so without it the wheel would
+# ship a web server with no frontend.
+build: web
 	rm -rf dist/
 	uv build
 	uvx twine check dist/*

@@ -150,6 +150,7 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 
 [tool.hatch.build.targets.sdist]
+artifacts = ["src/jailbee/web/static/**"]
 # The sdist is a build input, not a mirror of the repo. It carries the package
 # source plus whatever the wheel force-includes; prose docs, the website and
 # the test suite live in git. `docs/skills` must stay — `uv build` builds the
@@ -164,6 +165,9 @@ include = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jailbee"]
+# The web dashboard's built browser app is gitignored (`make web` produces it),
+# and hatch skips ignored files unless they are listed here.
+artifacts = ["src/jailbee/web/static/**"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "docs/skills" = "jailbee/skills"
