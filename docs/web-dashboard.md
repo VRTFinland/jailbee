@@ -6,6 +6,11 @@ per-container session lists, and a readable, live-following transcript of an
 agent session. It is read-only for now, runs on the host as the current user,
 and is installed as an optional extra.
 
+Which container ran a session is recorded by the shared state service, which
+runs only while some dashboard (terminal, Qt or web) is connected. A session
+that starts and ends with no dashboard open is still listed under its
+repository, but not attributed to a container.
+
 ## Install
 
 ```bash
@@ -13,8 +18,8 @@ uv tool install 'jailbee[web]'      # or: pipx install 'jailbee[web]'
 ```
 
 Released wheels carry the built browser app. From a source checkout the app
-must be built once (needs Node.js and npm), then the package installed with
-the extra:
+must be built once (needs Node.js 22.22+ or 24.15+, and npm), then the package
+installed with the extra:
 
 ```bash
 make web                            # builds frontend/ into src/jailbee/web/static/
@@ -30,7 +35,11 @@ jb serve                            # alias of `jb remote web serve`
 jb remote web serve --port 8919     # one-run overrides: --listen, --port
 ```
 
-`serve` stays in the foreground and prints the URL and a one-time login PIN.
+`serve` stays in the foreground and prints the URL and a one-time login PIN
+to stdout. Under the systemd service that output goes to the user journal, so
+anyone who can read that journal (for example members of `systemd-journal` or
+`adm`) can read the current PIN; turn PIN login off with
+`jb remote web auth pin off` once a TOTP key exists.
 The default address is `127.0.0.1:8910`. The flags apply to that run only and
 are never written to `global.yaml`.
 
@@ -57,12 +66,15 @@ can be combined:
 
 | Method | Set up with | Notes |
 |---|---|---|
-| PIN | on by default | A new one-time PIN is printed by `serve`. `jb remote web auth pin off` refuses PIN logins; at least one TOTP key must exist first. |
+| PIN | on by default | A new one-time PIN is printed by `serve` (to the journal under systemd). `jb remote web auth pin off` refuses PIN logins; at least one TOTP key must exist first. |
 | TOTP | `jb remote web auth totp add [--name NAME]` | Prints the secret and a QR code for an authenticator app. `totp ls` and `totp rm` manage keys. |
 | FIDO2 security key or passkey | `jb remote web auth fido2 setup` | See below. `fido2 ls` and `fido2 rm` manage keys. |
 | One-time link | `jb remote web open` | Localhost only, single use. |
 
 A successful login gives the browser a session that slides for 30 days.
+PIN and TOTP attempts are limited to five a minute, each method on its own,
+so guessing one never locks out another; one-time links and security keys are
+not limited.
 
 ```bash
 jb remote web auth status           # methods on, devices logged in
@@ -97,7 +109,11 @@ remote:
 With `auth.enabled: false` the server serves everything without a login. It
 refuses to bind a non-loopback address unless
 `remote.web.auth.allow_unauthenticated_remote: true` is also set, because then
-anyone who can reach the port sees the dashboard. Authentication is never
+anyone who can reach the port sees the dashboard. Without that opt-in the
+server also answers only requests whose `Host` header is `localhost`, a
+loopback address or the `listen` address, so a web page cannot reach the
+dashboard by pointing its own domain at `127.0.0.1` (DNS rebinding).
+Authentication is never
 skipped based on where a request comes from; see
 [Web dashboard authentication](security.md#web-dashboard-authentication).
 
@@ -147,7 +163,7 @@ not under a path prefix. Put TLS and the public name in the proxy and keep
 
 - upgrade WebSocket connections for `/api/ws` (the live view depends on it),
 - pass the original `Host` and `Origin` headers (FIDO2 derives its domain from
-  them),
+  them, and a WebSocket whose `Origin` does not match `Host` is refused),
 - keep the connection open long enough for a live view.
 
 ```nginx

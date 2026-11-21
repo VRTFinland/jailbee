@@ -121,6 +121,23 @@ Every login, failure, logout and revocation is audited
 - **FIDO2 domains.** A key is bound to the HTTPS domain it was registered at,
   taken from the request's `Origin` (else `Host`); the proxy must pass both
   through.
+- **Cross-origin checks.** A WebSocket handshake whose `Origin` names another
+  host or port than its `Host` is refused in every auth mode, so a page on
+  another site cannot open the live channel in a logged-in browser. With auth
+  disabled, a request whose `Host` is not `localhost`, a loopback address or
+  the `listen` address is refused (DNS rebinding), unless
+  `allow_unauthenticated_remote` is set.
+- **The PIN is in the journal.** `serve` prints the login PIN to stdout,
+  which under the systemd unit is the user journal: whoever can read that
+  journal (journal-reading groups such as `systemd-journal` or `adm`) can log
+  in with it. `jb remote web auth pin off` turns PIN login off once a TOTP key
+  exists.
+- **Attempt limits.** PIN and TOTP attempts are limited to five a minute per
+  method; one-time links (single use, 60 seconds, high entropy) and FIDO2
+  signatures are not limited, so a PIN guesser cannot lock the owner out.
+- **Session attribution is best-effort.** Which container ran a session is
+  recorded only while the state service runs, i.e. while some dashboard is
+  connected; sessions run with no dashboard open stay unattributed.
 
 ### Remote SSH
 
