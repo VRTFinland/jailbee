@@ -528,6 +528,7 @@ class DashboardSession:
         self.marked &= listed
         self._prune_merge_pick(listed)
         self._close_vanished_overlay()
+        self._rebuild_open_menu()
         self._refresh_orchestration_picker()
         self._pin_selection()
         self._snap_merge_cursor()
@@ -3225,6 +3226,31 @@ class DashboardSession:
             shown_columns=self.shown_columns,
             sort=self.sort,
             available=self.terminal.table_width,
+        )
+
+    def _rebuild_open_menu(self) -> None:
+        """Re-derive an open container menu's entries from the new snapshot.
+
+        The entries depend on live facts (the outbox counts, the container's
+        state), and a menu opened on a stale snapshot would otherwise miss an
+        entry until it is reopened. An unchanged list keeps the very same
+        object, so a box on screen is not touched; the box keeps its own
+        cursor (`MenuBox.show`).
+        """
+        menu = self.overlay
+        if not isinstance(menu, MenuState):
+            return
+        fresh = open_menu(
+            self.groups,
+            menu.container,
+            remote=self.remote,
+            ssh_policy=self.ssh_policy,
+            transport=self.transport,
+        )
+        if fresh is None or fresh.actions == menu.actions:
+            return
+        self.overlay = replace(
+            fresh, start_group=menu.start_group, start_index=menu.start_index, direct=menu.direct
         )
 
     def _close_vanished_overlay(self) -> None:
