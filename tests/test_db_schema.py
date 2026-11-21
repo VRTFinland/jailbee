@@ -1398,3 +1398,33 @@ def test_v25_database_migrates_to_v26_with_the_login_link_table() -> None:
         session.add(WebLoginLink(token_hash="h", expires_at=datetime(2026, 11, 21, tzinfo=UTC)))
         session.commit()
         assert session.exec(select(WebLoginLink)).one().token_hash == "h"
+
+
+def test_v26_database_migrates_to_v27_with_the_fido2_key_table() -> None:
+    from jailbee.db import _ensure_schema
+    from jailbee.db.models import SchemaMeta, WebFido2Key
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(SchemaMeta(id=1, version=26))
+        session.commit()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE web_fido2_key")
+
+    _ensure_schema(engine)
+
+    with Session(engine) as session:
+        session.add(
+            WebFido2Key(
+                name="yubikey",
+                credential_id=b"id",
+                credential_data=b"data",
+                rp_id="jb.example.com",
+                created_at=datetime(2026, 11, 21, tzinfo=UTC),
+            )
+        )
+        session.commit()
+        assert session.exec(select(WebFido2Key)).one().rp_id == "jb.example.com"
+        meta = session.get(SchemaMeta, 1)
+        assert meta is not None and meta.version == 27

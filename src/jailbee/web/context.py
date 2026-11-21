@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from jailbee.web.auth import Clock, PinHolder, RateLimiter, SessionStore, utcnow
 from jailbee.web.auth_admin import TotpVerifier
+from jailbee.web.fido2_auth import Fido2Auth
 from jailbee.web.repo_sessions import AgentHomes, RepoSessions, snapshot_homes
 from jailbee.web.state import (
     DEFAULT_GRACE_SECONDS,
@@ -47,6 +48,8 @@ class WebDeps:
     agent_homes: AgentHomes | None = None
     """Repo prefix → ``(agent, config home)`` pairs whose transcripts the session
     list reads. None derives them from the live snapshot."""
+    fido2: Fido2Auth | None = None
+    """The FIDO2 ceremony runner; None builds one over ``engine``."""
     auth_enabled: bool = True
     """False serves every route without a session (`remote.web.auth.enabled: false`).
     Never derived from the request's source address."""
@@ -63,6 +66,7 @@ class WebContext:
     sessions: SessionStore = field(init=False)
     limiter: RateLimiter = field(init=False)
     totp: TotpVerifier = field(init=False)
+    fido2: Fido2Auth = field(init=False)
     hub: StateHub = field(init=False)
     repo_sessions: RepoSessions = field(init=False)
     render_cache: RenderCache = field(init=False)
@@ -88,6 +92,9 @@ class WebContext:
         self.sessions = SessionStore(self.deps.engine, self.deps.clock)
         self.limiter = RateLimiter(self.deps.monotonic)
         self.totp = TotpVerifier(self.deps.engine, self.deps.clock)
+        self.fido2 = self.deps.fido2 or Fido2Auth(
+            self.deps.engine, clock=self.deps.clock, monotonic=self.deps.monotonic
+        )
         self.hub = StateHub(self.deps.snapshot_source, grace_seconds=self.deps.grace_seconds)
         self.repo_sessions = RepoSessions(self.deps.agent_homes or snapshot_homes(self.hub.latest))
         self.render_cache = RenderCache()

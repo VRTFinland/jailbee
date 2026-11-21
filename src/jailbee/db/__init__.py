@@ -28,7 +28,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 26
+CURRENT_SCHEMA_VERSION = 27
 
 
 def state_dir() -> Path:
@@ -324,6 +324,11 @@ def _migrate_to_v26(conn: Connection) -> None:
     return None
 
 
+def _migrate_to_v27(conn: Connection) -> None:
+    """v26 -> v27 adds `web_fido2_key` (web dashboard security keys) via create_all."""
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -351,6 +356,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     24: _migrate_to_v24,
     25: _migrate_to_v25,
     26: _migrate_to_v26,
+    27: _migrate_to_v27,
 }
 
 

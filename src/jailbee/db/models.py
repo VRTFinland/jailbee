@@ -453,8 +453,9 @@ class WebLoginLink(SQLModel, table=True):
 class WebAuthEvent(SQLModel, table=True):
     """One entry of the web dashboard's login audit log (#109).
 
-    `event` is login, login_failed, logout or revoke; `method` the login
-    method tried (pin, totp) or "cli" for a revocation from the command line;
+    `event` is login, login_failed, logout, revoke or key_added (a FIDO2 key
+    registered in setup mode); `method` the login method tried (pin, totp,
+    link, fido2, setup-pin) or "cli" for a revocation from the command line;
     `source` the client address when there was one. Pruned to the newest
     rows by `jailbee.web.auth_admin`.
     """
@@ -488,3 +489,28 @@ class ContainerSession(SQLModel, table=True):
     session_id: str
     first_seen: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
     last_seen: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+
+
+class WebFido2Key(SQLModel, table=True):
+    """One FIDO2 security key or passkey the web dashboard accepts (#109).
+
+    Registered only in setup mode (`jailbee remote web auth fido2 setup`).
+    `credential_data` is the WebAuthn attested credential data (credential id
+    and COSE public key) as the authenticator sent it; no secret is stored.
+    `rp_id` is the domain the key was registered for: a key only signs for
+    that domain. `sign_count` is the authenticator's last signature counter,
+    kept to notice a cloned key.
+    """
+
+    __tablename__ = "web_fido2_key"
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    credential_id: bytes = Field(index=True, unique=True)
+    credential_data: bytes
+    rp_id: str
+    sign_count: int = 0
+    created_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+    last_used_at: datetime | None = Field(
+        default=None, sa_column=Column(_UTCDateTime, nullable=True)
+    )

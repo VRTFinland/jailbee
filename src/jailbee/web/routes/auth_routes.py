@@ -7,13 +7,14 @@ CLI-only (spec #109).
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from jailbee.web import auth_admin, login_link
-from jailbee.web.deps import Context, RequireSession
+from jailbee.web.deps import Context, RequestRp, RequireSession, request_rp
+from jailbee.web.fido2_auth import Fido2Error
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
@@ -47,7 +48,23 @@ class LinkLogin(BaseModel):
     device_name: DeviceName
 
 
-Login = Annotated[PinLogin | TotpLogin | LinkLogin, Field(discriminator="method")]
+class Fido2Login(BaseModel):
+    """`POST /api/auth` with a security key's signature over a begun challenge."""
+
+    model_config = ConfigDict(extra="forbid")
+    method: Literal["fido2"]
+    challenge_id: Annotated[str, StringConstraints(max_length=100)]
+    credential: dict[str, Any]
+    """The browser's `PublicKeyCredential` as JSON (base64url binary fields)."""
+    device_name: DeviceName
+
+
+class Fido2Begin(BaseModel):
+    challenge_id: str
+    options: dict[str, Any]
+
+
+Login = Annotated[PinLogin | TotpLogin | LinkLogin | Fido2Login, Field(discriminator="method")]
 
 
 class TokenResponse(BaseModel):
@@ -77,7 +94,11 @@ def _source(request: Request) -> str:
     return request.client.host if request.client is not None else ""
 
 
-def _attempt(body: PinLogin | TotpLogin | LinkLogin, ctx: Context) -> bool:
+def _attempt(
+    body: PinLogin | TotpLogin | LinkLogin | Fido2Login, ctx: Context, request: Request
+) -> bool:
+    if isinstance(body, Fido2Login):
+        return ctx.fido2.login_complete(request_rp(request), body.challenge_id, body.credential)
     if isinstance(body, LinkLogin):
         return login_link.consume(ctx.deps.engine, body.token, clock=ctx.deps.clock)
     if isinstance(body, PinLogin):
@@ -111,17 +132,32 @@ def authenticate(body: Login, ctx: Context, request: Request) -> TokenResponse:
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many attempts, try again later",
         )
-    if not _attempt(body, ctx):
+    if not _attempt(body, ctx, request):
         audit("login_failed")
         detail = {
             "pin": "Invalid or expired PIN",
             "totp": "Invalid TOTP code",
             "link": "Invalid or expired login link",
+            "fido2": "Security key not accepted",
         }[body.method]
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
     token = ctx.sessions.create(body.device_name)
     audit("login")
     return TokenResponse(token=token)
+
+
+@router.post("/auth/fido2/begin")
+def fido2_begin(ctx: Context, rp: RequestRp) -> Fido2Begin:
+    """Start a security-key login; `POST /api/auth` with ``method: "fido2"`` completes it.
+
+    Counts against no attempt limit: it proves nothing, and the pending
+    challenges it creates are bounded (`fido2_auth.MAX_PENDING`).
+    """
+    try:
+        challenge = ctx.fido2.login_begin(rp)
+    except Fido2Error as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return Fido2Begin(challenge_id=challenge.id, options=challenge.options)
 
 
 @router.get("/session")

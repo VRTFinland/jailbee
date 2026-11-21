@@ -427,7 +427,7 @@ _WebPortOption = Annotated[
 ]
 
 
-def _remote_web_serve(listen: str | None, port: int | None) -> None:
+def _remote_web_serve(listen: str | None, port: int | None, *, setup: bool = False) -> None:
     from pydantic import ValidationError
 
     from jailbee.config.models_remote import RemoteWebConfig
@@ -448,12 +448,15 @@ def _remote_web_serve(listen: str | None, port: int | None) -> None:
         raise typer.Exit(1) from exc
     try:
         try:
-            from jailbee.web import server
+            from jailbee.web import server, setup_server
         except ModuleNotFoundError as exc:
             if not is_missing_web_extra(exc):
                 raise
             raise WebDependencyError() from exc
-        server.serve(effective, echo=typer.echo)
+        if setup:
+            setup_server.serve_setup(effective, echo=typer.echo)
+        else:
+            server.serve(effective, echo=typer.echo)
     except ServiceUpdatedError as exc:
         # Non-zero on purpose: the unit's Restart=on-failure brings it back on the new version.
         error_plain(str(exc))
@@ -549,12 +552,16 @@ web_auth_pin_app = typer.Typer(
 web_auth_totp_app = typer.Typer(
     name="totp", help="Authenticator-app (TOTP) keys.", no_args_is_help=True
 )
+web_auth_fido2_app = typer.Typer(
+    name="fido2", help="FIDO2 security keys and passkeys.", no_args_is_help=True
+)
 web_auth_sessions_app = typer.Typer(
     name="sessions", help="Logged-in devices.", no_args_is_help=True
 )
 web_remote_app.add_typer(web_auth_app)
 web_auth_app.add_typer(web_auth_pin_app)
 web_auth_app.add_typer(web_auth_totp_app)
+web_auth_app.add_typer(web_auth_fido2_app)
 web_auth_app.add_typer(web_auth_sessions_app)
 
 
@@ -589,6 +596,7 @@ def remote_web_auth_status_cmd() -> None:
     engine = get_engine()
     typer.echo(f"PIN: {'on' if auth_admin.pin_enabled(engine) else 'off'}")
     typer.echo(f"TOTP keys: {len(auth_admin.list_totp_keys(engine))}")
+    typer.echo(f"FIDO2 keys: {len(auth_admin.list_fido2_keys(engine))}")
     typer.echo(f"Sessions: {len(auth_admin.list_sessions(engine))}")
 
 
@@ -671,6 +679,64 @@ def remote_web_auth_totp_rm_cmd(
     with _web_auth_errors():
         removed = auth_admin.remove_totp_key(engine, key_id)
     typer.echo(f"Removed TOTP key {removed.id}.")
+
+
+@web_auth_fido2_app.command("setup")
+def remote_web_auth_fido2_setup_cmd(
+    listen: _WebListenOption = None,
+    port: _WebPortOption = None,
+) -> None:
+    """Run setup mode, where a browser registers a security key, until Ctrl-C.
+
+    Serves a setup page instead of the dashboard, on the dashboard's address
+    by default: open it through the same HTTPS domain you log in at, since a
+    key works only for the domain it was registered at. Stop the dashboard
+    first if it runs on that port.
+    """
+    _remote_web_serve(listen, port, setup=True)
+
+
+@web_auth_fido2_app.command("ls")
+def remote_web_auth_fido2_ls_cmd() -> None:
+    """List registered FIDO2 keys and the domain each works at."""
+    from jailbee.db import get_engine
+    from jailbee.web import auth_admin
+
+    for key in auth_admin.list_fido2_keys(get_engine()):
+        used = _web_time(key.last_used_at) if key.last_used_at else "never"
+        typer.echo(
+            f"{key.id}\t{key.name or '-'}\t{key.rp_id}\tadded {_web_time(key.created_at)}"
+            f"\tlast used {used}"
+        )
+
+
+@web_auth_fido2_app.command("rm")
+def remote_web_auth_fido2_rm_cmd(
+    key_id: Annotated[
+        int | None, typer.Argument(help="Id of the key (see `fido2 ls`). Asked for when omitted.")
+    ] = None,
+) -> None:
+    """Remove a FIDO2 key; it can no longer log in."""
+    from jailbee import prompting
+    from jailbee.db import get_engine
+    from jailbee.web import auth_admin
+
+    engine = get_engine()
+    if key_id is None:
+        key_id = prompting.choose_one(
+            "FIDO2 key",
+            [
+                prompting.Option(
+                    k.id, f"{k.id}  {k.name or '-'}  ({k.rp_id})", f"{k.id} ({k.name or '-'})"
+                )
+                for k in auth_admin.list_fido2_keys(engine)
+            ],
+            destructive=True,
+            empty_reason="no FIDO2 keys to remove",
+        )
+    with _web_auth_errors():
+        removed = auth_admin.remove_fido2_key(engine, key_id)
+    typer.echo(f"Removed FIDO2 key {removed.id}.")
 
 
 @web_auth_sessions_app.command("ls")

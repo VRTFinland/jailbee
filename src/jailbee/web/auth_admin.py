@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Literal
 
 from sqlmodel import Session, col, delete, select
 
-from jailbee.db.models import WebAuthEvent, WebAuthSetting, WebSession, WebTotpKey
+from jailbee.db.models import WebAuthEvent, WebAuthSetting, WebFido2Key, WebSession, WebTotpKey
 from jailbee.web.auth import Clock, SessionInfo, utcnow
 
 if TYPE_CHECKING:
@@ -39,8 +39,8 @@ TOTP_REPLAY_WINDOW = timedelta(seconds=90)
 
 TOTP_ISSUER = "JailBee"
 
-AuthEventKind = Literal["login", "login_failed", "logout", "revoke"]
-LoginMethod = Literal["pin", "totp"]
+AuthEventKind = Literal["login", "login_failed", "logout", "revoke", "key_added"]
+LoginMethod = Literal["pin", "totp", "fido2"]
 
 _PIN_ENABLED = "pin_enabled"
 
@@ -68,6 +68,17 @@ class NewTotpKey:
 
 
 @dataclass(frozen=True)
+class Fido2KeyInfo:
+    """A registered FIDO2 key, as listings show it."""
+
+    id: int
+    name: str
+    rp_id: str
+    created_at: datetime
+    last_used_at: datetime | None
+
+
+@dataclass(frozen=True)
 class AuditEvent:
     at: datetime
     event: str
@@ -88,10 +99,11 @@ def pin_enabled(engine: Engine) -> bool:
 
 def set_pin_enabled(engine: Engine, enabled: bool) -> None:
     """Turn PIN login on or off. Refuses to turn off the last login method."""
-    if not enabled and not list_totp_keys(engine):
+    if not enabled and not list_totp_keys(engine) and not list_fido2_keys(engine):
         raise AuthAdminError(
-            "Refusing to turn off PIN login: no TOTP key exists, so nobody could log in. "
-            "Add one first with `jailbee remote web auth totp add`."
+            "Refusing to turn off PIN login: no TOTP key or FIDO2 key exists, so nobody "
+            "could log in. Add one first with `jailbee remote web auth totp add` or "
+            "`jailbee remote web auth fido2 setup`."
         )
     with Session(engine) as s:
         row = s.get(WebAuthSetting, _PIN_ENABLED) or WebAuthSetting(key=_PIN_ENABLED, value="")
@@ -107,6 +119,8 @@ def enabled_methods(engine: Engine) -> list[LoginMethod]:
         methods.append("pin")
     if list_totp_keys(engine):
         methods.append("totp")
+    if list_fido2_keys(engine):
+        methods.append("fido2")
     return methods
 
 
@@ -161,10 +175,10 @@ def remove_totp_key(engine: Engine, key_id: int) -> TotpKeyInfo:
             raise AuthAdminError(f"No TOTP key with id {key_id}.")
         info = _key_info(row)
         remaining = len(s.exec(select(WebTotpKey.id)).all()) - 1
-        if remaining == 0 and not pin_enabled(engine):
+        if remaining == 0 and not pin_enabled(engine) and not list_fido2_keys(engine):
             raise AuthAdminError(
-                "Refusing to remove the last TOTP key while PIN login is off: "
-                "nobody could log in. Turn the PIN on first with "
+                "Refusing to remove the last TOTP key while PIN login is off and no "
+                "FIDO2 key exists: nobody could log in. Turn the PIN on first with "
                 "`jailbee remote web auth pin on`."
             )
         s.delete(row)
@@ -203,6 +217,41 @@ class TotpVerifier:
                     self._used[(key_id, code)] = now
                     return True
         return False
+
+
+# --- FIDO2 keys -------------------------------------------------------------
+# Registering a key needs the WebAuthn ceremony (`jailbee.web.fido2_auth`, run
+# by the setup server); listing and removing them is plain database work.
+
+
+def _fido2_info(row: WebFido2Key) -> Fido2KeyInfo:
+    assert row.id is not None
+    return Fido2KeyInfo(row.id, row.name, row.rp_id, row.created_at, row.last_used_at)
+
+
+def list_fido2_keys(engine: Engine) -> list[Fido2KeyInfo]:
+    with Session(engine) as s:
+        rows = s.exec(select(WebFido2Key).order_by(col(WebFido2Key.id))).all()
+        return [_fido2_info(r) for r in rows]
+
+
+def remove_fido2_key(engine: Engine, key_id: int) -> Fido2KeyInfo:
+    """Delete key ``key_id``. Refuses the last login method (no PIN, no TOTP key)."""
+    with Session(engine) as s:
+        row = s.get(WebFido2Key, key_id)
+        if row is None:
+            raise AuthAdminError(f"No FIDO2 key with id {key_id}.")
+        info = _fido2_info(row)
+        remaining = len(s.exec(select(WebFido2Key.id)).all()) - 1
+        if remaining == 0 and not pin_enabled(engine) and not list_totp_keys(engine):
+            raise AuthAdminError(
+                "Refusing to remove the last FIDO2 key while PIN login is off and no "
+                "TOTP key exists: nobody could log in. Turn the PIN on first with "
+                "`jailbee remote web auth pin on`."
+            )
+        s.delete(row)
+        s.commit()
+        return info
 
 
 # --- device sessions --------------------------------------------------------

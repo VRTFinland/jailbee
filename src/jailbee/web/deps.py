@@ -15,6 +15,7 @@ from starlette.requests import HTTPConnection
 
 from jailbee.web.auth import SessionInfo
 from jailbee.web.context import WebContext
+from jailbee.web.fido2_auth import Fido2Error, RelyingParty, relying_party
 
 
 def get_context(conn: HTTPConnection) -> WebContext:
@@ -55,3 +56,16 @@ def require_session(request: Request, ctx: Annotated[WebContext, Depends(get_con
 
 Context = Annotated[WebContext, Depends(get_context)]
 RequireSession = Annotated[Authed, Depends(require_session)]
+
+
+def request_rp(request: Request) -> RelyingParty:
+    """The WebAuthn relying party of ``request``: ``Origin``, else ``Host`` (400 if neither)."""
+    try:
+        return relying_party(
+            request.headers.get("origin"), request.headers.get("host"), request.url.scheme
+        )
+    except Fido2Error as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+RequestRp = Annotated[RelyingParty, Depends(request_rp)]
