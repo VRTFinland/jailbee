@@ -452,3 +452,24 @@ class WebAuthEvent(SQLModel, table=True):
     method: str = ""
     device_name: str = ""
     source: str = ""
+
+
+class ContainerSession(SQLModel, table=True):
+    """One agent session seen live in one container instance (#109).
+
+    Recorded by the state service's gatherer, so a session that was never
+    live while the service ran has no row. The Incus instance uuid, not the
+    name, is what identifies the container: a container recreated under the
+    same name does not inherit its predecessor's sessions. `container_uuid`
+    is "" when the instance's uuid was unknown.
+    """
+
+    __tablename__ = "container_session"
+
+    id: int | None = Field(default=None, primary_key=True)
+    container_name: str = Field(index=True)
+    container_uuid: str = Field(default="", index=True)
+    agent: str
+    session_id: str
+    first_seen: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+    last_seen: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))

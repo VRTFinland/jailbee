@@ -24,6 +24,7 @@ def _s(
     since: datetime | None = T0,
     waiting_for: str | None = None,
     updated_at: int | None = None,
+    session_id: str | None = None,
 ) -> AgentSession:
     return AgentSession(
         agent=agent,
@@ -33,6 +34,7 @@ def _s(
         waiting_for=waiting_for,
         since=since,
         updated_at=updated_at,
+        session_id=session_id,
     )
 
 
@@ -436,3 +438,10 @@ def test_each_agent_of_a_container_is_looked_up_separately():
     )
 
     assert sorted(seen) == ["claude", "codex"]
+
+
+def test_a_summary_names_the_live_sessions_of_the_agent():
+    sessions = {"a": [_s(10, 500, session_id="s-1"), _s(11, 501, session_id="s-2"), _s(12, 502)]}
+    out = _match(sessions, {"a": {1: 500, 2: 501, 3: 502}}, {1: 10, 2: 11, 3: 12})
+
+    assert sorted(out["a"][0].session_ids) == ["s-1", "s-2"]  # a session without an id is skipped

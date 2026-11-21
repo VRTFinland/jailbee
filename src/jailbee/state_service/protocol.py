@@ -46,7 +46,8 @@ from jailbee.update_check import UpdateNotice
 # 22 adds MemoryStatus.swap_cached and .zswapped: swap use leaves them out.
 # 23 adds immutable board-scoped GrantView.publish_projects.
 # 24 adds RepoGroup.default_project for the board picker.
-PROTOCOL = 24
+# 25 adds AgentSummary.session_ids for the web dashboard's session attribution.
+PROTOCOL = 25
 
 
 class ProtocolError(ValueError):

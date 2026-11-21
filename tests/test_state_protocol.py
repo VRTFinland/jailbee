@@ -423,7 +423,7 @@ def test_wire_schema_leaves_out_docstrings_and_titles():
 # PROTOCOL fails below: a client of another version would misread it. A pydantic
 # upgrade that only reshapes its schema output trips this too; a bump is then
 # harmless (a protocol mismatch makes the dashboard replace the state service).
-WIRE_SCHEMA = (24, "ed3364549e45fbbc9b4bd3ed35559f0c0fd1ab9b03055e507cbb739bb26c4422")
+WIRE_SCHEMA = (25, "342d287f7716589d69eb374e1e30c4e28dea1790700422f6b9acd22156888490")
 
 
 def test_a_wire_schema_change_bumps_the_protocol():

@@ -56,6 +56,8 @@ class AgentSummary:
     waiting_for: str | None
     count: int
     activity: AgentActivity | None = None
+    session_ids: tuple[str, ...] = ()
+    """The live sessions' ids (those that have one), for attributing transcripts."""
 
 
 def _rank(session: AgentSession) -> tuple[int, bool, float]:
@@ -113,6 +115,7 @@ def summarize(
             waiting_for=top.waiting_for,
             count=len(items),
             activity=None if activity_for is None else activity_for(ordered),
+            session_ids=tuple(s.session_id for s in ordered if s.session_id),
         )
         ranked.append((_rank(top), agent, summary))
     ranked.sort(key=lambda item: (item[0], item[1]))

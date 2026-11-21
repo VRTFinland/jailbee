@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import dataclasses
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from jailbee.dashboard.model import RepoGroup
+from jailbee.db import get_engine
 from jailbee.git_status import GitStatus
 from jailbee.global_config import DashboardRefresh
 from jailbee.lifecycle import ContainerInfo
@@ -382,3 +383,91 @@ def test_sent_counts_are_read_once_per_round(mocker):
     g.tick(active=True, refresh=False, roots=[])
 
     assert read.call_count == 1
+
+
+# --- recording which container ran which agent session ----------------------
+
+
+def _agent(*session_ids, agent="claude"):
+    from jailbee.agent_status import AgentSummary
+
+    return (AgentSummary(agent, "busy", None, None, len(session_ids), session_ids=session_ids),)
+
+
+def _ci_live(name, uuid, *session_ids):
+    c = _ci(name)
+    c.uuid = uuid
+    c.agent_status = _agent(*session_ids)
+    return c
+
+
+def _recording_gatherer(mocker, containers, recorder):
+    mocker.patch("jailbee.state_service.gatherer.sample_activity")
+    return Gatherer(
+        mocker.Mock(),
+        CAD,
+        gather=lambda *a, **k: [RepoGroup("alpha", "/a", None, list(containers))],
+        clock=_Clock(),
+        sleep=lambda _s: None,
+        recorder=recorder,
+    )
+
+
+def test_each_gather_records_the_live_sessions_of_their_containers(mocker):
+    from jailbee.state_service.session_log import SessionRecorder, recorded_sessions
+
+    engine = get_engine()
+    now = [datetime(2026, 11, 1, 10, tzinfo=UTC)]
+    recorder = SessionRecorder(engine, clock=lambda: now[0])
+    g = _recording_gatherer(
+        mocker, [_ci_live("alpha-1", "u-1", "s-1"), _ci("alpha-idle")], recorder
+    )
+
+    g.tick(active=True, refresh=False, roots=[])
+
+    rows = recorded_sessions(engine, "alpha-1", "u-1")
+    assert [(r.agent, r.session_id, r.first_seen, r.last_seen) for r in rows] == [
+        ("claude", "s-1", now[0], now[0])
+    ]
+    assert recorded_sessions(engine, "alpha-idle", None) == []
+
+
+def test_a_later_gather_moves_last_seen_and_keeps_first_seen(mocker):
+    from jailbee.state_service.session_log import SessionRecorder, recorded_sessions
+
+    engine = get_engine()
+    now = [datetime(2026, 11, 1, 10, tzinfo=UTC)]
+    recorder = SessionRecorder(engine, clock=lambda: now[0], write_interval=60.0)
+    first = now[0]
+    c = _ci_live("alpha-1", "u-1", "s-1")
+
+    recorder.record([RepoGroup("alpha", "/a", None, [c])])
+    now[0] = first + timedelta(seconds=10)
+    recorder.record([RepoGroup("alpha", "/a", None, [c])])  # too soon: no write
+    assert recorded_sessions(engine, "alpha-1", "u-1")[0].last_seen == first
+    now[0] = first + timedelta(minutes=5)
+    recorder.record([RepoGroup("alpha", "/a", None, [c])])
+
+    (row,) = recorded_sessions(engine, "alpha-1", "u-1")
+    assert (row.first_seen, row.last_seen) == (first, now[0])
+
+
+def test_a_recreated_container_has_its_own_recorded_sessions(mocker):
+    from jailbee.state_service.session_log import SessionRecorder, recorded_sessions
+
+    engine = get_engine()
+    recorder = SessionRecorder(engine)
+    recorder.record([RepoGroup("alpha", "/a", None, [_ci_live("alpha-1", "u-old", "s-old")])])
+    recorder.record([RepoGroup("alpha", "/a", None, [_ci_live("alpha-1", "u-new", "s-new")])])
+
+    assert [r.session_id for r in recorded_sessions(engine, "alpha-1", "u-new")] == ["s-new"]
+    assert [r.session_id for r in recorded_sessions(engine, "alpha-1", "u-old")] == ["s-old"]
+
+
+def test_a_failing_recorder_cannot_fail_the_gather(mocker):
+    def boom(groups):
+        raise RuntimeError("database is locked")
+
+    g = _recording_gatherer(mocker, [_ci("x")], boom)
+
+    assert isinstance(g.tick(active=True, refresh=False, roots=[]), Snapshot)
