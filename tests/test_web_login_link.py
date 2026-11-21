@@ -133,7 +133,6 @@ def test_auth_disabled_serves_the_api_without_a_session(clock: FakeClock) -> Non
     assert client.get("/api/auth/methods", headers=LOCAL).json()["auth_disabled"] is True
 
 
-
 def test_auth_disabled_serves_the_websocket_without_a_session(clock: FakeClock) -> None:
     client = make_client(clock, auth_enabled=False)
 

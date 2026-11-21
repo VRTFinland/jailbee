@@ -133,7 +133,9 @@ class SessionStore:
             return None
         now = self._clock()
         with Session(self._engine) as s:
-            row = s.exec(select(WebSession).where(WebSession.token_hash == token_hash(token))).first()
+            row = s.exec(
+                select(WebSession).where(WebSession.token_hash == token_hash(token))
+            ).first()
             if row is None:
                 return None
             if now - row.last_used_at > self._ttl:
@@ -154,7 +156,9 @@ class SessionStore:
         """
         cutoff = self._clock() - self._ttl
         with Session(self._engine) as s:
-            row = s.exec(select(WebSession).where(WebSession.token_hash == token_hash(token))).first()
+            row = s.exec(
+                select(WebSession).where(WebSession.token_hash == token_hash(token))
+            ).first()
             return row is not None and row.last_used_at >= cutoff
 
     def revoke(self, token: str) -> None:
