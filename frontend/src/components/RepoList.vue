@@ -18,8 +18,11 @@ function agentLabel(state: string): string {
 <template>
     <p v-if="view.repos.length === 0" class="muted">No repositories.</p>
     <section v-for="repo in view.repos" :key="repo.prefix" class="repo" :data-repo="repo.prefix">
-        <!-- Hook: ticket 04 turns this heading into a link to the repo view. -->
-        <h2 class="repo-heading">{{ repo.prefix }}</h2>
+        <h2 class="repo-heading">
+            <router-link :to="{name: 'repo', params: {prefix: repo.prefix}}">{{
+                repo.prefix
+            }}</router-link>
+        </h2>
         <p v-if="repo.containers.length === 0" class="muted empty">No containers.</p>
         <ul v-else class="rows">
             <!-- Hook: ticket 08 turns each row's content into a link to the container view. -->
@@ -61,6 +64,13 @@ function agentLabel(state: string): string {
     margin: 0 0 var(--space-2);
     color: var(--muted);
     letter-spacing: 0.04em;
+}
+.repo-heading a {
+    color: inherit;
+    text-decoration: none;
+}
+.repo-heading a:hover {
+    text-decoration: underline;
 }
 .muted {
     color: var(--muted);

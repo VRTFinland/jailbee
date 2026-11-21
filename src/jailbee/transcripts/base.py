@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from datetime import datetime
     from pathlib import Path
 
@@ -133,6 +134,31 @@ class SessionInfo:
     """Every model that answered, in first-use order."""
 
 
+class SessionInfoCache:
+    """Remembers `SessionInfo` by the file's path, size and mtime.
+
+    Listing reads every transcript; a long-lived caller (the web server) passes
+    one cache so only a file that grew or was rewritten is read again. Owned by
+    the caller, never a module global.
+    """
+
+    def __init__(self) -> None:
+        self._entries: dict[Path, tuple[tuple[int, int], SessionInfo | None]] = {}
+
+    def get(
+        self, path: Path, load: Callable[[], SessionInfo | None], stamp: tuple[int, int] | None
+    ) -> SessionInfo | None:
+        """`load()`'s result, reused while `stamp` (size, mtime_ns) is unchanged."""
+        if stamp is None:
+            return load()
+        hit = self._entries.get(path)
+        if hit is not None and hit[0] == stamp:
+            return hit[1]
+        info = load()
+        self._entries[path] = (stamp, info)
+        return info
+
+
 @runtime_checkable
 class TranscriptSource(Protocol):
     """One agent's transcript format.
@@ -148,8 +174,12 @@ class TranscriptSource(Protocol):
         """A session's transcript and subagent transcripts, or None."""
         ...
 
-    def list_sessions(self, config_home: Path) -> list[SessionInfo]:
-        """Every session under `config_home`, newest activity first."""
+    def list_sessions(
+        self, config_home: Path, cache: SessionInfoCache | None = None
+    ) -> list[SessionInfo]:
+        """Every session under `config_home`, newest activity first.
+
+        With a `cache`, a transcript unchanged since the last call is not read."""
         ...
 
     def subagent_transcript(self, config_home: Path, session_id: str, agent_id: str) -> Path | None:

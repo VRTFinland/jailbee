@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from jailbee.web.context import WebContext, WebDeps
-from jailbee.web.routes import auth_routes, ws_routes
+from jailbee.web.routes import auth_routes, repo_routes, ws_routes
 
 __all__ = ["WebDeps", "create_app"]
 
@@ -39,6 +39,7 @@ def create_app(deps: WebDeps) -> FastAPI:
     app.state.web = ctx
     app.include_router(auth_routes.router)
     app.include_router(ws_routes.router)
+    app.include_router(repo_routes.router)
     if deps.static_dir is not None:
         app.mount("/", StaticFiles(directory=deps.static_dir, html=True), name="static")
     return app

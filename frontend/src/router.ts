@@ -7,11 +7,20 @@ import {
 } from "vue-router"
 import {getToken} from "./api"
 import FrontPage from "./views/FrontPage.vue"
+import RepoView from "./views/RepoView.vue"
+import SessionPlaceholder from "./views/SessionPlaceholder.vue"
 import LoginView from "./views/LoginView.vue"
 
 export const routes: RouteRecordRaw[] = [
     {path: "/login", name: "login", component: LoginView, meta: {public: true}},
     {path: "/", name: "front", component: FrontPage},
+    {path: "/repos/:prefix", name: "repo", component: RepoView},
+    // Ticket 05 replaces the placeholder with the session view; the route name and params stay.
+    {
+        path: "/repos/:prefix/sessions/:agent/:sessionId",
+        name: "session",
+        component: SessionPlaceholder,
+    },
     {path: "/:pathMatch(.*)*", redirect: "/"},
 ]
 

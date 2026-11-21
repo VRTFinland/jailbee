@@ -44,6 +44,8 @@ from jailbee.transcripts.base import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from jailbee.transcripts.base import SessionInfoCache
+
 RESULT_CHARS = 4000
 """A tool result is cut to this many characters; the entry says it was cut."""
 
@@ -351,6 +353,16 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
     )
 
 
+def _cached_info(session_id: str, path: Path, cache: SessionInfoCache | None) -> SessionInfo | None:
+    if cache is None:
+        return session_info(session_id, path)
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return cache.get(path, lambda: session_info(session_id, path), (st.st_size, st.st_mtime_ns))
+
+
 def _session_files(config_home: Path) -> list[tuple[str, Path]]:
     """Every `<sessionId>.jsonl` directly in a project directory; no links followed."""
     try:
@@ -396,11 +408,13 @@ class ClaudeSource:
                     subagents[agent_id] = candidate
         return SessionFiles(paths.transcript, subagents)
 
-    def list_sessions(self, config_home: Path) -> list[SessionInfo]:
+    def list_sessions(
+        self, config_home: Path, cache: SessionInfoCache | None = None
+    ) -> list[SessionInfo]:
         sessions = [
             info
             for session_id, path in _session_files(config_home)
-            if (info := session_info(session_id, path)) is not None
+            if (info := _cached_info(session_id, path, cache)) is not None
         ]
         oldest = datetime.min.replace(tzinfo=UTC)
         return sorted(sessions, key=lambda s: s.last_activity or oldest, reverse=True)

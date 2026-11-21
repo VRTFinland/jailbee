@@ -58,3 +58,16 @@ export interface Status {
 }
 
 export type ServerMessage = ServerHello | FrontPage | Status
+
+/** One row of `GET /api/repos/{prefix}/sessions` (REST, not the WebSocket). */
+export interface SessionSummary {
+    session_id: string
+    agent: string
+    title: string
+    last_activity: string | null
+    models: string[]
+}
+
+export interface SessionList {
+    sessions: SessionSummary[]
+}

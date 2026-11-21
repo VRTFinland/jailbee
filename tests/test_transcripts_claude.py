@@ -264,6 +264,33 @@ def test_an_offset_past_a_shrunken_file_reads_it_from_the_start(
     assert result.offset == path.stat().st_size
 
 
+def test_a_cache_skips_an_unchanged_transcript_and_rereads_a_grown_one(
+    home: Path, source: ClaudeSource, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jailbee.transcripts import claude
+    from jailbee.transcripts.base import SessionInfoCache
+
+    reads: list[str] = []
+    real = claude.session_info
+
+    def counting(session_id: str, path: Path) -> object:
+        reads.append(session_id)
+        return real(session_id, path)
+
+    monkeypatch.setattr(claude, "session_info", counting)
+    cache = SessionInfoCache()
+    source.list_sessions(home, cache)
+    assert sorted(reads) == [SID, OTHER_SID]
+    reads.clear()
+    source.list_sessions(home, cache)
+    assert reads == []  # nothing changed
+    path = home / "projects" / "-work-repo" / f"{SID}.jsonl"
+    with path.open("a") as f:
+        f.write(json.dumps(_user_text("late", "later question")) + "\n")
+    source.list_sessions(home, cache)
+    assert reads == [SID]
+
+
 def test_sessions_are_listed_newest_activity_first(home: Path, source: ClaudeSource) -> None:
     sessions = source.list_sessions(home)
 

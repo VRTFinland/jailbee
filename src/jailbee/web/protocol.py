@@ -93,6 +93,24 @@ class RepoRow(BaseModel):
     containers: list[ContainerRow]
 
 
+class SessionView(BaseModel):
+    """One agent session in a repository's session list (REST, not the WebSocket)."""
+
+    model_config = ConfigDict(frozen=True)
+    session_id: str
+    agent: str
+    title: str
+    last_activity: datetime | None
+    models: list[str]
+
+
+class SessionListView(BaseModel):
+    """`GET /api/repos/{prefix}/sessions`: newest activity first."""
+
+    model_config = ConfigDict(frozen=True)
+    sessions: list[SessionView]
+
+
 class FrontPageView(BaseModel):
     """The whole front page, sent in full on every snapshot."""
 

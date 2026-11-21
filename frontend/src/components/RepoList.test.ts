@@ -1,5 +1,7 @@
 import {mount} from "@vue/test-utils"
 import {describe, expect, it} from "vitest"
+import {createMemoryHistory} from "vue-router"
+import {createAppRouter} from "../router"
 import type {FrontPageView} from "../protocol"
 import RepoList from "./RepoList.vue"
 
@@ -24,9 +26,13 @@ const view: FrontPageView = {
     ],
 }
 
+function mountList() {
+    return mount(RepoList, {props: {view}, global: {plugins: [createAppRouter(createMemoryHistory())]}})
+}
+
 describe("RepoList", () => {
     it("groups containers under a heading per repository", () => {
-        const wrapper = mount(RepoList, {props: {view}})
+        const wrapper = mountList()
         const repos = wrapper.findAll("section.repo")
         expect(repos.map((r) => r.get("h2").text())).toEqual(["alpha", "empty"])
         expect(repos[0].findAll("li").map((li) => li.attributes("data-container"))).toEqual([
@@ -36,8 +42,13 @@ describe("RepoList", () => {
         expect(repos[1].text()).toContain("No containers.")
     })
 
+    it("links each repository heading to its session list", () => {
+        const links = mountList().findAll("h2 a")
+        expect(links.map((a) => a.attributes("href"))).toEqual(["/repos/alpha", "/repos/empty"])
+    })
+
     it("marks the agent state so a waiting agent stands out", () => {
-        const wrapper = mount(RepoList, {props: {view}})
+        const wrapper = mountList()
         const rows = wrapper.findAll("li.row")
         expect(rows[0].attributes("data-agent")).toBe("waiting")
         expect(rows[0].get(".agent").text()).toBe("waiting for you")
@@ -46,7 +57,7 @@ describe("RepoList", () => {
     })
 
     it("shows the core's cells under their headers and skips empty ones", () => {
-        const wrapper = mount(RepoList, {props: {view}})
+        const wrapper = mountList()
         const rows = wrapper.findAll("li.row")
         expect(rows[0].get(".name").text()).toBe("1")
         expect(rows[0].findAll(".cell").map((c) => c.text())).toEqual(["ST▶", "AI◆ 5m"])
