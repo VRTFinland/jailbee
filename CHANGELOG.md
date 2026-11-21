@@ -34,6 +34,10 @@ before editing `## Unreleased`.
   `remote.web` sets the listen address, port, auth and excluded repositories,
   and `enable|disable|status` manage a systemd user unit that restarts the
   server when JailBee is upgraded.
+- The inbox follower announces a change of the container's orchestration grant
+  (granted, revoked, or a field such as `max_running_children`) once, naming
+  what changed, so an orchestrator agent can adapt
+  ([#147](https://github.com/VRTFinland/jailbee/issues/147)).
 
 ### Changed
 

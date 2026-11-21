@@ -15,6 +15,12 @@ def render_event(event: dict[str, Any]) -> str | None:
         )
     if kind == "digest":
         return "JailBee inbox: child status digest — check it with jailbee inbox children"
+    if kind == "grant-changed":
+        raw = event.get("changes")
+        items = raw if isinstance(raw, list) else []
+        changes = "; ".join(clean_c0c1(str(c)) for c in items)[:400]
+        detail = f" ({changes})" if changes else ""
+        return f"JailBee inbox: your orchestration grant changed{detail} — see jailbee inbox grant"
     if kind != "message":
         return None
     item = event["item"]
