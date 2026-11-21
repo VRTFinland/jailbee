@@ -89,7 +89,8 @@ class SessionInfo:
     last_used_at: datetime
 
 
-def _hash(token: str) -> str:
+def token_hash(token: str) -> str:
+    """The stored form of a bearer secret (session token, login link): its SHA-256 hex digest."""
     return hashlib.sha256(token.encode()).hexdigest()
 
 
@@ -113,7 +114,7 @@ class SessionStore:
         with Session(self._engine) as s:
             s.add(
                 WebSession(
-                    token_hash=_hash(token),
+                    token_hash=token_hash(token),
                     device_name=device_name,
                     created_at=now,
                     last_used_at=now,
@@ -132,7 +133,7 @@ class SessionStore:
             return None
         now = self._clock()
         with Session(self._engine) as s:
-            row = s.exec(select(WebSession).where(WebSession.token_hash == _hash(token))).first()
+            row = s.exec(select(WebSession).where(WebSession.token_hash == token_hash(token))).first()
             if row is None:
                 return None
             if now - row.last_used_at > self._ttl:
@@ -153,12 +154,12 @@ class SessionStore:
         """
         cutoff = self._clock() - self._ttl
         with Session(self._engine) as s:
-            row = s.exec(select(WebSession).where(WebSession.token_hash == _hash(token))).first()
+            row = s.exec(select(WebSession).where(WebSession.token_hash == token_hash(token))).first()
             return row is not None and row.last_used_at >= cutoff
 
     def revoke(self, token: str) -> None:
         with Session(self._engine) as s:
-            s.exec(delete(WebSession).where(col(WebSession.token_hash) == _hash(token)))
+            s.exec(delete(WebSession).where(col(WebSession.token_hash) == token_hash(token)))
             s.commit()
 
     def purge_expired(self) -> None:
