@@ -22,6 +22,10 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- Attachment confirmations in PR creation, submodule PR creation, PR description
+  updates and uncertain upload recovery now use the prompt channel instead of
+  reading an unattended terminal. Non-interactive runs require explicit consent;
+  upload recovery continues to support `--yes`.
 - Queued child spawns and ordinary restarts check the current orchestration
   grant before each dispatch. Lowering `max_running_children` leaves running
   children untouched and holds queued work until the count falls below the

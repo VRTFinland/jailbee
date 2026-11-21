@@ -247,7 +247,8 @@ def test_pr_images_never_upload_without_an_answer(
     result = CliRunner().invoke(app, argv, input="\x03")
 
     assert result.exit_code == (2 if backend == "noninteractive" else 1), result.output
-    assert "confirmation needed" in result.output if backend == "noninteractive" else "Aborted" in result.output
+    expected_message = "confirmation needed" if backend == "noninteractive" else "Aborted"
+    assert expected_message in result.output
     assert not uploads
     publish.assert_not_called()
     assert "m.json" in files
@@ -293,7 +294,8 @@ def test_upload_recovery_asks_the_same_confirmation(
     from jailbee.outbox.publication_db import open_publications
 
     argv, _descriptor, url = uncertain_upload_command
-    argv += ["--retry-duplicate"] if retry_duplicate else ["--url", url]
+    options = ["--retry-duplicate"] if retry_duplicate else ["--url", url]
+    argv = argv[:2] + options + ["--"] + argv[2:]
     start = at_terminal if backend == "terminal" else at_dashboard
     asked = start(lambda _: consent)
 
@@ -318,7 +320,9 @@ def test_upload_recovery_requires_an_answer_unless_yes(
     from jailbee.outbox.publication_db import open_publications
 
     argv, _descriptor, url = uncertain_upload_command
-    argv += ["--url", url] + (["--yes"] if yes else [])
+    options = ["--url", url] + (["--yes"] if yes else [])
+    # Blob identifiers use URL-safe base64 and can start with an option-like '-'.
+    argv = argv[:2] + options + ["--"] + argv[2:]
     if backend == "dashboard":
         peer = _open_channel(monkeypatch, request, lambda _: None)
     else:
