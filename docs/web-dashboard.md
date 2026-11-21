@@ -76,6 +76,24 @@ PIN and TOTP attempts are limited to five a minute, each method on its own,
 so guessing one never locks out another; one-time links and security keys are
 not limited.
 
+Five a minute is a budget, not a wall. Each wrong guess is spent: a wrong PIN
+is replaced by a new one, and a TOTP code changes every 30 seconds, so every
+guess has the same small chance. At the full rate an attacker who can reach
+the login can expect:
+
+| Method on | One guess hits | Even odds after | Within 30 days |
+|---|---|---|---|
+| PIN (6 digits) | 1 in 1,000,000 | about 96 days | about 19 % |
+| TOTP, one key | 3 in 1,000,000 (codes ±30 s accepted) | about 32 days | about 48 % |
+| PIN and TOTP together | both limits apply side by side | about 24 days | about 58 % |
+
+Each extra TOTP key adds another three codes to hit. The PIN is printed anew
+after every failed attempt, and failed logins show in `jb remote web auth log`
+and the journal, so a guessing run is visible long before it is likely to
+succeed, but only if someone looks. For a dashboard reachable from the
+internet, log in with FIDO2 security keys and turn the PIN off, or better,
+do not expose the server at all and reach it over an SSH tunnel or a VPN.
+
 ```bash
 jb remote web auth status           # methods on, devices logged in
 jb remote web auth sessions ls      # logged-in devices
@@ -85,6 +103,16 @@ jb remote web auth log [-n 50]      # logins, failures, logouts, revocations
 
 Revoking a session refuses the device's next request and closes its open live
 view.
+
+The audit log keeps the newest 1000 entries. Failed one-time-link and FIDO2
+logins, which no attempt limit throttles, are kept apart (the newest 100), so
+a flood of them cannot push earlier PIN or TOTP failures out of the log.
+
+Logins, TOTP secrets and sessions live in the JailBee state database
+(`~/.local/state/jailbee/state.sqlite`). Its directory is kept `0700` and the
+database `0600` (each JailBee process tightens them when it first opens
+the database), so other local users cannot read
+the TOTP secrets.
 
 ### FIDO2 setup mode
 
@@ -189,6 +217,12 @@ server {
     }
 }
 ```
+
+Every response carries a `Content-Security-Policy` (`default-src 'self'`,
+`frame-ancestors 'none'`, no inline scripts or styles), `X-Frame-Options: DENY`,
+`X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`. A proxy
+that adds its own security headers should not loosen these; the dashboard
+cannot be embedded in another page.
 
 Keep authentication on behind a proxy. Every request the server sees comes
 from the proxy, which is why [source addresses are never trusted](security.md#web-dashboard-authentication).

@@ -7,7 +7,8 @@ Chrome binary; talks to a server such as `scripts/web_smoke_server.py`.
 
 Checks: login (skipped with --no-auth) -> front page lists the repo and
 container -> repo page lists the fixture sessions -> session view renders the
-transcript. Exits 0 when every check passes, 1 otherwise.
+transcript -> the walk hit no Content-Security-Policy violation. Exits 0 when
+every check passes, 1 otherwise.
 """
 
 from __future__ import annotations
@@ -107,6 +108,12 @@ def main() -> int:
             return 1
         page = Page(targets[0]["webSocketDebuggerUrl"])
         page.call("Page.enable")
+        # Injected by CDP, so the page's own CSP does not block the listener.
+        page.call(
+            "Page.addScriptToEvaluateOnNewDocument",
+            source="window.__csp=[];document.addEventListener('securitypolicyviolation',"
+            "e=>window.__csp.push(e.violatedDirective+' '+e.blockedURI));",
+        )
 
         def shot(name: str) -> None:
             if args.screenshots:
@@ -150,6 +157,12 @@ def main() -> int:
         check("front page lists repo and container", front)
         check("repo page lists sessions", repo)
         check("session view renders the transcript", session)
+
+        def no_csp_violations() -> None:
+            violations = page.eval("window.__csp")
+            assert violations == [], f"blocked by the CSP: {violations}"
+
+        check("no Content-Security-Policy violations", no_csp_violations)
     finally:
         chrome.terminate()
         try:

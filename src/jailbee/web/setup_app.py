@@ -31,6 +31,7 @@ from jailbee.web import auth_admin
 from jailbee.web.auth import Clock, PinHolder, RateLimiter, utcnow
 from jailbee.web.deps import RequestRp
 from jailbee.web.fido2_auth import Fido2Auth, Fido2Error
+from jailbee.web.security_headers import SecurityHeaders
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -154,6 +155,7 @@ def create_setup_app(deps: SetupDeps) -> FastAPI:
     """A new setup-mode app over ``deps``. Holds no state outside the returned object."""
     app = FastAPI(title="JailBee setup", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.setup = SetupContext(deps)
+    app.add_middleware(SecurityHeaders)
     app.include_router(router)
     if deps.static_dir is not None:
 

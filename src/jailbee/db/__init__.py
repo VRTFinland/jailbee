@@ -62,12 +62,13 @@ def get_engine() -> Engine:
     UI thread reads the same database.
     """
     path = state_dir()
-    path.mkdir(parents=True, exist_ok=True)
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
     db_path = (path / "state.sqlite").resolve()
     with _ENGINE_LOCK:
         cached = _ENGINES.get(db_path)
         if cached is not None:
             return cached
+        _make_private(path, db_path)
         engine = create_engine(
             f"sqlite:///{db_path}",
             connect_args={"timeout": 30, "check_same_thread": False},
@@ -77,6 +78,23 @@ def get_engine() -> Engine:
         _ensure_schema(engine)
         _ENGINES[db_path] = engine
         return engine
+
+
+def _make_private(directory: Path, db_path: Path) -> None:
+    """Make the state directory 0700 and the database files 0600, before first use.
+
+    The database holds secrets (the web dashboard's TOTP keys), so no other
+    local user may read it. Creates `db_path` empty if it is missing, so
+    SQLite opens a file that is private from the start; SQLite gives the
+    `-wal` and `-shm` files it creates later the database file's mode.
+    Existing looser files, from before this rule, are tightened here.
+    """
+    directory.chmod(0o700)
+    db_path.touch(mode=0o600, exist_ok=True)
+    for name in (db_path.name, f"{db_path.name}-wal", f"{db_path.name}-shm"):
+        sidecar = db_path.with_name(name)
+        if sidecar.exists():
+            sidecar.chmod(0o600)
 
 
 def _migrate_to_v2(conn: Connection) -> None:

@@ -64,12 +64,6 @@ class Fido2Begin(BaseModel):
     options: dict[str, Any]
 
 
-UNLIMITED_METHODS = frozenset({"link", "fido2"})
-"""Login methods no attempt limit applies to: a link token is single-use,
-high-entropy and lives 60 s; a FIDO2 login is a signature over a fresh
-challenge. Guessing either is hopeless, and limiting them would let a PIN or
-TOTP guesser lock the owner out. PIN and TOTP each have their own bucket."""
-
 Login = Annotated[PinLogin | TotpLogin | LinkLogin | Fido2Login, Field(discriminator="method")]
 
 
@@ -126,7 +120,7 @@ def authenticate(body: Login, ctx: Context, request: Request) -> TokenResponse:
             source=source,
         )
 
-    if body.method not in UNLIMITED_METHODS and not ctx.limiter.allow(body.method):
+    if body.method not in auth_admin.UNLIMITED_METHODS and not ctx.limiter.allow(body.method):
         # Not a database row: a flood of refused requests must not churn the audit table.
         auth_admin.log.warning(
             "web auth rate-limited method=%s device=%r source=%s",

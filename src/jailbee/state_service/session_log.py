@@ -119,8 +119,10 @@ def attribution(
 
     The most recently seen container wins when two instances claim one session.
     """
-    out: dict[tuple[str, str], str] = {}
+    best: dict[tuple[str, str], ContainerSession] = {}
     for name, uuid in names:
-        for row in reversed(recorded_sessions(engine, name, uuid)):
-            out[(row.agent, row.session_id)] = name
-    return out
+        for row in recorded_sessions(engine, name, uuid):
+            key = (row.agent, row.session_id)
+            if key not in best or row.last_seen > best[key].last_seen:
+                best[key] = row
+    return {key: row.container_name for key, row in best.items()}
