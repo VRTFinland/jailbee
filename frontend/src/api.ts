@@ -45,13 +45,34 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
 
 export type LoginResult = {ok: true} | {ok: false; error: string}
 
-export async function loginWithPin(pin: string, deviceName: string): Promise<LoginResult> {
+export type AuthMethod = "pin" | "totp"
+
+/** The login methods the server offers; PIN only if it cannot be asked. */
+export async function fetchAuthMethods(): Promise<AuthMethod[]> {
+    try {
+        const res = await fetch("/api/auth/methods")
+        if (res.ok) {
+            const data = (await res.json()) as {methods: string[]}
+            const known = data.methods.filter((m): m is AuthMethod => m === "pin" || m === "totp")
+            if (known.length > 0) return known
+        }
+    } catch {
+        // fall through to the PIN
+    }
+    return ["pin"]
+}
+
+async function login(
+    body: Record<string, string>,
+    deviceName: string,
+    refused: string,
+): Promise<LoginResult> {
     let res: Response
     try {
         res = await fetch("/api/auth", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({method: "pin", pin, device_name: deviceName}),
+            body: JSON.stringify({...body, device_name: deviceName}),
         })
     } catch {
         return {ok: false, error: "The server cannot be reached."}
@@ -65,7 +86,23 @@ export async function loginWithPin(pin: string, deviceName: string): Promise<Log
     if (res.status === 429) {
         return {ok: false, error: "Too many attempts. Wait a minute and try again."}
     }
-    return {ok: false, error: "Wrong or used PIN. The server printed a new one."}
+    return {ok: false, error: refused}
+}
+
+export function loginWithPin(pin: string, deviceName: string): Promise<LoginResult> {
+    return login(
+        {method: "pin", pin},
+        deviceName,
+        "Wrong or used PIN. The server printed a new one.",
+    )
+}
+
+export function loginWithTotp(code: string, deviceName: string): Promise<LoginResult> {
+    return login(
+        {method: "totp", code},
+        deviceName,
+        "Wrong or already used code. Wait for the next one and try again.",
+    )
 }
 
 export async function logout(): Promise<void> {
