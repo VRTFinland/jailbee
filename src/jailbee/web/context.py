@@ -11,13 +11,19 @@ from typing import TYPE_CHECKING
 from jailbee.web.auth import Clock, PinHolder, RateLimiter, SessionStore, utcnow
 from jailbee.web.auth_admin import TotpVerifier
 from jailbee.web.repo_sessions import AgentHomes, RepoSessions, snapshot_homes
-from jailbee.web.state import DEFAULT_GRACE_SECONDS, SnapshotSourceFactory, StateHub
+from jailbee.web.state import (
+    DEFAULT_GRACE_SECONDS,
+    DEFAULT_SNAPSHOT_WAIT_SECONDS,
+    SnapshotSourceFactory,
+    StateHub,
+)
 from jailbee.web.transcript_render import RenderCache
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+    from jailbee.state_service.protocol import Snapshot
 
 
 @dataclass(frozen=True)
@@ -41,6 +47,9 @@ class WebDeps:
     agent_homes: AgentHomes | None = None
     """Repo prefix → ``(agent, config home)`` pairs whose transcripts the session
     list reads. None derives them from the live snapshot."""
+    snapshot_wait_seconds: float = DEFAULT_SNAPSHOT_WAIT_SECONDS
+    """How long a REST route waits for the first snapshot when no WebSocket
+    holds the state-service connection (a deep link or a reload)."""
 
 
 @dataclass
@@ -61,6 +70,16 @@ class WebContext:
         from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
         return self.deps.repo_scope or RemoteRepoScope(frozenset())
+
+    async def snapshot(self) -> Snapshot | None:
+        """The latest snapshot, fetched on demand when no browser holds the hub."""
+        return await self.hub.snapshot(self.deps.snapshot_wait_seconds)
+
+    async def homes_ready(self) -> None:
+        """Make sure the session homes resolve: they come from the snapshot
+        unless `WebDeps.agent_homes` overrides them."""
+        if self.deps.agent_homes is None:
+            await self.snapshot()
 
     def __post_init__(self) -> None:
         self.sessions = SessionStore(self.deps.engine, self.deps.clock)

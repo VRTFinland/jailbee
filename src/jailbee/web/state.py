@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 DEFAULT_GRACE_SECONDS = 10.0
+DEFAULT_SNAPSHOT_WAIT_SECONDS = 5.0
 
 
 class SnapshotSource(Protocol):
@@ -106,6 +107,28 @@ class StateHub:
         self._subscribers.discard(subscriber)
         if not self._subscribers and self._source is not None and self._closer is None:
             self._closer = asyncio.get_running_loop().create_task(self._close_after_grace())
+
+    async def snapshot(self, timeout: float) -> Snapshot | None:
+        """The latest snapshot, opening the source for a moment if none is held.
+
+        For REST routes on a deep link, where no WebSocket holds the source:
+        attach, wait at most ``timeout`` seconds for the first snapshot (or a
+        status, which means none is coming soon), then detach, so the source
+        still closes after the grace period once no browser looks.
+        """
+        latest = self.latest()
+        if latest is not None:
+            return latest
+        subscriber = self.attach()
+        try:
+            async with asyncio.timeout(timeout):
+                while self.latest() is None and self.status() is None:
+                    await subscriber.wait()
+        except TimeoutError:
+            pass
+        finally:
+            self.detach(subscriber)
+        return self.latest()
 
     async def aclose(self) -> None:
         """Close the source now (server shutdown)."""

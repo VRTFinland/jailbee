@@ -16,9 +16,10 @@ async def sessions_of_container(
     name: str, ctx: Context, _auth: RequireSession
 ) -> ContainerSessionListView:
     # An excluded repository's container answers exactly as an unknown one.
+    snapshot = await ctx.snapshot()
     view = await run_in_threadpool(
         container_sessions,
-        ctx.hub.latest(),
+        snapshot,
         name,
         ctx.scope,
         ctx.deps.engine,
