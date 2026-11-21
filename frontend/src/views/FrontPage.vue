@@ -1,36 +1,19 @@
 <script setup lang="ts">
-import {onBeforeUnmount, onMounted, ref} from "vue"
+import {computed} from "vue"
 import {useRouter} from "vue-router"
 import {logout} from "../api"
-import type {FrontPageView, ServerMessage} from "../protocol"
 import RepoList from "../components/RepoList.vue"
-import {DashboardSocket} from "../socket"
+import {useDashboard} from "../dashboard"
 
 const router = useRouter()
-const view = ref<FrontPageView | null>(null)
-const status = ref<string | null>(null)
-const connected = ref(false)
-const device = ref("")
-
-const socket = new DashboardSocket({
-    onMessage(message: ServerMessage) {
-        if (message.type === "hello") device.value = message.device_name
-        else if (message.type === "front_page") view.value = message.view
-        else if (message.type === "status") status.value = message.message
-    },
-    onConnectionChange(value: boolean) {
-        connected.value = value
-    },
-    onUnauthorized() {
-        void router.push({name: "login"})
-    },
-})
-
-onMounted(() => socket.start())
-onBeforeUnmount(() => socket.stop())
+const dashboard = useDashboard()
+const view = computed(() => dashboard?.state.view ?? null)
+const status = computed(() => dashboard?.state.status ?? null)
+const connected = computed(() => dashboard?.state.connected ?? false)
+const device = computed(() => dashboard?.state.device ?? "")
 
 async function signOut() {
-    socket.stop()
+    dashboard?.stop()
     await logout()
     await router.push({name: "login"})
 }

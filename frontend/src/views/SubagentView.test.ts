@@ -14,6 +14,7 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 const parent: TranscriptView = {
+    offset: 0,
     session_id: "s-1",
     agent: "claude",
     title: "Fix the login bug",
@@ -53,6 +54,7 @@ const parent: TranscriptView = {
 }
 
 const child: TranscriptView = {
+    offset: 0,
     session_id: "s-1",
     agent: "claude",
     title: "Review auth",

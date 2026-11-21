@@ -1,7 +1,7 @@
 // Mirror of src/jailbee/web/protocol.py. Bump PROTOCOL_VERSION in both files
 // on any change either side could misread.
 
-export const PROTOCOL_VERSION = 2
+export const PROTOCOL_VERSION = 3
 
 export const CLOSE_UNAUTHORIZED = 4001
 export const CLOSE_PROTOCOL_MISMATCH = 4002
@@ -13,7 +13,29 @@ export interface ClientAuth {
     token: string
 }
 
-export type ClientMessage = ClientAuth
+/** Which transcript a live subscription follows; `subagent_id` picks a subagent's. */
+export interface FollowKey {
+    prefix: string
+    agent: string
+    session_id: string
+    subagent_id: string | null
+}
+
+/** Follow a transcript from `offset` (`TranscriptView.offset`). */
+export interface Subscribe {
+    type: "subscribe"
+    v: number
+    key: FollowKey
+    offset: number
+}
+
+export interface Unsubscribe {
+    type: "unsubscribe"
+    v: number
+    key: FollowKey
+}
+
+export type ClientMessage = ClientAuth | Subscribe | Unsubscribe
 
 export interface ColumnHead {
     name: string
@@ -57,7 +79,24 @@ export interface Status {
     message: string | null
 }
 
-export type ServerMessage = ServerHello | FrontPage | Status
+/** Entries a followed transcript gained; never empty. */
+export interface TranscriptAppend {
+    type: "append"
+    v: number
+    key: FollowKey
+    entries: RenderedEntry[]
+    offset: number
+}
+
+/** A subscription refused (unknown or hidden session): nothing follows. */
+export interface SubscribeError {
+    type: "subscribe_error"
+    v: number
+    key: FollowKey
+    message: string
+}
+
+export type ServerMessage = ServerHello | FrontPage | Status | TranscriptAppend | SubscribeError
 
 /** One row of `GET /api/repos/{prefix}/sessions` (REST, not the WebSocket). */
 export interface SessionSummary {
@@ -162,4 +201,6 @@ export interface TranscriptView {
     last_activity: string | null
     models: string[]
     entries: RenderedEntry[]
+    /** Byte offset the entries were read to: where a live subscription resumes. */
+    offset: number
 }

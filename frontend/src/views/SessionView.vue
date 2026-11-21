@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // One agent session as a readable document. Every `html` field is rendered
 // and sanitised by the server; it is inserted as is.
-import {computed, nextTick, onMounted, ref} from "vue"
+import {computed, nextTick, onBeforeUnmount, onMounted, ref} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
 import ToolCall from "../components/ToolCall.vue"
+import {useDashboard} from "../dashboard"
 import type {
     RenderedEntry,
     RenderedSubagent,
@@ -70,6 +71,55 @@ function entryDomId(id: string): string {
     return `entry-${id}`
 }
 
+// ---- live follow ----------------------------------------------------------
+const dashboard = useDashboard()
+let unfollow: (() => void) | null = null
+let unmounted = false
+
+/** Within this many pixels of the bottom counts as "at the end". */
+const AT_END_SLACK_PX = 48
+
+function atEnd(): boolean {
+    const page = document.documentElement
+    return window.scrollY + window.innerHeight >= page.scrollHeight - AT_END_SLACK_PX
+}
+
+/**
+ * New entries from the live subscription. Normal display profile: append in
+ * place, and scroll along only if the reader was already at the end.
+ *
+ * Ticket 10 hook (e-ink profile): instead of appending, hold `entries` in a
+ * pending list and show a "new entries" notice the reader taps to apply them,
+ * so the screen does not repaint under them. Branch on the display profile here.
+ */
+async function onLiveAppend(entries: RenderedEntry[]) {
+    if (transcript.value === null) return
+    const follow = atEnd()
+    transcript.value.entries.push(...entries)
+    await nextTick()
+    if (follow) window.scrollTo({top: document.documentElement.scrollHeight})
+}
+
+function startFollowing(view: TranscriptView) {
+    if (unmounted) return // left before the transcript arrived
+    unfollow = dashboard?.follow(
+        {
+            prefix: prefix.value,
+            agent: agent.value,
+            session_id: sessionId.value,
+            subagent_id: agentId.value,
+        },
+        view.offset,
+        {onAppend: (entries) => void onLiveAppend(entries)},
+    ) ?? null
+}
+
+onBeforeUnmount(() => {
+    unmounted = true
+    unfollow?.()
+    unfollow = null
+})
+
 function jumpToLatest() {
     if (latestAnswer.value === null) return
     document.getElementById(entryDomId(latestAnswer.value))?.scrollIntoView({block: "start"})
@@ -86,7 +136,9 @@ onMounted(async () => {
         .map(encodeURIComponent)
         .join("/")
     try {
-        transcript.value = await apiFetch<TranscriptView>(`/api/repos/${path}`)
+        const view = await apiFetch<TranscriptView>(`/api/repos/${path}`)
+        transcript.value = view
+        startFollowing(view)
         await nextTick()
     } catch (e) {
         if (e instanceof Unauthorized) {

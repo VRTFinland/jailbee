@@ -16,6 +16,7 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 const transcript: TranscriptView = {
+    offset: 0,
     session_id: "s-1",
     agent: "claude",
     title: "Fix the login bug",
