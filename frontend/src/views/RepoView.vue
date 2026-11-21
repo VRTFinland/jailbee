@@ -54,6 +54,9 @@ onMounted(async () => {
                     <span class="title">{{ s.title || "Untitled session" }}</span>
                     <span class="meta">
                         <span class="agent">{{ s.agent }}</span>
+                        <span class="container" :class="{unattributed: !s.container}">{{
+                            s.container ?? "unattributed"
+                        }}</span>
                         <time v-if="s.last_activity" :datetime="s.last_activity">{{
                             when(s.last_activity)
                         }}</time>
@@ -126,5 +129,11 @@ onMounted(async () => {
 }
 .models {
     font-family: var(--font-mono);
+}
+.container:not(.unattributed) {
+    font-family: var(--font-mono);
+}
+.unattributed {
+    font-style: italic;
 }
 </style>

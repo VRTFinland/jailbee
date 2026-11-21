@@ -66,8 +66,26 @@ export interface SessionSummary {
     title: string
     last_activity: string | null
     models: string[]
+    /** The container the session was seen in; null when unattributed. */
+    container: string | null
 }
 
 export interface SessionList {
     sessions: SessionSummary[]
+}
+
+/** One row of `GET /api/containers/{name}/sessions`. */
+export interface ContainerSession {
+    session_id: string
+    agent: string
+    live: boolean
+    title: string
+    last_activity: string | null
+    models: string[]
+}
+
+export interface ContainerSessionList {
+    container: string
+    repo: string
+    sessions: ContainerSession[]
 }

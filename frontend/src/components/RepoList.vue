@@ -25,7 +25,6 @@ function agentLabel(state: string): string {
         </h2>
         <p v-if="repo.containers.length === 0" class="muted empty">No containers.</p>
         <ul v-else class="rows">
-            <!-- Hook: ticket 08 turns each row's content into a link to the container view. -->
             <li
                 v-for="c in repo.containers"
                 :key="c.name"
@@ -34,9 +33,9 @@ function agentLabel(state: string): string {
                 :data-agent="c.agent ?? undefined"
             >
                 <div class="main">
-                    <span class="name"
+                    <router-link class="name" :to="{name: 'container', params: {name: c.name}}"
                         ><span class="indent">{{ c.indent }}</span
-                        >{{ c.cells[0] }}</span
+                        >{{ c.cells[0] }}</router-link
                     >
                     <span v-if="c.agent" class="agent" :class="`agent-${c.agent}`">{{
                         agentLabel(c.agent)
@@ -102,6 +101,13 @@ function agentLabel(state: string): string {
     font-family: var(--font-mono);
     font-size: 1.1rem;
     word-break: break-all;
+}
+a.name {
+    color: inherit;
+    text-decoration: none;
+}
+a.name:hover {
+    text-decoration: underline;
 }
 .indent {
     white-space: pre;

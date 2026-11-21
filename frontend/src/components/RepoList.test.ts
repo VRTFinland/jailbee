@@ -47,6 +47,14 @@ describe("RepoList", () => {
         expect(links.map((a) => a.attributes("href"))).toEqual(["/repos/alpha", "/repos/empty"])
     })
 
+    it("links each container's name to its container view", () => {
+        const links = mountList().findAll("li.row a.name")
+        expect(links.map((a) => a.attributes("href"))).toEqual([
+            "/containers/alpha-1",
+            "/containers/alpha-2",
+        ])
+    })
+
     it("marks the agent state so a waiting agent stands out", () => {
         const wrapper = mountList()
         const rows = wrapper.findAll("li.row")

@@ -19,8 +19,16 @@ const sessions = [
         title: "Fix the login bug",
         last_activity: "2026-11-01T10:05:00Z",
         models: ["claude-opus-4", "claude-haiku-4"],
+        container: "alpha-1",
     },
-    {session_id: "s-old", agent: "claude", title: "", last_activity: null, models: []},
+    {
+        session_id: "s-old",
+        agent: "claude",
+        title: "",
+        last_activity: null,
+        models: [],
+        container: null,
+    },
 ]
 
 async function mountRepo(fetchMock: ReturnType<typeof vi.fn>) {
@@ -47,6 +55,13 @@ describe("RepoView", () => {
         expect(rows[0].text()).toContain("claude-haiku-4")
         expect(rows[0].get("time").attributes("datetime")).toBe("2026-11-01T10:05:00Z")
         expect(rows[1].text()).toContain("Untitled session")
+    })
+
+    it("shows each session's container, or that it is unattributed", async () => {
+        const {wrapper} = await mountRepo(vi.fn().mockResolvedValue(jsonResponse(200, {sessions})))
+        const rows = wrapper.findAll("li.session")
+        expect(rows[0].get(".container").text()).toBe("alpha-1")
+        expect(rows[1].get(".container").text()).toBe("unattributed")
     })
 
     it("links a row to the session route", async () => {
