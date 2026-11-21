@@ -1229,10 +1229,12 @@ def body_references(text: str) -> set[str]:
 
 def _apply_hint(short: str, plan: PrPlan) -> str:
     """The command that publishes a plan's manifests; the manifest is always named."""
-    names = [m.target.manifest.name for m in plan.manifests]
+    from jailbee.outbox.inspect import safe_text
+
+    names = [safe_text(m.target.manifest.name) for m in plan.manifests]
     if len(names) == 1:
         return f"`jailbee outbox apply {short} pr/{names[0]}`"
-    return f"`jailbee outbox apply {short} pr/<manifest>` (one of: {', '.join(names)})"
+    return f"`jailbee outbox apply {short} pr/<manifest>` (one manifest per run; pending: {', '.join(names)})"
 
 
 class FinalizeError(Exception):
