@@ -939,8 +939,7 @@ class MenuBox(OverlayBox):
             self._identity(old_entries[at]) if at is not None and at < len(old_entries) else None
         )
         if self.group is not None and not any(
-            isinstance(item, MenuGroup) and item.label == self.group
-            for item in menu_entries(spec)
+            isinstance(item, MenuGroup) and item.label == self.group for item in menu_entries(spec)
         ):
             self.group, followed = None, None  # the level it was in is gone
         entries = self._entries()
