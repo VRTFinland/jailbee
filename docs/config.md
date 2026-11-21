@@ -3240,6 +3240,10 @@ GitHub CLI (`gh`) integration. When enabled, `jailbee`:
 - Injects `GH_TOKEN` into the container at autostart via
   `/etc/profile.d/jailbee-github.sh` so login shells (and AI agents
   launched through them) authenticate without `gh auth login`.
+  `jailbee apply` rewrites the file in every running container, so a
+  rotated token needs no restart (stopped containers get it on their next
+  start). Only new login shells read it: shells and agents that are already
+  open keep the old `GH_TOKEN` until they are reopened.
 - Runs `jailbee doctor` checks for token presence, perms, and PAT shape.
 
 ```yaml

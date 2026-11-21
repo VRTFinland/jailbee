@@ -588,6 +588,23 @@ def run_apply(
                 f"Could not update LiteLLM settings on {short}: {e}; run `jailbee apply` to retry."
             )
 
+        # A rotated GitHub token alters no Incus profile, so it never triggers a
+        # restart; rewrite the profile.d file in place. Only new login shells
+        # read it: open shells and running agents keep the old GH_TOKEN.
+        from jailbee.autostart import inject_github_token
+        from jailbee.lifecycle import container_repo_dir
+
+        try:
+            inject_github_token(
+                cfg,
+                incus,
+                ci.name,
+                container_repo_dir(cfg, incus, ci.name),
+                mirror_endpoint=mirror_endpoint,
+            )
+        except (IncusError, OSError) as e:
+            warn(f"Could not refresh GH_TOKEN on {short}: {e}; run `jailbee apply` to retry.")
+
     # The repo's Squid rules once, after every container's environment is set,
     # instead of a full rebuild per container.
     egress_proxy.sync_repo(cfg, incus)
