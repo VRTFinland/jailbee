@@ -11,6 +11,7 @@ import uvicorn
 
 from jailbee import __version__
 from jailbee.db import get_engine
+from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.remote_ssh.running import installed_version as _installed_version
 from jailbee.web import assets
 from jailbee.web.app import WebDeps, create_app
@@ -67,6 +68,7 @@ def serve(
         engine=get_engine(),
         pin=pin,
         static_dir=directory,
+        repo_scope=RemoteRepoScope.of(config),
     )
     app = create_app(deps)
     echo(f"JailBee web dashboard: {server_url(config.listen, config.port)}")

@@ -19,7 +19,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 CLOSE_UNAUTHORIZED = 4001
 """No valid session token: the browser goes back to the login page."""
@@ -62,11 +62,35 @@ def decode_client(text: str) -> ClientAuth:
 # ---- server -> client ------------------------------------------------------
 
 
-class ContainerRow(BaseModel):
-    """One container on the front page."""
+class ColumnHead(BaseModel):
+    """One column: the core's field name (stable key) and its dashboard header."""
 
     model_config = ConfigDict(frozen=True)
     name: str
+    header: str
+
+
+class ContainerRow(BaseModel):
+    """One container: its name, fork-tree indent glyphs, agent state and cells.
+
+    ``cells`` is plain text aligned with the page's ``columns``. ``agent`` is
+    the most urgent agent state (``waiting``, ``busy``, ``idle``, ...), or
+    None when no agent runs there.
+    """
+
+    model_config = ConfigDict(frozen=True)
+    name: str
+    indent: str
+    agent: str | None
+    cells: list[str]
+
+
+class RepoRow(BaseModel):
+    """A repository heading and its containers."""
+
+    model_config = ConfigDict(frozen=True)
+    prefix: str
+    containers: list[ContainerRow]
 
 
 class FrontPageView(BaseModel):
@@ -75,7 +99,8 @@ class FrontPageView(BaseModel):
     model_config = ConfigDict(frozen=True)
     seq: int
     gathered_at: datetime
-    containers: list[ContainerRow]
+    columns: list[ColumnHead]
+    repos: list[RepoRow]
 
 
 class ServerHello(_Message):

@@ -68,7 +68,9 @@ async def _push(ws: WebSocket, ctx: WebContext, subscriber: Subscriber) -> None:
         snapshot = ctx.hub.latest()
         if snapshot is not None and snapshot.seq != last_seq:
             last_seq = snapshot.seq
-            await ws.send_text(encode(FrontPage(view=front_page_view(snapshot))))
+            await ws.send_text(
+                encode(FrontPage(view=front_page_view(snapshot, ctx.scope, ctx.deps.clock())))
+            )
 
 
 async def _receive(ws: WebSocket) -> None:

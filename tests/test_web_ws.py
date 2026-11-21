@@ -109,8 +109,11 @@ def test_front_page_arrives_on_every_snapshot(
 
     assert first["type"] == "front_page"
     assert first["v"] == PROTOCOL_VERSION
-    assert [c["name"] for c in first["view"]["containers"]] == ["alpha-one", "alpha-two"]
-    assert [c["name"] for c in second["view"]["containers"]] == ["alpha-two"]
+    assert [c["name"] for c in first["view"]["repos"][0]["containers"]] == [
+        "alpha-one",
+        "alpha-two",
+    ]
+    assert [c["name"] for c in second["view"]["repos"][0]["containers"]] == ["alpha-two"]
 
 
 def test_a_late_browser_gets_the_current_page_at_once() -> None:

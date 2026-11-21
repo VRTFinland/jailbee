@@ -3,6 +3,7 @@ import {onBeforeUnmount, onMounted, ref} from "vue"
 import {useRouter} from "vue-router"
 import {logout} from "../api"
 import type {FrontPageView, ServerMessage} from "../protocol"
+import RepoList from "../components/RepoList.vue"
 import {DashboardSocket} from "../socket"
 
 const router = useRouter()
@@ -48,10 +49,7 @@ async function signOut() {
 
         <main>
             <p v-if="view === null" class="muted">Waiting for the first update…</p>
-            <p v-else-if="view.containers.length === 0" class="muted">No containers.</p>
-            <ul v-else class="rows">
-                <li v-for="c in view.containers" :key="c.name" class="row">{{ c.name }}</li>
-            </ul>
+            <RepoList v-else :view="view" />
         </main>
     </div>
 </template>
@@ -85,16 +83,5 @@ async function signOut() {
 }
 .muted {
     color: var(--muted);
-}
-.rows {
-    list-style: none;
-    margin: var(--space-3) 0;
-    padding: 0;
-}
-.row {
-    font-family: var(--font-mono);
-    padding: var(--space-3);
-    border-bottom: 1px solid var(--border);
-    min-height: 3rem;
 }
 </style>

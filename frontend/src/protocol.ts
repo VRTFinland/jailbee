@@ -1,7 +1,7 @@
 // Mirror of src/jailbee/web/protocol.py. Bump PROTOCOL_VERSION in both files
 // on any change either side could misread.
 
-export const PROTOCOL_VERSION = 1
+export const PROTOCOL_VERSION = 2
 
 export const CLOSE_UNAUTHORIZED = 4001
 export const CLOSE_PROTOCOL_MISMATCH = 4002
@@ -15,14 +15,28 @@ export interface ClientAuth {
 
 export type ClientMessage = ClientAuth
 
+export interface ColumnHead {
+    name: string
+    header: string
+}
+
 export interface ContainerRow {
     name: string
+    indent: string
+    agent: string | null
+    cells: string[]
+}
+
+export interface RepoRow {
+    prefix: string
+    containers: ContainerRow[]
 }
 
 export interface FrontPageView {
     seq: number
     gathered_at: string
-    containers: ContainerRow[]
+    columns: ColumnHead[]
+    repos: RepoRow[]
 }
 
 export interface ServerHello {

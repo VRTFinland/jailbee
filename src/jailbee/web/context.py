@@ -14,6 +14,8 @@ from jailbee.web.state import DEFAULT_GRACE_SECONDS, SnapshotSourceFactory, Stat
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
+    from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+
 
 @dataclass(frozen=True)
 class WebDeps:
@@ -30,6 +32,9 @@ class WebDeps:
     monotonic: Callable[[], float] = time.monotonic
     static_dir: Path | None = None
     grace_seconds: float = DEFAULT_GRACE_SECONDS
+    repo_scope: RemoteRepoScope | None = None
+    """Which repositories a browser may see (`remote.web.excluded_repos`).
+    None means every repository; the real server always passes one."""
 
 
 @dataclass
@@ -40,6 +45,13 @@ class WebContext:
     sessions: SessionStore = field(init=False)
     limiter: RateLimiter = field(init=False)
     hub: StateHub = field(init=False)
+
+    @property
+    def scope(self) -> RemoteRepoScope:
+        """The repo scope every REST and WebSocket output is filtered with."""
+        from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+
+        return self.deps.repo_scope or RemoteRepoScope(frozenset())
 
     def __post_init__(self) -> None:
         self.sessions = SessionStore(self.deps.engine, self.deps.clock)

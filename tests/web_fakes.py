@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from jailbee.dashboard.model import RepoGroup
 from jailbee.lifecycle import ContainerInfo
@@ -84,10 +85,23 @@ class FakeSourceFactory:
         return self.made[0]
 
 
-def container(name: str, repo: str = "alpha") -> ContainerInfo:
-    return ContainerInfo(
+def container(name: str, repo: str = "alpha", **fields: Any) -> ContainerInfo:
+    info = ContainerInfo(
         name=name, state="Running", network="strict", ip=None, memory_limit=None, repo=repo
     )
+    for key, value in fields.items():
+        setattr(info, key, value)
+    return info
+
+
+def repo_group(prefix: str, *containers: ContainerInfo) -> RepoGroup:
+    group = RepoGroup(prefix, f"/repos/{prefix}", Path(f"/repos/{prefix}/.jailbee/config.yaml"), [])
+    group.containers.extend(containers)
+    return group
+
+
+def snapshot_of(*groups: RepoGroup, seq: int = 1) -> Snapshot:
+    return Snapshot(seq=seq, gathered_at=START, git_enabled=False, groups=list(groups))
 
 
 def snapshot(*names: str, seq: int = 1) -> Snapshot:
