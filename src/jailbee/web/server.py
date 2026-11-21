@@ -13,7 +13,7 @@ from jailbee import __version__
 from jailbee.db import get_engine
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.remote_ssh.running import installed_version as _installed_version
-from jailbee.web import assets
+from jailbee.web import assets, auth_admin
 from jailbee.web.app import WebDeps, create_app
 from jailbee.web.auth import PinHolder, RotationReason
 from jailbee.web.errors import FrontendNotBuiltError, ServiceUpdatedError
@@ -72,7 +72,13 @@ def serve(
     )
     app = create_app(deps)
     echo(f"JailBee web dashboard: {server_url(config.listen, config.port)}")
-    echo(f"PIN: {pin.current}")
+    if auth_admin.pin_enabled(deps.engine):
+        echo(f"PIN: {pin.current}")
+    else:
+        echo(
+            "PIN login is off. To allow it: `jailbee remote web auth pin on`, "
+            "then restart the server to see a PIN."
+        )
     http = uvicorn.Server(
         uvicorn.Config(app, host=config.listen, port=config.port, log_level="info")
     )
@@ -97,7 +103,8 @@ def serve(
     watcher = threading.Thread(target=watch, name="web-version-watch", daemon=True)
     watcher.start()
     try:
-        http.run()
+        with auth_admin.audit_logging():
+            http.run()
     finally:
         finished.set()
         watcher.join()

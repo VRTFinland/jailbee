@@ -131,6 +131,11 @@ python_version = "3.12"
 module = ["litellm", "litellm.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# qrcode ships no type information (no py.typed, no stubs package).
+module = ["qrcode", "qrcode.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 # Pinned rather than left to discovery. `website/demo/substrate/` is a
 # committed miniature application — the repo the workflow videos are recorded

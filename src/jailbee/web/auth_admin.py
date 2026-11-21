@@ -13,8 +13,10 @@ which the foreground server prints and its systemd unit sends to the journal.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Literal
@@ -129,6 +131,20 @@ def add_totp_key(engine: Engine, name: str, *, clock: Clock = utcnow) -> NewTotp
         s.commit()
         s.refresh(row)
         return NewTotpKey(_key_info(row), secret, uri)
+
+
+def qr_text(data: str) -> str:
+    """``data`` as a QR code drawn with block characters, for a terminal."""
+    import io
+
+    import qrcode
+
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_L)
+    qr.add_data(data)
+    qr.make(fit=True)
+    out = io.StringIO()
+    qr.print_ascii(out=out, invert=True)
+    return out.getvalue()
 
 
 def list_totp_keys(engine: Engine) -> list[TotpKeyInfo]:
@@ -249,6 +265,28 @@ def record_event(
         keep = select(WebAuthEvent.id).order_by(col(WebAuthEvent.id).desc()).limit(AUDIT_KEEP)
         s.exec(delete(WebAuthEvent).where(col(WebAuthEvent.id).not_in(keep)))
         s.commit()
+
+
+@contextlib.contextmanager
+def audit_logging() -> Iterator[None]:
+    """Print `jailbee.web.audit` lines on stderr while the server runs.
+
+    As the SSH server does with its own audit logger: a foreground run shows
+    them in the terminal, the systemd unit sends them to the journal.
+    """
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.INFO)
+    previous_level, previous_propagate = log.level, log.propagate
+    log.addHandler(handler)
+    log.setLevel(logging.INFO)
+    log.propagate = False
+    try:
+        yield
+    finally:
+        log.removeHandler(handler)
+        handler.close()
+        log.setLevel(previous_level)
+        log.propagate = previous_propagate
 
 
 def recent_events(engine: Engine, limit: int = 50) -> list[AuditEvent]:

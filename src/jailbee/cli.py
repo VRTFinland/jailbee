@@ -523,6 +523,201 @@ def serve_cmd(
     _remote_web_serve(listen, port)
 
 
+web_auth_app = typer.Typer(
+    name="auth",
+    help="Web dashboard logins: PIN, TOTP keys, device sessions, audit log.",
+    no_args_is_help=True,
+)
+web_auth_pin_app = typer.Typer(
+    name="pin", help="Turn the one-time PIN login on or off.", no_args_is_help=True
+)
+web_auth_totp_app = typer.Typer(
+    name="totp", help="Authenticator-app (TOTP) keys.", no_args_is_help=True
+)
+web_auth_sessions_app = typer.Typer(
+    name="sessions", help="Logged-in devices.", no_args_is_help=True
+)
+web_remote_app.add_typer(web_auth_app)
+web_auth_app.add_typer(web_auth_pin_app)
+web_auth_app.add_typer(web_auth_totp_app)
+web_auth_app.add_typer(web_auth_sessions_app)
+
+
+@contextlib.contextmanager
+def _web_auth_errors() -> Iterator[None]:
+    """Map refused actions and a missing `web` extra to a message and exit 1."""
+    from jailbee.web.auth_admin import AuthAdminError
+    from jailbee.web.errors import WebDependencyError, is_missing_web_extra
+
+    try:
+        yield
+    except AuthAdminError as exc:
+        error_plain(str(exc))
+        raise typer.Exit(1) from exc
+    except ModuleNotFoundError as exc:
+        if not is_missing_web_extra(exc):
+            raise
+        error_plain(str(WebDependencyError()))
+        raise typer.Exit(1) from exc
+
+
+def _web_time(at: datetime) -> str:
+    return at.astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+@web_auth_app.command("status")
+def remote_web_auth_status_cmd() -> None:
+    """Show which login methods are on and how many devices are logged in."""
+    from jailbee.db import get_engine
+    from jailbee.web import auth_admin
+
+    engine = get_engine()
+    typer.echo(f"PIN: {'on' if auth_admin.pin_enabled(engine) else 'off'}")
+    typer.echo(f"TOTP keys: {len(auth_admin.list_totp_keys(engine))}")
+    typer.echo(f"Sessions: {len(auth_admin.list_sessions(engine))}")
+
+
+def _set_web_pin(enabled: bool) -> None:
+    from jailbee.db import get_engine
+    from jailbee.web import auth_admin
+
+    with _web_auth_errors():
+        auth_admin.set_pin_enabled(get_engine(), enabled)
+    typer.echo(f"PIN login is {'on' if enabled else 'off'}.")
+
+
+@web_auth_pin_app.command("on")
+def remote_web_auth_pin_on_cmd() -> None:
+    """Allow logging in with the one-time PIN the server prints."""
+    _set_web_pin(True)
+
+
+@web_auth_pin_app.command("off")
+def remote_web_auth_pin_off_cmd() -> None:
+    """Refuse PIN logins. Needs at least one TOTP key."""
+    _set_web_pin(False)
+
+
+@web_auth_totp_app.command("add")
+def remote_web_auth_totp_add_cmd(
+    name: Annotated[
+        str, typer.Option("--name", help="Label for the key, e.g. the phone it lives on.")
+    ] = "",
+) -> None:
+    """Create a TOTP key and print its secret and a QR code to scan."""
+    from jailbee.db import get_engine
+    from jailbee.web import auth_admin
+
+    with _web_auth_errors():
+        import pyotp  # noqa: F401  # fail on a missing extra before storing anything
+        import qrcode  # noqa: F401
+
+        new = auth_admin.add_totp_key(get_engine(), name)
+        qr = auth_admin.qr_text(new.uri)
+    typer.echo(f"Added TOTP key {new.key.id}{f' ({name})' if name else ''}.")
+    typer.echo(f"Secret: {new.secret}")
+    typer.echo(f"URI: {new.uri}")
+    typer.echo("Scan with an authenticator app (shown only now):")
+    typer.echo(qr)
+
+
+@web_auth_totp_app.command("ls")
+def remote_web_auth_totp_ls_cmd() -> None:
+    """List TOTP keys (never their secrets)."""
+    from jailbee.db import get_engine
+    from jailbee.web import auth_admin
+
+    for key in auth_admin.list_totp_keys(get_engine()):
+        typer.echo(f"{key.id}\t{key.name or '-'}\tadded {_web_time(key.created_at)}")
+
+
+@web_auth_totp_app.command("rm")
+def remote_web_auth_totp_rm_cmd(
+    key_id: Annotated[
+        int | None, typer.Argument(help="Id of the key (see `totp ls`). Asked for when omitted.")
+    ] = None,
+) -> None:
+    """Remove a TOTP key; codes from it stop working."""
+    from jailbee import prompting
+    from jailbee.db import get_engine
+    from jailbee.web import auth_admin
+
+    engine = get_engine()
+    if key_id is None:
+        key_id = prompting.choose_one(
+            "TOTP key",
+            [
+                prompting.Option(k.id, f"{k.id}  {k.name or '-'}", f"{k.id} ({k.name or '-'})")
+                for k in auth_admin.list_totp_keys(engine)
+            ],
+            destructive=True,
+            empty_reason="no TOTP keys to remove",
+        )
+    with _web_auth_errors():
+        removed = auth_admin.remove_totp_key(engine, key_id)
+    typer.echo(f"Removed TOTP key {removed.id}.")
+
+
+@web_auth_sessions_app.command("ls")
+def remote_web_auth_sessions_ls_cmd() -> None:
+    """List logged-in devices, most recently used first."""
+    from jailbee.db import get_engine
+    from jailbee.web import auth_admin
+
+    for s in auth_admin.list_sessions(get_engine()):
+        typer.echo(
+            f"{s.id}\t{s.device_name}\tlast used {_web_time(s.last_used_at)}"
+            f"\tsince {_web_time(s.created_at)}"
+        )
+
+
+@web_auth_sessions_app.command("revoke")
+def remote_web_auth_sessions_revoke_cmd(
+    session_id: Annotated[
+        int | None,
+        typer.Argument(help="Id of the session (see `sessions ls`). Asked for when omitted."),
+    ] = None,
+) -> None:
+    """Log a device out: its next request, and its open live view, are refused."""
+    from jailbee import prompting
+    from jailbee.db import get_engine
+    from jailbee.web import auth_admin
+
+    engine = get_engine()
+    if session_id is None:
+        session_id = prompting.choose_one(
+            "session",
+            [
+                prompting.Option(
+                    s.id,
+                    f"{s.id}  {s.device_name}  (last used {_web_time(s.last_used_at)})",
+                    f"{s.id} ({s.device_name})",
+                )
+                for s in auth_admin.list_sessions(engine)
+            ],
+            destructive=True,
+            empty_reason="no web sessions to revoke",
+        )
+    with _web_auth_errors():
+        revoked = auth_admin.revoke_session(engine, session_id)
+    typer.echo(f"Revoked session {revoked.id} ({revoked.device_name}).")
+
+
+@web_auth_app.command("log")
+def remote_web_auth_log_cmd(
+    limit: Annotated[int, typer.Option("-n", "--limit", help="How many entries.")] = 50,
+) -> None:
+    """Show recent logins, failed logins, logouts and revocations."""
+    from jailbee.db import get_engine
+    from jailbee.web import auth_admin
+
+    for e in auth_admin.recent_events(get_engine(), limit):
+        typer.echo(
+            f"{_web_time(e.at)}\t{e.event}\t{e.method or '-'}\t{e.device_name or '-'}"
+            f"\t{e.source or '-'}"
+        )
+
+
 @app.command("_remote-console", hidden=True)
 def remote_console_cmd(
     policy_json: Annotated[

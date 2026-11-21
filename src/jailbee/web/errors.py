@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-WEB_EXTRA_MODULES = frozenset({"fastapi", "starlette", "uvicorn", "websockets"})
+WEB_EXTRA_MODULES = frozenset({"fastapi", "starlette", "uvicorn", "websockets", "pyotp", "qrcode"})
 
 
 class WebServeError(Exception):
