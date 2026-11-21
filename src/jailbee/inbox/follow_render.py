@@ -20,7 +20,8 @@ def render_event(event: dict[str, Any]) -> str | None:
         items = raw if isinstance(raw, list) else []
         changes = "; ".join(clean_c0c1(str(c)) for c in items)[:400]
         detail = f" ({changes})" if changes else ""
-        return f"JailBee inbox: your orchestration grant changed{detail} — see jailbee inbox grant"
+        hint = "" if items == ["grant revoked"] else " — see jailbee inbox grant"
+        return f"JailBee inbox: your orchestration grant changed{detail}{hint}"
     if kind != "message":
         return None
     item = event["item"]

@@ -497,12 +497,12 @@ def test_pulse_lead_sends_early_but_not_back_to_back(env: Env) -> None:
     assert ws.due_keepalives(35.0) == [1]
 
 
-def _set_grant(env: Env, grant: object | None) -> None:
+def _set_grant(env: Env, grant: Grant | None) -> None:
     ctx = env.memory.contexts[env.orch]
     if grant is None:
         ctx.sender.config.pop(labels.GRANT, None)
     else:
-        ctx.sender.config[labels.GRANT] = grant.to_label()  # type: ignore[attr-defined]
+        ctx.sender.config[labels.GRANT] = grant.to_label()
 
 
 def test_follower_unchanged_grant_republish_emits_nothing(env: Env) -> None:

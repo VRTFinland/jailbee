@@ -19,3 +19,10 @@ def test_grant_changed_detail_is_cut_to_400_characters() -> None:
     detail = line.split(" (", 1)[1].split(") — ", 1)[0]
     assert len(detail) == 400
     assert detail.startswith("x" * 300 + "; y")
+
+
+def test_grant_revoked_does_not_point_at_the_grant_command() -> None:
+    line = render_event({"kind": "grant-changed", "changes": ["grant revoked"]})
+    assert line is not None
+    assert "grant revoked" in line
+    assert "jailbee inbox grant" not in line
