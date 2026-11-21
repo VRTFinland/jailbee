@@ -171,3 +171,20 @@ def test_the_repo_list_marks_each_session_with_its_container_or_none(home: Path)
             SESSION_A: "alpha-1",
             SESSION_B: None,
         }
+
+
+@pytest.mark.parametrize(
+    ("newer", "older"), [("alpha-1", "alpha-2"), ("alpha-2", "alpha-1")]
+)
+def test_a_session_two_containers_saw_belongs_to_the_one_that_saw_it_last(
+    home: Path, newer: str, older: str
+) -> None:
+    uuids = {"alpha-1": "u-1", "alpha-2": "u-2"}
+    recent = seen(newer, uuids[newer], SESSION_B)
+    recent.last_seen = datetime(2026, 11, 10, tzinfo=UTC)
+    stale = seen(older, uuids[older], SESSION_B)
+    stale.last_seen = datetime(2026, 11, 5, tzinfo=UTC)
+
+    for client in open_client(home, recent, stale):
+        rows = client.get("/api/repos/alpha/sessions").json()["sessions"]
+        assert {r["session_id"]: r["container"] for r in rows}[SESSION_B] == newer
