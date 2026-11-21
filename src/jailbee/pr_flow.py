@@ -1886,6 +1886,7 @@ def apply_pr_updates(
     manifest stays pending, so a retry reuses it.
     """
     from jailbee import pr as pr_module
+    from jailbee import prompting
     from jailbee.outbox.io import PrManagement
 
     manager = management if management is not None else PrManagement()
@@ -1932,7 +1933,7 @@ def apply_pr_updates(
                     edit.body or "",
                     title=edit.title or "",
                     explicit_body=edit.source is None,
-                    confirm=lambda question: typer.confirm(question, default=False),
+                    confirm=lambda question: prompting.ask_confirm(question, default=False),
                     operation="Update",
                 )
                 if image_edit is None:

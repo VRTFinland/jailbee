@@ -422,7 +422,9 @@ def attachment_resolve(
                         f"Attest this URL belongs to the recorded image and repository: {url}"
                     )
                 )
-            return yes or typer.confirm("Resolve this upload?", default=False)
+            return yes or prompting.ask_confirm(
+                "Resolve this upload?", default=False, alternative="--yes"
+            )
 
         return recover(
             cfg,

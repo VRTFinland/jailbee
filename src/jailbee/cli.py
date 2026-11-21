@@ -9215,7 +9215,7 @@ def pr_push_cmd(
                 resolved_body,
                 title=resolved_title,
                 explicit_body=body is not None or is_update_path,
-                confirm=lambda question: typer.confirm(question, default=False),
+                confirm=lambda question: prompting.ask_confirm(question, default=False),
             )
             try:
                 created = pr_flow.create_or_view_pr(

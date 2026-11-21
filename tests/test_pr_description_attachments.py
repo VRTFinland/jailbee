@@ -138,7 +138,8 @@ def test_existing_pr_update_resolves_images_and_journals(
     source = selected(p)
     setup_upload(monkeypatch)
     mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/acme/widgets")
-    mocker.patch("typer.confirm", return_value=True)
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._confirm", return_value=True)
     edit = mocker.patch("jailbee.pr.edit_pr")
     if fail:
         from jailbee.pr import PrEditError

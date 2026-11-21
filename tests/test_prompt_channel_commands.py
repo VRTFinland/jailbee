@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 from jailbee import prompt_channel as pc
 from jailbee import prompting
 from jailbee.cli import app
+from tests.test_branch_pr import source_publisher as source_publisher
 from tests.test_prompt_channel import Peer
 
 
@@ -163,6 +164,186 @@ def _both(
     dashboard_asked = at_dashboard(answer)
     dashboard_result = run()
     return terminal_asked, dashboard_asked, terminal_result, dashboard_result
+
+
+# ---- PR images: approval before uploading ------------------------------------------
+
+
+@pytest.fixture(params=["create", "submodule", "update"])
+def image_pr_command(request, mocker, monkeypatch, tmp_path):
+    from jailbee import pr_outbox
+    from tests.test_branch_pr import StoreFiles
+    from tests.test_branch_pr_attachments import prepare
+    from tests.test_cli_pr import _pr_created, _publish_result, _setup, _update_setup
+    from tests.test_cli_submodule_pr import _happy
+    from tests.test_cli_submodule_pr import _setup as submodule_setup
+    from tests.test_pr_description_attachments import setup_upload
+
+    read_outbox = pr_outbox.read_outbox
+    pending_pr_text = pr_outbox.pending_pr_text
+    if request.param == "submodule":
+        cfg, incus, _ = submodule_setup(mocker, tmp_path)
+        create = _happy(mocker)
+        mocker.patch("jailbee.pr_outbox.read_outbox", side_effect=read_outbox)
+        argv = ["submodule", "pr", "push", "feat-foo", "lib/a", "--yes", "--no-ai"]
+        repo = "acme/lib-a"
+    else:
+        setup = _update_setup if request.param == "update" else _setup
+        cfg, incus = setup(mocker, tmp_path)
+        mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+        mocker.patch("jailbee.pr_submodule_flow.publish_submodule_prs_first", return_value=[])
+        create = mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+        argv = ["pr", "push", "feat-foo", "--no-ai"]
+        repo = "acme/widgets"
+    incus.config_get_checked.return_value = None
+    # Both command families select a real staged image description; only transport
+    # and GitHub operations are mocked by their existing command fixtures.
+    files = StoreFiles("uuid-full")
+    prepare({"files": files, "data": {"version": 1, "repo": repo, "pr": None, "head_sha": None}})
+    # The legacy submodule fixture's instance has no uuid until it needs an outbox.
+    incus.list_containers.return_value[0]["config"] = {"volatile.uuid": "uuid-full"}
+    source = read_outbox(incus, "sampleapp-feat-foo", uid=1000, strict=True)
+    mocker.patch("jailbee.pr_outbox.read_outbox", return_value=source)
+    # Restore selection rather than the legacy fixtures' empty-outbox default.
+    mocker.patch("jailbee.pr_outbox.pending_pr_text", wraps=pending_pr_text)
+    uploads = setup_upload(monkeypatch)
+    edit = mocker.patch("jailbee.pr.edit_pr")
+    return argv, files, uploads, edit if request.param == "update" else create, request.param
+
+
+@pytest.mark.parametrize("backend", ["terminal", "dashboard"])
+@pytest.mark.parametrize("consent", [True, False])
+def test_pr_images_ask_before_uploading(
+    image_pr_command, at_terminal, at_dashboard, backend, consent
+):
+    argv, files, uploads, publish, operation = image_pr_command
+    start = at_terminal if backend == "terminal" else at_dashboard
+    asked = start(lambda _asked: consent)
+
+    result = CliRunner().invoke(app, argv)
+
+    verb = "Update" if operation == "update" else "Create"
+    assert asked == [
+        Asked("confirm", f"{verb} PR with this description and upload its attachments?", (), False)
+    ]
+    assert (result.exit_code == 0) is consent, result.output
+    assert bool(uploads) is consent
+    assert publish.called is consent
+    assert ("m.json" not in files) is consent
+
+
+@pytest.mark.parametrize("backend", ["terminal", "dashboard", "noninteractive"])
+def test_pr_images_never_upload_without_an_answer(
+    image_pr_command, mocker, monkeypatch, request, backend
+):
+    argv, files, uploads, publish, _operation = image_pr_command
+    if backend == "dashboard":
+        _open_channel(monkeypatch, request, lambda _: None)
+    else:
+        mocker.patch("jailbee.prompting.is_interactive", return_value=backend == "terminal")
+        if backend == "noninteractive":
+            monkeypatch.setenv("JAILBEE_NONINTERACTIVE", "1")
+
+    result = CliRunner().invoke(app, argv, input="\x03")
+
+    assert result.exit_code == (2 if backend == "noninteractive" else 1), result.output
+    assert "confirmation needed" in result.output if backend == "noninteractive" else "Aborted" in result.output
+    assert not uploads
+    publish.assert_not_called()
+    assert "m.json" in files
+
+
+# ---- uncertain uploads: attestation or authorizing a duplicate ----------------------
+
+
+@pytest.fixture
+def uncertain_upload_command(source_publisher, monkeypatch, mocker):
+    from jailbee import attachment_github
+    from jailbee.outbox.attachment_publication import AttachmentPublicationError
+    from jailbee.outbox.pr_description import create_with_description
+    from tests.test_branch_pr_attachments import URL, prepare
+    from tests.test_pr_description_attachments import selected, setup_upload
+
+    p = source_publisher
+    descriptor = prepare(p)
+    source = selected(p)
+    setup_upload(monkeypatch)
+    mocker.patch(
+        "jailbee.attachment_github.upload_to_target",
+        side_effect=attachment_github.UploadUncertainError("connection lost"),
+    )
+    with pytest.raises(AttachmentPublicationError):
+        create_with_description(
+            p["cfg"], p["incus"], "full", source, source.text.body,
+            p["create"], lambda _: True, publisher="user"
+        )
+    mocker.patch("jailbee.config.load_repo_config", return_value=p["cfg"])
+    mocker.patch("jailbee.incus.Incus", return_value=p["incus"])
+    mocker.patch("jailbee.outbox.attachment_recovery.resolve_target", return_value=(p["cfg"], "full"))
+    argv = ["outbox", "attachment-resolve", "full", "pr/m.json", descriptor["blob"], "1"]
+    return argv, descriptor, URL
+
+
+@pytest.mark.parametrize("backend", ["terminal", "dashboard"])
+@pytest.mark.parametrize("retry_duplicate", [False, True])
+@pytest.mark.parametrize("consent", [False, True])
+def test_upload_recovery_asks_the_same_confirmation(
+    uncertain_upload_command, at_terminal, at_dashboard, backend, consent, retry_duplicate
+):
+    from jailbee.outbox.publication_db import open_publications
+
+    argv, _descriptor, url = uncertain_upload_command
+    argv += ["--retry-duplicate"] if retry_duplicate else ["--url", url]
+    start = at_terminal if backend == "terminal" else at_dashboard
+    asked = start(lambda _: consent)
+
+    result = CliRunner().invoke(app, argv)
+
+    assert asked == [Asked("confirm", "Resolve this upload?", (), False)], result.output
+    assert result.exit_code == 0, result.output
+    store = open_publications()
+    with store.claim("uuid-full", "pr", "m.json") as claim:
+        digest = store.stored_digest("uuid-full", "pr", "m.json")
+        outcomes = store.image_publisher.outcomes(claim, digest)
+    expected_state = ("rejected" if retry_duplicate else "applied") if consent else "uncertain"
+    assert outcomes[0].state == expected_state
+    assert outcomes[0].url == (url if consent and not retry_duplicate else None)
+
+
+@pytest.mark.parametrize("backend", ["terminal", "dashboard", "noninteractive"])
+@pytest.mark.parametrize("yes", [False, True])
+def test_upload_recovery_requires_an_answer_unless_yes(
+    uncertain_upload_command, mocker, monkeypatch, request, backend, yes
+):
+    from jailbee.outbox.publication_db import open_publications
+
+    argv, _descriptor, url = uncertain_upload_command
+    argv += ["--url", url] + (["--yes"] if yes else [])
+    if backend == "dashboard":
+        peer = _open_channel(monkeypatch, request, lambda _: None)
+    else:
+        mocker.patch("jailbee.prompting.is_interactive", return_value=backend == "terminal")
+        if backend == "noninteractive":
+            monkeypatch.setenv("JAILBEE_NONINTERACTIVE", "1")
+    terminal_prompt = mocker.spy(prompting, "_confirm")
+
+    result = CliRunner().invoke(app, argv, input="\x03")
+
+    expected_code = 0 if yes else (2 if backend == "noninteractive" else 1)
+    assert result.exit_code == expected_code, result.output
+    if yes:
+        terminal_prompt.assert_not_called()
+        if backend == "dashboard":
+            assert not peer.prompts
+    elif backend == "noninteractive":
+        assert "--yes" in result.output
+    else:
+        assert "Aborted" in result.output
+    store = open_publications()
+    with store.claim("uuid-full", "pr", "m.json") as claim:
+        digest = store.stored_digest("uuid-full", "pr", "m.json")
+        outcomes = store.image_publisher.outcomes(claim, digest)
+    assert outcomes[0].state == ("applied" if yes else "uncertain")
 
 
 # ---- destroy: a destructive confirmation --------------------------------------------
