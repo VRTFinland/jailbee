@@ -109,6 +109,8 @@ egress_allow:
   # `uv sync` (the sync-deps autostart step) inside a nested container.
   - pypi.org:443
   - files.pythonhosted.org:443
+  # npm packages for the web dashboard's Vue app (`make web`, #109).
+  - registry.npmjs.org:443
   # Narration for the narrated feature videos (website/video/render.py):
   # OpenAI's /v1/audio/speech. The key is the maintainer's own and never lives
   # in the repo; see website/video/README.md.
@@ -136,8 +138,9 @@ defaults:
 golden:
   # alias defaults to <container_prefix>-base if unset
   ubuntu_version: "26.04"
-  # No Java or Node: jailbee is Python-only, so `stacks` stays unset and no
-  # java/node version pin is needed.
+  # Node builds the web dashboard's Vue app (`make web`, ADR 0004, #109):
+  # `stacks.node` stages the bundled 30-nodejs snippet (NodeSource) and the
+  # shared npm cache. No Java: nothing in jailbee needs a JDK.
   # python is not configurable — the container Python is the base image's
   # system python3 (26.04 → 3.14).
   # libgl1 ships libGL.so.1 (the libglvnd dispatcher), which the optional
@@ -170,6 +173,8 @@ golden:
   # keep honest about what ends up in the image.
   #
   # Rebuild after editing any snippet: `jailbee base build`.
+  stacks:
+    node: 24
   extra_apt_packages:
     - libgl1
     - ttyd
