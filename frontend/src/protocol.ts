@@ -89,3 +89,77 @@ export interface ContainerSessionList {
     repo: string
     sessions: ContainerSession[]
 }
+
+// ---- a session's transcript (REST now; the WebSocket's live appends reuse RenderedEntry) ----
+// Every `html` / `input_html` field is rendered and sanitised by the server
+// (raw HTML escaped, unsafe link schemes dropped): it is the only HTML
+// the session view inserts.
+
+interface RenderedBase {
+    id: string
+    timestamp: string | null
+}
+
+export interface RenderedUser extends RenderedBase {
+    kind: "user"
+    html: string
+    /** An agent's own wrapper text (`<command-name>`, `<system-reminder>`, ...). */
+    meta: boolean
+}
+
+export interface RenderedAssistant extends RenderedBase {
+    kind: "assistant"
+    html: string
+    model: string | null
+}
+
+export interface RenderedThinking extends RenderedBase {
+    kind: "thinking"
+    /** Empty when the agent stored the thinking redacted. */
+    html: string
+    model: string | null
+}
+
+export interface RenderedToolCall extends RenderedBase {
+    kind: "tool_call"
+    call_id: string
+    name: string
+    summary: string
+    input_html: string
+    model: string | null
+}
+
+export interface RenderedToolResult extends RenderedBase {
+    kind: "tool_result"
+    call_id: string
+    html: string
+    truncated: boolean
+    full_length: number
+    is_error: boolean
+}
+
+export interface RenderedSubagent extends RenderedBase {
+    kind: "subagent"
+    call_id: string
+    agent_id: string
+    agent_type: string | null
+    description: string | null
+}
+
+export type RenderedEntry =
+    | RenderedUser
+    | RenderedAssistant
+    | RenderedThinking
+    | RenderedToolCall
+    | RenderedToolResult
+    | RenderedSubagent
+
+/** `GET /api/repos/{prefix}/sessions/{agent}/{session_id}`. */
+export interface TranscriptView {
+    session_id: string
+    agent: string
+    title: string
+    last_activity: string | null
+    models: string[]
+    entries: RenderedEntry[]
+}

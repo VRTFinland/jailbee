@@ -9,7 +9,7 @@ import {getToken} from "./api"
 import FrontPage from "./views/FrontPage.vue"
 import RepoView from "./views/RepoView.vue"
 import ContainerView from "./views/ContainerView.vue"
-import SessionPlaceholder from "./views/SessionPlaceholder.vue"
+import SessionView from "./views/SessionView.vue"
 import LoginView from "./views/LoginView.vue"
 
 export const routes: RouteRecordRaw[] = [
@@ -17,12 +17,7 @@ export const routes: RouteRecordRaw[] = [
     {path: "/", name: "front", component: FrontPage},
     {path: "/repos/:prefix", name: "repo", component: RepoView},
     {path: "/containers/:name", name: "container", component: ContainerView},
-    // Ticket 05 replaces the placeholder with the session view; the route name and params stay.
-    {
-        path: "/repos/:prefix/sessions/:agent/:sessionId",
-        name: "session",
-        component: SessionPlaceholder,
-    },
+    {path: "/repos/:prefix/sessions/:agent/:sessionId", name: "session", component: SessionView},
     {path: "/:pathMatch(.*)*", redirect: "/"},
 ]
 
