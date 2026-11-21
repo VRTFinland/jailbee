@@ -492,3 +492,25 @@ def test_a_failing_recorder_cannot_fail_the_gather(mocker):
     g = _recording_gatherer(mocker, [_ci("x")], boom)
 
     assert isinstance(g.tick(active=True, refresh=False, roots=[]), Snapshot)
+
+
+def test_a_base_tick_updates_the_rows_outbox_counts_and_not_the_carried_probe_copy(mocker):
+    clock = _Clock()
+    probed = GitStatus("+1 -0", "clean", "0", "ok", pending_pr_actions=0, pending_issue_actions=0)
+
+    def row(git, pr, issue):
+        c = _ci("x", git)
+        c.outbox_pr, c.outbox_issue = pr, issue
+        return c
+
+    rounds = iter([[row(None, 0, 0)], [row(probed, 0, 0)], [row(None, 2, 1)]])
+    g = _gatherer(mocker, lambda *a, **k: [RepoGroup("alpha", "/a", None, next(rounds))], clock)
+
+    g.tick(active=True, refresh=False, roots=[])  # base
+    g.tick(active=True, refresh=False, roots=[])  # git
+    clock.t = 3.0
+    third = g.tick(active=True, refresh=False, roots=[])  # base, staged since the git tick
+
+    c = third.groups[0].containers[0]
+    assert (c.outbox_pr, c.outbox_issue) == (2, 1)
+    assert c.git_status == probed  # carried forward, stale by design
