@@ -1500,3 +1500,53 @@ def test_deprecated_review_and_issue_leaves_are_removed(args):
     result = CliRunner().invoke(app, [*args, "--help"])
     assert result.exit_code == 2
     assert "No such command" in result.output
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (["--manifest", "001.json"], ProposalId("issue", "001.json")),
+        (["issue/001.json"], ProposalId("issue", "001.json")),
+        (["001.json", "--manifest", "001.json"], ProposalId("issue", "001.json")),
+    ],
+)
+def test_issue_apply_takes_the_manifest_as_argument_or_option(env, mocker, args, expected):
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
+    result = CliRunner().invoke(app, ["issue", "apply", "feature", *args, "-y"])
+    assert result.exit_code == 0, result.output
+    assert applied.call_args.args[3] == expected
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["issue", "apply", "feature", "001.json", "--manifest", "002.json"],
+        ["issue", "apply", "feature", "pr/001.json"],
+        ["review", "apply", "feature", "issue/001.json"],
+    ],
+)
+def test_kind_alias_apply_refuses_an_ambiguous_or_other_kind_manifest(env, mocker, args):
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
+    result = CliRunner().invoke(app, [*args, "-y"])
+    assert result.exit_code == 2, result.output
+    applied.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("kind", "flags"),
+    [("pr", ["--force"]), ("pr", ["--draft"]), ("pr", ["--foreign"]), ("issue", ["--foreign"])],
+)
+def test_kind_alias_apply_passes_its_flags_as_outbox_apply_does(env, mocker, kind, flags):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
+    calls = []
+    for args in (
+        ["outbox", "apply", "feature", f"{kind}/001.json", *flags, "-y"],
+        [_ALIAS[kind], "apply", "feature", "001.json", *flags, "-y"],
+    ):
+        result = CliRunner().invoke(app, args)
+        assert result.exit_code == 0, result.output
+        calls.append(applied.call_args)
+    assert calls[0].args[2:] == calls[1].args[2:]
+    assert calls[0].kwargs["options"] == calls[1].kwargs["options"]
+    assert getattr(calls[1].kwargs["options"], flags[0].lstrip("-")) is True

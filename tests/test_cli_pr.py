@@ -3122,7 +3122,7 @@ def test_a_foreign_pr_manifest_is_held_back_and_names_foreign(mocker, tmp_path):
     assert result.exit_code == 0, result.output
     apply_mock.assert_not_called()
     assert resolve.call_args.kwargs["allow_foreign"] is False
-    assert "jailbee review apply --foreign feat-foo" in result.output
+    assert "jailbee review apply --foreign feat-foo 001-x.json" in result.output
     assert "--force" not in result.output
 
 

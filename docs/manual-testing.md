@@ -2397,7 +2397,7 @@ jailbee pr push feat-adoptdesc --pr <N>
 # Answer n:
 # expect: "…description unchanged." and, after it,
 #           "<name> still holds a description this run did not use.
-#             `jailbee review apply feat-adoptdesc` publishes it."
+#             `jailbee review apply feat-adoptdesc <name>` publishes it."
 gh pr view <N> --json title      # expect: unchanged — declining consumed nothing
 
 jailbee pr push feat-adoptdesc        # nothing new to push; answer y this time

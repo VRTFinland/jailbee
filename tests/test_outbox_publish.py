@@ -1264,6 +1264,8 @@ def test_actual_cli_and_selected_publication_share_outcome_streams(env, mocker, 
     # The CLI (`outbox apply` and its `issue apply` alias) renders the same
     # outcome, then exits through its own error line for a failure.
     assert result.stderr.startswith(selected_output.err)
+    tail = result.stderr[len(selected_output.err) :].splitlines()
+    assert len(tail) == (0 if mode == "success" else 1) and all(t.startswith("✗") for t in tail)
     if mode == "success":
         assert result.stderr == ""
     else:
