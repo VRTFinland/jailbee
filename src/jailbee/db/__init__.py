@@ -28,7 +28,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 22
+CURRENT_SCHEMA_VERSION = 23
 
 
 def state_dir() -> Path:
@@ -304,6 +304,11 @@ def _migrate_to_v22(conn: Connection) -> None:
     conn.exec_driver_sql("DROP TABLE IF EXISTS sent_record")
 
 
+def _migrate_to_v23(conn: Connection) -> None:
+    """v22 -> v23 adds `web_session` (web dashboard logins) via create_all."""
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -327,6 +332,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     20: _migrate_to_v20,
     21: _migrate_to_v21,
     22: _migrate_to_v22,
+    23: _migrate_to_v23,
 }
 
 

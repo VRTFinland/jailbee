@@ -385,3 +385,22 @@ class GoldenSeedState(SQLModel, table=True):
     image_count: int = Field(sa_column=Column(Integer, nullable=False))
     size_bytes: int = Field(sa_column=Column(Integer, nullable=False))
     detail: str = Field(default="", nullable=False)
+
+
+class WebSession(SQLModel, table=True):
+    """One logged-in web dashboard device (#109).
+
+    The bearer token itself is never stored, only its SHA-256 hex digest, so
+    a copy of the database logs nobody in. `last_used_at` slides on every
+    authenticated request; a session unused for the TTL (30 days,
+    `jailbee.web.auth.SESSION_TTL`) is expired and deleted on its next use.
+    `id` is what CLI management (list, revoke) addresses a session by.
+    """
+
+    __tablename__ = "web_session"
+
+    id: int | None = Field(default=None, primary_key=True)
+    token_hash: str = Field(index=True, unique=True)
+    device_name: str
+    created_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+    last_used_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))

@@ -124,8 +124,14 @@ ssh_key_app = typer.Typer(
     help="Authorized SSH keys.",
     no_args_is_help=True,
 )
+web_remote_app = typer.Typer(
+    name="web",
+    help="Jailbee web dashboard server.",
+    no_args_is_help=True,
+)
 app.add_typer(remote_app)
 remote_app.add_typer(ssh_remote_app)
+remote_app.add_typer(web_remote_app)
 ssh_remote_app.add_typer(ssh_key_app)
 
 
@@ -409,6 +415,64 @@ def remote_ssh_serve_cmd(
     except (keys.SSHDependencyError, keys.SSHKeyError, OSError) as exc:
         error_plain(str(exc))
         raise typer.Exit(1) from exc
+
+
+_WebListenOption = Annotated[
+    str | None,
+    typer.Option("--listen", help="Override remote.web.listen for this run only."),
+]
+_WebPortOption = Annotated[
+    int | None,
+    typer.Option("--port", help="Override remote.web.port for this run only."),
+]
+
+
+def _remote_web_serve(listen: str | None, port: int | None) -> None:
+    from pydantic import ValidationError
+
+    from jailbee.config.models_remote import RemoteWebConfig
+    from jailbee.web.errors import WebDependencyError, WebServeError, is_missing_web_extra
+
+    configured = _load_global().remote.web
+    overrides = {k: v for k, v in (("listen", listen), ("port", port)) if v is not None}
+    try:
+        effective = RemoteWebConfig.model_validate({**configured.model_dump(), **overrides})
+    except ValidationError as exc:
+        error_plain(f"Invalid override: {exc}")
+        raise typer.Exit(1) from exc
+    try:
+        try:
+            from jailbee.web import server
+        except ModuleNotFoundError as exc:
+            if not is_missing_web_extra(exc):
+                raise
+            raise WebDependencyError() from exc
+        server.serve(effective, echo=typer.echo)
+    except (WebServeError, OSError) as exc:
+        error_plain(str(exc))
+        raise typer.Exit(1) from exc
+
+
+@web_remote_app.command("serve")
+def remote_web_serve_cmd(
+    listen: _WebListenOption = None,
+    port: _WebPortOption = None,
+) -> None:
+    """Run the web dashboard server in the foreground and print its URL and login PIN.
+
+    `--listen` and `--port` apply to this run only; nothing is written back
+    to `global.yaml`.
+    """
+    _remote_web_serve(listen, port)
+
+
+@app.command("serve")
+def serve_cmd(
+    listen: _WebListenOption = None,
+    port: _WebPortOption = None,
+) -> None:
+    """Run the web dashboard server (alias of `remote web serve`)."""
+    _remote_web_serve(listen, port)
 
 
 @app.command("_remote-console", hidden=True)

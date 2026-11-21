@@ -287,6 +287,8 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "config init",
         "config migrate",
         "remote",
+        # `remote web serve`'s alias: starts a host-side server.
+        "serve",
         "setup",
         "init",
         "apply",

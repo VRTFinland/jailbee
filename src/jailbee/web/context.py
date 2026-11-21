@@ -1,0 +1,47 @@
+"""What one web app instance holds: its dependencies and the objects built from them."""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from jailbee.web.auth import Clock, PinHolder, RateLimiter, SessionStore, utcnow
+from jailbee.web.state import DEFAULT_GRACE_SECONDS, SnapshotSourceFactory, StateHub
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
+
+
+@dataclass(frozen=True)
+class WebDeps:
+    """Everything `create_app` needs from outside. Tests pass fakes.
+
+    New slices add fields with defaults (a TOTP replay cache, a FIDO2
+    server, the auth-disabled switch), so existing callers keep working.
+    """
+
+    snapshot_source: SnapshotSourceFactory
+    engine: Engine
+    pin: PinHolder
+    clock: Clock = utcnow
+    monotonic: Callable[[], float] = time.monotonic
+    static_dir: Path | None = None
+    grace_seconds: float = DEFAULT_GRACE_SECONDS
+
+
+@dataclass
+class WebContext:
+    """Per-app state, reachable from a route as ``request.app.state.web``."""
+
+    deps: WebDeps
+    sessions: SessionStore = field(init=False)
+    limiter: RateLimiter = field(init=False)
+    hub: StateHub = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.sessions = SessionStore(self.deps.engine, self.deps.clock)
+        self.limiter = RateLimiter(self.deps.monotonic)
+        self.hub = StateHub(self.deps.snapshot_source, grace_seconds=self.deps.grace_seconds)
