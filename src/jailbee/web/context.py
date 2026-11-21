@@ -18,13 +18,15 @@ from jailbee.web.state import (
     SnapshotSourceFactory,
     StateHub,
 )
-from jailbee.web.transcript_render import RenderCache
+from jailbee.web.transcript_follow import TranscriptFollows
+from jailbee.web.transcript_render import RenderCache, render_entries
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
     from jailbee.state_service.protocol import Snapshot
+    from jailbee.web.file_watch import WatchFactory
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,9 @@ class WebDeps:
     snapshot_wait_seconds: float = DEFAULT_SNAPSHOT_WAIT_SECONDS
     """How long a REST route waits for the first snapshot when no WebSocket
     holds the state-service connection (a deep link or a reload)."""
+    file_watch: WatchFactory | None = None
+    """Starts a watch on a followed transcript; None uses inotify (polling
+    where it is unavailable)."""
 
 
 @dataclass
@@ -70,6 +75,7 @@ class WebContext:
     hub: StateHub = field(init=False)
     repo_sessions: RepoSessions = field(init=False)
     render_cache: RenderCache = field(init=False)
+    follows: TranscriptFollows = field(init=False)
 
     @property
     def scope(self) -> RemoteRepoScope:
@@ -98,3 +104,12 @@ class WebContext:
         self.hub = StateHub(self.deps.snapshot_source, grace_seconds=self.deps.grace_seconds)
         self.repo_sessions = RepoSessions(self.deps.agent_homes or snapshot_homes(self.hub.latest))
         self.render_cache = RenderCache()
+        watch: WatchFactory
+        if self.deps.file_watch is None:
+            from jailbee.web.file_watch import watch_file
+
+            watch = watch_file
+        else:
+            watch = self.deps.file_watch
+        cache = self.render_cache
+        self.follows = TranscriptFollows(watch, lambda entries: render_entries(entries, cache))

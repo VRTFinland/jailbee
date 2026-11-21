@@ -64,6 +64,8 @@ class SessionTranscript:
     agent: str
     info: SessionInfo
     entries: tuple[Entry, ...]
+    offset: int = 0
+    """Byte offset the entries were read to: where a live follow resumes."""
 
 
 class RepoSessions:
@@ -106,7 +108,8 @@ class RepoSessions:
         if found is None:
             return None
         source, _home, files, info = found
-        return SessionTranscript(agent, info, source.read(files.transcript).entries)
+        read = source.read(files.transcript)
+        return SessionTranscript(agent, info, read.entries, read.offset)
 
     def subagent_transcript(
         self, prefix: str, agent: str, session_id: str, agent_id: str
@@ -128,11 +131,27 @@ class RepoSessions:
             return None
         entries = source.read(files.transcript).entries
         description = subagent_descriptions(entries).get(agent_id)
+        read = source.read(path)
         return SessionTranscript(
             agent,
             replace(info, title=description or info.title or parent_info.title),
-            source.read(path).entries,
+            read.entries,
+            read.offset,
         )
+
+    def transcript_file(
+        self, prefix: str, agent: str, session_id: str, subagent_id: str | None = None
+    ) -> tuple[TranscriptSource, Path] | None:
+        """The file a live follow watches, validated as `transcript` and
+        `subagent_transcript` validate; None where they would answer None."""
+        found = self._locate(prefix, agent, session_id)
+        if found is None:
+            return None
+        source, home, files, _info = found
+        if subagent_id is None:
+            return source, files.transcript
+        path = source.subagent_transcript(home, session_id, subagent_id)
+        return None if path is None else (source, path)
 
     def _locate(
         self, prefix: str, agent: str, session_id: str

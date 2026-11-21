@@ -27,6 +27,7 @@ def create_app(deps: WebDeps) -> FastAPI:
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         ctx.sessions.purge_expired()
         yield
+        ctx.follows.close()
         await ctx.hub.aclose()
 
     app = FastAPI(

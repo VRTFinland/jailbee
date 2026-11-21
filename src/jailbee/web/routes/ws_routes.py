@@ -2,13 +2,16 @@
 
 After the auth handshake (see `jailbee.web.protocol`) two loops run per
 connection: one pushes the front page whenever the state hub wakes it, the
-other reads client messages until the browser goes away.
+other reads client messages (transcript subscriptions, `ws_follow`) until the
+browser goes away. Every send goes through one `_Outbox`, so the push loop
+and live transcript appends never interleave on the socket.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.concurrency import run_in_threadpool
@@ -21,6 +24,7 @@ from jailbee.web.protocol import (
     CLOSE_PROTOCOL_MISMATCH,
     CLOSE_UNAUTHORIZED,
     PROTOCOL_VERSION,
+    ClientAuth,
     FrontPage,
     ProtocolError,
     ServerHello,
@@ -30,6 +34,10 @@ from jailbee.web.protocol import (
 )
 from jailbee.web.state import Subscriber
 from jailbee.web.view import front_page_view
+from jailbee.web.ws_follow import ConnectionFollows
+
+if TYPE_CHECKING:
+    from jailbee.web.protocol import _Message
 
 router = APIRouter()
 
@@ -47,6 +55,9 @@ async def _authenticate(ws: WebSocket, ctx: WebContext) -> tuple[str, SessionInf
     except ProtocolError:
         await ws.close(code=CLOSE_BAD_MESSAGE, reason="Bad message")
         return None
+    if not isinstance(message, ClientAuth):
+        await ws.close(code=CLOSE_BAD_MESSAGE, reason="Expected auth")
+        return None
     if message.v != PROTOCOL_VERSION:
         await ws.close(code=CLOSE_PROTOCOL_MISMATCH, reason="Protocol version mismatch")
         return None
@@ -59,7 +70,26 @@ async def _authenticate(ws: WebSocket, ctx: WebContext) -> tuple[str, SessionInf
     return message.token, session
 
 
-async def _push(ws: WebSocket, ctx: WebContext, subscriber: Subscriber, token: str) -> None:
+class _Outbox:
+    """Serialises sends on one socket."""
+
+    def __init__(self, ws: WebSocket) -> None:
+        self._ws = ws
+        self._lock = asyncio.Lock()
+
+    async def send(self, message: _Message) -> None:
+        async with self._lock:
+            await self._ws.send_text(encode(message))
+
+    async def send_quietly(self, message: _Message) -> None:
+        """For background senders: a socket already gone is not an error."""
+        with contextlib.suppress(WebSocketDisconnect, RuntimeError):
+            await self.send(message)
+
+
+async def _push(
+    ws: WebSocket, ctx: WebContext, subscriber: Subscriber, token: str, outbox: _Outbox
+) -> None:
     """Send what changed on each wake-up; close instead once the session is revoked."""
     last_seq: int | None = None
     last_status: str | None = None
@@ -71,24 +101,30 @@ async def _push(ws: WebSocket, ctx: WebContext, subscriber: Subscriber, token: s
         status = ctx.hub.status()
         if status != last_status:
             last_status = status
-            await ws.send_text(encode(Status(message=status)))
+            await outbox.send(Status(message=status))
         snapshot = ctx.hub.latest()
         if snapshot is not None and snapshot.seq != last_seq:
             last_seq = snapshot.seq
-            await ws.send_text(
-                encode(FrontPage(view=front_page_view(snapshot, ctx.scope, ctx.deps.clock())))
+            await outbox.send(
+                FrontPage(view=front_page_view(snapshot, ctx.scope, ctx.deps.clock()))
             )
 
 
-async def _receive(ws: WebSocket) -> None:
-    """Drain client messages until the browser disconnects.
+async def _receive(ws: WebSocket, follows: ConnectionFollows) -> None:
+    """Dispatch client messages until the browser disconnects.
 
-    Nothing is expected after the handshake yet; later slices dispatch
-    transcript subscriptions here.
+    A message that does not parse closes the socket; a repeated auth is ignored.
     """
     with contextlib.suppress(WebSocketDisconnect):
         while True:
-            await ws.receive_text()
+            text = await ws.receive_text()
+            try:
+                message = decode_client(text)
+            except ProtocolError:
+                await ws.close(code=CLOSE_BAD_MESSAGE, reason="Bad message")
+                return
+            if not isinstance(message, ClientAuth):
+                await follows.handle(message)
 
 
 @router.websocket("/api/ws")
@@ -101,9 +137,11 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     token, session = authed
     await ws.send_text(encode(ServerHello(device_name=session.device_name)))
     subscriber = ctx.hub.attach()
+    outbox = _Outbox(ws)
+    follows = ConnectionFollows(ctx, outbox.send_quietly)
     tasks = [
-        asyncio.create_task(_push(ws, ctx, subscriber, token)),
-        asyncio.create_task(_receive(ws)),
+        asyncio.create_task(_push(ws, ctx, subscriber, token, outbox)),
+        asyncio.create_task(_receive(ws, follows)),
     ]
     try:
         done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -116,4 +154,5 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             with contextlib.suppress(WebSocketDisconnect, RuntimeError):
                 task.result()  # a send to a closed socket ends the push loop
     finally:
+        follows.close()
         ctx.hub.detach(subscriber)

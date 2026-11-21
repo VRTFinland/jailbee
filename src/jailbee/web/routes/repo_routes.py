@@ -67,6 +67,7 @@ async def _transcript_view(
             last_activity=found.info.last_activity,
             models=list(found.info.models),
             entries=render_entries(found.entries, ctx.render_cache),
+            offset=found.offset,
         )
 
     view = await run_in_threadpool(build)

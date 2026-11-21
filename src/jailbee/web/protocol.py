@@ -10,6 +10,12 @@ the body, never the URL, so it stays out of access logs). The server answers
 `ServerHello`, or closes with one of the ``CLOSE_*`` codes. After that the
 server pushes `FrontPage` on every state-service snapshot and `Status` when
 the state service's health changes.
+
+Live transcript follow: the browser sends `Subscribe` with the byte offset
+its REST `TranscriptView` was read to; the server answers `TranscriptAppend`
+with the entries written since (at once if any, then on every change), or
+`SubscribeError` for a session the REST endpoint would answer 404.
+`Unsubscribe` (or closing the socket) stops it.
 """
 
 from __future__ import annotations
@@ -19,7 +25,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 
 CLOSE_UNAUTHORIZED = 4001
 """No valid session token: the browser goes back to the login page."""
@@ -46,13 +52,39 @@ class ClientAuth(_Message):
     token: str
 
 
-ClientMessage = Annotated[ClientAuth, Field(discriminator="type")]
-"""Every client message type. Later slices add transcript subscribe/unsubscribe."""
+class FollowKey(BaseModel):
+    """Which transcript a subscription follows: a session, or one of its
+    subagents when ``subagent_id`` is set. Hashable, so it keys a connection's
+    subscriptions."""
 
-_CLIENT: TypeAdapter[ClientAuth] = TypeAdapter(ClientMessage)
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    prefix: str
+    agent: str
+    session_id: str
+    subagent_id: str | None = None
 
 
-def decode_client(text: str) -> ClientAuth:
+class Subscribe(_Message):
+    """Follow a transcript from ``offset`` (`TranscriptView.offset`). Subscribing
+    again to the same key restarts it from the new offset."""
+
+    type: Literal["subscribe"] = "subscribe"
+    key: FollowKey
+    offset: int = Field(ge=0)
+
+
+class Unsubscribe(_Message):
+    type: Literal["unsubscribe"] = "unsubscribe"
+    key: FollowKey
+
+
+ClientMessage = Annotated[ClientAuth | Subscribe | Unsubscribe, Field(discriminator="type")]
+"""Every client message type."""
+
+_CLIENT: TypeAdapter[ClientAuth | Subscribe | Unsubscribe] = TypeAdapter(ClientMessage)
+
+
+def decode_client(text: str) -> ClientAuth | Subscribe | Unsubscribe:
     try:
         return _CLIENT.validate_json(text)
     except ValidationError as exc:
@@ -201,6 +233,8 @@ class TranscriptView(BaseModel):
     last_activity: datetime | None
     models: list[str]
     entries: list[RenderedEntry]
+    offset: int = 0
+    """Byte offset the entries were read to: where a live `Subscribe` resumes."""
 
 
 class FrontPageView(BaseModel):
@@ -230,15 +264,35 @@ class Status(_Message):
     message: str | None
 
 
-ServerMessage = Annotated[ServerHello | FrontPage | Status, Field(discriminator="type")]
+class TranscriptAppend(_Message):
+    """Entries a followed transcript gained; ``offset`` is where the next read
+    starts. Never sent empty, and a partly written line waits until complete."""
 
-_SERVER: TypeAdapter[ServerHello | FrontPage | Status] = TypeAdapter(ServerMessage)
+    type: Literal["append"] = "append"
+    key: FollowKey
+    entries: list[RenderedEntry]
+    offset: int
+
+
+class SubscribeError(_Message):
+    """A subscription refused: unknown, hidden or invalid. Nothing follows."""
+
+    type: Literal["subscribe_error"] = "subscribe_error"
+    key: FollowKey
+    message: str
+
+
+ServerMessageType = ServerHello | FrontPage | Status | TranscriptAppend | SubscribeError
+
+ServerMessage = Annotated[ServerMessageType, Field(discriminator="type")]
+
+_SERVER: TypeAdapter[ServerMessageType] = TypeAdapter(ServerMessage)
 
 
 def encode(message: _Message) -> str:
     return message.model_dump_json()
 
 
-def decode_server(text: str) -> ServerHello | FrontPage | Status:
+def decode_server(text: str) -> ServerMessageType:
     """For tests and tools: parse a server message."""
     return _SERVER.validate_json(text)

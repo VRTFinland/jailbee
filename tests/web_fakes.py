@@ -116,3 +116,36 @@ def wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
         if time.monotonic() > deadline:
             raise AssertionError("condition not met in time")
         time.sleep(0.01)
+
+
+@dataclass
+class FakeWatch:
+    """One file watch; the test fires it as inotify would."""
+
+    path: Path
+    on_change: Callable[[], None]
+    closed: bool = False
+
+    def close(self) -> None:
+        self.closed = True
+
+    def fire(self) -> None:
+        """Report a change from another thread, as the real watcher's thread does."""
+        if not self.closed:
+            worker = threading.Thread(target=self.on_change)
+            worker.start()
+            worker.join()
+
+
+@dataclass
+class FakeWatchFactory:
+    made: list[FakeWatch] = field(default_factory=list)
+
+    def __call__(self, path: Path, on_change: Callable[[], None]) -> FakeWatch:
+        watch = FakeWatch(path, on_change)
+        self.made.append(watch)
+        return watch
+
+    @property
+    def open(self) -> list[FakeWatch]:
+        return [w for w in self.made if not w.closed]
