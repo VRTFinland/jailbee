@@ -246,8 +246,13 @@ class FollowConfig(BaseModel):
 
     wake_on: list[str] | None = Field(
         default_factory=lambda: [
-            "msg:done", "msg:question", "msg:blocked", "msg:idle", "msg:note",
-            "status:failed", "status:refused",
+            "msg:done",
+            "msg:question",
+            "msg:blocked",
+            "msg:idle",
+            "msg:note",
+            "status:failed",
+            "status:refused",
         ],
         description="Wait wake tokens; null announces every unread item.",
     )

@@ -138,9 +138,16 @@ def test_orchestrator_follow_skips_success_acks_but_keeps_messages_and_failures(
         {"id": "delivered", "type": "status", "state": "done", "detail": "delivered to kid"},
         {"id": "queued", "type": "status", "state": "queued", "detail": "queued at position 1"},
         {"id": "started", "type": "status", "state": "started", "detail": "creation started"},
-        {"id": "ready", "type": "status", "state": "done", "detail": "child is ready; agent is alive"},
-        *({"id": kind, "type": "message", "kind": kind, "from": "kid"}
-          for kind in ("note", "question", "blocked", "done", "idle")),
+        {
+            "id": "ready",
+            "type": "status",
+            "state": "done",
+            "detail": "child is ready; agent is alive",
+        },
+        *(
+            {"id": kind, "type": "message", "kind": kind, "from": "kid"}
+            for kind in ("note", "question", "blocked", "done", "idle")
+        ),
         {"id": "failed", "type": "status", "state": "failed"},
         {"id": "refused", "type": "status", "state": "refused"},
     ]
@@ -148,20 +155,26 @@ def test_orchestrator_follow_skips_success_acks_but_keeps_messages_and_failures(
         env.store.insert_item(env.orch, "proj-orch", item, now=100)
     env.ask(env.orch, "follow")
     executor.evaluate_waiters(env.memory)
-    announced = [response.result["item"]["id"] for _, response in env.listener.responses
-                 if response.result.get("kind") == "message"]
+    announced = [
+        response.result["item"]["id"]
+        for _, response in env.listener.responses
+        if response.result.get("kind") == "message"
+    ]
     assert announced == ["note", "question", "blocked", "done", "idle", "failed", "refused"]
     assert [row.id for row in env.store.unacked(env.orch)] == [item["id"] for item in items]
     env.ask(env.orch, "ack", ok_statuses=True)
     assert env.last().result == {"acked": 4}
 
 
-@pytest.mark.parametrize("tokens, expected", [
-    (["status:done"], ["ack"]),
-    (["done"], ["ack", "report"]),
-    (None, ["ack", "report", "note"]),
-    ([], []),
-])
+@pytest.mark.parametrize(
+    "tokens, expected",
+    [
+        (["status:done"], ["ack"]),
+        (["done"], ["ack", "report"]),
+        (None, ["ack", "report", "note"]),
+        ([], []),
+    ],
+)
 def test_follow_honors_repo_wake_filter(env: Env, tokens, expected) -> None:
     from dataclasses import replace
 
@@ -183,17 +196,23 @@ def test_follow_honors_repo_wake_filter(env: Env, tokens, expected) -> None:
         env.store.insert_item(env.orch, "proj-orch", item, now=100)
     executor.evaluate_waiters(env.memory)
     executor.evaluate_waiters(env.memory)
-    assert [response.result["item"]["id"] for _, response in env.listener.responses
-            if response.result.get("kind") == "message"] == expected
+    assert [
+        response.result["item"]["id"]
+        for _, response in env.listener.responses
+        if response.result.get("kind") == "message"
+    ] == expected
     assert len(env.store.unacked(env.orch)) == 3
 
 
-@pytest.mark.parametrize("policy, elapsed, expected", [
-    ({}, 7200, ["quiet-child"]),
-    ({"quiet_after": "1m", "digest": "off"}, 60, ["quiet-child"]),
-    ({"quiet_after": "off", "digest": "2m"}, 120, ["digest"]),
-    ({"quiet_after": "off", "digest": "off"}, 10000, []),
-])
+@pytest.mark.parametrize(
+    "policy, elapsed, expected",
+    [
+        ({}, 7200, ["quiet-child"]),
+        ({"quiet_after": "1m", "digest": "off"}, 60, ["quiet-child"]),
+        ({"quiet_after": "off", "digest": "2m"}, 120, ["digest"]),
+        ({"quiet_after": "off", "digest": "off"}, 10000, []),
+    ],
+)
 def test_follow_uses_configured_intervals_and_off(env: Env, monkeypatch, policy, elapsed, expected):
     from dataclasses import replace
 
@@ -215,13 +234,18 @@ def test_follow_uses_configured_intervals_and_off(env: Env, monkeypatch, policy,
         ticks[0] = 1000.0 + delta
         env.memory.children["proj-orch"] = broker_state.ChildrenView(ticks[0], view.children)
         executor.evaluate_waiters(env.memory)
-        events = [response.result["kind"] for _, response in env.listener.responses
-                  if response.result.get("kind") != "keepalive"]
+        events = [
+            response.result["kind"]
+            for _, response in env.listener.responses
+            if response.result.get("kind") != "keepalive"
+        ]
         assert events == (expected if delta == elapsed else [])
 
 
 def test_child_follow_still_announces_success_statuses(env: Env) -> None:
-    env.store.insert_item(env.kid, "proj-kid", {"id": "ack", "type": "status", "state": "done"}, now=100)
+    env.store.insert_item(
+        env.kid, "proj-kid", {"id": "ack", "type": "status", "state": "done"}, now=100
+    )
     env.ask(env.kid, "follow")
     executor.evaluate_waiters(env.memory)
     assert env.last().result["item"]["id"] == "ack"

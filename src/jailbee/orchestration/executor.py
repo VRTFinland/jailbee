@@ -151,15 +151,16 @@ def _dispatch(
                 conn_id=event.conn_id,
                 wake=(
                     frozenset(policy.wake_on)
-                    if orchestrator and policy.wake_on is not None else None
+                    if orchestrator and policy.wake_on is not None
+                    else None
                 ),
                 quiet=(
                     parse_duration(policy.quiet_after)
-                    if orchestrator and policy.quiet_after != "off" else 0
+                    if orchestrator and policy.quiet_after != "off"
+                    else 0
                 ),
                 digest=(
-                    parse_duration(policy.digest)
-                    if orchestrator and policy.digest != "off" else 0
+                    parse_duration(policy.digest) if orchestrator and policy.digest != "off" else 0
                 ),
                 deadline=None,
                 follow=True,
