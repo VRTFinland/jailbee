@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -87,16 +88,32 @@ class _Outbox:
             await self.send(message)
 
 
+Authorized = Callable[[], Awaitable[bool]]
+
+
+def _session_check(ws: WebSocket, ctx: WebContext, token: str) -> Authorized:
+    """Asked before every push and live append: False (and the socket closed
+    with 4001) once the session is revoked from the CLI or logged out."""
+
+    async def authorized() -> bool:
+        if not ctx.deps.auth_enabled or await run_in_threadpool(ctx.sessions.is_active, token):
+            return True
+        with contextlib.suppress(WebSocketDisconnect, RuntimeError):
+            await ws.close(code=CLOSE_UNAUTHORIZED, reason="Session revoked")
+        return False
+
+    return authorized
+
+
 async def _push(
-    ws: WebSocket, ctx: WebContext, subscriber: Subscriber, token: str, outbox: _Outbox
+    ctx: WebContext, subscriber: Subscriber, authorized: Authorized, outbox: _Outbox
 ) -> None:
-    """Send what changed on each wake-up; close instead once the session is revoked."""
+    """Send what changed on each wake-up; stop once the session is revoked."""
     last_seq: int | None = None
     last_status: str | None = None
     while True:
         await subscriber.wait()
-        if ctx.deps.auth_enabled and not await run_in_threadpool(ctx.sessions.is_active, token):
-            await ws.close(code=CLOSE_UNAUTHORIZED, reason="Session revoked")
+        if not await authorized():
             return
         status = ctx.hub.status()
         if status != last_status:
@@ -138,9 +155,10 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     await ws.send_text(encode(ServerHello(device_name=session.device_name)))
     subscriber = ctx.hub.attach()
     outbox = _Outbox(ws)
-    follows = ConnectionFollows(ctx, outbox.send_quietly)
+    authorized = _session_check(ws, ctx, token)
+    follows = ConnectionFollows(ctx, outbox.send_quietly, authorized)
     tasks = [
-        asyncio.create_task(_push(ws, ctx, subscriber, token, outbox)),
+        asyncio.create_task(_push(ctx, subscriber, authorized, outbox)),
         asyncio.create_task(_receive(ws, follows)),
     ]
     try:

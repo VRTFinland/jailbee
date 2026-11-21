@@ -19,12 +19,14 @@ pytest.importorskip("markdown")
 
 from fastapi.testclient import TestClient
 from starlette.testclient import WebSocketTestSession
+from starlette.websockets import WebSocketDisconnect
 
 from jailbee.db import get_engine
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.web.app import WebDeps, create_app
 from jailbee.web.auth import PinHolder
-from jailbee.web.protocol import PROTOCOL_VERSION
+from jailbee.web.protocol import CLOSE_UNAUTHORIZED, PROTOCOL_VERSION
+from jailbee.web.ws_follow import MAX_SUBSCRIPTIONS, TOO_MANY_SUBSCRIPTIONS
 from tests.web_fakes import (
     FakeClock,
     FakeSourceFactory,
@@ -318,3 +320,44 @@ def test_subscribe_as_first_message_is_still_a_bad_handshake(
         with pytest.raises(WebSocketDisconnect) as exc:
             ws.receive_json()
         assert exc.value.code == 4400
+
+
+def test_a_revoked_session_gets_no_more_appends_and_is_closed(
+    started: tuple[TestClient, str], transcript: Path, watches: FakeWatchFactory
+) -> None:
+    client, token = started
+    offset = rest_offset(client)
+    with connect(client, token) as ws:
+        subscribe(ws, offset)
+        wait_until(lambda: len(watches.open) == 1)
+        assert client.post("/api/logout").status_code == 200
+
+        append(transcript, record(2, "assistant", "Secret reply"))
+        watches.open[0].fire()
+
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_json()
+        assert closed.value.code == CLOSE_UNAUTHORIZED
+
+
+def test_subscriptions_per_socket_are_capped(
+    started: tuple[TestClient, str], transcript: Path, watches: FakeWatchFactory
+) -> None:
+    client, token = started
+    ids = [f"{SESSION[:-12]}{n:012d}" for n in range(MAX_SUBSCRIPTIONS + 1)]
+    for session_id in ids:
+        (transcript.parent / f"{session_id}.jsonl").write_text(record(1, "user", "hi"))
+    with connect(client, token) as ws:
+        for session_id in ids[:MAX_SUBSCRIPTIONS]:
+            subscribe(ws, 0, session_id=session_id)
+            assert ws.receive_json()["type"] == "append"
+
+        subscribe(ws, 0, session_id=ids[-1])
+
+        refusal = ws.receive_json()
+        assert refusal["type"] == "subscribe_error"
+        assert refusal["message"] == TOO_MANY_SUBSCRIPTIONS
+        assert len(watches.open) == MAX_SUBSCRIPTIONS
+        # Re-subscribing an existing key is not a new subscription.
+        subscribe(ws, 0, session_id=ids[0])
+        assert ws.receive_json()["type"] == "append"

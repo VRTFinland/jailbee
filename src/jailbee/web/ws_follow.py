@@ -27,16 +27,22 @@ if TYPE_CHECKING:
     from jailbee.web.transcript_follow import Follower
 
 Send = Callable[["_Message"], Awaitable[None]]
+Authorized = Callable[[], Awaitable[bool]]
+"""Whether the connection's session is still live; closes the socket when not."""
 
 UNKNOWN_SESSION = "Unknown session"
+MAX_SUBSCRIPTIONS = 32
+"""Followed transcripts per socket; each holds a file watch and a read position."""
+TOO_MANY_SUBSCRIPTIONS = "Too many subscriptions"
 
 
 class ConnectionFollows:
     """The subscriptions of one connection; `close` when the socket ends."""
 
-    def __init__(self, ctx: WebContext, send: Send) -> None:
+    def __init__(self, ctx: WebContext, send: Send, authorized: Authorized) -> None:
         self._ctx = ctx
         self._send = send
+        self._authorized = authorized
         self._followers: dict[FollowKey, Follower] = {}
 
     async def handle(self, message: Subscribe | Unsubscribe) -> None:
@@ -51,6 +57,9 @@ class ConnectionFollows:
 
     async def _subscribe(self, key: FollowKey, offset: int) -> None:
         self._drop(key)
+        if len(self._followers) >= MAX_SUBSCRIPTIONS:
+            await self._send(SubscribeError(key=key, message=TOO_MANY_SUBSCRIPTIONS))
+            return
         ctx = self._ctx
         found = None
         if ctx.scope.allows(key.prefix):
@@ -68,6 +77,8 @@ class ConnectionFollows:
         source, path = found
 
         async def deliver(entries: list[RenderedEntry], next_offset: int) -> None:
+            if not await self._authorized():
+                return  # revoked: the socket is closed, nothing more is sent
             await self._send(TranscriptAppend(key=key, entries=entries, offset=next_offset))
 
         self._followers[key] = ctx.follows.follow(key, source, path, offset, deliver)
