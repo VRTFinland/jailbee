@@ -35,8 +35,8 @@ before editing `## Unreleased`.
   and `enable|disable|status` manage a systemd user unit that restarts the
   server when JailBee is upgraded.
 - The inbox follower announces a change of the container's orchestration grant
-  (granted, revoked, or a field such as `max_running_children`) once, naming
-  what changed, so an orchestrator agent can adapt
+  (revoked, or a field such as `max_running_children`) once, naming
+  what changed, including a change made while the monitor was reconnecting, so an orchestrator agent can adapt
   ([#147](https://github.com/VRTFinland/jailbee/issues/147)).
 
 ### Changed
