@@ -46,11 +46,43 @@ def test_web_restrict_host_cannot_be_turned_off():
         RemoteWebConfig(restrict_host=False)
 
 
-def test_web_has_policy_fields_only():
-    assert set(RemoteWebConfig.model_fields) == POLICY_KEYS
+WEB_SERVER_KEYS = {"listen", "port", "auth"}
+
+
+def test_web_has_policy_fields_plus_server_settings():
+    assert set(RemoteWebConfig.model_fields) == POLICY_KEYS | WEB_SERVER_KEYS
     assert set(RemotePolicy.model_fields) == POLICY_KEYS
     with pytest.raises(ValidationError):
-        RemoteWebConfig(port=1234)
+        RemoteWebConfig(shell=True)
+
+
+def test_web_server_defaults_bind_loopback_on_its_own_port_with_auth_on():
+    web = GlobalConfig().remote.web
+    assert web.listen == "127.0.0.1"
+    assert web.port == 8910
+    assert web.auth.enabled is True
+
+
+def test_web_server_settings_round_trip_from_yaml(tmp_path):
+    path = tmp_path / "global.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {"remote": {"web": {"listen": "::", "port": 9000, "auth": {"enabled": False}}}}
+        )
+    )
+    web = load_global_config(path)[0].remote.web
+    assert (web.listen, web.port, web.auth.enabled) == ("::", 9000, False)
+    # The server settings never leak into the transport-neutral policy.
+    assert set(type(web.policy).model_fields) == POLICY_KEYS
+
+
+@pytest.mark.parametrize(
+    "override",
+    [{"listen": "localhost"}, {"port": 0}, {"port": 70000}, {"auth": {"enable": True}}],
+)
+def test_web_server_settings_reject_bad_values(override):
+    with pytest.raises(ValidationError):
+        RemoteWebConfig.model_validate(override)
 
 
 def test_web_files_default_follows_commands_mode_but_stays_off_when_disabled():

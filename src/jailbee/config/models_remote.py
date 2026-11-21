@@ -368,14 +368,49 @@ class RemoteSSHConfig(RemotePolicy):
         return self
 
 
-class RemoteWebConfig(RemotePolicy):
-    """`remote.web`: the policy fields only, most restrictive by default.
+class RemoteWebAuthConfig(BaseModel):
+    """`remote.web.auth`: how browsers log in to the web dashboard."""
 
-    Listen address, port and auth belong to the web server (spec #109).
-    `restrict_host` is forced on: the web never gets host access.
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Require a login (one-time PIN) before the web dashboard serves anything. "
+            "Never relaxed for requests from localhost: behind a reverse proxy or an "
+            "SSH tunnel every request comes from localhost."
+        ),
+    )
+
+
+class RemoteWebConfig(RemotePolicy):
+    """`remote.web`: the web server settings on top of the shared `RemotePolicy`.
+
+    The policy fields are the most restrictive by default and `restrict_host`
+    is forced on: the web never gets host access. `listen`, `port` and `auth`
+    belong to the web server (spec #109) and never reach `policy`.
     """
 
     _label: ClassVar[str] = "remote.web"
+    listen: str = Field(
+        default="127.0.0.1",
+        description="IP address the web dashboard server binds to.",
+    )
+    port: int = Field(
+        default=8910,
+        ge=1,
+        le=65535,
+        description="TCP port the web dashboard server listens on.",
+    )
+    auth: RemoteWebAuthConfig = Field(
+        default_factory=RemoteWebAuthConfig,
+        description="Browser login settings for the web dashboard.",
+    )
+
+    @field_validator("listen")
+    @classmethod
+    def _listen_is_an_ip_literal(cls, value: str) -> str:
+        ipaddress.ip_address(value)
+        return value
 
     @model_validator(mode="after")
     def _host_restriction_is_forced(self) -> Self:

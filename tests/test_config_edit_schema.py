@@ -306,7 +306,8 @@ def test_build_specs_covers_every_config_leaf():
     assert len(build_specs(Config)) == 123
     # remote.ssh.gpg adds one opt-in global boolean.
     # remote.web adds the ten `RemotePolicy` leaves: 59 + 10 = 69.
-    assert len(build_specs(GlobalConfig)) == 69
+    # The web server's `listen`, `port` and `auth.enabled` make 72.
+    assert len(build_specs(GlobalConfig)) == 72
 
 
 def test_a_default_factory_field_reports_its_real_default():
