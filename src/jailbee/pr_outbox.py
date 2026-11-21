@@ -1234,7 +1234,8 @@ def _apply_hint(short: str, plan: PrPlan) -> str:
     names = [safe_text(m.target.manifest.name) for m in plan.manifests]
     if len(names) == 1:
         return f"`jailbee outbox apply {short} pr/{names[0]}`"
-    return f"`jailbee outbox apply {short} pr/<manifest>` (one manifest per run; pending: {', '.join(names)})"
+    listed = ", ".join(names)
+    return f"`jailbee outbox apply {short} pr/<manifest>` (one manifest per run; pending: {listed})"
 
 
 class FinalizeError(Exception):
