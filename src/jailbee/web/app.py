@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from jailbee.web.context import WebContext, WebDeps
 from jailbee.web.origin_guard import HostPolicy, OriginGuard
 from jailbee.web.routes import auth_routes, container_routes, repo_routes, ws_routes
+from jailbee.web.security_headers import SecurityHeaders
 
 __all__ = ["WebDeps", "create_app"]
 
@@ -21,7 +22,8 @@ def create_app(deps: WebDeps) -> FastAPI:
     Routes are mounted before the static app, which serves the built browser
     app at ``/`` when ``deps.static_dir`` is given. FastAPI's generated docs
     are off: nothing beyond the login endpoints is reachable unauthenticated.
-    Every request passes `OriginGuard` (cross-site WebSocket and DNS rebinding).
+    Every request passes `OriginGuard` (cross-site WebSocket and DNS rebinding)
+    and every response gets `SecurityHeaders`.
     """
     ctx = WebContext(deps)
 
@@ -48,6 +50,7 @@ def create_app(deps: WebDeps) -> FastAPI:
             allow_remote=deps.allow_unauthenticated_remote,
         ),
     )
+    app.add_middleware(SecurityHeaders)
     app.include_router(auth_routes.router)
     app.include_router(ws_routes.router)
     app.include_router(repo_routes.router)

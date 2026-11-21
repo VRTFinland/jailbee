@@ -5874,7 +5874,8 @@ Never `tmux kill-server`. The private socket vanishes with its last session.
 ## Web dashboard headless smoke test
 
 Checks that the built browser app logs in, lists a repo and container, lists
-sessions and renders a transcript, against fixture data and without Incus.
+sessions and renders a transcript without tripping its Content-Security-Policy,
+against fixture data and without Incus.
 Needs Node.js (for `make web`), the `web` extra and Chrome
 (`/opt/google/chrome/chrome` by default, `--chrome PATH` otherwise). It is not
 part of `uv run pytest`.
@@ -5897,7 +5898,7 @@ echo "exit $?"
 kill $SERVER
 ```
 
-Expected: four `ok` lines and exit 0; `front.png`, `repo.png` and
+Expected: five `ok` lines and exit 0; `front.png`, `repo.png` and
 `session.png` land in `$T` for a visual check. Add `--no-auth` to both
 scripts to run the same walk with login disabled. The throwaway `XDG_*`
 directories keep the login database away from the real one; the server
