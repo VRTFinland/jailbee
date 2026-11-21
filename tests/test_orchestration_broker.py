@@ -832,7 +832,9 @@ def test_grant_changes_are_visible_without_container_files(rig: Rig) -> None:
 
 
 @pytest.mark.parametrize("operation", ["spawn", "restart"])
-def test_queued_launch_obeys_grant_lowered_after_inventory(rig: Rig, monkeypatch, operation) -> None:
+def test_queued_launch_obeys_grant_lowered_after_inventory(
+    rig: Rig, monkeypatch, operation
+) -> None:
     from copy import deepcopy
 
     from jailbee.create_flow import CreateStarted
@@ -943,6 +945,7 @@ def test_grant_read_failure_preserves_earlier_queued_launch_reply(rig: Rig, monk
     monkeypatch.setattr(actions, "start_child", start)
     rig.incus.list_containers.return_value = [_orch()]
     save_queue(rig.root, {"proj-orch": [_req("q1"), _req("q2", "proj-fix-3")]})
+
     def read(full, key):
         if key != labels.GRANT:
             return None
