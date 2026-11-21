@@ -254,3 +254,17 @@ def test_setup_mode_lists_nothing_but_its_mode_and_registration(setup_client: Te
     assert setup_client.get("/api/mode").json() == {"mode": "setup"}
     assert setup_client.get("/api/auth/methods").status_code == 404
     assert setup_client.post("/api/auth", json={}).status_code == 404
+
+
+def test_setup_mode_sends_the_browser_to_the_setup_view(
+    tmp_path: Any, clock: FakeClock, setup_pin: PinHolder
+) -> None:
+    (tmp_path / "index.html").write_text("<!doctype html><title>JailBee</title>")
+    deps = SetupDeps(engine=get_engine(), pin=setup_pin, clock=clock, static_dir=tmp_path)
+    browser = TestClient(create_setup_app(deps))
+
+    root = browser.get("/", follow_redirects=False)
+    page = browser.get("/index.html")
+
+    assert root.headers["location"] == "index.html#/setup"
+    assert "JailBee" in page.text

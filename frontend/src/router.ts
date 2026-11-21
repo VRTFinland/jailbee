@@ -12,9 +12,11 @@ import ContainerView from "./views/ContainerView.vue"
 import SessionView from "./views/SessionView.vue"
 import SettingsView from "./views/SettingsView.vue"
 import LoginView from "./views/LoginView.vue"
+import SetupView from "./views/SetupView.vue"
 
 export const routes: RouteRecordRaw[] = [
     {path: "/login", name: "login", component: LoginView, meta: {public: true}},
+    {path: "/setup", name: "setup", component: SetupView, meta: {public: true}},
     {path: "/", name: "front", component: FrontPage},
     {path: "/repos/:prefix", name: "repo", component: RepoView},
     {path: "/containers/:name", name: "container", component: ContainerView},

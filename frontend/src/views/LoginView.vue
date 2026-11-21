@@ -8,16 +8,22 @@ import {
     fetchAuthMethods,
     loginWithLink,
     loginWithPin,
+    loginWithSecurityKey,
     loginWithTotp,
     rememberedDeviceName,
 } from "../api"
 
-const LABELS: Record<AuthMethod, string> = {pin: "PIN", totp: "Authenticator code"}
+type CodeMethod = Exclude<AuthMethod, "fido2">
+
+const LABELS: Record<CodeMethod, string> = {pin: "PIN", totp: "Authenticator code"}
 
 const router = useRouter()
 const route = useRoute()
 const methods = ref<AuthMethod[]>(["pin"])
-const active = ref<AuthMethod>("pin")
+/** The methods typed into the form; a security key is a button of its own. */
+const codeMethods = computed(() => methods.value.filter((m): m is CodeMethod => m !== "fido2"))
+const securityKey = computed(() => methods.value.includes("fido2"))
+const active = ref<CodeMethod>("pin")
 const pin = ref("")
 const code = ref("")
 const device = ref(rememberedDeviceName())
@@ -37,15 +43,36 @@ onMounted(async () => {
         error.value = result.error
     }
     methods.value = await fetchAuthMethods()
-    active.value = methods.value[0]
+    active.value = codeMethods.value[0] ?? "pin"
 })
 
 const secret = computed(() => (active.value === "pin" ? pin.value : code.value))
 const ready = computed(() => /^\d{6}$/.test(secret.value) && device.value.trim().length > 0)
 
-function choose(method: AuthMethod) {
+function choose(method: CodeMethod) {
     active.value = method
     error.value = ""
+}
+
+async function finish(result: Awaited<ReturnType<typeof loginWithPin>>) {
+    if (result.ok) {
+        await router.push({name: "front"})
+    } else {
+        error.value = result.error
+    }
+}
+
+async function useSecurityKey() {
+    if (loading.value) return
+    if (!device.value.trim()) {
+        error.value = "Name this device first."
+        return
+    }
+    error.value = ""
+    loading.value = true
+    const result = await loginWithSecurityKey(device.value.trim())
+    loading.value = false
+    await finish(result)
 }
 
 async function submit() {
@@ -69,9 +96,9 @@ async function submit() {
 <template>
     <main class="login">
         <h1>JailBee</h1>
-        <div v-if="methods.length > 1" class="tabs" role="tablist">
+        <div v-if="codeMethods.length > 1" class="tabs" role="tablist">
             <button
-                v-for="m in methods"
+                v-for="m in codeMethods"
                 :key="m"
                 type="button"
                 role="tab"
@@ -83,7 +110,8 @@ async function submit() {
                 {{ LABELS[m] }}
             </button>
         </div>
-        <p v-if="active === 'pin'">Enter the PIN printed by <code>jailbee remote web serve</code>.</p>
+        <p v-if="codeMethods.length === 0">Log in with your security key.</p>
+        <p v-else-if="active === 'pin'">Enter the PIN printed by <code>jailbee remote web serve</code>.</p>
         <p v-else>Enter the 6-digit code from your authenticator app.</p>
         <form class="form" @submit.prevent="submit">
             <label>
@@ -97,7 +125,7 @@ async function submit() {
                     placeholder="e.g. Boox tablet"
                 />
             </label>
-            <label v-if="active === 'pin'">
+            <label v-if="codeMethods.length > 0 && active === 'pin'">
                 <span>PIN</span>
                 <input
                     v-model="pin"
@@ -112,7 +140,7 @@ async function submit() {
                     autofocus
                 />
             </label>
-            <label v-else>
+            <label v-else-if="codeMethods.length > 0">
                 <span>Code</span>
                 <input
                     v-model="code"
@@ -127,8 +155,18 @@ async function submit() {
                     autofocus
                 />
             </label>
-            <button type="submit" class="primary" :disabled="!ready || loading">
+            <button v-if="codeMethods.length > 0" type="submit" class="primary" :disabled="!ready || loading">
                 {{ loading ? "…" : "Log in" }}
+            </button>
+            <button
+                v-if="securityKey"
+                type="button"
+                data-test="security-key"
+                :class="codeMethods.length > 0 ? 'secondary' : 'primary'"
+                :disabled="loading"
+                @click="useSecurityKey"
+            >
+                Use security key
             </button>
         </form>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -202,7 +240,17 @@ input {
     color: var(--accent-text);
     cursor: pointer;
 }
-.primary:disabled {
+.secondary {
+    font: inherit;
+    min-height: 3rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+}
+.primary:disabled,
+.secondary:disabled {
     opacity: 0.5;
     cursor: default;
 }
