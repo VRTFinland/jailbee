@@ -28,7 +28,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 22
+CURRENT_SCHEMA_VERSION = 27
 
 
 def state_dir() -> Path:
@@ -304,6 +304,31 @@ def _migrate_to_v22(conn: Connection) -> None:
     conn.exec_driver_sql("DROP TABLE IF EXISTS sent_record")
 
 
+def _migrate_to_v23(conn: Connection) -> None:
+    """v22 -> v23 adds `web_session` (web dashboard logins) via create_all."""
+    return None
+
+
+def _migrate_to_v24(conn: Connection) -> None:
+    """v23 -> v24 adds `web_auth_setting`, `web_totp_key` and `web_auth_event` via create_all."""
+    return None
+
+
+def _migrate_to_v25(conn: Connection) -> None:
+    """v24 -> v25 adds `container_session` (agent sessions seen per container) via create_all."""
+    return None
+
+
+def _migrate_to_v26(conn: Connection) -> None:
+    """v25 -> v26 adds `web_login_link` (one-time localhost login links) via create_all."""
+    return None
+
+
+def _migrate_to_v27(conn: Connection) -> None:
+    """v26 -> v27 adds `web_fido2_key` (web dashboard security keys) via create_all."""
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -327,6 +352,11 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     20: _migrate_to_v20,
     21: _migrate_to_v21,
     22: _migrate_to_v22,
+    23: _migrate_to_v23,
+    24: _migrate_to_v24,
+    25: _migrate_to_v25,
+    26: _migrate_to_v26,
+    27: _migrate_to_v27,
 }
 
 

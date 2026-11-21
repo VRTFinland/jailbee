@@ -35,7 +35,7 @@ with no output is missed."""
 PROJECTS_DIRNAME = "projects"
 SUBAGENTS_DIRNAME = "subagents"
 
-_SESSION_ID = re.compile(
+SESSION_ID = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
 
@@ -56,7 +56,7 @@ _TOOL_ARGS = {
 """Which input field says what a tool call is about."""
 
 
-def _one_line(text: str, limit: int) -> str:
+def one_line(text: str, limit: int) -> str:
     """Whitespace collapsed, printable characters only, cut to `limit` with `…`."""
     flat = "".join(ch for ch in " ".join(text.split()) if ch.isprintable())
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
@@ -115,11 +115,11 @@ def read_tail(path: Path, limit: int = TAIL_BYTES) -> bytes | None:
     return data
 
 
-def _tool_text(block: dict[str, object]) -> str | None:
+def tool_summary(block: dict[str, object]) -> str | None:
     name = block.get("name")
     if not isinstance(name, str):
         return None
-    shown = _one_line(name, ARG_CHARS)
+    shown = one_line(name, ARG_CHARS)
     if not shown:
         return None
     key = _TOOL_ARGS.get(name)
@@ -127,7 +127,7 @@ def _tool_text(block: dict[str, object]) -> str | None:
     if key is not None and isinstance(tool_input, dict):
         argument = tool_input.get(key)
         if isinstance(argument, str):
-            text = _one_line(argument, ARG_CHARS)
+            text = one_line(argument, ARG_CHARS)
             if text:
                 return f"{shown}  {text}"
     return shown
@@ -193,7 +193,7 @@ def parse_tail(raw: bytes, *, now: float | None = None) -> TailActivity:
             kind = block.get("type")
             event: ActivityEvent
             if kind == "tool_use":
-                tool = _tool_text(block)
+                tool = tool_summary(block)
                 if tool is None:
                     continue
                 if last_tool is None:
@@ -205,7 +205,7 @@ def parse_tail(raw: bytes, *, now: float | None = None) -> TailActivity:
                     continue
                 if last_message is None:
                     last_message = _lines(text, LAST_MESSAGE_CHARS) or None
-                short = _one_line(text, MESSAGE_CHARS)
+                short = one_line(text, MESSAGE_CHARS)
                 if not short:
                     continue
                 event = ActivityEvent("message", short, date)
@@ -225,7 +225,7 @@ def locate(config_home: Path, session_id: str | None) -> ActivityPaths | None:
     name in whichever project directory holds it; a symlinked project
     directory is skipped.
     """
-    if session_id is None or _SESSION_ID.fullmatch(session_id) is None:
+    if session_id is None or SESSION_ID.fullmatch(session_id) is None:
         return None
     try:
         projects = sorted((config_home / PROJECTS_DIRNAME).iterdir())

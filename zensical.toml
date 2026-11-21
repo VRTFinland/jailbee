@@ -37,6 +37,7 @@ nav = [
     "orchestration.md",
     "orchestration-protocol.md",
     "remote-gui.md",
+    "web-dashboard.md",
     "project-config.md",
     "troubleshooting.md",
   ] },

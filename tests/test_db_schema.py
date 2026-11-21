@@ -1100,7 +1100,7 @@ def test_v15_db_gains_columns_version_defaulting_zero() -> None:
     assert row is not None
     assert row.columns_version == 0
     assert row.columns == '["name", "mem"]' and row.show_details is False
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 22
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
 
 
 def test_migrate_to_v16_is_idempotent() -> None:
@@ -1134,7 +1134,7 @@ def test_v16_db_gains_the_sort_columns() -> None:
     assert row is not None
     assert row.sort_field is None and row.sort_desc is False
     assert row.columns == '["name", "state"]' and row.columns_version == 1
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 22
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
 
 
 def test_migrate_to_v17_is_idempotent() -> None:
@@ -1167,7 +1167,7 @@ def test_v17_db_gains_show_system_defaulting_true() -> None:
     assert row is not None
     assert row.show_system is True
     assert row.columns == '["name"]' and row.show_details is False
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 22
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
 
 
 def test_migrate_to_v18_is_idempotent() -> None:
@@ -1200,7 +1200,7 @@ def test_v18_db_gains_details_rows_unset() -> None:
     assert row is not None
     assert row.details_rows is None
     assert row.columns == '["name"]' and row.show_details is False
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 22
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
 
 
 def test_migrate_to_v19_is_idempotent() -> None:
@@ -1253,7 +1253,7 @@ def test_v20_database_migrates_to_v21_with_seed_table() -> None:
         loaded = session.get(GoldenSeedState, "sampleapp--golden")
         version = meta.version if meta is not None else None
 
-    assert version == CURRENT_SCHEMA_VERSION == 22
+    assert version == CURRENT_SCHEMA_VERSION
     assert loaded is not None
     assert loaded.seeded_at == datetime(2026, 11, 6, tzinfo=UTC)
 
@@ -1282,7 +1282,7 @@ def test_v21_db_drops_the_retired_sent_record_table_and_keeps_other_rows() -> No
         meta = session.get(SchemaMeta, 1)
         prefs = session.get(ViewPrefs, "tui")
     assert "sent_record" not in tables
-    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION == 22
+    assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
     assert prefs is not None and prefs.columns == '["name"]'
 
 
@@ -1293,3 +1293,138 @@ def test_migrate_to_v22_is_idempotent() -> None:
     with engine.begin() as conn:
         _migrate_to_v22(conn)
         _migrate_to_v22(conn)  # no table left to drop: must not raise
+
+
+def test_v22_database_migrates_to_v23_with_the_web_session_table() -> None:
+    from jailbee.db import _ensure_schema
+    from jailbee.db.models import SchemaMeta, WebSession
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(SchemaMeta(id=1, version=22))
+        session.commit()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE web_session")
+
+    _ensure_schema(engine)
+
+    stamp = datetime(2026, 11, 21, tzinfo=UTC)
+    with Session(engine) as session:
+        session.add(
+            WebSession(token_hash="h", device_name="boox", created_at=stamp, last_used_at=stamp)
+        )
+        session.commit()
+        meta = session.get(SchemaMeta, 1)
+        row = session.exec(select(WebSession)).one()
+        assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
+    assert row.device_name == "boox"
+
+
+def test_v23_database_migrates_to_v24_with_the_web_auth_tables() -> None:
+    from jailbee.db import _ensure_schema
+    from jailbee.db.models import SchemaMeta, WebAuthEvent, WebAuthSetting, WebTotpKey
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(SchemaMeta(id=1, version=23))
+        session.commit()
+    with engine.begin() as conn:
+        for table in ("web_auth_setting", "web_totp_key", "web_auth_event"):
+            conn.exec_driver_sql(f"DROP TABLE {table}")
+
+    _ensure_schema(engine)
+
+    stamp = datetime(2026, 11, 21, tzinfo=UTC)
+    with Session(engine) as session:
+        session.add(WebAuthSetting(key="pin_enabled", value="false"))
+        session.add(WebTotpKey(name="phone", secret="S", created_at=stamp))
+        session.add(WebAuthEvent(at=stamp, event="login", method="pin", device_name="boox"))
+        session.commit()
+        meta = session.get(SchemaMeta, 1)
+        assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
+        assert session.exec(select(WebTotpKey)).one().name == "phone"
+        assert session.exec(select(WebAuthEvent)).one().at == stamp
+
+
+def test_v24_database_migrates_to_v25_with_the_container_session_table() -> None:
+    from jailbee.db import _ensure_schema
+    from jailbee.db.models import ContainerSession, SchemaMeta
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(SchemaMeta(id=1, version=24))
+        session.commit()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE container_session")
+
+    _ensure_schema(engine)
+
+    stamp = datetime(2026, 11, 21, tzinfo=UTC)
+    with Session(engine) as session:
+        session.add(
+            ContainerSession(
+                container_name="alpha-1",
+                container_uuid="u-1",
+                agent="claude",
+                session_id="s-1",
+                first_seen=stamp,
+                last_seen=stamp,
+            )
+        )
+        session.commit()
+        meta = session.get(SchemaMeta, 1)
+        assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
+        assert session.exec(select(ContainerSession)).one().last_seen == stamp
+
+
+def test_v25_database_migrates_to_v26_with_the_login_link_table() -> None:
+    from jailbee.db import _ensure_schema
+    from jailbee.db.models import SchemaMeta, WebLoginLink
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(SchemaMeta(id=1, version=25))
+        session.commit()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE web_login_link")
+
+    _ensure_schema(engine)
+
+    with Session(engine) as session:
+        session.add(WebLoginLink(token_hash="h", expires_at=datetime(2026, 11, 21, tzinfo=UTC)))
+        session.commit()
+        assert session.exec(select(WebLoginLink)).one().token_hash == "h"
+
+
+def test_v26_database_migrates_to_v27_with_the_fido2_key_table() -> None:
+    from jailbee.db import _ensure_schema
+    from jailbee.db.models import SchemaMeta, WebFido2Key
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(SchemaMeta(id=1, version=26))
+        session.commit()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE web_fido2_key")
+
+    _ensure_schema(engine)
+
+    with Session(engine) as session:
+        session.add(
+            WebFido2Key(
+                name="yubikey",
+                credential_id=b"id",
+                credential_data=b"data",
+                rp_id="jb.example.com",
+                created_at=datetime(2026, 11, 21, tzinfo=UTC),
+            )
+        )
+        session.commit()
+        assert session.exec(select(WebFido2Key)).one().rp_id == "jb.example.com"
+        meta = session.get(SchemaMeta, 1)
+        assert meta is not None and meta.version == 27

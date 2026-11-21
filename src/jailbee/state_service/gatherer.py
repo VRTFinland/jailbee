@@ -119,7 +119,9 @@ class Gatherer:
         update: Callable[[], UpdateNotice | None] = current_notice,
         system: SystemReader | None = None,
         sent_counts: Callable[[], sent.SentCounts] = sent.counts,
+        recorder: Callable[[list[RepoGroup]], None] | None = None,
     ) -> None:
+        self._recorder = recorder
         self._sent_counts = sent_counts
         self._incus = incus
         self.cadence = cadence
@@ -180,6 +182,7 @@ class Gatherer:
                 self._primed = True
             sample_activity(groups, self._sampler, self._reader)
             self._annotate_sent(groups)
+            self._record_sessions(groups)
         except Exception as exc:  # reported to every client; the service lives on
             message = str(exc) or type(exc).__name__
             if message != self._failing:
@@ -207,6 +210,15 @@ class Gatherer:
         if do_git or isinstance(result, GatherError):
             self._last_full = stamp
         return result
+
+    def _record_sessions(self, groups: list[RepoGroup]) -> None:
+        """Hand the live sessions to the recorder; its failure never fails the gather."""
+        if self._recorder is None:
+            return
+        try:
+            self._recorder(groups)
+        except Exception:
+            log.debug("session recording failed", exc_info=True)
 
     def _annotate_sent(self, groups: list[RepoGroup]) -> None:
         """Write the Sent record counts onto the groups and their containers.

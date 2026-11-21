@@ -74,6 +74,7 @@ HOST_COMMANDS: frozenset[str] = frozenset(
         "restart",
         "retarget",
         "review",
+        "serve",
         "setup",
         "shell",
         "snapshot",

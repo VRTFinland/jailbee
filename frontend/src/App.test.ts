@@ -1,0 +1,78 @@
+import {flushPromises, mount} from "@vue/test-utils"
+import {afterEach, describe, expect, it, vi} from "vitest"
+import {createMemoryHistory} from "vue-router"
+import {clearToken, setToken} from "./api"
+import App from "./App.vue"
+import {DASHBOARD, Dashboard, type SocketLike} from "./dashboard"
+import {createAppRouter} from "./router"
+import type {SocketHandlers} from "./socket"
+
+function harness() {
+    const sockets: {handlers: SocketHandlers; started: boolean}[] = []
+    const dashboard = new Dashboard((handlers): SocketLike => {
+        const socket = {
+            handlers,
+            started: false,
+            start() {
+                socket.started = true
+            },
+            stop() {
+                socket.started = false
+            },
+            send() {},
+        }
+        sockets.push(socket)
+        return socket
+    })
+    return {dashboard, sockets}
+}
+
+async function mountAt(path: string) {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", {status: 404})))
+    const {dashboard, sockets} = harness()
+    const router = createAppRouter(createMemoryHistory())
+    await router.push(path)
+    await router.isReady()
+    const wrapper = mount(App, {global: {plugins: [router], provide: {[DASHBOARD]: dashboard}}})
+    await flushPromises()
+    return {wrapper, router, dashboard, sockets}
+}
+
+afterEach(() => {
+    clearToken()
+})
+
+describe("App", () => {
+    it("opens the dashboard socket on a deep link to a signed-in page", async () => {
+        setToken("tok")
+        const {sockets} = await mountAt("/repos/alpha")
+        expect(sockets).toHaveLength(1)
+        expect(sockets[0].started).toBe(true)
+    })
+
+    it("keeps the socket closed on the login page and opens it after signing in", async () => {
+        const {router, sockets} = await mountAt("/login")
+        expect(sockets).toHaveLength(0)
+        setToken("tok")
+        await router.push("/containers/alpha-1")
+        await flushPromises()
+        expect(sockets).toHaveLength(1)
+        expect(sockets[0].started).toBe(true)
+    })
+
+    it("closes the socket when leaving for the login page", async () => {
+        setToken("tok")
+        const {router, sockets} = await mountAt("/")
+        await router.push("/login")
+        await flushPromises()
+        expect(sockets[0].started).toBe(false)
+    })
+
+    it("sends the user to login when the socket says the session is gone", async () => {
+        setToken("tok")
+        const {router, sockets} = await mountAt("/repos/alpha")
+        sockets[0].handlers.onUnauthorized()
+        await flushPromises()
+        expect(router.currentRoute.value.name).toBe("login")
+    })
+})

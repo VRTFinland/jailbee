@@ -64,7 +64,8 @@ isolated per-branch development environments using Incus system containers. See
   `macsetup/` call no `container` of their own), `macsetup/steps_wiring.py`
   (`ssh-keygen`), `macsetup/steps_gui.py` (`brew`), `cswap.py` (`cswap`),
   `remote_ssh/service.py` (`systemctl`, to install/enable/disable/restart/
-  inspect the SSH user unit), `orchestration/service.py` (`systemctl`, to
+  inspect the SSH user unit), `web/service.py` (`systemctl`, to
+  install/enable/disable/inspect the web dashboard user unit), `orchestration/service.py` (`systemctl`, to
   install/enable/inspect the broker user unit; the broker itself starts
   creation workers only through `create_flow`, i.e. its `launch_background`,
   and calls no `subprocess` of its own). `remote_ssh/console.py` and `remote_ssh/pty.py`
@@ -82,6 +83,8 @@ isolated per-branch development environments using Incus system containers. See
   passed via `pass_fds`, for the shared dashboard action runner.
   The terminal dashboard's open-in-browser calls Textual `App.open_url`
   (stdlib `webbrowser`, which may start `xdg-open`), only locally with a display.
+  `web/open_link.py` (`jailbee remote web open`) likewise calls stdlib
+  `webbrowser.open`, which may start `xdg-open`.
   `gui.py` is the one module that runs `incus` outside `incus.py`: a *detached*
   `subprocess.Popen` of `incus exec` (`launch_detached`), so a GUI app outlives
   the CLI, or — for a `waypipe ssh` session's own command — `launch_attached`,

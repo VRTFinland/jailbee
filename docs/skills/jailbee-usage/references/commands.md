@@ -187,6 +187,7 @@ that leaf or group, e.g. `jb --repo x net egress add pypi.org --repo`.
 - [Setup & host (`setup`, `init`, `apply`, `doctor`, `base`, `registry`, `display`)](#setup--host)
 - [LiteLLM proxy (`litellm up|down|status|login|logout|logs`)](#litellm-proxy)
 - [Remote SSH (`remote ssh`)](#remote-ssh)
+- [Web dashboard (`remote web`, `serve`)](#web-dashboard)
 - [Config (`config show|validate|init|edit|migrate`)](#config)
 - [Create & lifecycle (`new`, `start`, `stop`, `restart`, `destroy`, `autostart run|status|cancel`)](#create--lifecycle)
 - [Inspect (`ls`, `dashboard`, `job`, `disk-usage`, `prune`)](#inspect)
@@ -406,6 +407,26 @@ A command name matching nothing at all, at any visibility, is not rejected by
 the console or one-shot exec themselves (outside `disabled` mode): it is run
 through to `jailbee`, which reports its own "No such command" error with
 suggestions, in its own style, instead of a generic router message.
+
+## Web dashboard
+
+Host-side only; needs the `jailbee[web]` extra. Full guide: `docs/web-dashboard.md`.
+
+| Command | What it does |
+|---|---|
+| `jailbee serve` / `jailbee remote web serve [--listen IP] [--port N]` | Run the server in the foreground; prints the URL (default `127.0.0.1:8910`) and a one-time PIN. Flags apply to this run only. |
+| `jailbee remote web enable` / `disable` / `status` | Install+start / stop / inspect the `jailbee-web.service` systemd user unit. It restarts itself when the JailBee version changes. |
+| `jailbee remote web open` | Open the browser already logged in (one-time localhost link). |
+| `jailbee remote web auth status` / `log [-n N]` | Which login methods are on, devices logged in; audit log. |
+| `jailbee remote web auth pin on\|off` | Allow or refuse PIN login (off needs a TOTP key). |
+| `jailbee remote web auth totp add [--name N]` / `ls` / `rm` | Authenticator-app keys. |
+| `jailbee remote web auth fido2 setup` / `ls` / `rm` | Security keys; `setup` serves a registration page until Ctrl-C. |
+| `jailbee remote web auth sessions ls` / `revoke [ID]` | Logged-in devices; revoke ends a session and its live view. |
+
+Config: `remote.web.listen`, `port`, `auth.enabled`,
+`auth.allow_unauthenticated_remote`, `excluded_repos` and the shared remote
+policy. Source addresses are never trusted: behind a proxy or tunnel every
+request is local.
 
 ## Config
 

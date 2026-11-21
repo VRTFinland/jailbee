@@ -1,0 +1,37 @@
+{
+  "name": "jailbee-web",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "vue": "^3.5.46",
+    "vue-router": "^5.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@vitejs/plugin-vue": "^6.0.11",
+    "@vue/test-utils": "^2.6.0",
+    "jsdom": "^31.0.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1",
+    "vue-tsc": "^3.3.14"
+  },
+  "overrides": {
+    "js-beautify": {
+      "glob": "^14.0.3",
+      "editorconfig": {
+        "minimatch": "^11.0.2"
+      }
+    }
+  }
+}

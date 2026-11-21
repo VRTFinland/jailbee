@@ -385,3 +385,132 @@ class GoldenSeedState(SQLModel, table=True):
     image_count: int = Field(sa_column=Column(Integer, nullable=False))
     size_bytes: int = Field(sa_column=Column(Integer, nullable=False))
     detail: str = Field(default="", nullable=False)
+
+
+class WebSession(SQLModel, table=True):
+    """One logged-in web dashboard device (#109).
+
+    The bearer token itself is never stored, only its SHA-256 hex digest, so
+    a copy of the database logs nobody in. `last_used_at` slides on every
+    authenticated request; a session unused for the TTL (30 days,
+    `jailbee.web.auth.SESSION_TTL`) is expired and deleted on its next use.
+    `id` is what CLI management (list, revoke) addresses a session by.
+    """
+
+    __tablename__ = "web_session"
+
+    id: int | None = Field(default=None, primary_key=True)
+    token_hash: str = Field(index=True, unique=True)
+    device_name: str
+    created_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+    last_used_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+
+
+class WebAuthSetting(SQLModel, table=True):
+    """One web dashboard login setting, as a key/value row (#109).
+
+    Only `pin_enabled` so far ("true"/"false"; a missing row means on).
+    Written by `jailbee remote web auth`, read by the server on every login,
+    so a change takes effect without a restart.
+    """
+
+    __tablename__ = "web_auth_setting"
+
+    key: str = Field(primary_key=True)
+    value: str
+
+
+class WebTotpKey(SQLModel, table=True):
+    """One authenticator-app key the web dashboard accepts TOTP codes from (#109).
+
+    `secret` is the base32 TOTP secret in the clear: verifying a code needs
+    it, so unlike a session token it cannot be stored as a hash.
+    """
+
+    __tablename__ = "web_totp_key"
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    secret: str
+    created_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+
+
+class WebLoginLink(SQLModel, table=True):
+    """A pending one-time localhost login link (#109).
+
+    `jailbee remote web open` mints one; only the SHA-256 hex digest of the
+    token is stored. The row is deleted when the link is used, and expired
+    rows are deleted when the next link is minted or tried.
+    """
+
+    __tablename__ = "web_login_link"
+
+    id: int | None = Field(default=None, primary_key=True)
+    token_hash: str = Field(index=True, unique=True)
+    expires_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+
+
+class WebAuthEvent(SQLModel, table=True):
+    """One entry of the web dashboard's login audit log (#109).
+
+    `event` is login, login_failed, logout, revoke or key_added (a FIDO2 key
+    registered in setup mode); `method` the login method tried (pin, totp,
+    link, fido2, setup-pin) or "cli" for a revocation from the command line;
+    `source` the client address when there was one. Pruned to the newest
+    rows by `jailbee.web.auth_admin`.
+    """
+
+    __tablename__ = "web_auth_event"
+
+    id: int | None = Field(default=None, primary_key=True)
+    at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False, index=True))
+    event: str
+    method: str = ""
+    device_name: str = ""
+    source: str = ""
+
+
+class ContainerSession(SQLModel, table=True):
+    """One agent session seen live in one container instance (#109).
+
+    Recorded by the state service's gatherer, so a session that was never
+    live while the service ran has no row. The Incus instance uuid, not the
+    name, is what identifies the container: a container recreated under the
+    same name does not inherit its predecessor's sessions. `container_uuid`
+    is "" when the instance's uuid was unknown.
+    """
+
+    __tablename__ = "container_session"
+
+    id: int | None = Field(default=None, primary_key=True)
+    container_name: str = Field(index=True)
+    container_uuid: str = Field(default="", index=True)
+    agent: str
+    session_id: str
+    first_seen: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+    last_seen: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+
+
+class WebFido2Key(SQLModel, table=True):
+    """One FIDO2 security key or passkey the web dashboard accepts (#109).
+
+    Registered only in setup mode (`jailbee remote web auth fido2 setup`).
+    `credential_data` is the WebAuthn attested credential data (credential id
+    and COSE public key) as the authenticator sent it; no secret is stored.
+    `rp_id` is the domain the key was registered for: a key only signs for
+    that domain. `sign_count` is the authenticator's last signature counter,
+    kept to notice a cloned key.
+    """
+
+    __tablename__ = "web_fido2_key"
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    credential_id: bytes = Field(index=True, unique=True)
+    credential_data: bytes
+    rp_id: str
+    sign_count: int = 0
+    created_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+    last_used_at: datetime | None = Field(
+        default=None, sa_column=Column(_UTCDateTime, nullable=True)
+    )
