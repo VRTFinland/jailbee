@@ -28,7 +28,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 25
+CURRENT_SCHEMA_VERSION = 26
 
 
 def state_dir() -> Path:
@@ -319,6 +319,11 @@ def _migrate_to_v25(conn: Connection) -> None:
     return None
 
 
+def _migrate_to_v26(conn: Connection) -> None:
+    """v25 -> v26 adds `web_login_link` (one-time localhost login links) via create_all."""
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -345,6 +350,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     23: _migrate_to_v23,
     24: _migrate_to_v24,
     25: _migrate_to_v25,
+    26: _migrate_to_v26,
 }
 
 

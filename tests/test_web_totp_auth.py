@@ -115,11 +115,14 @@ def test_any_stored_key_logs_in(client: TestClient, clock: FakeClock) -> None:
 
 
 def test_login_view_offers_totp_once_a_key_exists(client: TestClient, clock: FakeClock) -> None:
-    assert client.get("/api/auth/methods").json() == {"methods": ["pin"]}
+    assert client.get("/api/auth/methods").json() == {"methods": ["pin"], "auth_disabled": False}
 
     add_key(clock)
 
-    assert client.get("/api/auth/methods").json() == {"methods": ["pin", "totp"]}
+    assert client.get("/api/auth/methods").json() == {
+        "methods": ["pin", "totp"],
+        "auth_disabled": False,
+    }
 
 
 def test_with_the_pin_off_even_the_right_pin_is_refused(
@@ -133,7 +136,7 @@ def test_with_the_pin_off_even_the_right_pin_is_refused(
     )
 
     assert response.status_code == 401
-    assert client.get("/api/auth/methods").json() == {"methods": ["totp"]}
+    assert client.get("/api/auth/methods").json() == {"methods": ["totp"], "auth_disabled": False}
 
 
 def test_the_pin_cannot_be_turned_off_without_a_totp_key() -> None:

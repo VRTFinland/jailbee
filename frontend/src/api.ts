@@ -89,6 +89,31 @@ async function login(
     return {ok: false, error: refused}
 }
 
+const LINK_DEVICE = "Local browser"
+
+/** Exchange the one-time token of `jailbee remote web open` for a session. */
+export function loginWithLink(token: string): Promise<LoginResult> {
+    return login(
+        {method: "link", token},
+        rememberedDeviceName() || LINK_DEVICE,
+        "This login link was already used or has expired. Run `jailbee remote web open` again.",
+    )
+}
+
+/** Whether the server runs without login (`remote.web.auth.enabled: false`). */
+export async function authIsDisabled(): Promise<boolean> {
+    try {
+        const res = await fetch("/api/auth/methods")
+        if (!res.ok) return false
+        return ((await res.json()) as {auth_disabled?: boolean}).auth_disabled === true
+    } catch {
+        return false
+    }
+}
+
+/** Stands in for a token when the server asks for none; the server ignores it. */
+export const NO_LOGIN_TOKEN = "no-login"
+
 export function loginWithPin(pin: string, deviceName: string): Promise<LoginResult> {
     return login(
         {method: "pin", pin},

@@ -5,7 +5,7 @@ import {
     type Router,
     type RouterHistory,
 } from "vue-router"
-import {getToken} from "./api"
+import {authIsDisabled, getToken, NO_LOGIN_TOKEN, setToken} from "./api"
 import FrontPage from "./views/FrontPage.vue"
 import RepoView from "./views/RepoView.vue"
 import ContainerView from "./views/ContainerView.vue"
@@ -31,9 +31,13 @@ export const routes: RouteRecordRaw[] = [
 /** Hash routing, so bookmarks work behind any reverse-proxy path. */
 export function createAppRouter(history: RouterHistory = createWebHashHistory()): Router {
     const router = createRouter({history, routes})
-    router.beforeEach((to) => {
-        if (!to.meta.public && !getToken()) return {name: "login"}
-        return true
+    router.beforeEach(async (to) => {
+        if (to.meta.public || getToken()) return true
+        if (await authIsDisabled()) {
+            setToken(NO_LOGIN_TOKEN)
+            return true
+        }
+        return {name: "login"}
     })
     return router
 }

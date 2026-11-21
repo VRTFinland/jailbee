@@ -47,6 +47,9 @@ class WebDeps:
     agent_homes: AgentHomes | None = None
     """Repo prefix → ``(agent, config home)`` pairs whose transcripts the session
     list reads. None derives them from the live snapshot."""
+    auth_enabled: bool = True
+    """False serves every route without a session (`remote.web.auth.enabled: false`).
+    Never derived from the request's source address."""
     snapshot_wait_seconds: float = DEFAULT_SNAPSHOT_WAIT_SECONDS
     """How long a REST route waits for the first snapshot when no WebSocket
     holds the state-service connection (a deep link or a reload)."""

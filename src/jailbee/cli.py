@@ -501,6 +501,21 @@ def remote_web_status_cmd() -> None:
     linger_tip()
 
 
+@web_remote_app.command("open")
+def remote_web_open_cmd() -> None:
+    """Open the web dashboard in your browser, already logged in (one-time localhost link)."""
+    from jailbee.db import get_engine
+    from jailbee.web import open_link
+    from jailbee.web.errors import WebServeError
+
+    try:
+        url = open_link.open_dashboard(get_engine(), _load_global().remote.web)
+    except (WebServeError, OSError) as exc:
+        error_plain(str(exc))
+        raise typer.Exit(1) from exc
+    typer.echo(f"Opened {url}")
+
+
 @web_remote_app.command("serve")
 def remote_web_serve_cmd(
     listen: _WebListenOption = None,

@@ -12,7 +12,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from jailbee.web import auth_admin
+from jailbee.web import auth_admin, login_link
 from jailbee.web.deps import Context, RequireSession
 
 router = APIRouter(prefix="/api", tags=["auth"])
@@ -38,7 +38,16 @@ class TotpLogin(BaseModel):
     device_name: DeviceName
 
 
-Login = Annotated[PinLogin | TotpLogin, Field(discriminator="method")]
+class LinkLogin(BaseModel):
+    """`POST /api/auth` with the one-time token of a localhost login link."""
+
+    model_config = ConfigDict(extra="forbid")
+    method: Literal["link"]
+    token: Annotated[str, StringConstraints(max_length=200)]
+    device_name: DeviceName
+
+
+Login = Annotated[PinLogin | TotpLogin | LinkLogin, Field(discriminator="method")]
 
 
 class TokenResponse(BaseModel):
@@ -53,10 +62,14 @@ class SessionResponse(BaseModel):
 
 class MethodsResponse(BaseModel):
     methods: list[str]
+    auth_disabled: bool = False
+    """The server runs with `remote.web.auth.enabled: false`: the browser skips the login."""
 
 
 @router.get("/auth/methods")
 def auth_methods(ctx: Context) -> MethodsResponse:
+    if not ctx.deps.auth_enabled:
+        return MethodsResponse(methods=[], auth_disabled=True)
     return MethodsResponse(methods=list(auth_admin.enabled_methods(ctx.deps.engine)))
 
 
@@ -64,7 +77,9 @@ def _source(request: Request) -> str:
     return request.client.host if request.client is not None else ""
 
 
-def _attempt(body: PinLogin | TotpLogin, ctx: Context) -> bool:
+def _attempt(body: PinLogin | TotpLogin | LinkLogin, ctx: Context) -> bool:
+    if isinstance(body, LinkLogin):
+        return login_link.consume(ctx.deps.engine, body.token, clock=ctx.deps.clock)
     if isinstance(body, PinLogin):
         return auth_admin.pin_enabled(ctx.deps.engine) and ctx.deps.pin.attempt(body.pin)
     return ctx.totp.verify(body.code)
@@ -98,7 +113,11 @@ def authenticate(body: Login, ctx: Context, request: Request) -> TokenResponse:
         )
     if not _attempt(body, ctx):
         audit("login_failed")
-        detail = "Invalid or expired PIN" if body.method == "pin" else "Invalid TOTP code"
+        detail = {
+            "pin": "Invalid or expired PIN",
+            "totp": "Invalid TOTP code",
+            "link": "Invalid or expired login link",
+        }[body.method]
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
     token = ctx.sessions.create(body.device_name)
     audit("login")

@@ -122,7 +122,7 @@ def test_unknown_auth_method_is_refused(client: TestClient) -> None:
 
 
 def test_auth_methods_lists_pin(client: TestClient) -> None:
-    assert client.get("/api/auth/methods").json() == {"methods": ["pin"]}
+    assert client.get("/api/auth/methods").json() == {"methods": ["pin"], "auth_disabled": False}
 
 
 @pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer nope"}, {"Authorization": "x"}])

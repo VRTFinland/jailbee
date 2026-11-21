@@ -435,6 +435,21 @@ class WebTotpKey(SQLModel, table=True):
     created_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
 
 
+class WebLoginLink(SQLModel, table=True):
+    """A pending one-time localhost login link (#109).
+
+    `jailbee remote web open` mints one; only the SHA-256 hex digest of the
+    token is stored. The row is deleted when the link is used, and expired
+    rows are deleted when the next link is minted or tried.
+    """
+
+    __tablename__ = "web_login_link"
+
+    id: int | None = Field(default=None, primary_key=True)
+    token_hash: str = Field(index=True, unique=True)
+    expires_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
+
+
 class WebAuthEvent(SQLModel, table=True):
     """One entry of the web dashboard's login audit log (#109).
 

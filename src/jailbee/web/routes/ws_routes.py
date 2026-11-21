@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 
 from jailbee.web.auth import SessionInfo
 from jailbee.web.context import WebContext
-from jailbee.web.deps import get_context
+from jailbee.web.deps import anonymous_session, get_context
 from jailbee.web.protocol import (
     CLOSE_BAD_MESSAGE,
     CLOSE_PROTOCOL_MISMATCH,
@@ -50,6 +50,8 @@ async def _authenticate(ws: WebSocket, ctx: WebContext) -> tuple[str, SessionInf
     if message.v != PROTOCOL_VERSION:
         await ws.close(code=CLOSE_PROTOCOL_MISMATCH, reason="Protocol version mismatch")
         return None
+    if not ctx.deps.auth_enabled:
+        return message.token, anonymous_session(ctx.deps.clock())
     session = await run_in_threadpool(ctx.sessions.validate, message.token)
     if session is None:
         await ws.close(code=CLOSE_UNAUTHORIZED, reason="Invalid token")
@@ -63,7 +65,7 @@ async def _push(ws: WebSocket, ctx: WebContext, subscriber: Subscriber, token: s
     last_status: str | None = None
     while True:
         await subscriber.wait()
-        if not await run_in_threadpool(ctx.sessions.is_active, token):
+        if ctx.deps.auth_enabled and not await run_in_threadpool(ctx.sessions.is_active, token):
             await ws.close(code=CLOSE_UNAUTHORIZED, reason="Session revoked")
             return
         status = ctx.hub.status()

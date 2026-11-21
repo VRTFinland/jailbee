@@ -13,10 +13,14 @@ from jailbee import __version__
 from jailbee.db import get_engine
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.remote_ssh.running import installed_version as _installed_version
-from jailbee.web import assets, auth_admin
+from jailbee.web import assets, auth_admin, open_link
 from jailbee.web.app import WebDeps, create_app
 from jailbee.web.auth import PinHolder, RotationReason
-from jailbee.web.errors import FrontendNotBuiltError, ServiceUpdatedError
+from jailbee.web.errors import (
+    FrontendNotBuiltError,
+    ServiceUpdatedError,
+    UnauthenticatedBindError,
+)
 from jailbee.web.state import state_client_source
 from jailbee.web.update_watch import watch_for_update
 
@@ -59,26 +63,35 @@ def serve(
         echo(f"{lead} New PIN: {new}")
 
     if not config.auth.enabled:
-        # Serving without login (with its loopback-only guard) is a later slice;
-        # until then the setting can only make things stricter, never looser.
-        echo("remote.web.auth.enabled is false, but this version always requires a login.")
+        if (
+            not open_link.is_loopback(config.listen)
+            and not config.auth.allow_unauthenticated_remote
+        ):
+            raise UnauthenticatedBindError(config.listen)
+        echo(
+            "WARNING: login is off (remote.web.auth.enabled: false). Anyone who can reach "
+            f"port {config.port} sees the dashboard; a reverse proxy or SSH tunnel to the port "
+            "bypasses auth."
+        )
     pin = PinHolder(on_rotate=announce)
     deps = WebDeps(
         snapshot_source=state_client_source,
         engine=get_engine(),
         pin=pin,
+        auth_enabled=config.auth.enabled,
         static_dir=directory,
         repo_scope=RemoteRepoScope.of(config),
     )
     app = create_app(deps)
     echo(f"JailBee web dashboard: {server_url(config.listen, config.port)}")
-    if auth_admin.pin_enabled(deps.engine):
-        echo(f"PIN: {pin.current}")
-    else:
-        echo(
-            "PIN login is off. To allow it: `jailbee remote web auth pin on`, "
-            "then restart the server to see a PIN."
-        )
+    if config.auth.enabled:
+        if auth_admin.pin_enabled(deps.engine):
+            echo(f"PIN: {pin.current}")
+        else:
+            echo(
+                "PIN login is off. To allow it: `jailbee remote web auth pin on`, "
+                "then restart the server to see a PIN."
+            )
     http = uvicorn.Server(
         uvicorn.Config(app, host=config.listen, port=config.port, log_level="info")
     )

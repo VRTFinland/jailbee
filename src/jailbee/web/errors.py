@@ -48,3 +48,25 @@ class FrontendNotBuiltError(WebServeError):
 def is_missing_web_extra(exc: ModuleNotFoundError) -> bool:
     """Whether ``exc`` is a module of the `web` extra failing to import."""
     return (exc.name or "").split(".")[0] in WEB_EXTRA_MODULES
+
+
+class UnauthenticatedBindError(WebServeError):
+    """Auth is off and the listen address is not loopback, without the explicit opt-in."""
+
+    def __init__(self, listen: str) -> None:
+        super().__init__(
+            f"remote.web.auth.enabled is false and remote.web.listen is {listen}, which is not "
+            "a loopback address: anyone who can reach the port would see the dashboard. "
+            "Listen on 127.0.0.1 or ::1, turn auth on, or set "
+            "remote.web.auth.allow_unauthenticated_remote: true to accept that."
+        )
+
+
+class ServerNotRunningError(WebServeError):
+    """`jailbee remote web open` found nothing listening on the configured address."""
+
+    def __init__(self, url: str) -> None:
+        super().__init__(
+            f"The web dashboard server is not running (nothing answers at {url}). "
+            "Start it with `jailbee remote web serve` or `jailbee remote web enable`."
+        )

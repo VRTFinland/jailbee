@@ -381,6 +381,15 @@ class RemoteWebAuthConfig(BaseModel):
         ),
     )
 
+    allow_unauthenticated_remote: bool = Field(
+        default=False,
+        description=(
+            "With auth.enabled false, allow the server to listen on a non-loopback "
+            "address. Anyone who can reach the port then sees the dashboard, and a "
+            "reverse proxy or SSH tunnel to the port bypasses auth too."
+        ),
+    )
+
 
 class RemoteWebConfig(RemotePolicy):
     """`remote.web`: the web server settings on top of the shared `RemotePolicy`.
