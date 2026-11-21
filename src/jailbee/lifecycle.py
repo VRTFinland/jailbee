@@ -669,6 +669,15 @@ def list_containers(
             )
         )
 
+    # The outbox store is a cheap host-side db read, so every gather counts it,
+    # not just the git tier: a stopped container has no probe to carry the
+    # count, and a stale one hides a freshly staged proposal.
+    issue_counts = issue_outbox_counts()
+    pr_counts = pr_outbox_counts()
+    for c in out:
+        c.outbox_issue = _issue_count(issue_counts, c.uuid)
+        c.outbox_pr = _issue_count(pr_counts, c.uuid)
+
     if with_git_status:
         targets: list[tuple[str, str, str | None]] = []
         for c in out:
@@ -728,8 +737,6 @@ def list_containers(
         uuids = {
             raw.get("name"): (raw.get("config") or {}).get("volatile.uuid") for raw in instances
         }
-        issue_counts = issue_outbox_counts()
-        pr_counts = pr_outbox_counts()
         for c in out:
             status = statuses.get(c.name)
             uuid = uuids.get(c.name)
@@ -741,8 +748,6 @@ def list_containers(
             )
             if status is None and unread:
                 status = GitStatus("?", "?", "?", "?")
-            c.outbox_issue = _issue_count(issue_counts, uuid)
-            c.outbox_pr = _issue_count(pr_counts, uuid)
             if status is not None:
                 status = replace(status, unread_inbox=unread)
                 status = replace(status, pending_issue_actions=_issue_count(issue_counts, uuid))

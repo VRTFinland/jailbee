@@ -12396,3 +12396,47 @@ def test_restart_captures_before_stop(tmp_path, mocker):
     calls = [c[0] for c in order.mock_calls]
     assert calls.index("exec") < calls.index("stop")
     assert incus.exec.call_args.args[1] == ["jailbee", "_agent-snapshot", "--capture"]
+
+
+# ---- outbox counts on a base-only gather ----
+
+
+def _outbox_rows(make_cfg, tmp_path, mocker, *, issue, pr):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    stopped = _container(name="myrepo-feat-a", state="Stopped")
+    stopped["config"]["volatile.uuid"] = "u-stopped"
+    incus.list_containers.return_value = [stopped]
+    mocker.patch("jailbee.lifecycle.issue_outbox_counts", return_value=issue)
+    mocker.patch("jailbee.lifecycle.pr_outbox_counts", return_value=pr)
+    return {c.name: c for c in list_containers(cfg, incus, with_git_status=False)}
+
+
+def test_base_only_gather_counts_a_stopped_containers_staged_outbox(make_cfg, tmp_path, mocker):
+    rows = _outbox_rows(make_cfg, tmp_path, mocker, issue={"u-stopped": 2}, pr={"u-stopped": 1})
+    row = rows["myrepo-feat-a"]
+    assert (row.outbox_pr, row.outbox_issue) == (1, 2)
+
+
+def test_base_only_gather_leaves_counts_unknown_only_when_the_store_is_unreadable(
+    make_cfg, tmp_path, mocker
+):
+    rows = _outbox_rows(make_cfg, tmp_path, mocker, issue=None, pr=None)
+    row = rows["myrepo-feat-a"]
+    assert (row.outbox_pr, row.outbox_issue) == (None, None)
+
+
+def test_destroy_guard_lists_a_stopped_containers_outbox_from_a_base_only_gather(
+    make_cfg, tmp_path, mocker
+):
+    from jailbee.destroy_guard import assess
+
+    rows = _outbox_rows(make_cfg, tmp_path, mocker, issue={"u-stopped": 2}, pr={"u-stopped": 1})
+    summary = assess(make_cfg(tmp_path / "myrepo"), rows["myrepo-feat-a"])
+    assert summary is not None
+    reasons = summary.reasons
+    assert "1 unapplied PR action" in reasons
+    assert "2 unapplied issue actions" in reasons
+    assert not any("could not be read" in r for r in reasons)
