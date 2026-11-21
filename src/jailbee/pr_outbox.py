@@ -1227,12 +1227,22 @@ def body_references(text: str) -> set[str]:
     return result
 
 
+def _apply_hint(short: str, plan: PrPlan) -> str:
+    """The command that publishes a plan's manifests; the manifest is always named."""
+    from jailbee.outbox.inspect import safe_text
+
+    names = [safe_text(m.target.manifest.name) for m in plan.manifests]
+    if len(names) == 1:
+        return f"`jailbee outbox apply {short} pr/{names[0]}`"
+    listed = ", ".join(names)
+    return f"`jailbee outbox apply {short} pr/<manifest>` (one manifest per run; pending: {listed})"
+
+
 class FinalizeError(Exception):
-    """`finalize`/`record_consumed`/`drop_manifest` could not update the outbox store.
+    """`finalize`/`record_consumed` could not update the outbox store.
 
     Raised when the host outbox store cannot record or remove a proposal after
-    the GitHub side of the work is already settled (or, for `drop_manifest`,
-    when the proposal could not be deleted). None of them returns an
+    the GitHub side of the work is already settled. Neither returns an
     `ApplyOutcome` to carry a `failure` string in, so this is the equivalent
     for them: a named exception whose message says which step failed and
     what that implies.
@@ -2505,7 +2515,7 @@ def _offer_locked(
         plural = "" if total == 1 else "s"
         info(
             f"{total} pending PR comment{plural} in {short}: "
-            f"`jailbee review apply {short}` publishes {'it' if total == 1 else 'them'}."
+            f"{_apply_hint(short, plan)} publishes {'it' if total == 1 else 'them'}."
         )
         return len(refusals)
 
@@ -2547,7 +2557,7 @@ def _offer_locked(
             accepted = confirm(total)
         if not accepted:
             info(
-                f"Nothing published. `jailbee review apply {short}` posts them later."
+                f"Nothing published. {_apply_hint(short, plan)} posts them later."
                 if for_offer
                 else "Nothing published."
             )

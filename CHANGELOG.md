@@ -41,7 +41,10 @@ before editing `## Unreleased`.
   apply` limited to PR or issue proposals, with the same prompts, output and
   exit codes ([#144](https://github.com/VRTFinland/jailbee/issues/144)). Each
   run publishes one manifest, named as `[<container>] [<manifest>]` or picked
-  when omitted, instead of every pending manifest at once.
+  when omitted, instead of every pending manifest at once. Script-visible
+  exit codes change: with nothing pending both now exit 2 (they exited 0 with
+  "Nothing pending"), and off a terminal a missing manifest exits 2 even when
+  exactly one is pending, because the destructive picker never auto-takes it.
 
 ### Removed
 

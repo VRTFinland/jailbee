@@ -91,7 +91,9 @@ def test_apply_help_shows_its_options():
     result = runner.invoke(app, ["issue", "apply", "--help"])
 
     assert result.exit_code == 0, result.output
-    assert "manifest" in result.output
+    # The positional's own row, not the docstring's mention of a manifest.
+    assert "[name] [manifest]" in result.output
+    assert "Manifest file name" in result.output
     assert "--yes" in result.output
     assert "--dry-run" in result.output
 
