@@ -597,23 +597,6 @@ _ACTION_LABELS: tuple[tuple[str, type[Action]], ...] = (
 _ACTION_LABEL_BY_TYPE: dict[type[Action], str] = {cls: label for label, cls in _ACTION_LABELS}
 
 
-def action_summary(manifest: Manifest) -> str:
-    """One manifest's action counts by type: ``review:1 reply:2``. Pure.
-
-    The one-cell counterpart of `plan_lines`, for `jb review ls`. It lives
-    here rather than in `cli.py` because `Action` is a closed union defined
-    in this module: a fifth variant needs a label here, and adding one to
-    `_ACTION_LABELS` is a visible edit next to the union itself, where the
-    same summary spelled out in the CLI would silently under-count.
-    """
-    parts = [
-        f"{label}:{count}"
-        for label, cls in _ACTION_LABELS
-        if (count := sum(isinstance(a, cls) for a in manifest.actions))
-    ]
-    return " ".join(parts)
-
-
 # --------------------------------------------------------------------------
 # Applying a manifest
 #
@@ -725,7 +708,7 @@ class PlannedManifest:
 
     target: Target
     progress: Progress
-    # `None` = every pending index (`review apply`, `outbox apply`).
+    # `None` = every pending index (`outbox apply` and its `review apply` alias).
     indices: frozenset[int] | None
     # What a normal publish sends.
     pending: frozenset[int]
@@ -1300,56 +1283,6 @@ def finalize(
         )
 
 
-def drop_manifest(
-    incus: Incus,
-    container: str,
-    outbox: Outbox,
-    name: str,
-    *,
-    uid: int | None,
-    management: PrManagement | None = None,
-) -> list[str]:
-    """Delete proposal `name` from the host outbox store without applying it.
-
-    Guarded by the row version `outbox` was read at and the instance identity;
-    the store refuses a proposal being published or with recorded publication
-    progress. Nothing is posted to GitHub and nothing is recorded as sent.
-    Returns the names removed (the manifest and its bodies). Raises
-    `FinalizeError` if the deletion fails; the proposal is then still pending.
-    """
-    from jailbee.orchestration.store import StoreError
-    from jailbee.outbox import publication_db, store_db
-
-    try:
-        ProposalId("pr", name)
-        if outbox.identity is None or outbox.uuid is None:
-            raise OutboxChanged("preview identity is unavailable; refresh required")
-        from jailbee.outbox.service import instance_identity
-
-        if instance_identity(incus, container) != (outbox.identity, outbox.uuid):
-            raise OutboxChanged("container changed; refresh required")
-        version = dict(outbox.versions).get(name)
-        if version is None:
-            raise OutboxChanged(f"{name}: proposal unavailable; refresh required")
-        removed = store_db.host_store(publication_db.default_root()).drop_proposal(
-            outbox.uuid, "pr", name, version
-        )
-    except store_db.ProposalChangedError as e:
-        raise FinalizeError(f"manifest {name} changed; refresh and retry") from e
-    except (
-        IncusError,
-        JournalError,
-        OutboxError,
-        OutboxExecutionError,
-        StoreError,
-        store_db.ProposalLockedError,
-    ) as e:
-        raise FinalizeError(
-            f"manifest {name} could not be deleted ({e}); it is still pending"
-        ) from e
-    return [name, *sorted(removed.bodies)]
-
-
 def uncertain_actions(outbox: Outbox, name: str) -> list[int]:
     """Indices of proposal `name` whose publication outcome is uncertain."""
     journal = outbox.journals.get(name)
@@ -1764,7 +1697,7 @@ def pending_pr_text(
             warn(
                 f"{container} has more than one pending PR description "
                 f"({', '.join(names)}); using none of them. Read them with "
-                f"`jailbee review show`, drop the stale one with `jailbee review "
+                f"`jailbee outbox show`, drop the stale one with `jailbee outbox "
                 f"drop`, or re-run `{scope.command}` on a terminal to choose."
             )
             return None
@@ -1892,7 +1825,9 @@ def _print_plan(
         # Two lines, as with the `pr: null` deferral: the command must not be
         # split across a wrap, which is what one long line does at 80 columns.
         console.print(f"  not in this offer: {len(held)} pending {kinds} action{plural}.")
-        console.print(f"  `jailbee review apply {escape(short)}` publishes {it}.")
+        console.print(
+            f"  `jailbee review apply {escape(short)} {escape(manifest.name)}` publishes {it}."
+        )
 
 
 def _print_identity(cfg: Config, total: int) -> None:
@@ -1948,7 +1883,7 @@ def _held_out(manifest: Manifest, progress: Progress, indices: frozenset[int] | 
     return [i for i in pending_indices(manifest, progress) if i not in indices]
 
 
-def _held_back(reason: str, short: str, *, stale: bool, foreign: bool = False) -> str:
+def _held_back(reason: str, short: str, name: str, *, stale: bool, foreign: bool = False) -> str:
     """A gate failure on the offer path, phrased as something to act on.
 
     The interesting case is staleness: `jailbee pr` has just pushed, so on the
@@ -1961,11 +1896,11 @@ def _held_back(reason: str, short: str, *, stale: bool, foreign: bool = False) -
     other relaxable refusal, under `--foreign`.
     """
     if stale:
-        remedy = f"`jailbee review apply --force {short}` posts them as outdated comments."
+        remedy = f"`jailbee review apply --force {short} {name}` posts them as outdated comments."
     elif foreign:
-        remedy = f"`jailbee review apply --foreign {short}` publishes to it anyway."
+        remedy = f"`jailbee review apply --foreign {short} {name}` publishes to it anyway."
     else:
-        remedy = f"`jailbee review apply {short}` deals with it separately."
+        remedy = f"`jailbee review apply {short} {name}` deals with it separately."
     return f"held back: {reason}\n  {remedy}"
 
 
@@ -2046,7 +1981,7 @@ def _gate_manifests(
                     # one long line does at 80 columns.
                     notes.append(
                         f"{name} still holds a description this run did not use.\n"
-                        f"  `jailbee review apply {short}` publishes it."
+                        f"  `jailbee review apply {short} {name}` publishes it."
                     )
                 continue
         try:
@@ -2077,7 +2012,9 @@ def _gate_manifests(
                 # `ForeignPrError`; every other `GateError` would refuse again
                 # identically.
                 notes.append(
-                    _held_back(str(e), short, stale=isinstance(e, StaleError), foreign=foreign)
+                    _held_back(
+                        str(e), short, name, stale=isinstance(e, StaleError), foreign=foreign
+                    )
                 )
             elif foreign:
                 # Two lines, so the flag is never split across a wrap.
@@ -2095,7 +2032,7 @@ def _gate_manifests(
             # least about the command the user actually ran.
             if not comments_only:
                 raise
-            notes.append(_held_back(str(e), short, stale=False))
+            notes.append(_held_back(str(e), short, name, stale=False))
             continue
         if target.pr is None:
             if raise_errors:
@@ -2458,9 +2395,10 @@ def _offer_locked(
 
     `pr_number` chooses the mode.
 
-    ``None`` is `jailbee review apply`: every pending manifest, descriptions
-    included, and anything that cannot be published is a refusal the caller
-    exits non-zero on.
+    ``None`` is the unified publish path (`jailbee outbox apply` and its
+    `review apply` alias, scoped to one manifest by ``outbox``): every pending
+    manifest given, descriptions included, and anything that cannot be
+    published is a refusal the caller exits non-zero on.
 
     An integer is the offer `jailbee pr` makes once that PR is up: only the
     unapplied non-`description` actions (see `_offerable_indices` — the

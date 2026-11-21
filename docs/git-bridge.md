@@ -1148,7 +1148,7 @@ description and source) and their draft batches live in the host outbox store
 action there (prepared before the GitHub call, applied with its sent record
 after it). Spawned children cannot stage GitHub proposals. Nothing is read
 from or written to the container, so the host never runs `incus exec` for the
-outbox, and `jb outbox`, `jb review ls` and `jb review apply` also work on
+outbox, and `jb outbox ls` and `jb outbox apply` also work on
 stopped containers. Proposals staged by earlier versions as files in the
 container are ignored, not imported: publish or drop them before upgrading.
 Inspection reads the store only and makes no `gh` or network calls.
@@ -1317,7 +1317,7 @@ still holds; only the ownership check is relaxed, and never silently. The plan
 ends with a highlighted warning naming the PR, its author and the container,
 directly above the confirmation, which on a terminal is the consent. With `-y` nobody reads
 that warning, so `-y` alone refuses such a manifest: add `--foreign` (on
-`jb outbox apply` and `jb review apply`).
+`jb outbox apply`, `jb review apply` and `jb issue apply`).
 
 The unified outbox (`jb outbox apply`, the outbox manager and both
 dashboards' Outbox entries) goes one step further: a numbered PR manifest may
@@ -1325,8 +1325,8 @@ name a PR in **a repository that is neither the superproject nor one of its
 submodules** — a description fix on a plugin repository the change also
 touches, say. Its plan warns that the repository is not the container's, and
 the same confirmation or `--foreign` is the consent. A `pr: null` manifest is
-never sent to another repository, and `jb review apply` and `jb pr push` keep the
-repository lock. For issue manifests, `--foreign`
+never sent to another repository, and `jb review apply` (the PR-only form of
+`jb outbox apply`) and `jb pr push` keep the repository lock. For issue manifests, `--foreign`
 acknowledges a different boundary: a repository outside the superproject and
 its submodules, as described [below](#targeting-the-superproject-or-a-submodule).
 The Qt
@@ -1337,8 +1337,8 @@ there is the consent (`--foreign` is passed only then). Publication asks exactly
 plan. `jb pr push`'s post-push
 offer never publishes to
 another PR: it holds such a manifest back and names
-`jb review apply --foreign <container>`. `jb review ls` lists it with the state
-`not bound`.
+`jb review apply --foreign <container> <manifest>`. `jb outbox ls` lists it with
+the state `not bound`.
 
 On a terminal, `jb outbox` (or `jb outbox browse [<container>]`) opens the
 **outbox manager** full screen: every container of the current repository
@@ -1410,9 +1410,11 @@ to remote command and host-protection policy. Native Qt is not offered over
 SSH.
 
 `jb review apply`, `jb issue apply/resolve`, `jb pr push` and `jb submodule pr push`
-workflows remain available. `jb review ls/show/drop` and `jb issue
-ls/show/drop` are **deprecated** in favour of `jb outbox ls/show/drop`: they are
-hidden from `--help`, behave as before and print a hint on stderr. The unified interface does not authorize agents to publish:
+workflows remain available. `jb review apply` and `jb issue apply` are
+kind-scoped aliases of `jb outbox apply`: they take the same arguments and
+share its prompts, output and exit codes, but offer only that kind's
+proposals. Inspecting and dropping proposals is `jb outbox ls/show/drop`. The
+unified interface does not authorize agents to publish:
 agents stage proposals; humans inspect and approve on the host.
 
 ## Issue management
@@ -1479,19 +1481,18 @@ broader target, not extra GitHub permissions: publication still uses the
 host's account and remains subject to GitHub's permissions and the normal
 proposal checks. Unknown local paths are refused.
 
-### `jailbee issue show / apply / resolve`
+### `jailbee issue apply / resolve`
 
-`issue show` is a deprecated alias of `jailbee outbox show` (hidden, hint on
-stderr); prefer `jailbee outbox`. Listing and dropping issue proposals is
-`jailbee outbox ls` and `jailbee outbox drop`.
+`jailbee issue apply` is `jailbee outbox apply` for issue manifests only.
+Listing, reading and dropping issue proposals is `jailbee outbox ls`,
+`jailbee outbox show` and `jailbee outbox drop`.
 
 ```bash
-jailbee issue show [<name>] [<manifest>]                  # deprecated
-jailbee issue apply [<name>] [--manifest <name>] [--yes] [--foreign] [--dry-run]
+jailbee issue apply [<name>] [<manifest>] [--yes] [--foreign] [--dry-run]
 jailbee issue resolve [<name>] [<manifest>] [<action>] (--applied --url <url> [--issue <n>] | --retry) [--yes]
 ```
 
-`jailbee issue show` prints a
+`jailbee outbox show` prints a
 manifest's full proposed text and journal state, never truncated, for
 actually reading a body before deciding. On a terminal the Markdown bodies are
 wrapped to the window and coloured; HTML tags and image URLs are shown as text
@@ -1505,16 +1506,17 @@ issue actions alongside other work at risk.
 
 ### One combined preview and approval
 
-`jailbee issue apply` builds a single plan covering **every selected
-manifest and every repository it touches** — not one confirmation per
-manifest or per action — and prints it in full (host GitHub login, then per
-manifest, per repository, every action's before/after text) before asking
-once, `Proceed?`. Declining, or `--dry-run` (which stops right after the
-plan with no confirmation, no recheck, and no mutation at all), leaves the
-outbox and GitHub exactly as they were. Naming no container (and no
-`--manifest`) auto-picks the one running container in this repo with
-anything pending, and only asks when more than one does — off a TTY with
-several candidates it errors, naming them.
+`jailbee issue apply` publishes **one manifest per run**. It builds a single
+plan covering that manifest and every repository it touches — not one
+confirmation per action — and prints it in full (host GitHub login, then per
+repository, every action's before/after text) before asking once
+(`Publish N pending actions?`). Declining, or `--dry-run` (which stops right
+after the plan with no confirmation, no recheck, and no mutation at all),
+leaves the outbox and GitHub exactly as they were. The manifest may be given
+bare (`001.json`) or with its kind (`issue/001.json`). A container or manifest
+left out is asked for, from the issue proposals only, even when there is a
+single candidate; off a TTY a missing value exits 2 naming the candidates, and
+with no issue proposal pending the command exits 2. Run it once per manifest.
 
 ### `--yes` and non-TTY behavior
 
@@ -1529,7 +1531,7 @@ and without a TTY to ask on, every one of these commands refuses outright
 
 Two checks guard the fields a pending proposal declares in `expected`.
 While building the plan, JailBee compares those action-specific fields with
-a live issue read. A mismatch refuses the **whole selected batch**. A
+a live issue read. A mismatch refuses the **whole manifest**. A
 pending action whose `issue_ref` points to a not-yet-published `create` is
 instead checked against the proposed issue's initial title, body, labels
 and open state; there is no live issue to read yet.
@@ -1547,8 +1549,7 @@ an atomic GitHub transaction, and changes after the last read remain possible.
 
 `jailbee issue apply` dispatches one manifest's actions in order and stops
 the entire run at the first action it cannot durably resolve one way or the
-other — nothing later in that manifest, or in any manifest after it in the
-batch, is attempted. A `create` action's issue number is recorded in the
+other — nothing later in that manifest is attempted. A `create` action's issue number is recorded in the
 host journal the instant it lands, keyed by the manifest-local `ref` a
 later action in the *same manifest* names with `issue_ref`. Re-running
 `jailbee issue apply` — the ordinary way to resume — skips every action the

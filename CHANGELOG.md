@@ -20,6 +20,20 @@ before editing `## Unreleased`.
   Filtered items stay unread and ackable, and child followers stay unfiltered
   ([#141](https://github.com/VRTFinland/jailbee/issues/141)).
 
+### Changed
+
+- `jailbee review apply` and `jailbee issue apply` are now `jailbee outbox
+  apply` limited to PR or issue proposals, with the same prompts, output and
+  exit codes ([#144](https://github.com/VRTFinland/jailbee/issues/144)). Each
+  run publishes one manifest, named as `[<container>] [<manifest>]` or picked
+  when omitted, instead of every pending manifest at once.
+
+### Removed
+
+- The hidden, deprecated `jailbee review ls`, `review show`, `review drop` and
+  `issue show`. Use `jailbee outbox ls`, `outbox show` and `outbox drop`
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
+
 ### Fixed
 
 - Attachment confirmations in PR creation, submodule PR creation, PR description

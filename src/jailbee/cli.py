@@ -552,7 +552,22 @@ IssueContainerArg = Annotated[
         autocompletion=completion.complete_container,
     ),
 ]
-"""The container positional shared by `issue show`, `drop` and `resolve`."""
+"""The container positional of `issue resolve`."""
+
+KindApplyContainerArg = Annotated[
+    str | None,
+    typer.Argument(
+        help="Full or short container name. Asked for when omitted.",
+        autocompletion=completion.complete_container,
+    ),
+]
+"""The container positional of `review apply` / `issue apply`."""
+
+KindApplyManifestArg = Annotated[
+    str | None,
+    typer.Argument(help="Manifest file name, e.g. 001.json. Asked for when omitted."),
+]
+"""The manifest positional of `review apply` / `issue apply`."""
 
 TagsFlag = Annotated[
     bool,
@@ -4188,12 +4203,12 @@ if TYPE_CHECKING:
     from jailbee.doctor_scroll import ScrollState
     from jailbee.forking import ForkSource
     from jailbee.incus import Incus as IncusType
-    from jailbee.issue_outbox import ApplyReport, OutboxSnapshot, PreparedBatch
+    from jailbee.issue_outbox import OutboxSnapshot
     from jailbee.lifecycle import ContainerInfo, ResolvedContainer
     from jailbee.outbox.io import PrManagement
     from jailbee.outbox_io import ContainerIdentity, IssueJournal
     from jailbee.pool import Pool
-    from jailbee.pr_outbox import Manifest, Outbox
+    from jailbee.pr_outbox import Outbox
     from jailbee.registry_cache import CacheProgress, CacheReport
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
     from jailbee.setup_command import StepKey
@@ -14270,17 +14285,6 @@ review_app = typer.Typer(
 app.add_typer(review_app)
 
 
-class _ReviewRow(NamedTuple):
-    """One pending manifest, as `jailbee review ls` lists it."""
-
-    container: str
-    pr: int | None
-    manifest: str
-    actions: str
-    state: str
-    error: str | None = None
-
-
 def _review_count(counts: dict[str, int] | None, uuid: str | None) -> int | None:
     """A container's PR proposals in the host outbox store; None when unknown."""
     if counts is None or uuid is None:
@@ -14301,7 +14305,7 @@ def _resolve_review_container(
 
     Only an explicit count of 0 means "nothing here". An unknown count (the
     store could not be read, or the container has no uuid) makes the
-    container a candidate and its outbox is read, exactly as `review ls`
+    container a candidate and its outbox is read, exactly as `outbox ls`
     does — inferring "nothing pending" from "the count is unknown" is how a
     written review gets silently lost, which is the one thing this feature
     exists to prevent.
@@ -14364,22 +14368,10 @@ def _read_review_outbox_or_exit(
         raise typer.Exit(2) from e
 
 
-def _select_manifests_or_exit(outbox: "Outbox", manifest: str | None, short: str) -> list[str]:
-    """Every pending manifest, or just the named one; exits 2 on a bad name."""
-    names = outbox.manifest_names
-    if manifest is None:
-        return names
-    if manifest not in names:
-        error_plain(f"{short} has no pending manifest named {manifest}")
-        if names:
-            error_plain(f"Pending there: {', '.join(names)}")
-        raise typer.Exit(2)
-    return [manifest]
-
-
 @review_app.command("apply")
 def review_apply_cmd(
-    name: ReviewContainerArg = None,
+    name: KindApplyContainerArg = None,
+    manifest: KindApplyManifestArg = None,
     draft: Annotated[
         bool,
         typer.Option(
@@ -14390,8 +14382,12 @@ def review_apply_cmd(
             ),
         ),
     ] = False,
-    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the plan and exit.")] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Confirm only; never bypass safety checks.")
+    ] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Show plan without publishing.")
+    ] = False,
     force: Annotated[
         bool,
         typer.Option("--force", help="Post line comments even though the PR head moved."),
@@ -14406,294 +14402,20 @@ def review_apply_cmd(
     ] = False,
     config: ConfigOption = None,
 ) -> None:
-    """Show what a container wants to publish to GitHub, then publish it."""
-    from jailbee import pr_outbox, prompting
-    from jailbee.lifecycle import short_name
-    from jailbee.outbox.publish import ask_publish_mode
+    """Publish one staged PR manifest: `jailbee outbox apply` for PR proposals only."""
+    from jailbee.cli_outbox import run_apply
 
-    cfg = _load_or_exit(config)
-    incus, container = _resolve_review_container(cfg, name)
-    if container is None:
-        info("Nothing pending: no container in this repo has PR actions waiting.")
-        return
-    short = short_name(cfg, container)
-    outbox = _read_review_outbox_or_exit(cfg, incus, container, short)
-    if not outbox.manifest_names:
-        info(f"Nothing pending in {short}.")
-        return
-
-    def _confirm(count: int) -> bool:
-        """Answer the plan's single question — or refuse to answer it for the user.
-
-        `--yes` is the whole answer when it was given. Without it, a run that
-        cannot be asked must not fall through to publishing, and the exit code
-        for "you have to say so yourself" belongs here rather than in
-        `pr_outbox`, which only ever returns a failure count.
-
-        Draft confirmation repeats the selected-mode count from the plan.
-        """
-        if yes:
-            return True
-        if not prompting.is_interactive():
-            error_plain(
-                "Refusing to publish to GitHub without a confirmation. "
-                "Re-run with -y, or from a terminal."
-            )
-            raise typer.Exit(2)
-        question = f"Publish {count} actions as a draft review?" if draft else "Proceed?"
-        return prompting.ask_confirm(question, default=False)
-
-    if pr_outbox.offer_pending_comments(
-        cfg,
-        incus,
-        container,
-        short,
-        # Every pending manifest, descriptions included: this command is the
-        # one that publishes whatever `jailbee pr` did not.
-        pr_number=None,
-        confirm=_confirm,
-        draft=draft,
-        choose_mode=ask_publish_mode
-        if prompting.is_interactive() and not yes and not draft
-        else None,
-        outbox=outbox,
-        force=force,
+    run_apply(
+        config,
+        name,
+        manifest,
+        kind="pr",
         dry_run=dry_run,
-        # A PR the container does not own is warned about in the plan; the
-        # prompt below the plan is consent only when someone reads it.
-        allow_foreign=foreign or (prompting.is_interactive() and not yes),
-        publisher="user",
-    ):
-        raise typer.Exit(1)
-
-
-def _deprecated_alias_hint(old: str, new: str) -> None:
-    """Tell, on stderr, that `jailbee <old>` is deprecated for `jailbee <new>`."""
-    from jailbee.tui import warn_plain
-
-    warn_plain(f"`jailbee {old}` is deprecated; use `jailbee {new}`.", stderr=True)
-
-
-@review_app.command("ls", hidden=True)
-def review_ls_cmd(
-    all_repos: Annotated[
-        bool,
-        typer.Option("--all-repos", help="List containers from every repo, not just this one."),
-    ] = False,
-    fmt: Annotated[
-        str,
-        typer.Option(
-            "--format",
-            "-o",
-            help="Output format: table (default) or json.",
-            autocompletion=completion.complete_choices("table", "json"),
-        ),
-    ] = "table",
-    fields: Annotated[
-        str | None,
-        typer.Option(
-            "--fields",
-            help="Comma-separated fields: container, pr, manifest, actions, state, error.",
-        ),
-    ] = None,
-    config: ConfigOption = None,
-) -> None:
-    """List the PR actions waiting in each container's outbox.
-
-    One row per manifest. The proposals live in the host outbox store, so a
-    stopped container is listed like a running one.
-    """
-    _deprecated_alias_hint("review ls", "outbox ls")
-    from rich.markup import escape
-
-    from jailbee import pr_outbox
-    from jailbee.incus import Incus
-    from jailbee.lifecycle import list_containers, short_name
-    from jailbee.tui import console
-
-    cfg = _load_or_exit(config)
-    incus = Incus()
-    rows: list[_ReviewRow] = []
-
-    from jailbee.lifecycle import pr_outbox_counts
-    from jailbee.remote_ssh.repo_scope import scope_for_session
-
-    counts = pr_outbox_counts()
-    for ci in list_containers(
-        cfg, incus, all_repos=all_repos, fast=True, scope=scope_for_session()
-    ):
-        short = short_name(cfg, ci.name)
-        if _review_count(counts, ci.uuid) == 0:
-            continue  # the store already answered "nothing here" — don't ask twice
-        try:
-            outbox = pr_outbox.read_outbox(incus, ci.name, uid=cfg.container_user.uid)
-        except pr_outbox.OutboxReadError as e:
-            rows.append(
-                _ReviewRow(
-                    container=short, pr=None, manifest="—", actions="?", state="error", error=str(e)
-                )
-            )
-            continue
-        for manifest_name in outbox.manifest_names:
-            try:
-                manifest = pr_outbox.parse_manifest(
-                    manifest_name, outbox.files[manifest_name], outbox.files
-                )
-                # force/allow_foreign so a moved head or a PR the container
-                # does not own is a *column value* here rather than a refusal:
-                # `ls` reports, and `apply` is where both block. Nothing is
-                # published either way.
-                target = pr_outbox.resolve_target(
-                    cfg, incus, ci.name, manifest, force=True, allow_foreign=True
-                )
-            except (pr_outbox.ManifestError, pr_outbox.GateError) as e:
-                rows.append(
-                    _ReviewRow(
-                        container=short,
-                        pr=None,
-                        manifest=manifest_name,
-                        actions="?",
-                        state="error",
-                        error=str(e),
-                    )
-                )
-                continue
-            if target.pr is None:
-                state = "for jb pr"
-            else:
-                flags = [
-                    *(["stale"] if target.stale else []),
-                    *(["not bound"] if target.foreign else []),
-                ]
-                state = ", ".join(flags) or "ok"
-            rows.append(
-                _ReviewRow(
-                    container=short,
-                    pr=target.pr.number if target.pr is not None else None,
-                    manifest=manifest_name,
-                    actions=pr_outbox.action_summary(manifest),
-                    state=state,
-                )
-            )
-
-    if fmt == "table":
-        # The table's own cell is too narrow for a gate refusal, so the
-        # message is printed in full above it. JSON keeps it in the `error`
-        # field instead.
-        for row in rows:
-            if row.error is not None:
-                warn_plain(row.error)
-
-    all_fields: list[table_format.FieldSpec[_ReviewRow]] = [
-        table_format.FieldSpec(
-            name="container",
-            header="CONTAINER",
-            cell=lambda r: escape(r.container),
-            json=lambda r: r.container,
-        ),
-        table_format.FieldSpec(
-            name="pr",
-            header="PR",
-            cell=lambda r: f"#{r.pr}" if r.pr is not None else "—",
-            json=lambda r: r.pr,
-        ),
-        table_format.FieldSpec(
-            name="manifest",
-            header="MANIFEST",
-            # Container-written file name: never passed through Rich's markup
-            # parser (see table_format's own convention in `port ls`).
-            cell=lambda r: escape(r.manifest),
-            json=lambda r: r.manifest,
-        ),
-        table_format.FieldSpec(
-            name="actions",
-            header="ACTIONS",
-            cell=lambda r: escape(r.actions),
-            json=lambda r: r.actions,
-        ),
-        table_format.FieldSpec(
-            name="state",
-            header="STATE",
-            cell=lambda r: r.state,
-            json=lambda r: r.state,
-        ),
-        table_format.FieldSpec(
-            name="error",
-            header="ERROR",
-            cell=lambda r: escape(r.error or ""),
-            json=lambda r: r.error,
-            default_table=False,
-        ),
-    ]
-
-    table_format.emit(
-        rows,
-        all_fields,
-        fmt=fmt,
-        fields=fields,
-        console=console,
-        title="Pending PR actions" if fmt == "table" else None,
-        empty_message="No pending PR actions.",
+        force=force,
+        foreign=foreign,
+        draft=draft,
+        yes=yes,
     )
-
-
-def _print_manifest_bodies(manifest: "Manifest") -> None:
-    """Print one manifest's actions, every body in full.
-
-    The rendering is `pr_outbox.show_lines`; this only decides how the lines
-    reach the terminal. `print_lines` keeps a ``[note]`` in a container-written
-    body from being read as a style tag and silently dropped, and shows the
-    Markdown bodies laid out without hiding any of their text — `jailbee
-    review show` exists precisely so the text can be read before it is
-    published.
-    """
-    from jailbee import pr_outbox
-    from jailbee.outbox.markdown_view import print_lines
-    from jailbee.tui import console
-
-    console.print()
-    print_lines(pr_outbox.show_lines(manifest))
-
-
-@review_app.command("show", hidden=True)
-def review_show_cmd(
-    name: ReviewContainerArg = None,
-    manifest: Annotated[
-        str | None,
-        typer.Argument(help="One manifest file name. Default: every pending manifest."),
-    ] = None,
-    config: ConfigOption = None,
-) -> None:
-    """Print every pending body in full: rendered on a terminal, raw when piped."""
-    _deprecated_alias_hint("review show", "outbox show")
-    from jailbee import pr_outbox
-    from jailbee.lifecycle import short_name
-
-    cfg = _load_or_exit(config)
-    incus, container = _resolve_review_container(cfg, name)
-    if container is None:
-        info("Nothing pending: no container in this repo has PR actions waiting.")
-        return
-    short = short_name(cfg, container)
-    outbox = _read_review_outbox_or_exit(cfg, incus, container, short)
-    names = _select_manifests_or_exit(outbox, manifest, short)
-    if not names:
-        info(f"Nothing pending in {short}.")
-        return
-
-    failed = False
-    for manifest_name in names:
-        try:
-            parsed = pr_outbox.parse_manifest(
-                manifest_name, outbox.files[manifest_name], outbox.files
-            )
-        except pr_outbox.ManifestError as e:
-            error_plain(str(e))
-            failed = True
-            continue
-        _print_manifest_bodies(parsed)
-    if failed:
-        raise typer.Exit(1)
 
 
 @review_app.command("resolve")
@@ -14766,62 +14488,6 @@ def review_resolve_cmd(
         )
     else:
         success_plain(f"{manifest} action {action} will be attempted again")
-
-
-@review_app.command("drop", hidden=True)
-def review_drop_cmd(
-    name: ReviewContainerArg = None,
-    manifest: Annotated[
-        str | None,
-        typer.Argument(help="One manifest file name. Default: every pending manifest."),
-    ] = None,
-    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
-    config: ConfigOption = None,
-) -> None:
-    """Delete pending PR actions, unapplied — nothing is published."""
-    _deprecated_alias_hint("review drop", "outbox drop")
-    import dataclasses
-
-    from jailbee import pr_outbox, prompting
-    from jailbee.lifecycle import short_name
-
-    cfg = _load_or_exit(config)
-    incus, container = _resolve_review_container(cfg, name)
-    if container is None:
-        info("Nothing pending: no container in this repo has PR actions waiting.")
-        return
-    short = short_name(cfg, container)
-    uid = cfg.container_user.uid
-    outbox = _read_review_outbox_or_exit(cfg, incus, container, short)
-    names = _select_manifests_or_exit(outbox, manifest, short)
-    if not names:
-        info(f"Nothing pending in {short}.")
-        return
-
-    if not yes:
-        if not prompting.is_interactive():
-            error_plain(
-                "Refusing to delete pending PR actions without a confirmation. "
-                "Re-run with -y, or from a terminal."
-            )
-            raise typer.Exit(2)
-        info(f"About to discard, unpublished, from {short}: {', '.join(names)}")
-        if not prompting.ask_confirm("Delete them?", default=False, destructive=True):
-            info("Nothing deleted.")
-            return
-
-    remaining = outbox
-    for manifest_name in names:
-        try:
-            deleted = pr_outbox.drop_manifest(incus, container, remaining, manifest_name, uid=uid)
-        except pr_outbox.FinalizeError as e:
-            error_plain(str(e))
-            raise typer.Exit(1) from e
-        # Shrink the snapshot as we go (it keeps the store key and row versions).
-        remaining = dataclasses.replace(
-            remaining, files={k: v for k, v in remaining.files.items() if k not in deleted}
-        )
-        success_plain(f"dropped {manifest_name} ({len(deleted)} file(s))")
 
 
 # ---- Issue outbox commands ----
@@ -14913,86 +14579,14 @@ def _read_issue_store_or_exit(
         raise typer.Exit(1) from e
 
 
-def _select_issue_manifests_or_exit(
-    outbox: "OutboxSnapshot", manifest: str | None, short: str
-) -> list[str]:
-    """Every pending manifest, or just the named one; exits 2 on a bad name."""
-    names = list(outbox.manifest_names)
-    if manifest is None:
-        return names
-    if manifest not in names:
-        error_plain(f"{short} has no pending manifest named {manifest}")
-        if names:
-            error_plain(f"Pending there: {', '.join(names)}")
-        raise typer.Exit(2)
-    return [manifest]
-
-
-@issue_app.command("show", hidden=True)
-def issue_show_cmd(
-    name: IssueContainerArg = None,
-    manifest: Annotated[
-        str | None,
-        typer.Argument(help="One manifest file name. Default: every pending manifest."),
-    ] = None,
-    config: ConfigOption = None,
-) -> None:
-    """Print every pending manifest's validated intent and host journal state.
-
-    Never reads GitHub: what is shown is exactly what the container proposed
-    and what jailbee itself has durably recorded about it so far.
-    """
-    _deprecated_alias_hint("issue show", "outbox show")
-    from jailbee import issue_outbox
-    from jailbee.issue_manifest import IssueManifestError, parse_manifest
-    from jailbee.lifecycle import short_name
-    from jailbee.outbox.markdown_view import print_lines
-    from jailbee.tui import console
-
-    cfg = _load_or_exit(config)
-    incus, container = _resolve_issue_container(cfg, name)
-    if container is None:
-        info("Nothing pending: no container in this repo has issue actions waiting.")
-        return
-    short = short_name(cfg, container)
-    outbox, _identity, _uuid, journals = _read_issue_store_or_exit(incus, container)
-    names = _select_issue_manifests_or_exit(outbox, manifest, short)
-    if not names:
-        info(f"Nothing pending in {short}.")
-        return
-
-    failed = False
-    for manifest_name in names:
-        try:
-            parsed = parse_manifest(manifest_name, outbox.files[manifest_name], outbox.files)
-        except IssueManifestError as e:
-            error_plain(str(e))
-            failed = True
-            continue
-        console.print()
-        print_lines(issue_outbox.show_lines(parsed, journals.get(manifest_name), short))
-    if failed:
-        raise typer.Exit(1)
-
-
 @issue_app.command("apply")
 def issue_apply_cmd(
-    name: Annotated[
+    name: KindApplyContainerArg = None,
+    manifest: KindApplyManifestArg = None,
+    manifest_option: Annotated[
         str | None,
-        typer.Argument(
-            help=(
-                "Container whose staged issue actions to apply. Omit it and "
-                "jailbee picks from the running containers that report "
-                "pending issue actions, asking only when more than one does."
-            ),
-            autocompletion=completion.complete_container,
-        ),
+        typer.Option("--manifest", hidden=True, help="Same as the MANIFEST argument."),
     ] = None,
-    manifest: Annotated[
-        str | None,
-        typer.Option("--manifest", help="One manifest file name. Default: every pending manifest."),
-    ] = None,
-    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip the confirmation.")] = False,
     foreign: Annotated[
         bool,
         typer.Option(
@@ -15003,96 +14597,29 @@ def issue_apply_cmd(
             ),
         ),
     ] = False,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the plan and exit.")] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Show plan without publishing.")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Confirm only; never bypass safety checks.")
+    ] = False,
     config: ConfigOption = None,
 ) -> None:
-    """Show what a container wants to change on GitHub, then apply it.
+    """Publish one staged issue manifest: `jailbee outbox apply` for issues only."""
+    from jailbee.cli_outbox import run_apply
 
-    Order is fixed: a read-only preflight prepares the plan; the full plan
-    and host identity are printed; one confirmation is asked; a second,
-    narrower read re-checks only what could have gone stale; only then does
-    anything mutate GitHub. `--dry-run` stops right after the plan is
-    printed — no confirmation, no stale recheck, no journal write, no
-    mutation. `--yes` skips only the confirmation: the stale recheck always
-    runs. Actions on a foreign repository (`github:<owner>/<name>`) are warned
-    about in the plan and named in the confirmation, or need `--foreign` with `-y`.
-    """
-    from jailbee import issue_outbox, prompting
-    from jailbee.lifecycle import short_name
-    from jailbee.outbox.markdown_view import print_lines
-
-    cfg = _load_or_exit(config)
-    incus, container = _resolve_issue_container(cfg, name)
-    if container is None:
-        info("Nothing pending: no container in this repo has issue actions waiting.")
-        return
-    short = short_name(cfg, container)
-    outbox, _identity, _uuid, _journals = _read_issue_store_or_exit(incus, container)
-    names = _select_issue_manifests_or_exit(outbox, manifest, short)
-    if not names:
-        info(f"Nothing pending in {short}.")
-        return
-
-    try:
-        batch = issue_outbox.prepare_batch(cfg, incus, container, names)
-    except issue_outbox.IssueGateError as e:
-        error_plain(str(e))
-        raise typer.Exit(1) from e
-
-    print_lines(issue_outbox.plan_lines(batch))
-
-    if dry_run:
-        return
-
-    if not yes:
-        if not prompting.is_interactive():
-            error_plain(
-                "Refusing to change GitHub issues without a confirmation. "
-                "Re-run with -y, or from a terminal."
-            )
-            raise typer.Exit(2)
-        # One question: when foreign repositories are involved it names them.
-        combined = None if foreign else issue_outbox.foreign_question(batch)
-        if combined is not None:
-            if not prompting.ask_confirm(combined, default=False):
-                info("Nothing applied.")
-                return
-        elif not prompting.ask_confirm("Proceed?", default=False):
-            info("Nothing applied.")
-            return
-    else:
-        try:
-            issue_outbox.foreign_consent(batch, allowed=foreign, ask=None)
-        except issue_outbox.ForeignRepoRefused as e:
-            error_plain(str(e))
-            raise typer.Exit(2) from e
-
-    try:
-        issue_outbox.revalidate_batch(batch)
-    except issue_outbox.IssueStaleError as e:
-        error_plain(str(e))
-        raise typer.Exit(1) from e
-
-    from jailbee.publish_progress import reporting
-
-    with reporting(issue_outbox.pending_action_count(batch)) as tick:
-        report = issue_outbox.apply_batch(
-            batch,
-            incus=incus,
-            before_action=tick,
-            container_prefix=cfg.container_prefix,
-            publisher="user",
-        )
-    _report_issue_apply_outcome(batch, report)
-    if report.failure is not None:
-        raise typer.Exit(1)
-
-
-def _report_issue_apply_outcome(batch: "PreparedBatch", report: "ApplyReport") -> None:
-    """Delegate domain outcome rendering to the shared outbox service."""
-    from jailbee.outbox.publish import print_issue_outcome
-
-    print_issue_outcome(batch, report)
+    if manifest is not None and manifest_option is not None and manifest != manifest_option:
+        error_plain("give the manifest once: as an argument or with --manifest")
+        raise typer.Exit(2)
+    run_apply(
+        config,
+        name,
+        manifest if manifest is not None else manifest_option,
+        kind="issue",
+        dry_run=dry_run,
+        foreign=foreign,
+        yes=yes,
+    )
 
 
 @issue_app.command("resolve")

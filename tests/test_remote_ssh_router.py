@@ -1726,28 +1726,12 @@ def test_draft_apply_allowed_but_yes_denied(command):
         policy_allows((*argv, "-y"), FULL)
 
 
-def test_deprecated_hidden_aliases_classify_as_container_commands() -> None:
-    from jailbee.remote_ssh.router import (
-        _CONTAINER_COMMANDS,
-        _DEPRECATED_HIDDEN_COMMANDS,
-        command_path,
-        is_host_command,
-    )
+def test_removed_review_and_issue_aliases_are_not_routable() -> None:
+    from jailbee.remote_ssh import router
 
-    assert _DEPRECATED_HIDDEN_COMMANDS == {
-        f"{group} {sub}"
-        for group, sub in (
-            ("review", "ls"),
-            ("review", "show"),
-            ("review", "drop"),
-            ("issue", "show"),
-        )
-    }
-    for path in _DEPRECATED_HIDDEN_COMMANDS:
-        assert path in known_command_paths()
-        assert path in _CONTAINER_COMMANDS
-        assert not is_host_command(path)
-        assert command_path(path.split()) == path
+    for path in ("review ls", "review show", "review drop", "issue show"):
+        assert path not in known_command_paths()
+        assert path not in router.routable_leaf_paths()
 
 
 def test_unclassified_hidden_command_is_still_not_routable(monkeypatch) -> None:
@@ -1761,7 +1745,7 @@ def test_unclassified_hidden_command_is_still_not_routable(monkeypatch) -> None:
     try:
         assert "zz-hidden-probe" not in known_command_paths()
         assert "zz-hidden-probe" not in router.routable_leaf_paths()
-        assert "review ls" in known_command_paths()
+        assert "review apply" in known_command_paths()
     finally:
         cli.app.registered_commands.pop()
         router._command_tree.cache_clear()

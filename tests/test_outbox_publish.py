@@ -1220,9 +1220,15 @@ def test_actual_cli_and_selected_publication_share_outcome_streams(env, mocker, 
     from jailbee.cli import app
     from jailbee.outbox_io import JournalAction
 
-    mocker.patch("jailbee.cli._load_or_exit", return_value=env[0])
-    mocker.patch("jailbee.cli._resolve_existing", return_value=(env[1], IDENTITY.full_name))
-    mocker.patch("jailbee.lifecycle.short_name", return_value="feature")
+    mocker.patch("jailbee.incus.Incus", return_value=env[1])
+    # The CLI resolves the container in the repository's scope: a profiled row.
+    cfg = env[0].model_copy(update={"container_prefix": "acme"})
+    mocker.patch("jailbee.config.load_config", return_value=cfg)
+    mocker.patch("jailbee.config.load_repo_config", return_value=cfg)
+    env[1].list_containers.return_value = [
+        {**env[1].list_containers.return_value[0], "profiles": ["acme-base"], "status": "Running"}
+    ]
+    env[1].exists.side_effect = lambda name: name == IDENTITY.full_name
     receipt = JournalAction(
         index=0,
         state="applied",
@@ -1252,10 +1258,14 @@ def test_actual_cli_and_selected_publication_share_outcome_streams(env, mocker, 
     assert selected(env) == (0 if mode == "success" else 1)
     selected_output = capsys.readouterr()
     result = CliRunner().invoke(
-        app, ["issue", "apply", "feature", "--manifest", "001.json", "-y"], env={"COLUMNS": "200"}
+        app, ["issue", "apply", IDENTITY.full_name, "001.json", "-y"], env={"COLUMNS": "200"}
     )
     assert result.exit_code == (0 if mode == "success" else 1), result.output
-    assert result.stderr == selected_output.err
+    # The CLI (`outbox apply` and its `issue apply` alias) renders the same
+    # outcome, then exits through its own error line for a failure.
+    assert result.stderr.startswith(selected_output.err)
+    tail = result.stderr[len(selected_output.err) :].splitlines()
+    assert len(tail) == (0 if mode == "success" else 1) and all(t.startswith("✗") for t in tail)
     if mode == "success":
         assert result.stderr == ""
     else:

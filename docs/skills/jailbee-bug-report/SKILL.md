@@ -79,7 +79,7 @@ github:VRTFinland/jailbee --body-file PATH`.
 
 ## When you're done
 
-Tell the user, verbatim: run `jb issue apply <container>` on the host —
+Tell the user, verbatim: run `jb issue apply <container> <manifest>` on the host —
 **nothing has been published yet.** They can inspect first with
 `jb outbox show <container> issue/<name printed by the command>`. Never run a host apply
 or `gh issue create` yourself.

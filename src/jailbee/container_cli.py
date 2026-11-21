@@ -20,7 +20,7 @@ VERSION_FILE = Path(__file__).resolve().parent.parent / "VERSION"
 HOST_SUBCOMMANDS = {
     "config": frozenset({"show", "migrate", "edit", "init"}),
     "pr": frozenset({"push", "bind", "unbind", "ls", "open"}),
-    "issue": frozenset({"apply", "resolve", "show"}),
+    "issue": frozenset({"apply", "resolve"}),
     # `outbox sent` exists on both sides: the container lists only its own records.
     "outbox": frozenset({"apply", "browse", "clear", "attachment-resolve", "attachments"}),
 }

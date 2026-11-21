@@ -111,20 +111,6 @@ def _leaf_identity(command: object) -> int:
     return id(getattr(callback, "__wrapped__", callback))
 
 
-# Hidden, deprecated aliases (`jailbee review ls|show|drop`, `jailbee issue show`, superseded
-# by `outbox ls|show|drop`) with their own callbacks, so alias detection by
-# callback identity cannot find them. They keep exactly the remote routing
-# they had while public: container-scoped, allow-listable, routable.
-_DEPRECATED_HIDDEN_COMMANDS = frozenset(
-    {
-        "issue show",
-        "review drop",
-        "review ls",
-        "review show",
-    }
-)
-
-
 @functools.cache
 def _command_tree() -> _CommandTree:
     """Walk the Click command tree exactly once per process.
@@ -162,7 +148,7 @@ def _command_tree() -> _CommandTree:
             return
         path = " ".join(prefix)
         commands[path] = command
-        if is_hidden and path not in _DEPRECATED_HIDDEN_COMMANDS:
+        if is_hidden:
             hidden_leaves.append((path, _leaf_identity(command)))
         else:
             public_leaves.add(path)
@@ -445,7 +431,7 @@ class RemoteUnlocks:
 # immutable value, since a call in a default argument trips ruff B008.
 NO_UNLOCKS = RemoteUnlocks()
 
-_CONTAINER_COMMANDS = _DEPRECATED_HIDDEN_COMMANDS | frozenset(
+_CONTAINER_COMMANDS = frozenset(
     {
         "service ls",
         "service wait",
@@ -838,7 +824,6 @@ def policy_allows(
             "branch",
             "exec",
             "job ls",
-            "review ls",
             # Filtered to the visible repos inside the command itself.
             "outbox sent ls",
             "outbox sent show",

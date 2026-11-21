@@ -5,7 +5,7 @@ paragraphs that are one line long. Printed verbatim they run off the terminal
 and the structure (lists, code, headings) is lost. `render_markdown` lays a
 body out for a terminal of a given width using Rich's Markdown renderer.
 
-The body is untrusted, and `jb review show` / the apply plans exist so a human
+The body is untrusted, and `jb outbox show` / the apply plans exist so a human
 reads what will be published, so the rendering must not hide anything GitHub
 would show. Three rules follow:
 

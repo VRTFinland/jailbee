@@ -186,15 +186,6 @@ def test_a_changed_proposal_is_refused_against_the_shown_revision(cfg, incus, gi
     github.comment.assert_not_called()
 
 
-def test_drop_manifest_deletes_the_row_and_its_bodies(incus):
-    name = stage(manifest(REPLY), {"x.md": "Reply text"})
-    outbox = pr_outbox.read_outbox(incus, FULL, uid=None)
-    removed = pr_outbox.drop_manifest(incus, FULL, outbox, name, uid=None)
-    assert removed == [name, "001-p-1.md"]
-    assert rows() == []
-    incus.exec.assert_not_called()
-
-
 def test_record_consumed_journals_a_used_description(incus):
     name = stage(manifest(DESCRIPTION, pr_number=None))
     pr_outbox.record_consumed(
