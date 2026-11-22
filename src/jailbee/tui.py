@@ -429,6 +429,11 @@ def _choice_base(c: ContainerInfo) -> str:
     return c.base_branch
 
 
+def _behind_text(behind_count: str) -> str:
+    """The picker's ↓ text: "↓•" when the container lacks the target commit."""
+    return "↓•" if behind_count == "•" else behind_count
+
+
 def _choice_widths(containers: list[ContainerInfo]) -> dict[str, int]:
     # Function-local import: `background` pulls in sqlmodel, and `tui` sits
     # on the `jailbee --help` path, which stays fast deliberately. `lifecycle`
@@ -446,7 +451,10 @@ def _choice_widths(containers: list[ContainerInfo]) -> dict[str, int]:
         "wt": max(len(c.git_status.wt if c.git_status else "—") for c in containers),
         "ahead": max(len(c.git_status.target_diff if c.git_status else "—") for c in containers),
         "count": max(len(c.git_status.ahead_count if c.git_status else "—") for c in containers),
-        "behind": max(len(c.git_status.behind_count if c.git_status else "—") for c in containers),
+        "behind": max(
+            len(_behind_text(c.git_status.behind_count) if c.git_status else "—")
+            for c in containers
+        ),
         "conflict": max(len(merge_label(c.git_status)[0]) for c in containers),
         "job": max(
             len(background.job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind))
@@ -469,7 +477,7 @@ def _format_choice_title(c: ContainerInfo, widths: dict[str, int]) -> str:
         wt = c.git_status.wt
         ahead = c.git_status.target_diff
         count = c.git_status.ahead_count
-        behind = c.git_status.behind_count
+        behind = _behind_text(c.git_status.behind_count)
     conflict = merge_label(c.git_status)[0]
     line = (
         f"{c.shown_name:<{widths['name']}}  "

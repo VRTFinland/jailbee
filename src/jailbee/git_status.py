@@ -358,6 +358,9 @@ def _parse_submodules(committed_raw: str, wt_raw: str) -> tuple[SubmoduleChange,
     return tuple(out)
 
 
+# `behind_count` when the target commit is absent from the container.
+BEHIND_UNKNOWN = "•"
+
 _PROBE_SNIPPET = r"""
 set +e
 cd "$REPO_DIR" 2>/dev/null || { printf '?\0?\0?\0?\0'; exit 0; }
@@ -458,6 +461,9 @@ else
   COUNT="?"
   BEHIND_COUNT="?"
   CONFLICT="?"
+  # A target the host knows but this container's object store lacks proves the
+  # container is behind it: "missing" = pull needed, count unknown. Nothing is written.
+  [ -n "$TARGET_SHA" ] && BEHIND_COUNT="missing"
 fi
 
 # --- fields 14-15: ↑/↓ against the host branch when the target is another ref ---
@@ -709,7 +715,10 @@ def probe_container_git(
         unmerged = None
 
     raw_behind = parts[12].strip() if len(parts) >= 13 else "?"
-    behind_count = raw_behind if raw_behind.isdigit() and sync is not None else "?"
+    if raw_behind == "missing" and sync is not None:  # ASCII on the wire; locale-proof
+        behind_count = BEHIND_UNKNOWN
+    else:
+        behind_count = raw_behind if raw_behind.isdigit() and sync is not None else "?"
     target_diff = ahead_diff
     if separate_host:
         raw_host_ahead = parts[13].strip() if len(parts) >= 15 else "?"

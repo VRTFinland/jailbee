@@ -1469,3 +1469,20 @@ def test_container_title_shows_the_glyph_alias_and_name_uncut() -> None:
     g = dmodel.RepoGroup("alpha", "/repos/alpha", None, [c])
     view = dd.details_for([g], dmodel.Row("container", f"alpha-{long}"), NOW)
     assert view is not None and view.title == f"⎈ my alias ({long})"
+
+
+def test_a_missing_target_commit_shows_pull_needed_in_the_git_row() -> None:
+    gs = GitStatus(
+        wt="clean",
+        ahead_diff="?",
+        ahead_count="?",
+        conflict="?",
+        target_diff="?",
+        behind_count="•",
+    )
+    panel = dd.container_panel(_c(git_status=gs, base_branch="dev"), NOW)
+
+    assert panel.git is not None
+    root = panel.git[0]
+    assert _plain(root.behind) == "↓•"
+    assert (_plain(root.ahead), _plain(root.target)) == ("?", "?")

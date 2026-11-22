@@ -17,7 +17,7 @@ from jailbee.git_status import (
     parse_shortstat,
     probe_container_git,
 )
-from jailbee.host_target import TargetSnapshot
+from jailbee.host_target import SyncTarget, TargetSnapshot
 from jailbee.incus import IncusError
 
 
@@ -1258,3 +1258,99 @@ def test_plain_probe_host_counts_equal_the_sync_counts(mocker, tmp_path):
     assert (status.host_ahead_count, status.host_behind_count) == ("1", "0")
     assert status.sync_target is not None
     assert (status.sync_target.kind, status.sync_target.sha) == ("host", host_sha)
+
+
+def _git(cwd, *args):
+    import subprocess
+
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _run_probe(repo, target_sha):
+    import os
+    import subprocess
+
+    from jailbee.git_status import _PROBE_SNIPPET
+
+    env = {
+        **os.environ,
+        "REPO_DIR": str(repo),
+        "TARGET_SHA": target_sha,
+        "HOST_SOURCE": "",
+        "HOST_HEAD": "",
+    }
+    out = subprocess.run(
+        ["bash", "-c", _PROBE_SNIPPET], env=env, capture_output=True, text=True, check=True
+    ).stdout
+    return out.split("\0")
+
+
+def test_probe_missing_target_commit_reports_behind_unknown(tmp_path):
+    host, container = tmp_path / "host", tmp_path / "container"
+    host.mkdir()
+    _git(host, "init", "-q")
+    (host / "a").write_text("1")
+    _git(host, "add", "a")
+    _git(host, "commit", "-qm", "one")
+    _git(tmp_path, "clone", "-q", str(host), str(container))
+    (host / "a").write_text("2")
+    _git(host, "commit", "-qam", "two")
+    new_sha = _git(host, "rev-parse", "HEAD")
+
+    parts = _run_probe(container, new_sha)
+
+    assert parts[1] == "?"  # DIFF
+    assert parts[2] == "?"  # ahead
+    assert parts[3] == "?"  # MERGE
+    assert parts[12] == "missing"  # behind: pull needed, count unknown
+
+
+def test_probe_present_target_commit_still_counts(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / "a").write_text("1")
+    _git(repo, "add", "a")
+    _git(repo, "commit", "-qm", "one")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "a").write_text("2")
+    _git(repo, "commit", "-qam", "two")
+
+    parts = _run_probe(repo, base)
+
+    assert parts[12] == "0"
+    assert parts[2] == "1"
+
+
+def test_probe_without_target_keeps_behind_unknown_question_mark(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / "a").write_text("1")
+    _git(repo, "add", "a")
+    _git(repo, "commit", "-qm", "one")
+
+    assert _run_probe(repo, "")[12] == "?"
+
+
+def test_probe_parses_behind_unknown_marker(mocker):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _payload(*_TWELVE, "missing")
+    target = TargetSnapshot(
+        branch="main",
+        sha="a" * 40,
+        source="local",
+        upstream_ref="",
+        tracking_relation="unavailable",
+    )
+
+    sync = SyncTarget("host", "main", "a" * 40, "refs/heads/main")
+    status = probe_container_git(incus, "c", "/r", "main", "main", target=target, sync=sync)
+
+    assert status.behind_count == "•"

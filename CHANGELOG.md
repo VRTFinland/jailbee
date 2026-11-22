@@ -36,6 +36,10 @@ before editing `## Unreleased`.
   new guide pages (being written), Remote GUI, FAQ and Troubleshooting. Commands,
   git bridge, orchestration, project config and the web dashboard moved under
   Reference; page URLs are unchanged.
+- A container that lacks the comparison target commit altogether (the host branch
+  moved on with commits it never received) shows `↓•` — pull needed, count
+  unknown — in the dashboard and `jailbee ls`, while DIFF, ↑ and MERGE stay `?`
+  ([#145](https://github.com/VRTFinland/jailbee/issues/145)).
 - Interactive Claude Code sessions receive managed, non-acknowledging inbox
   notifications through `jailbee inbox follow`
   ([#135](https://github.com/VRTFinland/jailbee/issues/135)). The repo's
