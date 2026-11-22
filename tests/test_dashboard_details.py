@@ -1581,3 +1581,33 @@ def test_card_lists_branches_with_unimported_commits() -> None:
 
     clean = GitStatus("clean", "clean", "0", "ok", other_branches=())
     assert dd.container_panel(_c(git_status=clean), NOW).warnings == ()
+
+
+# --- the services line --------------------------------------------------------
+
+
+def test_a_running_container_lists_its_services_and_states() -> None:
+    from jailbee.lifecycle import ServiceStatus
+
+    c = _c(services=(ServiceStatus("web", "ready"), ServiceStatus("db", "failed")))
+    panel = dd.container_panel(c, NOW)
+
+    assert _panel_plain(panel.services) == ["services web ready · db failed"]
+    assert "[red]failed[/red]" in panel.services[0]
+
+
+def test_a_running_container_without_services_has_no_services_line() -> None:
+    assert dd.container_panel(_c(services=()), NOW).services == ()
+    assert dd.container_panel(_c(), NOW).services == ()
+
+
+def test_a_failed_probe_reads_unknown() -> None:
+    panel = dd.container_panel(_c(services_unknown=True), NOW)
+    assert _panel_plain(panel.services) == ["services unknown"]
+
+
+def test_a_stopped_container_shows_no_services() -> None:
+    from jailbee.lifecycle import ServiceStatus
+
+    c = _c(state="Stopped", services=(ServiceStatus("web", "ready"),), services_unknown=True)
+    assert dd.container_panel(c, NOW).services == ()

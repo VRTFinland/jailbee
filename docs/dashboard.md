@@ -206,6 +206,7 @@ Live, auto-refreshing TUI of containers across all repos; the Outbox box has a S
 
 ### The details panel
 
+- A running container's card has a `services` line: each service and its `jailbee service ls` state (`unknown` when the probe failed). The state service refreshes it at most every 30 seconds; a stopped container shows none.
 - `v` shows/hides the details panel under the table — everything known about the highlighted container (or repo), with the action menu drawn to its right while open; the choice persists.
 - `+`/`-` make the panel taller/shorter, `=` resets its height, and dragging its top border does the same with the mouse; the height persists too.
 - The dashboard fills the terminal: the table takes the rows it needs, and the details panel grows from the bottom into what is left — for a busy agent, its last message in full and its recent tool calls and messages, newest first.

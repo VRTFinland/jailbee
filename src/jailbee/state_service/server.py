@@ -226,12 +226,19 @@ def run_service(incus: Incus) -> int:
         log.info("state service %s starting (%s)", __version__, cadence)
         from jailbee.db import get_engine
         from jailbee.pr_autofetch import PrHeadAutofetcher
+        from jailbee.state_service.service_probe import ServiceProbe, live_fetch
         from jailbee.state_service.session_log import SessionRecorder
 
         recorder = SessionRecorder(get_engine())
         asyncio.run(
             StateServer(
-                Gatherer(incus, cadence, recorder=recorder, pr_heads=PrHeadAutofetcher())
+                Gatherer(
+                    incus,
+                    cadence,
+                    recorder=recorder,
+                    pr_heads=PrHeadAutofetcher(),
+                    services=ServiceProbe(live_fetch(incus)),
+                )
             ).serve(sock)
         )
         return 0

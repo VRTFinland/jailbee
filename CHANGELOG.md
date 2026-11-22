@@ -24,6 +24,12 @@ before editing `## Unreleased`.
   "commits not on the host" line
   ([#145](https://github.com/VRTFinland/jailbee/issues/145)).
 
+- The dashboard's context card lists a running container's services with their
+  state (`services web ready · db failed`), so the Services menu is not needed
+  to see them. The state service probes each running container's `service ls`
+  at most every 30 seconds; a failed probe reads `unknown`
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
+
 - The dashboard's AGENT column draws one indicator per live agent session
   instead of one per state, so two Claude sessions read `● 12s ●`. A cell
   wider than 24 columns drops the ages, then ends with `+N`
