@@ -56,7 +56,9 @@ def service_rows(
     """
     data = _metadata(cfg, incus, full, ["ls", "--json"], probe=probe)
     if not isinstance(data, list):
-        raise ValueError("unexpected service listing")
+        from jailbee.container_app import ContainerJailbeeError
+
+        raise ContainerJailbeeError("unexpected service listing")
     return data
 
 

@@ -343,3 +343,62 @@ def test_run_service_shuts_the_probe_down_on_exit(mocker, tmp_path) -> None:
 
     assert server.run_service(mocker.Mock()) == 0
     probe.shutdown.assert_called_once_with()
+
+
+def test_a_first_job_finishing_after_restart_and_a_second_probe_is_dropped() -> None:
+    held = _Deferred()
+    probe = ServiceProbe(lambda root, name: [{"name": "old", "state": "running"}], submit=held)
+    probe.annotate(_groups(_ci("alpha-x")))  # first probe, token A
+    probe.annotate(_groups(_ci("alpha-x", "Stopped")))  # pruned
+    probe.annotate(_groups(_ci("alpha-x")))  # restarted: second probe
+    assert len(held.jobs) == 2
+    first, second = held.jobs
+    probe._fetch = lambda root, name: [{"name": "new", "state": "running"}]
+    first()  # stale job lands while the second is registered
+    assert probe._cache == {}
+    second()
+    assert probe._cache["alpha-x"].services == (ServiceState("new", "running"),)
+
+
+def test_an_absent_container_is_probed_again_within_two_minutes() -> None:
+    from jailbee.container_app import JailbeeAbsentError
+
+    clock = _Clock()
+    calls: list[str] = []
+
+    def fetch(root: Path, name: str):
+        calls.append(name)
+        raise JailbeeAbsentError("not mounted")
+
+    probe = ServiceProbe(fetch, interval=30.0, clock=clock, submit=_sync)
+    probe.annotate(_groups(_ci("alpha-x")))
+    clock.t = 121.0
+    probe.annotate(_groups(_ci("alpha-x")))
+    assert calls == ["alpha-x", "alpha-x"]
+
+
+def test_run_service_shuts_the_probe_down_when_serving_raises(mocker, tmp_path) -> None:
+    from jailbee.state_service import server
+
+    mocker.patch.object(server, "ensure_runtime_dir")
+    mocker.patch.object(
+        server, "_take_lifetime_lock", return_value=os.open(os.devnull, os.O_RDONLY)
+    )
+    mocker.patch.object(server, "socket_path", return_value=tmp_path / "s.sock")
+    mocker.patch.object(server, "lock_path", return_value=tmp_path / "l")
+    mocker.patch("jailbee.dashboard.model.global_config_or_defaults")
+    mocker.patch("jailbee.state_service.gatherer.Cadence")
+    mocker.patch("jailbee.state_service.gatherer.Gatherer")
+    mocker.patch("jailbee.db.get_engine")
+    mocker.patch("jailbee.pr_autofetch.PrHeadAutofetcher")
+    mocker.patch("jailbee.state_service.session_log.SessionRecorder")
+    mocker.patch.object(server, "StateServer")
+    mocker.patch.object(server.asyncio, "run", side_effect=RuntimeError("boom"))
+    probe = mocker.patch("jailbee.state_service.service_probe.ServiceProbe").return_value
+    mocker.patch("jailbee.state_service.service_probe.live_fetch")
+
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        server.run_service(mocker.Mock())
+    probe.shutdown.assert_called_once_with()
