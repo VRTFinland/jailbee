@@ -33,8 +33,8 @@ def test_keys_after_the_command_runs_reach_the_table(mocker, tmp_path):
     child.return_value.returncode = 0
     run = drive(
         mocker,
-        [burst(("exclamation_mark", "!"), *_typed("ls"), ("enter", "\r")), "j"],
-        [_group(tmp_path)],
+        [burst(("exclamation_mark", "!"), *_typed("ls"), ("enter", "\r")), "escape", "j"],
+        [_group(tmp_path)],  # the command's output opens; Esc closes it
     )
     child.assert_called_once()
     assert child.call_args.args[0][:2] == ["jailbee", "ls"]
