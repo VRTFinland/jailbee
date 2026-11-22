@@ -12043,7 +12043,6 @@ def agent_use_cmd(
         str | None,
         typer.Option(
             "--container",
-            "-c",
             autocompletion=completion.complete_container,
             help=(
                 "Set this one container's own agent (its runner label) instead of the repo "
