@@ -34,8 +34,10 @@ before editing `## Unreleased`.
   sets its own runner label (`--clear` returns it to the repo default) and applies to its
   next session only; `jailbee agent open [NAME]` starts the effective agent in a new tmux
   window of a running container now. The container menu has `Agent for this container…`
-  (key `g`, with a "repo default" row) and `New agent window` (key `A`), and the context
-  card says whether the agent comes from the container or the repo default.
+  (key `i`, with a "repo default" row) and `Open a new agent window now` (key `Y`), and the
+  context card says whether the agent comes from the container or the repo default; a
+  default that autostart skips (`claude-jb` with LiteLLM off) is not shown or opened
+  either. With a label set, the initial prompt and a service refresh target `claude`.
 - The terminal dashboard colours a whole container row by its non-normal phase: orange
   while booting, teal during autostart, magenta for other live jobs and red for
   a dead job or failed autostart, in hues legible on light and dark terminals

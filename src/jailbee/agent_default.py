@@ -301,14 +301,16 @@ def container_agent(cfg: Config, incus: Incus, container: str) -> tuple[str, str
     The source is ``container`` for its own label, else the layer of the repo's
     default runner. None when only the legacy `primary_agent` path applies.
     """
+    from jailbee.autostart import effective_runner
     from jailbee.dashboard.agent_choice import runner_label
 
     label = read_runner(incus, container)
     if label is not None:
         return runner_label(label), "container"
     view = cfg.orchestration_view()
-    if view.default_runner is not None and view.default_runner_source is not None:
-        return runner_label(view.default_runner), view.default_runner_source
+    applied = effective_runner(cfg, None, view.default_runner, warn=False)
+    if applied is not None and view.default_runner_source is not None:
+        return runner_label(applied), view.default_runner_source
     return None
 
 
@@ -320,7 +322,7 @@ def open_window(cfg: Config, incus: Incus, container: str) -> str:
     """
     from jailbee import tmux
     from jailbee.agents import primary_agent
-    from jailbee.autostart import agent_autostart_steps
+    from jailbee.autostart import agent_autostart_steps, effective_runner
     from jailbee.lifecycle import container_repo_dir, list_containers
     from jailbee.orchestration.labels import child_env, orchestrator_env
 
@@ -328,7 +330,9 @@ def open_window(cfg: Config, incus: Incus, container: str) -> str:
         raise SelectionError(f"{container} is not running")
     runner = read_runner(incus, container)
     default = cfg.orchestration_view().default_runner
-    name = "claude" if runner is not None or default is not None else primary_agent(cfg).name
+    name = (
+        "claude" if effective_runner(cfg, runner, default) is not None else primary_agent(cfg).name
+    )
     if name is None:
         raise SelectionError("no agent is enabled in this repo")
     extra_env = {**child_env(cfg, incus, container), **orchestrator_env(cfg, incus, container)}

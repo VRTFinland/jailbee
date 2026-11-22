@@ -479,8 +479,9 @@ _CONTAINER_COMMANDS = frozenset(
         "job ls",
         "ls",
         "agent show",
-        # Writes only the repo's local-layer `agents.default_runner` and resyncs
-        # `claude-jb` defaults in its containers; the repo scope check applies.
+        # Writes the repo's local-layer `agents.default_runner` and resyncs
+        # `claude-jb` defaults in its containers; with `--container` it writes
+        # that container's runner label instead. The repo scope check applies.
         "agent use",
         # Starts the agent in a tmux window of a container the repo scope covers;
         # no more than `shell` or `exec`, which are allowed.
