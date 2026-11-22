@@ -9,6 +9,7 @@ import re
 import sqlite3
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
@@ -303,7 +304,6 @@ def _precheck(
     if not rights.pr_reviews:
         raise pr_outbox.GateError("pr_reviews is not granted")
     _own_review_repo(ctx.cfg, manifest_pr)
-    _comment_edit_right(rights, manifest_pr)
     try:
         progress = pr_outbox._publication_progress(
             snapshot_pr, m.manifest, len(manifest_pr.actions)
@@ -311,6 +311,9 @@ def _precheck(
     except OutboxError as exc:
         raise pr_outbox.GateError(f"{exc}; resolve it on the host") from exc
     indices = pr_outbox.pending_indices(manifest_pr, progress)
+    _comment_edit_right(
+        rights, replace(manifest_pr, actions=tuple(manifest_pr.actions[i] for i in indices))
+    )
     return (
         "review",
         [

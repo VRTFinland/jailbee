@@ -2739,8 +2739,15 @@ def _offer_locked(
     from jailbee.publish_progress import reporting
 
     if policy is not None:
-        for target, _, _ in plans:
-            policy(target.manifest)
+        for target, progress, idx in plans:
+            # The policy judges what is still to be published, not what a
+            # previous run already landed.
+            pending = [
+                i for i in pending_indices(target.manifest, progress) if idx is None or i in idx
+            ]
+            policy(
+                replace(target.manifest, actions=tuple(target.manifest.actions[i] for i in pending))
+            )
     total = sum(planned_action_count(t.manifest, p, idx) for t, p, idx in plans)
     if action_limit is not None and total > action_limit:
         raise GateError("review actions exceed the reserved publish budget")
