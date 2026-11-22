@@ -420,8 +420,8 @@ class Terminal(Protocol):
         """
         ...
 
-    def update_output(self, text: str) -> None:
-        """Replace the text of the output screen :meth:`show_output` opened last, if still open."""
+    def update_output(self, text: str, failed: bool = False) -> None:
+        """Replace the text of the live output screen, if still open; ``failed`` styles it so."""
         ...
 
 
@@ -956,7 +956,9 @@ class DashboardSession:
             # (An error with output: the run started and failed after; keep what it printed.)
             self.queue.finish(entry_id, result.status if result.status is not None else 1, output)
             if entry_id == self._following:
-                self.terminal.update_output(output)  # the screen shows the whole of it
+                finished = self.queue.get(entry_id)  # the screen shows the whole of it
+                failed = finished is not None and finished.state == "failed"
+                self.terminal.update_output(output, failed=failed)
         if self._following is not None and (
             (found := self.queue.get(self._following)) is None or found.finished
         ):

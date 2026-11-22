@@ -632,8 +632,9 @@ class BareTerminal:
         # Closing the latest modal: what "continue in background" and Esc both do.
         self.modal = on_close
 
-    def update_output(self, text):  # type: ignore[no-untyped-def]
+    def update_output(self, text, failed=False):  # type: ignore[no-untyped-def]
         self.updated = [*getattr(self, "updated", []), text]
+        self.updated_failed = [*getattr(self, "updated_failed", []), failed]
 
 
 def bare_session(mocker, groups, **kw):  # type: ignore[no-untyped-def]
