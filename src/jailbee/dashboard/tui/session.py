@@ -2716,8 +2716,9 @@ class DashboardSession:
             self._outbox_marks[old.container] = (old.state.marks, old.revisions())
         # A destroyed container's marks go with it.
         # (An empty listing is "not loaded yet", not "everything destroyed".)
-        if self.groups:
-            live = {c.name for g in self.groups for c in g.containers}
+        # Judged against every repo, hidden ones included: hiding a repo is not destroying it.
+        if self.all_groups:
+            live = {c.name for g in self.all_groups for c in g.containers}
             for name in [n for n in self._outbox_marks if n not in live]:
                 del self._outbox_marks[name]
 

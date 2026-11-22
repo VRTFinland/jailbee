@@ -2421,8 +2421,9 @@ def test_marks_survive_the_sent_box_opening_in_between(mocker, tmp_path):
     _open_box(session)
     session.outbox_intent("mark", _ROW)
     session.click(Hit("row", ("alpha-x",)))
-    # the click closed the box; the marks must already be kept even if the box object
-    # is replaced without a `_remember_outbox_marks` call of its own
+    # the click closed the box and must have kept its marks itself: the box object is
+    # gone before the Sent box opens, so `open_sent` has nothing of it to save
+    session.outbox = None
     session.open_sent("alpha")
     session.close_overlay()
 
@@ -2529,11 +2530,28 @@ def test_marks_of_a_destroyed_container_are_pruned(mocker, tmp_path):
     session.click(Hit("row", ("alpha-x",)))
     assert "alpha-x" in session._outbox_marks
 
-    session.groups = [_outbox_group(tmp_path)]
-    session.groups[0].containers.clear()  # the container was destroyed
+    session.all_groups = [_outbox_group(tmp_path)]
+    session.all_groups[0].containers.clear()  # the container was destroyed
     session._remember_outbox_marks()
 
     assert "alpha-x" not in session._outbox_marks
+
+
+def test_marks_of_a_hidden_repo_survive_until_it_is_shown_again(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+
+    # the repo is hidden in settings: `groups` leaves it out, `all_groups` keeps it
+    session.groups = [_outbox_group(tmp_path)]
+    session.groups[0].containers.clear()
+    session._remember_outbox_marks()
+
+    assert "alpha-x" in session._outbox_marks
 
 
 def test_marks_are_kept_while_the_listing_is_not_loaded_yet(mocker, tmp_path):
@@ -2546,6 +2564,7 @@ def test_marks_are_kept_while_the_listing_is_not_loaded_yet(mocker, tmp_path):
     session.click(Hit("row", ("alpha-x",)))
 
     session.groups = []  # not loaded, not destroyed
+    session.all_groups = []
     session._remember_outbox_marks()
 
     assert "alpha-x" in session._outbox_marks
