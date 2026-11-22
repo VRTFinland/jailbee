@@ -2446,7 +2446,23 @@ def test_marks_of_a_destroyed_container_are_pruned(mocker, tmp_path):
     session.click(Hit("row", ("alpha-x",)))
     assert "alpha-x" in session._outbox_marks
 
-    session.groups = []  # the container was destroyed
+    session.groups = [_outbox_group(tmp_path)]
+    session.groups[0].containers.clear()  # the container was destroyed
     session._remember_outbox_marks()
 
     assert "alpha-x" not in session._outbox_marks
+
+
+def test_marks_are_kept_while_the_listing_is_not_loaded_yet(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+
+    session.groups = []  # not loaded, not destroyed
+    session._remember_outbox_marks()
+
+    assert "alpha-x" in session._outbox_marks

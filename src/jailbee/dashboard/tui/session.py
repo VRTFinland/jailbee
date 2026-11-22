@@ -2692,9 +2692,11 @@ class DashboardSession:
         if old is not None and old.container is not None and not old.sent_only:
             self._outbox_marks[old.container] = (old.state.marks, old.revisions())
         # A destroyed container's marks go with it.
-        live = {c.name for g in self.groups for c in g.containers}
-        for name in [n for n in self._outbox_marks if n not in live]:
-            del self._outbox_marks[name]
+        # (An empty listing is "not loaded yet", not "everything destroyed".)
+        if self.groups:
+            live = {c.name for g in self.groups for c in g.containers}
+            for name in [n for n in self._outbox_marks if n not in live]:
+                del self._outbox_marks[name]
 
     def open_sent(self, prefix: str) -> OutboxState | None:
         """The repo's Sent timeline (all containers, destroyed ones too); None after a notice."""
