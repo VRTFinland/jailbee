@@ -77,7 +77,7 @@ def test_uncertain_issue_is_kept_with_resolve_hint(tmp_path):
     assert plan.delete == ()
     item = plan.keep[0]
     assert item.selection is None
-    assert "jailbee issue resolve" in item.reason
+    assert "jailbee outbox resolve" in item.reason
 
 
 def test_invalid_manifest_without_evidence_is_deleted(tmp_path):

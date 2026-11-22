@@ -580,7 +580,7 @@ def resolve_uncertain_source(
     *,
     landed_url: str | None,
 ) -> bool:
-    """`jailbee review resolve` for any PR proposal, source manifests included.
+    """`jailbee outbox resolve` for any PR proposal, source manifests included.
 
     Settles the uncertain action through `pr_outbox.resolve_uncertain` (which
     files a source's sent record under ``source``). When a source publication

@@ -1216,7 +1216,7 @@ deletion. First run `jb outbox show <container> issue/<manifest>.json` and
 inspect its receipts and pending actions before approving whole-manifest
 archival deletion. Direct `outbox drop` previews deletion scope, not receipts
 or action content. Uncertain outcomes must first be reconciled with the
-existing `jb issue resolve` command. There is no general text editor in the
+`jb outbox resolve` command. There is no general text editor in the
 outbox manager.
 
 ### Clearing outboxes
@@ -1240,7 +1240,7 @@ confirmation, but still needs a container selection.
 only when no other pending manifest in the same store references them. Settled
 issue journal progress is archived automatically before deletion. It keeps
 issue manifests with any **uncertain** action: reconcile the outcome with
-`jb issue resolve` first. PR manifests with publication evidence (including
+`jb outbox resolve` first. PR manifests with publication evidence (including
 partial publication) are also kept; inspect them with `jb outbox` or
 finish with `jb outbox apply`. An unreadable journal is
 not treated as permission to delete.
@@ -1533,6 +1533,7 @@ Listing, reading and dropping issue proposals is `jailbee outbox ls`,
 ```bash
 jailbee issue apply [<name>] [<manifest>] [--yes] [--foreign] [--dry-run]
 jailbee issue resolve [<name>] [<manifest>] [<action>] (--applied --url <url> [--issue <n>] | --retry) [--yes]
+# alias of: jailbee outbox resolve [<name>] issue/<manifest> [<action>] ... (`pr/<manifest>` for PR actions)
 ```
 
 `jailbee outbox show` prints a
@@ -1600,13 +1601,14 @@ journal already shows `applied`, restores that number so a further
 `issue_ref` later in the file still resolves, and continues from wherever
 the run actually stopped.
 
-### `uncertain` actions and `jailbee issue resolve`
+### `uncertain` actions and `jailbee outbox resolve`
 
 A GitHub mutation whose outcome could not be determined for certain — a
 dropped connection, a timeout — is journaled `uncertain` rather than
 `applied` or left `pending`, and **`jailbee issue apply` refuses to touch
-that manifest again until it is resolved.** `jailbee issue resolve [<name>]
-[<manifest>] [<action>]` takes exactly one of (on a terminal, whatever you leave out —
+that manifest again until it is resolved.** `jailbee outbox resolve [<name>]
+[<proposal>] [<action>]` (`issue/<manifest>` for issues, `pr/<manifest>` for PR
+actions; `jailbee issue resolve` and `jailbee review resolve` are aliases) takes exactly one of (on a terminal, whatever you leave out —
 container, manifest, action, mode, URL — is asked for; off one it must be given
 as arguments and flags, or the command exits 2):
 
@@ -1633,7 +1635,7 @@ and the journal's archiving, all in one transaction. So a fully applied
 proposal is gone from the outbox the moment its last receipt is recorded; there
 is no separate cleanup step that can half-fail. A run that dies between the two
 commits leaves the action `prepared`, which every reader shows as `uncertain`
-until it is resolved with `jailbee issue resolve`; a journal is never archived
+until it is resolved with `jailbee outbox resolve`; a journal is never archived
 while an outcome is uncertain. Publication is single-flight per proposal: a
 claim in the store refuses a second run (or a resolution) while another live
 one holds it, and a claim whose process is gone is taken over. The container
@@ -1665,12 +1667,12 @@ proposal whose publication outcome is uncertain: that one is kept, with its
 bodies and journal, so the outcome can still be settled. `jailbee outbox`
 lists such proposals under `<container>@<instance-uuid>`, marked
 `(destroyed)` (`"destroyed": true` in `-o json`). Use that name with
-`jailbee issue resolve` or `jailbee review resolve` to settle the uncertain
+`jailbee outbox resolve` (aliases: `jailbee issue resolve`, `jailbee review resolve`) to settle the uncertain
 action, and with `jailbee outbox show` / `drop` (`--archive-journal` for
 settled progress) to inspect or discard what is left. A destroyed
 container's proposals cannot be published (`jailbee outbox apply` refuses);
 a PR source proposal cannot be pushed again either, so settle it with
-`jailbee review resolve` and drop it.
+`jailbee outbox resolve` and drop it.
 
 ### What enforces read-only container access
 

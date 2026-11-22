@@ -304,7 +304,7 @@ def apply_selected(
     if parse_retained_ref(name) is not None:
         raise OutboxError(
             f"{name}: the container was destroyed; resolve its uncertain actions "
-            "(jailbee issue resolve / jailbee review resolve) or drop the proposal"
+            "(jailbee outbox resolve) or drop the proposal"
         )
     target, container, view = _selected(cfg, incus, name, proposal, revision=expected_revision)
     if view.error:

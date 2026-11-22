@@ -639,7 +639,7 @@ def _journal_progress(outbox: Outbox, name: str, action_count: int | None) -> Pr
         index = next(a.index for a in journal.actions if a.state == "uncertain")
         raise OutboxError(
             f"{name}: the outcome of action {index} from an earlier run is uncertain; "
-            "check the PR on GitHub, then settle it with `jailbee review resolve`"
+            "check the PR on GitHub, then settle it with `jailbee outbox resolve`"
         )
     applied = {a.index: a.url or "" for a in journal.actions if a.state == "applied"}
     return Progress(frozenset(applied), {str(i): url for i, url in applied.items()})
@@ -1079,7 +1079,7 @@ def apply_manifest(
                 (),
                 (),
                 f"the outcome of action {uncertain[0]} from an earlier run is uncertain; "
-                "check the PR on GitHub, then settle it with `jailbee review resolve`",
+                "check the PR on GitHub, then settle it with `jailbee outbox resolve`",
                 draft,
             )
         for index in _apply_order(manifest.actions):

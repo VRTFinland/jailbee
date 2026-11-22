@@ -1189,7 +1189,7 @@ def test_issue_uncertain_and_pr_partial_preserve_recovery(env, kind, capsys):
         output = capsys.readouterr()
         assert "001.json action 0: uncertain" in output.err
         assert "001.json action 0: uncertain" not in output.out
-        assert "resolve: jailbee issue resolve" in output.out
+        assert "resolve: jailbee outbox resolve" in output.out
         env[4]["comment"].assert_not_called()
     else:
         env[2]["pr"] = store(
@@ -1294,8 +1294,8 @@ def test_issue_apply_alias_renders_the_selected_publication_outcome_then_exits(
                 "001.json action 2: pending"
             )
         if mode == "uncertain":
-            assert "resolve: jailbee issue resolve acme-feature 001.json 1" in text
-            assert text.index("resolve: jailbee issue resolve") < text.index(
+            assert "resolve: jailbee outbox resolve acme-feature issue/001.json 1" in text
+            assert text.index("resolve: jailbee outbox resolve") < text.index(
                 "001.json action 2: pending"
             )
 

@@ -875,7 +875,7 @@ def test_plan_and_show_render_receipts_and_uncertainty(preflight, state, display
             assert any("https://github.com/acme/app/issues/42" in line for line in lines)
         if display == "uncertain":
             assert any(
-                "jailbee issue resolve test-box a.json 0 "
+                "jailbee outbox resolve test-box issue/a.json 0 "
                 "(--applied --url <url> [--issue <n>] | --retry)" in line
                 for line in lines
             ), lines

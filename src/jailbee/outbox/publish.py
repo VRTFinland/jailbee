@@ -142,7 +142,7 @@ def issue_outcome_lines(
             lines.append(
                 OutcomeLine(
                     "info",
-                    f"  resolve: jailbee issue resolve {batch.container} {failure.manifest} "
+                    f"  resolve: jailbee outbox resolve {batch.container} issue/{failure.manifest} "
                     f"{failure.index} (--applied --url <url> [--issue <n>] | --retry)",
                 )
             )

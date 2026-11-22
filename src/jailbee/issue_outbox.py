@@ -914,7 +914,7 @@ def _action_lines(
         lines.append(f"  detail: {receipt.detail}")
     if status == "uncertain":
         lines.append(
-            f"  resolve: jailbee issue resolve {container} {name} {index} "
+            f"  resolve: jailbee outbox resolve {container} issue/{name} {index} "
             "(--applied --url <url> [--issue <n>] | --retry)"
         )
     if not isinstance(action, CreateAction) and issue.ref is not None:
