@@ -167,6 +167,13 @@ def test_run_in_container_missing_mount_requests_apply(result):
         container_app.run_in_container(Mock(), incus, "one", [], uid=None)
 
 
+def test_not_mounted_text_on_a_successful_exit_is_not_absent():
+    incus = Mock()
+    incus.exec_bytes.return_value = ExecResult(0, b"ok", b"warning: dir not mounted")
+    result = container_app.run_in_container(Mock(), incus, "one", [], uid=None)
+    assert result.returncode == 0
+
+
 def test_binds_profile_mounts_app_readonly(make_cfg, tmp_path):
     import yaml
 

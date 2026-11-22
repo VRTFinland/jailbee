@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 
 from datetime import UTC, datetime
 from pathlib import Path
@@ -295,3 +296,50 @@ def test_the_live_fetch_reads_in_probe_mode(mocker) -> None:
     live_fetch(mocker.Mock())(Path("/a"), "alpha-x")
 
     assert rows.call_args.kwargs == {"probe": True}
+
+
+def test_a_probe_finishing_after_its_container_was_pruned_is_dropped() -> None:
+    held = _Deferred()
+    probe = ServiceProbe(_ok, submit=held)
+    probe.annotate(_groups(_ci("alpha-x")))  # probe submitted, held
+    probe.annotate(_groups(_ci("alpha-x", "Stopped")))  # pruned while in flight
+    held.run_all()  # the old job lands now
+
+    assert probe._cache == {}
+    again = _groups(_ci("alpha-x"))
+    probe.annotate(again)  # restarted: probed afresh, no stale line
+    assert again[0].containers[0].services is None
+    assert len(held.jobs) == 1
+
+
+def test_a_stopped_container_drops_its_in_flight_marker() -> None:
+    held = _Deferred()
+    probe = ServiceProbe(_ok, submit=held)
+    probe.annotate(_groups(_ci("alpha-x")))
+    probe.annotate(_groups(_ci("alpha-x", "Stopped")))
+
+    assert probe._in_flight == {}
+
+
+def test_run_service_shuts_the_probe_down_on_exit(mocker, tmp_path) -> None:
+    from jailbee.state_service import server
+
+    mocker.patch.object(server, "ensure_runtime_dir")
+    mocker.patch.object(
+        server, "_take_lifetime_lock", return_value=os.open(os.devnull, os.O_RDONLY)
+    )
+    mocker.patch.object(server, "socket_path", return_value=tmp_path / "s.sock")
+    mocker.patch.object(server, "lock_path", return_value=tmp_path / "l")
+    mocker.patch("jailbee.dashboard.model.global_config_or_defaults")
+    mocker.patch("jailbee.state_service.gatherer.Cadence")
+    mocker.patch("jailbee.state_service.gatherer.Gatherer")
+    mocker.patch("jailbee.db.get_engine")
+    mocker.patch("jailbee.pr_autofetch.PrHeadAutofetcher")
+    mocker.patch("jailbee.state_service.session_log.SessionRecorder")
+    mocker.patch.object(server, "StateServer")
+    mocker.patch.object(server.asyncio, "run")
+    probe = mocker.patch("jailbee.state_service.service_probe.ServiceProbe").return_value
+    mocker.patch("jailbee.state_service.service_probe.live_fetch")
+
+    assert server.run_service(mocker.Mock()) == 0
+    probe.shutdown.assert_called_once_with()
