@@ -51,22 +51,41 @@ def test_the_index_page_is_first_in_the_nav() -> None:
     assert docs_site.published_pages()[0] == "README.md"
 
 
-def test_no_published_page_references_a_relative_image() -> None:
-    """Staging copies only the `.md` files `nav` names — an image referenced
-    by a relative path would 404 on the site, and `--strict` does not flag a
-    missing image the way it flags a missing page or anchor."""
-    import re
-
-    image_md = re.compile(r"!\[[^\]]*\]\(([^)\s]+)")
-    img_tag = re.compile(r'<img\s[^>]*\bsrc="([^"]+)"', re.IGNORECASE)
-
+def test_every_relative_image_a_published_page_references_exists() -> None:
+    """Staging copies the images the published pages reference, so a relative
+    reference works on the site -- but only if the file is really there."""
     for name in docs_site.published_pages():
-        text = (DOCS / name).read_text()
-        for pattern in (image_md, img_tag):
-            for target in pattern.findall(text):
-                assert target.startswith(("http://", "https://")), (
-                    f"{name}: relative image reference {target!r} would 404 on the site"
-                )
+        for target in docs_site.referenced_images(DOCS / name):
+            assert (DOCS / name).parent.joinpath(target).is_file(), (
+                f"{name}: image {target!r} does not exist"
+            )
+
+
+def test_staging_copies_the_images_published_pages_reference(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    (docs / "images").mkdir(parents=True)
+    (docs / "images" / "shot.png").write_bytes(b"png")
+    (docs / "images" / "unused.png").write_bytes(b"x")
+    (docs / "README.md").write_text("# index\n\n![a](images/shot.png)\n")
+    (docs / "other.md").write_text("# other\n\n![b](https://example.com/x.png)\n")
+    stage_dir = tmp_path / "_build" / "docs"
+
+    docs_site.stage(docs=docs, stage_dir=stage_dir, pages=["README.md", "other.md"])
+
+    assert (stage_dir / "images" / "shot.png").read_bytes() == b"png"
+    assert not (stage_dir / "images" / "unused.png").exists()
+
+
+def test_staging_refuses_a_missing_referenced_image(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "README.md").write_text("![a](images/gone.png)\n")
+    try:
+        docs_site.stage(docs=docs, stage_dir=tmp_path / "out", pages=["README.md"])
+    except SystemExit as exc:
+        assert "gone.png" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("staging accepted a reference to a missing image")
 
 
 def test_staging_copies_exactly_the_published_pages(tmp_path: Path) -> None:

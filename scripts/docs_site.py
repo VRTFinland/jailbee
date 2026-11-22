@@ -68,6 +68,17 @@ def published_pages(path: Path = CONFIG) -> list[str]:
     return pages
 
 
+_IMAGE_MD = re.compile(r"!\[[^\]]*\]\(([^)\s]+)")
+_IMAGE_TAG = re.compile(r'<img\s[^>]*\bsrc="([^"]+)"', re.IGNORECASE)
+
+
+def referenced_images(page: Path) -> list[str]:
+    """Relative image paths `page` references, as written (relative to the page)."""
+    text = page.read_text()
+    found = _IMAGE_MD.findall(text) + _IMAGE_TAG.findall(text)
+    return sorted({t for t in found if not _ABSOLUTE.match(t) and not t.startswith("data:")})
+
+
 def stage(
     docs: Path = DOCS,
     stage_dir: Path = STAGE,
@@ -90,6 +101,13 @@ def stage(
         target = stage_dir / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+        for image in referenced_images(source):
+            image_source = source.parent / image
+            if not image_source.is_file():
+                raise SystemExit(f"{name} references an image that does not exist: {image}")
+            image_target = target.parent / image
+            image_target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(image_source, image_target)
 
 
 # Any absolute or protocol-relative URL in a fetched attribute. `<a href>` is
