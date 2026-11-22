@@ -470,6 +470,7 @@ def child_options(
         warm_paths=resolve_warm_paths(cfg, plan.warm_paths) if fork is not None else None,
         inherited_labels=(fork.pr_labels or None) if fork else None,
         base_branch_label=fork.base_branch if fork is not None else plan.pr_base,
+        base_explicit_label=fork.base_explicit if fork is not None else None,
         untrusted_head=True,
         initial_prompt=plan.prompt,
         spawned_by=orchestrator_full,
@@ -754,6 +755,7 @@ def _handle_spawn_locked(ctx: ActionContext, m: Manifest) -> Outcome:
             pr_base=plan.pr_base,
             fork_base=fork.base_branch if fork is not None else None,
             fork_base_pinned=fork is not None and plan.ref is not None,
+            fork_base_explicit=fork.base_explicit if fork is not None else None,
         )
     )
     _store(ctx, queued)
@@ -922,6 +924,11 @@ def _start_spawn(ctx: ActionContext, req: QueuedRequest) -> Outcome:
                 req.fork_base
                 if req.fork_base_pinned
                 else ctx.incus.config_get(ctx.sender.full, "user.jailbee.base_branch") or None
+            ),
+            base_explicit=(
+                req.fork_base_explicit
+                if req.fork_base_pinned
+                else ctx.incus.config_get(ctx.sender.full, "user.jailbee.base_explicit") or None
             ),
             untrusted=bool(ctx.incus.config_get(ctx.sender.full, "user.jailbee.pr")),
             pr_labels=(
