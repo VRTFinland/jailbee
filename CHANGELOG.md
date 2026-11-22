@@ -145,6 +145,11 @@ before editing `## Unreleased`.
 - The hidden, deprecated `jailbee review ls`, `review show`, `review drop` and
   `issue show`. Use `jailbee outbox ls`, `outbox show` and `outbox drop`
   ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
+- Inside a container, `jailbee outbox drop`. `jailbee outbox discard
+  issue/NAME` (or `pr/NAME`) now removes a staged proposal and `outbox discard
+  --draft NAME [--kind issue|pr]` a draft; there is no alias. The host's
+  `jailbee outbox drop` is unchanged
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 
 ### Fixed
 

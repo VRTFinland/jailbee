@@ -28,7 +28,7 @@ def test_empty_list_and_child_guard(home, monkeypatch):
     assert result.exit_code == 0
     assert json.loads(result.stdout) == {"issue": [], "pr": [], "drafts": []}
     monkeypatch.setenv("JAILBEE_ROLE", "child")
-    for command in ("drop", "submit", "discard"):
+    for command in ("submit", "discard"):
         result = invoke(command)
         assert result.exit_code == 1
         assert "child container" in result.output
@@ -135,7 +135,7 @@ def test_pr_batch_and_review_protection(home, monkeypatch, broker):
     (row,) = broker.proposals("pr")
     assert row.name == "001-b.json"
     parse_manifest(row.name, row.manifest, dict(row.bodies))
-    assert invoke("discard", "review-12", "--kind", "pr").exit_code == 0
+    assert invoke("discard", "--draft", "review-12", "--kind", "pr").exit_code == 0
     assert broker.draft("review-12", "pr") is None
 
 
@@ -147,7 +147,7 @@ def test_child_reads_and_refuses_mutation(home, monkeypatch, broker):
     monkeypatch.setenv("JAILBEE_ROLE", "child")
     assert invoke("ls", "--json").exit_code == 0
     assert invoke("show", "issue/" + name).exit_code == 0
-    for args in [("drop", "issue/" + name), ("submit", "x"), ("discard", "x")]:
+    for args in [("discard", "issue/" + name), ("submit", "x"), ("discard", "--draft", "x")]:
         result = invoke(*args)
         assert result.exit_code == 1
         assert "jailbee inbox send message --text" in result.output
@@ -176,11 +176,13 @@ def test_issue_draft_discard_goes_over_the_socket(home, broker):
         == 0
     )
     assert broker.draft_state("b") is not None
-    result = invoke("discard", "b", "--kind", "issue")
+    result = invoke("discard", "--draft", "b", "--kind", "issue")
     assert result.exit_code == 0, result.output
     assert broker.draft_state("b") is None
     assert not (home / ".jailbee").exists()
-    assert invoke("discard", "b", "--kind", "issue").exit_code == 2  # nothing left to discard
+    assert (
+        invoke("discard", "--draft", "b", "--kind", "issue").exit_code == 2
+    )  # nothing left to discard
     assert broker.proposals() == []
 
 
@@ -190,3 +192,55 @@ def test_issue_drafts_never_touch_the_container_file_store(home, broker):
     assert invoke("submit", "b", "--kind", "issue").exit_code == 0
     assert not (home / ".jailbee/outbox-drafts").exists()
     assert not (home / ".jailbee/issue-outbox").exists()
+
+
+def test_drop_is_gone():
+    result = invoke("drop", "issue/x")
+    assert result.exit_code == 2
+
+
+def test_discard_removes_a_proposal(home, broker):
+    CliRunner().invoke(container_app, ["issue", "create", "--title", "Bug", "--body", "b"])
+    name = broker.only()[0]
+    result = invoke("discard", "issue/" + name)
+    assert result.exit_code == 0, result.output
+    assert f"discarded issue/{name}" in result.output
+    assert broker.proposals() == []
+
+
+def test_discard_without_a_target_names_the_missing_value(home, broker):
+    result = invoke("discard")
+    assert result.exit_code == 2
+    assert "--draft" in result.output and "issue/NAME" in result.output
+
+
+def test_discard_refuses_proposal_and_draft_together(home, broker):
+    result = invoke("discard", "issue/x", "--draft", "b")
+    assert result.exit_code == 2
+
+
+def test_same_name_draft_and_proposal_are_not_guessed(home, broker):
+    runner = CliRunner()
+    runner.invoke(container_app, ["issue", "comment", "7", "--body", "x", "--batch", "b"])
+    runner.invoke(container_app, ["issue", "create", "--title", "t", "--body", "b"])
+    name = broker.only()[0]
+    assert invoke("discard", "issue/" + name).exit_code == 0
+    assert broker.draft("b", "issue") is not None
+    assert invoke("discard", "--draft", "b", "--kind", "issue").exit_code == 0
+    assert broker.draft("b", "issue") is None
+
+
+def test_drop_hint_points_at_discard():
+    assert "outbox discard" in invoke("drop", "issue/x").output
+
+
+def test_old_draft_form_points_at_the_draft_flag(home, broker):
+    result = invoke("discard", "review-12")
+    assert result.exit_code == 2
+    assert "--draft review-12" in result.output
+
+
+def test_empty_draft_name_is_not_ignored(home, broker):
+    result = invoke("discard", "issue/x", "--draft", "")
+    assert result.exit_code == 2
+    assert "not both" in result.output

@@ -22,8 +22,9 @@ HOST_SUBCOMMANDS = {
     "pr": frozenset({"push", "bind", "unbind", "ls", "open"}),
     "issue": frozenset({"apply", "resolve"}),
     # `outbox sent` exists on both sides: the container lists only its own records.
+    # `outbox drop` is host-only; the container verb is `outbox discard`.
     "outbox": frozenset(
-        {"apply", "browse", "clear", "attachment-resolve", "attachments", "resolve"}
+        {"apply", "browse", "clear", "attachment-resolve", "attachments", "drop", "resolve"}
     ),
 }
 
@@ -31,6 +32,13 @@ HOST_SUBCOMMANDS = {
 class SharedGroup(TyperGroup):
     def get_command(self, ctx: Context, cmd_name: str) -> Command | None:
         if cmd_name in HOST_SUBCOMMANDS.get(ctx.info_name or "", frozenset()):
+            if (ctx.info_name, cmd_name) == ("outbox", "drop"):
+                typer.echo(
+                    "`jailbee outbox drop` is gone here: use `jailbee outbox discard "
+                    "issue/NAME` (or pr/NAME), or `outbox discard --draft NAME` for a draft.",
+                    err=True,
+                )
+                raise typer.Exit(2)
             typer.echo(
                 f"`jailbee {ctx.info_name} {cmd_name}` runs on the host, not inside a container.",
                 err=True,

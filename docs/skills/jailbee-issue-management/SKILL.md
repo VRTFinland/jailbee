@@ -150,8 +150,8 @@ batch target `@REF`. For edits, labels, assign and state on `@REF`, expected val
 are derived automatically from the earlier create; a revision check keeps
 concurrent draft appends atomic without holding the write lock during host reads.
 Inspect with `jailbee outbox ls` and `jailbee outbox show issue/NAME`.
-Remove a staged, unpublished proposal with `jailbee outbox drop issue/NAME`;
-discard an unsubmitted draft batch with `jailbee outbox discard NAME --kind issue`.
+Remove a staged, unpublished proposal with `jailbee outbox discard issue/NAME`;
+discard an unsubmitted draft batch with `jailbee outbox discard --draft NAME --kind issue`.
 
 ## Human inspection and approval
 
