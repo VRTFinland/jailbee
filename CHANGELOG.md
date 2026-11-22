@@ -12,7 +12,8 @@ before editing `## Unreleased`.
 
 - Links in the Markdown bodies of `jailbee outbox show` and the dashboard
   outbox preview are clickable (OSC 8) when the target is `http` or `https`; a
-  label that differs from the target is followed by the target's host, and
+  label that is not exactly the target's `scheme://host` is followed by
+  ` → host`, and
   every other scheme is shown as text with its target
   ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 

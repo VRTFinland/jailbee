@@ -66,7 +66,7 @@ def test_http_link_becomes_an_osc8_hyperlink() -> None:
 def test_https_link_with_a_different_label_shows_the_host() -> None:
     lines = render_markdown("[docs](https://Example.com/a?b=1)", width=60)
     assert _links(lines) == ["https://Example.com/a?b=1"]
-    assert plain(lines) == ["docs (example.com)"]
+    assert plain(lines) == ["docs → example.com"]
 
 
 def test_label_naming_another_host_cannot_disguise_the_target() -> None:
@@ -74,22 +74,81 @@ def test_label_naming_another_host_cannot_disguise_the_target() -> None:
     assert "evil.example" in out
 
 
-def test_other_schemes_are_plain_text_with_the_target_visible() -> None:
-    for href in ("javascript:alert(1)", "file:///etc/passwd", "ftp://h/x", "data:text/html,x"):
+def test_label_cannot_imitate_the_host_suffix() -> None:
+    out = plain(render_markdown("[docs (github.com)](https://evil.com)", width=60))
+    assert out == ["docs (github.com) → evil.com"]
+
+
+def test_userinfo_cannot_pose_as_the_host() -> None:
+    for md in (
+        "<https://github.com@evil.com/x>",
+        "[https://github.com@evil.com](https://github.com@evil.com)",
+    ):
+        out = "\n".join(plain(render_markdown(md, width=80)))
+        assert out.endswith("→ evil.com"), md
+
+
+def test_bare_origin_label_gets_no_suffix() -> None:
+    assert plain(render_markdown("[https://E.com/](https://e.com/)", width=60)) == [
+        "https://E.com/"
+    ]
+
+
+def test_uppercase_scheme_is_linked_and_the_target_not_repeated() -> None:
+    lines = render_markdown("<HTTPS://E.com>", width=60)
+    assert _links(lines) == ["https://E.com"]
+    assert plain(lines) == ["HTTPS://E.com"]
+
+
+def test_ipv6_literal_keeps_a_working_target_and_the_right_host() -> None:
+    lines = render_markdown("[x](https://[::1]/)", width=60)
+    assert _links(lines) == ["https://[::1]/"]
+    assert plain(lines) == ["x → ::1"]
+
+
+def test_non_http_scheme_that_survives_the_parser_is_text_with_the_target() -> None:
+    # markdown-it's validateLink rejects javascript:, vbscript:, file: and most data:
+    # before any link token exists, so only schemes like these reach the flattening.
+    for href in ("ftp://h/x", "mailto:a@b.c", "tel:+358"):
         lines = render_markdown(f"[click]({href})", width=60)
         assert not any("\x1b]8" in line for line in lines), href
-        out = "\n".join(plain(lines))
-        assert "click" in out and href in out
+        assert plain(lines) == [f"click → {href}"]
 
 
-def test_url_with_controls_or_non_ascii_is_not_linked() -> None:
-    for href in ("https://e.com/%E2%80%AE", "https://e.com/\u202ex", "https://e.com/a\x07b"):
-        lines = render_markdown(f"[t](<{href}>)", width=60)
-        assert "\x07" not in "\n".join(lines).replace("\x1b\\", "")
-        assert "\u202e" not in "\n".join(lines)
-        assert all(
-            not u.startswith(("https://e.com/\u202e", "https://e.com/\x07")) for u in _links(lines)
-        )
+def test_scheme_the_parser_rejects_is_never_linked() -> None:
+    for href in ("javascript:alert(1)", "file:///etc/passwd", "data:text/html,x"):
+        lines = render_markdown(f"[click]({href})", width=60)
+        assert not any("\x1b]8" in line for line in lines), href
+
+
+def test_link_host_guard_rejects_raw_controls_and_non_ascii() -> None:
+    from jailbee.outbox.markdown_view import _link_host
+
+    assert _link_host("https://e.com/x") == "e.com"
+    for url in (
+        "https://e.com/\x07",
+        "https://e.com/\x1b[31m",
+        "https://e.com/‮",
+        "https://e.com/é",
+        "https://e.com/a b",
+        "https://e.com/\n",
+        "ftp://e.com/",
+    ):
+        assert _link_host(url) is None, repr(url)
+
+
+def test_safe_style_drops_an_unsafe_link_and_keeps_a_safe_one() -> None:
+    from rich.style import Style
+
+    from jailbee.outbox.markdown_view import _safe_style
+
+    assert _safe_style(None) is None
+    unsafe = _safe_style(Style(link="javascript:x"))
+    assert unsafe is not None and unsafe.link is None
+    control = _safe_style(Style(bold=True, link="https://e.com/\x07"))
+    assert control is not None and control.link is None
+    kept = _safe_style(Style(bold=True, link="https://e.com/"))
+    assert kept is not None and kept.link == "https://e.com/" and kept.bold
 
 
 def test_wrapped_link_keeps_the_whole_target_on_every_line() -> None:
