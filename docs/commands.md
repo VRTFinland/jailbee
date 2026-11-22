@@ -704,8 +704,14 @@ and keeps drawing while it runs; the status line names the running command.
 - **Output goes to the notification queue.** Every action the dashboard
   runs this way becomes an entry in its notification queue: the command, its
   container or repo, its state (running, done, failed) and its exit status,
-  with everything it printed. No output screen pops up when an action ends;
-  a short notice says it finished (`done`, or `exited N`). A bulk run over
+  with everything it printed. A routine action pops up no output screen when
+  it ends: a short notice says it finished (`done`, or `exited N` with the
+  last output line), followed by a `Q` hint. Verbs run for their output (`git diff`,
+  `job log`, `net egress ls`, `merge`, `pr push`, `git push --pr`, doctor, disk
+  usage, autostart status and any command typed into the command line)
+  also open their output on the scrollable screen when they end; it stays in
+  the queue too. An entry keeps only the last ~64 KB of output, marked
+  `… earlier output dropped …`. A bulk run over
   several repos is one entry per run. An action refused by the policy or
   that could not start is only a notice. The badge `⟳ R · ⚠ A` at the top of
   the dashboard (R running, A failed) appears once anything has run; a click

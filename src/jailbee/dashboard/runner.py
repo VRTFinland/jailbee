@@ -192,6 +192,38 @@ def _child_env(
     )
 
 
+OUTPUT_KEEP_CHARS = 64_000
+OUTPUT_DROPPED_MARKER = "… earlier output dropped …\n"
+
+
+class _TailBuffer:
+    """Output text bounded to its last ``OUTPUT_KEEP_CHARS`` characters."""
+
+    def __init__(self) -> None:
+        self._parts: list[str] = []
+        self._size = 0
+        self._dropped = False
+
+    def append(self, chunk: str) -> None:
+        self._parts.append(chunk)
+        self._size += len(chunk)
+        if self._size > 2 * OUTPUT_KEEP_CHARS:  # trim in bulk, not per chunk
+            self._trim()
+
+    def _trim(self) -> None:
+        text = "".join(self._parts)
+        if len(text) > OUTPUT_KEEP_CHARS:
+            text = text[-OUTPUT_KEEP_CHARS:]
+            self._dropped = True
+        self._parts = [text]
+        self._size = len(text)
+
+    def text(self) -> str:
+        self._trim()
+        body = self._parts[0] if self._parts else ""
+        return OUTPUT_DROPPED_MARKER + body if self._dropped else body
+
+
 def run_actions(
     runs: Sequence[ActionRun],
     *,
@@ -208,29 +240,29 @@ def run_actions(
     terminal and web dashboards both run bulk actions through it.
     """
     runner_fn = run if run is not None else run_action
-    chunks: list[str] = []
+    chunks = _TailBuffer()
     results: list[RunResult] = []
     outputs: list[str] = []
     try:
         for item in runs:
             if len(runs) > 1:
                 chunks.append(f"── jailbee {_command_path(item.argv)} ──\n")
-            own: list[str] = []
+            own = _TailBuffer()
 
-            def sink(chunk: str, own: list[str] = own) -> None:
+            def sink(chunk: str, own: _TailBuffer = own) -> None:
                 chunks.append(chunk)
                 own.append(chunk)
 
             try:
                 result = runner_fn(item.argv, cwd=item.cwd, on_output=sink, **common)
             finally:
-                outputs.append("".join(own))
+                outputs.append(own.text())
             results.append(result)
             if result.error is not None or result.refused is not None:
                 break
     except Exception as exc:
         results.append(RunResult(error=str(exc)))
-    return ActionOutcome(results, "".join(chunks), outputs)
+    return ActionOutcome(results, chunks.text(), outputs)
 
 
 def run_action(

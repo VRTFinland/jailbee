@@ -28,8 +28,11 @@ before editing `## Unreleased`.
 - The terminal dashboard keeps a notification queue of the actions it runs
   in the background ([#151](https://github.com/VRTFinland/jailbee/issues/151)):
   each is an entry with its command, target, state, exit status and output,
-  until dismissed. Output screens no longer pop up when an action ends; a
-  short notice says it finished. The `⟳ running · ⚠ failed` badge at the top,
+  until dismissed (each keeps its last ~64 KB of output). Routine actions no
+  longer pop up an output screen when they end: a short notice says they
+  finished, with a `Q` hint and, for a failure, the last output line. Verbs run
+  for their output (diff, job log, egress list, merge, PR push, doctor,
+  disk usage, the command line) open it automatically. The `⟳ running · ⚠ failed` badge at the top,
   or `Q`, opens the queue, where an entry expands to its full output.
 - The documentation site has a task-first "User guide" section in place of "Daily use"
   ([#150](https://github.com/VRTFinland/jailbee/issues/150)): Getting started, seven

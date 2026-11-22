@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -288,11 +289,12 @@ class MergePick:
     saved_marks: frozenset[str] = frozenset()  # bulk marks to restore on Esc
 
 
-def _last_line(text: str, style: DispatchStyle) -> str:
-    """``": <last output line>"`` for a failed bare action, whose output has no screen."""
-    if style != "plain":
-        return ""
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def _last_line(text: str) -> str:
+    """``": <last output line>"`` for a failed action: why it failed, at a glance."""
+    lines = [line.strip() for line in _ANSI.sub("", text).splitlines() if line.strip()]
     if not lines:
         return ""
     line = lines[-1]
@@ -321,7 +323,7 @@ def _queue_label(entry: QueueEntry) -> str:
 
 def _tail(text: str) -> tuple[str, ...]:
     """The last non-blank lines of ``text``, for an entry's detail."""
-    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    lines = [line.rstrip() for line in _ANSI.sub("", text).splitlines() if line.strip()]
     return tuple(lines[-QUEUE_TAIL_LINES:])
 
 
@@ -857,10 +859,14 @@ class DashboardSession:
         """Finish the entries of the runs that ran; drop those that never started."""
         for i, entry_id in enumerate(ids):
             result = outcome.results[i] if i < len(outcome.results) else None
-            if result is None or result.refused is not None or result.error is not None:
+            output = outcome.outputs[i] if i < len(outcome.outputs) else ""
+            if result is None or result.refused is not None:
                 self.queue.drop(entry_id)
                 continue
-            output = outcome.outputs[i] if i < len(outcome.outputs) else ""
+            if result.error is not None and not output:
+                self.queue.drop(entry_id)  # never started
+                continue
+            # (An error with output: the run started and failed after; keep what it printed.)
             self.queue.finish(entry_id, result.status if result.status is not None else 1, output)
         self._queue_changed()
 
@@ -954,11 +960,15 @@ class DashboardSession:
                 )
             return None
         rc = result.status if result.status is not None else 1
-        # The output is the action's queue entry; no screen pops up on its own.
+        # Every action is a queue entry. A verb that runs *for* its output (diff,
+        # logs, listings, doctor, the command line) also opens it right away;
+        # the rest stay quiet and point at the queue.
         if rc != 0:
-            self.set_notice(f"'jailbee {label}' exited {rc}{_last_line(outcome.output, style)}")
+            self.set_notice(f"'jailbee {label}' exited {rc}{_last_line(outcome.output)} · Q: queue")
         else:
-            self.set_notice(f"'jailbee {label}' done")
+            self.set_notice(f"'jailbee {label}' done · Q: queue")
+        if style in ("paged", "output") and outcome.output:
+            self.terminal.show_output(f"jailbee {label}", outcome.output, failed=rc != 0)
         self.client.refresh()  # an action likely changed state — refresh ASAP
         return rc
 
@@ -1294,7 +1304,7 @@ class DashboardSession:
         kind: Literal["repo", "container"],
         argv: list[str],
         *,
-        style: DispatchStyle = "output",
+        style: DispatchStyle = "plain",
         diagnostic_path: Path | None = None,
         allow_orphan: bool = False,
         then: Callable[[int | None], None] | None = None,
@@ -1366,7 +1376,7 @@ class DashboardSession:
             return self.open_autostart_rerun(container)
         if verb == dact.AUTOSTART_STATUS:
             self.run_dashboard_command(
-                container, "container", dact.autostart_status_argv(container)
+                container, "container", dact.autostart_status_argv(container), style="output"
             )
             return None
         if verb == dact.AUTOSTART_CANCEL:
@@ -3340,7 +3350,7 @@ class DashboardSession:
             return
         if not is_attach_style(argv):
             # Everything the line can run that is not an attach verb: its output
-            # stays on screen until read (the old pause), its questions are modals.
+            # opens when it ends (it is also a queue entry); its questions are modals.
             self.run_action(repo, argv, style="output", label=" ".join(argv))
             return
         try:
@@ -3657,7 +3667,7 @@ class DashboardSession:
             elif verb == dact.REPO_DOCTOR:
                 self.run_dashboard_command(target, "repo", dact.doctor_argv(), style="paged")
             elif verb == dact.REPO_DISK_USAGE:
-                self.run_dashboard_command(target, "repo", dact.disk_usage_argv())
+                self.run_dashboard_command(target, "repo", dact.disk_usage_argv(), style="output")
             elif verb == dact.REPO_PRUNE:
                 self.run_dashboard_command(target, "repo", dact.prune_argv())
             elif verb == dact.REPO_REMOVE:
