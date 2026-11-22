@@ -543,19 +543,6 @@ def test_state_dry_run_warns_that_it_reopens_the_pr(cfg, incus, github, capsys):
     assert "reopens PR #12" in capsys.readouterr().out
 
 
-def test_state_foreign_pr_is_refused_without_the_foreign_flag(cfg, incus, mocker, capsys):
-    mocker.patch.object(
-        pr_outbox,
-        "resolve_target",
-        side_effect=pr_outbox.ForeignPrError("manifest m references PR #12, not owned"),
-    )
-    mocker.patch.object(pr, "set_state", create=True)
-    name = stage(manifest(STATE_CLOSE))
-    assert review_apply(cfg, incus, name) == 1
-    pr.set_state.assert_not_called()
-    assert "not owned" in capsys.readouterr().err
-
-
 def test_show_lines_render_a_state_change_with_its_warning():
     parsed = pr_outbox.parse_manifest("m.json", json.dumps(manifest(STATE_CLOSE)), {})
     assert "closes PR #12" in "\n".join(pr_outbox.show_lines(parsed))
@@ -568,3 +555,28 @@ def test_refused_state_holds_back_the_whole_manifest(cfg, incus, github, capsys)
     github.comment.assert_not_called()
     github.set_state.assert_not_called()
     assert "held back as a whole" in capsys.readouterr().err
+
+
+def test_state_is_rechecked_against_the_fresh_read_before_publish(cfg, incus, github, capsys):
+    name = stage(manifest(STATE_CLOSE))
+    calls = {"n": 0}
+
+    def target(_cfg, _incus, _container, parsed, **_kw):
+        calls["n"] += 1
+        merged = calls["n"] > 1  # the first read plans, the second is the pre-publish refresh
+        info = pr.PrInfo(12, "topic", "a" * 40, "MERGED" if merged else "OPEN", "main")
+        return pr_outbox.Target(parsed, info, False, PrScope.for_repo(cfg))
+
+    pr_outbox.resolve_target.side_effect = target
+    assert review_apply(cfg, incus, name) == 1
+    github.set_state.assert_not_called()
+    assert "is merged" in capsys.readouterr().err
+
+
+def test_refused_state_alone_is_not_held_back_as_a_whole(cfg, incus, github, capsys):
+    _pr_state(github, "CLOSED")
+    name = stage(manifest(STATE_CLOSE))
+    assert review_apply(cfg, incus, name) == 1
+    err = capsys.readouterr().err
+    assert "was open when staged" in err
+    assert "held back as a whole" not in err

@@ -1226,10 +1226,32 @@ def _state_manifest():
     )
 
 
+def _bound_as(ctx, mocker, binding):
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    entries = {
+        "topic": {
+            "head": "topic",
+            "pr": 12,
+            "base": "main",
+            "source": "refs/heads/topic",
+            "source_sha": "a" * 40,
+            "author": True,
+            "adopted": binding == "adopted",
+        }
+    }
+    ctx.incus.config_get_checked.side_effect = lambda full, key: (
+        json.dumps(entries)
+        if key == branch_pr.BRANCH_PRS_LABEL and binding != "label"
+        else "12"
+        if key == "user.jailbee.pr"
+        else None
+    )
+
+
 @pytest.mark.parametrize(("granted", "allowed"), [(False, False), (True, True)])
 def test_review_policy_needs_pr_state_right(rig, mocker, granted, allowed):
     ctx = rig[0]
-    _bound(ctx, mocker)
+    _bound_as(ctx, mocker, "authored")
     rights = PublishRights(pr_reviews=True, pr_state=granted)
     check = publishing._review_policy(rights, 1, ctx.cfg, ctx.incus, ctx.sender.full)
     if allowed:
@@ -1237,3 +1259,38 @@ def test_review_policy_needs_pr_state_right(rig, mocker, granted, allowed):
     else:
         with pytest.raises(pr_outbox.GateError, match="pr_state"):
             check(_state_manifest())
+
+
+@pytest.mark.parametrize(
+    ("binding", "allowed"), [("label", False), ("adopted", False), ("authored", True)]
+)
+def test_review_policy_state_change_requires_authored_binding(rig, mocker, binding, allowed):
+    ctx = rig[0]
+    _bound_as(ctx, mocker, binding)
+    rights = PublishRights(pr_reviews=True, pr_state=True)
+    check = publishing._review_policy(rights, 1, ctx.cfg, ctx.incus, ctx.sender.full)
+    if allowed:
+        check(_state_manifest())
+    else:
+        with pytest.raises(pr_outbox.GateError, match="authored"):
+            check(_state_manifest())
+
+
+def test_precheck_refuses_state_change_without_the_right(rig, mocker):
+    ctx, m, *_ = rig
+    payload = {
+        "version": 1,
+        "repo": "org/repo",
+        "pr": 12,
+        "head_sha": "a" * 40,
+        "actions": [{"type": "state", "state": "closed", "expected": {"state": "open"}}],
+    }
+    seed_source(ctx.sender.key, payload)
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    mocker.patch.object(pr_outbox, "read_outbox", side_effect=AssertionError("incus exec"))
+    ctx.sender = replace(
+        ctx.sender,
+        config={labels.GRANT: Grant(publish=PublishRights(pr_reviews=True)).to_label()},
+    )
+    out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
+    assert out.state == "refused" and "pr_state" in out.detail

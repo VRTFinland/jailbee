@@ -162,6 +162,8 @@ editors; its board picker supports adding a board and editing its action rights.
 Closing or reopening a bound PR is a `state` action in the PR manifest and needs
 `publish.pr_state`, which requires `publish.pr_reviews` and is narrowed with it
 like `pr_comment_edits`; `pr_reviews` does not imply it. The repo cap narrows it too.
+It also needs an authored, non-adopted PR binding, as a description rewrite does: an
+orchestrator cannot close a PR it is bound to only for review or adoption.
 
 `comment_edit` covers editing the body of an existing issue or PR conversation
 comment. Publication still refuses a comment written by any account other than the
