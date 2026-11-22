@@ -17,7 +17,7 @@ from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import MenuState
 from jailbee.sysstat import MemoryStatus
 from tests.dashboard_fixtures import ci, wide_group
-from tests.dashboard_pilot import bare_session, make_app
+from tests.dashboard_pilot import SyncJobs, bare_session, make_app
 
 
 def test_keys_move_and_open_a_menu_without_any_terminal(mocker, tmp_path):
@@ -1787,10 +1787,14 @@ def test_services_menu_order_and_ssh_action_gates(mocker, tmp_path):
     assert {e.value for e in actions.entries} == {"stop", "restart", "logs"}
 
 
-def _services_session(mocker, tmp_path, states):
-    """A session whose `service ls` answers each call from ``states`` (a list of lists)."""
-    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
+def _services_session(mocker, tmp_path, states, containers=("alpha-one",)):
+    """A session whose `service ls` answers each call from ``states`` (a list of lists).
+
+    Its job runner is `SyncJobs`: a re-list's result is delivered by `session.jobs.poll()`.
+    """
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci(c, "alpha") for c in containers])
     session, _ = bare_session(mocker, [group])
+    session.jobs = SyncJobs()
     answers = iter(states)
 
     def ls(argv, cwd=None):
@@ -1822,9 +1826,86 @@ def test_service_operation_returns_to_the_list_then_refreshes_it(mocker, tmp_pat
     # the operation ends: the open list is re-listed in place
     session.overlay = after
     run.call_args.kwargs["then"](0)
+    session.jobs.poll()
     assert session.overlay.purpose == "container-services"
     assert "db  (ready)" in session.overlay.entries[0].label
     assert session.overlay.start_index == 1
+
+
+def _start_first_service(session, run):
+    services = session.open_services("alpha-one")
+    actions = session.submit_picker(services, services.entries[0])
+    back = session.submit_picker(actions, next(e for e in actions.entries if e.value == "start"))
+    return back, run.call_args.kwargs["then"]
+
+
+def test_service_refresh_never_touches_another_containers_list(mocker, tmp_path):
+    session, run = _services_session(
+        mocker,
+        tmp_path,
+        [[("db", "stopped")], [("cache", "ready")], [("db", "ready")]],
+        containers=("alpha-one", "alpha-two"),
+    )
+    _back, then = _start_first_service(session, run)
+    other = session.open_services("alpha-two")
+    session.overlay = other
+    then(0)
+    session.jobs.poll()
+    assert session.overlay is other
+
+
+def test_service_refresh_while_the_action_picker_is_open_keeps_it_open(mocker, tmp_path):
+    session, run = _services_session(
+        mocker, tmp_path, [[("db", "stopped")], [("db", "ready")], [("db", "ready")]]
+    )
+    back, then = _start_first_service(session, run)
+    picker = session.submit_picker(back, back.entries[0])  # the action picker again
+    assert picker.purpose == "container-service-action"
+    session.overlay = picker
+    then(0)
+    session.jobs.poll()
+    assert session.overlay.purpose == "container-service-action"
+    assert session.overlay.back.purpose == "container-services"
+    assert "db  (ready)" in session.overlay.back.entries[0].label
+
+
+def test_service_action_picker_without_a_back_runs_and_closes(mocker, tmp_path):
+    session, run = _services_session(mocker, tmp_path, [[("db", "stopped")]])
+    services = session.open_services("alpha-one")
+    actions = session.submit_picker(services, services.entries[0])
+    orphan = dataclasses.replace(actions, back=None)
+    result = session.submit_picker(orphan, next(e for e in orphan.entries if e.value == "start"))
+    assert result is None
+    assert "then" not in run.call_args.kwargs
+
+
+def test_service_refresh_runs_off_the_ui_thread_and_coalesces(mocker, tmp_path):
+    session, run = _services_session(
+        mocker, tmp_path, [[("db", "stopped")], [("db", "ready")], [("db", "stopped")]]
+    )
+    back, then = _start_first_service(session, run)
+    session.overlay = back
+    quiet = mocker.patch(
+        "jailbee.dashboard.accounts.run_cli_quiet",
+        side_effect=lambda argv, cwd=None: mocker.Mock(
+            ok=True,
+            stdout=json.dumps(
+                [{"name": "db", "state": "ready", "window": None, "since": None, "detail": ""}]
+            ),
+        ),
+    )
+    then(0)
+    then(0)
+    then(0)
+    # one re-list in flight; nothing is applied before the poll delivers it
+    assert session.jobs.busy("services:alpha-one")
+    assert quiet.call_count == 1
+    assert "db  (stopped)" in session.overlay.entries[0].label
+    session.jobs.poll()  # delivers it and starts the one queued re-list
+    session.jobs.poll()
+    assert quiet.call_count == 2
+    assert not session.jobs.busy("services:alpha-one")
+    assert "db  (ready)" in session.overlay.entries[0].label
 
 
 def test_a_second_service_can_be_started_while_the_first_runs(mocker, tmp_path):
