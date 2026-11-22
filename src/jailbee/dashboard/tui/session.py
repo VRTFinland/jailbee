@@ -127,6 +127,7 @@ from jailbee.dashboard.model import (
     target_group,
     toggle_folded,
 )
+from jailbee.dashboard.notifications import NotificationQueue, QueueEntry
 from jailbee.dashboard.outbox import OutboxState
 from jailbee.dashboard.outbox_flow import Intent as OutboxIntent
 from jailbee.dashboard.outbox_flow import OutboxController
@@ -287,6 +288,29 @@ def _last_line(text: str, style: DispatchStyle) -> str:
         return ""
     line = lines[-1]
     return ": " + (line if len(line) <= 100 else line[:99] + "…")
+
+
+QUEUE_DISMISS_FINISHED = "\x00dismiss-finished"
+QUEUE_TAIL_LINES = 3
+
+_QUEUE_ICONS = {"running": "⟳", "done": "✓", "failed": "✗"}
+
+
+def _queue_state(entry: QueueEntry) -> str:
+    if entry.state == "running":
+        return "running"
+    return f"{entry.state} (exit {entry.status})"
+
+
+def _queue_label(entry: QueueEntry) -> str:
+    """One line of the queue list: state icon, target, command, state."""
+    return f"{_QUEUE_ICONS[entry.state]} {entry.target}: {entry.command} · {_queue_state(entry)}"
+
+
+def _tail(text: str) -> tuple[str, ...]:
+    """The last non-blank lines of ``text``, for an entry's detail."""
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    return tuple(lines[-QUEUE_TAIL_LINES:])
 
 
 def _now() -> datetime:
@@ -457,6 +481,8 @@ class DashboardSession:
         self.merge_pick: MergePick | None = None
         self.bulk_batches: list[BulkBatch] = []
         self.overlay: Overlay | None = None
+        # Every action started through the action runner, until dismissed.
+        self.queue = NotificationQueue()
         # Grant edits made here, shown until the gathered snapshot catches up (see _patch_grant).
         self._grant_patches: dict[str, _GrantPatch] = {}
         self._grant_pending: dict[str, float] = {}
@@ -620,6 +646,7 @@ class DashboardSession:
             ineligible=ineligible,
             transport=self.transport,
             ssh_policy=self.ssh_policy,
+            queue=self.queue.counts() if len(self.queue) else None,
         )
 
     def title(self) -> str:
@@ -743,6 +770,7 @@ class DashboardSession:
         style: DispatchStyle,
         label: str,
         then: Callable[[int | None], None] | None = None,
+        target: str | None = None,
     ) -> None:
         """Run ``jailbee <argv>`` through the action runner, in the dashboard.
 
@@ -750,8 +778,17 @@ class DashboardSession:
         ``repo`` and policy-checked by the caller. Returns at once: the result
         is settled on the frontend's thread by :meth:`_settle_actions`, which
         then calls ``then`` with the exit code (None when nothing ran).
+        ``target`` names the container or repo for its queue entry (default:
+        the first listed container in ``argv``, else the repo).
         """
-        self._start_actions([ActionRun(argv, repo.cwd())], [repo], style, label, then)
+        self._start_actions(
+            [ActionRun(argv, repo.cwd())],
+            [repo],
+            style,
+            label,
+            then,
+            targets=None if target is None else [target],
+        )
 
     def _start_actions(
         self,
@@ -762,11 +799,27 @@ class DashboardSession:
         then: Callable[[int | None], None] | None,
         *,
         settled: Callable[[ActionOutcome], None] | None = None,
+        commands: Sequence[str] | None = None,
+        targets: Sequence[str] | None = None,
     ) -> None:
+        """Start ``runs``, one queue entry each; settle them when the last one ended.
+
+        ``commands``/``targets`` label each run's entry (default: ``label``
+        and :meth:`_entry_target`).
+        """
         self.set_notice(f"running 'jailbee {label}'…", RUNNING_NOTICE_SECONDS)
+        ids = [
+            self.queue.start(
+                commands[i] if commands is not None else f"jailbee {label}",
+                targets[i] if targets is not None else self._entry_target(run.argv, repos[i]),
+            )
+            for i, run in enumerate(runs)
+        ]
+        self._queue_changed()
 
         def finished(outcome: ActionOutcome) -> None:
             self.notice_until = 0.0  # the running notice is over
+            self._settle_entries(ids, outcome)
             if settled is not None:
                 settled(outcome)
             else:
@@ -775,6 +828,106 @@ class DashboardSession:
                     then(rc)
 
         self.terminal.run_actions(runs, finished)
+
+    def _entry_target(self, argv: Sequence[str], repo: RepoTarget) -> str:
+        """The container ``argv`` names (its first listed one), else ``repo``'s prefix."""
+        listed = {c.name for g in self.groups for c in g.containers}
+        named = next((word for word in argv if word in listed), None)
+        if named is not None:
+            return named
+        group = next(
+            (g for g in self.groups if g.repo_root and Path(g.repo_root) == repo.repo_root),
+            None,
+        )
+        return group.prefix if group is not None else str(repo.repo_root)
+
+    def _settle_entries(self, ids: Sequence[int], outcome: ActionOutcome) -> None:
+        """Finish the entries of the runs that ran; drop those that never started."""
+        for i, entry_id in enumerate(ids):
+            result = outcome.results[i] if i < len(outcome.results) else None
+            if result is None or result.refused is not None or result.error is not None:
+                self.queue.drop(entry_id)
+                continue
+            if i < len(outcome.outputs):
+                output = outcome.outputs[i]
+            else:
+                output = outcome.output if len(ids) == 1 else ""
+            self.queue.finish(entry_id, result.status if result.status is not None else 1, output)
+        self._queue_changed()
+
+    def _queue_changed(self) -> None:
+        """Redraw an open queue list or entry from the queue as it is now."""
+        overlay = self.overlay
+        if not isinstance(overlay, Picker):
+            return
+        if overlay.purpose == "queue":
+            self.overlay = self.queue_picker(start_index=overlay.start_index)
+        elif overlay.purpose == "queue-entry":
+            self.overlay = self.queue_entry_picker(int(overlay.carry[0]))
+
+    def queue_picker(self, *, start_index: int = 0) -> Picker:
+        """The notification queue's list: one entry per action, then the clean-up."""
+        entries = [
+            PickerEntry(_queue_label(entry), str(entry.id)) for entry in reversed(list(self.queue))
+        ]
+        if any(entry.finished for entry in self.queue):
+            entries.append(PickerEntry("Dismiss finished", QUEUE_DISMISS_FINISHED, "D"))
+        detail: tuple[str, ...] = ()
+        if not entries:
+            detail = ("No background actions yet.",)
+            entries.append(PickerEntry("Close", "close"))
+        return Picker(
+            "queue",
+            "Notifications",
+            tuple(entries),
+            detail=detail,
+            start_index=min(start_index, len(entries) - 1),
+        )
+
+    def queue_entry_picker(self, entry_id: int) -> Picker:
+        """One entry's own actions, or the list again once it is gone."""
+        entry = self.queue.get(entry_id)
+        if entry is None:
+            return self.queue_picker()
+        entries = [PickerEntry("Show output", "output", "o")]
+        if entry.finished:
+            entries.append(PickerEntry("Dismiss", "dismiss", "d"))
+        return Picker(
+            "queue-entry",
+            entry.command,
+            tuple(entries),
+            carry=(str(entry.id),),
+            detail=(f"{entry.target}: {_queue_state(entry)}", *_tail(entry.output)),
+            back=self.queue_picker(),
+        )
+
+    def open_queue(self) -> None:
+        """The badge or its key: show the queue list."""
+        self.overlay = self.queue_picker()
+
+    def _queue_chosen(self, picker: Picker, entry: PickerEntry) -> Overlay | None:
+        if picker.purpose == "queue":
+            if entry.value == QUEUE_DISMISS_FINISHED:
+                self.queue.dismiss_finished()
+                return self.queue_picker()
+            if entry.value == "close" or not entry.value.isdigit():
+                return None
+            return self.queue_entry_picker(int(entry.value))
+        entry_id = int(picker.carry[0])
+        found = self.queue.get(entry_id)
+        if found is None:
+            return self.queue_picker()
+        if entry.value == "output":
+            self.terminal.show_output(
+                found.command, found.output, failed=found.state == "failed"
+            )
+            return self.queue_entry_picker(entry_id)
+        if entry.value == "dismiss":
+            if not self.queue.dismiss(entry_id):
+                self.set_notice("A running action cannot be dismissed")
+                return self.queue_entry_picker(entry_id)
+            return self.queue_picker()
+        return None
 
     def _settle_actions(
         self, repo: RepoTarget, label: str, style: DispatchStyle, outcome: ActionOutcome
@@ -793,28 +946,13 @@ class DashboardSession:
                 )
             return None
         rc = result.status if result.status is not None else 1
-        text = outcome.output
-        self._present_output(label, style, rc, text)
+        # The output is the action's queue entry; no screen pops up on its own.
         if rc != 0:
-            self.set_notice(f"'jailbee {label}' exited {rc}{_last_line(text, style)}")
-        elif style == "report":
-            # A clean run shows nothing, so this is all that says it ran.
+            self.set_notice(f"'jailbee {label}' exited {rc}{_last_line(outcome.output, style)}")
+        else:
             self.set_notice(f"'jailbee {label}' done")
         self.client.refresh()  # an action likely changed state — refresh ASAP
         return rc
-
-    def _present_output(self, label: str, style: DispatchStyle, rc: int, text: str) -> None:
-        """What the old pause/pager/bare styles become: an output screen or nothing.
-
-        ``output`` and ``paged`` always show what the command printed;
-        ``report`` only when it failed; ``plain`` never (a failure's last line
-        goes in the notice).
-        """
-        if not text.strip():
-            return
-        shows = style in ("output", "paged") or (style == "report" and rc != 0)
-        if shows:
-            self.terminal.show_output(f"jailbee {label}", text, failed=rc != 0)
 
     def dispatchable(self, target: str, verb: str) -> RepoTarget | None:
         """The repo to run ``verb`` on ``target`` in, or None after noticing why not.
@@ -2879,6 +3017,8 @@ class DashboardSession:
 
         None closes the overlay, as in :func:`submit_prompt`.
         """
+        if picker.purpose in ("queue", "queue-entry"):
+            return self._queue_chosen(picker, entry)
         if picker.purpose == "container-services":
             try:
                 name, state = json.loads(picker.carry[int(entry.value)])
@@ -3634,6 +3774,8 @@ class DashboardSession:
             self.overlay = self.start_new_container()
         elif key == "accounts":
             self.overlay = self.open_accounts()
+        elif key == "queue":
+            self.open_queue()
         elif key in ("config-edit", "config-edit-global") and self.remote:
             self.set_notice(REMOTE_CONFIG_EDIT_NOTE)
         elif key in ("config-edit", "config-edit-global"):
@@ -4126,15 +4268,18 @@ class DashboardSession:
             failed.update({r.prefix: f"exited {c}" for r, c in zip(runs, codes, strict=False) if c})
             self.marked -= frozenset(ok)
             batch = BulkBatch(action.verb, ok=ok, failed=failed, skipped=dict(action.skipped))
-            if failed or outcome.output.strip():
-                self.terminal.show_output(
-                    f"jailbee {action.verb}", outcome.output, failed=bool(failed)
-                )
             self.set_notice(batch.summary(), FAILURE_NOTICE_SECONDS if failed else NOTICE_SECONDS)
             self.client.refresh()
 
         self._start_actions(
-            full, [r.target for r in runs], "output", action.verb, None, settled=settled
+            full,
+            [r.target for r in runs],
+            "output",
+            action.verb,
+            None,
+            settled=settled,
+            commands=[f"jailbee {dact.command_label(list(run.argv))}" for run in runs],
+            targets=[run.prefix for run in runs],
         )
 
     def toggle_mark(self, name: str) -> None:
@@ -4252,6 +4397,9 @@ class DashboardSession:
             isinstance(overlay, (MenuState, RepoMenuState, Picker)) or overlay == "help"
         ):
             return  # a prompt, the command line, settings, egress or accounts keep the focus
+        if hit is not None and hit.kind == "queue":
+            self.open_queue()
+            return
         if hit is not None and hit.kind not in ("scroll", "sort") and not self._listed(hit):
             return  # stale: the row or repo left the listing since the frame was painted
         if hit is not None and hit.kind in ("advisory-run", "advisory-dismiss", "upgrade-all"):

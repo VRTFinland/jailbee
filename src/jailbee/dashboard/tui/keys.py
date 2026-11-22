@@ -81,6 +81,13 @@ KEY_BINDINGS: tuple[KeyBinding, ...] = (
         "credential groups and stored logins",
         "Actions",
     ),
+    KeyBinding(
+        "queue",
+        ("Q",),
+        "Q",
+        "notifications: actions run here and their output",
+        "Actions",
+    ),
     KeyBinding("optimize", ("O",), "O", "optimize column widths once", "View"),
     KeyBinding("refresh", ("f5", "ctrl+r"), "F5 / Ctrl-R", "force a full refresh", "View"),
     KeyBinding("details", ("v",), "v", "show/hide the details panel", "View"),

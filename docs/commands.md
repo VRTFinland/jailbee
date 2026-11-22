@@ -691,13 +691,19 @@ and keeps drawing while it runs; the status line names the running command.
 - **Cancel means cancel.** Esc or Ctrl-C in a modal has the effect of Esc or
   Ctrl-C at the CLI prompt. Quitting the dashboard with a question open
   cancels it, and the command exits instead of waiting.
-- **Output is shown by the dashboard.** Commands whose output is the point
-  (`git diff`, `outbox show`, ...) open a scrollable output screen when they
-  finish (Enter, Esc or `q` closes it). Git-bridge reports (`git push`,
-  `git pull`, merge, rename) open it only on failure and otherwise show a
-  short notice. Other commands show no screen; a failure's last output line
-  is in the notice. A bulk run over several repos shows one screen with every
-  run's output.
+- **Output goes to the notification queue.** Every action the dashboard
+  runs this way becomes an entry in its notification queue: the command, its
+  container or repo, its state (running, done, failed) and its exit status,
+  with everything it printed. No output screen pops up when an action ends;
+  a short notice says it finished (`done`, or `exited N`). A bulk run over
+  several repos is one entry per run. An action refused by the policy or
+  that could not start is only a notice. The badge `⟳ R · ⚠ A` at the top of
+  the dashboard (R running, A failed) appears once anything has run; a click
+  on it, or `Q`, opens the queue list (a click outside closes it). Choosing an
+  entry offers `Show output` (`o`: the full output on a scrollable screen;
+  Enter, Esc or `q` closes it) and, once it has finished, `Dismiss` (`d`);
+  `Dismiss finished` (`D`) clears every finished entry. A running entry
+  cannot be dismissed. The queue lives as long as the dashboard.
 - **Attach-style actions still hand over the terminal:** shell, tmux, IDE,
   browsers and `apps run`, the orphan tmux and shell entries, `config edit`
   (a full-screen editor), a followed `job log` and the outbox publish

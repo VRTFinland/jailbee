@@ -847,16 +847,17 @@ def test_two_repos_get_one_run_each(mocker, tmp_path):
     ]
 
 
-def test_one_failed_run_shows_the_output_of_all_runs_once_after_the_last(mocker, tmp_path):
+def test_one_failed_run_is_its_own_entry_and_no_screen_pops_up(mocker, tmp_path):
     child = _children(mocker, failing=("beta-a",))
     session = _two_repos(mocker, tmp_path)
 
     session.begin_bulk("git pull", confirmed=True)
 
     assert child.call_count == 2
-    ((_title, text, failed),) = session.terminal.shown
-    assert failed
-    assert "alpha-a" in text and "beta-a" in text  # one screen for both runs
+    assert getattr(session.terminal, "shown", []) == []
+    alpha, beta = session.queue
+    assert (alpha.state, beta.state) == ("done", "failed")
+    assert "alpha-a" in alpha.output and "beta-a" in beta.output  # one entry per run
 
 
 def test_a_clean_single_pull_says_it_is_done(mocker, tmp_path):

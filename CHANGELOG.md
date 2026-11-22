@@ -10,6 +10,12 @@ before editing `## Unreleased`.
 
 ### Added
 
+- The terminal dashboard keeps a notification queue of the actions it runs
+  in the background ([#151](https://github.com/VRTFinland/jailbee/issues/151)):
+  each is an entry with its command, target, state, exit status and output,
+  until dismissed. Output screens no longer pop up when an action ends; a
+  short notice says it finished. The `⟳ running · ⚠ failed` badge at the top,
+  or `Q`, opens the queue, where an entry expands to its full output.
 - The terminal dashboard colours a whole container row by its non-normal phase: yellow
   while booting, cyan during autostart, magenta for other live jobs and red for
   a dead job or failed autostart. A Stopped row stays dim.

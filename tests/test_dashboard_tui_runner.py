@@ -58,6 +58,11 @@ def _drive(
     return app
 
 
+def _finished(app: Any) -> bool:
+    """Whether the one action's queue entry has finished."""
+    return any(entry.finished for entry in app.session.queue)
+
+
 def _prompt(**kw: Any) -> Prompt:
     return Prompt(id=0, **{"kind": "confirm", "question": "Go?", **kw})
 
@@ -69,9 +74,10 @@ def test_prompt_during_action_is_a_modal_and_the_answer_reaches_the_child(mocker
         await _until(pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "the modal")
         assert app.session.terminal is app
         await pilot.press("y")
-        await _until(pilot, lambda: isinstance(app.screen, pm.OutputScreen), "the output")
-        assert "alku ä" in app.screen.text  # what the child printed is shown by the dashboard
-        await pilot.press("enter")
+        await _until(pilot, lambda: _finished(app), "the finished entry")
+        assert not isinstance(app.screen, pm.OutputScreen)  # nothing pops up on its own
+        (entry,) = app.session.queue
+        assert "alku ä" in entry.output  # what the child printed is in its queue entry
         await pilot.press("ctrl+c")
 
     _drive(mocker, tmp_path, spawn, script)
@@ -90,8 +96,7 @@ def test_single_choice_answer_reaches_the_child(mocker, tmp_path):
     async def script(app, pilot):
         await _until(pilot, lambda: isinstance(app.screen, pm.ChooseOneModal), "the list")
         await pilot.press("down", "enter")
-        await _until(pilot, lambda: isinstance(app.screen, pm.OutputScreen), "the output")
-        await pilot.press("enter")
+        await _until(pilot, lambda: _finished(app), "the finished entry")
         await pilot.press("ctrl+c")
 
     _drive(mocker, tmp_path, spawn, script)
@@ -104,8 +109,7 @@ def test_cancelling_a_modal_is_a_cancel_for_the_child(mocker, tmp_path):
     async def script(app, pilot):
         await _until(pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "the modal")
         await pilot.press("escape")
-        await _until(pilot, lambda: isinstance(app.screen, pm.OutputScreen), "the output")
-        await pilot.press("enter")
+        await _until(pilot, lambda: _finished(app), "the finished entry")
         await pilot.press("ctrl+c")
 
     _drive(mocker, tmp_path, spawn, script)
@@ -121,8 +125,7 @@ def test_destructive_question_is_styled_and_defaults_to_no(mocker, tmp_path):
         seen["styled"] = app.screen.has_class("destructive")
         seen["focus"] = app.focused
         await pilot.press("enter")  # Enter on the preset focus
-        await _until(pilot, lambda: isinstance(app.screen, pm.OutputScreen), "the output")
-        await pilot.press("enter")
+        await _until(pilot, lambda: _finished(app), "the finished entry")
         await pilot.press("ctrl+c")
 
     _drive(mocker, tmp_path, spawn, script)
@@ -140,8 +143,7 @@ def test_secret_is_masked_in_the_dashboard(mocker, tmp_path):
         await _until(pilot, lambda: isinstance(app.screen, pm.TextModal), "the input")
         seen["masked"] = app.screen.query_one(Input).password
         await pilot.press(*"s3cret", "enter")
-        await _until(pilot, lambda: isinstance(app.screen, pm.OutputScreen), "the output")
-        await pilot.press("enter")
+        await _until(pilot, lambda: _finished(app), "the finished entry")
         await pilot.press("ctrl+c")
 
     _drive(mocker, tmp_path, spawn, script)
