@@ -26,6 +26,7 @@ the host outbox's stored proposal files by hand.
     {"type": "reply", "comment_id": 99887, "body": "…"},
     {"type": "comment_edit", "comment_id": 99888, "body": "…", "expected": {"body": "…"}},
     {"type": "comment", "body_file": "001-general.md", "reply_to": 4455},
+    {"type": "state", "state": "closed", "expected": {"state": "open"}},
     {"type": "description", "body_file": "001-body.md", "title": "Improve onboarding", "branch": null}
   ]
 }
@@ -75,7 +76,7 @@ For rework of PR 1234, a numbered source can have no description action:
 }
 ```
 
-Every PR proposal — review, reply, comment, comment_edit, description and source — is
+Every PR proposal — review, reply, comment, comment_edit, state, description and source — is
 staged in the host outbox store over the broker socket (never as a file in
 the container); the broker re-validates it and refuses a child container. `jailbee outbox ls|show|drop`
 cover it as `pr/NNN-source.json`, and `jailbee outbox sent` lists it once
@@ -153,6 +154,17 @@ nothing partial lands.
 `POST /repos/{owner}/{repo}/pulls/{n}/comments/{comment_id}/replies`.
 `comment_id` is a review-comment id you read via `gh api`. Replies are
 separate calls, one per action, and are applied after the review.
+
+## `type: "state"`
+
+`gh pr close N` / `gh pr reopen N`. `state` is `closed` or `open`; `expected.state`
+is the other one — the state you read when staging — and is required. Stage it with
+`jailbee pr state [N] closed|open`, which fills in `expected.state`. Needs a numbered
+`pr`; at most one per manifest. Before publishing the host re-reads the PR and
+refuses unless it is still in `expected.state` (a merged PR is always refused). The
+plan warns `closes PR #N` / `reopens PR #N`. A PR the container does not own needs
+`--foreign`, as for any action. An orchestrator needs `publish.pr_state`. Merging
+and draft toggling are out of scope.
 
 ## `type: "comment_edit"`
 

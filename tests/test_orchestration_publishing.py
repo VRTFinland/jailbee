@@ -1208,3 +1208,32 @@ def test_precheck_does_not_need_the_edit_right_for_an_already_published_edit(rig
     )
     out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
     assert out.state != "refused" and "pr_comment_edits" not in (out.detail or "")
+
+
+def _state_manifest():
+    return pr_outbox.parse_manifest(
+        "a.json",
+        json.dumps(
+            {
+                "version": 1,
+                "repo": "org/repo",
+                "pr": 12,
+                "head_sha": "a" * 40,
+                "actions": [{"type": "state", "state": "closed", "expected": {"state": "open"}}],
+            }
+        ),
+        {},
+    )
+
+
+@pytest.mark.parametrize(("granted", "allowed"), [(False, False), (True, True)])
+def test_review_policy_needs_pr_state_right(rig, mocker, granted, allowed):
+    ctx = rig[0]
+    _bound(ctx, mocker)
+    rights = PublishRights(pr_reviews=True, pr_state=granted)
+    check = publishing._review_policy(rights, 1, ctx.cfg, ctx.incus, ctx.sender.full)
+    if allowed:
+        check(_state_manifest())
+    else:
+        with pytest.raises(pr_outbox.GateError, match="pr_state"):
+            check(_state_manifest())

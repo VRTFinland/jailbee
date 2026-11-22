@@ -306,6 +306,7 @@ def render_grant(grant: dict[str, Any], *, as_json: bool) -> int:
     print(
         "publish pr_comment_edits: " + ("yes" if publish.get("pr_comment_edits") is True else "no")
     )
+    print("publish pr_state: " + ("yes" if publish.get("pr_state") is True else "no"))
     print("publish max_actions_per_hour: " + text(publish.get("max_actions_per_hour")))
     print("default runner: " + runner_text)
     return 0

@@ -261,6 +261,20 @@ def review_comment(repo: str | None, comment_id: int) -> CommentView:
         raise GhError(f"invalid comment response; retry `{' '.join(argv)}`: {exc}") from exc
 
 
+def pr_state(repo: str | None, pr: int) -> str:
+    """The state of PR #`pr`: ``open``, ``closed`` or ``merged``."""
+    cwd, prefix = _api_repo(repo)
+    argv = ["gh", "api", f"{prefix}/pulls/{pr}"]
+    try:
+        value = run_json(argv, cwd=cwd)
+    except GhError as exc:
+        raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
+    state = value.get("state") if isinstance(value, dict) else None
+    if not isinstance(value, dict) or state not in ("open", "closed"):
+        raise GhError(f"invalid PR response; retry `{' '.join(argv)}`")
+    return "merged" if value.get("merged") is True else str(state)
+
+
 def review_state(repo: str | None, pr: int, review_id: int) -> str:
     """The state (``PENDING``, ``COMMENTED``, ...) of one review on PR #`pr`."""
     cwd, prefix = _api_repo(repo)

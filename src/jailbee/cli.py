@@ -13292,6 +13292,13 @@ def orchestrate_grant_cmd(
             help="Edit submitted PR review comments on bound PRs.",
         ),
     ] = None,
+    publish_pr_state: Annotated[
+        bool | None,
+        typer.Option(
+            "--publish-pr-state/--no-publish-pr-state",
+            help="Close and reopen bound PRs.",
+        ),
+    ] = None,
     publish_rate: Annotated[
         int | None,
         typer.Option("--publish-rate", help="Maximum published actions per sliding hour."),
@@ -13355,6 +13362,7 @@ def orchestrate_grant_cmd(
         publish_prs=publish_prs,
         publish_pr_reviews=publish_pr_reviews,
         publish_pr_comment_edits=publish_pr_comment_edits,
+        publish_pr_state=publish_pr_state,
         publish_rate=publish_rate,
         no_publish=no_publish,
     )

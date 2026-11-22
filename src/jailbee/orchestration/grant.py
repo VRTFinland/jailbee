@@ -219,6 +219,12 @@ class PublishRights(BaseModel):
             "(`pr_reviews` does not imply it)."
         ),
     )
+    pr_state: bool = Field(
+        default=False,
+        description=(
+            "Close and reopen bound PRs (`pr_reviews` does not imply it, and it needs it)."
+        ),
+    )
     max_actions_per_hour: int = Field(
         default=30,
         ge=1,
@@ -260,6 +266,7 @@ class PublishRights(BaseModel):
             or self.pull_requests
             or self.pr_reviews
             or self.pr_comment_edits
+            or self.pr_state
         )
 
     def covers_issue(self, kind: str, slug: str, *, foreign: bool) -> bool:
@@ -299,6 +306,7 @@ class PublishRights(BaseModel):
             and cap.pr_comment_edits
             and self.pr_reviews
             and cap.pr_reviews,
+            pr_state=self.pr_state and cap.pr_state and self.pr_reviews and cap.pr_reviews,
             max_actions_per_hour=min(self.max_actions_per_hour, cap.max_actions_per_hour),
         )
 
@@ -421,7 +429,7 @@ def cap_excess(grant: Grant, cap: RepoCap) -> list[str]:
                         f"publish right `projects: {entry.board}:{project_kind}` "
                         "is above the repo cap"
                     )
-        for name in ("pull_requests", "pr_reviews", "pr_comment_edits"):
+        for name in ("pull_requests", "pr_reviews", "pr_comment_edits", "pr_state"):
             if getattr(requested, name) and not getattr(narrowed, name):
                 out.append(f"publish right `{name}` is above the repo cap")
         if (

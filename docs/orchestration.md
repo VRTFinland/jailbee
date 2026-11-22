@@ -137,6 +137,7 @@ publish:
   pull_requests: true
   pr_reviews: false
   pr_comment_edits: false                       # edit submitted PR review comments
+  pr_state: false                               # close and reopen bound PRs
   max_actions_per_hour: 30                      # 1..500
 ```
 
@@ -146,6 +147,7 @@ jb orchestrate grant bugs --publish-project acme/7=add,set
 jb orchestrate grant bugs --publish-project acme/7=none  # remove this board's rights
 jb orchestrate grant bugs --publish-foreign-issues someorg/upstream-lib:comment
 jb orchestrate grant bugs --publish-pr-reviews --publish-rate 10
+jb orchestrate grant bugs --publish-pr-reviews --publish-pr-state
 jb orchestrate grant bugs --no-publish
 ```
 
@@ -156,6 +158,10 @@ action uses one publish-rate slot. Foreign issue grants do not grant project
 rights, and project grants do not grant rights to foreign issue actions. The
 terminal dashboard exposes **Publish projects** beside the other publish-rights
 editors; its board picker supports adding a board and editing its action rights.
+
+Closing or reopening a bound PR is a `state` action in the PR manifest and needs
+`publish.pr_state`, which requires `publish.pr_reviews` and is narrowed with it
+like `pr_comment_edits`; `pr_reviews` does not imply it. The repo cap narrows it too.
 
 `comment_edit` covers editing the body of an existing issue or PR conversation
 comment. Publication still refuses a comment written by any account other than the
