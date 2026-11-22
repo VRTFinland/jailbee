@@ -852,7 +852,7 @@ def _standalone_hint(ab: Abilities) -> str:
         parts.append("p publish")
     if ab.clear:
         parts.append("X clear")
-    parts += ["v view", "f full", "m raw"]
+    parts += ["v preview", "f full", "m raw"]
     if ab.scope:
         parts.append("a all repos")
     parts.append("r refresh")

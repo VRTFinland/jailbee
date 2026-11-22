@@ -190,6 +190,7 @@ class OutboxBox(OverlayBox):
         # controller that really re-selects that same row cannot move us off where
         # the user has since scrolled to.
         self._last_sent: RowKey | None = None
+        self._before_reader = "auto"  # the preview mode `f` was pressed in
         self._asked: object = None
         self.set_class(standalone, "-standalone")
         self.border_title = self._title_for(spec)
@@ -470,6 +471,9 @@ class OutboxBox(OverlayBox):
         if self.panel.question is not None:
             return self._question_key(event)
         key = event.key
+        reader = self.panel.preview == "full"
+        if reader and key in ("escape", "enter", "v", "f"):
+            return self._intent("preview", self._before_reader)  # back to where it was opened
         if key in ("escape", "enter") and not self._list_shown():
             # The preview replaced the list (narrow): back to the list first.
             return self._intent("preview", "auto")
@@ -480,13 +484,17 @@ class OutboxBox(OverlayBox):
         if key == "v":
             return self._intent("preview", self._preview_toggle())
         if key == "f":
-            return self._intent("preview", "auto" if self.panel.preview == "full" else "full")
+            if self.panel.preview != "full":
+                self._before_reader = self.panel.preview
+            return self._intent("preview", "full")
         if key == "enter" and not self._preview_shown():
             row = self._cursor_key()
             if row is not None and not has_children(self.panel, row):
                 # Nothing to expand: "open" shows the row in the hidden preview.
                 return self._intent("preview", "on")
         name = _INTENT_KEYS.get(key)
+        if reader and name not in (None, "raw", "refresh", "open"):
+            return True  # the list is hidden: its keys do nothing here
         if name is not None:
             return self._intent(name) if self._allowed(name) else True
         if not self._list.display:

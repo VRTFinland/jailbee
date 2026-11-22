@@ -5848,7 +5848,7 @@ Run `jb dashboard` (terminal at 140 columns).
 1. Run `jailbee outbox` from the repo (140 columns). Expected: the box fills
    the screen with `a` and `b` and their proposals in one tree; the bottom
    hint reads `q quit  Space mark  d delete  p publish  X clear
-   v view  f full  m raw  a all repos  r refresh`. `Space`, `d`, `v`, `m` and `p`
+   v preview  f full  m raw  a all repos  r refresh`. `Space`, `d`, `v`, `m` and `p`
    behave as in the dashboard; `f` opens the preview full screen (scroll with
    the arrows/PageUp/PageDown, `f` or Esc returns with the cursor kept).
 2. Press `a`. Expected: the scope widens to every registered repo (`a all

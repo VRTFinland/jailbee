@@ -306,3 +306,32 @@ def test_snapshot_outbox_app(snap_compare, mocker):
         assert app.controller.state.containers
 
     assert snap_compare(app, terminal_size=(100, 30), run_before=loaded)
+
+
+def test_dashboard_overlay_reader_opens_and_closes_with_the_cursor_kept(mocker, groups):
+    """`f` in the dashboard's Outbox box opens the reader; Esc returns, not closes the box."""
+    import asyncio
+
+    from jailbee.dashboard.tui.outbox_box import OutboxBox
+
+    app, open_outbox = _outbox_in_dashboard(mocker, groups)
+
+    async def scenario() -> tuple[int | None, int | None]:
+        async with app.run_test(size=(120, 34)) as pilot:
+            await open_outbox(pilot)
+            await pilot.press("down")
+            await pilot.pause()
+            box = app.query_one(OutboxBox)
+            cursor = box._list.highlighted
+            await pilot.press("f")
+            await pilot.pause()
+            assert app.session.overlay.preview == "full"
+            assert not box._list.display
+            await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.session.overlay, tsession.OutboxState)
+            assert app.session.overlay.preview == "auto" and box._list.display
+            return cursor, box._list.highlighted
+
+    cursor, kept = asyncio.run(scenario())
+    assert cursor is not None and kept == cursor
