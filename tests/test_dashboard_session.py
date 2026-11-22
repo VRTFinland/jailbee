@@ -2394,9 +2394,7 @@ def test_outside_click_closes_the_box_while_its_listing_is_in_flight(mocker, tmp
 
 
 @pytest.mark.parametrize("busy", ["planning…", "deleting…"])
-def test_outside_click_does_nothing_while_a_job_other_than_the_listing_runs(
-    mocker, tmp_path, busy
-):
+def test_outside_click_does_nothing_while_a_job_other_than_the_listing_runs(mocker, tmp_path, busy):
     from dataclasses import replace
 
     from jailbee.dashboard.hit import Hit
