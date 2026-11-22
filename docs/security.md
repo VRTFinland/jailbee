@@ -136,7 +136,7 @@ Every login, failure, logout and revocation is audited
 - **Attempt limits.** PIN and TOTP attempts are limited to five a minute per
   method, and after five consecutive failures the wait before the next
   attempt doubles with each failure from 2 seconds up to 30 minutes, until a
-  successful login by that method. Attempts during the wait are refused
+  successful login by any method. Attempts during the wait are refused
   without being checked. The waits are global, so a guesser can keep PIN and
   TOTP logins refused for the owner at about four requests an hour; that is
   the cost of the backoff. One-time links (single use, 60 seconds, high

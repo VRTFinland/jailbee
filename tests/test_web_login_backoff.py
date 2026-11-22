@@ -296,3 +296,39 @@ def test_the_wait_stays_at_the_cap_however_long_the_run() -> None:
         limiter.failed("pin")
 
     assert limiter.check("pin") == 1800.0
+
+
+def test_a_login_by_another_method_keeps_the_hold_on_an_attempt_in_flight(
+    clock: FakeClock,
+) -> None:
+    """A reset must not reopen the bucket of a guess still being checked."""
+    results: list[tuple[int, str | None]] = []
+    holder: dict[str, TestClient] = {}
+    armed: list[bool] = []
+
+    def on_rotate(new: str, why: str) -> None:
+        if armed:
+            armed.clear()
+            token = login_link.mint(get_engine(), clock=clock)
+            link = holder["client"].post(
+                "/api/auth", json={"method": "link", "token": token, "device_name": "owner"}
+            )
+            assert link.status_code == 200
+            results.append(pin_attempt(holder["client"], "000000"))
+
+    pin = PinHolder(generate=pin_sequence(), on_rotate=on_rotate)
+    deps = WebDeps(
+        snapshot_source=FakeSourceFactory(),
+        engine=get_engine(),
+        clock=clock,
+        monotonic=clock.monotonic,
+        pin=pin,
+    )
+    client = holder["client"] = TestClient(create_app(deps))
+    for _ in range(5):
+        fail_pin(client, pin)
+    clock.advance(timedelta(seconds=60))
+    armed.append(True)
+    fail_pin(client, pin)
+
+    assert results == [(429, "4")]

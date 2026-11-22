@@ -152,8 +152,8 @@ def authenticate(body: Login, ctx: Context, request: Request) -> TokenResponse:
             "fido2": "Security key not accepted",
         }[body.method]
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
-    ctx.limiter.reset()
     token = ctx.sessions.create(body.device_name)
+    ctx.limiter.reset(body.method if limited else None)
     audit("login")
     return TokenResponse(token=token)
 
