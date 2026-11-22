@@ -1558,8 +1558,9 @@ manifest's full proposed text and journal state, never truncated, for
 actually reading a body before deciding. On a terminal the Markdown bodies are
 wrapped to the window and coloured; HTML tags and image URLs are shown as text
 rather than hidden, and piped output is the raw text. `http(s)` links are
-clickable (OSC 8) in a terminal that supports it, with the target's host shown
-after a label that differs from the target; any other scheme (`javascript:`,
+clickable (OSC 8) in a terminal that supports it, with ` → host` shown after
+any label that is not exactly the target's `scheme://host`, so a label or a
+`user@` prefix cannot pose as the real host; any other scheme (`javascript:`,
 `file:`, …) is shown as text with its target.
 
 Pending manifests are also visible without running `outbox ls`:

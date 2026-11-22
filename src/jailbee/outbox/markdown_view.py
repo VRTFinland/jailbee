@@ -15,7 +15,8 @@ would show. Three rules follow:
 * Terminal controls are removed from the *rendered* segments, after the parser
   has decoded entities (``&#x202e;`` becomes a bidi override only at that
   point), so the escape codes in the output are only ever Rich's own styling.
-  Links are shown as text, never as OSC 8 hyperlinks.
+  A link becomes an OSC 8 hyperlink only when `_link_host` accepts its target
+  (printable ASCII, http/https); any other is shown as text with its target.
 * Those lines are marked `AnsiLine`. The renderers that produce lines stay pure
   and keep returning ``list[str]``; `print_lines` is where an `AnsiLine` is told
   apart from an ordinary line, which still gets `safe_text` and no markup. A
@@ -56,7 +57,10 @@ class AnsiLine(str):
 
 
 # Printable ASCII only: no controls, no whitespace, no bidi or other invisible characters.
-_SAFE_URL = re.compile(r"https?://[!-~]+")
+_SAFE_URL = re.compile(r"https?://[!-~]+", re.IGNORECASE)
+_BRACKETS = re.compile(r"%5([BD])", re.IGNORECASE)
+# The separator a label is unlikely to imitate convincingly: "(host)" is easy to fake.
+_HOST_SEP = " \u2192 "
 
 
 def _link_host(url: str) -> str | None:
@@ -69,33 +73,61 @@ def _link_host(url: str) -> str | None:
         return None
 
 
+def _normalise_href(href: str) -> str:
+    """`href` with a lower-case scheme and the brackets of an IPv6 literal un-encoded.
+
+    markdown-it percent-encodes ``[`` and ``]`` everywhere, which breaks the
+    authority of ``https://[::1]/``; only the authority is repaired.
+    """
+    scheme, sep, rest = href.partition("://")
+    if not sep:
+        return href
+    end = min((i for i in (rest.find(c) for c in "/?#") if i >= 0), default=len(rest))
+    authority = rest[:end]
+    userinfo, at, hostport = authority.rpartition("@")
+    if hostport[:3].upper() == "%5B":  # only an IPv6 literal, never userinfo
+        hostport = _BRACKETS.sub(lambda m: "[" if m[1] in "bB" else "]", hostport)
+    authority = f"{userinfo}{at}{hostport}"
+    return f"{scheme.lower()}://{authority}{rest[end:]}"
+
+
 def _text_token(content: str) -> Token:
     token = Token("text", "", 0)
     token.content = content
     return token
 
 
+def _plain_origin(label: str, href: str, host: str) -> bool:
+    """Whether `label` is exactly the scheme and host of `href`, so it cannot mislead."""
+    scheme = href.partition("://")[0]
+    if urlsplit(href).netloc.lower() != host:  # a port or userinfo is worth showing
+        return False
+    return label.lower() in (f"{scheme}://{host}".lower(), f"{scheme}://{host}/".lower())
+
+
 def _rewrite_links(children: list[Token]) -> list[Token]:
-    """Keep a safe link, with its host after a differing label; flatten any other to text."""
+    """Keep a safe link, adding its host after any label but the bare origin; flatten others."""
     out: list[Token] = []
     label = ""
     href = ""
     in_link = False
     for child in children:
         if child.type == "link_open":
-            href = str(child.attrs.get("href", ""))
+            href = _normalise_href(str(child.attrs.get("href", "")))
             label, in_link = "", True
             if _link_host(href) is None:
                 continue  # dropped: the close below shows the target as text
+            child.attrs["href"] = href
         elif child.type == "link_close":
             in_link = False
             host = _link_host(href)
             if host is None:
-                out.append(_text_token(f" ({href})"))
+                if label != href:
+                    out.append(_text_token(f"{_HOST_SEP}{href}"))
                 continue
             out.append(child)
-            if label != href:
-                out.append(_text_token(f" ({host.lower()})"))
+            if not _plain_origin(label, href, host):
+                out.append(_text_token(f"{_HOST_SEP}{host.lower()}"))
             continue
         elif in_link:
             label += child.content
