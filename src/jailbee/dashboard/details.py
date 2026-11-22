@@ -597,7 +597,13 @@ def _process_lines(c: ContainerInfo) -> tuple[str, ...]:
 def _warnings(c: ContainerInfo) -> tuple[str, ...]:
     """Yellow lines for what is off about ``c``'s git target, as markup."""
     warning = tracking_warning(c)
-    return () if warning is None else (f"[yellow]⚠ {escape(warning)}[/yellow]",)
+    lines: tuple[str, ...] = () if warning is None else (f"[yellow]⚠ {escape(warning)}[/yellow]",)
+    branches = c.git_status.other_branches if c.git_status is not None else None
+    if branches:
+        listed = ", ".join(f"{escape(b.name)} [dim]{escape(b.sha[:8])}[/dim]" for b in branches)
+        noun = "branch" if len(branches) == 1 else "branches"
+        lines += (f"[yellow]⚠ unimported commits on {noun}[/yellow] {listed}",)
+    return lines
 
 
 def _exceptions(c: ContainerInfo, now: datetime, ttl: str) -> tuple[str, ...]:

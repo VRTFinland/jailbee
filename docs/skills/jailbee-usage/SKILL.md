@@ -615,7 +615,9 @@ The destroy guard's "commits not on the host" check (below) depends on the
 container's HEAD sha and whether any remote-tracking ref contains it.
 Neither is a `jailbee ls` column, but both appear in the `git_status` field's
 JSON payload (`jailbee ls -o json`, keys `head_sha` / `remote_contained`) for
-scripting.
+scripting. The same check covers the container's other local branches:
+one whose tip is not on the host or behind a remote-tracking ref is listed
+in the dashboard's context card and named in the destroy warning (no column).
 
 **Two more bridge commands:**
 

@@ -240,6 +240,19 @@ def assess(cfg: Config, ci: ContainerInfo) -> RiskSummary | None:
                 else "commits not on the host (count unknown)"
             )
 
+    # Other local branches: the gather already dropped those whose tip is on the
+    # host or behind a remote-tracking ref; re-check the host, which may have
+    # imported them since.
+    stranded = [
+        b
+        for b in status.other_branches or ()
+        if b.remote_contained is not True and not has_commit(cfg.repo_root, b.sha)
+    ]
+    if stranded:
+        listed = ", ".join(f"{b.name} ({b.sha[:8]})" for b in stranded)
+        noun = "branch" if len(stranded) == 1 else "branches"
+        reasons.append(f"commits not on the host in {noun} {listed}")
+
     if not reasons:
         return None
     return RiskSummary(container=ci.display_name, reasons=tuple(reasons))

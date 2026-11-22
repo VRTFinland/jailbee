@@ -386,6 +386,22 @@ def _resolve_local_on_host(cfg: Config, status: GitStatus) -> GitStatus:
     )
 
 
+def _unimported_branches(cfg: Config, status: GitStatus) -> GitStatus:
+    """Keep only the other branches whose tip is on neither the host nor a remote.
+
+    Unknown remote containment counts as unimported, like the HEAD check in
+    the destroy guard. Object-presence checks only; nothing is fetched.
+    """
+    if status.other_branches is None:
+        return status
+    kept = tuple(
+        b
+        for b in status.other_branches
+        if b.remote_contained is not True and not has_commit(cfg.repo_root, b.sha)
+    )
+    return replace(status, other_branches=kept)
+
+
 def snapshot_targets_for(
     cfg: Config,
     containers: Sequence[ContainerInfo],
@@ -805,13 +821,15 @@ def list_containers(
                 status = replace(status, unread_inbox=unread)
                 status = replace(status, pending_issue_actions=_issue_count(issue_counts, uuid))
                 status = replace(status, pending_pr_actions=_issue_count(pr_counts, uuid))
-            c.git_status = (
-                None
-                if status is None
-                else _resolve_local_on_host(cfg, status)
-                if c.repo == cfg.container_prefix
-                else status
-            )
+            if status is not None:
+                # The host check needs this repo's object store; another repo's
+                # container keeps the branches unmeasured rather than unfiltered.
+                status = (
+                    _unimported_branches(cfg, _resolve_local_on_host(cfg, status))
+                    if c.repo == cfg.container_prefix
+                    else replace(status, other_branches=None)
+                )
+            c.git_status = status
 
     if with_background:
         from sqlmodel import Session

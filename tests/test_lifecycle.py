@@ -12703,3 +12703,28 @@ def test_host_columns_are_off_by_default_and_render_unknowns():
     assert specs["host_ahead"].cell(ci) == "[dim]0[/dim]"
     assert specs["host_behind"].cell(ci) == "[yellow]↓•[/yellow]"
     assert specs["host_behind"].json(ci) == PROBE_MISSING
+
+
+def test_unimported_branches_drops_host_and_remote_contained_tips(make_cfg, tmp_path, mocker):
+    from jailbee.git_status import GitStatus, OtherBranch
+    from jailbee.lifecycle import _unimported_branches
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.has_commit", side_effect=lambda _root, sha: sha == "onhost")
+    status = GitStatus(
+        "clean",
+        "clean",
+        "0",
+        "ok",
+        other_branches=(
+            OtherBranch("a", "onhost", False),
+            OtherBranch("b/c", "remote", True),
+            OtherBranch("d", "lost", False),
+            OtherBranch("e", "unk", None),
+        ),
+    )
+
+    kept = _unimported_branches(cfg, status).other_branches
+
+    assert [b.name for b in kept or ()] == ["d", "e"]
+    assert _unimported_branches(cfg, GitStatus("?", "?", "?", "?")).other_branches is None
