@@ -928,7 +928,7 @@ def test_default_runner_is_not_an_agent_entry(tmp_path):
     origins = layers.resolve(local_specs(), got)
     assert origins[("agents",)].source == "repo"
     assert "default_runner" not in origins[("agents",)].value
-    present, value = layers.lookup(got.local_raw, ("agents",))
+    present, _ = layers.lookup(got.local_raw, ("agents",))
     assert not present
 
 
