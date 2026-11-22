@@ -23,7 +23,7 @@ sha; the sync target's row says `sync target`, and a host-branch row standing in
 for a PR head the host never fetched says `sync target (fallback)` while the PR
 row reads `not fetched`. A child or fork shows `↳ <host branch>` and `⑂ <parent>`
 instead, the parent row with the parent's HEAD sha and the age of the gather
-pass that saw it; a stopped or unseen parent's row reads `not running`. A dim
+pass that saw it; a stopped or unseen parent's row reads `not seen running`. A dim
 footer line holds what no column shows: a memory-limit override and, for a fork,
 its source; it is left out when there is nothing to say (mode and credential group
 are table columns).

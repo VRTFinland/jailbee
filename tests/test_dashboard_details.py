@@ -671,7 +671,7 @@ def test_a_child_card_without_a_parent_head_marks_the_host_row_as_fallback() -> 
     assert panel.git is not None
     host, parent = panel.git[1:3]
     assert _plain(host.note) == "sync target (fallback)"
-    assert (_plain(parent.name), _plain(parent.target)) == ("⑂ orch", "not running")
+    assert (_plain(parent.name), _plain(parent.target)) == ("⑂ orch", "not seen running")
     assert (_plain(parent.ahead), _plain(parent.behind)) == ("—", "—")
 
 

@@ -381,7 +381,7 @@ def _target_rows(c: ContainerInfo, now: datetime) -> tuple[GitRow, ...]:
     if parent is not None:
         name = f"⑂ {escape(parent)}"
         if on_host:
-            return (host, GitRow(name, _DASH, _DASH, "[yellow]not running[/yellow]", ""))
+            return (host, GitRow(name, _DASH, _DASH, "[yellow]not seen running[/yellow]", ""))
         seen = (
             f"[dim]seen {_fetch_age(sync.seen_at, now)}[/dim]" if sync.seen_at is not None else ""
         )

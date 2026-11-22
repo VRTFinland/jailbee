@@ -251,7 +251,8 @@ work flows next, chosen automatically:
   HEAD as the dashboard's previous gather pass saw it (`↓•` when that commit is
   not in the child's object store); ↑ counts the child's commits not yet
   imported — since the orchestrator's last import, else since the fork's
-  starting commit (`?` when neither is known). Its cells carry a dim `⑂`
+  starting commit (`?` when neither is known); a `jailbee fork` has no imports, so its ↑
+  keeps counting from the fork point. Its cells carry a dim `⑂`
   marker. A stopped or missing parent, or the first gather pass (and a plain
   `jailbee ls`, which has no previous pass), compares with the host branch
   instead, and the cells carry a yellow `⑂?`;
@@ -275,7 +276,7 @@ PR head) with its own ↑/↓ and short sha, the sync target's row marked. The P
 how current it is: `fetched 3m ago`, `fetch failed 5m ago`, or `autofetch off`.
 A child or fork gets a host-branch row and a `⑂ <parent>` row instead, with the
 parent's HEAD sha and the age of the pass that saw it (`seen 1m ago`); a parent
-that cannot be compared with reads `not running`. JSON
+that cannot be compared with reads `not seen running`. JSON
 `git_status` carries the target as `sync_target` (`kind` `host`/`pr`/`parent`, `label`,
 `sha`, `ref`, `fallback`, `autofetch`, `fetched_at`, `fetch_error`,
 `fetch_error_at`, `parent`, `ahead_sha`, `seen_at`) plus `host_ahead_count`/`host_behind_count`, the
