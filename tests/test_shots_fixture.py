@@ -119,3 +119,20 @@ def test_queue_entries_reach_the_world_and_are_validated() -> None:
 
 def test_queue_step_is_a_step_kind() -> None:
     assert load_world(MINIMAL + "  - queue: seed\n").steps[-1] == ("queue", "seed")
+
+
+@pytest.mark.parametrize(
+    ("entry", "match"),
+    [
+        ("{target: y, state: done}", "command"),
+        ("{command: x, state: done}", "target"),
+        ("{command: x, target: y}", "state"),
+        ("{command: x, target: y, state: done, status: ok}", "status"),
+        ("{command: x, target: y, state: running, status: 0}", "running"),
+        ("{command: x, target: y, state: done, output: [a]}", "output"),
+        ("just text", "mapping"),
+    ],
+)
+def test_bad_queue_entries_fail_with_a_fixture_error(entry: str, match: str) -> None:
+    with pytest.raises(FixtureError, match=match):
+        load_world(MINIMAL + f"queue:\n  - {entry}\n")

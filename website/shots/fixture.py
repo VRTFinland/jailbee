@@ -262,6 +262,12 @@ def load_world(source: str | Path) -> World:
                 raise FixtureError(f"a queue entry has no {need!r}")
         if q["state"] not in QUEUE_STATES:
             raise FixtureError(f"queue state {q['state']!r} is not one of {QUEUE_STATES}")
+        if "output" in q and not isinstance(q["output"], str):
+            raise FixtureError("queue 'output' must be a string")
+        if "status" in q and (isinstance(q["status"], bool) or not isinstance(q["status"], int)):
+            raise FixtureError("queue 'status' must be an integer")
+        if "status" in q and q["state"] == "running":
+            raise FixtureError("a running queue entry has no 'status'")
     return World(
         (int(size[0]), int(size[1])),
         groups,
