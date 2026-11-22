@@ -10,6 +10,10 @@ before editing `## Unreleased`.
 
 ### Added
 
+- The documentation site has a task-first "User guide" section in place of "Daily use"
+  ([#150](https://github.com/VRTFinland/jailbee/issues/150)): Getting started, seven
+  new guide pages, Remote GUI, FAQ and Troubleshooting. Commands, git bridge,
+  orchestration and project config moved under Reference; page URLs are unchanged.
 - The terminal dashboard colours a whole container row by its non-normal phase: yellow
   while booting, cyan during autostart, magenta for other live jobs and red for
   a dead job or failed autostart. A Stopped row stays dim.
