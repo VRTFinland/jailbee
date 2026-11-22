@@ -364,19 +364,28 @@ def fetch_pr_head_unattended(
     """Fetch PR `number`'s head into `refs/jailbee/pr/<N>/head`, never prompting.
 
     For the detached state service, which has no terminal: git's terminal
-    prompt and credential helpers' interactive mode are off, ssh runs in batch
+    prompt, askpass programs and credential helpers' interactive mode are off, ssh runs in batch
     mode, stdin is closed and the fetch is bounded by `timeout`. A failed
     fetch leaves the ref as it was. Raises PrFetchError.
     """
     refspec = f"+pull/{number}/head:{pr_head_ref(number)}"
     try:
         env = {
-            **os.environ,
+            **{k: v for k, v in os.environ.items() if k not in ("GIT_ASKPASS", "SSH_ASKPASS")},
             "GIT_TERMINAL_PROMPT": "0",
             "GIT_SSH_COMMAND": _unattended_ssh_command(repo_root),
         }
         proc = subprocess.run(
-            ["git", "-c", "credential.interactive=never", "fetch", remote, refspec],
+            [
+                "git",
+                "-c",
+                "credential.interactive=never",
+                "-c",
+                "core.askPass=",
+                "fetch",
+                remote,
+                refspec,
+            ],
             cwd=repo_root,
             capture_output=True,
             text=True,

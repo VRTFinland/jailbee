@@ -47,6 +47,7 @@ class _PrState:
     fetched_at: float | None = None  # wall clock, epoch seconds
     error: str | None = None
     error_at: float | None = None
+    error_sha: str | None = None  # the ref's sha when the failure was first shown
 
 
 def read_policy(repo_root: Path) -> AutofetchPolicy | None:
@@ -122,6 +123,7 @@ class PrHeadAutofetcher:
                     continue
                 state = self._state(policy.repo_root, c.pr_number)
                 with self._lock:
+                    self._settle_error(state, gs.sync_target.sha)
                     target = replace(
                         gs.sync_target,
                         autofetch=policy.enabled,
@@ -130,6 +132,16 @@ class PrHeadAutofetcher:
                         fetch_error_at=state.error_at,
                     )
                 c.git_status = replace(gs, sync_target=target)
+
+    def _settle_error(self, state: _PrState, sha: str | None) -> None:
+        """Drop a failure the ref has moved past (a manual fetch succeeded). Lock held."""
+        if state.error is None or sha is None:
+            return
+        if state.error_sha is None:
+            state.error_sha = sha
+        elif state.error_sha != sha:
+            state.fetched_at = self._wall()
+            state.error = state.error_at = state.error_sha = None
 
     def _policy_for(self, repo_root: str) -> AutofetchPolicy | None:
         now = self._clock()
@@ -170,8 +182,9 @@ class PrHeadAutofetcher:
             with self._lock:
                 if error is None:
                     state.fetched_at, state.error, state.error_at = stamp, None, None
+                    state.error_sha = None
                 else:
-                    state.error, state.error_at = error, stamp
+                    state.error, state.error_at, state.error_sha = error, stamp, None
                 state.in_flight = False
 
         self._submit(job)

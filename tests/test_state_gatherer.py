@@ -549,12 +549,33 @@ def test_a_snapshot_carries_pr_head_fetch_facts_even_on_a_base_gather(mocker):
         sleep=lambda _s: None,
         pr_heads=pr_heads,
     )
+    annotate = mocker.spy(pr_heads, "annotate")
 
     g.tick(active=True, refresh=False, roots=[])
     g.tick(active=True, refresh=False, roots=[])
     clock.t = 3.0
     third = g.tick(active=True, refresh=False, roots=[])
+    assert annotate.call_count == 3  # on the base tick too, not carried over
 
     target = third.groups[0].containers[0].git_status.sync_target
     assert target.fetched_at == 5.0
     assert fetches == [7]
+
+
+def test_an_exception_inside_pr_head_annotate_leaves_the_gather_intact(mocker):
+    pr_heads = mocker.Mock()
+    pr_heads.annotate.side_effect = RuntimeError("boom")
+    mocker.patch("jailbee.state_service.gatherer.sample_activity")
+    g = Gatherer(
+        mocker.Mock(),
+        CAD,
+        sent_counts=lambda: SentCounts(),
+        gather=lambda *a, **k: [RepoGroup("alpha", "/a", None, [_ci("x")])],
+        clock=_Clock(),
+        sleep=lambda _s: None,
+        pr_heads=pr_heads,
+    )
+    result = g.tick(active=True, refresh=False, roots=[])
+    assert pr_heads.annotate.called
+    assert not isinstance(result, GatherError)
+    assert result.groups[0].containers[0].name == "x"

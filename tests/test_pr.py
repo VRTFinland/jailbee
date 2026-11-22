@@ -1602,15 +1602,21 @@ def test_unattended_fetch_never_prompts(tmp_path, mocker, monkeypatch):
     from jailbee.pr import fetch_pr_head_unattended
 
     monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    monkeypatch.setenv("GIT_ASKPASS", "/usr/bin/code-askpass")
+    monkeypatch.setenv("SSH_ASKPASS", "/usr/bin/ssh-askpass")
     calls = _unattended_run(mocker)
 
     fetch_pr_head_unattended(tmp_path, 7, remote="origin")
 
     cmd, kw = _fetch_call(calls)
+    assert "GIT_ASKPASS" not in kw["env"]
+    assert "SSH_ASKPASS" not in kw["env"]
     assert cmd == [
         "git",
         "-c",
         "credential.interactive=never",
+        "-c",
+        "core.askPass=",
         "fetch",
         "origin",
         "+pull/7/head:refs/jailbee/pr/7/head",
