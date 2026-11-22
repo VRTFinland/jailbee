@@ -83,6 +83,9 @@ class ContainerInfo:
     repo_dir: str | None = None
     pr_number: int | None = None
     pr_author: bool = False
+    # `owner/name` of the repo's GitHub upstream, set by the dashboard gather
+    # (never parsed from container text); the PR hyperlink is built from it.
+    pr_slug: str | None = None
     # The container's credential group, from
     # `user.jailbee.credential_group` (or its legacy spelling). None means it
     # inherits the repo's group; `accounts.groups.NO_GROUP` means it

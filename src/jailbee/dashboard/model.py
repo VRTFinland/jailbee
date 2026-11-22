@@ -223,6 +223,14 @@ class RepoGroup:
     sent_count: int = 0
 
 
+def _github_slug_of(cfg: Config) -> str | None:
+    """The repo's GitHub ``owner/name`` from its upstream remote, or None."""
+    from jailbee import git
+    from jailbee.github_repo import github_slug
+
+    return github_slug(git.get_remote_url(cfg.repo_root, cfg.upstream_remote) or "")
+
+
 def _agent_label(cfg: Config, runner: Runner | None) -> str | None:
     """The repo's effective agent for its row: the default runner, else the legacy launch.
 
@@ -532,7 +540,9 @@ def _gather_rows(
         from jailbee.autostart_profiles import profiled_config
         from jailbee.autostart_rerun import eligible_autostart, failed_targets
 
+        slug = _github_slug_of(cfg)
         for c in containers:
+            c.pr_slug = slug
             c.configured_mounts = tuple(cfg.optional_mounts)
             profile = (
                 c.autostart_profile

@@ -10,6 +10,10 @@ before editing `## Unreleased`.
 
 ### Added
 
+- The terminal dashboard's PR number (column and details panel) is a terminal
+  hyperlink (OSC 8) to the pull request, built from the repo's GitHub slug;
+  `JAILBEE_NO_HYPERLINKS=1` shows plain text
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
 - Links in the Markdown bodies of `jailbee outbox show` and the dashboard
   outbox preview are clickable (OSC 8) when the target is `http` or `https`; a
   label that is not exactly the target's `scheme://host` is followed by

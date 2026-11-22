@@ -176,6 +176,7 @@ def _full_snapshot() -> Snapshot:
             orchestrator_running=True,
             agent_runner="grok/sonnet",
             agent_source="container",
+            pr_slug="acme/widgets",
         )
     )
     group = RepoGroup(
@@ -434,7 +435,7 @@ def test_wire_schema_leaves_out_docstrings_and_titles():
 # PROTOCOL fails below: a client of another version would misread it. A pydantic
 # upgrade that only reshapes its schema output trips this too; a bump is then
 # harmless (a protocol mismatch makes the dashboard replace the state service).
-WIRE_SCHEMA = (33, "051f72506436ee47528842b3c7f226d28358cd6ab7969853fb55c83377f5f42c")
+WIRE_SCHEMA = (34, "19ed1b4cb3772d3acda319717c4aa6ee6aad4281fb2b39e3c6c98e78aab016c9")
 
 
 def test_a_wire_schema_change_bumps_the_protocol():

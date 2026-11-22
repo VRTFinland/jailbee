@@ -57,7 +57,8 @@ from jailbee.update_check import UpdateNotice
 # 31 adds GrantView.publish_pr_comment_edits, the PR comment-edit publish right.
 # 32 adds GitStatus.other_branches and OtherBranch, local branches with unimported commits.
 # 33 adds AgentSummary.sessions, one SessionMark per live session.
-PROTOCOL = 33
+# 34 adds ContainerInfo.pr_slug, the repo's GitHub slug for PR hyperlinks.
+PROTOCOL = 34
 
 
 class ProtocolError(ValueError):
