@@ -228,7 +228,10 @@ In status output, **DIFF ±** is the direct committed-tree line diff
 (`git diff <host-target> HEAD`); equal trees are `clean` even when histories
 differ. **↑** counts commits unique to the container and **↓** counts commits
 unique to the host target, using graph ancestry, so both can be nonzero when
-DIFF ± is clean. WT remains separate. Explicit JSON `git_status` exposes
+DIFF ± is clean. When the container does not hold the target commit at all
+(the host branch moved on with commits it never received), **↓** shows `↓•`
+(pull needed, count unknown; `behind_count` is `•` in JSON) while DIFF ±, ↑ and
+MERGE stay `?`. Nothing is written into the container. WT remains separate. Explicit JSON `git_status` exposes
 `target_diff`, `ahead_count`, `behind_count`, `base_source`, `base_sha`,
 `tracking_relation` and `upstream_ref`; per-submodule line fields are
 `target_ins`/`target_del`, while commit counts remain `ahead_commits` and

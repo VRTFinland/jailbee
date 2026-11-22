@@ -31,7 +31,13 @@ from jailbee.git import (
 # `parse_shortstat` is imported (not reimplemented) so the host-side
 # fallback below produces byte-identical `clean` / `+N -M` / `?` strings to
 # the container-side probe — duplicating the parser is how the two would drift.
-from jailbee.git_status import GitStatus, merge_label, parse_shortstat, probe_many_parallel
+from jailbee.git_status import (
+    BEHIND_UNKNOWN,
+    GitStatus,
+    merge_label,
+    parse_shortstat,
+    probe_many_parallel,
+)
 from jailbee.host_target import TargetSnapshot, resolve_target
 from jailbee.incus import Incus, IncusError
 from jailbee.memory_limit import LIMIT_KEY
@@ -3802,6 +3808,8 @@ def ls_field_specs(
                 return "[yellow]?[/yellow]"
             if zero_dim and v == "0":
                 return "[dim]0[/dim]"
+            if attr == "behind_count" and v == BEHIND_UNKNOWN:
+                return "[yellow]↓•[/yellow]"
             return v
 
         return cell

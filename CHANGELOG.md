@@ -10,6 +10,10 @@ before editing `## Unreleased`.
 
 ### Added
 
+- A container that lacks the comparison target commit altogether (the host branch
+  moved on with commits it never received) shows `↓•` — pull needed, count
+  unknown — in the dashboard and `jailbee ls`, while DIFF, ↑ and MERGE stay `?`
+  ([#145](https://github.com/VRTFinland/jailbee/issues/145)).
 - The terminal dashboard colours a whole container row by its non-normal phase: yellow
   while booting, cyan during autostart, magenta for other live jobs and red for
   a dead job or failed autostart. A Stopped row stays dim.
