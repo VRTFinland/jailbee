@@ -182,6 +182,25 @@ def test_choice_entries_order_and_custom_only_with_services(tmp_path):
     )
 
 
+def test_service_toggle_entries_show_descriptions(tmp_path):
+    from jailbee.dashboard.model import RepoGroup
+
+    group = RepoGroup(
+        "a",
+        str(tmp_path),
+        None,
+        [],
+        autostart_services=("db", "web"),
+        service_descriptions={"db": "Postgres for tests"},
+    )
+    entries = dact.autostart_service_entries(group, ("web",))
+    assert [(e.label, e.value) for e in entries] == [
+        ("Done", "\x00done"),
+        ("[ ] db — Postgres for tests", "db"),
+        ("[x] web", "web"),
+    ]
+
+
 def test_custom_services_args_joined(tmp_path):
     from jailbee.dashboard.model import RepoGroup
 
@@ -888,6 +907,17 @@ def test_orchestrate_grant_runner_options():
         "--",
         "x",
     ]
+
+
+def test_services_picker_shows_descriptions():
+    rows = dact.parse_service_rows(
+        '[{"name":"db","state":"ready","window":null,"since":null,"detail":"",'
+        '"description":"Postgres for tests"},'
+        '{"name":"web","state":"stopped","window":null,"since":null,"detail":""}]'
+    )
+    assert [r.description for r in rows] == ["Postgres for tests", ""]
+    labels = [e.label for e in dact.services_picker("alpha-x", rows).entries]
+    assert labels == ["db  (ready) — Postgres for tests", "web  (stopped)"]
 
 
 def test_services_json_and_state_actions():

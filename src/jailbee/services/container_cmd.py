@@ -61,12 +61,20 @@ def group(
 
 def _list(rt: ServiceRuntime, json_output: bool) -> None:
     statuses = rt.status()
+    descriptions = {name: svc.description for name, svc in rt.cfg.services.items()}
     if json_output:
-        typer.echo(json.dumps([asdict(s) for s in statuses]))
+        typer.echo(
+            json.dumps(
+                [{**asdict(s), "description": descriptions.get(s.name, "")} for s in statuses]
+            )
+        )
     else:
-        typer.echo("NAME  STATE  WINDOW  SINCE  DETAIL")
+        typer.echo("NAME  STATE  WINDOW  SINCE  DETAIL  DESCRIPTION")
         for s in statuses:
-            typer.echo(f"{s.name}  {s.state}  {s.window or '-'}  {s.since or '-'}  {s.detail}")
+            typer.echo(
+                f"{s.name}  {s.state}  {s.window or '-'}  {s.since or '-'}  {s.detail}  "
+                f"{descriptions.get(s.name) or '-'}"
+            )
 
 
 @service_app.command("ls")

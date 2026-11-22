@@ -10,6 +10,13 @@ before editing `## Unreleased`.
 
 ### Added
 
+- A service in `.jailbee/config.yaml` takes an optional `description`: what it
+  does and when it is needed
+  ([#149](https://github.com/VRTFinland/jailbee/issues/149)). In-container
+  `jailbee service ls` prints it in a DESCRIPTION column (and `--json`), so an
+  agent can tell which service to start; the dashboard shows it in the
+  `Services…` list and the custom-services picker.
+
 - `agents.default_runner` makes a runner (`claude` or `claude-jb`, an optional
   LiteLLM profile and model tier) the repo's default for every container's
   autostart, layered local → repo → global

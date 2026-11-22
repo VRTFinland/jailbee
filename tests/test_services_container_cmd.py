@@ -146,6 +146,7 @@ def test_ls_json_and_default(tmp_path: Path, monkeypatch) -> None:
             "detail": "ok",
             "launch": None,
             "status": None,
+            "description": "",
         }
     ]
     result = runner.invoke(container_app, base)
@@ -409,3 +410,32 @@ def test_logs_cli_invalid_regex_and_unknown_filter_exit_2(tmp_path):
     ):
         result = runner.invoke(container_app, base + args)
         assert result.exit_code == 2, result.output
+
+
+def test_ls_shows_descriptions(tmp_path: Path, monkeypatch) -> None:
+    from jailbee.services.runtime import ServiceRuntime, ServiceStatus
+
+    config = tmp_path / ".jailbee" / "config.yaml"
+    config.parent.mkdir()
+    config.write_text(
+        "container_prefix: repo\nservices:\n"
+        "  db:\n    run: sleep 1\n    description: Postgres; start before integration tests\n"
+        "  web:\n    run: sleep 1\n"
+    )
+    monkeypatch.setattr(
+        ServiceRuntime,
+        "status",
+        lambda self: [
+            ServiceStatus("db", "ready", "svc-db", "today", "ok"),
+            ServiceStatus("web", "stopped", None, None, ""),
+        ],
+    )
+    base = ["service", "--repo", str(tmp_path)]
+    result = CliRunner().invoke(container_app, [*base, "ls"])
+    assert "DESCRIPTION" in result.stdout
+    assert "Postgres; start before integration tests" in result.stdout
+    result = CliRunner().invoke(container_app, [*base, "ls", "--json"])
+    assert [(r["name"], r["description"]) for r in json.loads(result.stdout)] == [
+        ("db", "Postgres; start before integration tests"),
+        ("web", ""),
+    ]

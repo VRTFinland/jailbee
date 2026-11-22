@@ -209,6 +209,7 @@ class RepoGroup:
     memory_default: str = "16GiB"
     autostart_profiles: tuple[str, ...] = ()
     autostart_services: tuple[str, ...] = ()
+    service_descriptions: dict[str, str] = field(default_factory=dict)
     autostart_default_profile: str | None = None
     orchestration_profiles: tuple[str, ...] = ()
     default_runner: str | None = None
@@ -575,6 +576,9 @@ def _gather_rows(
                 memory_default=cfg.defaults.memory,
                 autostart_profiles=profile_names(cfg.autostart),
                 autostart_services=tuple(cfg.services),
+                service_descriptions={
+                    name: svc.description for name, svc in cfg.services.items() if svc.description
+                },
                 autostart_default_profile=cfg.autostart.default_profile or "all",
                 orchestration_profiles=tuple(sorted(orch_view.profiles)),
                 default_project=cfg.github.project,
