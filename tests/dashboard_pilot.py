@@ -501,9 +501,9 @@ def make_app(  # type: ignore[no-untyped-def]
     app.outputs = []  # type: ignore[attr-defined]
     show = app.show_output
 
-    def record(title, text, *, failed, live=False):  # type: ignore[no-untyped-def]
+    def record(title, text, *, failed, live=False, **buttons):  # type: ignore[no-untyped-def]
         app.outputs.append((title, text, failed))  # type: ignore[attr-defined]
-        show(title, text, failed=failed, live=live)
+        show(title, text, failed=failed, live=live, **buttons)
 
     app.show_output = record  # type: ignore[method-assign]
     return app
@@ -625,8 +625,12 @@ class BareTerminal:
         for runs, done in pending:
             done(drunner.run_actions(runs, run=subprocess_runner))
 
-    def show_output(self, title, text, *, failed, live=False):  # type: ignore[no-untyped-def]
+    def show_output(  # type: ignore[no-untyped-def]
+        self, title, text, *, failed, live=False, on_background=None, on_close=None
+    ):
         self.shown = [*getattr(self, "shown", []), (title, text, failed)]
+        # The latest modal's own buttons: "continue in background" and the close.
+        self.modal = (on_background, on_close)
 
     def update_output(self, text):  # type: ignore[no-untyped-def]
         self.updated = [*getattr(self, "updated", []), text]

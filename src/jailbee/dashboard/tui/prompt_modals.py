@@ -10,6 +10,7 @@ captured output.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 from rich.text import Text
@@ -231,12 +232,21 @@ class OutputScreen(ModalScreen[None]):
         Binding("enter", "close", "Close", priority=True),
         Binding("q", "close", "Close", priority=True),
         Binding("ctrl+c", "close", "Close", priority=True),
+        Binding("b", "background", "Continue in background", priority=True),
     ]
 
-    def __init__(self, title: str, text: str, *, failed: bool = False) -> None:
+    def __init__(
+        self,
+        title: str,
+        text: str,
+        *,
+        failed: bool = False,
+        on_background: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__()
         self.title_text = title
         self.text = text
+        self.on_background = on_background
         if failed:
             self.add_class("failed")
 
@@ -245,7 +255,10 @@ class OutputScreen(ModalScreen[None]):
             yield Static(Text(self.title_text), classes="title", markup=False)
             with VerticalScroll():
                 yield Static(Text.from_ansi(self.text), id="captured", markup=False)
-            yield Static("Up/Down scroll, Enter or Esc returns", classes="hint", markup=False)
+            hint = "Up/Down scroll, Enter or Esc returns"
+            if self.on_background is not None:
+                hint = "Up/Down scroll, b continues in the background, Enter or Esc returns"
+            yield Static(hint, classes="hint", markup=False)
 
     def set_text(self, text: str) -> None:
         """Replace the captured text (a live entry's output); stay at the end if it was there."""
@@ -259,6 +272,12 @@ class OutputScreen(ModalScreen[None]):
             self.call_after_refresh(scroll.scroll_end, animate=False)
 
     def action_close(self) -> None:
+        self.dismiss(None)
+
+    def action_background(self) -> None:
+        """"Continue in background": hand the action to the queue and leave."""
+        if self.on_background is not None:
+            self.on_background()
         self.dismiss(None)
 
 

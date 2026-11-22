@@ -128,7 +128,13 @@ from jailbee.dashboard.model import (
     target_group,
     toggle_folded,
 )
-from jailbee.dashboard.notifications import JobRow, NotificationQueue, QueueEntry, job_rows
+from jailbee.dashboard.notifications import (
+    JobRow,
+    NotificationQueue,
+    QueueEntry,
+    is_critical,
+    job_rows,
+)
 from jailbee.dashboard.outbox import OutboxState
 from jailbee.dashboard.outbox_flow import Intent as OutboxIntent
 from jailbee.dashboard.outbox_flow import OutboxController
@@ -396,10 +402,21 @@ class Terminal(Protocol):
         """
         ...
 
-    def show_output(self, title: str, text: str, *, failed: bool, live: bool = False) -> None:
+    def show_output(
+        self,
+        title: str,
+        text: str,
+        *,
+        failed: bool,
+        live: bool = False,
+        on_background: Callable[[], None] | None = None,
+        on_close: Callable[[], None] | None = None,
+    ) -> None:
         """Show an action's captured ``text`` until the user dismisses it.
 
         ``live``: :meth:`update_output` may replace the text while it stays open.
+        ``on_background``: when given, the screen offers "continue in background" and
+        calls it on that key; ``on_close`` is called whenever the screen goes away.
         """
         ...
 
@@ -546,6 +563,7 @@ class DashboardSession:
         # Every action started through the action runner, until dismissed.
         self.queue = NotificationQueue()
         self._following: int | None = None  # the entry whose output screen follows it live
+        self._modal_entry: int | None = None  # the critical entry whose modal is open
         # Grant edits made here, shown until the gathered snapshot catches up (see _patch_grant).
         self._grant_patches: dict[str, _GrantPatch] = {}
         self._grant_pending: dict[str, float] = {}
@@ -888,10 +906,16 @@ class DashboardSession:
             self.queue.start(
                 commands[i] if commands is not None else f"jailbee {label}",
                 targets[i] if targets is not None else self._entry_target(run.argv, repos[i]),
+                critical=is_critical(run.argv),
             )
             for i, run in enumerate(runs)
         ]
         self._queue_changed()
+        # A critical action's result is the modal's (or, once sent to the
+        # background, the queue's): no output screen of its own on the end.
+        if any((e := self.queue.get(i)) is not None and e.critical for i in ids):
+            style = "plain"
+        self._open_next_modal()
 
         def finished(outcome: ActionOutcome) -> None:
             self.notice_until = 0.0  # the running notice is over
@@ -924,10 +948,10 @@ class DashboardSession:
             result = outcome.results[i] if i < len(outcome.results) else None
             output = outcome.outputs[i] if i < len(outcome.outputs) else ""
             if result is None or result.refused is not None:
-                self.queue.drop(entry_id)
+                self._drop_entry(entry_id, (result.refused if result else None) or "not run")
                 continue
             if result.error is not None and not output:
-                self.queue.drop(entry_id)  # never started
+                self._drop_entry(entry_id, result.error)  # never started
                 continue
             # (An error with output: the run started and failed after; keep what it printed.)
             self.queue.finish(entry_id, result.status if result.status is not None else 1, output)
@@ -938,6 +962,55 @@ class DashboardSession:
         ):
             self._following = None
         self._queue_changed()
+
+    def _drop_entry(self, entry_id: int, why: str) -> None:
+        """Forget an entry that never ran; a modal it opened says why and goes on closing."""
+        self.queue.drop(entry_id)
+        if entry_id == self._modal_entry:
+            self.terminal.update_output(why)
+
+    # -- critical actions: the modal and the hand-off block ---------------------
+
+    def _open_next_modal(self) -> None:
+        """Open the modal of the oldest critical entry still in the foreground, if none is open."""
+        if self._modal_entry is not None:
+            return
+        entries = self.queue.foreground_entries()
+        if not entries:
+            return
+        entry = entries[0]
+        self._modal_entry = entry.id
+        self._following = None if entry.finished else entry.id
+        self.terminal.show_output(
+            entry.command,
+            entry.output or (QUEUE_NO_OUTPUT_YET if not entry.finished else ""),
+            failed=entry.state == "failed",
+            live=True,
+            on_background=lambda: self._modal_closed(entry.id),
+            on_close=lambda: self._modal_closed(entry.id),
+        )
+
+    def _modal_closed(self, entry_id: int) -> None:
+        """"Continue in background" or any close of a critical modal: the entry is an ordinary one."""
+        if self._modal_entry != entry_id:
+            return
+        self._modal_entry = None
+        self._following = None
+        self.queue.send_to_background(entry_id)
+        self._queue_changed()
+        self._open_next_modal()
+
+    def _hand_off_refused(self) -> bool:
+        """Whether a running critical action forbids a terminal hand-off (and say why)."""
+        blocker = self.queue.blocking_entry()
+        if blocker is None:
+            return False
+        self.set_notice(
+            f"'{blocker.command}' is running in the foreground: wait for it, "
+            "or continue in the background (b in its view) to hand off the terminal",
+            FAILURE_NOTICE_SECONDS,
+        )
+        return True
 
     def _entry_output(self, entry_id: int, chunk: str) -> None:
         self.queue.append(entry_id, chunk)
@@ -1144,6 +1217,8 @@ class DashboardSession:
             if style == "paged":
                 argv.append("--color")  # the output screen renders it; a pipe would turn it off
             self.run_action(repo, argv, style=style, label=f"{verb} {target}", target=target)
+            return
+        if self._hand_off_refused():
             return
         try:
             rc = self.terminal.hand_off(
@@ -1461,6 +1536,8 @@ class DashboardSession:
                 then=then,
                 target=target,
             )
+            return None
+        if self._hand_off_refused():
             return None
         try:
             rc = self.terminal.hand_off(
@@ -3425,6 +3502,8 @@ class DashboardSession:
         argv = ["jailbee", "config", "edit", *repo.flags()]
         if global_layer:
             argv.append("--global")
+        if self._hand_off_refused():
+            return
         try:
             rc = self.terminal.hand_off(
                 lambda: subprocess.run(argv, check=False, cwd=repo.cwd()).returncode
@@ -3469,6 +3548,8 @@ class DashboardSession:
             # Everything the line can run that is not an attach verb: its output
             # opens when it ends (it is also a queue entry); its questions are modals.
             self.run_action(repo, argv, style="output", label=" ".join(argv))
+            return
+        if self._hand_off_refused():
             return
         try:
 

@@ -12,7 +12,7 @@ back out without a trace.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 
@@ -26,6 +26,21 @@ from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS
 EntryState = Literal["running", "awaiting", "done", "failed"]
 
 
+def is_critical(argv: Sequence[str]) -> bool:
+    """Whether ``argv`` (a command without the program name) is a critical action.
+
+    ``merge``, ``git push --merge``, ``git pull`` and ``pr push``: outcomes the
+    user must not miss, so they open as a modal and block terminal hand-offs
+    until the user sends them to the background.
+    """
+    words = [w for w in argv[:2] if not w.startswith("-")]
+    if words[:1] == ["merge"]:
+        return True
+    if words == ["git", "pull"] or words == ["pr", "push"]:
+        return True
+    return words == ["git", "push"] and "--merge" in argv
+
+
 @dataclass(frozen=True)
 class QueueEntry:
     """One started action: what ran, on what, and how it went."""
@@ -36,6 +51,8 @@ class QueueEntry:
     state: EntryState = "running"
     status: int | None = None  # the exit status once finished
     output: str = ""
+    critical: bool = False  # a critical action (see :func:`is_critical`)
+    foreground: bool = False  # a critical action the user has not sent to the background
 
     @property
     def finished(self) -> bool:
@@ -121,12 +138,28 @@ class NotificationQueue:
     def get(self, entry_id: int) -> QueueEntry | None:
         return self._entries.get(entry_id)
 
-    def start(self, command: str, target: str) -> int:
-        """A new running entry; returns its id."""
+    def start(self, command: str, target: str, *, critical: bool = False) -> int:
+        """A new running entry; returns its id. A critical one starts in the foreground."""
         entry_id = self._next_id
         self._next_id += 1
-        self._entries[entry_id] = QueueEntry(entry_id, command, target)
+        self._entries[entry_id] = QueueEntry(
+            entry_id, command, target, critical=critical, foreground=critical
+        )
         return entry_id
+
+    def send_to_background(self, entry_id: int) -> None:
+        """The user continued a critical entry in the background (or closed its modal)."""
+        entry = self._entries.get(entry_id)
+        if entry is not None and entry.foreground:
+            self._entries[entry_id] = replace(entry, foreground=False)
+
+    def foreground_entries(self) -> list[QueueEntry]:
+        """The critical entries still in the foreground, oldest first."""
+        return [e for e in self._entries.values() if e.foreground]
+
+    def blocking_entry(self) -> QueueEntry | None:
+        """The running critical entry that forbids terminal hand-offs, if any."""
+        return next((e for e in self._entries.values() if e.foreground and not e.finished), None)
 
     def append(self, entry_id: int, chunk: str) -> None:
         """Output of a running action arrived; kept to the same tail cap as a finished one."""

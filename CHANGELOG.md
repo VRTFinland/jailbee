@@ -51,6 +51,11 @@ before editing `## Unreleased`.
   lifecycle jobs (create, start/restart, autostart), whoever started them, are listed
   there too as read-only rows with a way to open the job log; they count in the badge
   and go when the job does.
+  The critical actions (`merge`, `git push --merge`, `git pull`, `pr push`) open
+  directly in their entry's live screen as a modal and refuse every terminal
+  hand-off while they run in the foreground; `b` (continue in the background)
+  or closing the modal turns them into ordinary entries, and a result that
+  ends in the modal stays until it is closed.
 - The documentation site has a task-first "User guide" section in place of "Daily use"
   ([#150](https://github.com/VRTFinland/jailbee/issues/150)): Getting started, seven
   new guide pages (being written), Remote GUI, FAQ and Troubleshooting. Commands,
