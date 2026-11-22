@@ -1045,7 +1045,7 @@ def test_outbox_publish_shows_the_plan_and_publishes_in_the_background(mocker, t
     wait.assert_not_called()  # the terminal was never handed over
 
 
-def test_outbox_create_pr_is_c_in_the_box(mocker, tmp_path):
+def test_outbox_publish_runs_pr_push_in_the_box(mocker, tmp_path):
     group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
     payload = _ob_listing(
         _ob_container(
@@ -1060,13 +1060,13 @@ def test_outbox_create_pr_is_c_in_the_box(mocker, tmp_path):
     child = mocker.patch.object(tsession.subprocess, "run", return_value=mocker.Mock(returncode=0))
     patch_pause(mocker)
 
-    assert drive(mocker, [*container_menu_keys(group, "outbox browse"), "c"], [group]).rc == 0
+    assert drive(mocker, [*container_menu_keys(group, "outbox browse"), "p"], [group]).rc == 0
 
-    child.assert_called_once_with(
-        ["jailbee", "pr", "push", "alpha-x", "--config", str(group.config_path)],
-        check=False,
-        cwd=tmp_path,
-    )
+    # Handed off with a diagnostic file, so a failure's reason survives the refresh.
+    child.assert_called_once()
+    args, kwargs = child.call_args
+    assert args == (["jailbee", "pr", "push", "alpha-x", "--config", str(group.config_path)],)
+    assert kwargs["cwd"] == tmp_path and "JAILBEE_DIAGNOSTIC_TEXT_FILE" in kwargs["env"]
 
 
 @pytest.mark.parametrize(
