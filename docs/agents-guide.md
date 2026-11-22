@@ -37,7 +37,8 @@ LiteLLM](litellm.md)) carry every field and edge case.
 
    With `autostart: true` a `claude` window is already waiting. Without it, open
    a shell (`jailbee shell my-branch`) and run `claude`, or start the
-   container's agent window on demand with `jailbee agent open my-branch`.
+   container's agent window on demand with `jailbee agent open my-branch`
+   (the container must be running).
 
 **First run.** The first container of a repo has no login yet: complete Claude's
 onboarding there. Later containers reuse it, because the login lives in a
@@ -101,8 +102,8 @@ Claude, any other profile means `claude-jb` on that LiteLLM profile. Left out,
 served. The choice is written to the repo's host-local config
 (`agents.default_runner`); containers' `claude-jb` default profile is resynced,
 and running agent sessions are not touched. `jailbee agent use --clear` removes
-it, falling back to the older `litellm.autostart` / `litellm.default_profile`
-path. A `claude-jb` default is ignored (with a warning in the autostart log)
+the local choice: a repo or global `agents.default_runner` then applies, and if
+none is set, the older `litellm.autostart` / `litellm.default_profile` path. A `claude-jb` default is ignored (with a warning in the autostart log)
 while `litellm.enabled` is off.
 
 A **container override** changes one container only, for its next session:
@@ -113,8 +114,9 @@ jailbee agent use --container my-branch --clear   # follow the repo default agai
 jailbee agent open my-branch                      # start the effective agent now
 ```
 
-`agent open` starts it in a new tmux window right away and leaves running agent
-windows alone.
+`agent open` starts it in a new tmux window of a running container right away
+and leaves running agent windows alone. With an override set, an initial
+`--prompt` and `service refresh` go to `claude` whatever `primary_agent` says.
 
 In the terminal dashboard the same choices are menu entries: the repo menu's
 `Agent…` (key `g`) asks for a profile and then a tier, with the current choice
