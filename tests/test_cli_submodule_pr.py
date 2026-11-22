@@ -578,7 +578,7 @@ def test_submodule_outbox_pins_commands_and_consumes_an_existing_hint_once(
     updates = mocker.spy(pr_flow, "apply_pr_updates")
     consumption = mocker.spy(pr_flow, "record_outbox_consumption")
     consumed = mocker.patch("jailbee.pr_outbox.record_consumed")
-    mocker.patch("jailbee.cli._offer_outbox_comments", return_value=0)
+    mocker.patch("jailbee.pr_push_run.offer_outbox_comments", return_value=0)
     mocker.patch.dict("os.environ", {"GH_REPO": "unrelated/default"})
     commands = []
 
@@ -658,7 +658,7 @@ def test_submodule_pr_no_outbox_forwards_false_and_preserves_the_ai_path(mocker,
     pending = mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
     resolve = mocker.spy(pr_flow, "resolve_pr_text_and_head")
     apply_updates = mocker.spy(pr_flow, "apply_pr_updates")
-    offer = mocker.patch("jailbee.cli._offer_outbox_comments")
+    offer = mocker.patch("jailbee.pr_push_run.offer_outbox_comments")
 
     result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "--no-outbox", "--ai"])
 
@@ -684,7 +684,7 @@ def test_submodule_pr_uses_outbox_by_default_in_both_flow_calls(mocker, tmp_path
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=None)
     resolve = mocker.spy(pr_flow, "resolve_pr_text_and_head")
     apply_updates = mocker.spy(pr_flow, "apply_pr_updates")
-    mocker.patch("jailbee.cli._offer_outbox_comments", return_value=0)
+    mocker.patch("jailbee.pr_push_run.offer_outbox_comments", return_value=0)
 
     result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
@@ -703,7 +703,7 @@ def test_submodule_pr_outbox_description_is_used_recorded_once_and_named(mocker,
     mocker.patch("jailbee.pr_outbox.pending_pr_text", return_value=source)
     record_consumption = mocker.spy(pr_flow, "record_outbox_consumption")
     record_consumed = mocker.patch("jailbee.pr_outbox.record_consumed")
-    mocker.patch("jailbee.cli._offer_outbox_comments", return_value=0)
+    mocker.patch("jailbee.pr_push_run.offer_outbox_comments", return_value=0)
 
     result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo"])
 
@@ -737,7 +737,7 @@ def test_submodule_pr_outbox_offer_runs_after_outcome_and_consumption(mocker, tm
         side_effect=lambda *args, **kwargs: events.append(("record", args[3])),
     )
     offer = mocker.patch(
-        "jailbee.cli._offer_outbox_comments",
+        "jailbee.pr_push_run.offer_outbox_comments",
         side_effect=lambda *args, **kwargs: events.append(("offer", kwargs["number"])) or 0,
     )
 
@@ -765,7 +765,7 @@ def test_submodule_pr_outbox_offer_failure_exits_after_the_successful_outcome(mo
     mocker.patch("jailbee.pr_flow.render_pr_outcome", side_effect=render)
     mocker.patch("jailbee.pr_flow.record_outbox_consumption")
     mocker.patch(
-        "jailbee.cli._offer_outbox_comments",
+        "jailbee.pr_push_run.offer_outbox_comments",
         side_effect=lambda *args, **kwargs: events.append("offer") or 1,
     )
 
@@ -779,7 +779,7 @@ def test_submodule_pr_outbox_offer_failure_exits_after_the_successful_outcome(mo
 def test_submodule_pr_no_outbox_skips_the_comment_offer(mocker, tmp_path):
     _setup(mocker, tmp_path)
     _happy(mocker)
-    offer = mocker.patch("jailbee.cli._offer_outbox_comments")
+    offer = mocker.patch("jailbee.pr_push_run.offer_outbox_comments")
 
     result = runner.invoke(app, ["submodule", "pr", "push", "feat-foo", "--no-outbox"])
 
@@ -1486,7 +1486,7 @@ def test_submodule_replacement_after_guard_check_cannot_select_new_identity(
     mocker.patch("jailbee.pr.view_existing_pr", return_value=_created(already=True))
     edit = mocker.patch("jailbee.pr.edit_pr")
     consume = mocker.patch("jailbee.pr_outbox.record_consumed")
-    mocker.patch("jailbee.cli._offer_outbox_comments", return_value=0)
+    mocker.patch("jailbee.pr_push_run.offer_outbox_comments", return_value=0)
     result = CliRunner().invoke(app, ["submodule", "pr", "push", "feat-foo", "--no-ai"])
     assert result.exit_code == 1, result.exception
     assert isinstance(result.exception, SystemExit)

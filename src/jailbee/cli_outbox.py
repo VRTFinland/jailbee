@@ -754,22 +754,42 @@ def run_apply(
         )
 
     _run(None, config, operation)
+    if creation:
+        _run(
+            None,
+            config,
+            lambda cfg, incus: _publish_pr_creations(cfg, incus, creation, yes=yes),
+        )
+
+
+def _publish_pr_creations(
+    cfg: Config, incus: Incus, creation: Sequence[tuple[str, dict[str, str]]], *, yes: bool
+) -> int:
+    """Hand each PR creation to the `pr push` body that publishes it (its exits pass through).
+
+    `yes` skips only the publish confirmation, which `outbox apply` already
+    asked (a source manifest's "Publish?", a submodule's plan): the choices
+    `pr push` makes (a foreign PR head, which submodules) are asked again,
+    and off a terminal they exit 2 naming the missing choice.
+    """
+    from jailbee import pr_push_run
+    from jailbee.lifecycle import resolve_container_for_interactive
+
     for name, scope in creation:
-        _publish_pr_creation(config, name, scope, yes=yes)
+        try:
+            full = resolve_container_for_interactive(cfg, incus, name)
+        except ValueError as exc:
+            from jailbee.tui import error
 
-
-def _publish_pr_creation(
-    config: Path | None, name: str, scope: dict[str, str], *, yes: bool
-) -> None:
-    """Hand a PR creation to the `pr push` command that publishes it (its exits pass through)."""
-    from jailbee import cli
-
-    if scope.get("kind") == "submodule":
-        cli.submodule_pr_cmd(name, scope["path"], yes=yes, config=config)
-    elif scope.get("kind") == "source":
-        cli.pr_push_cmd(name, source_manifest=scope["manifest"], yes=yes, config=config)
-    else:
-        cli.pr_push_cmd(name, yes=yes, config=config)
+            error(str(exc))
+            raise typer.Exit(1) from exc
+        if scope.get("kind") == "submodule":
+            pr_push_run.run_submodule_pr_push(cfg, incus, full, path=scope["path"], yes=yes)
+        elif scope.get("kind") == "source":
+            pr_push_run.run_pr_push(cfg, incus, full, source_manifest=scope["manifest"], yes=yes)
+        else:
+            pr_push_run.run_pr_push(cfg, incus, full)
+    return 0
 
 
 def _run_sent(

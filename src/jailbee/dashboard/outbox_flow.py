@@ -390,6 +390,7 @@ class OutboxController:
         self._pending_publish: tuple[_BatchTarget, ...] | None = None
         # The PR creations it showed, handed off after the publishes.
         self._pending_creations: tuple[_Creation, ...] = ()
+        self._pending_skipped: tuple[str, ...] = ()
         # The keys asked about and the listing the question showed them from.
         self._pending_delete: (
             tuple[frozenset[dob.RowKey], tuple[dob.ContainerListing, ...]] | None
@@ -547,6 +548,7 @@ class OutboxController:
             self._pending_delete = None
             self._pending_publish = None
             self._pending_creations = ()
+            self._pending_skipped = ()
             self._batch_token = None
             status = (_ASK_AGAIN, *status)
         state, ok = self._reloaded(cursor=cursor, status=status)
@@ -592,6 +594,7 @@ class OutboxController:
             self._pending_delete = None
             self._pending_publish = None
             self._pending_creations = ()
+            self._pending_skipped = ()
             status = (_ASK_AGAIN,)
         self.state = replace(self.state, busy=_LOADING, question=None, status=())
         argv = self._ls_argv()
@@ -968,14 +971,79 @@ class OutboxController:
         creations: tuple[_Creation, ...],
     ) -> None:
         # Over SSH `-y` is refused: each interactive apply asks under its own plan.
-        status = [line.removeprefix("⚠ ") for line in skipped]
+        # The PR creations have no plan of their own, so one question covers them.
+        if creations:
+            self._ask_ssh_creations(targets, skipped, creations)
+            return
+        self._run_hand_off_batch(targets, [line.removeprefix("⚠ ") for line in skipped], ())
+
+    def _ask_ssh_creations(
+        self,
+        targets: tuple[_BatchTarget, ...],
+        skipped: list[str],
+        creations: tuple[_Creation, ...],
+    ) -> None:
+        many = len(self.state.containers) > 1
+        lines: list[str] = []
+        for name, proposal in creations:
+            pid = _safe(proposal.id)
+            lines.append(f"{_safe(name)}: {pid}" if many else pid)
+            lines.extend(_creation_lines(name, proposal))
+        if targets:
+            lines.append(
+                "then, one by one, outbox apply for: "
+                + ", ".join(_safe(pid) for _, pid, _, _ in targets)
+                + " (each asks under its own plan; PR creations run only if all succeed)"
+            )
+            # Creations run after the hand-offs, so a refusal there must stop them.
+            lines.insert(0, "manifests are handed to the terminal first")
+        lines.extend(skipped)
+        self._pending_skipped = tuple(skipped)
+        self._pending_publish = targets
+        self._pending_creations = creations
+        self._set(
+            replace(
+                self.state,
+                question=dob.Question(
+                    "publish-batch-ssh",
+                    f"Publish {len(targets) + len(creations)} proposals?",
+                    tuple(lines),
+                    (("Publish", "publish"), ("Cancel", "cancel")),
+                    default="cancel",
+                ),
+                status=(),
+            )
+        )
+
+    def _run_ssh_batch(self) -> None:
+        skipped, self._pending_skipped = self._pending_skipped, ()
+        targets, self._pending_publish = self._pending_publish or (), None
+        creations, self._pending_creations = self._pending_creations, ()
+        self.state = replace(self.state, question=None)
+        self._run_hand_off_batch(targets, [line.removeprefix("⚠ ") for line in skipped], creations)
+
+    def _run_hand_off_batch(
+        self,
+        targets: tuple[_BatchTarget, ...],
+        status: list[str],
+        creations: tuple[_Creation, ...],
+    ) -> None:
+        failed = False
         for name, pid, revision, _ in targets:
             rc = self.runner.hand_off(dob.outbox_apply_argv(name, pid, revision, yes=False))
             if rc is None:
                 status.append(f"{_safe(pid)}: outbox apply did not run")
+                failed = True
+            elif rc != 0:
+                status.append(f"{_safe(pid)}: outbox apply exited {rc}")
+                failed = True
         marks = self._unmarked(targets)
-        created, lines = self._run_creations(creations)
-        status.extend(lines)
+        created: tuple[_Creation, ...] = ()
+        if failed and creations:
+            status.append("PR creations not run: " + ", ".join(_safe(p.id) for _, p in creations))
+        elif creations:
+            created, lines = self._run_creations(creations)
+            status.extend(lines)
         self.state = replace(self.state, marks=marks - self._creation_keys(created))
         self._after_mutation(tuple(status))
 
@@ -1309,6 +1377,8 @@ class OutboxController:
             self._run_publish(question, value)
         elif question.purpose == "publish-batch" and value in ("publish", "draft"):
             self._run_publish_batch(value)
+        elif question.purpose == "publish-batch-ssh" and value == "publish":
+            self._run_ssh_batch()
         elif question.purpose == "clear" and value == "yes":
             self._run_clear(question)
         else:
@@ -1319,10 +1389,12 @@ class OutboxController:
         self._pending_delete = None
         self._pending_publish = None
         self._pending_creations = ()
+        self._pending_skipped = ()
         self._batch_token = None
         message = {
             "publish": "Nothing published.",
             "publish-batch": "Nothing published.",
+            "publish-batch-ssh": "Nothing published.",
             "delete": "Nothing deleted.",
             "clear": "Nothing cleared.",
         }.get(question.purpose if question else "")
