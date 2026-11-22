@@ -387,7 +387,7 @@ def set_state(
     return _mutation_receipt(data)
 
 
-_ISSUE_API_URL_RE = re.compile(r"https://api\.github\.com/repos/[^/]+/[^/]+/issues/([1-9][0-9]*)")
+_ISSUE_API_URL_RE = re.compile(r"https://api\.github\.com/repos/([^/]+/[^/]+)/issues/([1-9][0-9]*)")
 
 
 def get_issue_comment(repo_root: Path, repo: str, comment_id: int) -> CommentSnapshot:
@@ -404,7 +404,8 @@ def get_issue_comment(repo_root: Path, repo: str, comment_id: int) -> CommentSna
         author=_read_string(user.get("login")),
         body=raw_body or "",
         url=_read_string(data.get("html_url")),
-        parent=int(match.group(1)) if match else None,
+        parent=int(match.group(2)) if match else None,
+        repo=match.group(1) if match else None,
     )
 
 

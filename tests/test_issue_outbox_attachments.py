@@ -4,6 +4,7 @@ import pytest
 
 from jailbee import attachment_github, issue_github, issue_outbox
 from jailbee.attachment_github import UploadTarget
+from jailbee.comment_edit import CommentSnapshot
 from jailbee.outbox import publication_db
 from tests.test_outbox_attachment_staging import capture
 from tests.test_outbox_broker_ops import PLAIN, comment, manifest, put, stored
@@ -227,3 +228,70 @@ def test_comment_uploads_only_after_approval(flow):
     assert len(uploads) == 1
     assert calls[0]["body"] == f"![Evidence]({URL})"
     assert batch.manifests[0].actions[0].action.body == BODY
+
+
+def test_comment_edit_refuses_when_comment_changes_during_upload(env, monkeypatch):
+    monkeypatch.setattr(publication_db, "default_root", lambda: env.rig.root)
+    env.rig.incus.list_containers.return_value[-1]["created_at"] = "2026-01-01"
+    monkeypatch.setattr(
+        issue_outbox,
+        "resolve_repo_targets",
+        lambda cfg: {".": issue_outbox.RepoTarget(".", cfg.repo_root, "acme/app")},
+    )
+    monkeypatch.setattr(issue_github, "current_login", lambda root: "alice")
+    monkeypatch.setattr(
+        issue_github,
+        "get_issue",
+        lambda *args: issue_github.IssueSnapshot(
+            7, "Title", "Body", (), "open", "https://github.com/acme/app/issues/7", False
+        ),
+    )
+    current = ["Old body"]
+    monkeypatch.setattr(
+        issue_github,
+        "get_issue_comment",
+        lambda root, repo, comment_id: CommentSnapshot(
+            comment_id,
+            "alice",
+            current[0],
+            "https://github.com/acme/app/issues/7#issuecomment-555",
+            7,
+            "acme/app",
+        ),
+    )
+    descriptor = capture(env)
+    action = {
+        "type": "comment_edit",
+        "repo": ".",
+        "issue": 7,
+        "comment_id": 555,
+        "body": BODY,
+        "expected": {"body": "Old body"},
+    }
+    assert put(env, manifest={**manifest(action), "attachments": {"screen": descriptor}}).ok
+    name = stored(env)[0].name
+    monkeypatch.setattr(
+        attachment_github, "resolve_target", lambda root, repo: UploadTarget("github.com", repo, 1)
+    )
+
+    def upload(*args):
+        current[0] = "Changed remotely"
+        return URL
+
+    monkeypatch.setattr(attachment_github, "upload_to_target", upload)
+    writes = []
+    monkeypatch.setattr(
+        issue_github, "edit_issue_comment", lambda *args, **kwargs: writes.append(kwargs)
+    )
+    batch = issue_outbox.prepare_batch(env.rig.cfg, env.rig.incus, PLAIN, [name])
+    issue_outbox.revalidate_batch(batch)
+    report = issue_outbox.apply_batch(
+        batch,
+        incus=env.rig.incus,
+        publications=publication_db.PublicationStore(env.store),
+        container_prefix="proj",
+        publisher="user",
+    )
+    assert report.failure and not report.failure.uncertain
+    assert "expected.body" in report.failure.detail
+    assert writes == []
