@@ -555,6 +555,8 @@ def test_fetch_base_ref_updates_remote_tracking_and_returns_sha(tmp_path, mocker
     from jailbee.pr import fetch_base_ref
 
     def fake_run(cmd, **kwargs):
+        if "config" in cmd:
+            return _completed(returncode=1)
         if "fetch" in cmd:
             return _completed()
         if "rev-parse" in cmd:
@@ -564,15 +566,43 @@ def test_fetch_base_ref_updates_remote_tracking_and_returns_sha(tmp_path, mocker
     run = mocker.patch("subprocess.run", side_effect=fake_run)
     assert fetch_base_ref(tmp_path, "dev", remote="origin") == "basesha"
     fetch_calls = [c for c in run.call_args_list if "fetch" in c.args[0]]
-    assert fetch_calls == [
-        mocker.call(
-            ["git", "fetch", "origin", "+refs/heads/dev:refs/remotes/origin/dev"],
-            cwd=tmp_path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    ]
+    assert len(fetch_calls) == 1
+    assert fetch_calls[0].args[0][-2:] == ["origin", "+refs/heads/dev:refs/remotes/origin/dev"]
+
+
+def test_fetch_base_ref_never_prompts_and_is_bounded(tmp_path, mocker):
+    """Best-effort fetch: no credential prompt, batch-mode ssh, closed stdin, timeout."""
+    import subprocess
+
+    from jailbee.pr import UNATTENDED_FETCH_TIMEOUT, fetch_base_ref
+
+    mocker.patch.dict("os.environ", {"GIT_ASKPASS": "x", "SSH_ASKPASS": "y"})
+    mocker.patch.dict("os.environ", {"GIT_SSH_COMMAND": "ssh -i k"})
+
+    def fake_run(cmd, **kwargs):
+        if "fetch" in cmd:
+            return _completed()
+        return _completed(stdout="sha\n")
+
+    run = mocker.patch("subprocess.run", side_effect=fake_run)
+    fetch_base_ref(tmp_path, "dev", remote="origin")
+    call = next(c for c in run.call_args_list if "fetch" in c.args[0])
+    argv, kw = call.args[0], call.kwargs
+    assert "credential.interactive=never" in argv
+    assert kw["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert kw["env"]["GIT_SSH_COMMAND"] == "ssh -i k -o BatchMode=yes"
+    assert "GIT_ASKPASS" not in kw["env"] and "SSH_ASKPASS" not in kw["env"]
+    assert kw["stdin"] == subprocess.DEVNULL
+    assert kw["timeout"] == UNATTENDED_FETCH_TIMEOUT
+
+
+def test_fetch_base_ref_returns_none_on_timeout(tmp_path, mocker):
+    import subprocess
+
+    from jailbee.pr import fetch_base_ref
+
+    mocker.patch("subprocess.run", side_effect=subprocess.TimeoutExpired("git", 30))
+    assert fetch_base_ref(tmp_path, "dev", remote="origin") is None
 
 
 def test_fetch_base_ref_returns_none_when_fetch_fails(tmp_path, mocker):
@@ -580,6 +610,8 @@ def test_fetch_base_ref_returns_none_when_fetch_fails(tmp_path, mocker):
     from jailbee.pr import fetch_base_ref
 
     def fake_run(cmd, **kwargs):
+        if "config" in cmd:
+            return _completed(returncode=1)
         if "fetch" in cmd:
             return _completed(returncode=128, stderr="couldn't find remote ref\n")
         raise AssertionError(f"unexpected command: {cmd}")
@@ -988,13 +1020,14 @@ def test_fetch_base_ref_uses_the_given_remote(tmp_path, mocker):
     seen = []
 
     def fake_run(cmd, **kwargs):
-        seen.append(cmd)
+        if "config" not in cmd:
+            seen.append(cmd)
         return _completed(stdout="basesha\n")
 
     mocker.patch("subprocess.run", side_effect=fake_run)
 
     assert fetch_base_ref(tmp_path, "dev", remote="public") == "basesha"
-    assert seen[0] == ["git", "fetch", "public", "+refs/heads/dev:refs/remotes/public/dev"]
+    assert seen[0][-2:] == ["public", "+refs/heads/dev:refs/remotes/public/dev"]
     assert seen[1][-1] == "refs/remotes/public/dev"
 
 

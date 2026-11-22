@@ -6547,7 +6547,7 @@ def _retarget_setup(mocker, *, old_base="feat/a", mode=None, running=True, bg_op
     return incus
 
 
-def test_retarget_not_explicit_leaves_no_marker(mocker, make_cfg, tmp_path):
+def test_retarget_not_explicit_marks_the_base_derived(mocker, make_cfg, tmp_path):
     from jailbee import sync
 
     incus = _retarget_setup(mocker)
@@ -6555,7 +6555,8 @@ def test_retarget_not_explicit_leaves_no_marker(mocker, make_cfg, tmp_path):
     mocker.patch("jailbee.sync.git.push_url_multi")
     sync.retarget_container(make_cfg(tmp_path), incus, "feat-b", "main", explicit=False)
     assert incus.config_set.call_args_list == [
-        mocker.call("p-feat-b", "user.jailbee.base_branch", "main")
+        mocker.call("p-feat-b", "user.jailbee.base_branch", "main"),
+        mocker.call("p-feat-b", "user.jailbee.base_explicit", "false"),
     ]
 
 

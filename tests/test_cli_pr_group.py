@@ -383,3 +383,38 @@ def test_pr_push_offers_outbox_reference(mocker, tmp_path, no_outbox):
         assert bound.call_args.kwargs["number"] == 5
         assert bound.call_args.kwargs["confirmed"] is True
         assert created.call_args.kwargs["is_update"] is True
+
+
+def _adoption_run(mocker, tmp_path, extra):
+    """Run `pr push` where branch adoption resolves PR 12 based on `dev`."""
+    from jailbee.pr import PrInfo
+
+    _setup(mocker, tmp_path)
+    found = PrInfo(number=12, head_ref="topic", head_sha="a" * 40, state="OPEN", base_ref="dev")
+
+    def adopt(*args, on_resolved=None, **kwargs):
+        if on_resolved is not None:
+            on_resolved(found)
+        return (12, "topic")
+
+    mocker.patch("jailbee.pr_flow.adopt_existing_pr_for_branch", side_effect=adopt)
+    sync_base = mocker.patch("jailbee.pr_flow.sync_container_base_to_pr")
+    mocker.patch("jailbee.pr_flow.resolve_review_target", return_value=None)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr_flow.create_or_view_pr", return_value=_pr_created(already=True))
+    mocker.patch("jailbee.pr_flow.apply_pr_updates")
+    mocker.patch("jailbee.pr_links.link_pr_family")
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-ai", *extra])
+    assert result.exit_code == 0, result.output
+    return sync_base
+
+
+def test_first_push_adoption_syncs_the_container_base(mocker, tmp_path):
+    sync_base = _adoption_run(mocker, tmp_path, [])
+    sync_base.assert_called_once()
+    assert sync_base.call_args.kwargs["base_ref"] == "dev"
+
+
+def test_stacked_push_does_not_adopt_the_pr_base(mocker, tmp_path):
+    sync_base = _adoption_run(mocker, tmp_path, ["--stacked"])
+    sync_base.assert_not_called()

@@ -1317,6 +1317,8 @@ class NewContainerOptions:
     base: str | None = None
     mount: bool = False
     base_branch_label: str | None = None
+    # A fork's inherited `user.jailbee.base_explicit` value ("true"/"false").
+    base_explicit_label: str | None = None
     # PR number when created via `jailbee new --pr N` (review container).
     # Persisted as the `user.jailbee.pr` label; None for non-PR containers.
     pr: int | None = None
@@ -2224,10 +2226,20 @@ def _new_container(
     if base_label is None:
         base_label = source_branch if opts.clone and source_branch else cfg.default_branch
     incus.config_set(name, "user.jailbee.base_branch", base_label)
-    if opts.base is not None and opts.base_branch_label is None:
-        # The user named the base (`jailbee new --base`): `jailbee pr bind`
-        # must not replace it with the PR's base.
-        incus.config_set(name, "user.jailbee.base_explicit", "true")
+    # `user.jailbee.base_explicit`: "true" when the user named the base
+    # (`jailbee new --base`, or inherited from a fork's source), which
+    # `jailbee pr bind` must not replace with the PR's base; "false" for a
+    # derived one. A fork whose source predates the marker writes none.
+    if opts.base is not None:
+        base_explicit: str | None = "true"
+    elif opts.base_explicit_label is not None:
+        base_explicit = opts.base_explicit_label
+    elif opts.fork_of is not None:
+        base_explicit = None
+    else:
+        base_explicit = "false"
+    if base_explicit is not None:
+        incus.config_set(name, "user.jailbee.base_explicit", base_explicit)
 
     # `user.jailbee.pr`: the PR number for a `jailbee new --pr N` review container,
     # read back by `jailbee ls` / `jailbee pr`. Written here — alongside the other

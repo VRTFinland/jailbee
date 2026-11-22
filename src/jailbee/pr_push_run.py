@@ -303,6 +303,9 @@ def run_pr_push(
         pr_flow.reject_as_on_pr_update(scope, as_name, pr_label)
 
     def adopt_base(found: PrInfo) -> None:
+        if stacked:
+            # The stacked flow sets its own base (the parent's head).
+            return
         pr_flow.sync_container_base_to_pr(cfg, incus, full, short=short, base_ref=found.base_ref)
 
     if pr_number is not None:

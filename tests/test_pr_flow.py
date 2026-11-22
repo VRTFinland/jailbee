@@ -2375,6 +2375,12 @@ def _base_incus(mocker, labels=None):
     return incus
 
 
+def _base_cfg():
+    return types.SimpleNamespace(
+        repo_root=Path("/r"), upstream_remote="origin", default_branch="main"
+    )
+
+
 def _base_patches(mocker, *, fetched="deadbeef"):
     fetch = mocker.patch("jailbee.pr.fetch_base_ref", return_value=fetched)
     retarget = mocker.patch("jailbee.sync.retarget_container")
@@ -2384,7 +2390,7 @@ def _base_patches(mocker, *, fetched="deadbeef"):
 
 def test_sync_base_to_pr_retargets_when_base_differs(mocker):
     fetch, retarget = _base_patches(mocker)
-    cfg = types.SimpleNamespace(repo_root=Path("/r"), upstream_remote="origin")
+    cfg = _base_cfg()
     incus = _base_incus(mocker)
     retarget.return_value = types.SimpleNamespace(old_base="main", new_base="dev")
     pr_flow.sync_container_base_to_pr(cfg, incus, "c-full", short="c", base_ref="dev")
@@ -2394,7 +2400,7 @@ def test_sync_base_to_pr_retargets_when_base_differs(mocker):
 
 def test_sync_base_to_pr_noop_when_base_already_matches(mocker):
     _fetch, retarget = _base_patches(mocker)
-    cfg = types.SimpleNamespace(repo_root=Path("/r"), upstream_remote="origin")
+    cfg = _base_cfg()
     pr_flow.sync_container_base_to_pr(
         cfg,
         _base_incus(mocker, {"user.jailbee.base_branch": "dev"}),
@@ -2414,7 +2420,7 @@ def test_sync_base_to_pr_noop_when_base_already_matches(mocker):
 )
 def test_sync_base_to_pr_keeps_explicit_base(mocker, labels):
     _fetch, retarget = _base_patches(mocker)
-    cfg = types.SimpleNamespace(repo_root=Path("/r"), upstream_remote="origin")
+    cfg = _base_cfg()
     pr_flow.sync_container_base_to_pr(
         cfg, _base_incus(mocker, labels), "f", short="c", base_ref="dev"
     )
@@ -2427,14 +2433,14 @@ def test_sync_base_to_pr_warns_with_hint_when_retarget_fails(mocker):
     _, retarget = _base_patches(mocker)
     retarget.side_effect = SyncError("Container 'c' is not running.")
     warn = mocker.patch("jailbee.pr_flow.warn")
-    cfg = types.SimpleNamespace(repo_root=Path("/r"), upstream_remote="origin")
+    cfg = _base_cfg()
     pr_flow.sync_container_base_to_pr(cfg, _base_incus(mocker), "f", short="c", base_ref="dev")
     assert "jailbee git retarget c dev" in warn.call_args.args[0]
 
 
 def test_sync_base_to_pr_skips_mount_mode(mocker):
     _, retarget = _base_patches(mocker)
-    cfg = types.SimpleNamespace(repo_root=Path("/r"), upstream_remote="origin")
+    cfg = _base_cfg()
     pr_flow.sync_container_base_to_pr(
         cfg, _base_incus(mocker, {"user.jailbee.mode": "mount"}), "f", short="c", base_ref="dev"
     )
@@ -2458,6 +2464,93 @@ def test_sync_base_to_pr_never_raises(mocker):
     _, retarget = _base_patches(mocker)
     retarget.side_effect = RuntimeError("boom")
     warn = mocker.patch("jailbee.pr_flow.warn")
-    cfg = types.SimpleNamespace(repo_root=Path("/r"), upstream_remote="origin")
+    cfg = _base_cfg()
     pr_flow.sync_container_base_to_pr(cfg, _base_incus(mocker), "f", short="c", base_ref="dev")
     assert "boom" in warn.call_args.args[0]
+
+
+def test_sync_base_to_pr_retargets_non_explicit_with_exact_source_ref(mocker):
+    _fetch, retarget = _base_patches(mocker)
+    retarget.return_value = types.SimpleNamespace(old_base="main", new_base="dev")
+    pr_flow.sync_container_base_to_pr(
+        _base_cfg(), _base_incus(mocker), "f", short="c", base_ref="dev"
+    )
+    assert retarget.call_args.kwargs == {
+        "source_ref": "refs/remotes/origin/dev",
+        "explicit": False,
+    }
+
+
+def test_sync_base_to_pr_without_host_ref_passes_no_source_ref(mocker):
+    _fetch, retarget = _base_patches(mocker)
+    mocker.patch("jailbee.git.rev_parse", return_value=None)
+    retarget.return_value = types.SimpleNamespace(old_base="main", new_base="dev")
+    pr_flow.sync_container_base_to_pr(
+        _base_cfg(), _base_incus(mocker), "f", short="c", base_ref="dev"
+    )
+    assert retarget.call_args.kwargs["source_ref"] is None
+
+
+def test_sync_base_to_pr_warns_when_the_fetch_fails(mocker):
+    fetch, retarget = _base_patches(mocker, fetched=None)
+    warn = mocker.patch("jailbee.pr_flow.warn")
+    retarget.return_value = types.SimpleNamespace(old_base="main", new_base="dev")
+    pr_flow.sync_container_base_to_pr(
+        _base_cfg(), _base_incus(mocker), "f", short="c", base_ref="dev"
+    )
+    assert "Could not fetch PR base branch 'dev'" in warn.call_args.args[0]
+    retarget.assert_called_once()
+
+
+def test_sync_base_to_pr_keeps_a_legacy_non_default_base(mocker):
+    """No marker at all (container older than the marker) and base != default: chosen."""
+    _fetch, retarget = _base_patches(mocker)
+    incus = _base_incus(mocker, {"user.jailbee.base_branch": "feat/a"})
+    pr_flow.sync_container_base_to_pr(_base_cfg(), incus, "f", short="c", base_ref="dev")
+    retarget.assert_not_called()
+
+
+def test_sync_base_to_pr_moves_a_legacy_default_base(mocker):
+    _fetch, retarget = _base_patches(mocker)
+    retarget.return_value = types.SimpleNamespace(old_base="main", new_base="dev")
+    pr_flow.sync_container_base_to_pr(
+        _base_cfg(), _base_incus(mocker), "f", short="c", base_ref="dev"
+    )
+    retarget.assert_called_once()
+
+
+def test_sync_base_to_pr_follows_a_derived_base(mocker):
+    """Marker "false" = an earlier PR's base: the next PR's base replaces it."""
+    _fetch, retarget = _base_patches(mocker)
+    incus = _base_incus(
+        mocker, {"user.jailbee.base_branch": "feat/a", "user.jailbee.base_explicit": "false"}
+    )
+    retarget.return_value = types.SimpleNamespace(old_base="feat/a", new_base="dev")
+    pr_flow.sync_container_base_to_pr(_base_cfg(), incus, "f", short="c", base_ref="dev")
+    retarget.assert_called_once()
+
+
+def test_bind_outbox_reference_syncs_the_base(mocker):
+    mocker.patch("jailbee.pr_outbox.scope_slug", return_value="o/r")
+    mocker.patch("jailbee.pr_outbox.outbox_pr_references", return_value={5: ("a.json",)})
+    mocker.patch("jailbee.pr_flow.offer_outbox_binding", return_value=5)
+    sync_base = mocker.patch("jailbee.pr_flow.sync_container_base_to_pr")
+    found = _pr_info()
+
+    def bind(*args, on_resolved=None, **kwargs):
+        on_resolved(found)
+        return pr_flow.PrRecord(number=5, head="topic", author=False, adopted=True)
+
+    mocker.patch("jailbee.pr_flow.bind_pr_by_number", side_effect=bind)
+    cfg = types.SimpleNamespace(container_user=types.SimpleNamespace(uid=1000))
+    pr_flow.bind_outbox_reference(
+        cfg,
+        mocker.MagicMock(),
+        "c-full",
+        object(),
+        object(),
+        pr_flow.PrRecord(None, None, False, False),
+        short="c",
+        yes=True,
+    )
+    assert sync_base.call_args.kwargs["base_ref"] == found.base_ref

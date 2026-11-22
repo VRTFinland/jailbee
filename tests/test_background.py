@@ -215,6 +215,7 @@ def test_job_roundtrip_keeps_skip_agents() -> None:
         base=None,
         mount=False,
         base_branch_label="develop",
+        base_explicit_label="true",
         pr=7,
         clone_commit="beefcafe1234",
         skip_agents=True,

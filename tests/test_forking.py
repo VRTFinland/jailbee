@@ -116,6 +116,12 @@ def test_prepare_fork_without_a_pr_label_is_trusted(cfg, wired):
     assert forking.prepare_fork(cfg, _labels(pr=""), "src").untrusted is False
 
 
+def test_prepare_fork_carries_the_base_explicit_marker(cfg, wired):
+    incus = _labels(base_branch="feat/a", base_explicit="true")
+    assert forking.prepare_fork(cfg, incus, "src").base_explicit == "true"
+    assert forking.prepare_fork(cfg, _labels(base_branch="main"), "src").base_explicit is None
+
+
 def test_prepare_fork_unset_base_branch_is_none(cfg, wired):
     incus = MagicMock()
     incus.config_get.return_value = None

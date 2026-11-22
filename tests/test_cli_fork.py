@@ -382,3 +382,15 @@ def test_remote_fork_net_loose_needs_the_network_switch(argv, monkeypatch):
         policy_allows(argv, full)
     assert policy_allows(argv, full, unlocks=RemoteUnlocks(network=True)) == "fork"
     assert policy_allows(("fork", "src", "b"), full) == "fork"
+
+
+def test_new_fork_passes_the_base_explicit_marker(tmp_path, mocker):
+    from dataclasses import replace
+
+    _, new_container = _setup(tmp_path, mocker)
+    mocker.patch("jailbee.forking.prepare_fork", return_value=replace(SRC, base_explicit="true"))
+    result = _run(
+        ["new", "--fork-of", "src", "--name", "myrepo-b", "--no-autostart", "--no-background"]
+    )
+    assert result.exit_code == 0, result.output
+    assert new_container.call_args.args[2].base_explicit_label == "true"

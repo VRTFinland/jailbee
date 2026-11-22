@@ -233,11 +233,12 @@ def sync_container_base_to_pr(
     Never raises: the binding is already recorded, so a failure here is a warning.
 
     A base counts as *explicit* — and is left alone — when the user chose it:
-    `BASE_EXPLICIT_LABEL` is set (by `jailbee new --base` and `jailbee git
-    retarget`), or the container has a stacked PR (`<stacked label>_base`).
-    Anything else is a default (source branch / repo default branch) or an
-    earlier PR's base, and follows the PR. Containers created before the
-    marker existed read as non-explicit.
+    `BASE_EXPLICIT_LABEL` is "true" (set by `jailbee new --base` and `jailbee
+    git retarget`), or the container has a stacked PR (`<stacked label>_base`).
+    "false" marks a base derived by jailbee (source branch / default branch /
+    an earlier PR's base), which follows the PR. A container created before
+    the marker existed has no value at all: its base counts as chosen unless
+    it is the repo's default branch.
     """
     from jailbee import git, sync
     from jailbee import pr as pr_module
@@ -247,9 +248,9 @@ def sync_container_base_to_pr(
     current = incus.config_get(full, "user.jailbee.base_branch") or None
     if current == base_ref:
         return
-    if incus.config_get(full, BASE_EXPLICIT_LABEL) or incus.config_get(
-        full, f"{STACKED_LABEL_PREFIX}_base"
-    ):
+    marker = incus.config_get(full, BASE_EXPLICIT_LABEL) or None
+    chosen = marker == "true" or (marker is None and current != cfg.default_branch)
+    if chosen or incus.config_get(full, f"{STACKED_LABEL_PREFIX}_base"):
         info(f"Container '{short}' keeps its explicitly chosen base '{current}'.")
         return
     if pr_module.fetch_base_ref(cfg.repo_root, base_ref, remote=cfg.upstream_remote) is None:

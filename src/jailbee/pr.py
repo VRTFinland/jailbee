@@ -358,6 +358,41 @@ def _unattended_ssh_command(repo_root: Path) -> str:
     return f"{base or 'ssh'} -o BatchMode=yes"
 
 
+def _unattended_git_fetch(
+    repo_root: Path, remote: str, refspec: str, *, timeout: int
+) -> subprocess.CompletedProcess[str]:
+    """Run `git fetch remote refspec` that can neither prompt nor hang.
+
+    Git's terminal prompt, askpass programs and credential helpers' interactive
+    mode are off, ssh runs in batch mode, stdin is closed and the fetch is
+    bounded by `timeout`. May raise TimeoutExpired / OSError.
+    """
+    env = {
+        **{k: v for k, v in os.environ.items() if k not in ("GIT_ASKPASS", "SSH_ASKPASS")},
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_SSH_COMMAND": _unattended_ssh_command(repo_root),
+    }
+    return subprocess.run(
+        [
+            "git",
+            "-c",
+            "credential.interactive=never",
+            "-c",
+            "core.askPass=",
+            "fetch",
+            remote,
+            refspec,
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        timeout=timeout,
+    )
+
+
 def fetch_pr_head_unattended(
     repo_root: Path, number: int, *, remote: str, timeout: int = UNATTENDED_FETCH_TIMEOUT
 ) -> None:
@@ -370,30 +405,7 @@ def fetch_pr_head_unattended(
     """
     refspec = f"+pull/{number}/head:{pr_head_ref(number)}"
     try:
-        env = {
-            **{k: v for k, v in os.environ.items() if k not in ("GIT_ASKPASS", "SSH_ASKPASS")},
-            "GIT_TERMINAL_PROMPT": "0",
-            "GIT_SSH_COMMAND": _unattended_ssh_command(repo_root),
-        }
-        proc = subprocess.run(
-            [
-                "git",
-                "-c",
-                "credential.interactive=never",
-                "-c",
-                "core.askPass=",
-                "fetch",
-                remote,
-                refspec,
-            ],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            timeout=timeout,
-        )
+        proc = _unattended_git_fetch(repo_root, remote, refspec, timeout=timeout)
     except subprocess.TimeoutExpired as e:
         raise PrFetchError(f"git fetch for PR #{number} timed out after {timeout} s") from e
     except (FileNotFoundError, OSError) as e:
@@ -466,19 +478,14 @@ def fetch_base_ref(repo_root: Path, base_ref: str, *, remote: str) -> str | None
     The refspec is forced: a base branch can be rebased or force-pushed
     upstream, and the remote-tracking ref must follow the real remote tip.
 
-    Best-effort — returns ``None`` on any failure (base branch deleted
-    upstream, no network, git missing) and never raises. A stale anchor
+    Best-effort and unattended (never prompts; bounded by
+    `UNATTENDED_FETCH_TIMEOUT`) — returns ``None`` on any failure (base branch
+    deleted upstream, no network, timeout, git missing) and never raises. A stale anchor
     degrades the AHEAD numbers; it must not block container creation.
     """
     refspec = f"+refs/heads/{base_ref}:refs/remotes/{remote}/{base_ref}"
     try:
-        proc = subprocess.run(
-            ["git", "fetch", remote, refspec],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        proc = _unattended_git_fetch(repo_root, remote, refspec, timeout=UNATTENDED_FETCH_TIMEOUT)
         if proc.returncode != 0:
             return None
         resolved = subprocess.run(
@@ -488,7 +495,7 @@ def fetch_base_ref(repo_root: Path, base_ref: str, *, remote: str) -> str | None
             text=True,
             check=False,
         )
-    except (FileNotFoundError, OSError):
+    except (subprocess.TimeoutExpired, OSError):
         return None
     if resolved.returncode != 0:
         return None

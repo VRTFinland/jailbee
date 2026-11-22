@@ -2430,9 +2430,10 @@ def retarget_container(
     ``user.jailbee.base_branch`` label still records ``new_base``: it names the
     branch the work is stacked on, not the ref the anchor came from.
 
-    ``explicit`` (default) marks the new base as the user's own choice with
-    ``user.jailbee.base_explicit``, which `jailbee pr bind` then leaves alone;
-    the PR-bind flow passes False for a base it derived from the PR.
+    ``explicit`` (default) marks the new base as the user's own choice
+    (``user.jailbee.base_explicit=true``), which `jailbee pr bind` then leaves
+    alone; the PR-bind flow passes False for a base it derived from the PR
+    (``false``: a later bind may replace it).
     """
     from jailbee import background
     from jailbee.lifecycle import (
@@ -2493,8 +2494,7 @@ def retarget_container(
             pass
 
     incus.config_set(full_name, "user.jailbee.base_branch", new_base)
-    if explicit:
-        incus.config_set(full_name, "user.jailbee.base_explicit", "true")
+    incus.config_set(full_name, "user.jailbee.base_explicit", "true" if explicit else "false")
 
     return RetargetResult(old_base=old_base, new_base=new_base, base_oid=base_oid)
 
