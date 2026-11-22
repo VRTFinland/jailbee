@@ -712,3 +712,115 @@ def test_run_action_returns_the_id_of_its_queue_entry(mocker, tmp_path):
 
     (entry,) = _entries(session)
     assert entry.id == entry_id
+
+
+# --- lifecycle jobs from the snapshot (#146 ticket 15) -------------------------------
+
+
+def _job_container(name, phase, *, kind="create", pid=None):  # type: ignore[no-untyped-def]
+    import dataclasses
+    import os
+
+    return dataclasses.replace(
+        ci(name, "alpha", job_phase=phase, job_pid=pid if pid is not None else os.getpid()),
+        job_kind=kind,
+    )
+
+
+def _job_session(mocker, tmp_path, containers):  # type: ignore[no-untyped-def]
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, containers)
+    session, _ = bare_session(mocker, [group])
+    return session, group
+
+
+def _retick(session, group, containers):  # type: ignore[no-untyped-def]
+    group.containers[:] = containers
+    session.tick()
+
+
+def test_snapshot_jobs_are_read_only_queue_rows_counted_as_running(mocker, tmp_path):
+    session, _ = _job_session(
+        mocker,
+        tmp_path,
+        [
+            _job_container("alpha-a", "creating"),
+            _job_container("alpha-b", "starting", kind="boot"),
+            _job_container("alpha-c", "deps", kind="autostart"),
+            _job_container("alpha-d", "stopping", kind="stop"),  # not a lifecycle job
+            ci("alpha-e", "alpha"),
+        ],
+    )
+
+    assert [(j.target, j.failed) for j in session.queue.jobs] == [
+        ("alpha-a", False),
+        ("alpha-b", False),
+        ("alpha-c", False),
+    ]
+    assert len(list(session.queue)) == 0  # not actions of this session
+    assert session.view().queue == QueueCounts(running=3, attention=0)
+    picker = _open_queue(session)
+    assert [e.label.split(":")[0].lstrip("⟳✗ ") for e in picker.entries] == [
+        "alpha-a",
+        "alpha-b",
+        "alpha-c",
+    ]
+    assert not any("Dismiss" in e.label for e in picker.entries)
+
+
+def test_a_job_row_goes_when_the_job_does(mocker, tmp_path):
+    session, group = _job_session(mocker, tmp_path, [_job_container("alpha-a", "creating")])
+    assert session.view().queue == QueueCounts(running=1, attention=0)
+
+    _retick(session, group, [ci("alpha-a", "alpha")])
+
+    assert session.queue.jobs == ()
+    assert session.view().queue is None
+
+
+def test_an_open_queue_follows_the_jobs(mocker, tmp_path):
+    session, group = _job_session(mocker, tmp_path, [_job_container("alpha-a", "creating")])
+    _open_queue(session)
+
+    _retick(session, group, [ci("alpha-a", "alpha")])
+
+    picker = session.overlay
+    assert isinstance(picker, Picker) and picker.purpose == "queue"
+    assert [e.value for e in picker.entries] == ["close"]
+
+
+def test_a_failed_job_needs_attention_while_the_snapshot_shows_it(mocker, tmp_path):
+    session, group = _job_session(mocker, tmp_path, [_job_container("alpha-a", "failed")])
+
+    assert [(j.target, j.failed) for j in session.queue.jobs] == [("alpha-a", True)]
+    assert session.view().queue == QueueCounts(running=0, attention=1)
+
+    _retick(session, group, [ci("alpha-a", "alpha")])
+    assert session.view().queue is None
+
+
+def test_a_dead_worker_is_a_failed_job(mocker, tmp_path):
+    session, _ = _job_session(mocker, tmp_path, [_job_container("alpha-a", "creating", pid=2**22)])
+    assert session.view().queue == QueueCounts(running=0, attention=1)
+
+
+def test_a_job_row_cannot_be_dismissed(mocker, tmp_path):
+    _children(mocker)
+    session, _ = _job_session(mocker, tmp_path, [_job_container("alpha-a", "failed")])
+    _open_queue(session)
+    _choose(session, "alpha-a")
+
+    picker = session.overlay
+    assert isinstance(picker, Picker) and picker.purpose == "queue-job"
+    assert [e.value for e in picker.entries] == ["log"]
+    assert session.view().queue == QueueCounts(running=0, attention=1)
+
+
+def test_a_job_row_opens_the_job_log(mocker, tmp_path):
+    run = _children(mocker)
+    session, _ = _job_session(mocker, tmp_path, [_job_container("alpha-a", "failed")])
+    _open_queue(session)
+    _choose(session, "alpha-a")
+    _choose(session, "Show job log")
+
+    argvs = [call.args[0] for call in run.call_args_list]
+    assert any(a[:3] == ["jailbee", "job", "log"] and "alpha-a" in a for a in argvs)

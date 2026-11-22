@@ -1540,3 +1540,23 @@ def test_the_dispatcher_runs_an_orphan_verb_as_a_plain_cli_child(mocker):
 
     assert run.call_args.args[0] == ["jailbee", "orphan", "stop", "gamma-x"]
     assert run.call_args.kwargs["cwd"] == dmodel.RepoTarget.orphan().cwd()
+
+
+def test_queue_overlay_lists_a_job_row_and_opens_its_log(mocker, tmp_path):
+    import os
+
+    from jailbee.dashboard.overlays import Picker
+
+    job = dataclasses.replace(
+        ci("alpha-a", "alpha", job_phase="failed", job_pid=os.getpid()), job_kind="create"
+    )
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [job])
+    run_mock = mocker.patch.object(tsession.subprocess, "run")
+    run_mock.return_value.returncode = 0
+
+    run = drive(mocker, ["Q", "enter", "enter"], [group])
+
+    pickers = run.of_type(Picker)
+    assert any(p.purpose == "queue" and "alpha-a" in p.entries[0].label for p in pickers)
+    assert any(p.purpose == "queue-job" for p in pickers)
+    assert [t for t, _, _ in run.app.outputs] == ["jailbee job log alpha-a"]

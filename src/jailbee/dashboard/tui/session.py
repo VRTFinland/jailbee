@@ -128,7 +128,7 @@ from jailbee.dashboard.model import (
     target_group,
     toggle_folded,
 )
-from jailbee.dashboard.notifications import NotificationQueue, QueueEntry
+from jailbee.dashboard.notifications import JobRow, NotificationQueue, QueueEntry, job_rows
 from jailbee.dashboard.outbox import OutboxState
 from jailbee.dashboard.outbox_flow import Intent as OutboxIntent
 from jailbee.dashboard.outbox_flow import OutboxController
@@ -308,6 +308,7 @@ def _last_line(text: str) -> str:
 
 
 QUEUE_DISMISS_FINISHED = "\x00dismiss-finished"
+QUEUE_JOB_PREFIX = "\x00job:"
 QUEUE_TAIL_LINES = 3
 # What an expanded entry shows before its action has printed anything.
 QUEUE_NO_OUTPUT_YET = "(no output yet)"
@@ -335,6 +336,11 @@ def _queue_label(entry: QueueEntry) -> str:
                 line = line[: QUEUE_ROW_TAIL_CHARS - 1] + "…"
             label += f" — {line}"
     return label
+
+
+def _job_label(job: JobRow) -> str:
+    """One line of the queue list for a snapshot job."""
+    return f"{'✗' if job.failed else '⟳'} {job.target}: {job.phase} · job"
 
 
 def _tail(text: str) -> tuple[str, ...]:
@@ -599,6 +605,10 @@ class DashboardSession:
             present(snapshot.groups, self.cwd_root, self.scope)
         )
         self._apply_grant_patches()
+        jobs = job_rows(self.presented)
+        if jobs != self.queue.jobs:
+            self.queue.set_jobs(jobs)
+            self._queue_changed()
         self.all_groups = self._sorted(self.presented)
         self.git_enabled = snapshot.git_enabled
         self.update = None if (self.transport != "none") else snapshot.update
@@ -709,7 +719,7 @@ class DashboardSession:
             ineligible=ineligible,
             transport=self.transport,
             ssh_policy=self.ssh_policy,
-            queue=self.queue.counts() if len(self.queue) else None,
+            queue=None if self.queue.empty else self.queue.counts(),
         )
 
     def title(self) -> str:
@@ -955,10 +965,15 @@ class DashboardSession:
             self.overlay = self.queue_picker(start_index=overlay.start_index)
         elif overlay.purpose == "queue-entry":
             self.overlay = self.queue_entry_picker(int(overlay.carry[0]))
+        elif overlay.purpose == "queue-job":
+            self.overlay = self.queue_job_picker(overlay.carry[0])
 
     def queue_picker(self, *, start_index: int = 0) -> Picker:
         """The notification queue's list: one entry per action, then the clean-up."""
         entries = [
+            PickerEntry(_job_label(job), QUEUE_JOB_PREFIX + job.target) for job in self.queue.jobs
+        ]
+        entries += [
             PickerEntry(_queue_label(entry), str(entry.id)) for entry in reversed(list(self.queue))
         ]
         if any(entry.finished for entry in self.queue):
@@ -992,12 +1007,35 @@ class DashboardSession:
             back=self.queue_picker(),
         )
 
+    def queue_job_picker(self, target: str) -> Picker:
+        """A snapshot job's own action (its log), or the list again once it is gone."""
+        job = self.queue.job(target)
+        if job is None:
+            return self.queue_picker()
+        return Picker(
+            "queue-job",
+            f"{job.target}: {job.phase}",
+            (PickerEntry("Show job log", "log", "l"),),
+            carry=(job.target,),
+            detail=("A background job; it goes when the job does.",),
+            back=self.queue_picker(),
+        )
+
     def open_queue(self) -> None:
         """The badge or its key: show the queue list."""
         self.overlay = self.queue_picker()
 
     def _queue_chosen(self, picker: Picker, entry: PickerEntry) -> Overlay | None:
+        if picker.purpose == "queue-job":
+            target = picker.carry[0]
+            job = self.queue.job(target)
+            if job is None:
+                return self.queue_picker()
+            self.dispatch(target, "job log --follow" if job.running else "job log")
+            return self.queue_job_picker(target)
         if picker.purpose == "queue":
+            if entry.value.startswith(QUEUE_JOB_PREFIX):
+                return self.queue_job_picker(entry.value.removeprefix(QUEUE_JOB_PREFIX))
             if entry.value == QUEUE_DISMISS_FINISHED:
                 self.queue.dismiss_finished()
                 return self.queue_picker()
@@ -3115,7 +3153,7 @@ class DashboardSession:
 
         None closes the overlay, as in :func:`submit_prompt`.
         """
-        if picker.purpose in ("queue", "queue-entry"):
+        if picker.purpose in ("queue", "queue-entry", "queue-job"):
             return self._queue_chosen(picker, entry)
         if picker.purpose == "container-services":
             try:

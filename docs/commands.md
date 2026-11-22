@@ -726,6 +726,11 @@ and keeps drawing while it runs; the status line names the running command.
   Enter, Esc or `q` closes it) and, once it has finished, `Dismiss` (`d`);
   `Dismiss finished` (`D`) clears every finished entry. A running entry
   cannot be dismissed. The queue lives as long as the dashboard.
+  Background lifecycle jobs (create, start/restart, autostart) the snapshot
+  shows, whoever started them, are listed above the entries as read-only
+  rows (`target: phase · job`): they cannot be dismissed, count as running
+  in the badge (a failed job or a dead worker counts as ⚠) and go when the
+  job does. Choosing one offers `Show job log` (`l`).
 - **Attach-style actions still hand over the terminal:** shell, tmux, IDE,
   browsers and `apps run`, the orphan tmux and shell entries, `config edit`
   (a full-screen editor), a followed `job log` and the outbox publish

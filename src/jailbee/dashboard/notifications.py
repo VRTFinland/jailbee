@@ -3,16 +3,23 @@
 Frontend-agnostic and in memory only: the terminal dashboard keeps one queue
 per session, and a future web frontend can hold the same model. An entry is
 created when an action starts and finishes with its exit status and output;
-it stays until the user dismisses it. Actions that were refused or never
+it stays until the user dismisses it. Alongside them the queue lists the
+background lifecycle jobs of the latest snapshot (:class:`JobRow`): read-only,
+never dismissed, gone when the job is. Actions that were refused or never
 started are not entries: :meth:`NotificationQueue.drop` takes such an entry
 back out without a trace.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, replace
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+from jailbee import background
+
+if TYPE_CHECKING:
+    from jailbee.dashboard.model import RepoGroup
 
 from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS
 
@@ -40,6 +47,44 @@ class QueueEntry:
         return self.state in ("failed", "awaiting")
 
 
+# The jobs that move a container to being usable; stop, destroy and refresh are
+# quick or already the user's own action.
+LIFECYCLE_JOB_KINDS = frozenset(
+    {background.JOB_CREATE, background.JOB_BOOT, background.JOB_AUTOSTART}
+)
+
+
+@dataclass(frozen=True)
+class JobRow:
+    """One background lifecycle job from the snapshot, as the queue lists it."""
+
+    target: str  # the container
+    phase: str  # the phase label the JOB column shows, e.g. "create"
+    failed: bool  # the job ended in failure or its worker died
+
+    @property
+    def running(self) -> bool:
+        """A live job: its log can be followed."""
+        return not self.failed
+
+
+def job_rows(groups: Iterable[RepoGroup]) -> tuple[JobRow, ...]:
+    """The lifecycle jobs ``groups`` show, in listing order."""
+    rows: list[JobRow] = []
+    for group in groups:
+        for c in group.containers:
+            if c.job_phase is None or c.job_kind not in LIFECYCLE_JOB_KINDS:
+                continue
+            # Dead = a terminal phase, or a worker that vanished mid-phase.
+            if c.job_pid is None:
+                failed = c.job_phase in background.TERMINAL_PHASES
+            else:
+                failed = background.clearable(c.job_phase, c.job_pid)
+            label = background.job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind)
+            rows.append(JobRow(c.name, label or c.job_phase, failed))
+    return tuple(rows)
+
+
 @dataclass(frozen=True)
 class QueueCounts:
     """What the badge shows."""
@@ -54,6 +99,18 @@ class NotificationQueue:
     def __init__(self) -> None:
         self._entries: dict[int, QueueEntry] = {}
         self._next_id = 1
+        self.jobs: tuple[JobRow, ...] = ()
+
+    def job(self, target: str) -> JobRow | None:
+        return next((j for j in self.jobs if j.target == target), None)
+
+    def set_jobs(self, jobs: tuple[JobRow, ...]) -> None:
+        """Replace the snapshot's job rows; a job the snapshot dropped is gone."""
+        self.jobs = jobs
+
+    @property
+    def empty(self) -> bool:
+        return not self._entries and not self.jobs
 
     def __iter__(self) -> Iterator[QueueEntry]:
         return iter(self._entries.values())
@@ -120,6 +177,7 @@ class NotificationQueue:
     def counts(self) -> QueueCounts:
         entries = self._entries.values()
         return QueueCounts(
-            running=sum(e.state == "running" for e in entries),
-            attention=sum(e.needs_attention for e in entries),
+            running=sum(e.state == "running" for e in entries)
+            + sum(not j.failed for j in self.jobs),
+            attention=sum(e.needs_attention for e in entries) + sum(j.failed for j in self.jobs),
         )
