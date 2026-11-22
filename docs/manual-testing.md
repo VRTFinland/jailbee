@@ -2318,9 +2318,22 @@ exit
 jailbee outbox apply feat-issuesmoke issue/<that-name> -y
 # expect: refused — "#<task-number> is already a sub-issue of #<epic-number>"
 
-# Removal, and a removal of a link that does not exist:
+# A child that already has another parent is refused before anything is sent.
+# The preflight reads the child's `parent_issue_url`; first confirm GitHub
+# returns that field (if it prints null or nothing, the check is dead — report it):
+gh api repos/<owner>/<repo>/issues/<task-number> -q '.parent_issue_url'
+# expect: https://api.github.com/repos/<owner>/<repo>/issues/<epic-number>
 jailbee shell feat-issuesmoke
 jailbee outbox discard issue/<that-name>
+jailbee issue sub-issue <N> <task-number>
+exit
+jailbee outbox apply feat-issuesmoke issue/<other-parent> -y
+# expect: refused — "#<task-number> is already a sub-issue of #<epic-number>",
+#         and no 422 from GitHub
+
+# Removal, and a removal of a link that does not exist:
+jailbee shell feat-issuesmoke
+jailbee outbox discard issue/<other-parent>
 jailbee issue sub-issue <epic-number> <task-number> --remove --batch unrel
 jailbee issue blocked-by <task-number> <N> --remove --batch unrel
 jailbee outbox submit unrel --kind issue
