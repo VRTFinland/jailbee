@@ -40,7 +40,14 @@ from jailbee.git_status import (
     parse_shortstat,
     probe_many_parallel,
 )
-from jailbee.host_target import SyncTarget, TargetSnapshot, resolve_sync_target, resolve_target
+from jailbee.host_target import (
+    ParentHead,
+    SyncInputs,
+    SyncTarget,
+    TargetSnapshot,
+    resolve_sync_target,
+    resolve_target,
+)
 from jailbee.incus import Incus, IncusError
 from jailbee.memory_limit import LIMIT_KEY
 from jailbee.orchestration import labels as orch_labels
@@ -490,21 +497,70 @@ def _snapshot_targets_with_defaults(
     return snapshots, defaults, repo_roots
 
 
+def _parent_of(c: ContainerInfo) -> str | None:
+    """The full name of the container ``c`` syncs with: its spawner, else its fork source."""
+    if c.child is not None:
+        return c.child.orchestrator
+    return c.fork_of
+
+
+def _repo_short(c: ContainerInfo, full: str) -> str:
+    """``full`` without ``c``'s repo prefix, as the dashboard names it."""
+    prefix = f"{c.repo}-"
+    return full[len(prefix) :] if c.repo and full.startswith(prefix) else full
+
+
+def _sync_inputs(
+    c: ContainerInfo,
+    running: set[str],
+    parent_heads: Mapping[str, ParentHead],
+    last_imports: Mapping[str, str],
+) -> SyncInputs:
+    """What ``c``'s sync target is chosen from.
+
+    A parent's head counts only while the parent is running now and the
+    previous pass saw it: a stopped parent's last head would hide that it
+    can no longer receive anything.
+    """
+    parent = _parent_of(c)
+    if parent is None:
+        return SyncInputs(pr_number=c.pr_number)
+    from jailbee.forking import fork_pin_ref_of
+
+    return SyncInputs(
+        pr_number=c.pr_number,
+        parent=_repo_short(c, parent),
+        parent_head=parent_heads.get(parent) if parent in running else None,
+        last_import=last_imports.get(c.name),
+        fork_pin_ref=fork_pin_ref_of(_repo_short(c, c.name)) if c.fork_of else None,
+    )
+
+
 def _sync_targets(
     containers: Sequence[ContainerInfo],
     host_by_name: dict[str, TargetSnapshot],
     roots: dict[str, Path | None],
+    *,
+    running: set[str] | None = None,
+    parent_heads: Mapping[str, ParentHead] | None = None,
+    last_imports: Mapping[str, str] | None = None,
 ) -> dict[str, SyncTarget]:
-    """Each probed container's sync target, one ref read per (repo, PR, host branch)."""
-    cache: dict[tuple[str, int | None, TargetSnapshot], SyncTarget] = {}
+    """Each probed container's sync target, one ref read per (repo, inputs, host branch).
+
+    ``running`` names every running instance (any repo), ``parent_heads`` the
+    HEADs the previous gather pass saw, ``last_imports`` each child's
+    orchestration last-import label.
+    """
+    cache: dict[tuple[str, SyncInputs, TargetSnapshot], SyncTarget] = {}
     out: dict[str, SyncTarget] = {}
     for c in containers:
         host = host_by_name.get(c.name)
         if host is None or c.repo is None:
             continue
-        key = (c.repo, c.pr_number, host)
+        inputs = _sync_inputs(c, running or set(), parent_heads or {}, last_imports or {})
+        key = (c.repo, inputs, host)
         if key not in cache:
-            cache[key] = resolve_sync_target(roots.get(c.repo), c.pr_number, host)
+            cache[key] = resolve_sync_target(roots.get(c.repo), inputs, host)
         out[c.name] = cache[key]
     return out
 
@@ -532,6 +588,7 @@ def list_containers(
     timeout: int | None = None,
     scope: RemoteRepoScope | None = None,
     instances: list[dict[str, Any]] | None = None,
+    parent_heads: Mapping[str, ParentHead] | None = None,
 ) -> list[ContainerInfo]:
     """Return container infos for jailbee-managed containers.
 
@@ -550,6 +607,10 @@ def list_containers(
     are then unused). A caller that reads several repos from one snapshot
     — the dashboards, every refresh tick — passes it so the daemon builds
     the full instance state once instead of once per repo.
+
+    ``parent_heads`` is each container's HEAD as the previous gather pass saw
+    it, keyed by full name; a child or fork syncs with its parent's entry
+    (`host_target.SyncInputs`). Without one, it falls back to its host branch.
     """
     from jailbee import egress_scope
     from jailbee.accounts import groups
@@ -789,7 +850,20 @@ def list_containers(
                 uid=cfg.container_user.uid,
                 host_head=host_head,
                 target_by_name=target_by_name,
-                sync_by_name=_sync_targets(out, target_by_name, roots),
+                sync_by_name=_sync_targets(
+                    out,
+                    target_by_name,
+                    roots,
+                    running={
+                        raw["name"] for raw in instances if raw.get("status") == "Running"
+                    },
+                    parent_heads=parent_heads,
+                    last_imports={
+                        raw["name"]: raw["config"][orch_labels.LAST_IMPORT]
+                        for raw in instances
+                        if (raw.get("config") or {}).get(orch_labels.LAST_IMPORT)
+                    },
+                ),
                 host_head_by_name={
                     name: host_head
                     if any(c.name == name and c.repo == cfg.container_prefix for c in out)
@@ -3875,15 +3949,20 @@ def sync_marker(status: GitStatus | None) -> str:
 
     ``pr``: the cell compares with the PR head. ``pr?`` (yellow): a PR-bound
     container whose PR head the host has not fetched, compared with the host
-    branch instead. Empty for the host branch, so plain rows are unchanged.
+    branch instead. ``⑂``: a child or fork compared with its parent container;
+    ``⑂?`` (yellow): its parent is stopped, missing or not yet seen, so the
+    host branch stands in. Empty for the host branch, so plain rows are
+    unchanged.
     """
     target = status.sync_target if status is not None else None
     if target is None:
         return ""
     if target.kind == "pr":
         return "[dim]pr[/dim]"
+    if target.kind == "parent":
+        return "[dim]⑂[/dim]"
     if target.fallback:
-        return "[yellow]pr?[/yellow]"
+        return "[yellow]⑂?[/yellow]" if target.parent is not None else "[yellow]pr?[/yellow]"
     return ""
 
 
@@ -3905,6 +3984,10 @@ def sync_target_text(status: GitStatus | None) -> str:
         return "vs the host branch"
     if target.kind == "pr":
         return f"vs {target.label} head"
+    if target.kind == "parent":
+        return f"vs parent {target.label}"
+    if target.fallback and target.parent is not None:
+        return f"vs host branch {target.label} (parent {target.parent} not running or not seen yet)"
     if target.fallback:
         return f"vs host branch {target.label} (PR head not fetched)"
     return f"vs host branch {target.label}"

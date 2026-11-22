@@ -101,8 +101,8 @@ def test_tick_returns_numbered_snapshots_with_the_git_setting(mocker):
     assert isinstance(first, Snapshot) and isinstance(second, Snapshot)
     assert (first.seq, second.seq) == (1, 2)
     assert first.git_enabled is True
-    assert gather.call_args_list[0].kwargs == {"with_git": False}
-    assert gather.call_args_list[1].kwargs == {"with_git": True}
+    assert gather.call_args_list[0].kwargs == {"with_git": False, "parent_heads": {}}
+    assert gather.call_args_list[1].kwargs == {"with_git": True, "parent_heads": {}}
     assert gather.call_args_list[0].args[1] == [Path("/a")]
     assert g.tick(active=True, refresh=False, roots=[]) is None  # nothing due yet
 
@@ -119,6 +119,37 @@ def test_a_base_gather_carries_the_last_git_status_forward(mocker):
     third = g.tick(active=True, refresh=False, roots=[])  # base again
 
     assert third.groups[0].containers[0].git_status == status
+
+
+def test_the_next_gather_gets_the_heads_the_last_git_pass_saw(mocker):
+    """Children compare with their parent's HEAD from the previous pass; a
+    stopped container's head is not offered, and base passes keep the heads."""
+    from jailbee.host_target import ParentHead
+
+    clock = _Clock()
+    seen = GitStatus("", "clean", "0", "ok", head_sha="abc")
+    stopped = dataclasses.replace(_ci("y", GitStatus("", "clean", "0", "ok", head_sha="old")))
+    stopped.state = "Stopped"
+    rounds = iter([[_ci("x")], [_ci("x", seen), stopped], [_ci("x")], [_ci("x")]])
+    gather = mocker.Mock(
+        side_effect=lambda *a, **k: [RepoGroup("alpha", "/a", None, next(rounds))]
+    )
+    g = _gatherer(mocker, gather, clock)
+
+    g.tick(active=True, refresh=False, roots=[])  # base
+    g.tick(active=True, refresh=False, roots=[])  # git
+    clock.t = 3.0
+    g.tick(active=True, refresh=False, roots=[])  # base
+    clock.t = 11.0
+    g.tick(active=True, refresh=False, roots=[])  # git
+
+    expected = {"x": ParentHead("abc", datetime(2026, 10, 4, tzinfo=UTC).timestamp())}
+    assert [c.kwargs["parent_heads"] for c in gather.call_args_list] == [
+        {},
+        {},
+        expected,
+        expected,
+    ]
 
 
 def test_the_sampler_is_primed_once(mocker):

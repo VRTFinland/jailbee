@@ -245,6 +245,16 @@ retired; see [column migration](config.md#ls--dashboard--remembered-columns).
 DIFF ±, ↑, ↓ and MERGE compare with the container's **sync target** — where its
 work flows next, chosen automatically:
 
+- an orchestration child (any kind, `pr`-kind children included) or a fork
+  (`jailbee fork`) compares with its **parent** container, ahead of any PR
+  binding: ↓ counts the parent's commits the child lacks, against the parent's
+  HEAD as the dashboard's previous gather pass saw it (`↓•` when that commit is
+  not in the child's object store); ↑ counts the child's commits not yet
+  imported — since the orchestrator's last import, else since the fork's
+  starting commit (`?` when neither is known). Its cells carry a dim `⑂`
+  marker. A stopped or missing parent, or the first gather pass (and a plain
+  `jailbee ls`, which has no previous pass), compares with the host branch
+  instead, and the cells carry a yellow `⑂?`;
 - a PR-bound container (`jailbee new --pr`, `jailbee pr bind`) compares with the
   PR head the host last fetched, `refs/jailbee/pr/<N>/head`: ↑ means "push
   needed", ↓ "someone else pushed to the PR". Its cells carry a dim `pr`
@@ -262,10 +272,13 @@ work flows next, chosen automatically:
 The dashboard's details card names the sync target in the git table's `vs …`
 header and, for a PR-bound container, adds one row per target (host branch and
 PR head) with its own ↑/↓ and short sha, the sync target's row marked. The PR head's row also says
-how current it is: `fetched 3m ago`, `fetch failed 5m ago`, or `autofetch off`. JSON
-`git_status` carries the target as `sync_target` (`kind` `host`/`pr`, `label`,
+how current it is: `fetched 3m ago`, `fetch failed 5m ago`, or `autofetch off`.
+A child or fork gets a host-branch row and a `⑂ <parent>` row instead, with the
+parent's HEAD sha and the age of the pass that saw it (`seen 1m ago`); a parent
+that cannot be compared with reads `not running`. JSON
+`git_status` carries the target as `sync_target` (`kind` `host`/`pr`/`parent`, `label`,
 `sha`, `ref`, `fallback`, `autofetch`, `fetched_at`, `fetch_error`,
-`fetch_error_at`) plus `host_ahead_count`/`host_behind_count`, the
+`fetch_error_at`, `parent`, `ahead_sha`, `seen_at`) plus `host_ahead_count`/`host_behind_count`, the
 counts against the host branch whatever the target. `base_sha`, `base_source`,
 `tracking_relation` and `upstream_ref` keep describing the host branch.
 

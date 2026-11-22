@@ -209,6 +209,8 @@ def test_probe_passes_env_vars_into_snippet(mocker):
         "DEFAULT_BRANCH": "develop",
         "HOST_HEAD": "",
         "TARGET_SHA": "",
+        "AHEAD_BASE": "",
+        "AHEAD_BASE_SHA": "",
         "HOST_TARGET_SHA": "",
         "HOST_SOURCE": "/mnt/host-source",
         "GIT_OPTIONAL_LOCKS": "0",
@@ -1599,3 +1601,80 @@ def test_snippet_remote_containment_costs_one_git_call_for_many_branches(tmp_pat
     calls = log.read_text().splitlines()
     per_branch = [c for c in calls if "--contains" in c and c != "branch -r --contains HEAD"]
     assert per_branch == []
+
+
+def test_parent_probe_counts_up_from_the_last_import_and_down_from_the_parent_head(
+    mocker, tmp_path
+):
+    """A child: ↑ = commits since the last import, ↓ = parent commits it lacks."""
+    from jailbee.host_target import SyncTarget
+
+    repo = tmp_path / "ctr"
+    repo.mkdir()
+    _real_git(repo, "init", "-q")
+    host_sha = _commit(repo, "base")
+    _real_git(repo, "checkout", "-qb", "parent")
+    imported = _commit(repo, "child-imported")
+    parent_sha = _commit(repo, "parent-later")  # orchestrator commit after the import
+    _real_git(repo, "checkout", "-qb", "child", imported)
+    _commit(repo, "child-1")
+    _commit(repo, "child-2")
+
+    host = TargetSnapshot("main", host_sha, "local", "refs/remotes/origin/main", "equal")
+    sync = SyncTarget("parent", "orch", parent_sha, "", ahead_sha=imported, parent="orch")
+    status = _probe_real(mocker, repo, target=host, sync=sync)
+
+    assert (status.ahead_count, status.behind_count) == ("2", "1")
+    assert (status.host_ahead_count, status.host_behind_count) == ("3", "0")
+
+
+def test_parent_probe_after_import_shows_nothing_to_import(mocker, tmp_path):
+    from jailbee.host_target import SyncTarget
+
+    repo = tmp_path / "ctr"
+    repo.mkdir()
+    _real_git(repo, "init", "-q")
+    base = _commit(repo, "base")
+    _commit(repo, "child-1")
+    head = _commit(repo, "child-2")
+
+    host = TargetSnapshot("main", base, "local", "refs/remotes/origin/main", "equal")
+    sync = SyncTarget("parent", "orch", base, "", ahead_sha=head, parent="orch")
+    status = _probe_real(mocker, repo, target=host, sync=sync)
+
+    assert status.ahead_count == "0"
+
+
+def test_parent_probe_without_an_ahead_point_leaves_up_unknown(mocker, tmp_path):
+    from jailbee.host_target import SyncTarget
+
+    repo = tmp_path / "ctr"
+    repo.mkdir()
+    _real_git(repo, "init", "-q")
+    base = _commit(repo, "base")
+    _commit(repo, "child-1")
+
+    host = TargetSnapshot("main", base, "local", "refs/remotes/origin/main", "equal")
+    missing = SyncTarget("parent", "orch", base, "", ahead_sha=None, parent="orch")
+    absent = SyncTarget("parent", "orch", base, "", ahead_sha="f" * 40, parent="orch")
+
+    assert _probe_real(mocker, repo, target=host, sync=missing).ahead_count == "?"
+    assert _probe_real(mocker, repo, target=host, sync=absent).ahead_count == "?"
+    assert _probe_real(mocker, repo, target=host, sync=missing).behind_count == "0"
+
+
+def test_parent_probe_missing_parent_head_reads_pull_needed(mocker, tmp_path):
+    from jailbee.git_status import BEHIND_UNKNOWN
+    from jailbee.host_target import SyncTarget
+
+    repo = tmp_path / "ctr"
+    repo.mkdir()
+    _real_git(repo, "init", "-q")
+    base = _commit(repo, "base")
+    _commit(repo, "child-1")
+
+    host = TargetSnapshot("main", base, "local", "refs/remotes/origin/main", "equal")
+    sync = SyncTarget("parent", "orch", "e" * 40, "", ahead_sha=base, parent="orch")
+    status = _probe_real(mocker, repo, target=host, sync=sync)
+
+    assert (status.ahead_count, status.behind_count) == ("1", BEHIND_UNKNOWN)

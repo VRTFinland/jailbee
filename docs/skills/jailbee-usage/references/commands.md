@@ -889,7 +889,10 @@ below). The **sync target** is the host target branch, except for a PR-bound
 container: it compares with the PR head the host last fetched
 (`refs/jailbee/pr/<N>/head`; ↑ = push needed, ↓ = someone else pushed), and
 those four cells carry a dim `pr`; a yellow `pr?` means that ref is missing and
-the host branch stands in. The **JOB** column shows in-flight and failed
+the host branch stands in. An orchestration child or fork compares with its
+parent container instead, ahead of any PR (↑ = not yet imported, ↓ = parent
+commits it lacks, dim `⑂`; yellow `⑂?` when the parent is stopped or not yet
+seen by the dashboard). The **JOB** column shows in-flight and failed
 background-job phases (`jailbee new`/`jailbee destroy --background`), and
 renders a detached autostart run as `autostart:<stage>` (`<stage>` is
 whichever stage the supervisor is on) — see `jailbee job` and `jailbee

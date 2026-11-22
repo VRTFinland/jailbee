@@ -58,7 +58,9 @@ from jailbee.update_check import UpdateNotice
 # 32 adds GitStatus.other_branches and OtherBranch, local branches with unimported commits.
 # 33 adds AgentSummary.sessions, one SessionMark per live session.
 # 34 adds ContainerInfo.pr_slug, the repo's GitHub slug for PR hyperlinks.
-PROTOCOL = 34
+# 35 adds SyncTarget kind "parent" and .parent, .ahead_sha, .seen_at: children and
+# forks compare with their parent container.
+PROTOCOL = 35
 
 
 class ProtocolError(ValueError):

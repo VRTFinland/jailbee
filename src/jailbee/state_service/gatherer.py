@@ -23,6 +23,7 @@ from jailbee.dashboard.model import (
     sample_activity,
 )
 from jailbee.dashboard.system import SystemReader, pool_names
+from jailbee.host_target import ParentHead
 from jailbee.outbox import sent
 from jailbee.procstat import PRIME_INTERVAL_SECONDS, ActivitySampler
 from jailbee.state_service.protocol import GatherError, Snapshot
@@ -102,6 +103,16 @@ def refresh_due(
     return do_base, do_git
 
 
+def _running_heads(groups: list[RepoGroup], seen_at: float) -> dict[str, ParentHead]:
+    """Every running container's probed HEAD, stamped with the pass time."""
+    return {
+        c.name: ParentHead(c.git_status.head_sha, seen_at)
+        for g in groups
+        for c in g.containers
+        if c.state == "Running" and c.git_status is not None and c.git_status.head_sha
+    }
+
+
 class Gatherer:
     """Runs the schedule and turns each gather into a `Snapshot` or `GatherError`.
 
@@ -141,6 +152,9 @@ class Gatherer:
         self._last_base: float | None = None
         self._last_full: float | None = None
         self._prev: list[RepoGroup] = []
+        # Each running container's HEAD as the last git pass saw it: the next
+        # pass compares a child or fork with its parent's entry.
+        self._heads: dict[str, ParentHead] = {}
         self._seq = 0
         self._update = update
         # Pool reads are throttled inside the reader; the base tier adds no incus call.
@@ -175,7 +189,9 @@ class Gatherer:
             return None
         result: Snapshot | GatherError
         try:
-            groups = self._gather(self._incus, roots, with_git=do_git)
+            groups = self._gather(
+                self._incus, roots, with_git=do_git, parent_heads=dict(self._heads)
+            )
             if not do_git:
                 carry_forward_git_status(groups, self._prev)
             if not self._primed:
@@ -198,6 +214,8 @@ class Gatherer:
                 log.warning("gather recovered (was failing: %s)", self._failing)
                 self._failing = None
             self._prev = groups
+            if do_git:
+                self._heads = _running_heads(groups, self._wall_clock().timestamp())
             self._seq += 1
             result = Snapshot(
                 self._seq,

@@ -640,6 +640,41 @@ def test_a_pr_card_without_a_pr_head_ref_marks_the_host_row_as_fallback() -> Non
     assert (_plain(pr.ahead), _plain(pr.behind), _plain(pr.target)) == ("—", "—", "not fetched")
 
 
+def test_a_child_card_shows_the_parent_row_with_its_sha_and_pass_age() -> None:
+    sync = SyncTarget(
+        "parent", "orch", "c" * 40, "", parent="orch", ahead_sha="d" * 40,
+        seen_at=NOW.timestamp() - 90,
+    )
+    c = _c(git_status=_pr_status(sync), base_branch="dev", pr_number=7)
+
+    panel = dd.container_panel(c, NOW)
+
+    assert panel.base == "⑂ orch"
+    assert panel.git is not None
+    host, parent = panel.git[1:3]
+    assert [_plain(host.name), _plain(parent.name)] == ["↳ dev", "⑂ orch"]
+    assert [(_plain(r.ahead), _plain(r.behind)) for r in (host, parent)] == [
+        ("5", "1"),
+        ("2", "0"),
+    ]
+    assert [_plain(r.target) for r in (host, parent)] == ["b" * 10, "c" * 10]
+    assert [_plain(r.note) for r in (host, parent)] == ["", "sync target · seen 1m ago"]
+
+
+def test_a_child_card_without_a_parent_head_marks_the_host_row_as_fallback() -> None:
+    sync = SyncTarget("host", "dev", "b" * 40, "refs/heads/dev", fallback=True, parent="orch")
+    status = replace(_pr_status(sync), host_ahead_count="2", host_behind_count="0")
+
+    panel = dd.container_panel(_c(git_status=status, base_branch="dev"), NOW)
+
+    assert panel.base == "dev"
+    assert panel.git is not None
+    host, parent = panel.git[1:3]
+    assert _plain(host.note) == "sync target (fallback)"
+    assert (_plain(parent.name), _plain(parent.target)) == ("⑂ orch", "not running")
+    assert (_plain(parent.ahead), _plain(parent.behind)) == ("—", "—")
+
+
 def test_a_plain_card_has_no_target_rows() -> None:
     sync = SyncTarget("host", "dev", "b" * 40, "refs/heads/dev")
     status = replace(_pr_status(sync), host_ahead_count="2", host_behind_count="0")
