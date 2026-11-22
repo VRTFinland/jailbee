@@ -54,8 +54,8 @@ def build_runner(profile: str, model: str | None) -> Runner:
 
 def parse_selection(text: str) -> tuple[str, str | None]:
     """`profile` or `profile/model` -> (profile, model)."""
-    profile, _, model = text.strip().partition("/")
-    if not profile or "/" in model:
+    profile, slash, model = text.strip().partition("/")
+    if not profile or "/" in model or (slash and not model):
         raise SelectionError(f"expected PROFILE or PROFILE/MODEL, got {text!r}")
     return profile, model or None
 
@@ -70,7 +70,8 @@ def catalog(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> dict[str, tuple[st
         for name, body in profiles.items():
             tiers = body.get("tiers") if isinstance(body, dict) else None
             known = tiers if isinstance(tiers, dict) else {}
-            out[str(name)] = tuple(t for t in RUNNER_TIERS if t in known)
+            if str(name) != PLAIN:  # `claude` always means the plain agent
+                out[str(name)] = tuple(t for t in RUNNER_TIERS if t in known)
     return out
 
 
@@ -152,7 +153,7 @@ def effective(cfg: Config, incus: Incus) -> Effective:
     labels = tuple(
         (info.name, runner)
         for info in list_containers(cfg, incus)
-        if (runner := read_runner(incus, info.name)) is not None
+        if info.state == "Running" and (runner := read_runner(incus, info.name)) is not None
     )
     if view.default_runner is not None and view.default_runner_source is not None:
         return Effective(view.default_runner, view.default_runner_source, labels=labels)
@@ -172,10 +173,10 @@ def choose(cfg: Config, incus: Incus, gcfg: GlobalConfig, selection: str | None)
     from jailbee import prompting
     from jailbee.prompting import Option
 
-    offered = catalog(cfg, incus, gcfg)
     if selection is not None:
         profile, model = parse_selection(selection)
         return build_runner(profile, model)
+    offered = catalog(cfg, incus, gcfg)
     profile = prompting.choose_one(
         "agent profile",
         [

@@ -96,3 +96,22 @@ def test_invalid_agents_default_runner_is_a_config_error(layers):
     _write(repo_path, {"agents": {"default_runner": {"agent": "claude", "model": "gpt5"}}})
     with pytest.raises(ConfigError, match="default_runner"):
         load_config(repo_path)
+
+
+def test_relaunch_keeps_the_repo_default_runner(tmp_path, mocker):
+    from jailbee.config.models_orchestration import OrchestrationView
+    from jailbee.orchestration import agent_session
+    from tests.conftest import make_cfg
+
+    cfg = make_cfg(tmp_path)
+    runner = Runner(agent="claude", model="opus")
+    cfg._orchestration_view = OrchestrationView(default_runner=runner, default_runner_source="repo")
+    mocker.patch("jailbee.orchestration.agent_session.child_env", return_value={})
+    steps = mocker.patch(
+        "jailbee.autostart.agent_autostart_steps", side_effect=RuntimeError("stop here")
+    )
+    with pytest.raises(RuntimeError, match="stop here"):
+        agent_session.relaunch(
+            cfg, mocker.Mock(), "child", "prompt", runner=None, old_agent="claude"
+        )
+    assert steps.call_args.kwargs["default_runner"] == runner

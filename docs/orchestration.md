@@ -572,7 +572,8 @@ A `spawn` or `restart` manifest may carry an optional `runner`: `agent`
 `model` (`fable`, `opus`, `sonnet` or `haiku`). It rewrites the Claude
 command of the repo's `agents.claude.command` for that child. When omitted on
 spawn, the container default applies, then the local, repo, or global
-`orchestration.default_runner`, in that order; without any default the child
+`agents.default_runner` (or its deprecated alias `orchestration.default_runner`),
+in that order; without any default the child
 runs the repo's primary agent as configured. Set the container preference with
 `jb orchestrate grant bugs --runner-agent claude-jb --runner-profile grok --runner-model sonnet`;
 `--runner-profile` and `--runner-model` require `--runner-agent`. Use

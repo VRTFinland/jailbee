@@ -199,3 +199,15 @@ def test_real_runner_problems_accept_the_selection(rig, mocker):
     global_path.write_text(yaml.safe_dump({"litellm": {"enabled": True}}))
     result = runner.invoke(app, ["agent", "use", "grok/sonnet"])
     assert result.exit_code == 0, result.output
+
+
+def test_trailing_slash_is_a_usage_error(rig):
+    result = runner.invoke(app, ["agent", "use", "grok/"])
+    assert result.exit_code == 1 and "PROFILE/MODEL" in result.output
+    assert not local_config_path("myrepo").exists()
+
+
+def test_a_served_profile_named_claude_does_not_replace_plain_claude(rig, mocker):
+    payload = {"json": {"profiles": {"claude": {"tiers": {"haiku": "z"}}}}}
+    mocker.patch("jailbee.litellm.container_sync_payload", return_value=payload)
+    assert runner.invoke(app, ["agent", "use", "claude/opus"]).exit_code == 0
