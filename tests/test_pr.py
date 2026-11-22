@@ -1573,3 +1573,89 @@ def test_edit_review_comment_patches_the_review_comments_endpoint(mocker):
     assert cmd[cmd.index("--method") + 1] == "PATCH"
     assert "repos/acme/widgets/pulls/comments/9" in cmd
     assert json.loads(run.call_args.kwargs["input"]) == {"body": "new"}
+
+
+# --- unattended PR head fetch (state service autofetch) ---------------------
+
+
+def _unattended_run(mocker, *, ssh_config="", returncode=0, stderr="", exc=None):
+    """Mock `subprocess.run` for the config read and the fetch itself."""
+    calls: list[tuple[list[str], dict]] = []
+
+    def fake(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        if cmd[:3] == ["git", "config", "--get"]:
+            return mocker.Mock(returncode=0 if ssh_config else 1, stdout=ssh_config, stderr="")
+        if exc is not None:
+            raise exc
+        return mocker.Mock(returncode=returncode, stdout="", stderr=stderr)
+
+    mocker.patch("jailbee.pr.subprocess.run", side_effect=fake)
+    return calls
+
+
+def _fetch_call(calls):
+    return next((c, kw) for c, kw in calls if "fetch" in c)
+
+
+def test_unattended_fetch_never_prompts(tmp_path, mocker, monkeypatch):
+    from jailbee.pr import fetch_pr_head_unattended
+
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    calls = _unattended_run(mocker)
+
+    fetch_pr_head_unattended(tmp_path, 7, remote="origin")
+
+    cmd, kw = _fetch_call(calls)
+    assert cmd == [
+        "git",
+        "-c",
+        "credential.interactive=never",
+        "fetch",
+        "origin",
+        "+pull/7/head:refs/jailbee/pr/7/head",
+    ]
+    assert kw["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert kw["env"]["GIT_SSH_COMMAND"] == "ssh -o BatchMode=yes"
+    assert kw["timeout"] == 30
+    assert kw["stdin"] == subprocess.DEVNULL
+
+
+def test_unattended_fetch_appends_to_core_ssh_command(tmp_path, mocker, monkeypatch):
+    from jailbee.pr import fetch_pr_head_unattended
+
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    calls = _unattended_run(mocker, ssh_config="ssh -i /k/id\n")
+
+    fetch_pr_head_unattended(tmp_path, 7, remote="origin")
+
+    assert _fetch_call(calls)[1]["env"]["GIT_SSH_COMMAND"] == "ssh -i /k/id -o BatchMode=yes"
+
+
+def test_unattended_fetch_appends_to_git_ssh_command_env(tmp_path, mocker, monkeypatch):
+    from jailbee.pr import fetch_pr_head_unattended
+
+    monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -F /cfg")
+    calls = _unattended_run(mocker, ssh_config="ssh -i /ignored")
+
+    fetch_pr_head_unattended(tmp_path, 7, remote="origin")
+
+    assert _fetch_call(calls)[1]["env"]["GIT_SSH_COMMAND"] == "ssh -F /cfg -o BatchMode=yes"
+
+
+def test_unattended_fetch_failure_raises_with_stderr(tmp_path, mocker):
+    from jailbee.pr import PrFetchError, fetch_pr_head_unattended
+
+    _unattended_run(mocker, returncode=128, stderr="Permission denied (publickey).\n")
+
+    with pytest.raises(PrFetchError, match="Permission denied"):
+        fetch_pr_head_unattended(tmp_path, 7, remote="origin")
+
+
+def test_unattended_fetch_timeout_raises(tmp_path, mocker):
+    from jailbee.pr import PrFetchError, fetch_pr_head_unattended
+
+    _unattended_run(mocker, exc=subprocess.TimeoutExpired(["git"], 30))
+
+    with pytest.raises(PrFetchError, match="timed out"):
+        fetch_pr_head_unattended(tmp_path, 7, remote="origin")

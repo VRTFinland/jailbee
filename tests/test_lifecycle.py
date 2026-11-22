@@ -12571,6 +12571,10 @@ def test_git_status_json_names_the_sync_target_and_host_counts():
         "sha": "p" * 40,
         "ref": "refs/jailbee/pr/7/head",
         "fallback": False,
+        "autofetch": True,
+        "fetched_at": None,
+        "fetch_error": None,
+        "fetch_error_at": None,
     }
     assert (payload["host_ahead_count"], payload["host_behind_count"]) == ("5", "1")
 

@@ -53,7 +53,8 @@ from jailbee.update_check import UpdateNotice
 # 27 adds RepoGroup.agent_label, the repo's effective agent as `profile/model`.
 # 28 adds ContainerInfo.agent_runner and .agent_source, the agent the next session launches.
 # 29 adds RepoGroup.service_descriptions, the repo services' optional descriptions.
-PROTOCOL = 29
+# 30 adds SyncTarget.autofetch, .fetched_at, .fetch_error and .fetch_error_at.
+PROTOCOL = 30
 
 
 class ProtocolError(ValueError):

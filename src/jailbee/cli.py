@@ -9204,6 +9204,36 @@ def pr_open_cmd(
     pr_flow.open_container_pr(cfg, incus, full, short=short_name(cfg, full), stacked=stacked)
 
 
+@pr_app.command("fetch")
+def pr_fetch_cmd(
+    name: ContainerArg = None,
+    all_: Annotated[
+        bool,
+        typer.Option("--all", help="Refresh every PR-bound container's PR head."),
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Refresh a PR-bound container's PR head now (the ↓ column's target).
+
+    The interactive counterpart of the dashboard's `pr.autofetch`: git may ask
+    for a passphrase or a security-key touch. Use it when autofetch is off.
+    """
+    from jailbee import pr_flow
+    from jailbee.lifecycle import short_name
+
+    cfg = _load_or_exit(config)
+    if all_:
+        if name is not None:
+            error("--all and a container name cannot be combined.")
+            raise typer.Exit(2)
+        from jailbee.incus import Incus
+
+        pr_flow.fetch_all_pr_heads(cfg, Incus())
+        return
+    incus, full = _resolve_existing(cfg, name)
+    pr_flow.fetch_container_pr_head(cfg, incus, full, short=short_name(cfg, full))
+
+
 submodule_app = typer.Typer(
     name="submodule",
     no_args_is_help=True,

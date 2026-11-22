@@ -313,6 +313,7 @@ _MENU_KEYS: dict[str, str] = {
     "pr push": "P",
     "pr bind": "b",
     "pr unbind": "u",
+    "pr fetch": "F",
     # Lifecycle → (each also alone at the root when the SSH policy hides the rest)
     "restart": "r",
     "restart-with": "W",

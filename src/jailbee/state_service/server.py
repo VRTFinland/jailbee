@@ -225,10 +225,15 @@ def run_service(incus: Incus) -> int:
         cadence = Cadence.from_config(global_config_or_defaults().dashboard.refresh)
         log.info("state service %s starting (%s)", __version__, cadence)
         from jailbee.db import get_engine
+        from jailbee.pr_autofetch import PrHeadAutofetcher
         from jailbee.state_service.session_log import SessionRecorder
 
         recorder = SessionRecorder(get_engine())
-        asyncio.run(StateServer(Gatherer(incus, cadence, recorder=recorder)).serve(sock))
+        asyncio.run(
+            StateServer(
+                Gatherer(incus, cadence, recorder=recorder, pr_heads=PrHeadAutofetcher())
+            ).serve(sock)
+        )
         return 0
     finally:
         sock.unlink(missing_ok=True)

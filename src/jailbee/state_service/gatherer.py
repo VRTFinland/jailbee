@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from jailbee.dashboard.system import SystemStatus
     from jailbee.global_config import DashboardRefresh
     from jailbee.incus import Incus
+    from jailbee.pr_autofetch import PrHeadAutofetcher
     from jailbee.update_check import UpdateNotice
 
 log = logging.getLogger(__name__)
@@ -120,7 +121,9 @@ class Gatherer:
         system: SystemReader | None = None,
         sent_counts: Callable[[], sent.SentCounts] = sent.counts,
         recorder: Callable[[list[RepoGroup]], None] | None = None,
+        pr_heads: PrHeadAutofetcher | None = None,
     ) -> None:
+        self._pr_heads = pr_heads
         self._recorder = recorder
         self._sent_counts = sent_counts
         self._incus = incus
@@ -182,6 +185,7 @@ class Gatherer:
                 self._primed = True
             sample_activity(groups, self._sampler, self._reader)
             self._annotate_sent(groups)
+            self._annotate_pr_heads(groups)
             self._record_sessions(groups)
         except Exception as exc:  # reported to every client; the service lives on
             message = str(exc) or type(exc).__name__
@@ -210,6 +214,15 @@ class Gatherer:
         if do_git or isinstance(result, GatherError):
             self._last_full = stamp
         return result
+
+    def _annotate_pr_heads(self, groups: list[RepoGroup]) -> None:
+        """Start due PR head fetches and note their outcome; never fails the gather."""
+        if self._pr_heads is None:
+            return
+        try:
+            self._pr_heads.annotate(groups)
+        except Exception:
+            log.debug("PR head autofetch failed", exc_info=True)
 
     def _record_sessions(self, groups: list[RepoGroup]) -> None:
         """Hand the live sessions to the recorder; its failure never fails the gather."""

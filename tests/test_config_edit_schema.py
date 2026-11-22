@@ -303,7 +303,7 @@ def test_build_specs_covers_every_config_leaf():
     # Services add a model-map leaf; fork.warm_paths adds a string-list leaf;
     # golden.docker_seed contributes its four editable submodel leaves.
     # github.project and the host-local github.projects add two editable leaves.
-    assert len(build_specs(Config)) == 123
+    assert len(build_specs(Config)) == 125
     # remote.ssh.gpg adds one opt-in global boolean.
     # remote.web adds the ten `RemotePolicy` leaves: 59 + 10 = 69.
     # The web server's `listen`, `port` and `auth.enabled` make 72;

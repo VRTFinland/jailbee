@@ -1509,7 +1509,9 @@ Non-fast-forward updates require `--force`. Pending source rows show
 hands them to this PR push. An already-published
 source awaiting cleanup can remain `applied`; retry the same source push.
 `jailbee pr ls` includes source branch binding rows; `jailbee pr unbind
-NAME --head BRANCH` removes one such binding.
+NAME --head BRANCH` removes one such binding. `jailbee pr fetch [NAME] [--all]` refreshes a
+PR-bound container's PR head on the host (the ↓ target) interactively; the
+dashboard does it unattended every `pr.autofetch_interval` s while `pr.autofetch` is on.
 
 Create or update the container's GitHub PR. Publishes the
 container's branch to the GitHub `origin` by **fetching it to the host, then

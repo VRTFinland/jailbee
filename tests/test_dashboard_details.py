@@ -1508,3 +1508,45 @@ def test_summary_says_where_the_agent_runner_comes_from() -> None:
     )
     assert "agent (claude) (repo default, legacy)" in legacy
     assert not any("agent" in p for p in _panel_plain(dd.container_panel(_c(), NOW).summary))
+
+
+def _pr_card_notes(**fetch: object) -> list[str]:
+    sync = SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head", **fetch)  # type: ignore[arg-type]
+    c = _c(git_status=_pr_status(sync), base_branch="dev", pr_number=7)
+    panel = dd.container_panel(c, NOW)
+    assert panel.git is not None
+    return [_plain(r.note) for r in panel.git[1:3]]
+
+
+def test_the_pr_row_shows_how_long_ago_the_head_was_fetched() -> None:
+    notes = _pr_card_notes(fetched_at=NOW.timestamp() - 190)
+    assert notes == ["", "sync target · fetched 3m ago"]
+
+
+def test_the_pr_row_shows_a_failed_fetch_and_its_age() -> None:
+    notes = _pr_card_notes(
+        fetched_at=NOW.timestamp() - 4000,
+        fetch_error="Permission denied",
+        fetch_error_at=NOW.timestamp() - 125,
+    )
+    assert notes[1] == "sync target · fetch failed 2m ago"
+
+
+def test_the_pr_row_says_when_autofetch_is_off() -> None:
+    assert _pr_card_notes(autofetch=False)[1] == "sync target · autofetch off"
+
+
+def test_a_never_fetched_pr_row_shows_the_fetch_failure_too() -> None:
+    sync = SyncTarget(
+        "host",
+        "dev",
+        "b" * 40,
+        "refs/heads/dev",
+        fallback=True,
+        fetch_error="timed out",
+        fetch_error_at=NOW.timestamp() - 30,
+    )
+    c = _c(git_status=_pr_status(sync), base_branch="dev", pr_number=7)
+    panel = dd.container_panel(c, NOW)
+    assert panel.git is not None
+    assert _plain(panel.git[2].note) == "fetch failed 30s ago"
