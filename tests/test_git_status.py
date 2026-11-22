@@ -1523,3 +1523,81 @@ def test_probe_carries_other_branches_and_old_output_leaves_them_unmeasured(mock
 
     incus.exec.return_value = "\x00".join([""] * 14) + "\x00"
     assert probe_container_git(incus, "c", "/r", None, "main").other_branches is None
+
+
+def test_snippet_prints_question_mark_when_the_branch_listing_fails(tmp_path):
+    import os
+    import subprocess
+
+    from jailbee.git_status import _PROBE_SNIPPET
+
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git_in(repo, "init", "-q", "-b", "main")
+    _git_in(repo, "commit", "-q", "--allow-empty", "-m", "base")
+    real = subprocess.run(["which", "git"], capture_output=True, text=True).stdout.strip()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / "git"
+    shim.write_text(
+        f'#!/bin/sh\ncase "$1" in for-each-ref) exit 1;; esac\nexec {real} "$@"\n'
+    )
+    shim.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "REPO_DIR": str(repo),
+        "TARGET_SHA": "",
+        "HOST_TARGET_SHA": "",
+        "HOST_SOURCE": "",
+        "HOST_HEAD": "",
+    }
+    out = subprocess.run(
+        ["bash", "-c", _PROBE_SNIPPET], env=env, capture_output=True, text=True, check=True
+    ).stdout.split("\0")
+
+    assert out[15] == "?"
+    assert parse_other_branches(out[15]) is None
+
+
+def test_snippet_remote_containment_costs_one_git_call_for_many_branches(tmp_path):
+    import os
+    import subprocess
+
+    from jailbee.git_status import _PROBE_SNIPPET
+
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git_in(repo, "init", "-q", "-b", "main")
+    _git_in(repo, "commit", "-q", "--allow-empty", "-m", "base")
+    for i in range(6):
+        _git_in(repo, "checkout", "-q", "-b", f"b{i}", "main")
+        _git_in(repo, "commit", "-q", "--allow-empty", "-m", f"c{i}")
+        if i % 2:
+            _git_in(repo, "update-ref", f"refs/remotes/origin/b{i}", "HEAD")
+    _git_in(repo, "checkout", "-q", "main")
+    real = subprocess.run(["which", "git"], capture_output=True, text=True).stdout.strip()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "calls.log"
+    shim = bin_dir / "git"
+    shim.write_text(f'#!/bin/sh\necho "$*" >> {log}\nexec {real} "$@"\n')
+    shim.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "REPO_DIR": str(repo),
+        "TARGET_SHA": "",
+        "HOST_TARGET_SHA": "",
+        "HOST_SOURCE": "",
+        "HOST_HEAD": "",
+    }
+    out = subprocess.run(
+        ["bash", "-c", _PROBE_SNIPPET], env=env, capture_output=True, text=True, check=True
+    ).stdout.split("\0")
+
+    found = {b.name: b.remote_contained for b in parse_other_branches(out[15]) or ()}
+    assert found == {f"b{i}": bool(i % 2) for i in range(6)}
+    calls = log.read_text().splitlines()
+    per_branch = [c for c in calls if "--contains" in c and c != "branch -r --contains HEAD"]
+    assert per_branch == []

@@ -20,7 +20,9 @@ before editing `## Unreleased`.
   are no longer invisible. The dashboard's context card lists such a branch
   (name and short sha) while its tip is on neither the host nor a
   remote-tracking ref, and `jailbee destroy` warns about it next to the
-  "commits not on the host" line
+  "commits not on the host" line (or `other branches not checked` when the
+  list could not be read; reflog-only commits, stashes, tags and submodule
+  branches are not covered)
   ([#145](https://github.com/VRTFinland/jailbee/issues/145)).
 
 - `jailbee upgrade --jobs N` (`-j`) builds up to N base images at once, each

@@ -825,6 +825,10 @@ apply`/`jailbee issue apply`). Three outcomes:
   A local branch other than the checked-out one whose tip is on neither the
   host nor a remote-tracking ref adds `commits not on the host in branch
   <name> (<sha>)` (unknown remote containment counts as at risk).
+  The guard does not see reflog-only commits (abandoned detached-HEAD work),
+  `refs/stash`, tags off any branch, or submodule branches. "Behind a remote"
+  means any remote-tracking ref in the container, stale ones included; when
+  the branch list could not be read, destroy says `other branches not checked`.
   and `Destroying loses this.`, printed above the one `Destroy …?`
   confirmation, which defaults to **No** (the interactive picker, whose
   ticking is the selection, asks `Destroying loses this. Continue?` instead). A submodule is named by which of its signals is set —

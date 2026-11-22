@@ -602,26 +602,42 @@ UNMERGED=$(git ls-files --unmerged 2>/dev/null \
 case "$UNMERGED" in '' | *[!0-9]*) UNMERGED="?" ;; esac
 
 # --- field 16: other local branches, one "name<TAB>sha<TAB>remote" line each ---
-# Every refs/heads tip except the checked-out branch and any tip equal to HEAD
-# (HEAD is judged above). remote: 1 = a remote-tracking ref contains the tip,
-# 0 = none does, ? = the question failed. "?" alone = the listing itself failed.
+# Every refs/heads tip except any tip equal to HEAD (HEAD is judged above, which
+# also covers the checked-out branch). remote: 1 = a remote-tracking ref
+# contains the tip, 0 = none does, ? = the question failed. "?" alone = the
+# listing itself failed. Containment is ONE `rev-list <tips> --not --remotes`
+# whatever the branch count: it prints the commits no remote reaches, so a tip
+# is unpushed exactly when it appears in that output.
 OTHER_BRANCHES=$(
-  if ! REFS=$(git for-each-ref --format='%(HEAD)%09%(refname:short)%09%(objectname)' \
+  if ! REFS=$(git for-each-ref --format='%(refname:short)%09%(objectname)' \
       refs/heads 2>/dev/null); then
     printf '?'
   else
     TAB="$(printf '\t')"
-    printf '%s\n' "$REFS" | while IFS="$TAB" read -r cur bname bsha; do
+    TIPS=$(printf '%s\n' "$REFS" | while IFS="$TAB" read -r bname bsha; do
       [ -z "$bsha" ] && continue
-      [ "$cur" = "*" ] && continue
       [ "$bsha" = "$HEAD_SHA" ] && continue
-      if BR=$(git branch -r --contains "$bsha" 2>/dev/null); then
-        if [ -n "$BR" ]; then rc=1; else rc=0; fi
+      printf '%s\n' "$bsha"
+    done | sort -u)
+    if [ -n "$TIPS" ]; then
+      if UNPUSHED=$(git rev-list $TIPS --not --remotes 2>/dev/null); then
+        RC_OK=1
       else
-        rc="?"
+        RC_OK=0
       fi
-      printf '%s\t%s\t%s\n' "$bname" "$bsha" "$rc"
-    done
+      printf '%s\n' "$REFS" | while IFS="$TAB" read -r bname bsha; do
+        [ -z "$bsha" ] && continue
+        [ "$bsha" = "$HEAD_SHA" ] && continue
+        if [ "$RC_OK" = 0 ]; then
+          rc="?"
+        elif printf '%s\n' "$UNPUSHED" | grep -Fxq "$bsha"; then
+          rc=0
+        else
+          rc=1
+        fi
+        printf '%s\t%s\t%s\n' "$bname" "$bsha" "$rc"
+      done
+    fi
   fi
 )
 
