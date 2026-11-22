@@ -899,6 +899,7 @@ def test_comment_edit_reads_body_file() -> None:
         ({"expected": {"body": "x", "title": "y"}}, "unknown field 'title'"),
         ({"issue_ref": "new"}, "exactly one of issue or issue_ref"),
         ({"title": "no"}, "unknown field 'title'"),
+        ({"body": "Original text"}, "body must differ from expected.body"),
     ],
 )
 def test_comment_edit_rejects_malformed_fields(change: dict[str, object], message: str) -> None:

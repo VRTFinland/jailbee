@@ -1976,6 +1976,12 @@ def reconcile_action(
             expected = _expected_issue_number(action, manifest, journal)
             if expected is not None and expected != url_number:
                 raise JournalError("receipt URL does not match this action's issue")
+            if isinstance(action, CommentEditAction) and not resolution.url.endswith(
+                f"#issuecomment-{action.comment_id}"
+            ):
+                raise JournalError(
+                    f"receipt URL must be the permalink of comment {action.comment_id}"
+                )
 
         receipt_url = resolution.url
         if isinstance(action, (ProjectAddAction, ProjectSetAction)) and not _receipt_item(

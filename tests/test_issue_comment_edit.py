@@ -181,13 +181,21 @@ def test_uncertain_pr_comment_edit_resolves_with_its_pull_permalink(execution): 
             "https://github.com/acme/app/pull/7#issuecomment-555", issue=None
         ),
     )
-    with pytest.raises(Exception, match="does not match this action's issue"):
-        batch2 = execution["batch"]({"b.json": [_action()]})
-        _seed_execution(execution, batch2, state="uncertain", issue=None)
-        _reconcile(
-            execution,
-            batch2,
-            issue_outbox.AppliedResolution(
-                "https://github.com/acme/app/pull/8#issuecomment-555", issue=None
-            ),
-        )
+
+
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        ("https://github.com/acme/app/pull/8#issuecomment-555", "action's issue"),
+        ("https://github.com/acme/app/pull/7#issuecomment-999", "comment 555"),
+        ("https://github.com/acme/app/pull/7", "comment 555"),
+    ],
+)
+def test_resolve_refuses_a_permalink_to_another_thread_or_comment(execution, url, message):  # noqa: F811
+    from jailbee import issue_outbox
+    from jailbee.outbox_io import JournalError
+
+    batch = execution["batch"]({"b.json": [_action()]})
+    _seed_execution(execution, batch, state="uncertain", issue=None)
+    with pytest.raises(JournalError, match=message):
+        _reconcile(execution, batch, issue_outbox.AppliedResolution(url, issue=None))

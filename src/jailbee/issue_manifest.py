@@ -556,6 +556,8 @@ def _parse_comment_edit(
     if not isinstance(expected_body, str):
         raise IssueManifestError(f"{context}: expected.body must be a string")
     _validate_body_size(expected_body, "expected.body", context)
+    if body == expected_body:
+        raise IssueManifestError(f"{context}: body must differ from expected.body")
     return CommentEditAction(
         repo=repo,
         target=target,

@@ -30,8 +30,8 @@ class PrView:
     repo: str
 
 
-def run_json(argv: list[str], *, cwd: str | None = None) -> object:
-    """Run gh once and decode its JSON response."""
+def run_text(argv: list[str], *, cwd: str | None = None) -> str:
+    """Run gh once and return its standard output."""
     try:
         result = subprocess.run(
             argv, cwd=cwd, capture_output=True, text=True, check=False, timeout=30
@@ -48,8 +48,14 @@ def run_json(argv: list[str], *, cwd: str | None = None) -> object:
         raise GhError(f"cannot run gh: {exc}") from exc
     if result.returncode:
         raise GhError(result.stderr.strip() or "gh failed")
+    return result.stdout
+
+
+def run_json(argv: list[str], *, cwd: str | None = None) -> object:
+    """Run gh once and decode its JSON response."""
+    stdout = run_text(argv, cwd=cwd)
     try:
-        return json.loads(result.stdout)
+        return json.loads(stdout)
     except (json.JSONDecodeError, TypeError) as exc:
         raise GhError(f"gh returned malformed JSON; retry `{' '.join(argv)}`") from exc
 
@@ -197,24 +203,6 @@ def _api_repo(repo: str | None) -> tuple[str | None, str]:
     return cwd, f"repos/{slug}" if slug is not None else "repos/{owner}/{repo}"
 
 
-def _run_text(argv: list[str], cwd: str | None) -> str:
-    try:
-        result = subprocess.run(
-            argv, cwd=cwd, capture_output=True, text=True, check=False, timeout=30
-        )
-    except FileNotFoundError as exc:
-        if cwd is not None and exc.filename == cwd:
-            raise GhError(f"cannot use working directory {cwd!r}: {exc.strerror}") from exc
-        raise GhError("gh not found") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise GhError("gh timed out") from exc
-    except OSError as exc:
-        raise GhError(f"cannot run gh: {exc}") from exc
-    if result.returncode:
-        raise GhError(result.stderr.strip() or "gh failed")
-    return result.stdout
-
-
 def _comment_view(value: object) -> CommentView:
     if not isinstance(value, dict):
         raise ValueError("comment must be an object")
@@ -237,11 +225,27 @@ def issue_comment(repo: str | None, comment_id: int) -> CommentView:
     cwd, prefix = _api_repo(repo)
     argv = ["gh", "api", f"{prefix}/issues/comments/{comment_id}"]
     try:
-        return _comment_view(json.loads(_run_text(argv, cwd)))
+        return _comment_view(run_json(argv, cwd=cwd))
     except GhError as exc:
         raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
-    except (json.JSONDecodeError, ValueError) as exc:
+    except ValueError as exc:
         raise GhError(f"invalid comment response; retry `{' '.join(argv)}`: {exc}") from exc
+
+
+def _decode_pages(text: str) -> list[list[object]]:
+    """The JSON arrays ``gh api --paginate`` prints back to back, one per page."""
+    decoder = json.JSONDecoder()
+    pages: list[list[object]] = []
+    position = 0
+    while True:
+        while position < len(text) and text[position].isspace():
+            position += 1
+        if position == len(text):
+            return pages
+        page, position = decoder.raw_decode(text, position)
+        if not isinstance(page, list):
+            raise ValueError("page must be a list")
+        pages.append(page)
 
 
 def issue_comments(repo: str | None, number: int) -> tuple[CommentView, ...]:
@@ -249,21 +253,8 @@ def issue_comments(repo: str | None, number: int) -> tuple[CommentView, ...]:
     cwd, prefix = _api_repo(repo)
     argv = ["gh", "api", f"{prefix}/issues/{number}/comments", "--paginate"]
     try:
-        text = _run_text(argv, cwd)
-        # --paginate prints each page's JSON array back to back.
-        decoder = json.JSONDecoder()
-        comments: list[CommentView] = []
-        position = 0
-        while True:
-            while position < len(text) and text[position].isspace():
-                position += 1
-            if position == len(text):
-                break
-            page, position = decoder.raw_decode(text, position)
-            if not isinstance(page, list):
-                raise ValueError("page must be a list")
-            comments.extend(_comment_view(item) for item in page)
-        return tuple(comments)
+        pages = _decode_pages(run_text(argv, cwd=cwd))
+        return tuple(_comment_view(item) for page in pages for item in page)
     except GhError as exc:
         raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
     except (json.JSONDecodeError, ValueError) as exc:

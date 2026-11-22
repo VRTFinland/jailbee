@@ -176,7 +176,7 @@ comment and fills in `issue` and `expected.body` for you.
 | `repo` | As above. |
 | `issue` | Required positive integer: the issue or PR the comment is on. `issue_ref` is refused, because a create staged in the same batch has no comments yet. |
 | `comment_id` | Required positive integer: the comment's numeric id (the `#issuecomment-<id>` suffix of its URL, or the `id` from `jailbee issue comments N`). |
-| `body` / `body_file` | Required (exactly one); the new body, non-empty. |
+| `body` / `body_file` | Required (exactly one); the new body, non-empty and different from `expected.body`. |
 | `expected.body` | Required string: the comment's body when staged. |
 
 Before publishing, the host refuses the action unless the comment is still on
