@@ -536,6 +536,39 @@ def test_reader_scrolls_with_the_keys():
 
 def test_a_question_brings_the_list_back_out_of_the_reader():
     async def scenario(app, box, pilot):
-        return app.query_one("#outbox-right").display
+        return app.query_one(f"#{NATIVE_LIST_ID}").display
 
     assert run(state2(preview="full", question=question()), scenario, size=(140, 30)) is True
+
+
+@pytest.mark.parametrize("key", ["f", "v", "escape", "enter"])
+def test_leaving_the_reader_restores_the_mode_it_was_opened_from(key):
+    async def scenario(app, box, pilot):
+        opened = await press(box, "f", "f")
+        box.show(replace(box.panel, preview=opened.value))
+        await pilot.pause()
+        return await press(box, key, key if len(key) == 1 else None)
+
+    got = run(state2(preview="off"), scenario, size=(140, 30))
+    assert isinstance(got, OutboxBox.Intent)
+    assert (got.name, got.value) == ("preview", "off")
+
+
+@pytest.mark.parametrize(
+    ("key", "char"),
+    [
+        ("space", " "),
+        ("d", "d"),
+        ("p", "p"),
+        ("left", None),
+        ("right", None),
+        ("a", "a"),
+        ("tab", None),
+        ("X", "X"),
+    ],
+)
+def test_list_keys_do_nothing_in_the_reader(key, char):
+    async def scenario(app, box, pilot):
+        return await press(box, key, char)
+
+    assert run(state2(preview="full"), scenario, size=(140, 30)) is True

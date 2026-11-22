@@ -816,7 +816,7 @@ def outbox_hint(state: OutboxState, *, standalone: bool) -> str:
         return "↑/↓ choose · Enter confirm · Esc cancel"
     ab = state.abilities
     if state.tab == "sent":
-        parts = ["↑/↓ move", "o open URL", "v preview", "f full screen"]
+        parts = ["↑/↓ move", "o open URL", "v view", "f full screen"]
         if not state.sent_repo:
             parts.append("Tab Outbox")
         return " · ".join([*parts, "r refresh", "Esc close"])
@@ -831,7 +831,7 @@ def outbox_hint(state: OutboxState, *, standalone: bool) -> str:
         parts.append("p publish")
     if ab.clear:
         parts.append("X clear")
-    parts += ["v preview", "f full screen", "m manifest"]
+    parts += ["v view", "f full screen", "m manifest"]
     if standalone and ab.scope:
         parts.append("a all repos")
     parts.append("r refresh")

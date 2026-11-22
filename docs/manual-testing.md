@@ -5808,7 +5808,7 @@ Run `jb dashboard` (terminal at 140 columns).
    a preview on the right, side by side (content width at least
    `SIDE_BY_SIDE_MIN_COLS` = 110). The frame hint reads
    `↑/↓ move · Enter open · Space mark · d delete · p publish · X clear ·
-   v preview · f full screen · m manifest · r refresh · Esc close` (entries drop out
+   v view · f full screen · m manifest · r refresh · Esc close` (entries drop out
    for abilities the container lacks).
 2. Move to `001-review.json` and press Enter (or Right). Expected: the review
    expands to its action and the two inline comments; the preview follows the
