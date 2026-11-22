@@ -95,7 +95,8 @@ function agentLabel(state: string): string {
     border-left-color: var(--accent);
 }
 /* Row phase: the dashboard core's phases (the terminal dashboard's palette),
-   mapped onto each theme's --phase-* tokens. Stopped is dim, as in the TUI. */
+   mapped onto each theme's --phase-* tokens. Stopped is dim, as in the TUI.
+   Same specificity as the waiting-agent edge above and later, so a phase wins. */
 .row[data-phase="booting"] {
     border-left-color: var(--phase-booting);
 }
@@ -129,8 +130,9 @@ function agentLabel(state: string): string {
     color: var(--phase-failed);
     font-weight: 700;
 }
-/* E-ink has no colour: phases differ by border-left style, Stopped by a
-   dotted outline instead of a fade (greys repaint badly). */
+/* E-ink has no colour: phases differ by border-left style, Stopped by an open
+   top/right/bottom outline instead of a fade (greys repaint badly); phases only
+   style the left edge, so the two cannot be confused. */
 :root[data-theme="eink"] .row[data-phase="booting"] {
     border-left-style: dashed;
 }
@@ -145,9 +147,9 @@ function agentLabel(state: string): string {
 }
 :root[data-theme="eink"] .row[data-state="Stopped"] {
     opacity: 1;
-    border-top-style: dotted;
-    border-right-style: dotted;
-    border-bottom-style: dotted;
+    border-top-style: none;
+    border-right-style: none;
+    border-bottom-style: none;
 }
 .main {
     display: flex;
