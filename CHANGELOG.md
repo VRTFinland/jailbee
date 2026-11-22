@@ -240,7 +240,8 @@ before editing `## Unreleased`.
   actions, either side may be `@REF` for a create in the same batch, and
   `jailbee issue create --parent N|@REF --blocked-by N|@REF` stages the create
   followed by its links. The host refuses an add that already exists, a
-  removal that does not, and a pull request on either side. Orchestrator
+  removal that does not, a child that already has another parent, a direct
+  blocked-by cycle within a batch, and a pull request on either side. Orchestrator
   publication needs the new `sub_issue` and `dependency` issue kinds
   ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 

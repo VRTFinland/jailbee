@@ -408,6 +408,18 @@ def _relation_refusals(
     if number is None:
         return identity.id, []
     sub = isinstance(action, SubIssueAction)
+    if sub and not action.remove and identity.parent is not None:
+        parent_slug, parent_number = identity.parent
+        if (parent_slug.casefold(), parent_number) != (repo.slug.casefold(), number):
+            current_parent = (
+                f"#{parent_number}"
+                if parent_slug.casefold() == repo.slug.casefold()
+                else f"{parent_slug}#{parent_number}"
+            )
+            return identity.id, [
+                f"{context}: #{related.number} is already a sub-issue of {current_parent}; "
+                "GitHub refuses a second parent"
+            ]
     current = (
         issue_github.list_sub_issue_ids(host_repo_root, repo.slug, number)
         if sub
@@ -617,6 +629,8 @@ def prepare_batch(
     label_maps: dict[str, Mapping[str, str]] = {}
     label_errors: dict[str, str] = {}
     mutations: dict[tuple[str, int | str, str], str] = {}
+    # Pending "blocked by" additions of this batch: (repo, blocked, blocker).
+    blocked_edges: set[tuple[str, int, int]] = set()
     prepared = []
     established: dict[tuple[str, int | str, str], str] = {}
     for manifest, digest, journal in proposals:
@@ -683,6 +697,20 @@ def prepare_batch(
                     execution_errors.append(exc)
                     refusals.append(f"{context}: {exc}")
 
+            if (
+                isinstance(action, DependencyAction)
+                and not action.remove
+                and status == "pending"
+                and issue.number is not None
+                and isinstance(action.blocker, ExistingIssue)
+            ):
+                blocker = action.blocker.number
+                if (repo.identity, blocker, issue.number) in blocked_edges:
+                    refusals.append(
+                        f"{context}: dependency cycle between #{issue.number} and #{blocker}"
+                    )
+                blocked_edges.add((repo.identity, issue.number, blocker))
+
             related_id = None
             if isinstance(action, (SubIssueAction, DependencyAction)) and status == "pending":
                 try:
@@ -734,10 +762,18 @@ def prepare_batch(
                 if _assignee_overlap(action, login):
                     refusals.append(f"{context}: a login cannot appear in both add and remove")
             if status == "pending":
-                for field in mutation_keys(action):
+                keys: list[tuple[int | None, str]] = [
+                    (issue.number, field) for field in mutation_keys(action)
+                ]
+                if isinstance(action, SubIssueAction) and not action.remove:
+                    # One child has one parent: two adds collide on the child.
+                    related = related_issue(action)
+                    if isinstance(related, ExistingIssue):
+                        keys.append((related.number, "parent"))
+                for scope, field in keys:
                     mutation_key = (
-                        (repo.identity, issue.number, field)
-                        if issue.number is not None
+                        (repo.identity, scope, field)
+                        if scope is not None
                         else (manifest.name, issue.ref or "", field)
                     )
                     if mutation_key in mutations:
@@ -996,6 +1032,11 @@ def _action_lines(
         related = related_issue(action)
         if isinstance(related, CreatedIssue):
             lines.append(f"  depends on create ref {related.ref}")
+        if status == "uncertain":
+            lines.append(
+                "  already linked? Check the issue first: if the relation landed, resolve with "
+                "--applied; --retry would be refused as already linked (or not linked)"
+            )
     if isinstance(action, CreateAction):
         if issue.number is not None:
             lines.append(f"  create ref: {action.ref}")

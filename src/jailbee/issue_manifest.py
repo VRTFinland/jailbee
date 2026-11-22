@@ -891,6 +891,13 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             )
         if not isinstance(action, CreateAction):
             _record_mutations(changed, action.repo, action.target, mutation_keys(action), context)
+            if (
+                isinstance(action, SubIssueAction)
+                and not action.remove
+                and isinstance(action.child, ExistingIssue)
+            ):
+                # One child has one parent: two adds collide on the child.
+                _record_mutations(changed, action.repo, action.child, {"parent"}, context)
         if isinstance(action, (SubIssueAction, DependencyAction)):
             related = related_issue(action)
             if isinstance(related, CreatedIssue):

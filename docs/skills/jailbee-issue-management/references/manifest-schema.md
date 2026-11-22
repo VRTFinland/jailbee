@@ -305,8 +305,16 @@ already linked, a removal that is not, and a pull request on either side. The
 APIs take the other issue's numeric database id, which the host reads itself;
 for an issue created earlier in the batch it reads the id after the create.
 The field being changed is `sub_issue:<child>` or `blocked_by:<blocker>` on the
-target, so two changes of one link conflict. A link to a new issue (`*_ref`)
-has no field and never conflicts.
+target, so two changes of one link conflict. Two `sub_issue` adds of the same
+child under different parents conflict too (one child has one parent), and a
+child that already has another parent is refused at preflight (GitHub would
+reject it mid-batch). Two `dependency` adds that block each other (A blocked by
+B and B blocked by A) are refused. A link to a new issue (`*_ref`) has no
+field and never conflicts.
+
+If a relation's outcome is uncertain (a timed-out publish), check the issue:
+when the link is there, resolve with `--applied`; `--retry` would be refused as
+already linked.
 
 `create` has no `parent` or `blocked_by` field. `jailbee issue create --parent
 N|@REF --blocked-by N|@REF` stages the create and then these actions, targeting
