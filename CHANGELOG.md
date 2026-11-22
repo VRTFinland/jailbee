@@ -10,6 +10,12 @@ before editing `## Unreleased`.
 
 ### Added
 
+- Links in the Markdown bodies of `jailbee outbox show` and the dashboard
+  outbox preview are clickable (OSC 8) when the target is `http` or `https`; a
+  label that differs from the target is followed by the target's host, and
+  every other scheme is shown as text with its target
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
+
 - `jailbee upgrade --jobs N` (`-j`) builds up to N base images at once, each
   build's output prefixed with its alias; the default of 1 keeps the serial
   behaviour. `apply` and Docker seeding still run one repo at a time, and one
