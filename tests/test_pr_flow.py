@@ -2393,7 +2393,7 @@ def test_sync_base_to_pr_retargets_when_base_differs(mocker):
 
 
 def test_sync_base_to_pr_noop_when_base_already_matches(mocker):
-    fetch, retarget = _base_patches(mocker)
+    _fetch, retarget = _base_patches(mocker)
     cfg = types.SimpleNamespace(repo_root=Path("/r"), upstream_remote="origin")
     pr_flow.sync_container_base_to_pr(
         cfg,
@@ -2413,7 +2413,7 @@ def test_sync_base_to_pr_noop_when_base_already_matches(mocker):
     ],
 )
 def test_sync_base_to_pr_keeps_explicit_base(mocker, labels):
-    fetch, retarget = _base_patches(mocker)
+    _fetch, retarget = _base_patches(mocker)
     cfg = types.SimpleNamespace(repo_root=Path("/r"), upstream_remote="origin")
     pr_flow.sync_container_base_to_pr(
         cfg, _base_incus(mocker, labels), "f", short="c", base_ref="dev"

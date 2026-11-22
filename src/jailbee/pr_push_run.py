@@ -14,10 +14,10 @@ import typer
 from jailbee.tui import error, info, info_plain, success, warn
 
 if TYPE_CHECKING:
-    from jailbee.pr import PrInfo
     from jailbee.config import Config
     from jailbee.incus import Incus as IncusType
     from jailbee.outbox.io import PrManagement
+    from jailbee.pr import PrInfo
     from jailbee.submodule_pr import SubCandidate, SubmodulePrPlan
     from jailbee.sync import FetchResult, PublishResult
 
