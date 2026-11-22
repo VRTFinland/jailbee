@@ -165,6 +165,8 @@ def test_stopped_row_carries_its_state(
     ("fields", "phase"),
     [
         ({"job_kind": "boot", "job_phase": "starting", "job_pid": 1, "job_live": True}, "booting"),
+        ({"job_kind": "autostart", "job_phase": "starting", "job_pid": 1}, "autostart"),
+        ({"job_kind": "create", "job_phase": "creating", "job_pid": 1}, "job"),
         ({"autostart_failed": True}, "failed"),
     ],
 )

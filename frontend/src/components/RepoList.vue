@@ -145,7 +145,9 @@ function agentLabel(state: string): string {
 }
 :root[data-theme="eink"] .row[data-state="Stopped"] {
     opacity: 1;
-    border-style: dotted;
+    border-top-style: dotted;
+    border-right-style: dotted;
+    border-bottom-style: dotted;
 }
 .main {
     display: flex;
