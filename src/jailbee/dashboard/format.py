@@ -74,6 +74,27 @@ def autostart_failed(container: ContainerInfo) -> bool:
     return background.clearable(container.job_phase, container.job_pid)
 
 
+def merge_in_progress(container: ContainerInfo) -> bool:
+    """Whether the container's tree is stopped mid-merge (a conflict left it open).
+
+    The probe's live state (``git_status.in_progress`` / ``unmerged``), never
+    the ``conflict`` prediction; it clears at the next gather once the merge
+    is concluded or aborted. Unknown (``?``) or no probe counts as no merge.
+    """
+    status = container.git_status
+    if status is None:
+        return False
+    return status.in_progress == "merge" or bool(status.unmerged)
+
+
+MERGE_MARK_GLYPH = "⑂"
+MERGE_MARK = f"[bold white on red]{MERGE_MARK_GLYPH}[/bold white on red]"
+"""An unfinished merge's flag after the container name.
+
+White on red carries its own background, so it reads on light, dark and
+monochrome terminals alike, and no row phase colour (foreground only) matches it.
+"""
+
 ROW_PHASE_STYLES = {
     "booting": "orange3",
     "autostart": "dark_cyan",

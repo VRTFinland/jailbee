@@ -23,7 +23,13 @@ from rich.text import Text
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard.columns import FieldSpecCI, _frame_columns
 from jailbee.dashboard.fork_tree import fork_layout, name_prefix
-from jailbee.dashboard.format import ROW_PHASE_STYLES, autostart_failed, row_phase
+from jailbee.dashboard.format import (
+    MERGE_MARK,
+    ROW_PHASE_STYLES,
+    autostart_failed,
+    merge_in_progress,
+    row_phase,
+)
 from jailbee.dashboard.model import RepoGroup, Row, group_warnings, selectable_rows
 from jailbee.dashboard.settings import CURSOR_STYLE
 from jailbee.dashboard.sorting import DEFAULT_SORT, SortSpec
@@ -270,12 +276,18 @@ def entry_cells(entry: Entry, geometry: Geometry) -> tuple[str, ...]:
         )
         if spec.name == "name":
             value = entry.fork_prefix + value
-        if index == 0 and spec.name == "name" and autostart_failed(entry.container):
-            # Cut the name, not the mark: room is the column less the status
-            # indent and " ⚠", so a capped name still shows its failure.
+        marks = (
+            [MERGE_MARK] * merge_in_progress(entry.container)
+            + [WARN_MARK] * autostart_failed(entry.container)
+            if index == 0 and spec.name == "name"
+            else []
+        )
+        if marks:
+            # Cut the name, not the marks: room is the column less the status
+            # indent and " ⚠"-style marks, so a capped name still shows them.
             body = Text.from_markup(value)
-            body.truncate(max(1, geometry.widths[index] - 4), overflow="ellipsis")
-            value = f"{body.markup} {WARN_MARK}"
+            body.truncate(max(1, geometry.widths[index] - 2 - 2 * len(marks)), overflow="ellipsis")
+            value = " ".join([body.markup, *marks])
         indent = "◆ " if entry.source else "⟳ " if entry.running else "● " if entry.marked else "  "
         cells.append((indent + value) if index == 0 else value)
     return tuple(cells)

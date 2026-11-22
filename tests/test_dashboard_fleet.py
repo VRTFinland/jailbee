@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 import pytest
 from rich.console import Console
+from rich.style import Style
 
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard import model as dmodel
@@ -617,3 +618,78 @@ def test_phase_styles_are_distinct_and_avoid_plain_yellow():
 
     assert len(set(ROW_PHASE_STYLES.values())) == len(ROW_PHASE_STYLES)
     assert "yellow" not in ROW_PHASE_STYLES.values()
+
+
+def _merging(name, in_progress="merge", unmerged=None):  # type: ignore[no-untyped-def]  # test helper
+    from jailbee.git_status import GitStatus
+
+    gs = GitStatus(
+        wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", in_progress=in_progress
+    )
+    return ci(name, "r", git_status=replace(gs, unmerged=unmerged))
+
+
+@pytest.mark.parametrize(
+    ("in_progress", "unmerged", "expected"),
+    [
+        ("merge", None, True),
+        ("merge", 2, True),
+        ("", 2, True),
+        ("", 0, False),
+        ("", None, False),
+        ("?", None, False),
+        ("rebase", None, False),
+    ],
+)
+def test_merge_in_progress_follows_the_probe(in_progress, unmerged, expected):  # type: ignore[no-untyped-def]
+    from jailbee.dashboard.format import merge_in_progress
+
+    assert merge_in_progress(_merging("r-m", in_progress, unmerged)) is expected
+
+
+def test_merge_in_progress_is_false_without_a_git_probe():
+    from jailbee.dashboard.format import merge_in_progress
+
+    assert merge_in_progress(ci("r-x", "r")) is False
+
+
+def _name_line(tmp_path, container, width=80):  # type: ignore[no-untyped-def]
+    group = dmodel.RepoGroup("r", str(tmp_path), None, [container])
+    model = _fitted_name_model(group)
+    entry = next(e for e in model.entries if e.container)
+    return fleet.entry_line(entry, model.geometry, model.folded, selected=False, width=width)
+
+
+def test_a_merging_row_carries_a_marker_distinct_from_the_phase_styles(tmp_path):  # type: ignore[no-untyped-def]
+    from jailbee.dashboard.format import MERGE_MARK_GLYPH, ROW_PHASE_STYLES
+
+    line = _name_line(tmp_path, _merging("r-m"))
+    assert MERGE_MARK_GLYPH in line.plain
+    style = line.get_style_at_offset(Console(), line.plain.index(MERGE_MARK_GLYPH))
+    # Explicit foreground AND background: legible on light and dark terminals.
+    assert style.color is not None and style.bgcolor is not None and style.bold
+    # Phase styles are foreground-only, so the marker's background sets it apart.
+    assert all(Style.parse(v).bgcolor is None for v in ROW_PHASE_STYLES.values())
+    assert MERGE_MARK_GLYPH not in _name_line(tmp_path, _merging("r-m", "", None)).plain
+
+
+def test_the_marker_leaves_with_the_merge(tmp_path):  # type: ignore[no-untyped-def]
+    from jailbee.dashboard.format import MERGE_MARK_GLYPH
+
+    assert MERGE_MARK_GLYPH not in _name_line(tmp_path, _merging("r-m", "", 0)).plain
+
+
+def test_a_capped_name_keeps_its_merge_and_autostart_marks(tmp_path):  # type: ignore[no-untyped-def]
+    from jailbee import background
+    from jailbee.dashboard.format import MERGE_MARK_GLYPH
+    from jailbee.lifecycle import NAME_MAX_WIDTH
+
+    long = "z" * (NAME_MAX_WIDTH + 20)
+    c = replace(
+        _merging(f"r-{long}"),
+        job_kind=background.JOB_AUTOSTART,
+        job_phase=background.PHASE_FAILED,
+    )
+    line = _name_line(tmp_path, c, width=200)
+    assert line.plain.rstrip().endswith(f"… {MERGE_MARK_GLYPH} ⚠")
+    assert len(line.plain.rstrip()) == NAME_MAX_WIDTH + 2

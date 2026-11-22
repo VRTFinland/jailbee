@@ -10,6 +10,11 @@ before editing `## Unreleased`.
 
 ### Added
 
+- The terminal dashboard marks a container whose tree is stopped mid-merge with
+  a white-on-red `⑂` after its name, so an unfinished merge is visible without
+  opening the context card; it clears at the next refresh once the merge is
+  concluded or aborted
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
 - The terminal dashboard's PR number (column and details panel) is a terminal
   hyperlink (OSC 8) to the pull request, built from the repo's GitHub slug;
   `JAILBEE_NO_HYPERLINKS=1` shows plain text
