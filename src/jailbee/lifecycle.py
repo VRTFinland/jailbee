@@ -3796,6 +3796,11 @@ def sync_marker(status: GitStatus | None) -> str:
     return ""
 
 
+def plain_sync_marker(status: GitStatus | None) -> str:
+    """:func:`sync_marker` without markup, for plain-text surfaces."""
+    return re.sub(r"\[/?[a-z]+\]", "", sync_marker(status))
+
+
 SYNC_FIELDS = ("target_diff", "ahead_count", "behind_count", "conflict")
 """The columns that compare with the sync target and carry its marker."""
 
@@ -4595,6 +4600,7 @@ def ls_field_specs(
                 f"wt={c.git_status.wt} ±={c.git_status.target_diff} "
                 f"↑={c.git_status.ahead_count} ↓={c.git_status.behind_count} "
                 f"merge={c.git_status.conflict}"
+                + (f" {m}" if (m := plain_sync_marker(c.git_status)) else "")
                 if c.git_status
                 else "—"
             ),

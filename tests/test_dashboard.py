@@ -7569,3 +7569,74 @@ def test_pr_container_level_with_its_pr_head_still_offers_git_pull_and_diff():
 
     assert "git pull" in verbs
     assert "git diff" in verbs
+
+
+def test_dashboard_sync_columns_are_wide_enough_for_the_target_marker():
+    """At default widths a PR row's ↑12 / ↓4 / conflict keep their ``pr`` marker."""
+    from rich.text import Text
+
+    from jailbee.git_status import GitStatus
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ContainerInfo
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    c = ContainerInfo(
+        name="myrepo-b",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        repo="myrepo",
+        git_status=GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="12",
+            behind_count="4",
+            conflict="conflict",
+            target_diff="clean",
+            sync_target=SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head"),
+        ),
+    )
+    group = dmodel.RepoGroup("myrepo", "/myrepo", None, [c])
+    fields, widths = dcolumns._frame_columns(
+        [group],
+        now=now,
+        enabled=None,
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=("ahead_count", "behind_count", "conflict"),
+    )
+    for spec, width in zip(fields, widths, strict=True):
+        cell = Text.from_markup(spec.cell(c))
+        assert cell.cell_len <= width, (spec.name, cell.plain, width)
+    assert Text.from_markup(fields[0].cell(c)).plain == "12 pr"
+
+
+def test_container_picker_title_and_ls_git_status_carry_the_pr_marker():
+    from jailbee.git_status import GitStatus
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ContainerInfo, ls_field_specs
+
+    c = ContainerInfo(
+        name="myrepo-b",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        repo="myrepo",
+        git_status=GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="12",
+            behind_count="4",
+            conflict="ok",
+            target_diff="clean",
+            sync_target=SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head"),
+        ),
+    )
+    specs = {f.name: f for f in ls_field_specs(now=datetime(2026, 1, 1, tzinfo=UTC))}
+    assert specs["git_status"].cell(c).endswith("merge=ok pr")
+    assert "↑=12" in specs["git_status"].cell(c)
+    title = tui._format_choice_title(c, tui._choice_widths([c]))
+    assert "12 pr" in title
+    assert "4 pr" in title

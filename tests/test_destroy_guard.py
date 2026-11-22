@@ -529,3 +529,18 @@ def test_a_pr_container_counts_the_commits_missing_from_the_host_branch(tmp_path
 
     assert summary is not None
     assert summary.reasons == ("4 commits not on the host",)
+
+
+def test_a_known_zero_count_with_unknown_host_count_is_still_measurable():
+    from jailbee.destroy_guard import _nothing_measurable
+    from jailbee.host_target import SyncTarget
+
+    status = _ci(
+        ahead_count="0",
+        host_ahead_count="?",
+        wt="?",
+        sync_target=SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head"),
+    ).git_status
+
+    assert status is not None
+    assert not _nothing_measurable(status)

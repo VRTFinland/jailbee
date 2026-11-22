@@ -758,7 +758,11 @@ local ref wins; tracking-ahead/diverged notices describe only the fetched ref,
 not the remote server. Missing refs or an unreadable selected commit produce
 unknown comparison values rather than using a pinned anchor. Explicit JSON
 `git_status` exposes `target_diff`, `ahead_count`, `behind_count`, `base_source`,
-`base_sha`, `tracking_relation` and `upstream_ref`; its submodule line fields
+`base_sha`, `tracking_relation`, `upstream_ref`, `sync_target`,
+`host_ahead_count` and `host_behind_count` (the DIFF/↑/↓/MERGE columns compare
+with the sync target: the PR head for a PR container, otherwise the host
+branch; the `git_status` text column and picker titles carry a `pr` marker
+for a PR-head comparison); its submodule line fields
 are `target_ins`/`target_del` (with `ahead_commits`/`behind_commits` for graph
 counts).
 

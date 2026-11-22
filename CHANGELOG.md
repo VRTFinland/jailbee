@@ -84,7 +84,8 @@ before editing `## Unreleased`.
   instead of its host branch, so ↑ reads "push needed" and ↓ "someone else
   pushed" ([#145](https://github.com/VRTFinland/jailbee/issues/145)). Those
   cells carry a dim `pr`, or a yellow `pr?` when the host has no such ref and
-  the host branch stands in. The details card shows a git row per target (host
+  the host branch stands in (also in the `git_status` text column and the
+  container pickers). The details card shows a git row per target (host
   branch, PR head) with its ↑/↓ and short sha, the sync target marked, and JSON
   `git_status` gains `sync_target`, `host_ahead_count` and `host_behind_count`.
   Other containers are unchanged.
