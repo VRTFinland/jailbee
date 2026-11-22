@@ -21,12 +21,14 @@ All raise PrError subclasses with user-actionable messages on failure.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Never
 
+from jailbee.comment_edit import CommentSnapshot
 from jailbee.retry import with_remote_retry
 
 GH_PR_VIEW_JSON_FIELDS = (
@@ -803,6 +805,47 @@ def reply_to_review_comment(
     return str(
         _run_gh_api(repo_root, cmd, payload, "gh api pulls/comments/replies").get("html_url", "")
     )
+
+
+_PULL_API_URL_RE = re.compile(r"https://api\.github\.com/repos/([^/]+/[^/]+)/pulls/([1-9][0-9]*)")
+
+
+def get_review_comment(repo_root: Path, repo: str, comment_id: int) -> CommentSnapshot:
+    """Read one pull-request review (line) comment, a reply included."""
+    cmd = ["gh", "api", f"repos/{repo}/pulls/comments/{comment_id}"]
+    data = _run_gh_api(repo_root, cmd, None, "gh api pulls/comments")
+    user = data.get("user")
+    login = user.get("login") if isinstance(user, dict) else None
+    cid, body, url = data.get("id"), data.get("body"), data.get("html_url")
+    if type(cid) is not int or not isinstance(login, str) or not isinstance(url, str):
+        raise PrReviewError("'gh api pulls/comments' returned an unexpected comment")
+    if body is not None and not isinstance(body, str):
+        raise PrReviewError("'gh api pulls/comments' returned an unexpected comment")
+    pull_url = data.get("pull_request_url")
+    match = _PULL_API_URL_RE.fullmatch(pull_url) if isinstance(pull_url, str) else None
+    return CommentSnapshot(
+        id=cid,
+        author=login,
+        body=body or "",
+        url=url,
+        parent=int(match.group(2)) if match else None,
+        repo=match.group(1) if match else None,
+    )
+
+
+def edit_review_comment(repo_root: Path, repo: str, comment_id: int, body: str) -> str:
+    """Replace the body of review comment `comment_id`; return its URL."""
+    cmd = [
+        "gh",
+        "api",
+        "--method",
+        "PATCH",
+        f"repos/{repo}/pulls/comments/{comment_id}",
+        "--input",
+        "-",
+    ]
+    data = _run_gh_api(repo_root, cmd, json.dumps({"body": body}), "gh api pulls/comments edit")
+    return str(data.get("html_url", ""))
 
 
 def add_issue_comment(repo_root: Path, number: int, body: str, *, repo: str | None = None) -> str:

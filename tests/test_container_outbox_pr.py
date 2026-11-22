@@ -1055,3 +1055,51 @@ def test_real_entry_dispatches_pr(monkeypatch, tmp_path, capsys, broker):
     assert exc.value.code == 0
     assert "staged pr/" in capsys.readouterr().out
     assert staged_source(broker)[0]["pr"] == 1234
+
+
+def _review_comment(**changes):
+    value = {
+        "id": 55,
+        "user": {"login": "me"},
+        "body": "old text",
+        "html_url": "https://github.com/acme/widgets/pull/1234#discussion_r55",
+        "created_at": "2026-11-01T00:00:00Z",
+        "pull_request_url": "https://api.github.com/repos/acme/widgets/pulls/1234",
+    }
+    return {**value, **changes}
+
+
+def test_comment_edit_stages_the_edit_with_the_body_it_read(monkeypatch, broker):
+    monkeypatch.setattr(gh, "run_json", lambda argv, **kw: _review_comment())
+    result = invoke("comment-edit", "55", "1234", "--body", "new text")
+    assert result.exit_code == 0, result.output
+    raw, parsed, _ = staged_source(broker)
+    assert raw["actions"] == [
+        {
+            "type": "comment_edit",
+            "comment_id": 55,
+            "body": "new text",
+            "expected": {"body": "old text"},
+        }
+    ]
+    assert parsed.actions[0].expected_body == "old text"
+
+
+def test_comment_edit_refuses_a_comment_on_another_pr(monkeypatch, broker):
+    monkeypatch.setattr(
+        gh,
+        "run_json",
+        lambda argv, **kw: _review_comment(
+            pull_request_url="https://api.github.com/repos/acme/widgets/pulls/9"
+        ),
+    )
+    result = invoke("comment-edit", "55", "1234", "--body", "new text")
+    assert result.exit_code == 1
+    assert broker.proposals("pr") == []
+
+
+def test_comment_edit_refuses_an_unchanged_body(monkeypatch, broker):
+    monkeypatch.setattr(gh, "run_json", lambda argv, **kw: _review_comment())
+    result = invoke("comment-edit", "55", "1234", "--body", "old text")
+    assert result.exit_code == 2
+    assert broker.proposals("pr") == []

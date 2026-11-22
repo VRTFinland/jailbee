@@ -178,7 +178,7 @@ from issues the user claimed by hand), `assign` covers any login and implies
 `assign_self`.
 
 PR source manifests need `publish.pull_requests`; reviews/replies/descriptions
-need `publish.pr_reviews` and must target bound PRs in the own repository.
+need `publish.pr_reviews` (review-comment edits included) and must target bound PRs in the own repository.
 Existing unbound upstream branches, default/base heads, force pushes and
 foreign PRs are refused. New PRs use the default base; updates require an
 authored source-PR binding, not a review-only PR/stacked label or adopted

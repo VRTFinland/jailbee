@@ -172,6 +172,51 @@ def reply(
     _run(run)
 
 
+@pr_app.command("comment-edit")
+def comment_edit(
+    comment_id: Annotated[
+        str | None, typer.Argument(help="Numeric review comment id (a line comment or reply).")
+    ] = None,
+    pr: PrArg = None,
+    body: BodyOpt = None,
+    body_file: BodyFileOpt = None,
+    batch: BatchOpt = None,
+) -> None:
+    """Stage replacing the body of a submitted PR review comment you wrote.
+
+    The host publishes it only if the publishing account wrote the comment and
+    it still reads as it did when staged. Pending (unsubmitted) review comments
+    are edited through `pr review`, not here.
+    """
+
+    def run() -> None:
+        require_role()
+        if not comment_id or not comment_id.isdecimal() or int(comment_id) <= 0:
+            raise OutboxCommandError("comment id must be a positive number", 2)
+        text = _body(body, body_file, True)
+        if not text:
+            raise OutboxCommandError("comment body must be non-empty", 2)
+        view = _view(pr)
+        comment = gh.review_comment(view.repo, int(comment_id))
+        if comment.issue != view.number:
+            raise OutboxCommandError(f"comment {comment.id} is not on PR #{view.number}", 1)
+        if text == comment.body:
+            raise OutboxCommandError(f"comment {comment.id} body is unchanged", 2)
+        _stage(
+            _envelope(view),
+            {
+                "type": "comment_edit",
+                "comment_id": comment.id,
+                "body": text,
+                "expected": {"body": comment.body},
+            },
+            batch,
+            body_file is not None,
+        )
+
+    _run(run)
+
+
 def _description(title: str | None, text: str, branch: str | None) -> dict[str, object]:
     action: dict[str, object] = {"type": "description", "body": text}
     if title is not None:

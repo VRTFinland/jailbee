@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, Literal, assert_never
 from rich.markup import escape
 from rich.text import Text
 
-from jailbee import git, pr
+from jailbee import comment_edit, git, pr
 from jailbee.github_repo import github_slug, is_github_slug
 from jailbee.incus import Incus, IncusError
 from jailbee.outbox import sent
@@ -64,6 +64,9 @@ from jailbee.pr_manifest import (
 )
 from jailbee.pr_manifest import (
     CommentAction as CommentAction,
+)
+from jailbee.pr_manifest import (
+    CommentEditAction as CommentEditAction,
 )
 from jailbee.pr_manifest import (
     DescriptionAction as DescriptionAction,
@@ -513,6 +516,10 @@ def plan_lines(
             lines.append(f"COMMENT (general): {_first_line(action.body)}")
             if action.reply_to is not None:
                 lines.append(f"  reply to general comment #{action.reply_to}")
+        elif isinstance(action, CommentEditAction):
+            lines.append(f"EDIT review comment #{action.comment_id}")
+            lines.append("  body (- before, + after):")
+            lines.extend(comment_edit.diff_lines(action.expected_body, action.body))
         elif isinstance(action, DescriptionAction):
             lines.append("DESCRIPTION")
             if action.title is not None:
@@ -574,6 +581,11 @@ def show_lines(manifest: Manifest) -> list[str]:
             )
             lines.append(f"action {index} · COMMENT (general){reply}")
             lines.extend(render_markdown(action.body))
+        elif isinstance(action, CommentEditAction):
+            lines.append(f"action {index} · EDIT review comment #{action.comment_id}")
+            lines.extend(render_markdown(action.body))
+            lines.append("  body (- before, + after):")
+            lines.extend(comment_edit.diff_lines(action.expected_body, action.body))
         elif isinstance(action, DescriptionAction):
             lines.append(f"action {index} · DESCRIPTION")
             if action.title is not None:
@@ -590,6 +602,7 @@ _ACTION_LABELS: tuple[tuple[str, type[Action]], ...] = (
     ("review", ReviewAction),
     ("reply", ReplyAction),
     ("comment", CommentAction),
+    ("comment_edit", CommentEditAction),
     ("description", DescriptionAction),
 )
 
@@ -752,6 +765,7 @@ _ACTION_KIND: dict[type, str] = {
     ReviewAction: "review",
     ReplyAction: "reply",
     CommentAction: "comment",
+    CommentEditAction: "comment_edit",
     DescriptionAction: "description",
 }
 
@@ -836,7 +850,11 @@ def _apply_order(actions: tuple[Action, ...]) -> list[int]:
     """
     review = [i for i, a in enumerate(actions) if isinstance(a, ReviewAction)]
     description = [i for i, a in enumerate(actions) if isinstance(a, DescriptionAction)]
-    rest = [i for i, a in enumerate(actions) if isinstance(a, (ReplyAction, CommentAction))]
+    rest = [
+        i
+        for i, a in enumerate(actions)
+        if isinstance(a, (ReplyAction, CommentAction, CommentEditAction))
+    ]
     order = review + rest + description
     # Guards against a future fifth `Action` variant silently falling through
     # every isinstance check above: it would never be posted *and* never be
@@ -869,6 +887,43 @@ def _reply_permalink(slug: str, number: int, comment_id: int) -> str:
     permalink to the comment it answers.
     """
     return f"> [Replying to this comment](https://github.com/{slug}/pull/{number}#issuecomment-{comment_id})\n\n"
+
+
+def _comment_edit_refusals(
+    target: Target, action: CommentEditAction, login: str | None, context: str
+) -> list[str]:
+    """Read the review comment and apply the shared author and expected-body checks."""
+    assert target.pr is not None
+    try:
+        snapshot = pr.get_review_comment(
+            target.scope.repo_root, target.manifest.repo, action.comment_id
+        )
+    except pr.PrError as e:
+        return [f"{context}: {e}"]
+    return comment_edit.edit_refusals(
+        snapshot,
+        login=login or "",
+        expected_body=action.expected_body,
+        parent=target.pr.number,
+        repo=target.manifest.repo,
+        new_body=action.body,
+        context=context,
+    )
+
+
+def _pending_edit_refusals(target: Target, indices: Iterable[int]) -> list[str]:
+    """Why a pending `comment_edit` of `target` may not be published; empty when all may."""
+    edits = [
+        (i, a) for i in indices if isinstance(a := target.manifest.actions[i], CommentEditAction)
+    ]
+    if not edits:
+        return []
+    login = pr.gh_login(target.scope.repo_root)
+    refusals: list[str] = []
+    for index, action in edits:
+        context = f"{target.manifest.name} action {index}"
+        refusals.extend(_comment_edit_refusals(target, action, login, context))
+    return refusals
 
 
 def _apply_one(target: Target, action: Action, session: DraftSession | None = None) -> str:
@@ -904,6 +959,10 @@ def _apply_one(target: Target, action: Action, session: DraftSession | None = No
         if action.reply_to is not None:
             body = _reply_permalink(target.manifest.repo, number, action.reply_to) + body
         return pr.add_issue_comment(repo_root, number, body, repo=target.manifest.repo)
+    elif isinstance(action, CommentEditAction):
+        return pr.edit_review_comment(
+            repo_root, target.manifest.repo, action.comment_id, action.body
+        )
     elif isinstance(action, DescriptionAction):
         pr.edit_pr(
             repo_root, number, title=action.title, body=action.body, repo=target.manifest.repo
@@ -937,7 +996,7 @@ def _sent_action(
     manifest: Manifest, digest: str, index: int, action: Action, receipt_url: str, number: int
 ) -> sent.SentAction:
     """The Sent-log entry of one accepted PR action, from the manifest snapshot in hand."""
-    kind = type(action).__name__.lower().removesuffix("action")
+    kind = _ACTION_KIND[type(action)]
     title: str | None = None
     if isinstance(action, ReviewAction):
         parts = [action.body] if action.body else []
@@ -1151,6 +1210,12 @@ def apply_manifest(
                 except (GateError, OutboxError, pr.PrError, IncusError) as e:
                     failure = str(e)
                     break
+            if isinstance(action, CommentEditAction):
+                # An image upload takes time: recheck the comment just before editing it.
+                differences = _pending_edit_refusals(target, [index])
+                if differences:
+                    failure = "\n".join(differences)
+                    break
             store.mark_prepared(claim, digest, index, repo=manifest.repo, now=clock())
             try:
                 url = _apply_one(target, rendered, session)
@@ -1208,6 +1273,7 @@ def body_references(text: str) -> set[str]:
             "review",
             "reply",
             "comment",
+            "comment_edit",
             "description",
         ):
             raise ValueError("invalid action reference scope")
@@ -2066,6 +2132,19 @@ def _gate_manifests(
                     f"  Run `{target.scope.command} {short}` to create it."
                 )
             continue
+        edit_refusals = _pending_edit_refusals(
+            target,
+            pending_indices(manifest, _publication_progress(outbox, name, len(manifest.actions))),
+        )
+        if edit_refusals:
+            text = "\n".join(edit_refusals)
+            if raise_errors:
+                raise OutboxError(text)
+            if comments_only:
+                notes.append(f"{text}\n  {name} is held back.")
+            else:
+                refusals.append(PlanRefusal(text))
+            continue
         targets.append(target)
     return targets, refusals, notes
 
@@ -2359,6 +2438,8 @@ def _print_pr_plan(
                     action = planned.target.manifest.actions[i]
                     if isinstance(action, CommentAction):
                         label = f"held back in draft mode: action {i} (general comment)"
+                    elif isinstance(action, CommentEditAction):
+                        label = f"action {i}: published (comment edit)"
                     elif isinstance(action, DescriptionAction):
                         label = f"action {i}: published (description)"
                     else:

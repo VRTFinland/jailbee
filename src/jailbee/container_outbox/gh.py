@@ -203,20 +203,25 @@ def _api_repo(repo: str | None) -> tuple[str | None, str]:
     return cwd, f"repos/{slug}" if slug is not None else "repos/{owner}/{repo}"
 
 
-def _comment_view(value: object) -> CommentView:
+_PULL_API_URL_RE = re.compile(r"https://api\.github\.com/repos/[^/]+/[^/]+/pulls/([1-9][0-9]*)")
+
+
+def _comment_view(
+    value: object, *, parent_key: str = "issue_url", parent_re: re.Pattern[str] = _ISSUE_API_URL_RE
+) -> CommentView:
     if not isinstance(value, dict):
         raise ValueError("comment must be an object")
     user = value.get("user")
     author = user.get("login") if isinstance(user, dict) else None
     cid, body = value.get("id"), value.get("body")
-    created, url, issue_url = value.get("created_at"), value.get("html_url"), value.get("issue_url")
+    created, url, issue_url = value.get("created_at"), value.get("html_url"), value.get(parent_key)
     if type(cid) is not int or not isinstance(author, str):
         raise ValueError("comment needs an id and an author")
     if body is not None and not isinstance(body, str):
         raise ValueError("comment body must be text")
     if not isinstance(url, str) or not isinstance(created, str):
         raise ValueError("comment needs a URL and a creation time")
-    match = _ISSUE_API_URL_RE.fullmatch(issue_url) if isinstance(issue_url, str) else None
+    match = parent_re.fullmatch(issue_url) if isinstance(issue_url, str) else None
     return CommentView(cid, author, body or "", created, url, int(match[1]) if match else None)
 
 
@@ -226,6 +231,20 @@ def issue_comment(repo: str | None, comment_id: int) -> CommentView:
     argv = ["gh", "api", f"{prefix}/issues/comments/{comment_id}"]
     try:
         return _comment_view(run_json(argv, cwd=cwd))
+    except GhError as exc:
+        raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
+    except ValueError as exc:
+        raise GhError(f"invalid comment response; retry `{' '.join(argv)}`: {exc}") from exc
+
+
+def review_comment(repo: str | None, comment_id: int) -> CommentView:
+    """Read one pull-request review (line) comment; ``issue`` is its PR number."""
+    cwd, prefix = _api_repo(repo)
+    argv = ["gh", "api", f"{prefix}/pulls/comments/{comment_id}"]
+    try:
+        return _comment_view(
+            run_json(argv, cwd=cwd), parent_key="pull_request_url", parent_re=_PULL_API_URL_RE
+        )
     except GhError as exc:
         raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
     except ValueError as exc:

@@ -142,6 +142,8 @@ def _pr_actions(manifest: prs.Manifest, recorded_pr: int | None) -> tuple[Action
             kind = "description"
         elif isinstance(action, prs.ReplyAction):
             kind = "reply"
+        elif isinstance(action, prs.CommentEditAction):
+            kind = "comment_edit"
         else:
             kind = "comment"
         title = action.title if isinstance(action, prs.DescriptionAction) else None
@@ -157,7 +159,9 @@ def _pr_actions(manifest: prs.Manifest, recorded_pr: int | None) -> tuple[Action
                 "pending",
                 None,
                 comments,
-                action.comment_id if isinstance(action, prs.ReplyAction) else None,
+                action.comment_id
+                if isinstance(action, (prs.ReplyAction, prs.CommentEditAction))
+                else None,
             )
         )
     return tuple(result)

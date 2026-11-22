@@ -1491,7 +1491,14 @@ container records the comment's issue number and current body. On the host,
 the publish is refused unless the comment is still on that issue, was written
 by the account the host publishes with, and still has the body seen at staging
 time. The plan shows the change as a line diff. Two edits of one comment
-conflict. Review (line) comments are not covered.
+conflict. Review (line) comments are not covered by it.
+
+`jailbee pr comment-edit ID [N] --body TEXT` does the same for a submitted PR
+review (line) comment or reply: a `comment_edit` action in the PR manifest,
+published with `PATCH pulls/comments/ID` after the same checks (the comment is on
+that PR and repository, written by the publishing account, unchanged since
+staging). It is published directly, also under `--draft`. Pending
+(unsubmitted) review comments stay with `jailbee pr review`.
 
 Use `--batch NAME` and `jailbee outbox submit NAME
 --kind issue` to group actions. Nothing reaches GitHub until a human applies
