@@ -331,10 +331,30 @@ def test_comment_edit_refused_when_the_publishing_account_is_unknown(
 
 
 def test_comment_edit_rechecks_the_comment_just_before_publishing(cfg, incus, github):
+    # The gate read passes; the comment changes before the pre-PATCH recheck.
     github.read_comment.side_effect = [snapshot(), snapshot(body="Changed under us")]
     name = stage(manifest(COMMENT_EDIT))
     assert review_apply(cfg, incus, name) == 1
+    assert github.read_comment.call_count == 2
     github.edit_comment.assert_not_called()
+
+
+def test_comment_edit_recheck_recognises_a_landed_edit_with_attachments(
+    cfg, incus, github, mocker, capsys
+):
+    from jailbee.outbox.attachment_publication import AttachmentPublisher
+
+    mocker.patch.object(
+        AttachmentPublisher,
+        "resolve_body",
+        autospec=True,
+        side_effect=lambda self, claim, digest, body, *a: body.replace("WORDING", "https://img/x"),
+    )
+    github.read_comment.side_effect = [snapshot(), snapshot(body="Fixed https://img/x")]
+    name = stage(manifest({**COMMENT_EDIT, "body": "Fixed WORDING"}))
+    assert review_apply(cfg, incus, name) == 1
+    github.edit_comment.assert_not_called()
+    assert "already reads the new body" in capsys.readouterr().err
 
 
 def test_comment_edit_dry_run_shows_a_before_after_diff_and_publishes_nothing(
@@ -353,3 +373,63 @@ def test_comment_edit_that_already_landed_points_at_resolve(cfg, incus, github, 
     assert review_apply(cfg, incus, name) == 1
     github.edit_comment.assert_not_called()
     assert "already reads the new body" in capsys.readouterr().err
+
+
+def _refused_edit_with_reply(github):
+    github.read_comment.return_value = snapshot(body="Edited on GitHub meanwhile")
+    return stage(manifest(REPLY, COMMENT_EDIT), {"x.md": "Reply text"}, slug="mixed")
+
+
+def test_gate_dry_run_plan_lists_the_refusal_and_publishes_nothing(cfg, incus, github, capsys):
+    name = _refused_edit_with_reply(github)
+    assert review_apply(cfg, incus, name, dry_run=True) == 1
+    captured = capsys.readouterr()
+    assert "expected.body differs" in captured.err + captured.out
+    # the gate read the comment once; nothing was prepared for publishing
+    assert github.read_comment.call_count == 1
+    github.edit_comment.assert_not_called()
+    github.reply.assert_not_called()
+
+
+def test_one_refused_edit_holds_back_the_replies_of_its_manifest(cfg, incus, github, capsys):
+    name = _refused_edit_with_reply(github)
+    assert review_apply(cfg, incus, name) == 1
+    err = capsys.readouterr().err
+    assert "held back as a whole" in err
+    github.reply.assert_not_called()
+    github.edit_comment.assert_not_called()
+    assert github.read_comment.call_count == 1  # refused at the gate, not at the recheck
+
+
+def test_offered_refused_edit_appears_as_a_held_back_note(cfg, incus, github, capsys):
+    _refused_edit_with_reply(github)
+    code = pr_outbox.offer_pending_comments(
+        cfg,
+        incus,
+        FULL,
+        "c1",
+        pr_number=12,
+        confirm=lambda _n: True,
+        publisher="user",
+    )
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "expected.body differs" in captured.err + captured.out
+    assert "held back" in captured.err + captured.out
+    github.reply.assert_not_called()
+    github.edit_comment.assert_not_called()
+
+
+def test_draft_dry_run_labels_a_comment_edit_as_published(cfg, incus, github, capsys):
+    name = stage(manifest(REVIEW, COMMENT_EDIT), slug="draft")
+    review_apply(cfg, incus, name, dry_run=True, draft=True)
+    out = capsys.readouterr().out
+    assert "action 1: published (comment edit)" in out
+    assert "action 0: pending (in your pending review)" in out
+
+
+def test_show_lines_render_a_comment_edit_with_its_diff():
+    parsed = pr_outbox.parse_manifest("m.json", json.dumps(manifest(COMMENT_EDIT)), {})
+    text = "\n".join(pr_outbox.show_lines(parsed))
+    assert "action 0 · EDIT review comment #7" in text
+    assert "-Old wording" in text and "+Fixed wording" in text

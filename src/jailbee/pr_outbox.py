@@ -890,7 +890,11 @@ def _reply_permalink(slug: str, number: int, comment_id: int) -> str:
 
 
 def _comment_edit_refusals(
-    target: Target, action: CommentEditAction, login: str | None, context: str
+    target: Target,
+    action: CommentEditAction,
+    login: str | None,
+    context: str,
+    written: str | None = None,
 ) -> list[str]:
     """Read the review comment and apply the shared author and expected-body checks."""
     assert target.pr is not None
@@ -906,13 +910,20 @@ def _comment_edit_refusals(
         expected_body=action.expected_body,
         parent=target.pr.number,
         repo=target.manifest.repo,
-        new_body=action.body,
+        new_body=action.body if written is None else written,
         context=context,
     )
 
 
-def _pending_edit_refusals(target: Target, indices: Iterable[int]) -> list[str]:
-    """Why a pending `comment_edit` of `target` may not be published; empty when all may."""
+def _pending_edit_refusals(
+    target: Target, indices: Iterable[int], written: Mapping[int, str] | None = None
+) -> list[str]:
+    """Why a pending `comment_edit` of `target` may not be published; empty when all may.
+
+    `written` maps an index to the body `_apply_one` will actually write (the
+    action body with attachment URLs filled in), which is what a comment that
+    already reads the edit shows; an index without one compares `action.body`.
+    """
     edits = [
         (i, a) for i in indices if isinstance(a := target.manifest.actions[i], CommentEditAction)
     ]
@@ -922,7 +933,9 @@ def _pending_edit_refusals(target: Target, indices: Iterable[int]) -> list[str]:
     refusals: list[str] = []
     for index, action in edits:
         context = f"{target.manifest.name} action {index}"
-        refusals.extend(_comment_edit_refusals(target, action, login, context))
+        refusals.extend(
+            _comment_edit_refusals(target, action, login, context, (written or {}).get(index))
+        )
     return refusals
 
 
@@ -1212,7 +1225,7 @@ def apply_manifest(
                     break
             if isinstance(action, CommentEditAction):
                 # An image upload takes time: recheck the comment just before editing it.
-                differences = _pending_edit_refusals(target, [index])
+                differences = _pending_edit_refusals(target, [index], {index: rendered.body})
                 if differences:
                     failure = "\n".join(differences)
                     break
@@ -2132,16 +2145,23 @@ def _gate_manifests(
                     f"  Run `{target.scope.command} {short}` to create it."
                 )
             continue
-        edit_refusals = _pending_edit_refusals(
-            target,
-            pending_indices(manifest, _publication_progress(outbox, name, len(manifest.actions))),
+        pending = pending_indices(
+            manifest, _publication_progress(outbox, name, len(manifest.actions))
         )
+        edit_refusals = _pending_edit_refusals(target, pending)
         if edit_refusals:
             text = "\n".join(edit_refusals)
+            whole = any(not isinstance(manifest.actions[i], CommentEditAction) for i in pending)
+            if whole:
+                # One refused edit holds the whole manifest back, replies included.
+                text += (
+                    f"\n  {name} is held back as a whole: its other pending actions "
+                    "are not published until the edit is dropped or fixed."
+                )
             if raise_errors:
                 raise OutboxError(text)
             if comments_only:
-                notes.append(f"{text}\n  {name} is held back.")
+                notes.append(text if whole else f"{text}\n  {name} is held back.")
             else:
                 refusals.append(PlanRefusal(text))
             continue

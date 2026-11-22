@@ -511,6 +511,8 @@ def _publish_summary(g: GrantView) -> str:
         parts.append("PRs")
     if g.publish_pr_reviews:
         parts.append("PR reviews")
+    if g.publish_pr_comment_edits:
+        parts.append("PR comment edits")
     if not parts:
         return "none"
     return " · ".join([*parts, f"{g.publish_rate}/hour"])

@@ -168,7 +168,12 @@ manifest's repository and PR, was written by the account the host publishes with
 already reads the new body is reported as landed. The plan shows a line diff. The
 action does not depend on `head_sha`, and it is published directly even in
 `--draft` mode. Two edits of one comment in a manifest are refused. Pending
-(unsubmitted) review comments are not covered.
+(unsubmitted) review comments are not covered: staging refuses a comment whose
+review is still `PENDING`.
+
+If any pending edit is refused, the **whole manifest** is held back, replies and
+comments in it included, until the edit is dropped or fixed. Put an edit in its
+own manifest (its own `--batch`) when other actions must not wait for it.
 
 ## `type: "comment"`
 

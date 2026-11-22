@@ -143,6 +143,7 @@ def test_build_grant_foreign_issues_none_clears_only_the_foreign_block(cfg):
         {"publish_issues": ()},
         {"publish_prs": False},
         {"publish_pr_reviews": True},
+        {"publish_pr_comment_edits": True},
         {"publish_rate": 10},
         {"publish_foreign_issues": ()},
     ],
@@ -159,6 +160,7 @@ def test_no_publish_is_exclusive(cfg, changes):
         ("foreign_issues", "issue apply"),
         ("pull_requests", "pr push"),
         ("pr_reviews", "review apply"),
+        ("pr_comment_edits", "review apply"),
     ],
 )
 def test_remote_publish_requires_equivalent_manual_permission(cfg, incus, right, allowed):
@@ -424,6 +426,7 @@ def test_save_profile_writes_global_block(cfg, incus_with_grant, tmp_path):
             "foreign_issues": {"repos": [], "actions": []},
             "pull_requests": False,
             "pr_reviews": False,
+            "pr_comment_edits": False,
             "max_actions_per_hour": 30,
         },
     }
@@ -980,3 +983,12 @@ def test_local_grant_is_unbounded(make_cfg, tmp_path, incus, ensure):
     cfg = _wide_cfg(make_cfg, tmp_path, profile_loose=True)
     g = commands.grant(cfg, incus, "myrepo-a", GrantFlags(profile="wide"))
     assert g.grantable.loose is True and g.grantable.mounts == ("data",)
+
+
+def test_comment_edits_right_needs_pr_reviews(cfg):
+    with pytest.raises(GrantError, match="needs --publish-pr-reviews"):
+        commands.build_grant(cfg, None, GrantFlags(publish_pr_comment_edits=True))
+    rights = commands.build_grant(
+        cfg, None, GrantFlags(publish_pr_reviews=True, publish_pr_comment_edits=True)
+    ).publish
+    assert rights.pr_comment_edits is True

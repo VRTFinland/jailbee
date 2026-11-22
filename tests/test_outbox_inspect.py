@@ -539,3 +539,49 @@ def test_assignees_action_view_lists_add_and_remove_as_plain_text(tmp_path):
         False,
     )
     assert action.body == "add: @me, bob\nremove: carol"
+
+
+def test_pr_comment_edit_is_its_own_action_kind():
+    files = {
+        "001.json": json.dumps(
+            {
+                "version": 1,
+                "repo": "acme/repo",
+                "pr": 42,
+                "head_sha": "a" * 40,
+                "actions": [
+                    {
+                        "type": "comment_edit",
+                        "comment_id": 7,
+                        "body": "New",
+                        "expected": {"body": "Old"},
+                    }
+                ],
+            }
+        )
+    }
+    (view,) = build_views(IDENTITY, (store("pr", files),))
+    assert [a.kind for a in view.actions] == ["comment_edit"]
+    assert view.actions[0].body == "New"
+
+
+def test_issue_comment_edit_is_its_own_action_kind():
+    files = {
+        "001.json": json.dumps(
+            {
+                "version": 1,
+                "actions": [
+                    {
+                        "type": "comment_edit",
+                        "repo": ".",
+                        "issue": 7,
+                        "comment_id": 99,
+                        "body": "New",
+                        "expected": {"body": "Old"},
+                    }
+                ],
+            }
+        )
+    }
+    (view,) = build_views(IDENTITY, (store("issue", files),))
+    assert [a.kind for a in view.actions] == ["comment_edit"]

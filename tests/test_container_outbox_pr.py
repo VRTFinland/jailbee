@@ -1069,10 +1069,27 @@ def _review_comment(**changes):
     return {**value, **changes}
 
 
+def _gh_reads(monkeypatch, comment=None, review_state=None):
+    """Stub `gh api`, recording each argv and answering by endpoint."""
+    seen = []
+
+    def run_json(argv, **kw):
+        seen.append(argv)
+        if argv[2].endswith("/pulls/comments/55"):
+            return comment if comment is not None else _review_comment()
+        if "/reviews/" in argv[2]:
+            return {"state": review_state or "COMMENTED"}
+        pytest.fail(f"unexpected gh call {argv}")
+
+    monkeypatch.setattr(gh, "run_json", run_json)
+    return seen
+
+
 def test_comment_edit_stages_the_edit_with_the_body_it_read(monkeypatch, broker):
-    monkeypatch.setattr(gh, "run_json", lambda argv, **kw: _review_comment())
+    seen = _gh_reads(monkeypatch)
     result = invoke("comment-edit", "55", "1234", "--body", "new text")
     assert result.exit_code == 0, result.output
+    assert seen[0] == ["gh", "api", "repos/{owner}/{repo}/pulls/comments/55"]
     raw, parsed, _ = staged_source(broker)
     assert raw["actions"] == [
         {
@@ -1085,21 +1102,79 @@ def test_comment_edit_stages_the_edit_with_the_body_it_read(monkeypatch, broker)
     assert parsed.actions[0].expected_body == "old text"
 
 
+def test_comment_edit_is_staged_under_the_hyphenated_slug(monkeypatch, broker):
+    _gh_reads(monkeypatch)
+    assert invoke("comment-edit", "55", "1234", "--body", "new text").exit_code == 0
+    (row,) = broker.proposals("pr")
+    assert row.name == "001-comment-edit.json"
+
+
 def test_comment_edit_refuses_a_comment_on_another_pr(monkeypatch, broker):
-    monkeypatch.setattr(
-        gh,
-        "run_json",
-        lambda argv, **kw: _review_comment(
-            pull_request_url="https://api.github.com/repos/acme/widgets/pulls/9"
-        ),
+    _gh_reads(
+        monkeypatch,
+        _review_comment(pull_request_url="https://api.github.com/repos/acme/widgets/pulls/9"),
     )
     result = invoke("comment-edit", "55", "1234", "--body", "new text")
     assert result.exit_code == 1
     assert broker.proposals("pr") == []
 
 
+def test_comment_edit_refuses_a_comment_of_a_pending_review(monkeypatch, broker):
+    seen = _gh_reads(monkeypatch, _review_comment(pull_request_review_id=77), "PENDING")
+    result = invoke("comment-edit", "55", "1234", "--body", "new text")
+    assert result.exit_code == 1
+    assert "pending" in result.output
+    assert seen[-1] == ["gh", "api", "repos/{owner}/{repo}/pulls/1234/reviews/77"]
+    assert broker.proposals("pr") == []
+
+
+def test_comment_edit_stages_a_comment_of_a_submitted_review(monkeypatch, broker):
+    seen = _gh_reads(monkeypatch, _review_comment(pull_request_review_id=77))
+    assert invoke("comment-edit", "55", "1234", "--body", "new text").exit_code == 0
+    assert seen[-1] == ["gh", "api", "repos/{owner}/{repo}/pulls/1234/reviews/77"]
+    assert len(broker.proposals("pr")) == 1
+
+
+@pytest.mark.parametrize("comment_id", ["0", "-3", "abc", "1.5"])
+def test_comment_edit_refuses_a_bad_comment_id(monkeypatch, broker, comment_id):
+    _gh_reads(monkeypatch)
+    result = invoke("comment-edit", comment_id, "1234", "--body", "x")
+    assert result.exit_code == 2
+    assert broker.proposals("pr") == []
+
+
+def test_comment_edit_refuses_a_missing_comment_id(monkeypatch, broker):
+    _gh_reads(monkeypatch)
+    assert invoke("comment-edit", "--body", "x").exit_code == 2
+    assert broker.proposals("pr") == []
+
+
+def test_comment_edit_refuses_an_empty_body(monkeypatch, broker):
+    _gh_reads(monkeypatch)
+    result = invoke("comment-edit", "55", "1234", "--body", "")
+    assert result.exit_code == 2
+    assert broker.proposals("pr") == []
+
+
+def test_comment_edit_reads_the_body_from_a_file(monkeypatch, broker, tmp_path):
+    _gh_reads(monkeypatch)
+    path = tmp_path / "new.md"
+    path.write_text("from file")
+    result = invoke("comment-edit", "55", "1234", "--body-file", str(path))
+    assert result.exit_code == 0, result.output
+    _, parsed, _ = staged_source(broker)
+    assert parsed.actions[0].body == "from file"
+
+
+def test_comment_edit_refuses_a_missing_body_file(monkeypatch, broker, tmp_path):
+    _gh_reads(monkeypatch)
+    result = invoke("comment-edit", "55", "1234", "--body-file", str(tmp_path / "nope.md"))
+    assert result.exit_code != 0
+    assert broker.proposals("pr") == []
+
+
 def test_comment_edit_refuses_an_unchanged_body(monkeypatch, broker):
-    monkeypatch.setattr(gh, "run_json", lambda argv, **kw: _review_comment())
+    _gh_reads(monkeypatch)
     result = invoke("comment-edit", "55", "1234", "--body", "old text")
     assert result.exit_code == 2
     assert broker.proposals("pr") == []

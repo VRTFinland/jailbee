@@ -66,6 +66,7 @@ orchestration:
         actions: [add, set]        # board-scoped; set implies add and covers clear
     pull_requests: false
     pr_reviews: false
+    pr_comment_edits: false       # editing submitted PR review comments
     max_actions_per_hour: 10      # min with the grant's rate
 ```
 

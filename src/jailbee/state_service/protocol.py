@@ -54,7 +54,8 @@ from jailbee.update_check import UpdateNotice
 # 28 adds ContainerInfo.agent_runner and .agent_source, the agent the next session launches.
 # 29 adds RepoGroup.service_descriptions, the repo services' optional descriptions.
 # 30 adds SyncTarget.autofetch, .fetched_at, .fetch_error and .fetch_error_at.
-PROTOCOL = 30
+# 31 adds GrantView.publish_pr_comment_edits, the PR comment-edit publish right.
+PROTOCOL = 31
 
 
 class ProtocolError(ValueError):

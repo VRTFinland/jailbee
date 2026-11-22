@@ -1096,3 +1096,90 @@ def test_comment_grant_does_not_cover_comment_edit(rig):
     with pytest.raises(issue_outbox.IssueGateError, match="comment_edit"):
         publishing._issue_policy(PublishRights(issues=("comment",)), 1)(batch)
     publishing._issue_policy(PublishRights(issues=("comment", "comment_edit")), 1)(batch)
+
+
+def _edit_manifest(extra=()):
+    return pr_outbox.parse_manifest(
+        "a.json",
+        json.dumps(
+            {
+                "version": 1,
+                "repo": "org/repo",
+                "pr": 12,
+                "head_sha": "a" * 40,
+                "actions": [
+                    {"type": "comment", "body": "x"},
+                    {
+                        "type": "comment_edit",
+                        "comment_id": 5,
+                        "body": "n",
+                        "expected": {"body": "o"},
+                    },
+                ][: 2 if not extra else 1 + len(extra)],
+            }
+        ),
+        {},
+    )
+
+
+def _bound(ctx, mocker):
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    ctx.incus.config_get_checked.side_effect = lambda full, key: (
+        "12" if key == "user.jailbee.pr" else None
+    )
+
+
+@pytest.mark.parametrize(("edits", "allowed"), [(False, False), (True, True)])
+def test_review_policy_needs_comment_edit_right(rig, mocker, edits, allowed):
+    ctx = rig[0]
+    _bound(ctx, mocker)
+    rights = PublishRights(pr_reviews=True, pr_comment_edits=edits)
+    check = publishing._review_policy(rights, 2, ctx.cfg, ctx.incus, ctx.sender.full)
+    if allowed:
+        check(_edit_manifest())
+    else:
+        with pytest.raises(pr_outbox.GateError, match="pr_comment_edits"):
+            check(_edit_manifest())
+
+
+def test_review_policy_without_edits_unaffected_by_missing_edit_right(rig, mocker):
+    ctx = rig[0]
+    _bound(ctx, mocker)
+    manifest = pr_outbox.parse_manifest(
+        "a.json",
+        json.dumps(
+            {
+                "version": 1,
+                "repo": "org/repo",
+                "pr": 12,
+                "head_sha": "a" * 40,
+                "actions": [{"type": "comment", "body": "x"}],
+            }
+        ),
+        {},
+    )
+    publishing._review_policy(
+        PublishRights(pr_reviews=True), 1, ctx.cfg, ctx.incus, ctx.sender.full
+    )(manifest)
+
+
+def test_precheck_refuses_comment_edit_without_the_right(rig, mocker):
+    ctx, m, *_ = rig
+    payload = {
+        "version": 1,
+        "repo": "org/repo",
+        "pr": 12,
+        "head_sha": "a" * 40,
+        "actions": [
+            {"type": "comment_edit", "comment_id": 5, "body": "n", "expected": {"body": "o"}}
+        ],
+    }
+    seed_source(ctx.sender.key, payload)
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    mocker.patch.object(pr_outbox, "read_outbox", side_effect=AssertionError("incus exec"))
+    ctx.sender = replace(
+        ctx.sender,
+        config={labels.GRANT: Grant(publish=PublishRights(pr_reviews=True)).to_label()},
+    )
+    out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
+    assert out.state == "refused" and "pr_comment_edits" in out.detail

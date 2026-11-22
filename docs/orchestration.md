@@ -136,6 +136,7 @@ publish:
     actions: [comment]
   pull_requests: true
   pr_reviews: false
+  pr_comment_edits: false                       # edit submitted PR review comments
   max_actions_per_hour: 30                      # 1..500
 ```
 
@@ -160,7 +161,10 @@ editors; its board picker supports adding a board and editing its action rights.
 comment. Publication still refuses a comment written by any account other than the
 host's publishing account, or one changed since staging. `comment` does not
 imply it. Editing a submitted PR review (line) comment is a `comment_edit` action in
-the PR manifest and needs `publish.pr_reviews`, like a reply.
+the PR manifest and needs its own right, `publish.pr_comment_edits`, which requires
+`publish.pr_reviews`: `pr_reviews` does not imply it, and a PR manifest containing a
+`comment_edit` is refused at the publish gate without it. Replies and comments
+are unaffected. The repo cap narrows it like the other rights.
 
 Assignment has two kinds. `assign_self` covers only assignees changes whose
 logins all equal the publishing account, compared case-insensitively after
@@ -176,7 +180,8 @@ counts as widening.
 `--publish-foreign-issues REPO:KINDS` replaces the foreign block; every listed
 repository must use the same kinds. `--publish-foreign-issues none` clears the
 foreign block alone. `--publish-prs/--no-publish-prs` and
-`--publish-pr-reviews/--no-publish-pr-reviews` toggle their rights.
+`--publish-pr-reviews/--no-publish-pr-reviews` and
+`--publish-pr-comment-edits/--no-publish-pr-comment-edits` toggle their rights.
 `--no-publish` clears everything and is exclusive with other publish flags.
 A bare `grant` keeps existing publish rights. `show` and `ls` display them;
 the terminal dashboard's `Orchestration…` menu shows and edits them too.
