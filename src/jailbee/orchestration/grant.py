@@ -94,11 +94,14 @@ class Grantable(BaseModel):
         return _checked_egress(v)
 
 
-IssueActionKind = Literal["create", "edit", "comment", "labels", "state", "assign_self", "assign"]
+IssueActionKind = Literal[
+    "create", "edit", "comment", "comment_edit", "labels", "state", "assign_self", "assign"
+]
 ISSUE_ACTION_KINDS: tuple[IssueActionKind, ...] = (
     "assign",
     "assign_self",
     "comment",
+    "comment_edit",
     "create",
     "edit",
     "labels",

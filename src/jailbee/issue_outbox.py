@@ -12,7 +12,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, assert_never
 
-from jailbee import git, issue_github, issue_projects, submodules
+from jailbee import comment_edit, git, issue_github, issue_projects, submodules
 from jailbee.github_repo import github_slug, resolve_submodule_url
 from jailbee.incus import Incus, IncusError
 from jailbee.issue_github import (
@@ -27,6 +27,7 @@ from jailbee.issue_manifest import (
     ME_LOGIN,
     AssigneesAction,
     CommentAction,
+    CommentEditAction,
     CreateAction,
     CreatedIssue,
     EditAction,
@@ -354,6 +355,28 @@ def _differences(
     return differences
 
 
+def _comment_edit_refusals(
+    host_repo_root: Path,
+    repo: RepoTarget,
+    action: CommentEditAction,
+    login: str,
+    context: str,
+) -> list[str]:
+    """Read the comment and apply the shared author and expected-body checks.
+
+    Raises `IssueGithubReadError` when the comment cannot be read.
+    """
+    assert isinstance(action.target, ExistingIssue), "the parser requires an issue number"
+    snapshot = issue_github.get_issue_comment(host_repo_root, repo.slug, action.comment_id)
+    return comment_edit.edit_refusals(
+        snapshot,
+        login=login,
+        expected_body=action.expected_body,
+        parent=action.target.number,
+        context=context,
+    )
+
+
 def _load_proposals(
     outbox: OutboxSnapshot,
     names: Sequence[str],
@@ -596,6 +619,7 @@ def prepare_batch(
                     if snapshot.is_pull_request and not isinstance(
                         action,
                         (
+                            CommentEditAction,
                             ProjectAddAction,
                             ProjectSetAction,
                             ProjectClearAction,
@@ -604,6 +628,15 @@ def prepare_batch(
                     ):
                         refusals.append(f"{context}: target is a pull request, not an issue")
                     refusals.extend(_differences(action, snapshot, context, login))
+
+            if isinstance(action, CommentEditAction) and status == "pending" and login:
+                try:
+                    refusals.extend(
+                        _comment_edit_refusals(cfg.repo_root, repo, action, login, context)
+                    )
+                except IssueGithubReadError as exc:
+                    execution_errors.append(exc)
+                    refusals.append(f"{context}: {exc}")
 
             labels = None
             if isinstance(action, (CreateAction, LabelsAction)) and status == "pending":
@@ -799,6 +832,22 @@ def revalidate_batch(batch: PreparedBatch) -> None:
                         execution_errors.append(exc)
                         refusals.append(str(exc))
                 continue
+            if isinstance(resolved.action, CommentEditAction) and resolved.status == "pending":
+                context = f"{manifest.manifest.name} action {resolved.index}"
+                try:
+                    refusals.extend(
+                        _comment_edit_refusals(
+                            batch.host_repo_root,
+                            resolved.repo,
+                            resolved.action,
+                            batch.login,
+                            context,
+                        )
+                    )
+                except IssueGithubReadError as exc:
+                    execution_errors.append(exc)
+                    refusals.append(f"{context}: {exc}")
+                continue
             if (
                 resolved.status != "pending"
                 or resolved.issue.number is None
@@ -885,6 +934,10 @@ def _action_lines(
             lines.extend(_prose("body after", action.body))
     elif isinstance(action, CommentAction):
         lines.extend(_prose("body", action.body, markdown=True))
+    elif isinstance(action, CommentEditAction):
+        lines.append(f"  comment {action.comment_id}")
+        lines.append("  body (- before, + after):")
+        lines.extend(comment_edit.diff_lines(action.expected_body, action.body))
     elif isinstance(action, LabelsAction):
         added = (
             action.add
@@ -992,7 +1045,10 @@ def _attachment_lines(manifest: IssueManifest) -> list[str]:
             f"{attachment.size} bytes, sha256 {attachment.sha256})"
         )
         for index, action in enumerate(manifest.actions):
-            if isinstance(action, (CreateAction, EditAction, CommentAction)) and action.body:
+            if (
+                isinstance(action, (CreateAction, EditAction, CommentAction, CommentEditAction))
+                and action.body
+            ):
                 for reference in references(action.body):
                     if reference.id == identifier:
                         line = action.body.count("\n", 0, reference.start) + 1
@@ -1204,6 +1260,10 @@ def _execute_one(
         )
     if isinstance(action, CommentAction):
         return issue_github.add_comment(host_repo_root, repo, number, body=action.body)
+    if isinstance(action, CommentEditAction):
+        return issue_github.edit_issue_comment(
+            host_repo_root, repo, action.comment_id, issue=number, body=action.body
+        )
     if isinstance(action, LabelsAction):
         return issue_github.replace_labels(
             host_repo_root, repo, number, labels=resolved.labels or ()
@@ -1320,6 +1380,8 @@ def _sent_action(
         content = "\n\n".join(p for p in (action.title, action.body) if p)
     elif isinstance(action, CommentAction):
         kind, content = "comment", action.body
+    elif isinstance(action, CommentEditAction):
+        kind, content = "comment_edit", action.body
     elif isinstance(action, LabelsAction):
         kind = "labels"
         changes = [f"+{label}" for label in action.add]
@@ -1551,7 +1613,9 @@ def apply_batch(
                 action = resolved.action
                 if (
                     prepared.manifest.attachments
-                    and isinstance(action, (CreateAction, EditAction, CommentAction))
+                    and isinstance(
+                        action, (CreateAction, EditAction, CommentAction, CommentEditAction)
+                    )
                     and action.body is not None
                 ):
                     try:
@@ -1580,6 +1644,23 @@ def apply_batch(
                             differences.insert(
                                 0, f"{context}: target is a pull request, not an issue"
                             )
+                        if differences:
+                            return failed(
+                                name,
+                                resolved.index,
+                                False,
+                                "\n".join(differences),
+                                kind="validation",
+                            )
+                    if isinstance(action, CommentEditAction):
+                        # An image upload takes time: recheck the comment just before editing it.
+                        context = f"{name} action {resolved.index}"
+                        try:
+                            differences = _comment_edit_refusals(
+                                batch.host_repo_root, resolved.repo, action, batch.login, context
+                            )
+                        except IssueGithubReadError as exc:
+                            return failed(name, resolved.index, False, f"{context}: {exc}")
                         if differences:
                             return failed(
                                 name,
@@ -1769,17 +1850,18 @@ _RECEIPT_URL_RE = re.compile(
 )
 
 
-def _validated_receipt(url: str, repo: RepoTarget, *, project: bool = False) -> int:
+def _validated_receipt(url: str, repo: RepoTarget, *, allow_pull: bool = False) -> int:
     """Parse and validate a GitHub issue receipt URL; return its issue number.
 
     Deliberately strict: exactly `https://github.com/<owner>/<repo>/issues/<n>`,
     optionally followed by a `#fragment` (a comment permalink), matching
-    `repo` case-insensitively. No query string, no `pull`, no credentials in
-    the authority, no host lookalike, no trailing garbage.
+    `repo` case-insensitively. No query string, no `pull` (unless `allow_pull`:
+    a project item or a PR conversation comment), no credentials in the
+    authority, no host lookalike, no trailing garbage.
     """
     pattern = (
         re.compile(_RECEIPT_URL_RE.pattern.replace("/issues/", "/(?:issues|pull)/"))
-        if project
+        if allow_pull
         else _RECEIPT_URL_RE
     )
     match = pattern.fullmatch(url)
@@ -1865,9 +1947,15 @@ def reconcile_action(
         url_number = _validated_receipt(
             resolution.url,
             repo,
-            project=isinstance(
+            allow_pull=isinstance(
                 action,
-                (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction),
+                (
+                    CommentEditAction,
+                    ProjectAddAction,
+                    ProjectSetAction,
+                    ProjectClearAction,
+                    ProjectRemoveAction,
+                ),
             ),
         )
         if isinstance(action, CreateAction):
@@ -1888,6 +1976,12 @@ def reconcile_action(
             expected = _expected_issue_number(action, manifest, journal)
             if expected is not None and expected != url_number:
                 raise JournalError("receipt URL does not match this action's issue")
+            if isinstance(action, CommentEditAction) and not resolution.url.endswith(
+                f"#issuecomment-{action.comment_id}"
+            ):
+                raise JournalError(
+                    f"receipt URL must be the permalink of comment {action.comment_id}"
+                )
 
         receipt_url = resolution.url
         if isinstance(action, (ProjectAddAction, ProjectSetAction)) and not _receipt_item(
@@ -1901,7 +1995,7 @@ def reconcile_action(
             if (
                 not target.present
                 or target.url != receipt_url.split("#", 1)[0]
-                or _validated_receipt(target.url, repo, project=True) != url_number
+                or _validated_receipt(target.url, repo, allow_pull=True) != url_number
             ):
                 raise JournalError("project receipt does not identify a current board item")
             receipt_url = f"{target.url}#project-item-{target.item_id}"

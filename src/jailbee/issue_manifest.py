@@ -69,6 +69,23 @@ class CommentAction:
 
 
 @dataclass(frozen=True)
+class CommentEditAction:
+    """Replace the body of one existing issue or PR conversation comment.
+
+    ``target`` is the issue (or pull request) the comment belongs to; the host
+    checks that the comment is still there, authored by the publisher and
+    unchanged since staging (``expected_body``).
+    """
+
+    kind: ClassVar[Literal["comment_edit"]] = "comment_edit"
+    repo: str
+    target: IssueTarget
+    comment_id: int
+    body: str
+    expected_body: str
+
+
+@dataclass(frozen=True)
 class LabelsAction:
     kind: ClassVar[Literal["labels"]] = "labels"
     repo: str
@@ -153,6 +170,7 @@ IssueAction = (
     CreateAction
     | EditAction
     | CommentAction
+    | CommentEditAction
     | LabelsAction
     | AssigneesAction
     | StateAction
@@ -177,6 +195,8 @@ def mutation_keys(action: IssueAction) -> set[str]:
         )
     if isinstance(action, (LabelsAction, AssigneesAction, StateAction)):
         return {action.kind}
+    if isinstance(action, CommentEditAction):
+        return {f"comment:{action.comment_id}"}
     if isinstance(action, (ProjectAddAction, ProjectRemoveAction)):
         return {f"project:{action.project.casefold()}:membership"}
     if isinstance(action, (ProjectSetAction, ProjectClearAction)):
@@ -506,6 +526,47 @@ def _parse_comment(
     return CommentAction(repo=repo, target=target, body=body)
 
 
+def _parse_comment_edit(
+    item: dict[str, object],
+    files: Mapping[str, str],
+    body_files: set[str],
+    context: str,
+) -> CommentEditAction:
+    _reject_unknown(
+        item,
+        {"type", "repo", "issue", "issue_ref", "comment_id", "body", "body_file", "expected"},
+        context,
+    )
+    repo = _repo(item, context)
+    if "issue_ref" in item and "issue" not in item:
+        raise IssueManifestError(f"{context}: comment_edit requires an existing issue number")
+    target = _target(item, repo, {}, context)
+    comment_id = item.get("comment_id")
+    if type(comment_id) is not int or comment_id <= 0:
+        raise IssueManifestError(f"{context}: comment_id must be a positive integer")
+    body = _resolve_body(item, files, body_files, context, required=True)
+    assert body is not None
+    if not body:
+        raise IssueManifestError(f"{context}: comment body must be non-empty")
+    expected = _expected(item, context)
+    _reject_unknown(expected, {"body"}, f"{context} expected")
+    if "body" not in expected:
+        raise IssueManifestError(f"{context}: expected.body is required")
+    expected_body = expected["body"]
+    if not isinstance(expected_body, str):
+        raise IssueManifestError(f"{context}: expected.body must be a string")
+    _validate_body_size(expected_body, "expected.body", context)
+    if body == expected_body:
+        raise IssueManifestError(f"{context}: body must differ from expected.body")
+    return CommentEditAction(
+        repo=repo,
+        target=target,
+        comment_id=comment_id,
+        body=body,
+        expected_body=expected_body,
+    )
+
+
 def _parse_label_action(
     item: dict[str, object],
     refs: Mapping[str, str],
@@ -650,6 +711,8 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             action = _parse_edit(item, files, body_files, refs, changed, context)
         elif action_type == "comment":
             action = _parse_comment(item, files, body_files, refs, context)
+        elif action_type == "comment_edit":
+            action = _parse_comment_edit(item, files, body_files, context)
         elif action_type == "labels":
             action = _parse_label_action(item, refs, changed, context)
         elif action_type == "assignees":
@@ -724,8 +787,8 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
                     )
         else:
             raise IssueManifestError(
-                f"{context}: type must be one of create, edit, comment, labels, assignees, "
-                "state, project_add, project_set, project_clear, or project_remove"
+                f"{context}: type must be one of create, edit, comment, comment_edit, labels, "
+                "assignees, state, project_add, project_set, project_clear, or project_remove"
             )
         if not isinstance(action, CreateAction):
             _record_mutations(changed, action.repo, action.target, mutation_keys(action), context)
@@ -734,7 +797,8 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
     bodies = [
         action.body
         for action in actions
-        if isinstance(action, (CreateAction, EditAction, CommentAction)) and action.body is not None
+        if isinstance(action, (CreateAction, EditAction, CommentAction, CommentEditAction))
+        and action.body is not None
     ]
     try:
         validate_references(bodies, attachments)

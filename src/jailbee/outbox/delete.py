@@ -66,7 +66,7 @@ def _prune_attachments(kind: Kind, raw: dict[str, Any], files: dict[str, str]) -
     used: set[str] = set()
     for action in raw["actions"]:
         items = []
-        if kind == "pr" or action["type"] in ("create", "edit", "comment"):
+        if kind == "pr" or action["type"] in ("create", "edit", "comment", "comment_edit"):
             items.append(action)
         if kind == "pr" and action["type"] == "review":
             items.extend(action["comments"])

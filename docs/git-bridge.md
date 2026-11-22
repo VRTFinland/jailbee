@@ -1437,7 +1437,7 @@ section covers the host-side workflow the schema is applied through.
 
 ### Reading, triaging, and writing the manifest
 
-Inside the container, use `jailbee issue create|edit|comment|labels|assign|state|project`
+Inside the container, use `jailbee issue create|edit|comment|comment-edit|labels|assign|state|project`
 to stage proposals; `--body-file` accepts long text and `--repo` selects the
 target. `jailbee issue project N [--project OWNER/NUMBER]` stages `--add`,
 repeatable `--set FIELD=VALUE`, repeatable `--clear FIELD`, or `--remove`;
@@ -1455,6 +1455,15 @@ know that login. Other logins go through `--add` and `--remove`. The host
 compares the live assignees with the staged `expected` list before it
 changes anything, and a retry after a partly landed attempt is not refused
 as stale. Adds are sent before removes.
+
+`jailbee issue comment-edit ID --body TEXT` stages a `comment_edit` action that
+replaces the body of an existing issue or pull-request conversation comment.
+`jailbee issue comments N` lists a thread's comment ids read-only. The
+container records the comment's issue number and current body. On the host,
+the publish is refused unless the comment is still on that issue, was written
+by the account the host publishes with, and still has the body seen at staging
+time. The plan shows the change as a line diff. Two edits of one comment
+conflict. Review (line) comments are not covered.
 
 Use `--batch NAME` and `jailbee outbox submit NAME
 --kind issue` to group actions. Nothing reaches GitHub until a human applies

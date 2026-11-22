@@ -850,3 +850,71 @@ def test_assignees_accepts_enterprise_managed_user_logins() -> None:
     assert action.add == ("jdoe_acme",)
     assert action.remove == ("a-b_c",)
     assert action.expected_assignees == ("x_y",)
+
+
+def _comment_edit(**extra: object) -> dict[str, object]:
+    action: dict[str, object] = {
+        "type": "comment_edit",
+        "repo": ".",
+        "issue": 12,
+        "comment_id": 555,
+        "body": "Corrected text",
+        "expected": {"body": "Original text"},
+    }
+    action.update(extra)
+    return action
+
+
+def test_comment_edit_carries_comment_new_body_and_expected_body() -> None:
+    from jailbee.issue_manifest import CommentEditAction
+
+    (action,) = _parse_action(_comment_edit()).actions
+
+    assert action == CommentEditAction(
+        repo=".",
+        target=ExistingIssue(12),
+        comment_id=555,
+        body="Corrected text",
+        expected_body="Original text",
+    )
+
+
+def test_comment_edit_reads_body_file() -> None:
+    action = _parse_action(
+        {k: v for k, v in _comment_edit(body_file="b.md").items() if k != "body"},
+        {"b.md": "From file"},
+    ).actions[0]
+    assert action.body == "From file"
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"comment_id": 0}, "comment_id must be a positive integer"),
+        ({"comment_id": "555"}, "comment_id must be a positive integer"),
+        ({"comment_id": True}, "comment_id must be a positive integer"),
+        ({"body": ""}, "body must be non-empty"),
+        ({"expected": {}}, "expected.body is required"),
+        ({"expected": {"body": None}}, "expected.body must be a string"),
+        ({"expected": {"body": "x", "title": "y"}}, "unknown field 'title'"),
+        ({"issue_ref": "new"}, "exactly one of issue or issue_ref"),
+        ({"title": "no"}, "unknown field 'title'"),
+        ({"body": "Original text"}, "body must differ from expected.body"),
+    ],
+)
+def test_comment_edit_rejects_malformed_fields(change: dict[str, object], message: str) -> None:
+    with pytest.raises(IssueManifestError, match=message):
+        _parse_action(_comment_edit(**change))
+
+
+def test_comment_edit_requires_an_existing_issue_not_a_create_ref() -> None:
+    raw = {k: v for k, v in _comment_edit().items() if k != "issue"}
+    raw["issue_ref"] = "new"
+    with pytest.raises(IssueManifestError, match="comment_edit requires an existing issue"):
+        parse_manifest("001-work.json", _manifest(_create(), raw), {})
+
+
+def test_two_edits_of_one_comment_conflict_but_different_comments_do_not() -> None:
+    parse_manifest("001-work.json", _manifest(_comment_edit(), _comment_edit(comment_id=556)), {})
+    with pytest.raises(IssueManifestError, match=r"action 1.*already changes.*comment:555"):
+        parse_manifest("001-work.json", _manifest(_comment_edit(), _comment_edit()), {})

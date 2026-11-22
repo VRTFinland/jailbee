@@ -130,6 +130,11 @@ describe the change accurately.
 
 Use `jailbee pr comment N --body "..."`, `jailbee pr reply N --to ID
 --body "..."`, or `jailbee pr description N --title "..." --body-file PATH`.
+To correct a general (conversation) comment the publishing account already
+posted, stage `jailbee issue comment-edit ID --body "..."` (find ID with
+`jailbee issue comments N`). It goes through the issue outbox, because GitHub
+stores PR conversation comments as issue comments. Review (line) comments cannot
+be edited yet.
 Omitting N selects the unique actual container binding (primary, stacked,
 imported-head or submodule), never the currently checked-out branch. Multiple
 bindings require N. For a new PR description, `--new` requires a readable, empty

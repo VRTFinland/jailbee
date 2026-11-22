@@ -520,3 +520,134 @@ def test_assign_accepts_underscore_logins(monkeypatch, tmp_path, broker):
     result = invoke("assign", "42", "--add", "jdoe_acme")
     assert result.exit_code == 0, result.output
     assert broker.only()[1]["actions"][0]["add"] == ["jdoe_acme"]
+
+
+def _gh_comment(cid=555, author="alice", body="Old text", issue=7, kind="issues"):
+    return {
+        "id": cid,
+        "user": {"login": author},
+        "body": body,
+        "html_url": f"https://github.com/acme/app/{kind}/{issue}#issuecomment-{cid}",
+        "issue_url": f"https://api.github.com/repos/acme/app/issues/{issue}",
+        "created_at": "2026-11-20T10:00:00Z",
+    }
+
+
+class _FakeGhApi:
+    """Answers ``gh api`` reads the way gh prints them (paginated pages back to back)."""
+
+    def __init__(self, responses):
+        self.responses = responses
+        self.calls = []
+
+    def __call__(self, argv, cwd=None, **kwargs):
+        import subprocess
+
+        self.calls.append((argv, cwd))
+        endpoint = argv[2]
+        if endpoint not in self.responses:
+            return subprocess.CompletedProcess(argv, 1, "", "HTTP 404: Not Found")
+        out = self.responses[endpoint]
+        return subprocess.CompletedProcess(argv, 0, out, "")
+
+
+@pytest.mark.parametrize("kind", ["issues", "pull"])
+def test_comment_edit_stages_new_body_with_the_comment_as_read(monkeypatch, broker, kind):
+    fake = _FakeGhApi(
+        {"repos/{owner}/{repo}/issues/comments/555": json.dumps(_gh_comment(kind=kind))}
+    )
+    monkeypatch.setattr(gh.subprocess, "run", fake)
+
+    result = invoke("comment-edit", "555", "--body", "New text")
+
+    assert result.exit_code == 0, result.output
+    name, data, bodies = broker.only()
+    parse_manifest(name, json.dumps(data), bodies)
+    assert data["actions"] == [
+        {
+            "type": "comment_edit",
+            "repo": ".",
+            "issue": 7,
+            "comment_id": 555,
+            "body": "New text",
+            "expected": {"body": "Old text"},
+        }
+    ]
+    assert all("--method" not in argv for argv, _ in fake.calls)
+
+
+def test_comment_edit_reads_foreign_and_submodule_repos_at_their_own_slug(monkeypatch, broker):
+    fake = _FakeGhApi(
+        {
+            "repos/acme/other/issues/comments/555": json.dumps(_gh_comment()),
+            "repos/{owner}/{repo}/issues/comments/556": json.dumps(_gh_comment(cid=556)),
+        }
+    )
+    monkeypatch.setattr(gh.subprocess, "run", fake)
+
+    assert (
+        invoke("comment-edit", "555", "--body", "x", "--repo", "github:acme/other").exit_code == 0
+    )
+    assert invoke("comment-edit", "556", "--body", "y", "--repo", "libs/parser").exit_code == 0
+
+    assert fake.calls[0][1] is None
+    assert fake.calls[1][1] == "libs/parser"
+    repos = [row.manifest for row in broker.proposals()]
+    assert '"repo": "github:acme/other"' in repos[0] and '"repo": "libs/parser"' in repos[1]
+
+
+@pytest.mark.parametrize(
+    ("args", "message", "code"),
+    [
+        (("comment-edit", "555", "--body", "Old text"), "unchanged", 2),
+        (("comment-edit", "555"), "missing body", 2),
+        (("comment-edit", "x", "--body", "y"), "comment id must be a positive number", 2),
+        (("comment-edit", "999", "--body", "y"), "HTTP 404", 1),
+    ],
+)
+def test_comment_edit_refusals_stage_nothing(monkeypatch, broker, args, message, code):
+    fake = _FakeGhApi({"repos/{owner}/{repo}/issues/comments/555": json.dumps(_gh_comment())})
+    monkeypatch.setattr(gh.subprocess, "run", fake)
+
+    result = invoke(*args)
+
+    assert result.exit_code == code
+    assert message in result.output
+    assert broker.proposals() == []
+
+
+def test_comment_edit_appends_to_a_batch(monkeypatch, broker):
+    fake = _FakeGhApi({"repos/{owner}/{repo}/issues/comments/555": json.dumps(_gh_comment())})
+    monkeypatch.setattr(gh.subprocess, "run", fake)
+
+    result = invoke("comment-edit", "555", "--body", "New", "--batch", "b")
+
+    assert result.exit_code == 0, result.output
+    manifest, _ = broker.draft_state("b")
+    assert manifest["actions"][0]["type"] == "comment_edit"
+
+
+def test_comments_lists_ids_authors_and_bodies_across_pages(monkeypatch):
+    page1 = [_gh_comment(cid=1, body="First\nmore"), _gh_comment(cid=2, author="bob")]
+    page2 = [_gh_comment(cid=3, body="Third")]
+    fake = _FakeGhApi(
+        {"repos/{owner}/{repo}/issues/7/comments": json.dumps(page1) + json.dumps(page2)}
+    )
+    monkeypatch.setattr(gh.subprocess, "run", fake)
+
+    text = invoke("comments", "7")
+    assert text.exit_code == 0, text.output
+    lines = text.output.splitlines()
+    assert lines[0].startswith("1\talice\t2026-11-20T10:00:00Z\tFirst")
+    assert [line.split("\t")[0] for line in lines] == ["1", "2", "3"]
+    assert "--paginate" in fake.calls[0][0]
+
+    as_json = invoke("comments", "7", "--json")
+    assert as_json.exit_code == 0, as_json.output
+    assert json.loads(as_json.output)[0] == {
+        "id": 1,
+        "author": "alice",
+        "created_at": "2026-11-20T10:00:00Z",
+        "body": "First\nmore",
+        "url": "https://github.com/acme/app/issues/7#issuecomment-1",
+    }

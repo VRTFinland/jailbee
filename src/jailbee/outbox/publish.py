@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Literal, cast
 from jailbee import issue_outbox, pr, pr_outbox, prompting
 from jailbee.incus import IncusError
 from jailbee.issue_manifest import (
+    CommentEditAction,
     ProjectAddAction,
     ProjectClearAction,
     ProjectRemoveAction,
@@ -237,6 +238,11 @@ def issue_plan_json(
                                 ProjectRemoveAction,
                             ),
                         )
+                        else {}
+                    ),
+                    **(
+                        {"comment_id": action.comment_id}
+                        if isinstance(action, CommentEditAction)
                         else {}
                     ),
                 }

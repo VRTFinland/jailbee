@@ -127,7 +127,7 @@ expected fields, receipts and journals as manual publication.
 
 ```yaml
 publish:
-  issues: [create, edit, comment, labels, assign_self, state]  # own repo and declared submodules
+  issues: [create, edit, comment, comment_edit, labels, assign_self, state]  # own repo and declared submodules
   projects:
     - board: acme/7
       actions: [add, set, remove]                    # set implies add; set covers clear
@@ -155,6 +155,11 @@ action uses one publish-rate slot. Foreign issue grants do not grant project
 rights, and project grants do not grant rights to foreign issue actions. The
 terminal dashboard exposes **Publish projects** beside the other publish-rights
 editors; its board picker supports adding a board and editing its action rights.
+
+`comment_edit` covers editing the body of an existing issue or PR conversation
+comment. Publication still refuses a comment written by any account other than the
+host's publishing account, or one changed since staging. `comment` does not
+imply it.
 
 Assignment has two kinds. `assign_self` covers only assignees changes whose
 logins all equal the publishing account, compared case-insensitively after

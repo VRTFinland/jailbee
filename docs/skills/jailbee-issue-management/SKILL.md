@@ -1,6 +1,6 @@
 ---
 name: jailbee-issue-management
-description: Use when creating, editing, commenting on, labeling, closing, reopening, triaging, or organizing GitHub issues from inside a JailBee container — the container's `gh` is read-only, so every write is staged as a manifest in the issue outbox for a human to publish on the host. Trigger on "create an issue", "file a bug", "edit this issue", "update the issue title/body", "comment on issue #N", "add a label", "remove a label", "assign this issue", "assign it to me", "unassign", "close this issue", "reopen this issue", "triage these issues", "organize the issue backlog", "luo GitHub-issue", "muokkaa issueta", "kommentoi issueta", "lisää labeli", "poista labeli", "sulje issue", "avaa issue uudelleen", "järjestele issueja".
+description: Use when creating, editing, commenting on, labeling, closing, reopening, triaging, or organizing GitHub issues from inside a JailBee container — the container's `gh` is read-only, so every write is staged as a manifest in the issue outbox for a human to publish on the host. Trigger on "create an issue", "file a bug", "edit this issue", "update the issue title/body", "comment on issue #N", "edit my comment", "fix my comment on the PR", "add a label", "remove a label", "assign this issue", "assign it to me", "unassign", "close this issue", "reopen this issue", "triage these issues", "organize the issue backlog", "luo GitHub-issue", "muokkaa issueta", "kommentoi issueta", "muokkaa kommenttia", "lisää labeli", "poista labeli", "sulje issue", "avaa issue uudelleen", "järjestele issueja".
 ---
 
 # Managing GitHub issues from inside a container — the outbox
@@ -12,7 +12,7 @@ with `jailbee inbox send message --text "..."`; use `--kind question` when you
 need a result. Do not write GitHub outbox files or directories by hand.
 
 You are inside a JailBee container working with GitHub issues (creating one,
-editing a title or body, commenting, adding or removing labels, assigning or
+editing a title or body, commenting, editing your own comment, adding or removing labels, assigning or
 unassigning people, closing, or reopening). Your `gh` here can **read** GitHub but must never **write** to
 it: every issue action you produce is staged as a proposal in the host outbox
 store through the `jailbee issue` commands, and a human on the host reviews and publishes it
@@ -60,6 +60,8 @@ at numbers, titles, or label spelling:
   inspect current fields. Commands capture expected state automatically.
 - `gh issue list --json number,title,labels,state [--label ...] [--state ...]`
   — for finding or triaging a set of issues.
+- `jailbee issue comments <n> [--json]` — an issue's or PR's conversation
+  comments with their numeric ids, authors and bodies, for `comment-edit`.
 - `gh label list --json name` — the repository's exact label spelling and
   casing, so `add`/`remove` names match (GitHub label names are
   case-preserving but the host also folds case for comparison).
@@ -125,6 +127,13 @@ host-local `github.projects` list (`repos/<container_prefix>.yaml`), or an
 orchestrator's `publish.projects` grant. An unlisted board is refused before
 any host read. Ask the host user to add an extra board; the committed config
 cannot set `github.projects`. Staging rights do not grant publish rights.
+
+Editing a comment: `jailbee issue comment-edit ID --body "…"` (or
+`--body-file`) stages a replacement body for one conversation comment on an
+issue or a pull request. Find `ID` with `jailbee issue comments N`. The command
+records the comment's issue and current body. The host refuses it unless the
+publishing account wrote the comment and it is unchanged since staging, so
+edit only comments that account wrote. Review (line) comments are not covered.
 
 Assignment: `jailbee issue assign 42 --me` assigns the publishing account
 (`@me`, resolved on the host at publish time), `--unassign-me` removes it,

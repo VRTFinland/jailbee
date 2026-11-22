@@ -81,7 +81,7 @@ def test_build_grant_sets_issue_kinds(cfg):
         GrantError,
         match=(
             "unknown issue action 'close'; "
-            "known: assign, assign_self, comment, create, edit, labels, state"
+            "known: assign, assign_self, comment, comment_edit, create, edit, labels, state"
         ),
     ):
         commands.build_grant(cfg, None, GrantFlags(publish_issues=("close",)))
