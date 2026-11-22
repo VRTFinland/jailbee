@@ -709,3 +709,28 @@ def test_service_rows_probe_mode_is_bounded_and_never_restages(monkeypatch):
     host.service_rows(cfg, Mock(), "c")
     assert run.call_args.kwargs["restage"] is True
     assert run.call_args.kwargs["timeout"] is None
+
+
+def test_service_rows_rejects_a_non_list_payload_with_the_module_error(monkeypatch):
+    import pytest
+
+    from jailbee.container_app import ContainerJailbeeError
+
+    monkeypatch.setattr(host, "_metadata", lambda *a, **k: {"not": "a list"})
+    with pytest.raises(ContainerJailbeeError):
+        host.service_rows(Mock(), Mock(), "c")
+
+
+def test_service_start_picker_reports_a_malformed_listing_cleanly(monkeypatch):
+    from typer.testing import CliRunner
+
+    from jailbee import cli
+
+    monkeypatch.setattr(cli, "_load_or_exit", lambda config: Mock())
+    monkeypatch.setattr(cli, "_resolve_existing", lambda *a, **k: (Mock(), "c"))
+
+    monkeypatch.setattr(host, "_metadata", lambda *a, **k: {"not": "a list"})
+    result = CliRunner().invoke(cli.app, ["service", "start"])
+    assert result.exit_code == 1
+    assert "unexpected service listing" in result.output
+    assert "Traceback" not in result.output

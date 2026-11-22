@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 SERVICE_INTERVAL = 30.0
 """Seconds a container's service listing is reused before it is probed again."""
 
-ABSENT_INTERVAL = 600.0
+ABSENT_INTERVAL = 120.0
 """Seconds before a container without an in-container jailbee is probed again."""
 
 PROBE_TIMEOUT = 15.0
