@@ -134,6 +134,8 @@ Issue kinds use `publish.issues` for the own repo/submodules, or
 Project actions are separate: `publish.projects` grants actions per board
 (`owner/number`), with `set` also covering `add` and `clear`; it does not grant
 foreign issue rights or other boards.
+Editing an existing issue or PR conversation comment is its own issue kind,
+`comment_edit`; `comment` does not imply it.
 Assignment is an issue kind too: `assign_self` covers only assigning or
 unassigning the publisher's own login (so it can also unassign the host user
 from issues the user claimed by hand), `assign` covers any login and implies

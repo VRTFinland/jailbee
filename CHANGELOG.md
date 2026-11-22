@@ -41,6 +41,13 @@ before editing `## Unreleased`.
   (granted, revoked, or a field such as `max_running_children`) once, naming
   what changed, so an orchestrator agent can adapt
   ([#147](https://github.com/VRTFinland/jailbee/issues/147)).
+- Agents can correct their own issue and pull-request conversation comments:
+  `jailbee issue comment-edit ID --body …` stages a `comment_edit` issue-outbox
+  action, and the read-only `jailbee issue comments N` lists comment ids
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)). The host refuses
+  the edit unless the publishing account wrote the comment and it is unchanged
+  since staging, and the plan shows the change as a line diff. Orchestrator
+  publication needs the new `comment_edit` issue kind.
 
 ### Changed
 

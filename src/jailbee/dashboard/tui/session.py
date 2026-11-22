@@ -242,7 +242,16 @@ log = logging.getLogger(__name__)
 
 _TOGGLE_OPERATIONS = ("import", "refresh", "restart", "stop", "destroy")  # spawn/message baseline
 # publish issue kinds in the order the sub-picker lists them
-_PUBLISH_ISSUE_KINDS = ("create", "edit", "comment", "labels", "state", "assign_self", "assign")
+_PUBLISH_ISSUE_KINDS = (
+    "create",
+    "edit",
+    "comment",
+    "comment_edit",
+    "labels",
+    "state",
+    "assign_self",
+    "assign",
+)
 GRANT_PATCH_SECONDS = 15.0  # how long a local grant edit outlasts a snapshot that lacks it
 NOTICE_SECONDS = 2.5  # how long a transient subtitle message stays up
 FAILURE_NOTICE_SECONDS = 8.0  # a refused account command's reason, long enough to read

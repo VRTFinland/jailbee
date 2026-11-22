@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass
 from typing import Literal
@@ -170,3 +171,100 @@ def pr_view(number: int | None, *, cwd: str | None = None) -> PrView:
         raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise GhError(f"invalid PR response; retry `{' '.join(argv)}`: {exc}") from exc
+
+
+@dataclass(frozen=True)
+class CommentView:
+    """One issue or PR conversation comment as the container's gh reads it."""
+
+    id: int
+    author: str
+    body: str
+    created_at: str
+    url: str
+    issue: int | None
+
+
+_ISSUE_API_URL_RE = re.compile(r"https://api\.github\.com/repos/[^/]+/[^/]+/issues/([1-9][0-9]*)")
+
+
+def _api_repo(repo: str | None) -> tuple[str | None, str]:
+    """Working directory and ``repos/...`` prefix for one manifest repo value.
+
+    gh fills ``{owner}/{repo}`` from the checkout it runs in.
+    """
+    cwd, slug = _issue_target(repo)
+    return cwd, f"repos/{slug}" if slug is not None else "repos/{owner}/{repo}"
+
+
+def _run_text(argv: list[str], cwd: str | None) -> str:
+    try:
+        result = subprocess.run(
+            argv, cwd=cwd, capture_output=True, text=True, check=False, timeout=30
+        )
+    except FileNotFoundError as exc:
+        if cwd is not None and exc.filename == cwd:
+            raise GhError(f"cannot use working directory {cwd!r}: {exc.strerror}") from exc
+        raise GhError("gh not found") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise GhError("gh timed out") from exc
+    except OSError as exc:
+        raise GhError(f"cannot run gh: {exc}") from exc
+    if result.returncode:
+        raise GhError(result.stderr.strip() or "gh failed")
+    return result.stdout
+
+
+def _comment_view(value: object) -> CommentView:
+    if not isinstance(value, dict):
+        raise ValueError("comment must be an object")
+    user = value.get("user")
+    author = user.get("login") if isinstance(user, dict) else None
+    cid, body = value.get("id"), value.get("body")
+    created, url, issue_url = value.get("created_at"), value.get("html_url"), value.get("issue_url")
+    if type(cid) is not int or not isinstance(author, str):
+        raise ValueError("comment needs an id and an author")
+    if body is not None and not isinstance(body, str):
+        raise ValueError("comment body must be text")
+    if not isinstance(url, str) or not isinstance(created, str):
+        raise ValueError("comment needs a URL and a creation time")
+    match = _ISSUE_API_URL_RE.fullmatch(issue_url) if isinstance(issue_url, str) else None
+    return CommentView(cid, author, body or "", created, url, int(match[1]) if match else None)
+
+
+def issue_comment(repo: str | None, comment_id: int) -> CommentView:
+    """Read one issue or PR conversation comment by its numeric id."""
+    cwd, prefix = _api_repo(repo)
+    argv = ["gh", "api", f"{prefix}/issues/comments/{comment_id}"]
+    try:
+        return _comment_view(json.loads(_run_text(argv, cwd)))
+    except GhError as exc:
+        raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise GhError(f"invalid comment response; retry `{' '.join(argv)}`: {exc}") from exc
+
+
+def issue_comments(repo: str | None, number: int) -> tuple[CommentView, ...]:
+    """Every conversation comment on an issue or pull request, oldest first."""
+    cwd, prefix = _api_repo(repo)
+    argv = ["gh", "api", f"{prefix}/issues/{number}/comments", "--paginate"]
+    try:
+        text = _run_text(argv, cwd)
+        # --paginate prints each page's JSON array back to back.
+        decoder = json.JSONDecoder()
+        comments: list[CommentView] = []
+        position = 0
+        while True:
+            while position < len(text) and text[position].isspace():
+                position += 1
+            if position == len(text):
+                break
+            page, position = decoder.raw_decode(text, position)
+            if not isinstance(page, list):
+                raise ValueError("page must be a list")
+            comments.extend(_comment_view(item) for item in page)
+        return tuple(comments)
+    except GhError as exc:
+        raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise GhError(f"invalid comments response; retry `{' '.join(argv)}`: {exc}") from exc

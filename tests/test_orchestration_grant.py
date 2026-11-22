@@ -465,3 +465,15 @@ def test_cap_excess_allows_assign_self_under_assign_cap_and_assign_under_assign_
     assert cap_excess(Grant(publish=_rights(("assign",), ("assign",))), cap) == []
     own_self = RepoCap(publish=_rights(("assign_self",), ("assign_self",)))
     assert cap_excess(Grant(publish=_rights(("assign_self",), ("assign_self",))), own_self) == []
+
+
+def test_comment_edit_is_a_grantable_issue_kind_not_implied_by_comment():
+    from jailbee.orchestration.grant import ISSUE_ACTION_KINDS, PublishRights
+
+    assert "comment_edit" in ISSUE_ACTION_KINDS
+    assert PublishRights(issues=("comment_edit",)).covers_issue(
+        "comment_edit", "org/repo", foreign=False
+    )
+    assert not PublishRights(issues=("comment",)).covers_issue(
+        "comment_edit", "org/repo", foreign=False
+    )

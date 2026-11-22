@@ -14,6 +14,8 @@ the host outbox's stored proposal files by hand.
     {"type": "edit", "repo": ".", "issue": 42, "title": "…",
      "expected": {"title": "…"}},
     {"type": "comment", "repo": ".", "issue_ref": "new-bug", "body": "…"},
+    {"type": "comment_edit", "repo": ".", "issue": 42, "comment_id": 1234567890,
+     "body": "…", "expected": {"body": "…"}},
     {"type": "labels", "repo": ".", "issue": 42, "add": ["needs-triage"], "remove": [],
      "expected": {"labels": ["bug"]}},
     {"type": "assignees", "repo": ".", "issue": 42, "add": ["@me"], "remove": [],
@@ -162,6 +164,27 @@ an `expected.title` on an edit that only changes `body` is refused.
 No `expected` block — a comment never conflicts with the issue's current
 state.
 
+## `type: "comment_edit"`
+
+Replaces the body of one existing conversation comment on an issue or a pull
+request (both use GitHub's issue-comments API). Review (line) comments are not
+covered. Stage it with `jailbee issue comment-edit ID --body …`; it reads the
+comment and fills in `issue` and `expected.body` for you.
+
+| Field | Rule |
+|---|---|
+| `repo` | As above. |
+| `issue` | Required positive integer: the issue or PR the comment is on. `issue_ref` is refused, because a create staged in the same batch has no comments yet. |
+| `comment_id` | Required positive integer: the comment's numeric id (the `#issuecomment-<id>` suffix of its URL, or the `id` from `jailbee issue comments N`). |
+| `body` / `body_file` | Required (exactly one); the new body, non-empty. |
+| `expected.body` | Required string: the comment's body when staged. |
+
+Before publishing, the host refuses the action unless the comment is still on
+`issue`, was written by the GitHub account the host publishes with, and its body
+still equals `expected.body`. You can edit only comments the publishing account
+wrote, so check the author with `jailbee issue comments N` first. The field
+being changed is `comment:<comment_id>`, so two edits of one comment conflict.
+
 ## `type: "labels"`
 
 Adds and/or removes existing labels; **never creates a new label** — a
@@ -266,8 +289,8 @@ when staging (or derives `false` for a new `issue_ref`).
 
 Within a single manifest, two actions may not both touch the same field of
 the same issue (identified by `issue` number, or by the same `issue_ref`) —
-e.g. two `edit` actions both changing `#42`'s title is refused when the
-manifest is parsed. The refusal names only the *later* action's own index
+e.g. two `edit` actions both changing `#42`'s title, or two `comment_edit`
+actions on the same `comment_id`, is refused when the manifest is parsed. The refusal names only the *later* action's own index
 (`"<manifest> action <n>: target already changes field 'title'"`) — it does
 not say which earlier action first touched that field, so if a manifest has
 several actions on the same target, check all of them. Split the conflicting

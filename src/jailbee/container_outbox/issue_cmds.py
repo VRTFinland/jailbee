@@ -73,6 +73,18 @@ def comment_action(repo: str, target: int | str, body: str) -> dict[str, object]
     return {"type": "comment", "repo": repo, **_target(target), "body": body}
 
 
+def comment_edit_action(repo: str, view: gh.CommentView, body: str) -> dict[str, object]:
+    assert view.issue is not None
+    return {
+        "type": "comment_edit",
+        "repo": repo,
+        "issue": view.issue,
+        "comment_id": view.id,
+        "body": body,
+        "expected": {"body": view.body},
+    }
+
+
 def labels_action(
     repo: str, target: int | str, add: list[str], remove: list[str], view: gh.IssueView | None
 ) -> dict[str, object]:
@@ -304,6 +316,86 @@ def comment(
         text = _body(body, body_file, True)
         assert text is not None
         _stage(comment_action(repo, target, text), batch, body_file is not None)
+
+    _run(run)
+
+
+@issue_app.command("comments")
+def comments(
+    issue: Annotated[
+        str | None, typer.Argument(help="Issue or pull request number.")
+    ] = None,
+    repo: RepoOpt = ".",
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print every comment, with its full body, as JSON.")
+    ] = False,
+) -> None:
+    """List an issue's or PR's conversation comments with their ids (read-only).
+
+    Text output is one line per comment: id, author, creation time, first line.
+    Use the id with `comment-edit`.
+    """
+
+    def run() -> None:
+        target = _parse_target(issue)
+        if not isinstance(target, int):
+            raise OutboxCommandError("comments needs an existing issue or PR number", 2)
+        found = gh.issue_comments(repo, target)
+        if as_json:
+            typer.echo(
+                json.dumps(
+                    [
+                        {
+                            "id": c.id,
+                            "author": c.author,
+                            "created_at": c.created_at,
+                            "body": c.body,
+                            "url": c.url,
+                        }
+                        for c in found
+                    ],
+                    indent=2,
+                )
+            )
+            return
+        for c in found:
+            first = c.body.split("\n", 1)[0]
+            typer.echo(f"{c.id}\t{c.author}\t{c.created_at}\t{first}")
+
+    _run(run)
+
+
+@issue_app.command("comment-edit")
+def comment_edit(
+    comment_id: Annotated[
+        str | None,
+        typer.Argument(help="Numeric comment id (see `jailbee issue comments`)."),
+    ] = None,
+    body: BodyOpt = None,
+    body_file: BodyFileOpt = None,
+    repo: RepoOpt = ".",
+    batch: BatchOpt = None,
+) -> None:
+    """Stage replacing the body of an issue or PR conversation comment you wrote.
+
+    The host publishes it only if the publishing account wrote the comment and
+    it still reads as it did when staged.
+    """
+
+    def run() -> None:
+        require_role()
+        if not comment_id or not comment_id.isdecimal() or int(comment_id) <= 0:
+            raise OutboxCommandError("comment id must be a positive number", 2)
+        text = _body(body, body_file, True)
+        assert text is not None
+        if not text:
+            raise OutboxCommandError("comment body must be non-empty", 2)
+        view = gh.issue_comment(repo, int(comment_id))
+        if view.issue is None:
+            raise OutboxCommandError(f"comment {view.id} is not on an issue or PR", 1)
+        if text == view.body:
+            raise OutboxCommandError(f"comment {view.id} body is unchanged", 2)
+        _stage(comment_edit_action(repo, view, text), batch, body_file is not None)
 
     _run(run)
 
