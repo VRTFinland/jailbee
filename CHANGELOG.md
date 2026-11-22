@@ -18,8 +18,9 @@ before editing `## Unreleased`.
 - A click outside the dashboard's Outbox box closes it, like a container menu,
   and then acts on what was clicked; the box stays modal only while a question
   is open or a publish is running. Marks are kept per container for the
-  session and restored when the box is reopened (marks of proposals that
-  vanished or changed revision are dropped)
+  session (until the container is destroyed), however the box was closed, and
+  restored when the box is reopened (marks of proposals that vanished or
+  changed revision are dropped)
   ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 - Publishing from the outbox reports each created issue or PR as `#N <title>`
   with its URL, in `jb outbox apply` and in the dashboard result notice

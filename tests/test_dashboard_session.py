@@ -2286,6 +2286,22 @@ def test_marks_of_changed_or_vanished_proposals_are_dropped_on_reopen(mocker, tm
     assert session.overlay.marks == frozenset()
 
 
+def test_marks_of_a_vanished_proposal_are_dropped_on_reopen(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+    from tests.test_dashboard_outbox import _container, _listing
+
+    quiet = _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+
+    quiet.return_value = tsession.da.CliResult(True, "done", _listing(_container()))
+    _reopen_box(session)
+
+    assert session.overlay.marks == frozenset()
+
+
 def test_marks_survive_a_box_closed_before_its_listing_arrived(mocker, tmp_path):
     from jailbee.dashboard.hit import Hit
 
@@ -2304,3 +2320,149 @@ def test_marks_survive_a_box_closed_before_its_listing_arrived(mocker, tmp_path)
 
     assert _ROW in session._outbox_marks["alpha-x"][0]
     assert session._outbox_marks["alpha-x"][1] == {"pr/a.json": "r1"}
+
+
+def _reopen_box(session) -> None:  # type: ignore[no-untyped-def]
+    session.select(dmodel.Row("container", "alpha-x"))
+    session.handle_key("enter")
+    session.menu_chosen("outbox browse", None, 0)
+    _settle(session)
+
+
+def test_marks_survive_the_sent_box_opening_in_between(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    mocker.patch.object(tsession.dob, "read_sent", return_value=())
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+    # the click closed the box; the marks must already be kept even if the box object
+    # is replaced without a `_remember_outbox_marks` call of its own
+    session.open_sent("alpha")
+    session.close_overlay()
+
+    _reopen_box(session)
+
+    assert _ROW in session.overlay.marks
+
+
+def test_marks_survive_opening_sent_straight_from_a_marked_box(mocker, tmp_path):
+    _quiet(mocker)
+    mocker.patch.object(tsession.dob, "read_sent", return_value=())
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+
+    session.open_sent("alpha")
+    session.close_overlay()
+    _reopen_box(session)
+
+    assert _ROW in session.overlay.marks
+
+
+def test_marks_survive_esc_closing_the_box(mocker, tmp_path):
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.overlay_cancel()
+    assert not isinstance(session.overlay, tsession.OutboxState)
+    session.outbox = None  # the box object is gone
+
+    _reopen_box(session)
+
+    assert _ROW in session.overlay.marks
+
+
+def test_outside_click_closes_the_box_while_its_listing_is_in_flight(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    session.jobs = _HeldJobs()  # type: ignore[assignment]  # the listing never arrives
+    session.select(dmodel.Row("container", "alpha-x"))
+    session.handle_key("enter")
+    session.menu_chosen("outbox browse", None, 0)
+    assert isinstance(session.overlay, tsession.OutboxState)
+    assert session.overlay.busy == tsession.OUTBOX_LOADING
+
+    session.click(Hit("row", ("alpha-x",)))
+
+    assert session.overlay is None
+
+
+@pytest.mark.parametrize("busy", ["planning…", "deleting…"])
+def test_outside_click_does_nothing_while_a_job_other_than_the_listing_runs(mocker, tmp_path, busy):
+    from dataclasses import replace
+
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox._set(replace(session.outbox.state, busy=busy))  # type: ignore[union-attr]
+    box = session.overlay
+
+    session.click(Hit("row", ("alpha-x",)))
+
+    assert session.overlay is box
+
+
+def test_reopened_box_shows_marks_once_its_listing_arrives_after_an_early_close(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+    session.jobs = _HeldJobs()  # type: ignore[assignment]
+    session.select(dmodel.Row("container", "alpha-x"))
+    session.handle_key("enter")
+    session.menu_chosen("outbox browse", None, 0)
+    session.click(Hit("row", ("alpha-x",)))  # closed before the listing
+
+    held = _HeldJobs()
+    session.jobs = held  # type: ignore[assignment]
+    session.select(dmodel.Row("container", "alpha-x"))
+    session.handle_key("enter")
+    session.menu_chosen("outbox browse", None, 0)
+    held.poll()  # the listing arrives
+    session.tick()
+
+    assert session.overlay.busy is None
+    assert _ROW in session.overlay.marks
+
+
+def test_marks_of_a_destroyed_container_are_pruned(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+    assert "alpha-x" in session._outbox_marks
+
+    session.groups = [_outbox_group(tmp_path)]
+    session.groups[0].containers.clear()  # the container was destroyed
+    session._remember_outbox_marks()
+
+    assert "alpha-x" not in session._outbox_marks
+
+
+def test_marks_are_kept_while_the_listing_is_not_loaded_yet(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+
+    session.groups = []  # not loaded, not destroyed
+    session._remember_outbox_marks()
+
+    assert "alpha-x" in session._outbox_marks
