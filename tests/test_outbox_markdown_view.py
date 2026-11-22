@@ -349,3 +349,27 @@ def test_print_lines_color_keeps_styling_off_a_terminal(monkeypatch) -> None:
     out = buffer.getvalue()
     assert "\x1b[1mstyled" in out
     assert "\x1b[31m" not in out
+
+
+def test_no_hyperlinks_switch_turns_outbox_links_into_text(monkeypatch) -> None:
+    monkeypatch.setenv("JAILBEE_NO_HYPERLINKS", "1")
+    lines = render_markdown("[https://e.com](https://e.com)", width=60)
+    assert _links(lines) == []
+    assert plain(lines) == ["https://e.com"]
+
+
+def test_no_hyperlinks_switch_covers_the_panel_lines(monkeypatch) -> None:
+    from jailbee.outbox.markdown_view import markdown_text_lines
+
+    def has_link() -> bool:
+        return any(
+            span.style and getattr(span.style, "link", None)
+            for line in markdown_text_lines("[x](https://e.com)", 60)
+            for span in line.spans
+        )
+
+    monkeypatch.delenv("JAILBEE_NO_HYPERLINKS", raising=False)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    assert has_link()
+    monkeypatch.setenv("JAILBEE_NO_HYPERLINKS", "1")
+    assert not has_link()

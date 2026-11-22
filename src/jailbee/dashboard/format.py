@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -11,6 +10,7 @@ from rich.markup import escape
 
 from jailbee import background
 from jailbee.github_repo import is_github_slug
+from jailbee.hyperlinks import hyperlinks_enabled
 from jailbee.lifecycle import (
     AGENT_COMPACT_MAX_CELLS,
     DOING_MAX_NAMES,
@@ -247,13 +247,6 @@ def doing_cell(container: ContainerInfo) -> str:
     if hidden:
         names.append(f"[dim]+{hidden}[/dim]")
     return ",".join(names)
-
-
-def hyperlinks_enabled() -> bool:
-    """Whether OSC 8 links may be emitted: not disabled, not a dumb terminal."""
-    if os.environ.get("JAILBEE_NO_HYPERLINKS"):
-        return False
-    return os.environ.get("TERM", "") != "dumb"
 
 
 def pr_url(container: ContainerInfo) -> str | None:
