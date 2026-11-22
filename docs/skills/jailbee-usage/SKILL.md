@@ -1228,11 +1228,12 @@ latest outcome in `DOCKER`.
   first, so the command must follow it (`jailbee exec NAME -- cmd`); with the name omitted
   and no terminal it exits 2 — always pass both. If `<name>` is omitted where a
   TTY exists, you get a picker.
-- **After upgrading jailbee:** `jailbee upgrade [--force] [--dry-run]` runs
+- **After upgrading jailbee:** `jailbee upgrade [--force] [--dry-run] [--jobs N]` runs
   `base build` and `apply` in every registered repo and restarts nothing (`apply`
   names what needs a restart). By default a repo runs only what the release's
   upgrade notes owe it; `--force` runs both everywhere; `--dry-run` lists what
-  would run. Exit 1 if any repo failed.
+  would run; `--jobs N` builds up to N base images at once (output prefixed
+  `[<alias>]`, default 1). Exit 1 if any repo failed.
 - **Fork:** `jailbee fork <source> <name> [--branch <b>]` creates a container at `<source>`'s HEAD commit (same branch unless `--branch`); `<source>` must be running with no uncommitted changes. The fork remembers its source: BASE still shows the base branch, the dashboards name `<source>` in the container's details (`⑂ forked from <source>`), and `jailbee merge` offers `<source>` first. `--prompt FILE|-` starts the primary agent in the fork with an initial prompt (see `jailbee new`).
 - **Rename:** `jailbee rename <name> <alias>` gives a container an alias at once, even while it runs; listings show it and every command accepts it (the real name never changes). `jailbee rename <name> --clear` removes it. When `<alias>` is omitted, the prompt starts with the current alias or the container's short name. Ctrl-R clears an existing alias immediately in that CLI prompt; the shortcut hint appears only when an alias exists. Empty text submitted with Enter is not a clear request in the CLI. The dashboard's **Rename…** uses the same default and stays a single menu action; the terminal dashboard's rename prompt also supports Ctrl-R and an empty Enter response to clear. **Clear name** is offered in the multi-selection menu, skipping containers without aliases; **Merge into…** leads that menu and Destroy stays last.
 - **Lifecycle:** `jailbee start|stop|restart <name>`; `start`/`restart` re-run
