@@ -2492,7 +2492,7 @@ def test_sync_base_to_pr_without_host_ref_passes_no_source_ref(mocker):
 
 
 def test_sync_base_to_pr_warns_when_the_fetch_fails(mocker):
-    fetch, retarget = _base_patches(mocker, fetched=None)
+    _fetch, retarget = _base_patches(mocker, fetched=None)
     warn = mocker.patch("jailbee.pr_flow.warn")
     retarget.return_value = types.SimpleNamespace(old_base="main", new_base="dev")
     pr_flow.sync_container_base_to_pr(
