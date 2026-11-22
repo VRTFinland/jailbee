@@ -38,8 +38,16 @@ def _metadata(cfg: Config, incus: Incus, full: str, args: Sequence[str]) -> Any:
         raise ContainerJailbeeError("invalid service metadata from container") from exc
 
 
+def service_rows(cfg: Config, incus: Incus, full: str) -> list[dict[str, Any]]:
+    """The container's `service ls --json` rows."""
+    data = _metadata(cfg, incus, full, ["ls", "--json"])
+    if not isinstance(data, list):
+        raise ValueError("unexpected service listing")
+    return data
+
+
 def service_names(cfg: Config, incus: Incus, full: str) -> list[str]:
-    return [str(item["name"]) for item in _metadata(cfg, incus, full, ["ls", "--json"])]
+    return [str(item["name"]) for item in service_rows(cfg, incus, full)]
 
 
 def refresh(

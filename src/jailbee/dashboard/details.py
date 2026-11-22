@@ -544,9 +544,9 @@ def _service_lines(c: ContainerInfo) -> tuple[str, ...]:
     if not c.services:
         return ()
     parts = [
-        f"{escape(s.name)} [{_SERVICE_STYLE.get(s.state, 'dim')}]{escape(s.state)}"
-        f"[/{_SERVICE_STYLE.get(s.state, 'dim')}]"
+        f"{escape(s.name)} [{style}]{escape(s.state)}[/]"
         for s in c.services
+        for style in (_SERVICE_STYLE.get(s.state, "dim"),)
     ]
     return (f"[dim]services[/dim] {' · '.join(parts)}",)
 

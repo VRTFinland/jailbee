@@ -1593,7 +1593,7 @@ def test_a_running_container_lists_its_services_and_states() -> None:
     panel = dd.container_panel(c, NOW)
 
     assert _panel_plain(panel.services) == ["services web ready · db failed"]
-    assert "[red]failed[/red]" in panel.services[0]
+    assert "db [red]failed[/]" in panel.services[0]
 
 
 def test_a_running_container_without_services_has_no_services_line() -> None:
@@ -1611,3 +1611,12 @@ def test_a_stopped_container_shows_no_services() -> None:
 
     c = _c(state="Stopped", services=(ServiceStatus("web", "ready"),), services_unknown=True)
     assert dd.container_panel(c, NOW).services == ()
+
+
+def test_the_rendered_card_draws_the_services_line() -> None:
+    from jailbee.lifecycle import ServiceStatus
+
+    c = _c(services=(ServiceStatus("web", "ready"), ServiceStatus("db", "failed")))
+    view = dd.DetailsView(c.display_name, (), panel=dd.container_panel(c, NOW))
+
+    assert "services web ready · db failed" in _panel_body(view, None, 100)

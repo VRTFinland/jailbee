@@ -30,6 +30,9 @@ SERVICE_INTERVAL = 30.0
 
 MAX_WORKERS = 4
 
+PROBE_TIMEOUT = 15.0
+"""Seconds one gather waits for the probes; a container that is slower reads unknown."""
+
 Fetch = Callable[[Path, str], Sequence[dict[str, Any]]]
 """``(repo root, container) -> the rows of `service ls --json```; raises on failure."""
 
@@ -45,22 +48,16 @@ def live_fetch(incus: Incus) -> Fetch:
 
     def fetch(root: Path, full: str) -> Sequence[dict[str, Any]]:
         from jailbee.config.loader import load_repo_config
-        from jailbee.services.host import _metadata
+        from jailbee.services.host import service_rows
 
-        data = _metadata(load_repo_config(root), incus, full, ["ls", "--json"])
-        if not isinstance(data, list):
-            raise ValueError("unexpected service listing")
-        return data
+        return service_rows(load_repo_config(root), incus, full)
 
     return fetch
 
 
-def _rows(data: Sequence[dict[str, Any]]) -> tuple[ServiceStatus, ...]:
-    return tuple(
-        ServiceStatus(str(item["name"]), str(item["state"]))
-        for item in data
-        if isinstance(item, dict) and item.get("name") and item.get("state")
-    )
+def _parse_services(data: Sequence[dict[str, Any]]) -> tuple[ServiceStatus, ...]:
+    """The listing's rows; a malformed row raises, so the container reads unknown."""
+    return tuple(ServiceStatus(str(item["name"]), str(item["state"])) for item in data)
 
 
 class ServiceProbe:
@@ -69,8 +66,11 @@ class ServiceProbe:
         fetch: Fetch,
         *,
         interval: float = SERVICE_INTERVAL,
+        timeout: float = PROBE_TIMEOUT,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        self._timeout = timeout
+        self._pool = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="svc-probe")
         self._fetch = fetch
         self._interval = interval
         self._clock = clock
@@ -78,7 +78,7 @@ class ServiceProbe:
 
     def _probe(self, root: Path, name: str) -> _Entry:
         try:
-            services: tuple[ServiceStatus, ...] | None = _rows(self._fetch(root, name))
+            services: tuple[ServiceStatus, ...] | None = _parse_services(self._fetch(root, name))
         except Exception:
             log.debug("service probe of %s failed", name, exc_info=True)
             services = None
@@ -102,11 +102,14 @@ class ServiceProbe:
         for gone in set(self._cache) - running:
             del self._cache[gone]
         if due:
-            with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(due))) as pool:
-                for (_, name), entry in zip(
-                    due, pool.map(lambda d: self._probe(*d), due), strict=True
-                ):
-                    self._cache[name] = entry
+            futures = [(name, self._pool.submit(self._probe, root, name)) for root, name in due]
+            deadline = time.monotonic() + self._timeout
+            for name, future in futures:
+                try:
+                    entry = future.result(timeout=max(0.0, deadline - time.monotonic()))
+                except TimeoutError:  # still running: unknown now, retried next interval
+                    entry = _Entry(self._clock(), None)
+                self._cache[name] = entry
         for group in groups:
             for c in group.containers:
                 entry = self._cache.get(c.name) if c.state == "Running" else None

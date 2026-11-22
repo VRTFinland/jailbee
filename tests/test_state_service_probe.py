@@ -117,3 +117,26 @@ def test_the_gatherer_carries_services_in_the_snapshot(mocker) -> None:
     snap = g.tick(active=True, refresh=False, roots=[])
 
     assert snap.groups[0].containers[0].services == (ServiceStatus("web", "ready"),)
+
+
+def test_a_probe_slower_than_the_timeout_reads_unknown_without_stalling() -> None:
+    import threading
+
+    release = threading.Event()
+
+    def fetch(root: Path, name: str):
+        release.wait(5)
+        return []
+
+    groups = _groups(_ci("alpha-x"))
+    ServiceProbe(fetch, timeout=0.05).annotate(groups)
+    release.set()
+
+    assert groups[0].containers[0].services_unknown is True
+
+
+def test_a_malformed_row_reads_unknown() -> None:
+    groups = _groups(_ci("alpha-x"))
+    ServiceProbe(lambda r, n: [{"name": "web"}]).annotate(groups)
+
+    assert groups[0].containers[0].services_unknown is True
