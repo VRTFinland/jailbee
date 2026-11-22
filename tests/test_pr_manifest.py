@@ -125,3 +125,43 @@ def test_parse_rejects_two_edits_of_one_comment():
 
     with pytest.raises(ManifestError, match="edited twice"):
         _parse_edit(_edit_item(), _edit_item(body="other"))
+
+
+def _state_manifest(**item):
+    action = {"type": "state", "state": "closed", "expected": {"state": "open"}, **item}
+    return json.dumps({"version": 1, "repo": "o/r", "pr": 3, "head_sha": None, "actions": [action]})
+
+
+def test_state_action_parses():
+    from jailbee.pr_manifest import StateAction, parse_manifest
+
+    parsed = parse_manifest("m.json", _state_manifest(), {})
+    action = parsed.actions[0]
+    assert isinstance(action, StateAction)
+    assert (action.state, action.expected_state) == ("closed", "open")
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"state": "merged"},
+        {"state": "closed", "expected": {"state": "closed"}},
+        {"expected": {}},
+        {"expected": {"state": "bogus"}},
+        {"expected": None},
+    ],
+)
+def test_state_action_is_refused_when_malformed(item):
+    from jailbee.pr_manifest import ManifestError, parse_manifest
+
+    with pytest.raises(ManifestError):
+        parse_manifest("m.json", _state_manifest(**item), {})
+
+
+def test_state_action_needs_a_numbered_pr():
+    from jailbee.pr_manifest import ManifestError, parse_manifest
+
+    text = json.loads(_state_manifest())
+    text["pr"] = None
+    with pytest.raises(ManifestError):
+        parse_manifest("m.json", json.dumps(text), {})

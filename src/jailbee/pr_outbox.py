@@ -86,6 +86,9 @@ from jailbee.pr_manifest import (
 from jailbee.pr_manifest import (
     ReviewAction as ReviewAction,
 )
+from jailbee.pr_manifest import (
+    StateAction as StateAction,
+)
 from jailbee.pr_manifest import _escapes_containment
 from jailbee.pr_manifest import (
     is_source_manifest as is_source_manifest,
@@ -484,6 +487,11 @@ def _attachment_lines(manifest: Manifest) -> list[str]:
     return lines
 
 
+def _state_warning(action: StateAction, number: int | None) -> str:
+    verb = "closes" if action.state == "closed" else "reopens"
+    return f"{verb} PR #{number}"
+
+
 def plan_lines(
     target: Target, current_body: str | None, *, indices: frozenset[int] | None = None
 ) -> list[str]:
@@ -520,6 +528,9 @@ def plan_lines(
             lines.append(f"EDIT review comment #{action.comment_id}")
             lines.append("  body (- before, + after):")
             lines.extend(comment_edit.diff_lines(action.expected_body, action.body))
+        elif isinstance(action, StateAction):
+            number = target.pr.number if target.pr else None
+            lines.append(f"⚠ STATE: {_state_warning(action, number)}")
         elif isinstance(action, DescriptionAction):
             lines.append("DESCRIPTION")
             if action.title is not None:
@@ -586,6 +597,9 @@ def show_lines(manifest: Manifest) -> list[str]:
             lines.extend(render_markdown(action.body))
             lines.append("  body (- before, + after):")
             lines.extend(comment_edit.diff_lines(action.expected_body, action.body))
+        elif isinstance(action, StateAction):
+            lines.append(f"action {index} · STATE")
+            lines.append(f"  ⚠ {_state_warning(action, manifest.pr)}")
         elif isinstance(action, DescriptionAction):
             lines.append(f"action {index} · DESCRIPTION")
             if action.title is not None:
@@ -603,6 +617,7 @@ _ACTION_LABELS: tuple[tuple[str, type[Action]], ...] = (
     ("reply", ReplyAction),
     ("comment", CommentAction),
     ("comment_edit", CommentEditAction),
+    ("state", StateAction),
     ("description", DescriptionAction),
 )
 
@@ -766,6 +781,7 @@ _ACTION_KIND: dict[type, str] = {
     ReplyAction: "reply",
     CommentAction: "comment",
     CommentEditAction: "comment_edit",
+    StateAction: "state",
     DescriptionAction: "description",
 }
 
@@ -853,7 +869,7 @@ def _apply_order(actions: tuple[Action, ...]) -> list[int]:
     rest = [
         i
         for i, a in enumerate(actions)
-        if isinstance(a, (ReplyAction, CommentAction, CommentEditAction))
+        if isinstance(a, (ReplyAction, CommentAction, CommentEditAction, StateAction))
     ]
     order = review + rest + description
     # Guards against a future fifth `Action` variant silently falling through
@@ -948,6 +964,32 @@ def _pending_edit_refusals(
     return refusals
 
 
+def _state_refusals(target: Target, indices: Iterable[int]) -> list[str]:
+    """Why a pending `state` action of `target` may not be published; empty when all may.
+
+    The guard is the PR's state at publish time: it must still be the one the
+    agent saw when staging, and a merged PR is never closed or reopened.
+    """
+    assert target.pr is not None
+    refusals: list[str] = []
+    for i in indices:
+        action = target.manifest.actions[i]
+        if not isinstance(action, StateAction):
+            continue
+        context = f"{target.manifest.name} action {i}"
+        current = target.pr.state.lower()
+        if current == "merged":
+            refusals.append(
+                f"{context}: PR #{target.pr.number} is merged; it cannot be {action.state}"
+            )
+        elif current != action.expected_state:
+            refusals.append(
+                f"{context}: PR #{target.pr.number} was {action.expected_state} when staged "
+                f"but is now {current}; stage the state change again"
+            )
+    return refusals
+
+
 def _apply_one(target: Target, action: Action, session: DraftSession | None = None) -> str:
     """Post one action to GitHub via `pr.py`; return its receipt URL (or "")."""
     assert target.pr is not None  # apply_manifest's own precondition
@@ -985,6 +1027,9 @@ def _apply_one(target: Target, action: Action, session: DraftSession | None = No
         return pr.edit_review_comment(
             repo_root, target.manifest.repo, action.comment_id, action.body
         )
+    elif isinstance(action, StateAction):
+        pr.set_state(repo_root, number, action.state, repo=target.manifest.repo)
+        return ""  # closing or reopening changes an existing object; there is no new receipt
     elif isinstance(action, DescriptionAction):
         pr.edit_pr(
             repo_root, number, title=action.title, body=action.body, repo=target.manifest.repo
@@ -1026,6 +1071,8 @@ def _sent_action(
         content = "\n\n".join(parts)
     elif isinstance(action, DescriptionAction):
         content, title = action.body, action.title
+    elif isinstance(action, StateAction):
+        content = action.state
     else:
         content = action.body
     return sent.SentAction(
@@ -1192,7 +1239,11 @@ def apply_manifest(
                         manifest.repo,
                     )
 
-                rendered = replace(action, body=resolve(action.body))
+                rendered = (
+                    action
+                    if isinstance(action, StateAction)
+                    else replace(action, body=resolve(action.body))
+                )
                 if isinstance(rendered, ReviewAction):
                     rendered = replace(
                         rendered,
@@ -1296,6 +1347,7 @@ def body_references(text: str) -> set[str]:
             "reply",
             "comment",
             "comment_edit",
+            "state",
             "description",
         ):
             raise ValueError("invalid action reference scope")
@@ -2157,10 +2209,13 @@ def _gate_manifests(
         pending = pending_indices(
             manifest, _publication_progress(outbox, name, len(manifest.actions))
         )
-        edit_refusals = _pending_edit_refusals(target, pending)
+        edit_refusals = _pending_edit_refusals(target, pending) + _state_refusals(target, pending)
         if edit_refusals:
             text = "\n".join(edit_refusals)
-            whole = any(not isinstance(manifest.actions[i], CommentEditAction) for i in pending)
+            whole = any(
+                not isinstance(manifest.actions[i], (CommentEditAction, StateAction))
+                for i in pending
+            )
             if whole:
                 # One refused edit holds the whole manifest back, replies included.
                 text += (

@@ -83,15 +83,15 @@ def cfg(make_cfg, tmp_path):
 @pytest.fixture
 def github(mocker, cfg):
     """GitHub mutations and the gates, faked: every manifest resolves to PR #12."""
-    info = pr.PrInfo(12, "topic", "a" * 40, "OPEN", "main")
-
     def target(_cfg, _incus, _container, parsed, **_kw):
-        return pr_outbox.Target(parsed, info, False, PrScope.for_repo(cfg))
+        return pr_outbox.Target(parsed, calls.pr_info, False, PrScope.for_repo(cfg))
 
     mocker.patch.object(pr_outbox, "resolve_target", side_effect=target)
     mocker.patch.object(pr, "gh_login", return_value="me")
     mocker.patch.object(pr, "pr_body", return_value="Old body", create=True)
     calls = mocker.Mock()
+    calls.pr_info = pr.PrInfo(12, "topic", "a" * 40, "OPEN", "main")
+    mocker.patch.object(pr, "set_state", side_effect=calls.set_state, create=True)
     mocker.patch.object(pr, "add_issue_comment", side_effect=calls.comment)
     mocker.patch.object(pr, "reply_to_review_comment", side_effect=calls.reply)
     mocker.patch.object(pr, "submit_review", side_effect=calls.review)
@@ -485,3 +485,71 @@ def test_policy_sees_only_the_pending_actions(cfg, incus, github):
     github.read_comment.return_value = snapshot(body="Fixed wording")
     assert run() == 0
     assert seen == [["CommentEditAction", "CommentAction"], ["CommentAction"]]
+
+
+STATE_CLOSE = {"type": "state", "state": "closed", "expected": {"state": "open"}}
+STATE_REOPEN = {"type": "state", "state": "open", "expected": {"state": "closed"}}
+
+
+def _pr_state(github, state: str) -> None:
+    github.pr_info = pr.PrInfo(12, "topic", "a" * 40, state, "main")
+
+
+def test_state_close_publishes_through_gh_and_is_recorded(cfg, incus, github):
+    name = stage(manifest(STATE_CLOSE))
+    assert review_apply(cfg, incus, name) == 0
+    github.set_state.assert_called_once_with(cfg.repo_root, 12, "closed", repo=REPO)
+    assert rows() == []
+    (record,) = sent()
+    assert (record.kind, record.manifest, record.state) == ("state", name, "applied")
+
+
+def test_state_reopen_publishes_through_gh(cfg, incus, github):
+    _pr_state(github, "CLOSED")
+    name = stage(manifest(STATE_REOPEN))
+    assert review_apply(cfg, incus, name) == 0
+    github.set_state.assert_called_once_with(cfg.repo_root, 12, "open", repo=REPO)
+
+
+@pytest.mark.parametrize(
+    ("current", "message"),
+    [("CLOSED", "was open when staged but is now closed"), ("MERGED", "is merged")],
+)
+def test_state_is_refused_when_the_pr_changed_since_staging(
+    cfg, incus, github, capsys, current, message
+):
+    _pr_state(github, current)
+    name = stage(manifest(STATE_CLOSE))
+    assert review_apply(cfg, incus, name) == 1
+    github.set_state.assert_not_called()
+    assert message in capsys.readouterr().err
+    assert [r.name for r in rows()] == [name]
+
+
+def test_state_dry_run_warns_that_it_closes_the_pr_and_publishes_nothing(
+    cfg, incus, github, capsys
+):
+    name = stage(manifest(STATE_CLOSE))
+    review_apply(cfg, incus, name, dry_run=True)
+    assert "closes PR #12" in capsys.readouterr().out
+    github.set_state.assert_not_called()
+
+
+def test_state_dry_run_warns_that_it_reopens_the_pr(cfg, incus, github, capsys):
+    _pr_state(github, "CLOSED")
+    name = stage(manifest(STATE_REOPEN))
+    review_apply(cfg, incus, name, dry_run=True)
+    assert "reopens PR #12" in capsys.readouterr().out
+
+
+def test_state_foreign_pr_is_refused_without_the_foreign_flag(cfg, incus, mocker, capsys):
+    mocker.patch.object(
+        pr_outbox,
+        "resolve_target",
+        side_effect=pr_outbox.ForeignPrError("manifest m references PR #12, not owned"),
+    )
+    mocker.patch.object(pr, "set_state", create=True)
+    name = stage(manifest(STATE_CLOSE))
+    assert review_apply(cfg, incus, name) == 1
+    pr.set_state.assert_not_called()
+    assert "not owned" in capsys.readouterr().err

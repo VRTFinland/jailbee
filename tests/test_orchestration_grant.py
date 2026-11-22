@@ -63,6 +63,7 @@ def test_default_grant_label_is_the_spec_shape() -> None:
             "pull_requests": False,
             "pr_reviews": False,
             "pr_comment_edits": False,
+            "pr_state": False,
             "max_actions_per_hour": 30,
         },
     }
@@ -497,3 +498,16 @@ def test_cap_excess_names_comment_edits_above_the_cap() -> None:
     requested = PublishRights(pr_reviews=True, pr_comment_edits=True)
     messages = cap_excess(Grant(publish=requested), RepoCap(publish=PublishRights(pr_reviews=True)))
     assert any("pr_comment_edits" in line for line in messages)
+
+
+def test_pr_state_is_capped_and_needs_pr_reviews() -> None:
+    from jailbee.orchestration.grant import PublishRights
+
+    wanted = PublishRights(pr_reviews=True, pr_state=True)
+    assert PublishRights(pr_reviews=True).pr_state is False
+    assert PublishRights(pr_state=True).empty() is False
+    assert wanted.narrowed(PublishRights(pr_reviews=True)).pr_state is False
+    assert wanted.narrowed(wanted).pr_state is True
+    assert wanted.narrowed(PublishRights(pr_state=True)).pr_state is False
+    messages = cap_excess(Grant(publish=wanted), RepoCap(publish=PublishRights(pr_reviews=True)))
+    assert any("pr_state" in line for line in messages)

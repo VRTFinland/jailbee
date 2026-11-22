@@ -427,6 +427,7 @@ def test_save_profile_writes_global_block(cfg, incus_with_grant, tmp_path):
             "pull_requests": False,
             "pr_reviews": False,
             "pr_comment_edits": False,
+            "pr_state": False,
             "max_actions_per_hour": 30,
         },
     }
@@ -1039,3 +1040,17 @@ def test_profile_default_with_edits_but_no_reviews_is_narrowed(make_cfg, tmp_pat
         ).publish.pr_comment_edits
         is False
     )
+
+
+def test_pr_state_right_needs_pr_reviews_and_goes_with_them(cfg):
+    from jailbee.orchestration.grant import PublishRights
+
+    with pytest.raises(GrantError, match="--publish-pr-state needs --publish-pr-reviews"):
+        commands.build_grant(cfg, None, GrantFlags(publish_pr_state=True))
+    rights = commands.build_grant(
+        cfg, None, GrantFlags(publish_pr_reviews=True, publish_pr_state=True)
+    ).publish
+    assert rights.pr_state is True
+    current = Grant(publish=PublishRights(pr_reviews=True, pr_state=True))
+    off = commands.build_grant(cfg, current, GrantFlags(publish_pr_reviews=False)).publish
+    assert off.pr_state is False

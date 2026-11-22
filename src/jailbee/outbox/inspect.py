@@ -144,6 +144,8 @@ def _pr_actions(manifest: prs.Manifest, recorded_pr: int | None) -> tuple[Action
             kind = "reply"
         elif isinstance(action, prs.CommentEditAction):
             kind = "comment_edit"
+        elif isinstance(action, prs.StateAction):
+            kind = "state"
         else:
             kind = "comment"
         title = action.title if isinstance(action, prs.DescriptionAction) else None

@@ -91,7 +91,22 @@ class DescriptionAction:
     branch: str | None = None
 
 
-Action = ReviewAction | ReplyAction | CommentAction | CommentEditAction | DescriptionAction
+@dataclass(frozen=True)
+class StateAction:
+    """Close or reopen the PR; ``expected_state`` is the state the agent saw when staging."""
+
+    state: str
+    expected_state: str
+
+    @property
+    def body(self) -> str:
+        """No prose of its own; lets code that scans every action's text treat it as empty."""
+        return ""
+
+
+Action = (
+    ReviewAction | ReplyAction | CommentAction | CommentEditAction | DescriptionAction | StateAction
+)
 
 
 @dataclass(frozen=True)
@@ -305,6 +320,22 @@ def _parse_description(
     return DescriptionAction(body=body, title=title_val, branch=branch_val)
 
 
+_PR_STATES = ("open", "closed")
+
+
+def _parse_state(name: str, index: int, item: dict[str, Any]) -> StateAction:
+    state = item.get("state")
+    if state not in _PR_STATES:
+        raise ManifestError(f"{name} action {index}: state must be 'open' or 'closed'")
+    expected = item.get("expected")
+    expected_state = expected.get("state") if isinstance(expected, dict) else None
+    if expected_state not in _PR_STATES:
+        raise ManifestError(f"{name} action {index}: expected.state must be 'open' or 'closed'")
+    if expected_state == state:
+        raise ManifestError(f"{name} action {index}: the PR is already {state} when staged")
+    return StateAction(state=state, expected_state=expected_state)
+
+
 def _parse_actions(
     name: str,
     raw: dict[str, Any],
@@ -354,6 +385,12 @@ def _parse_actions(
                 )
             seen_description = True
             parsed.append(_parse_description(name, index, item, bodies))
+        elif action_type == "state":
+            if any(isinstance(a, StateAction) for a in parsed):
+                raise ManifestError(
+                    f"{name} action {index}: only one state action is allowed per manifest"
+                )
+            parsed.append(_parse_state(name, index, item))
         else:
             raise ManifestError(f"{name} action {index}: unknown action type {action_type!r}")
 

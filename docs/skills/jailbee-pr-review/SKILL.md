@@ -26,7 +26,7 @@ An orchestrator with `publish.pr_reviews` in the output of
 `jailbee inbox send publish --pr NAME.json --wait --until done --json` instead
 of asking the human to apply it. Comments and replies may target review-bound PRs in the own
 repository; a `comment_edit` action also needs `publish.pr_comment_edits` in that
-output; description rewrites additionally require an authored, non-adopted
+output, and a `state` action `publish.pr_state`; description rewrites additionally require an authored, non-adopted
 source-PR binding. No foreign PR, submodule or force override. Source PR manifests instead need
 `publish.pull_requests` and the own-branch restrictions described by
 `jailbee-orchestration`. Without `--until done`, `--wait` returns at `started`,
@@ -128,6 +128,12 @@ test suite can eat all of it. Writing to the outbox has no such budget — run w
 describe the change accurately.
 
 ## Staging PR actions
+
+To close or reopen a PR, stage `jailbee pr state [N] closed|open`. It records the state
+it read as `expected.state`; the host refuses it if the PR changed meanwhile or is
+merged, shows a `closes PR #N` / `reopens PR #N` warning in the plan, and needs
+`--foreign` for a PR the container does not own. Merging and draft toggling are not
+staged through the outbox.
 
 Use `jailbee pr comment N --body "..."`, `jailbee pr reply N --to ID
 --body "..."`, or `jailbee pr description N --title "..." --body-file PATH`.

@@ -232,6 +232,41 @@ def comment_edit(
     _run(run)
 
 
+@pr_app.command("state")
+def state(
+    first: Annotated[
+        str | None, typer.Argument(help="PR number, or the new state for the bound PR.")
+    ] = None,
+    second: Annotated[str | None, typer.Argument(help="New state: closed or open.")] = None,
+    batch: BatchOpt = None,
+) -> None:
+    """Stage closing or reopening a PR (`pr state [N] closed|open`).
+
+    The host publishes it only if the PR is still in the state it had when
+    staged; a merged PR is refused. A PR this container does not own needs
+    `--foreign` on the host.
+    """
+
+    def run() -> None:
+        require_role()
+        target, number_arg = (first, None) if second is None else (second, first)
+        if target not in ("closed", "open"):
+            raise OutboxCommandError("new state must be 'closed' or 'open'", 2)
+        view = _view(number_arg)
+        current = gh.pr_state(view.repo, view.number)
+        if current == "merged":
+            raise OutboxCommandError(f"PR #{view.number} is merged; it cannot be {target}", 2)
+        if current == target:
+            raise OutboxCommandError(f"PR #{view.number} is already {target}", 2)
+        _stage(
+            _envelope(view),
+            {"type": "state", "state": target, "expected": {"state": current}},
+            batch,
+        )
+
+    _run(run)
+
+
 def _description(title: str | None, text: str, branch: str | None) -> dict[str, object]:
     action: dict[str, object] = {"type": "description", "body": text}
     if title is not None:

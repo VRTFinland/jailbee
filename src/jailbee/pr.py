@@ -623,6 +623,17 @@ def set_ready(repo_root: Path, number: int, ready: bool, *, repo: str | None = N
     _run_gh_mutation(repo_root, cmd, "gh pr ready")
 
 
+def set_state(
+    repo_root: Path, number: int, state: str, *, repo: str | None = None
+) -> None:
+    """Close (`gh pr close`) or reopen (`gh pr reopen`) PR #`number`."""
+    verb = "close" if state == "closed" else "reopen"
+    cmd = ["gh", "pr", verb, str(number)]
+    if repo is not None:
+        cmd += ["--repo", repo]
+    _run_gh_mutation(repo_root, cmd, f"gh pr {verb}")
+
+
 class PrReviewError(PrError):
     """Posting a review, a reply, or a comment failed."""
 

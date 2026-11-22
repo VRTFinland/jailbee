@@ -23,7 +23,7 @@ Common conventions:
 
 Inside a non-child container, stage GitHub proposals with `jailbee issue
 create|edit|comment|comment-edit|labels|assign|state|project` and `jailbee pr
-comment|comment-edit|reply|description|source`. `jailbee issue comment-edit ID` replaces the
+comment|comment-edit|reply|state|description|source`. `jailbee pr state [N] closed|open` stages closing or reopening a PR (refused on a merged PR; the host guards the staged state). `jailbee issue comment-edit ID` replaces the
 body of an issue or PR conversation comment the publishing account wrote, and
 `jailbee pr comment-edit ID` that of a submitted PR review comment; the
 read-only `jailbee issue comments ISSUE [--json]` lists comment ids. `jailbee issue assign ISSUE|@REF` takes `--me`

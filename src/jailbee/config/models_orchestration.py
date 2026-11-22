@@ -157,6 +157,10 @@ class PublishRightsConfig(BaseModel):
         default=False,
         description="Edit submitted PR review comments (pr_reviews does not imply it).",
     )
+    pr_state: bool = Field(
+        default=False,
+        description="Close and reopen bound PRs (pr_reviews does not imply it).",
+    )
     max_actions_per_hour: int = Field(
         default=30, ge=1, le=500, description="Maximum reserved actions in a sliding hour."
     )

@@ -1178,3 +1178,72 @@ def test_comment_edit_refuses_an_unchanged_body(monkeypatch, broker):
     result = invoke("comment-edit", "55", "1234", "--body", "old text")
     assert result.exit_code == 2
     assert broker.proposals("pr") == []
+
+
+def _gh_pr_state(monkeypatch, state="open", merged=False):
+    seen = []
+
+    def run_json(argv, **kw):
+        seen.append(argv)
+        if argv[2].endswith("/pulls/1234"):
+            return {"state": state, "merged": merged}
+        pytest.fail(f"unexpected gh call {argv}")
+
+    monkeypatch.setattr(gh, "run_json", run_json)
+    return seen
+
+
+def test_state_stages_a_close_with_the_state_it_read(monkeypatch, broker):
+    seen = _gh_pr_state(monkeypatch)
+    result = invoke("state", "1234", "closed")
+    assert result.exit_code == 0, result.output
+    assert seen[0] == ["gh", "api", "repos/{owner}/{repo}/pulls/1234"]
+    raw, parsed, _ = staged_source(broker)
+    assert raw["actions"] == [{"type": "state", "state": "closed", "expected": {"state": "open"}}]
+    assert (parsed.actions[0].state, parsed.actions[0].expected_state) == ("closed", "open")
+    (row,) = broker.proposals("pr")
+    assert row.name == "001-state.json"
+
+
+def test_state_stages_a_reopen(monkeypatch, broker):
+    _gh_pr_state(monkeypatch, state="closed")
+    assert invoke("state", "1234", "open").exit_code == 0
+    raw, _, _ = staged_source(broker)
+    assert raw["actions"][0]["expected"] == {"state": "closed"}
+
+
+def test_state_without_a_number_uses_the_bound_pr(monkeypatch, tmp_path, broker):
+    from jailbee.container_outbox import bindings
+
+    monkeypatch.setattr(
+        bindings,
+        "SNAPSHOT",
+        binding_snapshot(tmp_path, {"user.jailbee.repo_dir": "/repo", "user.jailbee.pr": "1234"}),
+    )
+    monkeypatch.setattr(
+        gh, "pr_view", lambda number, *, cwd=None: gh.PrView(1234, "h", "acme/widgets")
+    )
+    _gh_pr_state(monkeypatch)
+    assert invoke("state", "closed").exit_code == 0
+    assert staged_source(broker)[0]["pr"] == 1234
+
+
+@pytest.mark.parametrize("args", [("1234", "merged"), ("1234", "bogus"), ("1234",), ()])
+def test_state_refuses_a_bad_target_state(monkeypatch, broker, args):
+    _gh_pr_state(monkeypatch)
+    assert invoke("state", *args).exit_code == 2
+    assert broker.proposals("pr") == []
+
+
+def test_state_refuses_when_the_pr_is_already_there(monkeypatch, broker):
+    _gh_pr_state(monkeypatch, state="closed")
+    result = invoke("state", "1234", "closed")
+    assert result.exit_code == 2 and "already closed" in result.output
+    assert broker.proposals("pr") == []
+
+
+def test_state_refuses_a_merged_pr(monkeypatch, broker):
+    _gh_pr_state(monkeypatch, state="closed", merged=True)
+    result = invoke("state", "1234", "open")
+    assert result.exit_code == 2 and "merged" in result.output
+    assert broker.proposals("pr") == []
