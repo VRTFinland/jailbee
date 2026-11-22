@@ -47,6 +47,7 @@ def fakes(mocker: MockerFixture):
     """Patch the two long operations; the loader is patched per test."""
     build = mocker.patch("jailbee.golden.build_golden_image")
     apply = mocker.patch("jailbee.apply.run_apply", return_value=_result())
+    mocker.patch("jailbee.init_command.ensure_loose_bridge")
     return build, apply
 
 
@@ -558,3 +559,192 @@ def test_jobs_dry_run_builds_nothing(make_cfg, tmp_path, mocker, fakes) -> None:
     _run([a.repo_root], force=True, dry_run=True, jobs=4)
 
     assert build.call_count == 0
+
+
+# --- review rework (#149 ticket 05) ---------------------------------------
+
+
+def test_jobs_ensures_loose_bridge_once_before_the_pool(make_cfg, tmp_path, mocker, fakes) -> None:
+    build, _ = fakes
+    order: list[str] = []
+    ensure = mocker.patch(
+        "jailbee.init_command.ensure_loose_bridge", side_effect=lambda *a, **k: order.append("e")
+    )
+    build.side_effect = lambda cfg, incus: order.append("b")
+    a, b = _cfg(make_cfg, tmp_path, "aa"), _cfg(make_cfg, tmp_path, "bb")
+    _load(mocker, {a.repo_root: a, b.repo_root: b})
+
+    _run([a.repo_root, b.repo_root], force=True, jobs=2)
+
+    assert ensure.call_count == 1
+    assert order[0] == "e"
+
+
+def test_jobs_spinners_are_off_even_when_the_terminal_is_forced(
+    make_cfg, tmp_path, mocker, fakes
+) -> None:
+    from jailbee import tui
+
+    build, _ = fakes
+    seen: list[bool] = []
+    build.side_effect = lambda cfg, incus: seen.extend(
+        [tui.console.is_terminal, tui.err_console.is_terminal, tui.hint_console.is_terminal]
+    )
+    originals = [(c, c._force_terminal) for c in (tui.console, tui.err_console, tui.hint_console)]
+    for c, _ in originals:
+        c._force_terminal = True  # what TTY_COMPATIBLE=1 / FORCE_COLOR do at import
+    try:
+        a, b = _cfg(make_cfg, tmp_path, "aa"), _cfg(make_cfg, tmp_path, "bb")
+        _load(mocker, {a.repo_root: a, b.repo_root: b})
+        _run([a.repo_root, b.repo_root], force=True, jobs=2)
+        assert seen == [False] * 6
+        assert all(c._force_terminal is True for c, _ in originals)  # restored
+    finally:
+        for c, old in originals:
+            c._force_terminal = old
+
+
+def test_jobs_interrupt_records_finished_builds_and_cancels_queued(
+    make_cfg, tmp_path, mocker, fakes, capsys
+) -> None:
+    import threading
+
+    build, apply = fakes
+    started: list[str] = []
+    go = threading.Event()
+
+    def fake_build(cfg, incus):
+        started.append(cfg.golden.alias)
+        go.wait(5)
+
+    build.side_effect = fake_build
+
+    def interrupted(self, timeout=None):
+        # Ctrl-C while aa builds and bb, cc wait their turn; aa then finishes.
+        threading.Timer(0.3, go.set).start()
+        raise KeyboardInterrupt
+
+    mocker.patch("concurrent.futures.Future.result", interrupted)
+    cfgs = [_cfg(make_cfg, tmp_path, p) for p in ("aa", "bb", "cc")]
+    _load(mocker, {c.repo_root: c for c in cfgs})
+
+    with pytest.raises(KeyboardInterrupt):
+        _run([c.repo_root for c in cfgs], force=True, jobs=2)
+
+    assert sorted(started) == ["aa-base", "bb-base"]  # cc was queued and never started
+    with Session(get_engine()) as session:
+        for prefix, done in (("aa", True), ("bb", True), ("cc", False)):
+            marks = load_or_backfill(session, prefix, VERSION, now=NOW)
+            assert marks["base_build"].observed is done
+    assert "Summary" in capsys.readouterr().out
+    assert apply.call_count == 0
+
+
+def test_router_prefixes_stderr_and_flushes_partial_line() -> None:
+    import io
+    import threading
+
+    from jailbee.upgrade_all import _PrefixRouter
+
+    inner = io.StringIO()
+    r = _PrefixRouter(inner, threading.Lock())
+    r.write("outside\n")  # unclaimed: straight through
+    r.claim("x")
+    r.write("a\r\nb\rpartial")
+    r.release()
+    r.write("after\n")
+    assert inner.getvalue().splitlines() == [
+        "outside",
+        "[x] a",
+        "[x] b",
+        "[x] partial",
+        "after",
+    ]
+
+
+def test_router_quiet_tty_hides_the_terminal() -> None:
+    import threading
+
+    from jailbee.upgrade_all import _PrefixRouter
+
+    class Tty:
+        def isatty(self) -> bool:
+            return True
+
+    r = _PrefixRouter(Tty(), threading.Lock())
+    assert r.isatty() is True
+    r.quiet_tty = True
+    assert r.isatty() is False
+
+
+def test_jobs_one_never_installs_the_router(make_cfg, tmp_path, mocker, fakes) -> None:
+    import threading
+
+    build, _ = fakes
+    threads: list[threading.Thread] = []
+    build.side_effect = lambda cfg, incus: threads.append(threading.current_thread())
+    spy = mocker.patch("jailbee.upgrade_all._build_in_parallel")
+    a = _cfg(make_cfg, tmp_path, "aa")
+    _load(mocker, {a.repo_root: a})
+
+    _run([a.repo_root], force=True, jobs=1)
+
+    assert spy.call_count == 0
+    assert threads == [threading.main_thread()]
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_jobs_restores_the_standard_streams(make_cfg, tmp_path, mocker, fakes, raises) -> None:
+    import sys
+
+    build, _ = fakes
+    if raises:
+        build.side_effect = IncusError("boom")
+    out, err = sys.stdout, sys.stderr
+    a, b = _cfg(make_cfg, tmp_path, "aa"), _cfg(make_cfg, tmp_path, "bb")
+    _load(mocker, {a.repo_root: a, b.repo_root: b})
+
+    _run([a.repo_root, b.repo_root], force=True, jobs=2)
+
+    assert sys.stdout is out
+    assert sys.stderr is err
+
+
+def test_jobs_second_interrupt_does_not_wait_again(make_cfg, tmp_path, mocker, fakes) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    calls: list[bool] = []
+    real_shutdown = ThreadPoolExecutor.shutdown
+
+    def shutdown(self, wait=True, *, cancel_futures=False):
+        calls.append(wait)
+        if len(calls) == 1:
+            raise KeyboardInterrupt  # second Ctrl-C while waiting
+        return real_shutdown(self, wait=wait, cancel_futures=cancel_futures)
+
+    mocker.patch.object(ThreadPoolExecutor, "shutdown", shutdown)
+    mocker.patch("concurrent.futures.Future.result", side_effect=KeyboardInterrupt)
+    a, b = _cfg(make_cfg, tmp_path, "aa"), _cfg(make_cfg, tmp_path, "bb")
+    _load(mocker, {a.repo_root: a, b.repo_root: b})
+
+    with pytest.raises(KeyboardInterrupt):
+        _run([a.repo_root, b.repo_root], force=True, jobs=2)
+
+    assert calls == [True, False]
+
+
+def test_jobs_stderr_lines_carry_the_alias_prefix(
+    make_cfg, tmp_path, mocker, fakes, capsys
+) -> None:
+    import sys
+
+    build, _ = fakes
+    build.side_effect = lambda cfg, incus: print("warned", file=sys.stderr)
+    a, b = _cfg(make_cfg, tmp_path, "aa"), _cfg(make_cfg, tmp_path, "bb")
+    _load(mocker, {a.repo_root: a, b.repo_root: b})
+
+    _run([a.repo_root, b.repo_root], force=True, jobs=2)
+
+    err = capsys.readouterr().err.splitlines()
+    assert "[aa-base] warned" in err
+    assert "[bb-base] warned" in err

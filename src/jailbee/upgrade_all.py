@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import sys
 import threading
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -159,21 +161,63 @@ class _PrefixRouter:
         return getattr(self._inner, name)
 
 
+class _BuildInterrupted(KeyboardInterrupt):
+    """Ctrl-C during the parallel builds; `finished` is what completed anyway."""
+
+    def __init__(self, finished: dict[str, Exception | None]) -> None:
+        super().__init__()
+        self.finished = finished
+
+
+@contextmanager
+def _no_spinners() -> Iterator[None]:
+    """Make Rich draw no live output on the shared consoles.
+
+    Rich reads TTY_COMPATIBLE / FORCE_COLOR when a console is created, which
+    beats `isatty()`, so the stream router alone cannot stop spinners. The
+    consoles are module globals read at import, hence the private attribute.
+    """
+    from jailbee import tui
+
+    consoles = [tui.console, tui.err_console, tui.hint_console]
+    saved = [c._force_terminal for c in consoles]
+    for c in consoles:
+        c._force_terminal = False
+    try:
+        yield
+    finally:
+        for c, old in zip(consoles, saved, strict=True):
+            c._force_terminal = old
+
+
 def _build_in_parallel(
     jobs_by_alias: dict[str, Config], incus: Incus, jobs: int
 ) -> dict[str, Exception | None]:
     """Build each alias's image with up to `jobs` builds at once.
 
     Returns alias -> the exception its build raised, or None when it worked.
-    Every build runs to its end; one failure never cancels the others.
+    Every build runs to its end; one failure never cancels the others. On
+    Ctrl-C queued builds are cancelled, running ones finish, and
+    `_BuildInterrupted` carries the results so far.
     """
     from jailbee.golden import build_golden_image
+    from jailbee.init_command import ensure_loose_bridge
+
+    # Once, here: concurrent builds would race to create it ("already exists").
+    ensure_loose_bridge(incus, quiet=True)
 
     lock = threading.Lock()
     out = _PrefixRouter(sys.stdout, lock)
     err = _PrefixRouter(sys.stderr, lock)
 
+    done: dict[str, Exception | None] = {}
+
     def one(alias: str, cfg: Config) -> Exception | None:
+        error = build_one(alias, cfg)
+        done[alias] = error
+        return error
+
+    def build_one(alias: str, cfg: Config) -> Exception | None:
         out.claim(alias)
         err.claim(alias)
         try:
@@ -189,16 +233,20 @@ def _build_in_parallel(
     real_out, real_err = sys.stdout, sys.stderr
     out.quiet_tty = err.quiet_tty = True
     sys.stdout, sys.stderr = out, err
+    pool = ThreadPoolExecutor(max_workers=jobs)
     try:
-        pool = ThreadPoolExecutor(max_workers=jobs)
-        try:
+        with _no_spinners():
             futures = {a: pool.submit(one, a, c) for a, c in jobs_by_alias.items()}
-            return {a: f.result() for a, f in futures.items()}
-        except BaseException:
-            pool.shutdown(wait=True, cancel_futures=True)  # Ctrl-C: start no queued build
-            raise
-        finally:
+            try:
+                results = {a: f.result() for a, f in futures.items()}
+            except KeyboardInterrupt as interrupt:
+                try:
+                    pool.shutdown(wait=True, cancel_futures=True)  # start no queued build
+                except KeyboardInterrupt:
+                    pool.shutdown(wait=False, cancel_futures=True)  # second Ctrl-C: stop waiting
+                raise _BuildInterrupted(dict(done)) from interrupt
             pool.shutdown(wait=True)
+            return results
     finally:
         sys.stdout, sys.stderr = real_out, real_err
 
@@ -213,6 +261,30 @@ def _record(
 
     with Session(get_engine()) as session:
         record(session, cfg.container_prefix, action, version, now=now)
+
+
+def _record_interrupted(
+    plans: list[RepoPlan], finished: dict[str, Exception | None], version: str, now: datetime
+) -> None:
+    """Keep the builds that finished before Ctrl-C, so the next run skips them."""
+    from jailbee.tui import warn
+
+    results: list[RepoResult] = []
+    for plan in plans:
+        cfg = plan.cfg
+        if cfg is None or not plan.build or cfg.golden.alias not in finished:
+            continue
+        error = finished[cfg.golden.alias]
+        result = RepoResult(root=plan.root, prefix=cfg.container_prefix, reasons=plan.reasons)
+        if error is None:
+            result.build = "built"
+            _record(cfg, "base_build", version, now)
+        else:
+            result.build = "failed"
+            result.error = str(error)
+        results.append(result)
+    warn("Interrupted: builds that finished are recorded; the rest were not started or recorded.")
+    _print_summary(results, dry_run=False)
 
 
 def run_upgrade_all(
@@ -251,7 +323,11 @@ def run_upgrade_all(
                 wanted.setdefault(plan.cfg.golden.alias, (plan.root, plan.cfg))
         if wanted:
             info_plain(f"== building {len(wanted)} base image(s), up to {jobs} at a time ==")
-            errors = _build_in_parallel({a: c for a, (_, c) in wanted.items()}, incus, jobs)
+            try:
+                errors = _build_in_parallel({a: c for a, (_, c) in wanted.items()}, incus, jobs)
+            except _BuildInterrupted as interrupted:
+                _record_interrupted(plans, interrupted.finished, version, now)
+                raise
             prebuilt = {a: (wanted[a][0], errors[a]) for a in wanted}
     results: list[RepoResult] = []
 
