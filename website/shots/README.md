@@ -8,7 +8,7 @@ never copied) and Textual's pilot presses the keys.
 
 ```bash
 make shots                                   # every fixture under fixtures/
-uv run python -m website.shots fixtures/docs.yaml --out /tmp/shots --no-png
+uv run python -m website.shots website/shots/fixtures/docs.yaml --out /tmp/shots --no-png
 ```
 
 SVG colours come from the app's own ANSI theme (`app.ansi_theme`), not the

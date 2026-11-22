@@ -270,22 +270,32 @@ repos:
         orchestrator_running: true
         agent_status: [{agent: claude, state: idle, since: '2026-11-22T11:25:00Z', count: 1}]
         git_status: {wt: 'clean', ahead_diff: '+46 -8', ahead_count: '2', conflict: ok, behind_count: '0', local_diff: '+46 -8', local_count: '2', in_progress: ''}
+      - name: refund-flow
+        memory_usage: 2791728742
+        memory_limit: 8GiB
+        cpu_percent: 0.0
+        created_at: '2026-11-19T09:15:00Z'
+        base_branch: checkout
+        child: {orchestrator: checkout, state: working}
+        orchestrator_running: true
+        agent_status: [{agent: claude, state: idle, since: '2026-11-22T11:48:00Z', count: 1}]
+        git_status: {wt: 'clean', ahead_diff: '+23 -4', ahead_count: '1', conflict: ok, behind_count: '2', local_diff: '+23 -4', local_count: '1', in_progress: ''}
       - name: main-dev
         memory_usage: 1932735283
         memory_limit: 8GiB
         cpu_percent: 0.0
-        created_at: '2026-11-19T09:15:00Z'
+        created_at: '2026-11-18T10:15:00Z'
         base_branch: main
-        agent_status: [{agent: claude, state: idle, since: '2026-11-22T11:48:00Z', count: 1}]
+        agent_status: [{agent: claude, state: idle, since: '2026-11-22T11:34:00Z', count: 1}]
         git_status: {wt: 'clean', ahead_diff: 'clean', ahead_count: '0', conflict: —, behind_count: '0', local_diff: 'clean', local_count: '0', in_progress: ''}
       - name: theme-dark
         memory_usage: 1717986918
         memory_limit: 8GiB
         cpu_percent: 0.0
-        created_at: '2026-11-18T10:15:00Z'
+        created_at: '2026-11-20T11:15:00Z'
         base_branch: main
         pr_number: 309
-        agent_status: [{agent: claude, state: idle, since: '2026-11-22T11:34:00Z', count: 1}]
+        agent_status: [{agent: claude, state: idle, since: '2026-11-22T11:54:00Z', count: 1}]
         git_status: {wt: 'clean', ahead_diff: '+69 -12', ahead_count: '3', conflict: ok, behind_count: '0', local_diff: '+69 -12', local_count: '3', in_progress: ''}
 outbox:
   storefront-stripe-3ds:
@@ -301,7 +311,7 @@ steps:
   - key: enter
   - shot: dashboard-menu
   - key: escape
-  - key: v
+  - key: v   # details panel on (the fixture's view hides it)
   - shot: dashboard-card
   - key: v
   - select: stripe-3ds

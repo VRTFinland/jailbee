@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import io
 import re
-import shutil
 import subprocess
 import tempfile
 from contextlib import ExitStack
@@ -27,6 +26,7 @@ from jailbee.dashboard import accounts as da
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard import outbox as dob
 from jailbee.dashboard.columns import COLUMNS_VERSION
+from jailbee.dashboard.runner import RunResult
 from jailbee.dashboard.tui import menu_state as tmenu
 from jailbee.dashboard.tui import session as tsession
 from jailbee.db.view_prefs import ViewState
@@ -74,7 +74,7 @@ def _quiet_cli(world: World) -> Any:
 
     def run(argv: Any, **_kwargs: Any) -> da.CliResult:
         words = list(argv)
-        if words[:2] == ["account", "ls"] or "account" in words[:1]:
+        if words[:2] == ["account", "ls"]:
             return da.CliResult(True, "", accounts_listing(world))
         if "outbox" in words and "ls" in words:
             for name in world.outbox:
@@ -141,6 +141,8 @@ async def _run(world: World, out_dir: Path) -> list[Path]:
         mocker.patch.object(da, "run_cli_quiet", side_effect=_quiet_cli(world))
         mocker.patch.object(dob, "read_sent", return_value=())
         app = pilot_support.make_app(mocker, client=client, view_state=_view_state(world))
+        # Nothing a fixture does may run a real `jailbee`: actions are swallowed.
+        app.action_runner = _no_action
         async with app.run_test(size=world.size) as pilot:
             await pilot.pause()
             # The headless driver leaves Rich's console at its default width, which crops
@@ -167,6 +169,10 @@ async def _run(world: World, out_dir: Path) -> list[Path]:
                     for key in [value] if kind == "key" else value:
                         await pilot_support._apply(pilot, app, key)
     return written
+
+
+def _no_action(argv: Any, **_kwargs: Any) -> Any:
+    return RunResult(status=0)
 
 
 def _redraw(app: Any) -> None:
@@ -205,7 +211,10 @@ def svg_size(svg: str) -> tuple[int, int]:
 
 def svg_to_png(svg_path: Path, png_path: Path, chrome: Path = CHROME) -> None:
     """Rasterise with headless Chrome (ImageMagick drops the SVG's unfilled strokes)."""
+    if not chrome.exists():
+        raise RuntimeError(f"{chrome} not found: PNG output needs the host Chrome (or --no-png)")
     width, height = svg_size(svg_path.read_text(encoding="utf-8"))
+    png_path.unlink(missing_ok=True)  # a stale PNG must not pass for this run's
     with tempfile.TemporaryDirectory() as profile:
         proc = subprocess.run(
             [
@@ -227,7 +236,3 @@ def svg_to_png(svg_path: Path, png_path: Path, chrome: Path = CHROME) -> None:
         )
     if proc.returncode != 0 or not png_path.exists():
         raise RuntimeError(f"chrome could not render {svg_path.name}: {proc.stderr.strip()[-300:]}")
-
-
-def chrome_available() -> bool:
-    return CHROME.exists() or shutil.which("google-chrome") is not None
