@@ -1047,9 +1047,10 @@ issue outbox are empty — it moves to the very top as "Outbox (N pending)" whil
 holds staged manifests; it opens the Outbox box: the proposals as a tree
 beside a preview, with `Space` mark (a row and everything under it), `d` delete
 (one "No"-first question naming exactly what goes), `p` publish the marked
-proposals, or the one under the cursor (the plans and the choice shown in the box),
-`c` create the PR a description awaits (`pr` for the main repo or
-`submodule pr` for its resolved submodule), `X` clear, `v`/`m` preview and raw
+proposals, or the one under the cursor (the plans and the choice shown in the box;
+a description awaiting its PR or a pinned source runs `pr push` /
+`submodule pr push` in the terminal, after the manifests, the first failure
+stopping the rest), `X` clear, `v`/`m` preview and raw
 manifest, `r` refresh and Esc back; keys the SSH policy refuses are not
 offered), then `job clear`, `job log`, then `Autostart →` (re-run, status, cancel and profile when eligible; cancel asks first), then `Git →` (`merge`,
 `git pull`, `git push`, `git push --pr`, `git diff`), `PR →` ("Create/update submodule PR…" when the container has submodule changes, `pr open`,
@@ -1483,8 +1484,8 @@ container's own PR. An existing PR supplies its actual head and base; a
 conflicting manifest branch is refused. `--title`, `--body`, `--base`,
 `--as`, `--pr` and `--stacked` cannot be combined with this option.
 Non-fast-forward updates require `--force`. Pending source rows show
-`awaiting-push` and `create_scope`; `outbox apply` exits 2 with a PR push
-hint, while the outbox `c` action starts PR push. An already-published
+`awaiting-push` and `create_scope`; `outbox apply` (and `p` in the outbox)
+hands them to this PR push. An already-published
 source awaiting cleanup can remain `applied`; retry the same source push.
 `jailbee pr ls` includes source branch binding rows; `jailbee pr unbind
 NAME --head BRANCH` removes one such binding.
@@ -1773,12 +1774,12 @@ management](../../../git-bridge.md#unified-proposal-management).
 
 | Command | What it does |
 |---|---|
-| `jailbee outbox [CONTAINER]` / `outbox browse [CONTAINER] [--all-repos]` | The full-screen outbox manager on a TTY — this repo's containers, the named one, or (`--all-repos`, `a` inside) every registered repo's, as a tree with a preview: `Space` mark a row and everything under it, `d` delete the marked, `p` publish the marked proposals (or the one under the cursor) after one question, `c` create PR, `X` clear, `v`/`m` preview/raw, `r` refresh, `q` quit — and the overview table off one. A container with `--all-repos` is exit 2. `browse` is the unambiguous spelling for a container named like a subcommand. Read-only over remote SSH. The Qt dashboard has a native window for it. |
+| `jailbee outbox [CONTAINER]` / `outbox browse [CONTAINER] [--all-repos]` | The full-screen outbox manager on a TTY — this repo's containers, the named one, or (`--all-repos`, `a` inside) every registered repo's, as a tree with a preview: `Space` mark a row and everything under it, `d` delete the marked, `p` publish the marked proposals (or the one under the cursor) after one question (a PR creation runs `pr push`), `X` clear, `v`/`m` preview/raw, `r` refresh, `q` quit — and the overview table off one. A container with `--all-repos` is exit 2. `browse` is the unambiguous spelling for a container named like a subcommand. Read-only over remote SSH. The Qt dashboard has a native window for it. |
 | `jailbee outbox ls [CONTAINER] [--all-repos] [-o table\|json]` | List proposals, including containers whose outbox cannot be read. |
 | `jailbee outbox show [CONTAINER] [PROPOSAL] [-o table\|json] [--color\|--no-color]` | The complete proposal, with zero-based action and inline-comment indices. Markdown bodies are rendered on a terminal, verbatim in a pipe unless `--color`. |
 | `jailbee outbox drop [CONTAINER] [PROPOSAL] [--action N [--comment M]] [--with-dependents] [--archive-journal] [-y] [--revision TOKEN]` | Delete locally — the whole proposal, one action, or one inline review comment — after showing the exact scope. `--with-dependents` takes issue `create` actions others refer to; `--revision` refuses if the proposal changed since you inspected it. `-y` only confirms. |
 | `jailbee outbox clear [CONTAINER...] [--dry-run] [-y\|--yes]` | Discard eligible whole PR and issue proposals in the named containers without publishing. Omitted names open a destructive single-container picker even with one candidate (exit 2 off-terminal). Shows delete/keep reasons; `--dry-run` only previews, `-y` skips only deletion confirmation. Uncertain issue actions, PR publication evidence and changed revisions are protected; newly arrived proposals are excluded. Settled issue journals are archived and shared body files retained. Exit 0: no kept/failed items or declined confirmation; 1: kept/unavailable/failed (also in dry-run); 2: usage/missing selection. See [clearing outboxes](../../../git-bridge.md#clearing-outboxes). Terminal dashboard only: **Clear outbox…** (`[X]`) in the container and **N selected** menus, always confirmed with **No** first, regardless of general confirmation settings; not offered in Qt. |
-| `jailbee outbox apply [CONTAINER] [PROPOSAL] [--dry-run] [--force] [--foreign] [-y] [--revision TOKEN]` | Publish one whole manifest through the same code as `review apply` / `issue apply`, which are its kind-scoped aliases. `--force` is the PR stale-anchor override and `--foreign` admits a PR the container does not own — here even in a repository that is not the container's — under `-y`; both are invalid for issues. |
+| `jailbee outbox apply [CONTAINER] [PROPOSAL] [--dry-run] [--force] [--foreign] [-y] [--revision TOKEN]` | Publish one whole manifest through the same code as `review apply` / `issue apply`, which are its kind-scoped aliases. `--force` is the PR stale-anchor override and `--foreign` admits a PR the container does not own — here even in a repository that is not the container's — under `-y`; both are invalid for issues. A PR creation (a description awaiting its PR, a pinned source) hands over to `jailbee pr push` / `submodule pr push` / `pr push --source-manifest` instead, its questions reaching you; `-y` is passed on and `--draft`/`--force`/`--foreign` are refused for it. |
 | `jailbee outbox sent ls [<container>] [--repo PREFIX] [-o table\|json] [--limit N]` | The Sent log: what JailBee published to GitHub from the outbox (reviews, replies, issue actions, PR descriptions, source PRs), newest first, with publisher (`user` or `orchestrator`), state (`applied` or `uncertain`) and GitHub URL. Records outlive the container; a record of a destroyed container is marked `†`. `<container>` shows only that container's current incarnation. Local, never calls GitHub |
 | `jailbee outbox sent show <id> [-o table\|json]` | One published action in full, with its URL |
 | `jailbee outbox sent clear [--repo PREFIX] [--before DATE] [-y]` | Delete Sent log records (GitHub is untouched); confirms unless `-y`. An omitted `--repo` is picked from a list (always asks); `--before` takes an ISO date or datetime (naive = UTC) |
