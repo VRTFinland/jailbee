@@ -31,6 +31,11 @@ before editing `## Unreleased`.
   until dismissed. Output screens no longer pop up when an action ends; a
   short notice says it finished. The `⟳ running · ⚠ failed` badge at the top,
   or `Q`, opens the queue, where an entry expands to its full output.
+- The documentation site has a task-first "User guide" section in place of "Daily use"
+  ([#150](https://github.com/VRTFinland/jailbee/issues/150)): Getting started, seven
+  new guide pages (being written), Remote GUI, FAQ and Troubleshooting. Commands,
+  git bridge, orchestration, project config and the web dashboard moved under
+  Reference; page URLs are unchanged.
 - Interactive Claude Code sessions receive managed, non-acknowledging inbox
   notifications through `jailbee inbox follow`
   ([#135](https://github.com/VRTFinland/jailbee/issues/135)). The repo's

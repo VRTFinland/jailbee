@@ -29,19 +29,27 @@ extra_css = ["assets/jailbee-docs.css"]
 # arrives from either place sees the same grouping.
 nav = [
   { "Overview" = "README.md" },
-  { "Setup" = ["installation.md", "storage.md", "getting-started.md", "macos.md", "apple-container-machine.md"] },
-  { "Daily use" = [
+  { "Setup" = ["installation.md", "storage.md", "macos.md", "apple-container-machine.md"] },
+  { "User guide" = [
+    "getting-started.md",
+    "everyday.md",
+    "code-in-and-out.md",
+    "github.md",
+    "dashboard.md",
+    "agents-guide.md",
+    "logins.md",
+    "orchestrating.md",
+    "remote-gui.md",
     "faq.md",
+    "troubleshooting.md",
+  ] },
+  { "Reference" = [
     "commands.md",
     "git-bridge.md",
     "orchestration.md",
     "orchestration-protocol.md",
-    "remote-gui.md",
-    "web-dashboard.md",
     "project-config.md",
-    "troubleshooting.md",
-  ] },
-  { "Reference" = [
+    "web-dashboard.md",
     "config.md",
     "agents.md",
     "litellm.md",
