@@ -36,6 +36,7 @@ from jailbee.state_service.protocol import (
 if TYPE_CHECKING:
     from jailbee.incus import Incus
     from jailbee.state_service.gatherer import Gatherer
+    from jailbee.state_service.service_probe import ServiceProbe
 
 log = logging.getLogger(__name__)
 
@@ -219,6 +220,7 @@ def run_service(incus: Incus) -> int:
         log.info("another state service holds the lock; exiting")
         return 0
     sock = socket_path()
+    probe: ServiceProbe | None = None
     try:
         # Only the lock holder may remove a socket: whatever is there is stale.
         sock.unlink(missing_ok=True)
@@ -230,6 +232,7 @@ def run_service(incus: Incus) -> int:
         from jailbee.state_service.session_log import SessionRecorder
 
         recorder = SessionRecorder(get_engine())
+        probe = ServiceProbe(live_fetch(incus))
         asyncio.run(
             StateServer(
                 Gatherer(
@@ -237,11 +240,13 @@ def run_service(incus: Incus) -> int:
                     cadence,
                     recorder=recorder,
                     pr_heads=PrHeadAutofetcher(),
-                    services=ServiceProbe(live_fetch(incus)),
+                    services=probe,
                 )
             ).serve(sock)
         )
         return 0
     finally:
+        if probe is not None:
+            probe.shutdown()
         sock.unlink(missing_ok=True)
         os.close(lock_fd)

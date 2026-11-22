@@ -23,7 +23,7 @@ from jailbee.dashboard.model import AppMenuEntry, RepoAdvisory, RepoGroup
 from jailbee.dashboard.system import PoolStatus, SystemStatus
 from jailbee.git_status import GitStatus, OtherBranch, SubmoduleChange
 from jailbee.host_target import SyncTarget
-from jailbee.lifecycle import ContainerInfo, ServiceStatus
+from jailbee.lifecycle import ContainerInfo, ServiceState
 from jailbee.orchestration.view import ChildView, GrantView
 from jailbee.procstat import ProcessActivity, ProcessMemory
 from jailbee.sysstat import DiskStatus, LoadStatus, MemoryStatus
@@ -57,7 +57,7 @@ from jailbee.update_check import UpdateNotice
 # 31 adds GrantView.publish_pr_comment_edits, the PR comment-edit publish right.
 # 32 adds GitStatus.other_branches and OtherBranch, local branches with unimported commits.
 # 33 adds AgentSummary.sessions, one SessionMark per live session.
-# 34 adds ContainerInfo.services (ServiceStatus) and .services_unknown.
+# 34 adds ContainerInfo.services (ServiceState) and .services_unknown.
 PROTOCOL = 34
 
 
@@ -155,7 +155,7 @@ _NAMESPACE: dict[str, Any] = {
         ProcessMemory,
         RepoAdvisory,
         RepoGroup,
-        ServiceStatus,
+        ServiceState,
         SessionMark,
         SubmoduleChange,
         SyncTarget,

@@ -690,3 +690,22 @@ def test_config_short_option_value_double_dash_is_not_separator(make_cfg, tmp_pa
     result = CliRunner().invoke(cli.app, ["service", "restart", "one", "web", "-c", "--"])
     assert result.exit_code == 0, result.output
     assert str(loaded.call_args.args[0]) == "--"
+
+
+def test_service_rows_probe_mode_is_bounded_and_never_restages(monkeypatch):
+    import json
+    from unittest.mock import Mock
+
+    from jailbee.services import host
+
+    run = Mock(return_value=Mock(returncode=0, stdout=json.dumps([]).encode(), stderr=b""))
+    monkeypatch.setattr("jailbee.container_app.run_in_container", run)
+    monkeypatch.setattr("jailbee.lifecycle.container_repo_dir", lambda *a: "/repo")
+    cfg = Mock()
+    host.service_rows(cfg, Mock(), "c", probe=True)
+    assert run.call_args.kwargs["restage"] is False
+    assert 0 < run.call_args.kwargs["timeout"] <= 15
+    run.reset_mock()
+    host.service_rows(cfg, Mock(), "c")
+    assert run.call_args.kwargs["restage"] is True
+    assert run.call_args.kwargs["timeout"] is None

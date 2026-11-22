@@ -1587,9 +1587,9 @@ def test_card_lists_branches_with_unimported_commits() -> None:
 
 
 def test_a_running_container_lists_its_services_and_states() -> None:
-    from jailbee.lifecycle import ServiceStatus
+    from jailbee.lifecycle import ServiceState
 
-    c = _c(services=(ServiceStatus("web", "ready"), ServiceStatus("db", "failed")))
+    c = _c(services=(ServiceState("web", "ready"), ServiceState("db", "failed")))
     panel = dd.container_panel(c, NOW)
 
     assert _panel_plain(panel.services) == ["services web ready · db failed"]
@@ -1607,16 +1607,16 @@ def test_a_failed_probe_reads_unknown() -> None:
 
 
 def test_a_stopped_container_shows_no_services() -> None:
-    from jailbee.lifecycle import ServiceStatus
+    from jailbee.lifecycle import ServiceState
 
-    c = _c(state="Stopped", services=(ServiceStatus("web", "ready"),), services_unknown=True)
+    c = _c(state="Stopped", services=(ServiceState("web", "ready"),), services_unknown=True)
     assert dd.container_panel(c, NOW).services == ()
 
 
 def test_the_rendered_card_draws_the_services_line() -> None:
-    from jailbee.lifecycle import ServiceStatus
+    from jailbee.lifecycle import ServiceState
 
-    c = _c(services=(ServiceStatus("web", "ready"), ServiceStatus("db", "failed")))
+    c = _c(services=(ServiceState("web", "ready"), ServiceState("db", "failed")))
     view = dd.DetailsView(c.display_name, (), panel=dd.container_panel(c, NOW))
 
     assert "services web ready · db failed" in _panel_body(view, None, 100)

@@ -70,7 +70,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class ServiceStatus:
+class ServiceState:
     """One service of a running container: its name and `service ls` state."""
 
     name: str
@@ -135,7 +135,7 @@ class ContainerInfo:
     # The container's services and their `service ls` states, written by the
     # state service's service probe (never by `list_containers`). None = none
     # gathered (stopped, not probed yet); `services_unknown` = the probe failed.
-    services: tuple[ServiceStatus, ...] | None = None
+    services: tuple[ServiceState, ...] | None = None
     services_unknown: bool = False
     job_phase: str | None = None
     job_pid: int | None = None

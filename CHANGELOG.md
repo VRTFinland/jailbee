@@ -26,8 +26,11 @@ before editing `## Unreleased`.
 
 - The dashboard's context card lists a running container's services with their
   state (`services web ready · db failed`), so the Services menu is not needed
-  to see them. The state service probes each running container's `service ls`
-  at most every 30 seconds; a failed probe reads `unknown`
+  to see them. While a dashboard is connected, the state service probes each
+  running container's `service ls` (its health/status checks) in the background
+  at most every 30 seconds, without holding back the snapshot; a failed or
+  hung probe reads `unknown`, and a container without an in-container jailbee
+  shows no line
   ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
 
 - The dashboard's AGENT column draws one indicator per live agent session
