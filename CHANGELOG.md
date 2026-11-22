@@ -27,11 +27,12 @@ before editing `## Unreleased`.
   ([#145](https://github.com/VRTFinland/jailbee/issues/145)): the dashboard's state
   service refetches each bound PR's head every `pr.autofetch_interval` seconds
   (default 300) while `pr.autofetch` is on, never prompting (git terminal prompt
-  off, `ssh -o BatchMode=yes`, 30 s timeout). A failure keeps the last known head;
+  off, askpass programs disabled, `ssh -o BatchMode=yes`, 30 s timeout). A failure keeps the last known head;
   the card's PR row shows `fetched 3m ago`, `fetch failed 5m ago` or `autofetch off`.
-  Turn autofetch off for passphrase or FIDO/YubiKey-backed remotes and refresh
+  Turn autofetch off for passphrase or FIDO/YubiKey-backed remotes, or a `plink`/`sh -c`
+  ssh wrapper, and refresh
   by hand with `jailbee pr fetch [<name>] [--all]` or the row menu's
-  `Refresh PR head`.
+  `Refresh PR head`; a failure note clears once a manual fetch moves the head.
 - `agents.default_runner` makes a runner (`claude` or `claude-jb`, an optional
   LiteLLM profile and model tier) the repo's default for every container's
   autostart, layered local → repo → global

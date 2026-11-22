@@ -221,3 +221,96 @@ def test_the_policy_is_reread_only_every_half_minute():
     rig.mono.t += 30
     rig.annotate(_container())
     assert len(reads) == 2
+
+
+def test_a_stale_failure_is_dropped_once_the_ref_moves_on():
+    rig = _Rig(interval=30)
+    rig.failure = RuntimeError("boom")
+    c = _container()
+    rig.annotate(c)
+    assert _target(c).fetch_error == "boom"
+
+    # a manual `jb pr fetch` moved the ref
+    moved = _container()
+    assert moved.git_status is not None and moved.git_status.sync_target is not None
+    moved.git_status = replace_sha(moved.git_status, "b" * 40)
+    rig.wall.t += 60
+    rig.annotate(moved)
+
+    t = _target(moved)
+    assert t.fetch_error is None and t.fetch_error_at is None
+    assert t.fetched_at == rig.wall.t
+
+
+def test_a_failure_stays_while_the_ref_is_unchanged():
+    rig = _Rig(interval=1000)
+    rig.failure = RuntimeError("boom")
+    rig.annotate(_container())
+    c = _container()
+    rig.annotate(c)
+    assert _target(c).fetch_error == "boom"
+
+
+def replace_sha(gs: GitStatus, sha: str) -> GitStatus:
+    from dataclasses import replace
+
+    assert gs.sync_target is not None
+    return replace(gs, sync_target=replace(gs.sync_target, sha=sha))
+
+
+def test_read_policy_maps_the_pr_block_of_the_repo_config(tmp_path):
+    from jailbee.pr_autofetch import read_policy
+
+    (tmp_path / ".jailbee").mkdir()
+    (tmp_path / ".jailbee" / "config.yaml").write_text(
+        "container_prefix: rp\npr:\n  autofetch: false\n  autofetch_interval: 90\n"
+    )
+    p = read_policy(tmp_path)
+    assert p is not None
+    assert (p.enabled, p.interval) == (False, 90.0)
+    assert p.repo_root == tmp_path.resolve() or p.repo_root == tmp_path
+
+
+def test_read_policy_defaults_and_remote_come_from_the_config(tmp_path, mocker, make_cfg):
+    from jailbee.pr_autofetch import read_policy
+
+    cfg = make_cfg(tmp_path, upstream_remote="upstream")
+    mocker.patch("jailbee.config.loader.load_repo_config", return_value=cfg)
+    p = read_policy(tmp_path)
+    assert p == AutofetchPolicy(cfg.repo_root, "upstream", True, 300.0)
+
+
+def test_read_policy_is_none_when_the_config_cannot_load(tmp_path, mocker):
+    from jailbee.pr_autofetch import read_policy
+
+    mocker.patch("jailbee.config.loader.load_repo_config", side_effect=ValueError("bad"))
+    assert read_policy(tmp_path) is None
+
+
+def test_the_real_thread_path_records_a_raising_fetch_and_frees_the_slot():
+    import threading
+
+    done = threading.Event()
+
+    def fetch(root, number, remote):
+        try:
+            raise RuntimeError("net down")
+        finally:
+            done.set()
+
+    mono = _Time()
+    fetcher = PrHeadAutofetcher(
+        policy=lambda root: AutofetchPolicy(ROOT, "origin", True, 30.0),
+        fetch=fetch,
+        clock=mono,
+        wall=lambda: 42.0,
+    )
+    fetcher.annotate([_group(_container())])
+    assert done.wait(5)
+    state = fetcher._states[(ROOT, 7)]
+    for _ in range(500):
+        if not state.in_flight:
+            break
+        threading.Event().wait(0.01)
+    assert state.in_flight is False
+    assert state.error == "net down" and state.error_at == 42.0
