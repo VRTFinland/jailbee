@@ -232,6 +232,13 @@ def _review_policy(
             raise pr_outbox.GateError(
                 "description rewrite requires an authored, non-adopted PR binding"
             )
+        if (
+            any(isinstance(action, pr_outbox.StateAction) for action in manifest.actions)
+            and target_number not in authored
+        ):
+            raise pr_outbox.GateError(
+                "PR close/reopen requires an authored, non-adopted PR binding"
+            )
 
     return check
 

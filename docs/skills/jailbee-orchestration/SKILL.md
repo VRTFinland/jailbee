@@ -182,7 +182,7 @@ need `publish.pr_reviews` and must target bound PRs in the own repository. Editi
 submitted review comment (a `comment_edit` action) additionally needs
 `publish.pr_comment_edits`, which `pr_reviews` does not imply; revoking
 `pr_reviews` also revokes it. Closing or reopening a bound PR (a `state` action)
-likewise needs `publish.pr_state`.
+likewise needs `publish.pr_state` and an authored, non-adopted PR binding.
 Existing unbound upstream branches, default/base heads, force pushes and
 foreign PRs are refused. New PRs use the default base; updates require an
 authored source-PR binding, not a review-only PR/stacked label or adopted

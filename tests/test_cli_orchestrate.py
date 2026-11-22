@@ -660,3 +660,18 @@ def test_pr_state_flag_reaches_commands(patched):
     assert res.exit_code == 0, res.output
     flags = patched.grant.call_args.args[3]
     assert (flags.publish_pr_reviews, flags.publish_pr_state) == (True, True)
+
+
+def test_grant_says_pr_state_was_revoked_with_reviews(patched):
+    from jailbee.orchestration.grant import PublishRights
+
+    before = Grant(publish=PublishRights(pr_reviews=True, pr_state=True))
+
+    def fake(*args, on_previous=None, **kwargs):
+        on_previous(before)
+        return Grant()
+
+    patched.grant.side_effect = fake
+    res = runner.invoke(app, ["orchestrate", "grant", "a", "--no-publish-pr-reviews"])
+    assert res.exit_code == 0, res.output
+    assert "PR state changes revoked with PR reviews" in " ".join(res.output.split())

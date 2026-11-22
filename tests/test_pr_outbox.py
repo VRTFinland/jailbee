@@ -3433,6 +3433,51 @@ def test_draft_skips_non_draftable_manifest_in_same_run(mocker, make_cfg, tmp_pa
     )
 
 
+def _state_draft_manifest_text():
+    return _manifest_text(
+        pr=7,
+        actions=[
+            {"type": "review", "body": "review", "comments": []},
+            {"type": "state", "state": "closed", "expected": {"state": "open"}},
+        ],
+    )
+
+
+def test_state_change_on_a_foreign_pr_is_refused_by_the_real_detection(
+    mocker, make_cfg, tmp_path, capsys
+):
+    text = _manifest_text(
+        pr=999, actions=[{"type": "state", "state": "closed", "expected": {"state": "open"}}]
+    )
+    cfg, incus, *_ = _selected_setup(mocker, make_cfg, tmp_path, files={"one.json": text})
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(number=999))
+    state = mocker.patch("jailbee.pr.set_state")
+    _selected_offer(cfg, incus)
+    state.assert_not_called()
+    assert "999" in capsys.readouterr().err
+
+
+def test_draft_indices_hold_back_state_changes():
+    from jailbee.pr_outbox import draft_indices, draft_preview, parse_manifest
+
+    manifest = parse_manifest("s.json", _state_draft_manifest_text(), {})
+    assert draft_indices(manifest, [0, 1]) == frozenset({0})
+    assert draft_preview(manifest, 7, [0, 1]).state_held_back == 1
+
+
+def test_draft_dry_run_labels_state_change_held_back(mocker, make_cfg, tmp_path, capsys):
+    cfg, incus, *_ = _selected_setup(
+        mocker, make_cfg, tmp_path, files={"one.json": _state_draft_manifest_text()}
+    )
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(number=7))
+    incus.config_get.side_effect = lambda c, key: {"user.jailbee.pr": "7"}.get(key)
+    assert _selected_offer(cfg, incus, draft=True, dry_run=True) == 0
+    output = capsys.readouterr().out
+    assert "held back in draft mode: action 1 (state change)" in output
+    assert "1 state change(s) held back" in output
+    assert "action 1: pending" not in output
+
+
 def test_dry_run_draft_lists_held_back_and_publishes_nothing(mocker, make_cfg, tmp_path, capsys):
     cfg, incus, apply = _draft_offer_setup(mocker, make_cfg, tmp_path)
     confirm = mocker.Mock(side_effect=AssertionError("dry run"))

@@ -163,7 +163,8 @@ is the other one — the state you read when staging — and is required. Stage 
 `pr`; at most one per manifest. Before publishing the host re-reads the PR and
 refuses unless it is still in `expected.state` (a merged PR is always refused). The
 plan warns `closes PR #N` / `reopens PR #N`. A PR the container does not own needs
-`--foreign`, as for any action. An orchestrator needs `publish.pr_state`. Merging
+`--foreign`, as for any action. An orchestrator needs `publish.pr_state` and an authored, non-adopted PR binding. In
+`--draft` mode a state change is held back in the outbox, like a general comment. Merging
 and draft toggling are out of scope.
 
 ## `type: "comment_edit"`

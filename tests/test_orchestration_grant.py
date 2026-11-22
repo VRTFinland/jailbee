@@ -509,5 +509,7 @@ def test_pr_state_is_capped_and_needs_pr_reviews() -> None:
     assert wanted.narrowed(PublishRights(pr_reviews=True)).pr_state is False
     assert wanted.narrowed(wanted).pr_state is True
     assert wanted.narrowed(PublishRights(pr_state=True)).pr_state is False
+    # Neither side's own pr_reviews may be missing for the state right to survive.
+    assert PublishRights(pr_state=True).narrowed(wanted).pr_state is False
     messages = cap_excess(Grant(publish=wanted), RepoCap(publish=PublishRights(pr_reviews=True)))
     assert any("pr_state" in line for line in messages)

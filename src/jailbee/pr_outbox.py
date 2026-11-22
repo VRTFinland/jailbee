@@ -710,6 +710,7 @@ class DraftPreview:
     held_back: int
     description: bool
     draft_total: int | None = None
+    state_held_back: int = 0
 
 
 PublishMode = Literal["publish", "draft"]
@@ -722,8 +723,10 @@ def draftable(manifest: Manifest, indices: Iterable[int]) -> bool:
 
 
 def draft_indices(manifest: Manifest, indices: Iterable[int]) -> frozenset[int]:
-    """Leave general comments pending while selecting draft-compatible actions."""
-    return frozenset(i for i in indices if not isinstance(manifest.actions[i], CommentAction))
+    """Leave general comments and state changes pending; they publish normally later."""
+    return frozenset(
+        i for i in indices if not isinstance(manifest.actions[i], (CommentAction, StateAction))
+    )
 
 
 def draft_preview(manifest: Manifest, pr_number: int, indices: Iterable[int]) -> DraftPreview:
@@ -733,6 +736,7 @@ def draft_preview(manifest: Manifest, pr_number: int, indices: Iterable[int]) ->
         pending=sum(isinstance(a, (ReviewAction, ReplyAction)) for a in actions),
         held_back=sum(isinstance(a, CommentAction) for a in actions),
         description=any(isinstance(a, DescriptionAction) for a in actions),
+        state_held_back=sum(isinstance(a, StateAction) for a in actions),
     )
 
 
@@ -810,7 +814,7 @@ def pr_plan_json(plan: PrPlan, short: str, *, proposal: str, revision: str) -> d
                     will_draft = "already_published"
                 elif isinstance(action, (ReviewAction, ReplyAction)):
                     will_draft = "draft"
-                elif isinstance(action, CommentAction):
+                elif isinstance(action, (CommentAction, StateAction)):
                     will_draft = "held_back"
                 else:
                     will_draft = "publish"
@@ -996,8 +1000,8 @@ def _apply_one(target: Target, action: Action, session: DraftSession | None = No
     repo_root = target.scope.repo_root
     number = target.pr.number
     if session is not None:
-        assert not isinstance(action, CommentAction), (
-            "general comments must be held back in draft mode"
+        assert not isinstance(action, (CommentAction, StateAction)), (
+            "general comments and state changes must be held back in draft mode"
         )
         if isinstance(action, ReviewAction):
             return session.review(action)
@@ -2522,6 +2526,8 @@ def _print_pr_plan(
                     action = planned.target.manifest.actions[i]
                     if isinstance(action, CommentAction):
                         label = f"held back in draft mode: action {i} (general comment)"
+                    elif isinstance(action, StateAction):
+                        label = f"held back in draft mode: action {i} (state change)"
                     elif isinstance(action, CommentEditAction):
                         label = f"action {i}: published (comment edit)"
                     elif isinstance(action, DescriptionAction):
@@ -2534,6 +2540,8 @@ def _print_pr_plan(
             clauses = [f"{preview.pending} go into your pending review on PR #{preview.pr}"]
             if preview.held_back:
                 clauses.append(f"{preview.held_back} general comment(s) held back")
+            if preview.state_held_back:
+                clauses.append(f"{preview.state_held_back} state change(s) held back")
             if preview.description:
                 clauses.append("the description is published")
             console.print("As a draft: " + "; ".join(clauses) + ".", soft_wrap=True)
@@ -2720,7 +2728,12 @@ def _offer_locked(
             mode = choose_mode(
                 total,
                 DraftPreview(
-                    first.pr, first.pending, first.held_back, first.description, total_draft
+                    first.pr,
+                    first.pending,
+                    first.held_back,
+                    first.description,
+                    total_draft,
+                    first.state_held_back,
                 ),
             )
             accepted = mode is not None
@@ -2776,6 +2789,13 @@ def _offer_locked(
             or refreshed.foreign_repo != target.foreign_repo
         ):
             raise OutboxChanged("PR target changed; refresh required")
+        # The state guard judges the PR as it is now, not as it was when planned.
+        state_refusals = _state_refusals(
+            refreshed,
+            [i for i in pending_indices(refreshed.manifest, progress) if idx is None or i in idx],
+        )
+        if state_refusals:
+            raise GateError("; ".join(state_refusals))
         refreshed_plans.append((refreshed, progress, idx))
     if selected_publication:
         # Remote target reads can run arbitrary time: keep local evidence fresh
