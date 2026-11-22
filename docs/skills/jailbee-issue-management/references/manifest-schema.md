@@ -313,8 +313,10 @@ B and B blocked by A) are refused. A link to a new issue (`*_ref`) has no
 field and never conflicts.
 
 If a relation's outcome is uncertain (a timed-out publish), check the issue:
-when the link is there, resolve with `--applied`; `--retry` would be refused as
-already linked.
+when the relation is in the state the action asks for, resolve with
+`--applied`; otherwise `--retry`. A retry of an action that already took effect
+is refused. A `remove` of a child from its parent earlier in the same batch lets
+a later `add` move it to another parent.
 
 `create` has no `parent` or `blocked_by` field. `jailbee issue create --parent
 N|@REF --blocked-by N|@REF` stages the create and then these actions, targeting

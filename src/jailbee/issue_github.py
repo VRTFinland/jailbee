@@ -454,14 +454,12 @@ class IssueIdentity:
 
 
 def _parent_of(value: object) -> tuple[str, int] | None:
-    """Read an issue object's ``parent_issue_url`` (null when it has no parent)."""
-    if value is None:
-        return None
+    """Read an issue object's ``parent_issue_url``; None when absent or not parseable."""
     if isinstance(value, str):
         match = re.search(r"/repos/([^/]+/[^/]+)/issues/([0-9]+)/?$", value)
         if match:
             return match.group(1), int(match.group(2))
-    raise IssueGithubReadError("GitHub read failed: unexpected response")
+    return None
 
 
 def get_issue_identity(repo_root: Path, repo: str, number: int) -> IssueIdentity:

@@ -391,8 +391,12 @@ def _relation_refusals(
     action: SubIssueAction | DependencyAction,
     number: int | None,
     context: str,
+    removals: frozenset[tuple[str, int, int]] = frozenset(),
 ) -> tuple[int | None, list[str]]:
     """The related issue's database id, and refusals from the relation's live state.
+
+    ``removals`` are the batch's ``(repo identity, parent, child)`` sub-issue
+    removals, so a child may be moved to another parent within one batch.
 
     A relation is refused when it already is in the state the action asks for
     (an add already linked, a remove not linked) or its other end is a pull
@@ -405,21 +409,22 @@ def _relation_refusals(
     identity = issue_github.get_issue_identity(host_repo_root, repo.slug, related.number)
     if identity.is_pull_request:
         return identity.id, [f"{context}: #{related.number} is a pull request, not an issue"]
-    if number is None:
-        return identity.id, []
     sub = isinstance(action, SubIssueAction)
     if sub and not action.remove and identity.parent is not None:
         parent_slug, parent_number = identity.parent
-        if (parent_slug.casefold(), parent_number) != (repo.slug.casefold(), number):
-            current_parent = (
-                f"#{parent_number}"
-                if parent_slug.casefold() == repo.slug.casefold()
-                else f"{parent_slug}#{parent_number}"
-            )
-            return identity.id, [
-                f"{context}: #{related.number} is already a sub-issue of {current_parent}; "
-                "GitHub refuses a second parent"
-            ]
+        same_repo = parent_slug.casefold() == repo.slug.casefold()
+        leaving = same_repo and (repo.identity, parent_number, related.number) in removals
+        if parent_number != number or not same_repo:
+            if not leaving:
+                current_parent = (
+                    f"#{parent_number}" if same_repo else f"{parent_slug}#{parent_number}"
+                )
+                return identity.id, [
+                    f"{context}: #{related.number} is already a sub-issue of "
+                    f"{current_parent}; GitHub refuses a second parent"
+                ]
+    if number is None:
+        return identity.id, []
     current = (
         issue_github.list_sub_issue_ids(host_repo_root, repo.slug, number)
         if sub
@@ -631,6 +636,8 @@ def prepare_batch(
     mutations: dict[tuple[str, int | str, str], str] = {}
     # Pending "blocked by" additions of this batch: (repo, blocked, blocker).
     blocked_edges: set[tuple[str, int, int]] = set()
+    # Pending sub-issue removals of this batch: (repo, parent, child).
+    sub_removals: set[tuple[str, int, int]] = set()
     prepared = []
     established: dict[tuple[str, int | str, str], str] = {}
     for manifest, digest, journal in proposals:
@@ -715,9 +722,21 @@ def prepare_batch(
             if isinstance(action, (SubIssueAction, DependencyAction)) and status == "pending":
                 try:
                     related_id, found = _relation_refusals(
-                        cfg.repo_root, repo, action, issue.number, context
+                        cfg.repo_root,
+                        repo,
+                        action,
+                        issue.number,
+                        context,
+                        frozenset(sub_removals),
                     )
                     refusals.extend(found)
+                    if (
+                        isinstance(action, SubIssueAction)
+                        and action.remove
+                        and issue.number is not None
+                        and isinstance(action.child, ExistingIssue)
+                    ):
+                        sub_removals.add((repo.identity, issue.number, action.child.number))
                 except IssueGithubReadError as exc:
                     execution_errors.append(exc)
                     refusals.append(f"{context}: {exc}")
@@ -886,6 +905,16 @@ def revalidate_batch(batch: PreparedBatch) -> None:
     errors: dict[tuple[str, int], str] = {}
     execution_errors: list[IssueGithubReadError] = []
     refusals = []
+    sub_removals = frozenset(
+        (resolved.repo.identity, resolved.issue.number, resolved.action.child.number)
+        for manifest in batch.manifests
+        for resolved in manifest.actions
+        if isinstance(resolved.action, SubIssueAction)
+        and resolved.action.remove
+        and resolved.status == "pending"
+        and resolved.issue.number is not None
+        and isinstance(resolved.action.child, ExistingIssue)
+    )
     for manifest in batch.manifests:
         for resolved in manifest.actions:
             if (
@@ -953,6 +982,7 @@ def revalidate_batch(batch: PreparedBatch) -> None:
                         resolved.action,
                         resolved.issue.number,
                         context,
+                        sub_removals,
                     )
                     refusals.extend(found)
                 except IssueGithubReadError as exc:
@@ -1033,9 +1063,10 @@ def _action_lines(
         if isinstance(related, CreatedIssue):
             lines.append(f"  depends on create ref {related.ref}")
         if status == "uncertain":
+            end_state = "gone" if action.remove else "already linked"
             lines.append(
-                "  already linked? Check the issue first: if the relation landed, resolve with "
-                "--applied; --retry would be refused as already linked (or not linked)"
+                f"  {end_state}? Check the issue first: if the relation is in its end state, "
+                "resolve with --applied; --retry would be refused as already done"
             )
     if isinstance(action, CreateAction):
         if issue.number is not None:

@@ -146,8 +146,8 @@ target the new issue by its ref, so each link is published, journaled and
 resolved on its own. Both issues must be in `--repo`. The host refuses an add
 that already exists, a removal that does not, a child that already has another
 parent, a direct blocked-by cycle in one batch, and a pull request on either
-side. If a link's publish ends uncertain, check whether it landed and resolve
-with `--applied` rather than `--retry`. Use the older `Part of #N` / `Blocked by: #N` lines at the top of a body
+side. If a link's publish ends uncertain, check whether the relation is in the
+state the action asks for: if so resolve with `--applied`, otherwise `--retry`. Use the older `Part of #N` / `Blocked by: #N` lines at the top of a body
 only as a fallback, when the native link cannot be published (the issues are
 in different repositories, or an orchestrator lacks the `sub_issue` /
 `dependency` publish kind).

@@ -413,6 +413,29 @@ def test_preflight_refuses_a_child_that_already_has_another_parent(preflight, gi
     assert github.mutations == []
 
 
+def test_child_with_another_parent_is_refused_when_the_parent_is_a_new_issue(
+    preflight,  # noqa: F811
+    github,
+):
+    from jailbee import issue_outbox
+
+    github.parents = {12: 11}
+    actions = [_create(), {**_sub(), "issue": None, "issue_ref": "bug"}]
+    actions[1].pop("issue")
+    with pytest.raises(issue_outbox.IssueGateError, match="#12 is already a sub-issue of #11"):
+        preflight["prepare"]({"a.json": actions})
+    assert github.mutations == []
+
+
+def test_child_can_move_to_another_parent_within_one_batch(preflight, github):  # noqa: F811
+    github.sub_issues = {11: {12}}
+    github.parents = {12: 11}
+    batch = preflight["prepare"]({"a.json": [_sub(issue=11, op="remove"), _sub()]})
+    from jailbee import issue_outbox
+
+    issue_outbox.revalidate_batch(batch)
+
+
 def test_child_with_another_parent_is_refused_on_revalidate(preflight, github):  # noqa: F811
     from jailbee import issue_outbox
 
@@ -462,7 +485,7 @@ def test_uncertain_relation_points_at_resolve_applied_before_retry():
         (JournalAction(0, "uncertain", "acme/app"), JournalAction(1, "uncertain", "acme/app")),
     )
     lines = issue_outbox.show_lines(manifest, journal, "box")
-    hints = [line for line in lines if "already linked" in line]
+    hints = [line for line in lines if "Check the issue first" in line]
     assert len(hints) == 2
     assert all("--applied" in line for line in hints)
 
