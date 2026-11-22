@@ -6,6 +6,7 @@ CLI-only (spec #109).
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
@@ -120,7 +121,9 @@ def authenticate(body: Login, ctx: Context, request: Request) -> TokenResponse:
             source=source,
         )
 
-    if body.method not in auth_admin.UNLIMITED_METHODS and not ctx.limiter.allow(body.method):
+    limited = body.method not in auth_admin.UNLIMITED_METHODS
+    wait = ctx.limiter.check(body.method) if limited else 0.0
+    if wait > 0:
         # Not a database row: a flood of refused requests must not churn the audit table.
         auth_admin.log.warning(
             "web auth rate-limited method=%s device=%r source=%s",
@@ -131,9 +134,17 @@ def authenticate(body: Login, ctx: Context, request: Request) -> TokenResponse:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many attempts, try again later",
+            headers={"Retry-After": str(math.ceil(wait))},
         )
     if not _attempt(body, ctx, request):
         audit("login_failed")
+        backoff = ctx.limiter.failed(body.method) if limited else None
+        if backoff is not None:
+            # Once per lengthening of the wait, never per refused attempt.
+            audit("backoff")
+            auth_admin.log.warning(
+                "web auth backoff method=%s next attempt in %ds", body.method, math.ceil(backoff)
+            )
         detail = {
             "pin": "Invalid or expired PIN",
             "totp": "Invalid TOTP code",
@@ -141,6 +152,8 @@ def authenticate(body: Login, ctx: Context, request: Request) -> TokenResponse:
             "fido2": "Security key not accepted",
         }[body.method]
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
+    if limited:
+        ctx.limiter.succeeded(body.method)
     token = ctx.sessions.create(body.device_name)
     audit("login")
     return TokenResponse(token=token)

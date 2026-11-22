@@ -173,13 +173,36 @@ class SessionStore:
             s.commit()
 
 
-class RateLimiter:
-    """At most ``max_attempts`` attempts per sliding ``window`` seconds, per bucket.
+BACKOFF_THRESHOLD = 5
+"""Consecutive failures of one method before a wait is imposed."""
 
-    Each bucket (a login method, say) counts on its own, so guessing one
-    method never locks out another. A refused attempt is not counted, so the
-    window drains on its own. Rotation already makes each PIN guess a
-    one-in-a-million shot; this bounds how many such shots an hour allows.
+BACKOFF_BASE = 2.0
+"""The wait after the ``BACKOFF_THRESHOLD``-th failure, in seconds; each further one doubles it."""
+
+BACKOFF_CAP = 1800.0
+"""The longest wait between attempts, in seconds (30 minutes)."""
+
+
+@dataclass
+class _Bucket:
+    attempts: deque[float]
+    failures: int = 0
+    blocked_until: float = 0.0
+
+
+class RateLimiter:
+    """Login attempt limits per bucket (a login method): a window and a backoff.
+
+    At most ``max_attempts`` attempts per sliding ``window`` seconds. On top of
+    that, from the ``backoff_threshold``-th consecutive failure on, the next
+    attempt waits ``backoff_base`` seconds, doubling with each further failure
+    up to ``backoff_cap``; a success resets it. Attempts refused by either
+    limit are not counted and must not be checked, so they buy no guesses.
+
+    Each bucket counts on its own, so guessing one method never locks out
+    another. Rotation already makes each PIN guess a one-in-a-million shot;
+    this bounds how many such shots a month allows. State lives in memory: a
+    server restart (an upgrade, under systemd) starts every bucket afresh.
     """
 
     def __init__(
@@ -188,20 +211,57 @@ class RateLimiter:
         *,
         max_attempts: int = 5,
         window: float = 60.0,
+        backoff_threshold: int = BACKOFF_THRESHOLD,
+        backoff_base: float = BACKOFF_BASE,
+        backoff_cap: float = BACKOFF_CAP,
     ) -> None:
         self._monotonic = monotonic
         self._max = max_attempts
         self._window = window
-        self._attempts: dict[str, deque[float]] = {}
+        self._threshold = backoff_threshold
+        self._base = backoff_base
+        self._cap = backoff_cap
+        self._buckets: dict[str, _Bucket] = {}
         self._lock = threading.Lock()
 
-    def allow(self, bucket: str = "") -> bool:
+    def _bucket(self, bucket: str) -> _Bucket:
+        return self._buckets.setdefault(bucket, _Bucket(deque()))
+
+    def check(self, bucket: str = "") -> float:
+        """Admit an attempt (0.0, and counts it) or the seconds to wait before one may come."""
         now = self._monotonic()
         with self._lock:
-            attempts = self._attempts.setdefault(bucket, deque())
+            b = self._bucket(bucket)
+            attempts = b.attempts
             while attempts and attempts[0] <= now - self._window:
                 attempts.popleft()
+            wait = b.blocked_until - now
             if len(attempts) >= self._max:
-                return False
+                wait = max(wait, attempts[0] + self._window - now)
+            if wait > 0:
+                return wait
             attempts.append(now)
-            return True
+            return 0.0
+
+    def _wait_after(self, failures: int) -> float:
+        if failures < self._threshold:
+            return 0.0
+        return float(min(self._base * 2 ** (failures - self._threshold), self._cap))
+
+    def failed(self, bucket: str = "") -> float | None:
+        """Record a failed attempt; the new wait when it lengthened the backoff, else None."""
+        now = self._monotonic()
+        with self._lock:
+            b = self._bucket(bucket)
+            b.failures += 1
+            wait = self._wait_after(b.failures)
+            if wait > 0:
+                b.blocked_until = now + wait
+            return wait if wait > self._wait_after(b.failures - 1) else None
+
+    def succeeded(self, bucket: str = "") -> None:
+        """A login by ``bucket`` succeeded: its backoff starts afresh."""
+        with self._lock:
+            b = self._bucket(bucket)
+            b.failures = 0
+            b.blocked_until = 0.0

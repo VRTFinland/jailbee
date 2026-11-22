@@ -15,6 +15,7 @@ on each attempt, like the login PIN). The app serves the built browser app;
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -112,10 +113,12 @@ def _source(request: Request) -> str:
 def register_begin(
     body: BeginRequest, ctx: Context, rp: RequestRp, request: Request
 ) -> BeginResponse:
-    if not ctx.limiter.allow():
+    wait = ctx.limiter.check()
+    if wait > 0:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many attempts, try again later",
+            headers={"Retry-After": str(math.ceil(wait))},
         )
     if not ctx.deps.pin.attempt(body.pin):
         auth_admin.record_event(

@@ -72,20 +72,32 @@ can be combined:
 | One-time link | `jb remote web open` | Localhost only, single use. |
 
 A successful login gives the browser a session that slides for 30 days.
-PIN and TOTP attempts are limited to five a minute, each method on its own,
-so guessing one never locks out another; one-time links and security keys are
-not limited.
+PIN and TOTP attempts are limited to five a minute, and after five failures
+in a row each further failure doubles the wait before the next attempt:
+2 seconds after the fifth, 4 after the sixth, up to 30 minutes. A successful
+login by that method resets the wait. Each method counts on its own, so
+guessing one never locks out another; one-time links and security keys are
+not limited. An attempt during the wait is refused unchecked with HTTP 429
+and a `Retry-After` header, so it buys no guess. An owner who mistypes four times waits no longer than the
+minute window; one who has been locked out of the PIN by a guessing run logs
+in with TOTP, a security key or `jb remote web open`, and the PIN's wait
+lifts at the first successful PIN login. The waits are kept in memory, so a
+restart of `serve` clears them; under systemd that happens only on an
+upgrade or a crash, nothing a remote client can trigger.
 
-Five a minute is a budget, not a wall. Each wrong guess is spent: a wrong PIN
-is replaced by a new one, and a TOTP code changes every 30 seconds, so every
-guess has the same small chance. At the full rate an attacker who can reach
-the login can expect:
+Each wrong guess is spent: a wrong PIN is replaced by a new one, and a TOTP
+code changes every 30 seconds, so every guess has the same small chance. At
+the 30-minute cap an attacker who can reach the login gets about 1,450
+guesses a month per method and can expect:
 
 | Method on | One guess hits | Even odds after | Within 30 days |
 |---|---|---|---|
-| PIN (6 digits) | 1 in 1,000,000 | about 96 days | about 19 % |
-| TOTP, one key | 3 in 1,000,000 (codes ±30 s accepted) | about 32 days | about 48 % |
-| PIN and TOTP together | both limits apply side by side | about 24 days | about 58 % |
+| PIN (6 digits) | 1 in 1,000,000 | about 40 years | about 0.15 % |
+| TOTP, one key | 3 in 1,000,000 (codes ±30 s accepted) | about 13 years | about 0.44 % |
+| PIN and TOTP together | both waits run side by side | about 10 years | about 0.58 % |
+
+Without the backoff, five guesses a minute gave even odds in about 32 days
+for TOTP and 96 days for the PIN.
 
 Each extra TOTP key adds another three codes to hit. The PIN is printed anew
 after every failed attempt, and failed logins show in `jb remote web auth log`
@@ -98,13 +110,15 @@ do not expose the server at all and reach it over an SSH tunnel or a VPN.
 jb remote web auth status           # methods on, devices logged in
 jb remote web auth sessions ls      # logged-in devices
 jb remote web auth sessions revoke ID
-jb remote web auth log [-n 50]      # logins, failures, logouts, revocations
+jb remote web auth log [-n 50]      # logins, failures, backoffs, logouts, revocations
 ```
 
 Revoking a session refuses the device's next request and closes its open live
 view.
 
-The audit log keeps the newest 1000 entries. Failed one-time-link and FIDO2
+Each lengthening of a PIN or TOTP wait is logged once as a `backoff` entry;
+refused attempts during a wait go to the journal only, so a flood of them
+cannot churn the audit log. The audit log keeps the newest 1000 entries. Failed one-time-link and FIDO2
 logins, which no attempt limit throttles, are kept apart (the newest 100), so
 a flood of them cannot push earlier PIN or TOTP failures out of the log.
 
