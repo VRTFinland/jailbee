@@ -145,7 +145,7 @@ class FakeRunner:
 
     def hand_off(self, argv: Sequence[str]) -> int | None:
         self.calls.append(("hand_off", list(argv)))
-        return 0
+        return getattr(self, "hand_off_rc", 0)
 
     def changed(self) -> None:
         self.changes += 1
@@ -1473,18 +1473,43 @@ def test_publish_batch_cancel_runs_no_pr_creation():
     assert ctl.state.status == ("Nothing published.",)
 
 
-def test_publish_batch_over_ssh_hands_off_manifests_then_pr_creations():
+def _ssh_batch(allow=None, rc=None):
     runner = FakeRunner(
         _listing(_creation("pr/c.json"), _proposal("pr/a.json")),
         allow=lambda argv: not (argv[1] == "apply" and "-y" in argv),
     )
-    runner, ctl = _batch("pr/c.json", "pr/a.json", runner=runner, plans={})
+    if rc is not None:
+        runner.hand_off_rc = rc
+    return _batch("pr/c.json", "pr/a.json", runner=runner, plans={})
+
+
+def test_publish_batch_over_ssh_asks_once_then_hands_off_manifests_then_pr_creations():
+    runner, ctl = _ssh_batch()
     assert runner.jobs == []
+    assert _hand_offs(runner) == []  # nothing runs before the shared question
+    q = ctl.state.question
+    assert q is not None and "pr/c.json" in q.lines
+    assert f"pushes the branch of {C}, opens/updates its PR: jailbee pr push {C}" in q.lines
+    ctl.intent("answer", None, "publish")
     assert _hand_offs(runner) == [
         dob.outbox_apply_argv(C, "pr/a.json", "r1", yes=False),
         ["pr", "push", C],
     ]
     assert ctl.state.marks == frozenset()
+
+
+def test_publish_batch_over_ssh_cancel_runs_nothing():
+    runner, ctl = _ssh_batch()
+    ctl.intent("answer", None, "cancel")
+    assert _hand_offs(runner) == []
+    assert "Nothing published." in ctl.state.status
+
+
+def test_publish_batch_over_ssh_failed_manifest_stops_pr_creations():
+    runner, ctl = _ssh_batch(rc=1)
+    ctl.intent("answer", None, "publish")
+    assert _hand_offs(runner) == [dob.outbox_apply_argv(C, "pr/a.json", "r1", yes=False)]
+    assert any("not run" in line for line in ctl.state.status)
 
 
 def test_publish_batch_across_containers_prefixes_headers():
