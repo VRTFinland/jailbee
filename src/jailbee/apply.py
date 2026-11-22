@@ -240,7 +240,11 @@ def run_apply(
     litellm_result, litellm_problem = _reconcile_litellm_or_warn(
         incus, gcfg, restart=not no_restart
     )
-    litellm_payload = _litellm_payload_or_warn(incus, gcfg, cfg.litellm_view())
+    from jailbee.agent_default import litellm_default_profile
+
+    litellm_payload = _litellm_payload_or_warn(
+        incus, gcfg, cfg.litellm_view(), litellm_default_profile(cfg)
+    )
 
     # Before `refresh_pool`, which writes the ACL with `incus network acl
     # edit` and fails against a name nobody created. `jailbee init` is where a
@@ -833,13 +837,16 @@ def _reconcile_litellm_or_warn(
 
 
 def _litellm_payload_or_warn(
-    incus: Incus, gcfg: GlobalConfig, view: LiteLLMRepoView | None = None
+    incus: Incus,
+    gcfg: GlobalConfig,
+    view: LiteLLMRepoView | None = None,
+    default_profile: str | None = None,
 ) -> dict[str, object] | None:
     from jailbee.litellm import container_sync_payload, unserved_warning
     from jailbee.tui import warn
 
     try:
-        payload = container_sync_payload(incus, gcfg, view=view)
+        payload = container_sync_payload(incus, gcfg, view=view, default_profile=default_profile)
     except IncusError as e:
         warn(f"Could not resolve LiteLLM settings: {e}; removing stale settings from containers.")
         return None

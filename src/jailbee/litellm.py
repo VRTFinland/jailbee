@@ -890,7 +890,11 @@ def litellm_reconcile(
 
 
 def container_sync_payload(
-    incus: Incus, gcfg: GlobalConfig, *, view: LiteLLMRepoView | None = None
+    incus: Incus,
+    gcfg: GlobalConfig,
+    *,
+    view: LiteLLMRepoView | None = None,
+    default_profile: str | None = None,
 ) -> dict[str, object] | None:
     """Resolve the dev-container settings without putting a key in a background job.
 
@@ -899,6 +903,8 @@ def container_sync_payload(
     When none is offered, `json` is None: `sync_container` then retires the
     settings, and `unserved` still names the profiles for the warning.
     `view` is one repo's (`Config.litellm_view()`); None means the host's own.
+    `default_profile` replaces the config's default (the repo's default runner,
+    `agent_default.litellm_default_profile`) when that profile is offered.
     """
     cfg = view.config if view is not None else gcfg.litellm
     scope = view.scope if view is not None else None
@@ -923,7 +929,13 @@ def container_sync_payload(
         return {"json": None, "keys": {}, "unserved": unserved}
     used = {cfg.instance_account(effective[name]) for name in profiles}
     return {
-        "json": {"version": 1, "default_profile": cfg.default_profile, "profiles": profiles},
+        "json": {
+            "version": 1,
+            "default_profile": default_profile
+            if default_profile in profiles
+            else cfg.default_profile,
+            "profiles": profiles,
+        },
         "keys": {account: key_paths[account] for account in sorted(used)},
         "unserved": unserved,
     }
