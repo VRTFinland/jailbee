@@ -1763,3 +1763,21 @@ def test_only_create_actions_contribute_a_title(env):
     assert _created_subject(batch, "001.json", 1, 42) == " #42"
     assert _created_subject(batch, "001.json", 2, 42) == " #42"
     assert _created_subject(batch, "001.json", 0, None) == ""
+
+
+def test_foreign_pr_consent_keeps_the_repository_lock_before_any_gh_call(env, capsys):
+    """The broker's state-only consent covers an unbound PR, never another
+    repository: a re-staged foreign repo is refused before `gh` is reached."""
+    _retarget_pr_manifest(env, "victim/private")
+
+    assert selected(env, "pr", foreign_pr=True) == 1
+    pr.resolve_pr.assert_not_called()
+    assert_no_mutation(env)
+    assert "victim/private" in capsys.readouterr().err
+
+
+def test_foreign_pr_consent_admits_an_unbound_pr_of_the_own_repository(env):
+    env[5]["user.jailbee.pr"] = "43"
+
+    assert selected(env, "pr", foreign_pr=True) == 0
+    assert env[4]["pr_comment"].call_count == 2

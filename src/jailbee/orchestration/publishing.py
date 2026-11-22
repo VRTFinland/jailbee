@@ -354,8 +354,8 @@ def _precheck(
             for i in indices
         ],
         # A state-only manifest may name any PR of the own repository, bound or
-        # not: resolving an unbound one needs the foreign-PR consent. The repo
-        # lock is `_state_policy`'s own-repository check, before and in the lock.
+        # not: resolving an unbound one needs the foreign-PR consent, which
+        # leaves the outbox's repository lock in place (`foreign_pr`).
         state_only,
     )
 
@@ -603,7 +603,14 @@ def _run(cfg: Config, root: Path, full: str, short: str, entry: dict[str, Any]) 
                 incus,
                 full,
                 ProposalId(entry["outbox"], entry["manifest"]),
-                options=PublishOptions(foreign=entry["foreign"], publisher="orchestrator"),
+                # An issue entry's consent is the foreign-repository one; a
+                # review entry's is a state-only manifest's unbound PR, which
+                # relaxes only the PR lock and keeps the repository lock.
+                options=PublishOptions(
+                    foreign=entry["kind"] == "issue" and entry["foreign"],
+                    foreign_pr=entry["kind"] == "review" and entry["foreign"],
+                    publisher="orchestrator",
+                ),
                 confirm=lambda n: True,
                 confirm_foreign=lambda q: False,
                 raise_errors=True,

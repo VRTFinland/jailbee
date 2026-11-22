@@ -3461,7 +3461,8 @@ def test_state_change_on_a_foreign_pr_is_refused_by_the_real_detection(
 def test_orchestrator_state_change_on_an_unbound_pr_runs_the_real_gates(
     mocker, make_cfg, tmp_path, repo, published
 ):
-    """The broker's foreign consent admits an unbound PR; its policy keeps it own-repo."""
+    """The broker's foreign-PR consent admits an unbound PR; the repository lock
+    refuses another repository before `gh` resolves the PR."""
     from jailbee.orchestration.grant import PublishRights
     from jailbee.orchestration.publishing import _review_policy
     from jailbee.pr_outbox import offer_pending_comments
@@ -3472,7 +3473,7 @@ def test_orchestrator_state_change_on_an_unbound_pr_runs_the_real_gates(
         actions=[{"type": "state", "state": "closed", "expected": {"state": "open"}}],
     )
     cfg, incus, *_, apply = _selected_setup(mocker, make_cfg, tmp_path, files={"one.json": text})
-    mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(number=999))
+    resolve = mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info(number=999))
     code = offer_pending_comments(
         cfg,
         incus,
@@ -3482,12 +3483,12 @@ def test_orchestrator_state_change_on_an_unbound_pr_runs_the_real_gates(
         manifest_names=("one.json",),
         confirm=lambda count: True,
         allow_foreign=True,
-        allow_foreign_repo=True,
         policy=_review_policy(PublishRights(pr_state=True), 1, cfg, incus, "c"),
         publisher="orchestrator",
     )
     assert (code == 0) is published
     assert apply.called is published
+    assert resolve.called is published
 
 
 def test_draft_indices_hold_back_state_changes():
