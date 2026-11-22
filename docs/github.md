@@ -76,8 +76,9 @@ it sends the content to its orchestrator instead. See
 
 ## How do I see what is waiting?
 
-Staged proposals show up without asking: `jb ls` has an `ISSUES` column
-(`✉N`), and the dashboard's `OUTBOX` column counts staged issue and PR actions.
+Staged proposals show up without asking: `jb ls` shows `✉N` in its `ISSUES` column (issue actions) and its `PR` column
+(PR actions) while something is pending, and the dashboard's `OUTBOX` column
+counts both.
 
 On the host:
 
@@ -124,7 +125,9 @@ jb outbox apply <container> pr/001-review.json --draft            # as your pend
 
 `outbox apply` publishes **all pending actions of one manifest**, never just a
 highlighted comment. There is no publish-everything command. `jb issue apply`
-and `jb review apply` are the same command restricted to issue or PR proposals.
+and `jb review apply` use the same publish path for issue or PR proposals only;
+they take the bare manifest name (`001-flaky-test.json`) and have a smaller flag
+set.
 
 Useful flags:
 
