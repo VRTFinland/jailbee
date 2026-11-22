@@ -854,9 +854,7 @@ def list_containers(
                     out,
                     target_by_name,
                     roots,
-                    running={
-                        raw["name"] for raw in instances if raw.get("status") == "Running"
-                    },
+                    running={raw["name"] for raw in instances if raw.get("status") == "Running"},
                     parent_heads=parent_heads,
                     last_imports={
                         raw["name"]: raw["config"][orch_labels.LAST_IMPORT]

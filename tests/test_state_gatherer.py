@@ -131,9 +131,7 @@ def test_the_next_gather_gets_the_heads_the_last_git_pass_saw(mocker):
     stopped = dataclasses.replace(_ci("y", GitStatus("", "clean", "0", "ok", head_sha="old")))
     stopped.state = "Stopped"
     rounds = iter([[_ci("x")], [_ci("x", seen), stopped], [_ci("x")], [_ci("x")]])
-    gather = mocker.Mock(
-        side_effect=lambda *a, **k: [RepoGroup("alpha", "/a", None, next(rounds))]
-    )
+    gather = mocker.Mock(side_effect=lambda *a, **k: [RepoGroup("alpha", "/a", None, next(rounds))])
     g = _gatherer(mocker, gather, clock)
 
     g.tick(active=True, refresh=False, roots=[])  # base

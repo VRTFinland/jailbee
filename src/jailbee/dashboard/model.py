@@ -39,11 +39,10 @@ from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 if TYPE_CHECKING:
     from sqlmodel import Session
 
-    from jailbee.host_target import ParentHead
-
     from jailbee.agent_activity import ActivityReader
     from jailbee.apps import AppSpec
     from jailbee.config import Config
+    from jailbee.host_target import ParentHead
     from jailbee.incus import Incus
     from jailbee.notices import Notice
     from jailbee.orchestration.runner_model import Runner

@@ -642,7 +642,12 @@ def test_a_pr_card_without_a_pr_head_ref_marks_the_host_row_as_fallback() -> Non
 
 def test_a_child_card_shows_the_parent_row_with_its_sha_and_pass_age() -> None:
     sync = SyncTarget(
-        "parent", "orch", "c" * 40, "", parent="orch", ahead_sha="d" * 40,
+        "parent",
+        "orch",
+        "c" * 40,
+        "",
+        parent="orch",
+        ahead_sha="d" * 40,
         seen_at=NOW.timestamp() - 90,
     )
     c = _c(git_status=_pr_status(sync), base_branch="dev", pr_number=7)
