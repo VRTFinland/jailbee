@@ -920,7 +920,7 @@ sessions of one agent, and `—` means none is running. **AGENT_COMPACT** shows
 each state as a mark with only the largest unit of its duration: `◆ 4m`
 (waiting), `● 12s` (busy), `◐ 20m` (shell), `○ 2h` (idle). It names no agent and draws one
 mark per live session: only the first of each state carries the age (`◆ 4m ● 12s ●`), the
-rest are bare glyphs. In the dashboard a cell that outgrows its width drops the ages, then keeps
+rest are bare glyphs. In the dashboard a cell wider than 24 columns drops the ages, then keeps
 as many glyphs as fit and ends with `+N` for the rest. A long idle time says
 how cold the agent's prompt cache is. These columns read the session files and trust a file only
 while a process of *that* container still matches it, so a crashed session
