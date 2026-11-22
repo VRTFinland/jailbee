@@ -1828,6 +1828,8 @@ def test_publish_issues_picker_lists_every_kind(mocker, tmp_path):
         ("state: off", "issue:state"),
         ("assign_self: on (via assign)", "issue:assign_self"),
         ("assign: on", "issue:assign"),
+        ("sub_issue: off", "issue:sub_issue"),
+        ("dependency: off", "issue:dependency"),
     ]
 
 
@@ -2023,7 +2025,7 @@ def test_ssh_offers_publish_widening_the_session_could_do_itself(mocker, tmp_pat
     values = [e.value for e in session.open_orchestration("alpha-one").entries]
     assert {"publish-issues", "publish-foreign", "publish:prs", "publish:pr-reviews"} <= set(values)
     picker = _publish_issues_picker(session)
-    assert len(picker.entries) == 8
+    assert len(picker.entries) == 10
 
 
 def test_ssh_offers_turning_publish_rights_off(mocker, tmp_path):
