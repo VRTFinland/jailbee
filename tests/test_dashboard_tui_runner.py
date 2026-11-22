@@ -27,8 +27,16 @@ def _group(tmp_path: Path) -> dmodel.RepoGroup:
     return dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-x", "alpha")])
 
 
+# Generous on purpose: under ``pytest -n auto`` on a loaded host (load 40-70) one run of
+# this file took minutes and a 5 s / 20 s ceiling timed out. These are condition waits,
+# so a quick run never pays for the ceiling; it only bounds a real hang.
+_WAIT_SECONDS = 60
+_RUN_SECONDS = 180
+_JOIN_SECONDS = 30
+
+
 async def _until(pilot: Any, condition: Callable[[], bool], what: str) -> None:
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + _WAIT_SECONDS
     while not condition():
         if time.monotonic() > deadline:
             raise AssertionError(f"timed out waiting for {what}")
@@ -54,8 +62,22 @@ def _drive(
                 await pilot.press(key)
             await script(app, pilot)
 
-    asyncio.run(asyncio.wait_for(main(), 20))
+    asyncio.run(asyncio.wait_for(main(), _RUN_SECONDS))
     return app
+
+
+def test_until_tolerates_a_stalled_event_loop(mocker):
+    """A starved host: each pause takes 1 s of wall time; 10 s must not time out."""
+    clock = [0.0]
+    mocker.patch.object(time, "monotonic", lambda: clock[0])
+
+    class SlowPilot:
+        async def pause(self, delay: float) -> None:
+            clock[0] += 1.0
+
+    asyncio.run(_until(SlowPilot(), lambda: clock[0] >= 10, "a slow thing"))
+    with pytest.raises(AssertionError, match="timed out waiting for never"):
+        asyncio.run(_until(SlowPilot(), lambda: False, "never"))
 
 
 def _finished(app: Any) -> bool:
@@ -161,7 +183,7 @@ def test_quitting_with_a_question_pending_cancels_it_and_the_app_exits(mocker, t
     app = _drive(mocker, tmp_path, spawn, script)  # wait_for: a hang fails the test
     assert app.quit_requested
     assert isinstance(spawn.child.answers[0], Cancel)  # the child was told, so it exited
-    spawn.child._thread.join(5)
+    spawn.child._thread.join(_JOIN_SECONDS)
     assert not spawn.child._thread.is_alive()
 
 
@@ -221,7 +243,7 @@ def test_remote_dashboard_action_audit_record_carries_the_ssh_client(mocker, tmp
                 await pilot.press(key)
             await _until(pilot, lambda: bool(records), "the audit record")
 
-    asyncio.run(asyncio.wait_for(main(), 20))
+    asyncio.run(asyncio.wait_for(main(), _RUN_SECONDS))
 
     assert records[0]["transport"] == "ssh"
     assert records[0]["client"] == "SHA256:abc"
