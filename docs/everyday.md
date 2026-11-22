@@ -8,7 +8,9 @@ repo has a `.jailbee/config.yaml`, `jailbee init` has run and the golden image
 is built. Every command below runs **on the host** in the repository (or with
 `jailbee --repo <path>`), and every `<name>` is the container's *short name*,
 the slugified branch that `jailbee ls` shows. Leave `<name>` out and JailBee
-picks the repo's only container, or opens a picker on a terminal.
+picks the repo's only container, or opens a picker on a terminal. The
+destructive commands (`destroy`, `snapshot restore`, `snapshot delete`) always
+show the picker, even with one candidate.
 
 ## Create a container for a branch
 
@@ -66,8 +68,9 @@ jailbee restart feat-my-feature    # stop + start
 A stopped container keeps its disk and costs no CPU or memory. `start` and
 `restart` re-run the repo's `autostart` commands; skip them with
 `--no-autostart`. `stop` refuses while a detached autostart stage is still
-running. `--force` pulls the plug instead of shutting down cleanly, so unsaved
-work is lost; use it only when a clean stop hangs.
+running. `--force` skips that check and pulls the plug instead of shutting
+down cleanly, so unsaved work is lost and a running autostart step is cut off;
+use it only when a clean stop hangs.
 
 More: [Commands](commands.md), [Autostart](faq.md#how-do-i-run-setup-steps-or-start-services-automatically)
 
@@ -90,7 +93,8 @@ and tag given they run without another confirmation.
 A snapshot covers the container's own root filesystem. It does **not** cover
 host-mounted directories, shared caches, credentials or a mount-mode working
 tree. Stop the container before restoring, and bring newer commits to the host
-first: restoring discards everything since the snapshot. Quiesce a database
+first: restoring discards everything since the snapshot and rebuilds the
+container's egress ACL. Quiesce a database
 before snapshotting if you need a consistent backup.
 
 More: [How do I take a snapshot before something risky?](faq.md#how-do-i-take-a-snapshot-before-something-risky)
@@ -134,10 +138,10 @@ jailbee net status                           # timer health, repos, pools
 jailbee ls --fields name,network,ttl         # who is loose, and until when
 ```
 
-Loose reverts to strict by itself. The default is a few minutes, enforced by
-the host's refresh timer. Choose the time per switch with `--for 30m`, or keep
+Loose reverts to strict by itself. The default is 15 minutes
+(`loose_auto_revert.after`), enforced by the host's refresh timer. Choose the time per switch with `--for 30m`, or keep
 it with `--for never` / `--no-revert`. With neither flag on a terminal JailBee
-asks. Loose mode fixes a blocked connection, but not missing credentials.
+asks; without a terminal it uses the configured default. Loose mode fixes a blocked connection, but not missing credentials.
 
 More: [strict vs loose](faq.md#what-is-the-difference-between-strict-and-loose),
 [Does loose stay on?](faq.md#does-loose-stay-on-until-i-remember-to-switch-back),
@@ -156,7 +160,7 @@ jailbee net egress rm pypi.org:443 feat-my-feature
 jailbee net egress export                                    # config key with overrides folded in
 ```
 
-Use `host:port`: an entry without a port allows every protocol and port. A
+Use `host:port`: an entry without a port allows every port. A
 container override dies with the container; `add --for 30m` expires it sooner.
 A `--repo` override is stored in your host-local config, not in git. Run
 `jailbee apply` to push it to running containers now, or let the refresh timer
@@ -215,8 +219,8 @@ inspected, so start it first if the work matters. `--force` skips both the
 confirmation and the check, and `--all` takes every container in the repo.
 `jailbee destroy -b` runs the teardown in the background.
 
-`jailbee prune` is different: it offers old stopped containers across repos
-and does **not** run the same work-loss check.
+`jailbee prune` is different: it offers containers stopped for more than 30 days,
+across repos, and does **not** run the same work-loss check.
 
 More: [How do I tear a container down without losing work?](faq.md#how-do-i-tear-a-container-down-without-losing-work)
 

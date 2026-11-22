@@ -483,7 +483,7 @@ folded in, for when one has earned a place in git.
 
 ### Does `loose` stay on until I remember to switch back?
 
-The default auto-revert policy is 5 minutes, enforced by the host's
+The default auto-revert policy is 15 minutes, enforced by the host's
 `jailbee-net-refresh` timer installed by `jailbee setup`. Without a running
 timer, expiry is not enforced automatically. Pick the TTL per switch with
 `jailbee net loose <name> --for 2h`, or opt out with `--for never` /

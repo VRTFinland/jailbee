@@ -13,6 +13,7 @@ from typer.core import TyperGroup
 
 from jailbee.cli import app
 
+_ROOT = typer.main.get_command(app)
 PAGE = Path(__file__).resolve().parents[1] / "docs" / "everyday.md"
 
 
@@ -28,8 +29,8 @@ def _command_lines() -> list[str]:
 
 
 def _check(line: str) -> None:
-    root = typer.main.get_command(app)
-    ctx = click.Context(root)
+    ctx = click.Context(_ROOT)
+    root = _ROOT
     cmd: click.Command = root
     words = shlex.split(line)[1:]
     rest: list[str] = []
