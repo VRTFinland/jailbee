@@ -612,12 +612,13 @@ class BareTerminal:
         self.handed.append(fn)
         return fn()
 
-    def run_actions(self, runs, done):  # type: ignore[no-untyped-def]
+    def run_actions(self, runs, done, progress=None):  # type: ignore[no-untyped-def]
         self.ran = [*getattr(self, "ran", []), *runs]
+        self.progress = progress
         if self.defer:
             self.pending.append((runs, done))
             return
-        done(drunner.run_actions(runs, run=subprocess_runner))
+        done(drunner.run_actions(runs, run=subprocess_runner, progress=progress))
 
     def finish_pending(self) -> None:
         pending, self.pending = self.pending, []
@@ -626,6 +627,9 @@ class BareTerminal:
 
     def show_output(self, title, text, *, failed):  # type: ignore[no-untyped-def]
         self.shown = [*getattr(self, "shown", []), (title, text, failed)]
+
+    def update_output(self, text):  # type: ignore[no-untyped-def]
+        self.updated = [*getattr(self, "updated", []), text]
 
 
 def bare_session(mocker, groups, **kw):  # type: ignore[no-untyped-def]

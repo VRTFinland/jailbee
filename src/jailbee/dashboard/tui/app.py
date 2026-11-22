@@ -91,6 +91,22 @@ def _set_mouse_reporting(driver: Driver | None, on: bool) -> None:
         driver._mouse = False
 
 
+class _OnAppThread:
+    """A :class:`~jailbee.dashboard.runner.RunProgress` whose calls land on the app thread."""
+
+    def __init__(
+        self, inner: drunner.RunProgress, on_app_thread: Callable[[Callable[[], None]], None]
+    ) -> None:
+        self._inner = inner
+        self._on_app_thread = on_app_thread
+
+    def output(self, index: int, chunk: str) -> None:
+        self._on_app_thread(lambda: self._inner.output(index, chunk))
+
+    def question(self, index: int, asking: bool) -> None:
+        self._on_app_thread(lambda: self._inner.question(index, asking))
+
+
 class DashboardApp(App[int], inherit_bindings=False):
     """The dashboard's Textual frontend: one frame, keys, timer, hand-off, title.
 
@@ -154,6 +170,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         self._ui_thread = threading.get_ident()
         self._pending_prompts: set[asyncio.Future[Any]] = set()
         self._prompts_closed = False
+        self._output_screen: OutputScreen | None = None  # the one a live entry follows
 
     # --- Terminal protocol -------------------------------------------------
 
@@ -183,6 +200,8 @@ class DashboardApp(App[int], inherit_bindings=False):
             # The snapshot is as old as the command was long.
             client.set_active(True)
             client.refresh()
+            if not self.modal_open:  # an open question is its own modal
+                self.session.after_hand_off()
             # `fn` may have set its own OSC 2 title: rewrite ours on the next frame.
             self._last_title = None
             self._painted = None
@@ -194,8 +213,13 @@ class DashboardApp(App[int], inherit_bindings=False):
         """Whether a question or an output screen is on top of the dashboard."""
         return self._is_mounted and len(self.screen_stack) > 1
 
-    def run_actions(self, runs: Sequence[ActionRun], done: Callable[[ActionOutcome], None]) -> None:
-        """Run the actions on a worker thread; ``done`` is called on the app thread."""
+    def run_actions(
+        self,
+        runs: Sequence[ActionRun],
+        done: Callable[[ActionOutcome], None],
+        progress: drunner.RunProgress | None = None,
+    ) -> None:
+        """Run the actions on a worker thread; ``done`` and ``progress`` run on the app thread."""
         session = self.session
         extra: dict[str, Any] = {"spawn": self.action_spawn} if self.action_spawn else {}
 
@@ -206,6 +230,7 @@ class DashboardApp(App[int], inherit_bindings=False):
                 transport=session.transport,
                 policy=session.ssh_policy,
                 on_prompt=self._ask_from_worker,
+                progress=None if progress is None else _OnAppThread(progress, self._on_app_thread),
                 client=self.remote_client,
                 **extra,
             )
@@ -217,7 +242,14 @@ class DashboardApp(App[int], inherit_bindings=False):
             work()
 
     def show_output(self, title: str, text: str, *, failed: bool) -> None:
-        self.push_screen(OutputScreen(title, text, failed=failed))
+        screen = OutputScreen(title, text, failed=failed)
+        self._output_screen = screen
+        self.push_screen(screen)
+
+    def update_output(self, text: str) -> None:
+        screen = self._output_screen
+        if screen is not None and screen in self.screen_stack:
+            screen.set_text(text)
 
     def _on_app_thread(self, fn: Callable[[], None]) -> None:
         if threading.get_ident() == self._ui_thread:

@@ -38,8 +38,12 @@ before editing `## Unreleased`.
   longer pop up an output screen when they end: a short notice says they
   finished, with a `Q` hint and, for a failure, the last output line. Verbs run
   for their output (diff, job log, egress list, merge, PR push, doctor,
-  disk usage, the command line) open it automatically. The `⟳ running · ⚠ failed` badge at the top,
-  or `Q`, opens the queue, where an entry expands to its full output.
+  disk usage, the command line) open it automatically. The `⟳ running · ⚠ attention` badge at the top,
+  or `Q`, opens the queue, where an entry expands to its full output. A
+  running entry shows its last output line in the list, an expanded one
+  follows the output live, and an entry waiting on a question reads
+  "awaiting answer"; failed and awaiting entries count as needing attention,
+  and returning from a tmux hand-off opens the queue when any do.
 - The documentation site has a task-first "User guide" section in place of "Daily use"
   ([#150](https://github.com/VRTFinland/jailbee/issues/150)): Getting started, seven
   new guide pages (being written), Remote GUI, FAQ and Troubleshooting. Commands,
