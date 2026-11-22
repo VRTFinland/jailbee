@@ -468,8 +468,11 @@ class DashboardSession:
         # Opens a URL in the desktop's browser; the app sets it (Textual's `App.open_url`).
         self.url_opener: Callable[[str], object] | None = None
         self.outbox_parent: MenuState | RepoMenuState | None = None
+        # The snapshot an open menu's entries were last checked against.
+        self._menu_seq: int | None = None  # set from the first snapshot below
         snapshot = self.client.latest()
         assert snapshot is not None  # `wait_first_snapshot` returned
+        self._menu_seq = snapshot.seq
         # The scoped, unsorted snapshot: a sort change re-sorts it without a refresh.
         # Advisories dismissed here whose snapshot has not caught up yet: hidden at once.
         self._dismissed: set[tuple[str, str]] = set()
@@ -528,7 +531,9 @@ class DashboardSession:
         self.marked &= listed
         self._prune_merge_pick(listed)
         self._close_vanished_overlay()
-        self._rebuild_open_menu()
+        if snapshot.seq != self._menu_seq:
+            self._menu_seq = snapshot.seq
+            self._rebuild_open_menu()
         self._refresh_orchestration_picker()
         self._pin_selection()
         self._snap_merge_cursor()

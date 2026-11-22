@@ -2127,8 +2127,9 @@ def test_an_open_menu_box_follows_its_entry_when_new_entries_appear(mocker, tmp_
     row = group.containers[0]
     row.outbox_pr, row.outbox_issue = 0, 0
 
-    def stage(_app):  # type: ignore[no-untyped-def]
-        row.outbox_pr = 1  # staged while the menu is open; the next tick sees it
+    def stage(app):  # type: ignore[no-untyped-def]
+        row.outbox_pr = 1  # staged while the menu is open; the next snapshot counts it
+        app.session.client.seq += 1
 
     run = drive(mocker, ["j", "enter", "j", stage], [group])
     menu = run.trace[-1].overlay
