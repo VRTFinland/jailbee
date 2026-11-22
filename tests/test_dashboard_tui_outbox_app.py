@@ -418,3 +418,30 @@ def test_local_outbox_diagnostic_handles_invalid_and_large_bytes(mocker):
     rc, text = runner.hand_off_diagnostic(["pr", "push", "alpha-x"])
     assert rc == 1 and text is not None and text.startswith("bad\ufffd")
     assert len(text) < 10000 and "truncated" in text
+
+
+def test_reader_opens_scrolls_and_closes_with_the_cursor_kept(quiet):
+    app = make()
+
+    async def scenario(pilot):  # type: ignore[no-untyped-def]
+        await pilot.press("down")  # second proposal
+        await pilot.pause()
+        box = app.query_one(OutboxBox)
+        cursor = box._list.highlighted
+        await pilot.press("f")
+        await pilot.pause()
+        assert app.controller.state.preview == "full"
+        assert not box._list.display and app.query_one("#outbox-right").display
+        await pilot.press("pagedown")
+        await pilot.press("j")
+        await pilot.pause()
+        assert "ISS o/r#42" not in screen_text(app)  # the list is hidden while reading
+        await pilot.press("escape")  # leaves the reader, not the app
+        await pilot.pause()
+        assert app.controller.state.preview == "auto" and box._list.display
+        return cursor, box._list.highlighted, screen_text(app)
+
+    cursor, kept, listed_again = drive(app, scenario)
+    assert cursor is not None and kept == cursor
+    assert "f full" in listed_again
+    assert "ISS o/r#42" in listed_again

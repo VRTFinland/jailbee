@@ -5808,7 +5808,7 @@ Run `jb dashboard` (terminal at 140 columns).
    a preview on the right, side by side (content width at least
    `SIDE_BY_SIDE_MIN_COLS` = 110). The frame hint reads
    `↑/↓ move · Enter open · Space mark · d delete · p publish · X clear ·
-   v preview · m manifest · r refresh · Esc close` (entries drop out
+   v preview · f full screen · m manifest · r refresh · Esc close` (entries drop out
    for abilities the container lacks).
 2. Move to `001-review.json` and press Enter (or Right). Expected: the review
    expands to its action and the two inline comments; the preview follows the
@@ -5848,8 +5848,9 @@ Run `jb dashboard` (terminal at 140 columns).
 1. Run `jailbee outbox` from the repo (140 columns). Expected: the box fills
    the screen with `a` and `b` and their proposals in one tree; the bottom
    hint reads `q quit  Space mark  d delete  p publish  X clear
-   v preview  m raw  a all repos  r refresh`. `Space`, `d`, `v`, `m` and `p`
-   behave as in the dashboard.
+   v view  f full  m raw  a all repos  r refresh`. `Space`, `d`, `v`, `m` and `p`
+   behave as in the dashboard; `f` opens the preview full screen (scroll with
+   the arrows/PageUp/PageDown, `f` or Esc returns with the cursor kept).
 2. Press `a`. Expected: the scope widens to every registered repo (`a all
    repos` toggles), the list reloads; press `a` again to return to this
    repo. With a named container (`jailbee outbox a`), `a` toggles between

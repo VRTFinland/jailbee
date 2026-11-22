@@ -54,8 +54,8 @@ Intent = Literal[
     "open",
 ]
 
-_Preview = Literal["auto", "on", "off"]
-_PREVIEW_MODES: dict[str, _Preview] = {"auto": "auto", "on": "on", "off": "off"}
+_Preview = Literal["auto", "on", "off", "full"]
+_PREVIEW_MODES: dict[str, _Preview] = {"auto": "auto", "on": "on", "off": "off", "full": "full"}
 
 _ASK_AGAIN = "outbox refreshed; ask again"
 _LOADING = "reading the outbox…"
