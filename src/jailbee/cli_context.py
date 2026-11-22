@@ -16,6 +16,7 @@ CONTAINER_COMMANDS: frozenset[str] = frozenset({"inbox", "_agent-snapshot"})
 HOST_COMMANDS: frozenset[str] = frozenset(
     {
         "_autostart-worker",
+        "agent",
         "_boot-worker",
         "_broker",
         "_destroy-worker",
@@ -74,6 +75,7 @@ HOST_COMMANDS: frozenset[str] = frozenset(
         "restart",
         "retarget",
         "review",
+        "serve",
         "setup",
         "shell",
         "snapshot",

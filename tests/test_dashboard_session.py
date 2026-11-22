@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 
 import pytest
 
@@ -16,7 +17,7 @@ from jailbee.dashboard.tui import session as tsession
 from jailbee.dashboard.tui.menu_state import MenuState
 from jailbee.sysstat import MemoryStatus
 from tests.dashboard_fixtures import ci, wide_group
-from tests.dashboard_pilot import bare_session, make_app
+from tests.dashboard_pilot import SyncJobs, bare_session, make_app
 
 
 def test_keys_move_and_open_a_menu_without_any_terminal(mocker, tmp_path):
@@ -1744,8 +1745,13 @@ def test_services_flow_and_malformed_notice(mocker, tmp_path):
     actions = session.submit_picker(picker, picker.entries[0])
     assert isinstance(actions, Picker)
     run = mocker.patch.object(session, "run_dashboard_command")
-    session.submit_picker(actions, next(e for e in actions.entries if e.value == "refresh"))
-    run.assert_called_once_with("alpha-one", "container", ["service", "refresh", "alpha-one", "db"])
+    back = session.submit_picker(actions, next(e for e in actions.entries if e.value == "refresh"))
+    assert back is not None and back.purpose == "container-services"
+    assert run.call_args.args == (
+        "alpha-one",
+        "container",
+        ["service", "refresh", "alpha-one", "db"],
+    )
     result.stdout = "broken"
     assert session.open_container_entry("alpha-one", "services") is None
     assert "could not list services" in session.notice
@@ -1779,6 +1785,162 @@ def test_services_menu_order_and_ssh_action_gates(mocker, tmp_path):
     actions = session.submit_picker(picker, picker.entries[0])
     assert isinstance(actions, Picker)
     assert {e.value for e in actions.entries} == {"stop", "restart", "logs"}
+
+
+def _services_session(mocker, tmp_path, states, containers=("alpha-one",)):
+    """A session whose `service ls` answers each call from ``states`` (a list of lists).
+
+    Its job runner is `SyncJobs`: a re-list's result is delivered by `session.jobs.poll()`.
+    """
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci(c, "alpha") for c in containers])
+    session, _ = bare_session(mocker, [group])
+    session.jobs = SyncJobs()
+    answers = iter(states)
+
+    def ls(argv, cwd=None):
+        rows = [
+            {"name": n, "state": st, "window": None, "since": None, "detail": ""}
+            for n, st in next(answers)
+        ]
+        return mocker.Mock(ok=True, stdout=json.dumps(rows))
+
+    mocker.patch("jailbee.dashboard.accounts.run_cli_quiet", side_effect=ls)
+    run = mocker.patch.object(session, "run_dashboard_command")
+    return session, run
+
+
+def test_service_operation_returns_to_the_list_then_refreshes_it(mocker, tmp_path):
+    session, run = _services_session(
+        mocker,
+        tmp_path,
+        [[("db", "stopped"), ("web", "stopped")], [("db", "ready"), ("web", "stopped")]],
+    )
+    services = session.open_services("alpha-one")
+    actions = session.submit_picker(services, services.entries[1])  # web
+    after = session.submit_picker(actions, next(e for e in actions.entries if e.value == "start"))
+    # back on the service list at once, cursor on the service just acted on
+    assert after.purpose == "container-services"
+    assert after.start_index == 1
+    argv = run.call_args.args[2]
+    assert argv == ["service", "start", "alpha-one", "web"]
+    # the operation ends: the open list is re-listed in place
+    session.overlay = after
+    run.call_args.kwargs["then"](0)
+    session.jobs.poll()
+    assert session.overlay.purpose == "container-services"
+    assert "db  (ready)" in session.overlay.entries[0].label
+    assert session.overlay.start_index == 1
+
+
+def _start_first_service(session, run):
+    services = session.open_services("alpha-one")
+    actions = session.submit_picker(services, services.entries[0])
+    back = session.submit_picker(actions, next(e for e in actions.entries if e.value == "start"))
+    return back, run.call_args.kwargs["then"]
+
+
+def test_service_refresh_never_touches_another_containers_list(mocker, tmp_path):
+    session, run = _services_session(
+        mocker,
+        tmp_path,
+        [[("db", "stopped")], [("cache", "ready")], [("db", "ready")]],
+        containers=("alpha-one", "alpha-two"),
+    )
+    _back, then = _start_first_service(session, run)
+    other = session.open_services("alpha-two")
+    session.overlay = other
+    then(0)
+    session.jobs.poll()
+    assert session.overlay is other
+
+
+def test_service_refresh_while_the_action_picker_is_open_keeps_it_open(mocker, tmp_path):
+    session, run = _services_session(
+        mocker, tmp_path, [[("db", "stopped")], [("db", "ready")], [("db", "ready")]]
+    )
+    back, then = _start_first_service(session, run)
+    picker = session.submit_picker(back, back.entries[0])  # the action picker again
+    assert picker.purpose == "container-service-action"
+    session.overlay = picker
+    then(0)
+    session.jobs.poll()
+    assert session.overlay.purpose == "container-service-action"
+    assert session.overlay.back.purpose == "container-services"
+    assert "db  (ready)" in session.overlay.back.entries[0].label
+
+
+def test_service_action_picker_without_a_back_runs_and_closes(mocker, tmp_path):
+    session, run = _services_session(mocker, tmp_path, [[("db", "stopped")]])
+    services = session.open_services("alpha-one")
+    actions = session.submit_picker(services, services.entries[0])
+    orphan = dataclasses.replace(actions, back=None)
+    result = session.submit_picker(orphan, next(e for e in orphan.entries if e.value == "start"))
+    assert result is None
+    assert "then" not in run.call_args.kwargs
+
+
+def test_service_refresh_runs_off_the_ui_thread_and_coalesces(mocker, tmp_path):
+    session, run = _services_session(
+        mocker, tmp_path, [[("db", "stopped")], [("db", "ready")], [("db", "stopped")]]
+    )
+    back, then = _start_first_service(session, run)
+    session.overlay = back
+    quiet = mocker.patch(
+        "jailbee.dashboard.accounts.run_cli_quiet",
+        side_effect=lambda argv, cwd=None: mocker.Mock(
+            ok=True,
+            stdout=json.dumps(
+                [{"name": "db", "state": "ready", "window": None, "since": None, "detail": ""}]
+            ),
+        ),
+    )
+    then(0)
+    then(0)
+    then(0)
+    # one re-list in flight; nothing is applied before the poll delivers it
+    assert session.jobs.busy("services:alpha-one")
+    assert quiet.call_count == 1
+    assert "db  (stopped)" in session.overlay.entries[0].label
+    session.jobs.poll()  # delivers it and starts the one queued re-list
+    session.jobs.poll()
+    assert quiet.call_count == 2
+    assert not session.jobs.busy("services:alpha-one")
+    assert "db  (ready)" in session.overlay.entries[0].label
+
+
+def test_a_second_service_can_be_started_while_the_first_runs(mocker, tmp_path):
+    session, run = _services_session(mocker, tmp_path, [[("db", "stopped"), ("web", "stopped")]])
+    services = session.open_services("alpha-one")
+    actions = session.submit_picker(services, services.entries[0])
+    again = session.submit_picker(actions, next(e for e in actions.entries if e.value == "start"))
+    actions2 = session.submit_picker(again, again.entries[1])
+    assert actions2.purpose == "container-service-action"
+    assert actions2.carry == ("web",)
+    session.submit_picker(actions2, next(e for e in actions2.entries if e.value == "start"))
+    assert [c.args[2] for c in run.call_args_list] == [
+        ["service", "start", "alpha-one", "db"],
+        ["service", "start", "alpha-one", "web"],
+    ]
+
+
+def test_service_refresh_after_the_user_left_the_list_changes_nothing(mocker, tmp_path):
+    session, run = _services_session(mocker, tmp_path, [[("db", "stopped")]])
+    services = session.open_services("alpha-one")
+    actions = session.submit_picker(services, services.entries[0])
+    session.submit_picker(actions, next(e for e in actions.entries if e.value == "start"))
+    session.overlay = None
+    run.call_args.kwargs["then"](0)
+    assert session.overlay is None
+
+
+def test_service_logs_still_leave_the_menu(mocker, tmp_path):
+    session, _run = _services_session(mocker, tmp_path, [[("db", "ready")]])
+    services = session.open_services("alpha-one")
+    actions = session.submit_picker(services, services.entries[0])
+    assert (
+        session.submit_picker(actions, next(e for e in actions.entries if e.value == "logs"))
+        is None
+    )
 
 
 # --- publish rights -------------------------------------------------------
@@ -1823,10 +1985,13 @@ def test_publish_issues_picker_lists_every_kind(mocker, tmp_path):
         ("create: off", "issue:create"),
         ("edit: off", "issue:edit"),
         ("comment: on", "issue:comment"),
+        ("comment_edit: off", "issue:comment_edit"),
         ("labels: off", "issue:labels"),
         ("state: off", "issue:state"),
         ("assign_self: on (via assign)", "issue:assign_self"),
         ("assign: on", "issue:assign"),
+        ("sub_issue: off", "issue:sub_issue"),
+        ("dependency: off", "issue:dependency"),
     ]
 
 
@@ -2022,7 +2187,7 @@ def test_ssh_offers_publish_widening_the_session_could_do_itself(mocker, tmp_pat
     values = [e.value for e in session.open_orchestration("alpha-one").entries]
     assert {"publish-issues", "publish-foreign", "publish:prs", "publish:pr-reviews"} <= set(values)
     picker = _publish_issues_picker(session)
-    assert len(picker.entries) == 7
+    assert len(picker.entries) == 10
 
 
 def test_ssh_offers_turning_publish_rights_off(mocker, tmp_path):
@@ -2101,3 +2266,491 @@ def test_publish_foreign_submit_rejects_a_malformed_answer(mocker, tmp_path):
     quiet.assert_not_called()
     assert "Unknown issue action" in session.notice
     assert out.entries[out.start_index].value == "publish-foreign"
+
+
+def _menu_verbs(menu):
+    from jailbee.dashboard.tui.menu_state import menu_entries
+
+    return [e[1] for e in menu_entries(menu) if isinstance(e, tuple)]
+
+
+def test_an_open_menu_gains_the_outbox_entry_when_a_new_snapshot_stages_work(mocker, tmp_path):
+    row = ci("alpha-one", "alpha")
+    row.outbox_pr, row.outbox_issue = 0, 0  # known empty: no Outbox entry
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [row])
+    session, _ = bare_session(mocker, [group])
+    session.handle_key("down")
+    session.tick()
+    session.handle_key("enter")
+    assert isinstance(session.overlay, MenuState)
+    assert "outbox browse" not in _menu_verbs(session.overlay)
+    session.overlay.start_index = 2
+
+    # A proposal is staged while the menu is open; the next snapshot counts it.
+    fresh = ci("alpha-one", "alpha")
+    fresh.outbox_pr, fresh.outbox_issue = 1, 0
+    session.client.groups = [dmodel.RepoGroup("alpha", str(tmp_path), None, [fresh])]
+    session.client.seq += 1
+    session.tick()
+
+    assert isinstance(session.overlay, MenuState)
+    assert session.overlay.container == "alpha-one"
+    assert "outbox browse" in _menu_verbs(session.overlay)
+    assert session.overlay.start_index == 2  # the cursor's start is kept
+
+
+def test_an_open_menu_is_left_alone_when_the_snapshot_changes_nothing_in_it(mocker, tmp_path):
+    row = ci("alpha-one", "alpha")
+    row.outbox_pr, row.outbox_issue = 0, 0
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [row])
+    session, _ = bare_session(mocker, [group])
+    session.handle_key("down")
+    session.tick()
+    session.handle_key("enter")
+    menu = session.overlay
+    session.client.seq += 1
+    session.tick()
+    assert session.overlay is menu
+
+
+def test_comment_edits_row_needs_reviews_or_the_right(mocker, tmp_path):
+    def values(publish):
+        session, _ = _orchestration_session(mocker, tmp_path, grant=True, publish=publish)
+        return {e.value: e.label for e in session.open_orchestration("alpha-one").entries}
+
+    assert "publish:pr-comment-edits" not in values({})
+    assert values({"publish_pr_reviews": True})["publish:pr-comment-edits"] == (
+        "Publish PR comment edits: off"
+    )
+    both = {"publish_pr_reviews": True, "publish_pr_comment_edits": True}
+    assert values(both)["publish:pr-comment-edits"] == "Publish PR comment edits: on"
+
+
+@pytest.mark.parametrize(
+    ("on", "flag"),
+    [(False, "--publish-pr-comment-edits"), (True, "--no-publish-pr-comment-edits")],
+)
+def test_publish_pr_comment_edits_toggle(mocker, tmp_path, on, flag):
+    publish = {"publish_pr_reviews": True, "publish_pr_comment_edits": on}
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True, publish=publish)
+    session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "publish:pr-comment-edits")
+    )
+    assert quiet.call_args.args[1] == ["orchestrate", "grant", flag, "--", "alpha-one"]
+    assert session.groups[0].containers[0].grant.publish_pr_comment_edits is (not on)
+
+
+def test_turning_reviews_off_clears_comment_edits_in_the_view(mocker, tmp_path):
+    publish = {"publish_pr_reviews": True, "publish_pr_comment_edits": True}
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True, publish=publish)
+    session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "publish:pr-reviews")
+    )
+    assert quiet.call_args.args[1] == [
+        "orchestrate",
+        "grant",
+        "--no-publish-pr-reviews",
+        "--",
+        "alpha-one",
+    ]
+    grant = session.groups[0].containers[0].grant
+    assert (grant.publish_pr_reviews, grant.publish_pr_comment_edits) == (False, False)
+
+
+# -- the Outbox box is not modal: an outside click closes it like a menu ------------------
+
+_ROW = ("alpha-x", "pr/a.json", None, None)
+
+
+def test_outside_click_closes_idle_outbox_and_reaches_the_row(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.select(dmodel.Row("repo", "alpha"))
+
+    session.click(Hit("row", ("alpha-x",)))
+
+    assert session.overlay is None
+    assert session.selected == dmodel.Row("container", "alpha-x")
+
+
+def test_outside_click_does_nothing_while_a_question_is_open(mocker, tmp_path):
+    from dataclasses import replace
+
+    from jailbee.dashboard.hit import Hit
+    from jailbee.dashboard.outbox import Question
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox._set(  # type: ignore[union-attr]
+        replace(session.outbox.state, question=Question("x", "t", (), (("y", "Yes"),), "y"))  # type: ignore[union-attr]
+    )
+    box = session.overlay
+
+    session.click(Hit("row", ("alpha-x",)))
+
+    assert session.overlay is box
+
+
+def test_outside_click_does_nothing_while_a_publish_runs(mocker, tmp_path):
+    from dataclasses import replace
+
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox._set(replace(session.outbox.state, busy="publishing…"))  # type: ignore[union-attr]
+    box = session.overlay
+
+    session.click(Hit("row", ("alpha-x",)))
+
+    assert session.overlay is box
+
+
+def test_marks_survive_close_and_reopen(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    assert _ROW in session.overlay.marks
+    session.click(Hit("row", ("alpha-x",)))
+    assert session.overlay is None
+
+    session.select(dmodel.Row("container", "alpha-x"))
+    session.handle_key("enter")
+    session.menu_chosen("outbox browse", None, 0)
+    _settle(session)
+
+    assert _ROW in session.overlay.marks
+
+
+def test_marks_of_changed_or_vanished_proposals_are_dropped_on_reopen(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+    from tests.test_dashboard_outbox import _action, _container, _listing, _proposal
+
+    quiet = _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+
+    changed = _listing(_container(_proposal(revision="r2", actions=[_action(0)])))
+    quiet.return_value = tsession.da.CliResult(True, "done", changed)
+    session.select(dmodel.Row("container", "alpha-x"))
+    session.handle_key("enter")
+    session.menu_chosen("outbox browse", None, 0)
+    _settle(session)
+
+    assert session.overlay.marks == frozenset()
+
+
+def test_marks_of_a_vanished_proposal_are_dropped_on_reopen(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+    from tests.test_dashboard_outbox import _container, _listing
+
+    quiet = _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+
+    quiet.return_value = tsession.da.CliResult(True, "done", _listing(_container()))
+    _reopen_box(session)
+
+    assert session.overlay.marks == frozenset()
+
+
+def test_marks_survive_a_box_closed_before_its_listing_arrived(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+    session.jobs = _HeldJobs()  # type: ignore[assignment]  # the listing never arrives
+    session.select(dmodel.Row("container", "alpha-x"))
+    session.handle_key("enter")
+    session.menu_chosen("outbox browse", None, 0)
+    session.click(Hit("row", ("alpha-x",)))  # closed again at once
+
+    session._remember_outbox_marks()
+
+    assert _ROW in session._outbox_marks["alpha-x"][0]
+    assert session._outbox_marks["alpha-x"][1] == {"pr/a.json": "r1"}
+
+
+def _reopen_box(session) -> None:  # type: ignore[no-untyped-def]
+    session.select(dmodel.Row("container", "alpha-x"))
+    session.handle_key("enter")
+    session.menu_chosen("outbox browse", None, 0)
+    _settle(session)
+
+
+def test_marks_survive_the_sent_box_opening_in_between(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    mocker.patch.object(tsession.dob, "read_sent", return_value=())
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+    # the click closed the box and must have kept its marks itself: the box object is
+    # gone before the Sent box opens, so `open_sent` has nothing of it to save
+    session.outbox = None
+    session.open_sent("alpha")
+    session.close_overlay()
+
+    _reopen_box(session)
+
+    assert _ROW in session.overlay.marks
+
+
+def test_marks_survive_opening_sent_straight_from_a_marked_box(mocker, tmp_path):
+    _quiet(mocker)
+    mocker.patch.object(tsession.dob, "read_sent", return_value=())
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+
+    session.open_sent("alpha")
+    session.close_overlay()
+    _reopen_box(session)
+
+    assert _ROW in session.overlay.marks
+
+
+def test_marks_survive_esc_closing_the_box(mocker, tmp_path):
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.overlay_cancel()
+    assert not isinstance(session.overlay, tsession.OutboxState)
+    session.outbox = None  # the box object is gone
+
+    _reopen_box(session)
+
+    assert _ROW in session.overlay.marks
+
+
+def test_outside_click_closes_the_box_while_its_listing_is_in_flight(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    session.jobs = _HeldJobs()  # type: ignore[assignment]  # the listing never arrives
+    session.select(dmodel.Row("container", "alpha-x"))
+    session.handle_key("enter")
+    session.menu_chosen("outbox browse", None, 0)
+    assert isinstance(session.overlay, tsession.OutboxState)
+    assert session.overlay.busy == tsession.OUTBOX_LOADING
+
+    session.click(Hit("row", ("alpha-x",)))
+
+    assert session.overlay is None
+
+
+@pytest.mark.parametrize("busy", ["planning…", "deleting…"])
+def test_outside_click_does_nothing_while_a_job_other_than_the_listing_runs(mocker, tmp_path, busy):
+    from dataclasses import replace
+
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox._set(replace(session.outbox.state, busy=busy))  # type: ignore[union-attr]
+    box = session.overlay
+
+    session.click(Hit("row", ("alpha-x",)))
+
+    assert session.overlay is box
+
+
+def test_reopened_box_shows_marks_once_its_listing_arrives_after_an_early_close(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+    session.jobs = _HeldJobs()  # type: ignore[assignment]
+    session.select(dmodel.Row("container", "alpha-x"))
+    session.handle_key("enter")
+    session.menu_chosen("outbox browse", None, 0)
+    session.click(Hit("row", ("alpha-x",)))  # closed before the listing
+
+    held = _HeldJobs()
+    session.jobs = held  # type: ignore[assignment]
+    session.select(dmodel.Row("container", "alpha-x"))
+    session.handle_key("enter")
+    session.menu_chosen("outbox browse", None, 0)
+    held.poll()  # the listing arrives
+    session.tick()
+
+    assert session.overlay.busy is None
+    assert _ROW in session.overlay.marks
+
+
+def test_marks_of_a_destroyed_container_are_pruned(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+    assert "alpha-x" in session._outbox_marks
+
+    session.all_groups = [_outbox_group(tmp_path)]
+    session.all_groups[0].containers.clear()  # the container was destroyed
+    session._remember_outbox_marks()
+
+    assert "alpha-x" not in session._outbox_marks
+
+
+def test_marks_of_a_hidden_repo_survive_until_it_is_shown_again(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+
+    # the repo is hidden in settings: `groups` leaves it out, `all_groups` keeps it
+    session.groups = [_outbox_group(tmp_path)]
+    session.groups[0].containers.clear()
+    session._remember_outbox_marks()
+
+    assert "alpha-x" in session._outbox_marks
+
+
+def test_marks_are_kept_while_the_listing_is_not_loaded_yet(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+
+    session.groups = []  # not loaded, not destroyed
+    session.all_groups = []
+    session._remember_outbox_marks()
+
+    assert "alpha-x" in session._outbox_marks
+
+
+def _rows_json(*pairs):
+    return json.dumps(
+        [{"name": n, "state": s, "window": None, "since": None, "detail": ""} for n, s in pairs]
+    )
+
+
+def _drain(session, key="services:alpha-one"):
+    import time
+
+    deadline = time.monotonic() + 10
+    while session.jobs.busy(key) and time.monotonic() < deadline:
+        session.jobs.poll()
+        time.sleep(0.01)
+
+
+def test_service_refresh_result_is_dropped_when_the_overlay_closes_meanwhile(mocker, tmp_path):
+    session, run = _services_session(mocker, tmp_path, [[("db", "stopped")], [("db", "ready")]])
+    back, then = _start_first_service(session, run)
+    session.overlay = back
+    then(0)
+    session.overlay = None  # the user left the menu while the listing ran
+    _drain(session)
+    assert session.overlay is None
+
+
+def test_service_refresh_result_is_dropped_when_another_list_opens_meanwhile(mocker, tmp_path):
+    session, run = _services_session(
+        mocker,
+        tmp_path,
+        [[("db", "stopped")], [("cache", "ready")], [("db", "ready")], [("x", "ready")]],
+        containers=("alpha-one", "alpha-two"),
+    )
+    back, then = _start_first_service(session, run)
+    session.overlay = back
+    then(0)
+    other = session.open_services("alpha-two")
+    session.overlay = other  # another container's list replaces it while listing
+    _drain(session)
+    assert session.overlay is other
+
+
+def test_failed_service_refresh_tells_the_user_and_keeps_the_list(mocker, tmp_path):
+    session, run = _services_session(mocker, tmp_path, [[("db", "stopped")]])
+    back, then = _start_first_service(session, run)
+    session.overlay = back
+    mocker.patch(
+        "jailbee.dashboard.accounts.run_cli_quiet",
+        return_value=mocker.Mock(ok=False, message="boom", stdout=""),
+    )
+    then(0)
+    _drain(session)
+    assert "could not list services: boom" in session.notice
+    assert session.overlay is back
+
+
+def test_failed_service_refresh_notice_is_not_raised_once_the_user_left(mocker, tmp_path):
+    session, run = _services_session(mocker, tmp_path, [[("db", "stopped")]])
+    back, then = _start_first_service(session, run)
+    session.overlay = back
+    mocker.patch(
+        "jailbee.dashboard.accounts.run_cli_quiet",
+        return_value=mocker.Mock(ok=False, message="boom", stdout=""),
+    )
+    then(0)
+    session.overlay = None
+    _drain(session)
+    assert "could not list services" not in (session.notice or "")
+
+
+def test_service_refresh_that_raises_does_not_leave_the_job_busy(mocker, tmp_path):
+    session, run = _services_session(mocker, tmp_path, [[("db", "stopped")]])
+    back, then = _start_first_service(session, run)
+    session.overlay = back
+    mocker.patch("jailbee.dashboard.accounts.run_cli_quiet", side_effect=OSError("gone"))
+    then(0)
+    _drain(session)
+    assert not session.jobs.busy("services:alpha-one")
+    assert "could not list services" in session.notice
+
+
+def test_older_service_listing_does_not_overwrite_a_reopened_list(mocker, tmp_path):
+    import threading
+
+    session, run = _services_session(mocker, tmp_path, [[("db", "stopped")]])
+    back, then = _start_first_service(session, run)
+    session.overlay = back
+    release = threading.Event()
+    main = threading.current_thread()
+
+    def quiet(argv, cwd=None):
+        if threading.current_thread() is main:
+            return mocker.Mock(ok=True, stdout=_rows_json(("db", "ready")))
+        release.wait(10)
+        return mocker.Mock(ok=True, stdout=_rows_json(("db", "stopped")))
+
+    mocker.patch("jailbee.dashboard.accounts.run_cli_quiet", side_effect=quiet)
+    then(0)  # slow listing in flight
+    reopened = session.open_services("alpha-one")  # fresher list shown meanwhile
+    session.overlay = reopened
+    release.set()
+    _drain(session)
+    assert session.overlay is reopened
+    assert "db  (ready)" in session.overlay.entries[0].label

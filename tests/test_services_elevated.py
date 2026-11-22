@@ -474,6 +474,22 @@ def test_pause_preserves_runner_and_checked_read_failure(paused_setup):
     kill.assert_not_called()
 
 
+def test_pause_relaunch_check_includes_the_repo_default_runner(paused_setup, mocker):
+    from jailbee.config.models_orchestration import OrchestrationView
+    from jailbee.orchestration.runner_model import Runner
+
+    cfg, incus, _, _, _, _, now, elevated = paused_setup
+    default = Runner(agent="claude", model="opus")
+    cfg._orchestration_view = OrchestrationView(default_runner=default)
+    spy = mocker.patch(
+        "jailbee.autostart.agent_autostart_steps",
+        return_value=[mocker.Mock(run="exec claude", **{"name": "claude"})],
+    )
+    spy.return_value[0].name = "claude"
+    elevated.pause_agent(cfg, incus, "box", now=now)
+    assert spy.call_args.kwargs["default_runner"] == default
+
+
 def test_pause_refuses_runner_with_unrewritable_command(paused_setup):
     from jailbee.orchestration import labels
     from jailbee.orchestration.runner_model import Runner

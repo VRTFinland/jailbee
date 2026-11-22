@@ -72,13 +72,41 @@ class CommentAction:
 
 
 @dataclass(frozen=True)
+class CommentEditAction:
+    """Replace the body of one of the publisher's own submitted review comments.
+
+    ``comment_id`` is a review (line) comment or reply; ``expected_body`` is the
+    body the agent saw when staging, which the host re-reads before publishing.
+    """
+
+    comment_id: int
+    body: str
+    expected_body: str
+
+
+@dataclass(frozen=True)
 class DescriptionAction:
     body: str
     title: str | None = None
     branch: str | None = None
 
 
-Action = ReviewAction | ReplyAction | CommentAction | DescriptionAction
+@dataclass(frozen=True)
+class StateAction:
+    """Close or reopen the PR; ``expected_state`` is the state the agent saw when staging."""
+
+    state: str
+    expected_state: str
+
+    @property
+    def body(self) -> str:
+        """No prose of its own; lets code that scans every action's text treat it as empty."""
+        return ""
+
+
+Action = (
+    ReviewAction | ReplyAction | CommentAction | CommentEditAction | DescriptionAction | StateAction
+)
 
 
 @dataclass(frozen=True)
@@ -256,6 +284,26 @@ def _parse_comment(
     return CommentAction(body=body, reply_to=reply_to)
 
 
+def _parse_comment_edit(
+    name: str, index: int, item: dict[str, Any], bodies: Mapping[str, str]
+) -> CommentEditAction:
+    comment_id = _require_int(name, index, item.get("comment_id"), "comment_id")
+    if comment_id < 1:
+        raise ManifestError(f"{name} action {index}: comment_id must be a positive integer")
+    body = _resolve_body(name, index, item, bodies)
+    if not body:
+        raise ManifestError(f"{name} action {index}: comment body must be non-empty")
+    expected = item.get("expected")
+    if not isinstance(expected, dict) or "body" not in expected:
+        raise ManifestError(f"{name} action {index}: expected.body is required")
+    expected_body = expected["body"]
+    if not isinstance(expected_body, str):
+        raise ManifestError(f"{name} action {index}: expected.body must be a string")
+    if len(expected_body.encode()) > MAX_BODY_BYTES:
+        raise ManifestError(f"{name} action {index}: expected.body is larger than the body cap")
+    return CommentEditAction(comment_id=comment_id, body=body, expected_body=expected_body)
+
+
 def _parse_description(
     name: str, index: int, item: dict[str, Any], bodies: Mapping[str, str]
 ) -> DescriptionAction:
@@ -270,6 +318,22 @@ def _parse_description(
         raise ManifestError(f"{name} action {index}: branch must be a string or null")
 
     return DescriptionAction(body=body, title=title_val, branch=branch_val)
+
+
+_PR_STATES = ("open", "closed")
+
+
+def _parse_state(name: str, index: int, item: dict[str, Any]) -> StateAction:
+    state = item.get("state")
+    if state not in _PR_STATES:
+        raise ManifestError(f"{name} action {index}: state must be 'open' or 'closed'")
+    expected = item.get("expected")
+    expected_state = expected.get("state") if isinstance(expected, dict) else None
+    if expected_state not in _PR_STATES:
+        raise ManifestError(f"{name} action {index}: expected.state must be 'open' or 'closed'")
+    if expected_state == state:
+        raise ManifestError(f"{name} action {index}: the PR is already {state} when staged")
+    return StateAction(state=state, expected_state=expected_state)
 
 
 def _parse_actions(
@@ -304,6 +368,16 @@ def _parse_actions(
             parsed.append(_parse_reply(name, index, item, bodies))
         elif action_type == "comment":
             parsed.append(_parse_comment(name, index, item, bodies))
+        elif action_type == "comment_edit":
+            edited = _parse_comment_edit(name, index, item, bodies)
+            if any(
+                isinstance(a, CommentEditAction) and a.comment_id == edited.comment_id
+                for a in parsed
+            ):
+                raise ManifestError(
+                    f"{name} action {index}: comment {edited.comment_id} is edited twice"
+                )
+            parsed.append(edited)
         elif action_type == "description":
             if seen_description:
                 raise ManifestError(
@@ -311,6 +385,12 @@ def _parse_actions(
                 )
             seen_description = True
             parsed.append(_parse_description(name, index, item, bodies))
+        elif action_type == "state":
+            if any(isinstance(a, StateAction) for a in parsed):
+                raise ManifestError(
+                    f"{name} action {index}: only one state action is allowed per manifest"
+                )
+            parsed.append(_parse_state(name, index, item))
         else:
             raise ManifestError(f"{name} action {index}: unknown action type {action_type!r}")
 

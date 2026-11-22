@@ -7,7 +7,7 @@ dashboard all build on it. Must not import ``jailbee.dashboard.tui``.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,8 +42,10 @@ if TYPE_CHECKING:
     from jailbee.agent_activity import ActivityReader
     from jailbee.apps import AppSpec
     from jailbee.config import Config
+    from jailbee.host_target import ParentHead
     from jailbee.incus import Incus
     from jailbee.notices import Notice
+    from jailbee.orchestration.runner_model import Runner
     from jailbee.procstat import ActivitySampler
 
 
@@ -208,15 +210,44 @@ class RepoGroup:
     memory_default: str = "16GiB"
     autostart_profiles: tuple[str, ...] = ()
     autostart_services: tuple[str, ...] = ()
+    service_descriptions: dict[str, str] = field(default_factory=dict)
     autostart_default_profile: str | None = None
     orchestration_profiles: tuple[str, ...] = ()
     default_runner: str | None = None
     default_runner_source: str | None = None
+    # The effective agent as `profile/model` for the repo row (`claude/opus`, `codex`).
+    agent_label: str | None = None
     runner_profiles: tuple[str, ...] = ()
     default_project: str | None = None
     # Outbox "Sent" log records of every container of this repo (destroyed ones
     # included); set by the state service's gatherer, 0 = none.
     sent_count: int = 0
+
+
+def _github_slug_of(cfg: Config) -> str | None:
+    """The repo's GitHub ``owner/name`` PR numbers resolve against, or None."""
+    from jailbee.pr import pr_repo_slug
+
+    return pr_repo_slug(cfg.repo_root, cfg.upstream_remote)
+
+
+def _agent_label(cfg: Config, runner: Runner | None) -> str | None:
+    """The repo's effective agent for its row: the default runner, else the legacy launch.
+
+    A legacy value is parenthesised: no runner is set, so the picker marks no row current.
+    """
+    from jailbee.dashboard.agent_choice import runner_label
+
+    if runner is not None:
+        return runner_label(runner)
+    from jailbee.agents import primary_agent
+    from jailbee.autostart import litellm_autostart_on
+
+    if litellm_autostart_on(cfg):
+        profile = cfg.litellm_view().config.default_profile
+        return f"({profile})" if profile else None
+    name = primary_agent(cfg).name
+    return f"({name})" if name else None
 
 
 @dataclass(frozen=True)
@@ -386,6 +417,7 @@ def gather_rows(
     repo_roots: list[Path],
     *,
     with_git: bool,
+    parent_heads: Mapping[str, ParentHead] | None = None,
 ) -> list[RepoGroup]:
     """Build per-repo groups, then append orphan groups.
 
@@ -406,9 +438,12 @@ def gather_rows(
     `notices.collecting()` — a ContextVar, so it is entered in this very
     thread — which turns the deprecation notices into data instead of lines in
     the state-service log.
+
+    ``parent_heads`` (each container's HEAD from the previous gather pass) is
+    what children and forks compare with; see `lifecycle.list_containers`.
     """
     with ExitStack() as stack:
-        return _gather_rows(incus, repo_roots, with_git, stack)
+        return _gather_rows(incus, repo_roots, with_git, stack, parent_heads)
 
 
 def _repo_advisories(
@@ -466,6 +501,7 @@ def _gather_rows(
     repo_roots: list[Path],
     with_git: bool,
     stack: ExitStack,
+    parent_heads: Mapping[str, ParentHead] | None = None,
 ) -> list[RepoGroup]:
     from jailbee.apps import resolve_apps
     from jailbee.remote_ssh.mount_policy import grantable_kinds
@@ -504,12 +540,15 @@ def _gather_rows(
             with_git_status=with_git,
             with_background=True,
             instances=instances,
+            parent_heads=parent_heads,
         )
         from jailbee.autostart_plan import TRIGGER_ORDER, rerunnable_stages
         from jailbee.autostart_profiles import profiled_config
         from jailbee.autostart_rerun import eligible_autostart, failed_targets
 
+        slug = _github_slug_of(cfg)
         for c in containers:
+            c.pr_slug = slug
             c.configured_mounts = tuple(cfg.optional_mounts)
             profile = (
                 c.autostart_profile
@@ -525,6 +564,13 @@ def _gather_rows(
         covered.add(cfg.container_prefix)
         orch_view = cfg.orchestration_view()
         runner = orch_view.default_runner
+        from jailbee.autostart import effective_runner
+
+        applied = effective_runner(cfg, None, runner, warn=False)  # what autostart launches
+        for c in containers:
+            if c.agent_runner is None:  # no label of its own: the repo default applies
+                c.agent_runner = _agent_label(cfg, applied)
+                c.agent_source = orch_view.default_runner_source if applied else "legacy"
         litellm_config = cfg.litellm_view().config
         groups.append(
             RepoGroup(
@@ -553,11 +599,17 @@ def _gather_rows(
                 memory_default=cfg.defaults.memory,
                 autostart_profiles=profile_names(cfg.autostart),
                 autostart_services=tuple(cfg.services),
+                service_descriptions={
+                    name: " ".join(svc.description.split())
+                    for name, svc in cfg.services.items()
+                    if svc.description.strip()
+                },
                 autostart_default_profile=cfg.autostart.default_profile or "all",
                 orchestration_profiles=tuple(sorted(orch_view.profiles)),
                 default_project=cfg.github.project,
                 default_runner=runner.describe() if runner else None,
                 default_runner_source=orch_view.default_runner_source,
+                agent_label=_agent_label(cfg, runner),
                 runner_profiles=tuple(sorted(litellm_config.effective_profiles()))
                 if litellm_config.enabled
                 else (),
@@ -592,7 +644,13 @@ def _gather_rows(
     return groups
 
 
-def gather_live(incus: Incus, extra_roots: Sequence[Path], *, with_git: bool) -> list[RepoGroup]:
+def gather_live(
+    incus: Incus,
+    extra_roots: Sequence[Path],
+    *,
+    with_git: bool,
+    parent_heads: Mapping[str, ParentHead] | None = None,
+) -> list[RepoGroup]:
     """One snapshot for the state service: repo roots re-resolved per gather.
 
     Both dashboards refresh on a timer, and the set of registered repos moves
@@ -612,10 +670,13 @@ def gather_live(incus: Incus, extra_roots: Sequence[Path], *, with_git: bool) ->
 
     ``extra_roots`` are the connected dashboards' cwd repos, which may not be
     registered. The result is unscoped and unpinned; each dashboard applies
-    its own `present`.
+    its own `present`. ``parent_heads`` is forwarded to `gather_rows`.
     """
     return gather_rows(
-        incus, _dedupe_roots([*extra_roots, *registered_repo_roots()]), with_git=with_git
+        incus,
+        _dedupe_roots([*extra_roots, *registered_repo_roots()]),
+        with_git=with_git,
+        parent_heads=parent_heads,
     )
 
 

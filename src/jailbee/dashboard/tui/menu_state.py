@@ -185,6 +185,8 @@ def open_repo_menu(
             actions.append(("Credential group…", "credential-group"))
         if permitted(["account", "ls"], ssh_policy, transport=transport):
             actions.append(("Accounts…", "accounts"))
+        if permitted(dact.agent_use_argv(), ssh_policy, transport=transport):
+            actions.append(("Agent…", dact.REPO_AGENT))
         if permitted(["net", "egress", "ls", "--repo"], ssh_policy, transport=transport):
             actions.append(MenuGroup("Network →", (("Egress…", "net egress ls"),)))
         if group.sent_count and permitted(
@@ -292,6 +294,8 @@ _MENU_KEYS: dict[str, str] = {
     dact.MOUNTS: "m",
     dact.SERVICES: "V",  # lowercase `v` belongs to the table's details panel
     dact.ORCHESTRATION: "G",  # grants; `O` is the table's optimize-widths key
+    dact.CONTAINER_AGENT: "i",  # `g` is Git →, `e` and `A` are table keys
+    dact.AGENT_WINDOW: "Y",
     "credential-group": "c",
     "Network →": "w",
     "fork": "f",
@@ -309,6 +313,7 @@ _MENU_KEYS: dict[str, str] = {
     "pr push": "P",
     "pr bind": "b",
     "pr unbind": "u",
+    "pr fetch": "F",
     # Lifecycle → (each also alone at the root when the SSH policy hides the rest)
     "restart": "r",
     "restart-with": "W",
@@ -320,6 +325,7 @@ _MENU_KEYS: dict[str, str] = {
     "new": "n",
     "new-pr": "p",
     "accounts": "a",
+    dact.REPO_AGENT: "g",
     dact.REPO_APPLY: "y",
     dact.REPO_BASE_BUILD: "b",
     dact.REPO_DISMISS_ADVISORIES: "i",

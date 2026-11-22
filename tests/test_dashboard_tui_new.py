@@ -266,7 +266,8 @@ def test_new_container_that_wants_an_answer_is_rerun_through_the_runner(mocker, 
         mocker.call(argv, check=False, cwd=tmp_path),
         mocker.call(argv, check=False, cwd=tmp_path),
     ]
-    # The second run is the one whose questions are modals; its output is shown.
+    # The second run is the one whose questions are modals; its output is a queue entry.
+    assert len(run.entries) == 1
     assert len(run.app.outputs) == 1
 
 

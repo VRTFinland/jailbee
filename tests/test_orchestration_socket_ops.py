@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING
 
 import pytest
 
-from jailbee.orchestration import broker_state, socket_ops, wire
+from jailbee.orchestration import broker_state, labels, socket_ops, wire
 from jailbee.orchestration.actions import Outcome
+from jailbee.orchestration.grant import Grant, RepoCap
 from jailbee.orchestration.socket_ops import NextArgs, Waiter, Waiters
 from jailbee.orchestration.store import BrokerStore, StoreError
 from tests.test_orchestration_broker import Rig, _child, _orch
@@ -493,3 +495,139 @@ def test_pulse_lead_sends_early_but_not_back_to_back(env: Env) -> None:
     assert ws.due_keepalives(5.0, lead=lead) == [1]
     assert ws.due_keepalives(9.9, lead=lead) == []  # next due at 35.0
     assert ws.due_keepalives(35.0) == [1]
+
+
+def _set_grant(env: Env, grant: Grant | None) -> None:
+    ctx = env.memory.contexts[env.orch]
+    if grant is None:
+        ctx.sender.config.pop(labels.GRANT, None)
+    else:
+        ctx.sender.config[labels.GRANT] = grant.to_label()
+
+
+def test_follower_unchanged_grant_republish_emits_nothing(env: Env) -> None:
+    ws = Waiters()
+    ws.add(env.waiter(follow=True))
+    assert env.evaluate(ws) == []
+    assert env.evaluate(ws, now=1001) == []
+    _set_grant(env, Grant.from_label(env.memory.contexts[env.orch].sender.config[labels.GRANT]))
+    assert env.evaluate(ws, now=1002) == []
+
+
+def test_follower_grant_field_change_emits_one_readable_event(env: Env) -> None:
+    ws = Waiters()
+    ws.add(env.waiter(follow=True))
+    env.evaluate(ws)
+    old = env.memory.contexts[env.orch].grant()
+    assert old is not None
+    new = old.model_copy(update={"max_running_children": old.max_running_children + 2})
+    _set_grant(env, new)
+    events = env.evaluate(ws, now=1001)
+    assert len(events) == 1
+    event = events[0][1]
+    assert isinstance(event, dict) and event["kind"] == "grant-changed"
+    assert event["changes"] == [
+        f"max_running_children: {old.max_running_children} -> {new.max_running_children}"
+    ]
+    assert env.evaluate(ws, now=1002) == []
+
+
+def _drop_context(env: Env) -> None:
+    """What the broker's tick does when the GRANT label is gone: no context at all."""
+    del env.memory.contexts[env.orch]
+
+
+def test_follower_grant_revoked_is_announced_before_not_orchestrated(env: Env) -> None:
+    ws = Waiters()
+    waiter = env.waiter(follow=True)
+    ws.add(waiter)
+    env.evaluate(ws)
+    _drop_context(env)
+    answered = env.evaluate(ws, now=1001)
+    assert [r[1] for r in answered[:1]] == [{"kind": "grant-changed", "changes": ["grant revoked"]}]
+    assert isinstance(answered[1][1], wire.WireError)
+    assert answered[1][1].code == wire.NOT_ORCHESTRATED
+    assert len(answered) == 2
+    assert len(ws) == 0
+
+
+def test_follower_without_a_seen_grant_gets_only_not_orchestrated(env: Env) -> None:
+    ws = Waiters()
+    ws.add(env.waiter(follow=True))
+    _drop_context(env)
+    answered = env.evaluate(ws)
+    assert len(answered) == 1 and isinstance(answered[0][1], wire.WireError)
+
+
+def test_follower_grant_added_means_a_context_holder_gained_a_grant(env: Env) -> None:
+    ws = Waiters()
+    ws.add(env.waiter(follow=True))
+    ctx = env.memory.contexts[env.orch]
+    original = Grant.from_label(ctx.sender.config[labels.GRANT])
+    ctx.sender.config[labels.SPAWNED_BY] = "proj-boss"  # a child: has a context, may lack a grant
+    _set_grant(env, None)
+    assert env.evaluate(ws) == []
+    _set_grant(env, original)
+    added = env.evaluate(ws, now=1001)
+    assert [r[1] for r in added] == [{"kind": "grant-changed", "changes": ["grant added"]}]
+
+
+def test_grant_change_during_a_reconnect_gap_is_announced(env: Env) -> None:
+    ws = Waiters()
+    ws.add(env.waiter(follow=True, conn_id=1))
+    env.evaluate(ws)
+    ws.drop(env.orch, 1)  # the connection is lost; nobody is following
+    old = env.memory.contexts[env.orch].grant()
+    assert old is not None
+    _set_grant(env, old.model_copy(update={"max_running_children": old.max_running_children + 1}))
+    ws.add(env.waiter(follow=True, conn_id=2))
+    events = env.evaluate(ws, now=1001)
+    assert [r[1]["kind"] for r in events] == ["grant-changed"]  # type: ignore[index]
+    assert env.evaluate(ws, now=1002) == []
+
+
+def test_grant_check_failure_is_logged_once_not_every_pass(
+    env: Env, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    ws = Waiters()
+    ws.add(env.waiter(follow=True))
+    env.evaluate(ws)
+
+    def boom() -> None:
+        raise RuntimeError("bad config")
+
+    monkeypatch.setattr(env.memory.contexts[env.orch], "grant", boom)
+    with caplog.at_level(logging.WARNING):
+        for n in range(4):
+            assert env.evaluate(ws, now=1001 + n) == []
+    assert len([r for r in caplog.records if "grant change" in r.getMessage()]) == 1
+
+
+def test_grant_changes_beyond_the_cap_are_summarised(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws = Waiters()
+    ws.add(env.waiter(follow=True))
+    env.evaluate(ws)
+    lines = [f"f{n}: 1 -> 2" for n in range(socket_ops.MAX_GRANT_CHANGES + 3)]
+    monkeypatch.setattr(socket_ops, "grant_diff", lambda before, after: lines)
+    ((_, event),) = env.evaluate(ws, now=1001)
+    assert isinstance(event, dict)
+    assert event["changes"] == [*lines[: socket_ops.MAX_GRANT_CHANGES], "... and 3 more"]
+
+
+def test_follower_announces_a_repo_cap_clamp_without_a_label_change(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws = Waiters()
+    ws.add(env.waiter(follow=True))
+    env.evaluate(ws)
+    before = env.memory.contexts[env.orch].grant()
+    assert before is not None and before.max_running_children > 1
+    monkeypatch.setattr(
+        "jailbee.orchestration.actions.profiles.repo_cap",
+        lambda cfg: RepoCap(allowed=True, max_running_children=1),
+    )
+    ((_, event),) = env.evaluate(ws, now=1001)
+    assert isinstance(event, dict)
+    assert event["changes"] == [f"max_running_children: {before.max_running_children} -> 1"]

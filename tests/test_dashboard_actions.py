@@ -182,6 +182,25 @@ def test_choice_entries_order_and_custom_only_with_services(tmp_path):
     )
 
 
+def test_service_toggle_entries_show_descriptions(tmp_path):
+    from jailbee.dashboard.model import RepoGroup
+
+    group = RepoGroup(
+        "a",
+        str(tmp_path),
+        None,
+        [],
+        autostart_services=("db", "web"),
+        service_descriptions={"db": "Postgres for tests"},
+    )
+    entries = dact.autostart_service_entries(group, ("web",))
+    assert [(e.label, e.value) for e in entries] == [
+        ("Done", "\x00done"),
+        ("[ ] db — Postgres for tests", "db"),
+        ("[x] web", "web"),
+    ]
+
+
 def test_custom_services_args_joined(tmp_path):
     from jailbee.dashboard.model import RepoGroup
 
@@ -414,6 +433,8 @@ _ALL_CONTAINER = {
     "mounts",
     "services",
     "orchestration",
+    "container-agent",
+    "agent-window",
 }
 
 
@@ -446,6 +467,7 @@ def _container_verbs(case: PolicyCase, container: ContainerInfo | None = None) -
         (_allow("autostart status"), {"autostart-status"}),
         (_allow("autostart cancel"), {"autostart-cancel"}),
         (_allow("snapshot ls"), {"snapshots"}),
+        (_allow("agent use", "agent open"), {"container-agent", "agent-window"}),
         (_SSH_ALLOW_OTHER, set()),
         (_SSH_EXCLUDED, {"snapshots"}),
         (_SSH_NO_POLICY, set()),
@@ -462,6 +484,7 @@ def _container_verbs(case: PolicyCase, container: ContainerInfo | None = None) -
         "ssh-allowlist-autostart-status",
         "ssh-allowlist-autostart-cancel",
         "ssh-allowlist-snapshot-ls",
+        "ssh-allowlist-agent",
         "ssh-allowlist-without",
         "ssh-excluded-repos",
         "ssh-no-policy",
@@ -488,6 +511,8 @@ def test_container_extras_order_and_labels():
         ("Mounts…", "mounts"),
         ("Services…", "services"),
         ("Orchestration…", "orchestration"),
+        ("Agent for this container…", "container-agent"),
+        ("Open a new agent window now", "agent-window"),
     )
 
 
@@ -888,6 +913,26 @@ def test_orchestrate_grant_runner_options():
         "--",
         "x",
     ]
+
+
+def test_services_picker_shows_descriptions():
+    rows = dact.parse_service_rows(
+        '[{"name":"db","state":"ready","window":null,"since":null,"detail":"",'
+        '"description":"Postgres for tests"},'
+        '{"name":"web","state":"stopped","window":null,"since":null,"detail":""}]'
+    )
+    assert [r.description for r in rows] == ["Postgres for tests", ""]
+    labels = [e.label for e in dact.services_picker("alpha-x", rows).entries]
+    assert labels == ["db  (ready) — Postgres for tests", "web  (stopped)"]
+
+
+def test_services_picker_flattens_multiline_descriptions():
+    rows = dact.parse_service_rows(
+        '[{"name":"db","state":"ready","window":null,"since":null,"detail":"",'
+        '"description":"Postgres.\\nNeeded for tests.\\n"}]'
+    )
+    labels = [e.label for e in dact.services_picker("alpha-x", rows).entries]
+    assert labels == ["db  (ready) — Postgres. Needed for tests."]
 
 
 def test_services_json_and_state_actions():

@@ -28,7 +28,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 22
+CURRENT_SCHEMA_VERSION = 27
 
 
 def state_dir() -> Path:
@@ -62,12 +62,13 @@ def get_engine() -> Engine:
     UI thread reads the same database.
     """
     path = state_dir()
-    path.mkdir(parents=True, exist_ok=True)
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
     db_path = (path / "state.sqlite").resolve()
     with _ENGINE_LOCK:
         cached = _ENGINES.get(db_path)
         if cached is not None:
             return cached
+        _make_private(path, db_path)
         engine = create_engine(
             f"sqlite:///{db_path}",
             connect_args={"timeout": 30, "check_same_thread": False},
@@ -77,6 +78,23 @@ def get_engine() -> Engine:
         _ensure_schema(engine)
         _ENGINES[db_path] = engine
         return engine
+
+
+def _make_private(directory: Path, db_path: Path) -> None:
+    """Make the state directory 0700 and the database files 0600, before first use.
+
+    The database holds secrets (the web dashboard's TOTP keys), so no other
+    local user may read it. Creates `db_path` empty if it is missing, so
+    SQLite opens a file that is private from the start; SQLite gives the
+    `-wal` and `-shm` files it creates later the database file's mode.
+    Existing looser files, from before this rule, are tightened here.
+    """
+    directory.chmod(0o700)
+    db_path.touch(mode=0o600, exist_ok=True)
+    for name in (db_path.name, f"{db_path.name}-wal", f"{db_path.name}-shm"):
+        sidecar = db_path.with_name(name)
+        if sidecar.exists():
+            sidecar.chmod(0o600)
 
 
 def _migrate_to_v2(conn: Connection) -> None:
@@ -304,6 +322,31 @@ def _migrate_to_v22(conn: Connection) -> None:
     conn.exec_driver_sql("DROP TABLE IF EXISTS sent_record")
 
 
+def _migrate_to_v23(conn: Connection) -> None:
+    """v22 -> v23 adds `web_session` (web dashboard logins) via create_all."""
+    return None
+
+
+def _migrate_to_v24(conn: Connection) -> None:
+    """v23 -> v24 adds `web_auth_setting`, `web_totp_key` and `web_auth_event` via create_all."""
+    return None
+
+
+def _migrate_to_v25(conn: Connection) -> None:
+    """v24 -> v25 adds `container_session` (agent sessions seen per container) via create_all."""
+    return None
+
+
+def _migrate_to_v26(conn: Connection) -> None:
+    """v25 -> v26 adds `web_login_link` (one-time localhost login links) via create_all."""
+    return None
+
+
+def _migrate_to_v27(conn: Connection) -> None:
+    """v26 -> v27 adds `web_fido2_key` (web dashboard security keys) via create_all."""
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -327,6 +370,11 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     20: _migrate_to_v20,
     21: _migrate_to_v21,
     22: _migrate_to_v22,
+    23: _migrate_to_v23,
+    24: _migrate_to_v24,
+    25: _migrate_to_v25,
+    26: _migrate_to_v26,
+    27: _migrate_to_v27,
 }
 
 

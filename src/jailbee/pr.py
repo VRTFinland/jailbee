@@ -21,12 +21,15 @@ All raise PrError subclasses with user-actionable messages on failure.
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Never
 
+from jailbee.comment_edit import CommentSnapshot
 from jailbee.retry import with_remote_retry
 
 GH_PR_VIEW_JSON_FIELDS = (
@@ -331,6 +334,114 @@ def _run_pr_head_fetch(repo_root: Path, pr: PrInfo, remote: str) -> None:
         raise PrFetchError(f"git fetch failed for PR #{pr.number}: {proc.stderr.strip()}")
 
 
+UNATTENDED_FETCH_TIMEOUT = 30
+"""Seconds an unattended PR head fetch may take before it is given up on."""
+
+
+def _unattended_ssh_command(repo_root: Path) -> str:
+    """The ssh command git would use, with `-o BatchMode=yes` appended.
+
+    `GIT_SSH_COMMAND` wins over `core.sshCommand`, as in git itself; with
+    neither, plain `ssh`. Appending (not replacing) keeps the user's key and
+    config options.
+    """
+    base = os.environ.get("GIT_SSH_COMMAND", "").strip()
+    if not base:
+        proc = subprocess.run(
+            ["git", "config", "--get", "core.sshCommand"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        base = proc.stdout.strip() if proc.returncode == 0 else ""
+    return f"{base or 'ssh'} -o BatchMode=yes"
+
+
+def _unattended_git_fetch(
+    repo_root: Path, remote: str, refspec: str, *, timeout: int
+) -> subprocess.CompletedProcess[str]:
+    """Run `git fetch remote refspec` that can neither prompt nor hang.
+
+    Git's terminal prompt, askpass programs and credential helpers' interactive
+    mode are off, ssh runs in batch mode, stdin is closed and the fetch is
+    bounded by `timeout`. May raise TimeoutExpired / OSError.
+    """
+    env = {
+        **{k: v for k, v in os.environ.items() if k not in ("GIT_ASKPASS", "SSH_ASKPASS")},
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_SSH_COMMAND": _unattended_ssh_command(repo_root),
+    }
+    return subprocess.run(
+        [
+            "git",
+            "-c",
+            "credential.interactive=never",
+            "-c",
+            "core.askPass=",
+            "fetch",
+            remote,
+            refspec,
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        timeout=timeout,
+    )
+
+
+def fetch_pr_head_unattended(
+    repo_root: Path, number: int, *, remote: str, timeout: int = UNATTENDED_FETCH_TIMEOUT
+) -> None:
+    """Fetch PR `number`'s head into `refs/jailbee/pr/<N>/head`, never prompting.
+
+    For the detached state service, which has no terminal: git's terminal
+    prompt, askpass programs and credential helpers' interactive mode are off, ssh runs in batch
+    mode, stdin is closed and the fetch is bounded by `timeout`. A failed
+    fetch leaves the ref as it was. Raises PrFetchError.
+    """
+    refspec = f"+pull/{number}/head:{pr_head_ref(number)}"
+    try:
+        proc = _unattended_git_fetch(repo_root, remote, refspec, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        raise PrFetchError(f"git fetch for PR #{number} timed out after {timeout} s") from e
+    except (FileNotFoundError, OSError) as e:
+        raise PrFetchError(f"git fetch for PR #{number} could not run: {e}") from e
+    if proc.returncode != 0:
+        raise PrFetchError(f"git fetch failed for PR #{number}: {proc.stderr.strip()}")
+
+
+def refresh_pr_head(repo_root: Path, number: int, *, remote: str) -> FetchResult:
+    """Interactive refresh of PR `number`'s head (auth prompts allowed, retry offered).
+
+    The by-number counterpart of `fetch_pr_head`, for callers that have only a
+    PR number: no gh lookup, so `new_sha` is read back from the fetched ref.
+    """
+    prev_sha = _rev_parse(repo_root, pr_head_ref(number))
+    with_remote_retry(
+        lambda: _run_pr_head_fetch(repo_root, _bare_pr(number), remote),
+        label=f"fetching PR #{number}'s head",
+        catch=PrFetchError,
+    )
+    new_sha = _rev_parse(repo_root, pr_head_ref(number))
+    if new_sha is None:
+        raise PrFetchError(f"PR #{number}'s head is missing after the fetch")
+    return FetchResult(
+        updated=prev_sha != new_sha,
+        prev_sha=prev_sha,
+        new_sha=new_sha,
+        ref=pr_head_ref(number),
+    )
+
+
+def _bare_pr(number: int) -> PrInfo:
+    """A PrInfo carrying only the number, for `_run_pr_head_fetch`."""
+    return PrInfo(number=number, head_ref="", head_sha="", state="OPEN", base_ref="")
+
+
 def _rev_parse(repo_root: Path, ref: str) -> str | None:
     """Resolve `ref` in `repo_root`; None when it does not exist.
 
@@ -367,19 +478,14 @@ def fetch_base_ref(repo_root: Path, base_ref: str, *, remote: str) -> str | None
     The refspec is forced: a base branch can be rebased or force-pushed
     upstream, and the remote-tracking ref must follow the real remote tip.
 
-    Best-effort — returns ``None`` on any failure (base branch deleted
-    upstream, no network, git missing) and never raises. A stale anchor
+    Best-effort and unattended (never prompts; bounded by
+    `UNATTENDED_FETCH_TIMEOUT`) — returns ``None`` on any failure (base branch
+    deleted upstream, no network, timeout, git missing) and never raises. A stale anchor
     degrades the AHEAD numbers; it must not block container creation.
     """
     refspec = f"+refs/heads/{base_ref}:refs/remotes/{remote}/{base_ref}"
     try:
-        proc = subprocess.run(
-            ["git", "fetch", remote, refspec],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        proc = _unattended_git_fetch(repo_root, remote, refspec, timeout=UNATTENDED_FETCH_TIMEOUT)
         if proc.returncode != 0:
             return None
         resolved = subprocess.run(
@@ -389,7 +495,7 @@ def fetch_base_ref(repo_root: Path, base_ref: str, *, remote: str) -> str | None
             text=True,
             check=False,
         )
-    except (FileNotFoundError, OSError):
+    except (subprocess.TimeoutExpired, OSError):
         return None
     if resolved.returncode != 0:
         return None
@@ -522,6 +628,15 @@ def set_ready(repo_root: Path, number: int, ready: bool, *, repo: str | None = N
     if not ready:
         cmd.append("--undo")
     _run_gh_mutation(repo_root, cmd, "gh pr ready")
+
+
+def set_state(repo_root: Path, number: int, state: str, *, repo: str | None = None) -> None:
+    """Close (`gh pr close`) or reopen (`gh pr reopen`) PR #`number`."""
+    verb = "close" if state == "closed" else "reopen"
+    cmd = ["gh", "pr", verb, str(number)]
+    if repo is not None:
+        cmd += ["--repo", repo]
+    _run_gh_mutation(repo_root, cmd, f"gh pr {verb}")
 
 
 class PrReviewError(PrError):
@@ -805,6 +920,47 @@ def reply_to_review_comment(
     )
 
 
+_PULL_API_URL_RE = re.compile(r"https://api\.github\.com/repos/([^/]+/[^/]+)/pulls/([1-9][0-9]*)")
+
+
+def get_review_comment(repo_root: Path, repo: str, comment_id: int) -> CommentSnapshot:
+    """Read one pull-request review (line) comment, a reply included."""
+    cmd = ["gh", "api", f"repos/{repo}/pulls/comments/{comment_id}"]
+    data = _run_gh_api(repo_root, cmd, None, "gh api pulls/comments")
+    user = data.get("user")
+    login = user.get("login") if isinstance(user, dict) else None
+    cid, body, url = data.get("id"), data.get("body"), data.get("html_url")
+    if type(cid) is not int or not isinstance(login, str) or not isinstance(url, str):
+        raise PrReviewError("'gh api pulls/comments' returned an unexpected comment")
+    if body is not None and not isinstance(body, str):
+        raise PrReviewError("'gh api pulls/comments' returned an unexpected comment")
+    pull_url = data.get("pull_request_url")
+    match = _PULL_API_URL_RE.fullmatch(pull_url) if isinstance(pull_url, str) else None
+    return CommentSnapshot(
+        id=cid,
+        author=login,
+        body=body or "",
+        url=url,
+        parent=int(match.group(2)) if match else None,
+        repo=match.group(1) if match else None,
+    )
+
+
+def edit_review_comment(repo_root: Path, repo: str, comment_id: int, body: str) -> str:
+    """Replace the body of review comment `comment_id`; return its URL."""
+    cmd = [
+        "gh",
+        "api",
+        "--method",
+        "PATCH",
+        f"repos/{repo}/pulls/comments/{comment_id}",
+        "--input",
+        "-",
+    ]
+    data = _run_gh_api(repo_root, cmd, json.dumps({"body": body}), "gh api pulls/comments edit")
+    return str(data.get("html_url", ""))
+
+
 def add_issue_comment(repo_root: Path, number: int, body: str, *, repo: str | None = None) -> str:
     """Post a top-level (issue-style) comment on PR #`number`."""
     payload = json.dumps({"body": body})
@@ -936,3 +1092,42 @@ def _number_from_url(url: str) -> int:
         return int(url.rstrip("/").rsplit("/", 1)[-1])
     except ValueError as e:
         raise PrCreateError(f"could not parse PR number from gh output: {url!r}") from e
+
+
+def pr_repo_slug(repo_root: Path, remote: str) -> str | None:
+    """The GitHub ``owner/name`` a PR number of this checkout belongs to, or None.
+
+    Mirrors how `gh` picks the repository for `gh pr view N` (which `jailbee new
+    --pr` and `open_pr_in_browser` use), without a network call: the remote
+    marked by `gh repo set-default` (``remote.<r>.gh-resolved``), else a remote
+    named ``upstream``, else `remote`. A candidate that is not on GitHub is skipped.
+    """
+    from jailbee import git
+    from jailbee.github_repo import github_slug, is_github_slug
+
+    candidates: list[str] = []
+    try:
+        proc = subprocess.run(
+            ["git", "config", "--get-regexp", r"^remote\..*\.gh-resolved$"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        proc = None
+    if proc is not None and proc.returncode == 0:
+        for line in proc.stdout.splitlines():
+            key, _, value = line.partition(" ")
+            value = value.strip()
+            if is_github_slug(value):
+                return value
+            if value == "base":
+                candidates.append(key.removeprefix("remote.").removesuffix(".gh-resolved"))
+    candidates += ["upstream", remote]
+    for name in dict.fromkeys(candidates):
+        slug = github_slug(git.get_remote_url(repo_root, name) or "")
+        if slug is not None:
+            return slug
+    return None

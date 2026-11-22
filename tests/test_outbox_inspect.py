@@ -470,7 +470,7 @@ def test_overview_json_delete_eligibility_matches_plan_clear(tmp_path):
     assert delete[ProposalId("issue", "001.json")].selection.archive_journal
     stuck = out["issue/002.json"]
     assert stuck["deletable"] is False
-    assert "jailbee issue resolve" in stuck["delete_block"]
+    assert "jailbee outbox resolve" in stuck["delete_block"]
 
 
 def test_overview_json_action_delete_scope(tmp_path):
@@ -539,3 +539,65 @@ def test_assignees_action_view_lists_add_and_remove_as_plain_text(tmp_path):
         False,
     )
     assert action.body == "add: @me, bob\nremove: carol"
+
+
+def test_pr_comment_edit_is_its_own_action_kind():
+    files = {
+        "001.json": json.dumps(
+            {
+                "version": 1,
+                "repo": "acme/repo",
+                "pr": 42,
+                "head_sha": "a" * 40,
+                "actions": [
+                    {
+                        "type": "comment_edit",
+                        "comment_id": 7,
+                        "body": "New",
+                        "expected": {"body": "Old"},
+                    }
+                ],
+            }
+        )
+    }
+    (view,) = build_views(IDENTITY, (store("pr", files),))
+    assert [a.kind for a in view.actions] == ["comment_edit"]
+    assert view.actions[0].body == "New"
+
+
+def test_issue_comment_edit_is_its_own_action_kind():
+    files = {
+        "001.json": json.dumps(
+            {
+                "version": 1,
+                "actions": [
+                    {
+                        "type": "comment_edit",
+                        "repo": ".",
+                        "issue": 7,
+                        "comment_id": 99,
+                        "body": "New",
+                        "expected": {"body": "Old"},
+                    }
+                ],
+            }
+        )
+    }
+    (view,) = build_views(IDENTITY, (store("issue", files),))
+    assert [a.kind for a in view.actions] == ["comment_edit"]
+
+
+def test_pr_state_is_its_own_action_kind():
+    files = {
+        "001.json": json.dumps(
+            {
+                "version": 1,
+                "repo": "acme/repo",
+                "pr": 42,
+                "head_sha": "a" * 40,
+                "actions": [{"type": "state", "state": "closed", "expected": {"state": "open"}}],
+            }
+        )
+    }
+    (view,) = build_views(IDENTITY, (store("pr", files),))
+    assert [a.kind for a in view.actions] == ["state"]

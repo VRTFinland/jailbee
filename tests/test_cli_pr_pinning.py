@@ -61,7 +61,7 @@ def _setup_command(mocker, tmp_path, *, submodule, authored=False):
     mocker.patch("jailbee.sync.assert_container_publishable", return_value="sampleapp-feat-foo")
     mocker.patch("jailbee.pr.find_pr_for_branch", return_value=None)
     mocker.patch("jailbee.git.commit_subject", return_value="feat: work")
-    mocker.patch("jailbee.cli._offer_outbox_comments", return_value=0)
+    mocker.patch("jailbee.pr_push_run.offer_outbox_comments", return_value=0)
     if submodule:
         root, slug = tmp_path / "lib/a", "acme/lib-a"
         args = ["submodule", "pr", "push", "feat-foo"]

@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import TypedDict
 
-from jailbee.host_target import TargetSnapshot
+from jailbee.host_target import SyncTarget, TargetSnapshot, host_sync_target
 from jailbee.incus import Incus, IncusError
 from jailbee.submodules import HOST_SOURCE
 
@@ -82,6 +82,34 @@ class SubmoduleChange:
 
 
 @dataclass(frozen=True)
+class OtherBranch:
+    """A local branch other than the checked-out one, with its tip commit.
+
+    ``remote_contained`` is True when a remote-tracking ref in the container
+    contains the tip, False when none does, None when that could not be asked.
+    """
+
+    name: str
+    sha: str
+    remote_contained: bool | None = None
+
+
+def parse_other_branches(raw: str) -> tuple[OtherBranch, ...] | None:
+    """Parse probe field 16; None when the listing failed (``?``)."""
+    if raw.strip() == "?":
+        return None
+    out: list[OtherBranch] = []
+    for line in raw.splitlines():
+        cols = line.split("\t")
+        if len(cols) != 3 or not cols[0] or not cols[1]:
+            continue
+        rc = cols[2].strip()
+        contained = True if rc == "1" else False if rc == "0" else None
+        out.append(OtherBranch(cols[0], cols[1], contained))
+    return tuple(out)
+
+
+@dataclass(frozen=True)
 class GitStatus:
     """Per-container git status, formatted for table display.
 
@@ -123,6 +151,31 @@ class GitStatus:
     base_source: str = "unavailable"
     tracking_relation: str = "unavailable"
     upstream_ref: str = ""
+    # What DIFF/↑/↓/MERGE above compare against (the sync target). None only
+    # for a status built without a target. ``base_*``/``tracking_relation``/
+    # ``upstream_ref`` keep describing the host branch whatever the target.
+    sync_target: SyncTarget | None = None
+    # ↑/↓ against the host branch. Equal to ``ahead_count``/``behind_count``
+    # when the sync target is the host branch.
+    host_ahead_count: str = "?"
+    host_behind_count: str = "?"
+    host_branch: str = ""  # the host branch's name; "" without a target
+
+    # Other local branches whose tip is on neither the host nor a remote-tracking
+    # ref (`lifecycle` filters the probe's raw list). None = not measured.
+    other_branches: tuple[OtherBranch, ...] | None = None
+
+    @property
+    def ahead_of_host(self) -> str:
+        """↑ against the host branch, whatever the sync target.
+
+        What the host-side verbs (``git pull``, ``git diff``, the destroy
+        guard) care about: their counterpart is the host branch, not the PR
+        head DIFF/↑/↓ compare with.
+        """
+        if self.sync_target is not None and self.sync_target.kind != "host":
+            return self.host_ahead_count
+        return self.ahead_count
 
 
 # Probe value -> the word shown to the user for an operation in progress.
@@ -337,6 +390,11 @@ def _parse_submodules(committed_raw: str, wt_raw: str) -> tuple[SubmoduleChange,
     return tuple(out)
 
 
+# `behind_count` when the target commit is absent from the container.
+BEHIND_UNKNOWN = "•"
+# The same state on the wire (ASCII, locale-proof) and in JSON output.
+PROBE_MISSING = "missing"
+
 _PROBE_SNIPPET = r"""
 set +e
 cd "$REPO_DIR" 2>/dev/null || { printf '?\0?\0?\0?\0'; exit 0; }
@@ -437,6 +495,43 @@ else
   COUNT="?"
   BEHIND_COUNT="?"
   CONFLICT="?"
+  # A target the host knows but this container's object store lacks proves the
+  # container is behind it: "missing" = pull needed, count unknown. Nothing is written.
+  [ -n "$TARGET_SHA" ] && BEHIND_COUNT="@MISSING@"
+fi
+
+# A parent target counts ↑ from the newest commit the parent certainly has
+# (AHEAD_BASE_SHA), not from the parent's HEAD: the parent moves on without
+# the child, and those commits are ↓, not ↑. When the parent's HEAD is in this
+# container (BASE set) its commits are excluded too, so work that reached the
+# parent by another route drops out. An AHEAD_BASE_SHA this repository lacks
+# makes rev-list fail, which leaves "?".
+if [ -n "$AHEAD_BASE" ]; then
+  COUNT="?"
+  if [ -n "$AHEAD_BASE_SHA" ]; then
+    if [ -n "$BASE" ]; then
+      COUNT=$(git rev-list --count HEAD "^${AHEAD_BASE_SHA}" "^${BASE}" 2>/dev/null) \
+        || COUNT="?"
+    else
+      COUNT=$(git rev-list --count "${AHEAD_BASE_SHA}..HEAD" 2>/dev/null) || COUNT="?"
+    fi
+  fi
+fi
+
+# --- fields 14-15: ↑/↓ against the host branch when the target is another ref ---
+HOST_AHEAD="?"
+HOST_BEHIND="?"
+if [ -n "$HOST_TARGET_SHA" ] \
+   && git cat-file -e "${HOST_TARGET_SHA}^{commit}" >/dev/null 2>&1; then
+  HOST_COUNTS=$(git rev-list --left-right --count "${HOST_TARGET_SHA}...HEAD" 2>/dev/null) \
+    || HOST_COUNTS="?"
+  if [ "$HOST_COUNTS" != "?" ]; then
+    set -- $HOST_COUNTS
+    HOST_BEHIND=$1
+    HOST_AHEAD=$2
+  fi
+elif [ -n "$HOST_TARGET_SHA" ]; then
+  HOST_BEHIND="@MISSING@"
 fi
 
 # --- per-submodule breakdown (fields 5 and 6) ---
@@ -524,11 +619,55 @@ UNMERGED=$(git ls-files --unmerged 2>/dev/null \
   | cut -f2 | sort -u | wc -l | tr -d '[:space:]')
 case "$UNMERGED" in '' | *[!0-9]*) UNMERGED="?" ;; esac
 
-printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+# --- field 16: other local branches, one "name<TAB>sha<TAB>remote" line each ---
+# Every refs/heads tip except any tip equal to HEAD (HEAD is judged above, which
+# also covers the checked-out branch). remote: 1 = a remote-tracking ref
+# contains the tip, 0 = none does, ? = the question failed. "?" alone = the
+# listing itself failed. Containment is ONE `rev-list <tips> --not --remotes`
+# whatever the branch count: it prints the commits no remote reaches, so a tip
+# is unpushed exactly when it appears in that output.
+OTHER_BRANCHES=$(
+  if ! REFS=$(git for-each-ref --format='%(refname:short)%09%(objectname)' \
+      refs/heads 2>/dev/null); then
+    printf '?'
+  else
+    TAB="$(printf '\t')"
+    TIPS=$(printf '%s\n' "$REFS" | while IFS="$TAB" read -r bname bsha; do
+      [ -z "$bsha" ] && continue
+      [ "$bsha" = "$HEAD_SHA" ] && continue
+      printf '%s\n' "$bsha"
+    done | sort -u)
+    if [ -n "$TIPS" ]; then
+      # Tips go in on stdin (no ARG_MAX limit); awk keeps only the tips from the
+      # unpushed-commit stream, so a long history never lands in a variable. A
+      # failed rev-list prints FAIL, which awk passes through.
+      UNPUSHED=$({ printf '%s\n' "$TIPS" | git rev-list --stdin --not --remotes 2>/dev/null \
+        || echo FAIL; } | awk -v t="$TIPS" \
+        'BEGIN { n = split(t, a, "\n"); for (i = 1; i <= n; i++) w[a[i]] = 1
+                 w["FAIL"] = 1 } $0 in w')
+      case "$UNPUSHED" in *FAIL*) RC_OK=0 ;; *) RC_OK=1 ;; esac
+      printf '%s\n' "$REFS" | while IFS="$TAB" read -r bname bsha; do
+        [ -z "$bsha" ] && continue
+        [ "$bsha" = "$HEAD_SHA" ] && continue
+        if [ "$RC_OK" = 0 ]; then
+          rc="?"
+        elif printf '%s\n' "$UNPUSHED" | grep -Fxq "$bsha"; then
+          rc=0
+        else
+          rc=1
+        fi
+        printf '%s\t%s\t%s\n' "$bname" "$bsha" "$rc"
+      done
+    fi
+  fi
+)
+
+printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
   "$WT" "$COMMITTED" "$COUNT" "$CONFLICT" "$SUB_COMMITTED_STRUCT" "$SUB_WT_STRUCT" \
   "$HEAD_SHA" "$REMOTE_CONTAINED" "$LOCAL_DIFF" "$LOCAL_COUNT" \
-  "$IN_PROGRESS" "$UNMERGED" "$BEHIND_COUNT"
-"""
+  "$IN_PROGRESS" "$UNMERGED" "$BEHIND_COUNT" "$HOST_AHEAD" "$HOST_BEHIND" \
+  "$OTHER_BRANCHES"
+""".replace("@MISSING@", PROBE_MISSING)
 
 
 def probe_container_git(
@@ -542,6 +681,7 @@ def probe_container_git(
     timeout_s: int = 3,
     host_head: str | None = None,
     target: TargetSnapshot | None = None,
+    sync: SyncTarget | None = None,
 ) -> GitStatus:
     """Run the probe snippet inside `full_name`, return parsed `GitStatus`.
 
@@ -558,9 +698,19 @@ def probe_container_git(
     is absent the LOCAL fields come back ``"?"`` and the host tries the
     mirror direction itself (see ``lifecycle._resolve_local_on_host``).
 
+    ``sync`` is the container's sync target (see `host_target.SyncTarget`);
+    DIFF/↑/↓/MERGE compare against it. Without one, or when it is the host
+    branch, they compare against ``target`` as before. A non-host sync target
+    also has the probe count ↑/↓ against ``target`` for the host-branch row.
+
     Any exec failure (non-zero exit, missing binary, timeout) or partial
     output leaves probe-dependent fields unknown but preserves the host snapshot.
     """
+    if sync is None and target is not None:
+        sync = host_sync_target(target)
+    compare_sha = sync.sha if sync is not None else None
+    separate_host = sync is not None and sync.kind != "host"
+    parent_target = sync is not None and sync.kind == "parent"
     unknown = GitStatus(
         wt="?",
         ahead_diff="?",
@@ -570,6 +720,8 @@ def probe_container_git(
         base_source=target.source if target is not None else "unavailable",
         tracking_relation=target.tracking_relation if target is not None else "unavailable",
         upstream_ref=target.upstream_ref if target is not None else "",
+        host_branch=target.branch if target is not None else "",
+        sync_target=sync,
     )
     try:
         raw = incus.exec(
@@ -580,7 +732,12 @@ def probe_container_git(
                 "BASE_BRANCH": base_branch or "",
                 "DEFAULT_BRANCH": default_branch,
                 "HOST_HEAD": host_head or "",
-                "TARGET_SHA": (target.sha or "") if target is not None else "",
+                "TARGET_SHA": compare_sha or "",
+                "AHEAD_BASE": "1" if parent_target else "",
+                "AHEAD_BASE_SHA": (sync.ahead_sha or "") if parent_target and sync else "",
+                "HOST_TARGET_SHA": (
+                    (target.sha or "") if separate_host and target is not None else ""
+                ),
                 "HOST_SOURCE": HOST_SOURCE,
                 # The probe only reads, but `git status`/`git diff --cached`
                 # refresh the index and write it back — which takes
@@ -659,8 +816,23 @@ def probe_container_git(
         unmerged = None
 
     raw_behind = parts[12].strip() if len(parts) >= 13 else "?"
-    behind_count = raw_behind if raw_behind.isdigit() else "?"
+    if raw_behind == PROBE_MISSING and sync is not None:  # ASCII on the wire; locale-proof
+        behind_count = BEHIND_UNKNOWN
+    else:
+        behind_count = raw_behind if raw_behind.isdigit() and sync is not None else "?"
     target_diff = ahead_diff
+    if separate_host:
+        raw_host_ahead = parts[13].strip() if len(parts) >= 15 else "?"
+        raw_host_behind = parts[14].strip() if len(parts) >= 15 else "?"
+        host_ahead = raw_host_ahead if raw_host_ahead.isdigit() else "?"
+        if raw_host_behind == PROBE_MISSING:
+            host_behind = BEHIND_UNKNOWN
+        else:
+            host_behind = raw_host_behind if raw_host_behind.isdigit() else "?"
+    else:
+        host_ahead, host_behind = ahead_count, behind_count
+
+    other_branches = parse_other_branches(parts[15]) if len(parts) >= 16 else None
 
     return GitStatus(
         wt=wt,
@@ -668,6 +840,7 @@ def probe_container_git(
         ahead_count=ahead_count,
         conflict=conflict,
         submodules=submodules,
+        other_branches=other_branches,
         head_sha=head_sha,
         remote_contained=remote_contained,
         local_diff=local_diff,
@@ -675,11 +848,15 @@ def probe_container_git(
         in_progress=in_progress,
         unmerged=unmerged,
         target_diff=target_diff,
-        behind_count=behind_count if target is not None else "?",
+        behind_count=behind_count,
         base_sha=target.sha if target is not None else None,
         base_source=target.source if target is not None else "unavailable",
         tracking_relation=target.tracking_relation if target is not None else "unavailable",
         upstream_ref=target.upstream_ref if target is not None else "",
+        host_branch=target.branch if target is not None else "",
+        sync_target=sync,
+        host_ahead_count=host_ahead,
+        host_behind_count=host_behind,
     )
 
 
@@ -694,6 +871,7 @@ def probe_many_parallel(
     host_head: str | None = None,
     target_by_name: Mapping[str, TargetSnapshot] | None = None,
     host_head_by_name: Mapping[str, str | None] | None = None,
+    sync_by_name: Mapping[str, SyncTarget] | None = None,
 ) -> dict[str, GitStatus]:
     """Run `probe_container_git` for each (full_name, repo_dir, base_branch) target.
 
@@ -720,6 +898,7 @@ def probe_many_parallel(
                 host_head_by_name.get(full_name) if host_head_by_name is not None else host_head
             ),
             target=(target_by_name or {}).get(full_name),
+            sync=(sync_by_name or {}).get(full_name),
         )
         return full_name, status
 

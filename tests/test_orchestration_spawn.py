@@ -466,6 +466,54 @@ def test_child_options_fork_is_untrusted_and_pinned(tmp_path: Path) -> None:
     assert o.initial_prompt == "p"
 
 
+def test_child_options_fork_carries_the_base_explicit_marker(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from jailbee.forking import ForkSource
+
+    ctx, plan = _plan(tmp_path)
+    fork = ForkSource("proj-src", "src-br", "deadbeef", "dev", False, {}, "false")
+    o = actions.child_options(ctx.cfg, plan, orchestrator_full="proj-orch", fork=fork)
+    assert o.base_explicit_label == "false"
+    o = actions.child_options(
+        ctx.cfg, plan, orchestrator_full="proj-orch", fork=replace(fork, base_explicit=None)
+    )
+    assert o.base_explicit_label is None
+
+
+@pytest.mark.parametrize("ref", [None, "v1"])
+def test_queued_fork_preserves_the_base_explicit_marker(tmp_path, monkeypatch, ref):
+    from jailbee.forking import ForkSource
+    from jailbee.orchestration.state import load_queue
+
+    ctx = _ctx(tmp_path, {"max_running_children": 1})
+    ctx.incus.config_get.side_effect = lambda name, key: (
+        "false" if key == "user.jailbee.base_explicit" else None
+    )
+    monkeypatch.setattr(actions, "count_breakdown", lambda ctx: (0, 0, 1))
+    monkeypatch.setattr(
+        actions.forking,
+        "prepare_fork",
+        MagicMock(
+            return_value=ForkSource(ctx.sender.full, "orch", "a" * 40, "dev", False, {}, "false")
+        ),
+    )
+    monkeypatch.setattr(actions.forking, "pin_fork_commit", MagicMock())
+    start = MagicMock(return_value=Outcome("started", "ok"))
+    monkeypatch.setattr(actions, "start_child", start)
+    m = _m().model_copy(update={"version": 2, "ref": ref})
+    assert actions.handle_spawn(ctx, m).state == "queued"
+    req = load_queue(ctx.root)[ctx.sender.full][0]
+    # The source's marker changes while the spawn waits: a ref fork keeps the
+    # snapshot taken at enqueue, a HEAD fork reads the live label at start.
+    ctx.incus.config_get.side_effect = lambda name, key: (
+        "true" if key == "user.jailbee.base_explicit" else None
+    )
+    assert actions._start_spawn(ctx, req).state == "started"
+    expected = "false" if ref is not None else "true"
+    assert start.call_args.kwargs["fork"].base_explicit == expected
+
+
 def test_child_options_new_loose_uses_base(tmp_path: Path) -> None:
     ctx, plan = _plan(tmp_path, "new", loose=True)
     o = actions.child_options(ctx.cfg, plan, orchestrator_full="proj-orch", fork=None)

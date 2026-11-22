@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass
 from typing import Literal
@@ -29,8 +30,8 @@ class PrView:
     repo: str
 
 
-def run_json(argv: list[str], *, cwd: str | None = None) -> object:
-    """Run gh once and decode its JSON response."""
+def run_text(argv: list[str], *, cwd: str | None = None) -> str:
+    """Run gh once and return its standard output."""
     try:
         result = subprocess.run(
             argv, cwd=cwd, capture_output=True, text=True, check=False, timeout=30
@@ -47,8 +48,14 @@ def run_json(argv: list[str], *, cwd: str | None = None) -> object:
         raise GhError(f"cannot run gh: {exc}") from exc
     if result.returncode:
         raise GhError(result.stderr.strip() or "gh failed")
+    return result.stdout
+
+
+def run_json(argv: list[str], *, cwd: str | None = None) -> object:
+    """Run gh once and decode its JSON response."""
+    stdout = run_text(argv, cwd=cwd)
     try:
-        return json.loads(result.stdout)
+        return json.loads(stdout)
     except (json.JSONDecodeError, TypeError) as exc:
         raise GhError(f"gh returned malformed JSON; retry `{' '.join(argv)}`") from exc
 
@@ -170,3 +177,142 @@ def pr_view(number: int | None, *, cwd: str | None = None) -> PrView:
         raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise GhError(f"invalid PR response; retry `{' '.join(argv)}`: {exc}") from exc
+
+
+@dataclass(frozen=True)
+class CommentView:
+    """One issue or PR conversation comment as the container's gh reads it."""
+
+    id: int
+    author: str
+    body: str
+    created_at: str
+    url: str
+    issue: int | None
+    review_id: int | None = None
+
+
+_ISSUE_API_URL_RE = re.compile(r"https://api\.github\.com/repos/[^/]+/[^/]+/issues/([1-9][0-9]*)")
+
+
+def _api_repo(repo: str | None) -> tuple[str | None, str]:
+    """Working directory and ``repos/...`` prefix for one manifest repo value.
+
+    gh fills ``{owner}/{repo}`` from the checkout it runs in.
+    """
+    cwd, slug = _issue_target(repo)
+    return cwd, f"repos/{slug}" if slug is not None else "repos/{owner}/{repo}"
+
+
+_PULL_API_URL_RE = re.compile(r"https://api\.github\.com/repos/[^/]+/[^/]+/pulls/([1-9][0-9]*)")
+
+
+def _comment_view(
+    value: object, *, parent_key: str = "issue_url", parent_re: re.Pattern[str] = _ISSUE_API_URL_RE
+) -> CommentView:
+    if not isinstance(value, dict):
+        raise ValueError("comment must be an object")
+    user = value.get("user")
+    author = user.get("login") if isinstance(user, dict) else None
+    cid, body = value.get("id"), value.get("body")
+    created, url, issue_url = value.get("created_at"), value.get("html_url"), value.get(parent_key)
+    if type(cid) is not int or not isinstance(author, str):
+        raise ValueError("comment needs an id and an author")
+    if body is not None and not isinstance(body, str):
+        raise ValueError("comment body must be text")
+    if not isinstance(url, str) or not isinstance(created, str):
+        raise ValueError("comment needs a URL and a creation time")
+    match = parent_re.fullmatch(issue_url) if isinstance(issue_url, str) else None
+    review = value.get("pull_request_review_id")
+    return CommentView(
+        cid,
+        author,
+        body or "",
+        created,
+        url,
+        int(match[1]) if match else None,
+        review if type(review) is int else None,
+    )
+
+
+def issue_comment(repo: str | None, comment_id: int) -> CommentView:
+    """Read one issue or PR conversation comment by its numeric id."""
+    cwd, prefix = _api_repo(repo)
+    argv = ["gh", "api", f"{prefix}/issues/comments/{comment_id}"]
+    try:
+        return _comment_view(run_json(argv, cwd=cwd))
+    except GhError as exc:
+        raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
+    except ValueError as exc:
+        raise GhError(f"invalid comment response; retry `{' '.join(argv)}`: {exc}") from exc
+
+
+def review_comment(repo: str | None, comment_id: int) -> CommentView:
+    """Read one pull-request review (line) comment; ``issue`` is its PR number."""
+    cwd, prefix = _api_repo(repo)
+    argv = ["gh", "api", f"{prefix}/pulls/comments/{comment_id}"]
+    try:
+        return _comment_view(
+            run_json(argv, cwd=cwd), parent_key="pull_request_url", parent_re=_PULL_API_URL_RE
+        )
+    except GhError as exc:
+        raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
+    except ValueError as exc:
+        raise GhError(f"invalid comment response; retry `{' '.join(argv)}`: {exc}") from exc
+
+
+def pr_state(repo: str | None, pr: int) -> str:
+    """The state of PR #`pr`: ``open``, ``closed`` or ``merged``."""
+    cwd, prefix = _api_repo(repo)
+    argv = ["gh", "api", f"{prefix}/pulls/{pr}"]
+    try:
+        value = run_json(argv, cwd=cwd)
+    except GhError as exc:
+        raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
+    state = value.get("state") if isinstance(value, dict) else None
+    if not isinstance(value, dict) or state not in ("open", "closed"):
+        raise GhError(f"invalid PR response; retry `{' '.join(argv)}`")
+    return "merged" if value.get("merged") is True else str(state)
+
+
+def review_state(repo: str | None, pr: int, review_id: int) -> str:
+    """The state (``PENDING``, ``COMMENTED``, ...) of one review on PR #`pr`."""
+    cwd, prefix = _api_repo(repo)
+    argv = ["gh", "api", f"{prefix}/pulls/{pr}/reviews/{review_id}"]
+    try:
+        value = run_json(argv, cwd=cwd)
+    except GhError as exc:
+        raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
+    state = value.get("state") if isinstance(value, dict) else None
+    if not isinstance(state, str):
+        raise GhError(f"invalid review response; retry `{' '.join(argv)}`")
+    return state
+
+
+def _decode_pages(text: str) -> list[list[object]]:
+    """The JSON arrays ``gh api --paginate`` prints back to back, one per page."""
+    decoder = json.JSONDecoder()
+    pages: list[list[object]] = []
+    position = 0
+    while True:
+        while position < len(text) and text[position].isspace():
+            position += 1
+        if position == len(text):
+            return pages
+        page, position = decoder.raw_decode(text, position)
+        if not isinstance(page, list):
+            raise ValueError("page must be a list")
+        pages.append(page)
+
+
+def issue_comments(repo: str | None, number: int) -> tuple[CommentView, ...]:
+    """Every conversation comment on an issue or pull request, oldest first."""
+    cwd, prefix = _api_repo(repo)
+    argv = ["gh", "api", f"{prefix}/issues/{number}/comments", "--paginate"]
+    try:
+        pages = _decode_pages(run_text(argv, cwd=cwd))
+        return tuple(_comment_view(item) for page in pages for item in page)
+    except GhError as exc:
+        raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise GhError(f"invalid comments response; retry `{' '.join(argv)}`: {exc}") from exc

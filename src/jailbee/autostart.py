@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shlex
 import signal
 import time
 from contextlib import contextmanager
@@ -184,54 +183,43 @@ def has_graphical_session() -> bool:
     )
 
 
-def _github_token_step(cfg: Config) -> AutostartStep | None:
-    """Return an AutostartStep that writes /etc/profile.d/jailbee-github.sh
-    with `export GH_TOKEN=<this repo's PAT>`, or None when no token applies.
+def _github_token(cfg: Config) -> str | None:
+    """The stripped GitHub token that applies to this repo, or None.
 
-    Returns None when:
-      - github.enabled is false
-      - no token applies (``GithubConfig.token_for`` returns None)
-      - the resolved token is empty after strip (validate_runtime would have
-        flagged this; defensive guard)
-
-    The step needs no network of its own (writing a file inside the
-    container does not), so it leaves the container's current profile
-    alone. It is executed by ``inject_github_token`` *before* the user's
-    autostart steps (each runs in a fresh ``bash -lc`` login shell that
-    sources /etc/profile.d), so on_start steps invoking `gh` see GH_TOKEN.
+    None when github.enabled is false, no token applies
+    (``GithubConfig.token_for`` returns None), or the token is empty after
+    strip (validate_runtime would have flagged this; defensive guard).
     """
     if not cfg.github.enabled:
         return None
     secret = cfg.github.token_for(cfg.container_prefix)
     if secret is None:
         return None
-    token = secret.get_secret_value().strip()
-    if not token:
-        return None
-    # Autostart steps run as the dev user. /etc/profile.d/ requires root,
-    # so we pipe through `sudo tee` — the dev user has passwordless sudo
-    # baked into the golden image (provision/install.sh:74-77).
-    return AutostartStep(
-        name="github-token",
-        run=(
-            f"printf 'export GH_TOKEN=%s\\n' {shlex.quote(token)} "
-            "| sudo tee /etc/profile.d/jailbee-github.sh > /dev/null "
-            "&& sudo chmod 0644 /etc/profile.d/jailbee-github.sh"
-        ),
-        network=None,
-    )
+    return secret.get_secret_value().strip() or None
+
+
+_GITHUB_PROFILE = "/etc/profile.d/jailbee-github.sh"
+
+# The token arrives on stdin, never in argv (visible in the host's `ps`).
+# /etc/profile.d/ requires root, and the dev user has passwordless sudo baked
+# into the golden image (provision/install.sh:74-77).
+_WRITE_GITHUB_PROFILE = (
+    "IFS= read -r token && "
+    f"printf 'export GH_TOKEN=%s\\n' \"$token\" | sudo tee {_GITHUB_PROFILE} > /dev/null "
+    f"&& sudo chmod 0644 {_GITHUB_PROFILE}"
+)
+_REMOVE_GITHUB_PROFILE = f"rm -f {_GITHUB_PROFILE}"
 
 
 def inject_github_token(
     cfg: Config,
     incus: Incus,
     container: str,
-    repo_dir: str,
     *,
     mirror_endpoint: tuple[str, int] | None = None,
 ) -> None:
     """Write /etc/profile.d/jailbee-github.sh into ``container`` when the github
-    integration applies; no-op otherwise.
+    integration applies; remove it otherwise.
 
     GH_TOKEN is auto-enabled *infrastructure*, not one of the user's
     configured autostart commands — like the Claude install, it must land
@@ -242,8 +230,9 @@ def inject_github_token(
     to any step that calls `gh`.
 
     Re-run on every boot path (`jailbee new`, `jailbee start`/`restart`, `jailbee apply`)
-    so a rotated PAT in config is picked up. No-op when github.enabled is off
-    or no token applies to this container's prefix.
+    so a rotated PAT in config is picked up. When github.enabled is off or no
+    token applies to this container's prefix, the file is removed instead, so
+    a token taken out of config does not linger in the container.
 
     ``mirror_endpoint`` is accepted for call-site symmetry with the other
     boot-path helpers but is not forwarded: the token step declares no
@@ -251,17 +240,18 @@ def inject_github_token(
     would need re-writing. Switching the profile is a *stage's* job now
     (see ``run_stage``), and this step is not part of a stage.
     """
-    step = _github_token_step(cfg)
-    if step is None:
-        return
-    info(f"Injecting GH_TOKEN into {container}")
+    token = _github_token(cfg)
     # A root `incus exec`, not a tmux step: this must not create the tmux
     # session. Window 0 is a non-login shell that inherits the *server's*
     # environment, and the server is started by whichever `ensure_session`
     # runs first (`agents.ensure_agents` on `jailbee new`) — if the file does
     # not exist yet by then, window 0 never sees GH_TOKEN. Callers therefore
     # invoke this before anything that creates the session.
-    incus.exec(container, ["bash", "-c", step.run])
+    if token is None:
+        # A removed or disabled token must not outlive its config entry.
+        incus.exec(container, ["bash", "-c", _REMOVE_GITHUB_PROFILE])
+        return
+    incus.exec_with_input(container, ["bash", "-c", _WRITE_GITHUB_PROFILE], token + "\n")
 
 
 def litellm_autostart_on(cfg: Config) -> bool:
@@ -298,15 +288,47 @@ def _agent_command(cfg: Config, name: str, command: str) -> str:
     return claude_jb_command(command) or command
 
 
+def effective_runner(
+    cfg: Config, runner: Runner | None, default_runner: Runner | None, *, warn: bool = True
+) -> Runner | None:
+    """The runner a container's Claude window is launched with, or None (legacy path).
+
+    The container's own ``runner`` label wins; else the repo's ``default_runner``,
+    unless it is on `claude-jb` while `litellm.enabled` is off (warning, ignored).
+    Autostart, "open a new agent window" and the dashboard card all resolve
+    through this one function, so they name the same agent. ``warn=False`` is for
+    callers that only display the answer (the dashboard's gather loop).
+    """
+    if runner is not None:
+        return runner
+    if default_runner is None:
+        return None
+    if default_runner.agent == "claude-jb" and not cfg.litellm_view().config.enabled:
+        if warn:
+            log.warning(
+                "default runner %s not applied: litellm is not enabled, "
+                "so `claude-jb` has no proxy to use",
+                default_runner.describe(),
+            )
+        return None
+    return default_runner
+
+
 def agent_autostart_steps(
     cfg: Config,
     *,
     initial_prompt: bool = False,
     extra_env: Mapping[str, str] | None = None,
     runner: Runner | None = None,
+    default_runner: Runner | None = None,
     resume: str | None = None,
+    launch: str | None = None,
 ) -> list[AutostartStep]:
     """One backgrounded tmux window per agent with `autostart`.
+
+    ``launch`` names one agent that gets a step whether or not it has `autostart`
+    (the dashboard's "open a new agent window"); its command is resolved exactly
+    as at autostart.
 
     Appended (not prepended) to on_start so user steps finish first, and
     ordered with `claude` last (see `agents.enabled_agent_specs`) because
@@ -357,6 +379,14 @@ def agent_autostart_steps(
     the window whether or not a prompt is pending, and the `litellm.autostart`
     swap does not apply. A command `runner_command` refuses falls back to the
     configured one with a warning (validation already refused it).
+
+    ``default_runner`` is the repo's default (`agents.default_runner`) and applies
+    to a container with no ``runner`` label: it rewrites the Claude command the
+    same way, but does not change which agent is the prompted primary. Order:
+    runner label, then ``default_runner``, then the `litellm.autostart` path.
+    A ``default_runner`` on `claude-jb` while `litellm.enabled` is off is not
+    applied (warning, legacy path): the repo-committed key cannot make a host
+    without the proxy autostart a failing window.
     """
     from jailbee.agents import enabled_agent_specs, primary_agent
     from jailbee.initial_prompt import CONSUMED_PATH, PROMPT_ENV, prompted_run
@@ -365,19 +395,20 @@ def agent_autostart_steps(
     if initial_prompt:
         primary = "claude" if runner is not None else primary_agent(cfg).name
     steps: list[AutostartStep] = []
+    effective = effective_runner(cfg, runner, default_runner)
     for spec in enabled_agent_specs(cfg):
         is_primary = spec.name == primary
-        if not (spec.autostart or is_primary) or not spec.command.strip():
+        if not (spec.autostart or is_primary or spec.name == launch) or not spec.command.strip():
             continue
         command = _agent_command(cfg, spec.name, spec.command)
-        if runner is not None and spec.name == "claude":
+        if effective is not None and spec.name == "claude":
             from jailbee.orchestration.runner import runner_command
 
-            rewritten = runner_command(spec.command, runner)
+            rewritten = runner_command(spec.command, effective)
             if rewritten is None:
                 log.warning(
                     "runner %s not applied: agents.claude.command %r is not a claude command",
-                    runner.describe(),
+                    effective.describe(),
                     spec.command,
                 )
             else:
@@ -438,6 +469,7 @@ def _on_start_agent_steps(
         initial_prompt=pending,
         extra_env=extra_env,
         runner=runner,
+        default_runner=cfg.orchestration_view().default_runner,
         resume=read_resume(incus, container),
     )
     entries = boot_entries(cfg, incus, container)
@@ -478,10 +510,9 @@ def run_autostart(
     # The synthetic per-agent steps (empty when no agent has autostart on)
     # are the planner's to place — claude sorts last (`enabled_agent_specs`)
     # because `_attach_tmux` selects the last one of these by name when it
-    # lands you in the session. The github-token step is NOT injected here:
-    # it's infrastructure, not a
-    # user autostart command, so it's written by ``inject_github_token``
-    # independently of --no-autostart.
+    # lands you in the session. The GitHub token is NOT written here: it's
+    # infrastructure, not a user autostart command, so ``inject_github_token``
+    # handles it independently of --no-autostart.
     # A pending initial prompt puts the agents after every stage, detached
     # ones included: the prompted agent starts working at once, and must not
     # do so in a container whose autostart has not finished.

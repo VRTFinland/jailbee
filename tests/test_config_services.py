@@ -96,6 +96,20 @@ def test_minimal_service(tmp_path):
     assert (service.health, service.health_timeout) == (None, 5)
 
 
+def test_service_description_defaults_empty_and_loads(tmp_path):
+    cfg = load(
+        "services:\n  web: {run: x}\n  db: {run: y, description: Postgres for integration tests}\n",
+        tmp_path,
+    )
+    assert cfg.services["web"].description == ""
+    assert cfg.services["db"].description == "Postgres for integration tests"
+
+
+def test_service_description_must_be_a_string(tmp_path):
+    with pytest.raises(ConfigError, match="description"):
+        load("services: {web: {run: x, description: [a]}}", tmp_path)
+
+
 def test_health_timeout_must_be_positive(tmp_path):
     with pytest.raises(ConfigError, match="health_timeout"):
         load("services: {web: {run: x, health_timeout: 0}}", tmp_path)

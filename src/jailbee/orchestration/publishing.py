@@ -9,6 +9,7 @@ import re
 import sqlite3
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
@@ -186,6 +187,20 @@ def _own_review_repo(cfg: Config, manifest: pr_outbox.Manifest) -> None:
         raise pr_outbox.GateError("PR reviews may target only the own repository")
 
 
+def _comment_edit_right(rights: PublishRights, manifest: pr_outbox.Manifest) -> None:
+    if not rights.pr_comment_edits and any(
+        isinstance(action, pr_outbox.CommentEditAction) for action in manifest.actions
+    ):
+        raise pr_outbox.GateError("pr_comment_edits is not granted for this manifest")
+
+
+def _state_right(rights: PublishRights, manifest: pr_outbox.Manifest) -> None:
+    if not rights.pr_state and any(
+        isinstance(action, pr_outbox.StateAction) for action in manifest.actions
+    ):
+        raise pr_outbox.GateError("pr_state is not granted for this manifest")
+
+
 def _review_policy(
     rights: PublishRights, count: int, cfg: Config, incus: Incus, full: str
 ) -> Callable[[pr_outbox.Manifest], None]:
@@ -193,6 +208,8 @@ def _review_policy(
         if pr_outbox.is_source_manifest(manifest) or not rights.pr_reviews:
             raise pr_outbox.GateError("pr_reviews is not granted for this manifest")
         _own_review_repo(cfg, manifest)
+        _comment_edit_right(rights, manifest)
+        _state_right(rights, manifest)
         from jailbee.pr_flow import PR_LABEL_PREFIX, STACKED_LABEL_PREFIX
 
         entries = branch_pr.BranchPrMap(incus, full).read().values()
@@ -214,6 +231,13 @@ def _review_policy(
         ):
             raise pr_outbox.GateError(
                 "description rewrite requires an authored, non-adopted PR binding"
+            )
+        if (
+            any(isinstance(action, pr_outbox.StateAction) for action in manifest.actions)
+            and target_number not in authored
+        ):
+            raise pr_outbox.GateError(
+                "PR close/reopen requires an authored, non-adopted PR binding"
             )
 
     return check
@@ -302,6 +326,9 @@ def _precheck(
     except OutboxError as exc:
         raise pr_outbox.GateError(f"{exc}; resolve it on the host") from exc
     indices = pr_outbox.pending_indices(manifest_pr, progress)
+    pending_manifest = replace(manifest_pr, actions=tuple(manifest_pr.actions[i] for i in indices))
+    _comment_edit_right(rights, pending_manifest)
+    _state_right(rights, pending_manifest)
     return (
         "review",
         [

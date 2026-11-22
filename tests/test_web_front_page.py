@@ -1,0 +1,209 @@
+"""The front page over `/api/ws`: repo groups, dashboard-core cells, agent state, repo scope.
+
+The expected cells come from the dashboard core (`dashboard.columns` /
+`dashboard.format`) and from literals, never from the web view's own code.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Iterator
+from datetime import timedelta
+from typing import Any
+
+import pytest
+
+pytest.importorskip("fastapi")
+
+from fastapi.testclient import TestClient
+from rich.text import Text
+
+from jailbee.agent_status import AgentSummary
+from jailbee.dashboard import format as dfmt
+from jailbee.dashboard.columns import default_columns, visible_fields
+from jailbee.db import get_engine
+from jailbee.remote_ssh.repo_scope import RemoteRepoScope
+from jailbee.web.app import WebDeps, create_app
+from jailbee.web.auth import PinHolder
+from jailbee.web.protocol import PROTOCOL_VERSION
+from tests.web_fakes import (
+    START,
+    FakeClock,
+    FakeSourceFactory,
+    container,
+    pin_sequence,
+    repo_group,
+    snapshot_of,
+)
+
+
+def agent(state: str) -> AgentSummary:
+    return AgentSummary(
+        agent="claude", state=state, since=START - timedelta(minutes=5), waiting_for=None, count=1
+    )
+
+
+@pytest.fixture
+def factory() -> FakeSourceFactory:
+    return FakeSourceFactory()
+
+
+def open_client(
+    factory: FakeSourceFactory, excluded: frozenset[str] = frozenset()
+) -> Iterator[tuple[TestClient, str]]:
+    clock = FakeClock()
+    pin = PinHolder(generate=pin_sequence())
+    deps = WebDeps(
+        snapshot_source=factory,
+        engine=get_engine(),
+        clock=clock,
+        monotonic=clock.monotonic,
+        pin=pin,
+        repo_scope=RemoteRepoScope(excluded),
+    )
+    with TestClient(create_app(deps)) as client:
+        body = {"method": "pin", "pin": pin.current, "device_name": "boox"}
+        yield client, client.post("/api/auth", json=body).json()["token"]
+
+
+@pytest.fixture
+def started(factory: FakeSourceFactory) -> Iterator[tuple[TestClient, str]]:
+    yield from open_client(factory)
+
+
+def first_page(client: TestClient, token: str, factory: FakeSourceFactory, snap: Any) -> str:
+    """The raw text of the first front-page message after pushing ``snap``."""
+    with client.websocket_connect("/api/ws") as ws:
+        ws.send_text(json.dumps({"type": "auth", "v": PROTOCOL_VERSION, "token": token}))
+        ws.receive_json()  # hello
+        factory.only.push(snap)
+        return ws.receive_text()
+
+
+def test_containers_are_grouped_under_their_repo(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    client, token = started
+    snap = snapshot_of(
+        repo_group("alpha", container("alpha-1"), container("alpha-2")),
+        repo_group("beta", container("beta-1", repo="beta")),
+    )
+    view = json.loads(first_page(client, token, factory, snap))["view"]
+    assert [(r["prefix"], [c["name"] for c in r["containers"]]) for r in view["repos"]] == [
+        ("alpha", ["alpha-1", "alpha-2"]),
+        ("beta", ["beta-1"]),
+    ]
+
+
+def test_cells_equal_the_dashboard_core_for_the_same_snapshot(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    client, token = started
+    info = container("alpha-1", agent_status=(agent("waiting"),))
+    page = json.loads(first_page(client, token, factory, snapshot_of(repo_group("alpha", info))))
+    view = page["view"]
+    row = view["repos"][0]["containers"][0]
+
+    specs = visible_fields(START, [info], default_columns())
+    shown = {c["name"]: c["header"] for c in view["columns"]}
+    assert "name" in shown
+    assert "agent_compact" in shown, "the agent state is a default column"
+    cells = dict(zip((c["name"] for c in view["columns"]), row["cells"], strict=True))
+    for spec in specs:
+        if spec.name not in shown:
+            continue  # the core drops all-empty columns; the web page follows
+        assert shown[spec.name] == dfmt.dashboard_header(spec)
+        assert cells[spec.name] == Text.from_markup(dfmt.dashboard_cell(spec, info, START)).plain
+    # Known-good literals, independent of the core's code.
+    assert cells["name"] == "1", "the repo prefix is the heading, not part of the cell"
+    assert row["name"] == "alpha-1", "the full name stays the row identity"
+    assert cells["state"] == "▶"
+    assert cells["agent_compact"].startswith("◆")
+
+
+@pytest.mark.parametrize("state", ["waiting", "busy", "idle"])
+def test_row_carries_the_agent_state(
+    started: tuple[TestClient, str], factory: FakeSourceFactory, state: str
+) -> None:
+    client, token = started
+    info = container("alpha-1", agent_status=(agent(state),))
+    view = json.loads(first_page(client, token, factory, snapshot_of(repo_group("alpha", info))))[
+        "view"
+    ]
+    assert view["repos"][0]["containers"][0]["agent"] == state
+
+
+def test_row_without_an_agent_has_no_agent_state(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    client, token = started
+    snap = snapshot_of(repo_group("alpha", container("alpha-1")))
+    view = json.loads(first_page(client, token, factory, snap))["view"]
+    assert view["repos"][0]["containers"][0]["agent"] is None
+
+
+def test_row_carries_state_and_no_phase_at_rest(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    client, token = started
+    snap = snapshot_of(repo_group("alpha", container("alpha-1")))
+    row = json.loads(first_page(client, token, factory, snap))["view"]["repos"][0]["containers"][0]
+    assert row["state"] == "Running"
+    assert row["phase"] is None
+
+
+def test_stopped_row_carries_its_state(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    client, token = started
+    snap = snapshot_of(repo_group("alpha", container("alpha-1", state="Stopped")))
+    row = json.loads(first_page(client, token, factory, snap))["view"]["repos"][0]["containers"][0]
+    assert row["state"] == "Stopped"
+
+
+@pytest.mark.parametrize(
+    ("fields", "phase"),
+    [
+        ({"job_kind": "boot", "job_phase": "starting", "job_pid": 1, "job_live": True}, "booting"),
+        ({"job_kind": "autostart", "job_phase": "starting", "job_pid": 1}, "autostart"),
+        ({"job_kind": "create", "job_phase": "creating", "job_pid": 1}, "job"),
+        ({"autostart_failed": True}, "failed"),
+    ],
+)
+def test_row_carries_the_shared_row_phase(
+    started: tuple[TestClient, str],
+    factory: FakeSourceFactory,
+    fields: dict[str, Any],
+    phase: str,
+) -> None:
+    client, token = started
+    info = container("alpha-1", **fields)
+    snap = snapshot_of(repo_group("alpha", info))
+    row = json.loads(first_page(client, token, factory, snap))["view"]["repos"][0]["containers"][0]
+    assert row["phase"] == phase
+
+
+def test_excluded_repo_appears_nowhere_in_the_message(factory: FakeSourceFactory) -> None:
+    snap = snapshot_of(
+        repo_group("alpha", container("alpha-1")),
+        repo_group("secret", container("secret-box", repo="secret")),
+    )
+    for client, token in open_client(factory, frozenset({"secret"})):
+        raw = first_page(client, token, factory, snap)
+    assert "alpha-1" in raw
+    assert "secret" not in raw
+
+
+def test_the_page_updates_on_each_snapshot(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    client, token = started
+    with client.websocket_connect("/api/ws") as ws:
+        ws.send_text(json.dumps({"type": "auth", "v": PROTOCOL_VERSION, "token": token}))
+        ws.receive_json()
+        factory.only.push(snapshot_of(repo_group("alpha", container("a1")), seq=1))
+        first = ws.receive_json()["view"]
+        factory.only.push(snapshot_of(repo_group("alpha", container("a2")), seq=2))
+        second = ws.receive_json()["view"]
+    assert [c["name"] for c in first["repos"][0]["containers"]] == ["a1"]
+    assert [c["name"] for c in second["repos"][0]["containers"]] == ["a2"]

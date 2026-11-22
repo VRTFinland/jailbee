@@ -13,7 +13,7 @@ here. A repo heading keeps the label/value grid.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -32,6 +32,7 @@ from jailbee.dashboard.advisories import owing_repos
 from jailbee.dashboard.hit import Hit, hit_style
 from jailbee.dashboard.model import group_warnings
 from jailbee.dashboard.system_bar import min_usage_bar_cells, usage_bar
+from jailbee.git_status import BEHIND_UNKNOWN
 from jailbee.lifecycle import (
     ContainerInfo,
     _format_bytes,
@@ -47,6 +48,7 @@ from jailbee.upgrade import ACTION_COMMANDS
 if TYPE_CHECKING:
     from jailbee.accounts.models import ActivityEvent
     from jailbee.dashboard.model import RepoGroup, Row
+    from jailbee.host_target import SyncTarget
     from jailbee.orchestration.view import GrantView
 
 DETAILS_MAX_ROWS = 8  # content rows inside the border, for the label/value grid
@@ -100,7 +102,8 @@ class ContainerPanel:
     running container's (used, limit) bytes: drawn as a bar at the right end of
     the summary row when the row has room for it, else not at all.
     ``orchestration`` are an orchestrator's or child's own lines, one row each
-    right under the exceptions line (empty: none are drawn).
+    right under the exceptions line (empty: none are drawn). ``services`` is the
+    running container's services line, drawn under the processes (empty: none).
     """
 
     summary: tuple[str, ...]
@@ -112,6 +115,7 @@ class ContainerPanel:
     processes: tuple[str, ...] = ()
     memory: tuple[int, int] | None = None
     orchestration: tuple[str, ...] = ()
+    services: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -305,12 +309,113 @@ def _git_value(value: str) -> str:
         return "[dim]clean[/dim]"
     if value == "?":
         return "[yellow]?[/yellow]"
+    if value == BEHIND_UNKNOWN:  # target commit absent: pull needed, count unknown
+        return "[yellow]↓•[/yellow]"
     return escape(value)
 
 
 def _present(markup: str) -> bool:
     """Whether a cell shows a value, not an empty string or the dash placeholder."""
     return Text.from_markup(markup).plain.strip() not in ("", "—")
+
+
+_SHORT_SHA = 10
+
+
+def _fetch_age(epoch: float, now: datetime) -> str:
+    seconds = max(0, int(now.timestamp() - epoch))
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds >= size:
+            return f"{seconds // size}{unit} ago"
+    return f"{seconds}s ago"
+
+
+def _freshness(sync: SyncTarget, now: datetime) -> str:
+    """How current the PR head is: autofetch off, last fetch failed, fetched Nm ago, or nothing."""
+    if not sync.autofetch:
+        return "[dim]autofetch off[/dim]"
+    if sync.fetch_error is not None and sync.fetch_error_at is not None:
+        age = _fetch_age(sync.fetch_error_at, now)
+        return f"[yellow]fetch failed {age}[/yellow]"
+    if sync.fetched_at is not None:
+        return f"[dim]fetched {_fetch_age(sync.fetched_at, now)}[/dim]"
+    return ""
+
+
+def _join_notes(*parts: str) -> str:
+    return " · ".join(p for p in parts if p)
+
+
+def _target_rows(c: ContainerInfo, now: datetime) -> tuple[GitRow, ...]:
+    """One git row per target the container could sync with; none for a plain one.
+
+    A child or fork gets the host-branch row and its parent's ``⑂`` row; a
+    PR-bound container the host-branch row and its PR head row. Each row has
+    ↑/↓ against that target and the target's short sha; the sync target's
+    note says so. A target that could not be resolved (a PR head the host
+    never fetched, a parent not running) is a row of dashes, and the
+    host-branch row standing in for it is marked fallback.
+    """
+    gs = c.git_status
+    if gs is None or gs.sync_target is None:
+        return ()
+    sync = gs.sync_target
+    parent = sync.parent
+    if parent is None and c.pr_number is None:
+        return ()
+
+    def sha(value: str | None) -> str:
+        return f"[dim]{escape(value[:_SHORT_SHA])}[/dim]" if value else "[yellow]?[/yellow]"
+
+    on_host = sync.kind == "host"
+    host_note = ""
+    if on_host:
+        fallback = " [yellow](fallback)[/yellow]" if sync.fallback else ""
+        host_note = f"[bold]sync target[/bold]{fallback}"
+    host = GitRow(
+        name=f"↳ {escape(gs.host_branch or c.base_branch or 'host branch')}",
+        ahead=_git_value(gs.host_ahead_count),
+        behind=_git_value(gs.host_behind_count),
+        target=sha(gs.base_sha),
+        working="",
+        note=host_note,
+    )
+    if parent is not None:
+        name = f"⑂ {escape(parent)}"
+        if on_host:
+            return (host, GitRow(name, _DASH, _DASH, "[yellow]not seen running[/yellow]", ""))
+        seen = (
+            f"[dim]seen {_fetch_age(sync.seen_at, now)}[/dim]" if sync.seen_at is not None else ""
+        )
+        row = GitRow(
+            name=name,
+            ahead=_git_value(gs.ahead_count),
+            behind=_git_value(gs.behind_count),
+            target=sha(sync.sha),
+            working="",
+            note=_join_notes("[bold]sync target[/bold]", seen),
+        )
+        return (host, row)
+    pr_name = f"↳ PR #{c.pr_number} head"
+    if on_host:
+        pr = GitRow(
+            name=pr_name,
+            ahead=_DASH,
+            behind=_DASH,
+            target="[yellow]not fetched[/yellow]",
+            working="",
+            note=_freshness(sync, now),
+        )
+    else:
+        pr = GitRow(
+            name=pr_name,
+            ahead=_git_value(gs.ahead_count),
+            behind=_git_value(gs.behind_count),
+            target=sha(sync.sha),
+            working="",
+            note=_join_notes("[bold]sync target[/bold]", _freshness(sync, now)),
+        )
+    return (host, pr)
 
 
 def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
@@ -334,7 +439,7 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
         summary.append(escape(c.network))
     if c.ip:
         summary.append(escape(c.ip))
-    pr, issues = cell("pr"), cell("issues")
+    pr, issues = dashboard_format.pr_markup(c), cell("issues")
     github = " · ".join(
         part
         for part in (
@@ -348,6 +453,13 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
     agent = cell("agent")
     if _present(agent):
         summary.append(agent)
+    if c.agent_runner:
+        where = (
+            "this container"
+            if c.agent_source == "container"
+            else f"repo default, {escape(c.agent_source or 'repo')}"
+        )
+        summary.append(f"[dim]agent[/dim] {escape(c.agent_runner)} [dim]({where})[/dim]")
     # Every busy process, unlike the cell, which stops at DOING_MAX_NAMES.
     doing = ", ".join(
         escape(p.comm) if p.count == 1 else f"{escape(p.comm)} x{p.count}" for p in c.activity
@@ -357,13 +469,20 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
 
     git: tuple[GitRow, ...] | None = None
     if c.git_status is not None:
+        # The table's `vs …` header names the sync target, so the root row
+        # leaves out the marker the table cells carry.
+        bare = replace(c, git_status=replace(c.git_status, sync_target=None))
+
+        def sync_cell(name: str) -> str:
+            return cells[name](bare)
+
         root = GitRow(
             name=f"[bold]{escape(c.display_name)}[/bold]",
-            ahead=cell("ahead_count"),
-            behind=cell("behind_count"),
-            target=cell("target_diff"),
+            ahead=sync_cell("ahead_count"),
+            behind=sync_cell("behind_count"),
+            target=sync_cell("target_diff"),
             working=cell("wt"),
-            note=f"[dim]merge[/dim] {cell('conflict')}",
+            note=f"[dim]merge[/dim] {sync_cell('conflict')}",
             extra=f"[dim]host HEAD[/dim] ↑{cell('local_count')} {cell('local_diff')}",
         )
         subs = tuple(
@@ -377,7 +496,7 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
             )
             for sub, row in zip(c.git_status.submodules, submodule_sub_rows(c), strict=True)
         )
-        git = (root, *subs)
+        git = (root, *_target_rows(c, now), *subs)
 
     # What no other row says: the base is the git table's "vs" header, memory and
     # CPU are the summary bar and the process lines, the table has the age, the
@@ -387,9 +506,16 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
         footer.append(f"memory {escape(c.memory_limit)}* (override)")
     if (source := fork_source(c)) is not None:
         footer.append(f"⑂ forked from {escape(source)}")
+    sync = c.git_status.sync_target if c.git_status is not None else None
+    if sync is not None and sync.kind == "parent":
+        base = f"⑂ {sync.label}"
+    elif sync is not None and sync.kind != "host":
+        base = sync.label
+    else:
+        base = c.base_branch or "base"
     return ContainerPanel(
         tuple(summary),
-        escape(c.base_branch or "base"),
+        escape(base),
         git,
         tuple(footer),
         _exceptions(c, now, cell("ttl")),
@@ -397,6 +523,7 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
         _process_lines(c),
         _memory_use(c),
         _orchestration_lines(c),
+        _service_lines(c),
     )
 
 
@@ -414,9 +541,41 @@ def _publish_summary(g: GrantView) -> str:
         parts.append("PRs")
     if g.publish_pr_reviews:
         parts.append("PR reviews")
+    if g.publish_pr_comment_edits:
+        parts.append("PR comment edits")
     if not parts:
         return "none"
     return " · ".join([*parts, f"{g.publish_rate}/hour"])
+
+
+_SERVICE_STYLE = {
+    "ready": "green",
+    "starting": "yellow",
+    "stopped": "dim",
+    "failed": "red",
+    "exited": "red",
+    "unhealthy": "red",
+}
+
+
+def _service_lines(c: ContainerInfo) -> tuple[str, ...]:
+    """The services line of a running container, as escaped markup; empty otherwise.
+
+    Nothing for a stopped container or one with no services; ``unknown`` when
+    the state service's probe failed.
+    """
+    if c.state != "Running":
+        return ()
+    if c.services_unknown:
+        return ("[dim]services[/dim] [dim]unknown[/dim]",)
+    if not c.services:
+        return ()
+    parts = [
+        f"{escape(s.name)} [{style}]{escape(s.state)}[/]"
+        for s in c.services
+        for style in (_SERVICE_STYLE.get(s.state, "dim"),)
+    ]
+    return (f"[dim]services[/dim] {' · '.join(parts)}",)
 
 
 def _orchestration_lines(c: ContainerInfo) -> tuple[str, ...]:
@@ -498,7 +657,13 @@ def _process_lines(c: ContainerInfo) -> tuple[str, ...]:
 def _warnings(c: ContainerInfo) -> tuple[str, ...]:
     """Yellow lines for what is off about ``c``'s git target, as markup."""
     warning = tracking_warning(c)
-    return () if warning is None else (f"[yellow]⚠ {escape(warning)}[/yellow]",)
+    lines: tuple[str, ...] = () if warning is None else (f"[yellow]⚠ {escape(warning)}[/yellow]",)
+    branches = c.git_status.other_branches if c.git_status is not None else None
+    if branches:
+        listed = ", ".join(f"{escape(b.name)} [dim]{escape(b.sha[:8])}[/dim]" for b in branches)
+        noun = "branch" if len(branches) == 1 else "branches"
+        lines += (f"[yellow]⚠ unimported commits on {noun}[/yellow] {listed}",)
+    return lines
 
 
 def _exceptions(c: ContainerInfo, now: datetime, ttl: str) -> tuple[str, ...]:
@@ -749,6 +914,8 @@ def _panel_lines(
 
     one(_summary_row(panel, options.max_width))
     for markup in panel.processes:
+        one(markup)
+    for markup in panel.services:
         one(markup)
     if panel.exceptions:
         one(_SUMMARY_GAP.join(panel.exceptions))

@@ -88,6 +88,10 @@ def test_review_resolve_applied_settles_a_source_publication(
     p["resolve"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
     mocker.patch("jailbee.cli._load_or_exit", return_value=p["cfg"])
     mocker.patch("jailbee.cli._resolve_existing", return_value=(p["incus"], "full"))
+    mocker.patch("jailbee.incus.Incus", return_value=p["incus"])
+    mocker.patch("jailbee.config.load_repo_config", return_value=p["cfg"])
+    mocker.patch("jailbee.cli_outbox_resolve._existing_container", return_value="full")
+    mocker.patch("jailbee.cli_outbox_resolve._review_container", return_value="full")
     mocker.patch("jailbee.lifecycle.short_name", return_value="c")
 
     result = CliRunner().invoke(app, ["review", "resolve", "c", "m.json", "0", "--applied", LANDED])
@@ -97,3 +101,35 @@ def test_review_resolve_applied_settles_a_source_publication(
     assert record.state == "applied"
     saved = json.loads(p["incus"].config_set.call_args.args[2])
     assert saved["feature/a"]["pr"] == 42
+
+
+def test_outbox_resolve_applied_settles_a_source_publication_like_review_resolve(
+    source_publisher,  # noqa: F811
+    mocker,
+):
+    """`jailbee outbox resolve pr/m.json --applied --url` ends in the same body as the alias."""
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+    from jailbee.outbox import sent
+    from jailbee.pr import PrInfo
+
+    p = source_publisher
+    _uncertain(p)
+    p["resolve"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
+    mocker.patch("jailbee.cli._load_or_exit", return_value=p["cfg"])
+    mocker.patch("jailbee.cli._resolve_existing", return_value=(p["incus"], "full"))
+    mocker.patch("jailbee.incus.Incus", return_value=p["incus"])
+    mocker.patch("jailbee.config.load_repo_config", return_value=p["cfg"])
+    mocker.patch("jailbee.cli_outbox_resolve._existing_container", return_value="full")
+    mocker.patch("jailbee.cli_outbox_resolve._review_container", return_value="full")
+    mocker.patch("jailbee.lifecycle.short_name", return_value="c")
+
+    result = CliRunner().invoke(
+        app, ["outbox", "resolve", "c", "pr/m.json", "0", "--applied", "--url", LANDED]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "recorded m.json action 0 as published" in result.output
+    (record,) = sent.list_records()
+    assert record.state == "applied"

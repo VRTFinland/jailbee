@@ -44,10 +44,25 @@ REPO_DISMISS_ADVISORIES = "dismiss-advisories"
 REPO_UPGRADE_ALL = "upgrade-all"
 REPO_SENT = "sent"
 REPO_REMOVE = "repo-remove"
+REPO_AGENT = "agent"
 
 
 def repo_remove_argv(prefix: str) -> list[str]:
     return ["repo", "rm", prefix]
+
+
+def agent_use_argv() -> list[str]:
+    """`jailbee agent use`, no argument: its profile and tier questions are the picker."""
+    return ["agent", "use"]
+
+
+def container_agent_argv(name: str) -> list[str]:
+    """The same picker for one container, with a "repo default" row first."""
+    return ["agent", "use", "--container", name]
+
+
+def agent_window_argv(name: str) -> list[str]:
+    return ["agent", "open", name]
 
 
 DIAGNOSTICS_LABEL = "Diagnostics →"
@@ -186,6 +201,22 @@ def autostart_choice_entries(group: RepoGroup) -> tuple[PickerEntry, ...]:
     )
 
 
+def autostart_service_entries(
+    group: RepoGroup, checked: Sequence[str] = ()
+) -> tuple[PickerEntry, ...]:
+    """The custom-services toggle rows: Done, then one checkbox row per service."""
+
+    def label(name: str) -> str:
+        text = f"[{'x' if name in checked else ' '}] {name}"
+        description = group.service_descriptions.get(name)
+        return f"{text} — {description}" if description else text
+
+    return (
+        PickerEntry("Done", "\x00done"),
+        *(PickerEntry(label(name), name) for name in group.autostart_services),
+    )
+
+
 def autostart_choice_args(
     group: RepoGroup, *, profile: str | None, services: Sequence[str] | None, creating: bool
 ) -> list[str]:
@@ -207,8 +238,12 @@ SNAPSHOTS = "snapshots"
 MOUNTS = "mounts"
 SERVICES = "services"
 ORCHESTRATION = "orchestration"
+CONTAINER_AGENT = "container-agent"
+AGENT_WINDOW = "agent-window"
 CONTAINER_VERBS = frozenset(
     {
+        CONTAINER_AGENT,
+        AGENT_WINDOW,
         AUTOSTART_RERUN,
         AUTOSTART_STATUS,
         AUTOSTART_CANCEL,
@@ -242,6 +277,7 @@ def service_logs_argv(name: str, service: str) -> list[str]:
 class ServiceRow:
     name: str
     state: str
+    description: str = ""
 
 
 def parse_service_rows(stdout: str) -> tuple[ServiceRow, ...]:
@@ -269,7 +305,14 @@ def parse_service_rows(stdout: str) -> tuple[ServiceRow, ...]:
             ):
                 raise ValueError
             seen.add(name)
-            rows.append(ServiceRow(name, state))
+            description = item.get("description")
+            rows.append(
+                ServiceRow(
+                    name,
+                    state,
+                    " ".join(description.split()) if isinstance(description, str) else "",
+                )
+            )
         return tuple(rows)
     except (ValueError, TypeError) as exc:
         raise ValueError("unexpected output from 'jailbee service ls'") from exc
@@ -279,7 +322,13 @@ def services_picker(container: str, rows: Sequence[ServiceRow]) -> Picker:
     return Picker(
         "container-services",
         f"Services — {container}",
-        tuple(PickerEntry(f"{r.name}  ({r.state})", str(i)) for i, r in enumerate(rows)),
+        tuple(
+            PickerEntry(
+                f"{r.name}  ({r.state})" + (f" — {r.description}" if r.description else ""),
+                str(i),
+            )
+            for i, r in enumerate(rows)
+        ),
         target=container,
         carry=tuple(json.dumps([r.name, r.state]) for r in rows),
     )
@@ -557,6 +606,7 @@ def orchestrate_grant_argv(
     publish_foreign: tuple[Sequence[str], Sequence[str]] | None = None,
     publish_prs: bool | None = None,
     publish_pr_reviews: bool | None = None,
+    publish_pr_comment_edits: bool | None = None,
     publish_rate: int | None = None,
 ) -> list[str]:
     """`jailbee orchestrate grant`: options before the separator, in signature order.
@@ -602,6 +652,12 @@ def orchestrate_grant_argv(
         options.append("--publish-prs" if publish_prs else "--no-publish-prs")
     if publish_pr_reviews is not None:
         options.append("--publish-pr-reviews" if publish_pr_reviews else "--no-publish-pr-reviews")
+    if publish_pr_comment_edits is not None:
+        options.append(
+            "--publish-pr-comment-edits"
+            if publish_pr_comment_edits
+            else "--no-publish-pr-comment-edits"
+        )
     if publish_rate is not None:
         options += ["--publish-rate", str(publish_rate)]
     return ["orchestrate", "grant", *options, "--", name]
@@ -787,6 +843,10 @@ def container_extras(
         before.append(("Services…", SERVICES))
     if orchestration_offered(container, ssh_policy, transport=transport, rows=rows):
         before.append(("Orchestration…", ORCHESTRATION))
+    if container.state in _EXISTING_STATES and allowed(container_agent_argv(name)):
+        before.append(("Agent for this container…", CONTAINER_AGENT))
+    if container.state == "Running" and allowed(agent_window_argv(name)):
+        before.append(("Open a new agent window now", AGENT_WINDOW))
     return ContainerExtras(tuple(after_job), tuple(before))
 
 

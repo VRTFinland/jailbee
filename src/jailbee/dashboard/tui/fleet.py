@@ -23,7 +23,13 @@ from rich.text import Text
 from jailbee.dashboard import hit as dhit
 from jailbee.dashboard.columns import FieldSpecCI, _frame_columns
 from jailbee.dashboard.fork_tree import fork_layout, name_prefix
-from jailbee.dashboard.format import autostart_failed
+from jailbee.dashboard.format import (
+    MERGE_MARK,
+    ROW_PHASE_STYLES,
+    autostart_failed,
+    merge_in_progress,
+    row_phase,
+)
 from jailbee.dashboard.model import RepoGroup, Row, group_warnings, selectable_rows
 from jailbee.dashboard.settings import CURSOR_STYLE
 from jailbee.dashboard.sorting import DEFAULT_SORT, SortSpec
@@ -73,6 +79,8 @@ class Entry:
     """A merge source while the dashboard picks merge targets: drawn with ``◆``."""
     dim: bool = False
     """Drawn dim: a stopped container, or not a merge target while the dashboard picks them."""
+    phase: str | None = None
+    """The row's non-normal phase (``format.row_phase``); it colours the whole row."""
     fork_prefix: str = ""
     """The NAME cell's orchestration-tree indent, ``fork_tree.name_prefix``."""
 
@@ -165,6 +173,7 @@ def table_model(
         )
         if group.prefix not in folded:
             layout = fork_layout(group.containers)
+            phases = {c.name: row_phase(c) for c in group.containers}
             entries.extend(
                 Entry(
                     Row("container", container.name),
@@ -173,7 +182,9 @@ def table_model(
                     marked=container.name in marked,
                     running=container.name in running,
                     source=container.name in sources,
-                    dim=container.name in ineligible or container.state == "Stopped",
+                    dim=container.name in ineligible
+                    or (container.state == "Stopped" and phases[container.name] is None),
+                    phase=phases[container.name],
                     fork_prefix=name_prefix(layout, container.name),
                 )
                 for container in group.containers
@@ -265,12 +276,18 @@ def entry_cells(entry: Entry, geometry: Geometry) -> tuple[str, ...]:
         )
         if spec.name == "name":
             value = entry.fork_prefix + value
-        if index == 0 and spec.name == "name" and autostart_failed(entry.container):
-            # Cut the name, not the mark: room is the column less the status
-            # indent and " ⚠", so a capped name still shows its failure.
+        marks = (
+            [MERGE_MARK] * merge_in_progress(entry.container)
+            + [WARN_MARK] * autostart_failed(entry.container)
+            if index == 0 and spec.name == "name"
+            else []
+        )
+        if marks:
+            # Cut the name, not the marks: room is the column less the status
+            # indent and " ⚠"-style marks, so a capped name still shows them.
             body = Text.from_markup(value)
-            body.truncate(max(1, geometry.widths[index] - 4), overflow="ellipsis")
-            value = f"{body.markup} {WARN_MARK}"
+            body.truncate(max(1, geometry.widths[index] - 2 - 2 * len(marks)), overflow="ellipsis")
+            value = " ".join([body.markup, *marks])
         indent = "◆ " if entry.source else "⟳ " if entry.running else "● " if entry.marked else "  "
         cells.append((indent + value) if index == 0 else value)
     return tuple(cells)
@@ -294,6 +311,8 @@ def repo_heading(
     rest = f" {group.prefix}"
     if group.checkout:
         rest += f" [{group.checkout}]"
+    if group.agent_label:
+        rest += f" {group.agent_label}"
     rest += f"  ({len(group.containers)})"
     if group.repo_root is None:
         rest += "  (orphan)"
@@ -348,7 +367,13 @@ def entry_line(
         _underline_on_hover(cells[index], indented=index == 0)
     # The whole row is clickable, but only the name is underlined on hover.
     hit = dhit.hit_style("row", entry.container.name) + dhit.no_hover_style()
-    base = MARKED_STYLE + hit if entry.marked else hit
+    # A marked row drops the phase foreground: coloured text would sit on the mark's blue.
+    if entry.phase and not entry.marked:
+        base = Style.parse(ROW_PHASE_STYLES[entry.phase]) + hit
+    else:
+        base = hit
+    if entry.marked:
+        base = base + MARKED_STYLE
     if entry.dim:
         base += Style(dim=True)
     # The cursor's band wins over a mark's blue; the row's `●` still shows the mark.

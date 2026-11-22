@@ -286,11 +286,15 @@ class StateClient:
             if (reply.protocol, reply.version) != (PROTOCOL, self._version):
                 # The newer jailbee wins: a stale dashboard must not shut
                 # down a newer server (its respawn runs the new code, so the
-                # two would flap forever). A differing protocol integer, an
-                # older server or an unparseable version: the server is
-                # replaced by our own.
+                # two would flap forever). A higher protocol integer is newer
+                # whatever the version strings say; at equal protocol the
+                # version decides. Otherwise (older server, unparseable
+                # version) the server is replaced by our own.
                 theirs, ours = parse_version(reply.version), parse_version(self._version)
-                if reply.protocol == PROTOCOL and theirs and ours and theirs > ours:
+                newer = reply.protocol > PROTOCOL or (
+                    reply.protocol == PROTOCOL and theirs and ours and theirs > ours
+                )
+                if newer:
                     raise StaleDashboard(
                         f"jailbee was upgraded to {reply.version}; restart this dashboard"
                     )

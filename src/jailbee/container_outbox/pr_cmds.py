@@ -117,7 +117,14 @@ def _stage(
         broker.draft_append("pr", batch, action, bodies, envelope=envelope)
         typer.echo(f"staged pr draft {batch}")
     else:
-        _announce(broker.put("pr", str(action["type"]), {**envelope, "actions": [action]}, bodies))
+        _announce(
+            broker.put(
+                "pr",
+                str(action["type"]).replace("_", "-"),
+                {**envelope, "actions": [action]},
+                bodies,
+            )
+        )
 
 
 @pr_app.command("comment")
@@ -167,6 +174,94 @@ def reply(
             {"type": "reply", "comment_id": to, "body": text},
             batch,
             body_file is not None,
+        )
+
+    _run(run)
+
+
+@pr_app.command("comment-edit")
+def comment_edit(
+    comment_id: Annotated[
+        str | None, typer.Argument(help="Numeric review comment id (a line comment or reply).")
+    ] = None,
+    pr: PrArg = None,
+    body: BodyOpt = None,
+    body_file: BodyFileOpt = None,
+    batch: BatchOpt = None,
+) -> None:
+    """Stage replacing the body of a submitted PR review comment you wrote.
+
+    The host publishes it only if the publishing account wrote the comment and
+    it still reads as it did when staged. Pending (unsubmitted) review comments
+    are edited through `pr review`, not here.
+    """
+
+    def run() -> None:
+        require_role()
+        if not comment_id or not comment_id.isdecimal() or int(comment_id) <= 0:
+            raise OutboxCommandError("comment id must be a positive number", 2)
+        text = _body(body, body_file, True)
+        if not text:
+            raise OutboxCommandError("comment body must be non-empty", 2)
+        view = _view(pr)
+        comment = gh.review_comment(view.repo, int(comment_id))
+        if comment.issue != view.number:
+            raise OutboxCommandError(f"comment {comment.id} is not on PR #{view.number}", 1)
+        if text == comment.body:
+            raise OutboxCommandError(f"comment {comment.id} body is unchanged", 2)
+        if comment.review_id is not None and (
+            gh.review_state(view.repo, view.number, comment.review_id) == "PENDING"
+        ):
+            raise OutboxCommandError(
+                f"comment {comment.id} belongs to a pending (unsubmitted) review; "
+                "edit it through `pr review`",
+                1,
+            )
+        _stage(
+            _envelope(view),
+            {
+                "type": "comment_edit",
+                "comment_id": comment.id,
+                "body": text,
+                "expected": {"body": comment.body},
+            },
+            batch,
+            body_file is not None,
+        )
+
+    _run(run)
+
+
+@pr_app.command("state")
+def state(
+    first: Annotated[
+        str | None, typer.Argument(help="PR number, or the new state for the bound PR.")
+    ] = None,
+    second: Annotated[str | None, typer.Argument(help="New state: closed or open.")] = None,
+    batch: BatchOpt = None,
+) -> None:
+    """Stage closing or reopening a PR (`pr state [N] closed|open`).
+
+    The host publishes it only if the PR is still in the state it had when
+    staged; a merged PR is refused. A PR this container does not own needs
+    `--foreign` on the host.
+    """
+
+    def run() -> None:
+        require_role()
+        target, number_arg = (first, None) if second is None else (second, first)
+        if target not in ("closed", "open"):
+            raise OutboxCommandError("new state must be 'closed' or 'open'", 2)
+        view = _view(number_arg)
+        current = gh.pr_state(view.repo, view.number)
+        if current == "merged":
+            raise OutboxCommandError(f"PR #{view.number} is merged; it cannot be {target}", 2)
+        if current == target:
+            raise OutboxCommandError(f"PR #{view.number} is already {target}", 2)
+        _stage(
+            _envelope(view),
+            {"type": "state", "state": target, "expected": {"state": current}},
+            batch,
         )
 
     _run(run)

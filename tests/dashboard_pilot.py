@@ -100,6 +100,7 @@ class FakeStateClient:
         self.fail = fail
         self.events: list[tuple[Any, ...]] = []
         self.closed = False
+        self.seq = 1  # a test bumps it to serve a "new" snapshot
 
     def wait_first_snapshot(self, timeout):  # type: ignore[no-untyped-def]
         self.events.append(("wait",))
@@ -109,7 +110,7 @@ class FakeStateClient:
 
     def latest(self):  # type: ignore[no-untyped-def]
         return Snapshot(
-            1,
+            self.seq,
             datetime(2026, 10, 4, tzinfo=UTC),
             self.git_enabled,
             self.groups,
@@ -303,6 +304,11 @@ class Run:
     def of_type(self, kind: type) -> list[Any]:
         return [view.overlay for view in self.trace if isinstance(view.overlay, kind)]
 
+    @property
+    def entries(self) -> list[tuple[str, str, bool]]:
+        """The notification queue's entries now: (command, output, failed)."""
+        return [(e.command, e.output, e.state == "failed") for e in self.app.session.queue]
+
 
 def _patch_startup(mocker, view_state=None, mouse=True, jobs=SyncJobs):  # type: ignore[no-untyped-def]
     """Patch everything `open_dashboard` touches except the state client."""
@@ -495,9 +501,9 @@ def make_app(  # type: ignore[no-untyped-def]
     app.outputs = []  # type: ignore[attr-defined]
     show = app.show_output
 
-    def record(title, text, *, failed):  # type: ignore[no-untyped-def]
+    def record(title, text, *, failed, live=False, **buttons):  # type: ignore[no-untyped-def]
         app.outputs.append((title, text, failed))  # type: ignore[attr-defined]
-        show(title, text, failed=failed)
+        show(title, text, failed=failed, live=live, **buttons)
 
     app.show_output = record  # type: ignore[method-assign]
     return app
@@ -597,19 +603,38 @@ class BareTerminal:
 
     def __init__(self) -> None:
         self.handed: list[object] = []
+        # With `defer`, actions wait in `pending` until `finish_pending()`:
+        # a test then sees them while they run.
+        self.defer = False
+        self.pending: list[tuple[Any, Any]] = []
 
     def hand_off(self, fn):  # type: ignore[no-untyped-def]
         self.handed.append(fn)
         return fn()
 
-    def run_actions(self, runs, done):  # type: ignore[no-untyped-def]
+    def run_actions(self, runs, done, progress=None):  # type: ignore[no-untyped-def]
         self.ran = [*getattr(self, "ran", []), *runs]
-        chunks: list[str] = []
-        results = [subprocess_runner(r.argv, cwd=r.cwd, on_output=chunks.append) for r in runs]
-        done(drunner.ActionOutcome(results, "".join(chunks)))
+        self.progress = progress
+        if self.defer:
+            self.pending.append((runs, done))
+            return
+        done(drunner.run_actions(runs, run=subprocess_runner, progress=progress))
 
-    def show_output(self, title, text, *, failed):  # type: ignore[no-untyped-def]
+    def finish_pending(self) -> None:
+        pending, self.pending = self.pending, []
+        for runs, done in pending:
+            done(drunner.run_actions(runs, run=subprocess_runner))
+
+    def show_output(  # type: ignore[no-untyped-def]
+        self, title, text, *, failed, live=False, background=False, on_close=None
+    ):
         self.shown = [*getattr(self, "shown", []), (title, text, failed)]
+        # Closing the latest modal: what "continue in background" and Esc both do.
+        self.modal = on_close
+
+    def update_output(self, text, failed=False):  # type: ignore[no-untyped-def]
+        self.updated = [*getattr(self, "updated", []), text]
+        self.updated_failed = [*getattr(self, "updated_failed", []), failed]
 
 
 def bare_session(mocker, groups, **kw):  # type: ignore[no-untyped-def]

@@ -35,6 +35,7 @@ def test_repo_header_enter_opens_menu_without_folding(mocker, tmp_path):
         "New from PR…",
         "Credential group…",
         "Accounts…",
+        "Agent…",
         "Network →",
         "Apply config…",
         "Diagnostics →",
@@ -122,9 +123,9 @@ def test_repo_apply_runs_with_the_chosen_restart_policy(mocker, tmp_path, downs,
     child.assert_called_once_with(
         ["jailbee", "apply", *tail, "--config", str(group.config_path)], check=False, cwd=tmp_path
     )
-    (_title, text, failed) = run.app.outputs[0]
-    assert len(run.app.outputs) == 1
-    assert "output of jailbee apply" in text  # what the command printed is on the screen
+    ((_command, text, failed),) = run.entries
+    assert run.app.outputs == []  # no screen pops up on its own
+    assert "output of jailbee apply" in text  # what the command printed is in its entry
     assert ("--no-restart" in text) == bool(tail)
     assert failed is False
 
@@ -176,7 +177,10 @@ def test_repo_apply_nonzero_exit_is_a_notice(mocker, tmp_path):
 
     run = drive(mocker, [*repo_menu_keys(group, "apply"), "enter"], [group])
 
-    assert "'jailbee apply' exited 2" in run.notices()
+    assert any(
+        n and n.startswith("'jailbee apply' exited 2") and n.endswith("· Q: queue")
+        for n in run.notices()
+    )
 
 
 def test_run_reports_a_vanished_repo_root_instead_of_crashing(mocker, tmp_path):
@@ -293,7 +297,7 @@ def test_edit_config_reports_a_vanished_repo_root_instead_of_crashing(mocker, tm
 # --- diagnostics and prune ----------------------------------------------------
 
 
-def test_repo_doctor_output_is_shown_on_a_scrollable_screen(mocker, tmp_path):
+def test_repo_doctor_output_is_kept_in_its_queue_entry(mocker, tmp_path):
     group = cfg_group(tmp_path)
     child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
@@ -304,8 +308,8 @@ def test_repo_doctor_output_is_shown_on_a_scrollable_screen(mocker, tmp_path):
     child.assert_called_once_with(
         ["jailbee", "doctor", "--config", str(group.config_path)], check=False, cwd=tmp_path
     )
-    (_title, text, failed) = run.app.outputs[0]
-    assert len(run.app.outputs) == 1  # the paged style: a scrollable output screen
+    ((_command, text, failed),) = run.entries  # the paged style: expanded from the queue
+    assert [o[0] for o in run.app.outputs] == ["jailbee doctor"]  # doctor opens its output
     assert text.startswith("output of jailbee doctor")  # the command's output, not just a count
     assert failed is False
 
@@ -321,7 +325,7 @@ def test_repo_doctor_over_ssh_sends_no_config(mocker, tmp_path):
     assert run.rc == 0
 
     child.assert_called_once_with(["jailbee", "doctor"], check=False, cwd=tmp_path)
-    assert len(run.app.outputs) == 1
+    assert len(run.entries) == 1
 
 
 @pytest.mark.parametrize(
@@ -352,7 +356,7 @@ def test_repo_disk_usage_and_prune_show_their_output(mocker, tmp_path, verb, arg
     flags = [] if over_ssh else ["--config", str(group.config_path)]
     child.assert_called_once_with(["jailbee", *argv, *flags], check=False, cwd=tmp_path)
     assert "--yes-to-all" not in child.call_args.args[0]
-    assert len(run.app.outputs) == 1
+    assert len(run.entries) == 1
 
 
 def test_repo_doctor_failure_is_a_notice(mocker, tmp_path):
@@ -362,7 +366,7 @@ def test_repo_doctor_failure_is_a_notice(mocker, tmp_path):
 
     run = drive(mocker, repo_menu_keys(group, "doctor"), [group])
 
-    assert "'jailbee doctor' exited 1" in run.notices()
+    assert any(n and n.startswith("'jailbee doctor' exited 1") for n in run.notices())
 
 
 # --- advisory entries in the repo menu ---------------------------------------

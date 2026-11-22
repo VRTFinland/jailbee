@@ -13,10 +13,15 @@ happen.
 
 from __future__ import annotations
 
+import sys
+import threading
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from jailbee.config import Config
@@ -98,6 +103,154 @@ def plan_repos(roots: list[Path], *, force: bool, version: str, now: datetime) -
     return plans
 
 
+class _PrefixRouter:
+    """A stand-in for a standard stream that prefixes what worker threads print.
+
+    Output from a thread that called `claim(prefix)` is split into lines, each
+    written whole as `[prefix] line`, so concurrent builds never share a line.
+    Other threads write straight through. Claimed threads report not being a
+    terminal, which keeps Rich from drawing spinners that would fight. A
+    spinner's own refresh thread is not a claimed thread, so the whole router
+    stops reporting a terminal for as long as `quiet_tty` is set.
+    """
+
+    def __init__(self, inner: Any, lock: threading.Lock) -> None:
+        self._inner = inner
+        self._lock = lock
+        self._local = threading.local()
+        self.quiet_tty = False
+
+    def claim(self, prefix: str) -> None:
+        self._local.prefix = prefix
+        self._local.pending = ""
+
+    def release(self) -> None:
+        pending = getattr(self._local, "pending", "")
+        if pending:
+            self._emit(pending)
+        self._local.prefix = None
+        self._local.pending = ""
+
+    def _emit(self, line: str) -> None:
+        with self._lock:
+            self._inner.write(f"[{self._local.prefix}] {line}\n")
+            self._inner.flush()
+
+    def write(self, text: str) -> int:
+        if getattr(self._local, "prefix", None) is None:
+            with self._lock:
+                return int(self._inner.write(text))
+        buffered = self._local.pending + text.replace("\r\n", "\n").replace("\r", "\n")
+        *lines, self._local.pending = buffered.split("\n")
+        for line in lines:
+            if line.strip():
+                self._emit(line)
+        return len(text)
+
+    def flush(self) -> None:
+        if getattr(self._local, "prefix", None) is None:
+            with self._lock:
+                self._inner.flush()
+
+    def isatty(self) -> bool:
+        if self.quiet_tty or getattr(self._local, "prefix", None) is not None:
+            return False
+        return bool(self._inner.isatty())
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+class _BuildInterrupted(KeyboardInterrupt):
+    """Ctrl-C during the parallel builds; `finished` is what completed anyway."""
+
+    def __init__(self, finished: dict[str, Exception | None]) -> None:
+        super().__init__()
+        self.finished = finished
+
+
+@contextmanager
+def _no_spinners() -> Iterator[None]:
+    """Make Rich draw no live output on the shared consoles.
+
+    Rich reads TTY_COMPATIBLE / FORCE_COLOR when a console is created, which
+    beats `isatty()`, so the stream router alone cannot stop spinners. The
+    consoles are module globals read at import, hence the private attribute.
+    """
+    from jailbee import tui
+
+    consoles = [tui.console, tui.err_console, tui.hint_console]
+    saved = [c._force_terminal for c in consoles]
+    for c in consoles:
+        c._force_terminal = False
+    try:
+        yield
+    finally:
+        for c, old in zip(consoles, saved, strict=True):
+            c._force_terminal = old
+
+
+def _build_in_parallel(
+    jobs_by_alias: dict[str, Config], incus: Incus, jobs: int
+) -> dict[str, Exception | None]:
+    """Build each alias's image with up to `jobs` builds at once.
+
+    Returns alias -> the exception its build raised, or None when it worked.
+    Every build runs to its end; one failure never cancels the others. On
+    Ctrl-C queued builds are cancelled, running ones finish, and
+    `_BuildInterrupted` carries the results so far.
+    """
+    from jailbee.golden import build_golden_image
+    from jailbee.init_command import ensure_loose_bridge
+
+    # Once, here: concurrent builds would race to create it ("already exists").
+    ensure_loose_bridge(incus, quiet=True)
+
+    lock = threading.Lock()
+    out = _PrefixRouter(sys.stdout, lock)
+    err = _PrefixRouter(sys.stderr, lock)
+
+    done: dict[str, Exception | None] = {}
+
+    def one(alias: str, cfg: Config) -> Exception | None:
+        error = build_one(alias, cfg)
+        done[alias] = error
+        return error
+
+    def build_one(alias: str, cfg: Config) -> Exception | None:
+        out.claim(alias)
+        err.claim(alias)
+        try:
+            build_golden_image(cfg, incus)
+        except Exception as e:  # reported in the summary; the others go on
+            print(f"build failed: {e}")  # prefixed, so it lands beside its build's output
+            return e
+        finally:
+            out.release()
+            err.release()
+        return None
+
+    real_out, real_err = sys.stdout, sys.stderr
+    out.quiet_tty = err.quiet_tty = True
+    sys.stdout, sys.stderr = out, err
+    pool = ThreadPoolExecutor(max_workers=jobs)
+    try:
+        with _no_spinners():
+            futures = {a: pool.submit(one, a, c) for a, c in jobs_by_alias.items()}
+            try:
+                results = {a: f.result() for a, f in futures.items()}
+            except KeyboardInterrupt as interrupt:
+                try:
+                    pool.shutdown(wait=True, cancel_futures=True)  # start no queued build
+                except KeyboardInterrupt:
+                    pool.shutdown(wait=False, cancel_futures=True)  # second Ctrl-C: stop waiting
+                raise _BuildInterrupted(dict(done)) from interrupt
+            pool.shutdown(wait=True)
+            return results
+    finally:
+        sys.stdout, sys.stderr = real_out, real_err
+
+
 def _record(
     cfg: Config, action: Literal["base_build", "apply"], version: str, now: datetime
 ) -> None:
@@ -110,6 +263,30 @@ def _record(
         record(session, cfg.container_prefix, action, version, now=now)
 
 
+def _record_interrupted(
+    plans: list[RepoPlan], finished: dict[str, Exception | None], version: str, now: datetime
+) -> None:
+    """Keep the builds that finished before Ctrl-C, so the next run skips them."""
+    from jailbee.tui import warn
+
+    results: list[RepoResult] = []
+    for plan in plans:
+        cfg = plan.cfg
+        if cfg is None or not plan.build or cfg.golden.alias not in finished:
+            continue
+        error = finished[cfg.golden.alias]
+        result = RepoResult(root=plan.root, prefix=cfg.container_prefix, reasons=plan.reasons)
+        if error is None:
+            result.build = "built"
+            _record(cfg, "base_build", version, now)
+        else:
+            result.build = "failed"
+            result.error = str(error)
+        results.append(result)
+    warn("Interrupted: builds that finished are recorded; the rest were not started or recorded.")
+    _print_summary(results, dry_run=False)
+
+
 def run_upgrade_all(
     roots: list[Path],
     incus: Incus,
@@ -120,8 +297,15 @@ def run_upgrade_all(
     version: str,
     now: datetime,
     docker_seed: bool = True,
+    jobs: int = 1,
 ) -> list[RepoResult]:
-    """Upgrade every repo in `roots`; return one result per repo, in order."""
+    """Upgrade every repo in `roots`; return one result per repo, in order.
+
+    With `jobs` > 1 the distinct base images are built up front, up to `jobs`
+    at a time, each build's output prefixed with its alias; `apply` and seeding
+    then run serially per repo as before. `jobs` = 1 builds and applies repo by
+    repo, exactly as it always did.
+    """
     from jailbee.apply import run_apply
     from jailbee.golden import build_golden_image
     from jailbee.tui import error_plain, info_plain, success
@@ -130,6 +314,21 @@ def run_upgrade_all(
     # alias -> whether this run's build of it worked. Repos that share an
     # alias (every scratch repo does) share one image, so it is built once.
     built: dict[str, bool] = {}
+    # Parallel mode: alias -> (repo whose build it was, the error or None).
+    prebuilt: dict[str, tuple[Path, Exception | None]] = {}
+    if jobs > 1 and not dry_run:
+        wanted: dict[str, tuple[Path, Config]] = {}
+        for plan in plans:
+            if plan.cfg is not None and plan.build:
+                wanted.setdefault(plan.cfg.golden.alias, (plan.root, plan.cfg))
+        if wanted:
+            info_plain(f"== building {len(wanted)} base image(s), up to {jobs} at a time ==")
+            try:
+                errors = _build_in_parallel({a: c for a, (_, c) in wanted.items()}, incus, jobs)
+            except _BuildInterrupted as interrupted:
+                _record_interrupted(plans, interrupted.finished, version, now)
+                raise
+            prebuilt = {a: (wanted[a][0], errors[a]) for a in wanted}
     results: list[RepoResult] = []
 
     for plan in plans:
@@ -155,7 +354,19 @@ def run_upgrade_all(
 
         if plan.build:
             alias = cfg.golden.alias
-            if alias in built:
+            if alias in prebuilt:
+                owner, build_error = prebuilt[alias]
+                built[alias] = build_error is None
+                if build_error is not None:
+                    result.build = "failed"
+                    result.error = (
+                        str(build_error)
+                        if owner == plan.root
+                        else f"base image '{alias}' failed to build earlier in this run"
+                    )
+                else:
+                    result.build = "built" if owner == plan.root else "shared"
+            elif alias in built:
                 ok = built[alias]
                 result.build = "shared" if ok else "failed"
                 if not ok:

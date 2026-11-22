@@ -25,7 +25,8 @@ An orchestrator with `publish.pr_reviews` in the output of
 `jailbee inbox grant` stages normally, then runs
 `jailbee inbox send publish --pr NAME.json --wait --until done --json` instead
 of asking the human to apply it. Comments and replies may target review-bound PRs in the own
-repository; description rewrites additionally require an authored, non-adopted
+repository; a `comment_edit` action also needs `publish.pr_comment_edits` in that
+output, and a `state` action `publish.pr_state`; description rewrites and state changes additionally require an authored, non-adopted
 source-PR binding. No foreign PR, submodule or force override. Source PR manifests instead need
 `publish.pull_requests` and the own-branch restrictions described by
 `jailbee-orchestration`. Without `--until done`, `--wait` returns at `started`,
@@ -128,8 +129,24 @@ describe the change accurately.
 
 ## Staging PR actions
 
+To close or reopen a PR, stage `jailbee pr state [N] closed|open`. It records the state
+it read as `expected.state`; the host refuses it if the PR changed meanwhile or is
+merged, shows a `closes PR #N` / `reopens PR #N` warning in the plan, and needs
+`--foreign` for a PR the container does not own. Merging and draft toggling are not
+staged through the outbox.
+
 Use `jailbee pr comment N --body "..."`, `jailbee pr reply N --to ID
 --body "..."`, or `jailbee pr description N --title "..." --body-file PATH`.
+To correct a general (conversation) comment the publishing account already
+posted, stage `jailbee issue comment-edit ID --body "..."` (find ID with
+`jailbee issue comments N`). It goes through the issue outbox, because GitHub
+stores PR conversation comments as issue comments. To correct a submitted review
+(line) comment or reply the account already posted, stage `jailbee pr comment-edit
+ID [N] --body "..."` (ID is the review comment id from `gh api
+repos/OWNER/REPO/pulls/N/comments`); it reads the comment and records its body as
+`expected.body`. The host refuses it unless that account wrote the comment, it is on
+that PR and it is unchanged since staging. Pending (unsubmitted) review comments are
+not edited this way; they belong to `jailbee pr review`.
 Omitting N selects the unique actual container binding (primary, stacked,
 imported-head or submodule), never the currently checked-out branch. Multiple
 bindings require N. For a new PR description, `--new` requires a readable, empty
@@ -144,8 +161,8 @@ later edits at publication time. Supply the intended replacement body explicitly
 Use `--batch NAME` for related actions and `jailbee outbox submit NAME
 --kind pr` to stage them. Inspect with `jailbee outbox ls` and `jailbee
 outbox show pr/NAME`. Remove a staged, unpublished proposal with `jailbee outbox
-drop pr/NAME`; discard an unsubmitted draft batch with `jailbee outbox
-discard NAME --kind pr`.
+discard pr/NAME`; discard an unsubmitted draft batch with `jailbee outbox
+discard --draft NAME --kind pr`.
 The commands stage every proposal and draft through the host broker into the
 host's outbox store; nothing is kept in the container's filesystem. When the
 broker cannot be reached they exit 4 with nothing staged. The
@@ -196,8 +213,9 @@ inspection; SSH browsing is read-only.
 For human approval on the host, `jb outbox apply <container>
 pr/NNN-topic.json --revision TOKEN` publishes all pending actions in that
 one manifest, not only a highlighted comment. `TOKEN` comes from inspection;
-a changed proposal requires refresh and renewed inspection. The original
-`jb review apply <container>` remains available. These are instructions to
+a changed proposal requires refresh and renewed inspection. The PR-only
+alias `jb review apply <container> [<manifest>]` also works; like `outbox apply`
+it publishes one manifest per run and asks for what is omitted. These are instructions to
 the human, **not permission for you to run host publication commands**.
 Stage with the commands only. Without matching orchestrator rights, stop
 there. With those rights, use `send publish` as described above; never call
@@ -208,7 +226,8 @@ host apply or direct `gh` mutations yourself.
 If a broker `done` confirms publication, report its URLs. If there is no
 final result yet, say publication is pending. For manifests not sent through
 a granted orchestrator publish request, tell the user to run
-`jb review apply <container>` on the host: **nothing has been published yet.**
+`jb review apply <container> <manifest>` on the host (once per manifest):
+**nothing has been published yet.**
 Everything still queued is a proposal in the host's outbox store
 (`jailbee outbox ls`).
 
@@ -219,5 +238,6 @@ The outbox is not a log of what happened — it is a queue of what you'd
 pending manifest, reject it outright, or ask you to fix it before it's
 applied. The record of what actually landed on GitHub is
 `jailbee outbox sent` (add `--kind pr`), which lists what the host published
-from this container. Never assume a manifest you wrote has been published;
+from this container; `jailbee outbox sent --json` holds the published PR
+and comment numbers and URLs. Never assume a manifest you wrote has been published;
 check that list (or ask) instead.

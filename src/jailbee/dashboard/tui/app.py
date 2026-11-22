@@ -7,6 +7,7 @@ the session holds.
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 import threading
 from collections.abc import Callable, Sequence
@@ -91,6 +92,60 @@ def _set_mouse_reporting(driver: Driver | None, on: bool) -> None:
         driver._mouse = False
 
 
+logger = logging.getLogger(__name__)
+
+
+class _OnAppThread:
+    """A :class:`~jailbee.dashboard.runner.RunProgress` whose calls land on the app thread.
+
+    Output never blocks the runner's pump: chunks pile up under a lock and at
+    most one flush is posted, which hands the app thread their coalesced text
+    (a blocking hand-off would stall the child once its pipe fills while the
+    app thread is busy, e.g. in a tmux hand-off). A question blocks, after
+    draining the output before it; :meth:`drain` settles what is still pending
+    before the batch finishes.
+    """
+
+    def __init__(
+        self,
+        inner: drunner.RunProgress,
+        on_app_thread: Callable[[Callable[[], None]], None],
+        post: Callable[[Callable[[], None]], None],
+    ) -> None:
+        self._inner = inner
+        self._on_app_thread = on_app_thread
+        self._post = post
+        self._lock = threading.Lock()
+        self._pending: list[tuple[int, str]] = []
+        self._scheduled = False
+
+    def output(self, index: int, chunk: str) -> None:
+        with self._lock:
+            self._pending.append((index, chunk))
+            if self._scheduled:
+                return
+            self._scheduled = True
+        self._post(self.drain)
+
+    def drain(self) -> None:
+        """Hand the pending output to the inner progress, one call per run; app thread only."""
+        with self._lock:
+            pending, self._pending = self._pending, []
+            self._scheduled = False
+        merged: dict[int, str] = {}
+        for index, chunk in pending:
+            merged[index] = merged.get(index, "") + chunk
+        for index, text in merged.items():
+            self._inner.output(index, text)
+
+    def question(self, index: int, asking: bool) -> None:
+        def ask() -> None:
+            self.drain()
+            self._inner.question(index, asking)
+
+        self._on_app_thread(ask)
+
+
 class DashboardApp(App[int], inherit_bindings=False):
     """The dashboard's Textual frontend: one frame, keys, timer, hand-off, title.
 
@@ -154,6 +209,7 @@ class DashboardApp(App[int], inherit_bindings=False):
         self._ui_thread = threading.get_ident()
         self._pending_prompts: set[asyncio.Future[Any]] = set()
         self._prompts_closed = False
+        self._output_screen: OutputScreen | None = None  # the one a live entry follows
 
     # --- Terminal protocol -------------------------------------------------
 
@@ -170,6 +226,7 @@ class DashboardApp(App[int], inherit_bindings=False):
     def hand_off(self, fn: Callable[[], int]) -> int:
         """Run ``fn`` on the real terminal with the dashboard suspended."""
         client = self.session.client
+        attention_before = self.session.queue.attention_items()
         # Nothing of this dashboard is on screen while `fn` runs: let the
         # shared service stop gathering on its behalf.
         client.set_active(False)
@@ -183,6 +240,8 @@ class DashboardApp(App[int], inherit_bindings=False):
             # The snapshot is as old as the command was long.
             client.set_active(True)
             client.refresh()
+            if not self.modal_open:  # an open question is its own modal
+                self.session.after_hand_off(attention_before)
             # `fn` may have set its own OSC 2 title: rewrite ours on the next frame.
             self._last_title = None
             self._painted = None
@@ -194,30 +253,72 @@ class DashboardApp(App[int], inherit_bindings=False):
         """Whether a question or an output screen is on top of the dashboard."""
         return self._is_mounted and len(self.screen_stack) > 1
 
-    def run_actions(self, runs: Sequence[ActionRun], done: Callable[[ActionOutcome], None]) -> None:
-        """Run the actions on a worker thread; ``done`` is called on the app thread."""
+    def run_actions(
+        self,
+        runs: Sequence[ActionRun],
+        done: Callable[[ActionOutcome], None],
+        progress: drunner.RunProgress | None = None,
+    ) -> None:
+        """Run the actions on a worker thread; ``done`` and ``progress`` run on the app thread."""
         session = self.session
         extra: dict[str, Any] = {"spawn": self.action_spawn} if self.action_spawn else {}
 
+        relay = (
+            None
+            if progress is None
+            else _OnAppThread(progress, self._on_app_thread, self._post_to_app_thread)
+        )
+
         def work() -> None:
-            outcome = drunner.run_actions(
-                runs,
-                run=self.action_runner,
-                transport=session.transport,
-                policy=session.ssh_policy,
-                on_prompt=self._ask_from_worker,
-                client=self.remote_client,
-                **extra,
-            )
-            self._on_app_thread(lambda: done(outcome))
+            try:
+                outcome = drunner.run_actions(
+                    runs,
+                    run=self.action_runner,
+                    transport=session.transport,
+                    policy=session.ssh_policy,
+                    on_prompt=self._ask_from_worker,
+                    progress=relay,
+                    client=self.remote_client,
+                    **extra,
+                )
+            except Exception as exc:
+                # A crashed worker must still settle its entries, or they stay running forever.
+                logger.debug("action worker crashed", exc_info=True)
+                outcome = ActionOutcome([drunner.RunResult(error=str(exc))], str(exc), [])
+
+            def settle() -> None:
+                if relay is not None:
+                    relay.drain()  # no chunk is lost before the entries finish
+                done(outcome)
+
+            self._on_app_thread(settle)
 
         if self.threaded_actions:
             self.run_worker(work, thread=True, exit_on_error=False)
         else:
             work()
 
-    def show_output(self, title: str, text: str, *, failed: bool) -> None:
-        self.push_screen(OutputScreen(title, text, failed=failed))
+    def show_output(
+        self,
+        title: str,
+        text: str,
+        *,
+        failed: bool,
+        live: bool = False,
+        background: bool = False,
+        on_close: Callable[[], None] | None = None,
+    ) -> None:
+        screen = OutputScreen(title, text, failed=failed, background=background)
+        if live:  # only a live screen is ever rewritten; a plain one stacked on top leaves it be
+            self._output_screen = screen
+        self.push_screen(screen, None if on_close is None else lambda _result: on_close())
+
+    def update_output(self, text: str, failed: bool = False) -> None:
+        screen = self._output_screen
+        if screen is not None and screen in self.screen_stack:
+            screen.set_text(text)
+            if failed:
+                screen.add_class("failed")
 
     def _on_app_thread(self, fn: Callable[[], None]) -> None:
         if threading.get_ident() == self._ui_thread:
@@ -226,7 +327,22 @@ class DashboardApp(App[int], inherit_bindings=False):
         try:
             self.call_from_thread(fn)
         except (Exception, asyncio.CancelledError):
-            pass  # the dashboard is gone: nobody is left to tell
+            # the dashboard is gone: nobody is left to tell
+            logger.debug("app-thread call dropped", exc_info=True)
+
+    def _post_to_app_thread(self, fn: Callable[[], None]) -> None:
+        """Run ``fn`` on the app thread without waiting for it (inline on the app thread)."""
+        if threading.get_ident() == self._ui_thread:
+            fn()
+            return
+        loop = self._loop
+        if loop is None:
+            logger.debug("app-thread post dropped: no loop")
+            return
+        try:
+            loop.call_soon_threadsafe(fn)
+        except (Exception, asyncio.CancelledError):
+            logger.debug("app-thread post dropped", exc_info=True)
 
     def _ask_from_worker(self, prompt: Prompt) -> Any:
         """The runner's ``on_prompt``: blocks the worker until a modal is answered."""

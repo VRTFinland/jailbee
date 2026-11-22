@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -15,10 +16,21 @@ from typer.core import TyperGroup
 if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
-    from jailbee.outbox.models import ProposalId
+    from jailbee.outbox.models import Kind, ProposalId
 
 _COMMANDS = frozenset(
-    ("browse", "ls", "show", "drop", "clear", "apply", "sent", "attachments", "attachment-resolve")
+    (
+        "browse",
+        "ls",
+        "show",
+        "drop",
+        "clear",
+        "apply",
+        "sent",
+        "attachments",
+        "attachment-resolve",
+        "resolve",
+    )
 )
 
 
@@ -117,7 +129,7 @@ def group(ctx: typer.Context, config: ConfigOption = None) -> None:
 
 
 def _run(
-    ctx: typer.Context, config: Path | None, operation: Callable[[Config, Incus], int]
+    ctx: typer.Context | None, config: Path | None, operation: Callable[[Config, Incus], int]
 ) -> None:
     from jailbee.attachments import AttachmentError
     from jailbee.config import ConfigError, load_config, load_repo_config
@@ -131,7 +143,7 @@ def _run(
     from jailbee.tui import error_plain
 
     try:
-        path = config if config is not None else ctx.obj
+        path = config if config is not None or ctx is None else ctx.obj
         check_config_selection(path)
         cfg = load_config(path) if path is not None else load_repo_config(Path.cwd())
         status = operation(cfg, Incus())
@@ -160,15 +172,24 @@ def _pick_target(
     proposal: str | None,
     *,
     destructive: bool,
+    kind: Kind | None = None,
 ) -> tuple[str, ProposalId]:
-    """The container and proposal a command acts on, asking for what is missing."""
+    """The container and proposal a command acts on, asking for what is missing.
+
+    With ``kind`` only that kind's proposals are candidates, and a bare
+    manifest name stands for ``<kind>/<name>``.
+    """
     from jailbee import prompting
     from jailbee.outbox.commands import discover
-    from jailbee.outbox.models import ProposalId
 
     if container is not None and proposal is not None:
-        return container, ProposalId.parse(proposal)
+        return container, _parse_proposal(proposal, kind)
     discovered = discover(cfg, incus, container, all_repos=False)
+    if kind is not None:
+        discovered = tuple(
+            replace(v, proposals=tuple(p for p in v.proposals if p.id.kind == kind))
+            for v in discovered
+        )
     views = [v for v in discovered if v.proposals]
     if container is not None:
         # Named, so nothing to ask: `discover` already resolved it to one container.
@@ -188,7 +209,7 @@ def _pick_target(
         )
         view = next(v for v in views if v.name == chosen)
     if proposal is not None:
-        return view.name, ProposalId.parse(proposal)
+        return view.name, _parse_proposal(proposal, kind)
     pid = prompting.choose_one(
         "proposal",
         [prompting.Option(p.id, f"{p.id}  {p.state}", str(p.id)) for p in view.proposals],
@@ -196,6 +217,19 @@ def _pick_target(
         empty_reason=f"no pending proposals in {view.name}",
     )
     return view.name, pid
+
+
+def _parse_proposal(value: str, kind: Kind | None) -> ProposalId:
+    """``kind/name`` always; a bare ``name`` too when the command is kind-scoped."""
+    from jailbee.outbox.models import OutboxError, ProposalId
+
+    if kind is None or "/" in value:
+        pid = ProposalId.parse(value)
+        if kind is not None and pid.kind != kind:
+            article = "an" if kind[0] in "aeiou" else "a"
+            raise OutboxError(f"{value}: not {article} {kind} proposal")
+        return pid
+    return ProposalId(kind, value)
 
 
 def browser_read_only() -> bool:
@@ -224,7 +258,7 @@ def browse(
     from jailbee.outbox.commands import show_overview
     from jailbee.outbox.models import OutboxError
 
-    path = config if config is not None else ctx.obj
+    path = config if config is not None or ctx is None else ctx.obj
 
     def operation(cfg: Config, incus: Incus) -> int:
         if not prompting.is_interactive():
@@ -357,6 +391,59 @@ def attachments(
             for row in rows:
                 typer.echo(safe_text(json.dumps(row, ensure_ascii=True)))
         return 0
+
+    _run(ctx, config, operation)
+
+
+@app.command("resolve")
+def resolve(
+    ctx: typer.Context,
+    container: ContainerArgument = None,
+    proposal: ProposalArgument = None,
+    action: Annotated[
+        int | None,
+        typer.Argument(help="Zero-based index of the uncertain action. Asked for when omitted."),
+    ] = None,
+    applied: Annotated[
+        bool, typer.Option("--applied", help="Confirm the action actually landed on GitHub.")
+    ] = False,
+    url: Annotated[
+        str | None, typer.Option("--url", help="The GitHub URL the action produced (--applied).")
+    ] = None,
+    issue: Annotated[
+        int | None,
+        typer.Option("--issue", help="The created issue's number (issue create actions only)."),
+    ] = None,
+    retry: Annotated[
+        bool, typer.Option("--retry", help="Forget the uncertain outcome and retry it.")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Skip the confirmation (issue proposals).")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Resolve one PR or issue action whose GitHub outcome an earlier run left uncertain.
+
+    Check GitHub first. Exactly one of `--applied` (with `--url`, and `--issue`
+    for an issue create) or `--retry` is required; `--retry` forgets the
+    uncertain record so `jailbee outbox apply` attempts it again. Also
+    available as `jailbee review resolve` and `jailbee issue resolve`.
+    """
+    from jailbee.cli_outbox_resolve import run_outbox_resolve
+
+    def operation(cfg: Config, incus: Incus) -> int:
+        return run_outbox_resolve(
+            cfg,
+            incus,
+            container,
+            proposal,
+            action,
+            applied=applied,
+            url=url,
+            issue=issue,
+            retry=retry,
+            yes=yes,
+        )
 
     _run(ctx, config, operation)
 
@@ -609,20 +696,87 @@ def apply(
     `-o json` (with `--dry-run` only) prints the plan as one JSON object and
     never prompts.
     """
-    import json
+    run_apply(
+        config if config is not None else ctx.obj,
+        container,
+        proposal,
+        dry_run=dry_run,
+        force=force,
+        foreign=foreign,
+        draft=draft,
+        yes=yes,
+        revision=revision,
+        as_json=output is Output.json,
+    )
 
+
+def run_apply(
+    config: Path | None,
+    container: str | None,
+    proposal: str | None,
+    *,
+    kind: Kind | None = None,
+    dry_run: bool = False,
+    force: bool = False,
+    foreign: bool = False,
+    draft: bool = False,
+    yes: bool = False,
+    revision: str | None = None,
+    as_json: bool = False,
+) -> None:
+    """The one host publish path for a staged proposal, shared by every spelling.
+
+    `jailbee outbox apply` and its kind-scoped aliases (`jailbee review
+    apply`, `jailbee issue apply`) all end here, so their prompts, output
+    and exit codes cannot drift apart. ``kind`` narrows the candidates and
+    lets ``proposal`` be a bare manifest name.
+
+    A PR creation (a description awaiting its PR, a pinned source awaiting its
+    push) is published by handing over to `jailbee pr push`, whose own
+    questions (AI consent, branch name, …) still reach the user.
+    """
     from jailbee import prompting
+    from jailbee.outbox import commands as outbox_commands
     from jailbee.outbox.commands import apply_selected
     from jailbee.outbox.markdown_view import print_lines
     from jailbee.outbox.models import OutboxError
     from jailbee.outbox.publish import PublishOptions, ask_publish_mode
 
-    as_json = output is Output.json
+    creation: list[tuple[str, dict[str, str]]] = []
 
     def operation(cfg: Config, incus: Incus) -> int:
+        from jailbee.outbox.models import pr_push_argv
+        from jailbee.tui import info_plain
+
         if as_json and not dry_run:
             raise OutboxError("JSON output requires --dry-run")
-        name, pid = _pick_target(cfg, incus, container, proposal, destructive=not as_json)
+        name, pid = _pick_target(
+            cfg, incus, container, proposal, destructive=not as_json, kind=kind
+        )
+        scope = outbox_commands.pr_creation(cfg, incus, name, pid, revision=revision)
+        if scope is not None:
+            refused = [
+                flag
+                for flag, given in (
+                    ("--draft", draft),
+                    ("--force", force),
+                    ("--foreign", foreign),
+                    ("-o json", as_json),
+                )
+                if given
+            ]
+            if refused:
+                raise OutboxError(
+                    f"{pid} is a PR creation, published by jailbee pr push: "
+                    f"{', '.join(refused)} does not apply"
+                )
+            command = "jailbee " + " ".join(pr_push_argv(name, scope) or ())
+            if dry_run:
+                info_plain(f"Dry run: publishing {pid} runs {command}")
+                return 0
+            info_plain(f"Publishing {pid} runs {command}")
+            creation.append((name, scope))
+            return 0
         return apply_selected(
             cfg,
             incus,
@@ -663,7 +817,43 @@ def apply(
             ),
         )
 
-    _run(ctx, config, operation)
+    _run(None, config, operation)
+    if creation:
+        _run(
+            None,
+            config,
+            lambda cfg, incus: _publish_pr_creations(cfg, incus, creation, yes=yes),
+        )
+
+
+def _publish_pr_creations(
+    cfg: Config, incus: Incus, creation: Sequence[tuple[str, dict[str, str]]], *, yes: bool
+) -> int:
+    """Hand each PR creation to the `pr push` body that publishes it (its exits pass through).
+
+    `yes` skips only the publish confirmation, which `outbox apply` already
+    asked (a source manifest's "Publish?", a submodule's plan): the choices
+    `pr push` makes (a foreign PR head, which submodules) are asked again,
+    and off a terminal they exit 2 naming the missing choice.
+    """
+    from jailbee import pr_push_run
+    from jailbee.lifecycle import resolve_container_for_interactive
+
+    for name, scope in creation:
+        try:
+            full = resolve_container_for_interactive(cfg, incus, name)
+        except ValueError as exc:
+            from jailbee.tui import error
+
+            error(str(exc))
+            raise typer.Exit(1) from exc
+        if scope.get("kind") == "submodule":
+            pr_push_run.run_submodule_pr_push(cfg, incus, full, path=scope["path"], yes=yes)
+        elif scope.get("kind") == "source":
+            pr_push_run.run_pr_push(cfg, incus, full, source_manifest=scope["manifest"], yes=yes)
+        else:
+            pr_push_run.run_pr_push(cfg, incus, full)
+    return 0
 
 
 def _run_sent(

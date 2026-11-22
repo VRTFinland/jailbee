@@ -182,7 +182,7 @@ children never can. The target file is read from the requester's own outbox.
 Use `jailbee inbox send publish --issue NAME --wait` or `--pr NAME --wait`.
 Issue action kinds and repo coverage must all be granted. Source PR manifests
 need `pull_requests` (own branches only, no force); review manifests need
-`pr_reviews` (bound PRs in the own repo only). Missing `publish` grants nothing.
+`pr_reviews` (bound PRs in the own repo only); a `comment_edit` action also needs `pr_comment_edits`; a `state` action (close or reopen) needs `pr_state`. Missing `publish` grants nothing.
 One request runs per orchestrator; all pending actions reserve sliding-hour
 budget up front, refunded only if the in-lock policy refuses before any mutation. A source publish counts as one action.
 Replies: `started`, then `done` with URLs/issue numbers or `failed` with the

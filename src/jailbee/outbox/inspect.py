@@ -80,6 +80,8 @@ def _issue_action(index: int, action: issues.IssueAction) -> ActionView:
             title, body, kind = action.title, action.body, "edit"
         elif isinstance(action, issues.CommentAction):
             body, kind = action.body, "comment"
+        elif isinstance(action, issues.CommentEditAction):
+            body, kind = action.body, "comment_edit"
         elif isinstance(action, issues.LabelsAction):
             body, kind, markdown = (
                 f"add: {', '.join(action.add)}\nremove: {', '.join(action.remove)}",
@@ -121,6 +123,8 @@ def _issue_action(index: int, action: issues.IssueAction) -> ActionView:
         elif isinstance(action, issues.StateAction):
             body = action.state + (f" ({action.reason})" if action.reason else "")
             kind, markdown = "state", False
+        elif isinstance(action, (issues.SubIssueAction, issues.DependencyAction)):
+            body, kind, markdown = issues.relation_change(action), action.kind, False
         else:
             assert_never(action)
     return ActionView(index, kind, action.repo, target, title, body, markdown, "pending", None, ())
@@ -140,6 +144,10 @@ def _pr_actions(manifest: prs.Manifest, recorded_pr: int | None) -> tuple[Action
             kind = "description"
         elif isinstance(action, prs.ReplyAction):
             kind = "reply"
+        elif isinstance(action, prs.CommentEditAction):
+            kind = "comment_edit"
+        elif isinstance(action, prs.StateAction):
+            kind = "state"
         else:
             kind = "comment"
         title = action.title if isinstance(action, prs.DescriptionAction) else None
@@ -155,7 +163,9 @@ def _pr_actions(manifest: prs.Manifest, recorded_pr: int | None) -> tuple[Action
                 "pending",
                 None,
                 comments,
-                action.comment_id if isinstance(action, prs.ReplyAction) else None,
+                action.comment_id
+                if isinstance(action, (prs.ReplyAction, prs.CommentEditAction))
+                else None,
             )
         )
     return tuple(result)

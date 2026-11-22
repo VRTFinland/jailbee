@@ -1405,11 +1405,147 @@ def test_apply_real_dry_run_json_is_parseable(publication_env, capsys):
     assert data["kind"] == "issue" and len(data["actions"]) == 3
 
 
-def test_apply_source_exits_two_with_push_hint(env):
-    raw = json.dumps(
+# `jb review apply` / `jb issue apply` are kind-scoped aliases of `jb outbox apply`:
+# one publish path, so the same proposal must yield the same output, exit code,
+# prompts and GitHub effects whichever spelling published it.
+
+_ALIAS = {"pr": "review", "issue": "issue"}
+
+
+@pytest.mark.parametrize("kind", ["issue", "pr"])
+@pytest.mark.parametrize(
+    ("flags", "answer"), [(["-y"], ""), ([], "n\n"), ([], "y\n"), (["--dry-run"], "")]
+)
+def test_kind_alias_apply_matches_outbox_apply(
+    publication_env, mocker, kind, flags, answer, typed_confirmations
+):
+    env, create, comment, review = publication_env
+    originals = {k: env[2][k].as_dict() for k in ("pr", "issue")}
+
+    def run(args):
+        # Each spelling starts from the same store: proposals and no journals.
+        with broker().transaction() as con:
+            for table in ("outbox_journal", "outbox_journal_action"):
+                con.execute(f"DELETE FROM {table} WHERE uuid=?", (UUID,))
+        for k, files in originals.items():
+            env[2][k] = store(k, files)
+        for mock in (create, comment, review):
+            mock.reset_mock()
+        prompt = mocker.spy(prompting, "_confirm")
+        result = CliRunner().invoke(app, args, input=answer, env={"COLUMNS": "200"})
+        effects = (
+            result.exit_code,
+            result.output,
+            [c.args for c in prompt.call_args_list],
+            create.call_count,
+            comment.call_count,
+            review.call_count,
+            sorted(env[2][kind].as_dict()),
+        )
+        mocker.stop(prompt)
+        return effects
+
+    unified = run(["outbox", "apply", "feature", f"{kind}/001.json", *flags])
+    alias = run([_ALIAS[kind], "apply", "feature", "001.json", *flags])
+    assert alias == unified
+
+
+@pytest.mark.parametrize("kind", ["issue", "pr"])
+def test_kind_alias_apply_offers_only_its_own_kind(env, mocker, kind):
+    _on_tty(mocker)
+    select = mocker.patch("jailbee.prompting._select", return_value=ProposalId(kind, "001.json"))
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
+    result = CliRunner().invoke(app, [_ALIAS[kind], "apply", "feature", "-y"])
+    assert result.exit_code == 0, result.output
+    (call,) = select.call_args_list
+    offered = [o.value for o in call.args[1]]
+    assert offered and all(p.kind == kind for p in offered)
+    assert applied.call_args.args[3] == ProposalId(kind, "001.json")
+
+
+@pytest.mark.parametrize("kind", ["issue", "pr"])
+def test_kind_alias_apply_without_its_kind_pending_is_a_reason(env, mocker, kind):
+    _on_tty(mocker)
+    env[2][kind] = store(kind, {})
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
+    result = CliRunner().invoke(app, [_ALIAS[kind], "apply"])
+    assert result.exit_code == 2, result.output
+    assert "no container has pending proposals" in panel_text(result.output)
+    applied.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "args",
+    [["review", "ls"], ["review", "show"], ["review", "drop"], ["issue", "show"]],
+)
+def test_deprecated_review_and_issue_leaves_are_removed(args):
+    result = CliRunner().invoke(app, [*args, "--help"])
+    assert result.exit_code == 2
+    assert "No such command" in result.output
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (["--manifest", "001.json"], ProposalId("issue", "001.json")),
+        (["issue/001.json"], ProposalId("issue", "001.json")),
+        (["001.json", "--manifest", "001.json"], ProposalId("issue", "001.json")),
+    ],
+)
+def test_issue_apply_takes_the_manifest_as_argument_or_option(env, mocker, args, expected):
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
+    result = CliRunner().invoke(app, ["issue", "apply", "feature", *args, "-y"])
+    assert result.exit_code == 0, result.output
+    assert applied.call_args.args[3] == expected
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (
+            ["issue", "apply", "feature", "001.json", "--manifest", "002.json"],
+            "give the manifest once",
+        ),
+        (["issue", "apply", "feature", "pr/001.json"], "not an issue proposal"),
+        (["review", "apply", "feature", "issue/001.json"], "not a pr proposal"),
+    ],
+)
+def test_kind_alias_apply_refuses_an_ambiguous_or_other_kind_manifest(env, mocker, args, message):
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
+    result = CliRunner().invoke(app, [*args, "-y"])
+    assert result.exit_code == 2, result.output
+    assert message in " ".join(result.output.split())
+    applied.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("kind", "flags"),
+    [("pr", ["--force"]), ("pr", ["--draft"]), ("pr", ["--foreign"]), ("issue", ["--foreign"])],
+)
+def test_kind_alias_apply_passes_its_flags_as_outbox_apply_does(env, mocker, kind, flags):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected", return_value=0)
+    calls = []
+    for args in (
+        ["outbox", "apply", "feature", f"{kind}/001.json", *flags, "-y"],
+        [_ALIAS[kind], "apply", "feature", "001.json", *flags, "-y"],
+    ):
+        result = CliRunner().invoke(app, args)
+        assert result.exit_code == 0, result.output
+        calls.append(applied.call_args)
+    assert calls[0].args[2:] == calls[1].args[2:]
+    assert calls[0].kwargs["options"] == calls[1].kwargs["options"]
+    assert getattr(calls[1].kwargs["options"], flags[0].lstrip("-")) is True
+
+
+# --- a PR creation is published by `pr push` ---------------------------------
+
+
+def _source_manifest() -> str:
+    return json.dumps(
         {
             "version": 1,
-            "repo": "acme/main",
+            "repo": "acme/repo",
             "pr": 7,
             "head_sha": None,
             "source": "refs/heads/topic",
@@ -1417,7 +1553,89 @@ def test_apply_source_exits_two_with_push_hint(env):
             "actions": [],
         }
     )
-    env[2]["pr"] = store("pr", {"source.json": raw})
-    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/source.json", "-y"])
+
+
+def test_apply_on_a_source_manifest_runs_its_source_push(env, mocker):
+    env[2]["pr"] = store("pr", {"002.json": _source_manifest()})
+    push = mocker.patch("jailbee.pr_push_run.run_pr_push")
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected")
+    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/002.json", "-y"])
+    assert result.exit_code == 0, result.output
+    push.assert_called_once()
+    assert push.call_args.args[2] == "acme-feature"
+    assert push.call_args.kwargs == {"source_manifest": "002.json", "yes": True}
+    applied.assert_not_called()
+    assert "jailbee pr push feature --source-manifest 002.json" in result.output
+
+
+@pytest.mark.parametrize(
+    ("scope", "target", "kwargs"),
+    [
+        ({"kind": "repo"}, "jailbee.pr_push_run.run_pr_push", {}),
+        (
+            {"kind": "submodule", "path": "libs/x"},
+            "jailbee.pr_push_run.run_submodule_pr_push",
+            {"path": "libs/x", "yes": False},
+        ),
+    ],
+)
+def test_apply_on_a_proposal_awaiting_its_pr_runs_pr_push(env, mocker, scope, target, kwargs):
+    mocker.patch("jailbee.outbox.commands.pr_creation", return_value=scope)
+    push = mocker.patch(target)
+    applied = mocker.patch("jailbee.outbox.commands.apply_selected")
+    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json"])
+    assert result.exit_code == 0, result.output
+    push.assert_called_once()
+    assert push.call_args.args[2] == "acme-feature"
+    assert push.call_args.kwargs == kwargs
+    applied.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("scope", "target", "kwargs"),
+    [
+        ({"kind": "repo"}, "jailbee.pr_push_run.run_pr_push", {}),
+        ({"kind": "source", "manifest": "s.json"}, "jailbee.pr_push_run.run_pr_push",
+         {"source_manifest": "s.json", "yes": True}),
+        ({"kind": "submodule", "path": "libs/x"}, "jailbee.pr_push_run.run_submodule_pr_push",
+         {"path": "libs/x", "yes": True}),
+    ],
+)  # fmt: skip
+def test_apply_yes_skips_only_the_publish_confirmation_of_a_pr_creation(
+    env, mocker, scope, target, kwargs
+):
+    """`-y` is never forwarded to the choices `pr push` makes (foreign head, submodules)."""
+    mocker.patch("jailbee.outbox.commands.pr_creation", return_value=scope)
+    push = mocker.patch(target)
+    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json", "-y"])
+    assert result.exit_code == 0, result.output
+    assert push.call_args.kwargs == kwargs
+
+
+def test_apply_pr_creation_keeps_pr_push_exit_status(env, mocker):
+    import typer
+
+    mocker.patch("jailbee.outbox.commands.pr_creation", return_value={"kind": "repo"})
+    mocker.patch("jailbee.pr_push_run.run_pr_push", side_effect=typer.Exit(1))
+    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json"])
+    assert result.exit_code == 1, result.output
+
+
+def test_apply_pr_creation_dry_run_names_the_command_and_runs_nothing(env, mocker):
+    mocker.patch("jailbee.outbox.commands.pr_creation", return_value={"kind": "repo"})
+    push = mocker.patch("jailbee.pr_push_run.run_pr_push")
+    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "jailbee pr push feature" in result.output
+    push.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "extra", [["--draft"], ["--force"], ["--foreign"], ["--dry-run", "-o", "json"]]
+)
+def test_apply_pr_creation_refuses_manifest_only_options(env, mocker, extra):
+    mocker.patch("jailbee.outbox.commands.pr_creation", return_value={"kind": "repo"})
+    push = mocker.patch("jailbee.pr_push_run.run_pr_push")
+    result = CliRunner().invoke(app, ["outbox", "apply", "feature", "pr/001.json", *extra])
     assert result.exit_code == 2, result.output
-    assert "jailbee pr push acme-feature --source-manifest source.json" in panel_text(result.output)
+    push.assert_not_called()

@@ -339,6 +339,30 @@ def _new_window(incus: Incus, container: str, window: str, shell_cmd: str, env_f
     incus.exec(container, _runuser(f"{new_window} && ({set_remain} || true)"))
 
 
+def open_window(
+    incus: Incus, container: str, base: str, command: str, env: dict[str, str], cwd: str
+) -> str:
+    """Start ``command`` in a new detached window and return its name.
+
+    Unlike :func:`run_step` this never replaces a window: the name is ``base``
+    or, when taken, ``base-2``, ``base-3`` … so a running agent is left alone.
+    """
+    base = _sanitize_window_name(base)
+    listing = incus.exec(
+        container,
+        _runuser(f"tmux list-windows -t {SESSION_NAME} -F '#{{window_name}}' 2>/dev/null || true"),
+    )
+    taken = set(listing.split())
+    window = base
+    n = 2
+    while window in taken:
+        window = f"{base}-{n}"
+        n += 1
+    shell_cmd = f"cd {shlex.quote(cwd)} && {command.strip()}"
+    _new_window(incus, container, window, shell_cmd, _env_flags(env))
+    return window
+
+
 def run_step(
     incus: Incus,
     container: str,

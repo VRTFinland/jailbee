@@ -273,3 +273,12 @@ def test_messages_table_shows_missing_values_as_dashes() -> None:
     table = messages_table([{**row, "container": "a", "id": "m1", "created_at": "t"}])
     cells = [c._cells[0] for c in table.columns]
     assert cells == ["a", "m1", "-", "-", "-", "-", "t", "-"]
+
+
+def test_grant_view_carries_comment_edit_right():
+    from jailbee.orchestration.grant import Grant, PublishRights
+
+    grant = Grant(publish=PublishRights(pr_reviews=True, pr_comment_edits=True))
+    view = parse_grant_view(grant.to_label())
+    assert view is not None and view.publish_pr_comment_edits is True
+    assert parse_grant_view(GRANT).publish_pr_comment_edits is False

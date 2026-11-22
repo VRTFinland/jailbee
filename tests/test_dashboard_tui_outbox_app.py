@@ -325,14 +325,14 @@ def _awaiting_listing() -> str:
     return _listing(_container(_proposal("pr/a.json")), _container(awaiting, name="beta-one"))
 
 
-def test_create_pr_in_all_repos_view_is_addressed_at_the_containers_repo(mocker, repos):
+def test_publish_pr_creation_in_all_repos_view_is_addressed_at_the_containers_repo(mocker, repos):
     repos["beta-one"] = BETA
     mocker.patch.object(
         da, "run_cli_quiet", return_value=da.CliResult(True, "done", _awaiting_listing())
     )
     handed = []
 
-    def foreground(target, argv, *, style):  # type: ignore[no-untyped-def]
+    def foreground(target, argv, *, style, diagnostic_path=None):  # type: ignore[no-untyped-def]
         handed.append((target, argv, target.flags(), target.cwd()))
         return 0
 
@@ -340,7 +340,7 @@ def test_create_pr_in_all_repos_view_is_addressed_at_the_containers_repo(mocker,
     app = OutboxApp(TARGET, container=None, all_repos=True, read_only=False)
 
     async def scenario(pilot):  # type: ignore[no-untyped-def]
-        await pilot.press("down", "c")  # the beta-one proposal
+        await pilot.press("down", "p")  # the beta-one proposal
         await pilot.pause()
 
     drive(app, scenario, size=(160, 30))
@@ -350,7 +350,7 @@ def test_create_pr_in_all_repos_view_is_addressed_at_the_containers_repo(mocker,
     ]  # fmt: skip
 
 
-def test_create_pr_refused_when_the_containers_repo_is_unknown(mocker, repos):
+def test_publish_pr_creation_refused_when_the_containers_repo_is_unknown(mocker, repos):
     repos["beta-one"] = None
     mocker.patch.object(
         da, "run_cli_quiet", return_value=da.CliResult(True, "done", _awaiting_listing())
@@ -359,7 +359,7 @@ def test_create_pr_refused_when_the_containers_repo_is_unknown(mocker, repos):
     app = OutboxApp(TARGET, container=None, all_repos=True, read_only=False)
 
     async def scenario(pilot):  # type: ignore[no-untyped-def]
-        await pilot.press("down", "c")
+        await pilot.press("down", "p")
         await pilot.pause()
 
     drive(app, scenario, size=(160, 30))
@@ -418,3 +418,30 @@ def test_local_outbox_diagnostic_handles_invalid_and_large_bytes(mocker):
     rc, text = runner.hand_off_diagnostic(["pr", "push", "alpha-x"])
     assert rc == 1 and text is not None and text.startswith("bad\ufffd")
     assert len(text) < 10000 and "truncated" in text
+
+
+def test_reader_opens_scrolls_and_closes_with_the_cursor_kept(quiet):
+    app = make()
+
+    async def scenario(pilot):  # type: ignore[no-untyped-def]
+        await pilot.press("down")  # second proposal
+        await pilot.pause()
+        box = app.query_one(OutboxBox)
+        cursor = box._list.highlighted
+        await pilot.press("f")
+        await pilot.pause()
+        assert app.controller.state.preview == "full"
+        assert not box._list.display and app.query_one("#outbox-right").display
+        await pilot.press("pagedown")
+        await pilot.press("j")
+        await pilot.pause()
+        assert "ISS o/r#42" not in screen_text(app)  # the list is hidden while reading
+        await pilot.press("escape")  # leaves the reader, not the app
+        await pilot.pause()
+        assert app.controller.state.preview == "auto" and box._list.display
+        return cursor, box._list.highlighted, screen_text(app)
+
+    cursor, kept, listed_again = drive(app, scenario)
+    assert cursor is not None and kept == cursor
+    assert "f full" in listed_again
+    assert "ISS o/r#42" in listed_again

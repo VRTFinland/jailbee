@@ -116,6 +116,12 @@ def test_prepare_fork_without_a_pr_label_is_trusted(cfg, wired):
     assert forking.prepare_fork(cfg, _labels(pr=""), "src").untrusted is False
 
 
+def test_prepare_fork_carries_the_base_explicit_marker(cfg, wired):
+    incus = _labels(base_branch="feat/a", base_explicit="true")
+    assert forking.prepare_fork(cfg, incus, "src").base_explicit == "true"
+    assert forking.prepare_fork(cfg, _labels(base_branch="main"), "src").base_explicit is None
+
+
 def test_prepare_fork_unset_base_branch_is_none(cfg, wired):
     incus = MagicMock()
     incus.config_get.return_value = None
@@ -328,3 +334,12 @@ def test_historical_submodule_gitlink_is_fetched_not_current_head(cfg, mocker):
     )
     assert fetch.call_args.args[2] == f"+{child_sha}:refs/jailbee-sub/src/commits/{child_sha}"
     assert fetch.call_args.kwargs["timeout"] == 17
+
+
+def test_explicit_ref_carries_the_base_explicit_marker(cfg, wired, mocker):
+    incus = _labels(base_branch="feat/a", base_explicit="false")
+    incus.exec.return_value = "a" * 40 + "\n"
+    mocker.patch("jailbee.sync.fetch_ref_from_container")
+    mocker.patch("jailbee.submodules.transport_submodules_to_host_at_commit", create=True)
+    result = forking.prepare_fork(cfg, incus, "src", ref="refs/heads/topic")
+    assert result.base_explicit == "false"

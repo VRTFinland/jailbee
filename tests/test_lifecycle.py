@@ -186,6 +186,34 @@ def test_list_containers_parses_orchestration_labels(make_cfg, tmp_path, mocker)
     assert infos["myrepo-k1"].orchestrator_running is True
 
 
+def test_list_containers_reads_the_runner_label_into_the_card_fields(make_cfg, tmp_path, mocker):
+    from jailbee.orchestration import labels
+    from jailbee.orchestration.runner import Runner
+
+    mocker.patch("jailbee.orchestration.view.queued_counts", return_value={})
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(
+            name="myrepo-own",
+            user_config={
+                labels.RUNNER: Runner(agent="claude-jb", profile="grok", model="sonnet").to_label()
+            },
+        ),
+        _container(name="myrepo-plain"),
+        _container(name="myrepo-bad", user_config={labels.RUNNER: "not a runner"}),
+    ]
+    infos = {c.name: c for c in list_containers(cfg, incus)}
+    assert (infos["myrepo-own"].agent_runner, infos["myrepo-own"].agent_source) == (
+        "grok/sonnet",
+        "container",
+    )
+    assert (infos["myrepo-plain"].agent_runner, infos["myrepo-plain"].agent_source) == (None, None)
+    assert infos["myrepo-bad"].agent_runner is None  # a corrupt label is no label
+
+
 def test_list_containers_reads_queue_file(make_cfg, tmp_path, mocker):
     from jailbee.orchestration import labels
 
@@ -1157,6 +1185,118 @@ def test_listing_snapshots_moved_host_branch_once_for_two_workers(make_cfg, tmp_
     }
 
 
+def test_listing_gives_pr_bound_containers_their_pr_head_as_the_sync_target(
+    make_cfg, tmp_path, mocker
+):
+    """A PR-bound container compares with the PR head the host last fetched;
+    its siblings bound to the same PR share one ref read, and a plain
+    container keeps the host branch."""
+    from jailbee.host_target import SyncTarget, TargetSnapshot
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(
+            name=f"myrepo-review-{n}",
+            user_config={"user.jailbee.repo_dir": "/repo", "user.jailbee.pr": "12"},
+        )
+        for n in (1, 2)
+    ] + [
+        _container(name="myrepo-plain", user_config={"user.jailbee.repo_dir": "/repo"}),
+        _container(
+            name="myrepo-unfetched",
+            user_config={"user.jailbee.repo_dir": "/repo", "user.jailbee.pr": "13"},
+        ),
+    ]
+    host = TargetSnapshot(cfg.default_branch, "host-sha", "local", "refs/x", "equal")
+    mocker.patch("jailbee.lifecycle.resolve_target", return_value=host)
+    rev_parse = mocker.patch(
+        "jailbee.git.rev_parse",
+        side_effect=lambda _root, ref: {"refs/jailbee/pr/12/head": "pr-sha"}.get(ref),
+    )
+    probe = mocker.patch("jailbee.lifecycle.probe_many_parallel", return_value={})
+    mocker.patch("jailbee.lifecycle.get_head_sha", return_value=None)
+
+    list_containers(cfg, incus, with_git_status=True)
+
+    sync = probe.call_args.kwargs["sync_by_name"]
+    pr12 = SyncTarget("pr", "PR #12", "pr-sha", "refs/jailbee/pr/12/head")
+    assert sync["myrepo-review-1"] == sync["myrepo-review-2"] == pr12
+    assert (sync["myrepo-plain"].kind, sync["myrepo-plain"].fallback) == ("host", False)
+    assert sync["myrepo-plain"].sha == "host-sha"
+    assert (sync["myrepo-unfetched"].kind, sync["myrepo-unfetched"].fallback) == ("host", True)
+    pr_reads = [c.args[1] for c in rev_parse.call_args_list]
+    assert sorted(pr_reads) == ["refs/jailbee/pr/12/head", "refs/jailbee/pr/13/head"]
+
+
+def test_listing_gives_children_and_forks_their_parent_as_the_sync_target(
+    make_cfg, tmp_path, mocker
+):
+    """A child (even a pr-kind one) and a fork compare with their parent's
+    HEAD from the previous pass; a stopped or unseen parent falls back to the
+    host branch, marked."""
+    from jailbee.host_target import ParentHead, TargetSnapshot
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    spawned = "user.jailbee.spawned_by"
+    last_import = "user.jailbee.orchestration.last_import"
+    rd = {"user.jailbee.repo_dir": "/repo"}
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(name="myrepo-orch", user_config=rd),
+        _container(name="myrepo-off", state="Stopped", user_config=rd),
+        _container(
+            name="myrepo-kid",
+            user_config={
+                **rd,
+                spawned: "myrepo-orch",
+                last_import: "imported-sha",
+                "user.jailbee.pr": "12",
+            },
+        ),
+        _container(name="myrepo-fork", user_config={**rd, "user.jailbee.fork_of": "myrepo-orch"}),
+        _container(name="myrepo-orphan", user_config={**rd, spawned: "myrepo-off"}),
+        _container(name="myrepo-unseen", user_config={**rd, "user.jailbee.fork_of": "myrepo-gone"}),
+    ]
+    host = TargetSnapshot(cfg.default_branch, "host-sha", "local", "refs/x", "equal")
+    mocker.patch("jailbee.lifecycle.resolve_target", return_value=host)
+    rev_parse = mocker.patch(
+        "jailbee.git.rev_parse",
+        side_effect=lambda _root, ref: {"refs/jailbee/fork/HEAD": "pin-sha"}.get(ref),
+    )
+    probe = mocker.patch("jailbee.lifecycle.probe_many_parallel", return_value={})
+    mocker.patch("jailbee.lifecycle.get_head_sha", return_value=None)
+
+    list_containers(
+        cfg,
+        incus,
+        with_git_status=True,
+        parent_heads={
+            "myrepo-orch": ParentHead("orch-sha", 50.0),
+            "myrepo-off": ParentHead("old-sha", 40.0),
+        },
+    )
+
+    sync = probe.call_args.kwargs["sync_by_name"]
+    kid, fork = sync["myrepo-kid"], sync["myrepo-fork"]
+    assert (kid.kind, kid.label, kid.sha, kid.ahead_sha, kid.seen_at) == (
+        "parent",
+        "orch",
+        "orch-sha",
+        "imported-sha",
+        50.0,
+    )
+    assert (fork.kind, fork.sha, fork.ahead_sha) == ("parent", "orch-sha", "pin-sha")
+    for name, parent in (("myrepo-orphan", "off"), ("myrepo-unseen", "gone")):
+        t = sync[name]
+        assert (t.kind, t.sha, t.fallback, t.parent) == ("host", "host-sha", True, parent)
+    assert "refs/jailbee/pr/12/head" not in [c.args[1] for c in rev_parse.call_args_list]
+
+
 def test_all_repos_uses_foreign_config_and_never_reads_excluded_or_orphan_refs(
     make_cfg, tmp_path, mocker, db_session, db_engine
 ):
@@ -1551,6 +1691,50 @@ def test_new_container_uses_explicit_base_branch_label_when_provided(make_cfg, t
 
     calls = [c for c in incus.config_set.call_args_list if c.args[1] == "user.jailbee.base_branch"]
     assert calls[0].args[2] == "develop"
+
+
+@pytest.mark.parametrize(
+    "extra,expected",
+    [
+        ({"base": "develop"}, "true"),
+        ({}, "false"),
+        # Lifecycle-level contract only: an explicit `base` marks "true" whatever
+        # label override accompanies it (the CLI itself rejects `--pr N --base X`).
+        ({"base": "develop", "base_branch_label": "dev"}, "true"),
+        ({"base_branch_label": "dev"}, "false"),
+        # A fork inherits its source's marker; a legacy source leaves none.
+        ({"fork_of": "p-src", "base_explicit_label": "true"}, "true"),
+        ({"fork_of": "p-src", "base_explicit_label": "false"}, "false"),
+        ({"fork_of": "p-src"}, None),
+    ],
+)
+def test_new_container_base_explicit_marker(make_cfg, tmp_path, mocker, extra, expected):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo, default_branch="main")
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value="base" in extra)
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="abc1234")
+    mocker.patch("jailbee.lifecycle.fetch_remote_ref")
+    opts = NewContainerOptions(
+        container_branch="feat/foo",
+        name=None,
+        network="strict",
+        memory="4GB",
+        cpu=4,
+        from_base="gie-golden",
+        clone=True,
+        autostart=False,
+        **extra,
+    )
+    new_container(cfg, incus, opts)
+    marked = [
+        c.args[2]
+        for c in incus.config_set.call_args_list
+        if c.args[1] == "user.jailbee.base_explicit"
+    ]
+    assert marked == ([expected] if expected is not None else [])
 
 
 def _fork_label_calls(make_cfg, tmp_path, mocker, **extra):
@@ -8554,6 +8738,19 @@ def test_ls_field_specs_json_includes_submodules_when_enabled():
     assert "submodules" not in specs_off["git_status"].json(c)
 
 
+def test_json_emits_the_probe_token_not_the_bullet_for_a_missing_target():
+    from jailbee.lifecycle import ls_field_specs
+
+    c = _ci_with_status(behind_count="•", host_behind_count="•")
+    by_name = {f.name: f for f in ls_field_specs(now=_NOW)}
+    assert by_name["behind_count"].json(c) == "missing"
+    payload = by_name["git_status"].json(c)
+    assert payload["behind_count"] == "missing"
+    assert payload["host_behind_count"] == "missing"
+    # display keeps the bullet
+    assert "↓•" in by_name["behind_count"].cell(c)
+
+
 def test_live_target_fields_and_json_metadata():
     from jailbee.git_status import GitStatus
     from jailbee.lifecycle import ls_field_specs
@@ -10642,8 +10839,10 @@ def test_doing_json_is_a_list_of_objects():
 # ---- AGENT column ----
 
 
-def _agent(state="waiting", *, agent="claude", since=None, waiting_for=None, count=1):
-    from jailbee.agent_status import AgentSummary
+def _agent(
+    state="waiting", *, agent="claude", since=None, waiting_for=None, count=1, sessions=None
+):
+    from jailbee.agent_status import AgentSummary, SessionMark
 
     return AgentSummary(
         agent=agent,
@@ -10651,6 +10850,11 @@ def _agent(state="waiting", *, agent="claude", since=None, waiting_for=None, cou
         since=since,
         waiting_for=waiting_for,
         count=count,
+        sessions=(
+            tuple(SessionMark(st) for st in sessions)
+            if sessions is not None
+            else (SessionMark(state, since),)
+        ),
     )
 
 
@@ -10869,11 +11073,151 @@ def test_agent_compact_cell_is_a_state_glyph_and_the_coarsest_duration(state, se
 
 
 def test_agent_compact_cell_has_no_agent_name_and_no_session_count():
-    c = _running(
-        agent_status=(_agent("waiting", since=_AGENT_NOW - timedelta(minutes=4), count=2),)
-    )
+    c = _running(agent_status=(_agent("waiting", since=_AGENT_NOW - timedelta(minutes=4)),))
 
     assert _plain(_agent_spec("agent_compact").cell(c)) == "◆ 4m"
+
+
+def test_agent_compact_cell_shows_one_indicator_per_session_with_mixed_states():
+    c = _running(
+        agent_status=(
+            _agent(
+                "waiting",
+                since=_AGENT_NOW - timedelta(minutes=4),
+                count=2,
+                sessions=("waiting", "idle"),
+            ),
+        )
+    )
+
+    assert _plain(_agent_spec("agent_compact").cell(c)) == "◆ 4m ○"
+
+
+def test_agent_compact_cell_two_sessions_of_one_state_are_two_glyphs():
+    c = _running(
+        agent_status=(
+            _agent(
+                "busy", since=_AGENT_NOW - timedelta(seconds=9), count=2, sessions=("busy",) * 2
+            ),
+        )
+    )
+
+    assert _plain(_agent_spec("agent_compact").cell(c)) == "● 9s ●"
+
+
+def test_agent_compact_cell_many_sessions_colours_each_glyph_by_its_own_state():
+    from jailbee.lifecycle import agent_compact_cell
+
+    states = ("waiting", "busy", "busy", "shell", "idle", "idle")
+    c = _agent("waiting", since=_AGENT_NOW, count=6, sessions=states)
+
+    cell = agent_compact_cell((c,), _AGENT_NOW)
+
+    assert _plain(cell) == "◆ 0s ● ● ◐ ○ ○"
+    assert cell.count("[green]") == 2
+    assert cell.count("[dim]") == 2
+
+
+def test_agent_compact_cell_without_session_marks_falls_back_to_count():
+    from jailbee.agent_status import AgentSummary
+    from jailbee.lifecycle import agent_compact_cell
+
+    old = AgentSummary("claude", "busy", None, None, 3)
+
+    assert _plain(agent_compact_cell((old,), _AGENT_NOW)) == "● ● ●"
+
+
+@pytest.mark.parametrize(
+    ("max_cells", "expected"),
+    [
+        (None, "◆ 4m ● ● ◐ ○ ○"),
+        (8, "◆ ● ● +3"),
+        (5, "◆ +5"),
+        (2, "+6"),
+    ],
+)
+def test_agent_compact_cell_narrow_falls_back_to_glyphs_then_plus_n(max_cells, expected):
+    from jailbee.lifecycle import agent_compact_cell
+
+    states = ("waiting", "busy", "busy", "shell", "idle", "idle")
+    c = _agent("waiting", since=_AGENT_NOW - timedelta(minutes=4), count=6, sessions=states)
+
+    assert _plain(agent_compact_cell((c,), _AGENT_NOW, max_cells=max_cells)) == expected
+
+
+def _agent_marks(state, marks, *, agent="claude", since=None, activity=None):
+    from jailbee.agent_status import AgentSummary, SessionMark
+
+    return AgentSummary(
+        agent=agent,
+        state=state,
+        since=since,
+        waiting_for=None,
+        count=len(marks),
+        sessions=tuple(SessionMark(st, at) for st, at in marks),
+        activity=activity,
+    )
+
+
+def test_agent_compact_cell_truncation_keeps_another_agents_waiting_session():
+    from jailbee.lifecycle import agent_compact_cell
+
+    t = _AGENT_NOW - timedelta(minutes=2)
+    claude = _agent_marks("waiting", [("waiting", t)] + [("idle", t)] * 11, since=t)
+    codex = _agent_marks("waiting", [("waiting", t)], agent="codex", since=t)
+
+    cell = _plain(agent_compact_cell((claude, codex), _AGENT_NOW, max_cells=24))
+
+    assert cell.startswith("◆ ◆ ")
+    assert cell.endswith(" +2")
+
+
+def test_agent_compact_cell_orders_sessions_across_agents_by_urgency():
+    from jailbee.lifecycle import agent_compact_cell
+
+    t = _AGENT_NOW - timedelta(minutes=2)
+    claude = _agent_marks("idle", [("idle", t), ("idle", t)], since=t)
+    codex = _agent_marks("busy", [("busy", _AGENT_NOW - timedelta(seconds=5))], agent="codex")
+
+    assert _plain(agent_compact_cell((claude, codex), _AGENT_NOW)) == "● 5s ○ 2m ○"
+
+
+def test_agent_compact_cell_age_is_the_sessions_own_not_the_agents_event_age():
+    from jailbee.accounts.models import AgentActivity
+    from jailbee.lifecycle import agent_compact_cell
+
+    own = _AGENT_NOW - timedelta(minutes=4)
+    activity = AgentActivity(
+        last_tool=None,
+        last_message=None,
+        state="busy",
+        last_event_at=_AGENT_NOW - timedelta(seconds=3),
+    )
+    a = _agent_marks("waiting", [("waiting", own), ("busy", None)], since=own, activity=activity)
+
+    assert _plain(agent_compact_cell((a,), _AGENT_NOW, activity_age=True)) == "◆ 4m ●"
+
+
+def test_agent_compact_cell_narrow_tier_counts_cells_not_characters():
+    from rich.text import Text
+
+    from jailbee.lifecycle import agent_compact_cell
+
+    wide = _agent_marks("字字", [("字字", None)] * 2)
+    # Full "? 字字 ? 字字" is 13 cells (9 chars); 10 cells must not be mistaken for fitting.
+    out = _plain(agent_compact_cell((wide,), _AGENT_NOW, max_cells=10))
+
+    assert Text(out).cell_len <= 10
+    assert out == "? 字字 +1"
+
+
+def test_agent_compact_cell_old_snapshot_with_count_zero_shows_one_glyph():
+    from jailbee.agent_status import AgentSummary
+    from jailbee.lifecycle import agent_compact_cell
+
+    old = AgentSummary("claude", "busy", None, None, 0)
+
+    assert _plain(agent_compact_cell((old,), _AGENT_NOW)) == "●"
 
 
 def test_agent_compact_cell_shows_one_glyph_per_distinct_state():
@@ -10885,7 +11229,7 @@ def test_agent_compact_cell_shows_one_glyph_per_distinct_state():
         )
     )
 
-    assert _plain(_agent_spec("agent_compact").cell(c)) == "◆ 4m ● 12s"
+    assert _plain(_agent_spec("agent_compact").cell(c)) == "◆ 4m ● 3s ●"
 
 
 def test_agent_compact_cell_colours_the_glyph_by_state():
@@ -11627,7 +11971,7 @@ def test_agent_compact_age_uses_event_time_not_status_duration():
     )
     assert _plain(agent_compact_cell((summary,), _AGENT_NOW)) == "● 2h"
     assert _plain(agent_compact_cell((summary,), _AGENT_NOW, activity_age=True)) == "● 14s"
-    summary = replace(summary, state="idle", activity=None)
+    summary = replace(summary, state="idle", activity=None, sessions=())
     assert (
         agent_compact_cell(
             (summary,), _AGENT_NOW, activity_age=True, recent_idle=timedelta(hours=3)
@@ -12396,3 +12740,387 @@ def test_restart_captures_before_stop(tmp_path, mocker):
     calls = [c[0] for c in order.mock_calls]
     assert calls.index("exec") < calls.index("stop")
     assert incus.exec.call_args.args[1] == ["jailbee", "_agent-snapshot", "--capture"]
+
+
+# ---- outbox counts on a base-only gather ----
+
+
+def _outbox_rows(make_cfg, tmp_path, mocker, *, issue, pr):
+    repo = tmp_path / "myrepo"
+    repo.mkdir(exist_ok=True)
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    stopped = _container(name="myrepo-feat-a", state="Stopped")
+    stopped["config"]["volatile.uuid"] = "u-stopped"
+    incus.list_containers.return_value = [stopped]
+    mocker.patch("jailbee.lifecycle.issue_outbox_counts", return_value=issue)
+    mocker.patch("jailbee.lifecycle.pr_outbox_counts", return_value=pr)
+    return {c.name: c for c in list_containers(cfg, incus, with_git_status=False)}
+
+
+def test_base_only_gather_counts_a_stopped_containers_staged_outbox(make_cfg, tmp_path, mocker):
+    rows = _outbox_rows(make_cfg, tmp_path, mocker, issue={"u-stopped": 2}, pr={"u-stopped": 1})
+    row = rows["myrepo-feat-a"]
+    assert (row.outbox_pr, row.outbox_issue) == (1, 2)
+
+
+def test_base_only_gather_leaves_counts_unknown_only_when_the_store_is_unreadable(
+    make_cfg, tmp_path, mocker
+):
+    readable = _outbox_rows(make_cfg, tmp_path, mocker, issue={}, pr={})["myrepo-feat-a"]
+    unreadable = _outbox_rows(make_cfg, tmp_path, mocker, issue=None, pr=None)["myrepo-feat-a"]
+
+    # Same base-only gather: a readable empty store is a known zero, an
+    # unreadable one is unknown, never zero.
+    assert (readable.outbox_pr, readable.outbox_issue) == (0, 0)
+    assert (unreadable.outbox_pr, unreadable.outbox_issue) == (None, None)
+
+
+def test_destroy_guard_lists_a_stopped_containers_outbox_from_a_base_only_gather(
+    make_cfg, tmp_path, mocker
+):
+    from jailbee.destroy_guard import assess
+
+    rows = _outbox_rows(make_cfg, tmp_path, mocker, issue={"u-stopped": 2}, pr={"u-stopped": 1})
+    summary = assess(make_cfg(tmp_path / "myrepo"), rows["myrepo-feat-a"])
+    assert summary is not None
+    reasons = summary.reasons
+    assert "1 unapplied PR action" in reasons
+    assert "2 unapplied issue actions" in reasons
+    assert not any("could not be read" in r for r in reasons)
+
+
+def _plain(markup: str) -> str:
+    from rich.text import Text
+
+    return Text.from_markup(markup).plain
+
+
+def test_sync_columns_carry_a_pr_marker_only_for_a_pr_head_target():
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ls_field_specs
+
+    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
+    pr = _ci_with_status(
+        target_diff="+3 -1",
+        ahead_count="2",
+        behind_count="0",
+        sync_target=SyncTarget("pr", "PR #7", "p" * 40, "refs/jailbee/pr/7/head"),
+    )
+    plain = _ci_with_status(
+        target_diff="+3 -1",
+        ahead_count="2",
+        behind_count="0",
+        sync_target=SyncTarget("host", "main", "h" * 40, "refs/heads/main"),
+    )
+    columns = ("target_diff", "ahead_count", "behind_count", "conflict")
+
+    assert [_plain(specs[n].cell(pr)) for n in columns] == ["+3 -1 pr", "2 pr", "0 pr", "ok pr"]
+    assert [_plain(specs[n].cell(plain)) for n in columns] == ["+3 -1", "2", "0", "ok"]
+    assert "[dim]pr[/dim]" in specs["ahead_count"].cell(pr)
+    # JSON stays the bare value; the target is in the git_status payload.
+    assert specs["ahead_count"].json(pr) == "2"
+
+
+def test_sync_columns_mark_a_pr_container_that_fell_back_to_the_host_branch():
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ls_field_specs
+
+    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
+    c = _ci_with_status(
+        ahead_count="2",
+        sync_target=SyncTarget("host", "main", "h" * 40, "refs/heads/main", fallback=True),
+    )
+
+    assert _plain(specs["ahead_count"].cell(c)) == "2 pr?"
+    assert "[yellow]pr?[/yellow]" in specs["ahead_count"].cell(c)
+
+
+def test_sync_columns_mark_a_child_comparing_with_its_parent_and_its_fallback():
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ls_field_specs, sync_target_text
+
+    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
+    child = _ci_with_status(
+        ahead_count="2",
+        sync_target=SyncTarget("parent", "orch", "o" * 40, "", parent="orch"),
+    )
+    orphan = _ci_with_status(
+        ahead_count="2",
+        sync_target=SyncTarget(
+            "host", "main", "h" * 40, "refs/heads/main", fallback=True, parent="orch"
+        ),
+    )
+
+    assert _plain(specs["ahead_count"].cell(child)) == "2 ⑂"
+    assert "[dim]⑂[/dim]" in specs["ahead_count"].cell(child)
+    assert _plain(specs["ahead_count"].cell(orphan)) == "2 ⑂?"
+    assert "[yellow]⑂?[/yellow]" in specs["ahead_count"].cell(orphan)
+    assert sync_target_text(child.git_status) == "vs parent orch"
+    assert sync_target_text(orphan.git_status) == (
+        "vs host branch main (parent orch not running or not seen yet)"
+    )
+
+
+def test_git_status_json_names_the_sync_target_and_host_counts():
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ls_field_specs
+
+    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
+    c = _ci_with_status(
+        ahead_count="2",
+        host_ahead_count="5",
+        host_behind_count="1",
+        sync_target=SyncTarget("pr", "PR #7", "p" * 40, "refs/jailbee/pr/7/head"),
+    )
+
+    payload = specs["git_status"].json(c)
+
+    assert payload["sync_target"] == {
+        "kind": "pr",
+        "label": "PR #7",
+        "sha": "p" * 40,
+        "ref": "refs/jailbee/pr/7/head",
+        "fallback": False,
+        "autofetch": True,
+        "fetched_at": None,
+        "fetch_error": None,
+        "fetch_error_at": None,
+        "parent": None,
+        "ahead_sha": None,
+        "seen_at": None,
+        "parent_unknown": False,
+    }
+    assert (payload["host_ahead_count"], payload["host_behind_count"]) == ("5", "1")
+
+
+# ---- columns follow the row's fresh store counts ----
+
+
+def _outbox_ci(*, outbox_pr, outbox_issue, git_pr=None, git_issue=None, probed=True):
+    from jailbee.git_status import GitStatus
+    from jailbee.lifecycle import ContainerInfo
+
+    git = (
+        GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="0",
+            conflict="ok",
+            pending_pr_actions=git_pr,
+            pending_issue_actions=git_issue,
+        )
+        if probed
+        else None
+    )
+    return ContainerInfo(
+        name="r-x",
+        state="Running" if probed else "Stopped",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        git_status=git,
+        outbox_pr=outbox_pr,
+        outbox_issue=outbox_issue,
+    )
+
+
+def test_outbox_columns_prefer_the_fresh_row_counts_over_the_carried_probe_copy():
+    from jailbee.lifecycle import ls_field_specs
+
+    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
+    ci = _outbox_ci(outbox_pr=3, outbox_issue=1, git_pr=0, git_issue=0)
+
+    assert specs["outbox"].cell(ci) == "✉4"
+    assert specs["outbox"].json(ci) == {"pr": 3, "issues": 1}
+    assert specs["issues"].cell(ci) == "✉1"
+    assert specs["pr"].cell(ci) == "✉3"
+
+
+def test_outbox_columns_count_a_stopped_row_with_no_git_status():
+    from jailbee.lifecycle import ls_field_specs
+
+    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
+    ci = _outbox_ci(outbox_pr=1, outbox_issue=2, probed=False)
+
+    assert specs["outbox"].cell(ci) == "✉3"
+
+
+def test_outbox_columns_fall_back_to_the_probe_copy_when_the_row_counts_are_unknown():
+    from jailbee.lifecycle import ls_field_specs
+
+    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
+    ci = _outbox_ci(outbox_pr=None, outbox_issue=None, git_pr=2, git_issue=1)
+
+    assert specs["outbox"].json(ci) == {"pr": 2, "issues": 1}
+
+
+def test_host_columns_show_host_counts_unlike_pr_sync_counts():
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ls_field_specs
+
+    pr = SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head")
+    ci = _ci_with_status(
+        ahead_count="2",
+        behind_count="1",
+        host_ahead_count="5",
+        host_behind_count="9",
+        sync_target=pr,
+    )
+    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
+
+    assert specs["host_ahead"].header == "H↑"
+    assert specs["host_behind"].header == "H↓"
+    assert specs["host_ahead"].cell(ci) == "5"
+    assert specs["host_behind"].cell(ci) == "9"
+    assert specs["ahead_count"].cell(ci).startswith("2")
+    assert specs["host_ahead"].json(ci) == "5"
+
+
+def test_host_columns_are_off_by_default_and_render_unknowns():
+    from jailbee.git_status import BEHIND_UNKNOWN, PROBE_MISSING
+    from jailbee.lifecycle import ls_field_specs
+
+    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
+    for name in ("host_ahead", "host_behind"):
+        assert specs[name].default_table is False
+        assert specs[name].default_dashboard is False
+        assert specs[name].default_json is False
+    ci = _ci_with_status(host_ahead_count="0", host_behind_count=BEHIND_UNKNOWN)
+    assert specs["host_ahead"].cell(ci) == "[dim]0[/dim]"
+    assert specs["host_behind"].cell(ci) == "[yellow]↓•[/yellow]"
+    assert specs["host_behind"].json(ci) == PROBE_MISSING
+
+
+def test_unimported_branches_drops_host_and_remote_contained_tips(make_cfg, tmp_path, mocker):
+    from jailbee.git_status import GitStatus, OtherBranch
+    from jailbee.lifecycle import _unimported_branches
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.lifecycle.has_commit", side_effect=lambda _root, sha: sha == "onhost")
+    status = GitStatus(
+        "clean",
+        "clean",
+        "0",
+        "ok",
+        other_branches=(
+            OtherBranch("a", "onhost", False),
+            OtherBranch("b/c", "remote", True),
+            OtherBranch("d", "lost", False),
+            OtherBranch("e", "unk", None),
+        ),
+    )
+
+    kept = _unimported_branches(cfg, status).other_branches
+
+    assert [b.name for b in kept or ()] == ["d", "e"]
+    assert _unimported_branches(cfg, GitStatus("?", "?", "?", "?")).other_branches is None
+
+
+def _list_with_other_branches(make_cfg, tmp_path, mocker, *, container_name, profiles):
+    from jailbee.git_status import GitStatus, OtherBranch
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(
+            name=container_name,
+            state="Running",
+            profiles=profiles,
+            user_config={"user.jailbee.mode": "clone", "user.jailbee.repo_dir": "/home/dev/repo"},
+        )
+    ]
+    mocker.patch(
+        "jailbee.lifecycle.probe_many_parallel",
+        return_value={
+            container_name: GitStatus(
+                "clean",
+                "clean",
+                "0",
+                "ok",
+                head_sha="h" * 40,
+                other_branches=(
+                    OtherBranch("onhost", "1" * 40, False),
+                    OtherBranch("lost", "2" * 40, False),
+                ),
+            )
+        },
+    )
+    mocker.patch("jailbee.lifecycle.has_commit", side_effect=lambda _root, sha: sha == "1" * 40)
+    (info,) = list_containers(cfg, incus, with_git_status=True, all_repos=True)
+    return info
+
+
+def test_list_containers_filters_other_branches_against_the_host(make_cfg, tmp_path, mocker):
+    info = _list_with_other_branches(
+        make_cfg,
+        tmp_path,
+        mocker,
+        container_name="myrepo-a",
+        profiles=["default", "myrepo-base", "myrepo-binds", "myrepo-net-strict"],
+    )
+
+    assert [b.name for b in info.git_status.other_branches] == ["lost"]
+
+
+def test_list_containers_leaves_other_repo_branches_unmeasured(make_cfg, tmp_path, mocker):
+    info = _list_with_other_branches(
+        make_cfg,
+        tmp_path,
+        mocker,
+        container_name="otherrepo-a",
+        profiles=["default", "otherrepo-base", "otherrepo-binds", "otherrepo-net-strict"],
+    )
+
+    assert info.git_status.other_branches is None
+
+
+def test_sync_target_text_names_the_no_pass_case_truthfully():
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import sync_target_text
+
+    unknown = _ci_with_status(
+        sync_target=SyncTarget(
+            "host",
+            "main",
+            "h" * 40,
+            "refs/heads/main",
+            fallback=True,
+            parent="orch",
+            parent_unknown=True,
+        )
+    )
+    stopped = _ci_with_status(
+        sync_target=SyncTarget(
+            "host", "main", "h" * 40, "refs/heads/main", fallback=True, parent="orch"
+        )
+    )
+
+    assert "head unknown outside the dashboard" in sync_target_text(unknown.git_status)
+    assert "not running or not seen yet" in sync_target_text(stopped.git_status)
+
+
+def test_plain_ls_gives_a_pr_child_its_pr_head_not_the_parent_fallback(make_cfg, tmp_path, mocker):
+    from jailbee.host_target import TargetSnapshot
+    from jailbee.lifecycle import ContainerInfo, _sync_targets
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.git.rev_parse", return_value="pr-sha")
+    child = ContainerInfo(
+        "myrepo-kid",
+        "Running",
+        "strict",
+        None,
+        None,
+        repo="myrepo",
+        pr_number=12,
+        fork_of="myrepo-orch",
+    )
+    host = TargetSnapshot(cfg.default_branch, "host-sha", "local", "refs/x", "equal")
+    targets = _sync_targets(
+        [child], {child.name: host}, {child.repo: tmp_path}, running={"myrepo-orch"}
+    )
+
+    assert targets[child.name].kind == "pr"

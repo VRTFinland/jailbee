@@ -147,6 +147,12 @@ destroy workflow, [watch the end-to-end demo](https://jailbee.gisgro.io/#demos).
   [GUI apps](https://jailbee.gisgro.io/docs/config/#apps) ·
   [Remote GUI](https://jailbee.gisgro.io/docs/remote-gui/)
 
+- **A browser view of your agents.** The optional web dashboard shows the
+  front page of repos and containers and follows an agent session's
+  transcript live, with PIN, TOTP and security-key login and an e-ink display
+  profile.
+  [Web dashboard](https://jailbee.gisgro.io/docs/web-dashboard/)
+
 - **Reusable state, personal settings outside git.** Shared caches and
   agent settings outlive individual containers, and credential groups share
   one Claude login across repos — in JailBee-managed directories, never your

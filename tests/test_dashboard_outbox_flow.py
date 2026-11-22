@@ -145,7 +145,7 @@ class FakeRunner:
 
     def hand_off(self, argv: Sequence[str]) -> int | None:
         self.calls.append(("hand_off", list(argv)))
-        return 0
+        return getattr(self, "hand_off_rc", 0)
 
     def changed(self) -> None:
         self.changes += 1
@@ -619,37 +619,68 @@ def test_publish_over_ssh_hands_off():
     assert runner.changes == 1
 
 
-def test_publish_awaiting_pr_points_to_create():
+def test_publish_awaiting_pr_without_scope_says_why():
     runner = FakeRunner(_listing(_proposal(state="awaiting-pr")))
     ctl = _controller(runner)
     ctl.load()
     ctl.intent("publish", _key())
-    assert ctl.state.status == ("pr/a.json awaits its PR: press c to create it",)
+    assert ctl.state.status == ("pr/a.json awaits its PR: no PR to create from here",)
     assert runner.jobs == []
+    assert not [c for c in runner.calls if c[0] == "hand_off"]
 
 
-# --- create PR -------------------------------------------------------------
+# --- publish creates the PR --------------------------------------------------
 
 
-def test_create_pr_rechecks_listing():
+def test_publish_awaiting_pr_rechecks_listing():
     awaiting = _proposal(state="awaiting-pr", create_scope={"kind": "repo"})
     runner = FakeRunner(_listing(awaiting), _listing({**awaiting, "revision": "r2"}))
     ctl = _controller(runner)
     ctl.load()
-    ctl.intent("create-pr", _key())
+    ctl.intent("publish", _key())
     assert [c for c in runner.calls if c[0] == "hand_off"] == []
     assert ctl.state.status == ("Proposal changed; refresh the outbox before creating a PR",)
 
 
-def test_create_pr_hands_off_when_unchanged():
+def test_publish_awaiting_pr_hands_off_pr_push():
     awaiting = _proposal(state="awaiting-pr", create_scope={"kind": "repo"})
     runner = FakeRunner(_listing(awaiting))
     ctl = _controller(runner)
     ctl.load()
-    ctl.intent("create-pr", _key())
+    ctl.intent("publish", _key())
+    assert runner.jobs == [] and ctl.state.question is None
     assert ("hand_off", ["pr", "push", C]) in runner.calls
     assert runner.calls[-1][1][1] == "ls"
     assert runner.changes == 1
+
+
+def test_publish_awaiting_pr_reports_failed_pr_push():
+    awaiting = _proposal(state="awaiting-pr", create_scope={"kind": "repo"})
+    runner = FakeRunner(_listing(awaiting))
+    runner.hand_off_diagnostic = lambda argv: (1, None)  # type: ignore[method-assign]
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("publish", _key())
+    assert ctl.state.status == ("pr push exited 1",)
+
+
+def test_publish_submodule_pr_hands_off_submodule_push():
+    awaiting = _proposal(state="awaiting-pr", create_scope={"kind": "submodule", "path": "libs/x"})
+    runner = FakeRunner(_listing(awaiting))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("publish", _key())
+    assert ("hand_off", ["submodule", "pr", "push", C, "libs/x"]) in runner.calls
+
+
+def test_publish_pr_creation_not_permitted():
+    awaiting = _proposal(state="awaiting-pr", create_scope={"kind": "repo"})
+    runner = FakeRunner(_listing(awaiting), allow=lambda argv: argv[:2] != ["pr", "push"])
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("publish", _key())
+    assert ctl.state.status == ("creating a PR is not available here",)
+    assert not [c for c in runner.calls if c[0] == "hand_off"]
 
 
 # --- clear -----------------------------------------------------------------
@@ -709,7 +740,7 @@ def test_busy_blocks_second_action():
     ctl = _controller(runner)
     ctl.load()
     ctl.intent("publish", _key())
-    for name in ("delete", "publish", "create-pr", "clear"):
+    for name in ("delete", "publish", "clear"):
         ctl.intent(name, _key())  # type: ignore[arg-type]  # loop over Intent names
         assert ctl.state.status == ("busy: planning…",)
         assert ctl.state.question is None
@@ -1017,7 +1048,7 @@ def test_load_later_withdraws_an_open_question():
     assert ctl.state.status[0] == "outbox refreshed; ask again"
 
 
-def test_source_push_and_publish_hint():
+def test_publish_source_hands_off_source_push():
     row = _proposal(
         state="awaiting-push", create_scope={"kind": "source", "manifest": "a.json"}, actions=[]
     )
@@ -1025,10 +1056,7 @@ def test_source_push_and_publish_hint():
     ctl = _controller(runner)
     ctl.load()
     ctl.intent("publish", _key())
-    assert ctl.state.status == ("pr/a.json: use c to push this source and open/update its PR",)
-    assert runner.jobs == []
-    assert not [c for c in runner.calls if c[0] == "hand_off"]
-    ctl.intent("create-pr", _key())
+    assert runner.jobs == [] and ctl.state.question is None
     assert ("hand_off", ["pr", "push", C, "--source-manifest", "a.json"]) in runner.calls
 
 
@@ -1042,7 +1070,7 @@ def test_source_handoff_diagnostic_survives_refresh():
     runner.hand_off_diagnostic = lambda argv: (1, message)
     ctl = _controller(runner)
     ctl.load()
-    ctl.intent("create-pr", _key())
+    ctl.intent("publish", _key())
     assert ctl.state.status == (message,)
 
 
@@ -1056,7 +1084,7 @@ def test_source_handoff_missing_or_failure_gets_status():
         runner.hand_off_diagnostic = lambda argv, result=result: result
         ctl = _controller(runner)
         ctl.load()
-        ctl.intent("create-pr", _key())
+        ctl.intent("publish", _key())
         assert ctl.state.status == (expected,)
 
 
@@ -1067,7 +1095,7 @@ def test_source_failure_diagnostic_prioritized_when_refresh_fails():
     runner.hand_off_diagnostic = lambda argv: (1, message)
     ctl = _controller(runner)
     ctl.load()
-    ctl.intent("create-pr", _key())
+    ctl.intent("publish", _key())
     assert ctl.state.status[-1] == message
 
 
@@ -1259,7 +1287,7 @@ def test_publish_batch_skips_unpublishable_and_refused():
     ]
     q = ctl.state.question
     assert q is not None and q.title == "Publish 1 proposal?"
-    assert "⚠ issue/c.json awaits its PR: press c to create it" in q.lines
+    assert "⚠ issue/c.json awaits its PR: no PR to create from here" in q.lines
     assert "⚠ issue/b.json: nope" in q.lines
     ctl.intent("answer", None, "publish")
     runner.finish(JobResult(0, "", "ok"))
@@ -1278,13 +1306,13 @@ def test_publish_batch_all_excluded_is_status_only():
     )
     assert ctl.state.question is None and ctl.state.busy is None
     assert ctl.state.status == (
-        "issue/c.json awaits its PR: press c to create it",
+        "issue/c.json awaits its PR: no PR to create from here",
         "pr/a.json: nope",
     )
     runner = FakeRunner(_listing(_proposal("issue/c.json", state="awaiting-pr")))
     _, ctl = _batch("issue/c.json", runner=runner, plans={})
     assert runner.jobs == [] and ctl.state.question is None
-    assert ctl.state.status == ("issue/c.json awaits its PR: press c to create it",)
+    assert ctl.state.status == ("issue/c.json awaits its PR: no PR to create from here",)
 
 
 def test_publish_marks_without_proposal_level_key():
@@ -1338,6 +1366,152 @@ def test_publish_batch_over_ssh_hands_off_each():
     assert runner.changes == 1
 
 
+def _creation(pid: str, **scope: str) -> dict[str, object]:
+    return _proposal(pid, state="awaiting-pr", create_scope=scope or {"kind": "repo"}, actions=[])
+
+
+def _hand_offs(runner: FakeRunner) -> list[list[str]]:
+    return [argv for kind, argv in runner.calls if kind == "hand_off"]
+
+
+def test_publish_batch_mixes_manifests_and_pr_creations_under_one_question():
+    source = _proposal(
+        "pr/s.json", state="awaiting-push", create_scope={"kind": "source", "manifest": "s.json"}
+    )
+    runner = FakeRunner(_listing(_proposal("pr/a.json"), _creation("pr/c.json"), source))
+    runner, ctl = _batch(
+        "pr/a.json", "pr/c.json", "pr/s.json", runner=runner,
+        plans={"pr/a.json": _plan(proposal="pr/a.json")},
+    )  # fmt: skip
+    assert _plan_jobs(runner) == [dob.outbox_plan_argv(C, "pr/a.json", "r1")]
+    q = ctl.state.question
+    assert q is not None and q.title == "Publish 3 proposals?"
+    assert "pr/c.json" in q.lines and "pr/s.json" in q.lines
+    assert f"pushes the branch of {C}, opens/updates its PR: jailbee pr push {C}" in q.lines
+    assert (
+        "pushes the pinned source of s.json, opens/updates its PR: "
+        f"jailbee pr push {C} --source-manifest s.json"
+    ) in q.lines
+    assert _hand_offs(runner) == []
+    assert q.choices[1][0].endswith("(PR creations as usual)")
+    ctl.intent("answer", None, "publish")
+    assert _hand_offs(runner) == []  # the non-interactive publish runs first
+    runner.finish(JobResult(0, "applied\n"))
+    assert _hand_offs(runner) == [
+        ["pr", "push", C],
+        ["pr", "push", C, "--source-manifest", "s.json"],
+    ]
+    assert "pr/a.json: applied" in ctl.state.status
+    assert "pr/c.json: pr push finished" in ctl.state.status
+    assert "pr/s.json: source push finished" in ctl.state.status
+    assert ctl.state.marks == frozenset()
+    assert runner.changes == 1
+
+
+def test_publish_batch_of_pr_creations_only_asks_without_planning():
+    runner = FakeRunner(_listing(_creation("pr/c.json"), _creation("pr/d.json")))
+    runner, ctl = _batch("pr/c.json", "pr/d.json", runner=runner, plans={})
+    assert runner.jobs == []
+    q = ctl.state.question
+    assert q is not None and q.title == "Publish 2 proposals?"
+    assert [label for label, _ in q.choices] == ["Publish", "Cancel"]
+    ctl.intent("answer", None, "publish")
+    assert _hand_offs(runner) == [["pr", "push", C], ["pr", "push", C]]
+
+
+def test_publish_batch_pr_creation_failure_stops_the_rest():
+    runner = FakeRunner(
+        _listing(_creation("pr/c.json"), _creation("pr/d.json"), _creation("pr/e.json"))
+    )
+    results = iter([(0, None), (1, "gh: rate limited"), (0, None)])
+    runner.hand_off_diagnostic = lambda argv: (  # type: ignore[method-assign]
+        runner.calls.append(("hand_off", list(argv))) or next(results)
+    )
+    runner, ctl = _batch("pr/c.json", "pr/d.json", "pr/e.json", runner=runner, plans={})
+    ctl.intent("answer", None, "publish")
+    assert len(_hand_offs(runner)) == 2
+    assert ctl.state.status == (
+        "pr/c.json: pr push finished",
+        "pr/d.json: gh: rate limited",
+        "stopped; not run: pr/e.json",
+    )
+    # What did not finish stays marked, to be published again.
+    assert _key("pr/c.json") not in ctl.state.marks
+    assert {_key("pr/d.json"), _key("pr/e.json")} <= ctl.state.marks
+
+
+def test_publish_batch_pr_creation_cancelled_stops_the_rest():
+    runner = FakeRunner(_listing(_creation("pr/c.json"), _creation("pr/d.json")))
+    runner.hand_off_diagnostic = lambda argv: (  # type: ignore[method-assign]
+        runner.calls.append(("hand_off", list(argv))) or (None, None)
+    )
+    runner, ctl = _batch("pr/c.json", "pr/d.json", runner=runner, plans={})
+    ctl.intent("answer", None, "publish")
+    assert len(_hand_offs(runner)) == 1
+    assert ctl.state.status == ("pr/c.json: pr push did not run", "stopped; not run: pr/d.json")
+
+
+def test_publish_batch_pr_creation_changed_since_question_is_not_run():
+    row = _creation("pr/c.json")
+    runner = FakeRunner(_listing(row))
+    runner, ctl = _batch("pr/c.json", runner=runner, plans={})
+    runner.listings = [_listing({**row, "revision": "r2"})]
+    ctl.intent("answer", None, "publish")
+    assert _hand_offs(runner) == []
+    assert ctl.state.status == (
+        "pr/c.json: Proposal changed; refresh the outbox before creating a PR",
+    )
+
+
+def test_publish_batch_cancel_runs_no_pr_creation():
+    runner = FakeRunner(_listing(_proposal("pr/a.json"), _creation("pr/c.json")))
+    runner, ctl = _batch(
+        "pr/a.json", "pr/c.json", runner=runner, plans={"pr/a.json": _plan(proposal="pr/a.json")}
+    )
+    ctl.intent("cancel", None)
+    assert _hand_offs(runner) == [] and _apply_jobs(runner) == []
+    assert ctl.state.status == ("Nothing published.",)
+
+
+def _ssh_batch(allow=None, rc=None):
+    runner = FakeRunner(
+        _listing(_creation("pr/c.json"), _proposal("pr/a.json")),
+        allow=lambda argv: not (argv[1] == "apply" and "-y" in argv),
+    )
+    if rc is not None:
+        runner.hand_off_rc = rc
+    return _batch("pr/c.json", "pr/a.json", runner=runner, plans={})
+
+
+def test_publish_batch_over_ssh_asks_once_then_hands_off_manifests_then_pr_creations():
+    runner, ctl = _ssh_batch()
+    assert runner.jobs == []
+    assert _hand_offs(runner) == []  # nothing runs before the shared question
+    q = ctl.state.question
+    assert q is not None and "pr/c.json" in q.lines
+    assert f"pushes the branch of {C}, opens/updates its PR: jailbee pr push {C}" in q.lines
+    ctl.intent("answer", None, "publish")
+    assert _hand_offs(runner) == [
+        dob.outbox_apply_argv(C, "pr/a.json", "r1", yes=False),
+        ["pr", "push", C],
+    ]
+    assert ctl.state.marks == frozenset()
+
+
+def test_publish_batch_over_ssh_cancel_runs_nothing():
+    runner, ctl = _ssh_batch()
+    ctl.intent("answer", None, "cancel")
+    assert _hand_offs(runner) == []
+    assert "Nothing published." in ctl.state.status
+
+
+def test_publish_batch_over_ssh_failed_manifest_stops_pr_creations():
+    runner, ctl = _ssh_batch(rc=1)
+    ctl.intent("answer", None, "publish")
+    assert _hand_offs(runner) == [dob.outbox_apply_argv(C, "pr/a.json", "r1", yes=False)]
+    assert any("not run" in line for line in ctl.state.status)
+
+
 def test_publish_batch_across_containers_prefixes_headers():
     listing = json.dumps(
         {
@@ -1367,3 +1541,16 @@ def test_publish_batch_across_containers_prefixes_headers():
         dob.outbox_apply_argv("alpha-x", "pr/a.json", "r1", yes=True),
         dob.outbox_apply_argv("beta-y", "pr/b.json", "r1", yes=True),
     ]
+
+
+def test_restored_mark_of_a_proposal_without_a_recorded_revision_is_dropped():
+    # The revision filter itself (not the listing-key filter) must drop a mark whose
+    # proposal is not in the recorded revisions: it cannot be shown unchanged.
+    runner = FakeRunner(_listing(_proposal()))
+    ctl = _controller(runner)
+    key = (C, "pr/a.json", None, None)
+    ctl.restore_marks(frozenset({key}), {"pr/other.json": "r1"})
+
+    ctl.load()
+
+    assert key not in ctl.state.marks

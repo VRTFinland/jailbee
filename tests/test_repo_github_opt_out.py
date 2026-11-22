@@ -53,7 +53,7 @@ def test_doctor_accepts_repo_github_opt_out(github_opt_out: Path, mocker):
 
 
 def test_repo_opt_out_skips_github_egress_and_token_injection(github_opt_out: Path, tmp_path):
-    from jailbee.autostart import _github_token_step
+    from jailbee.autostart import _github_token
     from jailbee.config import load_config
 
     local = tmp_path / ".config" / "jailbee" / "repos" / "myrepo.yaml"
@@ -64,7 +64,7 @@ def test_repo_opt_out_skips_github_egress_and_token_injection(github_opt_out: Pa
 
     assert cfg.github.token is not None
     assert "api.github.com:443" not in cfg.effective_egress_allow()
-    assert _github_token_step(cfg) is None
+    assert _github_token(cfg) is None
 
 
 def test_host_local_github_setting_retains_precedence(github_opt_out: Path, tmp_path):

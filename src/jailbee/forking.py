@@ -45,6 +45,8 @@ class ForkSource:
     # because whether it was cross-repo is not recorded on the container.
     untrusted: bool = False
     pr_labels: dict[str, str] = field(default_factory=dict)
+    # source's user.jailbee.base_explicit -> base_explicit_label
+    base_explicit: str | None = None
 
 
 def inherited_pr_labels(incus: Incus, full: str) -> dict[str, str]:
@@ -133,7 +135,15 @@ def prepare_fork(
             )
             branch = sync._resolve_branch(incus, full, repo_dir, None, uid=cfg.container_user.uid)
             base = incus.config_get(full, "user.jailbee.base_branch") or None
-            return ForkSource(full, branch or "HEAD", commit, base, True, {})
+            return ForkSource(
+                full,
+                branch or "HEAD",
+                commit,
+                base,
+                True,
+                {},
+                incus.config_get(full, "user.jailbee.base_explicit") or None,
+            )
         if sync._container_status_dirty(incus, full, repo_dir, uid=cfg.container_user.uid):
             raise ForkError(
                 f"uncommitted changes in '{short}': a fork carries commits only. "
@@ -151,7 +161,13 @@ def prepare_fork(
     untrusted = bool(incus.config_get(full, "user.jailbee.pr"))
     base = incus.config_get(full, "user.jailbee.base_branch") or None
     return ForkSource(
-        full, fetched.branch, fetched.new_oid, base, untrusted, inherited_pr_labels(incus, full)
+        full,
+        fetched.branch,
+        fetched.new_oid,
+        base,
+        untrusted,
+        inherited_pr_labels(incus, full),
+        incus.config_get(full, "user.jailbee.base_explicit") or None,
     )
 
 
@@ -164,7 +180,12 @@ def fork_pin_ref(cfg: Config, fork_full: str) -> str:
     """
     from jailbee.lifecycle import short_name
 
-    return f"refs/jailbee/{short_name(cfg, fork_full)}/HEAD"
+    return fork_pin_ref_of(short_name(cfg, fork_full))
+
+
+def fork_pin_ref_of(fork_short: str) -> str:
+    """:func:`fork_pin_ref` from the fork's short name, for a caller without its config."""
+    return f"refs/jailbee/{fork_short}/HEAD"
 
 
 def pin_fork_commit(cfg: Config, fork_full: str, commit: str) -> str:

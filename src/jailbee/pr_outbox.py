@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, Literal, assert_never
 from rich.markup import escape
 from rich.text import Text
 
-from jailbee import git, pr
+from jailbee import attachments, comment_edit, git, pr
 from jailbee.github_repo import github_slug, is_github_slug
 from jailbee.incus import Incus, IncusError
 from jailbee.outbox import sent
@@ -66,6 +66,9 @@ from jailbee.pr_manifest import (
     CommentAction as CommentAction,
 )
 from jailbee.pr_manifest import (
+    CommentEditAction as CommentEditAction,
+)
+from jailbee.pr_manifest import (
     DescriptionAction as DescriptionAction,
 )
 from jailbee.pr_manifest import (
@@ -82,6 +85,9 @@ from jailbee.pr_manifest import (
 )
 from jailbee.pr_manifest import (
     ReviewAction as ReviewAction,
+)
+from jailbee.pr_manifest import (
+    StateAction as StateAction,
 )
 from jailbee.pr_manifest import _escapes_containment
 from jailbee.pr_manifest import (
@@ -481,6 +487,11 @@ def _attachment_lines(manifest: Manifest) -> list[str]:
     return lines
 
 
+def _state_warning(action: StateAction, number: int | None) -> str:
+    verb = "closes" if action.state == "closed" else "reopens"
+    return f"{verb} PR #{number}"
+
+
 def plan_lines(
     target: Target, current_body: str | None, *, indices: frozenset[int] | None = None
 ) -> list[str]:
@@ -513,6 +524,13 @@ def plan_lines(
             lines.append(f"COMMENT (general): {_first_line(action.body)}")
             if action.reply_to is not None:
                 lines.append(f"  reply to general comment #{action.reply_to}")
+        elif isinstance(action, CommentEditAction):
+            lines.append(f"EDIT review comment #{action.comment_id}")
+            lines.append("  body (- before, + after):")
+            lines.extend(comment_edit.diff_lines(action.expected_body, action.body))
+        elif isinstance(action, StateAction):
+            number = target.pr.number if target.pr else None
+            lines.append(f"⚠ STATE: {_state_warning(action, number)}")
         elif isinstance(action, DescriptionAction):
             lines.append("DESCRIPTION")
             if action.title is not None:
@@ -574,6 +592,14 @@ def show_lines(manifest: Manifest) -> list[str]:
             )
             lines.append(f"action {index} · COMMENT (general){reply}")
             lines.extend(render_markdown(action.body))
+        elif isinstance(action, CommentEditAction):
+            lines.append(f"action {index} · EDIT review comment #{action.comment_id}")
+            lines.extend(render_markdown(action.body))
+            lines.append("  body (- before, + after):")
+            lines.extend(comment_edit.diff_lines(action.expected_body, action.body))
+        elif isinstance(action, StateAction):
+            lines.append(f"action {index} · STATE")
+            lines.append(f"  ⚠ {_state_warning(action, manifest.pr)}")
         elif isinstance(action, DescriptionAction):
             lines.append(f"action {index} · DESCRIPTION")
             if action.title is not None:
@@ -590,28 +616,13 @@ _ACTION_LABELS: tuple[tuple[str, type[Action]], ...] = (
     ("review", ReviewAction),
     ("reply", ReplyAction),
     ("comment", CommentAction),
+    ("comment_edit", CommentEditAction),
+    ("state", StateAction),
     ("description", DescriptionAction),
 )
 
 
 _ACTION_LABEL_BY_TYPE: dict[type[Action], str] = {cls: label for label, cls in _ACTION_LABELS}
-
-
-def action_summary(manifest: Manifest) -> str:
-    """One manifest's action counts by type: ``review:1 reply:2``. Pure.
-
-    The one-cell counterpart of `plan_lines`, for `jb review ls`. It lives
-    here rather than in `cli.py` because `Action` is a closed union defined
-    in this module: a fifth variant needs a label here, and adding one to
-    `_ACTION_LABELS` is a visible edit next to the union itself, where the
-    same summary spelled out in the CLI would silently under-count.
-    """
-    parts = [
-        f"{label}:{count}"
-        for label, cls in _ACTION_LABELS
-        if (count := sum(isinstance(a, cls) for a in manifest.actions))
-    ]
-    return " ".join(parts)
 
 
 # --------------------------------------------------------------------------
@@ -637,6 +648,12 @@ class Progress:
     urls: dict[str, str]
 
 
+def resolve_hint(name: str, index: int, container: str | None = None) -> str:
+    """A runnable ``jailbee outbox resolve`` command for one uncertain PR action."""
+    target = container if container is not None else "<container>"
+    return f"`jailbee outbox resolve {target} pr/{name} {index} --applied --url URL` or `--retry`"
+
+
 def _journal_progress(outbox: Outbox, name: str, action_count: int | None) -> Progress:
     """Progress of a store-held proposal from its publication journal.
 
@@ -656,7 +673,7 @@ def _journal_progress(outbox: Outbox, name: str, action_count: int | None) -> Pr
         index = next(a.index for a in journal.actions if a.state == "uncertain")
         raise OutboxError(
             f"{name}: the outcome of action {index} from an earlier run is uncertain; "
-            "check the PR on GitHub, then settle it with `jailbee review resolve`"
+            f"check the PR on GitHub, then settle it with {resolve_hint(name, index)}"
         )
     applied = {a.index: a.url or "" for a in journal.actions if a.state == "applied"}
     return Progress(frozenset(applied), {str(i): url for i, url in applied.items()})
@@ -693,6 +710,7 @@ class DraftPreview:
     held_back: int
     description: bool
     draft_total: int | None = None
+    state_held_back: int = 0
 
 
 PublishMode = Literal["publish", "draft"]
@@ -705,8 +723,10 @@ def draftable(manifest: Manifest, indices: Iterable[int]) -> bool:
 
 
 def draft_indices(manifest: Manifest, indices: Iterable[int]) -> frozenset[int]:
-    """Leave general comments pending while selecting draft-compatible actions."""
-    return frozenset(i for i in indices if not isinstance(manifest.actions[i], CommentAction))
+    """Leave general comments and state changes pending; they publish normally later."""
+    return frozenset(
+        i for i in indices if not isinstance(manifest.actions[i], (CommentAction, StateAction))
+    )
 
 
 def draft_preview(manifest: Manifest, pr_number: int, indices: Iterable[int]) -> DraftPreview:
@@ -716,6 +736,7 @@ def draft_preview(manifest: Manifest, pr_number: int, indices: Iterable[int]) ->
         pending=sum(isinstance(a, (ReviewAction, ReplyAction)) for a in actions),
         held_back=sum(isinstance(a, CommentAction) for a in actions),
         description=any(isinstance(a, DescriptionAction) for a in actions),
+        state_held_back=sum(isinstance(a, StateAction) for a in actions),
     )
 
 
@@ -725,7 +746,7 @@ class PlannedManifest:
 
     target: Target
     progress: Progress
-    # `None` = every pending index (`review apply`, `outbox apply`).
+    # `None` = every pending index (`outbox apply` and its `review apply` alias).
     indices: frozenset[int] | None
     # What a normal publish sends.
     pending: frozenset[int]
@@ -763,6 +784,8 @@ _ACTION_KIND: dict[type, str] = {
     ReviewAction: "review",
     ReplyAction: "reply",
     CommentAction: "comment",
+    CommentEditAction: "comment_edit",
+    StateAction: "state",
     DescriptionAction: "description",
 }
 
@@ -791,7 +814,7 @@ def pr_plan_json(plan: PrPlan, short: str, *, proposal: str, revision: str) -> d
                     will_draft = "already_published"
                 elif isinstance(action, (ReviewAction, ReplyAction)):
                     will_draft = "draft"
-                elif isinstance(action, CommentAction):
+                elif isinstance(action, (CommentAction, StateAction)):
                     will_draft = "held_back"
                 else:
                     will_draft = "publish"
@@ -847,7 +870,11 @@ def _apply_order(actions: tuple[Action, ...]) -> list[int]:
     """
     review = [i for i, a in enumerate(actions) if isinstance(a, ReviewAction)]
     description = [i for i, a in enumerate(actions) if isinstance(a, DescriptionAction)]
-    rest = [i for i, a in enumerate(actions) if isinstance(a, (ReplyAction, CommentAction))]
+    rest = [
+        i
+        for i, a in enumerate(actions)
+        if isinstance(a, (ReplyAction, CommentAction, CommentEditAction, StateAction))
+    ]
     order = review + rest + description
     # Guards against a future fifth `Action` variant silently falling through
     # every isinstance check above: it would never be posted *and* never be
@@ -882,14 +909,99 @@ def _reply_permalink(slug: str, number: int, comment_id: int) -> str:
     return f"> [Replying to this comment](https://github.com/{slug}/pull/{number}#issuecomment-{comment_id})\n\n"
 
 
+def _comment_edit_refusals(
+    target: Target,
+    action: CommentEditAction,
+    login: str | None,
+    context: str,
+    written: str | None = None,
+) -> list[str]:
+    """Read the review comment and apply the shared author and expected-body checks."""
+    assert target.pr is not None
+    try:
+        snapshot = pr.get_review_comment(
+            target.scope.repo_root, target.manifest.repo, action.comment_id
+        )
+    except pr.PrError as e:
+        return [f"{context}: {e}"]
+    new_body = action.body if written is None else written
+    if (
+        written is None
+        and snapshot.body != action.expected_body
+        and attachments.matches_rendered(action.body, snapshot.body)
+    ):
+        # Uploads were not recorded, so the rendered body is unknown: a comment
+        # shaped like the edit with its images filled in is the edit, landed.
+        new_body = snapshot.body
+    return comment_edit.edit_refusals(
+        snapshot,
+        login=login or "",
+        expected_body=action.expected_body,
+        parent=target.pr.number,
+        repo=target.manifest.repo,
+        new_body=new_body,
+        context=context,
+    )
+
+
+def _pending_edit_refusals(
+    target: Target, indices: Iterable[int], written: Mapping[int, str] | None = None
+) -> list[str]:
+    """Why a pending `comment_edit` of `target` may not be published; empty when all may.
+
+    `written` maps an index to the body `_apply_one` will actually write (the
+    action body with attachment URLs filled in), which is what a comment that
+    already reads the edit shows; an index without one compares `action.body`.
+    """
+    edits = [
+        (i, a) for i in indices if isinstance(a := target.manifest.actions[i], CommentEditAction)
+    ]
+    if not edits:
+        return []
+    login = pr.gh_login(target.scope.repo_root)
+    refusals: list[str] = []
+    for index, action in edits:
+        context = f"{target.manifest.name} action {index}"
+        refusals.extend(
+            _comment_edit_refusals(target, action, login, context, (written or {}).get(index))
+        )
+    return refusals
+
+
+def _state_refusals(target: Target, indices: Iterable[int]) -> list[str]:
+    """Why a pending `state` action of `target` may not be published; empty when all may.
+
+    The guard is the PR's state at publish time: it must still be the one the
+    agent saw when staging, and a merged PR is never closed or reopened.
+    """
+    assert target.pr is not None
+    refusals: list[str] = []
+    for i in indices:
+        action = target.manifest.actions[i]
+        if not isinstance(action, StateAction):
+            continue
+        context = f"{target.manifest.name} action {i}"
+        current = target.pr.state.lower()
+        if current == "merged":
+            refusals.append(
+                f"{context}: PR #{target.pr.number} is merged; it cannot be {action.state}"
+            )
+        elif current != action.expected_state:
+            refusals.append(
+                f"{context}: PR #{target.pr.number} was {action.expected_state} when staged "
+                f"but is now {current}; stage the state change again"
+            )
+    return refusals
+
+
 def _apply_one(target: Target, action: Action, session: DraftSession | None = None) -> str:
     """Post one action to GitHub via `pr.py`; return its receipt URL (or "")."""
     assert target.pr is not None  # apply_manifest's own precondition
     repo_root = target.scope.repo_root
     number = target.pr.number
     if session is not None:
-        assert not isinstance(action, CommentAction), (
-            "general comments must be held back in draft mode"
+        assert not isinstance(action, (CommentAction, StateAction)), (
+            "general comments and state changes must be held back in draft mode"
         )
         if isinstance(action, ReviewAction):
             return session.review(action)
@@ -915,6 +1027,13 @@ def _apply_one(target: Target, action: Action, session: DraftSession | None = No
         if action.reply_to is not None:
             body = _reply_permalink(target.manifest.repo, number, action.reply_to) + body
         return pr.add_issue_comment(repo_root, number, body, repo=target.manifest.repo)
+    elif isinstance(action, CommentEditAction):
+        return pr.edit_review_comment(
+            repo_root, target.manifest.repo, action.comment_id, action.body
+        )
+    elif isinstance(action, StateAction):
+        pr.set_state(repo_root, number, action.state, repo=target.manifest.repo)
+        return ""  # closing or reopening changes an existing object; there is no new receipt
     elif isinstance(action, DescriptionAction):
         pr.edit_pr(
             repo_root, number, title=action.title, body=action.body, repo=target.manifest.repo
@@ -948,7 +1067,7 @@ def _sent_action(
     manifest: Manifest, digest: str, index: int, action: Action, receipt_url: str, number: int
 ) -> sent.SentAction:
     """The Sent-log entry of one accepted PR action, from the manifest snapshot in hand."""
-    kind = type(action).__name__.lower().removesuffix("action")
+    kind = _ACTION_KIND[type(action)]
     title: str | None = None
     if isinstance(action, ReviewAction):
         parts = [action.body] if action.body else []
@@ -956,6 +1075,8 @@ def _sent_action(
         content = "\n\n".join(parts)
     elif isinstance(action, DescriptionAction):
         content, title = action.body, action.title
+    elif isinstance(action, StateAction):
+        content = action.state
     else:
         content = action.body
     return sent.SentAction(
@@ -1096,7 +1217,8 @@ def apply_manifest(
                 (),
                 (),
                 f"the outcome of action {uncertain[0]} from an earlier run is uncertain; "
-                "check the PR on GitHub, then settle it with `jailbee review resolve`",
+                f"check the PR on GitHub, then settle it with "
+                f"{resolve_hint(manifest.name, uncertain[0], container)}",
                 draft,
             )
         for index in _apply_order(manifest.actions):
@@ -1121,7 +1243,11 @@ def apply_manifest(
                         manifest.repo,
                     )
 
-                rendered = replace(action, body=resolve(action.body))
+                rendered = (
+                    action
+                    if isinstance(action, StateAction)
+                    else replace(action, body=resolve(action.body))
+                )
                 if isinstance(rendered, ReviewAction):
                     rendered = replace(
                         rendered,
@@ -1160,6 +1286,12 @@ def apply_manifest(
                         )
                 except (GateError, OutboxError, pr.PrError, IncusError) as e:
                     failure = str(e)
+                    break
+            if isinstance(action, CommentEditAction):
+                # An image upload takes time: recheck the comment just before editing it.
+                differences = _pending_edit_refusals(target, [index], {index: rendered.body})
+                if differences:
+                    failure = "\n".join(differences)
                     break
             store.mark_prepared(claim, digest, index, repo=manifest.repo, now=clock())
             try:
@@ -1218,6 +1350,8 @@ def body_references(text: str) -> set[str]:
             "review",
             "reply",
             "comment",
+            "comment_edit",
+            "state",
             "description",
         ):
             raise ValueError("invalid action reference scope")
@@ -1244,12 +1378,22 @@ def body_references(text: str) -> set[str]:
     return result
 
 
+def _apply_hint(short: str, plan: PrPlan) -> str:
+    """The command that publishes a plan's manifests; the manifest is always named."""
+    from jailbee.outbox.inspect import safe_text
+
+    names = [safe_text(m.target.manifest.name) for m in plan.manifests]
+    if len(names) == 1:
+        return f"`jailbee outbox apply {short} pr/{names[0]}`"
+    listed = ", ".join(names)
+    return f"`jailbee outbox apply {short} pr/<manifest>` (one manifest per run; pending: {listed})"
+
+
 class FinalizeError(Exception):
-    """`finalize`/`record_consumed`/`drop_manifest` could not update the outbox store.
+    """`finalize`/`record_consumed` could not update the outbox store.
 
     Raised when the host outbox store cannot record or remove a proposal after
-    the GitHub side of the work is already settled (or, for `drop_manifest`,
-    when the proposal could not be deleted). None of them returns an
+    the GitHub side of the work is already settled. Neither returns an
     `ApplyOutcome` to carry a `failure` string in, so this is the equivalent
     for them: a named exception whose message says which step failed and
     what that implies.
@@ -1298,56 +1442,6 @@ def finalize(
         raise FinalizeError(
             f"manifest {name} changed after publication; cleanup refused, journal retained"
         )
-
-
-def drop_manifest(
-    incus: Incus,
-    container: str,
-    outbox: Outbox,
-    name: str,
-    *,
-    uid: int | None,
-    management: PrManagement | None = None,
-) -> list[str]:
-    """Delete proposal `name` from the host outbox store without applying it.
-
-    Guarded by the row version `outbox` was read at and the instance identity;
-    the store refuses a proposal being published or with recorded publication
-    progress. Nothing is posted to GitHub and nothing is recorded as sent.
-    Returns the names removed (the manifest and its bodies). Raises
-    `FinalizeError` if the deletion fails; the proposal is then still pending.
-    """
-    from jailbee.orchestration.store import StoreError
-    from jailbee.outbox import publication_db, store_db
-
-    try:
-        ProposalId("pr", name)
-        if outbox.identity is None or outbox.uuid is None:
-            raise OutboxChanged("preview identity is unavailable; refresh required")
-        from jailbee.outbox.service import instance_identity
-
-        if instance_identity(incus, container) != (outbox.identity, outbox.uuid):
-            raise OutboxChanged("container changed; refresh required")
-        version = dict(outbox.versions).get(name)
-        if version is None:
-            raise OutboxChanged(f"{name}: proposal unavailable; refresh required")
-        removed = store_db.host_store(publication_db.default_root()).drop_proposal(
-            outbox.uuid, "pr", name, version
-        )
-    except store_db.ProposalChangedError as e:
-        raise FinalizeError(f"manifest {name} changed; refresh and retry") from e
-    except (
-        IncusError,
-        JournalError,
-        OutboxError,
-        OutboxExecutionError,
-        StoreError,
-        store_db.ProposalLockedError,
-    ) as e:
-        raise FinalizeError(
-            f"manifest {name} could not be deleted ({e}); it is still pending"
-        ) from e
-    return [name, *sorted(removed.bodies)]
 
 
 def uncertain_actions(outbox: Outbox, name: str) -> list[int]:
@@ -1764,7 +1858,7 @@ def pending_pr_text(
             warn(
                 f"{container} has more than one pending PR description "
                 f"({', '.join(names)}); using none of them. Read them with "
-                f"`jailbee review show`, drop the stale one with `jailbee review "
+                f"`jailbee outbox show`, drop the stale one with `jailbee outbox "
                 f"drop`, or re-run `{scope.command}` on a terminal to choose."
             )
             return None
@@ -1892,7 +1986,9 @@ def _print_plan(
         # Two lines, as with the `pr: null` deferral: the command must not be
         # split across a wrap, which is what one long line does at 80 columns.
         console.print(f"  not in this offer: {len(held)} pending {kinds} action{plural}.")
-        console.print(f"  `jailbee review apply {escape(short)}` publishes {it}.")
+        console.print(
+            f"  `jailbee review apply {escape(short)} {escape(manifest.name)}` publishes {it}."
+        )
 
 
 def _print_identity(cfg: Config, total: int) -> None:
@@ -1948,7 +2044,7 @@ def _held_out(manifest: Manifest, progress: Progress, indices: frozenset[int] | 
     return [i for i in pending_indices(manifest, progress) if i not in indices]
 
 
-def _held_back(reason: str, short: str, *, stale: bool, foreign: bool = False) -> str:
+def _held_back(reason: str, short: str, name: str, *, stale: bool, foreign: bool = False) -> str:
     """A gate failure on the offer path, phrased as something to act on.
 
     The interesting case is staleness: `jailbee pr` has just pushed, so on the
@@ -1961,11 +2057,11 @@ def _held_back(reason: str, short: str, *, stale: bool, foreign: bool = False) -
     other relaxable refusal, under `--foreign`.
     """
     if stale:
-        remedy = f"`jailbee review apply --force {short}` posts them as outdated comments."
+        remedy = f"`jailbee review apply --force {short} {name}` posts them as outdated comments."
     elif foreign:
-        remedy = f"`jailbee review apply --foreign {short}` publishes to it anyway."
+        remedy = f"`jailbee review apply --foreign {short} {name}` publishes to it anyway."
     else:
-        remedy = f"`jailbee review apply {short}` deals with it separately."
+        remedy = f"`jailbee review apply {short} {name}` deals with it separately."
     return f"held back: {reason}\n  {remedy}"
 
 
@@ -2046,7 +2142,7 @@ def _gate_manifests(
                     # one long line does at 80 columns.
                     notes.append(
                         f"{name} still holds a description this run did not use.\n"
-                        f"  `jailbee review apply {short}` publishes it."
+                        f"  `jailbee review apply {short} {name}` publishes it."
                     )
                 continue
         try:
@@ -2077,7 +2173,9 @@ def _gate_manifests(
                 # `ForeignPrError`; every other `GateError` would refuse again
                 # identically.
                 notes.append(
-                    _held_back(str(e), short, stale=isinstance(e, StaleError), foreign=foreign)
+                    _held_back(
+                        str(e), short, name, stale=isinstance(e, StaleError), foreign=foreign
+                    )
                 )
             elif foreign:
                 # Two lines, so the flag is never split across a wrap.
@@ -2095,7 +2193,7 @@ def _gate_manifests(
             # least about the command the user actually ran.
             if not comments_only:
                 raise
-            notes.append(_held_back(str(e), short, stale=False))
+            notes.append(_held_back(str(e), short, name, stale=False))
             continue
         if target.pr is None:
             if raise_errors:
@@ -2111,6 +2209,29 @@ def _gate_manifests(
                     f"manifest {name} describes a PR that does not exist yet.\n"
                     f"  Run `{target.scope.command} {short}` to create it."
                 )
+            continue
+        pending = pending_indices(
+            manifest, _publication_progress(outbox, name, len(manifest.actions))
+        )
+        edit_refusals = _pending_edit_refusals(target, pending) + _state_refusals(target, pending)
+        if edit_refusals:
+            text = "\n".join(edit_refusals)
+            whole = any(
+                not isinstance(manifest.actions[i], (CommentEditAction, StateAction))
+                for i in pending
+            )
+            if whole:
+                # One refused edit holds the whole manifest back, replies included.
+                text += (
+                    f"\n  {name} is held back as a whole: its other pending actions "
+                    "are not published until the edit is dropped or fixed."
+                )
+            if raise_errors:
+                raise OutboxError(text)
+            if comments_only:
+                notes.append(text if whole else f"{text}\n  {name} is held back.")
+            else:
+                refusals.append(PlanRefusal(text))
             continue
         targets.append(target)
     return targets, refusals, notes
@@ -2405,6 +2526,10 @@ def _print_pr_plan(
                     action = planned.target.manifest.actions[i]
                     if isinstance(action, CommentAction):
                         label = f"held back in draft mode: action {i} (general comment)"
+                    elif isinstance(action, StateAction):
+                        label = f"held back in draft mode: action {i} (state change)"
+                    elif isinstance(action, CommentEditAction):
+                        label = f"action {i}: published (comment edit)"
                     elif isinstance(action, DescriptionAction):
                         label = f"action {i}: published (description)"
                     else:
@@ -2415,6 +2540,8 @@ def _print_pr_plan(
             clauses = [f"{preview.pending} go into your pending review on PR #{preview.pr}"]
             if preview.held_back:
                 clauses.append(f"{preview.held_back} general comment(s) held back")
+            if preview.state_held_back:
+                clauses.append(f"{preview.state_held_back} state change(s) held back")
             if preview.description:
                 clauses.append("the description is published")
             console.print("As a draft: " + "; ".join(clauses) + ".", soft_wrap=True)
@@ -2458,9 +2585,10 @@ def _offer_locked(
 
     `pr_number` chooses the mode.
 
-    ``None`` is `jailbee review apply`: every pending manifest, descriptions
-    included, and anything that cannot be published is a refusal the caller
-    exits non-zero on.
+    ``None`` is the unified publish path (`jailbee outbox apply` and its
+    `review apply` alias, scoped to one manifest by ``outbox``): every pending
+    manifest given, descriptions included, and anything that cannot be
+    published is a refusal the caller exits non-zero on.
 
     An integer is the offer `jailbee pr` makes once that PR is up: only the
     unapplied non-`description` actions (see `_offerable_indices` — the
@@ -2567,7 +2695,7 @@ def _offer_locked(
         plural = "" if total == 1 else "s"
         info(
             f"{total} pending PR comment{plural} in {short}: "
-            f"`jailbee review apply {short}` publishes {'it' if total == 1 else 'them'}."
+            f"{_apply_hint(short, plan)} publishes {'it' if total == 1 else 'them'}."
         )
         return len(refusals)
 
@@ -2600,7 +2728,12 @@ def _offer_locked(
             mode = choose_mode(
                 total,
                 DraftPreview(
-                    first.pr, first.pending, first.held_back, first.description, total_draft
+                    first.pr,
+                    first.pending,
+                    first.held_back,
+                    first.description,
+                    total_draft,
+                    first.state_held_back,
                 ),
             )
             accepted = mode is not None
@@ -2609,7 +2742,7 @@ def _offer_locked(
             accepted = confirm(total)
         if not accepted:
             info(
-                f"Nothing published. `jailbee review apply {short}` posts them later."
+                f"Nothing published. {_apply_hint(short, plan)} posts them later."
                 if for_offer
                 else "Nothing published."
             )
@@ -2656,6 +2789,13 @@ def _offer_locked(
             or refreshed.foreign_repo != target.foreign_repo
         ):
             raise OutboxChanged("PR target changed; refresh required")
+        # The state guard judges the PR as it is now, not as it was when planned.
+        state_refusals = _state_refusals(
+            refreshed,
+            [i for i in pending_indices(refreshed.manifest, progress) if idx is None or i in idx],
+        )
+        if state_refusals:
+            raise GateError("; ".join(state_refusals))
         refreshed_plans.append((refreshed, progress, idx))
     if selected_publication:
         # Remote target reads can run arbitrary time: keep local evidence fresh
@@ -2674,8 +2814,15 @@ def _offer_locked(
     from jailbee.publish_progress import reporting
 
     if policy is not None:
-        for target, _, _ in plans:
-            policy(target.manifest)
+        for target, progress, idx in plans:
+            # The policy judges what is still to be published, not what a
+            # previous run already landed.
+            pending = [
+                i for i in pending_indices(target.manifest, progress) if idx is None or i in idx
+            ]
+            policy(
+                replace(target.manifest, actions=tuple(target.manifest.actions[i] for i in pending))
+            )
     total = sum(planned_action_count(t.manifest, p, idx) for t, p, idx in plans)
     if action_limit is not None and total > action_limit:
         raise GateError("review actions exceed the reserved publish budget")

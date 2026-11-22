@@ -95,7 +95,13 @@ def pause_agent(
         raise RefreshError(f"agent `{status.agent}` cannot be relaunched with its session")
     if runner is not None and runner_command(agent.command, runner) is None:
         raise RefreshError(f"agent `{status.agent}` cannot be relaunched with its runner")
-    steps = autostart.agent_autostart_steps(cfg, initial_prompt=True, runner=runner, resume=session)
+    steps = autostart.agent_autostart_steps(
+        cfg,
+        initial_prompt=True,
+        runner=runner,
+        default_runner=cfg.orchestration_view().default_runner,
+        resume=session,
+    )
     if not any(step.name == target and step.run for step in steps):
         raise RefreshError(f"agent `{status.agent}` has no usable relaunch step")
     updated_history = labels.with_session(labels.sessions_of(config), session)

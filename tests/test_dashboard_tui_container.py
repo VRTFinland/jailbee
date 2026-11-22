@@ -42,6 +42,7 @@ _SNAPSHOT_LS = ["snapshot", "ls", "alpha-x", "-o", "json", "--fields", "name,cre
 _TO_SNAPSHOT_ROW = ["j", "j", "enter"]
 _THREE_SNAPS = json.dumps([{"name": n, "created": "2026-09-29T10:00:00Z"} for n in ("a", "b", "c")])
 _CONTAINER_VERB_CASES = sorted(tsession.dact.CONTAINER_VERBS)
+_SERVICE_START_AT = 0  # index of "start" in a stopped service's action picker
 _VANISH_WHEN = pytest.mark.parametrize("when", ["frame-before-enter", "same-read-as-enter"])
 
 
@@ -253,7 +254,8 @@ def test_autostart_status_runs_in_the_terminal(mocker, tmp_path, over_ssh):
     child.assert_called_once_with(
         ["jailbee", "autostart", "status", "alpha-x", *flags], check=False, cwd=tmp_path
     )
-    assert len(run.app.outputs) == 1  # its output is shown by the dashboard
+    assert len(run.entries) == 1  # its output is the dashboard's queue entry
+    assert len(run.app.outputs) == 1  # a status listing opens its output
 
 
 def test_cancel_autostart_asks_first_and_no_runs_nothing(mocker, tmp_path):
@@ -401,7 +403,8 @@ def test_snapshot_create_with_a_timestamp_runs_in_the_terminal(mocker, tmp_path,
     child.assert_called_once_with(
         ["jailbee", "snapshot", "create", *flags, "--", "alpha-x"], check=False, cwd=tmp_path
     )
-    assert len(run.app.outputs) == 1  # its output is shown by the dashboard
+    assert len(run.entries) == 1  # its output is the dashboard's queue entry
+    assert run.app.outputs == []
 
 
 def test_snapshot_create_named_takes_an_option_like_tag_as_a_tag(mocker, tmp_path):
@@ -650,7 +653,8 @@ def test_snapshot_restore_and_delete_run_after_a_yes(
         check=False,
         cwd=tmp_path,
     )
-    assert len(run.app.outputs) == 1  # its output is shown by the dashboard
+    assert len(run.entries) == 1  # its output is the dashboard's queue entry
+    assert run.app.outputs == []
 
 
 @pytest.mark.parametrize("action_downs", [0, 1], ids=["restore", "delete"])
@@ -1045,7 +1049,7 @@ def test_outbox_publish_shows_the_plan_and_publishes_in_the_background(mocker, t
     wait.assert_not_called()  # the terminal was never handed over
 
 
-def test_outbox_create_pr_is_c_in_the_box(mocker, tmp_path):
+def test_outbox_publish_runs_pr_push_in_the_box(mocker, tmp_path):
     group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
     payload = _ob_listing(
         _ob_container(
@@ -1060,13 +1064,13 @@ def test_outbox_create_pr_is_c_in_the_box(mocker, tmp_path):
     child = mocker.patch.object(tsession.subprocess, "run", return_value=mocker.Mock(returncode=0))
     patch_pause(mocker)
 
-    assert drive(mocker, [*container_menu_keys(group, "outbox browse"), "c"], [group]).rc == 0
+    assert drive(mocker, [*container_menu_keys(group, "outbox browse"), "p"], [group]).rc == 0
 
-    child.assert_called_once_with(
-        ["jailbee", "pr", "push", "alpha-x", "--config", str(group.config_path)],
-        check=False,
-        cwd=tmp_path,
-    )
+    # Handed off with a diagnostic file, so a failure's reason survives the refresh.
+    child.assert_called_once()
+    args, kwargs = child.call_args
+    assert args == (["jailbee", "pr", "push", "alpha-x", "--config", str(group.config_path)],)
+    assert kwargs["cwd"] == tmp_path and "JAILBEE_DIAGNOSTIC_TEXT_FILE" in kwargs["env"]
 
 
 @pytest.mark.parametrize(
@@ -1474,6 +1478,41 @@ def test_services_direct_table_key_opens_picker_without_toggling_details(mocker,
     listing.assert_called_once()
 
 
+def test_a_service_operation_lands_on_the_list_and_a_second_one_starts(mocker, tmp_path):
+    group = every_verb_group(tmp_path)
+    menu = tmenu.open_menu([group], "alpha-x")
+    entries = tmenu.menu_entries(menu)
+    direct_key = next(
+        key
+        for item, key in zip(entries, tmenu.menu_hotkeys(entries), strict=True)
+        if isinstance(item, tuple) and item[1] == tsession.dact.SERVICES
+    )
+    rows = [
+        {"name": n, "state": "stopped", "window": None, "since": None, "detail": ""}
+        for n in ("db", "web")
+    ]
+    mocker.patch.object(
+        tsession.da,
+        "run_cli_quiet",
+        return_value=tsession.da.CliResult(True, "", json.dumps(rows)),
+    )
+    child = mocker.patch.object(tsession.subprocess, "run")
+    child.return_value.returncode = 0
+    patch_pause(mocker)
+    # db's action picker → "start"; the list returns; web's action picker → "start"
+    start = ["enter", *["j"] * _SERVICE_START_AT, "enter"]
+    run = drive(mocker, ["j", direct_key, *start, "j", *start], [group])
+    assert run.rc == 0
+    purposes = [p.purpose for p in run.of_type(tsession.Picker)]
+    assert purposes.count("container-services") >= 3  # opened, back after db, back after web
+    started = [
+        call.args[0][3:5]
+        for call in child.call_args_list
+        if call.args[0][:3] == ["jailbee", "service", "start"]
+    ]
+    assert started == [["alpha-x", "db"], ["alpha-x", "web"]]
+
+
 def test_an_orphan_row_opens_its_own_small_menu(mocker):
     group = dmodel.RepoGroup("gamma", None, None, [ci("gamma-x", "gamma")])
 
@@ -1537,3 +1576,23 @@ def test_the_dispatcher_runs_an_orphan_verb_as_a_plain_cli_child(mocker):
 
     assert run.call_args.args[0] == ["jailbee", "orphan", "stop", "gamma-x"]
     assert run.call_args.kwargs["cwd"] == dmodel.RepoTarget.orphan().cwd()
+
+
+def test_queue_overlay_lists_a_job_row_and_opens_its_log(mocker, tmp_path):
+    import os
+
+    from jailbee.dashboard.overlays import Picker
+
+    job = dataclasses.replace(
+        ci("alpha-a", "alpha", job_phase="failed", job_pid=os.getpid()), job_kind="create"
+    )
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [job])
+    run_mock = mocker.patch.object(tsession.subprocess, "run")
+    run_mock.return_value.returncode = 0
+
+    run = drive(mocker, ["Q", "enter", "enter"], [group])
+
+    pickers = run.of_type(Picker)
+    assert any(p.purpose == "queue" and "alpha-a" in p.entries[0].label for p in pickers)
+    assert any(p.purpose == "queue-job" for p in pickers)
+    assert [t for t, _, _ in run.app.outputs] == ["jailbee job log alpha-a"]

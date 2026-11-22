@@ -62,6 +62,8 @@ def test_default_grant_label_is_the_spec_shape() -> None:
             "foreign_issues": {"repos": [], "actions": []},
             "pull_requests": False,
             "pr_reviews": False,
+            "pr_comment_edits": False,
+            "pr_state": False,
             "max_actions_per_hour": 30,
         },
     }
@@ -465,3 +467,49 @@ def test_cap_excess_allows_assign_self_under_assign_cap_and_assign_under_assign_
     assert cap_excess(Grant(publish=_rights(("assign",), ("assign",))), cap) == []
     own_self = RepoCap(publish=_rights(("assign_self",), ("assign_self",)))
     assert cap_excess(Grant(publish=_rights(("assign_self",), ("assign_self",))), own_self) == []
+
+
+def test_comment_edit_is_a_grantable_issue_kind_not_implied_by_comment():
+    from jailbee.orchestration.grant import ISSUE_ACTION_KINDS, PublishRights
+
+    assert "comment_edit" in ISSUE_ACTION_KINDS
+    assert PublishRights(issues=("comment_edit",)).covers_issue(
+        "comment_edit", "org/repo", foreign=False
+    )
+    assert not PublishRights(issues=("comment",)).covers_issue(
+        "comment_edit", "org/repo", foreign=False
+    )
+
+
+def test_pr_comment_edits_is_capped_and_not_implied_by_pr_reviews() -> None:
+    from jailbee.orchestration.grant import PublishRights
+
+    wanted = PublishRights(pr_reviews=True, pr_comment_edits=True)
+    assert PublishRights(pr_reviews=True).pr_comment_edits is False
+    assert PublishRights(pr_comment_edits=True).empty() is False
+    assert wanted.narrowed(PublishRights(pr_reviews=True)).pr_comment_edits is False
+    assert wanted.narrowed(wanted).pr_comment_edits is True
+    assert wanted.narrowed(PublishRights(pr_comment_edits=True)).pr_comment_edits is False
+
+
+def test_cap_excess_names_comment_edits_above_the_cap() -> None:
+    from jailbee.orchestration.grant import PublishRights
+
+    requested = PublishRights(pr_reviews=True, pr_comment_edits=True)
+    messages = cap_excess(Grant(publish=requested), RepoCap(publish=PublishRights(pr_reviews=True)))
+    assert any("pr_comment_edits" in line for line in messages)
+
+
+def test_pr_state_is_capped_and_needs_pr_reviews() -> None:
+    from jailbee.orchestration.grant import PublishRights
+
+    wanted = PublishRights(pr_reviews=True, pr_state=True)
+    assert PublishRights(pr_reviews=True).pr_state is False
+    assert PublishRights(pr_state=True).empty() is False
+    assert wanted.narrowed(PublishRights(pr_reviews=True)).pr_state is False
+    assert wanted.narrowed(wanted).pr_state is True
+    assert wanted.narrowed(PublishRights(pr_state=True)).pr_state is False
+    # Neither side's own pr_reviews may be missing for the state right to survive.
+    assert PublishRights(pr_state=True).narrowed(wanted).pr_state is False
+    messages = cap_excess(Grant(publish=wanted), RepoCap(publish=PublishRights(pr_reviews=True)))
+    assert any("pr_state" in line for line in messages)

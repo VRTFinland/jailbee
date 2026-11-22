@@ -30,6 +30,10 @@ jailbee service stop api
 
 `start` also starts required dependencies. `refresh` runs configured preparation steps and restarts the selected service; if preparation needs elevated network or mounts, it refuses and tells you how to ask the orchestrator or host. Service output comes from `svc-<name>` windows in the autostart tmux session. For another repository use `jailbee service --repo <path> ls`; `ls` and `plan` support `--json`.
 
+`service ls` has a DESCRIPTION column (`description` in `--json`) with the
+repo's own note on what each service does and when it is needed; read it to
+decide which service to start.
+
 ### Status and log queries
 
 `service ls` may run the configured read-only `status` probe; its output or a

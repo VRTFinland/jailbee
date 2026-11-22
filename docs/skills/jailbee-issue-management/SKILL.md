@@ -1,6 +1,6 @@
 ---
 name: jailbee-issue-management
-description: Use when creating, editing, commenting on, labeling, closing, reopening, triaging, or organizing GitHub issues from inside a JailBee container — the container's `gh` is read-only, so every write is staged as a manifest in the issue outbox for a human to publish on the host. Trigger on "create an issue", "file a bug", "edit this issue", "update the issue title/body", "comment on issue #N", "add a label", "remove a label", "assign this issue", "assign it to me", "unassign", "close this issue", "reopen this issue", "triage these issues", "organize the issue backlog", "luo GitHub-issue", "muokkaa issueta", "kommentoi issueta", "lisää labeli", "poista labeli", "sulje issue", "avaa issue uudelleen", "järjestele issueja".
+description: Use when creating, editing, commenting on, labeling, closing, reopening, triaging, or organizing GitHub issues from inside a JailBee container — the container's `gh` is read-only, so every write is staged as a manifest in the issue outbox for a human to publish on the host. Trigger on "create an issue", "file a bug", "edit this issue", "update the issue title/body", "comment on issue #N", "edit my comment", "fix my comment on the PR", "add a label", "remove a label", "assign this issue", "assign it to me", "unassign", "make this a sub-issue", "link the parent issue", "mark as blocked by", "close this issue", "reopen this issue", "triage these issues", "organize the issue backlog", "luo GitHub-issue", "muokkaa issueta", "kommentoi issueta", "muokkaa kommenttia", "lisää labeli", "poista labeli", "lisää ali-issueksi", "merkitse blokatuksi", "sulje issue", "avaa issue uudelleen", "järjestele issueja".
 ---
 
 # Managing GitHub issues from inside a container — the outbox
@@ -12,8 +12,8 @@ with `jailbee inbox send message --text "..."`; use `--kind question` when you
 need a result. Do not write GitHub outbox files or directories by hand.
 
 You are inside a JailBee container working with GitHub issues (creating one,
-editing a title or body, commenting, adding or removing labels, assigning or
-unassigning people, closing, or reopening). Your `gh` here can **read** GitHub but must never **write** to
+editing a title or body, commenting, editing your own comment, adding or removing labels, assigning or
+unassigning people, linking sub-issues and blocked-by dependencies, closing, or reopening). Your `gh` here can **read** GitHub but must never **write** to
 it: every issue action you produce is staged as a proposal in the host outbox
 store through the `jailbee issue` commands, and a human on the host reviews and publishes it
 later with `jb issue apply`. Nothing you write here reaches GitHub by
@@ -60,6 +60,8 @@ at numbers, titles, or label spelling:
   inspect current fields. Commands capture expected state automatically.
 - `gh issue list --json number,title,labels,state [--label ...] [--state ...]`
   — for finding or triaging a set of issues.
+- `jailbee issue comments <n> [--json]` — an issue's or PR's conversation
+  comments with their numeric ids, authors and bodies, for `comment-edit`.
 - `gh label list --json name` — the repository's exact label spelling and
   casing, so `add`/`remove` names match (GitHub label names are
   case-preserving but the host also folds case for comparison).
@@ -126,6 +128,30 @@ orchestrator's `publish.projects` grant. An unlisted board is refused before
 any host read. Ask the host user to add an extra board; the committed config
 cannot set `github.projects`. Staging rights do not grant publish rights.
 
+Editing a comment: `jailbee issue comment-edit ID --body "…"` (or
+`--body-file`) stages a replacement body for one conversation comment on an
+issue or a pull request. Find `ID` with `jailbee issue comments N`. The command
+records the comment's issue and current body. The host refuses it unless the
+publishing account wrote the comment and it is unchanged since staging, so
+edit only comments that account wrote. Review (line) comments are edited with `jailbee pr comment-edit` (see jailbee-pr-review).
+
+Sub-issues and dependencies are native GitHub relations, staged like any
+other action. `jailbee issue sub-issue PARENT CHILD` makes CHILD a sub-issue of
+PARENT; `jailbee issue blocked-by ISSUE BLOCKER` marks ISSUE as blocked by
+BLOCKER. `--remove` drops the link instead. Either side may be `@REF` for a
+create staged earlier in the same batch; `--remove` needs existing numbers.
+`jailbee issue create … --parent N|@REF --blocked-by N|@REF` (`--blocked-by`
+repeatable) stages the create followed by those links as separate actions that
+target the new issue by its ref, so each link is published, journaled and
+resolved on its own. Both issues must be in `--repo`. The host refuses an add
+that already exists, a removal that does not, a child that already has another
+parent, a direct blocked-by cycle in one batch, and a pull request on either
+side. If a link's publish ends uncertain, check whether the relation is in the
+state the action asks for: if so resolve with `--applied`, otherwise `--retry`. Use the older `Part of #N` / `Blocked by: #N` lines at the top of a body
+only as a fallback, when the native link cannot be published (the issues are
+in different repositories, or an orchestrator lacks the `sub_issue` /
+`dependency` publish kind).
+
 Assignment: `jailbee issue assign 42 --me` assigns the publishing account
 (`@me`, resolved on the host at publish time), `--unassign-me` removes it,
 and `--add LOGIN` / `--remove LOGIN` (repeatable) name other users. Give at
@@ -141,8 +167,8 @@ batch target `@REF`. For edits, labels, assign and state on `@REF`, expected val
 are derived automatically from the earlier create; a revision check keeps
 concurrent draft appends atomic without holding the write lock during host reads.
 Inspect with `jailbee outbox ls` and `jailbee outbox show issue/NAME`.
-Remove a staged, unpublished proposal with `jailbee outbox drop issue/NAME`;
-discard an unsubmitted draft batch with `jailbee outbox discard NAME --kind issue`.
+Remove a staged, unpublished proposal with `jailbee outbox discard issue/NAME`;
+discard an unsubmitted draft batch with `jailbee outbox discard --draft NAME --kind issue`.
 
 ## Human inspection and approval
 
@@ -156,8 +182,9 @@ For human approval on the host, `jb outbox apply <container>
 issue/NNN-topic.json --revision TOKEN` publishes all pending actions in that
 one manifest, preserving the existing `expected`, journal and recovery
 gates. `TOKEN` comes from inspection; a changed proposal requires refresh
-and renewed inspection. The original `jb issue apply <container>` remains
-available. These are instructions to the human, **not permission for you
+and renewed inspection. The issue-only alias `jb issue apply <container>
+[<manifest>]` also works; like `outbox apply` it publishes one manifest per run
+and asks for what is omitted. These are instructions to the human, **not permission for you
 to run host publication commands**. Stage with the commands only. Without
 matching orchestrator publish rights, stop there. With those rights, use
 `send publish` as described above; never call host apply or direct `gh`
@@ -168,8 +195,8 @@ mutations yourself.
 If a broker `done` confirms publication, report its issue numbers and URLs.
 If there is no final result yet, say publication is pending. For manifests
 not sent through a granted orchestrator publish request, tell the user to
-run `jb issue apply <container>` on the host: **nothing has been published
-yet.** Everything still queued is a proposal
+run `jb issue apply <container> <manifest>` on the host (once per manifest):
+**nothing has been published yet.** Everything still queued is a proposal
 sitting in the host outbox store until then. `jailbee outbox sent` lists what
 was published. The host also sees the
 pending count without being told: `jb ls`'s ISSUES column shows `✉N` for
@@ -185,6 +212,7 @@ record of what actually landed on GitHub is the host's sent log:
 `jailbee outbox sent` (add `--json`, `--limit N` or `--kind issue`) lists
 what the host published from this container, newest first, with each
 action's state (`applied`, or `uncertain` while a human resolves it) and
-GitHub URL. A published proposal also disappears from `jailbee outbox ls`.
+GitHub URL; `jailbee outbox sent --json` is where the created issue
+numbers (`#N`) and URLs are recorded. A published proposal also disappears from `jailbee outbox ls`.
 Never assume a manifest you wrote has been published; check `jailbee outbox
 sent` (or ask) instead.

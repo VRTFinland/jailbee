@@ -23,7 +23,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any, Protocol
 
@@ -89,6 +89,8 @@ class ActionOutcome:
 
     results: list[RunResult]  # one per run that was started, in order
     output: str
+    # What each run of ``results`` printed on its own, without the batch headers.
+    outputs: list[str] = field(default_factory=list)
 
 
 # The orphan rows' own attach verbs (terminal dashboard only, never remote).
@@ -190,10 +192,56 @@ def _child_env(
     )
 
 
+OUTPUT_KEEP_CHARS = 64_000
+OUTPUT_DROPPED_MARKER = "… earlier output dropped …\n"
+
+
+class _TailBuffer:
+    """Output text bounded to its last ``OUTPUT_KEEP_CHARS`` characters."""
+
+    def __init__(self) -> None:
+        self._parts: list[str] = []
+        self._size = 0
+        self._dropped = False
+
+    def append(self, chunk: str) -> None:
+        self._parts.append(chunk)
+        self._size += len(chunk)
+        if self._size > 2 * OUTPUT_KEEP_CHARS:  # trim in bulk, not per chunk
+            self._trim()
+
+    def _trim(self) -> None:
+        text = "".join(self._parts)
+        if len(text) > OUTPUT_KEEP_CHARS:
+            text = text[-OUTPUT_KEEP_CHARS:]
+            self._dropped = True
+        self._parts = [text]
+        self._size = len(text)
+
+    def text(self) -> str:
+        self._trim()
+        body = self._parts[0] if self._parts else ""
+        return OUTPUT_DROPPED_MARKER + body if self._dropped else body
+
+
+class RunProgress(Protocol):
+    """Live word of a batch: output as it arrives, a question opening and closing.
+
+    ``index`` is the run's position in the batch. Both are called on the
+    thread that runs the action (the output sink's helper thread, the
+    prompt handler's thread): a frontend moves them to its own thread.
+    """
+
+    def output(self, index: int, chunk: str) -> None: ...
+
+    def question(self, index: int, asking: bool) -> None: ...
+
+
 def run_actions(
     runs: Sequence[ActionRun],
     *,
     run: Callable[..., RunResult] | None = None,
+    progress: RunProgress | None = None,
     **common: Any,
 ) -> ActionOutcome:
     """Run ``runs`` one after another through ``run`` (default `run_action`).
@@ -203,22 +251,53 @@ def run_actions(
     one run each starts with a ``── jailbee <command> ──`` header. The batch
     stops at the first run that was refused or could not start; a run that
     merely exits non-zero does not stop the others. Frontend-agnostic: the
-    terminal and web dashboards both run bulk actions through it.
+    terminal and web dashboards both run bulk actions through it. ``progress``
+    hears each run's output chunks and its questions while it runs.
     """
     runner_fn = run if run is not None else run_action
-    chunks: list[str] = []
+    chunks = _TailBuffer()
     results: list[RunResult] = []
+    outputs: list[str] = []
     try:
-        for item in runs:
+        for index, item in enumerate(runs):
             if len(runs) > 1:
                 chunks.append(f"── jailbee {_command_path(item.argv)} ──\n")
-            result = runner_fn(item.argv, cwd=item.cwd, on_output=chunks.append, **common)
+            own = _TailBuffer()
+
+            def sink(chunk: str, own: _TailBuffer = own, index: int = index) -> None:
+                chunks.append(chunk)
+                own.append(chunk)
+                if progress is not None:
+                    progress.output(index, chunk)
+
+            run_common = dict(common)
+            handler = common.get("on_prompt")
+            if progress is not None and handler is not None:
+                run_common["on_prompt"] = _announcing(handler, progress, index)
+
+            try:
+                result = runner_fn(item.argv, cwd=item.cwd, on_output=sink, **run_common)
+            finally:
+                outputs.append(own.text())
             results.append(result)
             if result.error is not None or result.refused is not None:
                 break
     except Exception as exc:
         results.append(RunResult(error=str(exc)))
-    return ActionOutcome(results, "".join(chunks))
+    return ActionOutcome(results, chunks.text(), outputs)
+
+
+def _announcing(handler: PromptHandler, progress: RunProgress, index: int) -> PromptHandler:
+    """``handler`` that tells ``progress`` while a question is open."""
+
+    def ask(prompt: Prompt) -> Any:
+        progress.question(index, True)
+        try:
+            return handler(prompt)
+        finally:
+            progress.question(index, False)
+
+    return ask
 
 
 def run_action(

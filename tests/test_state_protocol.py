@@ -13,8 +13,9 @@ import pytest
 from jailbee.accounts.models import ActivityEvent, AgentActivity
 from jailbee.agent_status import AgentSummary
 from jailbee.dashboard.model import AppMenuEntry, RepoAdvisory, RepoGroup
-from jailbee.git_status import GitStatus, SubmoduleChange
-from jailbee.lifecycle import ContainerInfo
+from jailbee.git_status import GitStatus, OtherBranch, SubmoduleChange
+from jailbee.host_target import SyncTarget
+from jailbee.lifecycle import ContainerInfo, ServiceState
 from jailbee.orchestration.view import ChildView, GrantView
 from jailbee.procstat import ProcessActivity, ProcessMemory
 from jailbee.state_service import protocol
@@ -74,6 +75,11 @@ def _full_snapshot() -> Snapshot:
             base_source="branch",
             tracking_relation="ahead",
             upstream_ref="origin/main",
+            sync_target=SyncTarget("pr", "PR #7", "fed987", "refs/jailbee/pr/7/head", True),
+            host_ahead_count="6",
+            host_behind_count="2",
+            host_branch="main",
+            other_branches=(OtherBranch("feat/x", "abc123", False),),
         )
     )
     container = ContainerInfo(
@@ -139,6 +145,8 @@ def _full_snapshot() -> Snapshot:
             git_status=git,
             job_live=True,
             sent_count=2,
+            services=(ServiceState("web", "ready"),),
+            services_unknown=True,
             job_phase="running",
             job_pid=77,
             job_kind="create",
@@ -168,6 +176,9 @@ def _full_snapshot() -> Snapshot:
             running_children=2,
             queued_children=3,
             orchestrator_running=True,
+            agent_runner="grok/sonnet",
+            agent_source="container",
+            pr_slug="acme/widgets",
         )
     )
     group = RepoGroup(
@@ -183,11 +194,13 @@ def _full_snapshot() -> Snapshot:
             autostart_profiles=("full", "light"),
             autostart_default_profile="full",
             autostart_services=("db", "web"),
+            service_descriptions={"db": "Postgres for tests"},
             orchestration_profiles=("bugfixer",),
             default_runner="claude haiku",
             default_runner_source="repo",
             runner_profiles=("grok",),
             default_project="Org/7",
+            agent_label="grok/sonnet",
             sent_count=4,
             push_action_default="merge",
             push_source_default="branch",
@@ -369,6 +382,7 @@ def test_combined_protocol_preserves_builtin_choices_and_rerun_state():
     group = decode(encode(snapshot)).groups[0]
     assert group.autostart_profiles == ("full", "light", "none", "all")
     assert group.autostart_services == ("db", "web")
+    assert group.service_descriptions == {"db": "Postgres for tests"}
     container = group.containers[0]
     assert container.autostart_failed == 2
     assert container.job_live is True
@@ -423,7 +437,7 @@ def test_wire_schema_leaves_out_docstrings_and_titles():
 # PROTOCOL fails below: a client of another version would misread it. A pydantic
 # upgrade that only reshapes its schema output trips this too; a bump is then
 # harmless (a protocol mismatch makes the dashboard replace the state service).
-WIRE_SCHEMA = (24, "ed3364549e45fbbc9b4bd3ed35559f0c0fd1ab9b03055e507cbb739bb26c4422")
+WIRE_SCHEMA = (37, "4d316f0bab832df3128ebdb481ac1a82260966f40bdd6346fea7eed16a543258")
 
 
 def test_a_wire_schema_change_bumps_the_protocol():

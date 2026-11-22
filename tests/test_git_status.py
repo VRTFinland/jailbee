@@ -10,14 +10,16 @@ import pytest
 
 from jailbee.git_status import (
     GitStatus,
+    OtherBranch,
     SubmoduleChange,
     _parse_submodules,
     _shortstat_ints,
     merge_label,
+    parse_other_branches,
     parse_shortstat,
     probe_container_git,
 )
-from jailbee.host_target import TargetSnapshot
+from jailbee.host_target import SyncTarget, TargetSnapshot
 from jailbee.incus import IncusError
 
 
@@ -207,6 +209,9 @@ def test_probe_passes_env_vars_into_snippet(mocker):
         "DEFAULT_BRANCH": "develop",
         "HOST_HEAD": "",
         "TARGET_SHA": "",
+        "AHEAD_BASE": "",
+        "AHEAD_BASE_SHA": "",
+        "HOST_TARGET_SHA": "",
         "HOST_SOURCE": "/mnt/host-source",
         "GIT_OPTIONAL_LOCKS": "0",
     }
@@ -1191,3 +1196,520 @@ def test_probe_borrows_missing_submodule_commit_from_host_source(mocker, tmp_pat
         assert status.submodules[0].behind_commits == 1
     else:
         assert status.target_diff == "?"
+
+
+def _probe_real(mocker, repo, *, target, sync=None):
+    from jailbee.git_status import _PROBE_SNIPPET
+
+    def exec_snippet(_name, _args, *, env, **_kwargs):
+        return subprocess.run(
+            ["bash", "-c", _PROBE_SNIPPET],
+            env={**os.environ, **env},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+
+    incus = mocker.Mock()
+    incus.exec.side_effect = exec_snippet
+    return probe_container_git(incus, "c", str(repo), "main", "main", target=target, sync=sync)
+
+
+def _commit(repo, name):
+    (repo / name).write_text(f"{name}\n")
+    _real_git(repo, "add", name)
+    _real_git(repo, "commit", "-qm", name)
+    return _real_git(repo, "rev-parse", "HEAD")
+
+
+def test_pr_bound_probe_compares_with_the_pr_head_and_still_counts_the_host_branch(
+    mocker, tmp_path
+):
+    """↑ against the PR head is "push needed"; the host row keeps its own ↑/↓."""
+    from jailbee.host_target import SyncTarget
+
+    repo = tmp_path / "ctr"
+    repo.mkdir()
+    _real_git(repo, "init", "-q")
+    host_sha = _commit(repo, "base")
+    pr_sha = _commit(repo, "pushed")  # the PR head the host last fetched
+    _commit(repo, "local-1")
+    _commit(repo, "local-2")  # two commits beyond the PR head
+
+    host = TargetSnapshot("main", host_sha, "local", "refs/remotes/origin/main", "equal")
+    sync = SyncTarget("pr", "PR #7", pr_sha, "refs/jailbee/pr/7/head")
+    status = _probe_real(mocker, repo, target=host, sync=sync)
+
+    assert (status.ahead_count, status.behind_count) == ("2", "0")
+    assert status.target_diff == "+2 -0"
+    assert (status.host_ahead_count, status.host_behind_count) == ("3", "0")
+    assert status.sync_target == sync
+    # The host snapshot fields keep describing the host branch.
+    assert status.base_sha == host_sha
+
+
+def test_plain_probe_host_counts_equal_the_sync_counts(mocker, tmp_path):
+    repo = tmp_path / "ctr"
+    repo.mkdir()
+    _real_git(repo, "init", "-q")
+    host_sha = _commit(repo, "base")
+    _commit(repo, "local-1")
+
+    host = TargetSnapshot("main", host_sha, "local", "refs/remotes/origin/main", "equal")
+    status = _probe_real(mocker, repo, target=host)
+
+    assert (status.ahead_count, status.behind_count) == ("1", "0")
+    assert (status.host_ahead_count, status.host_behind_count) == ("1", "0")
+    assert status.sync_target is not None
+    assert (status.sync_target.kind, status.sync_target.sha) == ("host", host_sha)
+
+
+def _git(cwd, *args):
+    import subprocess
+
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _run_probe(repo, target_sha, host_target_sha=""):
+    import os
+    import subprocess
+
+    from jailbee.git_status import _PROBE_SNIPPET
+
+    env = {
+        **os.environ,
+        "REPO_DIR": str(repo),
+        "TARGET_SHA": target_sha,
+        "HOST_TARGET_SHA": host_target_sha,
+        "HOST_SOURCE": "",
+        "HOST_HEAD": "",
+    }
+    out = subprocess.run(
+        ["bash", "-c", _PROBE_SNIPPET], env=env, capture_output=True, text=True, check=True
+    ).stdout
+    return out.split("\0")
+
+
+def test_probe_missing_target_commit_reports_behind_unknown(tmp_path):
+    host, container = tmp_path / "host", tmp_path / "container"
+    host.mkdir()
+    _git(host, "init", "-q")
+    (host / "a").write_text("1")
+    _git(host, "add", "a")
+    _git(host, "commit", "-qm", "one")
+    _git(tmp_path, "clone", "-q", str(host), str(container))
+    (host / "a").write_text("2")
+    _git(host, "commit", "-qam", "two")
+    new_sha = _git(host, "rev-parse", "HEAD")
+
+    parts = _run_probe(container, new_sha)
+
+    assert parts[1] == "?"  # DIFF
+    assert parts[2] == "?"  # ahead
+    assert parts[3] == "?"  # MERGE
+    assert parts[12] == "missing"  # behind: pull needed, count unknown
+
+
+def test_probe_shared_clone_sees_new_host_commits_and_counts_them(tmp_path):
+    """Clone-mode containers are `git clone --shared`: a new host commit is readable."""
+    host, container = tmp_path / "host", tmp_path / "container"
+    host.mkdir()
+    _git(host, "init", "-q")
+    (host / "a").write_text("1")
+    _git(host, "add", "a")
+    _git(host, "commit", "-qm", "one")
+    _git(tmp_path, "clone", "-q", "--shared", str(host), str(container))
+    (host / "a").write_text("2")
+    _git(host, "commit", "-qam", "two")
+
+    parts = _run_probe(container, _git(host, "rev-parse", "HEAD"))
+
+    assert parts[12] == "1"
+
+
+def test_probe_missing_host_target_reports_host_behind_missing(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / "a").write_text("1")
+    _git(repo, "add", "a")
+    _git(repo, "commit", "-qm", "one")
+
+    parts = _run_probe(repo, _git(repo, "rev-parse", "HEAD"), "f" * 40)
+
+    assert parts[14] == "missing"
+
+
+def test_probe_missing_token_is_one_constant():
+    from jailbee.git_status import _PROBE_SNIPPET, PROBE_MISSING
+
+    assert PROBE_MISSING == "missing"
+    assert f'="{PROBE_MISSING}"' in _PROBE_SNIPPET
+    assert "@MISSING@" not in _PROBE_SNIPPET
+
+
+def test_probe_parses_missing_host_behind_marker(mocker):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _payload(*_TWELVE, "3", "1", "missing")
+    target = TargetSnapshot("main", "a" * 40, "local", "", "unavailable")
+    sync = SyncTarget("container", "other", "b" * 40, "refs/x")
+
+    status = probe_container_git(incus, "c", "/r", "main", "main", target=target, sync=sync)
+
+    assert status.host_behind_count == "•"
+
+
+def test_probe_present_target_commit_still_counts(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / "a").write_text("1")
+    _git(repo, "add", "a")
+    _git(repo, "commit", "-qm", "one")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "a").write_text("2")
+    _git(repo, "commit", "-qam", "two")
+
+    parts = _run_probe(repo, base)
+
+    assert parts[12] == "0"
+    assert parts[2] == "1"
+
+
+def test_probe_without_target_keeps_behind_unknown_question_mark(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / "a").write_text("1")
+    _git(repo, "add", "a")
+    _git(repo, "commit", "-qm", "one")
+
+    assert _run_probe(repo, "")[12] == "?"
+
+
+def test_probe_parses_behind_unknown_marker(mocker):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _payload(*_TWELVE, "missing")
+    target = TargetSnapshot(
+        branch="main",
+        sha="a" * 40,
+        source="local",
+        upstream_ref="",
+        tracking_relation="unavailable",
+    )
+
+    sync = SyncTarget("host", "main", "a" * 40, "refs/heads/main")
+    status = probe_container_git(incus, "c", "/r", "main", "main", target=target, sync=sync)
+
+    assert status.behind_count == "•"
+
+
+def _real_git_incus(repo):
+    """An ``Incus`` stand-in whose ``exec`` runs the snippet in a local repo."""
+    import subprocess
+
+    class _LocalIncus:
+        def exec(self, _name, cmd, *, env=None, **_kwargs):
+            import os
+
+            merged = {**os.environ, **(env or {}), "REPO_DIR": str(repo)}
+            return subprocess.run(
+                cmd, env=merged, capture_output=True, text=True, check=True
+            ).stdout
+
+    return _LocalIncus()
+
+
+def test_probe_reports_unknown_host_counts_when_the_host_branch_object_is_missing(tmp_path):
+    """A PR-bound container that lacks the host branch tip: PR-head counts are
+    measured, host ↑ is "?" (the destroy guard then falls back to head_sha) and
+    host ↓ is "•" (behind, count unknown)."""
+    import subprocess
+
+    from jailbee.host_target import SyncTarget, TargetSnapshot
+
+    def git(*args):
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+    git("init", "-q", "-b", "main")
+    git("commit", "-q", "--allow-empty", "-m", "one")
+    pr_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    git("commit", "-q", "--allow-empty", "-m", "two")
+
+    status = probe_container_git(
+        _real_git_incus(tmp_path),
+        full_name="c",
+        repo_dir=str(tmp_path),
+        base_branch="main",
+        default_branch="main",
+        target=TargetSnapshot("main", "f" * 40, "local", "", "unavailable"),
+        sync=SyncTarget("pr", "PR #7", pr_sha, "refs/jailbee/pr/7/head"),
+    )
+
+    assert status.ahead_count == "1"
+    assert (status.host_ahead_count, status.host_behind_count) == ("?", "•")
+
+
+# ---- other local branches (probe field 16) ----
+
+
+def _git_in(cwd, *args):
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+
+
+def test_snippet_lists_other_branches_with_slashes_and_remote_flag(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git_in(repo, "init", "-q", "-b", "main")
+    _git_in(repo, "commit", "-q", "--allow-empty", "-m", "base")
+    _git_in(repo, "checkout", "-q", "-b", "feat/one")
+    _git_in(repo, "commit", "-q", "--allow-empty", "-m", "one")
+    _git_in(repo, "checkout", "-q", "main")
+    _git_in(repo, "checkout", "-q", "-b", "pushed")
+    _git_in(repo, "commit", "-q", "--allow-empty", "-m", "two")
+    _git_in(repo, "update-ref", "refs/remotes/origin/pushed", "HEAD")
+    _git_in(repo, "checkout", "-q", "main")
+
+    parts = _run_probe(repo, "")
+
+    assert parts[6] != ""  # HEAD sha: main
+    found = {b.name: b for b in parse_other_branches(parts[15]) or ()}
+    assert set(found) == {"feat/one", "pushed"}
+    assert found["pushed"].remote_contained is True
+    assert found["feat/one"].remote_contained is False
+    assert all(len(b.sha) == 40 for b in found.values())
+
+
+def test_snippet_omits_the_checked_out_branch_and_tips_equal_to_head(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git_in(repo, "init", "-q", "-b", "main")
+    _git_in(repo, "commit", "-q", "--allow-empty", "-m", "base")
+    _git_in(repo, "branch", "alias")  # same tip as HEAD
+
+    parts = _run_probe(repo, "")
+
+    assert parse_other_branches(parts[15]) == ()
+
+
+def test_parse_other_branches_unknown_and_malformed():
+    assert parse_other_branches("?") is None
+    assert parse_other_branches("bad line\n") == ()
+    assert parse_other_branches("a/b\tabc\t?\n") == (OtherBranch("a/b", "abc", None),)
+
+
+def test_probe_carries_other_branches_and_old_output_leaves_them_unmeasured(mocker):
+    incus = mocker.MagicMock()
+    fields = [""] * 15 + ["x/y\tdeadbeef\t0\n"]
+    incus.exec.return_value = "\x00".join(fields) + "\x00"
+    status = probe_container_git(incus, "c", "/r", None, "main")
+    assert status.other_branches == (OtherBranch("x/y", "deadbeef", False),)
+
+    incus.exec.return_value = "\x00".join([""] * 14) + "\x00"
+    assert probe_container_git(incus, "c", "/r", None, "main").other_branches is None
+
+
+def test_snippet_prints_question_mark_when_the_branch_listing_fails(tmp_path):
+    import os
+    import subprocess
+
+    from jailbee.git_status import _PROBE_SNIPPET
+
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git_in(repo, "init", "-q", "-b", "main")
+    _git_in(repo, "commit", "-q", "--allow-empty", "-m", "base")
+    real = subprocess.run(["which", "git"], capture_output=True, text=True).stdout.strip()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / "git"
+    shim.write_text(f'#!/bin/sh\ncase "$1" in for-each-ref) exit 1;; esac\nexec {real} "$@"\n')
+    shim.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "REPO_DIR": str(repo),
+        "TARGET_SHA": "",
+        "HOST_TARGET_SHA": "",
+        "HOST_SOURCE": "",
+        "HOST_HEAD": "",
+    }
+    out = subprocess.run(
+        ["bash", "-c", _PROBE_SNIPPET], env=env, capture_output=True, text=True, check=True
+    ).stdout.split("\0")
+
+    assert out[15] == "?"
+    assert parse_other_branches(out[15]) is None
+
+
+def test_snippet_remote_containment_costs_one_git_call_for_many_branches(tmp_path):
+    import os
+    import subprocess
+
+    from jailbee.git_status import _PROBE_SNIPPET
+
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git_in(repo, "init", "-q", "-b", "main")
+    _git_in(repo, "commit", "-q", "--allow-empty", "-m", "base")
+    for i in range(6):
+        _git_in(repo, "checkout", "-q", "-b", f"b{i}", "main")
+        _git_in(repo, "commit", "-q", "--allow-empty", "-m", f"c{i}")
+        if i % 2:
+            _git_in(repo, "update-ref", f"refs/remotes/origin/b{i}", "HEAD")
+    _git_in(repo, "checkout", "-q", "main")
+    real = subprocess.run(["which", "git"], capture_output=True, text=True).stdout.strip()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "calls.log"
+    shim = bin_dir / "git"
+    shim.write_text(f'#!/bin/sh\necho "$*" >> {log}\nexec {real} "$@"\n')
+    shim.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "REPO_DIR": str(repo),
+        "TARGET_SHA": "",
+        "HOST_TARGET_SHA": "",
+        "HOST_SOURCE": "",
+        "HOST_HEAD": "",
+    }
+    out = subprocess.run(
+        ["bash", "-c", _PROBE_SNIPPET], env=env, capture_output=True, text=True, check=True
+    ).stdout.split("\0")
+
+    found = {b.name: b.remote_contained for b in parse_other_branches(out[15]) or ()}
+    assert found == {f"b{i}": bool(i % 2) for i in range(6)}
+    calls = log.read_text().splitlines()
+    per_branch = [c for c in calls if "--contains" in c and c != "branch -r --contains HEAD"]
+    assert per_branch == []
+
+
+def test_parent_probe_counts_up_from_the_last_import_and_down_from_the_parent_head(
+    mocker, tmp_path
+):
+    """A child: ↑ = commits since the last import, ↓ = parent commits it lacks."""
+    from jailbee.host_target import SyncTarget
+
+    repo = tmp_path / "ctr"
+    repo.mkdir()
+    _real_git(repo, "init", "-q")
+    host_sha = _commit(repo, "base")
+    _real_git(repo, "checkout", "-qb", "parent")
+    imported = _commit(repo, "child-imported")
+    parent_sha = _commit(repo, "parent-later")  # orchestrator commit after the import
+    _real_git(repo, "checkout", "-qb", "child", imported)
+    _commit(repo, "child-1")
+    _commit(repo, "child-2")
+
+    host = TargetSnapshot("main", host_sha, "local", "refs/remotes/origin/main", "equal")
+    sync = SyncTarget("parent", "orch", parent_sha, "", ahead_sha=imported, parent="orch")
+    status = _probe_real(mocker, repo, target=host, sync=sync)
+
+    assert (status.ahead_count, status.behind_count) == ("2", "1")
+    assert (status.host_ahead_count, status.host_behind_count) == ("3", "0")
+
+
+def test_parent_probe_after_import_shows_nothing_to_import(mocker, tmp_path):
+    from jailbee.host_target import SyncTarget
+
+    repo = tmp_path / "ctr"
+    repo.mkdir()
+    _real_git(repo, "init", "-q")
+    base = _commit(repo, "base")
+    _commit(repo, "child-1")
+    head = _commit(repo, "child-2")
+
+    host = TargetSnapshot("main", base, "local", "refs/remotes/origin/main", "equal")
+    sync = SyncTarget("parent", "orch", base, "", ahead_sha=head, parent="orch")
+    status = _probe_real(mocker, repo, target=host, sync=sync)
+
+    assert status.ahead_count == "0"
+
+
+def test_parent_probe_without_an_ahead_point_leaves_up_unknown(mocker, tmp_path):
+    from jailbee.host_target import SyncTarget
+
+    repo = tmp_path / "ctr"
+    repo.mkdir()
+    _real_git(repo, "init", "-q")
+    base = _commit(repo, "base")
+    _commit(repo, "child-1")
+
+    host = TargetSnapshot("main", base, "local", "refs/remotes/origin/main", "equal")
+    missing = SyncTarget("parent", "orch", base, "", ahead_sha=None, parent="orch")
+    absent = SyncTarget("parent", "orch", base, "", ahead_sha="f" * 40, parent="orch")
+
+    assert _probe_real(mocker, repo, target=host, sync=missing).ahead_count == "?"
+    assert _probe_real(mocker, repo, target=host, sync=absent).ahead_count == "?"
+    assert _probe_real(mocker, repo, target=host, sync=missing).behind_count == "0"
+
+
+def test_parent_probe_missing_parent_head_reads_pull_needed(mocker, tmp_path):
+    from jailbee.git_status import BEHIND_UNKNOWN
+    from jailbee.host_target import SyncTarget
+
+    repo = tmp_path / "ctr"
+    repo.mkdir()
+    _real_git(repo, "init", "-q")
+    base = _commit(repo, "base")
+    _commit(repo, "child-1")
+
+    host = TargetSnapshot("main", base, "local", "refs/remotes/origin/main", "equal")
+    sync = SyncTarget("parent", "orch", "e" * 40, "", ahead_sha=base, parent="orch")
+    status = _probe_real(mocker, repo, target=host, sync=sync)
+
+    assert (status.ahead_count, status.behind_count) == ("1", BEHIND_UNKNOWN)
+
+
+def test_parent_probe_drops_up_for_work_that_reached_the_parent_another_way(mocker, tmp_path):
+    """A commit the parent head already contains is no longer ↑, though it lies
+    beyond the ahead point (the work reached the parent by another route)."""
+    from jailbee.host_target import SyncTarget
+
+    repo = tmp_path / "ctr"
+    repo.mkdir()
+    _real_git(repo, "init", "-q")
+    base = _commit(repo, "base")
+    _commit(repo, "child-1")
+    head = _commit(repo, "child-2")  # the parent has merged both already
+
+    host = TargetSnapshot("main", base, "local", "refs/remotes/origin/main", "equal")
+    # ahead point is the old fork pin; the parent head already contains child-2.
+    sync = SyncTarget("parent", "orch", head, "", ahead_sha=base, parent="orch")
+    status = _probe_real(mocker, repo, target=host, sync=sync)
+
+    assert status.ahead_count == "0"
+
+
+def test_parent_probe_counts_up_even_when_the_parent_sha_is_not_in_the_child(mocker, tmp_path):
+    from jailbee.host_target import SyncTarget
+
+    repo = tmp_path / "ctr"
+    repo.mkdir()
+    _real_git(repo, "init", "-q")
+    base = _commit(repo, "base")
+    _commit(repo, "child-1")
+
+    host = TargetSnapshot("main", base, "local", "refs/remotes/origin/main", "equal")
+    sync = SyncTarget("parent", "orch", "e" * 40, "", ahead_sha=base, parent="orch")
+
+    assert _probe_real(mocker, repo, target=host, sync=sync).ahead_count == "1"

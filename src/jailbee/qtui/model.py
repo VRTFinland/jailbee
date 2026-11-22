@@ -22,7 +22,13 @@ from jailbee.background import DEAD_SUFFIX, job_label_or_empty
 from jailbee.dashboard import format as dashboard_format
 from jailbee.dashboard.model import group_warnings
 from jailbee.git_status import IN_PROGRESS_CELL_LABELS
-from jailbee.lifecycle import fork_source, tracking_warning
+from jailbee.lifecycle import (
+    SYNC_FIELDS,
+    fork_source,
+    sync_marker,
+    sync_target_text,
+    tracking_warning,
+)
 
 if TYPE_CHECKING:
     from jailbee.dashboard.model import RepoGroup
@@ -125,6 +131,12 @@ def card_content(
     """Split a container's visible fields into NAME + STATE plus the rest,
     each addressable by ``FieldSpec.name`` so a renderer can place it."""
     cells = container_cells(c, fields)
+    # The card's git pieces read the bare values; the marker is the table's.
+    marker = _strip_markup(sync_marker(c.git_status))
+    if marker:
+        for index, field in enumerate(fields):
+            if field.name in SYNC_FIELDS and cells[index].endswith(f" {marker}"):
+                cells[index] = cells[index][: -len(marker) - 1]
     if now is not None:
         for index, field in enumerate(fields):
             if field.name == "network":
@@ -196,7 +208,8 @@ def git_segments(cc: CardContent) -> list[tuple[str, str]]:
         segs.append((f"↑{ahead_count}", "ahead"))
     behind_count = card_field(cc, "behind_count")
     if behind_count not in (None, "0"):
-        segs.append((f"↓{behind_count}", "ahead"))
+        # The missing-target cell is already "↓•"; counts are bare digits.
+        segs.append((behind_count if behind_count.startswith("↓") else f"↓{behind_count}", "ahead"))
     target_diff = card_field(cc, "target_diff")
     if target_diff not in (None, "clean", "✓"):
         segs.append((target_diff, "diff"))
@@ -276,8 +289,8 @@ _FIELD_MEANINGS = {
     "wt": "Working-tree diff; ✓ = clean",
     "target_diff": "Diff against host target branch; ✓ = clean",
     "local_diff": "Diff against checked-out host HEAD; ✓ = clean",
-    "ahead_count": "Commits ahead of host target",
-    "behind_count": "Commits behind host target",
+    "ahead_count": "Commits ahead of sync target",
+    "behind_count": "Commits behind sync target",
     "conflict": "Merge prediction or actual in-progress Git operation",
     "git_status": "Combined Git status",
     "pr": "Pull request; ↓ = review container (the outbox count is in OUTBOX)",
@@ -328,6 +341,8 @@ def cell_tooltip(c: ContainerInfo, field: FieldSpec[ContainerInfo]) -> str:
     elif field.name == "job":
         label = job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind)
         detail = "\n".join(part for part in (label, c.job_error) if part)
+    elif field.name in SYNC_FIELDS:
+        detail = f"{_strip_markup(field.cell(c))}\n{sync_target_text(c.git_status)}"
     else:
         detail = _strip_markup(field.cell(c))
     return f"{meaning}\n{detail}"

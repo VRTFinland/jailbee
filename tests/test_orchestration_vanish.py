@@ -55,6 +55,7 @@ MEMORY_LIFETIMES = {
     "status": (INSTANCE, "StatusCache.prune in tick, including idle rounds"),
     "children": (INSTANCE, "tick inventory and valid orchestrator contexts"),
     "contexts": (INSTANCE, "tick inventory"),
+    "grants_seen": (INSTANCE, "tick inventory"),
     "listener": (GLOBAL, "service; close_container removes vanished connections"),
     "store": (GLOBAL, "database handle; record lifetimes classified below"),
     "queries": (GLOBAL, "service; publish_queries replaces its snapshot each round"),
@@ -483,6 +484,7 @@ def test_vanished_container_has_no_unclassified_surviving_state(tmp_path, monkey
     )
     memory.env_ensured.add(UUID)
     memory.env_roles[UUID] = "child"
+    memory.grants_seen[UUID] = None
     memory.listed_roles[UUID] = "child"
     memory.project_configs[UUID] = env.rig.cfg
     memory.children[FULL] = broker_state.ChildrenView(1.0, [{"name": "child"}])
@@ -506,6 +508,7 @@ def test_vanished_container_has_no_unclassified_surviving_state(tmp_path, monkey
         "project_configs",
         "children",
         "contexts",
+        "grants_seen",
         "attached",
         "shared_uuids",
         "reusable_socket_dirs",

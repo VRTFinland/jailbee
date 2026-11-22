@@ -1055,3 +1055,195 @@ def test_real_entry_dispatches_pr(monkeypatch, tmp_path, capsys, broker):
     assert exc.value.code == 0
     assert "staged pr/" in capsys.readouterr().out
     assert staged_source(broker)[0]["pr"] == 1234
+
+
+def _review_comment(**changes):
+    value = {
+        "id": 55,
+        "user": {"login": "me"},
+        "body": "old text",
+        "html_url": "https://github.com/acme/widgets/pull/1234#discussion_r55",
+        "created_at": "2026-11-01T00:00:00Z",
+        "pull_request_url": "https://api.github.com/repos/acme/widgets/pulls/1234",
+    }
+    return {**value, **changes}
+
+
+def _gh_reads(monkeypatch, comment=None, review_state=None):
+    """Stub `gh api`, recording each argv and answering by endpoint."""
+    seen = []
+
+    def run_json(argv, **kw):
+        seen.append(argv)
+        if argv[2].endswith("/pulls/comments/55"):
+            return comment if comment is not None else _review_comment()
+        if "/reviews/" in argv[2]:
+            return {"state": review_state or "COMMENTED"}
+        pytest.fail(f"unexpected gh call {argv}")
+
+    monkeypatch.setattr(gh, "run_json", run_json)
+    return seen
+
+
+def test_comment_edit_stages_the_edit_with_the_body_it_read(monkeypatch, broker):
+    seen = _gh_reads(monkeypatch)
+    result = invoke("comment-edit", "55", "1234", "--body", "new text")
+    assert result.exit_code == 0, result.output
+    assert seen[0] == ["gh", "api", "repos/{owner}/{repo}/pulls/comments/55"]
+    raw, parsed, _ = staged_source(broker)
+    assert raw["actions"] == [
+        {
+            "type": "comment_edit",
+            "comment_id": 55,
+            "body": "new text",
+            "expected": {"body": "old text"},
+        }
+    ]
+    assert parsed.actions[0].expected_body == "old text"
+
+
+def test_comment_edit_is_staged_under_the_hyphenated_slug(monkeypatch, broker):
+    _gh_reads(monkeypatch)
+    assert invoke("comment-edit", "55", "1234", "--body", "new text").exit_code == 0
+    (row,) = broker.proposals("pr")
+    assert row.name == "001-comment-edit.json"
+
+
+def test_comment_edit_refuses_a_comment_on_another_pr(monkeypatch, broker):
+    _gh_reads(
+        monkeypatch,
+        _review_comment(pull_request_url="https://api.github.com/repos/acme/widgets/pulls/9"),
+    )
+    result = invoke("comment-edit", "55", "1234", "--body", "new text")
+    assert result.exit_code == 1
+    assert broker.proposals("pr") == []
+
+
+def test_comment_edit_refuses_a_comment_of_a_pending_review(monkeypatch, broker):
+    seen = _gh_reads(monkeypatch, _review_comment(pull_request_review_id=77), "PENDING")
+    result = invoke("comment-edit", "55", "1234", "--body", "new text")
+    assert result.exit_code == 1
+    assert "pending" in result.output
+    assert seen[-1] == ["gh", "api", "repos/{owner}/{repo}/pulls/1234/reviews/77"]
+    assert broker.proposals("pr") == []
+
+
+def test_comment_edit_stages_a_comment_of_a_submitted_review(monkeypatch, broker):
+    seen = _gh_reads(monkeypatch, _review_comment(pull_request_review_id=77))
+    assert invoke("comment-edit", "55", "1234", "--body", "new text").exit_code == 0
+    assert seen[-1] == ["gh", "api", "repos/{owner}/{repo}/pulls/1234/reviews/77"]
+    assert len(broker.proposals("pr")) == 1
+
+
+@pytest.mark.parametrize("comment_id", ["0", "-3", "abc", "1.5"])
+def test_comment_edit_refuses_a_bad_comment_id(monkeypatch, broker, comment_id):
+    _gh_reads(monkeypatch)
+    result = invoke("comment-edit", comment_id, "1234", "--body", "x")
+    assert result.exit_code == 2
+    assert broker.proposals("pr") == []
+
+
+def test_comment_edit_refuses_a_missing_comment_id(monkeypatch, broker):
+    _gh_reads(monkeypatch)
+    assert invoke("comment-edit", "--body", "x").exit_code == 2
+    assert broker.proposals("pr") == []
+
+
+def test_comment_edit_refuses_an_empty_body(monkeypatch, broker):
+    _gh_reads(monkeypatch)
+    result = invoke("comment-edit", "55", "1234", "--body", "")
+    assert result.exit_code == 2
+    assert broker.proposals("pr") == []
+
+
+def test_comment_edit_reads_the_body_from_a_file(monkeypatch, broker, tmp_path):
+    _gh_reads(monkeypatch)
+    path = tmp_path / "new.md"
+    path.write_text("from file")
+    result = invoke("comment-edit", "55", "1234", "--body-file", str(path))
+    assert result.exit_code == 0, result.output
+    _, parsed, _ = staged_source(broker)
+    assert parsed.actions[0].body == "from file"
+
+
+def test_comment_edit_refuses_a_missing_body_file(monkeypatch, broker, tmp_path):
+    _gh_reads(monkeypatch)
+    result = invoke("comment-edit", "55", "1234", "--body-file", str(tmp_path / "nope.md"))
+    assert result.exit_code != 0
+    assert broker.proposals("pr") == []
+
+
+def test_comment_edit_refuses_an_unchanged_body(monkeypatch, broker):
+    _gh_reads(monkeypatch)
+    result = invoke("comment-edit", "55", "1234", "--body", "old text")
+    assert result.exit_code == 2
+    assert broker.proposals("pr") == []
+
+
+def _gh_pr_state(monkeypatch, state="open", merged=False):
+    seen = []
+
+    def run_json(argv, **kw):
+        seen.append(argv)
+        if argv[2].endswith("/pulls/1234"):
+            return {"state": state, "merged": merged}
+        pytest.fail(f"unexpected gh call {argv}")
+
+    monkeypatch.setattr(gh, "run_json", run_json)
+    return seen
+
+
+def test_state_stages_a_close_with_the_state_it_read(monkeypatch, broker):
+    seen = _gh_pr_state(monkeypatch)
+    result = invoke("state", "1234", "closed")
+    assert result.exit_code == 0, result.output
+    assert seen[0] == ["gh", "api", "repos/{owner}/{repo}/pulls/1234"]
+    raw, parsed, _ = staged_source(broker)
+    assert raw["actions"] == [{"type": "state", "state": "closed", "expected": {"state": "open"}}]
+    assert (parsed.actions[0].state, parsed.actions[0].expected_state) == ("closed", "open")
+    (row,) = broker.proposals("pr")
+    assert row.name == "001-state.json"
+
+
+def test_state_stages_a_reopen(monkeypatch, broker):
+    _gh_pr_state(monkeypatch, state="closed")
+    assert invoke("state", "1234", "open").exit_code == 0
+    raw, _, _ = staged_source(broker)
+    assert raw["actions"][0]["expected"] == {"state": "closed"}
+
+
+def test_state_without_a_number_uses_the_bound_pr(monkeypatch, tmp_path, broker):
+    from jailbee.container_outbox import bindings
+
+    monkeypatch.setattr(
+        bindings,
+        "SNAPSHOT",
+        binding_snapshot(tmp_path, {"user.jailbee.repo_dir": "/repo", "user.jailbee.pr": "1234"}),
+    )
+    monkeypatch.setattr(
+        gh, "pr_view", lambda number, *, cwd=None: gh.PrView(1234, "h", "acme/widgets")
+    )
+    _gh_pr_state(monkeypatch)
+    assert invoke("state", "closed").exit_code == 0
+    assert staged_source(broker)[0]["pr"] == 1234
+
+
+@pytest.mark.parametrize("args", [("1234", "merged"), ("1234", "bogus"), ("1234",), ()])
+def test_state_refuses_a_bad_target_state(monkeypatch, broker, args):
+    _gh_pr_state(monkeypatch)
+    assert invoke("state", *args).exit_code == 2
+    assert broker.proposals("pr") == []
+
+
+def test_state_refuses_when_the_pr_is_already_there(monkeypatch, broker):
+    _gh_pr_state(monkeypatch, state="closed")
+    result = invoke("state", "1234", "closed")
+    assert result.exit_code == 2 and "already closed" in result.output
+    assert broker.proposals("pr") == []
+
+
+def test_state_refuses_a_merged_pr(monkeypatch, broker):
+    _gh_pr_state(monkeypatch, state="closed", merged=True)
+    result = invoke("state", "1234", "open")
+    assert result.exit_code == 2 and "merged" in result.output
+    assert broker.proposals("pr") == []

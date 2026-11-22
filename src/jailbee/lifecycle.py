@@ -5,12 +5,13 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from rich.markup import escape
+from rich.text import Text
 
 from jailbee import agent_status, table_format
 from jailbee.config import CONTAINER_USERNAME, Config, HostMount, SharedCache
@@ -31,8 +32,22 @@ from jailbee.git import (
 # `parse_shortstat` is imported (not reimplemented) so the host-side
 # fallback below produces byte-identical `clean` / `+N -M` / `?` strings to
 # the container-side probe — duplicating the parser is how the two would drift.
-from jailbee.git_status import GitStatus, merge_label, parse_shortstat, probe_many_parallel
-from jailbee.host_target import TargetSnapshot, resolve_target
+from jailbee.git_status import (
+    BEHIND_UNKNOWN,
+    PROBE_MISSING,
+    GitStatus,
+    merge_label,
+    parse_shortstat,
+    probe_many_parallel,
+)
+from jailbee.host_target import (
+    ParentHead,
+    SyncInputs,
+    SyncTarget,
+    TargetSnapshot,
+    resolve_sync_target,
+    resolve_target,
+)
 from jailbee.incus import Incus, IncusError
 from jailbee.memory_limit import LIMIT_KEY
 from jailbee.orchestration import labels as orch_labels
@@ -61,6 +76,14 @@ if TYPE_CHECKING:
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
 
+@dataclass(frozen=True)
+class ServiceState:
+    """One service of a running container: its name and `service ls` state."""
+
+    name: str
+    state: str
+
+
 @dataclass
 class ContainerInfo:
     name: str
@@ -75,6 +98,9 @@ class ContainerInfo:
     repo_dir: str | None = None
     pr_number: int | None = None
     pr_author: bool = False
+    # `owner/name` of the repo's GitHub upstream, set by the dashboard gather
+    # (never parsed from container text); the PR hyperlink is built from it.
+    pr_slug: str | None = None
     # The container's credential group, from
     # `user.jailbee.credential_group` (or its legacy spelling). None means it
     # inherits the repo's group; `accounts.groups.NO_GROUP` means it
@@ -116,6 +142,11 @@ class ContainerInfo:
     # Outbox "Sent" log records of this container's current incarnation; set by
     # the state service's gatherer (never by `list_containers`), 0 = none.
     sent_count: int = 0
+    # The container's services and their `service ls` states, written by the
+    # state service's service probe (never by `list_containers`). None = none
+    # gathered (stopped, not probed yet); `services_unknown` = the probe failed.
+    services: tuple[ServiceState, ...] | None = None
+    services_unknown: bool = False
     job_phase: str | None = None
     job_pid: int | None = None
     job_kind: str | None = None
@@ -155,6 +186,12 @@ class ContainerInfo:
     running_children: int = 0
     queued_children: int = 0
     orchestrator_running: bool | None = None
+    # The agent the next session launches, as `profile/model`, and where the
+    # choice comes from: `container` (its own runner label), a layer of the
+    # repo's default runner (`local`/`repo`/`global`) or `legacy`. `list_containers`
+    # sets only the label; the dashboard gatherer fills in the repo default.
+    agent_runner: str | None = None
+    agent_source: str | None = None
 
     @property
     def display_name(self) -> str:
@@ -302,8 +339,16 @@ def _diff_key(value: str | None) -> table_format.SortKey | None:
     return (1, int(match[1]) + int(match[2]))
 
 
+def _json_count(value: str) -> str:
+    """JSON keeps the ASCII probe token for a missing target, not the display bullet."""
+    return PROBE_MISSING if value == BEHIND_UNKNOWN else value
+
+
 def _count_key(value: str | None) -> table_format.SortKey | None:
-    """A git count string (``"3"``); ``"—"`` / ``"?"`` are None."""
+    """A git count string (``"3"``); ``"•"`` (target missing) above every count;
+    ``"—"`` / ``"?"`` are None."""
+    if value == BEHIND_UNKNOWN:  # at least one commit behind, count unknown
+        return (float("inf"),)
     return (int(value),) if value is not None and value.isdigit() else None
 
 
@@ -365,6 +410,22 @@ def _resolve_local_on_host(cfg: Config, status: GitStatus) -> GitStatus:
     )
 
 
+def _unimported_branches(cfg: Config, status: GitStatus) -> GitStatus:
+    """Keep only the other branches whose tip is on neither the host nor a remote.
+
+    Unknown remote containment counts as unimported, like the HEAD check in
+    the destroy guard. Object-presence checks only; nothing is fetched.
+    """
+    if status.other_branches is None:
+        return status
+    kept = tuple(
+        b
+        for b in status.other_branches
+        if b.remote_contained is not True and not has_commit(cfg.repo_root, b.sha)
+    )
+    return replace(status, other_branches=kept)
+
+
 def snapshot_targets_for(
     cfg: Config,
     containers: Sequence[ContainerInfo],
@@ -373,7 +434,7 @@ def snapshot_targets_for(
     scope: RemoteRepoScope | None = None,
 ) -> dict[tuple[str, str], TargetSnapshot]:
     """Resolve one immutable host target per visible repository and base branch."""
-    snapshots, _defaults = _snapshot_targets_with_defaults(
+    snapshots, _defaults, _roots = _snapshot_targets_with_defaults(
         cfg, containers, all_repos=all_repos, scope=scope
     )
     return snapshots
@@ -385,8 +446,11 @@ def _snapshot_targets_with_defaults(
     *,
     all_repos: bool = False,
     scope: RemoteRepoScope | None = None,
-) -> tuple[dict[tuple[str, str], TargetSnapshot], dict[str, str]]:
-    """Return snapshots and each loaded repository's effective default branch."""
+) -> tuple[dict[tuple[str, str], TargetSnapshot], dict[str, str], dict[str, Path | None]]:
+    """Return snapshots, each repository's effective default branch and its root.
+
+    The root is None for a repository whose config cannot be loaded.
+    """
     from sqlmodel import Session, col, select
 
     from jailbee.config import load_repo_config
@@ -405,7 +469,7 @@ def _snapshot_targets_with_defaults(
         and c.repo_dir
     ]
     if not eligible:
-        return {}, {}
+        return {}, {}, {}
 
     foreign = {c.repo for c in eligible if c.repo != cfg.container_prefix}
     roots: dict[str, Path] = {}
@@ -418,6 +482,7 @@ def _snapshot_targets_with_defaults(
 
     snapshots: dict[tuple[str, str], TargetSnapshot] = {}
     defaults: dict[str, str] = {}
+    repo_roots: dict[str, Path | None] = {}
     foreign_configs: dict[str, Config | None] = {}
     for c in eligible:
         assert c.repo is not None
@@ -433,6 +498,7 @@ def _snapshot_targets_with_defaults(
                     foreign_configs[c.repo] = None
             repo_cfg = foreign_configs[c.repo]
         defaults[c.repo] = repo_cfg.default_branch if repo_cfg is not None else cfg.default_branch
+        repo_roots[c.repo] = repo_cfg.repo_root if repo_cfg is not None else None
         branch = c.base_branch or defaults[c.repo]
         key = (c.repo, branch)
         if key in snapshots:
@@ -441,7 +507,84 @@ def _snapshot_targets_with_defaults(
             snapshots[key] = TargetSnapshot(branch, None, "unavailable", "", "unavailable")
         else:
             snapshots[key] = resolve_target(repo_cfg.repo_root, branch, repo_cfg.upstream_remote)
-    return snapshots, defaults
+    return snapshots, defaults, repo_roots
+
+
+def _parent_of(c: ContainerInfo) -> str | None:
+    """The full name of the container ``c`` syncs with: its spawner, else its fork source."""
+    if c.child is not None:
+        return c.child.orchestrator
+    return c.fork_of
+
+
+def _repo_short(c: ContainerInfo, full: str) -> str:
+    """``full`` without ``c``'s repo prefix, as the dashboard names it."""
+    prefix = f"{c.repo}-"
+    return full[len(prefix) :] if c.repo and full.startswith(prefix) else full
+
+
+def _sync_inputs(
+    c: ContainerInfo,
+    running: set[str],
+    parent_heads: Mapping[str, ParentHead],
+    last_imports: Mapping[str, str],
+    *,
+    heads_known: bool = True,
+) -> SyncInputs:
+    """What ``c``'s sync target is chosen from.
+
+    A parent's head counts only while the parent is running now and the
+    previous pass saw it: a stopped parent's last head would hide that it
+    can no longer receive anything.
+    """
+    parent = _parent_of(c)
+    if parent is None:
+        return SyncInputs(pr_number=c.pr_number)
+    from jailbee.forking import fork_pin_ref_of
+
+    return SyncInputs(
+        pr_number=c.pr_number,
+        parent=_repo_short(c, parent),
+        parent_head=parent_heads.get(parent) if parent in running else None,
+        last_import=last_imports.get(c.name),
+        fork_pin_ref=fork_pin_ref_of(_repo_short(c, c.name)) if c.fork_of else None,
+        heads_known=heads_known,
+    )
+
+
+def _sync_targets(
+    containers: Sequence[ContainerInfo],
+    host_by_name: dict[str, TargetSnapshot],
+    roots: dict[str, Path | None],
+    *,
+    running: set[str] | None = None,
+    parent_heads: Mapping[str, ParentHead] | None = None,
+    last_imports: Mapping[str, str] | None = None,
+) -> dict[str, SyncTarget]:
+    """Each probed container's sync target, one ref read per (repo, inputs, host branch).
+
+    ``running`` names every running instance (any repo), ``parent_heads`` the
+    HEADs the previous gather pass saw, ``last_imports`` each child's
+    orchestration last-import label.
+    """
+    cache: dict[tuple[str, SyncInputs, TargetSnapshot], SyncTarget] = {}
+    out: dict[str, SyncTarget] = {}
+    for c in containers:
+        host = host_by_name.get(c.name)
+        if host is None or c.repo is None:
+            continue
+        inputs = _sync_inputs(
+            c,
+            running or set(),
+            parent_heads or {},
+            last_imports or {},
+            heads_known=parent_heads is not None,
+        )
+        key = (c.repo, inputs, host)
+        if key not in cache:
+            cache[key] = resolve_sync_target(roots.get(c.repo), inputs, host)
+        out[c.name] = cache[key]
+    return out
 
 
 def _root_pool(raw: dict[str, Any]) -> str | None:
@@ -467,6 +610,7 @@ def list_containers(
     timeout: int | None = None,
     scope: RemoteRepoScope | None = None,
     instances: list[dict[str, Any]] | None = None,
+    parent_heads: Mapping[str, ParentHead] | None = None,
 ) -> list[ContainerInfo]:
     """Return container infos for jailbee-managed containers.
 
@@ -485,6 +629,10 @@ def list_containers(
     are then unused). A caller that reads several repos from one snapshot
     — the dashboards, every refresh tick — passes it so the daemon builds
     the full instance state once instead of once per repo.
+
+    ``parent_heads`` is each container's HEAD as the previous gather pass saw
+    it, keyed by full name; a child or fork syncs with its parent's entry
+    (`host_target.SyncInputs`). Without one, it falls back to its host branch.
     """
     from jailbee import egress_scope
     from jailbee.accounts import groups
@@ -602,6 +750,11 @@ def list_containers(
             config.get(orch_labels.RUNNER),
         )
 
+        from jailbee.dashboard.agent_choice import runner_label
+        from jailbee.orchestration.runner import parse_runner_label
+
+        own_runner = parse_runner_label(config.get(orch_labels.RUNNER))
+
         repo_dir_raw = config.get("user.jailbee.repo_dir")
         repo_dir = repo_dir_raw if isinstance(repo_dir_raw, str) and repo_dir_raw else None
 
@@ -666,8 +819,19 @@ def list_containers(
                 root_pool=_root_pool(raw),
                 grant=grant_view,
                 child=child_view,
+                agent_runner=runner_label(own_runner) if own_runner is not None else None,
+                agent_source="container" if own_runner is not None else None,
             )
         )
+
+    # The outbox store is a cheap host-side db read, so every gather counts it,
+    # not just the git tier: a stopped container has no probe to carry the
+    # count, and a stale one hides a freshly staged proposal.
+    issue_counts = issue_outbox_counts()
+    pr_counts = pr_outbox_counts()
+    for c in out:
+        c.outbox_issue = _issue_count(issue_counts, c.uuid)
+        c.outbox_pr = _issue_count(pr_counts, c.uuid)
 
     if with_git_status:
         targets: list[tuple[str, str, str | None]] = []
@@ -687,7 +851,7 @@ def list_containers(
         # its arguments are evaluated first).
         statuses: dict[str, GitStatus] = {}
         if targets:
-            snapshots, defaults = _snapshot_targets_with_defaults(
+            snapshots, defaults, roots = _snapshot_targets_with_defaults(
                 cfg, out, all_repos=all_repos, scope=scope
             )
             target_names = {name for name, _, _ in targets}
@@ -708,6 +872,18 @@ def list_containers(
                 uid=cfg.container_user.uid,
                 host_head=host_head,
                 target_by_name=target_by_name,
+                sync_by_name=_sync_targets(
+                    out,
+                    target_by_name,
+                    roots,
+                    running={raw["name"] for raw in instances if raw.get("status") == "Running"},
+                    parent_heads=parent_heads,
+                    last_imports={
+                        raw["name"]: raw["config"][orch_labels.LAST_IMPORT]
+                        for raw in instances
+                        if (raw.get("config") or {}).get(orch_labels.LAST_IMPORT)
+                    },
+                ),
                 host_head_by_name={
                     name: host_head
                     if any(c.name == name and c.repo == cfg.container_prefix for c in out)
@@ -728,8 +904,6 @@ def list_containers(
         uuids = {
             raw.get("name"): (raw.get("config") or {}).get("volatile.uuid") for raw in instances
         }
-        issue_counts = issue_outbox_counts()
-        pr_counts = pr_outbox_counts()
         for c in out:
             status = statuses.get(c.name)
             uuid = uuids.get(c.name)
@@ -741,19 +915,19 @@ def list_containers(
             )
             if status is None and unread:
                 status = GitStatus("?", "?", "?", "?")
-            c.outbox_issue = _issue_count(issue_counts, uuid)
-            c.outbox_pr = _issue_count(pr_counts, uuid)
             if status is not None:
                 status = replace(status, unread_inbox=unread)
                 status = replace(status, pending_issue_actions=_issue_count(issue_counts, uuid))
                 status = replace(status, pending_pr_actions=_issue_count(pr_counts, uuid))
-            c.git_status = (
-                None
-                if status is None
-                else _resolve_local_on_host(cfg, status)
-                if c.repo == cfg.container_prefix
-                else status
-            )
+            if status is not None:
+                # The host check needs this repo's object store; another repo's
+                # container keeps the branches unmeasured rather than unfiltered.
+                status = (
+                    _unimported_branches(cfg, _resolve_local_on_host(cfg, status))
+                    if c.repo == cfg.container_prefix
+                    else replace(status, other_branches=None)
+                )
+            c.git_status = status
 
     if with_background:
         from sqlmodel import Session
@@ -1237,6 +1411,8 @@ class NewContainerOptions:
     base: str | None = None
     mount: bool = False
     base_branch_label: str | None = None
+    # A fork's inherited `user.jailbee.base_explicit` value ("true"/"false").
+    base_explicit_label: str | None = None
     # PR number when created via `jailbee new --pr N` (review container).
     # Persisted as the `user.jailbee.pr` label; None for non-PR containers.
     pr: int | None = None
@@ -2144,6 +2320,20 @@ def _new_container(
     if base_label is None:
         base_label = source_branch if opts.clone and source_branch else cfg.default_branch
     incus.config_set(name, "user.jailbee.base_branch", base_label)
+    # `user.jailbee.base_explicit`: "true" when the user named the base
+    # (`jailbee new --base`, or inherited from a fork's source), which
+    # `jailbee pr bind` must not replace with the PR's base; "false" for a
+    # derived one. A fork whose source predates the marker writes none.
+    if opts.base is not None:
+        base_explicit: str | None = "true"
+    elif opts.base_explicit_label is not None:
+        base_explicit = opts.base_explicit_label
+    elif opts.fork_of is not None:
+        base_explicit = None
+    else:
+        base_explicit = "false"
+    if base_explicit is not None:
+        incus.config_set(name, "user.jailbee.base_explicit", base_explicit)
 
     # `user.jailbee.pr`: the PR number for a `jailbee new --pr N` review container,
     # read back by `jailbee ls` / `jailbee pr`. Written here — alongside the other
@@ -2451,11 +2641,11 @@ def _new_container(
     # this is jailbee's own step, and the fork's tree is already cloned in by
     # now, so the branch's `autostart` must not reach it. Infrastructure, not a
     # user autostart command — written regardless of --no-autostart so `gh`
-    # works in every container. No-op when the github integration is off or no
+    # works in every container. Removes the file when the github integration is off or no
     # token applies.
     from jailbee.autostart import inject_github_token
 
-    inject_github_token(cfg, incus, name, repo_dir, mirror_endpoint=opts.mirror_endpoint)
+    inject_github_token(cfg, incus, name, mirror_endpoint=opts.mirror_endpoint)
 
     # The container is running by now and autostart has not run. Written even
     # with --no-autostart (a later start consumes it). Not best-effort: a
@@ -3573,6 +3763,9 @@ def format_duration_coarse(delta: timedelta) -> str:
     return f"{total // 3600}h"
 
 
+AGENT_COMPACT_MAX_CELLS = 24
+"""Widest the dashboard lets the `agent_compact` cell grow before it abbreviates."""
+
 _AGENT_GLYPHS: dict[str, tuple[str, str | None]] = {
     "waiting": ("◆", "yellow"),
     "busy": ("●", "green"),
@@ -3589,8 +3782,14 @@ def agent_compact_cell(
     recent_idle: timedelta | None = None,
     recent_idle_style: str = "bold bright_white",
     activity_age: bool = False,
+    max_cells: int | None = None,
 ) -> str:
-    """The `agent_compact` cell: one glyph (and coarse age) per distinct state.
+    """The `agent_compact` cell: one glyph per live session.
+
+    Sessions of every agent are ordered by urgency; only the first of each
+    state carries a coarse age (its own, the others are bare glyphs). When the result is wider
+    than ``max_cells`` it falls back to bare glyphs, and past that to as many
+    glyphs as fit followed by ``+N`` for the rest.
 
     ``activity_age`` selects the latest real event for dashboard freshness;
     the default preserves `jailbee ls`'s state duration. Unknown event ages
@@ -3603,28 +3802,60 @@ def agent_compact_cell(
     if not statuses:
         return "[dim]—[/dim]"
 
-    def text_of(s: AgentSummary) -> str:
-        glyph, colour = _AGENT_GLYPHS.get(s.state, ("?", None))
+    from jailbee.agent_status import rank_key
+
+    def glyph_of(state: str, *, age_from: datetime | None = None, with_age: bool = False) -> str:
+        glyph, colour = _AGENT_GLYPHS.get(state, ("?", None))
         text = glyph
-        if s.state not in _AGENT_GLYPHS:
+        if state not in _AGENT_GLYPHS:
             # The state is raw text from a file the container wrote.
-            text += f" {escape(s.state)}"
-        stamp = (
-            (s.activity.last_event_at if s.activity is not None else None)
-            if activity_age
-            else s.since
-        )
-        if stamp is not None and stamp <= now:
-            age = now - stamp
+            text += f" {escape(state)}"
+        if with_age and age_from is not None and age_from <= now:
+            age = now - age_from
             text += f" {format_duration_coarse(age)}"
-            if recent_idle is not None and s.state == "idle" and age < recent_idle:
+            if recent_idle is not None and state == "idle" and age < recent_idle:
                 colour = recent_idle_style
         return f"[{colour}]{text}[/{colour}]" if colour else text
 
-    # One mark per distinct state: agents arrive in `agent_status._rank`
-    # order, so the first of a state is its longest wait or latest change.
-    first_of_state = {s.state: s for s in reversed(statuses)}
-    return " ".join(text_of(s) for s in statuses if first_of_state[s.state] is s)
+    # One urgency-ordered list over every agent's sessions, so truncation drops
+    # the least urgent session whichever agent owns it.
+    marks: list[tuple[str, datetime | None]] = []
+    for s in statuses:
+        # Old snapshots carry no per-session marks: `count` stands in for them.
+        entries = [(m.state, m.since) for m in s.sessions] or [(s.state, None)] * max(s.count, 1)
+        for i, (state, own) in enumerate(entries):
+            stamp = own
+            if i == 0:
+                # The agent-wide stamps describe the most urgent session; the
+                # event time only when that session produced the latest event.
+                event = s.activity.last_event_at if s.activity is not None else None
+                event_state = s.activity.state if s.activity is not None else None
+                if activity_age and event is not None and event_state in (None, state):
+                    stamp = event
+                elif stamp is None and not activity_age:
+                    stamp = s.since
+            marks.append((state, stamp))
+    marks.sort(key=lambda m: rank_key(m[0], m[1]))
+
+    glyphs = [glyph_of(state) for state, _ in marks]
+    full: list[str] = []
+    seen: set[str] = set()
+    for state, stamp in marks:
+        full.append(glyph_of(state, age_from=stamp, with_age=state not in seen))
+        seen.add(state)
+    cell = " ".join(full)
+    if max_cells is None or Text.from_markup(cell).cell_len <= max_cells:
+        return cell
+    plain = " ".join(glyphs)
+    if Text.from_markup(plain).cell_len <= max_cells:
+        return plain
+    for keep in range(len(glyphs) - 1, -1, -1):
+        shown = " ".join([*glyphs[:keep], f"+{len(glyphs) - keep}"])
+        if Text.from_markup(shown).cell_len <= max_cells:
+            return shown
+    # Even a bare `+N` does not fit: the column is narrower than any useful
+    # answer, so the count wins over the width.
+    return f"+{len(glyphs)}"
 
 
 def repo_has_submodules(cfg: Config) -> bool:
@@ -3749,6 +3980,66 @@ LS_FIT_DROP_ORDER: tuple[str, ...] = (
 )
 
 
+def sync_marker(status: GitStatus | None) -> str:
+    """The dim marker a sync cell (DIFF/↑/↓/MERGE) carries for a non-host target.
+
+    ``pr``: the cell compares with the PR head. ``pr?`` (yellow): a PR-bound
+    container whose PR head the host has not fetched, compared with the host
+    branch instead. ``⑂``: a child or fork compared with its parent container;
+    ``⑂?`` (yellow): its parent is stopped, missing or not yet seen, so the
+    host branch stands in. Empty for the host branch, so plain rows are
+    unchanged.
+    """
+    target = status.sync_target if status is not None else None
+    if target is None:
+        return ""
+    if target.kind == "pr":
+        return "[dim]pr[/dim]"
+    if target.kind == "parent":
+        return "[dim]⑂[/dim]"
+    if target.fallback:
+        return "[yellow]⑂?[/yellow]" if target.parent is not None else "[yellow]pr?[/yellow]"
+    return ""
+
+
+def plain_sync_marker(status: GitStatus | None) -> str:
+    """:func:`sync_marker` without markup, for plain-text surfaces."""
+    return re.sub(r"\[/?[a-z]+\]", "", sync_marker(status))
+
+
+_BEHIND_ATTRS = ("behind_count", "host_behind_count")
+
+SYNC_FIELDS = ("target_diff", "ahead_count", "behind_count", "conflict")
+"""The columns that compare with the sync target and carry its marker."""
+
+
+def sync_target_text(status: GitStatus | None) -> str:
+    """What the sync columns compare with, as one plain sentence."""
+    target = status.sync_target if status is not None else None
+    if target is None:
+        return "vs the host branch"
+    if target.kind == "pr":
+        return f"vs {target.label} head"
+    if target.kind == "parent":
+        return f"vs parent {target.label}"
+    if target.fallback and target.parent is not None and target.parent_unknown:
+        return (
+            f"vs host branch {target.label} "
+            f"(parent {target.parent} head unknown outside the dashboard)"
+        )
+    if target.fallback and target.parent is not None:
+        return f"vs host branch {target.label} (parent {target.parent} not running or not seen yet)"
+    if target.fallback:
+        return f"vs host branch {target.label} (PR head not fetched)"
+    return f"vs host branch {target.label}"
+
+
+def with_sync_marker(cell: str, status: GitStatus | None) -> str:
+    """``cell`` followed by its sync-target marker, if any."""
+    marker = sync_marker(status)
+    return f"{cell} {marker}" if marker else cell
+
+
 def ls_field_specs(
     *, now: datetime, all_repos: bool = False, show_submodules: bool = False
 ) -> list[table_format.FieldSpec[ContainerInfo]]:
@@ -3786,8 +4077,10 @@ def ls_field_specs(
         delta = c.loose_until - now
         return max(0, int(delta.total_seconds() // 60))
 
-    def _git_cell(attr: str, zero_dim: bool = False) -> Callable[[ContainerInfo], str]:
-        def cell(c: ContainerInfo) -> str:
+    def _git_cell(
+        attr: str, zero_dim: bool = False, *, sync: bool = False
+    ) -> Callable[[ContainerInfo], str]:
+        def value(c: ContainerInfo) -> str:
             if c.git_status is None:
                 return "[dim]—[/dim]"
             v: str = getattr(c.git_status, attr)
@@ -3797,7 +4090,13 @@ def ls_field_specs(
                 return "[yellow]?[/yellow]"
             if zero_dim and v == "0":
                 return "[dim]0[/dim]"
+            if attr in _BEHIND_ATTRS and v == BEHIND_UNKNOWN:
+                return "[yellow]↓•[/yellow]"
             return v
+
+        def cell(c: ContainerInfo) -> str:
+            text = value(c)
+            return with_sync_marker(text, c.git_status) if sync else text
 
         return cell
 
@@ -3805,14 +4104,15 @@ def ls_field_specs(
         def get(c: ContainerInfo) -> str | None:
             if c.git_status is None:
                 return None
-            return getattr(c.git_status, attr)  # type: ignore[no-any-return]
+            v: str = getattr(c.git_status, attr)
+            return _json_count(v) if attr in _BEHIND_ATTRS else v
 
         return get
 
     def _conflict_cell(c: ContainerInfo) -> str:
         text, kind = merge_label(c.git_status)
         style = _MERGE_KIND_STYLE[kind]
-        return f"[{style}]{text}[/{style}]"
+        return with_sync_marker(f"[{style}]{text}[/{style}]", c.git_status)
 
     def _git_status_json(c: ContainerInfo) -> dict[str, object] | None:
         if c.git_status is None:
@@ -3821,7 +4121,7 @@ def ls_field_specs(
             "wt": c.git_status.wt,
             "target_diff": c.git_status.target_diff,
             "ahead_count": c.git_status.ahead_count,
-            "behind_count": c.git_status.behind_count,
+            "behind_count": _json_count(c.git_status.behind_count),
             "base_sha": c.git_status.base_sha,
             "base_source": c.git_status.base_source,
             "tracking_relation": c.git_status.tracking_relation,
@@ -3833,6 +4133,11 @@ def ls_field_specs(
             "local_count": c.git_status.local_count,
             "in_progress": c.git_status.in_progress,
             "unmerged": c.git_status.unmerged,
+            "sync_target": (
+                asdict(c.git_status.sync_target) if c.git_status.sync_target is not None else None
+            ),
+            "host_ahead_count": c.git_status.host_ahead_count,
+            "host_behind_count": _json_count(c.git_status.host_behind_count),
         }
         if show_submodules:
             payload["submodules"] = [
@@ -3964,6 +4269,10 @@ def ls_field_specs(
         ]
 
     def _pending_pr_actions(c: ContainerInfo) -> int:
+        # The row's own store count is fresh every tick; the probe's copy is
+        # carried forward between git ticks, so it is only the fallback.
+        if c.outbox_pr is not None:
+            return c.outbox_pr
         return (c.git_status.pending_pr_actions or 0) if c.git_status else 0
 
     def _pr_cell(c: ContainerInfo) -> str:
@@ -3988,6 +4297,8 @@ def ls_field_specs(
         }
 
     def _pending_issue_actions(c: ContainerInfo) -> int:
+        if c.outbox_issue is not None:
+            return c.outbox_issue
         return (c.git_status.pending_issue_actions or 0) if c.git_status else 0
 
     def _issues_cell(c: ContainerInfo) -> str:
@@ -4435,6 +4746,7 @@ def ls_field_specs(
             default_dashboard=True,
             default_json=False,
             dashboard_min_width=6,
+            dashboard_max_width=AGENT_COMPACT_MAX_CELLS,
         ),
         table_format.FieldSpec(
             name="wt",
@@ -4450,7 +4762,7 @@ def ls_field_specs(
             sort=_git_key("target_diff", _diff_key),
             sort_desc_first=True,
             header="DIFF ±",
-            cell=_git_cell("target_diff"),
+            cell=_git_cell("target_diff", sync=True),
             json=_git_json("target_diff"),
             default_json=False,
         ),
@@ -4459,7 +4771,7 @@ def ls_field_specs(
             sort=_git_key("ahead_count", _count_key),
             sort_desc_first=True,
             header="↑",
-            cell=_git_cell("ahead_count", zero_dim=True),
+            cell=_git_cell("ahead_count", zero_dim=True, sync=True),
             json=_git_json("ahead_count"),
             justify="right",
             default_json=False,
@@ -4469,7 +4781,7 @@ def ls_field_specs(
             sort=_git_key("behind_count", _count_key),
             sort_desc_first=True,
             header="↓",
-            cell=_git_cell("behind_count", zero_dim=True),
+            cell=_git_cell("behind_count", zero_dim=True, sync=True),
             json=_git_json("behind_count"),
             justify="right",
             default_json=False,
@@ -4481,6 +4793,33 @@ def ls_field_specs(
             header="MERGE",
             cell=_conflict_cell,
             json=lambda c: c.git_status.conflict if c.git_status else None,
+            default_json=False,
+        ),
+        table_format.FieldSpec(
+            name="host_ahead",
+            sort=_git_key("host_ahead_count", _count_key),
+            sort_desc_first=True,
+            header="H↑",
+            cell=_git_cell("host_ahead_count", zero_dim=True),
+            json=_git_json("host_ahead_count"),
+            justify="right",
+            # Always the host branch, whatever the sync target is; equals ↑ on
+            # rows that sync with the host branch. Opt in via --fields or
+            # `ls.fields` / `columns.fields`.
+            default_table=False,
+            default_dashboard=False,
+            default_json=False,
+        ),
+        table_format.FieldSpec(
+            name="host_behind",
+            sort=_git_key("host_behind_count", _count_key),
+            sort_desc_first=True,
+            header="H↓",
+            cell=_git_cell("host_behind_count", zero_dim=True),
+            json=_git_json("host_behind_count"),
+            justify="right",
+            default_table=False,
+            default_dashboard=False,
             default_json=False,
         ),
         table_format.FieldSpec(
@@ -4515,6 +4854,7 @@ def ls_field_specs(
                 f"wt={c.git_status.wt} ±={c.git_status.target_diff} "
                 f"↑={c.git_status.ahead_count} ↓={c.git_status.behind_count} "
                 f"merge={c.git_status.conflict}"
+                + (f" {m}" if (m := plain_sync_marker(c.git_status)) else "")
                 if c.git_status
                 else "—"
             ),

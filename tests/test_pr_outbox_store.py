@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from jailbee import pr, pr_outbox
+from jailbee.comment_edit import CommentSnapshot
 from jailbee.db import state_dir
 from jailbee.outbox import publication_db, store_db
 from jailbee.outbox_io import proposal_digest
@@ -82,24 +83,49 @@ def cfg(make_cfg, tmp_path):
 @pytest.fixture
 def github(mocker, cfg):
     """GitHub mutations and the gates, faked: every manifest resolves to PR #12."""
-    info = pr.PrInfo(12, "topic", "a" * 40, "OPEN", "main")
 
     def target(_cfg, _incus, _container, parsed, **_kw):
-        return pr_outbox.Target(parsed, info, False, PrScope.for_repo(cfg))
+        return pr_outbox.Target(parsed, calls.pr_info, False, PrScope.for_repo(cfg))
 
     mocker.patch.object(pr_outbox, "resolve_target", side_effect=target)
     mocker.patch.object(pr, "gh_login", return_value="me")
     mocker.patch.object(pr, "pr_body", return_value="Old body", create=True)
     calls = mocker.Mock()
+    calls.pr_info = pr.PrInfo(12, "topic", "a" * 40, "OPEN", "main")
+    mocker.patch.object(pr, "set_state", side_effect=calls.set_state, create=True)
     mocker.patch.object(pr, "add_issue_comment", side_effect=calls.comment)
     mocker.patch.object(pr, "reply_to_review_comment", side_effect=calls.reply)
     mocker.patch.object(pr, "submit_review", side_effect=calls.review)
     mocker.patch.object(pr, "edit_pr", side_effect=calls.edit)
+    mocker.patch.object(pr, "get_review_comment", side_effect=calls.read_comment)
+    mocker.patch.object(pr, "edit_review_comment", side_effect=calls.edit_comment)
+    calls.read_comment.return_value = snapshot()
+    calls.edit_comment.return_value = "https://github.com/acme/widgets/pull/12#discussion_r7"
     calls.comment.return_value = "https://github.com/acme/widgets/pull/12#c1"
     calls.reply.return_value = "https://github.com/acme/widgets/pull/12#r1"
     calls.review.return_value = "https://github.com/acme/widgets/pull/12#rev"
     calls.edit.return_value = None
     return calls
+
+
+COMMENT_EDIT = {
+    "type": "comment_edit",
+    "comment_id": 7,
+    "body": "Fixed wording",
+    "expected": {"body": "Old wording"},
+}
+
+
+def snapshot(**kw: Any) -> CommentSnapshot:
+    fields: dict[str, Any] = {
+        "id": 7,
+        "author": "me",
+        "body": "Old wording",
+        "url": "https://github.com/acme/widgets/pull/12#discussion_r7",
+        "parent": 12,
+        "repo": REPO,
+    }
+    return CommentSnapshot(**{**fields, **kw})
 
 
 def review_apply(cfg, incus, name: str, **kw: Any) -> int:
@@ -186,15 +212,6 @@ def test_a_changed_proposal_is_refused_against_the_shown_revision(cfg, incus, gi
     github.comment.assert_not_called()
 
 
-def test_drop_manifest_deletes_the_row_and_its_bodies(incus):
-    name = stage(manifest(REPLY), {"x.md": "Reply text"})
-    outbox = pr_outbox.read_outbox(incus, FULL, uid=None)
-    removed = pr_outbox.drop_manifest(incus, FULL, outbox, name, uid=None)
-    assert removed == [name, "001-p-1.md"]
-    assert rows() == []
-    incus.exec.assert_not_called()
-
-
 def test_record_consumed_journals_a_used_description(incus):
     name = stage(manifest(DESCRIPTION, pr_number=None))
     pr_outbox.record_consumed(
@@ -273,3 +290,293 @@ def test_only_an_uncertain_action_can_be_resolved(incus):
     name = stage(manifest(COMMENT))
     with pytest.raises(pr_outbox.OutboxError, match="no uncertain action 0"):
         pr_outbox.resolve_uncertain(incus, FULL, name, 0, landed_url=None)
+
+
+def test_comment_edit_publishes_through_the_review_comments_endpoint(cfg, incus, github):
+    name = stage(manifest(COMMENT_EDIT))
+    assert review_apply(cfg, incus, name) == 0
+    github.edit_comment.assert_called_once_with(cfg.repo_root, REPO, 7, "Fixed wording")
+    assert rows() == []
+    (record,) = sent()
+    assert (record.kind, record.manifest, record.state) == ("comment_edit", name, "applied")
+
+
+@pytest.mark.parametrize(
+    ("changed", "message"),
+    [
+        ({"author": "someone-else"}, "authored by someone-else"),
+        ({"body": "Edited on GitHub meanwhile"}, "expected.body differs"),
+        ({"parent": 99}, "belongs to #99"),
+        ({"repo": "other/repo"}, "belongs to other/repo"),
+    ],
+)
+def test_comment_edit_is_refused_and_nothing_is_published(
+    cfg, incus, github, capsys, changed, message
+):
+    github.read_comment.return_value = snapshot(**changed)
+    name = stage(manifest(COMMENT_EDIT))
+    assert review_apply(cfg, incus, name) == 1
+    github.edit_comment.assert_not_called()
+    assert message in capsys.readouterr().err
+    assert [r.name for r in rows()] == [name]
+
+
+def test_comment_edit_refused_when_the_publishing_account_is_unknown(
+    cfg, incus, github, mocker, capsys
+):
+    mocker.patch.object(pr, "gh_login", return_value=None)
+    name = stage(manifest(COMMENT_EDIT))
+    assert review_apply(cfg, incus, name) == 1
+    github.edit_comment.assert_not_called()
+    assert "unresolved publishing account" in capsys.readouterr().err
+
+
+def test_comment_edit_rechecks_the_comment_just_before_publishing(cfg, incus, github):
+    # The gate read passes; the comment changes before the pre-PATCH recheck.
+    github.read_comment.side_effect = [snapshot(), snapshot(body="Changed under us")]
+    name = stage(manifest(COMMENT_EDIT))
+    assert review_apply(cfg, incus, name) == 1
+    assert github.read_comment.call_count == 2
+    github.edit_comment.assert_not_called()
+
+
+def test_comment_edit_recheck_recognises_a_landed_edit_with_attachments(
+    cfg, incus, github, mocker, capsys
+):
+    from jailbee.outbox.attachment_publication import AttachmentPublisher
+
+    mocker.patch.object(
+        AttachmentPublisher,
+        "resolve_body",
+        autospec=True,
+        side_effect=lambda self, claim, digest, body, *a: body.replace("WORDING", "https://img/x"),
+    )
+    github.read_comment.side_effect = [snapshot(), snapshot(body="Fixed https://img/x")]
+    name = stage(manifest({**COMMENT_EDIT, "body": "Fixed WORDING"}))
+    assert review_apply(cfg, incus, name) == 1
+    github.edit_comment.assert_not_called()
+    assert "already reads the new body" in capsys.readouterr().err
+
+
+def test_comment_edit_dry_run_shows_a_before_after_diff_and_publishes_nothing(
+    cfg, incus, github, capsys
+):
+    name = stage(manifest(COMMENT_EDIT))
+    review_apply(cfg, incus, name, dry_run=True)
+    out = capsys.readouterr().out
+    assert "-Old wording" in out and "+Fixed wording" in out
+    github.edit_comment.assert_not_called()
+
+
+def test_comment_edit_that_already_landed_points_at_resolve(cfg, incus, github, capsys):
+    github.read_comment.return_value = snapshot(body="Fixed wording")
+    name = stage(manifest(COMMENT_EDIT))
+    assert review_apply(cfg, incus, name) == 1
+    github.edit_comment.assert_not_called()
+    assert "already reads the new body" in capsys.readouterr().err
+
+
+def _refused_edit_with_reply(github):
+    github.read_comment.return_value = snapshot(body="Edited on GitHub meanwhile")
+    return stage(manifest(REPLY, COMMENT_EDIT), {"x.md": "Reply text"}, slug="mixed")
+
+
+def test_gate_dry_run_plan_lists_the_refusal_and_publishes_nothing(cfg, incus, github, capsys):
+    name = _refused_edit_with_reply(github)
+    assert review_apply(cfg, incus, name, dry_run=True) == 1
+    captured = capsys.readouterr()
+    assert "expected.body differs" in captured.err + captured.out
+    # the gate read the comment once; nothing was prepared for publishing
+    assert github.read_comment.call_count == 1
+    github.edit_comment.assert_not_called()
+    github.reply.assert_not_called()
+
+
+def test_one_refused_edit_holds_back_the_replies_of_its_manifest(cfg, incus, github, capsys):
+    name = _refused_edit_with_reply(github)
+    assert review_apply(cfg, incus, name) == 1
+    err = capsys.readouterr().err
+    assert "held back as a whole" in err
+    github.reply.assert_not_called()
+    github.edit_comment.assert_not_called()
+    assert github.read_comment.call_count == 1  # refused at the gate, not at the recheck
+
+
+def test_offered_refused_edit_appears_as_a_held_back_note(cfg, incus, github, capsys):
+    _refused_edit_with_reply(github)
+    code = pr_outbox.offer_pending_comments(
+        cfg,
+        incus,
+        FULL,
+        "c1",
+        pr_number=12,
+        confirm=lambda _n: True,
+        publisher="user",
+    )
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "expected.body differs" in captured.err + captured.out
+    assert "held back" in captured.err + captured.out
+    github.reply.assert_not_called()
+    github.edit_comment.assert_not_called()
+
+
+def test_draft_dry_run_labels_a_comment_edit_as_published(cfg, incus, github, capsys):
+    name = stage(manifest(REVIEW, COMMENT_EDIT), slug="draft")
+    review_apply(cfg, incus, name, dry_run=True, draft=True)
+    out = capsys.readouterr().out
+    assert "action 1: published (comment edit)" in out
+    assert "action 0: pending (in your pending review)" in out
+
+
+def test_show_lines_render_a_comment_edit_with_its_diff():
+    parsed = pr_outbox.parse_manifest("m.json", json.dumps(manifest(COMMENT_EDIT)), {})
+    text = "\n".join(pr_outbox.show_lines(parsed))
+    assert "action 0 · EDIT review comment #7" in text
+    assert "-Old wording" in text and "+Fixed wording" in text
+
+
+LANDED_URL = "https://github.com/user-attachments/assets/12345678-1234-1234-1234-123456789abc"
+
+
+def test_gate_recognises_a_landed_edit_whose_attachments_were_not_recorded(github, cfg):
+    """The first gate read already holds the rendered body, not the placeholder one."""
+    from types import SimpleNamespace
+
+    action = pr_outbox.CommentEditAction(
+        comment_id=7, body="Fixed ![i](attachment:screen)", expected_body="Old wording"
+    )
+    target = SimpleNamespace(
+        pr=SimpleNamespace(number=12),
+        scope=SimpleNamespace(repo_root=cfg.repo_root),
+        manifest=SimpleNamespace(repo=REPO),
+    )
+    github.read_comment.return_value = snapshot(body=f"Fixed ![i]({LANDED_URL})")
+    text = "\n".join(pr_outbox._comment_edit_refusals(target, action, "me", "ctx"))
+    assert "already reads the new body" in text
+    assert "expected.body differs" not in text
+    github.read_comment.return_value = snapshot(body="Something else entirely")
+    text = "\n".join(pr_outbox._comment_edit_refusals(target, action, "me", "ctx"))
+    assert "expected.body differs" in text
+
+
+def test_policy_sees_only_the_pending_actions(cfg, incus, github):
+    """An edit already published by an earlier run no longer needs a right."""
+    github.comment.side_effect = [pr.PrError("boom"), "https://github.com/acme/widgets/pull/12#c1"]
+    name = stage(manifest(COMMENT_EDIT, COMMENT))
+    seen: list[list[str]] = []
+
+    def policy(parsed):
+        seen.append([type(a).__name__ for a in parsed.actions])
+
+    def run() -> int:
+        return pr_outbox.offer_pending_comments(
+            cfg,
+            incus,
+            FULL,
+            "c1",
+            pr_number=None,
+            confirm=lambda _n: True,
+            manifest_names=(name,),
+            publisher="user",
+            policy=policy,
+        )
+
+    assert run() == 1
+    github.read_comment.return_value = snapshot(body="Fixed wording")
+    assert run() == 0
+    assert seen == [["CommentEditAction", "CommentAction"], ["CommentAction"]]
+
+
+STATE_CLOSE = {"type": "state", "state": "closed", "expected": {"state": "open"}}
+STATE_REOPEN = {"type": "state", "state": "open", "expected": {"state": "closed"}}
+
+
+def _pr_state(github, state: str) -> None:
+    github.pr_info = pr.PrInfo(12, "topic", "a" * 40, state, "main")
+
+
+def test_state_close_publishes_through_gh_and_is_recorded(cfg, incus, github):
+    name = stage(manifest(STATE_CLOSE))
+    assert review_apply(cfg, incus, name) == 0
+    github.set_state.assert_called_once_with(cfg.repo_root, 12, "closed", repo=REPO)
+    assert rows() == []
+    (record,) = sent()
+    assert (record.kind, record.manifest, record.state) == ("state", name, "applied")
+
+
+def test_state_reopen_publishes_through_gh(cfg, incus, github):
+    _pr_state(github, "CLOSED")
+    name = stage(manifest(STATE_REOPEN))
+    assert review_apply(cfg, incus, name) == 0
+    github.set_state.assert_called_once_with(cfg.repo_root, 12, "open", repo=REPO)
+
+
+@pytest.mark.parametrize(
+    ("current", "message"),
+    [("CLOSED", "was open when staged but is now closed"), ("MERGED", "is merged")],
+)
+def test_state_is_refused_when_the_pr_changed_since_staging(
+    cfg, incus, github, capsys, current, message
+):
+    _pr_state(github, current)
+    name = stage(manifest(STATE_CLOSE))
+    assert review_apply(cfg, incus, name) == 1
+    github.set_state.assert_not_called()
+    assert message in capsys.readouterr().err
+    assert [r.name for r in rows()] == [name]
+
+
+def test_state_dry_run_warns_that_it_closes_the_pr_and_publishes_nothing(
+    cfg, incus, github, capsys
+):
+    name = stage(manifest(STATE_CLOSE))
+    review_apply(cfg, incus, name, dry_run=True)
+    assert "closes PR #12" in capsys.readouterr().out
+    github.set_state.assert_not_called()
+
+
+def test_state_dry_run_warns_that_it_reopens_the_pr(cfg, incus, github, capsys):
+    _pr_state(github, "CLOSED")
+    name = stage(manifest(STATE_REOPEN))
+    review_apply(cfg, incus, name, dry_run=True)
+    assert "reopens PR #12" in capsys.readouterr().out
+
+
+def test_show_lines_render_a_state_change_with_its_warning():
+    parsed = pr_outbox.parse_manifest("m.json", json.dumps(manifest(STATE_CLOSE)), {})
+    assert "closes PR #12" in "\n".join(pr_outbox.show_lines(parsed))
+
+
+def test_refused_state_holds_back_the_whole_manifest(cfg, incus, github, capsys):
+    _pr_state(github, "CLOSED")
+    name = stage(manifest(COMMENT, STATE_CLOSE))
+    assert review_apply(cfg, incus, name) == 1
+    github.comment.assert_not_called()
+    github.set_state.assert_not_called()
+    assert "held back as a whole" in capsys.readouterr().err
+
+
+def test_state_is_rechecked_against_the_fresh_read_before_publish(cfg, incus, github, capsys):
+    name = stage(manifest(STATE_CLOSE))
+    calls = {"n": 0}
+
+    def target(_cfg, _incus, _container, parsed, **_kw):
+        calls["n"] += 1
+        merged = calls["n"] > 1  # the first read plans, the second is the pre-publish refresh
+        info = pr.PrInfo(12, "topic", "a" * 40, "MERGED" if merged else "OPEN", "main")
+        return pr_outbox.Target(parsed, info, False, PrScope.for_repo(cfg))
+
+    pr_outbox.resolve_target.side_effect = target
+    assert review_apply(cfg, incus, name) == 1
+    github.set_state.assert_not_called()
+    assert "is merged" in capsys.readouterr().err
+
+
+def test_refused_state_alone_is_not_held_back_as_a_whole(cfg, incus, github, capsys):
+    _pr_state(github, "CLOSED")
+    name = stage(manifest(STATE_CLOSE))
+    assert review_apply(cfg, incus, name) == 1
+    err = capsys.readouterr().err
+    assert "was open when staged" in err
+    assert "held back as a whole" not in err

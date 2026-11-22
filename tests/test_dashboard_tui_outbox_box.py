@@ -67,7 +67,6 @@ def state2(**over):
         ("space", " ", "mark"),
         ("d", "d", "delete"),
         ("p", "p", "publish"),
-        ("c", "c", "create-pr"),
         ("X", "X", "clear"),
         ("v", "v", "preview"),
         ("m", "m", "raw"),
@@ -87,6 +86,24 @@ def test_keys_map_to_intents(key, char, name):
     assert got.key == ("outbox", "", None)
 
 
+def test_c_is_not_a_key():
+    async def scenario(app, box, pilot):
+        return await press(box, "c", "c")
+
+    got = run(state2(), scenario, standalone=True)
+    assert not isinstance(got, OutboxBox.Intent)
+
+
+def test_p_is_offered_for_pr_creation_alone():
+    only_create = dob.Abilities(False, False, False, True, False, False)
+
+    async def scenario(app, box, pilot):
+        return await press(box, "p", "p")
+
+    got = run(state2(abilities=only_create), scenario, standalone=True)
+    assert isinstance(got, OutboxBox.Intent) and got.name == "publish"
+
+
 def test_escape_and_q():
     async def scenario(app, box, pilot):
         return await press(box, "escape"), await press(box, "q", "q")
@@ -101,9 +118,9 @@ def test_ability_off_key_is_eaten():
     off = dob.Abilities(False, False, False, False, False, False)
 
     async def scenario(app, box, pilot):
-        return [await press(box, k, k) for k in "dpcXa"]
+        return [await press(box, k, k) for k in "dpXa"]
 
-    assert run(state2(abilities=off), scenario, standalone=True) == [True] * 5
+    assert run(state2(abilities=off), scenario, standalone=True) == [True] * 4
 
 
 def test_scope_key_is_eaten_in_the_dashboard():
@@ -449,7 +466,7 @@ def test_refresh_failure_keeps_source_hint_visible():
     runner.hand_off_diagnostic = lambda argv: (1, message)
     controller = _controller(runner)
     controller.load()
-    controller.intent("create-pr", flow_key())
+    controller.intent("publish", flow_key())
 
     async def scenario(app, box, pilot):
         return screen_text(app)
@@ -457,3 +474,101 @@ def test_refresh_failure_keeps_source_hint_visible():
     rendered = run(controller.state, scenario, size=(80, 30), standalone=True)
     assert "non-fast-forward update" in rendered
     assert "--source-manifest a.json --force" in rendered
+
+
+# -- the full-screen reader (`f`) ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("preview", "size", "value"),
+    [
+        ("auto", (140, 30), "full"),  # beside the list at ≥110 columns: still preview-only
+        ("auto", (80, 30), "full"),
+        ("on", (80, 30), "full"),
+    ],
+)
+def test_f_opens_the_reader(preview, size, value):
+    async def scenario(app, box, pilot):
+        return await press(box, "f", "f")
+
+    got = run(state2(preview=preview), scenario, size=size)
+    assert (got.name, got.value) == ("preview", value)
+
+
+@pytest.mark.parametrize("key", ["escape", "enter", "f", "v"])
+def test_reader_keys_return_to_the_list(key):
+    async def scenario(app, box, pilot):
+        return await press(box, key, key if len(key) == 1 else None)
+
+    got = run(state2(preview="full"), scenario, size=(140, 30))
+    assert isinstance(got, OutboxBox.Intent)
+    assert (got.name, got.value) == ("preview", "auto")
+
+
+@pytest.mark.parametrize("size", [(80, 30), (140, 30)])
+def test_reader_shows_only_the_preview_at_any_width(size):
+    async def scenario(app, box, pilot):
+        return (
+            app.query_one(f"#{NATIVE_LIST_ID}").display,
+            app.query_one("#outbox-right").display,
+        )
+
+    assert run(state2(preview="full"), scenario, size=size) == (False, True)
+
+
+def test_reader_scrolls_with_the_keys():
+    many = [_action(i, body="line\n" * 5) for i in range(12)]
+
+    async def scenario(app, box, pilot):
+        scroll = app.query_one("#outbox-preview")
+        assert scroll.max_scroll_y > 0
+        await press(box, "pagedown")
+        await pilot.pause(1.0)  # the scroll animates
+        moved = scroll.scroll_y
+        await press(box, "home")
+        await pilot.pause(1.0)
+        return moved, scroll.scroll_y
+
+    spec = _state(_proposal(A, actions=many), preview="full", abilities=ALL)
+    moved, back = run(spec, scenario, size=(140, 14))
+    assert moved > 0 and back < moved
+
+
+def test_a_question_brings_the_list_back_out_of_the_reader():
+    async def scenario(app, box, pilot):
+        return app.query_one(f"#{NATIVE_LIST_ID}").display
+
+    assert run(state2(preview="full", question=question()), scenario, size=(140, 30)) is True
+
+
+@pytest.mark.parametrize("key", ["f", "v", "escape", "enter"])
+def test_leaving_the_reader_restores_the_mode_it_was_opened_from(key):
+    async def scenario(app, box, pilot):
+        opened = await press(box, "f", "f")
+        box.show(replace(box.panel, preview=opened.value))
+        await pilot.pause()
+        return await press(box, key, key if len(key) == 1 else None)
+
+    got = run(state2(preview="off"), scenario, size=(140, 30))
+    assert isinstance(got, OutboxBox.Intent)
+    assert (got.name, got.value) == ("preview", "off")
+
+
+@pytest.mark.parametrize(
+    ("key", "char"),
+    [
+        ("space", " "),
+        ("d", "d"),
+        ("p", "p"),
+        ("left", None),
+        ("right", None),
+        ("a", "a"),
+        ("tab", None),
+        ("X", "X"),
+    ],
+)
+def test_list_keys_do_nothing_in_the_reader(key, char):
+    async def scenario(app, box, pilot):
+        return await press(box, key, char)
+
+    assert run(state2(preview="full"), scenario, size=(140, 30)) is True

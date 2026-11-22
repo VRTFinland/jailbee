@@ -167,6 +167,13 @@ def test_run_in_container_missing_mount_requests_apply(result):
         container_app.run_in_container(Mock(), incus, "one", [], uid=None)
 
 
+def test_not_mounted_text_on_a_successful_exit_is_not_absent():
+    incus = Mock()
+    incus.exec_bytes.return_value = ExecResult(0, b"ok", b"warning: dir not mounted")
+    result = container_app.run_in_container(Mock(), incus, "one", [], uid=None)
+    assert result.returncode == 0
+
+
 def test_binds_profile_mounts_app_readonly(make_cfg, tmp_path):
     import yaml
 
@@ -220,3 +227,35 @@ def test_interactive_retries_once_on_skew(monkeypatch):
     incus.exec_interactive.side_effect = [86, 86]
     with pytest.raises(container_app.ContainerJailbeeError):
         container_app.run_in_container_interactive(cfg, incus, "one", [], uid=123)
+
+
+def test_a_no_restage_run_never_restages_on_skew(monkeypatch):
+    incus = Mock()
+    incus.exec_bytes.return_value = ExecResult(86, b"", b"old")
+    stage = Mock()
+    sync = Mock()
+    monkeypatch.setattr(container_app, "stage", stage)
+    monkeypatch.setattr("jailbee.agent_skills.sync_agent_skills", sync)
+    with pytest.raises(container_app.ContainerJailbeeError, match="old"):
+        container_app.run_in_container(Mock(), incus, "one", [], uid=None, restage=False)
+    stage.assert_not_called()
+    sync.assert_not_called()
+    assert incus.exec_bytes.call_count == 1
+
+
+def test_run_in_container_passes_a_timeout_to_the_exec():
+    incus = Mock()
+    incus.exec_bytes.return_value = ExecResult(0, b"", b"")
+    container_app.run_in_container(Mock(), incus, "one", [], uid=None, timeout=10)
+    assert incus.exec_bytes.call_args.kwargs["timeout"] == 10
+
+
+@pytest.mark.parametrize(
+    "result",
+    [ExecResult(127, b"", b""), ExecResult(88, b"", b""), ExecResult(1, b"", b"not mounted")],
+)
+def test_a_container_without_jailbee_raises_the_missing_subclass(result):
+    incus = Mock()
+    incus.exec_bytes.return_value = result
+    with pytest.raises(container_app.JailbeeAbsentError):
+        container_app.run_in_container(Mock(), incus, "one", [], uid=None)

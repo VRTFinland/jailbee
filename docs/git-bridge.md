@@ -228,12 +228,65 @@ In status output, **DIFF ±** is the direct committed-tree line diff
 (`git diff <host-target> HEAD`); equal trees are `clean` even when histories
 differ. **↑** counts commits unique to the container and **↓** counts commits
 unique to the host target, using graph ancestry, so both can be nonzero when
-DIFF ± is clean. WT remains separate. Explicit JSON `git_status` exposes
+DIFF ± is clean. When the container does not hold the target commit at all
+(for example a target commit that exists only in another container, or a shared
+object store the container cannot read; a clone-mode container shares the host's
+object store, so a new host commit is counted normally), **↓** shows `↓•`
+(pull needed, count unknown; `behind_count` and `host_behind_count` are the string
+`"missing"` in JSON, never a number) while DIFF ±, ↑ and MERGE stay `?`. Nothing is written into the container. WT remains separate. Explicit JSON `git_status` exposes
 `target_diff`, `ahead_count`, `behind_count`, `base_source`, `base_sha`,
 `tracking_relation` and `upstream_ref`; per-submodule line fields are
 `target_ins`/`target_del`, while commit counts remain `ahead_commits` and
 `behind_commits`. The old `ahead_diff`, `ahead_ins` and `ahead_del` names are
 retired; see [column migration](config.md#ls--dashboard--remembered-columns).
+
+### Sync target
+
+DIFF ±, ↑, ↓ and MERGE compare with the container's **sync target** — where its
+work flows next, chosen automatically:
+
+- an orchestration child (any kind, `pr`-kind children included) or a fork
+  (`jailbee fork`) compares with its **parent** container, ahead of any PR
+  binding: ↓ counts the parent's commits the child lacks, against the parent's
+  HEAD as the dashboard's previous gather pass saw it (`↓•` when that commit is
+  not in the child's object store); ↑ counts the child's commits not yet
+  imported — since the orchestrator's last import, else since the fork's
+  starting commit (`?` when neither is known); a `jailbee fork` has no imports, so its ↑
+  keeps counting from the fork point. Its cells carry a dim `⑂`
+  marker. A stopped or missing parent, or the first gather pass, compares with the
+  host branch instead, and the cells carry a yellow `⑂?`. A plain
+  `jailbee ls` has no previous pass, so no parent's head is known: a PR-bound
+  child there compares with its PR head as before, any other child or fork
+  with the host branch (`⑂?`, described as "parent head unknown outside the
+  dashboard"). A parent whose probe fails while it runs keeps its previous head,
+  with its older "seen" time, so the child does not flap. When the parent's HEAD
+  is in the child, ↑ also excludes everything the parent already has;
+- a PR-bound container (`jailbee new --pr`, `jailbee pr bind`) compares with the
+  PR head the host last fetched, `refs/jailbee/pr/<N>/head`: ↑ means "push
+  needed", ↓ "someone else pushed to the PR". Its cells carry a dim `pr`
+  marker. Without that ref on the host the container compares with its host
+  branch instead, and the cells carry a yellow `pr?`. The dashboard's state
+  service refetches the ref every `pr.autofetch_interval` seconds (default 300)
+  while [`pr.autofetch`](config.md#pr) is on, so ↓ follows pushes made elsewhere.
+  The fetch never prompts (git's terminal prompt off, `ssh -o BatchMode=yes`,
+  a 30 s timeout) and a failure keeps the old head. With autofetch off, or to
+  refresh at once, run `jailbee pr fetch [<name>] [--all]` (auth prompts are
+  allowed) or use the row menu's `Refresh PR head`;
+- every other container compares with its host branch as described above, with
+  no marker.
+
+The dashboard's details card names the sync target in the git table's `vs …`
+header and, for a PR-bound container, adds one row per target (host branch and
+PR head) with its own ↑/↓ and short sha, the sync target's row marked. The PR head's row also says
+how current it is: `fetched 3m ago`, `fetch failed 5m ago`, or `autofetch off`.
+A child or fork gets a host-branch row and a `⑂ <parent>` row instead, with the
+parent's HEAD sha and the age of the pass that saw it (`seen 1m ago`); a parent
+that cannot be compared with reads `not seen running`. JSON
+`git_status` carries the target as `sync_target` (`kind` `host`/`pr`/`parent`, `label`,
+`sha`, `ref`, `fallback`, `autofetch`, `fetched_at`, `fetch_error`,
+`fetch_error_at`, `parent`, `ahead_sha`, `seen_at`) plus `host_ahead_count`/`host_behind_count`, the
+counts against the host branch whatever the target. `base_sha`, `base_source`,
+`tracking_relation` and `upstream_ref` keep describing the host branch.
 
 `jailbee git diff <name>` uses the same live host target and direct comparison
 by default. `--incoming` selects the former three-dot contribution diff;
@@ -1114,9 +1167,11 @@ an informational reminder: JailBee does not verify or reduce the token's
 JailBee writes the configured token into `/etc/profile.d/jailbee-github.sh`
 inside the container for login shells to export as `GH_TOKEN`. It is readable
 by container processes, not confined to the `gh` binary. New/start/restart and
-apply paths refresh this file when a token is configured; disabling the
-integration or removing the config value does not erase a previously written
-token. Revoke an exposed token at GitHub and remove stale container copies.
+apply paths refresh this file when a token is configured; when the
+integration is disabled or the config value is removed, they delete the file
+instead (running containers on `jailbee apply`, others on their next start).
+Copies the container's own processes already read are not recalled, so revoke
+an exposed token at GitHub.
 
 **Two identities, on purpose.** Supply a read-only token for the container
 and keep the host's publishing credentials separate. The intended workflow
@@ -1148,7 +1203,7 @@ description and source) and their draft batches live in the host outbox store
 action there (prepared before the GitHub call, applied with its sent record
 after it). Spawned children cannot stage GitHub proposals. Nothing is read
 from or written to the container, so the host never runs `incus exec` for the
-outbox, and `jb outbox`, `jb review ls` and `jb review apply` also work on
+outbox, and `jb outbox ls` and `jb outbox apply` also work on
 stopped containers. Proposals staged by earlier versions as files in the
 container are ignored, not imported: publish or drop them before upgrading.
 Inspection reads the store only and makes no `gh` or network calls.
@@ -1188,7 +1243,7 @@ deletion. First run `jb outbox show <container> issue/<manifest>.json` and
 inspect its receipts and pending actions before approving whole-manifest
 archival deletion. Direct `outbox drop` previews deletion scope, not receipts
 or action content. Uncertain outcomes must first be reconciled with the
-existing `jb issue resolve` command. There is no general text editor in the
+`jb outbox resolve` command. There is no general text editor in the
 outbox manager.
 
 ### Clearing outboxes
@@ -1212,7 +1267,7 @@ confirmation, but still needs a container selection.
 only when no other pending manifest in the same store references them. Settled
 issue journal progress is archived automatically before deletion. It keeps
 issue manifests with any **uncertain** action: reconcile the outcome with
-`jb issue resolve` first. PR manifests with publication evidence (including
+`jb outbox resolve` first. PR manifests with publication evidence (including
 partial publication) are also kept; inspect them with `jb outbox` or
 finish with `jb outbox apply`. An unreadable journal is
 not treated as permission to delete.
@@ -1317,7 +1372,7 @@ still holds; only the ownership check is relaxed, and never silently. The plan
 ends with a highlighted warning naming the PR, its author and the container,
 directly above the confirmation, which on a terminal is the consent. With `-y` nobody reads
 that warning, so `-y` alone refuses such a manifest: add `--foreign` (on
-`jb outbox apply` and `jb review apply`).
+`jb outbox apply`, `jb review apply` and `jb issue apply`).
 
 The unified outbox (`jb outbox apply`, the outbox manager and both
 dashboards' Outbox entries) goes one step further: a numbered PR manifest may
@@ -1325,8 +1380,8 @@ name a PR in **a repository that is neither the superproject nor one of its
 submodules** — a description fix on a plugin repository the change also
 touches, say. Its plan warns that the repository is not the container's, and
 the same confirmation or `--foreign` is the consent. A `pr: null` manifest is
-never sent to another repository, and `jb review apply` and `jb pr push` keep the
-repository lock. For issue manifests, `--foreign`
+never sent to another repository, and `jb review apply` (the PR-only form of
+`jb outbox apply`) and `jb pr push` keep the repository lock. For issue manifests, `--foreign`
 acknowledges a different boundary: a repository outside the superproject and
 its submodules, as described [below](#targeting-the-superproject-or-a-submodule).
 The Qt
@@ -1337,8 +1392,7 @@ there is the consent (`--foreign` is passed only then). Publication asks exactly
 plan. `jb pr push`'s post-push
 offer never publishes to
 another PR: it holds such a manifest back and names
-`jb review apply --foreign <container>`. `jb review ls` lists it with the state
-`not bound`.
+`jb review apply --foreign <container> <manifest>`.
 
 On a terminal, `jb outbox` (or `jb outbox browse [<container>]`) opens the
 **outbox manager** full screen: every container of the current repository
@@ -1351,8 +1405,8 @@ opens the same manager under the table, for its container. Keys, also shown
 in the hint line: ↑/↓ move, Enter/→ expand, ← collapse, `Space` mark a row
 and everything under it (unmarking a row also unmarks the rows above it), `d`
 delete the marked rows (or the highlighted one), `p` publish the marked
-proposals (or the highlighted one), `c` create PR,
-`X` clear the outbox, `v` preview on/off, `m` the raw manifest, `r` refresh;
+proposals (or the highlighted one) — PR creations included,
+`X` clear the outbox, `v` preview on/off, `f` read the preview full screen (any width; `f` or Esc returns to the list with the cursor kept), `m` the raw manifest, `r` refresh;
 in `jb outbox`, `a` switches between this repository and all registered ones
 and `q` or Esc quits, while in the dashboard Esc goes back to the container
 menu. Below 110 columns the preview is not beside the list: Enter on a row
@@ -1375,9 +1429,16 @@ preview in the list's place, and Esc, Enter or `v` goes back to the list.
   proposals then publish one after another, a failure not stopping the rest.
   Publishing works on whole proposals: with only actions or comments marked,
   `p` says to mark the proposal row.
-- **Create PR** (a description awaiting its PR) re-reads the listing and,
-  if the proposal is unchanged, hands the terminal to `jb pr push` or
-  `jb submodule pr push` for the resolved scope, with that command's own checks.
+- **Publishing a PR creation** — a description awaiting its PR, or a pinned
+  source awaiting its push — re-reads the listing and, if the proposal is
+  unchanged, hands the terminal to `jb pr push`, `jb submodule pr push` or
+  `jb pr push --source-manifest` for the resolved scope, with that command's
+  own checks and questions (AI consent, branch name, …). Marked together with
+  manifests, the one question lists each PR creation as "pushes the branch of
+  …, opens/updates its PR" with the command it runs; the manifests publish
+  first, then the PR creations one hand-off at a time, and the first that
+  fails or is cancelled stops the rest — the status names what was not run,
+  and those stay marked.
 - **Clear** reads the outbox's clear plan and asks once, as Clear outbox…
   below does.
 
@@ -1410,9 +1471,11 @@ to remote command and host-protection policy. Native Qt is not offered over
 SSH.
 
 `jb review apply`, `jb issue apply/resolve`, `jb pr push` and `jb submodule pr push`
-workflows remain available. `jb review ls/show/drop` and `jb issue
-ls/show/drop` are **deprecated** in favour of `jb outbox ls/show/drop`: they are
-hidden from `--help`, behave as before and print a hint on stderr. The unified interface does not authorize agents to publish:
+workflows remain available. `jb review apply` and `jb issue apply` are
+kind-scoped aliases of `jb outbox apply`: they take the same arguments and
+share its prompts, output and exit codes, but offer only that kind's
+proposals. Inspecting and dropping proposals is `jb outbox ls/show/drop`. The
+unified interface does not authorize agents to publish:
 agents stage proposals; humans inspect and approve on the host.
 
 ## Issue management
@@ -1429,7 +1492,7 @@ section covers the host-side workflow the schema is applied through.
 
 ### Reading, triaging, and writing the manifest
 
-Inside the container, use `jailbee issue create|edit|comment|labels|assign|state|project`
+Inside the container, use `jailbee issue create|edit|comment|comment-edit|labels|assign|state|project|sub-issue|blocked-by`
 to stage proposals; `--body-file` accepts long text and `--repo` selects the
 target. `jailbee issue project N [--project OWNER/NUMBER]` stages `--add`,
 repeatable `--set FIELD=VALUE`, repeatable `--clear FIELD`, or `--remove`;
@@ -1447,6 +1510,36 @@ know that login. Other logins go through `--add` and `--remove`. The host
 compares the live assignees with the staged `expected` list before it
 changes anything, and a retry after a partly landed attempt is not refused
 as stale. Adds are sent before removes.
+
+`jailbee issue comment-edit ID --body TEXT` stages a `comment_edit` action that
+replaces the body of an existing issue or pull-request conversation comment.
+`jailbee issue comments N` lists a thread's comment ids read-only. The
+container records the comment's issue number and current body. On the host,
+the publish is refused unless the comment is still on that issue, was written
+by the account the host publishes with, and still has the body seen at staging
+time. The plan shows the change as a line diff. Two edits of one comment
+conflict. Review (line) comments are not covered by it.
+
+`jailbee pr comment-edit ID [N] --body TEXT` does the same for a submitted PR
+review (line) comment or reply: a `comment_edit` action in the PR manifest,
+published with `PATCH pulls/comments/ID` after the same checks (the comment is on
+that PR and repository, written by the publishing account, unchanged since
+staging). It is published directly, also under `--draft`. Pending
+(unsubmitted) review comments stay with `jailbee pr review`; staging refuses a
+comment of a pending review. A refused edit holds back the other pending actions
+of the same manifest too, so stage edits in their own batch when that matters.
+
+`jailbee issue sub-issue PARENT CHILD` stages a `sub_issue` action and
+`jailbee issue blocked-by ISSUE BLOCKER` a `dependency` action: native GitHub
+sub-issue and "blocked by" links between two issues of `--repo`. `--remove`
+drops the link. Either side may be `@REF` for a create earlier in the batch;
+`jailbee issue create --parent N|@REF --blocked-by N|@REF` stages the create
+and then these actions, so each link is journaled on its own and a failed link
+never makes the create uncertain. Both GitHub APIs take the other issue's
+database id; the host reads it at preflight, or right after the create for an
+`@REF`. The host refuses an add that is already linked, a removal that is not,
+and a pull request on either side, at preflight and again before publishing.
+Two changes of one link conflict.
 
 Use `--batch NAME` and `jailbee outbox submit NAME
 --kind issue` to group actions. Nothing reaches GitHub until a human applies
@@ -1479,23 +1572,27 @@ broader target, not extra GitHub permissions: publication still uses the
 host's account and remains subject to GitHub's permissions and the normal
 proposal checks. Unknown local paths are refused.
 
-### `jailbee issue show / apply / resolve`
+### `jailbee issue apply / resolve`
 
-`issue show` is a deprecated alias of `jailbee outbox show` (hidden, hint on
-stderr); prefer `jailbee outbox`. Listing and dropping issue proposals is
-`jailbee outbox ls` and `jailbee outbox drop`.
+`jailbee issue apply` is `jailbee outbox apply` for issue manifests only.
+Listing, reading and dropping issue proposals is `jailbee outbox ls`,
+`jailbee outbox show` and `jailbee outbox drop`.
 
 ```bash
-jailbee issue show [<name>] [<manifest>]                  # deprecated
-jailbee issue apply [<name>] [--manifest <name>] [--yes] [--foreign] [--dry-run]
+jailbee issue apply [<name>] [<manifest>] [--yes] [--foreign] [--dry-run]
 jailbee issue resolve [<name>] [<manifest>] [<action>] (--applied --url <url> [--issue <n>] | --retry) [--yes]
+# alias of: jailbee outbox resolve [<name>] issue/<manifest> [<action>] ... (`pr/<manifest>` for PR actions)
 ```
 
-`jailbee issue show` prints a
+`jailbee outbox show` prints a
 manifest's full proposed text and journal state, never truncated, for
 actually reading a body before deciding. On a terminal the Markdown bodies are
 wrapped to the window and coloured; HTML tags and image URLs are shown as text
-rather than hidden, and piped output is the raw text.
+rather than hidden, and piped output is the raw text. `http(s)` links are
+clickable (OSC 8) in a terminal that supports it, with ` → host` shown after
+any label that is not exactly the target's `scheme://host`, so a label or a
+`user@` prefix cannot pose as the real host; any other scheme (`javascript:`,
+`file:`, …) is shown as text with its target.
 
 Pending manifests are also visible without running `outbox ls`:
 `jailbee ls`'s ISSUES column shows `✉N`. The dashboards use a combined
@@ -1505,16 +1602,17 @@ issue actions alongside other work at risk.
 
 ### One combined preview and approval
 
-`jailbee issue apply` builds a single plan covering **every selected
-manifest and every repository it touches** — not one confirmation per
-manifest or per action — and prints it in full (host GitHub login, then per
-manifest, per repository, every action's before/after text) before asking
-once, `Proceed?`. Declining, or `--dry-run` (which stops right after the
-plan with no confirmation, no recheck, and no mutation at all), leaves the
-outbox and GitHub exactly as they were. Naming no container (and no
-`--manifest`) auto-picks the one running container in this repo with
-anything pending, and only asks when more than one does — off a TTY with
-several candidates it errors, naming them.
+`jailbee issue apply` publishes **one manifest per run**. It builds a single
+plan covering that manifest and every repository it touches — not one
+confirmation per action — and prints it in full (host GitHub login, then per
+repository, every action's before/after text) before asking once
+(`Publish N pending actions?`). Declining, or `--dry-run` (which stops right
+after the plan with no confirmation, no recheck, and no mutation at all),
+leaves the outbox and GitHub exactly as they were. The manifest may be given
+bare (`001.json`) or with its kind (`issue/001.json`). A container or manifest
+left out is asked for, from the issue proposals only, even when there is a
+single candidate; off a TTY a missing value exits 2 naming the candidates, and
+with no issue proposal pending the command exits 2. Run it once per manifest.
 
 ### `--yes` and non-TTY behavior
 
@@ -1529,7 +1627,7 @@ and without a TTY to ask on, every one of these commands refuses outright
 
 Two checks guard the fields a pending proposal declares in `expected`.
 While building the plan, JailBee compares those action-specific fields with
-a live issue read. A mismatch refuses the **whole selected batch**. A
+a live issue read. A mismatch refuses the **whole manifest**. A
 pending action whose `issue_ref` points to a not-yet-published `create` is
 instead checked against the proposed issue's initial title, body, labels
 and open state; there is no live issue to read yet.
@@ -1547,8 +1645,7 @@ an atomic GitHub transaction, and changes after the last read remain possible.
 
 `jailbee issue apply` dispatches one manifest's actions in order and stops
 the entire run at the first action it cannot durably resolve one way or the
-other — nothing later in that manifest, or in any manifest after it in the
-batch, is attempted. A `create` action's issue number is recorded in the
+other — nothing later in that manifest is attempted. A `create` action's issue number is recorded in the
 host journal the instant it lands, keyed by the manifest-local `ref` a
 later action in the *same manifest* names with `issue_ref`. Re-running
 `jailbee issue apply` — the ordinary way to resume — skips every action the
@@ -1556,13 +1653,14 @@ journal already shows `applied`, restores that number so a further
 `issue_ref` later in the file still resolves, and continues from wherever
 the run actually stopped.
 
-### `uncertain` actions and `jailbee issue resolve`
+### `uncertain` actions and `jailbee outbox resolve`
 
 A GitHub mutation whose outcome could not be determined for certain — a
 dropped connection, a timeout — is journaled `uncertain` rather than
 `applied` or left `pending`, and **`jailbee issue apply` refuses to touch
-that manifest again until it is resolved.** `jailbee issue resolve [<name>]
-[<manifest>] [<action>]` takes exactly one of (on a terminal, whatever you leave out —
+that manifest again until it is resolved.** `jailbee outbox resolve [<name>]
+[<proposal>] [<action>]` (`issue/<manifest>` for issues, `pr/<manifest>` for PR
+actions; `jailbee issue resolve` and `jailbee review resolve` are aliases) takes exactly one of (on a terminal, whatever you leave out —
 container, manifest, action, mode, URL — is asked for; off one it must be given
 as arguments and flags, or the command exits 2):
 
@@ -1589,7 +1687,7 @@ and the journal's archiving, all in one transaction. So a fully applied
 proposal is gone from the outbox the moment its last receipt is recorded; there
 is no separate cleanup step that can half-fail. A run that dies between the two
 commits leaves the action `prepared`, which every reader shows as `uncertain`
-until it is resolved with `jailbee issue resolve`; a journal is never archived
+until it is resolved with `jailbee outbox resolve`; a journal is never archived
 while an outcome is uncertain. Publication is single-flight per proposal: a
 claim in the store refuses a second run (or a resolution) while another live
 one holds it, and a claim whose process is gone is taken over. The container
@@ -1621,12 +1719,12 @@ proposal whose publication outcome is uncertain: that one is kept, with its
 bodies and journal, so the outcome can still be settled. `jailbee outbox`
 lists such proposals under `<container>@<instance-uuid>`, marked
 `(destroyed)` (`"destroyed": true` in `-o json`). Use that name with
-`jailbee issue resolve` or `jailbee review resolve` to settle the uncertain
+`jailbee outbox resolve` (aliases: `jailbee issue resolve`, `jailbee review resolve`) to settle the uncertain
 action, and with `jailbee outbox show` / `drop` (`--archive-journal` for
 settled progress) to inspect or discard what is left. A destroyed
 container's proposals cannot be published (`jailbee outbox apply` refuses);
 a PR source proposal cannot be pushed again either, so settle it with
-`jailbee review resolve` and drop it.
+`jailbee outbox resolve` and drop it.
 
 ### What enforces read-only container access
 

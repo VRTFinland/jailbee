@@ -13,7 +13,13 @@ if TYPE_CHECKING:
     from jailbee.incus import Incus
 
 
-def _metadata(cfg: Config, incus: Incus, full: str, args: Sequence[str]) -> Any:
+PROBE_EXEC_TIMEOUT = 10
+"""Seconds a background probe's `incus exec` may run before it is killed."""
+
+
+def _metadata(
+    cfg: Config, incus: Incus, full: str, args: Sequence[str], *, probe: bool = False
+) -> Any:
     from jailbee.container_app import ContainerJailbeeError, run_in_container
     from jailbee.lifecycle import container_repo_dir
 
@@ -27,6 +33,8 @@ def _metadata(cfg: Config, incus: Incus, full: str, args: Sequence[str]) -> Any:
         cwd=repo,
         env={"HOME": f"/home/{CONTAINER_USERNAME}"},
         init_groups=True,
+        timeout=PROBE_EXEC_TIMEOUT if probe else None,
+        restage=not probe,
     )
     if result.returncode:
         raise ContainerJailbeeError(
@@ -38,8 +46,24 @@ def _metadata(cfg: Config, incus: Incus, full: str, args: Sequence[str]) -> Any:
         raise ContainerJailbeeError("invalid service metadata from container") from exc
 
 
+def service_rows(
+    cfg: Config, incus: Incus, full: str, *, probe: bool = False
+) -> list[dict[str, Any]]:
+    """The container's `service ls --json` rows.
+
+    ``probe=True`` is the dashboard's background reading: bounded by
+    ``PROBE_EXEC_TIMEOUT`` and never restages the host bundle.
+    """
+    data = _metadata(cfg, incus, full, ["ls", "--json"], probe=probe)
+    if not isinstance(data, list):
+        from jailbee.container_app import ContainerJailbeeError
+
+        raise ContainerJailbeeError("unexpected service listing")
+    return data
+
+
 def service_names(cfg: Config, incus: Incus, full: str) -> list[str]:
-    return [str(item["name"]) for item in _metadata(cfg, incus, full, ["ls", "--json"])]
+    return [str(item["name"]) for item in service_rows(cfg, incus, full)]
 
 
 def refresh(

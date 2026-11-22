@@ -50,7 +50,7 @@ class FakeChild:
             end.close()
 
     def wait(self) -> int:
-        self._thread.join(5)
+        self._thread.join(30)
         return self._code
 
     def kill(self) -> None:
@@ -309,3 +309,83 @@ def test_run_actions_a_single_run_has_no_header_and_a_failed_exit_does_not_stop_
         [runner.ActionRun(["ls", "x"], tmp_path), runner.ActionRun(["ls", "y"], tmp_path)], run=fake
     )
     assert seen[-2:] == ["x", "y"] and len(two.results) == 2
+
+
+def test_run_actions_keeps_each_runs_own_output_apart(tmp_path):
+    def fake(argv, *, cwd, on_output, **common):
+        on_output(f"out {argv[-1]}\n")
+        on_output("more\n")
+        return runner.RunResult(status=0)
+
+    runs = [runner.ActionRun(["git", "pull", n], tmp_path) for n in ("a", "b")]
+    outcome = runner.run_actions(runs, run=fake)
+
+    # One text per run, without the batch headers, in run order.
+    assert outcome.outputs == ["out a\nmore\n", "out b\nmore\n"]
+
+
+def test_run_actions_caps_stored_output_to_a_tail_with_a_marker(tmp_path):
+    big = "x" * 1000 + "\n"
+
+    def fake(argv, *, cwd, on_output, **common):
+        for _ in range(500):
+            on_output(big)
+        on_output("THE END\n")
+        return runner.RunResult(status=0)
+
+    outcome = runner.run_actions([runner.ActionRun(["ls"], tmp_path)], run=fake)
+
+    (own,) = outcome.outputs
+    assert len(own) < 200_000 and own.endswith("THE END\n")
+    assert "earlier output dropped" in own
+    assert len(outcome.output) < 200_000 and "earlier output dropped" in outcome.output
+
+
+class _Heard:
+    def __init__(self) -> None:
+        self.events: list[tuple] = []
+
+    def output(self, index: int, chunk: str) -> None:
+        self.events.append(("out", index, chunk))
+
+    def question(self, index: int, asking: bool) -> None:
+        self.events.append(("ask", index, asking))
+
+
+def test_run_actions_progress_hears_chunks_and_questions_with_the_run_index(tmp_path):
+    def fake(argv, *, cwd, on_output, on_prompt, **common):
+        on_output(f"one {argv[-1]}\n")
+        on_prompt("question")
+        on_output(f"two {argv[-1]}\n")
+        return runner.RunResult(status=0)
+
+    heard = _Heard()
+    runs = [runner.ActionRun(["merge", n], tmp_path) for n in ("a", "b")]
+    runner.run_actions(runs, run=fake, progress=heard, on_prompt=lambda _p: True)
+
+    assert heard.events == [
+        ("out", 0, "one a\n"),
+        ("ask", 0, True),
+        ("ask", 0, False),
+        ("out", 0, "two a\n"),
+        ("out", 1, "one b\n"),
+        ("ask", 1, True),
+        ("ask", 1, False),
+        ("out", 1, "two b\n"),
+    ]
+
+
+def test_run_actions_progress_sees_a_question_close_when_the_handler_raises(tmp_path):
+    def fake(argv, *, cwd, on_output, on_prompt, **common):
+        on_prompt("question")
+        return runner.RunResult(status=0)
+
+    def boom(_p):
+        raise RuntimeError("ui gone")
+
+    heard = _Heard()
+    runner.run_actions(
+        [runner.ActionRun(["merge"], tmp_path)], run=fake, progress=heard, on_prompt=boom
+    )
+
+    assert heard.events == [("ask", 0, True), ("ask", 0, False)]

@@ -42,6 +42,14 @@ type ActivityLookup = Callable[[str, AgentSession, int], AgentActivity | None]
 
 
 @dataclass(frozen=True)
+class SessionMark:
+    """One live session's state, for the per-session indicator in the AGENT cell."""
+
+    state: str
+    since: datetime | None = None
+
+
+@dataclass(frozen=True)
 class AgentSummary:
     """One agent's live sessions in one container, as the AGENT cell shows them.
 
@@ -56,9 +64,17 @@ class AgentSummary:
     waiting_for: str | None
     count: int
     activity: AgentActivity | None = None
+    session_ids: tuple[str, ...] = ()
+    """The live sessions' ids (those that have one), for attributing transcripts."""
+    sessions: tuple[SessionMark, ...] = ()
+    """Every live session's state, most urgent first (`count` entries; empty on old data)."""
 
 
 def _rank(session: AgentSession) -> tuple[int, bool, float]:
+    return rank_key(session.state, session.since)
+
+
+def rank_key(state: str, since: datetime | None) -> tuple[int, bool, float]:
     """Most urgent first; undated last among equals.
 
     Among equal `waiting` states the longest wait comes first: it is the one
@@ -66,14 +82,13 @@ def _rank(session: AgentSession) -> tuple[int, bool, float]:
     a session idle since yesterday does not hide one that just finished.
     """
     try:
-        urgency = URGENCY.index(session.state)
+        urgency = URGENCY.index(state)
     except ValueError:
         urgency = len(URGENCY)
-    since = session.since
     if since is None:
         return (urgency, True, 0.0)
     stamp = since.timestamp()
-    return (urgency, False, stamp if session.state == "waiting" else -stamp)
+    return (urgency, False, stamp if state == "waiting" else -stamp)
 
 
 def _one_per_process(sessions: Iterable[AgentSession]) -> list[AgentSession]:
@@ -113,6 +128,8 @@ def summarize(
             waiting_for=top.waiting_for,
             count=len(items),
             activity=None if activity_for is None else activity_for(ordered),
+            session_ids=tuple(s.session_id for s in ordered if s.session_id),
+            sessions=tuple(SessionMark(s.state, s.since) for s in ordered),
         )
         ranked.append((_rank(top), agent, summary))
     ranked.sort(key=lambda item: (item[0], item[1]))

@@ -255,6 +255,7 @@ See [Claude configuration](config.md#claude) for the agent options and
 
 ## Next steps
 
+- [Everyday use](everyday.md) — create, enter, stop, snapshot and destroy containers; services, network modes, egress and ports
 - [Commands](commands.md) — full command + flag reference
 - [Git bridge and branch workflows](git-bridge.md) — moving commits between host and containers, stacked PRs, mount vs clone
 - [Setting up JailBee in your own project](project-config.md) — adapting `jailbee` to your own repo and stack

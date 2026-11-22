@@ -243,7 +243,9 @@ def test_gather_rows_sorts_named_repos_alphabetically(tmp_path, mocker, make_cfg
     def fake_load(root):
         return cwd_cfg if root == cwd_root else other_cfg
 
-    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background, instances):
+    def fake_list(
+        cfg, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
         if all_repos:
             return []  # no orphans
         if cfg is cwd_cfg:
@@ -257,6 +259,27 @@ def test_gather_rows_sorts_named_repos_alphabetically(tmp_path, mocker, make_cfg
     assert [g.prefix for g in groups] == ["alpha", "beta"]
     assert groups[1].config_path == cwd_root / ".jailbee" / "config.yaml"
     assert [c.name for c in groups[1].containers] == ["beta-one"]
+
+
+def test_gather_rows_hands_the_previous_heads_to_each_repo_listing(tmp_path, mocker, make_cfg):
+    root = _repo_dir(tmp_path, "alpha")
+    cfg = make_cfg(root)
+    heads = {"alpha-orch": object()}
+    seen: list[object] = []
+
+    def fake_list(
+        c, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
+        if not all_repos:
+            seen.append(parent_heads)
+        return []
+
+    mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
+    mocker.patch.object(dmodel, "list_containers", side_effect=fake_list)
+
+    dmodel.gather_rows(mocker.MagicMock(), [root], with_git=True, parent_heads=heads)
+
+    assert seen == [heads]
 
 
 def test_gather_rows_includes_a_repo_with_no_config_file(tmp_path, monkeypatch, mocker):
@@ -297,7 +320,9 @@ def test_gather_rows_carries_the_repos_loose_ttl_default(tmp_path, mocker, make_
     root = tmp_path / "alpha"
     mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
+    def fake_list(
+        c, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dmodel, "list_containers", side_effect=fake_list)
@@ -307,13 +332,34 @@ def test_gather_rows_carries_the_repos_loose_ttl_default(tmp_path, mocker, make_
     assert groups[0].loose_ttl_default == "45m"
 
 
+def test_gather_rows_stamps_every_container_with_the_pr_slug(tmp_path, mocker, make_cfg):
+    cfg = make_cfg(tmp_path / "alpha")
+    root = tmp_path / "alpha"
+    mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
+    slug = mocker.patch("jailbee.pr.pr_repo_slug", return_value="acme/widgets")
+
+    def fake_list(
+        c, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
+        return [] if all_repos else [_ci("alpha-one", "alpha")]
+
+    mocker.patch.object(dmodel, "list_containers", side_effect=fake_list)
+
+    groups = dmodel.gather_rows(mocker.MagicMock(), [root], with_git=False)
+
+    assert groups[0].containers[0].pr_slug == "acme/widgets"
+    slug.assert_called_once_with(cfg.repo_root, cfg.upstream_remote)
+
+
 def test_gather_rows_carries_the_repos_checked_out_branch(tmp_path, mocker, make_cfg):
     cfg = make_cfg(tmp_path / "alpha")
     root = tmp_path / "alpha"
     mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
     mocker.patch.object(dmodel.git, "get_checkout_label", return_value="feat-1")
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
+    def fake_list(
+        c, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dmodel, "list_containers", side_effect=fake_list)
@@ -334,7 +380,9 @@ def test_gather_rows_carries_the_repos_optional_mount_kinds(tmp_path, mocker, ma
     root = tmp_path / "alpha"
     mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
+    def fake_list(
+        c, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dmodel, "list_containers", side_effect=fake_list)
@@ -438,7 +486,9 @@ def test_gather_rows_loose_ttl_default_is_none_when_policy_disabled(tmp_path, mo
     root = tmp_path / "alpha"
     mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
+    def fake_list(
+        c, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dmodel, "list_containers", side_effect=fake_list)
@@ -457,7 +507,9 @@ def test_gather_rows_carries_the_repos_agent_homes(tmp_path, mocker, make_cfg):
     root = tmp_path / "alpha"
     mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
+    def fake_list(
+        c, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
         return [_ci("orphan-x", "orphan")] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dmodel, "list_containers", side_effect=fake_list)
@@ -481,7 +533,9 @@ def test_gather_rows_records_the_repos_push_defaults(tmp_path, mocker, make_cfg)
     root = tmp_path / "alpha"
     mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
+    def fake_list(
+        c, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dmodel, "list_containers", side_effect=fake_list)
@@ -498,7 +552,9 @@ def test_gather_rows_push_defaults_fall_back_to_the_config_defaults(tmp_path, mo
     root = tmp_path / "alpha"
     mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
+    def fake_list(
+        c, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dmodel, "list_containers", side_effect=fake_list)
@@ -514,7 +570,9 @@ def test_gather_rows_renders_an_int_after_as_minutes(tmp_path, mocker, make_cfg)
     root = tmp_path / "alpha"
     mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
+    def fake_list(
+        c, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dmodel, "list_containers", side_effect=fake_list)
@@ -529,7 +587,9 @@ def test_gather_rows_orphan_group_has_no_loose_ttl_default(tmp_path, mocker, mak
     root = tmp_path / "alpha"
     mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
+    def fake_list(
+        c, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
         if all_repos:
             return [_ci("alpha-one", "alpha"), _ci("gamma-x", "gamma")]
         return [_ci("alpha-one", "alpha")]
@@ -547,7 +607,9 @@ def test_gather_rows_surfaces_orphans_view_only(tmp_path, mocker, make_cfg):
     root = tmp_path / "alpha"
     mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
+    def fake_list(
+        c, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
         if all_repos:
             return [_ci("alpha-one", "alpha"), _ci("gamma-x", "gamma")]
         return [_ci("alpha-one", "alpha")]
@@ -575,7 +637,9 @@ def test_gather_rows_cwd_none_orphans_sort_last(tmp_path, mocker, make_cfg):
     def fake_load(root):
         return alpha if root == alpha_root else beta
 
-    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background, instances):
+    def fake_list(
+        cfg, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
         if all_repos:
             # one orphan ('zeta') plus the two covered repos
             return [_ci("alpha-1", "alpha"), _ci("beta-1", "beta"), _ci("zeta-x", "zeta")]
@@ -602,7 +666,9 @@ def test_gather_rows_includes_empty_repo_for_targeting(tmp_path, mocker, make_cf
     def fake_load(root):
         return empty_cfg if root == empty_root else populated_cfg
 
-    def fake_list(cfg, incus, *, all_repos, with_git_status, with_background, instances):
+    def fake_list(
+        cfg, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
         if all_repos:
             return []  # no orphans
         if cfg is empty_cfg:
@@ -660,7 +726,9 @@ def test_gather_rows_skips_unloadable_config_never_raises(tmp_path, mocker, make
             raise OSError("gone")
         return good
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
+    def fake_list(
+        c, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dmodel, "load_repo_config", side_effect=fake_load)
@@ -790,7 +858,7 @@ def test_gather_live_reresolves_repo_roots_on_every_gather(mocker):
     registered.append(b)  # a `jailbee new` in repo b just registered it
     dmodel.gather_live(incus, [], with_git=True)
     assert gr.call_args.args[1] == [a, b]
-    assert gr.call_args.kwargs == {"with_git": True}
+    assert gr.call_args.kwargs == {"with_git": True, "parent_heads": None}
 
 
 def test_carry_forward_git_status_fills_in_from_previous_snapshot():
@@ -1198,8 +1266,8 @@ def test_repo_network_menu_is_a_submenu_of_its_own_level():
     menu = tmenu.open_repo_menu([group], "alpha", frozenset())
     assert menu is not None
     network = dmenus.MenuGroup("Network →", (("Egress…", "net egress ls"),))
-    assert menu.actions[4] == network
-    assert tmenu.menu_entries(menu)[4] == network
+    assert menu.actions[5] == network
+    assert tmenu.menu_entries(menu)[5] == network
     assert tmenu.menu_entries(menu, "Network →") == network.actions
     assert tmenu.menu_entries(menu, "No such group →") == ()
     assert tmenu.menu_title(menu, None) == "alpha →"
@@ -1319,6 +1387,7 @@ def test_menu_actions_stopped_includes_open_pr_when_pr_known():
         ("Open PR", "pr open"),
         ("Bind to PR…", "pr bind"),
         ("Unbind PR #7", "pr unbind"),
+        ("Refresh PR head", "pr fetch"),
         ("Rename…", "rename"),
         ("Memory: unknown…", "mem"),
         ("Egress…", "net egress ls"),
@@ -1333,6 +1402,7 @@ def test_menu_actions_stopped_includes_open_pr_when_pr_known():
                 ("Open PR", "pr open"),
                 ("Bind to PR…", "pr bind"),
                 ("Unbind PR #7", "pr unbind"),
+                ("Refresh PR head", "pr fetch"),
             ),
         ),
         ("Rename…", "rename"),
@@ -1922,6 +1992,7 @@ def test_menu_hotkeys_inside_submenus_are_scoped_to_that_level():
         "Open PR": "p",
         "Bind to PR…": "b",
         "Unbind PR #7": "u",
+        "Refresh PR head": "F",
         "Create/update PR": "P",
     }
     assert _hotkeys(root, "Lifecycle →") == {"Restart": "r", "Stop": "H", "Destroy": "D"}
@@ -2033,6 +2104,8 @@ def test_container_menu_keys_never_move_whatever_else_is_shown(state, lifecycle)
         ("Mounts…", tsession.dact.MOUNTS),
         ("Services…", tsession.dact.SERVICES),
         ("Orchestration…", tsession.dact.ORCHESTRATION),
+        ("Agent for this container…", tsession.dact.CONTAINER_AGENT),
+        ("Open a new agent window now", tsession.dact.AGENT_WINDOW),
     )
     for pr_number, pr_author, job, network, extras, pending in itertools.product(
         (None, 7),
@@ -2549,7 +2622,9 @@ def test_gather_rows_sets_apps_from_config(tmp_path, mocker, make_cfg):
     root = tmp_path / "alpha"
     mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
+    def fake_list(
+        c, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
         return [] if all_repos else [_ci("alpha-one", "alpha")]
 
     mocker.patch.object(dmodel, "list_containers", side_effect=fake_list)
@@ -2566,7 +2641,9 @@ def test_gather_rows_orphan_groups_have_no_apps(tmp_path, mocker, make_cfg):
     root = tmp_path / "alpha"
     mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
 
-    def fake_list(c, incus, *, all_repos, with_git_status, with_background, instances):
+    def fake_list(
+        c, incus, *, all_repos, with_git_status, with_background, instances, parent_heads=None
+    ):
         if all_repos:
             return [_ci("alpha-one", "alpha"), _ci("gamma-x", "gamma")]
         return [_ci("alpha-one", "alpha")]
@@ -5637,6 +5714,8 @@ def test_container_menu_places_autostart_after_the_job_log_and_snapshots_before_
     assert verbs[verbs.index("snapshots") + 1 : verbs.index("credential-group")] == [
         "services",
         "orchestration",
+        "container-agent",
+        "agent-window",
     ]
     # Credential group… still sits directly above the Network → group
     assert verbs[verbs.index("credential-group") + 1].startswith("net ")
@@ -6243,9 +6322,11 @@ def test_gather_live_adds_extra_roots_to_the_registered_ones(mocker, tmp_path):
     rows = mocker.patch.object(dmodel, "gather_rows", return_value=[])
     incus = mocker.Mock()
 
-    dmodel.gather_live(incus, [extra], with_git=True)
+    dmodel.gather_live(incus, [extra], with_git=True, parent_heads={"p": None})
 
-    rows.assert_called_once_with(incus, [extra, registered], with_git=True)
+    rows.assert_called_once_with(
+        incus, [extra, registered], with_git=True, parent_heads={"p": None}
+    )
 
 
 def _group(prefix, root=None):
@@ -7507,3 +7588,219 @@ def test_web_dashboard_offers_the_actions_its_own_policy_permits():
     assert dmenus.actions_for_container(groups, "alpha-1", transport="web", ssh_policy=policy) == [
         ("Open shell", "shell")
     ]
+
+
+def test_dashboard_clean_diff_cell_keeps_the_pr_target_marker():
+    from rich.text import Text
+
+    from jailbee.dashboard.format import dashboard_cell
+    from jailbee.git_status import GitStatus
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ContainerInfo, ls_field_specs
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    specs = {f.name: f for f in ls_field_specs(now=now)}
+
+    def container(sync: SyncTarget) -> ContainerInfo:
+        return ContainerInfo(
+            name="myrepo-b",
+            state="Running",
+            network=None,
+            ip=None,
+            memory_limit=None,
+            git_status=GitStatus(
+                wt="clean",
+                ahead_diff="clean",
+                ahead_count="1",
+                conflict="ok",
+                target_diff="clean",
+                sync_target=sync,
+            ),
+        )
+
+    pr = container(SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head"))
+    host = container(SyncTarget("host", "main", "b" * 40, "refs/heads/main"))
+
+    def plain(name: str, c: ContainerInfo) -> str:
+        return Text.from_markup(dashboard_cell(specs[name], c, now)).plain
+
+    assert [plain(n, pr) for n in ("target_diff", "ahead_count", "conflict")] == [
+        "✓ pr",
+        "1 pr",
+        "ok pr",
+    ]
+    assert [plain(n, host) for n in ("target_diff", "wt")] == ["✓", "✓"]
+
+
+def test_pr_container_level_with_its_pr_head_still_offers_git_pull_and_diff():
+    """↑ against the PR head is 0, but the host branch lacks those commits:
+    `git pull` / `git diff` act on the host branch, so they stay offered."""
+    from jailbee.git_status import GitStatus
+    from jailbee.host_target import SyncTarget
+
+    status = GitStatus(
+        wt="clean",
+        ahead_diff="clean",
+        ahead_count="0",
+        conflict="ok",
+        host_ahead_count="3",
+        sync_target=SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head"),
+    )
+    verbs = [verb for _, verb in dmenus.menu_actions(_ctx(mode="clone", git_status=status))]
+
+    assert "git pull" in verbs
+    assert "git diff" in verbs
+
+
+def test_dashboard_sync_columns_are_wide_enough_for_the_target_marker():
+    """At default widths a PR row's ↑12 / ↓4 / conflict keep their ``pr`` marker."""
+    from rich.text import Text
+
+    from jailbee.git_status import GitStatus
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ContainerInfo
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    c = ContainerInfo(
+        name="myrepo-b",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        repo="myrepo",
+        git_status=GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="12",
+            behind_count="4",
+            conflict="conflict",
+            target_diff="clean",
+            sync_target=SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head"),
+        ),
+    )
+    group = dmodel.RepoGroup("myrepo", "/myrepo", None, [c])
+    fields, widths = dcolumns._frame_columns(
+        [group],
+        now=now,
+        enabled=None,
+        folded=frozenset(),
+        column_widths=None,
+        shown_columns=("ahead_count", "behind_count", "conflict"),
+    )
+    for spec, width in zip(fields, widths, strict=True):
+        cell = Text.from_markup(spec.cell(c))
+        assert cell.cell_len <= width, (spec.name, cell.plain, width)
+    assert Text.from_markup(fields[0].cell(c)).plain == "12 pr"
+
+
+def test_container_picker_title_and_ls_git_status_carry_the_pr_marker():
+    from jailbee.git_status import GitStatus
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ContainerInfo, ls_field_specs
+
+    c = ContainerInfo(
+        name="myrepo-b",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        repo="myrepo",
+        git_status=GitStatus(
+            wt="clean",
+            ahead_diff="clean",
+            ahead_count="12",
+            behind_count="4",
+            conflict="ok",
+            target_diff="clean",
+            sync_target=SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head"),
+        ),
+    )
+    specs = {f.name: f for f in ls_field_specs(now=datetime(2026, 1, 1, tzinfo=UTC))}
+    assert specs["git_status"].cell(c).endswith("merge=ok pr")
+    assert "↑=12" in specs["git_status"].cell(c)
+    title = tui._format_choice_title(c, tui._choice_widths([c]))
+    assert "12 pr" in title
+    assert "4 pr" in title
+
+
+def test_gather_rows_card_says_legacy_when_the_default_cannot_apply(tmp_path, mocker, make_cfg):
+    """A `claude-jb` default with litellm off is what autostart skips; the card agrees."""
+    from jailbee.config.models_orchestration import OrchestrationView, RepoOrchestration
+    from jailbee.orchestration.runner_model import Runner
+
+    root = tmp_path / "alpha"
+    cfg = make_cfg(root)
+    assert not cfg.litellm_view().config.enabled
+    cfg._orchestration_view = OrchestrationView(
+        profiles={},
+        default_profile=None,
+        repo=RepoOrchestration(),
+        default_runner=Runner(agent="claude-jb", profile="grok", model="sonnet"),
+        default_runner_source="repo",
+    )
+    from tests.dashboard_fixtures import ci
+
+    plain = ci("alpha-plain", "alpha")
+    mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
+    mocker.patch.object(dmodel, "list_containers", return_value=[plain])
+    group = dmodel.gather_rows(mocker.MagicMock(), [root], with_git=False)[0]
+    [c] = group.containers
+    assert c.agent_source == "legacy"
+    assert c.agent_runner != "grok/sonnet"  # not the default autostart skips
+
+
+def test_gather_rows_gives_each_container_its_agent_and_where_it_comes_from(
+    tmp_path, mocker, make_cfg
+):
+    from jailbee.config.models_orchestration import OrchestrationView, RepoOrchestration
+    from jailbee.orchestration.runner_model import Runner
+
+    root = tmp_path / "alpha"
+    cfg = make_cfg(root)
+    cfg._orchestration_view = OrchestrationView(
+        profiles={},
+        default_profile=None,
+        repo=RepoOrchestration(),
+        default_runner=Runner(agent="claude", model="opus"),
+        default_runner_source="local",
+    )
+    from tests.dashboard_fixtures import ci
+
+    own = ci("alpha-own", "alpha")
+    own.agent_runner, own.agent_source = "grok/sonnet", "container"
+    plain = ci("alpha-plain", "alpha")
+    mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
+    mocker.patch.object(dmodel, "list_containers", return_value=[own, plain])
+    group = dmodel.gather_rows(mocker.MagicMock(), [root], with_git=False)[0]
+    got = {c.name: (c.agent_runner, c.agent_source) for c in group.containers}
+    assert got == {
+        "alpha-own": ("grok/sonnet", "container"),  # its own label wins
+        "alpha-plain": ("claude/opus", "local"),
+    }
+
+
+def test_dashboard_agent_compact_cell_abbreviates_past_the_column_cap():
+    from rich.text import Text
+
+    from jailbee.agent_status import AgentSummary, SessionMark
+    from jailbee.dashboard.format import dashboard_cell
+    from jailbee.lifecycle import ContainerInfo, ls_field_specs
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    spec = next(f for f in ls_field_specs(now=now) if f.name == "agent_compact")
+    c = ContainerInfo(
+        name="myrepo-b",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        repo="myrepo",
+        agent_status=(
+            AgentSummary("claude", "idle", None, None, 20, sessions=(SessionMark("idle"),) * 20),
+        ),
+    )
+
+    cell = dashboard_cell(spec, c, now)
+
+    assert "+" in cell
+    assert Text.from_markup(cell).cell_len <= 24

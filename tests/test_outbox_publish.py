@@ -256,7 +256,14 @@ def test_result_sink_gets_urls_and_policy_sees_applied_batch(env, kind):
     assert "001.json" not in env[2][kind].as_dict()
     assert any("https://github.com/acme/repo/" in line for line in lines)
     if kind == "issue":
-        assert any("73" in line for line in lines)
+        assert (
+            "001.json action 0: applied #73 Example (https://github.com/acme/repo/issues/73)"
+            in lines
+        )
+        assert (
+            "001.json action 1: applied #42 (https://github.com/acme/repo/issues/42#issuecomment-1)"
+            in lines
+        )
         assert any("#issuecomment-1" in line for line in lines)
         assert len(seen[0].manifests[0].actions) == 3
         assert [r["index"] for r in receipts] == [0, 1, 2]
@@ -1189,7 +1196,7 @@ def test_issue_uncertain_and_pr_partial_preserve_recovery(env, kind, capsys):
         output = capsys.readouterr()
         assert "001.json action 0: uncertain" in output.err
         assert "001.json action 0: uncertain" not in output.out
-        assert "resolve: jailbee issue resolve" in output.out
+        assert "resolve: jailbee outbox resolve" in output.out
         env[4]["comment"].assert_not_called()
     else:
         env[2]["pr"] = store(
@@ -1214,15 +1221,23 @@ def test_plan_cannot_interpret_terminal_controls(env, kind, capsys):
 
 
 @pytest.mark.parametrize("mode", ["failed", "uncertain", "batch", "cleanup", "success"])
-def test_actual_cli_and_selected_publication_share_outcome_streams(env, mocker, capsys, mode):
+def test_issue_apply_alias_renders_the_selected_publication_outcome_then_exits(
+    env, mocker, capsys, mode
+):
     from typer.testing import CliRunner
 
     from jailbee.cli import app
     from jailbee.outbox_io import JournalAction
 
-    mocker.patch("jailbee.cli._load_or_exit", return_value=env[0])
-    mocker.patch("jailbee.cli._resolve_existing", return_value=(env[1], IDENTITY.full_name))
-    mocker.patch("jailbee.lifecycle.short_name", return_value="feature")
+    mocker.patch("jailbee.incus.Incus", return_value=env[1])
+    # The CLI resolves the container in the repository's scope: a profiled row.
+    cfg = env[0].model_copy(update={"container_prefix": "acme"})
+    mocker.patch("jailbee.config.load_config", return_value=cfg)
+    mocker.patch("jailbee.config.load_repo_config", return_value=cfg)
+    env[1].list_containers.return_value = [
+        {**env[1].list_containers.return_value[0], "profiles": ["acme-base"], "status": "Running"}
+    ]
+    env[1].exists.side_effect = lambda name: name == IDENTITY.full_name
     receipt = JournalAction(
         index=0,
         state="applied",
@@ -1252,10 +1267,14 @@ def test_actual_cli_and_selected_publication_share_outcome_streams(env, mocker, 
     assert selected(env) == (0 if mode == "success" else 1)
     selected_output = capsys.readouterr()
     result = CliRunner().invoke(
-        app, ["issue", "apply", "feature", "--manifest", "001.json", "-y"], env={"COLUMNS": "200"}
+        app, ["issue", "apply", IDENTITY.full_name, "001.json", "-y"], env={"COLUMNS": "200"}
     )
     assert result.exit_code == (0 if mode == "success" else 1), result.output
-    assert result.stderr == selected_output.err
+    # The CLI (`outbox apply` and its `issue apply` alias) renders the same
+    # outcome, then exits through its own error line for a failure.
+    assert result.stderr.startswith(selected_output.err)
+    tail = result.stderr[len(selected_output.err) :].splitlines()
+    assert len(tail) == (0 if mode == "success" else 1) and all(t.startswith("✗") for t in tail)
     if mode == "success":
         assert result.stderr == ""
     else:
@@ -1267,9 +1286,12 @@ def test_actual_cli_and_selected_publication_share_outcome_streams(env, mocker, 
         }[mode]
         assert expected in result.stderr and expected not in result.stdout
     for text in (result.stdout, selected_output.out):
-        assert "001.json action 0: applied (https://github.com/acme/repo/issues/73)" in text
+        assert (
+            "001.json action 0: applied #73 Example (https://github.com/acme/repo/issues/73)"
+            in text
+        )
         if mode == "success":
-            assert "001.json action 1: applied (https://receipt/2)" in text
+            assert "001.json action 1: applied #73" in text and "(https://receipt/2)" in text
             assert "001.json: fully applied and removed from the outbox" in text
             assert (
                 text.index("001.json action 0: applied")
@@ -1282,8 +1304,8 @@ def test_actual_cli_and_selected_publication_share_outcome_streams(env, mocker, 
                 "001.json action 2: pending"
             )
         if mode == "uncertain":
-            assert "resolve: jailbee issue resolve acme-feature 001.json 1" in text
-            assert text.index("resolve: jailbee issue resolve") < text.index(
+            assert "resolve: jailbee outbox resolve acme-feature issue/001.json 1" in text
+            assert text.index("resolve: jailbee outbox resolve") < text.index(
                 "001.json action 2: pending"
             )
 
@@ -1662,3 +1684,82 @@ def test_issue_plan_json_names_the_assignees_kind(env):
     assert [(a["kind"], a["target"], a["will"]) for a in data["actions"]] == [
         ("assignees", "acme/repo#42", "publish")
     ]
+
+
+def _publish_issue_lines(env, files):
+    from jailbee.outbox.publish import PublishOptions, publish_selected
+
+    env[2]["issue"] = store("issue", files)
+    lines = []
+    assert (
+        publish_selected(
+            env[0],
+            env[1],
+            IDENTITY.full_name,
+            ProposalId("issue", "001.json"),
+            options=PublishOptions(publisher="user"),
+            confirm=lambda n: True,
+            raise_errors=True,
+            result_sink=lines.append,
+        )
+        == 0
+    )
+    return lines
+
+
+def test_issue_result_and_cli_lines_strip_controls_from_title(env, capsys):
+    files = {
+        "001.json": json.dumps(
+            {
+                "version": 1,
+                "actions": [
+                    {
+                        "type": "create",
+                        "repo": ".",
+                        "ref": "n",
+                        "title": "Ti\x1b[31mtle\x07",
+                        "body": "B",
+                    }
+                ],
+            }
+        )
+    }
+    lines = _publish_issue_lines(env, files)
+    assert lines == [
+        "001.json action 0: applied #73 Ti[31mtle (https://github.com/acme/repo/issues/73)"
+    ]
+    out = capsys.readouterr()
+    assert "\x1b" not in out.out + out.err and "\x07" not in out.out + out.err
+    assert "applied #73 Ti[31mtle" in out.out + out.err
+
+
+def test_only_create_actions_contribute_a_title(env):
+    from jailbee.outbox.publish import _created_subject
+
+    cfg, incus, *_ = env
+    env[2]["issue"] = store(
+        "issue",
+        {
+            "001.json": json.dumps(
+                {
+                    "version": 1,
+                    "actions": [
+                        {"type": "create", "repo": ".", "ref": "n", "title": "T", "body": "B"},
+                        {
+                            "type": "edit",
+                            "repo": ".",
+                            "issue": 42,
+                            "title": "Renamed",
+                            "expected": {"title": "Old"},
+                        },
+                        {"type": "comment", "repo": ".", "issue": 42, "body": "hi"},
+                    ],
+                }
+            )
+        },
+    )
+    batch = issue_outbox.prepare_batch(cfg, incus, IDENTITY.full_name, ("001.json",))
+    assert _created_subject(batch, "001.json", 0, 73) == " #73 T"
+    assert _created_subject(batch, "001.json", 1, 42) == " #42"
+    assert _created_subject(batch, "001.json", 2, 42) == " #42"
+    assert _created_subject(batch, "001.json", 0, None) == ""

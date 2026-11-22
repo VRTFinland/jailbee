@@ -14,6 +14,8 @@ the host outbox's stored proposal files by hand.
     {"type": "edit", "repo": ".", "issue": 42, "title": "…",
      "expected": {"title": "…"}},
     {"type": "comment", "repo": ".", "issue_ref": "new-bug", "body": "…"},
+    {"type": "comment_edit", "repo": ".", "issue": 42, "comment_id": 1234567890,
+     "body": "…", "expected": {"body": "…"}},
     {"type": "labels", "repo": ".", "issue": 42, "add": ["needs-triage"], "remove": [],
      "expected": {"labels": ["bug"]}},
     {"type": "assignees", "repo": ".", "issue": 42, "add": ["@me"], "remove": [],
@@ -23,7 +25,9 @@ the host outbox's stored proposal files by hand.
     {"type": "project_add", "repo": ".", "issue": 42, "project": "acme/7",
      "expected": {"present": false}},
     {"type": "project_remove", "repo": ".", "issue": 43, "project": "acme/7",
-     "expected": {"present": true}}
+     "expected": {"present": true}},
+    {"type": "sub_issue", "repo": ".", "issue": 40, "sub_issue_ref": "new-bug", "op": "add"},
+    {"type": "dependency", "repo": ".", "issue_ref": "new-bug", "blocked_by": 41, "op": "add"}
   ]
 }
 ```
@@ -162,6 +166,27 @@ an `expected.title` on an edit that only changes `body` is refused.
 No `expected` block — a comment never conflicts with the issue's current
 state.
 
+## `type: "comment_edit"`
+
+Replaces the body of one existing conversation comment on an issue or a pull
+request (both use GitHub's issue-comments API). Review (line) comments use the
+PR manifest's `comment_edit`. Stage it with `jailbee issue comment-edit ID --body …`; it reads the
+comment and fills in `issue` and `expected.body` for you.
+
+| Field | Rule |
+|---|---|
+| `repo` | As above. |
+| `issue` | Required positive integer: the issue or PR the comment is on. `issue_ref` is refused, because a create staged in the same batch has no comments yet. |
+| `comment_id` | Required positive integer: the comment's numeric id (the `#issuecomment-<id>` suffix of its URL, or the `id` from `jailbee issue comments N`). |
+| `body` / `body_file` | Required (exactly one); the new body, non-empty and different from `expected.body`. |
+| `expected.body` | Required string: the comment's body when staged. |
+
+Before publishing, the host refuses the action unless the comment is still on
+`issue`, was written by the GitHub account the host publishes with, and its body
+still equals `expected.body`. You can edit only comments the publishing account
+wrote, so check the author with `jailbee issue comments N` first. The field
+being changed is `comment:<comment_id>`, so two edits of one comment conflict.
+
 ## `type: "labels"`
 
 Adds and/or removes existing labels; **never creates a new label** — a
@@ -262,12 +287,48 @@ option names and validates the value type before publishing.
 `project_add` stores membership in `expected.present`; the host captures it
 when staging (or derives `false` for a new `issue_ref`).
 
+## Relations: `type: "sub_issue"` and `type: "dependency"`
+
+Native GitHub sub-issue and "blocked by" links. Each action adds or removes one
+link between two issues in the same `repo`.
+
+| Field | Rule |
+|---|---|
+| `repo`, `issue`/`issue_ref` | As above. For `sub_issue` the target is the **parent**; for `dependency` it is the **blocked** issue. |
+| `sub_issue` / `sub_issue_ref` | `sub_issue` only, exactly one: the child, as a positive issue number or the `ref` of an earlier `create` in the same manifest and repo. |
+| `blocked_by` / `blocked_by_ref` | `dependency` only, exactly one: the blocking issue, as a number or an earlier `create`'s `ref`. |
+| `op` | Required, `"add"` or `"remove"`. `"remove"` needs existing numbers on both sides (a new issue has no links). |
+
+No `expected` block: the action names its end state. At preflight, and again
+just before publishing, the host reads the link and refuses an add that is
+already linked, a removal that is not, and a pull request on either side. The
+APIs take the other issue's numeric database id, which the host reads itself;
+for an issue created earlier in the batch it reads the id after the create.
+The field being changed is `sub_issue:<child>` or `blocked_by:<blocker>` on the
+target, so two changes of one link conflict. Two `sub_issue` adds of the same
+child under different parents conflict too (one child has one parent), and a
+child that already has another parent is refused at preflight (GitHub would
+reject it mid-batch). Two `dependency` adds that block each other (A blocked by
+B and B blocked by A) are refused. A link to a new issue (`*_ref`) has no
+field and never conflicts.
+
+If a relation's outcome is uncertain (a timed-out publish), check the issue:
+when the relation is in the state the action asks for, resolve with
+`--applied`; otherwise `--retry`. A retry of an action that already took effect
+is refused. A `remove` of a child from its parent earlier in the same batch lets
+a later `add` move it to another parent.
+
+`create` has no `parent` or `blocked_by` field. `jailbee issue create --parent
+N|@REF --blocked-by N|@REF` stages the create and then these actions, targeting
+the new issue by its `ref`, so a failed link never makes the create itself
+uncertain.
+
 ## One field, one action, per target
 
 Within a single manifest, two actions may not both touch the same field of
 the same issue (identified by `issue` number, or by the same `issue_ref`) —
-e.g. two `edit` actions both changing `#42`'s title is refused when the
-manifest is parsed. The refusal names only the *later* action's own index
+e.g. two `edit` actions both changing `#42`'s title, or two `comment_edit`
+actions on the same `comment_id`, is refused when the manifest is parsed. The refusal names only the *later* action's own index
 (`"<manifest> action <n>: target already changes field 'title'"`) — it does
 not say which earlier action first touched that field, so if a manifest has
 several actions on the same target, check all of them. Split the conflicting

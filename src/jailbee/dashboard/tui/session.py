@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -127,7 +128,15 @@ from jailbee.dashboard.model import (
     target_group,
     toggle_folded,
 )
+from jailbee.dashboard.notifications import (
+    JobRow,
+    NotificationQueue,
+    QueueEntry,
+    is_critical,
+    job_rows,
+)
 from jailbee.dashboard.outbox import OutboxState
+from jailbee.dashboard.outbox_flow import LOADING as OUTBOX_LOADING
 from jailbee.dashboard.outbox_flow import Intent as OutboxIntent
 from jailbee.dashboard.outbox_flow import OutboxController
 from jailbee.dashboard.overlays import (
@@ -137,7 +146,15 @@ from jailbee.dashboard.overlays import (
     parse_pr_number,
     validate_answer,
 )
-from jailbee.dashboard.runner import ActionOutcome, ActionRun, RunResult, is_attach_style
+from jailbee.dashboard.runner import (
+    OUTPUT_DROPPED_MARKER,
+    OUTPUT_KEEP_CHARS,
+    ActionOutcome,
+    ActionRun,
+    RunProgress,
+    RunResult,
+    is_attach_style,
+)
 from jailbee.dashboard.settings import (
     SettingsState,
     Tab,
@@ -242,7 +259,18 @@ log = logging.getLogger(__name__)
 
 _TOGGLE_OPERATIONS = ("import", "refresh", "restart", "stop", "destroy")  # spawn/message baseline
 # publish issue kinds in the order the sub-picker lists them
-_PUBLISH_ISSUE_KINDS = ("create", "edit", "comment", "labels", "state", "assign_self", "assign")
+_PUBLISH_ISSUE_KINDS = (
+    "create",
+    "edit",
+    "comment",
+    "comment_edit",
+    "labels",
+    "state",
+    "assign_self",
+    "assign",
+    "sub_issue",
+    "dependency",
+)
 GRANT_PATCH_SECONDS = 15.0  # how long a local grant edit outlasts a snapshot that lacks it
 NOTICE_SECONDS = 2.5  # how long a transient subtitle message stays up
 FAILURE_NOTICE_SECONDS = 8.0  # a refused account command's reason, long enough to read
@@ -278,15 +306,58 @@ class MergePick:
     saved_marks: frozenset[str] = frozenset()  # bulk marks to restore on Esc
 
 
-def _last_line(text: str, style: DispatchStyle) -> str:
-    """``": <last output line>"`` for a failed bare action, whose output has no screen."""
-    if style != "plain":
-        return ""
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def _last_line(text: str) -> str:
+    """``": <last output line>"`` for a failed action: why it failed, at a glance."""
+    lines = [line.strip() for line in _ANSI.sub("", text).splitlines() if line.strip()]
     if not lines:
         return ""
     line = lines[-1]
     return ": " + (line if len(line) <= 100 else line[:99] + "…")
+
+
+QUEUE_DISMISS_FINISHED = "\x00dismiss-finished"
+QUEUE_JOB_PREFIX = "\x00job:"
+QUEUE_TAIL_LINES = 3
+# What an expanded entry shows before its action has printed anything.
+QUEUE_NO_OUTPUT_YET = "(no output yet)"
+QUEUE_ROW_TAIL_CHARS = 60
+
+_QUEUE_ICONS = {"running": "⟳", "awaiting": "⚠", "done": "✓", "failed": "✗"}
+
+
+def _queue_state(entry: QueueEntry) -> str:
+    if entry.state == "running":
+        return "running"
+    if entry.state == "awaiting":
+        return "awaiting answer"
+    return f"{entry.state} (exit {entry.status})"
+
+
+def _queue_label(entry: QueueEntry) -> str:
+    """One line of the queue list: icon, target, command, state, a live entry's last line."""
+    label = f"{_QUEUE_ICONS[entry.state]} {entry.target}: {entry.command} · {_queue_state(entry)}"
+    if not entry.finished:
+        last = _tail(entry.output)[-1:]
+        if last:
+            line = last[0].strip()
+            if len(line) > QUEUE_ROW_TAIL_CHARS:
+                line = line[: QUEUE_ROW_TAIL_CHARS - 1] + "…"
+            label += f" — {line}"
+    return label
+
+
+def _job_label(job: JobRow) -> str:
+    """One line of the queue list for a snapshot job."""
+    return f"{'✗' if job.failed else '⟳'} {job.target}: {job.phase} · job"
+
+
+def _tail(text: str) -> tuple[str, ...]:
+    """The last non-blank lines of ``text``, for an entry's detail."""
+    lines = [line.rstrip() for line in _ANSI.sub("", text).splitlines() if line.strip()]
+    return tuple(lines[-QUEUE_TAIL_LINES:])
 
 
 def _now() -> datetime:
@@ -323,16 +394,39 @@ class Terminal(Protocol):
         """Give the real terminal to ``fn`` (a child command), take it back, return its result."""
         ...
 
-    def run_actions(self, runs: Sequence[ActionRun], done: Callable[[ActionOutcome], None]) -> None:
+    def run_actions(
+        self,
+        runs: Sequence[ActionRun],
+        done: Callable[[ActionOutcome], None],
+        progress: RunProgress | None = None,
+    ) -> None:
         """Run each action through the action runner without taking the terminal.
 
         The child's questions are asked by the frontend itself. Returns at once;
-        ``done`` is called on the frontend's own thread when the last run ended.
+        ``done`` and every ``progress`` call are made on the frontend's own thread.
         """
         ...
 
-    def show_output(self, title: str, text: str, *, failed: bool) -> None:
-        """Show an action's captured ``text`` until the user dismisses it."""
+    def show_output(
+        self,
+        title: str,
+        text: str,
+        *,
+        failed: bool,
+        live: bool = False,
+        background: bool = False,
+        on_close: Callable[[], None] | None = None,
+    ) -> None:
+        """Show an action's captured ``text`` until the user dismisses it.
+
+        ``live``: :meth:`update_output` may replace the text while it stays open.
+        ``background``: the screen offers "continue in background" (key ``b``; closing it
+        means the same). ``on_close`` is called whenever the screen goes away.
+        """
+        ...
+
+    def update_output(self, text: str, failed: bool = False) -> None:
+        """Replace the text of the live output screen, if still open; ``failed`` styles it so."""
         ...
 
 
@@ -402,6 +496,20 @@ def _cap_detail(lines: tuple[str, ...]) -> tuple[str, ...]:
     return (*lines[:MAX_DETAIL_LINES], f"…and {len(lines) - MAX_DETAIL_LINES} more")
 
 
+class _EntryProgress:
+    """The runner's live word for a batch, routed to the queue entries of its runs."""
+
+    def __init__(self, session: DashboardSession, ids: Sequence[int]) -> None:
+        self._session = session
+        self._ids = ids
+
+    def output(self, index: int, chunk: str) -> None:
+        self._session._entry_output(self._ids[index], chunk)
+
+    def question(self, index: int, asking: bool) -> None:
+        self._session._entry_question(self._ids[index], asking)
+
+
 class DashboardSession:
     """One open terminal dashboard (see the module docstring).
 
@@ -435,6 +543,10 @@ class DashboardSession:
         self.engine = startup.engine
         self.client = startup.client
         self.jobs = JobRunner()
+        self._services_relist_queued: set[str] = set()
+        # Bumped whenever a container's service list is opened afresh, so a
+        # listing that started before it can tell it is older than what shows.
+        self._services_generation: dict[str, int] = {}
         view_state = startup.view_state
         self.enabled: tuple[str, ...] | None = view_state.columns
         self.folded: frozenset[str] = view_state.folded
@@ -457,6 +569,10 @@ class DashboardSession:
         self.merge_pick: MergePick | None = None
         self.bulk_batches: list[BulkBatch] = []
         self.overlay: Overlay | None = None
+        # Every action started through the action runner, until dismissed.
+        self.queue = NotificationQueue()
+        self._following: int | None = None  # the entry whose output screen follows it live
+        self._modal_entry: int | None = None  # the critical entry whose modal is open
         # Grant edits made here, shown until the gathered snapshot catches up (see _patch_grant).
         self._grant_patches: dict[str, _GrantPatch] = {}
         self._grant_pending: dict[str, float] = {}
@@ -465,11 +581,16 @@ class DashboardSession:
         self.notice_until = time.monotonic() + STARTUP_NOTICE_SECONDS if startup.notice else 0.0
         # The open Outbox box's controller and the menu its Esc returns to.
         self.outbox: OutboxController | None = None
+        # Marks of a closed Outbox box, per container, for the next box of that container.
+        self._outbox_marks: dict[str, tuple[frozenset[dob.RowKey], dict[str, str]]] = {}
         # Opens a URL in the desktop's browser; the app sets it (Textual's `App.open_url`).
         self.url_opener: Callable[[str], object] | None = None
         self.outbox_parent: MenuState | RepoMenuState | None = None
+        # The snapshot an open menu's entries were last checked against.
+        self._menu_seq: int | None = None  # set from the first snapshot below
         snapshot = self.client.latest()
         assert snapshot is not None  # `wait_first_snapshot` returned
+        self._menu_seq = snapshot.seq
         # The scoped, unsorted snapshot: a sort change re-sorts it without a refresh.
         # Advisories dismissed here whose snapshot has not caught up yet: hidden at once.
         self._dismissed: set[tuple[str, str]] = set()
@@ -521,6 +642,12 @@ class DashboardSession:
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
         self.rows = selectable_rows(self.groups, self.folded)
+        # Job rows come from what the table shows: a hidden repo's jobs are not
+        # dispatchable (`dispatchable` looks the target up in `self.groups`).
+        jobs = job_rows(self.groups)
+        if jobs != self.queue.jobs:
+            self.queue.set_jobs(jobs)
+            self._queue_changed()
         # Every refresh: a column appears once it has content (a mount attached,
         # a container turned loose) and goes once it has none.
         self._recompute_shown()
@@ -528,6 +655,9 @@ class DashboardSession:
         self.marked &= listed
         self._prune_merge_pick(listed)
         self._close_vanished_overlay()
+        if snapshot.seq != self._menu_seq:
+            self._menu_seq = snapshot.seq
+            self._rebuild_open_menu()
         self._refresh_orchestration_picker()
         self._pin_selection()
         self._snap_merge_cursor()
@@ -620,6 +750,7 @@ class DashboardSession:
             ineligible=ineligible,
             transport=self.transport,
             ssh_policy=self.ssh_policy,
+            queue=None if self.queue.empty else self.queue.counts(),
         )
 
     def title(self) -> str:
@@ -743,15 +874,28 @@ class DashboardSession:
         style: DispatchStyle,
         label: str,
         then: Callable[[int | None], None] | None = None,
-    ) -> None:
+        target: str | None = None,
+    ) -> int:
         """Run ``jailbee <argv>`` through the action runner, in the dashboard.
+
+        Returns the id of the action's queue entry.
 
         ``argv`` is the command without the program name, already addressed at
         ``repo`` and policy-checked by the caller. Returns at once: the result
         is settled on the frontend's thread by :meth:`_settle_actions`, which
         then calls ``then`` with the exit code (None when nothing ran).
+        ``target`` names the container or repo for its queue entry (default:
+        the first listed container in ``argv``, else the repo).
         """
-        self._start_actions([ActionRun(argv, repo.cwd())], [repo], style, label, then)
+        (entry_id,) = self._start_actions(
+            [ActionRun(argv, repo.cwd())],
+            [repo],
+            style,
+            label,
+            then,
+            targets=None if target is None else [target],
+        )
+        return entry_id
 
     def _start_actions(
         self,
@@ -762,11 +906,33 @@ class DashboardSession:
         then: Callable[[int | None], None] | None,
         *,
         settled: Callable[[ActionOutcome], None] | None = None,
-    ) -> None:
+        commands: Sequence[str] | None = None,
+        targets: Sequence[str] | None = None,
+    ) -> list[int]:
+        """Start ``runs``, one queue entry each (their ids returned); settle them at the end.
+
+        ``commands``/``targets`` label each run's entry (default: ``label``
+        and :meth:`_entry_target`).
+        """
         self.set_notice(f"running 'jailbee {label}'…", RUNNING_NOTICE_SECONDS)
+        ids = [
+            self.queue.start(
+                commands[i] if commands is not None else f"jailbee {label}",
+                targets[i] if targets is not None else self._entry_target(run.argv, repos[i]),
+                critical=is_critical(run.argv),
+            )
+            for i, run in enumerate(runs)
+        ]
+        self._queue_changed()
+        # A critical action's result is the modal's (or, once sent to the
+        # background, the queue's): no output screen of its own on the end.
+        if any((e := self.queue.get(i)) is not None and e.critical for i in ids):
+            style = "plain"
+        self._open_next_modal()
 
         def finished(outcome: ActionOutcome) -> None:
             self.notice_until = 0.0  # the running notice is over
+            self._settle_entries(ids, outcome)
             if settled is not None:
                 settled(outcome)
             else:
@@ -774,7 +940,219 @@ class DashboardSession:
                 if then is not None:
                     then(rc)
 
-        self.terminal.run_actions(runs, finished)
+        self.terminal.run_actions(runs, finished, _EntryProgress(self, ids))
+        return ids
+
+    def _entry_target(self, argv: Sequence[str], repo: RepoTarget) -> str:
+        """The container ``argv`` names (its first listed one), else ``repo``'s prefix."""
+        listed = {c.name for g in self.groups for c in g.containers}
+        named = next((word for word in argv if word in listed), None)
+        if named is not None:
+            return named
+        group = next(
+            (g for g in self.groups if g.repo_root and Path(g.repo_root) == repo.repo_root),
+            None,
+        )
+        return group.prefix if group is not None else str(repo.repo_root)
+
+    def _settle_entries(self, ids: Sequence[int], outcome: ActionOutcome) -> None:
+        """Finish the entries of the runs that ran; drop those that never started."""
+        for i, entry_id in enumerate(ids):
+            result = outcome.results[i] if i < len(outcome.results) else None
+            output = outcome.outputs[i] if i < len(outcome.outputs) else ""
+            if result is None or result.refused is not None:
+                self._drop_entry(entry_id, (result.refused if result else None) or "not run")
+                continue
+            if result.error is not None and not output:
+                self._drop_entry(entry_id, result.error)  # never started
+                continue
+            # (An error with output: the run started and failed after; keep what it printed.)
+            self.queue.finish(entry_id, result.status if result.status is not None else 1, output)
+            if entry_id == self._following:
+                finished = self.queue.get(entry_id)  # the screen shows the whole of it
+                failed = finished is not None and finished.state == "failed"
+                self.terminal.update_output(output, failed=failed)
+        if self._following is not None and (
+            (found := self.queue.get(self._following)) is None or found.finished
+        ):
+            self._following = None
+        self._queue_changed()
+
+    def _drop_entry(self, entry_id: int, why: str) -> None:
+        """Forget an entry that never ran; a modal it opened says why and goes on closing."""
+        self.queue.drop(entry_id)
+        if entry_id == self._modal_entry:
+            self.terminal.update_output(why)
+
+    # -- critical actions: the modal and the hand-off block ---------------------
+
+    def _open_next_modal(self) -> None:
+        """Open the modal of the oldest critical entry still in the foreground, if none is open."""
+        if self._modal_entry is not None:
+            return
+        entries = self.queue.foreground_entries()
+        if not entries:
+            return
+        entry = entries[0]
+        self._modal_entry = entry.id
+        self._following = None if entry.finished else entry.id
+        self.terminal.show_output(
+            entry.command,
+            entry.output or (QUEUE_NO_OUTPUT_YET if not entry.finished else ""),
+            failed=entry.state == "failed",
+            live=True,
+            background=True,
+            on_close=lambda: self._modal_closed(entry.id),
+        )
+
+    def _modal_closed(self, entry_id: int) -> None:
+        """Continue in background, or any close of a critical modal: the entry turns ordinary."""
+        if self._modal_entry != entry_id:
+            return
+        self._modal_entry = None
+        self._following = None
+        self.queue.send_to_background(entry_id)
+        self._queue_changed()
+        self._open_next_modal()
+
+    def _hand_off_refused(self) -> bool:
+        """Whether a running critical action forbids a terminal hand-off (and say why)."""
+        blocker = self.queue.blocking_entry()
+        if blocker is None:
+            return False
+        self.set_notice(
+            f"'{blocker.command}' is running in the foreground: wait for it, "
+            "or continue in the background (b in its view) to hand off the terminal",
+            FAILURE_NOTICE_SECONDS,
+        )
+        return True
+
+    def _entry_output(self, entry_id: int, chunk: str) -> None:
+        self.queue.append(entry_id, chunk)
+        self._queue_changed()
+        if entry_id == self._following:
+            found = self.queue.get(entry_id)
+            if found is not None:
+                self.terminal.update_output(found.output)
+
+    def _entry_question(self, entry_id: int, asking: bool) -> None:
+        self.queue.set_awaiting(entry_id, asking)
+        self._queue_changed()
+
+    def after_hand_off(self, attention_before: frozenset[tuple[str, str | int]]) -> None:
+        """Back from a tmux hand-off: show the queue if something new waits on the user.
+
+        ``attention_before`` is ``queue.attention_items()`` when the hand-off
+        began: a failed job row lingers until `job clear`, so only an item
+        that was not waiting then opens the queue (a count would miss one
+        item replacing another).
+        """
+        if self.overlay is None and not self.queue.attention_items() <= attention_before:
+            self.open_queue()
+
+    def _queue_changed(self) -> None:
+        """Redraw an open queue list or entry from the queue as it is now."""
+        overlay = self.overlay
+        if not isinstance(overlay, Picker):
+            return
+        if overlay.purpose == "queue":
+            self.overlay = self.queue_picker(start_index=overlay.start_index)
+        elif overlay.purpose == "queue-entry":
+            self.overlay = self.queue_entry_picker(int(overlay.carry[0]))
+        elif overlay.purpose == "queue-job":
+            self.overlay = self.queue_job_picker(overlay.carry[0])
+
+    def queue_picker(self, *, start_index: int = 0) -> Picker:
+        """The notification queue's list: one entry per action, then the clean-up."""
+        entries = [
+            PickerEntry(_job_label(job), QUEUE_JOB_PREFIX + job.target) for job in self.queue.jobs
+        ]
+        entries += [
+            PickerEntry(_queue_label(entry), str(entry.id)) for entry in reversed(list(self.queue))
+        ]
+        if any(entry.finished for entry in self.queue):
+            entries.append(PickerEntry("Dismiss finished", QUEUE_DISMISS_FINISHED, "D"))
+        detail: tuple[str, ...] = ()
+        if not entries:
+            detail = ("No background actions yet.",)
+            entries.append(PickerEntry("Close", "close"))
+        return Picker(
+            "queue",
+            "Notifications",
+            tuple(entries),
+            detail=detail,
+            start_index=min(start_index, len(entries) - 1),
+        )
+
+    def queue_entry_picker(self, entry_id: int) -> Picker:
+        """One entry's own actions, or the list again once it is gone."""
+        entry = self.queue.get(entry_id)
+        if entry is None:
+            return self.queue_picker()
+        entries = [PickerEntry("Show output", "output", "o")]
+        if entry.finished:
+            entries.append(PickerEntry("Dismiss", "dismiss", "d"))
+        return Picker(
+            "queue-entry",
+            entry.command,
+            tuple(entries),
+            carry=(str(entry.id),),
+            detail=(f"{entry.target}: {_queue_state(entry)}", *_tail(entry.output)),
+            back=self.queue_picker(),
+        )
+
+    def queue_job_picker(self, target: str) -> Picker:
+        """A snapshot job's own action (its log), or the list again once it is gone."""
+        job = self.queue.job(target)
+        if job is None:
+            return self.queue_picker()
+        return Picker(
+            "queue-job",
+            f"{job.target}: {job.phase}",
+            (PickerEntry("Show job log", "log", "l"),),
+            carry=(job.target,),
+            detail=("A background job; it goes when the job does.",),
+            back=self.queue_picker(),
+        )
+
+    def open_queue(self) -> None:
+        """The badge or its key: show the queue list."""
+        self.overlay = self.queue_picker()
+
+    def _queue_chosen(self, picker: Picker, entry: PickerEntry) -> Overlay | None:
+        if picker.purpose == "queue-job":
+            target = picker.carry[0]
+            job = self.queue.job(target)
+            if job is None:
+                return self.queue_picker()
+            self.dispatch(target, "job log --follow" if job.running else "job log")
+            return self.queue_job_picker(target)
+        if picker.purpose == "queue":
+            if entry.value.startswith(QUEUE_JOB_PREFIX):
+                return self.queue_job_picker(entry.value.removeprefix(QUEUE_JOB_PREFIX))
+            if entry.value == QUEUE_DISMISS_FINISHED:
+                self.queue.dismiss_finished()
+                return self.queue_picker()
+            if entry.value == "close" or not entry.value.isdigit():
+                return None
+            return self.queue_entry_picker(int(entry.value))
+        entry_id = int(picker.carry[0])
+        found = self.queue.get(entry_id)
+        if found is None:
+            return self.queue_picker()
+        if entry.value == "output":
+            text = found.output or (QUEUE_NO_OUTPUT_YET if not found.finished else "")
+            self._following = None if found.finished else entry_id
+            self.terminal.show_output(
+                found.command, text, failed=found.state == "failed", live=not found.finished
+            )
+            return self.queue_entry_picker(entry_id)
+        if entry.value == "dismiss":
+            if not self.queue.dismiss(entry_id):
+                self.set_notice("A running action cannot be dismissed")
+                return self.queue_entry_picker(entry_id)
+            return self.queue_picker()
+        return None
 
     def _settle_actions(
         self, repo: RepoTarget, label: str, style: DispatchStyle, outcome: ActionOutcome
@@ -793,28 +1171,17 @@ class DashboardSession:
                 )
             return None
         rc = result.status if result.status is not None else 1
-        text = outcome.output
-        self._present_output(label, style, rc, text)
+        # Every action is a queue entry. A verb that runs *for* its output (diff,
+        # logs, listings, doctor, the command line) also opens it right away;
+        # the rest stay quiet and point at the queue.
         if rc != 0:
-            self.set_notice(f"'jailbee {label}' exited {rc}{_last_line(text, style)}")
-        elif style == "report":
-            # A clean run shows nothing, so this is all that says it ran.
-            self.set_notice(f"'jailbee {label}' done")
+            self.set_notice(f"'jailbee {label}' exited {rc}{_last_line(outcome.output)} · Q: queue")
+        else:
+            self.set_notice(f"'jailbee {label}' done · Q: queue")
+        if style in ("paged", "output") and outcome.output:
+            self.terminal.show_output(f"jailbee {label}", outcome.output, failed=rc != 0)
         self.client.refresh()  # an action likely changed state — refresh ASAP
         return rc
-
-    def _present_output(self, label: str, style: DispatchStyle, rc: int, text: str) -> None:
-        """What the old pause/pager/bare styles become: an output screen or nothing.
-
-        ``output`` and ``paged`` always show what the command printed;
-        ``report`` only when it failed; ``plain`` never (a failure's last line
-        goes in the notice).
-        """
-        if not text.strip():
-            return
-        shows = style in ("output", "paged") or (style == "report" and rc != 0)
-        if shows:
-            self.terminal.show_output(f"jailbee {label}", text, failed=rc != 0)
 
     def dispatchable(self, target: str, verb: str) -> RepoTarget | None:
         """The repo to run ``verb`` on ``target`` in, or None after noticing why not.
@@ -870,7 +1237,9 @@ class DashboardSession:
             argv = action_cli_argv(repo, verb, target, transport=self.transport)
             if style == "paged":
                 argv.append("--color")  # the output screen renders it; a pipe would turn it off
-            self.run_action(repo, argv, style=style, label=f"{verb} {target}")
+            self.run_action(repo, argv, style=style, label=f"{verb} {target}", target=target)
+            return
+        if self._hand_off_refused():
             return
         try:
             rc = self.terminal.hand_off(
@@ -1148,7 +1517,7 @@ class DashboardSession:
         kind: Literal["repo", "container"],
         argv: list[str],
         *,
-        style: DispatchStyle = "output",
+        style: DispatchStyle = "plain",
         diagnostic_path: Path | None = None,
         allow_orphan: bool = False,
         then: Callable[[int | None], None] | None = None,
@@ -1186,7 +1555,10 @@ class DashboardSession:
                 style=style,
                 label=dact.command_label(argv),
                 then=then,
+                target=target,
             )
+            return None
+        if self._hand_off_refused():
             return None
         try:
             rc = self.terminal.hand_off(
@@ -1219,7 +1591,7 @@ class DashboardSession:
             return self.open_autostart_rerun(container)
         if verb == dact.AUTOSTART_STATUS:
             self.run_dashboard_command(
-                container, "container", dact.autostart_status_argv(container)
+                container, "container", dact.autostart_status_argv(container), style="output"
             )
             return None
         if verb == dact.AUTOSTART_CANCEL:
@@ -1232,6 +1604,13 @@ class DashboardSession:
             return self.open_services(container)
         if verb == dact.ORCHESTRATION:
             return self.open_orchestration(container)
+        if verb == dact.CONTAINER_AGENT:
+            # The command's own questions are the picker (prompt channel).
+            self.run_dashboard_command(container, "container", dact.container_agent_argv(container))
+            return None
+        if verb == dact.AGENT_WINDOW:
+            self.run_dashboard_command(container, "container", dact.agent_window_argv(container))
+            return None
         return None
 
     def open_orchestration(self, container: str, start_index: int = 0) -> Picker | None:
@@ -1590,6 +1969,13 @@ class DashboardSession:
         if grant.publish_pr_reviews or self._publish_widening_permitted(container, "reviews"):
             state = "on" if grant.publish_pr_reviews else "off"
             entries.append(PickerEntry(f"Publish PR reviews: {state}", "publish:pr-reviews"))
+        if grant.publish_pr_comment_edits or (
+            grant.publish_pr_reviews and self._publish_widening_permitted(container, "reviews")
+        ):
+            state = "on" if grant.publish_pr_comment_edits else "off"
+            entries.append(
+                PickerEntry(f"Publish PR comment edits: {state}", "publish:pr-comment-edits")
+            )
         entries.append(PickerEntry(f"Publish rate: {grant.publish_rate}/hour…", "publish-rate"))
         return entries
 
@@ -1816,6 +2202,10 @@ class DashboardSession:
             argv = dact.orchestrate_grant_argv(
                 container, publish_pr_reviews=not grant.publish_pr_reviews
             )
+        elif value == "publish:pr-comment-edits":
+            argv = dact.orchestrate_grant_argv(
+                container, publish_pr_comment_edits=not grant.publish_pr_comment_edits
+            )
         patched = replace(grant)
         if value.startswith("op:"):
             op = value[len("op:") :]
@@ -1828,7 +2218,14 @@ class DashboardSession:
         elif value == "publish:prs":
             patched = replace(grant, publish_prs=not grant.publish_prs)
         elif value == "publish:pr-reviews":
-            patched = replace(grant, publish_pr_reviews=not grant.publish_pr_reviews)
+            reviews = not grant.publish_pr_reviews
+            patched = replace(
+                grant,
+                publish_pr_reviews=reviews,
+                publish_pr_comment_edits=grant.publish_pr_comment_edits and reviews,
+            )
+        elif value == "publish:pr-comment-edits":
+            patched = replace(grant, publish_pr_comment_edits=not grant.publish_pr_comment_edits)
         if argv is None or not self.run_quiet_cli(repo, argv):
             return self._close_after_failure()
         self._patch_grant(container, patched)
@@ -2159,7 +2556,13 @@ class DashboardSession:
             return None
         return dact.mounts_picker(container, entries)
 
-    def open_services(self, container: str) -> Picker | None:
+    def _service_ls(self, container: str) -> Callable[[], tuple[dact.ServiceRow, ...] | str] | None:
+        """The blocking `service ls` of ``container``, ready to run on any thread.
+
+        Resolved here, on the UI thread (a notice and None when the container
+        is gone); the returned call touches no session state and gives the rows,
+        or the failure as a string.
+        """
         repo = self.repo_for(container, "container")
         found = self._listed_container(container)
         if repo is None or found is None or found[1].state != "Running":
@@ -2168,19 +2571,92 @@ class DashboardSession:
         argv = dact.addressed(
             dact.service_ls_argv(container), repo.flags(), transport=self.transport
         )
-        try:
-            check_dashboard_command(argv, self.ssh_policy, transport=self.transport)
-            result = da.run_cli_quiet(argv, cwd=repo.cwd())
-            if not result.ok:
-                raise ValueError(result.message)
-            rows = dact.parse_service_rows(result.stdout)
-        except (RouteError, ValueError) as exc:
-            self.set_notice(f"could not list services: {exc}", seconds=FAILURE_NOTICE_SECONDS)
+        policy, transport, cwd = self.ssh_policy, self.transport, repo.cwd()
+
+        def ls() -> tuple[dact.ServiceRow, ...] | str:
+            try:
+                check_dashboard_command(argv, policy, transport=transport)
+                result = da.run_cli_quiet(argv, cwd=cwd)
+                if not result.ok:
+                    raise ValueError(result.message)
+                return dact.parse_service_rows(result.stdout)
+            except Exception as exc:  # a job thread must never die with its busy mark set
+                return str(exc)
+
+        return ls
+
+    def open_services(self, container: str) -> Picker | None:
+        ls = self._service_ls(container)
+        if ls is None:
+            return None
+        rows = ls()
+        if isinstance(rows, str):
+            self.set_notice(f"could not list services: {rows}", seconds=FAILURE_NOTICE_SECONDS)
             return None
         if not rows:
             self.set_notice(f"No services in '{container}'")
             return None
+        self._services_generation[container] = self._services_generation.get(container, 0) + 1
         return dact.services_picker(container, rows)
+
+    def _services_overlay(self, container: str) -> tuple[Picker, Picker] | None:
+        """The open overlay and the service list it shows, if they are container's."""
+        overlay = self.overlay
+        if not isinstance(overlay, Picker) or overlay.target != container:
+            return None
+        shown = overlay.back if overlay.purpose == "container-service-action" else overlay
+        if not isinstance(shown, Picker) or shown.purpose != "container-services":
+            return None
+        return overlay, shown
+
+    def _refresh_services(self, container: str) -> None:
+        """Re-list ``container``'s services into an open service picker, if one is showing.
+
+        Runs when a service operation ends. The cursor stays on the same row;
+        an action picker keeps its place and gets the fresh list as its back.
+        `service ls` can take up to 60 s, so it runs on a job thread; actions
+        ending while one is in flight only queue a single further re-list.
+        """
+        if self._services_overlay(container) is None:
+            return
+        key = f"services:{container}"
+        if self.jobs.busy(key):
+            self._services_relist_queued.add(container)
+            return
+        ls = self._service_ls(container)
+        if ls is None:
+            return
+        generation = self._services_generation.get(container, 0)
+        self.jobs.call(
+            key,
+            "refreshing services…",
+            ls,
+            lambda rows: self._apply_refreshed_services(container, rows, generation),
+        )
+
+    def _apply_refreshed_services(
+        self, container: str, rows: tuple[dact.ServiceRow, ...] | str, generation: int
+    ) -> None:
+        queued = container in self._services_relist_queued
+        self._services_relist_queued.discard(container)
+        # The user may have moved on while the listing ran: look again now.
+        current = self._services_overlay(container)
+        if generation != self._services_generation.get(container, 0):
+            current = None  # a fresher list was opened meanwhile; this one is older
+        if current is not None and isinstance(rows, str):
+            if not queued:  # a queued re-run reports its own outcome
+                self.set_notice(f"could not list services: {rows}", seconds=FAILURE_NOTICE_SECONDS)
+        elif current is not None and not isinstance(rows, str) and rows:
+            overlay, shown = current
+            fresh = dact.services_picker(container, rows)
+            start = max(0, min(shown.start_index, len(fresh.entries) - 1))
+            fresh = replace(fresh, start_index=start)
+            if shown is overlay:
+                self.overlay = fresh
+            else:
+                self.overlay = replace(overlay, back=fresh)
+        if queued:
+            self._refresh_services(container)
 
     def open_autostart_rerun(self, container: str) -> Picker | None:
         """Capture the public listing; no worker or config probes in the frontend."""
@@ -2287,9 +2763,26 @@ class DashboardSession:
         controller.sent_loader = read
         controller.load_sent()
         controller.on_change = self._outbox_listener(controller)
+        self._remember_outbox_marks()
+        saved = self._outbox_marks.get(container)
+        if saved is not None and saved[0]:
+            controller.restore_marks(*saved)
         self.outbox = controller
         controller.load_later()
         return controller.state
+
+    def _remember_outbox_marks(self) -> None:
+        """Keep the marks of the box being replaced or closed, for its container's next box."""
+        old = self.outbox
+        if old is not None and old.container is not None and not old.sent_only:
+            self._outbox_marks[old.container] = (old.state.marks, old.revisions())
+        # A destroyed container's marks go with it.
+        # (An empty listing is "not loaded yet", not "everything destroyed".)
+        # Judged against every repo, hidden ones included: hiding a repo is not destroying it.
+        if self.all_groups:
+            live = {c.name for g in self.all_groups for c in g.containers}
+            for name in [n for n in self._outbox_marks if n not in live]:
+                del self._outbox_marks[name]
 
     def open_sent(self, prefix: str) -> OutboxState | None:
         """The repo's Sent timeline (all containers, destroyed ones too); None after a notice."""
@@ -2316,6 +2809,7 @@ class DashboardSession:
         )
         controller.load_sent()
         controller.on_change = self._outbox_listener(controller)
+        self._remember_outbox_marks()
         self.outbox = controller
         return controller.state
 
@@ -2545,13 +3039,7 @@ class DashboardSession:
         return Picker(
             "autostart-services",
             f"Custom services — {choice.target}",
-            (
-                PickerEntry("Done", "\x00done"),
-                *(
-                    PickerEntry(f"[{'x' if name in checked else ' '}] {name}", name)
-                    for name in group.autostart_services
-                ),
-            ),
+            dact.autostart_service_entries(group, checked),
             target=choice.target,
             carry=(*choice.carry, *checked),
             back=choice,
@@ -2879,6 +3367,8 @@ class DashboardSession:
 
         None closes the overlay, as in :func:`submit_prompt`.
         """
+        if picker.purpose in ("queue", "queue-entry", "queue-job"):
+            return self._queue_chosen(picker, entry)
         if picker.purpose == "container-services":
             try:
                 name, state = json.loads(picker.carry[int(entry.value)])
@@ -2899,7 +3389,9 @@ class DashboardSession:
             if not entries:
                 self.set_notice("No service actions are permitted here")
                 return None
-            return replace(actions, entries=entries, back=picker)
+            return replace(
+                actions, entries=entries, back=replace(picker, start_index=int(entry.value))
+            )
         if picker.purpose == "container-service-action":
             if entry.value not in {"start", "stop", "restart", "refresh", "logs"}:
                 return None
@@ -2909,8 +3401,16 @@ class DashboardSession:
                 if entry.value == "logs"
                 else dact.service_op_argv(entry.value, picker.target, name)
             )
-            self.run_dashboard_command(picker.target, "container", argv)
-            return None
+            if entry.value == "logs" or picker.back is None:
+                self.run_dashboard_command(picker.target, "container", argv)
+                return None
+            # An operation runs on in the background (its queue entry holds the
+            # output); the user lands back on the service list, refreshed when it ends.
+            target = picker.target
+            self.run_dashboard_command(
+                target, "container", argv, then=lambda _rc: self._refresh_services(target)
+            )
+            return picker.back
 
         if picker.purpose in ("new-autostart", "restart-autostart"):
             if entry.value == dact.CUSTOM_SERVICES:
@@ -3149,6 +3649,8 @@ class DashboardSession:
         argv = ["jailbee", "config", "edit", *repo.flags()]
         if global_layer:
             argv.append("--global")
+        if self._hand_off_refused():
+            return
         try:
             rc = self.terminal.hand_off(
                 lambda: subprocess.run(argv, check=False, cwd=repo.cwd()).returncode
@@ -3191,8 +3693,10 @@ class DashboardSession:
             return
         if not is_attach_style(argv):
             # Everything the line can run that is not an attach verb: its output
-            # stays on screen until read (the old pause), its questions are modals.
+            # opens when it ends (it is also a queue entry); its questions are modals.
             self.run_action(repo, argv, style="output", label=" ".join(argv))
+            return
+        if self._hand_off_refused():
             return
         try:
 
@@ -3225,6 +3729,31 @@ class DashboardSession:
             shown_columns=self.shown_columns,
             sort=self.sort,
             available=self.terminal.table_width,
+        )
+
+    def _rebuild_open_menu(self) -> None:
+        """Re-derive an open container menu's entries from the new snapshot.
+
+        The entries depend on live facts (the outbox counts, the container's
+        state), and a menu opened on a stale snapshot would otherwise miss an
+        entry until it is reopened. An unchanged list keeps the very same
+        object, so a box on screen is not touched; the box keeps its own
+        cursor (`MenuBox.show`).
+        """
+        menu = self.overlay
+        if not isinstance(menu, MenuState):
+            return
+        fresh = open_menu(
+            self.groups,
+            menu.container,
+            remote=self.remote,
+            ssh_policy=self.ssh_policy,
+            transport=self.transport,
+        )
+        if fresh is None or fresh.actions == menu.actions:
+            return
+        self.overlay = replace(
+            fresh, start_group=menu.start_group, start_index=menu.start_index, direct=menu.direct
         )
 
     def _close_vanished_overlay(self) -> None:
@@ -3437,6 +3966,7 @@ class DashboardSession:
             self.overlay = self.egress_parent
             self.egress_parent = None
         elif isinstance(overlay, OutboxState):
+            self._remember_outbox_marks()
             self.overlay = self.outbox_parent
             self.outbox_parent = None
         elif isinstance(overlay, Picker):
@@ -3453,6 +3983,8 @@ class DashboardSession:
 
     def close_overlay(self) -> None:
         """Close the overlay and everything behind it (a click outside it)."""
+        if isinstance(self.overlay, OutboxState):
+            self._remember_outbox_marks()
         self.overlay = None
         self.egress_parent = None
         self.outbox_parent = None
@@ -3497,6 +4029,9 @@ class DashboardSession:
                 self.overlay = self.load_accounts(target)
             elif verb == dact.REPO_APPLY:
                 self.overlay = dact.apply_picker(target)
+            elif verb == dact.REPO_AGENT:
+                # The command's own two questions are the picker (prompt channel).
+                self.run_dashboard_command(target, "repo", dact.agent_use_argv())
             elif verb == dact.REPO_BASE_BUILD:
                 self.run_dashboard_command(target, "repo", dact.base_build_argv())
             elif verb == dact.REPO_DISMISS_ADVISORIES:
@@ -3508,7 +4043,7 @@ class DashboardSession:
             elif verb == dact.REPO_DOCTOR:
                 self.run_dashboard_command(target, "repo", dact.doctor_argv(), style="paged")
             elif verb == dact.REPO_DISK_USAGE:
-                self.run_dashboard_command(target, "repo", dact.disk_usage_argv())
+                self.run_dashboard_command(target, "repo", dact.disk_usage_argv(), style="output")
             elif verb == dact.REPO_PRUNE:
                 self.run_dashboard_command(target, "repo", dact.prune_argv())
             elif verb == dact.REPO_REMOVE:
@@ -3634,6 +4169,8 @@ class DashboardSession:
             self.overlay = self.start_new_container()
         elif key == "accounts":
             self.overlay = self.open_accounts()
+        elif key == "queue":
+            self.open_queue()
         elif key in ("config-edit", "config-edit-global") and self.remote:
             self.set_notice(REMOTE_CONFIG_EDIT_NOTE)
         elif key in ("config-edit", "config-edit-global"):
@@ -4033,9 +4570,10 @@ class DashboardSession:
     ) -> None:
         """One detached child per container; one notice when the last one ends.
 
-        Nothing is suspended: these verbs print nothing worth reading and ask
-        nothing the dashboard has not already answered (``bulk_argv``, or
-        ``argv_for`` when each child's argv is built elsewhere).
+        Nothing is suspended: each child's output is captured into its queue
+        entry (none for a ``--background`` child, whose job row is its
+        progress), and these verbs ask nothing the dashboard has not already
+        answered (``bulk_argv``, or ``argv_for`` when each child's argv is built elsewhere).
         """
         batch = BulkBatch(action.verb, skipped=dict(action.skipped))
         self.bulk_batches.append(batch)
@@ -4057,26 +4595,54 @@ class DashboardSession:
                 continue
             argv = ["jailbee", *dact.addressed(canonical, target.flags(), transport=self.transport)]
             batch.pending.add(name)
+            # A tracked verb (``--background``) exits at once: its progress is a
+            # lifecycle job row, so it gets no queue entry of its own.
+            entry_id = (
+                None
+                if "--background" in canonical
+                else self.queue.start(
+                    f"jailbee {' '.join(canonical)}", name, critical=is_critical(canonical)
+                )
+            )
             try:
                 self.jobs.start(
                     f"bulk:{action.verb}:{name}",
                     f"{action.verb} {name}…",
                     argv,
                     target.cwd(),
-                    partial(self._bulk_child_done, batch, name),
+                    partial(self._bulk_child_done, batch, name, entry_id),
+                    capture_stdout=True,
                 )
-            except ValueError:
+            except (ValueError, OSError) as exc:
+                self._drop_bulk_entry(entry_id)
                 batch.pending.discard(name)
-                batch.skipped[name] = f"a bulk {action.verb} is already running"
-            except OSError as exc:
+                if isinstance(exc, ValueError):
+                    batch.skipped[name] = f"a bulk {action.verb} is already running"
+                else:
+                    batch.failed[name] = str(exc) or f"'{target.repo_root}' no longer exists"
+            except BaseException:
+                self._drop_bulk_entry(entry_id)
                 batch.pending.discard(name)
-                batch.failed[name] = str(exc) or f"'{target.repo_root}' no longer exists"
+                raise
+        self._queue_changed()
         self._settle(batch)
 
-    def _bulk_child_done(self, batch: BulkBatch, name: str, result: JobResult) -> None:
+    def _bulk_child_done(
+        self, batch: BulkBatch, name: str, entry_id: int | None, result: JobResult
+    ) -> None:
+        if entry_id is not None:
+            output = result.stdout + result.stderr  # success lines go to stdout
+            if len(output) > OUTPUT_KEEP_CHARS:
+                output = OUTPUT_DROPPED_MARKER + output[-OUTPUT_KEEP_CHARS:]
+            self.queue.finish(entry_id, result.returncode, output)
+            self._queue_changed()
         batch.finish(name, result)
         self.client.refresh()
         self._settle(batch)
+
+    def _drop_bulk_entry(self, entry_id: int | None) -> None:
+        if entry_id is not None:
+            self.queue.drop(entry_id)
 
     def _settle(self, batch: BulkBatch) -> None:
         """Report a batch whose children have all ended; unmark what succeeded."""
@@ -4126,15 +4692,18 @@ class DashboardSession:
             failed.update({r.prefix: f"exited {c}" for r, c in zip(runs, codes, strict=False) if c})
             self.marked -= frozenset(ok)
             batch = BulkBatch(action.verb, ok=ok, failed=failed, skipped=dict(action.skipped))
-            if failed or outcome.output.strip():
-                self.terminal.show_output(
-                    f"jailbee {action.verb}", outcome.output, failed=bool(failed)
-                )
             self.set_notice(batch.summary(), FAILURE_NOTICE_SECONDS if failed else NOTICE_SECONDS)
             self.client.refresh()
 
         self._start_actions(
-            full, [r.target for r in runs], "output", action.verb, None, settled=settled
+            full,
+            [r.target for r in runs],
+            "output",
+            action.verb,
+            None,
+            settled=settled,
+            commands=[f"jailbee {dact.command_label(list(run.argv))}" for run in runs],
+            targets=[run.prefix for run in runs],
         )
 
     def toggle_mark(self, name: str) -> None:
@@ -4248,10 +4817,18 @@ class DashboardSession:
             self._merge_pick_click(hit, toggle=toggle)
             return
         overlay = self.overlay
-        if overlay is not None and not (
+        if isinstance(overlay, OutboxState):
+            if overlay.question is not None or (
+                overlay.busy is not None and overlay.busy != OUTBOX_LOADING
+            ):
+                return  # a question or a running publish keeps the focus
+        elif overlay is not None and not (
             isinstance(overlay, (MenuState, RepoMenuState, Picker)) or overlay == "help"
         ):
             return  # a prompt, the command line, settings, egress or accounts keep the focus
+        if hit is not None and hit.kind == "queue":
+            self.open_queue()
+            return
         if hit is not None and hit.kind not in ("scroll", "sort") and not self._listed(hit):
             return  # stale: the row or repo left the listing since the frame was painted
         if hit is not None and hit.kind in ("advisory-run", "advisory-dismiss", "upgrade-all"):

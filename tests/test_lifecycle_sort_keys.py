@@ -202,3 +202,8 @@ def test_helpers_are_module_level():
     assert lifecycle._diff_key("clean") == (0, 0)
     assert lifecycle._count_key("7") == (7,)
     assert lifecycle._text_key("  ") is None
+
+
+def test_count_key_sorts_a_missing_target_above_every_count():
+    assert lifecycle._count_key("•") > lifecycle._count_key("999999")
+    assert lifecycle._count_key("?") is None

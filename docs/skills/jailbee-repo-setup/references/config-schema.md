@@ -455,7 +455,8 @@ path would otherwise become an argument to the first), while `args`
 
 Repo service names start with a lowercase letter or digit, contain lowercase
 letters, digits, `_` or `-`, and have at most 63 characters. Each has required
-nonempty `run` and optional `prepare` (list), `ready` (command), `ready_timeout`
+nonempty `run`, optional `description` (string, `""`: what the service does and
+when an agent needs it; shown by `service ls` and the dashboard) and optional `prepare` (list), `ready` (command), `ready_timeout`
 (positive seconds, 120), `status` (read-only command), `status_timeout` (integer
 seconds, minimum 1, default 5), `logs.filters` (named regex map, `{}`) and
 `logs.history_limit` (tmux scrollback lines, 50000, minimum 1000), `stop` (command), `stop_timeout`
@@ -734,7 +735,7 @@ JSON are unaffected. `hide` only prunes the *built-in* default set.
 Allowed names: `name`, `full_name`, `alias`, `repo`, `mode`, `base`, `state`,
 `created`, `job`, `network`, `ttl`, `loose_until`, `ip`, `memory_limit`,
 `mem`, `wt`, `target_diff`, `ahead_count`, `behind_count`, `conflict`,
-`local_diff`, `local_count`, `git_status`, `pr`. Three things are problems: an unknown
+`host_ahead`, `host_behind`, `local_diff`, `local_count`, `git_status`, `pr`. Three things are problems: an unknown
 name (reported with the allowed set listed), `fields: []` (no columns at
 all — use `fields: null` for the built-in default set), and a name repeated
 inside `fields`. None of these is fatal at load time, in either file — a
@@ -758,7 +759,12 @@ local ref wins; tracking-ahead/diverged notices describe only the fetched ref,
 not the remote server. Missing refs or an unreadable selected commit produce
 unknown comparison values rather than using a pinned anchor. Explicit JSON
 `git_status` exposes `target_diff`, `ahead_count`, `behind_count`, `base_source`,
-`base_sha`, `tracking_relation` and `upstream_ref`; its submodule line fields
+`base_sha`, `tracking_relation`, `upstream_ref`, `sync_target`,
+`host_ahead_count` and `host_behind_count` (the DIFF/↑/↓/MERGE columns compare
+with the sync target: the PR head for a PR container, otherwise the host
+branch; the `git_status` text column and picker titles carry a `pr` marker
+for a PR-head comparison); `behind_count` is digits, `"?"` or `"missing"` (the
+container lacks the target commit: behind, count unknown); its submodule line fields
 are `target_ins`/`target_del` (with `ahead_commits`/`behind_commits` for graph
 counts).
 
@@ -864,7 +870,7 @@ GitHub CLI (`gh`) integration inside containers.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | bool | `false` | Master switch. Enable globally; a committed repo config may contain only `github: {enabled: false}` to override it. When `true`: auto-adds `api.github.com:443` to strict-mode egress, writes `/etc/profile.d/jailbee-github.sh` (exports the token) at autostart, and enables the `github` doctor checks. The `gh` binary is always in the golden image regardless. |
+| `enabled` | bool | `false` | Master switch. Enable globally; a committed repo config may contain only `github: {enabled: false}` to override it. When `true`: auto-adds `api.github.com:443` to strict-mode egress, writes `/etc/profile.d/jailbee-github.sh` (exports the token) on boot and `jailbee apply` (removed again when disabled or the token is gone), and enables the `github` doctor checks. The `gh` binary is always in the golden image regardless. |
 | `token` | PAT | unset | This repo's fine-grained personal access token. A `SecretStr` (masked in config dumps). **Set only in the host-local file `~/.config/jailbee/repos/<container_prefix>.yaml`**, mode `0600` — `load_config` rejects tokens in the committed repo file and `github.token` in `global.yaml`. |
 | `api_tokens` | map `container_prefix` → PAT | `{}` | **Deprecated; removed in 2.0.0.** The pre-1.6 per-repo map in `global.yaml`; the host operator moves it with `jailbee config migrate --apply`. Don't write new entries. |
 
@@ -1060,6 +1066,8 @@ in `global.yaml` and the repo config; the repo layer wins field by field.
 | `pr.agent` | string | `auto` | Which in-container agent writes the PR text. `auto` = the repo's own agent: among enabled agents the `autostart` ones first, then all enabled; Claude first, then by name; the first with a `headless` command. With `litellm.autostart` on, Claude runs as `claude-jb`. Name an agent (`claude`, `codex`, ...) to pin it, or `claude-jb` to run Claude through the LiteLLM wrapper. A pinned agent that is not enabled or has no `headless` command is reported and the placeholder used — never another agent. No usable agent under `auto` just means AI generation is off. |
 | `pr.ai_description` | bool | `true` | When `true`, `jailbee pr push` generates a new PR's title and body with the agent (opt out per-invocation with `jailbee pr push --no-ai`). |
 | `pr.ai_branch` | bool | `true` | When `true`, `jailbee pr push` asks the agent to propose a convention-following head branch name (confirmed interactively; `--as` / `--no-ai` override). No effect when `ai_description` is `false`. |
+| `pr.autofetch` | bool | `true` | The dashboard's state service refetches each PR-bound container's PR head every `autofetch_interval` seconds (never prompting; failure keeps the old head). Turn off for passphrase or FIDO/YubiKey-backed remotes and use `jailbee pr fetch`. |
+| `pr.autofetch_interval` | int | `300` | Seconds between autofetches of one PR (minimum 30). |
 | `pr.model` | string \| null | agent's own | Model passed as `--model`. Unset: `sonnet` for Claude/`claude-jb`, the agent's own default for any other. An alias or full model ID; an explicit `null` inherits the container's default model on every agent. Must be a single whitespace-free token or config load fails. |
 | `pr.prompt` | string \| null | `null` | Project-specific PR-writing instructions, embedded in JailBee's prompt as a section that outranks its generic title/body guidance. A repo-level key — this is where a project's PR standard belongs. Max 20 000 characters. |
 | `pr.timeout` | int | `600` | Seconds `jailbee pr push` gives the agent to produce the PR text before falling back to a placeholder. Generation is an agentic run over the log, the diff, the PR template, the branch's spec and the CI config — a dozen-plus turns, so cost scales with the repository, not just the diff (109 s in JailBee's own repo on a 21-file diff). Raise it for a large tree, or when `prompt` asks for slower work. Must be positive; to disable generation use `ai_description: false`. |

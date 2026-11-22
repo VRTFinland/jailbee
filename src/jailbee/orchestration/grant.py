@@ -94,15 +94,29 @@ class Grantable(BaseModel):
         return _checked_egress(v)
 
 
-IssueActionKind = Literal["create", "edit", "comment", "labels", "state", "assign_self", "assign"]
+IssueActionKind = Literal[
+    "create",
+    "edit",
+    "comment",
+    "comment_edit",
+    "labels",
+    "state",
+    "assign_self",
+    "assign",
+    "sub_issue",
+    "dependency",
+]
 ISSUE_ACTION_KINDS: tuple[IssueActionKind, ...] = (
     "assign",
     "assign_self",
     "comment",
+    "comment_edit",
     "create",
+    "dependency",
     "edit",
     "labels",
     "state",
+    "sub_issue",
 )
 
 
@@ -209,6 +223,19 @@ class PublishRights(BaseModel):
     pr_reviews: bool = Field(
         default=False, description="Publish comments, replies and descriptions on bound PRs."
     )
+    pr_comment_edits: bool = Field(
+        default=False,
+        description=(
+            "Edit the host user's submitted PR review comments on bound PRs "
+            "(`pr_reviews` does not imply it)."
+        ),
+    )
+    pr_state: bool = Field(
+        default=False,
+        description=(
+            "Close and reopen bound PRs (`pr_reviews` does not imply it, and it needs it)."
+        ),
+    )
     max_actions_per_hour: int = Field(
         default=30,
         ge=1,
@@ -249,6 +276,8 @@ class PublishRights(BaseModel):
             or (self.foreign_issues.repos and self.foreign_issues.actions)
             or self.pull_requests
             or self.pr_reviews
+            or self.pr_comment_edits
+            or self.pr_state
         )
 
     def covers_issue(self, kind: str, slug: str, *, foreign: bool) -> bool:
@@ -284,6 +313,11 @@ class PublishRights(BaseModel):
             ),
             pull_requests=self.pull_requests and cap.pull_requests,
             pr_reviews=self.pr_reviews and cap.pr_reviews,
+            pr_comment_edits=self.pr_comment_edits
+            and cap.pr_comment_edits
+            and self.pr_reviews
+            and cap.pr_reviews,
+            pr_state=self.pr_state and cap.pr_state and self.pr_reviews and cap.pr_reviews,
             max_actions_per_hour=min(self.max_actions_per_hour, cap.max_actions_per_hour),
         )
 
@@ -406,7 +440,7 @@ def cap_excess(grant: Grant, cap: RepoCap) -> list[str]:
                         f"publish right `projects: {entry.board}:{project_kind}` "
                         "is above the repo cap"
                     )
-        for name in ("pull_requests", "pr_reviews"):
+        for name in ("pull_requests", "pr_reviews", "pr_comment_edits", "pr_state"):
             if getattr(requested, name) and not getattr(narrowed, name):
                 out.append(f"publish right `{name}` is above the repo cap")
         if (

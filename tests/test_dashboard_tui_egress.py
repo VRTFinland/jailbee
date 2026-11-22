@@ -110,7 +110,7 @@ def test_repo_egress_dispatch_uses_repo_scope_and_explicit_config(mocker, tmp_pa
 
     steps = [
         "enter",
-        *["j"] * 4,  # past New container…, New from PR…, Credential group…, Accounts…
+        *["j"] * 5,  # past New container…, New from PR…, Credential group…, Accounts…, Agent…
         "enter",
         "enter",
         "a",

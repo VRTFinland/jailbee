@@ -240,7 +240,11 @@ def run_apply(
     litellm_result, litellm_problem = _reconcile_litellm_or_warn(
         incus, gcfg, restart=not no_restart
     )
-    litellm_payload = _litellm_payload_or_warn(incus, gcfg, cfg.litellm_view())
+    from jailbee.agent_default import litellm_default_profile
+
+    litellm_payload = _litellm_payload_or_warn(
+        incus, gcfg, cfg.litellm_view(), litellm_default_profile(cfg)
+    )
 
     # Before `refresh_pool`, which writes the ACL with `incus network acl
     # edit` and fails against a name nobody created. `jailbee init` is where a
@@ -588,6 +592,16 @@ def run_apply(
                 f"Could not update LiteLLM settings on {short}: {e}; run `jailbee apply` to retry."
             )
 
+        # A rotated GitHub token alters no Incus profile, so it never triggers a
+        # restart; rewrite the profile.d file in place. Only new login shells
+        # read it: open shells and running agents keep the old GH_TOKEN.
+        from jailbee.autostart import inject_github_token
+
+        try:
+            inject_github_token(cfg, incus, ci.name, mirror_endpoint=mirror_endpoint)
+        except (IncusError, OSError) as e:
+            warn(f"Could not refresh GH_TOKEN on {short}: {e}; run `jailbee apply` to retry.")
+
     # The repo's Squid rules once, after every container's environment is set,
     # instead of a full rebuild per container.
     egress_proxy.sync_repo(cfg, incus)
@@ -833,13 +847,16 @@ def _reconcile_litellm_or_warn(
 
 
 def _litellm_payload_or_warn(
-    incus: Incus, gcfg: GlobalConfig, view: LiteLLMRepoView | None = None
+    incus: Incus,
+    gcfg: GlobalConfig,
+    view: LiteLLMRepoView | None = None,
+    default_profile: str | None = None,
 ) -> dict[str, object] | None:
     from jailbee.litellm import container_sync_payload, unserved_warning
     from jailbee.tui import warn
 
     try:
-        payload = container_sync_payload(incus, gcfg, view=view)
+        payload = container_sync_payload(incus, gcfg, view=view, default_profile=default_profile)
     except IncusError as e:
         warn(f"Could not resolve LiteLLM settings: {e}; removing stale settings from containers.")
         return None
@@ -943,7 +960,7 @@ def _restart_one(
     repo_dir = container_repo_dir(cfg, incus, name)
     # Re-inject GH_TOKEN (infrastructure, not a user autostart step) so a
     # rotated PAT is picked up on `jailbee apply`.
-    inject_github_token(cfg, incus, name, repo_dir, mirror_endpoint=mirror_endpoint)
+    inject_github_token(cfg, incus, name, mirror_endpoint=mirror_endpoint)
     effective = effective_autostart_config(cfg, incus, name)
     effective = profiled_config(effective, resolve_profile(effective, incus, name))
     run_autostart(

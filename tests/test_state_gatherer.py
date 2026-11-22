@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import dataclasses
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from jailbee.dashboard.model import RepoGroup
+from jailbee.db import get_engine
 from jailbee.git_status import GitStatus
 from jailbee.global_config import DashboardRefresh
 from jailbee.lifecycle import ContainerInfo
@@ -76,7 +77,7 @@ def _ci(name, git=None):
     return ContainerInfo(name, "Running", "strict", None, None, repo="alpha", git_status=git)
 
 
-def _gatherer(mocker, gather, clock, sent_counts=lambda: SentCounts()):
+def _gatherer(mocker, gather, clock, sent_counts=lambda: SentCounts(), wall_clock=None):
     mocker.patch("jailbee.state_service.gatherer.sample_activity")
     return Gatherer(
         mocker.Mock(),
@@ -85,7 +86,7 @@ def _gatherer(mocker, gather, clock, sent_counts=lambda: SentCounts()):
         gather=gather,
         clock=clock,
         sleep=lambda _s: None,
-        wall_clock=lambda: datetime(2026, 10, 4, tzinfo=UTC),
+        wall_clock=wall_clock or (lambda: datetime(2026, 10, 4, tzinfo=UTC)),
     )
 
 
@@ -100,8 +101,8 @@ def test_tick_returns_numbered_snapshots_with_the_git_setting(mocker):
     assert isinstance(first, Snapshot) and isinstance(second, Snapshot)
     assert (first.seq, second.seq) == (1, 2)
     assert first.git_enabled is True
-    assert gather.call_args_list[0].kwargs == {"with_git": False}
-    assert gather.call_args_list[1].kwargs == {"with_git": True}
+    assert gather.call_args_list[0].kwargs == {"with_git": False, "parent_heads": {}}
+    assert gather.call_args_list[1].kwargs == {"with_git": True, "parent_heads": {}}
     assert gather.call_args_list[0].args[1] == [Path("/a")]
     assert g.tick(active=True, refresh=False, roots=[]) is None  # nothing due yet
 
@@ -118,6 +119,88 @@ def test_a_base_gather_carries_the_last_git_status_forward(mocker):
     third = g.tick(active=True, refresh=False, roots=[])  # base again
 
     assert third.groups[0].containers[0].git_status == status
+
+
+def test_the_next_gather_gets_the_heads_the_last_git_pass_saw(mocker):
+    """Children compare with their parent's HEAD from the previous pass; a
+    stopped container's head is not offered, and base passes keep the heads."""
+    from jailbee.host_target import ParentHead
+
+    clock = _Clock()
+    seen = GitStatus("", "clean", "0", "ok", head_sha="abc")
+    stopped = dataclasses.replace(_ci("y", GitStatus("", "clean", "0", "ok", head_sha="old")))
+    stopped.state = "Stopped"
+    rounds = iter([[_ci("x")], [_ci("x", seen), stopped], [_ci("x")], [_ci("x")]])
+    gather = mocker.Mock(side_effect=lambda *a, **k: [RepoGroup("alpha", "/a", None, next(rounds))])
+    g = _gatherer(mocker, gather, clock)
+
+    g.tick(active=True, refresh=False, roots=[])  # base
+    g.tick(active=True, refresh=False, roots=[])  # git
+    clock.t = 3.0
+    g.tick(active=True, refresh=False, roots=[])  # base
+    clock.t = 11.0
+    g.tick(active=True, refresh=False, roots=[])  # git
+
+    expected = {"x": ParentHead("abc", datetime(2026, 10, 4, tzinfo=UTC).timestamp())}
+    assert [c.kwargs["parent_heads"] for c in gather.call_args_list] == [
+        {},
+        {},
+        expected,
+        expected,
+    ]
+
+
+def test_a_base_pass_keeps_the_head_stamp_of_the_last_git_pass(mocker):
+    """The card's "seen Nm ago" must not claim a fresher head than a git pass saw."""
+    from jailbee.host_target import ParentHead
+
+    clock = _Clock()
+    wall = [datetime(2026, 10, 4, tzinfo=UTC)]
+    seen = GitStatus("", "clean", "0", "ok", head_sha="abc")
+    rounds = iter([[_ci("x")], [_ci("x", seen)], [_ci("x", seen)], [_ci("x", seen)]])
+    gather = mocker.Mock(side_effect=lambda *a, **k: [RepoGroup("alpha", "/a", None, next(rounds))])
+    g = _gatherer(mocker, gather, clock, wall_clock=lambda: wall[0])
+
+    g.tick(active=True, refresh=False, roots=[])  # base
+    g.tick(active=True, refresh=False, roots=[])  # git, stamps the heads
+    stamp = wall[0].timestamp()
+    clock.t = 3.0
+    wall[0] += timedelta(minutes=5)
+    g.tick(active=True, refresh=False, roots=[])  # base only
+    clock.t = 6.5
+    wall[0] += timedelta(minutes=5)
+    g.tick(active=True, refresh=False, roots=[])  # base only
+
+    assert [c.kwargs["parent_heads"] for c in gather.call_args_list][2:] == [
+        {"x": ParentHead("abc", stamp)},
+        {"x": ParentHead("abc", stamp)},
+    ]
+
+
+def test_a_failed_probe_of_a_running_parent_keeps_its_previous_head(mocker):
+    from jailbee.host_target import ParentHead
+
+    clock = _Clock()
+    wall = [datetime(2026, 10, 4, tzinfo=UTC)]
+    seen = GitStatus("", "clean", "0", "ok", head_sha="abc")
+    rounds = iter(
+        [[_ci("x")], [_ci("x", seen)], [_ci("x", GitStatus("?", "?", "?", "?"))], [_ci("x")]]
+    )
+    gather = mocker.Mock(side_effect=lambda *a, **k: [RepoGroup("alpha", "/a", None, next(rounds))])
+    g = _gatherer(mocker, gather, clock, wall_clock=lambda: wall[0])
+
+    g.tick(active=True, refresh=False, roots=[])  # base
+    g.tick(active=True, refresh=False, roots=[])  # git ok
+    stamp = wall[0].timestamp()
+    clock.t = 20.0
+    wall[0] += timedelta(minutes=1)
+    g.tick(active=True, refresh=False, roots=[])  # git, probe failed
+    clock.t = 40.0
+    g.tick(active=True, refresh=False, roots=[])  # git again
+
+    heads = [c.kwargs["parent_heads"] for c in gather.call_args_list]
+    assert heads[2] == {"x": ParentHead("abc", stamp)}
+    assert heads[3] == {"x": ParentHead("abc", stamp)}  # kept, stamp not refreshed
 
 
 def test_the_sampler_is_primed_once(mocker):
@@ -382,3 +465,199 @@ def test_sent_counts_are_read_once_per_round(mocker):
     g.tick(active=True, refresh=False, roots=[])
 
     assert read.call_count == 1
+
+
+# --- recording which container ran which agent session ----------------------
+
+
+def _agent(*session_ids, agent="claude"):
+    from jailbee.agent_status import AgentSummary
+
+    return (AgentSummary(agent, "busy", None, None, len(session_ids), session_ids=session_ids),)
+
+
+def _ci_live(name, uuid, *session_ids):
+    c = _ci(name)
+    c.uuid = uuid
+    c.agent_status = _agent(*session_ids)
+    return c
+
+
+def _recording_gatherer(mocker, containers, recorder):
+    mocker.patch("jailbee.state_service.gatherer.sample_activity")
+    return Gatherer(
+        mocker.Mock(),
+        CAD,
+        gather=lambda *a, **k: [RepoGroup("alpha", "/a", None, list(containers))],
+        clock=_Clock(),
+        sleep=lambda _s: None,
+        recorder=recorder,
+    )
+
+
+def test_each_gather_records_the_live_sessions_of_their_containers(mocker):
+    from jailbee.state_service.session_log import SessionRecorder, recorded_sessions
+
+    engine = get_engine()
+    now = [datetime(2026, 11, 1, 10, tzinfo=UTC)]
+    recorder = SessionRecorder(engine, clock=lambda: now[0])
+    g = _recording_gatherer(
+        mocker, [_ci_live("alpha-1", "u-1", "s-1"), _ci("alpha-idle")], recorder
+    )
+
+    g.tick(active=True, refresh=False, roots=[])
+
+    rows = recorded_sessions(engine, "alpha-1", "u-1")
+    assert [(r.agent, r.session_id, r.first_seen, r.last_seen) for r in rows] == [
+        ("claude", "s-1", now[0], now[0])
+    ]
+    assert recorded_sessions(engine, "alpha-idle", None) == []
+
+
+def test_a_later_gather_moves_last_seen_and_keeps_first_seen(mocker):
+    from jailbee.state_service.session_log import SessionRecorder, recorded_sessions
+
+    engine = get_engine()
+    now = [datetime(2026, 11, 1, 10, tzinfo=UTC)]
+    recorder = SessionRecorder(engine, clock=lambda: now[0], write_interval=60.0)
+    first = now[0]
+    c = _ci_live("alpha-1", "u-1", "s-1")
+
+    recorder.record([RepoGroup("alpha", "/a", None, [c])])
+    now[0] = first + timedelta(seconds=10)
+    recorder.record([RepoGroup("alpha", "/a", None, [c])])  # too soon: no write
+    assert recorded_sessions(engine, "alpha-1", "u-1")[0].last_seen == first
+    now[0] = first + timedelta(minutes=5)
+    recorder.record([RepoGroup("alpha", "/a", None, [c])])
+
+    (row,) = recorded_sessions(engine, "alpha-1", "u-1")
+    assert (row.first_seen, row.last_seen) == (first, now[0])
+
+
+def test_a_session_that_comes_back_is_written_again_at_once(mocker):
+    # The throttle forgets sessions a gather no longer reports, so its memory
+    # stays bounded by the live sessions, not by every session ever seen.
+    from jailbee.state_service.session_log import SessionRecorder, recorded_sessions
+
+    engine = get_engine()
+    now = [datetime(2026, 11, 1, 10, tzinfo=UTC)]
+    recorder = SessionRecorder(engine, clock=lambda: now[0], write_interval=60.0)
+    first = now[0]
+    live = RepoGroup("alpha", "/a", None, [_ci_live("alpha-1", "u-1", "s-1")])
+
+    recorder.record([live])
+    now[0] = first + timedelta(seconds=10)
+    recorder.record([RepoGroup("alpha", "/a", None, [_ci("alpha-1")])])
+    now[0] = first + timedelta(seconds=20)
+    recorder.record([live])
+
+    (row,) = recorded_sessions(engine, "alpha-1", "u-1")
+    assert row.last_seen == now[0]
+
+
+def test_a_recreated_container_has_its_own_recorded_sessions(mocker):
+    from jailbee.state_service.session_log import SessionRecorder, recorded_sessions
+
+    engine = get_engine()
+    recorder = SessionRecorder(engine)
+    recorder.record([RepoGroup("alpha", "/a", None, [_ci_live("alpha-1", "u-old", "s-old")])])
+    recorder.record([RepoGroup("alpha", "/a", None, [_ci_live("alpha-1", "u-new", "s-new")])])
+
+    assert [r.session_id for r in recorded_sessions(engine, "alpha-1", "u-new")] == ["s-new"]
+    assert [r.session_id for r in recorded_sessions(engine, "alpha-1", "u-old")] == ["s-old"]
+
+
+def test_a_failing_recorder_cannot_fail_the_gather(mocker):
+    def boom(groups):
+        raise RuntimeError("database is locked")
+
+    g = _recording_gatherer(mocker, [_ci("x")], boom)
+
+    assert isinstance(g.tick(active=True, refresh=False, roots=[]), Snapshot)
+
+
+def test_a_base_tick_updates_the_rows_outbox_counts_and_not_the_carried_probe_copy(mocker):
+    clock = _Clock()
+    probed = GitStatus("+1 -0", "clean", "0", "ok", pending_pr_actions=0, pending_issue_actions=0)
+
+    def row(git, pr, issue):
+        c = _ci("x", git)
+        c.outbox_pr, c.outbox_issue = pr, issue
+        return c
+
+    rounds = iter([[row(None, 0, 0)], [row(probed, 0, 0)], [row(None, 2, 1)]])
+    g = _gatherer(mocker, lambda *a, **k: [RepoGroup("alpha", "/a", None, next(rounds))], clock)
+
+    g.tick(active=True, refresh=False, roots=[])  # base
+    g.tick(active=True, refresh=False, roots=[])  # git
+    clock.t = 3.0
+    third = g.tick(active=True, refresh=False, roots=[])  # base, staged since the git tick
+
+    c = third.groups[0].containers[0]
+    assert (c.outbox_pr, c.outbox_issue) == (2, 1)
+    assert c.git_status == probed  # carried forward, stale by design
+
+
+def test_a_snapshot_carries_pr_head_fetch_facts_even_on_a_base_gather(mocker):
+    from jailbee.host_target import SyncTarget
+    from jailbee.pr_autofetch import AutofetchPolicy, PrHeadAutofetcher
+
+    clock = _Clock()
+    status = GitStatus(
+        "clean", "clean", "0", "ok", sync_target=SyncTarget("pr", "PR #7", "a" * 40, "r")
+    )
+    rounds = iter([[_ci("x")], [_ci("x", status)], [_ci("x")]])
+
+    def groups(*a, **k):
+        batch = next(rounds)
+        for c in batch:
+            c.pr_number = 7
+        return [RepoGroup("alpha", "/a", None, batch)]
+
+    fetches: list[int] = []
+    pr_heads = PrHeadAutofetcher(
+        policy=lambda root: AutofetchPolicy(root, "origin", True, 300.0),
+        fetch=lambda root, n, remote: fetches.append(n),
+        wall=lambda: 5.0,
+        submit=lambda job: job(),
+    )
+    mocker.patch("jailbee.state_service.gatherer.sample_activity")
+    g = Gatherer(
+        mocker.Mock(),
+        CAD,
+        sent_counts=lambda: SentCounts(),
+        gather=groups,
+        clock=clock,
+        sleep=lambda _s: None,
+        pr_heads=pr_heads,
+    )
+    annotate = mocker.spy(pr_heads, "annotate")
+
+    g.tick(active=True, refresh=False, roots=[])
+    g.tick(active=True, refresh=False, roots=[])
+    clock.t = 3.0
+    third = g.tick(active=True, refresh=False, roots=[])
+    assert annotate.call_count == 3  # on the base tick too, not carried over
+
+    target = third.groups[0].containers[0].git_status.sync_target
+    assert target.fetched_at == 5.0
+    assert fetches == [7]
+
+
+def test_an_exception_inside_pr_head_annotate_leaves_the_gather_intact(mocker):
+    pr_heads = mocker.Mock()
+    pr_heads.annotate.side_effect = RuntimeError("boom")
+    mocker.patch("jailbee.state_service.gatherer.sample_activity")
+    g = Gatherer(
+        mocker.Mock(),
+        CAD,
+        sent_counts=lambda: SentCounts(),
+        gather=lambda *a, **k: [RepoGroup("alpha", "/a", None, [_ci("x")])],
+        clock=_Clock(),
+        sleep=lambda _s: None,
+        pr_heads=pr_heads,
+    )
+    result = g.tick(active=True, refresh=False, roots=[])
+    assert pr_heads.annotate.called
+    assert not isinstance(result, GatherError)
+    assert result.groups[0].containers[0].name == "x"

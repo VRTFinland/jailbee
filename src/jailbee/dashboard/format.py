@@ -9,10 +9,14 @@ from typing import TYPE_CHECKING
 from rich.markup import escape
 
 from jailbee import background
+from jailbee.github_repo import is_github_slug
+from jailbee.hyperlinks import hyperlinks_enabled
 from jailbee.lifecycle import (
+    AGENT_COMPACT_MAX_CELLS,
     DOING_MAX_NAMES,
     agent_compact_cell,
     format_duration_short,
+    with_sync_marker,
 )
 
 if TYPE_CHECKING:
@@ -68,6 +72,72 @@ def autostart_failed(container: ContainerInfo) -> bool:
     if container.job_pid is None:
         return container.job_phase in background.TERMINAL_PHASES
     return background.clearable(container.job_phase, container.job_pid)
+
+
+def merge_in_progress(container: ContainerInfo) -> bool:
+    """Whether the container's tree is stopped mid-merge (a conflict left it open).
+
+    The probe's live state (``git_status.in_progress`` / ``unmerged``), never
+    the ``conflict`` prediction; it clears at the next gather once the merge
+    is concluded or aborted. Unknown (``?``) or no probe counts as no merge.
+    """
+    status = container.git_status
+    if status is None:
+        return False
+    return status.in_progress == "merge" or bool(status.unmerged)
+
+
+MERGE_MARK_GLYPH = "⑂"
+MERGE_MARK = f"[bold white on red]{MERGE_MARK_GLYPH}[/bold white on red]"
+"""An unfinished merge's flag after the container name.
+
+White on red carries its own background, so it reads on light, dark and
+monochrome terminals alike, and no row phase colour (foreground only) matches it.
+"""
+
+ROW_PHASE_STYLES = {
+    "booting": "orange3",
+    "autostart": "dark_cyan",
+    "job": "magenta",
+    "failed": "red",
+}
+"""Row colour per non-normal phase (Rich names), shared by terminal-dashboard code.
+
+Hues are picked to stay legible on both dark and light terminal backgrounds,
+so no plain ``yellow`` or ``cyan`` (near-invisible on white).
+"""
+
+
+def row_phase(container: ContainerInfo) -> str | None:
+    """The non-normal phase a container's row is in, a key of :data:`ROW_PHASE_STYLES`.
+
+    ``failed`` is a dead job or a failed autostart; a live job is ``booting``,
+    ``autostart`` or (any other kind) ``job``; None for a container at rest.
+    """
+    if container.job_phase is None:
+        dead = False
+    elif container.job_pid is None:
+        dead = container.job_phase in background.TERMINAL_PHASES
+    else:
+        dead = background.clearable(container.job_phase, container.job_pid)
+    old_failure = (
+        container.autostart_failed
+        and not container.job_live
+        and container.state != "Stopped"  # the outcomes file survives a stop
+    )
+    if dead or old_failure:
+        return "failed"
+    if container.job_phase is None:
+        return None
+    # Boot and create jobs sit in the autostart phase before being re-kinded.
+    if (
+        container.job_kind == background.JOB_AUTOSTART
+        or container.job_phase == background.PHASE_AUTOSTART
+    ):
+        return "autostart"
+    if container.job_kind == background.JOB_BOOT:
+        return "booting"
+    return "job"
 
 
 def state_label(state: str) -> str:
@@ -200,6 +270,25 @@ def doing_cell(container: ContainerInfo) -> str:
     return ",".join(names)
 
 
+def pr_url(container: ContainerInfo) -> str | None:
+    """The bound PR's GitHub URL, from the repo slug only; None when unknown."""
+    slug = container.pr_slug
+    if container.pr_number is None or slug is None or not is_github_slug(slug):
+        return None
+    return f"https://github.com/{slug}/pull/{container.pr_number}"
+
+
+def pr_markup(container: ContainerInfo) -> str:
+    """The PR number (``#N``, ``#N↓`` for a review) as markup, linked when possible."""
+    if container.pr_number is None:
+        return ""
+    label = f"#{container.pr_number}"
+    url = pr_url(container) if hyperlinks_enabled() else None
+    if url is not None:
+        label = f"[link={url}]{label}[/link]"
+    return label if container.pr_author else f"{label}↓"
+
+
 def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, now: datetime) -> str:
     """Return a dashboard-specific value, keeping unknown text safely renderable."""
     if field.name == "job" and container.autostart_failed and not container.job_live:
@@ -221,12 +310,14 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
         return value
     if field.name == "pr":
         # The outbox count lives in OUTBOX; `jailbee ls` keeps it in PR.
-        if container.pr_number is None:
-            return ""
-        return f"#{container.pr_number}" if container.pr_author else f"#{container.pr_number}↓"
+        return pr_markup(container)
     if field.name == "agent_compact":
         return agent_compact_cell(
-            container.agent_status, now, recent_idle=RECENT_IDLE, activity_age=True
+            container.agent_status,
+            now,
+            recent_idle=RECENT_IDLE,
+            activity_age=True,
+            max_cells=AGENT_COMPACT_MAX_CELLS,
         )
     if field.name == "created":
         return _age(container.created_at, now)
@@ -274,6 +365,8 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
         return doing_cell(container)
     if field.name in ("wt", "target_diff", "local_diff") and container.git_status is not None:
         if getattr(container.git_status, field.name) == "clean":
+            if field.name == "target_diff":
+                return with_sync_marker("[dim]✓[/dim]", container.git_status)
             return "[dim]✓[/dim]"
     if field.name == "ttl":
         return value.replace(" ", "")

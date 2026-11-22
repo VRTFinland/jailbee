@@ -73,6 +73,18 @@ def comment_action(repo: str, target: int | str, body: str) -> dict[str, object]
     return {"type": "comment", "repo": repo, **_target(target), "body": body}
 
 
+def comment_edit_action(repo: str, view: gh.CommentView, body: str) -> dict[str, object]:
+    assert view.issue is not None
+    return {
+        "type": "comment_edit",
+        "repo": repo,
+        "issue": view.issue,
+        "comment_id": view.id,
+        "body": body,
+        "expected": {"body": view.body},
+    }
+
+
 def labels_action(
     repo: str, target: int | str, add: list[str], remove: list[str], view: gh.IssueView | None
 ) -> dict[str, object]:
@@ -112,6 +124,21 @@ def state_action(
     if reason is not None and not (state == "open" and reason == "reopened"):
         action["reason"] = reason
     return action
+
+
+def relation_action(
+    kind: str, repo: str, target: int | str, related: int | str, remove: bool
+) -> dict[str, object]:
+    """A ``sub_issue`` (target = parent) or ``dependency`` (target = blocked issue)."""
+    field = "sub_issue" if kind == "sub_issue" else "blocked_by"
+    other = {field: related} if isinstance(related, int) else {f"{field}_ref": related[1:]}
+    return {
+        "type": kind,
+        "repo": repo,
+        **_target(target),
+        **other,
+        "op": "remove" if remove else "add",
+    }
 
 
 def _body(body: str | None, body_file: Path | None, required: bool) -> str | None:
@@ -188,7 +215,9 @@ def _stage(
     batch: str | None,
     file_body: bool = False,
     as_json: bool = False,
+    follow_up: list[dict[str, object]] | None = None,
 ) -> None:
+    """Stage ``action`` (plus ``follow_up`` actions after it) as one proposal or draft step."""
     bodies: dict[str, str] = {}
     body = action.get("body")
     if isinstance(body, str) and (file_body or len(body.encode("utf-8")) > 4096):
@@ -197,7 +226,10 @@ def _stage(
         del action["body"]
         action["body_file"] = name
     if batch is not None:
-        broker.draft_append("issue", batch, action, bodies)
+        if follow_up:
+            broker.draft_append_many("issue", batch, [action, *follow_up], bodies)
+        else:
+            broker.draft_append("issue", batch, action, bodies)
         typer.echo(f"staged issue draft {batch}")
     else:
         slug = (
@@ -206,7 +238,9 @@ def _stage(
             ]
             or "issue"
         )
-        name = broker.put("issue", slug, {"version": 1, "actions": [action]}, bodies)
+        name = broker.put(
+            "issue", slug, {"version": 1, "actions": [action, *(follow_up or [])]}, bodies
+        )
         if as_json:
             typer.echo(json.dumps({"name": name}))
         else:
@@ -235,12 +269,24 @@ def create(
         str | None,
         typer.Option(help="Name for later batch actions to target as @REF (default: issue)."),
     ] = None,
+    parent: Annotated[
+        str | None,
+        typer.Option(help="Make the new issue a sub-issue of this issue number or @REF."),
+    ] = None,
+    blocked_by: Annotated[
+        list[str] | None,
+        typer.Option(help="Mark the new issue blocked by this issue number or @REF; repeatable."),
+    ] = None,
     batch: BatchOpt = None,
     as_json: Annotated[
         bool, typer.Option("--json", help="Print the staged manifest name as JSON.")
     ] = False,
 ) -> None:
-    """Stage a new issue; give the body with --body or --body-file."""
+    """Stage a new issue; give the body with --body or --body-file.
+
+    --parent and --blocked-by stage native sub_issue / dependency actions after
+    the create, targeting it by its ref.
+    """
 
     def run() -> None:
         require_role()
@@ -252,11 +298,21 @@ def create(
             raise OutboxCommandError("missing title", 2)
         text = _body(body, body_file, True)
         assert text is not None
+        own = f"@{ref or 'issue'}"
+        follow_up = [
+            relation_action("dependency", repo, own, _parse_target(item), False)
+            for item in blocked_by or []
+        ]
+        if parent is not None:
+            follow_up.insert(
+                0, relation_action("sub_issue", repo, _parse_target(parent), own, False)
+            )
         _stage(
             create_action(repo, title, text, label or [], ref or "issue"),
             batch,
             body_file is not None,
             as_json,
+            follow_up,
         )
 
     _run(run)
@@ -304,6 +360,84 @@ def comment(
         text = _body(body, body_file, True)
         assert text is not None
         _stage(comment_action(repo, target, text), batch, body_file is not None)
+
+    _run(run)
+
+
+@issue_app.command("comments")
+def comments(
+    issue: Annotated[str | None, typer.Argument(help="Issue or pull request number.")] = None,
+    repo: RepoOpt = ".",
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print every comment, with its full body, as JSON.")
+    ] = False,
+) -> None:
+    """List an issue's or PR's conversation comments with their ids (read-only).
+
+    Text output is one line per comment: id, author, creation time, first line.
+    Use the id with `comment-edit`.
+    """
+
+    def run() -> None:
+        target = _parse_target(issue)
+        if not isinstance(target, int):
+            raise OutboxCommandError("comments needs an existing issue or PR number", 2)
+        found = gh.issue_comments(repo, target)
+        if as_json:
+            typer.echo(
+                json.dumps(
+                    [
+                        {
+                            "id": c.id,
+                            "author": c.author,
+                            "created_at": c.created_at,
+                            "body": c.body,
+                            "url": c.url,
+                        }
+                        for c in found
+                    ],
+                    indent=2,
+                )
+            )
+            return
+        for c in found:
+            first = c.body.split("\n", 1)[0]
+            typer.echo(f"{c.id}\t{c.author}\t{c.created_at}\t{first}")
+
+    _run(run)
+
+
+@issue_app.command("comment-edit")
+def comment_edit(
+    comment_id: Annotated[
+        str | None,
+        typer.Argument(help="Numeric comment id (see `jailbee issue comments`)."),
+    ] = None,
+    body: BodyOpt = None,
+    body_file: BodyFileOpt = None,
+    repo: RepoOpt = ".",
+    batch: BatchOpt = None,
+) -> None:
+    """Stage replacing the body of an issue or PR conversation comment you wrote.
+
+    The host publishes it only if the publishing account wrote the comment and
+    it still reads as it did when staged.
+    """
+
+    def run() -> None:
+        require_role()
+        if not comment_id or not comment_id.isdecimal() or int(comment_id) <= 0:
+            raise OutboxCommandError("comment id must be a positive number", 2)
+        text = _body(body, body_file, True)
+        assert text is not None
+        if not text:
+            raise OutboxCommandError("comment body must be non-empty", 2)
+        view = gh.issue_comment(repo, int(comment_id))
+        if view.issue is None:
+            raise OutboxCommandError(f"comment {view.id} is not on an issue or PR", 1)
+        if text == view.body:
+            raise OutboxCommandError(f"comment {view.id} body is unchanged", 2)
+        _stage(comment_edit_action(repo, view, text), batch, body_file is not None)
 
     _run(run)
 
@@ -455,3 +589,70 @@ def state(
         _stage(state_action(repo, target, state, reason, _view(repo, target)), batch)
 
     _run(run)
+
+
+def _stage_relation(
+    kind: str,
+    target_arg: str | None,
+    related_arg: str | None,
+    missing: str,
+    remove: bool,
+    repo: str,
+    batch: str | None,
+) -> None:
+    require_role()
+    target = _parse_target(target_arg)
+    if not related_arg:
+        raise OutboxCommandError(f"missing {missing}", 2)
+    related = _parse_target(related_arg)
+    if related == target:
+        raise OutboxCommandError("an issue cannot be related to itself", 2)
+    if remove and not (isinstance(target, int) and isinstance(related, int)):
+        raise OutboxCommandError("--remove needs existing issue numbers, not @REF", 2)
+    _stage(relation_action(kind, repo, target, related, remove), batch)
+
+
+@issue_app.command("sub-issue")
+def sub_issue(
+    parent: Annotated[
+        str | None, typer.Argument(help="Parent issue number, or @REF for a staged create.")
+    ] = None,
+    child: Annotated[
+        str | None, typer.Argument(help="Sub-issue number, or @REF for a staged create.")
+    ] = None,
+    remove: Annotated[
+        bool, typer.Option("--remove", help="Detach the sub-issue instead of adding it.")
+    ] = False,
+    repo: RepoOpt = ".",
+    batch: BatchOpt = None,
+) -> None:
+    """Stage making CHILD a native sub-issue of PARENT (or detaching it with --remove).
+
+    Both issues are in --repo. The host refuses an add that is already linked
+    and a removal that is not.
+    """
+    _run(lambda: _stage_relation("sub_issue", parent, child, "sub-issue", remove, repo, batch))
+
+
+@issue_app.command("blocked-by")
+def blocked_by_cmd(
+    issue: Annotated[
+        str | None, typer.Argument(help="Blocked issue number, or @REF for a staged create.")
+    ] = None,
+    blocker: Annotated[
+        str | None, typer.Argument(help="Blocking issue number, or @REF for a staged create.")
+    ] = None,
+    remove: Annotated[
+        bool, typer.Option("--remove", help="Drop the dependency instead of adding it.")
+    ] = False,
+    repo: RepoOpt = ".",
+    batch: BatchOpt = None,
+) -> None:
+    """Stage a native "ISSUE is blocked by BLOCKER" dependency (or drop it with --remove).
+
+    Both issues are in --repo. The host refuses an add that already exists and
+    a removal of a dependency that does not.
+    """
+    _run(
+        lambda: _stage_relation("dependency", issue, blocker, "blocking issue", remove, repo, batch)
+    )

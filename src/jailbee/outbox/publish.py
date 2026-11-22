@@ -10,10 +10,17 @@ from typing import TYPE_CHECKING, Literal, cast
 from jailbee import issue_outbox, pr, pr_outbox, prompting
 from jailbee.incus import IncusError
 from jailbee.issue_manifest import (
+    CommentEditAction,
+    CreateAction,
+    CreatedIssue,
+    DependencyAction,
+    ExistingIssue,
     ProjectAddAction,
     ProjectClearAction,
     ProjectRemoveAction,
     ProjectSetAction,
+    SubIssueAction,
+    related_issue,
 )
 from jailbee.orchestration.store import StoreError
 from jailbee.outbox import sent
@@ -110,6 +117,22 @@ class OutcomeLine:
     text: str
 
 
+def _created_subject(
+    batch: issue_outbox.PreparedBatch, manifest: str, index: int, number: int | None
+) -> str:
+    """` #N <title>` for a receipt that carries an issue number, else an empty string."""
+    if number is None:
+        return ""
+    title = ""
+    for prepared in batch.manifests:
+        if prepared.manifest.name != manifest:
+            continue
+        for resolved in prepared.actions:
+            if resolved.index == index and isinstance(resolved.action, CreateAction):
+                title = f" {resolved.action.title}"
+    return f" #{number}{title}"
+
+
 def issue_outcome_lines(
     batch: issue_outbox.PreparedBatch,
     report: issue_outbox.ApplyReport,
@@ -120,7 +143,10 @@ def issue_outcome_lines(
     for name, receipt in (*report.applied, *report.skipped):
         attempted.add((name, receipt.index))
         detail = f" ({receipt.url})" if receipt.url else ""
-        lines.append(OutcomeLine("success", f"{name} action {receipt.index}: applied{detail}"))
+        subject = _created_subject(batch, name, receipt.index, receipt.issue)
+        lines.append(
+            OutcomeLine("success", f"{name} action {receipt.index}: applied{subject}{detail}")
+        )
     failure = report.failure
     if failure is None:
         lines.extend(
@@ -141,7 +167,7 @@ def issue_outcome_lines(
             lines.append(
                 OutcomeLine(
                     "info",
-                    f"  resolve: jailbee issue resolve {batch.container} {failure.manifest} "
+                    f"  resolve: jailbee outbox resolve {batch.container} issue/{failure.manifest} "
                     f"{failure.index} (--applied --url <url> [--issue <n>] | --retry)",
                 )
             )
@@ -165,6 +191,10 @@ def print_issue_outcome(
             success_plain(safe_text(line.text))
         else:
             info_plain(safe_text(line.text))
+
+
+def _related(issue: ExistingIssue | CreatedIssue) -> str:
+    return f"#{issue.number}" if isinstance(issue, ExistingIssue) else f"@{issue.ref}"
 
 
 def issue_plan_json(
@@ -237,6 +267,19 @@ def issue_plan_json(
                                 ProjectRemoveAction,
                             ),
                         )
+                        else {}
+                    ),
+                    **(
+                        {"comment_id": action.comment_id}
+                        if isinstance(action, CommentEditAction)
+                        else {}
+                    ),
+                    **(
+                        {
+                            "related": _related(related_issue(action)),
+                            "operation": "remove" if action.remove else "add",
+                        }
+                        if isinstance(action, (SubIssueAction, DependencyAction))
                         else {}
                     ),
                 }
@@ -505,9 +548,9 @@ def publish_selected(
             print_issue_outcome(batch, report)
             if result_sink is not None:
                 for name, receipt in report.applied:
-                    number = f" issue #{receipt.issue}" if receipt.issue is not None else ""
+                    subject = safe_text(_created_subject(batch, name, receipt.index, receipt.issue))
                     result_sink(
-                        f"{name} action {receipt.index}: applied{number} "
+                        f"{name} action {receipt.index}: applied{subject} "
                         f"({receipt.url or 'no URL'})"
                     )
             if raise_errors and report.failure is not None:

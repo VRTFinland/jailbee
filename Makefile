@@ -1,5 +1,5 @@
-.PHONY: install install-gui install-skill check build publish-testpypi \
-        changelog release site site-check docs-serve
+.PHONY: install install-gui install-web install-skill check build publish-testpypi \
+        changelog release site site-check docs-serve web web-test shots
 
 # Use bash for recipe lines — the `release` target relies on bash features
 # (`set -euo pipefail`, `read -r -p`) that /bin/sh does not provide.
@@ -38,6 +38,16 @@ install:
 # `make install` includes the optional Qt GUI and SSH extras by default.
 install-gui: install
 
+# `make install` plus the web dashboard: builds the browser app first (needs
+# Node.js and npm) so the installed wheel carries it, adds the `web` extra and
+# restarts the dashboard service if it runs.
+install-web: web
+	uv tool install '.[gui,ssh,web]' --force --reinstall
+	jailbee setup --yes
+	@if command -v systemctl >/dev/null 2>&1; then \
+		systemctl --user try-restart jailbee-web.service; \
+	fi
+
 # Just the bundled agent skills, for when only they changed and host-level
 # `install_host_skills` is on (off by default). `make install` does this too,
 # via `jailbee setup`, which is also what an end user runs — the copying
@@ -47,6 +57,17 @@ install-gui: install
 # installed wheel carries the copy from whenever it was last built.
 install-skill:
 	uv run jailbee setup --yes --only skills
+
+# Build the web dashboard's browser app (frontend/) into the package's
+# static directory, src/jailbee/web/static/, which `jailbee remote web serve`
+# serves. That directory is gitignored: built assets are never committed.
+# `npm ci` installs exactly what frontend/package-lock.json pins.
+web:
+	cd frontend && npm ci && npm run build
+
+# The browser app's unit tests (Vitest).
+web-test:
+	cd frontend && npm ci && npm test
 
 # Run the full CI gate locally: lint, format check, type check, tests.
 check:
@@ -82,8 +103,10 @@ docs-serve:
 	python3 scripts/docs_site.py stage
 	$(ZENSICAL) serve
 
-# Build a clean sdist + wheel and validate the packaged metadata.
-build:
+# Build a clean sdist + wheel and validate the packaged metadata. `web` runs
+# first: the built browser app is gitignored, so without it the wheel would
+# ship a web server with no frontend.
+build: web
 	rm -rf dist/
 	uv build
 	uvx twine check dist/*
@@ -167,3 +190,9 @@ release:
 	gh release create "v$$v" dist/* --title "v$$v" --notes-file "$$notes" -R "$(REPO)"; \
 	rm -f "$$notes"; \
 	echo "==> Released v$$v"
+
+# Regenerate the dashboard screenshots (docs/images/dashboard/) from the seeded
+# fixtures in website/shots/fixtures/: SVG for the docs, PNG (host Chrome) for
+# videos. No Incus and no containers; see website/shots/README.md.
+shots:
+	uv run python -m website.shots

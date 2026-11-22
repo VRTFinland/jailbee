@@ -521,3 +521,50 @@ def test_card_content_keeps_raw_limit_and_override(override):
     cc = card_content(c, ls_field_specs(now=datetime.now(UTC)))
     assert cc.memory_limit == "2GB"
     assert cc.memory_override is override
+
+
+def _pr_ci(sync):
+    from jailbee.git_status import GitStatus
+
+    c = _ci("p-review", "p")
+    c.pr_number = 7
+    c.git_status = GitStatus(
+        wt="clean",
+        ahead_diff="clean",
+        ahead_count="0",
+        conflict="ok",
+        target_diff="clean",
+        behind_count="0",
+        sync_target=sync,
+    )
+    return c
+
+
+def test_card_git_segments_ignore_the_sync_target_marker():
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ls_field_specs
+
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    fields = [f for f in ls_field_specs(now=now) if f.name in m._GIT_FIELD_NAMES]
+    for sync in (
+        SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head"),
+        SyncTarget("host", "main", "b" * 40, "refs/heads/main", fallback=True),
+    ):
+        assert m.git_segments(m.card_content(_pr_ci(sync), fields, now)) == []
+
+
+def test_sync_cell_tooltip_names_the_target():
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ls_field_specs
+
+    spec = next(f for f in ls_field_specs(now=datetime.now(UTC)) if f.name == "ahead_count")
+    pr = _pr_ci(SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head"))
+    fallback = _pr_ci(SyncTarget("host", "main", "b" * 40, "refs/heads/main", fallback=True))
+
+    assert "vs PR #7 head" in m.cell_tooltip(pr, spec)
+    assert "PR head not fetched" in m.cell_tooltip(fallback, spec)
+
+
+def test_git_segments_missing_target_shows_one_arrow():
+    cc = _cc(wt="clean", behind_count="↓•")
+    assert m.git_segments(cc) == [("↓•", "ahead")]

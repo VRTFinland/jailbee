@@ -259,9 +259,9 @@ def test_ctrl_r_does_not_submit_a_fork_prompt(mocker, tmp_path):
     child.assert_not_called()
 
 
-@pytest.mark.parametrize(("rc", "pauses"), [(1, 1), (0, 0)])
-def test_rename_shows_the_output_only_when_the_cli_fails(mocker, tmp_path, rc, pauses):
-    # A refused alias prints its reason; it is shown on an output screen.
+@pytest.mark.parametrize("rc", [1, 0])
+def test_rename_output_is_a_queue_entry_and_no_screen(mocker, tmp_path, rc):
+    # A refused alias prints its reason; it is kept in the queue entry.
     info = dataclasses.replace(ci("alpha-x", "alpha"), alias="old")
     group = cfg_group(tmp_path, (info,))
     child = mocker.patch.object(tsession.subprocess, "run")
@@ -270,4 +270,6 @@ def test_rename_shows_the_output_only_when_the_cli_fails(mocker, tmp_path, rc, p
     run = drive(mocker, ["j", "enter", "R", *keys("x"), "enter"], [group])
 
     child.assert_called_once()
-    assert len(run.app.outputs) == pauses
+    ((_command, _text, failed),) = run.entries
+    assert failed is (rc != 0)
+    assert run.app.outputs == []

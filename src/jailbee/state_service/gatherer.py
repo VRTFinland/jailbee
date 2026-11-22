@@ -23,6 +23,7 @@ from jailbee.dashboard.model import (
     sample_activity,
 )
 from jailbee.dashboard.system import SystemReader, pool_names
+from jailbee.host_target import ParentHead
 from jailbee.outbox import sent
 from jailbee.procstat import PRIME_INTERVAL_SECONDS, ActivitySampler
 from jailbee.state_service.protocol import GatherError, Snapshot
@@ -34,6 +35,8 @@ if TYPE_CHECKING:
     from jailbee.dashboard.system import SystemStatus
     from jailbee.global_config import DashboardRefresh
     from jailbee.incus import Incus
+    from jailbee.pr_autofetch import PrHeadAutofetcher
+    from jailbee.state_service.service_probe import ServiceProbe
     from jailbee.update_check import UpdateNotice
 
 log = logging.getLogger(__name__)
@@ -101,6 +104,27 @@ def refresh_due(
     return do_base, do_git
 
 
+def _running_heads(
+    groups: list[RepoGroup], seen_at: float, previous: dict[str, ParentHead]
+) -> dict[str, ParentHead]:
+    """Every running container's probed HEAD, stamped with the pass time.
+
+    A running container whose probe failed keeps its previous entry (and its
+    older stamp): the card's age keeps growing instead of the children
+    flapping to the host-branch fallback for one pass.
+    """
+    heads: dict[str, ParentHead] = {}
+    for g in groups:
+        for c in g.containers:
+            if c.state != "Running":
+                continue
+            if c.git_status is not None and c.git_status.head_sha:
+                heads[c.name] = ParentHead(c.git_status.head_sha, seen_at)
+            elif c.name in previous:
+                heads[c.name] = previous[c.name]
+    return heads
+
+
 class Gatherer:
     """Runs the schedule and turns each gather into a `Snapshot` or `GatherError`.
 
@@ -119,7 +143,13 @@ class Gatherer:
         update: Callable[[], UpdateNotice | None] = current_notice,
         system: SystemReader | None = None,
         sent_counts: Callable[[], sent.SentCounts] = sent.counts,
+        recorder: Callable[[list[RepoGroup]], None] | None = None,
+        pr_heads: PrHeadAutofetcher | None = None,
+        services: ServiceProbe | None = None,
     ) -> None:
+        self._services = services
+        self._pr_heads = pr_heads
+        self._recorder = recorder
         self._sent_counts = sent_counts
         self._incus = incus
         self.cadence = cadence
@@ -136,6 +166,9 @@ class Gatherer:
         self._last_base: float | None = None
         self._last_full: float | None = None
         self._prev: list[RepoGroup] = []
+        # Each running container's HEAD as the last git pass saw it: the next
+        # pass compares a child or fork with its parent's entry.
+        self._heads: dict[str, ParentHead] = {}
         self._seq = 0
         self._update = update
         # Pool reads are throttled inside the reader; the base tier adds no incus call.
@@ -170,7 +203,9 @@ class Gatherer:
             return None
         result: Snapshot | GatherError
         try:
-            groups = self._gather(self._incus, roots, with_git=do_git)
+            groups = self._gather(
+                self._incus, roots, with_git=do_git, parent_heads=dict(self._heads)
+            )
             if not do_git:
                 carry_forward_git_status(groups, self._prev)
             if not self._primed:
@@ -180,6 +215,9 @@ class Gatherer:
                 self._primed = True
             sample_activity(groups, self._sampler, self._reader)
             self._annotate_sent(groups)
+            self._annotate_pr_heads(groups)
+            self._annotate_services(groups)
+            self._record_sessions(groups)
         except Exception as exc:  # reported to every client; the service lives on
             message = str(exc) or type(exc).__name__
             if message != self._failing:
@@ -191,6 +229,8 @@ class Gatherer:
                 log.warning("gather recovered (was failing: %s)", self._failing)
                 self._failing = None
             self._prev = groups
+            if do_git:
+                self._heads = _running_heads(groups, self._wall_clock().timestamp(), self._heads)
             self._seq += 1
             result = Snapshot(
                 self._seq,
@@ -207,6 +247,33 @@ class Gatherer:
         if do_git or isinstance(result, GatherError):
             self._last_full = stamp
         return result
+
+    def _annotate_pr_heads(self, groups: list[RepoGroup]) -> None:
+        """Start due PR head fetches and note their outcome; never fails the gather."""
+        if self._pr_heads is None:
+            return
+        try:
+            self._pr_heads.annotate(groups)
+        except Exception:
+            log.debug("PR head autofetch failed", exc_info=True)
+
+    def _annotate_services(self, groups: list[RepoGroup]) -> None:
+        """Write each running container's service states; never fails the gather."""
+        if self._services is None:
+            return
+        try:
+            self._services.annotate(groups)
+        except Exception:
+            log.debug("service probe failed", exc_info=True)
+
+    def _record_sessions(self, groups: list[RepoGroup]) -> None:
+        """Hand the live sessions to the recorder; its failure never fails the gather."""
+        if self._recorder is None:
+            return
+        try:
+            self._recorder(groups)
+        except Exception:
+            log.debug("session recording failed", exc_info=True)
 
     def _annotate_sent(self, groups: list[RepoGroup]) -> None:
         """Write the Sent record counts onto the groups and their containers.

@@ -680,6 +680,21 @@ def test_a_menu_box_is_as_wide_as_its_widest_level(mocker, tmp_path):
     assert sizes[0] == sizes[1] == tmenu.menu_width(menu) + 5  # opening a level never resizes
 
 
+def test_showing_an_unchanged_menu_again_does_not_reload_the_box(mocker, tmp_path):
+    """`show` runs on every frame sync; a reload posts `Changed`, which syncs again - a loop."""
+    posted = []
+
+    def reshow(app):
+        box = app.frame.native_box
+        original = box.post_message
+        box.post_message = lambda m: posted.append(type(m).__name__) or original(m)
+        box.show(box.spec)
+        box.post_message = original
+
+    drive(mocker, ["j", "enter", reshow], [alpha_group(tmp_path)])
+    assert "Changed" not in posted
+
+
 def test_a_menu_is_native_with_focus_and_its_title(mocker, tmp_path):
     seen = []
     run = drive(
@@ -2120,3 +2135,39 @@ def test_a_floating_confirm_dims_the_dashboard_behind_it(mocker, tmp_path):
     )
 
     assert seen == [(False, False, False), (True, True, False), (False, False, False)]
+
+
+def test_an_open_menu_box_follows_its_entry_when_new_entries_appear(mocker, tmp_path):
+    group = alpha_group(tmp_path)
+    row = group.containers[0]
+    row.outbox_pr, row.outbox_issue = 0, 0
+
+    def stage(app):  # type: ignore[no-untyped-def]
+        row.outbox_pr = 1  # staged while the menu is open; the next snapshot counts it
+        app.session.client.seq += 1
+
+    run = drive(mocker, ["j", "enter", "j", stage], [group])
+    menu = run.trace[-1].overlay
+    assert isinstance(menu, MenuState)
+    verbs = [e[1] for e in tmenu.menu_entries(menu) if isinstance(e, tuple)]
+    assert "outbox browse" in verbs
+    # the cursor was on "shell" and stays on it as the entries shift under it
+    assert run.natives[-1] == NativeState("menu", verbs.index("shell"), level=None)
+
+
+def test_pilot_a_mouse_click_outside_the_outbox_box_closes_it_and_selects_the_row(mocker, tmp_path):
+    from tests.test_dashboard_session import _outbox_json
+    from tests.test_dashboard_session import _quiet as quiet_listing
+
+    quiet_listing(mocker, _outbox_json())
+    group = alpha_group(tmp_path)
+    name = group.containers[0].name
+
+    def open_box(app):  # type: ignore[no-untyped-def]
+        app.session.overlay = app.session.open_outbox(name)  # the row is not selected
+
+    run = drive(mocker, [open_box, Click(Hit("row", (name,)))], [group])
+
+    assert isinstance(run.trace[1].overlay, tsession.OutboxState)
+    assert run.trace[-1].overlay is None
+    assert run.trace[-1].selected == tsession.Row("container", name)

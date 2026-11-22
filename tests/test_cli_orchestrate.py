@@ -627,3 +627,51 @@ def test_messages_missing_store_notes_on_stderr(patched, tmp_path, mocker):
     assert res.exit_code == 0
     assert "no broker message store yet" in res.output
     assert not (tmp_path / "broker.db").exists()
+
+
+def test_comment_edit_flags_reach_commands(patched):
+    res = runner.invoke(
+        app, ["orchestrate", "grant", "a", "--publish-pr-reviews", "--publish-pr-comment-edits"]
+    )
+    assert res.exit_code == 0, res.output
+    flags = patched.grant.call_args.args[3]
+    assert (flags.publish_pr_reviews, flags.publish_pr_comment_edits) == (True, True)
+
+
+def test_grant_says_comment_edits_were_revoked_with_reviews(patched):
+    from jailbee.orchestration.grant import PublishRights
+
+    before = Grant(publish=PublishRights(pr_reviews=True, pr_comment_edits=True))
+
+    def fake(*args, on_previous=None, **kwargs):
+        on_previous(before)
+        return Grant()
+
+    patched.grant.side_effect = fake
+    res = runner.invoke(app, ["orchestrate", "grant", "a", "--no-publish-pr-reviews"])
+    assert res.exit_code == 0, res.output
+    assert "PR comment edits revoked with PR reviews" in " ".join(res.output.split())
+
+
+def test_pr_state_flag_reaches_commands(patched):
+    res = runner.invoke(
+        app, ["orchestrate", "grant", "a", "--publish-pr-reviews", "--publish-pr-state"]
+    )
+    assert res.exit_code == 0, res.output
+    flags = patched.grant.call_args.args[3]
+    assert (flags.publish_pr_reviews, flags.publish_pr_state) == (True, True)
+
+
+def test_grant_says_pr_state_was_revoked_with_reviews(patched):
+    from jailbee.orchestration.grant import PublishRights
+
+    before = Grant(publish=PublishRights(pr_reviews=True, pr_state=True))
+
+    def fake(*args, on_previous=None, **kwargs):
+        on_previous(before)
+        return Grant()
+
+    patched.grant.side_effect = fake
+    res = runner.invoke(app, ["orchestrate", "grant", "a", "--no-publish-pr-reviews"])
+    assert res.exit_code == 0, res.output
+    assert "PR state changes revoked with PR reviews" in " ".join(res.output.split())

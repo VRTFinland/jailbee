@@ -18,11 +18,12 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 
 from jailbee.accounts.models import ActivityEvent, AgentActivity
-from jailbee.agent_status import AgentSummary
+from jailbee.agent_status import AgentSummary, SessionMark
 from jailbee.dashboard.model import AppMenuEntry, RepoAdvisory, RepoGroup
 from jailbee.dashboard.system import PoolStatus, SystemStatus
-from jailbee.git_status import GitStatus, SubmoduleChange
-from jailbee.lifecycle import ContainerInfo
+from jailbee.git_status import GitStatus, OtherBranch, SubmoduleChange
+from jailbee.host_target import SyncTarget
+from jailbee.lifecycle import ContainerInfo, ServiceState
 from jailbee.orchestration.view import ChildView, GrantView
 from jailbee.procstat import ProcessActivity, ProcessMemory
 from jailbee.sysstat import DiskStatus, LoadStatus, MemoryStatus
@@ -46,7 +47,22 @@ from jailbee.update_check import UpdateNotice
 # 22 adds MemoryStatus.swap_cached and .zswapped: swap use leaves them out.
 # 23 adds immutable board-scoped GrantView.publish_projects.
 # 24 adds RepoGroup.default_project for the board picker.
-PROTOCOL = 24
+# 25 adds AgentSummary.session_ids for the web dashboard's session attribution.
+# 26 adds GitStatus.sync_target (the resolved comparison target), the
+# host-branch ↑/↓ host_ahead_count/host_behind_count and host_branch.
+# 27 adds RepoGroup.agent_label, the repo's effective agent as `profile/model`.
+# 28 adds ContainerInfo.agent_runner and .agent_source, the agent the next session launches.
+# 29 adds RepoGroup.service_descriptions, the repo services' optional descriptions.
+# 30 adds SyncTarget.autofetch, .fetched_at, .fetch_error and .fetch_error_at.
+# 31 adds GrantView.publish_pr_comment_edits, the PR comment-edit publish right.
+# 32 adds GitStatus.other_branches and OtherBranch, local branches with unimported commits.
+# 33 adds AgentSummary.sessions, one SessionMark per live session.
+# 34 adds ContainerInfo.pr_slug, the repo's GitHub slug for PR hyperlinks.
+# 35 adds ContainerInfo.services (ServiceState) and .services_unknown.
+# 36 adds SyncTarget kind "parent" and .parent, .ahead_sha, .seen_at: children and
+# forks compare with their parent container.
+# 37 adds SyncTarget.parent_unknown: the parent's head is unknown (no gather pass).
+PROTOCOL = 37
 
 
 class ProtocolError(ValueError):
@@ -136,13 +152,17 @@ _NAMESPACE: dict[str, Any] = {
         GrantView,
         LoadStatus,
         MemoryStatus,
+        OtherBranch,
         Path,
         PoolStatus,
         ProcessActivity,
         ProcessMemory,
         RepoAdvisory,
         RepoGroup,
+        ServiceState,
+        SessionMark,
         SubmoduleChange,
+        SyncTarget,
         SystemStatus,
         UpdateNotice,
         datetime,

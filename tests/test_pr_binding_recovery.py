@@ -195,9 +195,10 @@ def test_bind_pins_actual_gh_argv_to_configured_remote(mocker, tmp_path, submodu
     )
     result = CliRunner().invoke(app, [*args, "20", "--yes"])
     assert result.exit_code == 0, result.output
-    argv = run.call_args.args[0]
-    assert argv[-2:] == ["--repo", "active/repo"]
-    assert run.call_args.kwargs["cwd"] == root
+    # The container flow also fetches the PR base afterwards; pin the gh call.
+    gh_call = next(c for c in run.call_args_list if c.args[0][0] == "gh")
+    assert gh_call.args[0][-2:] == ["--repo", "active/repo"]
+    assert gh_call.kwargs["cwd"] == root
 
 
 @pytest.mark.parametrize("stacked", [False, True])

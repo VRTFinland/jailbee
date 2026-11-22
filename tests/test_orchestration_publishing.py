@@ -1077,3 +1077,220 @@ def test_publish_failure_after_the_policy_passed_keeps_the_reservation(rig):
     publishing.settle(ctx, lambda ref, out: replies.append(out))
     assert replies[0].state == "failed" and "GitHub failed" in replies[0].detail
     assert len(open_state_store(ctx.root).kv_get("publish-budget.json")[ctx.sender.full]) == 1
+
+
+def test_comment_grant_does_not_cover_comment_edit(rig):
+    from types import SimpleNamespace
+
+    from jailbee.issue_manifest import CommentEditAction, ExistingIssue
+    from jailbee.issue_outbox import ResolvedAction, ResolvedIssue
+
+    edit = ResolvedAction(
+        1,
+        CommentEditAction(".", ExistingIssue(12), 555, "new", "old"),
+        issue_outbox.RepoTarget(".", rig[0].root, "org/repo"),
+        ResolvedIssue(12),
+        "pending",
+    )
+    batch = SimpleNamespace(login="alice", manifests=(SimpleNamespace(actions=(edit,)),))
+    with pytest.raises(issue_outbox.IssueGateError, match="comment_edit"):
+        publishing._issue_policy(PublishRights(issues=("comment",)), 1)(batch)
+    publishing._issue_policy(PublishRights(issues=("comment", "comment_edit")), 1)(batch)
+
+
+def _edit_manifest(extra=()):
+    return pr_outbox.parse_manifest(
+        "a.json",
+        json.dumps(
+            {
+                "version": 1,
+                "repo": "org/repo",
+                "pr": 12,
+                "head_sha": "a" * 40,
+                "actions": [
+                    {"type": "comment", "body": "x"},
+                    {
+                        "type": "comment_edit",
+                        "comment_id": 5,
+                        "body": "n",
+                        "expected": {"body": "o"},
+                    },
+                ][: 2 if not extra else 1 + len(extra)],
+            }
+        ),
+        {},
+    )
+
+
+def _bound(ctx, mocker):
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    ctx.incus.config_get_checked.side_effect = lambda full, key: (
+        "12" if key == "user.jailbee.pr" else None
+    )
+
+
+@pytest.mark.parametrize(("edits", "allowed"), [(False, False), (True, True)])
+def test_review_policy_needs_comment_edit_right(rig, mocker, edits, allowed):
+    ctx = rig[0]
+    _bound(ctx, mocker)
+    rights = PublishRights(pr_reviews=True, pr_comment_edits=edits)
+    check = publishing._review_policy(rights, 2, ctx.cfg, ctx.incus, ctx.sender.full)
+    if allowed:
+        check(_edit_manifest())
+    else:
+        with pytest.raises(pr_outbox.GateError, match="pr_comment_edits"):
+            check(_edit_manifest())
+
+
+def test_review_policy_without_edits_unaffected_by_missing_edit_right(rig, mocker):
+    ctx = rig[0]
+    _bound(ctx, mocker)
+    manifest = pr_outbox.parse_manifest(
+        "a.json",
+        json.dumps(
+            {
+                "version": 1,
+                "repo": "org/repo",
+                "pr": 12,
+                "head_sha": "a" * 40,
+                "actions": [{"type": "comment", "body": "x"}],
+            }
+        ),
+        {},
+    )
+    publishing._review_policy(
+        PublishRights(pr_reviews=True), 1, ctx.cfg, ctx.incus, ctx.sender.full
+    )(manifest)
+
+
+def test_precheck_refuses_comment_edit_without_the_right(rig, mocker):
+    ctx, m, *_ = rig
+    payload = {
+        "version": 1,
+        "repo": "org/repo",
+        "pr": 12,
+        "head_sha": "a" * 40,
+        "actions": [
+            {"type": "comment_edit", "comment_id": 5, "body": "n", "expected": {"body": "o"}}
+        ],
+    }
+    seed_source(ctx.sender.key, payload)
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    mocker.patch.object(pr_outbox, "read_outbox", side_effect=AssertionError("incus exec"))
+    ctx.sender = replace(
+        ctx.sender,
+        config={labels.GRANT: Grant(publish=PublishRights(pr_reviews=True)).to_label()},
+    )
+    out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
+    assert out.state == "refused" and "pr_comment_edits" in out.detail
+
+
+def test_precheck_does_not_need_the_edit_right_for_an_already_published_edit(rig, mocker):
+    ctx, m, *_ = rig
+    payload = {
+        "version": 1,
+        "repo": "org/repo",
+        "pr": 12,
+        "head_sha": "a" * 40,
+        "actions": [
+            {"type": "comment_edit", "comment_id": 5, "body": "n", "expected": {"body": "o"}},
+            {"type": "comment", "body": "hi"},
+        ],
+    }
+    seed_source(ctx.sender.key, payload)
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    mocker.patch.object(
+        pr_outbox, "_publication_progress", return_value=pr_outbox.Progress(frozenset({0}), {})
+    )
+    ctx.sender = replace(
+        ctx.sender,
+        config={labels.GRANT: Grant(publish=PublishRights(pr_reviews=True)).to_label()},
+    )
+    out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
+    assert out.state != "refused" and "pr_comment_edits" not in (out.detail or "")
+
+
+def _state_manifest():
+    return pr_outbox.parse_manifest(
+        "a.json",
+        json.dumps(
+            {
+                "version": 1,
+                "repo": "org/repo",
+                "pr": 12,
+                "head_sha": "a" * 40,
+                "actions": [{"type": "state", "state": "closed", "expected": {"state": "open"}}],
+            }
+        ),
+        {},
+    )
+
+
+def _bound_as(ctx, mocker, binding):
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    entries = {
+        "topic": {
+            "head": "topic",
+            "pr": 12,
+            "base": "main",
+            "source": "refs/heads/topic",
+            "source_sha": "a" * 40,
+            "author": True,
+            "adopted": binding == "adopted",
+        }
+    }
+    ctx.incus.config_get_checked.side_effect = lambda full, key: (
+        json.dumps(entries)
+        if key == branch_pr.BRANCH_PRS_LABEL and binding != "label"
+        else "12"
+        if key == "user.jailbee.pr"
+        else None
+    )
+
+
+@pytest.mark.parametrize(("granted", "allowed"), [(False, False), (True, True)])
+def test_review_policy_needs_pr_state_right(rig, mocker, granted, allowed):
+    ctx = rig[0]
+    _bound_as(ctx, mocker, "authored")
+    rights = PublishRights(pr_reviews=True, pr_state=granted)
+    check = publishing._review_policy(rights, 1, ctx.cfg, ctx.incus, ctx.sender.full)
+    if allowed:
+        check(_state_manifest())
+    else:
+        with pytest.raises(pr_outbox.GateError, match="pr_state"):
+            check(_state_manifest())
+
+
+@pytest.mark.parametrize(
+    ("binding", "allowed"), [("label", False), ("adopted", False), ("authored", True)]
+)
+def test_review_policy_state_change_requires_authored_binding(rig, mocker, binding, allowed):
+    ctx = rig[0]
+    _bound_as(ctx, mocker, binding)
+    rights = PublishRights(pr_reviews=True, pr_state=True)
+    check = publishing._review_policy(rights, 1, ctx.cfg, ctx.incus, ctx.sender.full)
+    if allowed:
+        check(_state_manifest())
+    else:
+        with pytest.raises(pr_outbox.GateError, match="authored"):
+            check(_state_manifest())
+
+
+def test_precheck_refuses_state_change_without_the_right(rig, mocker):
+    ctx, m, *_ = rig
+    payload = {
+        "version": 1,
+        "repo": "org/repo",
+        "pr": 12,
+        "head_sha": "a" * 40,
+        "actions": [{"type": "state", "state": "closed", "expected": {"state": "open"}}],
+    }
+    seed_source(ctx.sender.key, payload)
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    mocker.patch.object(pr_outbox, "read_outbox", side_effect=AssertionError("incus exec"))
+    ctx.sender = replace(
+        ctx.sender,
+        config={labels.GRANT: Grant(publish=PublishRights(pr_reviews=True)).to_label()},
+    )
+    out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
+    assert out.state == "refused" and "pr_state" in out.detail

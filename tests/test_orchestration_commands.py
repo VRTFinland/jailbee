@@ -81,7 +81,8 @@ def test_build_grant_sets_issue_kinds(cfg):
         GrantError,
         match=(
             "unknown issue action 'close'; "
-            "known: assign, assign_self, comment, create, edit, labels, state"
+            "known: assign, assign_self, comment, comment_edit, create, dependency, edit, labels, "
+            "state, sub_issue"
         ),
     ):
         commands.build_grant(cfg, None, GrantFlags(publish_issues=("close",)))
@@ -143,6 +144,7 @@ def test_build_grant_foreign_issues_none_clears_only_the_foreign_block(cfg):
         {"publish_issues": ()},
         {"publish_prs": False},
         {"publish_pr_reviews": True},
+        {"publish_pr_comment_edits": True},
         {"publish_rate": 10},
         {"publish_foreign_issues": ()},
     ],
@@ -159,6 +161,7 @@ def test_no_publish_is_exclusive(cfg, changes):
         ("foreign_issues", "issue apply"),
         ("pull_requests", "pr push"),
         ("pr_reviews", "review apply"),
+        ("pr_comment_edits", "review apply"),
     ],
 )
 def test_remote_publish_requires_equivalent_manual_permission(cfg, incus, right, allowed):
@@ -424,6 +427,8 @@ def test_save_profile_writes_global_block(cfg, incus_with_grant, tmp_path):
             "foreign_issues": {"repos": [], "actions": []},
             "pull_requests": False,
             "pr_reviews": False,
+            "pr_comment_edits": False,
+            "pr_state": False,
             "max_actions_per_hour": 30,
         },
     }
@@ -980,3 +985,81 @@ def test_local_grant_is_unbounded(make_cfg, tmp_path, incus, ensure):
     cfg = _wide_cfg(make_cfg, tmp_path, profile_loose=True)
     g = commands.grant(cfg, incus, "myrepo-a", GrantFlags(profile="wide"))
     assert g.grantable.loose is True and g.grantable.mounts == ("data",)
+
+
+def test_comment_edits_right_needs_pr_reviews(cfg):
+    with pytest.raises(GrantError, match="needs --publish-pr-reviews"):
+        commands.build_grant(cfg, None, GrantFlags(publish_pr_comment_edits=True))
+    rights = commands.build_grant(
+        cfg, None, GrantFlags(publish_pr_reviews=True, publish_pr_comment_edits=True)
+    ).publish
+    assert rights.pr_comment_edits is True
+
+
+def test_revoking_pr_reviews_also_clears_comment_edits(cfg):
+    from jailbee.orchestration.grant import PublishRights
+
+    current = Grant(publish=PublishRights(pr_reviews=True, pr_comment_edits=True))
+    rights = commands.build_grant(cfg, current, GrantFlags(publish_pr_reviews=False)).publish
+    assert rights.pr_reviews is False and rights.pr_comment_edits is False
+    with pytest.raises(GrantError, match="needs --publish-pr-reviews"):
+        commands.build_grant(
+            cfg, current, GrantFlags(publish_pr_reviews=False, publish_pr_comment_edits=True)
+        )
+
+
+def test_inherited_edits_without_reviews_are_narrowed_not_fatal(cfg):
+    from jailbee.orchestration.grant import PublishRights
+
+    current = Grant(publish=PublishRights(pr_comment_edits=True, issues=("comment",)))
+    rights = commands.build_grant(cfg, current, GrantFlags(publish_rate=5)).publish
+    assert rights.pr_comment_edits is False
+    assert rights.issues == ("comment",) and rights.max_actions_per_hour == 5
+
+
+def test_publish_summary_names_comment_edits():
+    from jailbee.orchestration.grant import PublishRights
+
+    rights = PublishRights(pr_reviews=True, pr_comment_edits=True)
+    assert "PR comment edits" in commands.publish_summary(rights)
+
+
+def test_profile_default_with_edits_but_no_reviews_is_narrowed(make_cfg, tmp_path):
+    from jailbee.config.models_orchestration import PublishRightsConfig
+
+    profiles = {"odd": OrchestrationProfile(publish=PublishRightsConfig(pr_comment_edits=True))}
+    cfg = _cfg(
+        make_cfg,
+        tmp_path,
+        view=OrchestrationView(profiles=profiles, default_profile="odd"),
+        mounts=True,
+    )
+    assert commands.build_grant(cfg, None, GrantFlags()).publish.pr_comment_edits is False
+    assert (
+        commands.build_grant(
+            cfg, None, GrantFlags(profile="odd", publish_rate=3)
+        ).publish.pr_comment_edits
+        is False
+    )
+
+
+def test_pr_state_right_needs_pr_reviews_and_goes_with_them(cfg):
+    from jailbee.orchestration.grant import PublishRights
+
+    with pytest.raises(GrantError, match="--publish-pr-state needs --publish-pr-reviews"):
+        commands.build_grant(cfg, None, GrantFlags(publish_pr_state=True))
+    rights = commands.build_grant(
+        cfg, None, GrantFlags(publish_pr_reviews=True, publish_pr_state=True)
+    ).publish
+    assert rights.pr_state is True
+    current = Grant(publish=PublishRights(pr_reviews=True, pr_state=True))
+    off = commands.build_grant(cfg, current, GrantFlags(publish_pr_reviews=False)).publish
+    assert off.pr_state is False
+
+
+def test_publish_summary_names_pr_state():
+    from jailbee.orchestration.grant import PublishRights
+
+    assert "PR close/reopen" in commands.publish_summary(
+        PublishRights(pr_reviews=True, pr_state=True)
+    )

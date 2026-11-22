@@ -53,9 +53,14 @@ creates a GitHub Release, none of which claiming a name needs (and the public
 repo may not exist yet). Upload the built artifacts directly:
 
 ```bash
-make build                # sdist + wheel, validated with twine check
+make build                # builds the web frontend (make web), then sdist + wheel, validated with twine check
 uvx twine upload dist/*
 ```
+
+`make build` needs Node.js and npm: the web dashboard's browser app is built
+into `src/jailbee/web/static/` (gitignored) and shipped through hatch
+`artifacts`. Before uploading, confirm
+`python3 -m zipfile -l dist/*.whl | grep web/static/index.html` finds it.
 
 Two things that catch people out:
 

@@ -66,7 +66,7 @@ def _prune_attachments(kind: Kind, raw: dict[str, Any], files: dict[str, str]) -
     used: set[str] = set()
     for action in raw["actions"]:
         items = []
-        if kind == "pr" or action["type"] in ("create", "edit", "comment"):
+        if kind == "pr" or action["type"] in ("create", "edit", "comment", "comment_edit"):
             items.append(action)
         if kind == "pr" and action["type"] == "review":
             items.extend(action["comments"])
@@ -191,7 +191,9 @@ def plan_delete(
                 dependents = tuple(
                     i
                     for i, a in enumerate(actions)
-                    if is_create and a.get("issue_ref") == action["ref"]
+                    if is_create
+                    and action["ref"]
+                    in (a.get("issue_ref"), a.get("sub_issue_ref"), a.get("blocked_by_ref"))
                 )
                 if dependents and not selection.with_dependents:
                     raise OutboxError(
@@ -284,8 +286,8 @@ def plan_clear(container: ContainerView) -> ContainerClearPlan:
             if any(action.state == "uncertain" for action in view.actions):
                 index = next(action.index for action in view.actions if action.state == "uncertain")
                 reason = (
-                    "uncertain — reconcile with: jailbee issue resolve "
-                    f"{container.name} {view.id.name} {index} (--applied --url <url> | --retry)"
+                    "uncertain — reconcile with: jailbee outbox resolve "
+                    f"{container.name} {view.id} {index} (--applied --url <url> | --retry)"
                 )
             elif view.id.kind == "pr" and view.edit_block:
                 reason = (

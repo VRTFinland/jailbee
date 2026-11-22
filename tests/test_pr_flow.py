@@ -2363,3 +2363,204 @@ def test_outbox_manifest_menu_keeps_its_question(mocker):
     mocker.patch("questionary.select", side_effect=select)
     pr_flow._pick_outbox_manifest(["001-a.json", "002-b.json"])
     assert headers == ["More than one PR description is pending. Which one?"]
+
+
+# ---- binding records the PR base (#145) ------------------------------------
+
+
+def _base_incus(mocker, labels=None):
+    incus = mocker.MagicMock()
+    data = {"user.jailbee.base_branch": "main", **(labels or {})}
+    incus.config_get.side_effect = lambda name, key: data.get(key)
+    return incus
+
+
+def _base_cfg():
+    return types.SimpleNamespace(
+        repo_root=Path("/r"), upstream_remote="origin", default_branch="main"
+    )
+
+
+def _base_patches(mocker, *, fetched="deadbeef"):
+    fetch = mocker.patch("jailbee.pr.fetch_base_ref", return_value=fetched)
+    retarget = mocker.patch("jailbee.sync.retarget_container")
+    mocker.patch("jailbee.git.rev_parse", return_value="cafe")
+    return fetch, retarget
+
+
+def test_sync_base_to_pr_retargets_when_base_differs(mocker):
+    fetch, retarget = _base_patches(mocker)
+    cfg = _base_cfg()
+    incus = _base_incus(mocker)
+    retarget.return_value = types.SimpleNamespace(old_base="main", new_base="dev")
+    pr_flow.sync_container_base_to_pr(cfg, incus, "c-full", short="c", base_ref="dev")
+    fetch.assert_called_once()
+    assert retarget.call_args.args[2:4] == ("c", "dev")
+
+
+def test_sync_base_to_pr_noop_when_base_already_matches(mocker):
+    _fetch, retarget = _base_patches(mocker)
+    cfg = _base_cfg()
+    pr_flow.sync_container_base_to_pr(
+        cfg,
+        _base_incus(mocker, {"user.jailbee.base_branch": "dev"}),
+        "f",
+        short="c",
+        base_ref="dev",
+    )
+    retarget.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        {"user.jailbee.base_explicit": "true"},
+        {f"{pr_flow.STACKED_LABEL_PREFIX}_base": "feat/parent"},
+    ],
+)
+def test_sync_base_to_pr_keeps_explicit_base(mocker, labels):
+    _fetch, retarget = _base_patches(mocker)
+    cfg = _base_cfg()
+    pr_flow.sync_container_base_to_pr(
+        cfg, _base_incus(mocker, labels), "f", short="c", base_ref="dev"
+    )
+    retarget.assert_not_called()
+
+
+def test_sync_base_to_pr_missing_base_label_is_not_explicit(mocker):
+    _fetch, retarget = _base_patches(mocker)
+    incus = _base_incus(mocker)
+    incus.config_get.side_effect = lambda name, key: None
+    info = mocker.patch("jailbee.pr_flow.info")
+    pr_flow.sync_container_base_to_pr(_base_cfg(), incus, "f", short="c", base_ref="dev")
+    retarget.assert_called_once()
+    assert not any("explicitly chosen" in c.args[0] for c in info.call_args_list)
+
+
+def test_sync_base_to_pr_warns_with_hint_when_retarget_fails(mocker):
+    from jailbee.sync import SyncError
+
+    _, retarget = _base_patches(mocker)
+    retarget.side_effect = SyncError("Container 'c' is not running.")
+    warn = mocker.patch("jailbee.pr_flow.warn")
+    cfg = _base_cfg()
+    pr_flow.sync_container_base_to_pr(cfg, _base_incus(mocker), "f", short="c", base_ref="dev")
+    assert "jailbee git retarget c dev" in warn.call_args.args[0]
+
+
+def test_sync_base_to_pr_skips_mount_mode(mocker):
+    _, retarget = _base_patches(mocker)
+    cfg = _base_cfg()
+    pr_flow.sync_container_base_to_pr(
+        cfg, _base_incus(mocker, {"user.jailbee.mode": "mount"}), "f", short="c", base_ref="dev"
+    )
+    retarget.assert_not_called()
+
+
+def test_bind_container_pr_updates_base(tmp_path, mocker):
+    mocker.patch("jailbee.pr.resolve_pr", return_value=_pr_info())
+    mocker.patch("jailbee.pr_flow.assert_pr_inheritance_complete")
+    sync_base = mocker.patch("jailbee.pr_flow.sync_container_base_to_pr")
+    mocker.patch("jailbee.pr_flow.PrScope.for_repo", return_value=_super_scope(tmp_path))
+    incus = mocker.MagicMock()
+    incus.config_get.return_value = None
+    pr_flow.bind_container_pr(
+        types.SimpleNamespace(), incus, "c-full", short="c", number=7, yes=True
+    )
+    assert sync_base.call_args.kwargs["base_ref"] == "main"
+
+
+def test_sync_base_to_pr_never_raises(mocker):
+    _, retarget = _base_patches(mocker)
+    retarget.side_effect = RuntimeError("boom")
+    warn = mocker.patch("jailbee.pr_flow.warn")
+    cfg = _base_cfg()
+    pr_flow.sync_container_base_to_pr(cfg, _base_incus(mocker), "f", short="c", base_ref="dev")
+    assert "boom" in warn.call_args.args[0]
+
+
+def test_sync_base_to_pr_retargets_non_explicit_with_exact_source_ref(mocker):
+    _fetch, retarget = _base_patches(mocker)
+    retarget.return_value = types.SimpleNamespace(old_base="main", new_base="dev")
+    pr_flow.sync_container_base_to_pr(
+        _base_cfg(), _base_incus(mocker), "f", short="c", base_ref="dev"
+    )
+    assert retarget.call_args.kwargs == {
+        "source_ref": "refs/remotes/origin/dev",
+        "explicit": False,
+    }
+
+
+def test_sync_base_to_pr_without_host_ref_passes_no_source_ref(mocker):
+    _fetch, retarget = _base_patches(mocker)
+    mocker.patch("jailbee.git.rev_parse", return_value=None)
+    retarget.return_value = types.SimpleNamespace(old_base="main", new_base="dev")
+    pr_flow.sync_container_base_to_pr(
+        _base_cfg(), _base_incus(mocker), "f", short="c", base_ref="dev"
+    )
+    assert retarget.call_args.kwargs["source_ref"] is None
+
+
+def test_sync_base_to_pr_warns_when_the_fetch_fails(mocker):
+    _fetch, retarget = _base_patches(mocker, fetched=None)
+    warn = mocker.patch("jailbee.pr_flow.warn")
+    retarget.return_value = types.SimpleNamespace(old_base="main", new_base="dev")
+    pr_flow.sync_container_base_to_pr(
+        _base_cfg(), _base_incus(mocker), "f", short="c", base_ref="dev"
+    )
+    assert "Could not fetch PR base branch 'dev'" in warn.call_args.args[0]
+    retarget.assert_called_once()
+
+
+def test_sync_base_to_pr_keeps_a_legacy_non_default_base(mocker):
+    """No marker at all (container older than the marker) and base != default: chosen."""
+    _fetch, retarget = _base_patches(mocker)
+    incus = _base_incus(mocker, {"user.jailbee.base_branch": "feat/a"})
+    pr_flow.sync_container_base_to_pr(_base_cfg(), incus, "f", short="c", base_ref="dev")
+    retarget.assert_not_called()
+
+
+def test_sync_base_to_pr_moves_a_legacy_default_base(mocker):
+    _fetch, retarget = _base_patches(mocker)
+    retarget.return_value = types.SimpleNamespace(old_base="main", new_base="dev")
+    pr_flow.sync_container_base_to_pr(
+        _base_cfg(), _base_incus(mocker), "f", short="c", base_ref="dev"
+    )
+    retarget.assert_called_once()
+
+
+def test_sync_base_to_pr_follows_a_derived_base(mocker):
+    """Marker "false" = an earlier PR's base: the next PR's base replaces it."""
+    _fetch, retarget = _base_patches(mocker)
+    incus = _base_incus(
+        mocker, {"user.jailbee.base_branch": "feat/a", "user.jailbee.base_explicit": "false"}
+    )
+    retarget.return_value = types.SimpleNamespace(old_base="feat/a", new_base="dev")
+    pr_flow.sync_container_base_to_pr(_base_cfg(), incus, "f", short="c", base_ref="dev")
+    retarget.assert_called_once()
+
+
+def test_bind_outbox_reference_syncs_the_base(mocker):
+    mocker.patch("jailbee.pr_outbox.scope_slug", return_value="o/r")
+    mocker.patch("jailbee.pr_outbox.outbox_pr_references", return_value={5: ("a.json",)})
+    mocker.patch("jailbee.pr_flow.offer_outbox_binding", return_value=5)
+    sync_base = mocker.patch("jailbee.pr_flow.sync_container_base_to_pr")
+    found = _pr_info()
+
+    def bind(*args, on_resolved=None, **kwargs):
+        on_resolved(found)
+        return pr_flow.PrRecord(number=5, head="topic", author=False, adopted=True)
+
+    mocker.patch("jailbee.pr_flow.bind_pr_by_number", side_effect=bind)
+    cfg = types.SimpleNamespace(container_user=types.SimpleNamespace(uid=1000))
+    pr_flow.bind_outbox_reference(
+        cfg,
+        mocker.MagicMock(),
+        "c-full",
+        object(),
+        object(),
+        pr_flow.PrRecord(None, None, False, False),
+        short="c",
+        yes=True,
+    )
+    assert sync_base.call_args.kwargs["base_ref"] == found.base_ref

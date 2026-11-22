@@ -830,6 +830,28 @@ class PickerBox(OverlayBox):
         ]
         yield OverlayList(*options, mouse_enabled=self.mouse_enabled)
 
+    def show(self, spec: Overlay) -> None:
+        """New entries for the same list: the cursor stays on its entry (by value)."""
+        super().show(spec)
+        assert isinstance(spec, Picker)
+        old, self.picker = self.picker, spec
+        if not self.is_mounted or old.entries == spec.entries:
+            return
+        lst = self.query_one(OverlayList)
+        at = lst.highlighted
+        followed = old.entries[at].value if at is not None and at < len(old.entries) else None
+        cursor = next(
+            (i for i, e in enumerate(spec.entries) if e.value == followed),
+            min(at or 0, max(0, len(spec.entries) - 1)),
+        )
+        lst.clear_options()
+        lst.add_options(
+            [Option(_one_line(_keyed_label(entry))) for entry in spec.entries]
+            or [Option(_one_line("(nothing to choose)", "dim"), disabled=True)]
+        )
+        lst.highlighted = cursor
+        self.post_message(self.Changed())
+
     def content_rows(self) -> int:
         return max(1, len(self.picker.entries))
 
@@ -920,6 +942,40 @@ class MenuBox(OverlayBox):
 
     def _entries(self) -> Sequence[MenuItem]:
         return menu_entries(self.menu, self.group)
+
+    @staticmethod
+    def _identity(item: MenuItem) -> str:
+        return item.label if isinstance(item, MenuGroup) else item[1]
+
+    def show(self, spec: Overlay) -> None:
+        """New entries for the same menu: the cursor stays on its entry when it is still there."""
+        old_entries = self._entries() if self.is_mounted else ()
+        super().show(spec)
+        assert isinstance(spec, (MenuState, RepoMenuState))
+        previous, self.menu = self.menu, spec
+        if not self.is_mounted:
+            return
+        # `show` runs on every frame sync and a reload posts `Changed`, which
+        # syncs again: reload only when the entries really differ.
+        if list(old_entries) == list(menu_entries(spec, self.group)) and (
+            menu_title(previous, self.group) == menu_title(spec, self.group)
+        ):
+            return
+        lst = self.query_one(OverlayList)
+        at = lst.highlighted
+        followed = (
+            self._identity(old_entries[at]) if at is not None and at < len(old_entries) else None
+        )
+        if self.group is not None and not any(
+            isinstance(item, MenuGroup) and item.label == self.group for item in menu_entries(spec)
+        ):
+            self.group, followed = None, None  # the level it was in is gone
+        entries = self._entries()
+        cursor = next(
+            (i for i, item in enumerate(entries) if self._identity(item) == followed),
+            min(at or 0, max(0, len(entries) - 1)),
+        )
+        self._load(self.group, cursor)
 
     def _options(self) -> list[Option]:
         entries = self._entries()

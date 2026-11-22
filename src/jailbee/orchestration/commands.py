@@ -68,6 +68,8 @@ class GrantFlags:
     publish_foreign_issues: tuple[str, ...] | None = None
     publish_prs: bool | None = None
     publish_pr_reviews: bool | None = None
+    publish_pr_comment_edits: bool | None = None
+    publish_pr_state: bool | None = None
     publish_rate: int | None = None
     no_publish: bool = False
     publish_project: tuple[str, ...] | None = None
@@ -216,6 +218,8 @@ def _publish_rights(base: PublishRights, flags: GrantFlags) -> PublishRights:
         "foreign_issues": flags.publish_foreign_issues,
         "pull_requests": flags.publish_prs,
         "pr_reviews": flags.publish_pr_reviews,
+        "pr_comment_edits": flags.publish_pr_comment_edits,
+        "pr_state": flags.publish_pr_state,
         "max_actions_per_hour": flags.publish_rate,
     }
     if flags.no_publish:
@@ -260,9 +264,25 @@ def _publish_rights(base: PublishRights, flags: GrantFlags) -> PublishRights:
         data["foreign_issues"] = ForeignIssueRights(
             repos=tuple(repos), actions=actions or ()
         ).model_dump()
-    for name in ("pull_requests", "pr_reviews", "max_actions_per_hour"):
+    for name in (
+        "pull_requests",
+        "pr_reviews",
+        "pr_comment_edits",
+        "pr_state",
+        "max_actions_per_hour",
+    ):
         if changes[name] is not None:
             data[name] = changes[name]
+    if data["pr_comment_edits"] and not data["pr_reviews"]:
+        if flags.publish_pr_comment_edits:
+            raise GrantError("--publish-pr-comment-edits needs --publish-pr-reviews")
+        # Edits ride on reviews: turning reviews off (or a default that holds
+        # edits without them) leaves no edit right behind.
+        data["pr_comment_edits"] = False
+    if data["pr_state"] and not data["pr_reviews"]:
+        if flags.publish_pr_state:
+            raise GrantError("--publish-pr-state needs --publish-pr-reviews")
+        data["pr_state"] = False
     return PublishRights.model_validate(data)
 
 
@@ -281,6 +301,10 @@ def publish_summary(rights: PublishRights) -> str:
         parts.append("PRs")
     if rights.pr_reviews:
         parts.append("PR reviews")
+    if rights.pr_comment_edits:
+        parts.append("PR comment edits")
+    if rights.pr_state:
+        parts.append("PR close/reopen")
     parts.append(f"{rights.max_actions_per_hour}/hour")
     return "; ".join(parts)
 
@@ -424,6 +448,10 @@ def _check_remote_bound(
         )
     if p.pr_reviews and (not had.pr_reviews or rate_widened):
         required.append(("pr_reviews", ["review", "apply", full]))
+    if p.pr_comment_edits and (not had.pr_comment_edits or rate_widened):
+        required.append(("pr_comment_edits", ["review", "apply", full]))
+    if p.pr_state and (not had.pr_state or rate_widened):
+        required.append(("pr_state", ["review", "apply", full]))
     for right, argv in required:
         try:
             policy_allows(

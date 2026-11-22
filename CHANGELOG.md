@@ -10,6 +10,185 @@ before editing `## Unreleased`.
 
 ### Added
 
+- Container agents can stage closing or reopening a pull request with `jailbee pr state [N]
+  closed|open`: a `state` action in the PR manifest, published with `jb outbox apply` or
+  the dashboard. The plan warns `closes PR #N` / `reopens PR #N`, a PR that changed state
+  since staging (or is merged) is refused, a foreign PR needs `--foreign`, `--draft` holds
+  the change back in the outbox, and an orchestrator needs the new `publish.pr_state` right
+  and an authored, non-adopted PR binding
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
+- The terminal dashboard's `Services…` menu returns to the service list after a
+  start, stop, restart or refresh and refreshes it when the action ends, so the
+  next service can be acted on at once
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
+- The terminal dashboard marks a container whose tree is stopped mid-merge with
+  a white-on-red `⑂` after its name, so an unfinished merge is visible without
+  opening the context card; it clears at the next refresh once the merge is
+  concluded or aborted
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
+- A click outside the dashboard's Outbox box closes it, like a container menu,
+  and then acts on what was clicked; the box stays modal only while a question
+  is open or a publish is running. Marks are kept per container for the
+  session (until the container is destroyed; hiding its repo does not drop them), however the box was closed, and
+  restored when the box is reopened (marks of proposals that vanished or
+  changed revision are dropped)
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
+- Publishing from the outbox reports each created issue or PR as `#N <title>`
+  with its URL, in `jb outbox apply`, `jb pr push --source-manifest` and in the
+  dashboard result notice
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
+- The terminal dashboard's PR number (column and details panel) is a terminal
+  hyperlink (OSC 8) to the pull request, built from the repository `gh pr view` resolves (`upstream`, else the
+  upstream remote);
+  `JAILBEE_NO_HYPERLINKS=1` shows plain text, also in outbox Markdown links
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
+- Links in the Markdown bodies of `jailbee outbox show` and the dashboard
+  outbox preview are clickable (OSC 8) when the target is `http` or `https`; a
+  label that is not exactly the target's `scheme://host` is followed by
+  ` → host`, and
+  every other scheme is shown as text with its target
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
+
+- `jailbee pr bind` (and the adoption of an existing PR by the first `jailbee
+  pr push`) now sets the container's base branch to the PR's base, as
+  `jailbee new --pr` does, so BASE and the host comparison follow the PR. A
+  base chosen with `new --base`, `git retarget`, a fork's source (including
+  an orchestrator fork) or a stacked PR is kept — also for containers created
+  before the marker existed, unless their base is the repo's default branch
+  or missing; the PR-base
+  fetch never prompts or hangs ([#145](https://github.com/VRTFinland/jailbee/issues/145)).
+
+- Commits made on a branch other than the checked-out one inside a container
+  are no longer invisible. The dashboard's context card lists such a branch
+  (name and short sha) while its tip is on neither the host nor a
+  remote-tracking ref, and `jailbee destroy` warns about it next to the
+  "commits not on the host" line (or `other branches not checked` when the
+  list could not be read; reflog-only commits, stashes, tags and submodule
+  branches are not covered)
+  ([#145](https://github.com/VRTFinland/jailbee/issues/145)).
+
+- The dashboard's context card lists a running container's services with their
+  state (`services web ready · db failed`), so the Services menu is not needed
+  to see them. While a dashboard is connected, the state service probes each
+  running container's `service ls` (its health/status checks) in the background
+  at most every 30 seconds, without holding back the snapshot; a failed or
+  hung probe reads `unknown`, and a container without an in-container jailbee
+  shows no line
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
+
+- The dashboard's AGENT column draws one indicator per live agent session
+  instead of one per state, ordered by urgency across agents, so two Claude
+  sessions read `● 12s ●`; the age beside a glyph is that session's own. A cell
+  wider than 24 columns drops the ages, then ends with `+N`
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
+- `jailbee upgrade --jobs N` (`-j`) builds up to N base images at once, each
+  build's output prefixed with its alias; the default of 1 keeps the serial
+  behaviour. `apply` and Docker seeding still run one repo at a time, and one
+  failed build fails only the repos using that image. Ctrl-C starts no
+  queued build and keeps the builds that already finished
+  ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
+- A service in `.jailbee/config.yaml` takes an optional `description`: what it
+  does and when it is needed
+  ([#149](https://github.com/VRTFinland/jailbee/issues/149)). In-container
+  `jailbee service ls` prints it in a DESCRIPTION column (and `--json`), so an
+  agent can tell which service to start; the dashboard shows it in the
+  `Services…` list and the custom-services picker.
+
+- Opt-in `host_ahead` / `host_behind` columns (**H↑** / **H↓**) always count commits
+  against the host branch, whatever the row's sync target is
+  ([#145](https://github.com/VRTFinland/jailbee/issues/145)); enable them in the
+  dashboard's column settings, or with `ls.fields` / `jailbee ls --fields`.
+
+- A PR-bound container's ↓ follows pushes made elsewhere to its PR
+  ([#145](https://github.com/VRTFinland/jailbee/issues/145)): the dashboard's state
+  service refetches each bound PR's head every `pr.autofetch_interval` seconds
+  (default 300) while `pr.autofetch` is on, never prompting (git terminal prompt
+  off, askpass programs disabled, `ssh -o BatchMode=yes`, 30 s timeout). A failure keeps the last known head;
+  the card's PR row shows `fetched 3m ago`, `fetch failed 5m ago` or `autofetch off`.
+  Turn autofetch off for passphrase or FIDO/YubiKey-backed remotes, or a `plink`/`sh -c`
+  ssh wrapper, and refresh
+  by hand with `jailbee pr fetch [<name>] [--all]` or the row menu's
+  `Refresh PR head`; a failure note clears once a manual fetch moves the head.
+- `agents.default_runner` makes a runner (`claude` or `claude-jb`, an optional
+  LiteLLM profile and model tier) the repo's default for every container's
+  autostart, layered local → repo → global
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)). A container's own
+  runner label wins, and without either the existing `primary_agent` /
+  `litellm.autostart` behaviour is unchanged. `jailbee agent use PROFILE[/MODEL]`
+  (or `--clear`) writes it to the repo's host-local config, validated against the
+  LiteLLM profiles, and resyncs the `claude-jb` default profile in running
+  containers; `jailbee agent show` prints the effective choice and its source.
+  The terminal dashboard's repo menu has `Agent…` (key `g`, also over remote
+  SSH) which runs `jailbee agent use` as a two-step picker (profile, then tier,
+  the current choice marked), and the repo row shows the effective agent as
+  `profile/model` (`claude/opus`, `codex`; in parentheses, `(grok)`, while only the legacy launch applies).
+  `orchestration.default_runner` stays as a deprecated alias. **Behaviour
+  change for alias users:** `orchestration.default_runner` used to affect only
+  spawned children; as an alias it now sets the runner of every container's
+  autostart, relaunch and refresh too, so move it to a children-only profile
+  `default_runner` if that is not wanted. A `claude-jb` default is ignored (with
+  a warning) while `litellm.enabled` is off. `jailbee config edit` shows the key
+  as its own fields rather than as an agent.
+  One container can override the repo default: `jailbee agent use PROFILE[/MODEL] --container NAME`
+  sets its own runner label (`--clear` returns it to the repo default) and applies to its
+  next session only; `jailbee agent open [NAME]` starts the effective agent in a new tmux
+  window of a running container now. The container menu has `Agent for this container…`
+  (key `i`, with a "repo default" row) and `Open a new agent window now` (key `Y`), and the
+  context card says whether the agent comes from the container or the repo default; a
+  default that autostart skips (`claude-jb` with LiteLLM off) is not shown or opened
+  either. With a label set, the initial prompt and a service refresh target `claude`.
+- The terminal dashboard colours a whole container row by its non-normal phase: orange
+  while booting, teal during autostart, magenta for other live jobs and red for
+  a dead job or failed autostart, in hues legible on light and dark terminals
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)). A Stopped row stays dim
+  and a marked row keeps the mark's blue background without the phase colour. The web
+  front page styles its rows by the same phases in every theme: a coloured edge and a
+  phase label, in e-ink distinguished by edge style rather than colour; Stopped rows are
+  dim (an open outline in e-ink).
+- The terminal dashboard keeps a notification queue of the actions it runs
+  in the background ([#151](https://github.com/VRTFinland/jailbee/issues/151)):
+  each is an entry with its command, target, state, exit status and output,
+  until dismissed (each keeps its last ~64 KB of output). Routine actions no
+  longer pop up an output screen when they end: a short notice says they
+  finished, with a `Q` hint and, for a failure, the last output line. Verbs run
+  for their output (diff, job log, egress list, merge, PR push, doctor,
+  disk usage, the command line) open it automatically. The `⟳ running · ⚠ attention` badge
+  or `Q`, opens the queue, where an entry expands to its full output. A
+  running entry shows its last output line in the list, an expanded one
+  follows the output live, and an entry waiting on a question reads
+  "awaiting answer"; failed and awaiting entries count as needing attention,
+  and returning from a tmux hand-off opens the queue when any do. The list
+  keeps its cursor on the same entry while output streams, a background action
+  keeps running during a tmux hand-off, and an action whose worker crashes
+  settles instead of staying running. Background
+  lifecycle jobs (create, start/restart, autostart, destroy), whoever started them, are listed
+  there too as read-only rows with a way to open the job log; they count in the badge
+  and go when the job does (a hidden repo's jobs are left out, and a failed job
+  already listed does not reopen the queue after a hand-off). A bulk verb run in
+  parallel (stop, outbox clear, …) is one entry per container, with its
+  exit status and output; start, restart and destroy run as background jobs, so
+  their progress and failure are the job row, not an entry.
+  The critical actions (`merge` or `git merge`, `git push --merge`, `git pull`, `pr push`) open
+  directly in their entry's live screen as a modal and refuse every terminal
+  hand-off while they run in the foreground; `b` (continue in the background)
+  or closing the modal turns them into ordinary entries, and a result that
+  ends in the modal stays until it is closed.
+- The documentation site has a task-first "User guide" section in place of "Daily use"
+  ([#150](https://github.com/VRTFinland/jailbee/issues/150)): Getting started, seven
+  new guide pages (being written), Remote GUI, FAQ and Troubleshooting. Commands,
+  git bridge, orchestration, project config and the web dashboard moved under
+  Reference; page URLs are unchanged. The terminal dashboard has its own page
+  with screenshots (including the notification queue), a keys cheat sheet, a menu map and the full reference that
+  used to be one `commands.md` table cell; the built site now ships the images
+  the published pages reference. The everyday-use page walks through creating,
+  entering, stopping, snapshotting and destroying a container, services,
+  strict and loose networking, egress overrides and port forwards.
+- A container that lacks the comparison target commit altogether (for example a
+  commit that lives only in another container, or a shared object store it cannot
+  read) shows `↓•` — pull needed, count unknown — in the dashboard, its card and
+  `jailbee ls`, sorting as the largest count, while DIFF, ↑ and MERGE stay `?`; JSON
+  output carries `"missing"` in `behind_count` and `host_behind_count`
+  ([#145](https://github.com/VRTFinland/jailbee/issues/145)).
 - Interactive Claude Code sessions receive managed, non-acknowledging inbox
   notifications through `jailbee inbox follow`
   ([#135](https://github.com/VRTFinland/jailbee/issues/135)). The repo's
@@ -19,9 +198,134 @@ before editing `## Unreleased`.
   minutes and digests are off; both intervals can be tuned or disabled.
   Filtered items stay unread and ackable, and child followers stay unfiltered
   ([#141](https://github.com/VRTFinland/jailbee/issues/141)).
+- Web dashboard: `jailbee remote web serve` (alias `jailbee serve`) runs a
+  host-side, read-only browser dashboard, installed with the `web` extra
+  ([#109](https://github.com/VRTFinland/jailbee/issues/109)). The front page
+  shows repositories and containers with the terminal dashboard's core columns
+  and agent state; a container or repository opens its agent sessions, and a
+  session opens as a typeset transcript with rendered Markdown, folded tool
+  calls, optional thinking, subagent transcripts and live updates. Themes
+  (light, dark, e-ink) and an e-ink display profile with page turns are chosen
+  per device, and the app installs as a PWA with no CDN assets. Login uses a
+  one-time PIN, TOTP or a FIDO2 key (registered in a CLI-started setup mode),
+  with 30-day device sessions managed only through `jailbee remote web auth`;
+  `jailbee remote web open` logs the local browser in through a one-time link.
+  `remote.web` sets the listen address, port, auth and excluded repositories,
+  and `enable|disable|status` manage a systemd user unit that restarts the
+  server when JailBee is upgraded. Every response carries a strict
+  Content-Security-Policy, `frame-ancestors 'none'` and `nosniff`; the audit
+  log keeps unthrottled link and FIDO2 failures on their own budget so they
+  cannot evict PIN or TOTP failures; PIN and TOTP logins back off
+  exponentially after five failures in a row (2 seconds doubling to
+  30 minutes, refused attempts answered with `Retry-After`; any
+  successful login resets every method's wait), each step
+  audited once; and because the state database now holds
+  TOTP secrets, JailBee keeps its state directory `0700` and `state.sqlite`
+  `0600`, tightening existing ones on first use.
+- The inbox follower announces a change of the container's orchestration grant
+  (revoked, or a field such as `max_running_children`) once, naming
+  what changed, including a change made while the monitor was reconnecting, so an orchestrator agent can adapt
+  ([#147](https://github.com/VRTFinland/jailbee/issues/147)).
+- The outbox manager (dashboard overlay and `jailbee outbox browse`) reads the selected item full screen: `f` shows the preview alone at any width, scrollable, and `f` or Esc returns to the list with the cursor kept ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
+- Agents can correct their own issue and pull-request conversation comments:
+  `jailbee issue comment-edit ID --body …` stages a `comment_edit` issue-outbox
+  action, and the read-only `jailbee issue comments N` lists comment ids
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)). The host refuses
+  the edit unless the publishing account wrote the comment and it is unchanged
+  since staging, and the plan shows the change as a line diff. Orchestrator
+  publication needs the new `comment_edit` issue kind. `jailbee pr comment-edit ID`
+  does the same for a submitted PR review (line) comment or reply, as a
+  `comment_edit` action in the PR manifest. Orchestrator publication of it needs
+  its own right, `publish.pr_comment_edits` (`--publish-pr-comment-edits`),
+  beyond `publish.pr_reviews`; a comment of a pending review is refused when staging,
+  and one refused edit holds back the rest of its manifest. Turning `publish.pr_reviews`
+  off also clears the edit right (the dashboard has a row for it too), and only pending
+  edits need it.
+- Native GitHub sub-issues and "blocked by" dependencies through the issue
+  outbox: `jailbee issue sub-issue PARENT CHILD` and `jailbee issue blocked-by
+  ISSUE BLOCKER` (`--remove` to drop a link) stage `sub_issue` and `dependency`
+  actions, either side may be `@REF` for a create in the same batch, and
+  `jailbee issue create --parent N|@REF --blocked-by N|@REF` stages the create
+  followed by its links. The host refuses an add that already exists, a
+  removal that does not, a child that already has another parent, a direct
+  blocked-by cycle within a batch, and a pull request on either side. Orchestrator
+  publication needs the new `sub_issue` and `dependency` issue kinds
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
+
+### Changed
+
+- DIFF, ↑, ↓ and MERGE in the dashboards and `jailbee ls` compare a PR-bound
+  container with the PR head the host last fetched (`refs/jailbee/pr/<N>/head`)
+  instead of its host branch, so ↑ reads "push needed" and ↓ "someone else
+  pushed" ([#145](https://github.com/VRTFinland/jailbee/issues/145)). Those
+  cells carry a dim `pr`, or a yellow `pr?` when the host has no such ref and
+  the host branch stands in (also in the `git_status` text column and the
+  container pickers). The details card shows a git row per target (host
+  branch, PR head) with its ↑/↓ and short sha, the sync target marked, and JSON
+  `git_status` gains `sync_target`, `host_ahead_count` and `host_behind_count`.
+  An orchestration child (of any kind, PR children included) or a fork compares
+  with its parent container instead, ahead of a PR binding: ↑ counts commits not
+  yet imported, ↓ the parent's commits it lacks (the parent's HEAD as the
+  dashboard's previous pass saw it). Those cells carry a dim `⑂`, or a yellow
+  `⑂?` when the parent is stopped, missing or not yet seen and the host branch
+  stands in; the card gains a `⑂ <parent>` row with the parent's sha and the
+  pass age. Plain `jailbee ls` has no previous pass, so a PR-bound child there
+  keeps comparing with its PR head. Other containers are unchanged.
+- `jailbee review apply` and `jailbee issue apply` are now `jailbee outbox
+  apply` limited to PR or issue proposals, with the same prompts, output and
+  exit codes ([#144](https://github.com/VRTFinland/jailbee/issues/144)). Each
+  run publishes one manifest, named as `[<container>] [<manifest>]` or picked
+  when omitted, instead of every pending manifest at once. Script-visible
+  exit codes change: with nothing pending both now exit 2 (they exited 0 with
+  "Nothing pending"), and off a terminal a missing manifest exits 2 even when
+  exactly one is pending, because the destructive picker never auto-takes it.
+- `jailbee outbox resolve [<container>] [pr|issue/<manifest>] [<action>]` settles
+  an uncertain PR or issue action in one place
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)): `--applied --url
+  <url>` (plus `--issue <n>` for an issue create) records that it landed,
+  `--retry` forgets the outcome. `jailbee review resolve` and `jailbee issue
+  resolve` remain as aliases, and the hints printed after an uncertain
+  publication, a refused clear or a destroyed container name the new command as
+  a runnable line (`jailbee outbox resolve <container> pr/<manifest> <index> …`).
+  It asks for the container first, then one picker over its uncertain PR and
+  issue proposals, and asks a PR's mode and URL on a terminal like an issue's.
+  Over remote SSH it is classified like its aliases.
+- Publishing in the outbox manager covers PR creations too: `p` on a
+  description awaiting its PR, or on a pinned source awaiting its push, hands
+  the terminal to `jailbee pr push` (or `submodule pr push`, `pr push
+  --source-manifest`), and the separate `c` key is gone. Marked rows of both
+  kinds share one question; manifests publish first, then each PR creation in
+  turn, and the first that fails or is cancelled stops the rest. `jailbee
+  outbox apply` likewise hands such a proposal to `pr push` instead of exiting
+  2 with a push hint ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
+
+### Removed
+
+- The hidden, deprecated `jailbee review ls`, `review show`, `review drop` and
+  `issue show`. Use `jailbee outbox ls`, `outbox show` and `outbox drop`
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
+- Inside a container, `jailbee outbox drop`. `jailbee outbox discard
+  issue/NAME` (or `pr/NAME`) now removes a staged proposal and `outbox discard
+  --draft NAME [--kind issue|pr]` a draft; with no target it asks which one (a picker on a terminal, exit 2
+  naming the candidates otherwise); there is no alias. The host's
+  `jailbee outbox drop` is unchanged
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 
 ### Fixed
 
+- **A dashboard left running across a JailBee upgrade stops instead of
+  fighting the newer state service.** The "newer wins" rule only applied when
+  both sides spoke the same protocol, so an older dashboard of a different
+  protocol shut the newer service down and the two kept replacing each other.
+  The older dashboard now stops with "jailbee was upgraded; restart this
+  dashboard" ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
+
+- **`jailbee apply` refreshes the GitHub token in running containers.** A
+  rotated token no longer waits for a profile change that restarts them
+  ([#149](https://github.com/VRTFinland/jailbee/issues/149)), and removing the
+  token or disabling `github` now deletes it from the containers on apply,
+  start and restart. Shells and agents that are already open keep the old
+  token until reopened.
 - Attachment confirmations in PR creation, submodule PR creation, PR description
   updates and uncertain upload recovery now use the prompt channel instead of
   reading an unattended terminal. Non-interactive runs require explicit consent;

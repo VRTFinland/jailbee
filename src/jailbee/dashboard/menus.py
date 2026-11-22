@@ -91,7 +91,15 @@ class MenuGroup:
 MenuItem = tuple[str, str] | MenuGroup
 
 _PR_MENU_VERBS = frozenset(
-    {"pr open", "pr push", "pr bind", "pr unbind", "submodule pr push", "review apply"}
+    {
+        "pr open",
+        "pr push",
+        "pr bind",
+        "pr unbind",
+        "pr fetch",
+        "submodule pr push",
+        "review apply",
+    }
 )
 _GIT_MENU_VERBS = frozenset(
     {"merge", "git pull", "git push", "git push --pr", "git retarget", "git diff"}
@@ -239,14 +247,14 @@ def _bridge_possible(ctx: MenuContext) -> bool:
 
 def _has_commits_for_host(git: GitStatus | None) -> bool:
     """Whether `jailbee git pull` has commits to send to the host."""
-    return git is None or git.ahead_count != _NO_COMMITS
+    return git is None or git.ahead_of_host != _NO_COMMITS
 
 
 def _has_diff_to_show(git: GitStatus | None) -> bool:
     """Whether `jailbee git diff` would print anything."""
     if git is None:
         return True
-    return not (git.wt == _NO_CHANGES and git.ahead_count == _NO_COMMITS)
+    return not (git.wt == _NO_CHANGES and git.ahead_of_host == _NO_COMMITS)
 
 
 def _outbox_counts(ctx: MenuContext) -> tuple[int | None, int | None]:
@@ -379,6 +387,7 @@ def menu_actions(ctx: MenuContext) -> list[tuple[str, str]]:
         actions.append(("Bind to PR…", "pr bind"))
         if ctx.pr_number is not None:
             actions.append((f"Unbind PR #{ctx.pr_number}", "pr unbind"))
+            actions.append(("Refresh PR head", "pr fetch"))
     if _bridge_possible(ctx):
         actions.append(("Merge into…", "merge"))
         if _has_commits_for_host(ctx.git_status):
@@ -827,6 +836,7 @@ def _is_gui_verb(verb: str) -> bool:
 PRINTING_VERBS: frozenset[str] = frozenset(
     {
         "pr push",
+        "pr fetch",
         "submodule pr push",
         "git push",
         "git push --pr",

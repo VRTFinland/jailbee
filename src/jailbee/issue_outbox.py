@@ -12,7 +12,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, assert_never
 
-from jailbee import git, issue_github, issue_projects, submodules
+from jailbee import comment_edit, git, issue_github, issue_projects, submodules
 from jailbee.github_repo import github_slug, resolve_submodule_url
 from jailbee.incus import Incus, IncusError
 from jailbee.issue_github import (
@@ -27,8 +27,10 @@ from jailbee.issue_manifest import (
     ME_LOGIN,
     AssigneesAction,
     CommentAction,
+    CommentEditAction,
     CreateAction,
     CreatedIssue,
+    DependencyAction,
     EditAction,
     ExistingIssue,
     IssueAction,
@@ -40,9 +42,12 @@ from jailbee.issue_manifest import (
     ProjectRemoveAction,
     ProjectSetAction,
     StateAction,
+    SubIssueAction,
     foreign_slug,
     mutation_keys,
     parse_manifest,
+    related_issue,
+    relation_change,
 )
 from jailbee.outbox import publication_db, sent
 from jailbee.outbox.markdown_view import render_markdown
@@ -185,6 +190,8 @@ class ResolvedAction:
     project_target: issue_projects.ProjectTarget | None = None
     project_field: issue_projects.ResolvedField | None = None
     established_item: str | None = None
+    # A relation's other issue, as its database id, when known at preflight.
+    related_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -352,6 +359,84 @@ def _differences(
         if actual != expected:
             differences.append(f"{context}: expected.{field} differs from the current issue")
     return differences
+
+
+def _comment_edit_refusals(
+    host_repo_root: Path,
+    repo: RepoTarget,
+    action: CommentEditAction,
+    login: str,
+    context: str,
+) -> list[str]:
+    """Read the comment and apply the shared author and expected-body checks.
+
+    Raises `IssueGithubReadError` when the comment cannot be read.
+    """
+    assert isinstance(action.target, ExistingIssue), "the parser requires an issue number"
+    snapshot = issue_github.get_issue_comment(host_repo_root, repo.slug, action.comment_id)
+    return comment_edit.edit_refusals(
+        snapshot,
+        login=login,
+        expected_body=action.expected_body,
+        parent=action.target.number,
+        repo=repo.slug,
+        new_body=action.body,
+        context=context,
+    )
+
+
+def _relation_refusals(
+    host_repo_root: Path,
+    repo: RepoTarget,
+    action: SubIssueAction | DependencyAction,
+    number: int | None,
+    context: str,
+    removals: frozenset[tuple[str, int, int]] = frozenset(),
+) -> tuple[int | None, list[str]]:
+    """The related issue's database id, and refusals from the relation's live state.
+
+    ``removals`` are the batch's ``(repo identity, parent, child)`` sub-issue
+    removals, so a child may be moved to another parent within one batch.
+
+    A relation is refused when it already is in the state the action asks for
+    (an add already linked, a remove not linked) or its other end is a pull
+    request. Without both issue numbers (one is created in this batch) only
+    what is known is checked. Raises `IssueGithubReadError`.
+    """
+    related = related_issue(action)
+    if not isinstance(related, ExistingIssue):
+        return None, []
+    identity = issue_github.get_issue_identity(host_repo_root, repo.slug, related.number)
+    if identity.is_pull_request:
+        return identity.id, [f"{context}: #{related.number} is a pull request, not an issue"]
+    sub = isinstance(action, SubIssueAction)
+    if sub and not action.remove and identity.parent is not None:
+        parent_slug, parent_number = identity.parent
+        same_repo = parent_slug.casefold() == repo.slug.casefold()
+        leaving = same_repo and (repo.identity, parent_number, related.number) in removals
+        if parent_number != number or not same_repo:
+            if not leaving:
+                current_parent = (
+                    f"#{parent_number}" if same_repo else f"{parent_slug}#{parent_number}"
+                )
+                return identity.id, [
+                    f"{context}: #{related.number} is already a sub-issue of "
+                    f"{current_parent}; GitHub refuses a second parent"
+                ]
+    if number is None:
+        return identity.id, []
+    current = (
+        issue_github.list_sub_issue_ids(host_repo_root, repo.slug, number)
+        if sub
+        else issue_github.list_blocked_by_ids(host_repo_root, repo.slug, number)
+    )
+    linked = identity.id in current
+    if linked == action.remove:
+        return identity.id, []
+    child, other = (related.number, number) if sub else (number, related.number)
+    relation = f"a sub-issue of #{other}" if sub else f"blocked by #{other}"
+    state = "already" if linked else "not"
+    return identity.id, [f"{context}: #{child} is {state} {relation}"]
 
 
 def _load_proposals(
@@ -549,6 +634,10 @@ def prepare_batch(
     label_maps: dict[str, Mapping[str, str]] = {}
     label_errors: dict[str, str] = {}
     mutations: dict[tuple[str, int | str, str], str] = {}
+    # Pending "blocked by" additions of this batch: (repo, blocked, blocker).
+    blocked_edges: set[tuple[str, int, int]] = set()
+    # Pending sub-issue removals of this batch: (repo, parent, child).
+    sub_removals: set[tuple[str, int, int]] = set()
     prepared = []
     established: dict[tuple[str, int | str, str], str] = {}
     for manifest, digest, journal in proposals:
@@ -596,6 +685,7 @@ def prepare_batch(
                     if snapshot.is_pull_request and not isinstance(
                         action,
                         (
+                            CommentEditAction,
                             ProjectAddAction,
                             ProjectSetAction,
                             ProjectClearAction,
@@ -604,6 +694,52 @@ def prepare_batch(
                     ):
                         refusals.append(f"{context}: target is a pull request, not an issue")
                     refusals.extend(_differences(action, snapshot, context, login))
+
+            if isinstance(action, CommentEditAction) and status == "pending" and login:
+                try:
+                    refusals.extend(
+                        _comment_edit_refusals(cfg.repo_root, repo, action, login, context)
+                    )
+                except IssueGithubReadError as exc:
+                    execution_errors.append(exc)
+                    refusals.append(f"{context}: {exc}")
+
+            if (
+                isinstance(action, DependencyAction)
+                and not action.remove
+                and status == "pending"
+                and issue.number is not None
+                and isinstance(action.blocker, ExistingIssue)
+            ):
+                blocker = action.blocker.number
+                if (repo.identity, blocker, issue.number) in blocked_edges:
+                    refusals.append(
+                        f"{context}: dependency cycle between #{issue.number} and #{blocker}"
+                    )
+                blocked_edges.add((repo.identity, issue.number, blocker))
+
+            related_id = None
+            if isinstance(action, (SubIssueAction, DependencyAction)) and status == "pending":
+                try:
+                    related_id, found = _relation_refusals(
+                        cfg.repo_root,
+                        repo,
+                        action,
+                        issue.number,
+                        context,
+                        frozenset(sub_removals),
+                    )
+                    refusals.extend(found)
+                    if (
+                        isinstance(action, SubIssueAction)
+                        and action.remove
+                        and issue.number is not None
+                        and isinstance(action.child, ExistingIssue)
+                    ):
+                        sub_removals.add((repo.identity, issue.number, action.child.number))
+                except IssueGithubReadError as exc:
+                    execution_errors.append(exc)
+                    refusals.append(f"{context}: {exc}")
 
             labels = None
             if isinstance(action, (CreateAction, LabelsAction)) and status == "pending":
@@ -645,10 +781,18 @@ def prepare_batch(
                 if _assignee_overlap(action, login):
                     refusals.append(f"{context}: a login cannot appear in both add and remove")
             if status == "pending":
-                for field in mutation_keys(action):
+                keys: list[tuple[int | None, str]] = [
+                    (issue.number, field) for field in mutation_keys(action)
+                ]
+                if isinstance(action, SubIssueAction) and not action.remove:
+                    # One child has one parent: two adds collide on the child.
+                    related = related_issue(action)
+                    if isinstance(related, ExistingIssue):
+                        keys.append((related.number, "parent"))
+                for scope, field in keys:
                     mutation_key = (
-                        (repo.identity, issue.number, field)
-                        if issue.number is not None
+                        (repo.identity, scope, field)
+                        if scope is not None
                         else (manifest.name, issue.ref or "", field)
                     )
                     if mutation_key in mutations:
@@ -735,6 +879,7 @@ def prepare_batch(
                     project_target,
                     project_field,
                     own_item,
+                    related_id,
                 )
             )
         prepared.append(PreparedManifest(manifest, digest, journal, tuple(actions)))
@@ -760,6 +905,16 @@ def revalidate_batch(batch: PreparedBatch) -> None:
     errors: dict[tuple[str, int], str] = {}
     execution_errors: list[IssueGithubReadError] = []
     refusals = []
+    sub_removals = frozenset(
+        (resolved.repo.identity, resolved.issue.number, resolved.action.child.number)
+        for manifest in batch.manifests
+        for resolved in manifest.actions
+        if isinstance(resolved.action, SubIssueAction)
+        and resolved.action.remove
+        and resolved.status == "pending"
+        and resolved.issue.number is not None
+        and isinstance(resolved.action.child, ExistingIssue)
+    )
     for manifest in batch.manifests:
         for resolved in manifest.actions:
             if (
@@ -798,6 +953,41 @@ def revalidate_batch(batch: PreparedBatch) -> None:
                     except IssueGithubReadError as exc:
                         execution_errors.append(exc)
                         refusals.append(str(exc))
+                continue
+            if isinstance(resolved.action, CommentEditAction) and resolved.status == "pending":
+                context = f"{manifest.manifest.name} action {resolved.index}"
+                try:
+                    refusals.extend(
+                        _comment_edit_refusals(
+                            batch.host_repo_root,
+                            resolved.repo,
+                            resolved.action,
+                            batch.login,
+                            context,
+                        )
+                    )
+                except IssueGithubReadError as exc:
+                    execution_errors.append(exc)
+                    refusals.append(f"{context}: {exc}")
+                continue
+            if (
+                isinstance(resolved.action, (SubIssueAction, DependencyAction))
+                and resolved.status == "pending"
+            ):
+                context = f"{manifest.manifest.name} action {resolved.index}"
+                try:
+                    _, found = _relation_refusals(
+                        batch.host_repo_root,
+                        resolved.repo,
+                        resolved.action,
+                        resolved.issue.number,
+                        context,
+                        sub_removals,
+                    )
+                    refusals.extend(found)
+                except IssueGithubReadError as exc:
+                    execution_errors.append(exc)
+                    refusals.append(f"{context}: {exc}")
                 continue
             if (
                 resolved.status != "pending"
@@ -863,11 +1053,21 @@ def _action_lines(
         lines.append(f"  detail: {receipt.detail}")
     if status == "uncertain":
         lines.append(
-            f"  resolve: jailbee issue resolve {container} {name} {index} "
+            f"  resolve: jailbee outbox resolve {container} issue/{name} {index} "
             "(--applied --url <url> [--issue <n>] | --retry)"
         )
     if not isinstance(action, CreateAction) and issue.ref is not None:
         lines.append(f"  depends on create ref {issue.ref}")
+    if isinstance(action, (SubIssueAction, DependencyAction)):
+        related = related_issue(action)
+        if isinstance(related, CreatedIssue):
+            lines.append(f"  depends on create ref {related.ref}")
+        if status == "uncertain":
+            end_state = "gone" if action.remove else "already linked"
+            lines.append(
+                f"  {end_state}? Check the issue first: if the relation is in its end state, "
+                "resolve with --applied; --retry would be refused as already done"
+            )
     if isinstance(action, CreateAction):
         if issue.number is not None:
             lines.append(f"  create ref: {action.ref}")
@@ -885,6 +1085,10 @@ def _action_lines(
             lines.extend(_prose("body after", action.body))
     elif isinstance(action, CommentAction):
         lines.extend(_prose("body", action.body, markdown=True))
+    elif isinstance(action, CommentEditAction):
+        lines.append(f"  comment {action.comment_id}")
+        lines.append("  body (- before, + after):")
+        lines.extend(comment_edit.diff_lines(action.expected_body, action.body))
     elif isinstance(action, LabelsAction):
         added = (
             action.add
@@ -928,6 +1132,8 @@ def _action_lines(
         lines.append(f"  state: {action.expected_state} -> {action.state}")
         if action.reason is not None:
             lines.append(f"  reason: {action.reason}")
+    elif isinstance(action, (SubIssueAction, DependencyAction)):
+        lines.append(f"  {relation_change(action)}")
     else:
         assert_never(action)
     return lines
@@ -992,7 +1198,10 @@ def _attachment_lines(manifest: IssueManifest) -> list[str]:
             f"{attachment.size} bytes, sha256 {attachment.sha256})"
         )
         for index, action in enumerate(manifest.actions):
-            if isinstance(action, (CreateAction, EditAction, CommentAction)) and action.body:
+            if (
+                isinstance(action, (CreateAction, EditAction, CommentAction, CommentEditAction))
+                and action.body
+            ):
                 for reference in references(action.body):
                     if reference.id == identifier:
                         line = action.body.count("\n", 0, reference.start) + 1
@@ -1204,6 +1413,10 @@ def _execute_one(
         )
     if isinstance(action, CommentAction):
         return issue_github.add_comment(host_repo_root, repo, number, body=action.body)
+    if isinstance(action, CommentEditAction):
+        return issue_github.edit_issue_comment(
+            host_repo_root, repo, action.comment_id, issue=number, body=action.body
+        )
     if isinstance(action, LabelsAction):
         return issue_github.replace_labels(
             host_repo_root, repo, number, labels=resolved.labels or ()
@@ -1290,6 +1503,25 @@ def _execute_one(
         return issue_github.set_state(
             host_repo_root, repo, number, state=action.state, reason=action.reason
         )
+    if isinstance(action, (SubIssueAction, DependencyAction)):
+        related_id = resolved.related_id
+        if related_id is None:
+            # The other end was created earlier in this batch: read its id now.
+            related = related_issue(action)
+            other = (
+                related.number
+                if isinstance(related, ExistingIssue)
+                else _resolved_number(ResolvedIssue(None, related.ref), created)
+            )
+            try:
+                related_id = issue_github.get_issue_identity(host_repo_root, repo, other).id
+            except IssueGithubReadError as exc:
+                raise IssueGithubMutationError(str(exc), uncertain=False) from exc
+        if isinstance(action, SubIssueAction):
+            sub = issue_github.remove_sub_issue if action.remove else issue_github.add_sub_issue
+            return sub(host_repo_root, repo, number, sub_issue_id=related_id)
+        dep = issue_github.remove_blocked_by if action.remove else issue_github.add_blocked_by
+        return dep(host_repo_root, repo, number, blocker_id=related_id)
     assert_never(action)
 
 
@@ -1320,6 +1552,8 @@ def _sent_action(
         content = "\n\n".join(p for p in (action.title, action.body) if p)
     elif isinstance(action, CommentAction):
         kind, content = "comment", action.body
+    elif isinstance(action, CommentEditAction):
+        kind, content = "comment_edit", action.body
     elif isinstance(action, LabelsAction):
         kind = "labels"
         changes = [f"+{label}" for label in action.add]
@@ -1356,6 +1590,8 @@ def _sent_action(
     elif isinstance(action, StateAction):
         kind = "state"
         content = f"state {action.state}" + (f" ({action.reason})" if action.reason else "")
+    elif isinstance(action, (SubIssueAction, DependencyAction)):
+        kind, content = action.kind, relation_change(action)
     else:
         assert_never(action)
     return sent.SentAction(
@@ -1551,7 +1787,9 @@ def apply_batch(
                 action = resolved.action
                 if (
                     prepared.manifest.attachments
-                    and isinstance(action, (CreateAction, EditAction, CommentAction))
+                    and isinstance(
+                        action, (CreateAction, EditAction, CommentAction, CommentEditAction)
+                    )
                     and action.body is not None
                 ):
                     try:
@@ -1589,6 +1827,23 @@ def apply_batch(
                                 kind="validation",
                             )
                     resolved = replace(resolved, action=replace(action, body=body))
+                if isinstance(action, CommentEditAction):
+                    # Recheck the comment just before editing it, after any upload.
+                    context = f"{name} action {resolved.index}"
+                    try:
+                        differences = _comment_edit_refusals(
+                            batch.host_repo_root, resolved.repo, action, batch.login, context
+                        )
+                    except IssueGithubReadError as exc:
+                        return failed(name, resolved.index, False, f"{context}: {exc}")
+                    if differences:
+                        return failed(
+                            name,
+                            resolved.index,
+                            False,
+                            "\n".join(differences),
+                            kind="validation",
+                        )
                 try:
                     store.mark_prepared(
                         claim, digest, resolved.index, repo=resolved.repo.slug, now=clock()
@@ -1769,17 +2024,18 @@ _RECEIPT_URL_RE = re.compile(
 )
 
 
-def _validated_receipt(url: str, repo: RepoTarget, *, project: bool = False) -> int:
+def _validated_receipt(url: str, repo: RepoTarget, *, allow_pull: bool = False) -> int:
     """Parse and validate a GitHub issue receipt URL; return its issue number.
 
     Deliberately strict: exactly `https://github.com/<owner>/<repo>/issues/<n>`,
     optionally followed by a `#fragment` (a comment permalink), matching
-    `repo` case-insensitively. No query string, no `pull`, no credentials in
-    the authority, no host lookalike, no trailing garbage.
+    `repo` case-insensitively. No query string, no `pull` (unless `allow_pull`:
+    a project item or a PR conversation comment), no credentials in the
+    authority, no host lookalike, no trailing garbage.
     """
     pattern = (
         re.compile(_RECEIPT_URL_RE.pattern.replace("/issues/", "/(?:issues|pull)/"))
-        if project
+        if allow_pull
         else _RECEIPT_URL_RE
     )
     match = pattern.fullmatch(url)
@@ -1865,9 +2121,15 @@ def reconcile_action(
         url_number = _validated_receipt(
             resolution.url,
             repo,
-            project=isinstance(
+            allow_pull=isinstance(
                 action,
-                (ProjectAddAction, ProjectSetAction, ProjectClearAction, ProjectRemoveAction),
+                (
+                    CommentEditAction,
+                    ProjectAddAction,
+                    ProjectSetAction,
+                    ProjectClearAction,
+                    ProjectRemoveAction,
+                ),
             ),
         )
         if isinstance(action, CreateAction):
@@ -1888,6 +2150,12 @@ def reconcile_action(
             expected = _expected_issue_number(action, manifest, journal)
             if expected is not None and expected != url_number:
                 raise JournalError("receipt URL does not match this action's issue")
+            if isinstance(action, CommentEditAction) and not resolution.url.endswith(
+                f"#issuecomment-{action.comment_id}"
+            ):
+                raise JournalError(
+                    f"receipt URL must be the permalink of comment {action.comment_id}"
+                )
 
         receipt_url = resolution.url
         if isinstance(action, (ProjectAddAction, ProjectSetAction)) and not _receipt_item(
@@ -1901,7 +2169,7 @@ def reconcile_action(
             if (
                 not target.present
                 or target.url != receipt_url.split("#", 1)[0]
-                or _validated_receipt(target.url, repo, project=True) != url_number
+                or _validated_receipt(target.url, repo, allow_pull=True) != url_number
             ):
                 raise JournalError("project receipt does not identify a current board item")
             receipt_url = f"{target.url}#project-item-{target.item_id}"

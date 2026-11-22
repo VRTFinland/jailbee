@@ -555,6 +555,8 @@ def test_fetch_base_ref_updates_remote_tracking_and_returns_sha(tmp_path, mocker
     from jailbee.pr import fetch_base_ref
 
     def fake_run(cmd, **kwargs):
+        if "config" in cmd:
+            return _completed(returncode=1)
         if "fetch" in cmd:
             return _completed()
         if "rev-parse" in cmd:
@@ -564,15 +566,43 @@ def test_fetch_base_ref_updates_remote_tracking_and_returns_sha(tmp_path, mocker
     run = mocker.patch("subprocess.run", side_effect=fake_run)
     assert fetch_base_ref(tmp_path, "dev", remote="origin") == "basesha"
     fetch_calls = [c for c in run.call_args_list if "fetch" in c.args[0]]
-    assert fetch_calls == [
-        mocker.call(
-            ["git", "fetch", "origin", "+refs/heads/dev:refs/remotes/origin/dev"],
-            cwd=tmp_path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    ]
+    assert len(fetch_calls) == 1
+    assert fetch_calls[0].args[0][-2:] == ["origin", "+refs/heads/dev:refs/remotes/origin/dev"]
+
+
+def test_fetch_base_ref_never_prompts_and_is_bounded(tmp_path, mocker):
+    """Best-effort fetch: no credential prompt, batch-mode ssh, closed stdin, timeout."""
+    import subprocess
+
+    from jailbee.pr import UNATTENDED_FETCH_TIMEOUT, fetch_base_ref
+
+    mocker.patch.dict("os.environ", {"GIT_ASKPASS": "x", "SSH_ASKPASS": "y"})
+    mocker.patch.dict("os.environ", {"GIT_SSH_COMMAND": "ssh -i k"})
+
+    def fake_run(cmd, **kwargs):
+        if "fetch" in cmd:
+            return _completed()
+        return _completed(stdout="sha\n")
+
+    run = mocker.patch("subprocess.run", side_effect=fake_run)
+    fetch_base_ref(tmp_path, "dev", remote="origin")
+    call = next(c for c in run.call_args_list if "fetch" in c.args[0])
+    argv, kw = call.args[0], call.kwargs
+    assert "credential.interactive=never" in argv
+    assert kw["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert kw["env"]["GIT_SSH_COMMAND"] == "ssh -i k -o BatchMode=yes"
+    assert "GIT_ASKPASS" not in kw["env"] and "SSH_ASKPASS" not in kw["env"]
+    assert kw["stdin"] == subprocess.DEVNULL
+    assert kw["timeout"] == UNATTENDED_FETCH_TIMEOUT
+
+
+def test_fetch_base_ref_returns_none_on_timeout(tmp_path, mocker):
+    import subprocess
+
+    from jailbee.pr import fetch_base_ref
+
+    mocker.patch("subprocess.run", side_effect=subprocess.TimeoutExpired("git", 30))
+    assert fetch_base_ref(tmp_path, "dev", remote="origin") is None
 
 
 def test_fetch_base_ref_returns_none_when_fetch_fails(tmp_path, mocker):
@@ -580,6 +610,8 @@ def test_fetch_base_ref_returns_none_when_fetch_fails(tmp_path, mocker):
     from jailbee.pr import fetch_base_ref
 
     def fake_run(cmd, **kwargs):
+        if "config" in cmd:
+            return _completed(returncode=1)
         if "fetch" in cmd:
             return _completed(returncode=128, stderr="couldn't find remote ref\n")
         raise AssertionError(f"unexpected command: {cmd}")
@@ -988,13 +1020,14 @@ def test_fetch_base_ref_uses_the_given_remote(tmp_path, mocker):
     seen = []
 
     def fake_run(cmd, **kwargs):
-        seen.append(cmd)
+        if "config" not in cmd:
+            seen.append(cmd)
         return _completed(stdout="basesha\n")
 
     mocker.patch("subprocess.run", side_effect=fake_run)
 
     assert fetch_base_ref(tmp_path, "dev", remote="public") == "basesha"
-    assert seen[0] == ["git", "fetch", "public", "+refs/heads/dev:refs/remotes/public/dev"]
+    assert seen[0][-2:] == ["public", "+refs/heads/dev:refs/remotes/public/dev"]
     assert seen[1][-1] == "refs/remotes/public/dev"
 
 
@@ -1536,3 +1569,132 @@ def test_graphql_maps_auth_and_missing_binary(mocker):
     )
     with pytest.raises(PrReviewError, match="not authenticated"):
         _run_gh_graphql(Path("/repo"), "query {}", {}, "lookup")
+
+
+def test_get_review_comment_reads_author_body_and_pull_request(mocker):
+    from jailbee.pr import get_review_comment
+
+    run = mocker.patch(
+        "subprocess.run",
+        return_value=_completed(
+            stdout=json.dumps(
+                {
+                    "id": 9,
+                    "user": {"login": "me"},
+                    "body": "text",
+                    "html_url": "https://x/9",
+                    "pull_request_url": "https://api.github.com/repos/acme/widgets/pulls/7",
+                }
+            )
+        ),
+    )
+    snapshot = get_review_comment(Path("/repo"), "acme/widgets", 9)
+    assert (snapshot.id, snapshot.author, snapshot.body) == (9, "me", "text")
+    assert (snapshot.parent, snapshot.repo) == (7, "acme/widgets")
+    assert run.call_args.args[0][-1] == "repos/acme/widgets/pulls/comments/9"
+
+
+def test_edit_review_comment_patches_the_review_comments_endpoint(mocker):
+    from jailbee.pr import edit_review_comment
+
+    run = mocker.patch(
+        "subprocess.run",
+        return_value=_completed(stdout=json.dumps({"html_url": "https://x/9"})),
+    )
+    assert edit_review_comment(Path("/repo"), "acme/widgets", 9, "new") == "https://x/9"
+    cmd = run.call_args.args[0]
+    assert cmd[cmd.index("--method") + 1] == "PATCH"
+    assert "repos/acme/widgets/pulls/comments/9" in cmd
+    assert json.loads(run.call_args.kwargs["input"]) == {"body": "new"}
+
+
+# --- unattended PR head fetch (state service autofetch) ---------------------
+
+
+def _unattended_run(mocker, *, ssh_config="", returncode=0, stderr="", exc=None):
+    """Mock `subprocess.run` for the config read and the fetch itself."""
+    calls: list[tuple[list[str], dict]] = []
+
+    def fake(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        if cmd[:3] == ["git", "config", "--get"]:
+            return mocker.Mock(returncode=0 if ssh_config else 1, stdout=ssh_config, stderr="")
+        if exc is not None:
+            raise exc
+        return mocker.Mock(returncode=returncode, stdout="", stderr=stderr)
+
+    mocker.patch("jailbee.pr.subprocess.run", side_effect=fake)
+    return calls
+
+
+def _fetch_call(calls):
+    return next((c, kw) for c, kw in calls if "fetch" in c)
+
+
+def test_unattended_fetch_never_prompts(tmp_path, mocker, monkeypatch):
+    from jailbee.pr import fetch_pr_head_unattended
+
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    monkeypatch.setenv("GIT_ASKPASS", "/usr/bin/code-askpass")
+    monkeypatch.setenv("SSH_ASKPASS", "/usr/bin/ssh-askpass")
+    calls = _unattended_run(mocker)
+
+    fetch_pr_head_unattended(tmp_path, 7, remote="origin")
+
+    cmd, kw = _fetch_call(calls)
+    assert "GIT_ASKPASS" not in kw["env"]
+    assert "SSH_ASKPASS" not in kw["env"]
+    assert cmd == [
+        "git",
+        "-c",
+        "credential.interactive=never",
+        "-c",
+        "core.askPass=",
+        "fetch",
+        "origin",
+        "+pull/7/head:refs/jailbee/pr/7/head",
+    ]
+    assert kw["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert kw["env"]["GIT_SSH_COMMAND"] == "ssh -o BatchMode=yes"
+    assert kw["timeout"] == 30
+    assert kw["stdin"] == subprocess.DEVNULL
+
+
+def test_unattended_fetch_appends_to_core_ssh_command(tmp_path, mocker, monkeypatch):
+    from jailbee.pr import fetch_pr_head_unattended
+
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    calls = _unattended_run(mocker, ssh_config="ssh -i /k/id\n")
+
+    fetch_pr_head_unattended(tmp_path, 7, remote="origin")
+
+    assert _fetch_call(calls)[1]["env"]["GIT_SSH_COMMAND"] == "ssh -i /k/id -o BatchMode=yes"
+
+
+def test_unattended_fetch_appends_to_git_ssh_command_env(tmp_path, mocker, monkeypatch):
+    from jailbee.pr import fetch_pr_head_unattended
+
+    monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -F /cfg")
+    calls = _unattended_run(mocker, ssh_config="ssh -i /ignored")
+
+    fetch_pr_head_unattended(tmp_path, 7, remote="origin")
+
+    assert _fetch_call(calls)[1]["env"]["GIT_SSH_COMMAND"] == "ssh -F /cfg -o BatchMode=yes"
+
+
+def test_unattended_fetch_failure_raises_with_stderr(tmp_path, mocker):
+    from jailbee.pr import PrFetchError, fetch_pr_head_unattended
+
+    _unattended_run(mocker, returncode=128, stderr="Permission denied (publickey).\n")
+
+    with pytest.raises(PrFetchError, match="Permission denied"):
+        fetch_pr_head_unattended(tmp_path, 7, remote="origin")
+
+
+def test_unattended_fetch_timeout_raises(tmp_path, mocker):
+    from jailbee.pr import PrFetchError, fetch_pr_head_unattended
+
+    _unattended_run(mocker, exc=subprocess.TimeoutExpired(["git"], 30))
+
+    with pytest.raises(PrFetchError, match="timed out"):
+        fetch_pr_head_unattended(tmp_path, 7, remote="origin")

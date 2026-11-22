@@ -16,6 +16,7 @@ from jailbee.dashboard import hit as dhit
 from jailbee.dashboard.commands import Transport
 from jailbee.dashboard.egress import EgressState
 from jailbee.dashboard.model import RepoGroup, Row
+from jailbee.dashboard.notifications import QueueCounts
 from jailbee.dashboard.outbox import OutboxState, outbox_hint
 from jailbee.dashboard.overlays import (
     PICKER_HINT,
@@ -91,6 +92,25 @@ def update_line(notice: UpdateNotice, *, hover: dhit.Hit | None = None) -> Text:
     return line
 
 
+def queue_badge(counts: QueueCounts) -> Text:
+    """The notification queue's badge: ``⟳ running · ⚠ needs attention``, one click target.
+
+    A zero count is dim; a non-zero one is bold, the attention count also red,
+    so it reads in light, dark and monochrome themes alike.
+    """
+    hit = Style(meta={dhit.HIT_KEY: dhit.Hit("queue").meta_value()})
+    badge = Text()
+    badge.append(
+        f"⟳ {counts.running}", style=Style(bold=counts.running > 0, dim=not counts.running) + hit
+    )
+    badge.append(" · ", style=Style(dim=True) + hit)
+    badge.append(
+        f"⚠ {counts.attention}",
+        style=(Style(bold=True, color="red") if counts.attention else Style(dim=True)) + hit,
+    )
+    return badge
+
+
 _MENU_LETTERS_NOTE = (
     "A container's or repo's actions are its menu's letters, and they work here "
     "without Enter (g Git, l Lifecycle, …); Enter shows the whole list. A letter "
@@ -132,6 +152,8 @@ def help_lines() -> list[str]:
         " CHILDREN running/limit +queued; INBOX ✉N actionable unread.",
         "BASE ↗: remote-tracking base; MODE: cln clone, mnt mount.",
         "WT / DIFF / L DIFF: ✓ clean; DIFF vs host target, L DIFF vs host HEAD.",
+        "DIFF ↑ ↓ MERGE vs the sync target: pr = PR head; pr? = PR head not fetched, host branch;",
+        "  ⑂ = parent container (↑ not imported); ⑂? = parent not seen running, host branch.",
         "DOING ×N: process count; JOB auto:stage: autostart stage.",  # noqa: RUF001 - intentional multiplication sign
         "Menus: the key in brackets picks that entry, like Enter on it.",
         "Outbox box: Tab switches Outbox/Sent; in Sent, o opens the URL (or shows it), v preview.",
@@ -226,6 +248,8 @@ class DashboardView:
     # The host status line above the table; drawn only while `show_system` and known.
     system: SystemStatus | None = None
     show_system: bool = True
+    # The notification queue's badge counts; None while the queue is empty.
+    queue: QueueCounts | None = None
     # Content rows scrolled off the top of the details panel.
     details_scroll: int = 0
     # The details panel's chosen content height; None: the built-in one.

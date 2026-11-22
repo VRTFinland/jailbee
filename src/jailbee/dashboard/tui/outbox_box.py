@@ -6,8 +6,9 @@ it never changes the state itself. Keys reach it only through `handle_key`.
 
 Layout: the row list and the preview sit side by side from
 `SIDE_BY_SIDE_MIN_COLS` columns of content; below that the preview replaces the
-list while it is on (`v`), or while a question is open (the question's lines
-live in the preview and must be readable). A question's choices are a second
+list while it is on (`v`), while the full-screen reader is open (`f`, at any width;
+Esc or `f` leaves it), or while a question is open (the question's lines live in
+the preview and must be readable). A question's choices are a second
 list under the preview and take the keys.
 """
 
@@ -70,7 +71,6 @@ _INTENT_KEYS: dict[str, IntentName] = {
     "space": "mark",
     "d": "delete",
     "p": "publish",
-    "c": "create-pr",
     "X": "clear",
     "v": "preview",
     "m": "raw",
@@ -190,6 +190,7 @@ class OutboxBox(OverlayBox):
         # controller that really re-selects that same row cannot move us off where
         # the user has since scrolled to.
         self._last_sent: RowKey | None = None
+        self._before_reader = "auto"  # the preview mode `f` was pressed in
         self._asked: object = None
         self.set_class(standalone, "-standalone")
         self.border_title = self._title_for(spec)
@@ -211,16 +212,18 @@ class OutboxBox(OverlayBox):
             return 80
 
     def _side(self) -> bool:
-        return self._width >= SIDE_BY_SIDE_MIN_COLS and self.panel.preview != "off"
+        return self._width >= SIDE_BY_SIDE_MIN_COLS and self.panel.preview not in ("off", "full")
 
     def _preview_shown(self) -> bool:
         if self.panel.question is not None:
             return True
         if self.panel.preview == "off":
             return False
-        return self._width >= SIDE_BY_SIDE_MIN_COLS or self.panel.preview == "on"
+        return self._width >= SIDE_BY_SIDE_MIN_COLS or self.panel.preview in ("on", "full")
 
     def _list_shown(self) -> bool:
+        if self.panel.preview == "full" and self.panel.question is None:
+            return False  # the full-screen reader: the preview alone, at any width
         return not (self._preview_shown() and self._width < SIDE_BY_SIDE_MIN_COLS)
 
     def _list_width(self) -> int:
@@ -444,8 +447,7 @@ class OutboxBox(OverlayBox):
         ab = self.panel.abilities
         return {
             "delete": ab.delete,
-            "publish": ab.publish or ab.publish_hand_off,
-            "create-pr": ab.create_pr,
+            "publish": ab.publish or ab.publish_hand_off or ab.create_pr,
             "clear": ab.clear,
             "scope": ab.scope and self.standalone,
             "open": self.panel.tab == "sent",
@@ -469,6 +471,9 @@ class OutboxBox(OverlayBox):
         if self.panel.question is not None:
             return self._question_key(event)
         key = event.key
+        reader = self.panel.preview == "full"
+        if reader and key in ("escape", "enter", "v", "f"):
+            return self._intent("preview", self._before_reader)  # back to where it was opened
         if key in ("escape", "enter") and not self._list_shown():
             # The preview replaced the list (narrow): back to the list first.
             return self._intent("preview", "auto")
@@ -478,12 +483,18 @@ class OutboxBox(OverlayBox):
             return self.Cancelled(self.key) if self.standalone else False
         if key == "v":
             return self._intent("preview", self._preview_toggle())
+        if key == "f":
+            if self.panel.preview != "full":
+                self._before_reader = self.panel.preview
+            return self._intent("preview", "full")
         if key == "enter" and not self._preview_shown():
             row = self._cursor_key()
             if row is not None and not has_children(self.panel, row):
                 # Nothing to expand: "open" shows the row in the hidden preview.
                 return self._intent("preview", "on")
         name = _INTENT_KEYS.get(key)
+        if reader and name not in (None, "raw", "refresh", "open"):
+            return True  # the list is hidden: its keys do nothing here
         if name is not None:
             return self._intent(name) if self._allowed(name) else True
         if not self._list.display:

@@ -487,11 +487,11 @@ def test_no_gui_warning_names_apps_not_two_products(tmp_path, capsys, mocker):
     assert "GUI app" in out
 
 
-# ---------- github-token autostart step
+# ---------- github token (written by inject_github_token)
 
 
-def test_github_token_step_returns_none_when_disabled(tmp_path):
-    from jailbee.autostart import _github_token_step
+def test_github_token_returns_none_when_disabled(tmp_path):
+    from jailbee.autostart import _github_token
     from tests.conftest import make_cfg
 
     cfg = make_cfg(
@@ -499,11 +499,11 @@ def test_github_token_step_returns_none_when_disabled(tmp_path):
         container_prefix="sampleapp",
         github={"enabled": False, "api_tokens": {"sampleapp": "github_pat_xxx"}},
     )
-    assert _github_token_step(cfg) is None
+    assert _github_token(cfg) is None
 
 
-def test_github_token_step_returns_none_when_prefix_absent_from_map(tmp_path):
-    from jailbee.autostart import _github_token_step
+def test_github_token_returns_none_when_prefix_absent_from_map(tmp_path):
+    from jailbee.autostart import _github_token
     from tests.conftest import make_cfg
 
     cfg = make_cfg(
@@ -511,11 +511,11 @@ def test_github_token_step_returns_none_when_prefix_absent_from_map(tmp_path):
         container_prefix="not-in-map",
         github={"enabled": True, "api_tokens": {"sampleapp": "github_pat_xxx"}},
     )
-    assert _github_token_step(cfg) is None
+    assert _github_token(cfg) is None
 
 
-def test_github_token_step_returns_none_for_whitespace_only_token(tmp_path):
-    from jailbee.autostart import _github_token_step
+def test_github_token_returns_none_for_whitespace_only_token(tmp_path):
+    from jailbee.autostart import _github_token
     from tests.conftest import make_cfg
 
     cfg = make_cfg(
@@ -523,42 +523,25 @@ def test_github_token_step_returns_none_for_whitespace_only_token(tmp_path):
         container_prefix="sampleapp",
         github={"enabled": True, "api_tokens": {"sampleapp": "   "}},
     )
-    assert _github_token_step(cfg) is None
+    assert _github_token(cfg) is None
 
 
-def test_github_token_step_emits_step_with_quoted_token(tmp_path):
-    from jailbee.autostart import _github_token_step
+def test_github_token_strips_the_configured_token(tmp_path):
+    from jailbee.autostart import _github_token
     from tests.conftest import make_cfg
 
     cfg = make_cfg(
         tmp_path,
         container_prefix="sampleapp",
-        github={
-            "enabled": True,
-            "api_tokens": {"sampleapp": "github_pat_with's-quote"},
-        },
+        github={"enabled": True, "api_tokens": {"sampleapp": " github_pat_x\n"}},
     )
-    step = _github_token_step(cfg)
-    assert step is not None
-    assert step.name == "github-token"
-    assert step.network is None
-    assert "/etc/profile.d/jailbee-github.sh" in step.run
-    assert "export GH_TOKEN=" in step.run
-    # Step runs as dev user; /etc/profile.d/ is root-owned, so the write
-    # path goes through sudo (passwordless sudo is in the golden image).
-    assert "sudo tee /etc/profile.d/jailbee-github.sh" in step.run
-    assert "sudo chmod 0644" in step.run
-    # shlex.quote of a string containing a single quote becomes
-    # 'github_pat_with'"'"'s-quote'
-    assert "github_pat_with'\"'\"'s-quote" in step.run
-    # SecretStr.repr must not leak into the body.
-    assert "SecretStr" not in step.run
+    assert _github_token(cfg) == "github_pat_x"
 
 
-def test_github_token_step_prefers_the_local_token(tmp_path):
+def test_github_token_prefers_the_local_token(tmp_path):
     from pydantic import SecretStr
 
-    from jailbee.autostart import _github_token_step
+    from jailbee.autostart import _github_token
     from jailbee.config.models_agents import GithubConfig
     from tests.conftest import make_cfg
 
@@ -571,10 +554,7 @@ def test_github_token_step_prefers_the_local_token(tmp_path):
             )
         }
     )
-    step = _github_token_step(cfg)
-    assert step is not None
-    assert "ghp_local" in step.run
-    assert "ghp_legacy" not in step.run
+    assert _github_token(cfg) == "ghp_local"
 
 
 def test_github_token_not_part_of_run_autostart(tmp_path):
@@ -613,47 +593,78 @@ def test_github_token_not_part_of_run_autostart(tmp_path):
 def test_inject_github_token_writes_profile_without_a_tmux_session(tmp_path, mocker):
     """The token file is written by one root `incus exec`, and no tmux session
     is created for it: window 0 inherits the server's environment, so the file
-    has to exist before the first `ensure_session` (see `agents.ensure_agents`)."""
+    has to exist before the first `ensure_session` (see `agents.ensure_agents`).
+    The token travels on stdin, never in argv."""
     from jailbee.autostart import inject_github_token
     from tests.conftest import make_cfg
 
     cfg = make_cfg(
         tmp_path,
         container_prefix="sampleapp",
-        github={"enabled": True, "api_tokens": {"sampleapp": "github_pat_xxx"}},
+        github={"enabled": True, "api_tokens": {"sampleapp": "github_pat_x'y"}},
     )
     incus = MagicMock()
     ensure = mocker.patch("jailbee.autostart.tmux.ensure_session")
     apply_step = mocker.patch("jailbee.autostart._apply_step")
 
-    inject_github_token(cfg, incus, "c1", "/r")
+    inject_github_token(cfg, incus, "c1")
 
     ensure.assert_not_called()
     apply_step.assert_not_called()
-    incus.exec.assert_called_once()
-    name, cmd = incus.exec.call_args.args
+    incus.exec.assert_not_called()
+    incus.exec_with_input.assert_called_once()
+    name, cmd, stdin = incus.exec_with_input.call_args.args
     assert name == "c1"
-    assert incus.exec.call_args.kwargs.get("uid") is None
+    assert incus.exec_with_input.call_args.kwargs.get("uid") is None
     assert "/etc/profile.d/jailbee-github.sh" in cmd[-1]
-    assert "github_pat_xxx" in cmd[-1]
+    assert "github_pat_x" not in " ".join(cmd)
+    assert stdin == "github_pat_x'y\n"
 
 
-def test_inject_github_token_noop_when_disabled(tmp_path, mocker):
-    """No token applies → nothing runs in the container."""
+def test_inject_github_token_script_round_trips_the_token(tmp_path):
+    """The stdin-fed script writes exactly `export GH_TOKEN=<token>`."""
+    import subprocess
+
+    from jailbee.autostart import _WRITE_GITHUB_PROFILE
+
+    target = tmp_path / "out.sh"
+    script = (
+        _WRITE_GITHUB_PROFILE.replace("sudo tee", "tee")
+        .replace("sudo chmod", "chmod")
+        .replace("/etc/profile.d/jailbee-github.sh", str(target))
+    )
+    subprocess.run(["bash", "-c", script], input="tok'en\n", text=True, check=True)
+    assert target.read_text() == "export GH_TOKEN=tok'en\n"
+
+
+@pytest.mark.parametrize(
+    "github",
+    [
+        {"enabled": False},
+        {"enabled": True, "api_tokens": {"other": "github_pat_x"}},
+        {"enabled": True, "api_tokens": {"sampleapp": "   "}},
+    ],
+)
+def test_inject_github_token_removes_stale_file_when_no_token(tmp_path, mocker, github):
+    """No token applies (disabled, removed, empty) -> the old file goes away."""
     from jailbee.autostart import inject_github_token
     from tests.conftest import make_cfg
 
-    cfg = make_cfg(tmp_path, github={"enabled": False})
+    cfg = make_cfg(tmp_path, container_prefix="sampleapp", github=github)
     incus = MagicMock()
     ensure = mocker.patch("jailbee.autostart.tmux.ensure_session")
 
-    inject_github_token(cfg, incus, "c1", "/r")
+    inject_github_token(cfg, incus, "c1")
 
-    incus.exec.assert_not_called()
+    incus.exec_with_input.assert_not_called()
+    incus.exec.assert_called_once()
+    name, cmd = incus.exec.call_args.args
+    assert name == "c1"
+    assert cmd[-1] == "rm -f /etc/profile.d/jailbee-github.sh"
     ensure.assert_not_called()
 
 
-def test_on_start_unchanged_when_github_token_step_returns_none(tmp_path):
+def test_on_start_unchanged_when_no_github_token(tmp_path):
     from jailbee.autostart import AutostartTrigger, run_autostart
     from tests.conftest import make_cfg
 
@@ -876,7 +887,6 @@ def test_run_autostart_sets_and_clears_progress_flag(mocker):
     cfg = _cfg(steps_on_start=[step])
     incus = MagicMock()
     mocker.patch("jailbee.autostart._apply_step")
-    mocker.patch("jailbee.autostart._github_token_step", return_value=None)
 
     run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, repo_dir="/r")
 
@@ -896,7 +906,6 @@ def test_run_autostart_clears_progress_flag_on_exception(mocker):
         "jailbee.autostart._apply_step",
         side_effect=RuntimeError("boom"),
     )
-    mocker.patch("jailbee.autostart._github_token_step", return_value=None)
 
     with pytest.raises(RuntimeError):
         run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, repo_dir="/r")
@@ -1192,7 +1201,9 @@ def test_run_autostart_asks_prompt_pending_on_start_only(mocker, tmp_path):
     incus.config_get.return_value = None
     steps = mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
-    steps.assert_called_once_with(cfg, initial_prompt=True, extra_env={}, runner=None, resume=None)
+    steps.assert_called_once_with(
+        cfg, initial_prompt=True, extra_env={}, runner=None, default_runner=None, resume=None
+    )
     pending.assert_called_once()
     pending.reset_mock()
     steps.reset_mock()
@@ -1217,6 +1228,7 @@ def test_run_autostart_passes_child_env(mocker, tmp_path):
         initial_prompt=False,
         extra_env={"JAILBEE_ROLE": "child", "JAILBEE_ORCHESTRATOR": "orch"},
         runner=None,
+        default_runner=None,
         resume=None,
     )
 
@@ -1465,3 +1477,117 @@ def test_on_start_consumes_snapshot_once_even_when_disabled(tmp_path, mocker, en
     boot.assert_called_once_with(cfg, incus, "box")
     assert pending is False
     assert (steps[0].run == resume_run(entry)) is enabled
+
+
+# ---------- repo default runner (agents.default_runner)
+
+
+def _with_default_runner(cfg, runner):
+    from jailbee.config.models_orchestration import OrchestrationView
+
+    cfg._orchestration_view = OrchestrationView(default_runner=runner, default_runner_source="repo")
+    return cfg
+
+
+def test_default_runner_rewrites_the_claude_command_on_any_container(tmp_path):
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _with_litellm(_runner_cfg(tmp_path, claude_autostart=True), autostart=False)
+    runner = Runner(agent="claude-jb", profile="grok", model="haiku")
+    [step] = agent_autostart_steps(cfg, default_runner=runner)
+    assert step.run == "exec claude-jb -P grok --model haiku"
+
+
+def test_default_runner_claude_jb_without_litellm_falls_back_with_warning(tmp_path, caplog):
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _with_litellm(_runner_cfg(tmp_path, claude_autostart=True), enabled=False)
+    runner = Runner(agent="claude-jb", profile="grok")
+    [step] = agent_autostart_steps(cfg, default_runner=runner)
+    assert step.run == "exec claude"
+    assert "litellm" in caplog.text.lower()
+
+
+def test_default_runner_beats_litellm_autostart_swap(tmp_path):
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _runner_cfg(tmp_path, claude_autostart=True)
+    [step] = agent_autostart_steps(cfg, default_runner=Runner(agent="claude", model="opus"))
+    assert step.run == "exec claude --model opus"
+
+
+def test_runner_label_beats_default_runner(tmp_path):
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _runner_cfg(tmp_path, claude_autostart=True)
+    [step] = agent_autostart_steps(
+        cfg,
+        runner=Runner(agent="claude", model="sonnet"),
+        default_runner=Runner(agent="claude", model="opus"),
+    )
+    assert step.run == "exec claude --model sonnet"
+
+
+def test_default_runner_does_not_make_claude_the_prompted_primary(tmp_path):
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _runner_cfg(tmp_path)
+    steps = agent_autostart_steps(
+        cfg, initial_prompt=True, default_runner=Runner(agent="claude", model="opus")
+    )
+    assert [s.name for s in steps] == ["codex"]
+
+
+def test_default_runner_refused_command_falls_back_with_warning(tmp_path, caplog):
+    from jailbee.orchestration.runner import Runner
+    from tests.conftest import with_agent
+
+    cfg = with_agent(
+        _runner_cfg(tmp_path, claude_autostart=True), "claude", command="./wrapper.sh --x"
+    )
+    [step] = agent_autostart_steps(cfg, default_runner=Runner(agent="claude", model="opus"))
+    assert step.run == "exec ./wrapper.sh --x"
+    assert "not applied" in caplog.text
+
+
+def test_no_runner_anywhere_keeps_the_legacy_path(tmp_path):
+    cfg = _runner_cfg(tmp_path, claude_autostart=True)
+    [step] = agent_autostart_steps(cfg)
+    assert step.run == "exec claude"
+
+
+def test_on_start_uses_the_repo_default_when_the_container_has_no_label(tmp_path, mocker):
+    from jailbee.autostart import _on_start_agent_steps
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _with_default_runner(
+        _runner_cfg(tmp_path, claude_autostart=True), Runner(agent="claude", model="opus")
+    )
+    incus = mocker.Mock()
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
+    mocker.patch("jailbee.orchestration.labels.child_env", return_value={})
+    mocker.patch("jailbee.orchestration.labels.orchestrator_env", return_value={})
+    mocker.patch("jailbee.agent_resume.boot_entries", return_value=[])
+    steps, _ = _on_start_agent_steps(cfg, incus, "box", AutostartTrigger.ON_START)
+    assert [s.run for s in steps if s.name == "claude"] == ["exec claude --model opus"]
+
+
+def test_on_start_label_beats_the_repo_default(tmp_path, mocker):
+    from jailbee.autostart import _on_start_agent_steps
+    from jailbee.orchestration import labels
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _with_default_runner(
+        _runner_cfg(tmp_path, claude_autostart=True), Runner(agent="claude", model="opus")
+    )
+    incus = mocker.Mock()
+    incus.config_get.side_effect = lambda name, key: (
+        Runner(agent="claude", model="haiku").to_label() if key == labels.RUNNER else None
+    )
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
+    mocker.patch("jailbee.orchestration.labels.child_env", return_value={})
+    mocker.patch("jailbee.orchestration.labels.orchestrator_env", return_value={})
+    mocker.patch("jailbee.agent_resume.boot_entries", return_value=[])
+    steps, _ = _on_start_agent_steps(cfg, incus, "box", AutostartTrigger.ON_START)
+    assert [s.run for s in steps if s.name == "claude"] == ["exec claude --model haiku"]

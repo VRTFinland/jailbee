@@ -45,3 +45,8 @@ website/demo/workflows/*.boundaries/
 # episode sources are committed; the finished videos go to YouTube.
 website/video/.cache/
 website/video/out/
+
+# Web dashboard: the browser app's dependencies and its build output.
+# `make web` builds frontend/ into the package; built assets are never committed.
+frontend/node_modules/
+/src/jailbee/web/static/

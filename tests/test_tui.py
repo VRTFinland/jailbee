@@ -1150,3 +1150,58 @@ def test_an_unwritable_diagnostics_file_does_not_break_output(tmp_path, monkeypa
     monkeypatch.setenv(tui.DIAGNOSTICS_ENV, str(tmp_path / "missing" / "diagnostics"))
     tui.warn_plain("still printed")
     assert "still printed" in capsys.readouterr().out
+
+
+def test_a_missing_target_commit_reads_as_pull_needed_in_ls_and_picker():
+    from datetime import UTC, datetime
+
+    from jailbee.git_status import GitStatus
+    from jailbee.lifecycle import ContainerInfo, ls_field_specs
+    from jailbee.tui import _choice_widths, _format_choice_title
+
+    def info(behind: str) -> ContainerInfo:
+        return ContainerInfo(
+            name="myrepo-x",
+            state="Running",
+            network="strict",
+            ip=None,
+            memory_limit=None,
+            repo="myrepo",
+            base_branch="main",
+            git_status=GitStatus(
+                wt="clean",
+                ahead_diff="?",
+                ahead_count="?",
+                conflict="?",
+                behind_count=behind,
+            ),
+        )
+
+    fields = {f.name: f for f in ls_field_specs(now=datetime(2026, 1, 1, tzinfo=UTC))}
+    assert "↓•" in fields["behind_count"].cell(info("•"))
+    assert fields["behind_count"].cell(info("3")) == "3"
+    assert fields["behind_count"].cell(info("?")) == "[yellow]?[/yellow]"
+    assert fields["ahead_count"].cell(info("•")) == "[yellow]?[/yellow]"
+    c = info("•")
+    assert "↓•" in _format_choice_title(c, _choice_widths([c]))
+
+
+def test_picker_width_fits_the_missing_target_marker() -> None:
+    from jailbee.git_status import GitStatus
+    from jailbee.tui import _choice_widths, _format_choice_title
+
+    c = ContainerInfo(
+        name="myrepo-feat-a",
+        state="Running",
+        network="strict",
+        ip="10.0.0.42",
+        memory_limit="4GB",
+        repo="myrepo",
+        base_branch="dev",
+        git_status=GitStatus(
+            wt="clean", ahead_diff="clean", ahead_count="0", conflict="ok", behind_count="•"
+        ),
+    )
+    widths = _choice_widths([c])
+    assert widths["behind"] == len("↓•")
+    assert "↓•" in _format_choice_title(c, widths)

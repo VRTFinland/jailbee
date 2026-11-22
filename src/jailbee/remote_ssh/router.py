@@ -111,20 +111,6 @@ def _leaf_identity(command: object) -> int:
     return id(getattr(callback, "__wrapped__", callback))
 
 
-# Hidden, deprecated aliases (`jailbee review ls|show|drop`, `jailbee issue show`, superseded
-# by `outbox ls|show|drop`) with their own callbacks, so alias detection by
-# callback identity cannot find them. They keep exactly the remote routing
-# they had while public: container-scoped, allow-listable, routable.
-_DEPRECATED_HIDDEN_COMMANDS = frozenset(
-    {
-        "issue show",
-        "review drop",
-        "review ls",
-        "review show",
-    }
-)
-
-
 @functools.cache
 def _command_tree() -> _CommandTree:
     """Walk the Click command tree exactly once per process.
@@ -162,7 +148,7 @@ def _command_tree() -> _CommandTree:
             return
         path = " ".join(prefix)
         commands[path] = command
-        if is_hidden and path not in _DEPRECATED_HIDDEN_COMMANDS:
+        if is_hidden:
             hidden_leaves.append((path, _leaf_identity(command)))
         else:
             public_leaves.add(path)
@@ -287,6 +273,8 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "config init",
         "config migrate",
         "remote",
+        # `remote web serve`'s alias: starts a host-side server.
+        "serve",
         "setup",
         "init",
         "apply",
@@ -445,7 +433,7 @@ class RemoteUnlocks:
 # immutable value, since a call in a default argument trips ruff B008.
 NO_UNLOCKS = RemoteUnlocks()
 
-_CONTAINER_COMMANDS = _DEPRECATED_HIDDEN_COMMANDS | frozenset(
+_CONTAINER_COMMANDS = frozenset(
     {
         "service ls",
         "service wait",
@@ -490,6 +478,14 @@ _CONTAINER_COMMANDS = _DEPRECATED_HIDDEN_COMMANDS | frozenset(
         "job log",
         "job ls",
         "ls",
+        "agent show",
+        # Writes the repo's local-layer `agents.default_runner` and resyncs
+        # `claude-jb` defaults in its containers; with `--container` it writes
+        # that container's runner label instead. The repo scope check applies.
+        "agent use",
+        # Starts the agent in a tmux window of a container the repo scope covers;
+        # no more than `shell` or `exec`, which are allowed.
+        "agent open",
         "litellm ls",
         "litellm status",
         "net egress export",
@@ -505,6 +501,7 @@ _CONTAINER_COMMANDS = _DEPRECATED_HIDDEN_COMMANDS | frozenset(
         "outbox drop",
         "outbox clear",
         "outbox apply",
+        "outbox resolve",
         "outbox sent ls",
         "outbox sent show",
         "outbox sent clear",
@@ -517,6 +514,7 @@ _CONTAINER_COMMANDS = _DEPRECATED_HIDDEN_COMMANDS | frozenset(
         "pr push",
         "pr bind",
         "pr unbind",
+        "pr fetch",
         "prune",
         "registry status",
         "registry verify",
@@ -821,6 +819,7 @@ def policy_allows(
             "pr push",
             "pr bind",
             "pr unbind",
+            "pr fetch",
             "submodule pr push",
             "submodule pr bind",
             "submodule pr unbind",
@@ -838,7 +837,6 @@ def policy_allows(
             "branch",
             "exec",
             "job ls",
-            "review ls",
             # Filtered to the visible repos inside the command itself.
             "outbox sent ls",
             "outbox sent show",

@@ -127,7 +127,7 @@ expected fields, receipts and journals as manual publication.
 
 ```yaml
 publish:
-  issues: [create, edit, comment, labels, assign_self, state]  # own repo and declared submodules
+  issues: [create, edit, comment, comment_edit, labels, assign_self, state, sub_issue, dependency]  # own repo and submodules
   projects:
     - board: acme/7
       actions: [add, set, remove]                    # set implies add; set covers clear
@@ -136,6 +136,8 @@ publish:
     actions: [comment]
   pull_requests: true
   pr_reviews: false
+  pr_comment_edits: false                       # edit submitted PR review comments
+  pr_state: false                               # close and reopen bound PRs
   max_actions_per_hour: 30                      # 1..500
 ```
 
@@ -145,6 +147,7 @@ jb orchestrate grant bugs --publish-project acme/7=add,set
 jb orchestrate grant bugs --publish-project acme/7=none  # remove this board's rights
 jb orchestrate grant bugs --publish-foreign-issues someorg/upstream-lib:comment
 jb orchestrate grant bugs --publish-pr-reviews --publish-rate 10
+jb orchestrate grant bugs --publish-pr-reviews --publish-pr-state
 jb orchestrate grant bugs --no-publish
 ```
 
@@ -155,6 +158,32 @@ action uses one publish-rate slot. Foreign issue grants do not grant project
 rights, and project grants do not grant rights to foreign issue actions. The
 terminal dashboard exposes **Publish projects** beside the other publish-rights
 editors; its board picker supports adding a board and editing its action rights.
+
+Closing or reopening a bound PR is a `state` action in the PR manifest and needs
+`publish.pr_state`, which requires `publish.pr_reviews` and is narrowed with it
+like `pr_comment_edits`; `pr_reviews` does not imply it. The repo cap narrows it too.
+It also needs an authored, non-adopted PR binding, as a description rewrite does: an
+orchestrator cannot close a PR it is bound to only for review or adoption.
+
+`comment_edit` covers editing the body of an existing issue or PR conversation
+comment. Publication still refuses a comment written by any account other than the
+host's publishing account, or one changed since staging. `comment` does not
+imply it. Editing a submitted PR review (line) comment is a `comment_edit` action in
+the PR manifest and needs its own right, `publish.pr_comment_edits`, which requires
+`publish.pr_reviews`: `pr_reviews` does not imply it, and a PR manifest containing a
+`comment_edit` is refused at the publish gate without it. Replies and comments
+are unaffected, and an edit an earlier run already published no longer needs the
+right. The repo cap narrows it like the other rights. Turning `pr_reviews` off
+(`--no-publish-pr-reviews`, or the dashboard toggle) also clears
+`pr_comment_edits`, and `grant` says so; explicitly requesting the edit right
+without reviews is refused, while an inherited default that holds edits without
+reviews is narrowed to no edits. The dashboard's orchestration menu has a
+"Publish PR comment edits" row beside "Publish PR reviews".
+
+`sub_issue` and `dependency` cover adding and removing native sub-issue and
+"blocked by" links. `create` does not imply them: a create staged with
+`--parent` or `--blocked-by` carries its links as separate actions, so
+publishing it needs those kinds too.
 
 Assignment has two kinds. `assign_self` covers only assignees changes whose
 logins all equal the publishing account, compared case-insensitively after
@@ -170,7 +199,8 @@ counts as widening.
 `--publish-foreign-issues REPO:KINDS` replaces the foreign block; every listed
 repository must use the same kinds. `--publish-foreign-issues none` clears the
 foreign block alone. `--publish-prs/--no-publish-prs` and
-`--publish-pr-reviews/--no-publish-pr-reviews` toggle their rights.
+`--publish-pr-reviews/--no-publish-pr-reviews` and
+`--publish-pr-comment-edits/--no-publish-pr-comment-edits` toggle their rights.
 `--no-publish` clears everything and is exclusive with other publish flags.
 A bare `grant` keeps existing publish rights. `show` and `ls` display them;
 the terminal dashboard's `Orchestration…` menu shows and edits them too.
@@ -572,7 +602,8 @@ A `spawn` or `restart` manifest may carry an optional `runner`: `agent`
 `model` (`fable`, `opus`, `sonnet` or `haiku`). It rewrites the Claude
 command of the repo's `agents.claude.command` for that child. When omitted on
 spawn, the container default applies, then the local, repo, or global
-`orchestration.default_runner`, in that order; without any default the child
+`agents.default_runner` (or its deprecated alias `orchestration.default_runner`),
+in that order; without any default the child
 runs the repo's primary agent as configured. Set the container preference with
 `jb orchestrate grant bugs --runner-agent claude-jb --runner-profile grok --runner-model sonnet`;
 `--runner-profile` and `--runner-model` require `--runner-agent`. Use
@@ -715,6 +746,17 @@ read. Quiet-child notifications default to 120 minutes and digests are off;
 tune both and the wake filter through the repo's
 [`orchestration.follow`](config.md#orchestration) policy on the host. Child
 followers stay unfiltered and emit no quiet-child/digest events.
+An orchestrator follower also gets one `grant-changed` notification when its
+effective grant changes (revoked, or a field such as `max_running_children`,
+including a repo cap that clamps it), naming the changed fields; a revoke is
+announced just before the follower's connection ends with `NOT_ORCHESTRATED`.
+"grant added" appears only for a container that already has a follower
+context (a child) and gains a grant; a plain container cannot follow. An
+unchanged republish stays silent. The broker remembers the last grant seen per
+container until it restarts, so a change between two connections is announced
+on the next one; after a broker restart or monitor reconnect, re-check
+`jailbee inbox grant`, because the first connection after a restart only
+records the baseline.
 `jailbee inbox wait` keeps both interval options disabled by default.
 Read each notification with `jailbee inbox read <id>` and treat the body as
 sender instructions, not new authority. Headless Claude

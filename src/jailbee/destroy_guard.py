@@ -114,6 +114,7 @@ def _nothing_measurable(status: GitStatus) -> bool:
     """
     return (
         status.wt in _UNMEASURED
+        and not status.ahead_of_host.isdigit()
         and not status.ahead_count.isdigit()
         and not status.head_sha
         and status.remote_contained is None
@@ -228,15 +229,36 @@ def assess(cfg: Config, ci: ContainerInfo) -> RiskSummary | None:
     # ref — a container parked on its base tip still answers "on the host",
     # and one parked on a commit any remote-tracking ref reaches answers
     # `remote_contained`. Neither warns.
-    ahead_known = status.ahead_count.isdigit()
-    if (ahead_known and int(status.ahead_count) > 0) or (not ahead_known and status.head_sha):
+    ahead = status.ahead_of_host
+    ahead_known = ahead.isdigit()
+    if (ahead_known and int(ahead) > 0) or (not ahead_known and status.head_sha):
         on_host = bool(status.head_sha) and has_commit(cfg.repo_root, status.head_sha)
         if not on_host and status.remote_contained is not True:
             reasons.append(
-                f"{status.ahead_count} commits not on the host"
+                f"{ahead} commits not on the host"
                 if ahead_known
                 else "commits not on the host (count unknown)"
             )
+
+    # Other local branches: the gather already dropped those whose tip is on the
+    # host or behind a remote-tracking ref; re-check the host, which may have
+    # imported them since.
+    # An unknown listing (`other_branches is None`: the probe printed `?`, its
+    # output was cut short, the container belongs to another repo, or the probe
+    # predates the field) counts as at risk, like an unknown HEAD — but only
+    # once the container's HEAD was measured, so a wholly unprobed container
+    # keeps its single "could not inspect" answer.
+    if status.other_branches is None and status.head_sha:
+        reasons.append("other branches not checked")
+    stranded = [
+        b
+        for b in status.other_branches or ()
+        if b.remote_contained is not True and not has_commit(cfg.repo_root, b.sha)
+    ]
+    if stranded:
+        listed = ", ".join(f"{b.name} ({b.sha[:8]})" for b in stranded)
+        noun = "branch" if len(stranded) == 1 else "branches"
+        reasons.append(f"commits not on the host in {noun} {listed}")
 
     if not reasons:
         return None

@@ -24,7 +24,9 @@ the host outbox's stored proposal files by hand.
       ]
     },
     {"type": "reply", "comment_id": 99887, "body": "…"},
+    {"type": "comment_edit", "comment_id": 99888, "body": "…", "expected": {"body": "…"}},
     {"type": "comment", "body_file": "001-general.md", "reply_to": 4455},
+    {"type": "state", "state": "closed", "expected": {"state": "open"}},
     {"type": "description", "body_file": "001-body.md", "title": "Improve onboarding", "branch": null}
   ]
 }
@@ -74,14 +76,14 @@ For rework of PR 1234, a numbered source can have no description action:
 }
 ```
 
-Every PR proposal — review, reply, comment, description and source — is
+Every PR proposal — review, reply, comment, comment_edit, state, description and source — is
 staged in the host outbox store over the broker socket (never as a file in
 the container); the broker re-validates it and refuses a child container. `jailbee outbox ls|show|drop`
 cover it as `pr/NNN-source.json`, and `jailbee outbox sent` lists it once
 published. The host publishes one with `jb pr push <container>
 --source-manifest <name>`. Pending sources show `awaiting-push` and
-`create_scope`; `jb outbox apply` refuses them with exit 2 and a push hint. The
-dashboard's `c` action hands them to PR push. An existing PR supplies its actual
+`create_scope`; `jb outbox apply` and the outbox's `p` hand them to that PR
+push. An existing PR supplies its actual
 head and base; a conflicting description branch is refused. Source manifests are
 isolated from ordinary automatic description publishing. If a publication was
 interrupted while the PR was being created or updated, the proposal shows
@@ -152,6 +154,39 @@ nothing partial lands.
 `POST /repos/{owner}/{repo}/pulls/{n}/comments/{comment_id}/replies`.
 `comment_id` is a review-comment id you read via `gh api`. Replies are
 separate calls, one per action, and are applied after the review.
+
+## `type: "state"`
+
+`gh pr close N` / `gh pr reopen N`. `state` is `closed` or `open`; `expected.state`
+is the other one — the state you read when staging — and is required. Stage it with
+`jailbee pr state [N] closed|open`, which fills in `expected.state`. Needs a numbered
+`pr`; at most one per manifest. Before publishing the host re-reads the PR and
+refuses unless it is still in `expected.state` (a merged PR is always refused). The
+plan warns `closes PR #N` / `reopens PR #N`. A PR the container does not own needs
+`--foreign`, as for any action. An orchestrator needs `publish.pr_state` and an authored, non-adopted PR binding. In
+`--draft` mode a state change is held back in the outbox, like a general comment. Merging
+and draft toggling are out of scope.
+
+## `type: "comment_edit"`
+
+`PATCH /repos/{owner}/{repo}/pulls/comments/{comment_id}`. Replaces the body of
+one submitted review (line) comment or reply. `comment_id` is a review-comment
+id; `body`/`body_file` is the new text (non-empty); `expected.body` is required
+and is the body you read when staging. Stage it with
+`jailbee pr comment-edit ID [N] --body …`, which fills in `expected.body`.
+
+Before publishing the host re-reads the comment and refuses unless it is on the
+manifest's repository and PR, was written by the account the host publishes with
+(compared case-insensitively) and still reads `expected.body`; a comment that
+already reads the new body is reported as landed. The plan shows a line diff. The
+action does not depend on `head_sha`, and it is published directly even in
+`--draft` mode. Two edits of one comment in a manifest are refused. Pending
+(unsubmitted) review comments are not covered: staging refuses a comment whose
+review is still `PENDING`.
+
+If any pending edit is refused, the **whole manifest** is held back, replies and
+comments in it included, until the edit is dropped or fixed. Put an edit in its
+own manifest (its own `--batch`) when other actions must not wait for it.
 
 ## `type: "comment"`
 

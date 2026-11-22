@@ -24,6 +24,7 @@ or `-`, and are at most 63 characters.
 | Field | Meaning and default |
 |---|---|
 | `run` | Required nonempty foreground command. |
+| `description` | Optional text (`""`): what the service does and when it is needed. Shown in the DESCRIPTION column of in-container `jailbee service ls` (and its `--json`) and in the dashboard's `Services…` list and custom-services picker; whitespace is collapsed to one line in the lists. |
 | `prepare` | Serial steps, default `[]`; run once on first selected autostart and explicitly on refresh. |
 | `ready`, `ready_timeout` | Optional probe and positive timeout in seconds (120). |
 | `status`, `status_timeout` | Optional read-only status probe and timeout in seconds (5, minimum 1); a failed or timed-out probe reports an error without changing lifecycle state. |
@@ -136,6 +137,7 @@ This illustrative excerpt references `pricing` without defining it: define a
 ```yaml
 services:
   db:
+    description: Postgres; start it before running integration tests   # optional
     prepare:                       # optional serial list of steps
       - run: docker compose pull
         network: loose
@@ -1916,6 +1918,8 @@ naming the file — and is removed in 2.0.0. `jailbee config migrate --apply` re
 | `pr.ai_branch` | bool | `true` | When `true`, `jailbee pr push` asks the agent to propose a convention-following head branch name when opening a **new** PR. Has no effect when `pr.ai_description: false`. |
 | `pr.model` | string \| null | agent's own | Model passed as `--model`. Left **unset**, Claude (and `claude-jb`) use `sonnet` — writing a description is a bounded job, and pinning it keeps generation from competing for the budget of the coding work — and every other agent uses its own default. Accepts an alias or a full model ID. An explicit `null` omits the flag on every agent, so the container's default model applies. `haiku` works but has a smaller context window. Rejected at load if it is not a single whitespace-free token. |
 | `pr.prompt` | string \| null | `null` | Project-specific PR-writing instructions, usually a YAML block scalar in a repo's `.jailbee/config.yaml`. Embedded in JailBee's own prompt as a delimited section that **outranks** the generic title/body guidance, so a project can dictate the shape of its descriptions — but it is placed before the JSON response contract, which it cannot override. Whitespace-only is treated as unset; capped at 20 000 characters. |
+| `pr.autofetch` | bool | `true` | When `true`, the dashboard's state service refetches the head of every PR-bound container's PR so the ↓ column follows pushes made elsewhere. The fetch never prompts (git terminal prompt off, `ssh -o BatchMode=yes`, 30 s timeout); a failure keeps the last known head and the card shows `fetch failed <age>`. Turn it off if your remote uses a passphrase-protected or FIDO/YubiKey-backed SSH key — a background fetch could poke the agent or token unasked, or fail every time — and refresh with `jailbee pr fetch` or the dashboard's `Refresh PR head`. The ssh option is appended to `core.sshCommand` / `GIT_SSH_COMMAND` (and `GIT_SSH` is overridden by it), so a `plink`-style or `sh -c` wrapper, or a custom `GIT_SSH` program, may break: turn autofetch off for such setups. |
+| `pr.autofetch_interval` | int | `300` | Seconds between autofetches of one PR's head (minimum 30). Ignored when `pr.autofetch` is `false`. |
 | `pr.timeout` | int | `600` | Seconds `jailbee pr push` gives the agent to produce the PR text before falling back to a placeholder. Generation is an agentic run, not one model call — it reads the log, the cumulative diff, the PR template, the branch's spec and the CI config across a dozen-plus turns, so the cost scales with the repository, not just with the diff. Measured in JailBee's own repo on a 21-file/+940 diff: 109 s. Raise it for a large tree, or when `pr.prompt` asks for slower work. Must be positive — to switch generation off use `pr.ai_description: false`. |
 
 **What `auto` picks.** An explicit `primary_agent` name (not `auto`) wins when that agent has a `headless` command. Otherwise, among the enabled agents, the ones with `autostart` on
@@ -2529,6 +2533,20 @@ so there is no distinct target branch to read from.
 |---|---|---|---|
 | `primary_agent` | `auto` \| agent name | `auto` | The repo's primary agent: the one that receives the initial prompt of [`jailbee new --prompt`](commands.md) and the agent `pr.agent: auto` prefers when it has a `headless` command (an explicit name steers it; with `auto` the result equals the plain search). `auto` picks among the enabled agents: those with `autostart` on first, then the rest; inside each group `claude` first, then by name. A name must be an enabled agent, otherwise the problem is reported (`--prompt` exits 2) and no other agent is used. See [Primary agent and initial prompt](agents.md#primary-agent-and-initial-prompt). |
 
+### `agents.default_runner`
+
+```yaml
+agents:
+  default_runner:
+    agent: claude-jb   # claude or claude-jb
+    profile: grok      # optional; only with claude-jb (a LiteLLM profile)
+    model: sonnet      # optional: fable, opus, sonnet or haiku
+```
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `agents.default_runner` | `{agent, profile?, model?}` | none | The repo's default [runner](orchestration.md) for **every** container of the repo, not only spawned children. Allowed in `global.yaml`, the repo's `.jailbee/config.yaml` and the host-local `repos/<prefix>.yaml`; layered local → repo → global, the first layer that sets it wins. It is not an agent: it never appears under `agents.<name>`. Autostart resolves a container's Claude command as: the container's own runner label (a child spawned with a runner), then `agents.default_runner`, then the legacy path (`primary_agent`, `litellm.autostart`, `litellm.default_profile`, no model). With a runner the `agents.claude.command` is rewritten (`claude` ↔ `claude-jb`, `-P`, `--model`); a command that is not a Claude command keeps its configured form and logs a warning. It does not change which agent is the primary agent. When the runner names a `claude-jb` profile, that profile is also the `claude-jb` default inside the repo's containers (written by `jailbee apply`, `new` and `jailbee agent use`). Set it with [`jailbee agent use`](commands.md#jailbee-agent). The deprecated alias `orchestration.default_runner` is still read (in a layer, `agents.default_runner` wins over it); spawned children get the same default as before. |
+
 ### `docker_registry_mirror.extra_registries`
 
 ```yaml
@@ -2861,10 +2879,13 @@ settings UI, or ask for it from `ls` with `--fields ip`.
 The dashboards label state **ST** (▶ Running, ■ Stopped, Ⅱ Frozen), creation
 **AGE** (elapsed seconds/minutes/hours/days), network **LOOSE** (empty for strict; a red **●** and the remaining auto-revert time for loose, `● 45m`, or `● ∞` with no deadline; Qt cards show the same text without the colour), target diff **DIFF**, local diff **L DIFF**, combined status **GIT**, full name **FULL**, memory
 limit **LIMIT**, memory in use **USED**, its share of the limit **MEM%**, loose deadline **UNTIL**, optional mounts **MOUNT** (empty when none are attached; a red **●** — the same flag as LOOSE — and the time remaining until the last attached mount detaches, e.g. `● 12m`, or `● ∞` if one has no deadline), pending issues **ISS** (when selected), and staged PR plus issue manifests **OUTBOX** (`✉N`), orchestration role **ROLE** (`orch`, `child`, or a red `child!` when the orchestrator is not running), **CHILDREN** and **INBOX**. **AI** uses
-◆ waiting, ● busy, ◐ shell, ○ idle — bright when the agent went idle less than 30 minutes ago, dim after that — and ? for an unknown agent state. Full
+◆ waiting, ● busy, ◐ shell, ○ idle — bright when the agent went idle less than 30 minutes ago, dim after that — and ? for an unknown agent state. One glyph per live session, all agents ordered by urgency; past 24 columns the ages drop, then the least urgent sessions fold into `+N`. Full
 **AGENT** remains unchanged. **BASE**'s ↗ marks a remote-tracking base;
 **MODE** uses `cln`/`mnt`. **WT**, **DIFF** and **L DIFF** show ✓ for clean, not
-for an unknown result. **DOING** uses ×N for process counts; **JOB** shortens
+for an unknown result. **DIFF**, **↑**, **↓** and **MERGE** compare with the
+container's [sync target](git-bridge.md#sync-target); for a PR-bound container
+they carry a dim `pr` (PR head) or a yellow `pr?` (PR head not fetched, host
+branch instead), in `jailbee ls` too. **DOING** uses ×N for process counts; **JOB** shortens
 working verbs (`start`, `create`, `clone`, `stop`, `delete`, `destroy`) and
 `autostart:<stage>` to `auto:<stage>`, preserving `failed` and `(dead)`.
 Qt table tooltips expand the labels, exact timestamps and agent details;
@@ -2891,7 +2912,7 @@ the command line still wins in **every** format, table or JSON.
 Allowed names (also the `jailbee ls --fields` vocabulary): `name`, `full_name`, `alias`,
 `repo`, `mode`, `base`, `state`, `created`, `job`, `network`, `ttl`,
 `loose_until`, `mounts`, `ip`, `memory_limit`, `mem`, `mem_used`, `mem_pct`, `wt`, `target_diff`,
-`ahead_count`, `behind_count`, `conflict`, `local_diff`, `local_count`, `git_status`, `pr`,
+`ahead_count`, `behind_count`, `conflict`, `host_ahead`, `host_behind`, `local_diff`, `local_count`, `git_status`, `pr`,
 `issues`, `outbox`, `group`, `autostart_profile`, `role`, `children`, `inbox`, `cpu`, `doing`, `agent`, `agent_compact`. `claude` and `claude_group`
 are accepted aliases for `group`.
 
@@ -2900,8 +2921,13 @@ explicit `--fields ahead_diff` is an error. Use `target_diff` for the direct
 committed-tree comparison with the host target branch, or `jailbee git diff
 --incoming` for the former branch-contribution patch. Explicit JSON
 `git_status` uses `target_diff`, `behind_count`, `base_source`, `base_sha`,
-`tracking_relation` and `upstream_ref` instead of `ahead_diff`; its submodule
+`tracking_relation` and `upstream_ref` instead of `ahead_diff`, and adds
+`sync_target`, `host_ahead_count` and `host_behind_count` (see
+[sync target](git-bridge.md#sync-target)); a count is a digit string, `"?"`
+(unknown) or `"missing"` (the container lacks the target commit: behind by at
+least one, count unknown, shown as `↓•`); its submodule
 line fields are `target_ins`/`target_del` instead of `ahead_ins`/`ahead_del`.
+`host_ahead` (**H↑**) and `host_behind` (**H↓**) are opt-in columns that always count commits against the host branch, whatever the row's sync target is: on a PR-bound row they differ from ↑/↓, on a row syncing with the host branch they equal them. They are off by default in the dashboard and `jailbee ls`; enable them in the dashboard's column settings, or with `ls.fields` / `--fields`.
 `local_diff` and `local_count` remain opt-in comparisons with the host's
 currently checked-out HEAD, which can differ from the target branch. If the
 host's local target branch is absent, status uses the configured upstream's
@@ -3090,6 +3116,8 @@ orchestration:
           actions: [comment]
         pull_requests: false     # own source PR manifests
         pr_reviews: false        # bound own-repository PRs
+        pr_comment_edits: false  # edit submitted PR review comments
+        pr_state: false          # close and reopen bound PRs
         max_actions_per_hour: 30 # 1..500; reserved; refunded only when the in-lock policy refuses before any mutation
 ```
 
@@ -3102,10 +3130,19 @@ It is applied by `jailbee new` to the new container, except for
 mount-mode containers, children, and when the repo's caps (`allowed` or an
 excess) would refuse the grant.
 
-`default_runner` has the shape `{agent, profile?, model?}`. Runner selection
+`default_runner` has the shape `{agent, profile?, model?}`. At host and repo
+level `orchestration.default_runner` is a deprecated alias of
+[`agents.default_runner`](#agentsdefault_runner), which now applies to every
+container of the repo and wins over the alias within a layer. Runner selection
 prefers an explicit runner, then the container's runner, then a non-null
 host-local default, the repo default, and finally the global default. It is a
 preference, not a right, and does not grant orchestration permissions.
+
+!!! warning "The alias is no longer children-only"
+    Before `agents.default_runner` existed, `orchestration.default_runner` affected
+    only spawned children. As its alias it now also sets the runner of every
+    container's autostart, relaunch and refresh. To keep a children-only default,
+    set `default_runner` on a grant profile instead (see the profile keys below).
 
 **Per repo** (`.jailbee/config.yaml`): rights may only be narrowed; the repo
 may set `default_runner`, idle-report thresholds and follower notifications freely.
@@ -3240,6 +3277,11 @@ GitHub CLI (`gh`) integration. When enabled, `jailbee`:
 - Injects `GH_TOKEN` into the container at autostart via
   `/etc/profile.d/jailbee-github.sh` so login shells (and AI agents
   launched through them) authenticate without `gh auth login`.
+  `jailbee apply` rewrites the file in every running container, so a
+  rotated token needs no restart (stopped containers get it on their next
+  start). Disabling `github` or removing the token deletes the file the same
+  way. Only new login shells read it: shells and agents that are already
+  open keep the old `GH_TOKEN` until they are reopened.
 - Runs `jailbee doctor` checks for token presence, perms, and PAT shape.
 
 ```yaml
@@ -3656,14 +3698,30 @@ settings still belong here; the systemd service never passes those flags.
 
 ### `remote.web`
 
-Host-global remote policy for the web transport. Like `remote.ssh`, it is set
-only in `~/.config/jailbee/global.yaml`. It carries the shared permission
-settings and nothing else: the policy keys are the same as `remote.ssh`'s
+Settings for the [web dashboard](web-dashboard.md) and its remote policy for
+the web transport. Like `remote.ssh`, it is set only in
+`~/.config/jailbee/global.yaml`. Besides the server keys below, the policy
+keys are the same as `remote.ssh`'s
 (`commands.mode`, `commands.allow`, `restrict_host`, `excluded_repos`,
 `mount_roots`, `mounts`, `orchestration`, `network`, `files`, `rdp`) and mean
 the same, see [`remote.ssh`](#remotessh) and
 [Remote policy](security.md#remote-policy). The defaults are the most
-restrictive policy:
+restrictive policy.
+
+Server keys:
+
+| Key | Default | Description |
+|---|---|---|
+| `listen` | `127.0.0.1` | IP address literal the server binds to. |
+| `port` | `8910` | TCP port (1-65535). |
+| `auth.enabled` | `true` | Require a login. `false` serves everything without one; never relaxed based on the request's source address, because a proxy or tunnel makes every request local. |
+| `auth.allow_unauthenticated_remote` | `false` | With `auth.enabled: false`, allow a non-loopback `listen`. Otherwise the server refuses to start. |
+
+`jb remote web serve --listen/--port` override the first two for one run.
+Login methods are managed with `jb remote web auth`, not in YAML; see
+[Web dashboard](web-dashboard.md).
+
+Policy keys:
 
 | Key | Default |
 |---|---|

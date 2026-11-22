@@ -541,3 +541,67 @@ def test_source_listing_scope_and_apply_refusal(env, mocker, capsys):
             confirm=lambda _: True,
         )
     publisher.assert_not_called()
+
+
+def _source_manifest() -> str:
+    return json.dumps(
+        {
+            "version": 1,
+            "repo": "acme/main",
+            "pr": 7,
+            "head_sha": None,
+            "source": "refs/heads/topic",
+            "source_sha": "a" * 40,
+            "actions": [],
+        }
+    )
+
+
+def test_pr_creation_of_a_source_manifest_is_its_source_push(env):
+    from jailbee.outbox.commands import pr_creation
+    from jailbee.outbox.models import ProposalId
+
+    cfg, incus, _, reader, _, _journals = env
+    reader.side_effect = lambda i, c, k, **kw: store(
+        k, {"002.json": _source_manifest()} if k == "pr" else {}
+    )
+    scope = pr_creation(cfg, incus, "feature", ProposalId("pr", "002.json"))
+    assert scope == {"kind": "source", "manifest": "002.json"}
+
+
+def test_pr_creation_of_a_description_awaiting_its_pr_is_pr_push(env, mocker):
+    from jailbee.outbox.commands import pr_creation
+    from jailbee.outbox.models import ProposalId
+    from jailbee.pr_flow import PrScope
+
+    cfg, incus, _, reader, _, _journals = env
+    files = {
+        "002.json": json.dumps(
+            {
+                "version": 1,
+                "repo": "acme/main",
+                "pr": None,
+                "head_sha": None,
+                "actions": [{"type": "description", "title": "T", "body_file": "body.md"}],
+            }
+        ),
+        "body.md": "Body.",
+    }
+    reader.side_effect = lambda i, c, k, **kw: store(k, files if k == "pr" else {})
+    mocker.patch("jailbee.pr_flow.candidate_scopes", return_value=[PrScope.for_repo(cfg)])
+    mocker.patch("jailbee.submodule_pr.recorded_paths", return_value=[])
+    mocker.patch("jailbee.pr_outbox.scope_slug", return_value="acme/main")
+    incus.config_get.return_value = None
+    assert pr_creation(cfg, incus, "feature", ProposalId("pr", "002.json")) == {"kind": "repo"}
+    # Without a resolvable scope there is nothing it could run: say so.
+    mocker.patch("jailbee.pr_outbox.scope_slug", return_value="other/repo")
+    with pytest.raises(OutboxError, match="jailbee pr push feature"):
+        pr_creation(cfg, incus, "feature", ProposalId("pr", "002.json"))
+
+
+def test_pr_creation_is_none_for_a_manifest_publish(env):
+    from jailbee.outbox.commands import pr_creation
+    from jailbee.outbox.models import ProposalId
+
+    cfg, incus, _, _, _, _journals = env
+    assert pr_creation(cfg, incus, "feature", ProposalId("issue", "001.json")) is None

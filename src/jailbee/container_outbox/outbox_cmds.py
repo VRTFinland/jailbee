@@ -237,19 +237,6 @@ def show(target: TargetArg = None) -> None:
     _run(run)
 
 
-@outbox_app.command("drop")
-def drop(target: TargetArg = None) -> None:
-    """Remove a staged proposal that is not yet published."""
-
-    def run() -> None:
-        require_role()
-        kind, name = _target(target)
-        broker.drop(kind, name)
-        typer.echo(f"dropped {kind}/{name}")
-
-    _run(run)
-
-
 @outbox_app.command("submit")
 def submit(name: DraftArg = None, kind: KindOpt = None) -> None:
     """Stage a draft batch for publishing; review drafts need pr review submit."""
@@ -264,14 +251,68 @@ def submit(name: DraftArg = None, kind: KindOpt = None) -> None:
     _run(run)
 
 
+def _pick_discard_target() -> str:
+    """Ask which staged proposal or draft to discard (always asked: destructive)."""
+    from jailbee import prompting
+
+    options: list[prompting.Option[str]] = []
+    kinds: tuple[Kind, ...] = ("issue", "pr")
+    for kind in kinds:
+        for row in broker.list_proposals(kind):
+            value = f"{kind}/{row['name']}"
+            options.append(prompting.Option(value, f"{value}  {row['summary']}", value))
+    for kind in kinds:
+        for row in broker.draft_list(kind):
+            value = f"draft {kind}/{row['name']}"
+            title = f"{value}  {row['actions']} actions"
+            options.append(prompting.Option(value, title, f"--draft {row['name']} --kind {kind}"))
+    return prompting.choose_one(
+        "outbox item to discard",
+        options,
+        destructive=True,
+        empty_reason="nothing staged to discard (see `outbox ls`)",
+        alternative="give issue/NAME or pr/NAME, or --draft NAME",
+    )
+
+
 @outbox_app.command("discard")
-def discard(name: DraftArg = None, kind: KindOpt = None) -> None:
-    """Discard a draft batch without staging it."""
+def discard(
+    target: TargetArg = None,
+    draft: Annotated[
+        str | None, typer.Option("--draft", help="Draft batch name to discard.")
+    ] = None,
+    kind: KindOpt = None,
+) -> None:
+    """Remove a staged proposal (issue/NAME or pr/NAME), or a draft with --draft NAME."""
 
     def run() -> None:
         require_role()
-        domain, draft = _resolve(name, kind)
-        broker.draft_discard(domain, draft)
-        typer.echo(f"discarded {domain} draft {draft}")
+        if target and draft is not None:
+            raise OutboxCommandError("give a proposal or --draft NAME, not both", 2)
+        if draft is not None:
+            domain, name = _resolve(draft, kind)
+            broker.draft_discard(domain, name)
+            typer.echo(f"discarded {domain} draft {name}")
+            return
+        if not target:
+            if kind is not None:
+                raise OutboxCommandError("--kind applies only to --draft", 2)
+            picked = _pick_discard_target()
+            if picked.startswith("draft "):
+                draft_kind, _, draft_name = picked[len("draft ") :].partition("/")
+                broker.draft_discard(cast(Kind, draft_kind), draft_name)
+                typer.echo(f"discarded {draft_kind} draft {draft_name}")
+                return
+        else:
+            picked = target
+        if kind is not None:
+            raise OutboxCommandError("--kind applies only to --draft", 2)
+        if "/" not in picked:
+            raise OutboxCommandError(
+                f"expected issue/NAME or pr/NAME; for a draft use --draft {picked}", 2
+            )
+        proposal_kind, name = _target(picked)
+        broker.drop(proposal_kind, name)
+        typer.echo(f"discarded {proposal_kind}/{name}")
 
     _run(run)

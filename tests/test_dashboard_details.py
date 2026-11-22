@@ -19,6 +19,7 @@ from jailbee.agent_status import AgentSummary
 from jailbee.dashboard import details as dd
 from jailbee.dashboard import model as dmodel
 from jailbee.git_status import GitStatus, SubmoduleChange
+from jailbee.host_target import SyncTarget
 from jailbee.lifecycle import ContainerInfo, ls_field_specs
 from jailbee.procstat import ProcessActivity, ProcessMemory
 
@@ -590,6 +591,103 @@ def test_git_root_row_reuses_the_table_cells() -> None:
     assert (root.target, root.working) == (cells["target_diff"](c), cells["wt"](c))
     assert _plain(root.note) == f"merge {_plain(cells['conflict'](c))}"
     assert _plain(root.extra) == "host HEAD ↑5 +1 -0"
+
+
+def _pr_status(sync: SyncTarget) -> GitStatus:
+    return GitStatus(
+        wt="clean",
+        ahead_diff="+4 -0",
+        ahead_count="2",
+        conflict="ok",
+        target_diff="+4 -0",
+        behind_count="0",
+        host_ahead_count="5",
+        host_behind_count="1",
+        base_sha="b" * 40,
+        sync_target=sync,
+    )
+
+
+def test_a_pr_bound_card_shows_a_row_per_target_and_marks_the_sync_target() -> None:
+    sync = SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head")
+    c = _c(git_status=_pr_status(sync), base_branch="dev", pr_number=7)
+
+    panel = dd.container_panel(c, NOW)
+
+    assert panel.base == "PR #7"
+    assert panel.git is not None
+    root, host, pr = panel.git[:3]
+    # The `vs PR #7` header already names the target: no marker on the root row.
+    assert [_plain(root.ahead), _plain(root.behind), _plain(root.note)] == ["2", "0", "merge ok"]
+    assert [_plain(host.name), _plain(pr.name)] == ["↳ dev", "↳ PR #7 head"]
+    assert [(_plain(r.ahead), _plain(r.behind)) for r in (host, pr)] == [("5", "1"), ("2", "0")]
+    assert [_plain(r.target) for r in (host, pr)] == ["b" * 10, "a" * 10]
+    assert [_plain(r.note) for r in (host, pr)] == ["", "sync target"]
+
+
+def test_a_pr_card_without_a_pr_head_ref_marks_the_host_row_as_fallback() -> None:
+    sync = SyncTarget("host", "dev", "b" * 40, "refs/heads/dev", fallback=True)
+    status = replace(_pr_status(sync), host_ahead_count="2", host_behind_count="0")
+    c = _c(git_status=status, base_branch="dev", pr_number=7)
+
+    panel = dd.container_panel(c, NOW)
+
+    assert panel.base == "dev"
+    assert panel.git is not None
+    host, pr = panel.git[1:3]
+    assert _plain(host.note) == "sync target (fallback)"
+    assert _plain(pr.name) == "↳ PR #7 head"
+    assert (_plain(pr.ahead), _plain(pr.behind), _plain(pr.target)) == ("—", "—", "not fetched")
+
+
+def test_a_child_card_shows_the_parent_row_with_its_sha_and_pass_age() -> None:
+    sync = SyncTarget(
+        "parent",
+        "orch",
+        "c" * 40,
+        "",
+        parent="orch",
+        ahead_sha="d" * 40,
+        seen_at=NOW.timestamp() - 90,
+    )
+    c = _c(git_status=_pr_status(sync), base_branch="dev", pr_number=7)
+
+    panel = dd.container_panel(c, NOW)
+
+    assert panel.base == "⑂ orch"
+    assert panel.git is not None
+    host, parent = panel.git[1:3]
+    assert [_plain(host.name), _plain(parent.name)] == ["↳ dev", "⑂ orch"]
+    assert [(_plain(r.ahead), _plain(r.behind)) for r in (host, parent)] == [
+        ("5", "1"),
+        ("2", "0"),
+    ]
+    assert [_plain(r.target) for r in (host, parent)] == ["b" * 10, "c" * 10]
+    assert [_plain(r.note) for r in (host, parent)] == ["", "sync target · seen 1m ago"]
+
+
+def test_a_child_card_without_a_parent_head_marks_the_host_row_as_fallback() -> None:
+    sync = SyncTarget("host", "dev", "b" * 40, "refs/heads/dev", fallback=True, parent="orch")
+    status = replace(_pr_status(sync), host_ahead_count="2", host_behind_count="0")
+
+    panel = dd.container_panel(_c(git_status=status, base_branch="dev"), NOW)
+
+    assert panel.base == "dev"
+    assert panel.git is not None
+    host, parent = panel.git[1:3]
+    assert _plain(host.note) == "sync target (fallback)"
+    assert (_plain(parent.name), _plain(parent.target)) == ("⑂ orch", "not seen running")
+    assert (_plain(parent.ahead), _plain(parent.behind)) == ("—", "—")
+
+
+def test_a_plain_card_has_no_target_rows() -> None:
+    sync = SyncTarget("host", "dev", "b" * 40, "refs/heads/dev")
+    status = replace(_pr_status(sync), host_ahead_count="2", host_behind_count="0")
+
+    panel = dd.container_panel(_c(git_status=status, base_branch="dev"), NOW)
+
+    assert panel.base == "dev"
+    assert panel.git is not None and len(panel.git) == 1
 
 
 def test_submodule_rows_follow_the_root_in_order_and_keep_unknowns() -> None:
@@ -1411,3 +1509,154 @@ def test_container_title_shows_the_glyph_alias_and_name_uncut() -> None:
     g = dmodel.RepoGroup("alpha", "/repos/alpha", None, [c])
     view = dd.details_for([g], dmodel.Row("container", f"alpha-{long}"), NOW)
     assert view is not None and view.title == f"⎈ my alias ({long})"
+
+
+def test_a_missing_target_commit_shows_pull_needed_in_the_git_row() -> None:
+    gs = GitStatus(
+        wt="clean",
+        ahead_diff="?",
+        ahead_count="?",
+        conflict="?",
+        target_diff="?",
+        behind_count="•",
+    )
+    panel = dd.container_panel(_c(git_status=gs, base_branch="dev"), NOW)
+
+    assert panel.git is not None
+    root = panel.git[0]
+    assert _plain(root.behind) == "↓•"
+    assert (_plain(root.ahead), _plain(root.target)) == ("?", "?")
+
+
+def test_git_value_renders_the_missing_target_marker_as_behind_unknown() -> None:
+    from jailbee.dashboard.details import _git_value
+
+    assert _git_value("•") == "[yellow]↓•[/yellow]"
+
+
+def test_summary_says_where_the_agent_runner_comes_from() -> None:
+    own = _panel_plain(
+        dd.container_panel(_c(agent_runner="grok/sonnet", agent_source="container"), NOW).summary
+    )
+    assert "agent grok/sonnet (this container)" in own
+    repo = _panel_plain(
+        dd.container_panel(_c(agent_runner="claude/opus", agent_source="local"), NOW).summary
+    )
+    assert "agent claude/opus (repo default, local)" in repo
+    legacy = _panel_plain(
+        dd.container_panel(_c(agent_runner="(claude)", agent_source="legacy"), NOW).summary
+    )
+    assert "agent (claude) (repo default, legacy)" in legacy
+    assert not any("agent" in p for p in _panel_plain(dd.container_panel(_c(), NOW).summary))
+
+
+def _pr_card_notes(**fetch: object) -> list[str]:
+    sync = SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head", **fetch)  # type: ignore[arg-type]
+    c = _c(git_status=_pr_status(sync), base_branch="dev", pr_number=7)
+    panel = dd.container_panel(c, NOW)
+    assert panel.git is not None
+    return [_plain(r.note) for r in panel.git[1:3]]
+
+
+def test_the_pr_row_shows_how_long_ago_the_head_was_fetched() -> None:
+    notes = _pr_card_notes(fetched_at=NOW.timestamp() - 190)
+    assert notes == ["", "sync target · fetched 3m ago"]
+
+
+def test_the_pr_row_shows_a_failed_fetch_and_its_age() -> None:
+    notes = _pr_card_notes(
+        fetched_at=NOW.timestamp() - 4000,
+        fetch_error="Permission denied",
+        fetch_error_at=NOW.timestamp() - 125,
+    )
+    assert notes[1] == "sync target · fetch failed 2m ago"
+
+
+def test_the_pr_row_says_when_autofetch_is_off() -> None:
+    assert _pr_card_notes(autofetch=False)[1] == "sync target · autofetch off"
+
+
+def test_a_never_fetched_pr_row_shows_the_fetch_failure_too() -> None:
+    sync = SyncTarget(
+        "host",
+        "dev",
+        "b" * 40,
+        "refs/heads/dev",
+        fallback=True,
+        fetch_error="timed out",
+        fetch_error_at=NOW.timestamp() - 30,
+    )
+    c = _c(git_status=_pr_status(sync), base_branch="dev", pr_number=7)
+    panel = dd.container_panel(c, NOW)
+    assert panel.git is not None
+    assert _plain(panel.git[2].note) == "fetch failed 30s ago"
+
+
+def test_orchestrator_card_shows_comment_edit_right() -> None:
+    p = dd.container_panel(
+        _orch(
+            publish={
+                "publish_pr_reviews": True,
+                "publish_pr_comment_edits": True,
+                "publish_rate": 12,
+            }
+        ),
+        NOW,
+    )
+    assert "PR comment edits" in p.orchestration[4]
+
+
+def test_card_lists_branches_with_unimported_commits() -> None:
+    from jailbee.git_status import GitStatus, OtherBranch
+
+    status = GitStatus(
+        "clean",
+        "clean",
+        "0",
+        "ok",
+        other_branches=(OtherBranch("feat/side", "0123456789abcdef"),),
+    )
+    warnings = _panel_plain(dd.container_panel(_c(git_status=status), NOW).warnings)
+    assert any("feat/side" in w and "01234567" in w for w in warnings)
+
+    clean = GitStatus("clean", "clean", "0", "ok", other_branches=())
+    assert dd.container_panel(_c(git_status=clean), NOW).warnings == ()
+
+
+# --- the services line --------------------------------------------------------
+
+
+def test_a_running_container_lists_its_services_and_states() -> None:
+    from jailbee.lifecycle import ServiceState
+
+    c = _c(services=(ServiceState("web", "ready"), ServiceState("db", "failed")))
+    panel = dd.container_panel(c, NOW)
+
+    assert _panel_plain(panel.services) == ["services web ready · db failed"]
+    assert "db [red]failed[/]" in panel.services[0]
+
+
+def test_a_running_container_without_services_has_no_services_line() -> None:
+    assert dd.container_panel(_c(services=()), NOW).services == ()
+    assert dd.container_panel(_c(), NOW).services == ()
+
+
+def test_a_failed_probe_reads_unknown() -> None:
+    panel = dd.container_panel(_c(services_unknown=True), NOW)
+    assert _panel_plain(panel.services) == ["services unknown"]
+
+
+def test_a_stopped_container_shows_no_services() -> None:
+    from jailbee.lifecycle import ServiceState
+
+    c = _c(state="Stopped", services=(ServiceState("web", "ready"),), services_unknown=True)
+    assert dd.container_panel(c, NOW).services == ()
+
+
+def test_the_rendered_card_draws_the_services_line() -> None:
+    from jailbee.lifecycle import ServiceState
+
+    c = _c(services=(ServiceState("web", "ready"), ServiceState("db", "failed")))
+    view = dd.DetailsView(c.display_name, (), panel=dd.container_panel(c, NOW))
+
+    assert "services web ready · db failed" in _panel_body(view, None, 100)

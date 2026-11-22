@@ -3044,7 +3044,7 @@ def test_declining_the_offer_leaves_everything_pending(mocker, tmp_path, typed_c
     # true of the off-TTY hint, which asks nothing, so the prompt is the pin.
     assert "Post 1 pending PR comment now?" in result.output
     assert "Nothing published." in result.output
-    assert "jailbee review apply" in result.output
+    assert "jailbee outbox apply feat-foo pr/001-x.json" in result.output
 
 
 def test_a_stale_review_is_held_back_with_a_reason(mocker, tmp_path):
@@ -3122,7 +3122,7 @@ def test_a_foreign_pr_manifest_is_held_back_and_names_foreign(mocker, tmp_path):
     assert result.exit_code == 0, result.output
     apply_mock.assert_not_called()
     assert resolve.call_args.kwargs["allow_foreign"] is False
-    assert "jailbee review apply --foreign feat-foo" in result.output
+    assert "jailbee review apply --foreign feat-foo 001-x.json" in result.output
     assert "--force" not in result.output
 
 
@@ -3149,7 +3149,8 @@ def test_no_offer_off_tty_just_a_hint(mocker, tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     apply_mock.assert_not_called()
-    assert "1 pending PR comment" in result.output and "jailbee review apply" in result.output
+    assert "1 pending PR comment" in result.output
+    assert "jailbee outbox apply feat-foo pr/001-x.json" in " ".join(result.output.split())
 
 
 def test_no_outbox_suppresses_the_offer(mocker, tmp_path):
@@ -3571,7 +3572,7 @@ def test_pr_real_lock_keeps_individual_delete_outside_receipt_window(
     mocker.patch("jailbee.pr_outbox.pending_pr_text", side_effect=select)
     mocker.patch("jailbee.pr.create_pr", side_effect=create)
     mocker.patch("jailbee.pr_outbox.record_consumed", side_effect=consume)
-    mocker.patch("jailbee.cli._offer_outbox_comments", return_value=0)
+    mocker.patch("jailbee.pr_push_run.offer_outbox_comments", return_value=0)
     try:
         result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-ai"])
         assert result.exit_code == (0 if outcome == "create" else 1), result.exception
@@ -3654,7 +3655,7 @@ def test_pr_replacement_after_guard_check_cannot_select_new_identity(
     mocker.patch("jailbee.pr.view_existing_pr", return_value=_pr_created(already=True))
     edit = mocker.patch("jailbee.pr.edit_pr")
     consume = mocker.patch("jailbee.pr_outbox.record_consumed")
-    mocker.patch("jailbee.cli._offer_outbox_comments", return_value=0)
+    mocker.patch("jailbee.pr_push_run.offer_outbox_comments", return_value=0)
     result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--no-ai"])
     assert result.exit_code == 1, result.exception
     assert isinstance(result.exception, SystemExit)
@@ -3693,8 +3694,8 @@ def test_nested_publication_guard_never_rebinds_identity_and_releases(mocker, tm
 
 @pytest.mark.parametrize("interactive", [True, False])
 def test_pr_offer_draft_choose_mode(mocker, tmp_path, interactive):
-    from jailbee.cli import _offer_outbox_comments
     from jailbee.outbox.publish import ask_publish_mode
+    from jailbee.pr_push_run import offer_outbox_comments as _offer_outbox_comments
     from tests.conftest import make_cfg
 
     mocker.patch("jailbee.prompting.is_interactive", return_value=interactive)
