@@ -26,6 +26,7 @@ def test_host_commands_snapshot():
         ["pr", "push"],
         ["pr", "bind", "dev", "42"],
         ["pr", "unbind"],
+        ["pr", "fetch"],
         ["pr", "ls"],
         ["pr", "open"],
         ["issue", "apply"],

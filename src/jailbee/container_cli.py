@@ -19,7 +19,7 @@ VERSION_FILE = Path(__file__).resolve().parent.parent / "VERSION"
 # Explicit host-only branches: unknown names must still be reported as typos.
 HOST_SUBCOMMANDS = {
     "config": frozenset({"show", "migrate", "edit", "init"}),
-    "pr": frozenset({"push", "bind", "unbind", "ls", "open"}),
+    "pr": frozenset({"push", "bind", "unbind", "ls", "open", "fetch"}),
     "issue": frozenset({"apply", "resolve"}),
     # `outbox sent` exists on both sides: the container lists only its own records.
     # `outbox drop` is host-only; the container verb is `outbox discard`.

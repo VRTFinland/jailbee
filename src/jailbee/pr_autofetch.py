@@ -133,11 +133,13 @@ class PrHeadAutofetcher:
 
     def _policy_for(self, repo_root: str) -> AutofetchPolicy | None:
         now = self._clock()
-        cached = self._policies.get(repo_root)
+        with self._lock:
+            cached = self._policies.get(repo_root)
         if cached is not None and now - cached[0] < POLICY_TTL:
             return cached[1]
         policy = self._policy(Path(repo_root))
-        self._policies[repo_root] = (now, policy)
+        with self._lock:
+            self._policies[repo_root] = (now, policy)
         return policy
 
     def _state(self, repo_root: Path, number: int) -> _PrState:
