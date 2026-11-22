@@ -433,3 +433,27 @@ def test_show_lines_render_a_comment_edit_with_its_diff():
     text = "\n".join(pr_outbox.show_lines(parsed))
     assert "action 0 · EDIT review comment #7" in text
     assert "-Old wording" in text and "+Fixed wording" in text
+
+
+LANDED_URL = "https://github.com/user-attachments/assets/12345678-1234-1234-1234-123456789abc"
+
+
+def test_gate_recognises_a_landed_edit_whose_attachments_were_not_recorded(github, cfg):
+    """The first gate read already holds the rendered body, not the placeholder one."""
+    from types import SimpleNamespace
+
+    action = pr_outbox.CommentEditAction(
+        comment_id=7, body="Fixed ![i](attachment:screen)", expected_body="Old wording"
+    )
+    target = SimpleNamespace(
+        pr=SimpleNamespace(number=12),
+        scope=SimpleNamespace(repo_root=cfg.repo_root),
+        manifest=SimpleNamespace(repo=REPO),
+    )
+    github.read_comment.return_value = snapshot(body=f"Fixed ![i]({LANDED_URL})")
+    text = "\n".join(pr_outbox._comment_edit_refusals(target, action, "me", "ctx"))
+    assert "already reads the new body" in text
+    assert "expected.body differs" not in text
+    github.read_comment.return_value = snapshot(body="Something else entirely")
+    text = "\n".join(pr_outbox._comment_edit_refusals(target, action, "me", "ctx"))
+    assert "expected.body differs" in text
