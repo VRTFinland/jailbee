@@ -1192,7 +1192,7 @@ def test_run_autostart_asks_prompt_pending_on_start_only(mocker, tmp_path):
     incus.config_get.return_value = None
     steps = mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
-    steps.assert_called_once_with(cfg, initial_prompt=True, extra_env={}, runner=None, resume=None)
+    steps.assert_called_once_with(cfg, initial_prompt=True, extra_env={}, runner=None, default_runner=None, resume=None)
     pending.assert_called_once()
     pending.reset_mock()
     steps.reset_mock()
@@ -1217,6 +1217,7 @@ def test_run_autostart_passes_child_env(mocker, tmp_path):
         initial_prompt=False,
         extra_env={"JAILBEE_ROLE": "child", "JAILBEE_ORCHESTRATOR": "orch"},
         runner=None,
+        default_runner=None,
         resume=None,
     )
 
@@ -1465,3 +1466,107 @@ def test_on_start_consumes_snapshot_once_even_when_disabled(tmp_path, mocker, en
     boot.assert_called_once_with(cfg, incus, "box")
     assert pending is False
     assert (steps[0].run == resume_run(entry)) is enabled
+
+
+# ---------- repo default runner (agents.default_runner)
+
+
+def _with_default_runner(cfg, runner):
+    from jailbee.config.models_orchestration import OrchestrationView
+
+    cfg._orchestration_view = OrchestrationView(default_runner=runner, default_runner_source="repo")
+    return cfg
+
+
+def test_default_runner_rewrites_the_claude_command_on_any_container(tmp_path):
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _runner_cfg(tmp_path, claude_autostart=True)
+    runner = Runner(agent="claude-jb", profile="grok", model="haiku")
+    [step] = agent_autostart_steps(cfg, default_runner=runner)
+    assert step.run == "exec claude-jb -P grok --model haiku"
+
+
+def test_default_runner_beats_litellm_autostart_swap(tmp_path):
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _runner_cfg(tmp_path, claude_autostart=True)
+    [step] = agent_autostart_steps(cfg, default_runner=Runner(agent="claude", model="opus"))
+    assert step.run == "exec claude --model opus"
+
+
+def test_runner_label_beats_default_runner(tmp_path):
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _runner_cfg(tmp_path, claude_autostart=True)
+    [step] = agent_autostart_steps(
+        cfg,
+        runner=Runner(agent="claude", model="sonnet"),
+        default_runner=Runner(agent="claude", model="opus"),
+    )
+    assert step.run == "exec claude --model sonnet"
+
+
+def test_default_runner_does_not_make_claude_the_prompted_primary(tmp_path):
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _runner_cfg(tmp_path)
+    steps = agent_autostart_steps(
+        cfg, initial_prompt=True, default_runner=Runner(agent="claude", model="opus")
+    )
+    assert [s.name for s in steps] == ["codex"]
+
+
+def test_default_runner_refused_command_falls_back_with_warning(tmp_path, caplog):
+    from jailbee.orchestration.runner import Runner
+    from tests.conftest import with_agent
+
+    cfg = with_agent(
+        _runner_cfg(tmp_path, claude_autostart=True), "claude", command="./wrapper.sh --x"
+    )
+    [step] = agent_autostart_steps(cfg, default_runner=Runner(agent="claude", model="opus"))
+    assert step.run == "exec ./wrapper.sh --x"
+    assert "not applied" in caplog.text
+
+
+def test_no_runner_anywhere_keeps_the_legacy_path(tmp_path):
+    cfg = _runner_cfg(tmp_path, claude_autostart=True)
+    [step] = agent_autostart_steps(cfg)
+    assert step.run == "exec claude"
+
+
+def test_on_start_uses_the_repo_default_when_the_container_has_no_label(tmp_path, mocker):
+    from jailbee.autostart import _on_start_agent_steps
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _with_default_runner(
+        _runner_cfg(tmp_path, claude_autostart=True), Runner(agent="claude", model="opus")
+    )
+    incus = mocker.Mock()
+    incus.config_get.return_value = None
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
+    mocker.patch("jailbee.orchestration.labels.child_env", return_value={})
+    mocker.patch("jailbee.orchestration.labels.orchestrator_env", return_value={})
+    mocker.patch("jailbee.agent_resume.boot_entries", return_value=[])
+    steps, _ = _on_start_agent_steps(cfg, incus, "box", AutostartTrigger.ON_START)
+    assert [s.run for s in steps if s.name == "claude"] == ["exec claude --model opus"]
+
+
+def test_on_start_label_beats_the_repo_default(tmp_path, mocker):
+    from jailbee.autostart import _on_start_agent_steps
+    from jailbee.orchestration import labels
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _with_default_runner(
+        _runner_cfg(tmp_path, claude_autostart=True), Runner(agent="claude", model="opus")
+    )
+    incus = mocker.Mock()
+    incus.config_get.side_effect = lambda name, key: (
+        Runner(agent="claude", model="haiku").to_label() if key == labels.RUNNER else None
+    )
+    mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
+    mocker.patch("jailbee.orchestration.labels.child_env", return_value={})
+    mocker.patch("jailbee.orchestration.labels.orchestrator_env", return_value={})
+    mocker.patch("jailbee.agent_resume.boot_entries", return_value=[])
+    steps, _ = _on_start_agent_steps(cfg, incus, "box", AutostartTrigger.ON_START)
+    assert [s.run for s in steps if s.name == "claude"] == ["exec claude --model haiku"]

@@ -24,7 +24,7 @@ from jailbee.config.models_litellm import (
     input_free_lines,
 )
 from jailbee.config.models_net import LocalCredentials
-from jailbee.config.models_orchestration import OrchestrationHostConfig
+from jailbee.config.models_orchestration import OrchestrationHostConfig, peel_agents_runner
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -107,6 +107,7 @@ def validate_local_raw(raw: dict[str, object], origin: str) -> None:
     from jailbee.config.root import Config
 
     overlay, _ = split_local_raw(raw, origin)
+    overlay, _runner = peel_agents_runner(overlay, origin)
     local_litellm_overlay(raw, origin)
     local_orchestration_overlay(raw, origin)
     try:

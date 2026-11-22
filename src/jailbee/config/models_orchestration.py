@@ -7,7 +7,17 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
+
+from jailbee.config.errors import ConfigError
 
 from jailbee.egress import validate_allow_entry
 from jailbee.inbox.cli import parse_duration
@@ -355,15 +365,53 @@ class OrchestrationView:
     default_runner_source: DefaultRunnerSource | None = None
 
 
+def peel_agents_runner(raw: dict[str, object], origin: str) -> tuple[dict[str, object], Runner | None]:
+    """Split `agents.default_runner` off one raw layer, validated.
+
+    `agents` is a mapping of agent name to settings, so the key is not an agent:
+    it is peeled before the layers merge and never reaches `Config.agents`.
+    The error names `origin`, the file the key came from.
+    """
+    agents = raw.get("agents")
+    if not isinstance(agents, dict) or "default_runner" not in agents:
+        return raw, None
+    rest = {k: v for k, v in agents.items() if k != "default_runner"}
+    out = {k: v for k, v in raw.items() if k != "agents"}
+    if rest:
+        out["agents"] = rest
+    block = agents["default_runner"]
+    if block is None:
+        return out, None
+    try:
+        return out, Runner.model_validate(block)
+    except ValidationError as e:
+        raise ConfigError(f"Invalid `agents.default_runner` in {origin}:\n{e}") from e
+
+
+@dataclass(frozen=True)
+class AgentsRunnerLayers:
+    """`agents.default_runner` as each layer set it (None: the layer did not)."""
+
+    host: Runner | None = None
+    repo: Runner | None = None
+    local: Runner | None = None
+
+
 def build_view(
     host: OrchestrationHostConfig,
     local: OrchestrationHostConfig | None,
     repo: RepoOrchestration,
+    agents: AgentsRunnerLayers | None = None,
 ) -> OrchestrationView:
     """Merge global and host-local blocks; local profiles replace global ones by name.
 
+    The default runner layers local -> repo -> global; within a layer the
+    `agents.default_runner` key beats its deprecated alias
+    `orchestration.default_runner`.
+
     Raises `ValueError` when the resulting default names no profile.
     """
+    agents = agents or AgentsRunnerLayers()
     profiles = dict(host.profiles)
     default = host.default_profile
     if local is not None:
@@ -372,14 +420,22 @@ def build_view(
             default = local.default_profile
     if default is not None and default not in profiles:
         raise ValueError(f"default_profile {default!r} is not in `profiles`")
+    local_alias = (
+        local.default_runner
+        if local is not None and "default_runner" in local.model_fields_set
+        else None
+    )
     runner: Runner | None = None
     source: DefaultRunnerSource | None = None
-    if local is not None and "default_runner" in local.model_fields_set and local.default_runner:
-        runner, source = local.default_runner, "local"
-    elif repo.default_runner is not None:
-        runner, source = repo.default_runner, "repo"
-    elif host.default_runner is not None:
-        runner, source = host.default_runner, "global"
+    layered: tuple[tuple[DefaultRunnerSource, Runner | None], ...] = (
+        ("local", agents.local or local_alias),
+        ("repo", agents.repo or repo.default_runner),
+        ("global", agents.host or host.default_runner),
+    )
+    for layer, candidate in layered:
+        if candidate is not None:
+            runner, source = candidate, layer
+            break
     return OrchestrationView(
         profiles=profiles,
         default_profile=default,

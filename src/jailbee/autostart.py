@@ -304,6 +304,7 @@ def agent_autostart_steps(
     initial_prompt: bool = False,
     extra_env: Mapping[str, str] | None = None,
     runner: Runner | None = None,
+    default_runner: Runner | None = None,
     resume: str | None = None,
 ) -> list[AutostartStep]:
     """One backgrounded tmux window per agent with `autostart`.
@@ -357,6 +358,11 @@ def agent_autostart_steps(
     the window whether or not a prompt is pending, and the `litellm.autostart`
     swap does not apply. A command `runner_command` refuses falls back to the
     configured one with a warning (validation already refused it).
+
+    ``default_runner`` is the repo's default (`agents.default_runner`) and applies
+    to a container with no ``runner`` label: it rewrites the Claude command the
+    same way, but does not change which agent is the prompted primary. Order:
+    runner label, then ``default_runner``, then the `litellm.autostart` path.
     """
     from jailbee.agents import enabled_agent_specs, primary_agent
     from jailbee.initial_prompt import CONSUMED_PATH, PROMPT_ENV, prompted_run
@@ -365,19 +371,20 @@ def agent_autostart_steps(
     if initial_prompt:
         primary = "claude" if runner is not None else primary_agent(cfg).name
     steps: list[AutostartStep] = []
+    effective = runner or default_runner
     for spec in enabled_agent_specs(cfg):
         is_primary = spec.name == primary
         if not (spec.autostart or is_primary) or not spec.command.strip():
             continue
         command = _agent_command(cfg, spec.name, spec.command)
-        if runner is not None and spec.name == "claude":
+        if effective is not None and spec.name == "claude":
             from jailbee.orchestration.runner import runner_command
 
-            rewritten = runner_command(spec.command, runner)
+            rewritten = runner_command(spec.command, effective)
             if rewritten is None:
                 log.warning(
                     "runner %s not applied: agents.claude.command %r is not a claude command",
-                    runner.describe(),
+                    effective.describe(),
                     spec.command,
                 )
             else:
@@ -438,6 +445,7 @@ def _on_start_agent_steps(
         initial_prompt=pending,
         extra_env=extra_env,
         runner=runner,
+        default_runner=cfg.orchestration_view().default_runner,
         resume=read_resume(incus, container),
     )
     entries = boot_entries(cfg, incus, container)
