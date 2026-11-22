@@ -544,3 +544,30 @@ def test_a_known_zero_count_with_unknown_host_count_is_still_measurable():
 
     assert status is not None
     assert not _nothing_measurable(status)
+
+
+def test_unimported_branch_is_a_risk_and_names_branch_and_sha(tmp_path, mocker):
+    from jailbee.destroy_guard import assess
+    from jailbee.git_status import OtherBranch
+
+    mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
+    ci = _ci(other_branches=(OtherBranch("feat/side", "0123456789abcdef", None),))
+
+    summary = assess(make_cfg(tmp_path), ci)
+
+    assert summary is not None
+    (reason,) = summary.reasons
+    assert "feat/side" in reason and "01234567" in reason
+
+
+def test_other_branch_on_host_or_remote_or_unmeasured_is_not_a_risk(tmp_path, mocker):
+    from jailbee.destroy_guard import assess
+    from jailbee.git_status import OtherBranch
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.destroy_guard.has_commit", return_value=True)
+    assert assess(cfg, _ci(other_branches=(OtherBranch("a", "abc", False),))) is None
+    mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
+    assert assess(cfg, _ci(other_branches=(OtherBranch("a", "abc", True),))) is None
+    assert assess(cfg, _ci(other_branches=())) is None
+    assert assess(cfg, _ci(other_branches=None)) is None

@@ -82,6 +82,34 @@ class SubmoduleChange:
 
 
 @dataclass(frozen=True)
+class OtherBranch:
+    """A local branch other than the checked-out one, with its tip commit.
+
+    ``remote_contained`` is True when a remote-tracking ref in the container
+    contains the tip, False when none does, None when that could not be asked.
+    """
+
+    name: str
+    sha: str
+    remote_contained: bool | None = None
+
+
+def parse_other_branches(raw: str) -> tuple[OtherBranch, ...] | None:
+    """Parse probe field 16; None when the listing failed (``?``)."""
+    if raw.strip() == "?":
+        return None
+    out: list[OtherBranch] = []
+    for line in raw.splitlines():
+        cols = line.split("\t")
+        if len(cols) != 3 or not cols[0] or not cols[1]:
+            continue
+        rc = cols[2].strip()
+        contained = True if rc == "1" else False if rc == "0" else None
+        out.append(OtherBranch(cols[0], cols[1], contained))
+    return tuple(out)
+
+
+@dataclass(frozen=True)
 class GitStatus:
     """Per-container git status, formatted for table display.
 
@@ -132,6 +160,10 @@ class GitStatus:
     host_ahead_count: str = "?"
     host_behind_count: str = "?"
     host_branch: str = ""  # the host branch's name; "" without a target
+
+    # Other local branches whose tip is on neither the host nor a remote-tracking
+    # ref (`lifecycle` filters the probe's raw list). None = not measured.
+    other_branches: tuple[OtherBranch, ...] | None = None
 
     @property
     def ahead_of_host(self) -> str:
@@ -569,10 +601,35 @@ UNMERGED=$(git ls-files --unmerged 2>/dev/null \
   | cut -f2 | sort -u | wc -l | tr -d '[:space:]')
 case "$UNMERGED" in '' | *[!0-9]*) UNMERGED="?" ;; esac
 
-printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+# --- field 16: other local branches, one "name<TAB>sha<TAB>remote" line each ---
+# Every refs/heads tip except the checked-out branch and any tip equal to HEAD
+# (HEAD is judged above). remote: 1 = a remote-tracking ref contains the tip,
+# 0 = none does, ? = the question failed. "?" alone = the listing itself failed.
+OTHER_BRANCHES=$(
+  if ! REFS=$(git for-each-ref --format='%(HEAD)%09%(refname:short)%09%(objectname)' \
+      refs/heads 2>/dev/null); then
+    printf '?'
+  else
+    TAB="$(printf '\t')"
+    printf '%s\n' "$REFS" | while IFS="$TAB" read -r cur bname bsha; do
+      [ -z "$bsha" ] && continue
+      [ "$cur" = "*" ] && continue
+      [ "$bsha" = "$HEAD_SHA" ] && continue
+      if BR=$(git branch -r --contains "$bsha" 2>/dev/null); then
+        if [ -n "$BR" ]; then rc=1; else rc=0; fi
+      else
+        rc="?"
+      fi
+      printf '%s\t%s\t%s\n' "$bname" "$bsha" "$rc"
+    done
+  fi
+)
+
+printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
   "$WT" "$COMMITTED" "$COUNT" "$CONFLICT" "$SUB_COMMITTED_STRUCT" "$SUB_WT_STRUCT" \
   "$HEAD_SHA" "$REMOTE_CONTAINED" "$LOCAL_DIFF" "$LOCAL_COUNT" \
-  "$IN_PROGRESS" "$UNMERGED" "$BEHIND_COUNT" "$HOST_AHEAD" "$HOST_BEHIND"
+  "$IN_PROGRESS" "$UNMERGED" "$BEHIND_COUNT" "$HOST_AHEAD" "$HOST_BEHIND" \
+  "$OTHER_BRANCHES"
 """.replace("@MISSING@", PROBE_MISSING)
 
 
@@ -735,12 +792,15 @@ def probe_container_git(
     else:
         host_ahead, host_behind = ahead_count, behind_count
 
+    other_branches = parse_other_branches(parts[15]) if len(parts) >= 16 else None
+
     return GitStatus(
         wt=wt,
         ahead_diff=ahead_diff,
         ahead_count=ahead_count,
         conflict=conflict,
         submodules=submodules,
+        other_branches=other_branches,
         head_sha=head_sha,
         remote_contained=remote_contained,
         local_diff=local_diff,

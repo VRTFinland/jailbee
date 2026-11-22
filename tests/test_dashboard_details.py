@@ -1564,3 +1564,20 @@ def test_orchestrator_card_shows_comment_edit_right() -> None:
         NOW,
     )
     assert "PR comment edits" in p.orchestration[4]
+
+
+def test_card_lists_branches_with_unimported_commits() -> None:
+    from jailbee.git_status import GitStatus, OtherBranch
+
+    status = GitStatus(
+        "clean",
+        "clean",
+        "0",
+        "ok",
+        other_branches=(OtherBranch("feat/side", "0123456789abcdef"),),
+    )
+    warnings = _panel_plain(dd.container_panel(_c(git_status=status), NOW).warnings)
+    assert any("feat/side" in w and "01234567" in w for w in warnings)
+
+    clean = GitStatus("clean", "clean", "0", "ok", other_branches=())
+    assert dd.container_panel(_c(git_status=clean), NOW).warnings == ()

@@ -10,10 +10,12 @@ import pytest
 
 from jailbee.git_status import (
     GitStatus,
+    OtherBranch,
     SubmoduleChange,
     _parse_submodules,
     _shortstat_ints,
     merge_label,
+    parse_other_branches,
     parse_shortstat,
     probe_container_git,
 )
@@ -1457,3 +1459,67 @@ def test_probe_reports_unknown_host_counts_when_the_host_branch_object_is_missin
 
     assert status.ahead_count == "1"
     assert (status.host_ahead_count, status.host_behind_count) == ("?", "•")
+
+
+# ---- other local branches (probe field 16) ----
+
+
+def _git_in(cwd, *args):
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+
+
+def test_snippet_lists_other_branches_with_slashes_and_remote_flag(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git_in(repo, "init", "-q", "-b", "main")
+    _git_in(repo, "commit", "-q", "--allow-empty", "-m", "base")
+    _git_in(repo, "checkout", "-q", "-b", "feat/one")
+    _git_in(repo, "commit", "-q", "--allow-empty", "-m", "one")
+    _git_in(repo, "checkout", "-q", "main")
+    _git_in(repo, "checkout", "-q", "-b", "pushed")
+    _git_in(repo, "commit", "-q", "--allow-empty", "-m", "two")
+    _git_in(repo, "update-ref", "refs/remotes/origin/pushed", "HEAD")
+    _git_in(repo, "checkout", "-q", "main")
+
+    parts = _run_probe(repo, "")
+
+    assert parts[6] != ""  # HEAD sha: main
+    found = {b.name: b for b in parse_other_branches(parts[15]) or ()}
+    assert set(found) == {"feat/one", "pushed"}
+    assert found["pushed"].remote_contained is True
+    assert found["feat/one"].remote_contained is False
+    assert all(len(b.sha) == 40 for b in found.values())
+
+
+def test_snippet_omits_the_checked_out_branch_and_tips_equal_to_head(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git_in(repo, "init", "-q", "-b", "main")
+    _git_in(repo, "commit", "-q", "--allow-empty", "-m", "base")
+    _git_in(repo, "branch", "alias")  # same tip as HEAD
+
+    parts = _run_probe(repo, "")
+
+    assert parse_other_branches(parts[15]) == ()
+
+
+def test_parse_other_branches_unknown_and_malformed():
+    assert parse_other_branches("?") is None
+    assert parse_other_branches("bad line\n") == ()
+    assert parse_other_branches("a/b\tabc\t?\n") == (OtherBranch("a/b", "abc", None),)
+
+
+def test_probe_carries_other_branches_and_old_output_leaves_them_unmeasured(mocker):
+    incus = mocker.MagicMock()
+    fields = [""] * 15 + ["x/y\tdeadbeef\t0\n"]
+    incus.exec.return_value = "\x00".join(fields) + "\x00"
+    status = probe_container_git(incus, "c", "/r", None, "main")
+    assert status.other_branches == (OtherBranch("x/y", "deadbeef", False),)
+
+    incus.exec.return_value = "\x00".join([""] * 14) + "\x00"
+    assert probe_container_git(incus, "c", "/r", None, "main").other_branches is None

@@ -822,6 +822,9 @@ apply`/`jailbee issue apply`). Three outcomes:
 - **Something at risk** → a one-line summary per container (e.g. `feat-foo:
   working tree +3 -1 · 2 unapplied PR actions · 2 unapplied issue actions ·
   2 commits not on the host`)
+  A local branch other than the checked-out one whose tip is on neither the
+  host nor a remote-tracking ref adds `commits not on the host in branch
+  <name> (<sha>)` (unknown remote containment counts as at risk).
   and `Destroying loses this.`, printed above the one `Destroy …?`
   confirmation, which defaults to **No** (the interactive picker, whose
   ticking is the selection, asks `Destroying loses this. Continue?` instead). A submodule is named by which of its signals is set —

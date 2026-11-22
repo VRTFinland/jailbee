@@ -10,6 +10,12 @@ before editing `## Unreleased`.
 
 ### Added
 
+- Commits made on a branch other than the checked-out one inside a container
+  are no longer invisible. The dashboard's context card lists such a branch
+  (name and short sha) while its tip is on neither the host nor a
+  remote-tracking ref, and `jailbee destroy` warns about it next to the
+  "commits not on the host" line
+  ([#145](https://github.com/VRTFinland/jailbee/issues/145)).
 - `jailbee upgrade --jobs N` (`-j`) builds up to N base images at once, each
   build's output prefixed with its alias; the default of 1 keeps the serial
   behaviour. `apply` and Docker seeding still run one repo at a time, and one
