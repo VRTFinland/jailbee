@@ -1241,7 +1241,7 @@ def test_probe_missing_target_commit_reports_behind_unknown(tmp_path):
     assert parts[1] == "?"  # DIFF
     assert parts[2] == "?"  # ahead
     assert parts[3] == "?"  # MERGE
-    assert parts[12] == "•"  # behind: pull needed, count unknown
+    assert parts[12] == "missing"  # behind: pull needed, count unknown
 
 
 def test_probe_present_target_commit_still_counts(tmp_path):
@@ -1274,7 +1274,7 @@ def test_probe_without_target_keeps_behind_unknown_question_mark(tmp_path):
 
 def test_probe_parses_behind_unknown_marker(mocker):
     incus = mocker.MagicMock()
-    incus.exec.return_value = _payload(*_TWELVE, "•")
+    incus.exec.return_value = _payload(*_TWELVE, "missing")
     target = TargetSnapshot(
         branch="main",
         sha="a" * 40,

@@ -441,8 +441,8 @@ else
   BEHIND_COUNT="?"
   CONFLICT="?"
   # A target the host knows but this container's object store lacks proves the
-  # container is behind it: "•" = pull needed, count unknown. Nothing is written.
-  [ -n "$TARGET_SHA" ] && BEHIND_COUNT="•"
+  # container is behind it: "missing" = pull needed, count unknown. Nothing is written.
+  [ -n "$TARGET_SHA" ] && BEHIND_COUNT="missing"
 fi
 
 # --- per-submodule breakdown (fields 5 and 6) ---
@@ -665,7 +665,10 @@ def probe_container_git(
         unmerged = None
 
     raw_behind = parts[12].strip() if len(parts) >= 13 else "?"
-    behind_count = raw_behind if raw_behind.isdigit() or raw_behind == BEHIND_UNKNOWN else "?"
+    if raw_behind == "missing":  # ASCII on the wire; locale-proof
+        behind_count = BEHIND_UNKNOWN
+    else:
+        behind_count = raw_behind if raw_behind.isdigit() else "?"
     target_diff = ahead_diff
 
     return GitStatus(
