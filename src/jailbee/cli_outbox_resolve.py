@@ -494,15 +494,25 @@ def run_outbox_resolve(
             else _existing_container(cfg, incus, container)
         )
     else:
-        views = [v for v in discover(cfg, incus, container, all_repos=False) if v.available]
+        discovered = discover(cfg, incus, container, all_repos=False)
+        if container is not None:
+            broken = next((v for v in discovered if not v.available), None)
+            if broken is not None:
+                # An unreadable outbox is not an empty one: say why, never "nothing pending".
+                error_plain(broken.error or f"{container}: outbox is unavailable")
+                raise typer.Exit(2)
+        views = [v for v in discovered if v.available]
         uncertain: dict[str, tuple[ProposalView, ...]] = {
-            v.name: tuple(p for p in v.proposals if p.state == "uncertain") for v in views
+            v.name: tuple(
+                p for p in v.proposals if p.state == "uncertain" and (pid is None or p.id == pid)
+            )
+            for v in views
         }
         candidates = [name for name, rows in uncertain.items() if rows]
         if container is not None:
-            full = views[0].name if views else container
-            if not candidates and pid is None:
-                info(f"Nothing pending: {container} has no uncertain actions.")
+            full = views[0].name
+            if not candidates:
+                info(f"Nothing pending: {container} has no matching uncertain actions.")
                 return 0
         else:
             if not candidates:

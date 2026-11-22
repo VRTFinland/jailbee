@@ -196,3 +196,13 @@ def test_pr_retry_chosen_at_the_prompt_forgets_the_outcome(mocker):
     )
 
     assert settle.call_args.kwargs["landed_url"] is None
+
+
+def test_unreadable_named_container_is_an_error_not_nothing_pending(mocker, host):
+    mocker.patch(
+        "jailbee.outbox.commands.discover",
+        return_value=(ContainerView(None, "full-c", False, "outbox store is unreadable", (), ()),),
+    )
+    result = _invoke(["outbox", "resolve", "c", "--retry"])
+    assert result.exit_code == 2
+    assert "unreadable" in result.output
