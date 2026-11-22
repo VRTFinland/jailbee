@@ -133,6 +133,18 @@ class GitStatus:
     host_behind_count: str = "?"
     host_branch: str = ""  # the host branch's name; "" without a target
 
+    @property
+    def ahead_of_host(self) -> str:
+        """↑ against the host branch, whatever the sync target.
+
+        What the host-side verbs (``git pull``, ``git diff``, the destroy
+        guard) care about: their counterpart is the host branch, not the PR
+        head DIFF/↑/↓ compare with.
+        """
+        if self.sync_target is not None and self.sync_target.kind != "host":
+            return self.host_ahead_count
+        return self.ahead_count
+
 
 # Probe value -> the word shown to the user for an operation in progress.
 _IN_PROGRESS_LABELS = {

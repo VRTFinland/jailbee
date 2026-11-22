@@ -7549,3 +7549,23 @@ def test_dashboard_clean_diff_cell_keeps_the_pr_target_marker():
         "ok pr",
     ]
     assert [plain(n, host) for n in ("target_diff", "wt")] == ["✓", "✓"]
+
+
+def test_pr_container_level_with_its_pr_head_still_offers_git_pull_and_diff():
+    """↑ against the PR head is 0, but the host branch lacks those commits:
+    `git pull` / `git diff` act on the host branch, so they stay offered."""
+    from jailbee.git_status import GitStatus
+    from jailbee.host_target import SyncTarget
+
+    status = GitStatus(
+        wt="clean",
+        ahead_diff="clean",
+        ahead_count="0",
+        conflict="ok",
+        host_ahead_count="3",
+        sync_target=SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head"),
+    )
+    verbs = [verb for _, verb in dmenus.menu_actions(_ctx(mode="clone", git_status=status))]
+
+    assert "git pull" in verbs
+    assert "git diff" in verbs
