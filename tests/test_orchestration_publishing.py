@@ -1388,7 +1388,10 @@ def test_precheck_refuses_state_change_without_any_pr_right(rig, mocker):
 
 def test_precheck_mixed_state_manifest_needs_pr_reviews_and_stays_bound(rig, mocker):
     ctx, m, *_ = rig
-    payload = {**_STATE_PAYLOAD, "actions": [{"type": "comment", "body": "x"}, *_STATE_PAYLOAD["actions"]]}
+    payload = {
+        **_STATE_PAYLOAD,
+        "actions": [{"type": "comment", "body": "x"}, *_STATE_PAYLOAD["actions"]],
+    }
     seed_source(ctx.sender.key, payload)
     mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
     _grant_state(ctx, PublishRights(pr_state=True))

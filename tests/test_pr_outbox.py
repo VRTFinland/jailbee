@@ -3457,9 +3457,7 @@ def test_state_change_on_a_foreign_pr_is_refused_by_the_real_detection(
     assert "999" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize(
-    ("repo", "published"), [("acme/widgets", True), ("other/widgets", False)]
-)
+@pytest.mark.parametrize(("repo", "published"), [("acme/widgets", True), ("other/widgets", False)])
 def test_orchestrator_state_change_on_an_unbound_pr_runs_the_real_gates(
     mocker, make_cfg, tmp_path, repo, published
 ):
