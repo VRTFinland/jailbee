@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus as IncusType
     from jailbee.outbox.io import PrManagement
-    from jailbee.pr import PrCreated
+    from jailbee.pr import PrCreated, PrInfo
     from jailbee.pr_ai import PrText
     from jailbee.pr_outbox import OutboxPrText
 
@@ -211,7 +211,65 @@ def bind_outbox_reference(
         yes=yes,
         record_context=f"on '{short}'",
         confirmed=True,
+        on_resolved=lambda found: sync_container_base_to_pr(
+            cfg, incus, full, short=short, base_ref=found.base_ref
+        ),
     )
+
+
+BASE_EXPLICIT_LABEL = "user.jailbee.base_explicit"
+
+
+def sync_container_base_to_pr(
+    cfg: Config,
+    incus: IncusType,
+    full: str,
+    *,
+    short: str,
+    base_ref: str,
+) -> None:
+    """Point the container's base at the bound PR's base, like `jailbee new --pr`.
+
+    Never raises: the binding is already recorded, so a failure here is a warning.
+
+    A base counts as *explicit* — and is left alone — when the user chose it:
+    `BASE_EXPLICIT_LABEL` is set (by `jailbee new --base` and `jailbee git
+    retarget`), or the container has a stacked PR (`<stacked label>_base`).
+    Anything else is a default (source branch / repo default branch) or an
+    earlier PR's base, and follows the PR. Containers created before the
+    marker existed read as non-explicit.
+    """
+    from jailbee import git, sync
+    from jailbee import pr as pr_module
+
+    if incus.config_get(full, "user.jailbee.mode") == "mount":
+        return
+    current = incus.config_get(full, "user.jailbee.base_branch") or None
+    if current == base_ref:
+        return
+    if incus.config_get(full, BASE_EXPLICIT_LABEL) or incus.config_get(
+        full, f"{STACKED_LABEL_PREFIX}_base"
+    ):
+        info(f"Container '{short}' keeps its explicitly chosen base '{current}'.")
+        return
+    if pr_module.fetch_base_ref(cfg.repo_root, base_ref, remote=cfg.upstream_remote) is None:
+        warn(
+            f"Could not fetch PR base branch '{base_ref}' from {cfg.upstream_remote}; "
+            f"using the host's copy."
+        )
+    remote_ref = f"refs/remotes/{cfg.upstream_remote}/{base_ref}"
+    source_ref = remote_ref if git.rev_parse(cfg.repo_root, remote_ref) else None
+    try:
+        result = sync.retarget_container(
+            cfg, incus, short, base_ref, source_ref=source_ref, explicit=False
+        )
+    except sync.SyncError as exc:
+        warn(
+            f"Could not set '{short}' base to the PR base '{base_ref}': {exc} "
+            f"Retry with: jailbee git retarget {short} {base_ref}"
+        )
+        return
+    success(f"Base of '{short}': {result.old_base or 'unset'} → {result.new_base}")
 
 
 def bind_container_pr(
@@ -251,6 +309,9 @@ def bind_container_pr(
             record_context=f"on '{short}'",
             intent="bind",
             target_label=f"container '{short}'",
+            on_resolved=lambda found: sync_container_base_to_pr(
+                cfg, incus, full, short=short, base_ref=found.base_ref
+            ),
         )
     except MalformedPrLabelError as exc:
         error(str(exc))
@@ -1477,6 +1538,7 @@ def adopt_existing_pr_for_branch(
     branch: str | None,
     yes: bool,
     record_context: str,
+    on_resolved: Callable[[PrInfo], None] | None = None,
 ) -> tuple[int, str] | None:
     """Adopt the PR that already exists for the container's branch, if any.
 
@@ -1559,6 +1621,8 @@ def adopt_existing_pr_for_branch(
         number=found.number,
         context=f"Could not record PR #{found.number} {record_context}",
     )
+    if on_resolved is not None:
+        on_resolved(found)
 
     return found.number, found.head_ref
 
@@ -1574,6 +1638,7 @@ def bind_pr_by_number(
     intent: Literal["push", "bind"] = "push",
     confirmed: bool = False,
     target_label: str = "this container",
+    on_resolved: Callable[[PrInfo], None] | None = None,
 ) -> PrRecord:
     """Bind this target to PR ``number``, and return the record to run under.
 
@@ -1597,6 +1662,9 @@ def bind_pr_by_number(
     ``intent="bind"`` asks only about binding ``target_label`` rather than
     pushing commits; retarget questions are unchanged. ``confirmed`` skips
     confirmation when the caller has already obtained the user's decision.
+
+    ``on_resolved`` receives the resolved PR once the binding is recorded (the
+    container flow uses it to adopt the PR's base branch).
 
     Exits non-zero on an unresolvable, closed/merged, or fork PR, and on a
     declined or unavailable confirmation.
@@ -1673,6 +1741,8 @@ def bind_pr_by_number(
     )
     if intent == "bind" and not recorded:
         raise typer.Exit(1)
+    if on_resolved is not None:
+        on_resolved(found)
     # In-process, not a re-read: `state.record` is best-effort, and the run
     # must publish to the right head even when the write failed.
     return PrRecord(number=number, head=found.head_ref, author=False, adopted=True)

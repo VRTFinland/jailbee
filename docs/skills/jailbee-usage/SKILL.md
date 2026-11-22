@@ -1590,6 +1590,8 @@ one such row without removing the ordinary binding. See the
 [source schema](../jailbee-pr-review/references/manifest-schema.md#source-publication-examples).
 
 To manage bindings without publishing, run `jailbee pr bind <container> N`
+(which also moves the container's base to the PR's base unless you chose the
+base yourself with `new --base`, `git retarget` or `--stacked`)
 and `jailbee pr unbind <container>` on the host. Use `--stacked` on
 `unbind` to remove a stacked binding. For a submodule use
 `jailbee submodule pr bind <container> <path> N` or

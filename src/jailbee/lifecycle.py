@@ -2224,6 +2224,10 @@ def _new_container(
     if base_label is None:
         base_label = source_branch if opts.clone and source_branch else cfg.default_branch
     incus.config_set(name, "user.jailbee.base_branch", base_label)
+    if opts.base is not None and opts.base_branch_label is None:
+        # The user named the base (`jailbee new --base`): `jailbee pr bind`
+        # must not replace it with the PR's base.
+        incus.config_set(name, "user.jailbee.base_explicit", "true")
 
     # `user.jailbee.pr`: the PR number for a `jailbee new --pr N` review container,
     # read back by `jailbee ls` / `jailbee pr`. Written here — alongside the other

@@ -6547,6 +6547,18 @@ def _retarget_setup(mocker, *, old_base="feat/a", mode=None, running=True, bg_op
     return incus
 
 
+def test_retarget_not_explicit_leaves_no_marker(mocker, make_cfg, tmp_path):
+    from jailbee import sync
+
+    incus = _retarget_setup(mocker)
+    mocker.patch("jailbee.sync.git.rev_parse", return_value="abc1234")
+    mocker.patch("jailbee.sync.git.push_url_multi")
+    sync.retarget_container(make_cfg(tmp_path), incus, "feat-b", "main", explicit=False)
+    assert incus.config_set.call_args_list == [
+        mocker.call("p-feat-b", "user.jailbee.base_branch", "main")
+    ]
+
+
 def test_retarget_pushes_new_base_and_deletes_old(mocker, make_cfg, tmp_path):
     from jailbee import sync
 
@@ -6562,7 +6574,10 @@ def test_retarget_pushes_new_base_and_deletes_old(mocker, make_cfg, tmp_path):
         "ext::receive",
         ["+refs/heads/main:refs/jailbee/base/main", ":refs/jailbee/base/feat/a"],
     )
-    incus.config_set.assert_called_once_with("p-feat-b", "user.jailbee.base_branch", "main")
+    assert incus.config_set.call_args_list == [
+        mocker.call("p-feat-b", "user.jailbee.base_branch", "main"),
+        mocker.call("p-feat-b", "user.jailbee.base_explicit", "true"),
+    ]
     assert result.old_base == "feat/a"
     assert result.new_base == "main"
     assert result.base_oid == "abc1234"
@@ -6707,7 +6722,10 @@ def test_retarget_source_ref_anchors_the_new_base_elsewhere(mocker, make_cfg, tm
             ":refs/jailbee/base/feat/a",
         ],
     )
-    incus.config_set.assert_called_once_with("p-feat-b", "user.jailbee.base_branch", "feat/x")
+    assert incus.config_set.call_args_list == [
+        mocker.call("p-feat-b", "user.jailbee.base_branch", "feat/x"),
+        mocker.call("p-feat-b", "user.jailbee.base_explicit", "true"),
+    ]
     assert result.new_base == "feat/x"
     assert result.base_oid == "abc1234"
 

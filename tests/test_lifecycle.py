@@ -1627,6 +1627,34 @@ def test_new_container_uses_explicit_base_branch_label_when_provided(make_cfg, t
     assert calls[0].args[2] == "develop"
 
 
+@pytest.mark.parametrize("base,explicit", [("develop", True), (None, False)])
+def test_new_container_marks_user_named_base_explicit(make_cfg, tmp_path, mocker, base, explicit):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo, default_branch="main")
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value=base is not None)
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="abc1234")
+    mocker.patch("jailbee.lifecycle.fetch_remote_ref")
+    opts = NewContainerOptions(
+        container_branch="feat/foo",
+        name=None,
+        network="strict",
+        memory="4GB",
+        cpu=4,
+        from_base="gie-golden",
+        clone=True,
+        autostart=False,
+        base=base,
+    )
+    new_container(cfg, incus, opts)
+    marked = [
+        c for c in incus.config_set.call_args_list if c.args[1] == "user.jailbee.base_explicit"
+    ]
+    assert bool(marked) is explicit
+
+
 def _fork_label_calls(make_cfg, tmp_path, mocker, **extra):
     repo = tmp_path / "myrepo"
     repo.mkdir()
