@@ -930,8 +930,14 @@ class MenuBox(OverlayBox):
         old_entries = self._entries() if self.is_mounted else ()
         super().show(spec)
         assert isinstance(spec, (MenuState, RepoMenuState))
-        self.menu = spec
+        previous, self.menu = self.menu, spec
         if not self.is_mounted:
+            return
+        # `show` runs on every frame sync and a reload posts `Changed`, which
+        # syncs again: reload only when the entries really differ.
+        if list(old_entries) == list(menu_entries(spec, self.group)) and (
+            menu_title(previous, self.group) == menu_title(spec, self.group)
+        ):
             return
         lst = self.query_one(OverlayList)
         at = lst.highlighted

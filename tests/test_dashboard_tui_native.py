@@ -680,6 +680,21 @@ def test_a_menu_box_is_as_wide_as_its_widest_level(mocker, tmp_path):
     assert sizes[0] == sizes[1] == tmenu.menu_width(menu) + 5  # opening a level never resizes
 
 
+def test_showing_an_unchanged_menu_again_does_not_reload_the_box(mocker, tmp_path):
+    """`show` runs on every frame sync; a reload posts `Changed`, which syncs again - a loop."""
+    posted = []
+
+    def reshow(app):
+        box = app.frame.native_box
+        original = box.post_message
+        box.post_message = lambda m: posted.append(type(m).__name__) or original(m)
+        box.show(box.spec)
+        box.post_message = original
+
+    drive(mocker, ["j", "enter", reshow], [alpha_group(tmp_path)])
+    assert "Changed" not in posted
+
+
 def test_a_menu_is_native_with_focus_and_its_title(mocker, tmp_path):
     seen = []
     run = drive(
