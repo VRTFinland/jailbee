@@ -625,7 +625,8 @@ OTHER_BRANCHES=$(
       # failed rev-list prints FAIL, which awk passes through.
       UNPUSHED=$({ printf '%s\n' "$TIPS" | git rev-list --stdin --not --remotes 2>/dev/null \
         || echo FAIL; } | awk -v t="$TIPS" \
-        'BEGIN { n = split(t, a, "\n"); for (i = 1; i <= n; i++) w[a[i]] = 1; w["FAIL"] = 1 } $0 in w')
+        'BEGIN { n = split(t, a, "\n"); for (i = 1; i <= n; i++) w[a[i]] = 1
+                 w["FAIL"] = 1 } $0 in w')
       case "$UNPUSHED" in *FAIL*) RC_OK=0 ;; *) RC_OK=1 ;; esac
       printf '%s\n' "$REFS" | while IFS="$TAB" read -r bname bsha; do
         [ -z "$bsha" ] && continue
