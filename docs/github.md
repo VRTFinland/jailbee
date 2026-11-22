@@ -194,7 +194,10 @@ jb outbox sent clear --before 2026-01-01 -y   # delete local records only
 ```
 
 Publishing (`jb outbox apply`, its aliases and the dashboard) also names each
-created issue or PR as `#N <title>` next to its URL.
+created issue or PR as `#N <title>` next to its URL, for example
+`opened PR #42 Fix the parser: https://github.com/acme/repo/pull/42` (also from
+`jb pr push --source-manifest`). For an action on an existing issue (a comment,
+label or edit) `#N` is that target issue, and no title is shown.
 
 Each record carries the publisher (you or an orchestrator), the state
 (`applied` or `uncertain`), the content and the URL. Records outlive the

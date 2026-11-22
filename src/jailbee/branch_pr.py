@@ -250,7 +250,7 @@ def publish_source_manifest(
     from jailbee.outbox.models import OutboxChanged, OutboxError, ProposalId
     from jailbee.outbox.service import instance_identity
     from jailbee.outbox_io import JournalError
-    from jailbee.tui import error_plain, info_plain, warn_plain
+    from jailbee.tui import error_plain, info_plain, success_plain, warn_plain
 
     try:
         if own_branches_only and force:
@@ -550,11 +550,12 @@ def publish_source_manifest(
                     head, number, base, manifest.source, manifest.source_sha, authored, not authored
                 )
             )
+            named = f" {safe_text(title)}" if title else ""
+            line = f"{'opened' if target is None else 'updated'} PR #{number}{named}: {url}"
             if result_sink is not None:
-                named = f" {safe_text(title)}" if title else ""
-                result_sink(
-                    f"{'opened' if target is None else 'updated'} PR #{number}{named}: {url}"
-                )
+                result_sink(line)
+            else:
+                success_plain(line)
             return 0
     except (
         IncusError,

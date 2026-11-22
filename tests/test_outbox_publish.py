@@ -256,7 +256,14 @@ def test_result_sink_gets_urls_and_policy_sees_applied_batch(env, kind):
     assert "001.json" not in env[2][kind].as_dict()
     assert any("https://github.com/acme/repo/" in line for line in lines)
     if kind == "issue":
-        assert any("applied #73 " in line for line in lines)
+        assert (
+            "001.json action 0: applied #73 Example (https://github.com/acme/repo/issues/73)"
+            in lines
+        )
+        assert (
+            "001.json action 1: applied #42 (https://github.com/acme/repo/issues/42#issuecomment-1)"
+            in lines
+        )
         assert any("#issuecomment-1" in line for line in lines)
         assert len(seen[0].manifests[0].actions) == 3
         assert [r["index"] for r in receipts] == [0, 1, 2]
@@ -1677,3 +1684,82 @@ def test_issue_plan_json_names_the_assignees_kind(env):
     assert [(a["kind"], a["target"], a["will"]) for a in data["actions"]] == [
         ("assignees", "acme/repo#42", "publish")
     ]
+
+
+def _publish_issue_lines(env, files):
+    from jailbee.outbox.publish import PublishOptions, publish_selected
+
+    env[2]["issue"] = store("issue", files)
+    lines = []
+    assert (
+        publish_selected(
+            env[0],
+            env[1],
+            IDENTITY.full_name,
+            ProposalId("issue", "001.json"),
+            options=PublishOptions(publisher="user"),
+            confirm=lambda n: True,
+            raise_errors=True,
+            result_sink=lines.append,
+        )
+        == 0
+    )
+    return lines
+
+
+def test_issue_result_and_cli_lines_strip_controls_from_title(env, capsys):
+    files = {
+        "001.json": json.dumps(
+            {
+                "version": 1,
+                "actions": [
+                    {
+                        "type": "create",
+                        "repo": ".",
+                        "ref": "n",
+                        "title": "Ti\x1b[31mtle\x07",
+                        "body": "B",
+                    }
+                ],
+            }
+        )
+    }
+    lines = _publish_issue_lines(env, files)
+    assert lines == [
+        "001.json action 0: applied #73 Ti[31mtle (https://github.com/acme/repo/issues/73)"
+    ]
+    out = capsys.readouterr()
+    assert "\x1b" not in out.out + out.err and "\x07" not in out.out + out.err
+    assert "applied #73 Ti[31mtle" in out.out + out.err
+
+
+def test_only_create_actions_contribute_a_title(env):
+    from jailbee.outbox.publish import _created_subject
+
+    cfg, incus, *_ = env
+    env[2]["issue"] = store(
+        "issue",
+        {
+            "001.json": json.dumps(
+                {
+                    "version": 1,
+                    "actions": [
+                        {"type": "create", "repo": ".", "ref": "n", "title": "T", "body": "B"},
+                        {
+                            "type": "edit",
+                            "repo": ".",
+                            "issue": 42,
+                            "title": "Renamed",
+                            "expected": {"title": "Old"},
+                        },
+                        {"type": "comment", "repo": ".", "issue": 42, "body": "hi"},
+                    ],
+                }
+            )
+        },
+    )
+    batch = issue_outbox.prepare_batch(cfg, incus, IDENTITY.full_name, ("001.json",))
+    assert _created_subject(batch, "001.json", 0, 73) == " #73 T"
+    assert _created_subject(batch, "001.json", 1, 42) == " #42"
+    assert _created_subject(batch, "001.json", 2, 42) == " #42"
+    assert _created_subject(batch, "001.json", 0, None) == ""
