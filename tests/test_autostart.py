@@ -487,7 +487,7 @@ def test_no_gui_warning_names_apps_not_two_products(tmp_path, capsys, mocker):
     assert "GUI app" in out
 
 
-# ---------- github-token autostart step
+# ---------- github token (written by inject_github_token)
 
 
 def test_github_token_returns_none_when_disabled(tmp_path):
@@ -664,7 +664,7 @@ def test_inject_github_token_removes_stale_file_when_no_token(tmp_path, mocker, 
     ensure.assert_not_called()
 
 
-def test_on_start_unchanged_when_github_token_returns_none(tmp_path):
+def test_on_start_unchanged_when_no_github_token(tmp_path):
     from jailbee.autostart import AutostartTrigger, run_autostart
     from tests.conftest import make_cfg
 
@@ -694,7 +694,7 @@ def test_on_start_unchanged_when_github_token_returns_none(tmp_path):
     assert applied == ["user-step"]
 
 
-def test_on_create_does_not_get_github_token(tmp_path):
+def test_on_create_does_not_get_github_token_step(tmp_path):
     """github-token is only injected into on_start (rotation friendliness),
     not on_create."""
     from jailbee.autostart import AutostartTrigger, run_autostart
@@ -887,7 +887,6 @@ def test_run_autostart_sets_and_clears_progress_flag(mocker):
     cfg = _cfg(steps_on_start=[step])
     incus = MagicMock()
     mocker.patch("jailbee.autostart._apply_step")
-    mocker.patch("jailbee.autostart._github_token", return_value=None)
 
     run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, repo_dir="/r")
 
@@ -907,7 +906,6 @@ def test_run_autostart_clears_progress_flag_on_exception(mocker):
         "jailbee.autostart._apply_step",
         side_effect=RuntimeError("boom"),
     )
-    mocker.patch("jailbee.autostart._github_token", return_value=None)
 
     with pytest.raises(RuntimeError):
         run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, repo_dir="/r")

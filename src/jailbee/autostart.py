@@ -468,10 +468,9 @@ def run_autostart(
     # The synthetic per-agent steps (empty when no agent has autostart on)
     # are the planner's to place — claude sorts last (`enabled_agent_specs`)
     # because `_attach_tmux` selects the last one of these by name when it
-    # lands you in the session. The github-token step is NOT injected here:
-    # it's infrastructure, not a
-    # user autostart command, so it's written by ``inject_github_token``
-    # independently of --no-autostart.
+    # lands you in the session. The GitHub token is NOT written here: it's
+    # infrastructure, not a user autostart command, so ``inject_github_token``
+    # handles it independently of --no-autostart.
     # A pending initial prompt puts the agents after every stage, detached
     # ones included: the prompted agent starts working at once, and must not
     # do so in a container whose autostart has not finished.
