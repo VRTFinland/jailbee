@@ -392,7 +392,7 @@ def test_own_branches_only_opens_or_updates_and_binds(source_publisher, bound):
         == 0
     )
     assert lines == [
-        f"{'updated' if bound else 'opened'} PR #42: https://github.com/acme/widgets/pull/42"
+        f"{'updated' if bound else 'opened'} PR #42 Title: https://github.com/acme/widgets/pull/42"
     ]
     assert json.loads(p["incus"].config_set.call_args.args[2])["feature/a"]["pr"] == 42
 

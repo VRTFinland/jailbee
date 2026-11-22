@@ -193,6 +193,9 @@ jb outbox sent show 12            # one record in full, with its GitHub URL
 jb outbox sent clear --before 2026-01-01 -y   # delete local records only
 ```
 
+Publishing (`jb outbox apply`, its aliases and the dashboard) also names each
+created issue or PR as `#N <title>` next to its URL.
+
 Each record carries the publisher (you or an orchestrator), the state
 (`applied` or `uncertain`), the content and the URL. Records outlive the
 container. In the dashboard, the Outbox box has a **Sent** tab (`Tab` switches,

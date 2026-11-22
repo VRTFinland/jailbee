@@ -195,6 +195,7 @@ record of what actually landed on GitHub is the host's sent log:
 `jailbee outbox sent` (add `--json`, `--limit N` or `--kind issue`) lists
 what the host published from this container, newest first, with each
 action's state (`applied`, or `uncertain` while a human resolves it) and
-GitHub URL. A published proposal also disappears from `jailbee outbox ls`.
+GitHub URL; `jailbee outbox sent --json` is where the created issue
+numbers (`#N`) and URLs are recorded. A published proposal also disappears from `jailbee outbox ls`.
 Never assume a manifest you wrote has been published; check `jailbee outbox
 sent` (or ask) instead.

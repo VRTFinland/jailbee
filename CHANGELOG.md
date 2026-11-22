@@ -10,6 +10,9 @@ before editing `## Unreleased`.
 
 ### Added
 
+- Publishing from the outbox reports each created issue or PR as `#N <title>`
+  with its URL, in `jb outbox apply` and in the dashboard result notice
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 - The terminal dashboard's PR number (column and details panel) is a terminal
   hyperlink (OSC 8) to the pull request, built from the repository `gh pr view` resolves (`upstream`, else the
   upstream remote);
