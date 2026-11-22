@@ -16234,7 +16234,7 @@ def account_group_set_cmd(
     ] = False,
     config: ConfigOption = None,
 ) -> None:
-    """Set this repo's credential group. Permanent — writes `global.yaml`.
+    """Set this repo's credential group. Permanent — writes the host-local `repos/<prefix>.yaml`.
 
     Every container of this repo follows it, except any with a temporary
     override from `jailbee account group use`. Use `jailbee account group
