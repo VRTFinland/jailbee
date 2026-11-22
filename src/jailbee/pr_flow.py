@@ -255,7 +255,7 @@ def sync_container_base_to_pr(
     if pr_module.fetch_base_ref(cfg.repo_root, base_ref, remote=cfg.upstream_remote) is None:
         warn(
             f"Could not fetch PR base branch '{base_ref}' from {cfg.upstream_remote}; "
-            f"using the host's copy."
+            f"using whatever copy the host already has."
         )
     remote_ref = f"refs/remotes/{cfg.upstream_remote}/{base_ref}"
     source_ref = remote_ref if git.rev_parse(cfg.repo_root, remote_ref) else None
@@ -263,7 +263,7 @@ def sync_container_base_to_pr(
         result = sync.retarget_container(
             cfg, incus, short, base_ref, source_ref=source_ref, explicit=False
         )
-    except sync.SyncError as exc:
+    except Exception as exc:  # best-effort: the binding is already recorded
         warn(
             f"Could not set '{short}' base to the PR base '{base_ref}': {exc} "
             f"Retry with: jailbee git retarget {short} {base_ref}"

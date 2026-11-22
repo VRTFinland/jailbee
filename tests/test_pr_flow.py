@@ -2452,3 +2452,12 @@ def test_bind_container_pr_updates_base(tmp_path, mocker):
         types.SimpleNamespace(), incus, "c-full", short="c", number=7, yes=True
     )
     assert sync_base.call_args.kwargs["base_ref"] == "main"
+
+
+def test_sync_base_to_pr_never_raises(mocker):
+    _, retarget = _base_patches(mocker)
+    retarget.side_effect = RuntimeError("boom")
+    warn = mocker.patch("jailbee.pr_flow.warn")
+    cfg = types.SimpleNamespace(repo_root=Path("/r"), upstream_remote="origin")
+    pr_flow.sync_container_base_to_pr(cfg, _base_incus(mocker), "f", short="c", base_ref="dev")
+    assert "boom" in warn.call_args.args[0]
