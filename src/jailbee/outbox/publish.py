@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Literal, cast
 from jailbee import issue_outbox, pr, pr_outbox, prompting
 from jailbee.incus import IncusError
 from jailbee.issue_manifest import (
-    CreateAction,
     CommentEditAction,
+    CreateAction,
     ProjectAddAction,
     ProjectClearAction,
     ProjectRemoveAction,
@@ -531,9 +531,7 @@ def publish_selected(
             print_issue_outcome(batch, report)
             if result_sink is not None:
                 for name, receipt in report.applied:
-                    subject = safe_text(
-                        _created_subject(batch, name, receipt.index, receipt.issue)
-                    )
+                    subject = safe_text(_created_subject(batch, name, receipt.index, receipt.issue))
                     result_sink(
                         f"{name} action {receipt.index}: applied{subject} "
                         f"({receipt.url or 'no URL'})"

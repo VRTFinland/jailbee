@@ -1279,7 +1279,10 @@ def test_issue_apply_alias_renders_the_selected_publication_outcome_then_exits(
         }[mode]
         assert expected in result.stderr and expected not in result.stdout
     for text in (result.stdout, selected_output.out):
-        assert "001.json action 0: applied #73 Example (https://github.com/acme/repo/issues/73)" in text
+        assert (
+            "001.json action 0: applied #73 Example (https://github.com/acme/repo/issues/73)"
+            in text
+        )
         if mode == "success":
             assert "001.json action 1: applied #73" in text and "(https://receipt/2)" in text
             assert "001.json: fully applied and removed from the outbox" in text
