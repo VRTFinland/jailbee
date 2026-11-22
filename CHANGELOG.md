@@ -19,7 +19,13 @@ before editing `## Unreleased`.
   (or `--clear`) writes it to the repo's host-local config, validated against the
   LiteLLM profiles, and resyncs the `claude-jb` default profile in running
   containers; `jailbee agent show` prints the effective choice and its source.
-  `orchestration.default_runner` stays as a deprecated alias.
+  `orchestration.default_runner` stays as a deprecated alias. **Behaviour
+  change for alias users:** `orchestration.default_runner` used to affect only
+  spawned children; as an alias it now sets the runner of every container's
+  autostart, relaunch and refresh too, so move it to a children-only profile
+  `default_runner` if that is not wanted. A `claude-jb` default is ignored (with
+  a warning) while `litellm.enabled` is off. `jailbee config edit` shows the key
+  as its own fields rather than as an agent.
 - The terminal dashboard colours a whole container row by its non-normal phase: orange
   while booting, teal during autostart, magenta for other live jobs and red for
   a dead job or failed autostart, in hues legible on light and dark terminals

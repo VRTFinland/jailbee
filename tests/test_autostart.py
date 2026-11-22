@@ -1492,10 +1492,20 @@ def _with_default_runner(cfg, runner):
 def test_default_runner_rewrites_the_claude_command_on_any_container(tmp_path):
     from jailbee.orchestration.runner import Runner
 
-    cfg = _runner_cfg(tmp_path, claude_autostart=True)
+    cfg = _with_litellm(_runner_cfg(tmp_path, claude_autostart=True), autostart=False)
     runner = Runner(agent="claude-jb", profile="grok", model="haiku")
     [step] = agent_autostart_steps(cfg, default_runner=runner)
     assert step.run == "exec claude-jb -P grok --model haiku"
+
+
+def test_default_runner_claude_jb_without_litellm_falls_back_with_warning(tmp_path, caplog):
+    from jailbee.orchestration.runner import Runner
+
+    cfg = _with_litellm(_runner_cfg(tmp_path, claude_autostart=True), enabled=False)
+    runner = Runner(agent="claude-jb", profile="grok")
+    [step] = agent_autostart_steps(cfg, default_runner=runner)
+    assert step.run == "exec claude"
+    assert "litellm" in caplog.text.lower()
 
 
 def test_default_runner_beats_litellm_autostart_swap(tmp_path):

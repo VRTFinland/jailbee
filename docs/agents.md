@@ -297,7 +297,11 @@ orchestrator spawns a child with a runner) wins over it; without either, the
 legacy path applies (`litellm.autostart`, `litellm.default_profile`).
 `jailbee agent use claude/opus` or `jailbee agent use grok/sonnet` writes it to the
 repo's host-local config, and `jailbee agent show` prints the effective choice and
-its source. Only the Claude family is offered.
+its source. Only the Claude family is offered. A `claude-jb` default is ignored,
+with a warning in the autostart log, while `litellm.enabled` is off, so a
+repo-committed value cannot start a failing window on a host without the proxy.
+The deprecated alias `orchestration.default_runner` used to affect only spawned
+children; it now applies to every container like the new key.
 
 ## 5. Which paths to share
 

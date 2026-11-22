@@ -1485,3 +1485,45 @@ def test_open_editor_refuses_an_origins_map_that_misses_a_spec():
             origins=origins,
             layer_raw=raw_for(layer_set, "repo"),
         )
+
+
+_RUNNER_RAW = {"agent": "claude-jb", "profile": "grok"}
+
+
+def _agents_spec():
+    return replace(COLLECTION, path=("agents",), kind=FieldKind.MODEL_MAP, default={})
+
+
+def test_adding_an_agent_keeps_the_layers_default_runner():
+    spec = _agents_spec()
+    state = _open({"agents": {"claude": {}, "default_runner": _RUNNER_RAW}}, specs=(spec,))
+
+    got, _ = st.add_entry(state, spec, "codex")
+
+    assert [c.path for c in st.changes(got)] == [("agents",)]
+    assert st.changes(got)[0].value == {
+        "claude": {},
+        "codex": {},
+        "default_runner": _RUNNER_RAW,
+    }
+
+
+def test_deleting_an_agent_keeps_the_layers_default_runner():
+    spec = _agents_spec()
+    state = _open({"agents": {"claude": {}, "default_runner": _RUNNER_RAW}}, specs=(spec,))
+
+    got = st.delete_entry(state, spec, "claude")
+
+    assert st.changes(got)[0].value == {"default_runner": _RUNNER_RAW}
+
+
+def test_a_runner_edit_survives_a_structural_agents_edit():
+    spec = _agents_spec()
+    state = _open({"agents": {"claude": {}, "default_runner": _RUNNER_RAW}}, specs=(spec,))
+    state = st.stage(state, ("agents", "default_runner", "profile"), "gpt")
+
+    got, _ = st.add_entry(state, spec, "codex")
+
+    written = {c.path: c.value for c in st.changes(got)}
+    assert written[("agents", "default_runner", "profile")] == "gpt"
+    assert written[("agents",)]["codex"] == {}

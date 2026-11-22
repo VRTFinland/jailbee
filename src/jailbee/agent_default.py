@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+import yaml
 from pydantic import ValidationError
 
 from jailbee import litellm
@@ -91,8 +92,22 @@ def problems(cfg: Config, incus: Incus, gcfg: GlobalConfig, runner: Runner) -> l
 
 def write(cfg: Config, runner: Runner | None) -> None:
     """Write (or, with None, remove) `agents.default_runner` in the repo's local layer."""
-    value: object = DELETE if runner is None else runner.model_dump(mode="json", exclude_none=True)
-    patch_local_file(cfg.container_prefix, [YamlChange(KEY_PATH, value)])
+    if runner is not None:
+        value = runner.model_dump(mode="json", exclude_none=True)
+        patch_local_file(cfg.container_prefix, [YamlChange(KEY_PATH, value)])
+        return
+    from jailbee.config.local_layer import local_config_path
+
+    try:
+        raw = yaml.safe_load(local_config_path(cfg.container_prefix).read_text())
+    except (OSError, yaml.YAMLError):
+        raw = None
+    agents = raw.get("agents") if isinstance(raw, dict) else None
+    # Removing the only key leaves no `agents: {}` husk behind.
+    only_key = isinstance(agents, dict) and set(agents) == {KEY_PATH[1]}
+    patch_local_file(
+        cfg.container_prefix, [YamlChange(KEY_PATH[:1] if only_key else KEY_PATH, DELETE)]
+    )
 
 
 def litellm_default_profile(cfg: Config) -> str | None:

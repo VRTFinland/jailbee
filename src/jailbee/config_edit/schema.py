@@ -582,6 +582,17 @@ The host-local layer takes `github` and `credentials` instead; see
 """
 
 
+def _default_runner_specs() -> tuple[FieldSpec, ...]:
+    """`agents.default_runner`: the `Runner` model's fields under the `agents` map.
+
+    `agents` is a collection of agents, so the key is not part of `Config`'s tree
+    (the loader peels it off each layer); it gets its own leaves here.
+    """
+    from jailbee.orchestration.runner_model import Runner
+
+    return rebase(build_specs(Runner), ("agents", "default_runner"))
+
+
 def repo_specs() -> tuple[FieldSpec, ...]:
     """Editable leaves of a repo's `.jailbee/config.yaml`.
 
@@ -592,6 +603,7 @@ def repo_specs() -> tuple[FieldSpec, ...]:
 
     return (
         *build_specs(Config),
+        *_default_runner_specs(),
         *rebase(build_specs(RepoOrchestration), ("orchestration",)),
     )
 
@@ -609,7 +621,7 @@ def global_specs() -> tuple[FieldSpec, ...]:
     """
     overlay = [s for s in build_specs(Config) if s.path[0] not in _HOST_LEVEL_KEYS]
     host = [s for s in build_specs(GlobalConfig) if s.path[0] in _HOST_LEVEL_KEYS]
-    return tuple(overlay + host)
+    return tuple([*overlay, *_default_runner_specs(), *host])
 
 
 def local_specs() -> tuple[FieldSpec, ...]:
@@ -626,6 +638,7 @@ def local_specs() -> tuple[FieldSpec, ...]:
 
     return (
         *build_specs(Config),
+        *_default_runner_specs(),
         *rebase(build_specs(LiteLLMRepoOverlay), ("litellm",)),
         *rebase(build_specs(OrchestrationHostConfig), ("orchestration",)),
         *rebase(build_specs(LocalCredentials), ("credentials",)),

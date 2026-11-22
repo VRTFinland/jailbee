@@ -256,7 +256,9 @@ def resolve_agents_raw(raw: dict[str, object]) -> dict[str, object]:
     if not isinstance(raw_agents, dict):
         raise ConfigError("`agents` must be a mapping of agent name to settings.")
     # Not an agent (see `peel_agents_runner`); a caller that skipped the peel
-    # must not see it validated as one.
+    # must not see it validated as one, but its own value is still checked.
+    if "default_runner" in raw_agents:
+        peel_agents_runner({"agents": raw_agents}, "the merged config")
     agents: dict[str, object] = {
         k: _copy(v) for k, v in raw_agents.items() if k != "default_runner"
     }

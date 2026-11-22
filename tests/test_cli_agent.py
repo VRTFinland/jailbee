@@ -146,6 +146,12 @@ def test_clear_removes_only_the_key_and_resyncs(rig, mocker):
     assert sync.call_count == 1
 
 
+def test_clear_drops_an_emptied_agents_mapping(rig):
+    runner.invoke(app, ["agent", "use", "gpt/haiku"])
+    assert runner.invoke(app, ["agent", "use", "--clear"]).exit_code == 0
+    assert "agents" not in (_local() or {})
+
+
 def test_show_prints_each_source(rig, mocker):
     repo_cfg, _ = rig
     out = runner.invoke(app, ["agent", "show"]).output
