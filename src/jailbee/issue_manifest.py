@@ -746,9 +746,7 @@ def _parse_relation(
     else:
         ref = item[f"{field}_ref"]
         if not isinstance(ref, str) or not ref:
-            raise IssueManifestError(
-                f"{context}: {field}_ref must name an earlier create action"
-            )
+            raise IssueManifestError(f"{context}: {field}_ref must name an earlier create action")
         ref_repo = refs.get(ref)
         if ref_repo is None:
             raise IssueManifestError(

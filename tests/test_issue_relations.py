@@ -26,10 +26,7 @@ from tests.test_issue_outbox import (  # noqa: F401 - pytest fixtures
     preflight,
 )
 
-_REAL = {
-    name: getattr(issue_github, name)
-    for name in ("get_issue", "create_issue", "add_comment")
-}
+_REAL = {name: getattr(issue_github, name) for name in ("get_issue", "create_issue", "add_comment")}
 
 
 def _manifest(*actions):
@@ -324,7 +321,13 @@ def test_relations_to_a_create_resolve_after_it(preflight, github):  # noqa: F81
         {
             "a.json": [
                 _create(),
-                {"type": "sub_issue", "repo": ".", "issue": 10, "sub_issue_ref": "bug", "op": "add"},
+                {
+                    "type": "sub_issue",
+                    "repo": ".",
+                    "issue": 10,
+                    "sub_issue_ref": "bug",
+                    "op": "add",
+                },
                 {
                     "type": "dependency",
                     "repo": ".",
@@ -358,7 +361,13 @@ def test_relations_to_a_create_resolve_after_it(preflight, github):  # noqa: F81
         ({"pulls": {10}}, [_sub()], "target is a pull request"),
     ],
 )
-def test_preflight_refuses_a_relation_already_in_its_end_state(preflight, github, state, actions, message):  # noqa: F811
+def test_preflight_refuses_a_relation_already_in_its_end_state(
+    preflight,  # noqa: F811
+    github,
+    state,
+    actions,
+    message,
+):
     from jailbee import issue_outbox
 
     github.sub_issues = state.get("sub_issues", {})
@@ -573,7 +582,9 @@ def test_deleting_a_create_cascades_to_relations_naming_it(tmp_path):
         {"type": "dependency", "repo": ".", "issue": 12, "blocked_by_ref": "bug", "op": "add"},
         _dep(),
     ]
-    view = inspected(tmp_path, "issue", {"001.json": json.dumps({"version": 1, "actions": actions})})
+    view = inspected(
+        tmp_path, "issue", {"001.json": json.dumps({"version": 1, "actions": actions})}
+    )
     with pytest.raises(OutboxError, match=r"\(1, 2\)"):
         plan_delete(view, ProposalId("issue", "001.json"), DeleteSelection(action=0))
     plan = plan_delete(
