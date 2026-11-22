@@ -373,6 +373,8 @@ def _comment_edit_refusals(
         login=login,
         expected_body=action.expected_body,
         parent=action.target.number,
+        repo=repo.slug,
+        new_body=action.body,
         context=context,
     )
 
@@ -1652,24 +1654,24 @@ def apply_batch(
                                 "\n".join(differences),
                                 kind="validation",
                             )
-                    if isinstance(action, CommentEditAction):
-                        # An image upload takes time: recheck the comment just before editing it.
-                        context = f"{name} action {resolved.index}"
-                        try:
-                            differences = _comment_edit_refusals(
-                                batch.host_repo_root, resolved.repo, action, batch.login, context
-                            )
-                        except IssueGithubReadError as exc:
-                            return failed(name, resolved.index, False, f"{context}: {exc}")
-                        if differences:
-                            return failed(
-                                name,
-                                resolved.index,
-                                False,
-                                "\n".join(differences),
-                                kind="validation",
-                            )
                     resolved = replace(resolved, action=replace(action, body=body))
+                if isinstance(action, CommentEditAction):
+                    # Recheck the comment just before editing it, after any upload.
+                    context = f"{name} action {resolved.index}"
+                    try:
+                        differences = _comment_edit_refusals(
+                            batch.host_repo_root, resolved.repo, action, batch.login, context
+                        )
+                    except IssueGithubReadError as exc:
+                        return failed(name, resolved.index, False, f"{context}: {exc}")
+                    if differences:
+                        return failed(
+                            name,
+                            resolved.index,
+                            False,
+                            "\n".join(differences),
+                            kind="validation",
+                        )
                 try:
                     store.mark_prepared(
                         claim, digest, resolved.index, repo=resolved.repo.slug, now=clock()

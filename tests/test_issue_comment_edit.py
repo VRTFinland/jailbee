@@ -38,14 +38,16 @@ def _action(**changes):
 class FakeGh:
     """A GitHub holding one comment, answering only ``gh api`` on that comment."""
 
-    def __init__(self, *, author="alice", body="Old wording\nsecond line", pull=False):
+    def __init__(
+        self, *, author="alice", body="Old wording\nsecond line", pull=False, repo="acme/app"
+    ):
         kind = "pull" if pull else "issues"
         self.comment = {
             "id": 555,
             "user": {"login": author},
             "body": body,
             "html_url": f"https://github.com/acme/app/{kind}/7#issuecomment-555",
-            "issue_url": "https://api.github.com/repos/acme/app/issues/7",
+            "issue_url": f"https://api.github.com/repos/{repo}/issues/7",
         }
         self.patches: list[dict[str, object]] = []
 
@@ -199,3 +201,65 @@ def test_resolve_refuses_a_permalink_to_another_thread_or_comment(execution, url
     _seed_execution(execution, batch, state="uncertain", issue=None)
     with pytest.raises(JournalError, match=message):
         _reconcile(execution, batch, issue_outbox.AppliedResolution(url, issue=None))
+
+
+def test_comment_of_a_renamed_or_transferred_repository_is_refused(preflight, mocker):  # noqa: F811
+    from jailbee import issue_outbox
+
+    mocker.patch(
+        "jailbee.issue_github.subprocess.run", side_effect=FakeGh(repo="other-org/elsewhere")
+    )
+    with pytest.raises(issue_outbox.IssueGateError, match="belongs to other-org/elsewhere"):
+        preflight["prepare"]({"a.json": [_action()]})
+
+
+def test_repository_slug_is_compared_case_insensitively(preflight, mocker):  # noqa: F811
+    mocker.patch("jailbee.issue_github.subprocess.run", side_effect=FakeGh(repo="Acme/App"))
+    assert preflight["prepare"]({"a.json": [_action()]})
+
+
+def test_retrying_an_edit_that_already_landed_points_at_resolve_applied(preflight, gh):  # noqa: F811
+    from jailbee import issue_outbox
+
+    batch = preflight["prepare"]({"a.json": [_action()]})
+    gh.comment = {**gh.comment, "body": "Fixed wording\nsecond line"}
+    with pytest.raises(issue_outbox.IssueStaleError, match=r"already reads the new body") as exc:
+        issue_outbox.revalidate_batch(batch)
+    assert "--applied" in str(exc.value)
+    assert gh.comment["html_url"] in str(exc.value)
+
+
+def test_comment_is_rechecked_right_before_its_edit(preflight, gh):  # noqa: F811
+    from jailbee import issue_outbox
+
+    batch = preflight["prepare"]({"a.json": [_action()]})
+    issue_outbox.revalidate_batch(batch)
+    gh.comment = {**gh.comment, "body": "Edited after the plan"}
+    report = issue_outbox.apply_batch(
+        batch, incus=preflight["incus"], container_prefix="app", publisher="user"
+    )
+    assert report.failure is not None and not report.failure.uncertain
+    assert "expected.body differs" in report.failure.detail
+    assert gh.patches == []
+
+
+def test_recheck_happens_per_edit_not_once_per_batch(preflight, gh):  # noqa: F811
+    from jailbee import issue_outbox
+
+    batch = preflight["prepare"]({"a.json": [_action()]})
+    issue_outbox.revalidate_batch(batch)
+    seen = []
+
+    def before():
+        seen.append(1)
+        gh.comment = {**gh.comment, "body": "Edited after the plan"}
+
+    report = issue_outbox.apply_batch(
+        batch,
+        incus=preflight["incus"],
+        container_prefix="app",
+        publisher="user",
+        before_action=before,
+    )
+    assert seen == [1]
+    assert report.failure is not None and gh.patches == []

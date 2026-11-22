@@ -552,7 +552,12 @@ def test_get_issue_comment_returns_author_body_and_parent_number(tmp_path, mocke
     snapshot = get_issue_comment(tmp_path, "acme/widgets", 9001)
 
     assert snapshot == CommentSnapshot(
-        9001, "alice", "Confirmed", "https://github.com/acme/widgets/pull/42#issuecomment-9001", 42
+        9001,
+        "alice",
+        "Confirmed",
+        "https://github.com/acme/widgets/pull/42#issuecomment-9001",
+        42,
+        "acme/widgets",
     )
     _assert_api_call(run, tmp_path, ["gh", "api", "repos/acme/widgets/issues/comments/9001"], None)
 

@@ -23,6 +23,8 @@ class CommentSnapshot:
     url: str
     # The issue or pull request number the comment belongs to, when known.
     parent: int | None = None
+    # The ``owner/repo`` slug of the comment's parent, when known.
+    repo: str | None = None
 
 
 def edit_refusals(
@@ -31,13 +33,23 @@ def edit_refusals(
     login: str,
     expected_body: str,
     parent: int | None = None,
+    repo: str | None = None,
+    new_body: str | None = None,
     context: str,
 ) -> list[str]:
     """Why ``snapshot`` may not be replaced by the publisher ``login``; empty when it may.
 
-    ``parent``, when given, is the issue or PR the edit claims the comment is on.
+    ``parent`` and ``repo`` (an ``owner/repo`` slug, compared case-insensitively
+    so a rename or transfer redirect is still caught), when given, are the issue
+    or PR and repository the edit claims the comment is on. ``new_body`` is what
+    the edit would write: a comment that already reads it means the edit landed.
     """
     refusals = []
+    if repo is not None and (snapshot.repo or "").casefold() != repo.casefold():
+        refusals.append(
+            f"{context}: comment {snapshot.id} belongs to "
+            f"{snapshot.repo or 'an unknown repository'}, not {repo}"
+        )
     if parent is not None and snapshot.parent != parent:
         where = f"#{snapshot.parent}" if snapshot.parent is not None else "another thread"
         refusals.append(f"{context}: comment {snapshot.id} belongs to {where}, not #{parent}")
@@ -46,7 +58,12 @@ def edit_refusals(
             f"{context}: comment {snapshot.id} is authored by {snapshot.author}, "
             f"not {login or 'the unresolved publishing account'}"
         )
-    if snapshot.body != expected_body:
+    if snapshot.body != expected_body and snapshot.body == new_body:
+        refusals.append(
+            f"{context}: comment {snapshot.id} already reads the new body, so the edit "
+            f"landed; resolve it as applied with --applied --url {snapshot.url}"
+        )
+    elif snapshot.body != expected_body:
         refusals.append(f"{context}: expected.body differs from the current comment")
     return refusals
 

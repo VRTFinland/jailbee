@@ -1077,3 +1077,22 @@ def test_publish_failure_after_the_policy_passed_keeps_the_reservation(rig):
     publishing.settle(ctx, lambda ref, out: replies.append(out))
     assert replies[0].state == "failed" and "GitHub failed" in replies[0].detail
     assert len(open_state_store(ctx.root).kv_get("publish-budget.json")[ctx.sender.full]) == 1
+
+
+def test_comment_grant_does_not_cover_comment_edit(rig):
+    from types import SimpleNamespace
+
+    from jailbee.issue_manifest import CommentEditAction, ExistingIssue
+    from jailbee.issue_outbox import ResolvedAction, ResolvedIssue
+
+    edit = ResolvedAction(
+        1,
+        CommentEditAction(".", ExistingIssue(12), 555, "new", "old"),
+        issue_outbox.RepoTarget(".", rig[0].root, "org/repo"),
+        ResolvedIssue(12),
+        "pending",
+    )
+    batch = SimpleNamespace(login="alice", manifests=(SimpleNamespace(actions=(edit,)),))
+    with pytest.raises(issue_outbox.IssueGateError, match="comment_edit"):
+        publishing._issue_policy(PublishRights(issues=("comment",)), 1)(batch)
+    publishing._issue_policy(PublishRights(issues=("comment", "comment_edit")), 1)(batch)

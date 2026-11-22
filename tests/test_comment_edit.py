@@ -54,3 +54,57 @@ def test_diff_lines_show_removed_added_and_context_lines():
         "  +new",
         "   tail",
     ]
+
+
+def test_comment_of_another_repository_is_refused_case_insensitively():
+    assert (
+        edit_refusals(
+            _snapshot(repo="Acme/App"),
+            login="alice",
+            expected_body="old",
+            parent=7,
+            repo="acme/app",
+            context="c",
+        )
+        == []
+    )
+    (refusal,) = edit_refusals(
+        _snapshot(repo="acme/other"),
+        login="alice",
+        expected_body="old",
+        parent=7,
+        repo="acme/app",
+        context="c",
+    )
+    assert refusal == "c: comment 5 belongs to acme/other, not acme/app"
+
+
+def test_unknown_comment_repository_is_refused_when_one_is_named():
+    (refusal,) = edit_refusals(
+        _snapshot(repo=None), login="alice", expected_body="old", repo="acme/app", context="c"
+    )
+    assert "not acme/app" in refusal
+
+
+def test_already_applied_edit_says_how_to_resolve_it():
+    (refusal,) = edit_refusals(
+        _snapshot(body="new"),
+        login="alice",
+        expected_body="old",
+        new_body="new",
+        context="m action 0",
+    )
+    assert "already reads the new body" in refusal
+    assert "--applied" in refusal and URL in refusal
+    assert "expected.body differs" not in refusal
+
+
+def test_differing_comment_that_is_not_the_new_body_keeps_the_generic_wording():
+    (refusal,) = edit_refusals(
+        _snapshot(body="third"),
+        login="alice",
+        expected_body="old",
+        new_body="new",
+        context="c",
+    )
+    assert "expected.body differs" in refusal
