@@ -956,7 +956,7 @@ against base is clean — a container left mid-merge by `jailbee git push
 --current` shows `conflict!`, not `ok`, until you finish or abort it in
 `jailbee shell <name>`.
 
-Two more git-status columns exist, **off by default** (plus **H↑**/**H↓** — `host_ahead`/`host_behind` — which always count against the host branch, unlike ↑/↓ on a PR-bound or child row): **LOCAL ±**
+Two more git-status columns exist, **off by default** (plus **H↑**/**H↓** — `host_ahead`/`host_behind` — which always count against the host branch, unlike ↑/↓ on a PR-bound row): **LOCAL ±**
 (`local_diff`) and **L↑** (`local_count`) — the diff/commit-count between
 the container's HEAD and the *host's currently checked-out branch*, as
 opposed to `DIFF ±`/`↑`/`↓`'s comparison against the host target branch.

@@ -2927,7 +2927,7 @@ committed-tree comparison with the host target branch, or `jailbee git diff
 (unknown) or `"missing"` (the container lacks the target commit: behind by at
 least one, count unknown, shown as `↓•`); its submodule
 line fields are `target_ins`/`target_del` instead of `ahead_ins`/`ahead_del`.
-`host_ahead` (**H↑**) and `host_behind` (**H↓**) are opt-in columns that always count commits against the host branch, whatever the row's sync target is: on a PR-bound or child row they differ from ↑/↓, on a row syncing with the host branch they equal them. They are off by default in the dashboard and `jailbee ls`; enable them via `columns.fields` / `ls.fields`.
+`host_ahead` (**H↑**) and `host_behind` (**H↓**) are opt-in columns that always count commits against the host branch, whatever the row's sync target is: on a PR-bound row they differ from ↑/↓, on a row syncing with the host branch they equal them. They are off by default in the dashboard and `jailbee ls`; enable them in the dashboard's column settings, or with `ls.fields` / `--fields`.
 `local_diff` and `local_count` remain opt-in comparisons with the host's
 currently checked-out HEAD, which can differ from the target branch. If the
 host's local target branch is absent, status uses the configured upstream's

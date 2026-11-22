@@ -12691,7 +12691,7 @@ def test_host_columns_show_host_counts_unlike_pr_sync_counts():
 
 
 def test_host_columns_are_off_by_default_and_render_unknowns():
-    from jailbee.git_status import BEHIND_UNKNOWN
+    from jailbee.git_status import BEHIND_UNKNOWN, PROBE_MISSING
     from jailbee.lifecycle import ls_field_specs
 
     specs = {f.name: f for f in ls_field_specs(now=_NOW)}
@@ -12702,4 +12702,4 @@ def test_host_columns_are_off_by_default_and_render_unknowns():
     ci = _ci_with_status(host_ahead_count="0", host_behind_count=BEHIND_UNKNOWN)
     assert specs["host_ahead"].cell(ci) == "[dim]0[/dim]"
     assert specs["host_behind"].cell(ci) == "[yellow]↓•[/yellow]"
-    assert specs["host_behind"].json(ci) is None or specs["host_behind"].json(ci) != BEHIND_UNKNOWN
+    assert specs["host_behind"].json(ci) == PROBE_MISSING

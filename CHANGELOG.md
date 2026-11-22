@@ -31,8 +31,8 @@ before editing `## Unreleased`.
 
 - Opt-in `host_ahead` / `host_behind` columns (**H↑** / **H↓**) always count commits
   against the host branch, whatever the row's sync target is
-  ([#145](https://github.com/VRTFinland/jailbee/issues/145)); enable them via
-  `columns.fields` or `ls.fields`.
+  ([#145](https://github.com/VRTFinland/jailbee/issues/145)); enable them in the
+  dashboard's column settings, or with `ls.fields` / `jailbee ls --fields`.
 
 - A PR-bound container's ↓ follows pushes made elsewhere to its PR
   ([#145](https://github.com/VRTFinland/jailbee/issues/145)): the dashboard's state
