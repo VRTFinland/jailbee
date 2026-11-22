@@ -1127,3 +1127,32 @@ def test_reused_source_manifest_name_keeps_earlier_sent_row(source_publisher):
     assert _publish(p) == 0
     rows = sorted(sent.list_records(), key=lambda r: r.id)
     assert [r.title for r in rows] == ["Title", "Other"]
+
+
+def _run_source_cli(p, mocker, *args):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    mocker.patch("jailbee.cli._load_or_exit", return_value=p["cfg"])
+    mocker.patch("jailbee.cli._resolve_existing", return_value=(p["incus"], "full"))
+    mocker.patch("jailbee.lifecycle.short_name", return_value="c")
+    mocker.patch("jailbee.pr_submodule_flow.publish_submodule_prs_first", return_value=[])
+    return CliRunner().invoke(app, ["pr", "push", "c", "--source-manifest", "m.json", *args])
+
+
+def test_source_manifest_cli_names_created_pr(source_publisher, mocker):
+    p = source_publisher
+    result = _run_source_cli(p, mocker, "--yes")
+    assert result.exit_code == 0, result.output
+    assert "opened PR #42 Title: https://github.com/acme/widgets/pull/42" in result.stdout
+
+
+def test_source_manifest_cli_strips_controls_from_title(source_publisher, mocker):
+    p = source_publisher
+    p["data"]["actions"][0]["title"] = "Ti\x1b[31mtle\x07"
+    p["files"]["m.json"] = json.dumps(p["data"])
+    result = _run_source_cli(p, mocker, "--yes")
+    assert result.exit_code == 0, result.output
+    assert "opened PR #42 Ti[31mtle: https://" in result.stdout
+    assert "\x1b" not in result.stdout and "\x07" not in result.stdout
