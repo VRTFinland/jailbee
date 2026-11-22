@@ -1557,7 +1557,10 @@ jailbee issue resolve [<name>] [<manifest>] [<action>] (--applied --url <url> [-
 manifest's full proposed text and journal state, never truncated, for
 actually reading a body before deciding. On a terminal the Markdown bodies are
 wrapped to the window and coloured; HTML tags and image URLs are shown as text
-rather than hidden, and piped output is the raw text.
+rather than hidden, and piped output is the raw text. `http(s)` links are
+clickable (OSC 8) in a terminal that supports it, with the target's host shown
+after a label that differs from the target; any other scheme (`javascript:`,
+`file:`, …) is shown as text with its target.
 
 Pending manifests are also visible without running `outbox ls`:
 `jailbee ls`'s ISSUES column shows `✉N`. The dashboards use a combined

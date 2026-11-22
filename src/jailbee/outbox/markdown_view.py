@@ -27,16 +27,20 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import shutil
 import sys
 from collections.abc import Iterable
 from functools import lru_cache
 from typing import ClassVar
+from urllib.parse import urlsplit
 
 from markdown_it import MarkdownIt
+from markdown_it.token import Token
 from rich.console import Console
 from rich.markdown import Heading, Markdown, MarkdownElement
 from rich.segment import Segment, Segments
+from rich.style import Style
 from rich.text import Text
 
 # Never wrap narrower than this, however deep the indent: a few columns of
@@ -51,15 +55,72 @@ class AnsiLine(str):
     __slots__ = ()
 
 
+# Printable ASCII only: no controls, no whitespace, no bidi or other invisible characters.
+_SAFE_URL = re.compile(r"https?://[!-~]+")
+
+
+def _link_host(url: str) -> str | None:
+    """The host of a linkable URL, or None when it must not become a hyperlink."""
+    if not _SAFE_URL.fullmatch(url):
+        return None
+    try:
+        return urlsplit(url).hostname or None
+    except ValueError:
+        return None
+
+
+def _text_token(content: str) -> Token:
+    token = Token("text", "", 0)
+    token.content = content
+    return token
+
+
+def _rewrite_links(children: list[Token]) -> list[Token]:
+    """Keep a safe link, with its host after a differing label; flatten any other to text."""
+    out: list[Token] = []
+    label = ""
+    href = ""
+    in_link = False
+    for child in children:
+        if child.type == "link_open":
+            href = str(child.attrs.get("href", ""))
+            label, in_link = "", True
+            if _link_host(href) is None:
+                continue  # dropped: the close below shows the target as text
+        elif child.type == "link_close":
+            in_link = False
+            host = _link_host(href)
+            if host is None:
+                out.append(_text_token(f" ({href})"))
+                continue
+            out.append(child)
+            if label != href:
+                out.append(_text_token(f" ({host.lower()})"))
+            continue
+        elif in_link:
+            label += child.content
+        out.append(child)
+    return out
+
+
+def _safe_style(style: Style | None) -> Style | None:
+    """`style` without a link unless the link is one `_link_host` accepts."""
+    if style is not None and style.link and _link_host(style.link) is None:
+        return style.update_link(None)
+    return style
+
+
 class _VerbatimMarkdown(Markdown):
-    """Rich's Markdown, minus the two places it hides what the author wrote."""
+    """Rich's Markdown, minus the places it hides what the author wrote; links vetted."""
 
     def __init__(self, markup: str) -> None:
-        super().__init__(markup, hyperlinks=False)
+        super().__init__(markup, hyperlinks=True)
         # Rich's own parser has HTML on, and Rich then renders no HTML token at all.
         parser = MarkdownIt("commonmark", {"html": False}).enable("strikethrough").enable("table")
         self.parsed = parser.parse(markup)
         for token in self.parsed:
+            if token.children:
+                token.children = _rewrite_links(token.children)
             for child in token.children or []:
                 if child.type == "image":
                     # Rich lifts an image out of its line into a block of its own, which
@@ -97,7 +158,7 @@ def _markdown_lines(text: str, width: int) -> tuple[Text, ...]:
         line = Text()
         for segment in row:
             if not segment.control:
-                line.append(safe_text(segment.text), segment.style)
+                line.append(safe_text(segment.text), _safe_style(segment.style))
         # Not stripped: a code block's trailing spaces carry its background.
         lines.append(line)
     while lines and not lines[-1].plain.strip():
@@ -178,7 +239,7 @@ def render_markdown(text: str, *, indent: str = "", width: int | None = None) ->
     )
     # Sanitise what the parser produced, not what it was given: entities decode late.
     segments = [
-        Segment(safe_text(segment.text), segment.style)
+        Segment(safe_text(segment.text), _safe_style(segment.style))
         for segment in console.render(_VerbatimMarkdown(text))
         if not segment.control
     ]

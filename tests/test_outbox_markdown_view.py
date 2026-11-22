@@ -53,10 +53,59 @@ def test_styled_output_is_marked_and_coloured(monkeypatch) -> None:
     assert re.search(r"\x1b\[[\d;]*\b(3[0-7]|38)\b", joined)  # a foreground colour, not just bold
 
 
-def test_no_hyperlink_escapes_and_url_stays_visible() -> None:
-    lines = render_markdown("[x](https://e.com)", width=60)
-    assert not any("\x1b]8" in line for line in lines)
-    assert "https://e.com" in "\n".join(plain(lines))
+def _links(lines: list[str]) -> list[str]:
+    return [m for line in lines for m in re.findall(r"\x1b\]8;[^;]*;([^\x1b]+)\x1b\\", line)]
+
+
+def test_http_link_becomes_an_osc8_hyperlink() -> None:
+    lines = render_markdown("[https://e.com](https://e.com)", width=60)
+    assert _links(lines) == ["https://e.com"]
+    assert plain(lines) == ["https://e.com"]
+
+
+def test_https_link_with_a_different_label_shows_the_host() -> None:
+    lines = render_markdown("[docs](https://Example.com/a?b=1)", width=60)
+    assert _links(lines) == ["https://Example.com/a?b=1"]
+    assert plain(lines) == ["docs (example.com)"]
+
+
+def test_label_naming_another_host_cannot_disguise_the_target() -> None:
+    out = "\n".join(plain(render_markdown("[github.com](https://evil.example/x)", width=60)))
+    assert "evil.example" in out
+
+
+def test_other_schemes_are_plain_text_with_the_target_visible() -> None:
+    for href in ("javascript:alert(1)", "file:///etc/passwd", "ftp://h/x", "data:text/html,x"):
+        lines = render_markdown(f"[click]({href})", width=60)
+        assert not any("\x1b]8" in line for line in lines), href
+        out = "\n".join(plain(lines))
+        assert "click" in out and href in out
+
+
+def test_url_with_controls_or_non_ascii_is_not_linked() -> None:
+    for href in ("https://e.com/%E2%80%AE", "https://e.com/\u202ex", "https://e.com/a\x07b"):
+        lines = render_markdown(f"[t](<{href}>)", width=60)
+        assert "\x07" not in "\n".join(lines).replace("\x1b\\", "")
+        assert "\u202e" not in "\n".join(lines)
+        assert all(
+            not u.startswith(("https://e.com/\u202e", "https://e.com/\x07")) for u in _links(lines)
+        )
+
+
+def test_wrapped_link_keeps_the_whole_target_on_every_line() -> None:
+    url = "https://example.com/" + "a" * 70
+    links = _links(render_markdown(f"<{url}>", width=30))
+    assert len(links) > 1 and set(links) == {url}
+
+
+def test_markdown_text_lines_carry_the_link_style() -> None:
+    from jailbee.outbox.markdown_view import markdown_text_lines
+
+    good = markdown_text_lines("[a](https://e.com) [b](javascript:x)", 60)[0]
+    links = {
+        span.style.link for span in good.spans if hasattr(span.style, "link") and span.style.link
+    }
+    assert links == {"https://e.com"}
 
 
 def test_escapes_in_the_body_never_reach_the_output() -> None:
