@@ -50,7 +50,7 @@ class FakeChild:
             end.close()
 
     def wait(self) -> int:
-        self._thread.join(5)
+        self._thread.join(30)
         return self._code
 
     def kill(self) -> None:

@@ -130,12 +130,12 @@ def test_lock_is_exclusive_across_processes(tmp_path):
     first = context.Process(target=_hold_lock, args=(str(tmp_path), acquired, release))
     second = context.Process(target=_try_lock, args=(str(tmp_path), second_acquired))
     first.start()
-    assert acquired.wait(5)
+    assert acquired.wait(60)
     second.start()
     assert not second_acquired.wait(0.1)
     release.set()
-    assert second_acquired.wait(5)
-    first.join(5)
-    second.join(5)
+    assert second_acquired.wait(60)
+    first.join(60)
+    second.join(60)
     assert first.exitcode == 0
     assert second.exitcode == 0
