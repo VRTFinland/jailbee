@@ -1693,6 +1693,49 @@ def test_new_container_uses_explicit_base_branch_label_when_provided(make_cfg, t
     assert calls[0].args[2] == "develop"
 
 
+@pytest.mark.parametrize(
+    "extra,expected",
+    [
+        ({"base": "develop"}, "true"),
+        ({}, "false"),
+        # `jailbee new --pr N --base X`: the PR's base labels it, the user still named one.
+        ({"base": "develop", "base_branch_label": "dev"}, "true"),
+        ({"base_branch_label": "dev"}, "false"),
+        # A fork inherits its source's marker; a legacy source leaves none.
+        ({"fork_of": "p-src", "base_explicit_label": "true"}, "true"),
+        ({"fork_of": "p-src", "base_explicit_label": "false"}, "false"),
+        ({"fork_of": "p-src"}, None),
+    ],
+)
+def test_new_container_base_explicit_marker(make_cfg, tmp_path, mocker, extra, expected):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo, default_branch="main")
+    incus = MagicMock()
+    incus.exists.return_value = False
+    mocker.patch("jailbee.lifecycle.branch_exists_in_source", return_value="base" in extra)
+    mocker.patch("jailbee.lifecycle.rev_parse_remote", return_value="abc1234")
+    mocker.patch("jailbee.lifecycle.fetch_remote_ref")
+    opts = NewContainerOptions(
+        container_branch="feat/foo",
+        name=None,
+        network="strict",
+        memory="4GB",
+        cpu=4,
+        from_base="gie-golden",
+        clone=True,
+        autostart=False,
+        **extra,
+    )
+    new_container(cfg, incus, opts)
+    marked = [
+        c.args[2]
+        for c in incus.config_set.call_args_list
+        if c.args[1] == "user.jailbee.base_explicit"
+    ]
+    assert marked == ([expected] if expected is not None else [])
+
+
 def _fork_label_calls(make_cfg, tmp_path, mocker, **extra):
     repo = tmp_path / "myrepo"
     repo.mkdir()

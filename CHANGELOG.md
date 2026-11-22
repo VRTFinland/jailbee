@@ -36,6 +36,14 @@ before editing `## Unreleased`.
   every other scheme is shown as text with its target
   ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 
+- `jailbee pr bind` (and the adoption of an existing PR by the first `jailbee
+  pr push`) now sets the container's base branch to the PR's base, as
+  `jailbee new --pr` does, so BASE and the host comparison follow the PR. A
+  base chosen with `new --base` (also with `--pr`), `git retarget`, a fork's
+  source or a stacked PR is kept — also for containers created before the
+  marker existed, unless their base is the repo's default branch; the PR-base
+  fetch never prompts or hangs ([#145](https://github.com/VRTFinland/jailbee/issues/145)).
+
 - Commits made on a branch other than the checked-out one inside a container
   are no longer invisible. The dashboard's context card lists such a branch
   (name and short sha) while its tip is on neither the host nor a

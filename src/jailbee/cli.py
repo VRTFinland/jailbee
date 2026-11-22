@@ -3158,6 +3158,7 @@ def new_cmd(
                 if fork_source is not None
                 else None
             ),
+            base_explicit_label=fork_source.base_explicit if fork_source is not None else None,
             pr=pr,
             # A fork's head, not merely "a PR": an internal PR's head is a
             # branch in this repo's own origin. A `jailbee fork` of a PR

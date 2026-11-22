@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus as IncusType
     from jailbee.outbox.io import PrManagement
+    from jailbee.pr import PrInfo
     from jailbee.submodule_pr import SubCandidate, SubmodulePrPlan
     from jailbee.sync import FetchResult, PublishResult
 
@@ -301,6 +302,12 @@ def run_pr_push(
     if as_name is not None and (is_author or stored_pr_branch or pr_label) and not undecided_review:
         pr_flow.reject_as_on_pr_update(scope, as_name, pr_label)
 
+    def adopt_base(found: PrInfo) -> None:
+        if stacked:
+            # The stacked flow sets its own base (the parent's head).
+            return
+        pr_flow.sync_container_base_to_pr(cfg, incus, full, short=short, base_ref=found.base_ref)
+
     if pr_number is not None:
         # An explicitly named PR settles the head outright, so it replaces both
         # adoption paths below rather than racing them.
@@ -311,6 +318,7 @@ def run_pr_push(
             record=record,
             yes=yes,
             record_context=f"on '{short}'",
+            on_resolved=adopt_base,
         )
         is_author = record.author
         stored_pr_branch = record.head
@@ -346,7 +354,12 @@ def run_pr_push(
     # skips the lookup entirely.
     if not (is_author or stored_pr_branch or pr_label) and as_name is None:
         found_pr = pr_flow.adopt_existing_pr_for_branch(
-            scope, state, branch=container_branch, yes=yes, record_context=f"on '{short}'"
+            scope,
+            state,
+            branch=container_branch,
+            yes=yes,
+            record_context=f"on '{short}'",
+            on_resolved=adopt_base,
         )
         if found_pr is not None:
             found_number, found_head = found_pr
