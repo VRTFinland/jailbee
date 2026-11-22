@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from jailbee.config import Config
     from jailbee.incus import Incus
     from jailbee.notices import Notice
+    from jailbee.orchestration.runner_model import Runner
     from jailbee.procstat import ActivitySampler
 
 
@@ -212,11 +213,27 @@ class RepoGroup:
     orchestration_profiles: tuple[str, ...] = ()
     default_runner: str | None = None
     default_runner_source: str | None = None
+    # The effective agent as `profile/model` for the repo row (`claude/opus`, `codex`).
+    agent_label: str | None = None
     runner_profiles: tuple[str, ...] = ()
     default_project: str | None = None
     # Outbox "Sent" log records of every container of this repo (destroyed ones
     # included); set by the state service's gatherer, 0 = none.
     sent_count: int = 0
+
+
+def _agent_label(cfg: Config, runner: Runner | None) -> str | None:
+    """The repo's effective agent for its row: the default runner, else the legacy launch."""
+    from jailbee.dashboard.agent_choice import runner_label
+
+    if runner is not None:
+        return runner_label(runner)
+    from jailbee.agents import primary_agent
+    from jailbee.autostart import litellm_autostart_on
+
+    if litellm_autostart_on(cfg):
+        return cfg.litellm_view().config.default_profile or None
+    return primary_agent(cfg).name
 
 
 @dataclass(frozen=True)
@@ -558,6 +575,7 @@ def _gather_rows(
                 default_project=cfg.github.project,
                 default_runner=runner.describe() if runner else None,
                 default_runner_source=orch_view.default_runner_source,
+                agent_label=_agent_label(cfg, runner),
                 runner_profiles=tuple(sorted(litellm_config.effective_profiles()))
                 if litellm_config.enabled
                 else (),

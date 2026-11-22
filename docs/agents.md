@@ -297,7 +297,12 @@ orchestrator spawns a child with a runner) wins over it; without either, the
 legacy path applies (`litellm.autostart`, `litellm.default_profile`).
 `jailbee agent use claude/opus` or `jailbee agent use grok/sonnet` writes it to the
 repo's host-local config, and `jailbee agent show` prints the effective choice and
-its source. Only the Claude family is offered. A `claude-jb` default is ignored,
+its source. In the terminal dashboard the repo menu's `Agent…` entry (key `g`) runs
+the same command: a profile picker (`claude` plus every LiteLLM profile the repo is
+served), then a tier picker ("profile default" plus the tiers the profile maps), the
+current choice marked. The repo row shows the effective agent as `profile/model`
+(`claude/opus`, `codex/sonnet`, `codex` when no tier is set). Only the Claude family
+is offered. A `claude-jb` default is ignored,
 with a warning in the autostart log, while `litellm.enabled` is off, so a
 repo-committed value cannot start a failing window on a host without the proxy.
 The deprecated alias `orchestration.default_runner` used to affect only spawned

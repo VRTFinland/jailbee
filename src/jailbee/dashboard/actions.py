@@ -44,10 +44,16 @@ REPO_DISMISS_ADVISORIES = "dismiss-advisories"
 REPO_UPGRADE_ALL = "upgrade-all"
 REPO_SENT = "sent"
 REPO_REMOVE = "repo-remove"
+REPO_AGENT = "agent"
 
 
 def repo_remove_argv(prefix: str) -> list[str]:
     return ["repo", "rm", prefix]
+
+
+def agent_use_argv() -> list[str]:
+    """`jailbee agent use`, no argument: its profile and tier questions are the picker."""
+    return ["agent", "use"]
 
 
 DIAGNOSTICS_LABEL = "Diagnostics →"

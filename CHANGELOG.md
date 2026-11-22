@@ -19,6 +19,10 @@ before editing `## Unreleased`.
   (or `--clear`) writes it to the repo's host-local config, validated against the
   LiteLLM profiles, and resyncs the `claude-jb` default profile in running
   containers; `jailbee agent show` prints the effective choice and its source.
+  The terminal dashboard's repo menu has `Agent…` (key `g`, also over remote
+  SSH) which runs `jailbee agent use` as a two-step picker (profile, then tier,
+  the current choice marked), and the repo row shows the effective agent as
+  `profile/model` (`claude/opus`, `codex`).
   `orchestration.default_runner` stays as a deprecated alias. **Behaviour
   change for alias users:** `orchestration.default_runner` used to affect only
   spawned children; as an alias it now sets the runner of every container's

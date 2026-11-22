@@ -180,40 +180,33 @@ def effective(cfg: Config, incus: Incus) -> Effective:
     return Effective(None, "legacy", legacy=via, labels=labels)
 
 
-_DEFAULT_TIER = ""  # picker sentinel: a `None` value would read as a cancel
-
-
 def choose(cfg: Config, incus: Incus, gcfg: GlobalConfig, selection: str | None) -> Runner:
-    """The runner to write: parsed from `selection`, else asked for (profile, then tier)."""
+    """The runner to write: parsed from `selection`, else asked for (profile, then tier).
+
+    The rows come from `dashboard.agent_choice`, shared with the dashboards; the
+    current default is marked and the cursor starts on it.
+    """
     from jailbee import prompting
-    from jailbee.prompting import Option
+    from jailbee.dashboard import agent_choice
 
     if selection is not None:
         profile, model = parse_selection(selection)
         return build_runner(profile, model)
     offered = catalog(cfg, incus, gcfg)
+    now_profile, now_tier = agent_choice.split_current(cfg.orchestration_view().default_runner)
     profile = prompting.choose_one(
         "agent profile",
-        [
-            Option(
-                name,
-                name,
-                name,
-                "plain Claude" if name == PLAIN else "claude-jb through this LiteLLM profile",
-            )
-            for name in offered
-        ],
+        agent_choice.profile_options(offered, now_profile),
         question="Default agent profile for this repo's containers:",
+        default=now_profile if now_profile in offered else None,
     )
-    tiers = offered[profile]
+    tier_now = now_tier if profile == now_profile else None
     tier = prompting.choose_one(
         "model tier",
-        [
-            Option(_DEFAULT_TIER, "profile default", "default", "the profile's own default tier"),
-            *(Option(t, t, t) for t in tiers),
-        ],
+        agent_choice.tier_options(offered[profile], tier_now),
         question=f"Model tier for {profile}:",
         always_ask=True,
+        default=tier_now or agent_choice.DEFAULT_TIER,
     )
     return build_runner(profile, tier or None)
 
