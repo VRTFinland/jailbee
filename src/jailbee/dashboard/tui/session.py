@@ -544,6 +544,9 @@ class DashboardSession:
         self.client = startup.client
         self.jobs = JobRunner()
         self._services_relist_queued: set[str] = set()
+        # Bumped whenever a container's service list is opened afresh, so a
+        # listing that started before it can tell it is older than what shows.
+        self._services_generation: dict[str, int] = {}
         view_state = startup.view_state
         self.enabled: tuple[str, ...] | None = view_state.columns
         self.folded: frozenset[str] = view_state.folded
@@ -2577,7 +2580,7 @@ class DashboardSession:
                 if not result.ok:
                     raise ValueError(result.message)
                 return dact.parse_service_rows(result.stdout)
-            except (RouteError, ValueError) as exc:
+            except Exception as exc:  # a job thread must never die with its busy mark set
                 return str(exc)
 
         return ls
@@ -2593,6 +2596,7 @@ class DashboardSession:
         if not rows:
             self.set_notice(f"No services in '{container}'")
             return None
+        self._services_generation[container] = self._services_generation.get(container, 0) + 1
         return dact.services_picker(container, rows)
 
     def _services_overlay(self, container: str) -> tuple[Picker, Picker] | None:
@@ -2622,21 +2626,27 @@ class DashboardSession:
         ls = self._service_ls(container)
         if ls is None:
             return
+        generation = self._services_generation.get(container, 0)
         self.jobs.call(
             key,
             "refreshing services…",
             ls,
-            lambda rows: self._apply_refreshed_services(container, rows),
+            lambda rows: self._apply_refreshed_services(container, rows, generation),
         )
 
     def _apply_refreshed_services(
-        self, container: str, rows: tuple[dact.ServiceRow, ...] | str
+        self, container: str, rows: tuple[dact.ServiceRow, ...] | str, generation: int
     ) -> None:
         queued = container in self._services_relist_queued
         self._services_relist_queued.discard(container)
         # The user may have moved on while the listing ran: look again now.
         current = self._services_overlay(container)
-        if current is not None and not isinstance(rows, str) and rows:
+        if generation != self._services_generation.get(container, 0):
+            current = None  # a fresher list was opened meanwhile; this one is older
+        if current is not None and isinstance(rows, str):
+            if not queued:  # a queued re-run reports its own outcome
+                self.set_notice(f"could not list services: {rows}", seconds=FAILURE_NOTICE_SECONDS)
+        elif current is not None and not isinstance(rows, str) and rows:
             overlay, shown = current
             fresh = dact.services_picker(container, rows)
             start = max(0, min(shown.start_index, len(fresh.entries) - 1))
