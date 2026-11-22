@@ -1366,7 +1366,7 @@ def test_unbound_orchestrator_with_pr_state_closes_an_own_repo_pr(rig, mocker):
     replies = []
     publishing.settle(ctx, lambda ref, out: replies.append(out))
     assert replies[0].state == "done", replies[0].detail
-    # Only the PR lock is relaxed; the repository lock stays (#144 ticket 31).
+    # Only the PR lock is relaxed; the repository lock stays.
     assert seen == {"foreign": False, "foreign_pr": True}
 
 
@@ -1443,7 +1443,6 @@ def test_state_policy_refuses_a_state_change_without_a_pr_number(rig, mocker):
     still refuses it on its own, since an unbound target would otherwise resolve."""
     ctx = rig[0]
     mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
-    ctx.incus.config_get_checked.return_value = None
     check = publishing._review_policy(
         PublishRights(pr_state=True), 1, ctx.cfg, ctx.incus, ctx.sender.full
     )
