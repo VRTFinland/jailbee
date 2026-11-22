@@ -248,10 +248,10 @@ class DashboardApp(App[int], inherit_bindings=False):
         *,
         failed: bool,
         live: bool = False,
-        on_background: Callable[[], None] | None = None,
+        background: bool = False,
         on_close: Callable[[], None] | None = None,
     ) -> None:
-        screen = OutputScreen(title, text, failed=failed, on_background=on_background)
+        screen = OutputScreen(title, text, failed=failed, background=background)
         self._output_screen = screen if live else None  # only a live screen is ever rewritten
         self.push_screen(screen, None if on_close is None else lambda _result: on_close())
 

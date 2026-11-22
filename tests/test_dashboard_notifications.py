@@ -865,7 +865,7 @@ def test_continue_in_background_allows_hand_offs_and_keeps_the_entry(mocker, tmp
     mocker.patch.object(tsession, "_run_cli_foreground", return_value=0)
     session, terminal = _one_repo(mocker, tmp_path, defer=True)
     session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
-    on_background = terminal.modal[0]
+    on_background = terminal.modal
 
     on_background()
 
@@ -881,7 +881,7 @@ def test_closing_the_modal_of_a_running_critical_action_continues_it_in_backgrou
     session, terminal = _one_repo(mocker, tmp_path, defer=True)
     session.run_dashboard_command("alpha-a", "container", ["git", "pull", "alpha-a"])
 
-    terminal.modal[1]()  # Esc / Enter
+    terminal.modal()  # Esc / Enter
 
     (entry,) = _entries(session)
     assert not entry.foreground and entry.state == "running"
@@ -904,7 +904,7 @@ def test_a_critical_action_sent_to_background_pops_no_output_when_it_ends(mocker
     _children(mocker, failing=("alpha-a",))
     session, terminal = _one_repo(mocker, tmp_path, defer=True)
     session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
-    terminal.modal[0]()
+    terminal.modal()
 
     terminal.finish_pending()
 
@@ -935,14 +935,14 @@ def test_two_critical_actions_each_get_an_entry_and_the_block_holds_while_any_is
 
     assert len(_entries(session)) == 2
     assert len(terminal.shown) == 1  # one modal at a time
-    terminal.modal[0]()  # the first goes to the background; the second's modal opens
+    terminal.modal()  # the first goes to the background; the second's modal opens
     assert [t for t, _, _ in terminal.shown] == [
         "jailbee merge alpha-a",
         "jailbee git pull alpha-a",
     ]
     assert _hand_off_attempt(session) is None  # the second is still in the foreground
 
-    terminal.modal[0]()
+    terminal.modal()
 
     assert _hand_off_attempt(session) == 0
 
@@ -974,7 +974,7 @@ def test_pilot_a_critical_action_opens_its_modal_and_the_result_stays_until_clos
     screen, text = seen[0]
     assert isinstance(screen, pm.OutputScreen)
     assert text == "output of jailbee merge alpha-a\n"
-    assert "b continues in the background" in run.screens[1]
+    assert "b, Enter or Esc continues in the background" in run.screens[1]
     assert not isinstance(seen[1], pm.OutputScreen)  # closed by the user
     (entry,) = list(run.app.session.queue)
     assert entry.state == "done" and not entry.foreground

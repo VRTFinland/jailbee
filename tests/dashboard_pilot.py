@@ -626,11 +626,11 @@ class BareTerminal:
             done(drunner.run_actions(runs, run=subprocess_runner))
 
     def show_output(  # type: ignore[no-untyped-def]
-        self, title, text, *, failed, live=False, on_background=None, on_close=None
+        self, title, text, *, failed, live=False, background=False, on_close=None
     ):
         self.shown = [*getattr(self, "shown", []), (title, text, failed)]
-        # The latest modal's own buttons: "continue in background" and the close.
-        self.modal = (on_background, on_close)
+        # Closing the latest modal: what "continue in background" and Esc both do.
+        self.modal = on_close
 
     def update_output(self, text):  # type: ignore[no-untyped-def]
         self.updated = [*getattr(self, "updated", []), text]

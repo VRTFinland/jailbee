@@ -10,7 +10,6 @@ captured output.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any, ClassVar
 
 from rich.text import Text
@@ -241,12 +240,12 @@ class OutputScreen(ModalScreen[None]):
         text: str,
         *,
         failed: bool = False,
-        on_background: Callable[[], None] | None = None,
+        background: bool = False,
     ) -> None:
         super().__init__()
         self.title_text = title
         self.text = text
-        self.on_background = on_background
+        self.background = background
         if failed:
             self.add_class("failed")
 
@@ -256,8 +255,8 @@ class OutputScreen(ModalScreen[None]):
             with VerticalScroll():
                 yield Static(Text.from_ansi(self.text), id="captured", markup=False)
             hint = "Up/Down scroll, Enter or Esc returns"
-            if self.on_background is not None:
-                hint = "Up/Down scroll, b continues in the background, Enter or Esc returns"
+            if self.background:
+                hint = "Up/Down scroll, b, Enter or Esc continues in the background"
             yield Static(hint, classes="hint", markup=False)
 
     def set_text(self, text: str) -> None:
@@ -275,10 +274,9 @@ class OutputScreen(ModalScreen[None]):
         self.dismiss(None)
 
     def action_background(self) -> None:
-        """ "Continue in background": hand the action to the queue and leave."""
-        if self.on_background is not None:
-            self.on_background()
-        self.dismiss(None)
+        """Continue in background: leave; the owner of the screen sees the close."""
+        if self.background:
+            self.dismiss(None)
 
 
 def modal_for(prompt: Prompt) -> PromptModal:

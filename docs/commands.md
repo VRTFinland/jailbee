@@ -736,8 +736,8 @@ and keeps drawing while it runs; the status line names the running command.
   expanded live screen, so a conflict, a question or a result is not missed.
   While one runs in the foreground, every terminal hand-off (shell, tmux, IDE,
   `config edit`, the command line's attach verbs, the outbox publish) is refused
-  with a notice that says why. `b` in the modal (`continue in the background`)
-  or closing it with Enter or Esc turns it into an ordinary running entry and
+  with a notice that says why. `b` in the modal (`continue in the background`),
+  Enter or Esc turns it into an ordinary running entry and
   hand-offs work again; it then shows ⚠ in the badge if it fails or asks a
   question. When the action ends inside the modal, its final output stays on
   the screen until you close it. Several critical actions each get an entry,

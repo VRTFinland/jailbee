@@ -409,14 +409,14 @@ class Terminal(Protocol):
         *,
         failed: bool,
         live: bool = False,
-        on_background: Callable[[], None] | None = None,
+        background: bool = False,
         on_close: Callable[[], None] | None = None,
     ) -> None:
         """Show an action's captured ``text`` until the user dismisses it.
 
         ``live``: :meth:`update_output` may replace the text while it stays open.
-        ``on_background``: when given, the screen offers "continue in background" and
-        calls it on that key; ``on_close`` is called whenever the screen goes away.
+        ``background``: the screen offers "continue in background" (key ``b``; closing it
+        means the same). ``on_close`` is called whenever the screen goes away.
         """
         ...
 
@@ -986,7 +986,7 @@ class DashboardSession:
             entry.output or (QUEUE_NO_OUTPUT_YET if not entry.finished else ""),
             failed=entry.state == "failed",
             live=True,
-            on_background=lambda: self._modal_closed(entry.id),
+            background=True,
             on_close=lambda: self._modal_closed(entry.id),
         )
 
