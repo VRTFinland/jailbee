@@ -68,7 +68,7 @@ def _notes(mocker: MockerFixture, *actions: str) -> None:
     )
 
 
-def _run(roots, *, force=False, dry_run=False, docker_seed=True):
+def _run(roots, *, force=False, dry_run=False, docker_seed=True, jobs=1):
     return run_upgrade_all(
         roots,
         Incus(),
@@ -78,6 +78,7 @@ def _run(roots, *, force=False, dry_run=False, docker_seed=True):
         version=VERSION,
         now=NOW,
         docker_seed=docker_seed,
+        jobs=jobs,
     )
 
 
@@ -429,3 +430,131 @@ def test_plan_carries_the_reasons(make_cfg, tmp_path, mocker) -> None:
 
     assert plan.apply and not plan.build
     assert plan.reasons == ["r"]
+
+
+def test_jobs_two_builds_distinct_aliases_concurrently(make_cfg, tmp_path, mocker, fakes) -> None:
+    import threading
+
+    build, _ = fakes
+    # Both builds must be inside build_golden_image at once to pass the barrier;
+    # a serial run times out and raises BrokenBarrierError.
+    barrier = threading.Barrier(2, timeout=5)
+    build.side_effect = lambda cfg, incus: barrier.wait()
+    a, b = _cfg(make_cfg, tmp_path, "aa"), _cfg(make_cfg, tmp_path, "bb")
+    _load(mocker, {a.repo_root: a, b.repo_root: b})
+
+    results = _run([a.repo_root, b.repo_root], force=True, jobs=2)
+
+    assert [r.build for r in results] == ["built", "built"]
+    assert [r.apply for r in results] == ["applied", "applied"]
+    assert all(r.ok for r in results)
+
+
+def test_jobs_one_builds_serially(make_cfg, tmp_path, mocker, fakes) -> None:
+    import threading
+
+    build, _ = fakes
+    running = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def slow(cfg, incus):
+        nonlocal running, peak
+        with lock:
+            running += 1
+            peak = max(peak, running)
+        import time
+
+        time.sleep(0.05)
+        with lock:
+            running -= 1
+
+    build.side_effect = slow
+    a, b = _cfg(make_cfg, tmp_path, "aa"), _cfg(make_cfg, tmp_path, "bb")
+    _load(mocker, {a.repo_root: a, b.repo_root: b})
+
+    _run([a.repo_root, b.repo_root], force=True)
+
+    assert peak == 1
+
+
+def test_jobs_failure_is_reported_and_others_complete(make_cfg, tmp_path, mocker, fakes) -> None:
+    build, apply = fakes
+
+    def fake_build(cfg, incus):
+        if cfg.golden.alias == "aa-base":
+            raise IncusError("apt exploded")
+
+    build.side_effect = fake_build
+    cfgs = [_cfg(make_cfg, tmp_path, p) for p in ("aa", "bb", "cc")]
+    _load(mocker, {c.repo_root: c for c in cfgs})
+
+    results = _run([c.repo_root for c in cfgs], force=True, jobs=3)
+
+    assert [r.build for r in results] == ["failed", "built", "built"]
+    assert results[0].apply == "blocked"
+    assert "apt exploded" in (results[0].error or "")
+    assert [r.apply for r in results[1:]] == ["applied", "applied"]
+    assert [r.ok for r in results] == [False, True, True]
+    assert apply.call_count == 2
+    with Session(get_engine()) as session:
+        assert not load_or_backfill(session, "aa", VERSION, now=NOW)["base_build"].observed
+        assert load_or_backfill(session, "bb", VERSION, now=NOW)["base_build"].observed
+
+
+def test_jobs_shared_alias_is_built_once(make_cfg, tmp_path, mocker, fakes) -> None:
+    build, _ = fakes
+    a = _cfg(make_cfg, tmp_path, "aa", alias="scratch-base")
+    b = _cfg(make_cfg, tmp_path, "bb", alias="scratch-base")
+    _load(mocker, {a.repo_root: a, b.repo_root: b})
+
+    results = _run([a.repo_root, b.repo_root], force=True, jobs=2)
+
+    assert build.call_count == 1
+    assert [r.build for r in results] == ["built", "shared"]
+
+
+def test_jobs_shared_alias_failure_marks_the_sharing_repo(
+    make_cfg, tmp_path, mocker, fakes
+) -> None:
+    build, _ = fakes
+    build.side_effect = IncusError("boom")
+    a = _cfg(make_cfg, tmp_path, "aa", alias="scratch-base")
+    b = _cfg(make_cfg, tmp_path, "bb", alias="scratch-base")
+    _load(mocker, {a.repo_root: a, b.repo_root: b})
+
+    results = _run([a.repo_root, b.repo_root], force=True, jobs=2)
+
+    assert [r.build for r in results] == ["failed", "failed"]
+    assert "boom" in (results[0].error or "")
+    assert "failed to build earlier" in (results[1].error or "")
+
+
+def test_jobs_output_lines_carry_the_alias_prefix(
+    make_cfg, tmp_path, mocker, fakes, capsys
+) -> None:
+    from jailbee.tui import info_plain
+
+    build, _ = fakes
+    build.side_effect = lambda cfg, incus: info_plain(f"step of {cfg.golden.alias}\nsecond line")
+    a, b = _cfg(make_cfg, tmp_path, "aa"), _cfg(make_cfg, tmp_path, "bb")
+    _load(mocker, {a.repo_root: a, b.repo_root: b})
+
+    _run([a.repo_root, b.repo_root], force=True, jobs=2)
+
+    lines = capsys.readouterr().out.splitlines()
+    assert "[aa-base] step of aa-base" in lines
+    assert "[aa-base] second line" in lines
+    assert "[bb-base] step of bb-base" in lines
+    # Output is back to normal once the builds are done.
+    assert any(line.startswith("== ") and "aa" in line for line in lines)
+
+
+def test_jobs_dry_run_builds_nothing(make_cfg, tmp_path, mocker, fakes) -> None:
+    build, _ = fakes
+    a = _cfg(make_cfg, tmp_path, "aa")
+    _load(mocker, {a.repo_root: a})
+
+    _run([a.repo_root], force=True, dry_run=True, jobs=4)
+
+    assert build.call_count == 0

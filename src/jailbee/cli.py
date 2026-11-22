@@ -2158,6 +2158,15 @@ def upgrade_cmd(
     no_docker_seed: Annotated[
         bool, typer.Option("--no-docker-seed", help="Skip Docker image seeding in every repo.")
     ] = False,
+    jobs: Annotated[
+        int,
+        typer.Option(
+            "--jobs",
+            "-j",
+            min=1,
+            help="Build up to N base images at once (default 1: one after another).",
+        ),
+    ] = 1,
 ) -> None:
     """Run `base build` and `apply` in every registered repo, restarting nothing.
 
@@ -2183,6 +2192,7 @@ def upgrade_cmd(
         version=__version__,
         now=_now(),
         docker_seed=not no_docker_seed,
+        jobs=jobs,
     )
     if not all(r.ok for r in results):
         raise typer.Exit(1)
