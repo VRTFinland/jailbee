@@ -42,6 +42,7 @@ _SNAPSHOT_LS = ["snapshot", "ls", "alpha-x", "-o", "json", "--fields", "name,cre
 _TO_SNAPSHOT_ROW = ["j", "j", "enter"]
 _THREE_SNAPS = json.dumps([{"name": n, "created": "2026-09-29T10:00:00Z"} for n in ("a", "b", "c")])
 _CONTAINER_VERB_CASES = sorted(tsession.dact.CONTAINER_VERBS)
+_SERVICE_START_AT = 0  # index of "start" in a stopped service's action picker
 _VANISH_WHEN = pytest.mark.parametrize("when", ["frame-before-enter", "same-read-as-enter"])
 
 
@@ -1475,6 +1476,41 @@ def test_services_direct_table_key_opens_picker_without_toggling_details(mocker,
     assert [p.purpose for p in run.of_type(tsession.Picker)] == ["container-services"]
     assert run.last.show_details == run.trace[0].show_details
     listing.assert_called_once()
+
+
+def test_a_service_operation_lands_on_the_list_and_a_second_one_starts(mocker, tmp_path):
+    group = every_verb_group(tmp_path)
+    menu = tmenu.open_menu([group], "alpha-x")
+    entries = tmenu.menu_entries(menu)
+    direct_key = next(
+        key
+        for item, key in zip(entries, tmenu.menu_hotkeys(entries), strict=True)
+        if isinstance(item, tuple) and item[1] == tsession.dact.SERVICES
+    )
+    rows = [
+        {"name": n, "state": "stopped", "window": None, "since": None, "detail": ""}
+        for n in ("db", "web")
+    ]
+    mocker.patch.object(
+        tsession.da,
+        "run_cli_quiet",
+        return_value=tsession.da.CliResult(True, "", json.dumps(rows)),
+    )
+    child = mocker.patch.object(tsession.subprocess, "run")
+    child.return_value.returncode = 0
+    patch_pause(mocker)
+    # db's action picker → "start"; the list returns; web's action picker → "start"
+    start = ["enter", *["j"] * _SERVICE_START_AT, "enter"]
+    run = drive(mocker, ["j", direct_key, *start, "j", *start], [group])
+    assert run.rc == 0
+    purposes = [p.purpose for p in run.of_type(tsession.Picker)]
+    assert purposes.count("container-services") >= 3  # opened, back after db, back after web
+    started = [
+        call.args[0][3:5]
+        for call in child.call_args_list
+        if call.args[0][:3] == ["jailbee", "service", "start"]
+    ]
+    assert started == [["alpha-x", "db"], ["alpha-x", "web"]]
 
 
 def test_an_orphan_row_opens_its_own_small_menu(mocker):

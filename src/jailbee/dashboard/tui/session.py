@@ -543,6 +543,7 @@ class DashboardSession:
         self.engine = startup.engine
         self.client = startup.client
         self.jobs = JobRunner()
+        self._services_relist_queued: set[str] = set()
         view_state = startup.view_state
         self.enabled: tuple[str, ...] | None = view_state.columns
         self.folded: frozenset[str] = view_state.folded
@@ -2552,7 +2553,13 @@ class DashboardSession:
             return None
         return dact.mounts_picker(container, entries)
 
-    def open_services(self, container: str) -> Picker | None:
+    def _service_ls(self, container: str) -> Callable[[], tuple[dact.ServiceRow, ...] | str] | None:
+        """The blocking `service ls` of ``container``, ready to run on any thread.
+
+        Resolved here, on the UI thread (a notice and None when the container
+        is gone); the returned call touches no session state and gives the rows,
+        or the failure as a string.
+        """
         repo = self.repo_for(container, "container")
         found = self._listed_container(container)
         if repo is None or found is None or found[1].state != "Running":
@@ -2561,40 +2568,85 @@ class DashboardSession:
         argv = dact.addressed(
             dact.service_ls_argv(container), repo.flags(), transport=self.transport
         )
-        try:
-            check_dashboard_command(argv, self.ssh_policy, transport=self.transport)
-            result = da.run_cli_quiet(argv, cwd=repo.cwd())
-            if not result.ok:
-                raise ValueError(result.message)
-            rows = dact.parse_service_rows(result.stdout)
-        except (RouteError, ValueError) as exc:
-            self.set_notice(f"could not list services: {exc}", seconds=FAILURE_NOTICE_SECONDS)
+        policy, transport, cwd = self.ssh_policy, self.transport, repo.cwd()
+
+        def ls() -> tuple[dact.ServiceRow, ...] | str:
+            try:
+                check_dashboard_command(argv, policy, transport=transport)
+                result = da.run_cli_quiet(argv, cwd=cwd)
+                if not result.ok:
+                    raise ValueError(result.message)
+                return dact.parse_service_rows(result.stdout)
+            except (RouteError, ValueError) as exc:
+                return str(exc)
+
+        return ls
+
+    def open_services(self, container: str) -> Picker | None:
+        ls = self._service_ls(container)
+        if ls is None:
+            return None
+        rows = ls()
+        if isinstance(rows, str):
+            self.set_notice(f"could not list services: {rows}", seconds=FAILURE_NOTICE_SECONDS)
             return None
         if not rows:
             self.set_notice(f"No services in '{container}'")
             return None
         return dact.services_picker(container, rows)
 
+    def _services_overlay(self, container: str) -> tuple[Picker, Picker] | None:
+        """The open overlay and the service list it shows, if they are container's."""
+        overlay = self.overlay
+        if not isinstance(overlay, Picker) or overlay.target != container:
+            return None
+        shown = overlay.back if overlay.purpose == "container-service-action" else overlay
+        if not isinstance(shown, Picker) or shown.purpose != "container-services":
+            return None
+        return overlay, shown
+
     def _refresh_services(self, container: str) -> None:
         """Re-list ``container``'s services into an open service picker, if one is showing.
 
         Runs when a service operation ends. The cursor stays on the same row;
         an action picker keeps its place and gets the fresh list as its back.
+        `service ls` can take up to 60 s, so it runs on a job thread; actions
+        ending while one is in flight only queue a single further re-list.
         """
-        overlay = self.overlay
-        if not isinstance(overlay, Picker) or overlay.target != container:
+        if self._services_overlay(container) is None:
             return
-        shown = overlay.back if overlay.purpose == "container-service-action" else overlay
-        if not isinstance(shown, Picker) or shown.purpose != "container-services":
+        key = f"services:{container}"
+        if self.jobs.busy(key):
+            self._services_relist_queued.add(container)
             return
-        fresh = self.open_services(container)
-        if fresh is None:
+        ls = self._service_ls(container)
+        if ls is None:
             return
-        fresh = replace(fresh, start_index=max(0, min(shown.start_index, len(fresh.entries) - 1)))
-        if shown is overlay:
-            self.overlay = fresh
-        else:
-            self.overlay = replace(overlay, back=fresh)
+        self.jobs.call(
+            key,
+            "refreshing services…",
+            ls,
+            lambda rows: self._apply_refreshed_services(container, rows),
+        )
+
+    def _apply_refreshed_services(
+        self, container: str, rows: tuple[dact.ServiceRow, ...] | str
+    ) -> None:
+        queued = container in self._services_relist_queued
+        self._services_relist_queued.discard(container)
+        # The user may have moved on while the listing ran: look again now.
+        current = self._services_overlay(container)
+        if current is not None and not isinstance(rows, str) and rows:
+            overlay, shown = current
+            fresh = dact.services_picker(container, rows)
+            start = max(0, min(shown.start_index, len(fresh.entries) - 1))
+            fresh = replace(fresh, start_index=start)
+            if shown is overlay:
+                self.overlay = fresh
+            else:
+                self.overlay = replace(overlay, back=fresh)
+        if queued:
+            self._refresh_services(container)
 
     def open_autostart_rerun(self, container: str) -> Picker | None:
         """Capture the public listing; no worker or config probes in the frontend."""
