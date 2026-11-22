@@ -254,7 +254,9 @@ def submit(name: DraftArg = None, kind: KindOpt = None) -> None:
 @outbox_app.command("discard")
 def discard(
     target: TargetArg = None,
-    draft: Annotated[str | None, typer.Option("--draft", help="Draft batch name to discard.")] = None,
+    draft: Annotated[
+        str | None, typer.Option("--draft", help="Draft batch name to discard.")
+    ] = None,
     kind: KindOpt = None,
 ) -> None:
     """Remove a staged proposal (issue/NAME or pr/NAME), or a draft with --draft NAME."""

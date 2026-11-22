@@ -180,7 +180,9 @@ def test_issue_draft_discard_goes_over_the_socket(home, broker):
     assert result.exit_code == 0, result.output
     assert broker.draft_state("b") is None
     assert not (home / ".jailbee").exists()
-    assert invoke("discard", "--draft", "b", "--kind", "issue").exit_code == 2  # nothing left to discard
+    assert (
+        invoke("discard", "--draft", "b", "--kind", "issue").exit_code == 2
+    )  # nothing left to discard
     assert broker.proposals() == []
 
 
