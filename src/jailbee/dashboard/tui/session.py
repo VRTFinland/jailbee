@@ -939,7 +939,7 @@ class DashboardSession:
 
     def queue_job_picker(self, target: str) -> Picker:
         """A snapshot job's own action (its log), or the list again once it is gone."""
-        job = next((j for j in self.queue.jobs if j.target == target), None)
+        job = self.queue.job(target)
         if job is None:
             return self.queue_picker()
         return Picker(
@@ -958,14 +958,14 @@ class DashboardSession:
     def _queue_chosen(self, picker: Picker, entry: PickerEntry) -> Overlay | None:
         if picker.purpose == "queue-job":
             target = picker.carry[0]
-            job = next((j for j in self.queue.jobs if j.target == target), None)
+            job = self.queue.job(target)
             if job is None:
                 return self.queue_picker()
             self.dispatch(target, "job log --follow" if job.running else "job log")
             return self.queue_job_picker(target)
         if picker.purpose == "queue":
             if entry.value.startswith(QUEUE_JOB_PREFIX):
-                return self.queue_job_picker(entry.value[len(QUEUE_JOB_PREFIX) :])
+                return self.queue_job_picker(entry.value.removeprefix(QUEUE_JOB_PREFIX))
             if entry.value == QUEUE_DISMISS_FINISHED:
                 self.queue.dismiss_finished()
                 return self.queue_picker()

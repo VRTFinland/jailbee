@@ -58,7 +58,11 @@ class JobRow:
     target: str  # the container
     phase: str  # the phase label the JOB column shows, e.g. "create"
     failed: bool  # the job ended in failure or its worker died
-    running: bool  # a live job: its log can be followed
+
+    @property
+    def running(self) -> bool:
+        """A live job: its log can be followed."""
+        return not self.failed
 
 
 def job_rows(groups: Iterable[RepoGroup]) -> tuple[JobRow, ...]:
@@ -68,12 +72,13 @@ def job_rows(groups: Iterable[RepoGroup]) -> tuple[JobRow, ...]:
         for c in group.containers:
             if c.job_phase is None or c.job_kind not in LIFECYCLE_JOB_KINDS:
                 continue
+            # Dead = a terminal phase, or a worker that vanished mid-phase.
             if c.job_pid is None:
                 failed = c.job_phase in background.TERMINAL_PHASES
             else:
                 failed = background.clearable(c.job_phase, c.job_pid)
             label = background.job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind)
-            rows.append(JobRow(c.name, label or c.job_phase, failed, not failed))
+            rows.append(JobRow(c.name, label or c.job_phase, failed))
     return tuple(rows)
 
 
@@ -92,6 +97,9 @@ class NotificationQueue:
         self._entries: dict[int, QueueEntry] = {}
         self._next_id = 1
         self.jobs: tuple[JobRow, ...] = ()
+
+    def job(self, target: str) -> JobRow | None:
+        return next((j for j in self.jobs if j.target == target), None)
 
     def set_jobs(self, jobs: tuple[JobRow, ...]) -> None:
         """Replace the snapshot's job rows; a job the snapshot dropped is gone."""
