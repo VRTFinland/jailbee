@@ -1198,8 +1198,8 @@ def test_repo_network_menu_is_a_submenu_of_its_own_level():
     menu = tmenu.open_repo_menu([group], "alpha", frozenset())
     assert menu is not None
     network = dmenus.MenuGroup("Network →", (("Egress…", "net egress ls"),))
-    assert menu.actions[4] == network
-    assert tmenu.menu_entries(menu)[4] == network
+    assert menu.actions[5] == network
+    assert tmenu.menu_entries(menu)[5] == network
     assert tmenu.menu_entries(menu, "Network →") == network.actions
     assert tmenu.menu_entries(menu, "No such group →") == ()
     assert tmenu.menu_title(menu, None) == "alpha →"

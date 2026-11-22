@@ -35,6 +35,7 @@ def test_repo_header_enter_opens_menu_without_folding(mocker, tmp_path):
         "New from PR…",
         "Credential group…",
         "Accounts…",
+        "Agent…",
         "Network →",
         "Apply config…",
         "Diagnostics →",

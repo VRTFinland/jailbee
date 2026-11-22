@@ -50,7 +50,8 @@ from jailbee.update_check import UpdateNotice
 # 25 adds AgentSummary.session_ids for the web dashboard's session attribution.
 # 26 adds GitStatus.sync_target (the resolved comparison target), the
 # host-branch ↑/↓ host_ahead_count/host_behind_count and host_branch.
-PROTOCOL = 26
+# 27 adds RepoGroup.agent_label, the repo's effective agent as `profile/model`.
+PROTOCOL = 27
 
 
 class ProtocolError(ValueError):

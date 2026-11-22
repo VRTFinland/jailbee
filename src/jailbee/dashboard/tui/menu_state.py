@@ -185,6 +185,8 @@ def open_repo_menu(
             actions.append(("Credential group…", "credential-group"))
         if permitted(["account", "ls"], ssh_policy, transport=transport):
             actions.append(("Accounts…", "accounts"))
+        if permitted(dact.agent_use_argv(), ssh_policy, transport=transport):
+            actions.append(("Agent…", dact.REPO_AGENT))
         if permitted(["net", "egress", "ls", "--repo"], ssh_policy, transport=transport):
             actions.append(MenuGroup("Network →", (("Egress…", "net egress ls"),)))
         if group.sent_count and permitted(
@@ -320,6 +322,7 @@ _MENU_KEYS: dict[str, str] = {
     "new": "n",
     "new-pr": "p",
     "accounts": "a",
+    dact.REPO_AGENT: "g",
     dact.REPO_APPLY: "y",
     dact.REPO_BASE_BUILD: "b",
     dact.REPO_DISMISS_ADVISORIES: "i",

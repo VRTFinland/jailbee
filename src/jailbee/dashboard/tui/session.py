@@ -3687,6 +3687,9 @@ class DashboardSession:
                 self.overlay = self.load_accounts(target)
             elif verb == dact.REPO_APPLY:
                 self.overlay = dact.apply_picker(target)
+            elif verb == dact.REPO_AGENT:
+                # The command's own two questions are the picker (prompt channel).
+                self.run_dashboard_command(target, "repo", dact.agent_use_argv())
             elif verb == dact.REPO_BASE_BUILD:
                 self.run_dashboard_command(target, "repo", dact.base_build_argv())
             elif verb == dact.REPO_DISMISS_ADVISORIES:

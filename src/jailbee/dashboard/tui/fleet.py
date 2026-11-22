@@ -299,6 +299,8 @@ def repo_heading(
     rest = f" {group.prefix}"
     if group.checkout:
         rest += f" [{group.checkout}]"
+    if group.agent_label:
+        rest += f" {group.agent_label}"
     rest += f"  ({len(group.containers)})"
     if group.repo_root is None:
         rest += "  (orphan)"
