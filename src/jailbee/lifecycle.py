@@ -528,6 +528,8 @@ def _sync_inputs(
     running: set[str],
     parent_heads: Mapping[str, ParentHead],
     last_imports: Mapping[str, str],
+    *,
+    heads_known: bool = True,
 ) -> SyncInputs:
     """What ``c``'s sync target is chosen from.
 
@@ -546,6 +548,7 @@ def _sync_inputs(
         parent_head=parent_heads.get(parent) if parent in running else None,
         last_import=last_imports.get(c.name),
         fork_pin_ref=fork_pin_ref_of(_repo_short(c, c.name)) if c.fork_of else None,
+        heads_known=heads_known,
     )
 
 
@@ -570,7 +573,13 @@ def _sync_targets(
         host = host_by_name.get(c.name)
         if host is None or c.repo is None:
             continue
-        inputs = _sync_inputs(c, running or set(), parent_heads or {}, last_imports or {})
+        inputs = _sync_inputs(
+            c,
+            running or set(),
+            parent_heads or {},
+            last_imports or {},
+            heads_known=parent_heads is not None,
+        )
         key = (c.repo, inputs, host)
         if key not in cache:
             cache[key] = resolve_sync_target(roots.get(c.repo), inputs, host)
@@ -3997,6 +4006,11 @@ def sync_target_text(status: GitStatus | None) -> str:
         return f"vs {target.label} head"
     if target.kind == "parent":
         return f"vs parent {target.label}"
+    if target.fallback and target.parent is not None and target.parent_unknown:
+        return (
+            f"vs host branch {target.label} "
+            f"(parent {target.parent} head unknown outside the dashboard)"
+        )
     if target.fallback and target.parent is not None:
         return f"vs host branch {target.label} (parent {target.parent} not running or not seen yet)"
     if target.fallback:

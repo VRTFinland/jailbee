@@ -104,14 +104,25 @@ def refresh_due(
     return do_base, do_git
 
 
-def _running_heads(groups: list[RepoGroup], seen_at: float) -> dict[str, ParentHead]:
-    """Every running container's probed HEAD, stamped with the pass time."""
-    return {
-        c.name: ParentHead(c.git_status.head_sha, seen_at)
-        for g in groups
-        for c in g.containers
-        if c.state == "Running" and c.git_status is not None and c.git_status.head_sha
-    }
+def _running_heads(
+    groups: list[RepoGroup], seen_at: float, previous: dict[str, ParentHead]
+) -> dict[str, ParentHead]:
+    """Every running container's probed HEAD, stamped with the pass time.
+
+    A running container whose probe failed keeps its previous entry (and its
+    older stamp): the card's age keeps growing instead of the children
+    flapping to the host-branch fallback for one pass.
+    """
+    heads: dict[str, ParentHead] = {}
+    for g in groups:
+        for c in g.containers:
+            if c.state != "Running":
+                continue
+            if c.git_status is not None and c.git_status.head_sha:
+                heads[c.name] = ParentHead(c.git_status.head_sha, seen_at)
+            elif c.name in previous:
+                heads[c.name] = previous[c.name]
+    return heads
 
 
 class Gatherer:
@@ -219,7 +230,9 @@ class Gatherer:
                 self._failing = None
             self._prev = groups
             if do_git:
-                self._heads = _running_heads(groups, self._wall_clock().timestamp())
+                self._heads = _running_heads(
+                    groups, self._wall_clock().timestamp(), self._heads
+                )
             self._seq += 1
             result = Snapshot(
                 self._seq,
