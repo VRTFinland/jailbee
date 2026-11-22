@@ -188,6 +188,8 @@ class _Bucket:
     attempts: deque[float]
     failures: int = 0
     blocked_until: float = 0.0
+    in_flight: int = 0
+    """Admitted attempts not yet settled by `failed` or `reset`."""
 
 
 class RateLimiter:
@@ -196,14 +198,15 @@ class RateLimiter:
     At most ``max_attempts`` attempts per sliding ``window`` seconds. On top of
     that, from the ``backoff_threshold``-th consecutive failure on, the next
     attempt waits ``backoff_base`` seconds, doubling with each further failure
-    up to ``backoff_cap``; a success resets it. Attempts refused by either
+    up to ``backoff_cap``; a login success by any method resets every
+    bucket's backoff (`reset`). Attempts refused by either
     limit are not counted and must not be checked, so they buy no guesses.
     An admitted attempt holds the bucket for the wait its failure would earn
-    until ``failed`` or ``succeeded`` settles it, so parallel requests cannot
+    until ``failed`` or ``reset`` settles it, so parallel requests cannot
     share one opening.
 
-    Each bucket counts on its own, so guessing one method never locks out
-    another. Rotation already makes each PIN guess a one-in-a-million shot;
+    Each bucket counts failures on its own, so a few typos on one method cost
+    another nothing. Rotation already makes each PIN guess a one-in-a-million shot;
     this bounds how many such shots a month allows. State lives in memory: a
     server restart (an upgrade, under systemd) starts every bucket afresh.
     """
@@ -244,6 +247,7 @@ class RateLimiter:
             if wait > 0:
                 return wait
             attempts.append(now)
+            b.in_flight += 1
             # Charge the wait this attempt would earn by failing up front, so
             # a parallel attempt cannot slip in while this one is checked.
             b.blocked_until = now + self._wait_after(b.failures + 1)
@@ -261,14 +265,28 @@ class RateLimiter:
         with self._lock:
             b = self._bucket(bucket)
             b.failures += 1
+            b.in_flight = max(0, b.in_flight - 1)
             wait = self._wait_after(b.failures)
             if wait > 0:
                 b.blocked_until = now + wait
             return wait if wait > self._wait_after(b.failures - 1) else None
 
-    def succeeded(self, bucket: str = "") -> None:
-        """A login by ``bucket`` succeeded: its backoff starts afresh."""
+    def reset(self, settled: str | None = None) -> None:
+        """A login succeeded, by any method: every bucket's backoff starts afresh.
+
+        ``settled`` is the bucket of the attempt that just succeeded, if it
+        has one (links and security keys have none). Buckets are global, not
+        per source, so a guesser can hold every method at its cap; a success
+        the owner can still make must therefore lift them all. Only the
+        failure count and the backoff are cleared: the per-minute window still
+        applies, and a bucket with another attempt still being checked keeps
+        the hold that attempt earned, so a parallel guess cannot slip in.
+        """
         with self._lock:
-            b = self._bucket(bucket)
-            b.failures = 0
-            b.blocked_until = 0.0
+            if settled is not None:
+                b = self._bucket(settled)
+                b.in_flight = max(0, b.in_flight - 1)
+            for b in self._buckets.values():
+                b.failures = 0
+                if b.in_flight == 0:
+                    b.blocked_until = 0.0

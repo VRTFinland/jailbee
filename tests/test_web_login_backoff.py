@@ -17,7 +17,7 @@ import pyotp
 from fastapi.testclient import TestClient
 
 from jailbee.db import get_engine
-from jailbee.web import auth_admin
+from jailbee.web import auth_admin, login_link
 from jailbee.web.app import WebDeps, create_app
 from jailbee.web.auth import PinHolder, RateLimiter
 from tests.web_fakes import FakeClock, FakeSourceFactory, pin_sequence
@@ -184,15 +184,19 @@ def test_totp_backs_off_on_its_own(client: TestClient, pin: PinHolder, clock: Fa
     assert pin_attempt(client, pin.current, device="owner")[0] == 200
 
 
-def test_an_attempt_in_flight_holds_back_a_parallel_one(clock: FakeClock) -> None:
-    """Past the threshold, a second guess sent while the first is still being checked waits."""
+def _parallel_refusal(
+    clock: FakeClock, prior_failures: int, *, escalated: bool = False
+) -> tuple[int, str | None]:
+    """Fail ``prior_failures`` times, then fail once more with a parallel guess mid-check.
+
+    ``escalated`` adds a failure past the threshold and sits out its wait first.
+    """
     parallel: list[tuple[int, str | None]] = []
     holder: dict[str, TestClient] = {}
-
     armed: list[bool] = []
 
     def on_rotate(new: str, why: str) -> None:
-        # Runs inside the first attempt's check: the parallel request arrives now.
+        # Runs inside the armed attempt's check: the parallel request arrives now.
         if armed:
             armed.clear()
             parallel.append(pin_attempt(holder["client"], "000000"))
@@ -206,14 +210,82 @@ def test_an_attempt_in_flight_holds_back_a_parallel_one(clock: FakeClock) -> Non
         pin=pin,
     )
     client = holder["client"] = TestClient(create_app(deps))
-    five_failures(client, pin, clock)
-    fail_pin(client, pin)
-    wait_out(client, pin, clock)
-
+    for _ in range(prior_failures):
+        fail_pin(client, pin)
+    clock.advance(timedelta(seconds=60))  # the minute window is not what holds the parallel one
+    if escalated:
+        fail_pin(client, pin)
+        wait_out(client, pin, clock)
     armed.append(True)
     fail_pin(client, pin)
+    assert len(parallel) == 1
+    return parallel[0]
 
-    assert parallel == [(429, "8")]
+
+def test_an_attempt_in_flight_holds_back_a_parallel_one(clock: FakeClock) -> None:
+    """Past the threshold, a second guess sent while the first is still being checked waits."""
+    assert _parallel_refusal(clock, 5, escalated=True) == (429, "8")
+
+
+def test_a_parallel_attempt_is_held_back_at_the_threshold_boundary(clock: FakeClock) -> None:
+    """At four failures the in-flight attempt would earn the first wait: hold from there."""
+    assert _parallel_refusal(clock, 4) == (429, "2")
+
+
+def test_a_fractional_wait_is_rounded_up_in_retry_after(
+    client: TestClient, pin: PinHolder, clock: FakeClock
+) -> None:
+    for _ in range(5):
+        fail_pin(client, pin)
+    clock.advance(timedelta(milliseconds=500))  # 59.5 s of the minute window left
+
+    assert pin_attempt(client, wrong(pin)) == (429, "60")
+
+
+def test_a_link_login_lifts_the_pin_and_totp_waits(
+    client: TestClient, pin: PinHolder, clock: FakeClock
+) -> None:
+    five_failures(client, pin, clock)
+    fail_pin(client, pin)
+    secret = auth_admin.add_totp_key(get_engine(), "phone", clock=clock).secret
+    totp = pyotp.TOTP(secret)
+    near = {str(totp.at(clock.now + timedelta(seconds=d))) for d in (-30, 0, 30)}
+    bad = next(c for c in (f"{n:06d}" for n in range(1000)) if c not in near)
+    for _ in range(5):
+        client.post("/api/auth", json={"method": "totp", "code": bad, "device_name": "thief"})
+    assert pin_attempt(client, pin.current)[0] == 429
+
+    token = login_link.mint(get_engine(), clock=clock)
+    link = client.post("/api/auth", json={"method": "link", "token": token, "device_name": "owner"})
+    assert link.status_code == 200
+
+    assert pin_attempt(client, pin.current, device="owner")[0] == 200
+    clock.advance(timedelta(seconds=60))  # only the minute window is left on TOTP
+    code = client.post(
+        "/api/auth",
+        json={"method": "totp", "code": totp.at(clock.now), "device_name": "owner"},
+    )
+    assert code.status_code == 200
+
+
+def test_a_pin_login_lifts_the_totp_wait(
+    client: TestClient, pin: PinHolder, clock: FakeClock
+) -> None:
+    secret = auth_admin.add_totp_key(get_engine(), "phone", clock=clock).secret
+    totp = pyotp.TOTP(secret)
+    near = {str(totp.at(clock.now + timedelta(seconds=d))) for d in (-30, 0, 30)}
+    bad = next(c for c in (f"{n:06d}" for n in range(1000)) if c not in near)
+    for _ in range(5):
+        client.post("/api/auth", json={"method": "totp", "code": bad, "device_name": "thief"})
+    clock.advance(timedelta(seconds=60))
+    client.post("/api/auth", json={"method": "totp", "code": bad, "device_name": "thief"})
+    assert pin_attempt(client, pin.current)[0] == 200
+
+    code = client.post(
+        "/api/auth",
+        json={"method": "totp", "code": totp.at(clock.now), "device_name": "owner"},
+    )
+    assert code.status_code == 200
 
 
 def test_the_wait_stays_at_the_cap_however_long_the_run() -> None:
@@ -222,3 +294,39 @@ def test_the_wait_stays_at_the_cap_however_long_the_run() -> None:
         limiter.failed("pin")
 
     assert limiter.check("pin") == 1800.0
+
+
+def test_a_login_by_another_method_keeps_the_hold_on_an_attempt_in_flight(
+    clock: FakeClock,
+) -> None:
+    """A reset must not reopen the bucket of a guess still being checked."""
+    results: list[tuple[int, str | None]] = []
+    holder: dict[str, TestClient] = {}
+    armed: list[bool] = []
+
+    def on_rotate(new: str, why: str) -> None:
+        if armed:
+            armed.clear()
+            token = login_link.mint(get_engine(), clock=clock)
+            link = holder["client"].post(
+                "/api/auth", json={"method": "link", "token": token, "device_name": "owner"}
+            )
+            assert link.status_code == 200
+            results.append(pin_attempt(holder["client"], "000000"))
+
+    pin = PinHolder(generate=pin_sequence(), on_rotate=on_rotate)
+    deps = WebDeps(
+        snapshot_source=FakeSourceFactory(),
+        engine=get_engine(),
+        clock=clock,
+        monotonic=clock.monotonic,
+        pin=pin,
+    )
+    client = holder["client"] = TestClient(create_app(deps))
+    for _ in range(5):
+        fail_pin(client, pin)
+    clock.advance(timedelta(seconds=60))
+    armed.append(True)
+    fail_pin(client, pin)
+
+    assert results == [(429, "4")]
