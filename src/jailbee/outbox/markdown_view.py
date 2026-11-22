@@ -44,6 +44,8 @@ from rich.segment import Segment, Segments
 from rich.style import Style
 from rich.text import Text
 
+from jailbee.hyperlinks import hyperlinks_enabled
+
 # Never wrap narrower than this, however deep the indent: a few columns of
 # text per line is less readable than a long line.
 _MIN_WIDTH = 20
@@ -136,8 +138,12 @@ def _rewrite_links(children: list[Token]) -> list[Token]:
 
 
 def _safe_style(style: Style | None) -> Style | None:
-    """`style` without a link unless the link is one `_link_host` accepts."""
-    if style is not None and style.link and _link_host(style.link) is None:
+    """`style` without a link unless the link is one `_link_host` accepts and links are on."""
+    if (
+        style is not None
+        and style.link
+        and (not hyperlinks_enabled() or _link_host(style.link) is None)
+    ):
         return style.update_link(None)
     return style
 
@@ -178,7 +184,7 @@ class _PanelMarkdown(_VerbatimMarkdown):
 
 
 @lru_cache(maxsize=64)
-def _markdown_lines(text: str, width: int) -> tuple[Text, ...]:
+def _markdown_lines(text: str, width: int, links: bool) -> tuple[Text, ...]:
     from jailbee.outbox.inspect import safe_text
 
     console = Console(width=width, height=_ROWS, force_terminal=True, highlight=False)
@@ -209,7 +215,7 @@ def markdown_text_lines(text: str, width: int) -> list[Text]:
     Cached per (text, width): a panel is redrawn on every refresh, and each
     call returns copies, so a caller may style them.
     """
-    return [line.copy() for line in _markdown_lines(text, max(1, width))]
+    return [line.copy() for line in _markdown_lines(text, max(1, width), hyperlinks_enabled())]
 
 
 def _terminal_width() -> int | None:

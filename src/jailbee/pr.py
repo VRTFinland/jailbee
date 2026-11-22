@@ -1076,3 +1076,42 @@ def _number_from_url(url: str) -> int:
         return int(url.rstrip("/").rsplit("/", 1)[-1])
     except ValueError as e:
         raise PrCreateError(f"could not parse PR number from gh output: {url!r}") from e
+
+
+def pr_repo_slug(repo_root: Path, remote: str) -> str | None:
+    """The GitHub ``owner/name`` a PR number of this checkout belongs to, or None.
+
+    Mirrors how `gh` picks the repository for `gh pr view N` (which `jailbee new
+    --pr` and `open_pr_in_browser` use), without a network call: the remote
+    marked by `gh repo set-default` (``remote.<r>.gh-resolved``), else a remote
+    named ``upstream``, else `remote`. A candidate that is not on GitHub is skipped.
+    """
+    from jailbee import git
+    from jailbee.github_repo import github_slug, is_github_slug
+
+    candidates: list[str] = []
+    try:
+        proc = subprocess.run(
+            ["git", "config", "--get-regexp", r"^remote\..*\.gh-resolved$"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        proc = None
+    if proc is not None and proc.returncode == 0:
+        for line in proc.stdout.splitlines():
+            key, _, value = line.partition(" ")
+            value = value.strip()
+            if is_github_slug(value):
+                return value
+            if value == "base":
+                candidates.append(key.removeprefix("remote.").removesuffix(".gh-resolved"))
+    candidates += ["upstream", remote]
+    for name in dict.fromkeys(candidates):
+        slug = github_slug(git.get_remote_url(repo_root, name) or "")
+        if slug is not None:
+            return slug
+    return None

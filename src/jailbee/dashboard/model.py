@@ -224,11 +224,10 @@ class RepoGroup:
 
 
 def _github_slug_of(cfg: Config) -> str | None:
-    """The repo's GitHub ``owner/name`` from its upstream remote, or None."""
-    from jailbee import git
-    from jailbee.github_repo import github_slug
+    """The repo's GitHub ``owner/name`` PR numbers resolve against, or None."""
+    from jailbee.pr import pr_repo_slug
 
-    return github_slug(git.get_remote_url(cfg.repo_root, cfg.upstream_remote) or "")
+    return pr_repo_slug(cfg.repo_root, cfg.upstream_remote)
 
 
 def _agent_label(cfg: Config, runner: Runner | None) -> str | None:

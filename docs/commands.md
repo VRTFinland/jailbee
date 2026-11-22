@@ -226,6 +226,15 @@ in-flight scan can exceed the overall timeout. Lock acquisition and the probe
 itself are each bounded separately by `health_timeout`, so a scan may include
 both waits.
 
+## Terminal hyperlinks
+
+Clickable links (OSC 8) are emitted by the dashboard's PR number and by the
+Markdown bodies of `jailbee outbox show` and the dashboard outbox preview.
+`JAILBEE_NO_HYPERLINKS=1` (or `TERM=dumb`) turns all of them off; the text is
+shown instead. A PR number links to the repository `gh pr view` would use: the
+remote marked by `gh repo set-default`, else `upstream`, else the repo's
+upstream remote.
+
 ## Global repository option
 
 `--repo PREFIX` runs a command in that registered repository instead of the
