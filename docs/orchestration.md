@@ -137,7 +137,7 @@ publish:
   pull_requests: true
   pr_reviews: false
   pr_comment_edits: false                       # edit submitted PR review comments
-  pr_state: false                               # close and reopen bound PRs
+  pr_state: false                               # close and reopen any own-repo PR
   max_actions_per_hour: 30                      # 1..500
 ```
 
@@ -147,7 +147,7 @@ jb orchestrate grant bugs --publish-project acme/7=add,set
 jb orchestrate grant bugs --publish-project acme/7=none  # remove this board's rights
 jb orchestrate grant bugs --publish-foreign-issues someorg/upstream-lib:comment
 jb orchestrate grant bugs --publish-pr-reviews --publish-rate 10
-jb orchestrate grant bugs --publish-pr-reviews --publish-pr-state
+jb orchestrate grant bugs --publish-pr-state
 jb orchestrate grant bugs --no-publish
 ```
 
@@ -159,11 +159,15 @@ rights, and project grants do not grant rights to foreign issue actions. The
 terminal dashboard exposes **Publish projects** beside the other publish-rights
 editors; its board picker supports adding a board and editing its action rights.
 
-Closing or reopening a bound PR is a `state` action in the PR manifest and needs
-`publish.pr_state`, which requires `publish.pr_reviews` and is narrowed with it
-like `pr_comment_edits`; `pr_reviews` does not imply it. The repo cap narrows it too.
-It also needs an authored, non-adopted PR binding, as a description rewrite does: an
-orchestrator cannot close a PR it is bound to only for review or adoption.
+Closing or reopening a PR is a `state` action in the PR manifest and needs
+`publish.pr_state`. The right stands alone: it neither needs nor is implied by
+`publish.pr_reviews`, and it is capped by the repo cap and narrowed for children
+like the other publish rights. A manifest of only `state` actions publishes for any
+numbered PR of the orchestrator's own repository, bound or not, so an orchestrator
+can close old PRs or reopen several (`jailbee pr state 12 15 closed` stages one
+manifest per PR; publish each). A PR in another repository is refused. A manifest
+that mixes `state` with comments, replies or a description still needs what those
+actions need (`pr_reviews`, a bound PR); the state action does not widen them.
 
 `comment_edit` covers editing the body of an existing issue or PR conversation
 comment. Publication still refuses a comment written by any account other than the

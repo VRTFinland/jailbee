@@ -10,12 +10,13 @@ before editing `## Unreleased`.
 
 ### Added
 
-- Container agents can stage closing or reopening a pull request with `jailbee pr state [N]
-  closed|open`: a `state` action in the PR manifest, published with `jb outbox apply` or
-  the dashboard. The plan warns `closes PR #N` / `reopens PR #N`, a PR that changed state
-  since staging (or is merged) is refused, a foreign PR needs `--foreign`, `--draft` holds
-  the change back in the outbox, and an orchestrator needs the new `publish.pr_state` right
-  and an authored, non-adopted PR binding
+- Container agents can stage closing or reopening pull requests with `jailbee pr state
+  [N ...] closed|open`: a `state` action in the PR manifest, one manifest per PR, published
+  with `jb outbox apply` or the dashboard. The plan warns `closes PR #N` / `reopens PR #N`,
+  a PR that changed state since staging (or is merged) is refused, a foreign PR needs
+  `--foreign`, and `--draft` holds the change back in the outbox. An orchestrator needs the
+  new `publish.pr_state` right, which stands alone (no `pr_reviews`) and covers any PR of
+  its own repository, no binding needed
   ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 - The terminal dashboard's `Services…` menu returns to the service list after a
   start, stop, restart or refresh and refreshes it when the action ends, so the
