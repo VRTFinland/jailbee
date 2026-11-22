@@ -1681,8 +1681,8 @@ def test_parent_probe_missing_parent_head_reads_pull_needed(mocker, tmp_path):
 
 
 def test_parent_probe_drops_up_for_work_that_reached_the_parent_another_way(mocker, tmp_path):
-    """A fork's commit the parent already has (cherry-picked in as itself, i.e.
-    merged back by another route) is no longer ↑ once the parent head contains it."""
+    """A commit the parent head already contains is no longer ↑, though it lies
+    beyond the ahead point (the work reached the parent by another route)."""
     from jailbee.host_target import SyncTarget
 
     repo = tmp_path / "ctr"
