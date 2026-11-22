@@ -115,6 +115,7 @@ def _nothing_measurable(status: GitStatus) -> bool:
     return (
         status.wt in _UNMEASURED
         and not status.ahead_of_host.isdigit()
+        and not status.ahead_count.isdigit()
         and not status.head_sha
         and status.remote_contained is None
         and not status.submodules

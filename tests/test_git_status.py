@@ -1354,3 +1354,55 @@ def test_probe_parses_behind_unknown_marker(mocker):
     status = probe_container_git(incus, "c", "/r", "main", "main", target=target, sync=sync)
 
     assert status.behind_count == "•"
+
+
+def _real_git_incus(repo):
+    """An ``Incus`` stand-in whose ``exec`` runs the snippet in a local repo."""
+    import subprocess
+
+    class _LocalIncus:
+        def exec(self, _name, cmd, *, env=None, **_kwargs):
+            import os
+
+            merged = {**os.environ, **(env or {}), "REPO_DIR": str(repo)}
+            return subprocess.run(
+                cmd, env=merged, capture_output=True, text=True, check=True
+            ).stdout
+
+    return _LocalIncus()
+
+
+def test_probe_reports_unknown_host_counts_when_the_host_branch_object_is_missing(tmp_path):
+    """A PR-bound container that lacks the host branch tip: PR-head counts are
+    measured, host counts are "?" (the destroy guard then falls back to head_sha)."""
+    import subprocess
+
+    from jailbee.host_target import SyncTarget, TargetSnapshot
+
+    def git(*args):
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+    git("init", "-q", "-b", "main")
+    git("commit", "-q", "--allow-empty", "-m", "one")
+    pr_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    git("commit", "-q", "--allow-empty", "-m", "two")
+
+    status = probe_container_git(
+        _real_git_incus(tmp_path),
+        full_name="c",
+        repo_dir=str(tmp_path),
+        base_branch="main",
+        default_branch="main",
+        target=TargetSnapshot("main", "f" * 40, "local", "", "unavailable"),
+        sync=SyncTarget("pr", "PR #7", pr_sha, "refs/jailbee/pr/7/head"),
+    )
+
+    assert status.ahead_count == "1"
+    assert (status.host_ahead_count, status.host_behind_count) == ("?", "?")

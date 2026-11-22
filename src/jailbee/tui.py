@@ -450,17 +450,26 @@ def _choice_widths(containers: list[ContainerInfo]) -> dict[str, int]:
         "base": max(len(_choice_base(c)) for c in containers),
         "wt": max(len(c.git_status.wt if c.git_status else "—") for c in containers),
         "ahead": max(len(c.git_status.target_diff if c.git_status else "—") for c in containers),
-        "count": max(len(c.git_status.ahead_count if c.git_status else "—") for c in containers),
-        "behind": max(
-            len(_behind_text(c.git_status.behind_count) if c.git_status else "—")
-            for c in containers
-        ),
+        "count": max(len(_marked(c, "ahead_count")) for c in containers),
+        "behind": max(len(_marked(c, "behind_count")) for c in containers),
         "conflict": max(len(merge_label(c.git_status)[0]) for c in containers),
         "job": max(
             len(background.job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind))
             for c in containers
         ),
     }
+
+
+def _marked(c: ContainerInfo, field: str) -> str:
+    """A git count as the picker shows it: followed by the sync-target marker."""
+    from jailbee.lifecycle import plain_sync_marker
+
+    if c.git_status is None:
+        return "—"
+    value = getattr(c.git_status, field)
+    if field == "behind_count":
+        value = _behind_text(value)
+    return f"{value} {plain_sync_marker(c.git_status)}".strip()
 
 
 def _format_choice_title(c: ContainerInfo, widths: dict[str, int]) -> str:
@@ -476,8 +485,8 @@ def _format_choice_title(c: ContainerInfo, widths: dict[str, int]) -> str:
     else:
         wt = c.git_status.wt
         ahead = c.git_status.target_diff
-        count = c.git_status.ahead_count
-        behind = _behind_text(c.git_status.behind_count)
+        count = _marked(c, "ahead_count")
+        behind = _marked(c, "behind_count")
     conflict = merge_label(c.git_status)[0]
     line = (
         f"{c.shown_name:<{widths['name']}}  "
