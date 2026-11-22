@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -9,6 +10,7 @@ from typing import TYPE_CHECKING
 from rich.markup import escape
 
 from jailbee import background
+from jailbee.github_repo import is_github_slug
 from jailbee.lifecycle import (
     DOING_MAX_NAMES,
     agent_compact_cell,
@@ -246,6 +248,32 @@ def doing_cell(container: ContainerInfo) -> str:
     return ",".join(names)
 
 
+def hyperlinks_enabled() -> bool:
+    """Whether OSC 8 links may be emitted: not disabled, not a dumb terminal."""
+    if os.environ.get("JAILBEE_NO_HYPERLINKS"):
+        return False
+    return os.environ.get("TERM", "") != "dumb"
+
+
+def pr_url(container: ContainerInfo) -> str | None:
+    """The bound PR's GitHub URL, from the repo slug only; None when unknown."""
+    slug = container.pr_slug
+    if container.pr_number is None or slug is None or not is_github_slug(slug):
+        return None
+    return f"https://github.com/{slug}/pull/{container.pr_number}"
+
+
+def pr_markup(container: ContainerInfo) -> str:
+    """The PR number (``#N``, ``#N↓`` for a review) as markup, linked when possible."""
+    if container.pr_number is None:
+        return ""
+    label = f"#{container.pr_number}"
+    url = pr_url(container) if hyperlinks_enabled() else None
+    if url is not None:
+        label = f"[link={url}]{label}[/link]"
+    return label if container.pr_author else f"{label}↓"
+
+
 def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, now: datetime) -> str:
     """Return a dashboard-specific value, keeping unknown text safely renderable."""
     if field.name == "job" and container.autostart_failed and not container.job_live:
@@ -267,9 +295,7 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
         return value
     if field.name == "pr":
         # The outbox count lives in OUTBOX; `jailbee ls` keeps it in PR.
-        if container.pr_number is None:
-            return ""
-        return f"#{container.pr_number}" if container.pr_author else f"#{container.pr_number}↓"
+        return pr_markup(container)
     if field.name == "agent_compact":
         return agent_compact_cell(
             container.agent_status, now, recent_idle=RECENT_IDLE, activity_age=True

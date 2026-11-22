@@ -415,7 +415,7 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
         summary.append(escape(c.network))
     if c.ip:
         summary.append(escape(c.ip))
-    pr, issues = cell("pr"), cell("issues")
+    pr, issues = dashboard_format.pr_markup(c), cell("issues")
     github = " · ".join(
         part
         for part in (

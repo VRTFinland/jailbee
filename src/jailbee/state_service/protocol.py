@@ -55,7 +55,8 @@ from jailbee.update_check import UpdateNotice
 # 29 adds RepoGroup.service_descriptions, the repo services' optional descriptions.
 # 30 adds SyncTarget.autofetch, .fetched_at, .fetch_error and .fetch_error_at.
 # 31 adds GrantView.publish_pr_comment_edits, the PR comment-edit publish right.
-PROTOCOL = 31
+# 32 adds ContainerInfo.pr_slug, the repo's GitHub slug for PR hyperlinks.
+PROTOCOL = 32
 
 
 class ProtocolError(ValueError):
