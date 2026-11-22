@@ -184,7 +184,7 @@ def _issue_policy(
 def _own_review_repo(cfg: Config, manifest: pr_outbox.Manifest) -> None:
     slug = github_slug(git.get_remote_url(cfg.repo_root, cfg.upstream_remote) or "")
     if slug is None or slug.casefold() != manifest.repo.casefold():
-        raise pr_outbox.GateError("PR reviews may target only the own repository")
+        raise pr_outbox.GateError("PR actions may target only the own repository")
 
 
 def _comment_edit_right(rights: PublishRights, manifest: pr_outbox.Manifest) -> None:
@@ -332,7 +332,8 @@ def _precheck(
         _state_policy(rights, ctx.cfg, manifest_pr)
     elif not rights.pr_reviews:
         raise pr_outbox.GateError("pr_reviews is not granted")
-    _own_review_repo(ctx.cfg, manifest_pr)
+    else:
+        _own_review_repo(ctx.cfg, manifest_pr)
     try:
         progress = pr_outbox._publication_progress(
             snapshot_pr, m.manifest, len(manifest_pr.actions)
