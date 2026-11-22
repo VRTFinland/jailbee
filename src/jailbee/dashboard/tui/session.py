@@ -991,7 +991,7 @@ class DashboardSession:
         )
 
     def _modal_closed(self, entry_id: int) -> None:
-        """"Continue in background" or any close of a critical modal: the entry is an ordinary one."""
+        """Continue in background, or any close of a critical modal: the entry turns ordinary."""
         if self._modal_entry != entry_id:
             return
         self._modal_entry = None

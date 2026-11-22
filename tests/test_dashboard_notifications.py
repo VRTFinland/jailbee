@@ -839,7 +839,9 @@ CRITICAL_ARGVS = [
 
 def _hand_off_attempt(session):  # type: ignore[no-untyped-def]
     """A foreground hand-off through the session; returns what it answered."""
-    return session.run_dashboard_command("alpha-a", "container", ["shell", "alpha-a"], foreground=True)
+    return session.run_dashboard_command(
+        "alpha-a", "container", ["shell", "alpha-a"], foreground=True
+    )
 
 
 @pytest.mark.parametrize("argv", CRITICAL_ARGVS)
@@ -863,7 +865,7 @@ def test_continue_in_background_allows_hand_offs_and_keeps_the_entry(mocker, tmp
     mocker.patch.object(tsession, "_run_cli_foreground", return_value=0)
     session, terminal = _one_repo(mocker, tmp_path, defer=True)
     session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
-    on_background, on_close = terminal.modal
+    on_background = terminal.modal[0]
 
     on_background()
 
@@ -934,7 +936,10 @@ def test_two_critical_actions_each_get_an_entry_and_the_block_holds_while_any_is
     assert len(_entries(session)) == 2
     assert len(terminal.shown) == 1  # one modal at a time
     terminal.modal[0]()  # the first goes to the background; the second's modal opens
-    assert [t for t, _, _ in terminal.shown] == ["jailbee merge alpha-a", "jailbee git pull alpha-a"]
+    assert [t for t, _, _ in terminal.shown] == [
+        "jailbee merge alpha-a",
+        "jailbee git pull alpha-a",
+    ]
     assert _hand_off_attempt(session) is None  # the second is still in the foreground
 
     terminal.modal[0]()

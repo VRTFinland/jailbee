@@ -275,7 +275,7 @@ class OutputScreen(ModalScreen[None]):
         self.dismiss(None)
 
     def action_background(self) -> None:
-        """"Continue in background": hand the action to the queue and leave."""
+        """ "Continue in background": hand the action to the queue and leave."""
         if self.on_background is not None:
             self.on_background()
         self.dismiss(None)
