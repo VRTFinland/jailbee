@@ -24,7 +24,7 @@ or `-`, and are at most 63 characters.
 | Field | Meaning and default |
 |---|---|
 | `run` | Required nonempty foreground command. |
-| `description` | Optional text (`""`): what the service does and when it is needed. Shown in the DESCRIPTION column of in-container `jailbee service ls` (and its `--json`) and in the dashboard's `Services…` list and custom-services picker. |
+| `description` | Optional text (`""`): what the service does and when it is needed. Shown in the DESCRIPTION column of in-container `jailbee service ls` (and its `--json`) and in the dashboard's `Services…` list and custom-services picker; whitespace is collapsed to one line in the lists. |
 | `prepare` | Serial steps, default `[]`; run once on first selected autostart and explicitly on refresh. |
 | `ready`, `ready_timeout` | Optional probe and positive timeout in seconds (120). |
 | `status`, `status_timeout` | Optional read-only status probe and timeout in seconds (5, minimum 1); a failed or timed-out probe reports an error without changing lifecycle state. |

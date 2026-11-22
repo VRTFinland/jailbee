@@ -433,7 +433,10 @@ def test_ls_shows_descriptions(tmp_path: Path, monkeypatch) -> None:
     base = ["service", "--repo", str(tmp_path)]
     result = CliRunner().invoke(container_app, [*base, "ls"])
     assert "DESCRIPTION" in result.stdout
-    assert "Postgres; start before integration tests" in result.stdout
+    rows = {line.split()[0]: line for line in result.stdout.splitlines()[1:] if line.strip()}
+    assert rows["db"].endswith("Postgres; start before integration tests")
+    assert rows["web"].rstrip().endswith(" -")
+    assert "Postgres" not in rows["web"]
     result = CliRunner().invoke(container_app, [*base, "ls", "--json"])
     assert [(r["name"], r["description"]) for r in json.loads(result.stdout)] == [
         ("db", "Postgres; start before integration tests"),

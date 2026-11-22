@@ -926,6 +926,15 @@ def test_services_picker_shows_descriptions():
     assert labels == ["db  (ready) — Postgres for tests", "web  (stopped)"]
 
 
+def test_services_picker_flattens_multiline_descriptions():
+    rows = dact.parse_service_rows(
+        '[{"name":"db","state":"ready","window":null,"since":null,"detail":"",'
+        '"description":"Postgres.\\nNeeded for tests.\\n"}]'
+    )
+    labels = [e.label for e in dact.services_picker("alpha-x", rows).entries]
+    assert labels == ["db  (ready) — Postgres. Needed for tests."]
+
+
 def test_services_json_and_state_actions():
     rows = dact.parse_service_rows(
         '[{"name":"db","state":"ready","window":"svc-db","since":null,"detail":""}]'
