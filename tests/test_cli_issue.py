@@ -60,6 +60,8 @@ def _setup(mocker, tmp_path, *, files=None):
     mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
     incus = mocker.MagicMock()
     mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "acme-feat-foo"))
+    mocker.patch("jailbee.incus.Incus", return_value=incus)
+    mocker.patch("jailbee.cli_outbox_resolve._existing_container", return_value="acme-feat-foo")
     mocker.patch("jailbee.lifecycle.short_name", return_value="feat-foo")
     mocker.patch("jailbee.prompting.is_interactive", return_value=True)
     snapshot = OutboxSnapshot(files=files or {})
@@ -357,10 +359,7 @@ def _uncertain_setup(mocker, tmp_path, *, name_resolver=True):
         ),
     )
     if name_resolver:
-        mocker.patch(
-            "jailbee.cli._resolve_issue_container",
-            return_value=(mocker.MagicMock(), "acme-feat-foo"),
-        )
+        mocker.patch("jailbee.cli_outbox_resolve._issue_container", return_value="acme-feat-foo")
     return mocker.patch("jailbee.issue_outbox.reconcile_action")
 
 
@@ -423,10 +422,7 @@ def test_resolve_asks_for_the_created_issue_number(mocker, tmp_path):
 
 def test_resolve_without_uncertain_manifests_exits_2(mocker, tmp_path):
     _setup_resolve(mocker, tmp_path)  # no journal actions: nothing uncertain
-    mocker.patch(
-        "jailbee.cli._resolve_issue_container",
-        return_value=(mocker.MagicMock(), "acme-feat-foo"),
-    )
+    mocker.patch("jailbee.cli_outbox_resolve._issue_container", return_value="acme-feat-foo")
     reconcile = mocker.patch("jailbee.issue_outbox.reconcile_action")
 
     result = runner.invoke(app, ["issue", "resolve"])

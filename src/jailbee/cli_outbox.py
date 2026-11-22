@@ -429,48 +429,14 @@ def resolve(
     uncertain record so `jailbee outbox apply` attempts it again. Also
     available as `jailbee review resolve` and `jailbee issue resolve`.
     """
-    from jailbee import prompting
-    from jailbee.cli import run_issue_resolve, run_review_resolve
-    from jailbee.outbox.models import OutboxError, ProposalId
-    from jailbee.tui import error_plain
+    from jailbee.cli_outbox_resolve import run_outbox_resolve
 
-    cfg_path = config if config is not None else ctx.obj
-    kind: str
-    manifest: str | None = None
-    if proposal is None:
-        kind = prompting.choose_one(
-            "kind",
-            [
-                prompting.Option("pr", "pr: a pull request action", "pr/<manifest>.json"),
-                prompting.Option("issue", "issue: an issue action", "issue/<manifest>.json"),
-            ],
-        )
-    else:
-        try:
-            pid = ProposalId.parse(proposal)
-        except OutboxError as exc:
-            error_plain(str(exc))
-            raise typer.Exit(2) from exc
-        kind, manifest = pid.kind, pid.name
-    if kind == "pr":
-        if applied == retry:
-            error_plain("Exactly one of --applied --url URL or --retry is required.")
-            raise typer.Exit(2)
-        if applied and url is None:
-            error_plain("--applied requires --url URL.")
-            raise typer.Exit(2)
-        if retry and url is not None:
-            error_plain("--retry accepts neither --url nor --issue.")
-            raise typer.Exit(2)
-        if issue is not None:
-            error_plain("--issue is only valid for an issue create action.")
-            raise typer.Exit(2)
-        run_review_resolve(cfg_path, container, manifest, action, url=url, retry=retry)
-    else:
-        run_issue_resolve(
-            cfg_path,
+    def operation(cfg: Config, incus: Incus) -> int:
+        return run_outbox_resolve(
+            cfg,
+            incus,
             container,
-            manifest,
+            proposal,
             action,
             applied=applied,
             url=url,
@@ -478,6 +444,8 @@ def resolve(
             retry=retry,
             yes=yes,
         )
+
+    _run(ctx, config, operation)
 
 
 @app.command("attachment-resolve")

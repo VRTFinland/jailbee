@@ -122,7 +122,11 @@ before editing `## Unreleased`.
   <url>` (plus `--issue <n>` for an issue create) records that it landed,
   `--retry` forgets the outcome. `jailbee review resolve` and `jailbee issue
   resolve` remain as aliases, and the hints printed after an uncertain
-  publication, a refused clear or a destroyed container name the new command.
+  publication, a refused clear or a destroyed container name the new command as
+  a runnable line (`jailbee outbox resolve <container> pr/<manifest> <index> …`).
+  It asks for the container first, then one picker over its uncertain PR and
+  issue proposals, and asks a PR's mode and URL on a terminal like an issue's.
+  Over remote SSH it is classified like its aliases.
 - Publishing in the outbox manager covers PR creations too: `p` on a
   description awaiting its PR, or on a pinned source awaiting its push, hands
   the terminal to `jailbee pr push` (or `submodule pr push`, `pr push

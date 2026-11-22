@@ -1767,8 +1767,11 @@ progress); inspect one with `jailbee outbox show`.
 ### `jailbee outbox resolve [CONTAINER] [PROPOSAL] [ACTION] (--applied --url URL [--issue N] | --retry) [-y]`
 
 The one command for uncertain PR and issue actions. `PROPOSAL` is
-`pr/<manifest>.json` or `issue/<manifest>.json` (asked for with the kind when
-omitted). `jailbee issue resolve [NAME] [MANIFEST] ...` and `jailbee review
+`pr/<manifest>.json` or `issue/<manifest>.json`. Omitted, the container is
+asked first, then one picker lists that container's uncertain `pr/` and
+`issue/` proposals together; with nothing uncertain it prints "Nothing
+pending" and exits 0. For a PR the mode and URL are asked for too, as for an
+issue. `jailbee issue resolve [NAME] [MANIFEST] ...` and `jailbee review
 resolve [NAME] [MANIFEST] [ACTION] (--applied URL | --retry)` are aliases of it
 for one kind; `--yes` only applies to issue proposals.
 
