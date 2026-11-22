@@ -500,16 +500,17 @@ def test_cap_excess_names_comment_edits_above_the_cap() -> None:
     assert any("pr_comment_edits" in line for line in messages)
 
 
-def test_pr_state_is_capped_and_needs_pr_reviews() -> None:
+def test_pr_state_is_capped_and_stands_alone() -> None:
     from jailbee.orchestration.grant import PublishRights
 
-    wanted = PublishRights(pr_reviews=True, pr_state=True)
+    wanted = PublishRights(pr_state=True)
     assert PublishRights(pr_reviews=True).pr_state is False
-    assert PublishRights(pr_state=True).empty() is False
-    assert wanted.narrowed(PublishRights(pr_reviews=True)).pr_state is False
+    assert wanted.empty() is False
+    # pr_reviews is no part of it: on neither side, the state right survives.
     assert wanted.narrowed(wanted).pr_state is True
-    assert wanted.narrowed(PublishRights(pr_state=True)).pr_state is False
-    # Neither side's own pr_reviews may be missing for the state right to survive.
-    assert PublishRights(pr_state=True).narrowed(wanted).pr_state is False
+    assert wanted.narrowed(PublishRights(pr_reviews=True, pr_state=True)) == wanted
+    assert wanted.narrowed(PublishRights(pr_reviews=True)).pr_state is False
+    assert wanted.narrowed(PublishRights()).pr_state is False
     messages = cap_excess(Grant(publish=wanted), RepoCap(publish=PublishRights(pr_reviews=True)))
     assert any("pr_state" in line for line in messages)
+    assert cap_excess(Grant(publish=wanted), RepoCap(publish=wanted)) == []

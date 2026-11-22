@@ -234,35 +234,49 @@ def comment_edit(
 
 @pr_app.command("state")
 def state(
-    first: Annotated[
-        str | None, typer.Argument(help="PR number, or the new state for the bound PR.")
+    args: Annotated[
+        list[str] | None,
+        typer.Argument(
+            help="PR numbers (none: the bound PR), then the new state: closed or open.",
+            metavar="[N]... closed|open",
+        ),
     ] = None,
-    second: Annotated[str | None, typer.Argument(help="New state: closed or open.")] = None,
     batch: BatchOpt = None,
 ) -> None:
-    """Stage closing or reopening a PR (`pr state [N] closed|open`).
+    """Stage closing or reopening PRs (`pr state [N ...] closed|open`).
 
-    The host publishes it only if the PR is still in the state it had when
-    staged; a merged PR is refused. A PR this container does not own needs
-    `--foreign` on the host.
+    Each named PR gets its own manifest, so each publishes on its own; no PR
+    binding is needed for a numbered PR. The host publishes one only if the
+    PR is still in the state it had when staged; a merged PR is refused. A PR
+    this container does not own needs `--foreign` on the host.
     """
 
     def run() -> None:
         require_role()
-        target, number_arg = (first, None) if second is None else (second, first)
+        values: list[str | None] = [*args] if args else [None]
+        *numbers, target = values
         if target not in ("closed", "open"):
             raise OutboxCommandError("new state must be 'closed' or 'open'", 2)
-        view = _view(number_arg)
-        current = gh.pr_state(view.repo, view.number)
-        if current == "merged":
-            raise OutboxCommandError(f"PR #{view.number} is merged; it cannot be {target}", 2)
-        if current == target:
-            raise OutboxCommandError(f"PR #{view.number} is already {target}", 2)
-        _stage(
-            _envelope(view),
-            {"type": "state", "state": target, "expected": {"state": current}},
-            batch,
-        )
+        if len(numbers) > 1 and batch is not None:
+            raise OutboxCommandError("--batch takes one PR; name a single PR number", 2)
+        if len(set(numbers)) != len(numbers):
+            raise OutboxCommandError("a PR number is named more than once", 2)
+        staged: list[tuple[gh.PrView, str]] = []
+        # Read every PR first: one that cannot change state stages nothing.
+        for number in numbers or [None]:  # no number: the one bound PR
+            view = _view(number)
+            current = gh.pr_state(view.repo, view.number)
+            if current == "merged":
+                raise OutboxCommandError(f"PR #{view.number} is merged; it cannot be {target}", 2)
+            if current == target:
+                raise OutboxCommandError(f"PR #{view.number} is already {target}", 2)
+            staged.append((view, current))
+        for view, current in staged:
+            _stage(
+                _envelope(view),
+                {"type": "state", "state": target, "expected": {"state": current}},
+                batch,
+            )
 
     _run(run)
 
