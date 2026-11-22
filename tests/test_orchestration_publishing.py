@@ -1183,3 +1183,28 @@ def test_precheck_refuses_comment_edit_without_the_right(rig, mocker):
     )
     out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
     assert out.state == "refused" and "pr_comment_edits" in out.detail
+
+
+def test_precheck_does_not_need_the_edit_right_for_an_already_published_edit(rig, mocker):
+    ctx, m, *_ = rig
+    payload = {
+        "version": 1,
+        "repo": "org/repo",
+        "pr": 12,
+        "head_sha": "a" * 40,
+        "actions": [
+            {"type": "comment_edit", "comment_id": 5, "body": "n", "expected": {"body": "o"}},
+            {"type": "comment", "body": "hi"},
+        ],
+    }
+    seed_source(ctx.sender.key, payload)
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    mocker.patch.object(
+        pr_outbox, "_publication_progress", return_value=pr_outbox.Progress(frozenset({0}), {})
+    )
+    ctx.sender = replace(
+        ctx.sender,
+        config={labels.GRANT: Grant(publish=PublishRights(pr_reviews=True)).to_label()},
+    )
+    out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
+    assert out.state != "refused" and "pr_comment_edits" not in (out.detail or "")

@@ -992,3 +992,50 @@ def test_comment_edits_right_needs_pr_reviews(cfg):
         cfg, None, GrantFlags(publish_pr_reviews=True, publish_pr_comment_edits=True)
     ).publish
     assert rights.pr_comment_edits is True
+
+
+def test_revoking_pr_reviews_also_clears_comment_edits(cfg):
+    from jailbee.orchestration.grant import PublishRights
+
+    current = Grant(publish=PublishRights(pr_reviews=True, pr_comment_edits=True))
+    rights = commands.build_grant(cfg, current, GrantFlags(publish_pr_reviews=False)).publish
+    assert rights.pr_reviews is False and rights.pr_comment_edits is False
+    with pytest.raises(GrantError, match="needs --publish-pr-reviews"):
+        commands.build_grant(
+            cfg, current, GrantFlags(publish_pr_reviews=False, publish_pr_comment_edits=True)
+        )
+
+
+def test_inherited_edits_without_reviews_are_narrowed_not_fatal(cfg):
+    from jailbee.orchestration.grant import PublishRights
+
+    current = Grant(publish=PublishRights(pr_comment_edits=True, issues=("comment",)))
+    rights = commands.build_grant(cfg, current, GrantFlags(publish_rate=5)).publish
+    assert rights.pr_comment_edits is False
+    assert rights.issues == ("comment",) and rights.max_actions_per_hour == 5
+
+
+def test_publish_summary_names_comment_edits():
+    from jailbee.orchestration.grant import PublishRights
+
+    rights = PublishRights(pr_reviews=True, pr_comment_edits=True)
+    assert "PR comment edits" in commands.publish_summary(rights)
+
+
+def test_profile_default_with_edits_but_no_reviews_is_narrowed(make_cfg, tmp_path):
+    from jailbee.config.models_orchestration import PublishRightsConfig
+
+    profiles = {"odd": OrchestrationProfile(publish=PublishRightsConfig(pr_comment_edits=True))}
+    cfg = _cfg(
+        make_cfg,
+        tmp_path,
+        view=OrchestrationView(profiles=profiles, default_profile="odd"),
+        mounts=True,
+    )
+    assert commands.build_grant(cfg, None, GrantFlags()).publish.pr_comment_edits is False
+    assert (
+        commands.build_grant(
+            cfg, None, GrantFlags(profile="odd", publish_rate=3)
+        ).publish.pr_comment_edits
+        is False
+    )

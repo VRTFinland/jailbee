@@ -133,3 +133,27 @@ def rewrite(body: str, urls: Mapping[str, str]) -> str:
         cursor = ref.end
     pieces.append(body[cursor:])
     return "".join(pieces)
+
+
+_URL_SHAPE = _URL.pattern.removesuffix(r"\Z")
+
+
+def matches_rendered(body: str, rendered: str) -> bool:
+    """Whether `rendered` is `body` with every attachment placeholder replaced by an upload URL.
+
+    Recognises a comment that already holds an edit whose uploads were not
+    recorded: each placeholder matches any attachment URL.
+    """
+    try:
+        refs = references(body)
+    except AttachmentError:
+        return False
+    if not refs:
+        return rendered == body
+    pieces: list[str] = []
+    cursor = 0
+    for ref in refs:
+        pieces.extend((re.escape(body[cursor : ref.start]), _URL_SHAPE))
+        cursor = ref.end
+    pieces.append(re.escape(body[cursor:]))
+    return re.fullmatch("".join(pieces), rendered) is not None

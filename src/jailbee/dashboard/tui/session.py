@@ -1958,6 +1958,13 @@ class DashboardSession:
         if grant.publish_pr_reviews or self._publish_widening_permitted(container, "reviews"):
             state = "on" if grant.publish_pr_reviews else "off"
             entries.append(PickerEntry(f"Publish PR reviews: {state}", "publish:pr-reviews"))
+        if grant.publish_pr_comment_edits or (
+            grant.publish_pr_reviews and self._publish_widening_permitted(container, "reviews")
+        ):
+            state = "on" if grant.publish_pr_comment_edits else "off"
+            entries.append(
+                PickerEntry(f"Publish PR comment edits: {state}", "publish:pr-comment-edits")
+            )
         entries.append(PickerEntry(f"Publish rate: {grant.publish_rate}/hour…", "publish-rate"))
         return entries
 
@@ -2184,6 +2191,10 @@ class DashboardSession:
             argv = dact.orchestrate_grant_argv(
                 container, publish_pr_reviews=not grant.publish_pr_reviews
             )
+        elif value == "publish:pr-comment-edits":
+            argv = dact.orchestrate_grant_argv(
+                container, publish_pr_comment_edits=not grant.publish_pr_comment_edits
+            )
         patched = replace(grant)
         if value.startswith("op:"):
             op = value[len("op:") :]
@@ -2196,7 +2207,14 @@ class DashboardSession:
         elif value == "publish:prs":
             patched = replace(grant, publish_prs=not grant.publish_prs)
         elif value == "publish:pr-reviews":
-            patched = replace(grant, publish_pr_reviews=not grant.publish_pr_reviews)
+            reviews = not grant.publish_pr_reviews
+            patched = replace(
+                grant,
+                publish_pr_reviews=reviews,
+                publish_pr_comment_edits=grant.publish_pr_comment_edits and reviews,
+            )
+        elif value == "publish:pr-comment-edits":
+            patched = replace(grant, publish_pr_comment_edits=not grant.publish_pr_comment_edits)
         if argv is None or not self.run_quiet_cli(repo, argv):
             return self._close_after_failure()
         self._patch_grant(container, patched)

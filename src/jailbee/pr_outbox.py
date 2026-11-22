@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, Literal, assert_never
 from rich.markup import escape
 from rich.text import Text
 
-from jailbee import comment_edit, git, pr
+from jailbee import attachments, comment_edit, git, pr
 from jailbee.github_repo import github_slug, is_github_slug
 from jailbee.incus import Incus, IncusError
 from jailbee.outbox import sent
@@ -904,13 +904,22 @@ def _comment_edit_refusals(
         )
     except pr.PrError as e:
         return [f"{context}: {e}"]
+    new_body = action.body if written is None else written
+    if (
+        written is None
+        and snapshot.body != action.expected_body
+        and attachments.matches_rendered(action.body, snapshot.body)
+    ):
+        # Uploads were not recorded, so the rendered body is unknown: a comment
+        # shaped like the edit with its images filled in is the edit, landed.
+        new_body = snapshot.body
     return comment_edit.edit_refusals(
         snapshot,
         login=login or "",
         expected_body=action.expected_body,
         parent=target.pr.number,
         repo=target.manifest.repo,
-        new_body=action.body if written is None else written,
+        new_body=new_body,
         context=context,
     )
 
@@ -2730,8 +2739,15 @@ def _offer_locked(
     from jailbee.publish_progress import reporting
 
     if policy is not None:
-        for target, _, _ in plans:
-            policy(target.manifest)
+        for target, progress, idx in plans:
+            # The policy judges what is still to be published, not what a
+            # previous run already landed.
+            pending = [
+                i for i in pending_indices(target.manifest, progress) if idx is None or i in idx
+            ]
+            policy(
+                replace(target.manifest, actions=tuple(target.manifest.actions[i] for i in pending))
+            )
     total = sum(planned_action_count(t.manifest, p, idx) for t, p, idx in plans)
     if action_limit is not None and total > action_limit:
         raise GateError("review actions exceed the reserved publish budget")

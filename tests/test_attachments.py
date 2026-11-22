@@ -111,3 +111,14 @@ def test_attachment_mentions_in_https_paths_are_not_reserved_destinations():
 def test_escaped_parentheses_in_destination_are_rejected():
     with pytest.raises(AttachmentError):
         references(r"[x](attachment:a\(b\))")
+
+
+def test_matches_rendered_fills_placeholders_with_upload_urls():
+    from jailbee.attachments import matches_rendered
+
+    url = "https://github.com/user-attachments/assets/12345678-1234-1234-1234-123456789abc"
+    body = "See ![i](attachment:a) now"
+    assert matches_rendered(body, f"See ![i]({url}) now")
+    assert not matches_rendered(body, "See ![i](https://evil/x) now")
+    assert not matches_rendered(body, "See ![i](attachment:a) now")
+    assert matches_rendered("plain", "plain") and not matches_rendered("plain", "other")

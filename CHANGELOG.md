@@ -151,7 +151,9 @@ before editing `## Unreleased`.
   `comment_edit` action in the PR manifest. Orchestrator publication of it needs
   its own right, `publish.pr_comment_edits` (`--publish-pr-comment-edits`),
   beyond `publish.pr_reviews`; a comment of a pending review is refused when staging,
-  and one refused edit holds back the rest of its manifest.
+  and one refused edit holds back the rest of its manifest. Turning `publish.pr_reviews`
+  off also clears the edit right (the dashboard has a row for it too), and only pending
+  edits need it.
 
 ### Changed
 
