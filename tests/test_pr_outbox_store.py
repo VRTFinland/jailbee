@@ -83,6 +83,7 @@ def cfg(make_cfg, tmp_path):
 @pytest.fixture
 def github(mocker, cfg):
     """GitHub mutations and the gates, faked: every manifest resolves to PR #12."""
+
     def target(_cfg, _incus, _container, parsed, **_kw):
         return pr_outbox.Target(parsed, calls.pr_info, False, PrScope.for_repo(cfg))
 
