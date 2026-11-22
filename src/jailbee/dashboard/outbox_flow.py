@@ -1038,9 +1038,7 @@ class OutboxController:
         marks = self._unmarked(targets)
         created: tuple[_Creation, ...] = ()
         if failed and creations:
-            status.append(
-                "PR creations not run: " + ", ".join(_safe(p.id) for _, p in creations)
-            )
+            status.append("PR creations not run: " + ", ".join(_safe(p.id) for _, p in creations))
         elif creations:
             created, lines = self._run_creations(creations)
             status.extend(lines)

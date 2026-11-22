@@ -69,7 +69,7 @@ def test_flags_and_comments_callback_reach_step(mocker, tmp_path):
         True,
         True,
     )
-    offer = mocker.patch("jailbee.cli._offer_outbox_comments", return_value=2)
+    offer = mocker.patch("jailbee.pr_push_run.offer_outbox_comments", return_value=2)
     management = object()
     assert kw["offer_comments"](456, management) == 2
     offer.assert_called_once_with(*step.call_args.args, number=456, management=management)
