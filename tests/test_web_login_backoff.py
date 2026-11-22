@@ -256,9 +256,7 @@ def test_a_link_login_lifts_the_pin_and_totp_waits(
     assert pin_attempt(client, pin.current)[0] == 429
 
     token = login_link.mint(get_engine(), clock=clock)
-    link = client.post(
-        "/api/auth", json={"method": "link", "token": token, "device_name": "owner"}
-    )
+    link = client.post("/api/auth", json={"method": "link", "token": token, "device_name": "owner"})
     assert link.status_code == 200
 
     assert pin_attempt(client, pin.current, device="owner")[0] == 200
