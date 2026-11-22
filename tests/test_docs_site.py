@@ -13,6 +13,8 @@ import importlib.util
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 from tests.docs_links import UNPUBLISHED
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -75,6 +77,15 @@ def test_staging_copies_the_images_a_published_page_references(tmp_path: Path) -
 
     assert (stage_dir / "images" / "used.png").read_bytes() == b"png"
     assert not (stage_dir / "images" / "unused.png").exists()
+
+
+def test_staging_refuses_a_missing_image(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "p.md").write_text("![alt](images/gone.png)\n")
+
+    with pytest.raises(SystemExit, match="missing image"):
+        docs_site.stage(docs=docs, stage_dir=tmp_path / "stage", pages=["p.md"])
 
 
 def test_relative_images_ignores_absolute_urls() -> None:

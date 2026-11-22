@@ -75,7 +75,7 @@ _IMAGE_TAG = re.compile(r'<img\s[^>]*\bsrc="([^"]+)"', re.IGNORECASE)
 def relative_images(text: str) -> list[str]:
     """Relative image paths a page references (Markdown and `<img>` forms)."""
     found = _IMAGE_MD.findall(text) + _IMAGE_TAG.findall(text)
-    return [t for t in found if not t.startswith(("http://", "https://", "//"))]
+    return [t for t in found if not re.match(r"^(?:[a-z][a-z0-9+.-]*:|//)", t, re.IGNORECASE)]
 
 
 def stage(
