@@ -65,10 +65,11 @@ class QueueEntry:
         return self.state in ("failed", "awaiting")
 
 
-# The jobs that move a container to being usable; stop, destroy and refresh are
-# quick or already the user's own action.
+# The background jobs the queue lists: those that move a container to being
+# usable, and a background destroy (a failed one stays visible); stop and
+# refresh are quick or already the user's own action.
 LIFECYCLE_JOB_KINDS = frozenset(
-    {background.JOB_CREATE, background.JOB_BOOT, background.JOB_AUTOSTART}
+    {background.JOB_CREATE, background.JOB_BOOT, background.JOB_AUTOSTART, background.JOB_DESTROY}
 )
 
 

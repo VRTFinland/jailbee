@@ -4451,9 +4451,10 @@ class DashboardSession:
     ) -> None:
         """One detached child per container; one notice when the last one ends.
 
-        Nothing is suspended: these verbs print nothing worth reading and ask
-        nothing the dashboard has not already answered (``bulk_argv``, or
-        ``argv_for`` when each child's argv is built elsewhere).
+        Nothing is suspended: each child's output is captured into its queue
+        entry (none for a ``--background`` child, whose job row is its
+        progress), and these verbs ask nothing the dashboard has not already
+        answered (``bulk_argv``, or ``argv_for`` when each child's argv is built elsewhere).
         """
         batch = BulkBatch(action.verb, skipped=dict(action.skipped))
         self.bulk_batches.append(batch)
@@ -4475,7 +4476,15 @@ class DashboardSession:
                 continue
             argv = ["jailbee", *dact.addressed(canonical, target.flags(), transport=self.transport)]
             batch.pending.add(name)
-            entry_id = self.queue.start(f"jailbee {' '.join(canonical)}", name)
+            # A tracked verb (``--background``) exits at once: its progress is a
+            # lifecycle job row, so it gets no queue entry of its own.
+            entry_id = (
+                None
+                if "--background" in canonical
+                else self.queue.start(
+                    f"jailbee {' '.join(canonical)}", name, critical=is_critical(canonical)
+                )
+            )
             try:
                 self.jobs.start(
                     f"bulk:{action.verb}:{name}",
@@ -4483,29 +4492,38 @@ class DashboardSession:
                     argv,
                     target.cwd(),
                     partial(self._bulk_child_done, batch, name, entry_id),
+                    capture_stdout=True,
                 )
-            except ValueError:
-                self.queue.drop(entry_id)
+            except (ValueError, OSError) as exc:
+                self._drop_bulk_entry(entry_id)
                 batch.pending.discard(name)
-                batch.skipped[name] = f"a bulk {action.verb} is already running"
-            except OSError as exc:
-                self.queue.drop(entry_id)
+                if isinstance(exc, ValueError):
+                    batch.skipped[name] = f"a bulk {action.verb} is already running"
+                else:
+                    batch.failed[name] = str(exc) or f"'{target.repo_root}' no longer exists"
+            except BaseException:
+                self._drop_bulk_entry(entry_id)
                 batch.pending.discard(name)
-                batch.failed[name] = str(exc) or f"'{target.repo_root}' no longer exists"
+                raise
         self._queue_changed()
         self._settle(batch)
 
     def _bulk_child_done(
-        self, batch: BulkBatch, name: str, entry_id: int, result: JobResult
+        self, batch: BulkBatch, name: str, entry_id: int | None, result: JobResult
     ) -> None:
-        output = result.stderr  # these verbs print nothing on stdout worth keeping
-        if len(output) > OUTPUT_KEEP_CHARS:
-            output = OUTPUT_DROPPED_MARKER + output[-OUTPUT_KEEP_CHARS:]
-        self.queue.finish(entry_id, result.returncode, output)
-        self._queue_changed()
+        if entry_id is not None:
+            output = result.stdout + result.stderr  # success lines go to stdout
+            if len(output) > OUTPUT_KEEP_CHARS:
+                output = OUTPUT_DROPPED_MARKER + output[-OUTPUT_KEEP_CHARS:]
+            self.queue.finish(entry_id, result.returncode, output)
+            self._queue_changed()
         batch.finish(name, result)
         self.client.refresh()
         self._settle(batch)
+
+    def _drop_bulk_entry(self, entry_id: int | None) -> None:
+        if entry_id is not None:
+            self.queue.drop(entry_id)
 
     def _settle(self, batch: BulkBatch) -> None:
         """Report a batch whose children have all ended; unmark what succeeded."""

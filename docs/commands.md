@@ -720,8 +720,10 @@ and keeps drawing while it runs; the status line names the running command.
   also open their output on the scrollable screen when they end; it stays in
   the queue too. An entry keeps only the last ~64 KB of output, marked
   `… earlier output dropped …`. A bulk run over
-  several repos is one entry per run, and a parallel bulk verb (stop, destroy,
-  outbox clear, …) is one entry per container, with the child's error output.
+  several repos is one entry per run, and a parallel bulk verb (stop,
+  outbox clear, …) is one entry per container, with the child's output. A bulk
+  start, restart or destroy runs as a background job and has no entry: its
+  job row is what the queue shows, red if it fails.
   An action refused by the policy or
   that could not start is only a notice. The badge `⟳ R · ⚠ A` at the top of
   the dashboard (R running, A needs attention: failed or awaiting an answer) appears once
@@ -735,7 +737,7 @@ and keeps drawing while it runs; the status line names the running command.
   cannot be dismissed. The cursor stays on its entry while output streams in,
   and a running action keeps going while a tmux hand-off has the terminal.
   The queue lives as long as the dashboard.
-  Background lifecycle jobs (create, start/restart, autostart) the snapshot
+  Background jobs (create, start/restart, autostart, destroy) the snapshot
   shows, whoever started them, are listed above the entries as read-only
   rows (`target: phase · job`): they cannot be dismissed, count as running
   in the badge (a failed job or a dead worker counts as ⚠) and go when the
