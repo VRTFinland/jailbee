@@ -1,5 +1,5 @@
 .PHONY: install install-gui install-web install-skill check build publish-testpypi \
-        changelog release site site-check docs-serve web web-test
+        changelog release site site-check docs-serve web web-test shots
 
 # Use bash for recipe lines — the `release` target relies on bash features
 # (`set -euo pipefail`, `read -r -p`) that /bin/sh does not provide.
@@ -190,3 +190,9 @@ release:
 	gh release create "v$$v" dist/* --title "v$$v" --notes-file "$$notes" -R "$(REPO)"; \
 	rm -f "$$notes"; \
 	echo "==> Released v$$v"
+
+# Regenerate the dashboard screenshots (docs/images/dashboard/) from the seeded
+# fixtures in website/shots/fixtures/: SVG for the docs, PNG (host Chrome) for
+# videos. No Incus and no containers; see website/shots/README.md.
+shots:
+	uv run python -m website.shots
