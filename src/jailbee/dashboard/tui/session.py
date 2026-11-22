@@ -35,7 +35,6 @@ from jailbee.dashboard.bulk import (
     DETACHED_MENU_VERBS,
     MOUNTS_ENTRY,
     MOUNTS_KEY,
-    TRACKED_VERBS,
     BulkAction,
     BulkBatch,
     BulkMount,
@@ -4452,9 +4451,10 @@ class DashboardSession:
     ) -> None:
         """One detached child per container; one notice when the last one ends.
 
-        Nothing is suspended: these verbs print nothing worth reading and ask
-        nothing the dashboard has not already answered (``bulk_argv``, or
-        ``argv_for`` when each child's argv is built elsewhere).
+        Nothing is suspended: each child's output is captured into its queue
+        entry (none for a ``--background`` child, whose job row is its
+        progress), and these verbs ask nothing the dashboard has not already
+        answered (``bulk_argv``, or ``argv_for`` when each child's argv is built elsewhere).
         """
         batch = BulkBatch(action.verb, skipped=dict(action.skipped))
         self.bulk_batches.append(batch)
@@ -4480,7 +4480,7 @@ class DashboardSession:
             # lifecycle job row, so it gets no queue entry of its own.
             entry_id = (
                 None
-                if action.verb in TRACKED_VERBS
+                if "--background" in canonical
                 else self.queue.start(
                     f"jailbee {' '.join(canonical)}", name, critical=is_critical(canonical)
                 )
