@@ -1588,7 +1588,9 @@ and `jailbee pr unbind <container>` on the host. Use `--stacked` on
 `unbind` to remove a stacked binding. For a submodule use
 `jailbee submodule pr bind <container> <path> N` or
 `jailbee submodule pr unbind <container> <path>`. Use `jailbee pr open`
-or `jailbee submodule pr open` to open a recorded PR. Forks inherit bindings.
+or `jailbee submodule pr open` to open a recorded PR. Forks inherit bindings. A bound PR's head
+stays current in the dashboard by itself (`pr.autofetch`); `jailbee pr fetch
+[container] [--all]` refreshes it by hand.
 
 Key point: it publishes **host-side** — JailBee fetches the container's branch to the
 host, then fast-forward pushes it under the **host's** `gh` credentials. So,

@@ -249,15 +249,23 @@ work flows next, chosen automatically:
   PR head the host last fetched, `refs/jailbee/pr/<N>/head`: ↑ means "push
   needed", ↓ "someone else pushed to the PR". Its cells carry a dim `pr`
   marker. Without that ref on the host the container compares with its host
-  branch instead, and the cells carry a yellow `pr?`;
+  branch instead, and the cells carry a yellow `pr?`. The dashboard's state
+  service refetches the ref every `pr.autofetch_interval` seconds (default 300)
+  while [`pr.autofetch`](config.md#pr) is on, so ↓ follows pushes made elsewhere.
+  The fetch never prompts (git's terminal prompt off, `ssh -o BatchMode=yes`,
+  a 30 s timeout) and a failure keeps the old head. With autofetch off, or to
+  refresh at once, run `jailbee pr fetch [<name>] [--all]` (auth prompts are
+  allowed) or use the row menu's `Refresh PR head`;
 - every other container compares with its host branch as described above, with
   no marker.
 
 The dashboard's details card names the sync target in the git table's `vs …`
 header and, for a PR-bound container, adds one row per target (host branch and
-PR head) with its own ↑/↓ and short sha, the sync target's row marked. JSON
+PR head) with its own ↑/↓ and short sha, the sync target's row marked. The PR head's row also says
+how current it is: `fetched 3m ago`, `fetch failed 5m ago`, or `autofetch off`. JSON
 `git_status` carries the target as `sync_target` (`kind` `host`/`pr`, `label`,
-`sha`, `ref`, `fallback`) plus `host_ahead_count`/`host_behind_count`, the
+`sha`, `ref`, `fallback`, `autofetch`, `fetched_at`, `fetch_error`,
+`fetch_error_at`) plus `host_ahead_count`/`host_behind_count`, the
 counts against the host branch whatever the target. `base_sha`, `base_source`,
 `tracking_relation` and `upstream_ref` keep describing the host branch.
 

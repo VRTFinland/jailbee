@@ -304,6 +304,73 @@ def open_container_pr(
     pr.open_pr_in_browser(cfg.repo_root, number)
 
 
+def _refresh_one(cfg: Config, incus: IncusType, full: str, *, short: str) -> bool:
+    """Refresh one container's PR head; False when the container has no PR or the fetch failed."""
+    from jailbee import pr
+
+    try:
+        number = ContainerLabelState(incus, full, short=short).read().number
+    except MalformedPrLabelError as exc:
+        error(str(exc))
+        return False
+    if number is None:
+        error(f"Container '{short}' has no associated PR.")
+        return False
+    try:
+        result = pr.refresh_pr_head(cfg.repo_root, number, remote=cfg.upstream_remote)
+    except pr.PrError as exc:
+        error(f"{short}: {exc}")
+        return False
+    sha = result.new_sha[:10]
+    if result.updated and result.prev_sha:
+        success(f"{short}: PR #{number} head moved {result.prev_sha[:10]} -> {sha}")
+    elif result.updated:
+        success(f"{short}: PR #{number} head fetched ({sha})")
+    else:
+        info(f"{short}: PR #{number} head is current ({sha})")
+    return True
+
+
+def fetch_container_pr_head(cfg: Config, incus: IncusType, full: str, *, short: str) -> None:
+    """`jailbee pr fetch <container>`: refresh that container's PR head, exit 1 on failure."""
+    if not _refresh_one(cfg, incus, full, short=short):
+        raise typer.Exit(1)
+
+
+def fetch_all_pr_heads(cfg: Config, incus: IncusType) -> None:
+    """`jailbee pr fetch --all`: refresh every PR-bound container's head.
+
+    A PR shared by several containers is fetched once. Containers without a
+    PR are skipped, not errors; one failure does not stop the rest but exits 1.
+    """
+    from jailbee import lifecycle
+
+    failed = False
+    seen: set[int] = set()
+    bound = 0
+    for container in lifecycle.list_containers(cfg, incus, fast=True):
+        full = container.name
+        short = lifecycle.short_name(cfg, full)
+        try:
+            number = ContainerLabelState(incus, full, short=short).read().number
+        except MalformedPrLabelError as exc:
+            error(str(exc))
+            failed = True
+            continue
+        if number is None:
+            continue
+        bound += 1
+        if number in seen:
+            continue
+        seen.add(number)
+        if not _refresh_one(cfg, incus, full, short=short):
+            failed = True
+    if bound == 0:
+        info("No container is bound to a PR.")
+    if failed:
+        raise typer.Exit(1)
+
+
 def candidate_scopes(cfg: Config, *, extra_paths: Iterable[str] = ()) -> list[PrScope]:
     """The superproject, then unique initialized submodules in path order.
 

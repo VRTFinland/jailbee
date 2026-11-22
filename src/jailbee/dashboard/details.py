@@ -48,6 +48,7 @@ from jailbee.upgrade import ACTION_COMMANDS
 if TYPE_CHECKING:
     from jailbee.accounts.models import ActivityEvent
     from jailbee.dashboard.model import RepoGroup, Row
+    from jailbee.host_target import SyncTarget
     from jailbee.orchestration.view import GrantView
 
 DETAILS_MAX_ROWS = 8  # content rows inside the border, for the label/value grid
@@ -319,7 +320,31 @@ def _present(markup: str) -> bool:
 _SHORT_SHA = 10
 
 
-def _target_rows(c: ContainerInfo) -> tuple[GitRow, ...]:
+def _fetch_age(epoch: float, now: datetime) -> str:
+    seconds = max(0, int(now.timestamp() - epoch))
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds >= size:
+            return f"{seconds // size}{unit} ago"
+    return f"{seconds}s ago"
+
+
+def _freshness(sync: SyncTarget, now: datetime) -> str:
+    """How current the PR head is: autofetch off, last fetch failed, fetched Nm ago, or nothing."""
+    if not sync.autofetch:
+        return "[dim]autofetch off[/dim]"
+    if sync.fetch_error is not None and sync.fetch_error_at is not None:
+        age = _fetch_age(sync.fetch_error_at, now)
+        return f"[yellow]fetch failed {age}[/yellow]"
+    if sync.fetched_at is not None:
+        return f"[dim]fetched {_fetch_age(sync.fetched_at, now)}[/dim]"
+    return ""
+
+
+def _join_notes(*parts: str) -> str:
+    return " · ".join(p for p in parts if p)
+
+
+def _target_rows(c: ContainerInfo, now: datetime) -> tuple[GitRow, ...]:
     """One git row per target a PR-bound container could sync with; none otherwise.
 
     Each row has ↑/↓ against that target and the target's short sha; the
@@ -355,6 +380,7 @@ def _target_rows(c: ContainerInfo) -> tuple[GitRow, ...]:
             behind=_DASH,
             target="[yellow]not fetched[/yellow]",
             working="",
+            note=_freshness(sync, now),
         )
     else:
         pr = GitRow(
@@ -363,7 +389,7 @@ def _target_rows(c: ContainerInfo) -> tuple[GitRow, ...]:
             behind=_git_value(gs.behind_count),
             target=sha(sync.sha),
             working="",
-            note="[bold]sync target[/bold]",
+            note=_join_notes("[bold]sync target[/bold]", _freshness(sync, now)),
         )
     return (host, pr)
 
@@ -439,7 +465,7 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
             )
             for sub, row in zip(c.git_status.submodules, submodule_sub_rows(c), strict=True)
         )
-        git = (root, *_target_rows(c), *subs)
+        git = (root, *_target_rows(c, now), *subs)
 
     # What no other row says: the base is the git table's "vs" header, memory and
     # CPU are the summary bar and the process lines, the table has the age, the

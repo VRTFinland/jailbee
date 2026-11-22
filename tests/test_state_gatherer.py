@@ -514,3 +514,47 @@ def test_a_base_tick_updates_the_rows_outbox_counts_and_not_the_carried_probe_co
     c = third.groups[0].containers[0]
     assert (c.outbox_pr, c.outbox_issue) == (2, 1)
     assert c.git_status == probed  # carried forward, stale by design
+
+
+def test_a_snapshot_carries_pr_head_fetch_facts_even_on_a_base_gather(mocker):
+    from jailbee.host_target import SyncTarget
+    from jailbee.pr_autofetch import AutofetchPolicy, PrHeadAutofetcher
+
+    clock = _Clock()
+    status = GitStatus(
+        "clean", "clean", "0", "ok", sync_target=SyncTarget("pr", "PR #7", "a" * 40, "r")
+    )
+    rounds = iter([[_ci("x")], [_ci("x", status)], [_ci("x")]])
+
+    def groups(*a, **k):
+        batch = next(rounds)
+        for c in batch:
+            c.pr_number = 7
+        return [RepoGroup("alpha", "/a", None, batch)]
+
+    fetches: list[int] = []
+    pr_heads = PrHeadAutofetcher(
+        policy=lambda root: AutofetchPolicy(root, "origin", True, 300.0),
+        fetch=lambda root, n, remote: fetches.append(n),
+        wall=lambda: 5.0,
+        submit=lambda job: job(),
+    )
+    mocker.patch("jailbee.state_service.gatherer.sample_activity")
+    g = Gatherer(
+        mocker.Mock(),
+        CAD,
+        sent_counts=lambda: SentCounts(),
+        gather=groups,
+        clock=clock,
+        sleep=lambda _s: None,
+        pr_heads=pr_heads,
+    )
+
+    g.tick(active=True, refresh=False, roots=[])
+    g.tick(active=True, refresh=False, roots=[])
+    clock.t = 3.0
+    third = g.tick(active=True, refresh=False, roots=[])
+
+    target = third.groups[0].containers[0].git_status.sync_target
+    assert target.fetched_at == 5.0
+    assert fetches == [7]

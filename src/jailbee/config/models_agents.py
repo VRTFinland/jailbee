@@ -792,6 +792,30 @@ class PrConfig(BaseModel):
         ),
     )
 
+    autofetch: bool = Field(
+        default=True,
+        description=(
+            "When true (default), the dashboard's state service refetches the head of "
+            "every PR-bound container's PR every `autofetch_interval` seconds, so the "
+            "↓ column follows pushes made elsewhere. The fetch never prompts: it runs "
+            "detached, with git's terminal prompt off, `ssh -o BatchMode=yes` and a "
+            "30 s timeout; a failure keeps the last known head and shows `fetch "
+            "failed` on the card. Turn it off if your git remote is behind a "
+            "passphrase-protected or FIDO/YubiKey-backed SSH key (a background fetch "
+            "could poke the agent or hardware token unasked, or fail every time) and "
+            "refresh by hand with `jailbee pr fetch` or the dashboard's "
+            "`Refresh PR head`."
+        ),
+    )
+    autofetch_interval: int = Field(
+        default=300,
+        ge=30,
+        description=(
+            "Seconds between autofetches of one PR's head (at least 30). Defaults to "
+            "300. Has no effect when `autofetch` is false."
+        ),
+    )
+
     @field_validator("agent")
     @classmethod
     def _agent_is_a_name(cls, v: str) -> str:

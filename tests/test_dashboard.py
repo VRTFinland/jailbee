@@ -1319,6 +1319,7 @@ def test_menu_actions_stopped_includes_open_pr_when_pr_known():
         ("Open PR", "pr open"),
         ("Bind to PR…", "pr bind"),
         ("Unbind PR #7", "pr unbind"),
+        ("Refresh PR head", "pr fetch"),
         ("Rename…", "rename"),
         ("Memory: unknown…", "mem"),
         ("Egress…", "net egress ls"),
@@ -1333,6 +1334,7 @@ def test_menu_actions_stopped_includes_open_pr_when_pr_known():
                 ("Open PR", "pr open"),
                 ("Bind to PR…", "pr bind"),
                 ("Unbind PR #7", "pr unbind"),
+                ("Refresh PR head", "pr fetch"),
             ),
         ),
         ("Rename…", "rename"),
@@ -1922,6 +1924,7 @@ def test_menu_hotkeys_inside_submenus_are_scoped_to_that_level():
         "Open PR": "p",
         "Bind to PR…": "b",
         "Unbind PR #7": "u",
+        "Refresh PR head": "F",
         "Create/update PR": "P",
     }
     assert _hotkeys(root, "Lifecycle →") == {"Restart": "r", "Stop": "H", "Destroy": "D"}

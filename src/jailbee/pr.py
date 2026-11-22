@@ -21,6 +21,7 @@ All raise PrError subclasses with user-actionable messages on failure.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -329,6 +330,93 @@ def _run_pr_head_fetch(repo_root: Path, pr: PrInfo, remote: str) -> None:
         raise PrFetchError("--pr requires git to be installed and on PATH") from e
     if proc.returncode != 0:
         raise PrFetchError(f"git fetch failed for PR #{pr.number}: {proc.stderr.strip()}")
+
+
+UNATTENDED_FETCH_TIMEOUT = 30
+"""Seconds an unattended PR head fetch may take before it is given up on."""
+
+
+def _unattended_ssh_command(repo_root: Path) -> str:
+    """The ssh command git would use, with `-o BatchMode=yes` appended.
+
+    `GIT_SSH_COMMAND` wins over `core.sshCommand`, as in git itself; with
+    neither, plain `ssh`. Appending (not replacing) keeps the user's key and
+    config options.
+    """
+    base = os.environ.get("GIT_SSH_COMMAND", "").strip()
+    if not base:
+        proc = subprocess.run(
+            ["git", "config", "--get", "core.sshCommand"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        base = proc.stdout.strip() if proc.returncode == 0 else ""
+    return f"{base or 'ssh'} -o BatchMode=yes"
+
+
+def fetch_pr_head_unattended(
+    repo_root: Path, number: int, *, remote: str, timeout: int = UNATTENDED_FETCH_TIMEOUT
+) -> None:
+    """Fetch PR `number`'s head into `refs/jailbee/pr/<N>/head`, never prompting.
+
+    For the detached state service, which has no terminal: git's terminal
+    prompt and credential helpers' interactive mode are off, ssh runs in batch
+    mode, stdin is closed and the fetch is bounded by `timeout`. A failed
+    fetch leaves the ref as it was. Raises PrFetchError.
+    """
+    refspec = f"+pull/{number}/head:{pr_head_ref(number)}"
+    try:
+        env = {
+            **os.environ,
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_SSH_COMMAND": _unattended_ssh_command(repo_root),
+        }
+        proc = subprocess.run(
+            ["git", "-c", "credential.interactive=never", "fetch", remote, refspec],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise PrFetchError(f"git fetch for PR #{number} timed out after {timeout} s") from e
+    except (FileNotFoundError, OSError) as e:
+        raise PrFetchError(f"git fetch for PR #{number} could not run: {e}") from e
+    if proc.returncode != 0:
+        raise PrFetchError(f"git fetch failed for PR #{number}: {proc.stderr.strip()}")
+
+
+def refresh_pr_head(repo_root: Path, number: int, *, remote: str) -> FetchResult:
+    """Interactive refresh of PR `number`'s head (auth prompts allowed, retry offered).
+
+    The by-number counterpart of `fetch_pr_head`, for callers that have only a
+    PR number: no gh lookup, so `new_sha` is read back from the fetched ref.
+    """
+    prev_sha = _rev_parse(repo_root, pr_head_ref(number))
+    with_remote_retry(
+        lambda: _run_pr_head_fetch(repo_root, _bare_pr(number), remote),
+        label=f"fetching PR #{number}'s head",
+        catch=PrFetchError,
+    )
+    new_sha = _rev_parse(repo_root, pr_head_ref(number))
+    if new_sha is None:
+        raise PrFetchError(f"PR #{number}'s head is missing after the fetch")
+    return FetchResult(
+        updated=prev_sha != new_sha,
+        prev_sha=prev_sha,
+        new_sha=new_sha,
+        ref=pr_head_ref(number),
+    )
+
+
+def _bare_pr(number: int) -> PrInfo:
+    """A PrInfo carrying only the number, for `_run_pr_head_fetch`."""
+    return PrInfo(number=number, head_ref="", head_sha="", state="OPEN", base_ref="")
 
 
 def _rev_parse(repo_root: Path, ref: str) -> str | None:

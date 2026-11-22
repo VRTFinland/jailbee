@@ -79,6 +79,12 @@ class SyncTarget:
     in for one that could not be resolved (a PR-bound container whose PR head
     the host has never fetched). ``label`` is what the user reads: the branch
     name, or ``PR #N``; ``ref`` the host ref it came from.
+
+    The last four fields are facts about keeping a PR head current, filled in
+    by the state service (`pr_autofetch`): ``autofetch`` is whether the repo
+    refetches it on its own, ``fetched_at`` when that last succeeded (epoch
+    seconds), ``fetch_error`` and ``fetch_error_at`` the last failure, if the
+    latest attempt failed.
     """
 
     kind: SyncKind
@@ -86,6 +92,10 @@ class SyncTarget:
     sha: str | None
     ref: str
     fallback: bool = False
+    autofetch: bool = True
+    fetched_at: float | None = None
+    fetch_error: str | None = None
+    fetch_error_at: float | None = None
 
 
 def host_sync_target(host: TargetSnapshot, *, fallback: bool = False) -> SyncTarget:

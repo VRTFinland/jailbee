@@ -51,7 +51,8 @@ from jailbee.update_check import UpdateNotice
 # 26 adds GitStatus.sync_target (the resolved comparison target), the
 # host-branch ↑/↓ host_ahead_count/host_behind_count and host_branch.
 # 27 adds RepoGroup.agent_label, the repo's effective agent as `profile/model`.
-PROTOCOL = 27
+# 28 adds SyncTarget.autofetch, .fetched_at, .fetch_error and .fetch_error_at.
+PROTOCOL = 28
 
 
 class ProtocolError(ValueError):
