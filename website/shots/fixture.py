@@ -24,10 +24,12 @@ from jailbee.orchestration.view import ChildView, GrantView
 from jailbee.procstat import ProcessActivity, ProcessMemory
 
 DEFAULT_SIZE = (200, 45)
-TOP_KEYS = {"size", "now", "repos", "steps", "outbox", "accounts", "view"}
+TOP_KEYS = {"size", "now", "repos", "steps", "outbox", "accounts", "view", "queue"}
 VIEW_KEYS = {"columns", "show_details", "show_system", "sort_field", "sort_desc", "details_rows"}
-STEP_KEYS = {"shot", "key", "keys", "select", "menu"}
+STEP_KEYS = {"shot", "key", "keys", "select", "menu", "queue"}
 OUTBOX_KEYS = {"id", "kind", "action", "repo", "target", "title", "body", "state"}
+QUEUE_KEYS = {"command", "target", "state", "status", "output"}
+QUEUE_STATES = ("running", "done", "failed")
 ACCOUNT_KEYS = ("agent", "group", "account", "state", "repos", "containers")
 _DATETIME_FIELDS = {"created_at", "loose_until"}
 
@@ -45,6 +47,7 @@ class World:
     outbox: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     accounts: list[dict[str, Any]] = field(default_factory=list)
     view: dict[str, Any] = field(default_factory=dict)
+    queue: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _check(keys: Any, allowed: set[str], where: str) -> None:
@@ -251,6 +254,14 @@ def load_world(source: str | Path) -> World:
         _check(_mapping(a, "an account"), set(ACCOUNT_KEYS), "an account")
     view = _mapping(raw.get("view") or {}, "view")
     _check(view, VIEW_KEYS, "view")
+    queue = list(raw.get("queue") or [])
+    for q in queue:
+        _check(_mapping(q, "a queue entry"), QUEUE_KEYS, "a queue entry")
+        for need in ("command", "target", "state"):
+            if need not in q:
+                raise FixtureError(f"a queue entry has no {need!r}")
+        if q["state"] not in QUEUE_STATES:
+            raise FixtureError(f"queue state {q['state']!r} is not one of {QUEUE_STATES}")
     return World(
         (int(size[0]), int(size[1])),
         groups,
@@ -259,4 +270,5 @@ def load_world(source: str | Path) -> World:
         outbox,
         accounts,
         view,
+        queue,
     )

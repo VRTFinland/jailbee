@@ -43,6 +43,23 @@ tree beside a preview. You mark, delete or publish from there:
 
 ![The accounts overlay](images/dashboard/dashboard-accounts.png)
 
+Every action the dashboard starts becomes an entry in its notification queue.
+Once anything has run, a badge `⟳ R · ⚠ A` appears at the top (R running, A
+failed or awaiting an answer); click it or press `Q` to open the list, newest
+first. Here a base build is still running (its last output line is on the row),
+a push failed and a stop finished:
+
+![The notification queue](images/dashboard/dashboard-queue.png)
+
+Choose an entry to see its state and the tail of its output. `o` shows all of
+it, and `d` dismisses a finished entry (`D` in the list dismisses every
+finished one):
+
+![One failed entry of the queue](images/dashboard/dashboard-queue-entry.png)
+
+The queue lives as long as the dashboard; the rules are in
+[Commands](commands.md#terminal-dashboard-actions).
+
 ## Keys
 
 The keys the menus do not have. Press `h` or `?` in the dashboard for the same

@@ -53,6 +53,14 @@ def test_docs_shots_show_their_content(tmp_path: Path, monkeypatch: pytest.Monke
     assert "Outbox ·" in texts["dashboard-outbox"]
     assert "credential groups" in texts["dashboard-accounts"]
     assert "◆" in hero  # a waiting agent
+    assert "⟳" not in hero  # no queue badge before the fixture's queue is seeded
+    queue = texts["dashboard-queue"]
+    assert "Notifications" in queue
+    assert "⟳ 1" in queue and "⚠ 1" in queue  # the badge: one running, one failed
+    for line in ("✓ storefront-theme-dark", "✗ invoicer-csv-import", "⟳ invoicer"):
+        assert line in queue
+    entry = texts["dashboard-queue-entry"]
+    assert "failed (exit 1)" in entry and "Merge conflict" in entry and "Dismiss" in entry
 
 
 def test_there_is_at_least_the_docs_fixture() -> None:
@@ -69,6 +77,8 @@ def test_docs_fixture_tree_and_shots() -> None:
         "dashboard-card",
         "dashboard-outbox",
         "dashboard-accounts",
+        "dashboard-queue",
+        "dashboard-queue-entry",
     ]
 
 

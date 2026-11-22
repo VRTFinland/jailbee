@@ -104,3 +104,18 @@ accounts:
     )
     assert "demo-a" in world.outbox
     assert world.accounts[0]["state"] == "live"
+
+
+def test_queue_entries_reach_the_world_and_are_validated() -> None:
+    world = load_world(
+        MINIMAL + "queue:\n  - {command: merge a, target: demo-a, state: failed, status: 1}\n"
+    )
+    assert world.queue[0]["state"] == "failed"
+    with pytest.raises(FixtureError, match="queue state"):
+        load_world(MINIMAL + "queue:\n  - {command: x, target: y, state: bogus}\n")
+    with pytest.raises(FixtureError, match="outpt"):
+        load_world(MINIMAL + "queue:\n  - {command: x, target: y, state: done, outpt: z}\n")
+
+
+def test_queue_step_is_a_step_kind() -> None:
+    assert load_world(MINIMAL + "  - queue: seed\n").steps[-1] == ("queue", "seed")

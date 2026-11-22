@@ -122,7 +122,7 @@ before editing `## Unreleased`.
   new guide pages (being written), Remote GUI, FAQ and Troubleshooting. Commands,
   git bridge, orchestration, project config and the web dashboard moved under
   Reference; page URLs are unchanged. The terminal dashboard has its own page
-  with screenshots, a keys cheat sheet, a menu map and the full reference that
+  with screenshots (including the notification queue), a keys cheat sheet, a menu map and the full reference that
   used to be one `commands.md` table cell; the built site now ships the images
   the published pages reference.
 - A container that lacks the comparison target commit altogether (for example a
