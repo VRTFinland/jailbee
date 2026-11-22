@@ -137,7 +137,7 @@ before editing `## Unreleased`.
   and a marked row keeps the mark's blue background without the phase colour. The web
   front page styles its rows by the same phases in every theme: a coloured edge and a
   phase label, in e-ink distinguished by edge style rather than colour; Stopped rows are
-  dim (dotted in e-ink).
+  dim (an open outline in e-ink).
 - The terminal dashboard keeps a notification queue of the actions it runs
   in the background ([#151](https://github.com/VRTFinland/jailbee/issues/151)):
   each is an entry with its command, target, state, exit status and output,
