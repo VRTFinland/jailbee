@@ -2191,3 +2191,116 @@ def test_turning_reviews_off_clears_comment_edits_in_the_view(mocker, tmp_path):
     ]
     grant = session.groups[0].containers[0].grant
     assert (grant.publish_pr_reviews, grant.publish_pr_comment_edits) == (False, False)
+
+
+# -- the Outbox box is not modal: an outside click closes it like a menu ------------------
+
+_ROW = ("alpha-x", "pr/a.json", None, None)
+
+
+def test_outside_click_closes_idle_outbox_and_reaches_the_row(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.select(dmodel.Row("repo", "alpha"))
+
+    session.click(Hit("row", ("alpha-x",)))
+
+    assert session.overlay is None
+    assert session.selected == dmodel.Row("container", "alpha-x")
+
+
+def test_outside_click_does_nothing_while_a_question_is_open(mocker, tmp_path):
+    from dataclasses import replace
+
+    from jailbee.dashboard.hit import Hit
+    from jailbee.dashboard.outbox import Question
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox._set(  # type: ignore[union-attr]
+        replace(session.outbox.state, question=Question("x", "t", (), (("y", "Yes"),), "y"))  # type: ignore[union-attr]
+    )
+    box = session.overlay
+
+    session.click(Hit("row", ("alpha-x",)))
+
+    assert session.overlay is box
+
+
+def test_outside_click_does_nothing_while_a_publish_runs(mocker, tmp_path):
+    from dataclasses import replace
+
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox._set(replace(session.outbox.state, busy="publishing…"))  # type: ignore[union-attr]
+    box = session.overlay
+
+    session.click(Hit("row", ("alpha-x",)))
+
+    assert session.overlay is box
+
+
+def test_marks_survive_close_and_reopen(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    assert _ROW in session.overlay.marks
+    session.click(Hit("row", ("alpha-x",)))
+    assert session.overlay is None
+
+    session.select(dmodel.Row("container", "alpha-x"))
+    session.handle_key("enter")
+    session.menu_chosen("outbox browse", None, 0)
+    _settle(session)
+
+    assert _ROW in session.overlay.marks
+
+
+def test_marks_of_changed_or_vanished_proposals_are_dropped_on_reopen(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+    from tests.test_dashboard_outbox import _action, _container, _listing, _proposal
+
+    quiet = _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+
+    changed = _listing(_container(_proposal(revision="r2", actions=[_action(0)])))
+    quiet.return_value = tsession.da.CliResult(True, "done", changed)
+    session.select(dmodel.Row("container", "alpha-x"))
+    session.handle_key("enter")
+    session.menu_chosen("outbox browse", None, 0)
+    _settle(session)
+
+    assert session.overlay.marks == frozenset()
+
+
+def test_marks_survive_a_box_closed_before_its_listing_arrived(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+    session.jobs = _HeldJobs()  # type: ignore[assignment]  # the listing never arrives
+    session.select(dmodel.Row("container", "alpha-x"))
+    session.handle_key("enter")
+    session.menu_chosen("outbox browse", None, 0)
+    session.click(Hit("row", ("alpha-x",)))  # closed again at once
+
+    session._remember_outbox_marks()
+
+    assert _ROW in session._outbox_marks["alpha-x"][0]
+    assert session._outbox_marks["alpha-x"][1] == {"pr/a.json": "r1"}

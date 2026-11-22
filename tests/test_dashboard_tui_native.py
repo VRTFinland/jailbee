@@ -2153,3 +2153,21 @@ def test_an_open_menu_box_follows_its_entry_when_new_entries_appear(mocker, tmp_
     assert "outbox browse" in verbs
     # the cursor was on "shell" and stays on it as the entries shift under it
     assert run.natives[-1] == NativeState("menu", verbs.index("shell"), level=None)
+
+
+def test_pilot_a_mouse_click_outside_the_outbox_box_closes_it_and_selects_the_row(mocker, tmp_path):
+    from tests.test_dashboard_session import _outbox_json
+    from tests.test_dashboard_session import _quiet as quiet_listing
+
+    quiet_listing(mocker, _outbox_json())
+    group = alpha_group(tmp_path)
+    name = group.containers[0].name
+
+    def open_box(app):  # type: ignore[no-untyped-def]
+        app.session.overlay = app.session.open_outbox(name)  # the row is not selected
+
+    run = drive(mocker, [open_box, Click(Hit("row", (name,)))], [group])
+
+    assert isinstance(run.trace[1].overlay, tsession.OutboxState)
+    assert run.trace[-1].overlay is None
+    assert run.trace[-1].selected == tsession.Row("container", name)
