@@ -89,6 +89,7 @@ def test_resolve_target_marks_relation_unavailable_on_ancestor_error(mocker, tmp
 
 # ---- resolve_sync_target: the ref a container's DIFF/↑/↓ compare against ----
 
+
 def _host_snapshot(sha: str | None = "host-sha"):
     from jailbee.host_target import TargetSnapshot
 
@@ -128,9 +129,7 @@ def test_sync_target_of_a_pr_bound_container_is_the_pr_head(mocker, tmp_path):
     )
 
 
-def test_pr_bound_container_without_a_pr_head_ref_falls_back_to_the_host_branch(
-    mocker, tmp_path
-):
+def test_pr_bound_container_without_a_pr_head_ref_falls_back_to_the_host_branch(mocker, tmp_path):
     from jailbee.host_target import resolve_sync_target
 
     mocker.patch("jailbee.git.rev_parse", return_value=None)
