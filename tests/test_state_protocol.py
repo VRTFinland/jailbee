@@ -190,6 +190,7 @@ def _full_snapshot() -> Snapshot:
             autostart_profiles=("full", "light"),
             autostart_default_profile="full",
             autostart_services=("db", "web"),
+            service_descriptions={"db": "Postgres for tests"},
             orchestration_profiles=("bugfixer",),
             default_runner="claude haiku",
             default_runner_source="repo",
@@ -377,6 +378,7 @@ def test_combined_protocol_preserves_builtin_choices_and_rerun_state():
     group = decode(encode(snapshot)).groups[0]
     assert group.autostart_profiles == ("full", "light", "none", "all")
     assert group.autostart_services == ("db", "web")
+    assert group.service_descriptions == {"db": "Postgres for tests"}
     container = group.containers[0]
     assert container.autostart_failed == 2
     assert container.job_live is True
@@ -431,7 +433,7 @@ def test_wire_schema_leaves_out_docstrings_and_titles():
 # PROTOCOL fails below: a client of another version would misread it. A pydantic
 # upgrade that only reshapes its schema output trips this too; a bump is then
 # harmless (a protocol mismatch makes the dashboard replace the state service).
-WIRE_SCHEMA = (28, "46f6f33b763543c211e6f57ef17104ae97ec168c57edacbd4f45ddf148964cea")
+WIRE_SCHEMA = (29, "004354530d1806f20b30e07f71828aff0f2dd2dcf51fa58a306eda8c03b9e875")
 
 
 def test_a_wire_schema_change_bumps_the_protocol():

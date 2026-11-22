@@ -52,7 +52,8 @@ from jailbee.update_check import UpdateNotice
 # host-branch ↑/↓ host_ahead_count/host_behind_count and host_branch.
 # 27 adds RepoGroup.agent_label, the repo's effective agent as `profile/model`.
 # 28 adds ContainerInfo.agent_runner and .agent_source, the agent the next session launches.
-PROTOCOL = 28
+# 29 adds RepoGroup.service_descriptions, the repo services' optional descriptions.
+PROTOCOL = 29
 
 
 class ProtocolError(ValueError):

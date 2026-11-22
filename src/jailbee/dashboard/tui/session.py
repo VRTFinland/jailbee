@@ -2910,13 +2910,7 @@ class DashboardSession:
         return Picker(
             "autostart-services",
             f"Custom services — {choice.target}",
-            (
-                PickerEntry("Done", "\x00done"),
-                *(
-                    PickerEntry(f"[{'x' if name in checked else ' '}] {name}", name)
-                    for name in group.autostart_services
-                ),
-            ),
+            dact.autostart_service_entries(group, checked),
             target=choice.target,
             carry=(*choice.carry, *checked),
             back=choice,

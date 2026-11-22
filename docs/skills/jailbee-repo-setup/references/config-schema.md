@@ -455,7 +455,8 @@ path would otherwise become an argument to the first), while `args`
 
 Repo service names start with a lowercase letter or digit, contain lowercase
 letters, digits, `_` or `-`, and have at most 63 characters. Each has required
-nonempty `run` and optional `prepare` (list), `ready` (command), `ready_timeout`
+nonempty `run`, optional `description` (string, `""`: what the service does and
+when an agent needs it; shown by `service ls` and the dashboard) and optional `prepare` (list), `ready` (command), `ready_timeout`
 (positive seconds, 120), `status` (read-only command), `status_timeout` (integer
 seconds, minimum 1, default 5), `logs.filters` (named regex map, `{}`) and
 `logs.history_limit` (tmux scrollback lines, 50000, minimum 1000), `stop` (command), `stop_timeout`

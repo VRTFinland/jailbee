@@ -85,6 +85,12 @@ class Service(BaseModel):
     prepare: list[ServicePrepareStep] = Field(
         default_factory=list, description="Serial preparation steps."
     )
+    description: str = Field(
+        default="",
+        description=(
+            "What the service does and when it is needed; shown to agents and in the dashboard."
+        ),
+    )
     run: str = Field(min_length=1, description="Long-running foreground shell command.")
     args: bool = Field(default=False, description="Allow positional runtime arguments.")
     ready: str | None = Field(default=None, description="Optional readiness probe command.")
