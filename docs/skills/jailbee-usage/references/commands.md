@@ -187,6 +187,7 @@ that leaf or group, e.g. `jb --repo x net egress add pypi.org --repo`.
 ## Table of contents
 
 - [Setup & host (`setup`, `init`, `apply`, `doctor`, `base`, `registry`, `display`)](#setup--host)
+- [Default agent runner (`agent use|show`)](#default-agent-runner)
 - [LiteLLM proxy (`litellm up|down|status|login|logout|logs`)](#litellm-proxy)
 - [Remote SSH (`remote ssh`)](#remote-ssh)
 - [Web dashboard (`remote web`, `serve`)](#web-dashboard)
@@ -228,6 +229,13 @@ speculatively.
 | `jailbee display up [--recreate]\|down\|status\|attach [name]` | Shared RDP display for GUI apps launched over remote SSH. `up` provisions the `jailbee-display` container (weston) and prints how to connect; `down` stops it and revokes SSH forwarding to it; `--recreate` rebuilds it. Only meaningful with `remote.ssh.rdp: true`. `up` and `down` are host-only (the container has no `jailbee`); `status` also works over remote SSH. `attach` (host only) attaches the host's Wayland display to a running container, for GUI apps started from a shell; the GUI launchers do it themselves (see `gui.wayland` in `docs/config.md`). On a Linux laptop or a Mac (Cocoa-Way), `waypipe ssh` gives native windows instead (on by default via `remote.ssh.waypipe`; titles carry a `[<container>] ` prefix); see `docs/remote-gui.md`. |
 | `jailbee net install` | Deprecated alias for `jailbee setup --yes --only timer`, which does exactly the same work — (re)installing the `jailbee-net-refresh` user systemd timer + service. Still works; prints a deprecation warning. |
 | `jailbee version` / `jailbee --version` | Print the version. |
+
+## Default agent runner
+
+| Command | What it does |
+|---|---|
+| `jailbee agent use [PROFILE[/MODEL]] [--clear]` | Write `agents.default_runner` to the repo's host-local config (`claude/opus` = plain Claude, other profile = `claude-jb` on it; model optional), validated against the LiteLLM config, then resync `claude-jb`'s default profile in running containers. `--clear` removes it. Host-only. |
+| `jailbee agent show` | Effective default runner and its source (`local`/`repo`/`global`/`legacy`); lists containers whose own runner label overrides it. Host-only. |
 
 ## LiteLLM proxy
 

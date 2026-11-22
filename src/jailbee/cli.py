@@ -12663,6 +12663,77 @@ def display_attach_cmd(name: ContainerArg = None, config: ConfigOption = None) -
         info(f"The host display is already attached to {resolved}")
 
 
+agent_app = typer.Typer(
+    name="agent",
+    help="The agent runner this repo's containers use by default.",
+    no_args_is_help=True,
+)
+app.add_typer(agent_app)
+
+
+@agent_app.command("use")
+def agent_use_cmd(
+    selection: Annotated[
+        str | None,
+        typer.Argument(
+            help=(
+                "PROFILE or PROFILE/MODEL: `claude/opus` is plain Claude, any other profile "
+                "runs `claude-jb` on that LiteLLM profile (`grok`, `grok/sonnet`). "
+                "Asked for when omitted."
+            )
+        ),
+    ] = None,
+    clear: Annotated[
+        bool, typer.Option("--clear", help="Remove the choice; fall back to the other layers.")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Set the repo's default agent runner (`agents.default_runner`, local layer).
+
+    Written to this repo's host-local config. Containers' `claude-jb` default
+    profile is resynced; running agent sessions are not touched.
+    """
+    from jailbee import agent_default
+    from jailbee.incus import Incus, IncusError
+
+    if clear and selection is not None:
+        error("--clear takes no PROFILE")
+        raise typer.Exit(2)
+    cfg = _load_or_exit(config)
+    incus, gcfg = Incus(), _load_global()
+    try:
+        result = agent_default.use(
+            cfg, incus, gcfg, selection, reload=lambda: _load_or_exit(config), clear=clear
+        )
+    except (agent_default.SelectionError, IncusError) as e:
+        error(str(e))
+        raise typer.Exit(1) from e
+    if result.runner is None:
+        success("Cleared the default runner from this repo's local config")
+    else:
+        success(f"Default runner for this repo: {result.runner.describe()}")
+    if result.resync.synced:
+        info(f"Resynced claude-jb settings in {len(result.resync.synced)} running container(s)")
+    for name, why in result.resync.failed:
+        warn_plain(f"Could not resync {name}: {why}; run `jailbee apply` to retry.")
+
+
+@agent_app.command("show")
+def agent_show_cmd(config: ConfigOption = None) -> None:
+    """Show the effective default runner and where it comes from."""
+    from jailbee import agent_default
+    from jailbee.incus import Incus
+
+    cfg = _load_or_exit(config)
+    shown = agent_default.effective(cfg, Incus())
+    if shown.runner is not None:
+        typer.echo(f"default runner: {shown.runner.describe()} (source: {shown.source})")
+    else:
+        typer.echo(f"default runner: {shown.legacy} (source: legacy)")
+    for name, runner in shown.labels:
+        typer.echo(f"container {name}: {runner.describe()} (source: label)")
+
+
 litellm_app = typer.Typer(
     name="litellm",
     help="LiteLLM proxy for coding agents on other providers' models.",

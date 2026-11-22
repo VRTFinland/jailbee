@@ -10,6 +10,16 @@ before editing `## Unreleased`.
 
 ### Added
 
+- `agents.default_runner` makes a runner (`claude` or `claude-jb`, an optional
+  LiteLLM profile and model tier) the repo's default for every container's
+  autostart, layered local → repo → global
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)). A container's own
+  runner label wins, and without either the existing `primary_agent` /
+  `litellm.autostart` behaviour is unchanged. `jailbee agent use PROFILE[/MODEL]`
+  (or `--clear`) writes it to the repo's host-local config, validated against the
+  LiteLLM profiles, and resyncs the `claude-jb` default profile in running
+  containers; `jailbee agent show` prints the effective choice and its source.
+  `orchestration.default_runner` stays as a deprecated alias.
 - The terminal dashboard colours a whole container row by its non-normal phase: orange
   while booting, teal during autostart, magenta for other live jobs and red for
   a dead job or failed autostart, in hues legible on light and dark terminals

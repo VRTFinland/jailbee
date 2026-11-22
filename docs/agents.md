@@ -287,6 +287,18 @@ text, not `-` or `---`.
   stage](config.md#the-reserved-agents-stage).
 - A restart after consumption relaunches the plain `command`.
 
+### The repo's default runner
+
+`agents.default_runner` (`{agent: claude|claude-jb, profile?, model?}`, see
+[config](config.md#agentsdefault_runner)) picks how Claude is launched in **all**
+of a repo's containers: plain `claude`, or `claude-jb` on a LiteLLM profile,
+optionally with a model tier. A container's own runner label (set when an
+orchestrator spawns a child with a runner) wins over it; without either, the
+legacy path applies (`litellm.autostart`, `litellm.default_profile`).
+`jailbee agent use claude/opus` or `jailbee agent use grok/sonnet` writes it to the
+repo's host-local config, and `jailbee agent show` prints the effective choice and
+its source. Only the Claude family is offered.
+
 ## 5. Which paths to share
 
 Prefer sharing the agent's **auth and settings surface only**, rather than

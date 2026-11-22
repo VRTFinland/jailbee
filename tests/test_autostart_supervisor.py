@@ -1406,7 +1406,9 @@ def test_run_detached_passes_prompt_pending_for_on_start(tmp_path, mocker, make_
 
     autostart_mod.run_detached(cfg, incus, _spec(tmp_path, block))
 
-    steps.assert_called_once_with(cfg, initial_prompt=True, extra_env={}, runner=None, resume=None)
+    steps.assert_called_once_with(
+        cfg, initial_prompt=True, extra_env={}, runner=None, default_runner=None, resume=None
+    )
     pending.assert_called_once()
 
 

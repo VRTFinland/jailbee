@@ -1083,6 +1083,17 @@ def test_sync_payload_after_up():
     assert "sk-jb-" not in repr(payload)
 
 
+def test_sync_payload_default_profile_override_only_when_served():
+    incus = _incus(present=True)
+    ll.litellm_up(incus, _gcfg())
+    served = ll.container_sync_payload(incus, _gcfg())["json"]["profiles"]
+    other = next(iter(served))
+    over = ll.container_sync_payload(incus, _gcfg(), default_profile=other)
+    assert over["json"]["default_profile"] == other
+    ignored = ll.container_sync_payload(incus, _gcfg(), default_profile="not-served")
+    assert ignored["json"]["default_profile"] == "codex"
+
+
 def test_sync_container_writes_json_and_key():
     incus = _incus(present=True)
     ll.litellm_up(incus, _gcfg())

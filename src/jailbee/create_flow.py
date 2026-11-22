@@ -186,10 +186,16 @@ def host_extras(
             )
 
     from jailbee import litellm
+    from jailbee.agent_default import litellm_default_profile
 
     litellm_payload: dict[str, object] | None
     try:
-        litellm_payload = litellm.container_sync_payload(incus, gcfg, view=cfg.litellm_view())
+        litellm_payload = litellm.container_sync_payload(
+            incus,
+            gcfg,
+            view=cfg.litellm_view(),
+            default_profile=litellm_default_profile(cfg),
+        )
     except IncusError as e:
         warnings.append(f"Could not resolve LiteLLM settings: {e}; run `jailbee apply` to retry.")
         litellm_payload = None

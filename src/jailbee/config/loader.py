@@ -51,10 +51,12 @@ from jailbee.config.models_host import (
 from jailbee.config.models_litellm import LiteLLMConfig, input_free_lines
 from jailbee.config.models_net import Credentials
 from jailbee.config.models_orchestration import (
+    AgentsRunnerLayers,
     OrchestrationHostConfig,
     OrchestrationView,
     RepoOrchestration,
     build_view,
+    peel_agents_runner,
 )
 from jailbee.config.retired import (
     _check_agents_spelling,
@@ -146,6 +148,7 @@ def _orchestration_view(
     repo: RepoOrchestration,
     global_from: str,
     local_from: str,
+    agents: AgentsRunnerLayers | None = None,
 ) -> OrchestrationView:
     try:
         host = OrchestrationHostConfig.model_validate(
@@ -154,7 +157,7 @@ def _orchestration_view(
     except ValidationError as e:
         raise ConfigError(f"Invalid `orchestration` in {global_from}:\n{e}") from e
     try:
-        return build_view(host, local, repo)
+        return build_view(host, local, repo, agents)
     except ValueError as e:
         raise ConfigError(
             f"Invalid `orchestration`: {e} (profiles come from {global_from} and "
@@ -252,7 +255,11 @@ def resolve_agents_raw(raw: dict[str, object]) -> dict[str, object]:
     raw_agents = result.pop("agents", {})
     if not isinstance(raw_agents, dict):
         raise ConfigError("`agents` must be a mapping of agent name to settings.")
-    agents: dict[str, object] = {k: _copy(v) for k, v in raw_agents.items()}
+    # Not an agent (see `peel_agents_runner`); a caller that skipped the peel
+    # must not see it validated as one.
+    agents: dict[str, object] = {
+        k: _copy(v) for k, v in raw_agents.items() if k != "default_runner"
+    }
 
     legacy = result.pop("claude", None)
     if legacy is not None:
@@ -825,6 +832,9 @@ def load_config_from_layers(
     )
     _check_pull_migration(global_for_merge, repo_raw, default_global_config_path(), path)
     _check_agents_spelling(global_for_merge, repo_raw, default_global_config_path(), path)
+    # `agents.default_runner` is not an agent: peel it off each layer before the merge.
+    global_for_merge, global_runner = peel_agents_runner(global_for_merge, global_from)
+    repo_raw, repo_runner = peel_agents_runner(repo_raw, origin)
 
     # A committed repo may disable GitHub, but must not contain host settings or tokens.
     repo_github = repo_raw.get("github")
@@ -907,6 +917,7 @@ def load_config_from_layers(
     local_from = local_origin or str(local_path)
     _check_retired_keys(local_raw)
     local_overlay, local_creds = split_local_raw(local_raw, local_from)
+    local_overlay, local_runner = peel_agents_runner(local_overlay, local_from)
     local_litellm = local_litellm_overlay(local_raw, local_from)
     local_orch = local_orchestration_overlay(local_raw, local_from)
     if emit_hint:
@@ -935,7 +946,12 @@ def load_config_from_layers(
         local_from,
     )
     cfg._orchestration_view = _orchestration_view(
-        host_raw, local_orch, repo_orch, global_from, local_from
+        host_raw,
+        local_orch,
+        repo_orch,
+        global_from,
+        local_from,
+        AgentsRunnerLayers(host=global_runner, repo=repo_runner, local=local_runner),
     )
 
     _validate_pooled_caches(cfg)

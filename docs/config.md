@@ -2529,6 +2529,20 @@ so there is no distinct target branch to read from.
 |---|---|---|---|
 | `primary_agent` | `auto` \| agent name | `auto` | The repo's primary agent: the one that receives the initial prompt of [`jailbee new --prompt`](commands.md) and the agent `pr.agent: auto` prefers when it has a `headless` command (an explicit name steers it; with `auto` the result equals the plain search). `auto` picks among the enabled agents: those with `autostart` on first, then the rest; inside each group `claude` first, then by name. A name must be an enabled agent, otherwise the problem is reported (`--prompt` exits 2) and no other agent is used. See [Primary agent and initial prompt](agents.md#primary-agent-and-initial-prompt). |
 
+### `agents.default_runner`
+
+```yaml
+agents:
+  default_runner:
+    agent: claude-jb   # claude or claude-jb
+    profile: grok      # optional; only with claude-jb (a LiteLLM profile)
+    model: sonnet      # optional: fable, opus, sonnet or haiku
+```
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `agents.default_runner` | `{agent, profile?, model?}` | none | The repo's default [runner](orchestration.md) for **every** container of the repo, not only spawned children. Allowed in `global.yaml`, the repo's `.jailbee/config.yaml` and the host-local `repos/<prefix>.yaml`; layered local → repo → global, the first layer that sets it wins. It is not an agent: it never appears under `agents.<name>`. Autostart resolves a container's Claude command as: the container's own runner label (a child spawned with a runner), then `agents.default_runner`, then the legacy path (`primary_agent`, `litellm.autostart`, `litellm.default_profile`, no model). With a runner the `agents.claude.command` is rewritten (`claude` ↔ `claude-jb`, `-P`, `--model`); a command that is not a Claude command keeps its configured form and logs a warning. It does not change which agent is the primary agent. When the runner names a `claude-jb` profile, that profile is also the `claude-jb` default inside the repo's containers (written by `jailbee apply`, `new` and `jailbee agent use`). Set it with [`jailbee agent use`](commands.md#jailbee-agent). The deprecated alias `orchestration.default_runner` is still read (in a layer, `agents.default_runner` wins over it); spawned children get the same default as before. |
+
 ### `docker_registry_mirror.extra_registries`
 
 ```yaml
@@ -3102,7 +3116,10 @@ It is applied by `jailbee new` to the new container, except for
 mount-mode containers, children, and when the repo's caps (`allowed` or an
 excess) would refuse the grant.
 
-`default_runner` has the shape `{agent, profile?, model?}`. Runner selection
+`default_runner` has the shape `{agent, profile?, model?}`. At host and repo
+level `orchestration.default_runner` is a deprecated alias of
+[`agents.default_runner`](#agentsdefault_runner), which now applies to every
+container of the repo and wins over the alias within a layer. Runner selection
 prefers an explicit runner, then the container's runner, then a non-null
 host-local default, the repo default, and finally the global default. It is a
 preference, not a right, and does not grant orchestration permissions.

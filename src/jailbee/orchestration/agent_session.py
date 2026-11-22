@@ -34,6 +34,7 @@ def relaunch(
         initial_prompt=True,
         extra_env=child_env(cfg, incus, child),
         runner=runner,
+        default_runner=cfg.orchestration_view().default_runner,
         resume=resume,
     )
     step = next(s for s in steps if s.name == target)
