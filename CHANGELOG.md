@@ -39,7 +39,10 @@ before editing `## Unreleased`.
   finished, with a `Q` hint and, for a failure, the last output line. Verbs run
   for their output (diff, job log, egress list, merge, PR push, doctor,
   disk usage, the command line) open it automatically. The `⟳ running · ⚠ failed` badge at the top,
-  or `Q`, opens the queue, where an entry expands to its full output.
+  or `Q`, opens the queue, where an entry expands to its full output. Background
+  lifecycle jobs (create, start/restart, autostart), whoever started them, are listed
+  there too as read-only rows with a way to open the job log; they count in the badge
+  and go when the job does.
 - The documentation site has a task-first "User guide" section in place of "Daily use"
   ([#150](https://github.com/VRTFinland/jailbee/issues/150)): Getting started, seven
   new guide pages (being written), Remote GUI, FAQ and Troubleshooting. Commands,
