@@ -128,7 +128,16 @@ def test_the_most_urgent_session_speaks_for_the_agent_and_all_are_counted():
 
     assert out["a"] == (
         agent_status.AgentSummary(
-            agent="claude", state="waiting", since=T0, waiting_for="input needed", count=3
+            agent="claude",
+            state="waiting",
+            since=T0,
+            waiting_for="input needed",
+            count=3,
+            sessions=(
+                agent_status.SessionMark("waiting", T0),
+                agent_status.SessionMark("busy", T0),
+                agent_status.SessionMark("idle", T0),
+            ),
         ),
     )
 

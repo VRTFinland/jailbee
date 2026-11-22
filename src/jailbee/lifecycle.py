@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from rich.markup import escape
+from rich.text import Text
 
 from jailbee import agent_status, table_format
 from jailbee.config import CONTAINER_USERNAME, Config, HostMount, SharedCache
@@ -3649,6 +3650,9 @@ def format_duration_coarse(delta: timedelta) -> str:
     return f"{total // 3600}h"
 
 
+AGENT_COMPACT_MAX_CELLS = 24
+"""Widest the dashboard lets the `agent_compact` cell grow before it abbreviates."""
+
 _AGENT_GLYPHS: dict[str, tuple[str, str | None]] = {
     "waiting": ("◆", "yellow"),
     "busy": ("●", "green"),
@@ -3665,8 +3669,14 @@ def agent_compact_cell(
     recent_idle: timedelta | None = None,
     recent_idle_style: str = "bold bright_white",
     activity_age: bool = False,
+    max_cells: int | None = None,
 ) -> str:
-    """The `agent_compact` cell: one glyph (and coarse age) per distinct state.
+    """The `agent_compact` cell: one glyph per live session.
+
+    Each agent's most urgent session carries a coarse age, but only the first
+    of each state does (the others are bare glyphs). When the result is wider
+    than ``max_cells`` it falls back to bare glyphs, and past that to as many
+    glyphs as fit followed by ``+N`` for the rest.
 
     ``activity_age`` selects the latest real event for dashboard freshness;
     the default preserves `jailbee ls`'s state duration. Unknown event ages
@@ -3697,10 +3707,34 @@ def agent_compact_cell(
                 colour = recent_idle_style
         return f"[{colour}]{text}[/{colour}]" if colour else text
 
-    # One mark per distinct state: agents arrive in `agent_status._rank`
-    # order, so the first of a state is its longest wait or latest change.
+    def glyph_of(state: str) -> str:
+        glyph, colour = _AGENT_GLYPHS.get(state, ("?", None))
+        if state not in _AGENT_GLYPHS:
+            glyph += f" {escape(state)}"
+        return f"[{colour}]{glyph}[/{colour}]" if colour else glyph
+
+    # Agents arrive in `agent_status._rank` order, so the first of a state is
+    # its longest wait or latest change: that one carries the age.
     first_of_state = {s.state: s for s in reversed(statuses)}
-    return " ".join(text_of(s) for s in statuses if first_of_state[s.state] is s)
+    glyphs: list[str] = []
+    full: list[str] = []
+    for s in statuses:
+        # Old snapshots carry no per-session marks: `count` stands in for them.
+        states = [m.state for m in s.sessions] or [s.state] * max(s.count, 1)
+        glyphs.extend(glyph_of(state) for state in states)
+        full.append(text_of(s) if first_of_state[s.state] is s else glyph_of(s.state))
+        full.extend(glyph_of(state) for state in states[1:])
+    cell = " ".join(full)
+    if max_cells is None or Text.from_markup(cell).cell_len <= max_cells:
+        return cell
+    plain = " ".join(glyphs)
+    if Text.from_markup(plain).cell_len <= max_cells:
+        return plain
+    for keep in range(len(glyphs) - 1, -1, -1):
+        shown = " ".join([*glyphs[:keep], f"+{len(glyphs) - keep}"])
+        if Text.from_markup(shown).cell_len <= max_cells:
+            return shown
+    return f"+{len(glyphs)}"
 
 
 def repo_has_submodules(cfg: Config) -> bool:
@@ -4577,6 +4611,7 @@ def ls_field_specs(
             default_dashboard=True,
             default_json=False,
             dashboard_min_width=6,
+            dashboard_max_width=AGENT_COMPACT_MAX_CELLS,
         ),
         table_format.FieldSpec(
             name="wt",

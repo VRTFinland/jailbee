@@ -10,6 +10,7 @@ from rich.markup import escape
 
 from jailbee import background
 from jailbee.lifecycle import (
+    AGENT_COMPACT_MAX_CELLS,
     DOING_MAX_NAMES,
     agent_compact_cell,
     format_duration_short,
@@ -272,7 +273,11 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
         return f"#{container.pr_number}" if container.pr_author else f"#{container.pr_number}↓"
     if field.name == "agent_compact":
         return agent_compact_cell(
-            container.agent_status, now, recent_idle=RECENT_IDLE, activity_age=True
+            container.agent_status,
+            now,
+            recent_idle=RECENT_IDLE,
+            activity_age=True,
+            max_cells=AGENT_COMPACT_MAX_CELLS,
         )
     if field.name == "created":
         return _age(container.created_at, now)
