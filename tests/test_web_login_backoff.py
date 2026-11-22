@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from jailbee.db import get_engine
 from jailbee.web import auth_admin
 from jailbee.web.app import WebDeps, create_app
-from jailbee.web.auth import PinHolder
+from jailbee.web.auth import PinHolder, RateLimiter
 from tests.web_fakes import FakeClock, FakeSourceFactory, pin_sequence
 
 ESCALATING_WAITS = [4, 8, 16, 32, 64, 128, 256, 512, 1024, 1800, 1800, 1800]
@@ -107,7 +107,7 @@ def test_a_minute_window_refusal_says_when_to_retry(
     assert pin_attempt(client, wrong(pin)) == (429, "40")
 
 
-def test_a_few_typos_cost_no_wait(client: TestClient, pin: PinHolder, clock: FakeClock) -> None:
+def test_a_few_typos_cost_no_wait(client: TestClient, pin: PinHolder) -> None:
     for _ in range(4):
         fail_pin(client, pin)
 
@@ -182,3 +182,43 @@ def test_totp_backs_off_on_its_own(client: TestClient, pin: PinHolder, clock: Fa
     assert totp_attempt(bad) == (429, "4")
     # The PIN bucket is untouched.
     assert pin_attempt(client, pin.current, device="owner")[0] == 200
+
+
+def test_an_attempt_in_flight_holds_back_a_parallel_one(clock: FakeClock) -> None:
+    """Past the threshold, a second guess sent while the first is still being checked waits."""
+    parallel: list[tuple[int, str | None]] = []
+    holder: dict[str, TestClient] = {}
+
+    armed: list[bool] = []
+
+    def on_rotate(new: str, why: str) -> None:
+        # Runs inside the first attempt's check: the parallel request arrives now.
+        if armed:
+            armed.clear()
+            parallel.append(pin_attempt(holder["client"], "000000"))
+
+    pin = PinHolder(generate=pin_sequence(), on_rotate=on_rotate)
+    deps = WebDeps(
+        snapshot_source=FakeSourceFactory(),
+        engine=get_engine(),
+        clock=clock,
+        monotonic=clock.monotonic,
+        pin=pin,
+    )
+    client = holder["client"] = TestClient(create_app(deps))
+    five_failures(client, pin, clock)
+    fail_pin(client, pin)
+    wait_out(client, pin, clock)
+
+    armed.append(True)
+    fail_pin(client, pin)
+
+    assert parallel == [(429, "8")]
+
+
+def test_the_wait_stays_at_the_cap_however_long_the_run() -> None:
+    limiter = RateLimiter(lambda: 0.0)
+    for _ in range(2000):
+        limiter.failed("pin")
+
+    assert limiter.check("pin") == 1800.0

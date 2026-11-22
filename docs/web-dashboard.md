@@ -78,11 +78,13 @@ in a row each further failure doubles the wait before the next attempt:
 login by that method resets the wait. Each method counts on its own, so
 guessing one never locks out another; one-time links and security keys are
 not limited. An attempt during the wait is refused unchecked with HTTP 429
-and a `Retry-After` header, so it buys no guess. An owner who mistypes four times waits no longer than the
-minute window; one who has been locked out of the PIN by a guessing run logs
-in with TOTP, a security key or `jb remote web open`, and the PIN's wait
-lifts at the first successful PIN login. The waits are kept in memory, so a
-restart of `serve` clears them; under systemd that happens only on an
+and a `Retry-After` header, so it buys no guess, and an attempt still being
+checked holds back a parallel one. An owner who mistypes up to four times
+waits not at all, a fifth or sixth time a few seconds; one who has been
+locked out of the PIN by a guessing run logs in with TOTP, a security key or
+`jb remote web open`, and the PIN's wait lifts at the first successful PIN
+login. The waits are kept in memory, so a restart of `serve` clears them;
+under systemd that happens only on an
 upgrade or a crash, nothing a remote client can trigger.
 
 Each wrong guess is spent: a wrong PIN is replaced by a new one, and a TOTP
@@ -118,7 +120,8 @@ view.
 
 Each lengthening of a PIN or TOTP wait is logged once as a `backoff` entry;
 refused attempts during a wait go to the journal only, so a flood of them
-cannot churn the audit log. The audit log keeps the newest 1000 entries. Failed one-time-link and FIDO2
+cannot churn the audit log. The audit log keeps the newest 1000 entries.
+Failed one-time-link and FIDO2
 logins, which no attempt limit throttles, are kept apart (the newest 100), so
 a flood of them cannot push earlier PIN or TOTP failures out of the log.
 
@@ -136,7 +139,8 @@ happen through the same HTTPS address you will log in at. `fido2 setup` runs a
 temporary server that serves a registration page instead of the dashboard
 (stop the dashboard first if it uses that port; `--listen` and `--port`
 apply). Register the key in the browser, then press Ctrl-C and start the
-dashboard again.
+dashboard again. The setup PIN keeps only the five-a-minute limit, without
+the backoff: setup mode runs only while you register a key.
 
 ### Authentication disabled
 

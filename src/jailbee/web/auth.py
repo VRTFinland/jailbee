@@ -198,6 +198,9 @@ class RateLimiter:
     attempt waits ``backoff_base`` seconds, doubling with each further failure
     up to ``backoff_cap``; a success resets it. Attempts refused by either
     limit are not counted and must not be checked, so they buy no guesses.
+    An admitted attempt holds the bucket for the wait its failure would earn
+    until ``failed`` or ``succeeded`` settles it, so parallel requests cannot
+    share one opening.
 
     Each bucket counts on its own, so guessing one method never locks out
     another. Rotation already makes each PIN guess a one-in-a-million shot;
@@ -241,12 +244,16 @@ class RateLimiter:
             if wait > 0:
                 return wait
             attempts.append(now)
+            # Charge the wait this attempt would earn by failing up front, so
+            # a parallel attempt cannot slip in while this one is checked.
+            b.blocked_until = now + self._wait_after(b.failures + 1)
             return 0.0
 
     def _wait_after(self, failures: int) -> float:
         if failures < self._threshold:
             return 0.0
-        return float(min(self._base * 2 ** (failures - self._threshold), self._cap))
+        doublings = min(failures - self._threshold, 64)  # past the cap anyway; no overflow
+        return float(min(self._base * 2**doublings, self._cap))
 
     def failed(self, bucket: str = "") -> float | None:
         """Record a failed attempt; the new wait when it lengthened the backoff, else None."""
