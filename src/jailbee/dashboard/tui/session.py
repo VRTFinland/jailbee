@@ -292,6 +292,9 @@ def _last_line(text: str, style: DispatchStyle) -> str:
 
 QUEUE_DISMISS_FINISHED = "\x00dismiss-finished"
 QUEUE_TAIL_LINES = 3
+# A running entry's output screen: its output is kept once it ends (#151 ticket 13
+# follows it live).
+QUEUE_RUNNING_OUTPUT = "(still running — its output is kept here when it ends)"
 
 _QUEUE_ICONS = {"running": "⟳", "done": "✓", "failed": "✗"}
 
@@ -848,10 +851,7 @@ class DashboardSession:
             if result is None or result.refused is not None or result.error is not None:
                 self.queue.drop(entry_id)
                 continue
-            if i < len(outcome.outputs):
-                output = outcome.outputs[i]
-            else:
-                output = outcome.output if len(ids) == 1 else ""
+            output = outcome.outputs[i] if i < len(outcome.outputs) else ""
             self.queue.finish(entry_id, result.status if result.status is not None else 1, output)
         self._queue_changed()
 
@@ -918,7 +918,8 @@ class DashboardSession:
         if found is None:
             return self.queue_picker()
         if entry.value == "output":
-            self.terminal.show_output(found.command, found.output, failed=found.state == "failed")
+            text = found.output if found.finished else QUEUE_RUNNING_OUTPUT
+            self.terminal.show_output(found.command, text, failed=found.state == "failed")
             return self.queue_entry_picker(entry_id)
         if entry.value == "dismiss":
             if not self.queue.dismiss(entry_id):
@@ -1006,7 +1007,7 @@ class DashboardSession:
             argv = action_cli_argv(repo, verb, target, transport=self.transport)
             if style == "paged":
                 argv.append("--color")  # the output screen renders it; a pipe would turn it off
-            self.run_action(repo, argv, style=style, label=f"{verb} {target}")
+            self.run_action(repo, argv, style=style, label=f"{verb} {target}", target=target)
             return
         try:
             rc = self.terminal.hand_off(
@@ -1322,6 +1323,7 @@ class DashboardSession:
                 style=style,
                 label=dact.command_label(argv),
                 then=then,
+                target=target,
             )
             return None
         try:

@@ -176,13 +176,13 @@ def test_dismiss_one_finished_entry(mocker, tmp_path):
     _children(mocker)
     session, _ = _one_repo(mocker, tmp_path)
     _start(session)
-    _start(session)
+    session.run_dashboard_command("alpha-a", "container", ["stop", "alpha-a"])
     _open_queue(session)
 
-    _choose(session, "jailbee start alpha-a")
+    _choose(session, "jailbee stop alpha-a")
     _choose(session, "Dismiss")
 
-    assert len(_entries(session)) == 1
+    assert [e.command for e in _entries(session)] == ["jailbee start alpha-a"]
     picker = session.overlay
     assert isinstance(picker, Picker) and picker.purpose == "queue"  # back on the list
 
@@ -290,3 +290,41 @@ def test_pilot_an_entry_expands_to_its_full_output(mocker, tmp_path):
         ("jailbee start alpha-a", "output of jailbee start alpha-a\n", False)
     ]
     assert isinstance(seen[0], pm.OutputScreen)
+
+
+def test_an_entry_that_finishes_while_its_view_is_open_offers_dismiss(mocker, tmp_path):
+    _children(mocker)
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    _start(session)
+    _open_queue(session)
+    _choose(session, "jailbee start alpha-a")
+
+    terminal.finish_pending()
+
+    entry_picker = session.overlay
+    assert isinstance(entry_picker, Picker) and entry_picker.purpose == "queue-entry"
+    assert any(e.label == "Dismiss" for e in entry_picker.entries)
+    assert "output of jailbee start alpha-a" in entry_picker.detail  # the output's tail
+
+
+def test_a_running_entry_says_its_output_comes_when_it_ends(mocker, tmp_path):
+    _children(mocker)
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    _start(session)
+    _open_queue(session)
+
+    _choose(session, "jailbee start alpha-a")
+    _choose(session, "Show output")
+
+    ((_title, text, failed),) = terminal.shown
+    assert "still running" in text and failed is False
+
+
+def test_a_dispatched_action_names_its_container_as_the_target(mocker, tmp_path):
+    _children(mocker)
+    session, _ = _one_repo(mocker, tmp_path)
+
+    session.run_dashboard_command("alpha-a", "container", ["service", "ls", "alpha-a"])
+
+    (entry,) = _entries(session)
+    assert entry.target == "alpha-a"

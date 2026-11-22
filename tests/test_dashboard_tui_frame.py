@@ -488,3 +488,28 @@ def test_every_saved_view_state_keeps_a_stored_show_system_preference(mocker, tm
     assert saved.call_args.args[2].show_system is False
     drive(mocker, ["S", "tab", "tab", "space"], [group], view_state=ViewState())
     assert saved.call_args.args[2].show_system is False
+
+
+# --- the notification queue badge ----------------------------------------------
+
+
+def test_the_queue_badge_leads_the_system_row(tmp_path):
+    from jailbee.dashboard.notifications import QueueCounts
+
+    view = view_of(
+        [_long(tmp_path, 3)], system=_system(), show_system=True, queue=QueueCounts(2, 1)
+    )
+    lines = paint(view, size=(100, 25))
+    assert "⟳ 2 · ⚠ 1" in lines[1] and "Mem" in lines[1]
+    assert "NAME" in lines[2]
+
+
+def test_the_queue_badge_keeps_its_row_while_the_status_is_hidden(tmp_path):
+    from jailbee.dashboard.notifications import QueueCounts
+
+    view = view_of(
+        [_long(tmp_path, 3)], system=_system(), show_system=False, queue=QueueCounts(0, 0)
+    )
+    lines = paint(view, size=(100, 25))
+    assert "⟳ 0 · ⚠ 0" in lines[1] and "Mem" not in lines[1]
+    assert "NAME" in lines[2]
