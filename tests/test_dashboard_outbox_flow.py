@@ -1541,3 +1541,16 @@ def test_publish_batch_across_containers_prefixes_headers():
         dob.outbox_apply_argv("alpha-x", "pr/a.json", "r1", yes=True),
         dob.outbox_apply_argv("beta-y", "pr/b.json", "r1", yes=True),
     ]
+
+
+def test_restored_mark_of_a_proposal_without_a_recorded_revision_is_dropped():
+    # The revision filter itself (not the listing-key filter) must drop a mark whose
+    # proposal is not in the recorded revisions: it cannot be shown unchanged.
+    runner = FakeRunner(_listing(_proposal()))
+    ctl = _controller(runner)
+    key = (C, "pr/a.json", None, None)
+    ctl.restore_marks(frozenset({key}), {"pr/other.json": "r1"})
+
+    ctl.load()
+
+    assert key not in ctl.state.marks
