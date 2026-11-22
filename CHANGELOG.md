@@ -147,7 +147,8 @@ before editing `## Unreleased`.
   ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 - Inside a container, `jailbee outbox drop`. `jailbee outbox discard
   issue/NAME` (or `pr/NAME`) now removes a staged proposal and `outbox discard
-  --draft NAME [--kind issue|pr]` a draft; there is no alias. The host's
+  --draft NAME [--kind issue|pr]` a draft; with no target it asks which one (a picker on a terminal, exit 2
+  naming the candidates otherwise); there is no alias. The host's
   `jailbee outbox drop` is unchanged
   ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 

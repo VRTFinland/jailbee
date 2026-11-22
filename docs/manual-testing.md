@@ -2030,7 +2030,7 @@ jailbee outbox ls feat-issuesmoke
 # expect: 001-decline.json STATE=pending (unchanged — nothing was journaled)
 jailbee shell feat-issuesmoke
 jailbee outbox ls               # the decline proposal is still there — declining consumed nothing
-jailbee outbox drop issue/<decline-name>   # name as printed by `outbox ls`
+jailbee outbox discard issue/<decline-name>   # name as printed by `outbox ls`
 exit
 ```
 
