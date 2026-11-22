@@ -1020,3 +1020,22 @@ def test_publish_summary_names_comment_edits():
 
     rights = PublishRights(pr_reviews=True, pr_comment_edits=True)
     assert "PR comment edits" in commands.publish_summary(rights)
+
+
+def test_profile_default_with_edits_but_no_reviews_is_narrowed(make_cfg, tmp_path):
+    from jailbee.config.models_orchestration import PublishRightsConfig
+
+    profiles = {"odd": OrchestrationProfile(publish=PublishRightsConfig(pr_comment_edits=True))}
+    cfg = _cfg(
+        make_cfg,
+        tmp_path,
+        view=OrchestrationView(profiles=profiles, default_profile="odd"),
+        mounts=True,
+    )
+    assert commands.build_grant(cfg, None, GrantFlags()).publish.pr_comment_edits is False
+    assert (
+        commands.build_grant(
+            cfg, None, GrantFlags(profile="odd", publish_rate=3)
+        ).publish.pr_comment_edits
+        is False
+    )

@@ -1207,4 +1207,4 @@ def test_precheck_does_not_need_the_edit_right_for_an_already_published_edit(rig
         config={labels.GRANT: Grant(publish=PublishRights(pr_reviews=True)).to_label()},
     )
     out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
-    assert "pr_comment_edits" not in (out.detail or "")
+    assert out.state != "refused" and "pr_comment_edits" not in (out.detail or "")

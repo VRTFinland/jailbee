@@ -135,10 +135,7 @@ def rewrite(body: str, urls: Mapping[str, str]) -> str:
     return "".join(pieces)
 
 
-_URL_SHAPE = (
-    r"https://github\.com/user-attachments/assets/"
-    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
-)
+_URL_SHAPE = _URL.pattern.removesuffix(r"\Z")
 
 
 def matches_rendered(body: str, rendered: str) -> bool:
