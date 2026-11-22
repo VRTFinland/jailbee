@@ -504,8 +504,14 @@ def test_queued_fork_preserves_the_base_explicit_marker(tmp_path, monkeypatch, r
     m = _m().model_copy(update={"version": 2, "ref": ref})
     assert actions.handle_spawn(ctx, m).state == "queued"
     req = load_queue(ctx.root)[ctx.sender.full][0]
+    # The source's marker changes while the spawn waits: a ref fork keeps the
+    # snapshot taken at enqueue, a HEAD fork reads the live label at start.
+    ctx.incus.config_get.side_effect = lambda name, key: (
+        "true" if key == "user.jailbee.base_explicit" else None
+    )
     assert actions._start_spawn(ctx, req).state == "started"
-    assert start.call_args.kwargs["fork"].base_explicit == "false"
+    expected = "false" if ref is not None else "true"
+    assert start.call_args.kwargs["fork"].base_explicit == expected
 
 
 def test_child_options_new_loose_uses_base(tmp_path: Path) -> None:
