@@ -70,7 +70,6 @@ _INTENT_KEYS: dict[str, IntentName] = {
     "space": "mark",
     "d": "delete",
     "p": "publish",
-    "c": "create-pr",
     "X": "clear",
     "v": "preview",
     "m": "raw",
@@ -444,8 +443,7 @@ class OutboxBox(OverlayBox):
         ab = self.panel.abilities
         return {
             "delete": ab.delete,
-            "publish": ab.publish or ab.publish_hand_off,
-            "create-pr": ab.create_pr,
+            "publish": ab.publish or ab.publish_hand_off or ab.create_pr,
             "clear": ab.clear,
             "scope": ab.scope and self.standalone,
             "open": self.panel.tab == "sent",

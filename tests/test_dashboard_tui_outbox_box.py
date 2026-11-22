@@ -67,7 +67,6 @@ def state2(**over):
         ("space", " ", "mark"),
         ("d", "d", "delete"),
         ("p", "p", "publish"),
-        ("c", "c", "create-pr"),
         ("X", "X", "clear"),
         ("v", "v", "preview"),
         ("m", "m", "raw"),
@@ -87,6 +86,24 @@ def test_keys_map_to_intents(key, char, name):
     assert got.key == ("outbox", "", None)
 
 
+def test_c_is_not_a_key():
+    async def scenario(app, box, pilot):
+        return await press(box, "c", "c")
+
+    got = run(state2(), scenario, standalone=True)
+    assert not isinstance(got, OutboxBox.Intent)
+
+
+def test_p_is_offered_for_pr_creation_alone():
+    only_create = dob.Abilities(False, False, False, True, False, False)
+
+    async def scenario(app, box, pilot):
+        return await press(box, "p", "p")
+
+    got = run(state2(abilities=only_create), scenario, standalone=True)
+    assert isinstance(got, OutboxBox.Intent) and got.name == "publish"
+
+
 def test_escape_and_q():
     async def scenario(app, box, pilot):
         return await press(box, "escape"), await press(box, "q", "q")
@@ -101,9 +118,9 @@ def test_ability_off_key_is_eaten():
     off = dob.Abilities(False, False, False, False, False, False)
 
     async def scenario(app, box, pilot):
-        return [await press(box, k, k) for k in "dpcXa"]
+        return [await press(box, k, k) for k in "dpXa"]
 
-    assert run(state2(abilities=off), scenario, standalone=True) == [True] * 5
+    assert run(state2(abilities=off), scenario, standalone=True) == [True] * 4
 
 
 def test_scope_key_is_eaten_in_the_dashboard():
@@ -449,7 +466,7 @@ def test_refresh_failure_keeps_source_hint_visible():
     runner.hand_off_diagnostic = lambda argv: (1, message)
     controller = _controller(runner)
     controller.load()
-    controller.intent("create-pr", flow_key())
+    controller.intent("publish", flow_key())
 
     async def scenario(app, box, pilot):
         return screen_text(app)

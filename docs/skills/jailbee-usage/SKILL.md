@@ -1558,8 +1558,8 @@ own branch. `jailbee submodule pr push` is unchanged.
 For an imported branch, publish its pinned source manifest explicitly:
 `jailbee pr push <container> --source-manifest <file.json>`. Source proposals
 live in the host outbox store (no `incus exec`); pending ones show
-`awaiting-push`; `outbox apply` refuses them with a push hint, while the outbox
-`c` action invokes PR push. One interrupted during the PR call shows `uncertain`:
+`awaiting-push`; `outbox apply` (or `p` in the outbox) hands them to that PR
+push. One interrupted during the PR call shows `uncertain`:
 check GitHub, then rerun the same push (it asks before publishing again). `jailbee pr ls` includes source
 branch binding rows; `jailbee pr unbind <container> --head <branch>` removes
 one such row without removing the ordinary binding. See the
@@ -1804,7 +1804,7 @@ container in the current repo (`jailbee outbox CONTAINER` narrows it to one,
 registered repo). The proposals form a tree beside a preview: `Space` marks
 a row and everything under it, `d` deletes the marked after one "No"-first
 question, `p` publishes the marked proposals (or the one under the cursor)
-after one question showing each publication plan, `c` creates the PR a staged description awaits, `X`
+after one question showing each publication plan (a staged description awaiting its PR, or a pinned source, runs `pr push` in the terminal), `X`
 clears the container's outbox, `v`/`m` toggle preview and raw manifest, `r`
 refreshes, `q` quits. On a narrow terminal Enter on a leaf row (a description,
 a reply, a comment) shows the preview in the list's place; Esc goes back. Off a terminal it prints the overview table. The

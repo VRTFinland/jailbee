@@ -342,8 +342,9 @@ def test_standalone_hint_fits_100_columns_with_every_ability():
     # 96: the box's content width at 100 terminal columns (border and padding).
     assert len(hint) <= 96
     assert hint.startswith("q quit")
-    for part in ("d delete", "p publish", "c PR", "X clear", "a all repos", "r refresh"):
+    for part in ("d delete", "p publish", "X clear", "a all repos", "r refresh"):
         assert part in hint
+    assert "c PR" not in hint
 
 
 def test_hint_drops_unavailable_abilities():
@@ -351,13 +352,17 @@ def test_hint_drops_unavailable_abilities():
     state = _state(_proposal(), abilities=full)
     hint = dob.outbox_hint(state, standalone=False)
     assert hint == (
-        "↑/↓ move · Enter open · Space mark · d delete · p publish · c create PR · X clear"
+        "↑/↓ move · Enter open · Space mark · d delete · p publish · X clear"
         " · v preview · m manifest · r refresh · Esc close"
     )
     standalone = dob.outbox_hint(state, standalone=True)
     assert "a all repos" in standalone and standalone.startswith("q quit")
     none = dob.outbox_hint(_state(_proposal()), standalone=False)
     assert "d delete" not in none and "p publish" not in none and "a all" not in none
+    create = dob.Abilities(False, False, False, True, False, False)
+    create_only = _state(_proposal(), abilities=create)
+    assert "p publish" in dob.outbox_hint(create_only, standalone=False)
+    assert "p publish" in dob.outbox_hint(create_only, standalone=True)
     q = dob.Question("p", "T", (), (), "")
     import dataclasses
 

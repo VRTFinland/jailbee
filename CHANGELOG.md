@@ -63,6 +63,14 @@ before editing `## Unreleased`.
   exit codes change: with nothing pending both now exit 2 (they exited 0 with
   "Nothing pending"), and off a terminal a missing manifest exits 2 even when
   exactly one is pending, because the destructive picker never auto-takes it.
+- Publishing in the outbox manager covers PR creations too: `p` on a
+  description awaiting its PR, or on a pinned source awaiting its push, hands
+  the terminal to `jailbee pr push` (or `submodule pr push`, `pr push
+  --source-manifest`), and the separate `c` key is gone. Marked rows of both
+  kinds share one question; manifests publish first, then each PR creation in
+  turn, and the first that fails or is cancelled stops the rest. `jailbee
+  outbox apply` likewise hands such a proposal to `pr push` instead of exiting
+  2 with a push hint ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 
 ### Removed
 

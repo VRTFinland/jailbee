@@ -80,8 +80,8 @@ the container); the broker re-validates it and refuses a child container. `jailb
 cover it as `pr/NNN-source.json`, and `jailbee outbox sent` lists it once
 published. The host publishes one with `jb pr push <container>
 --source-manifest <name>`. Pending sources show `awaiting-push` and
-`create_scope`; `jb outbox apply` refuses them with exit 2 and a push hint. The
-dashboard's `c` action hands them to PR push. An existing PR supplies its actual
+`create_scope`; `jb outbox apply` and the outbox's `p` hand them to that PR
+push. An existing PR supplies its actual
 head and base; a conflicting description branch is refused. Source manifests are
 isolated from ordinary automatic description publishing. If a publication was
 interrupted while the PR was being created or updated, the proposal shows

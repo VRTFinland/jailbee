@@ -14,6 +14,22 @@ State = Literal[
 ]
 
 
+def pr_push_argv(name: str, scope: dict[str, str] | None) -> list[str] | None:
+    """The `jailbee` argv that publishes a PR creation of ``scope``, or None for no scope.
+
+    A proposal awaiting its PR (scope ``repo`` or ``submodule``) or a pinned
+    source awaiting its push (scope ``source``) is published by `pr push`,
+    never by `outbox apply` itself.
+    """
+    if scope == {"kind": "repo"}:
+        return ["pr", "push", name]
+    if scope is not None and scope.get("kind") == "submodule" and scope.get("path"):
+        return ["submodule", "pr", "push", name, scope["path"]]
+    if scope is not None and scope.get("kind") == "source" and scope.get("manifest"):
+        return ["pr", "push", name, "--source-manifest", scope["manifest"]]
+    return None
+
+
 class OutboxError(ValueError):
     """Invalid input or blocked local operation."""
 

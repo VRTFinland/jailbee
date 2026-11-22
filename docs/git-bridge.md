@@ -1350,7 +1350,7 @@ opens the same manager under the table, for its container. Keys, also shown
 in the hint line: ↑/↓ move, Enter/→ expand, ← collapse, `Space` mark a row
 and everything under it (unmarking a row also unmarks the rows above it), `d`
 delete the marked rows (or the highlighted one), `p` publish the marked
-proposals (or the highlighted one), `c` create PR,
+proposals (or the highlighted one) — PR creations included,
 `X` clear the outbox, `v` preview on/off, `m` the raw manifest, `r` refresh;
 in `jb outbox`, `a` switches between this repository and all registered ones
 and `q` or Esc quits, while in the dashboard Esc goes back to the container
@@ -1374,9 +1374,16 @@ preview in the list's place, and Esc, Enter or `v` goes back to the list.
   proposals then publish one after another, a failure not stopping the rest.
   Publishing works on whole proposals: with only actions or comments marked,
   `p` says to mark the proposal row.
-- **Create PR** (a description awaiting its PR) re-reads the listing and,
-  if the proposal is unchanged, hands the terminal to `jb pr push` or
-  `jb submodule pr push` for the resolved scope, with that command's own checks.
+- **Publishing a PR creation** — a description awaiting its PR, or a pinned
+  source awaiting its push — re-reads the listing and, if the proposal is
+  unchanged, hands the terminal to `jb pr push`, `jb submodule pr push` or
+  `jb pr push --source-manifest` for the resolved scope, with that command's
+  own checks and questions (AI consent, branch name, …). Marked together with
+  manifests, the one question lists each PR creation as "pushes the branch of
+  …, opens/updates its PR" with the command it runs; the manifests publish
+  first, then the PR creations one hand-off at a time, and the first that
+  fails or is cancelled stops the rest — the status names what was not run,
+  and those stay marked.
 - **Clear** reads the outbox's clear plan and asks once, as Clear outbox…
   below does.
 
