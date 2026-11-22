@@ -102,7 +102,8 @@ class ContainerPanel:
     running container's (used, limit) bytes: drawn as a bar at the right end of
     the summary row when the row has room for it, else not at all.
     ``orchestration`` are an orchestrator's or child's own lines, one row each
-    right under the exceptions line (empty: none are drawn).
+    right under the exceptions line (empty: none are drawn). ``services`` is the
+    running container's services line, drawn under the processes (empty: none).
     """
 
     summary: tuple[str, ...]
@@ -114,6 +115,7 @@ class ContainerPanel:
     processes: tuple[str, ...] = ()
     memory: tuple[int, int] | None = None
     orchestration: tuple[str, ...] = ()
+    services: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -494,6 +496,7 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
         _process_lines(c),
         _memory_use(c),
         _orchestration_lines(c),
+        _service_lines(c),
     )
 
 
@@ -516,6 +519,36 @@ def _publish_summary(g: GrantView) -> str:
     if not parts:
         return "none"
     return " · ".join([*parts, f"{g.publish_rate}/hour"])
+
+
+_SERVICE_STYLE = {
+    "ready": "green",
+    "starting": "yellow",
+    "stopped": "dim",
+    "failed": "red",
+    "exited": "red",
+    "unhealthy": "red",
+}
+
+
+def _service_lines(c: ContainerInfo) -> tuple[str, ...]:
+    """The services line of a running container, as escaped markup; empty otherwise.
+
+    Nothing for a stopped container or one with no services; ``unknown`` when
+    the state service's probe failed.
+    """
+    if c.state != "Running":
+        return ()
+    if c.services_unknown:
+        return ("[dim]services[/dim] [dim]unknown[/dim]",)
+    if not c.services:
+        return ()
+    parts = [
+        f"{escape(s.name)} [{style}]{escape(s.state)}[/]"
+        for s in c.services
+        for style in (_SERVICE_STYLE.get(s.state, "dim"),)
+    ]
+    return (f"[dim]services[/dim] {' · '.join(parts)}",)
 
 
 def _orchestration_lines(c: ContainerInfo) -> tuple[str, ...]:
@@ -854,6 +887,8 @@ def _panel_lines(
 
     one(_summary_row(panel, options.max_width))
     for markup in panel.processes:
+        one(markup)
+    for markup in panel.services:
         one(markup)
     if panel.exceptions:
         one(_SUMMARY_GAP.join(panel.exceptions))

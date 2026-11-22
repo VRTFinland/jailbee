@@ -69,6 +69,14 @@ if TYPE_CHECKING:
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 
 
+@dataclass(frozen=True)
+class ServiceState:
+    """One service of a running container: its name and `service ls` state."""
+
+    name: str
+    state: str
+
+
 @dataclass
 class ContainerInfo:
     name: str
@@ -127,6 +135,11 @@ class ContainerInfo:
     # Outbox "Sent" log records of this container's current incarnation; set by
     # the state service's gatherer (never by `list_containers`), 0 = none.
     sent_count: int = 0
+    # The container's services and their `service ls` states, written by the
+    # state service's service probe (never by `list_containers`). None = none
+    # gathered (stopped, not probed yet); `services_unknown` = the probe failed.
+    services: tuple[ServiceState, ...] | None = None
+    services_unknown: bool = False
     job_phase: str | None = None
     job_pid: int | None = None
     job_kind: str | None = None

@@ -33,6 +33,10 @@ class ContainerJailbeeError(RuntimeError):
     """The in-container launcher cannot run the requested version."""
 
 
+class JailbeeAbsentError(ContainerJailbeeError):
+    """The container has no in-container jailbee (not mounted, or an old image)."""
+
+
 def staging_root() -> Path:
     return xdg_data_home() / "jailbee" / "container-app"
 
@@ -121,7 +125,14 @@ def run_in_container(
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     init_groups: bool = False,
+    timeout: int | None = None,
+    restage: bool = True,
 ) -> ExecResult:
+    """Run `jailbee ARGS` in the container.
+
+    ``restage=False`` (background probes) never rewrites the host bundle or
+    skills on a version skew; the skew is reported as an error instead.
+    """
     expected = expected_version()
     command = ["jailbee", "--expect-version", expected, *args]
     kwargs: dict[str, Any] = (
@@ -129,7 +140,12 @@ def run_in_container(
         if cwd is None and env is None and not init_groups
         else {"cwd": cwd, "env": env, "init_groups": init_groups}
     )
+    if timeout is not None:
+        kwargs["timeout"] = timeout
     result = incus.exec_bytes(full, command, uid=uid, **kwargs)
+    if result.returncode == EXIT_SKEW and not restage:
+        their = result.stderr.decode(errors="replace").strip() or "unknown"
+        raise ContainerJailbeeError(f"container sees jailbee {their}, expected {expected}")
     if result.returncode == EXIT_SKEW:
         stage(force=True)
         from jailbee.agent_skills import sync_agent_skills
@@ -142,11 +158,9 @@ def run_in_container(
                 f"container still sees jailbee {their} after restaging {expected}"
             )
     if result.returncode == EXIT_NOT_MOUNTED or b"not mounted" in result.stderr.lower():
-        raise ContainerJailbeeError(
-            "in-container jailbee is not mounted - run `jb apply` on the host"
-        )
+        raise JailbeeAbsentError("in-container jailbee is not mounted - run `jb apply` on the host")
     if result.returncode == 127:
-        raise ContainerJailbeeError(
+        raise JailbeeAbsentError(
             "this container's image has no in-container jailbee - run `jb base build`, "
             "then recreate the container"
         )

@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from jailbee.global_config import DashboardRefresh
     from jailbee.incus import Incus
     from jailbee.pr_autofetch import PrHeadAutofetcher
+    from jailbee.state_service.service_probe import ServiceProbe
     from jailbee.update_check import UpdateNotice
 
 log = logging.getLogger(__name__)
@@ -122,7 +123,9 @@ class Gatherer:
         sent_counts: Callable[[], sent.SentCounts] = sent.counts,
         recorder: Callable[[list[RepoGroup]], None] | None = None,
         pr_heads: PrHeadAutofetcher | None = None,
+        services: ServiceProbe | None = None,
     ) -> None:
+        self._services = services
         self._pr_heads = pr_heads
         self._recorder = recorder
         self._sent_counts = sent_counts
@@ -186,6 +189,7 @@ class Gatherer:
             sample_activity(groups, self._sampler, self._reader)
             self._annotate_sent(groups)
             self._annotate_pr_heads(groups)
+            self._annotate_services(groups)
             self._record_sessions(groups)
         except Exception as exc:  # reported to every client; the service lives on
             message = str(exc) or type(exc).__name__
@@ -223,6 +227,15 @@ class Gatherer:
             self._pr_heads.annotate(groups)
         except Exception:
             log.debug("PR head autofetch failed", exc_info=True)
+
+    def _annotate_services(self, groups: list[RepoGroup]) -> None:
+        """Write each running container's service states; never fails the gather."""
+        if self._services is None:
+            return
+        try:
+            self._services.annotate(groups)
+        except Exception:
+            log.debug("service probe failed", exc_info=True)
 
     def _record_sessions(self, groups: list[RepoGroup]) -> None:
         """Hand the live sessions to the recorder; its failure never fails the gather."""

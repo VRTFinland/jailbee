@@ -23,7 +23,7 @@ from jailbee.dashboard.model import AppMenuEntry, RepoAdvisory, RepoGroup
 from jailbee.dashboard.system import PoolStatus, SystemStatus
 from jailbee.git_status import GitStatus, OtherBranch, SubmoduleChange
 from jailbee.host_target import SyncTarget
-from jailbee.lifecycle import ContainerInfo
+from jailbee.lifecycle import ContainerInfo, ServiceState
 from jailbee.orchestration.view import ChildView, GrantView
 from jailbee.procstat import ProcessActivity, ProcessMemory
 from jailbee.sysstat import DiskStatus, LoadStatus, MemoryStatus
@@ -58,7 +58,8 @@ from jailbee.update_check import UpdateNotice
 # 32 adds GitStatus.other_branches and OtherBranch, local branches with unimported commits.
 # 33 adds AgentSummary.sessions, one SessionMark per live session.
 # 34 adds ContainerInfo.pr_slug, the repo's GitHub slug for PR hyperlinks.
-PROTOCOL = 34
+# 35 adds ContainerInfo.services (ServiceState) and .services_unknown.
+PROTOCOL = 35
 
 
 class ProtocolError(ValueError):
@@ -155,6 +156,7 @@ _NAMESPACE: dict[str, Any] = {
         ProcessMemory,
         RepoAdvisory,
         RepoGroup,
+        ServiceState,
         SessionMark,
         SubmoduleChange,
         SyncTarget,
