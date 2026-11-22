@@ -854,7 +854,8 @@ def test_one_failed_run_is_its_own_entry_and_no_screen_pops_up(mocker, tmp_path)
     session.begin_bulk("git pull", confirmed=True)
 
     assert child.call_count == 2
-    assert getattr(session.terminal, "shown", []) == []
+    # `git pull` is critical: only the first run's modal opened, no output screen at the end.
+    assert [t for t, _, _ in session.terminal.shown] == ["jailbee git pull alpha-a"]
     alpha, beta = session.queue
     assert (alpha.state, beta.state) == ("done", "failed")
     assert "alpha-a" in alpha.output and "beta-a" in beta.output  # one entry per run
