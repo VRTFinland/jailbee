@@ -197,6 +197,7 @@ def test_issue_drafts_never_touch_the_container_file_store(home, broker):
 def test_drop_is_gone():
     result = invoke("drop", "issue/x")
     assert result.exit_code == 2
+    assert "discard" in result.output
 
 
 def test_discard_removes_a_proposal(home, broker):
@@ -208,26 +209,64 @@ def test_discard_removes_a_proposal(home, broker):
     assert broker.proposals() == []
 
 
-def test_discard_without_a_target_names_the_missing_value(home, broker):
+def test_discard_without_a_target_off_a_terminal_names_the_candidates(home, broker, mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    CliRunner().invoke(container_app, ["issue", "create", "--title", "Bug", "--body", "b"])
+    CliRunner().invoke(container_app, ["issue", "comment", "7", "--body", "x", "--batch", "d1"])
+    name = broker.only()[0]
     result = invoke("discard")
     assert result.exit_code == 2
-    assert "--draft" in result.output and "issue/NAME" in result.output
+    assert f"issue/{name}" in result.output
+    assert "--draft d1" in result.output or "draft issue/d1" in result.output
+    assert broker.proposals() != []
+
+
+def test_discard_without_a_target_picks_on_a_terminal(home, broker, mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    CliRunner().invoke(container_app, ["issue", "create", "--title", "Bug", "--body", "b"])
+    name = broker.only()[0]
+    seen = []
+
+    def pick(noun, options, **kwargs):
+        seen.append((noun, kwargs.get("destructive"), [o.label for o in options]))
+        return options[0].value
+
+    mocker.patch("jailbee.prompting._select", side_effect=pick)
+    result = invoke("discard")
+    assert result.exit_code == 0, result.output
+    assert seen  # a lone candidate is still asked: discarding is destructive
+    assert broker.proposals() == []
+    assert f"discarded issue/{name}" in result.output
+
+
+def test_discard_with_nothing_staged_says_so(home, broker, mocker):
+    mocker.patch("jailbee.prompting.is_interactive", return_value=False)
+    result = invoke("discard")
+    assert result.exit_code == 2
+    assert "nothing" in result.output.lower()
 
 
 def test_discard_refuses_proposal_and_draft_together(home, broker):
+    CliRunner().invoke(container_app, ["issue", "comment", "7", "--body", "x", "--batch", "b"])
     result = invoke("discard", "issue/x", "--draft", "b")
     assert result.exit_code == 2
+    assert "not both" in result.output
+    assert broker.draft("b", "issue") is not None
 
 
 def test_same_name_draft_and_proposal_are_not_guessed(home, broker):
     runner = CliRunner()
-    runner.invoke(container_app, ["issue", "comment", "7", "--body", "x", "--batch", "b"])
     runner.invoke(container_app, ["issue", "create", "--title", "t", "--body", "b"])
     name = broker.only()[0]
+    # A draft named like the proposal as closely as draft names allow (no ".json").
+    stem = name.removesuffix(".json")
+    runner.invoke(container_app, ["issue", "comment", "7", "--body", "x", "--batch", stem])
+    assert broker.draft(stem, "issue") is not None
     assert invoke("discard", "issue/" + name).exit_code == 0
-    assert broker.draft("b", "issue") is not None
-    assert invoke("discard", "--draft", "b", "--kind", "issue").exit_code == 0
-    assert broker.draft("b", "issue") is None
+    assert broker.proposals() == []
+    assert broker.draft(stem, "issue") is not None
+    assert invoke("discard", "--draft", stem, "--kind", "issue").exit_code == 0
+    assert broker.draft(stem, "issue") is None
 
 
 def test_drop_hint_points_at_discard():

@@ -251,6 +251,30 @@ def submit(name: DraftArg = None, kind: KindOpt = None) -> None:
     _run(run)
 
 
+def _pick_discard_target() -> str:
+    """Ask which staged proposal or draft to discard (always asked: destructive)."""
+    from jailbee import prompting
+
+    options: list[prompting.Option[str]] = []
+    kinds: tuple[Kind, ...] = ("issue", "pr")
+    for kind in kinds:
+        for row in broker.list_proposals(kind):
+            value = f"{kind}/{row['name']}"
+            options.append(prompting.Option(value, f"{value}  {row['summary']}", value))
+    for kind in kinds:
+        for row in broker.draft_list(kind):
+            value = f"draft {kind}/{row['name']}"
+            title = f"{value}  {row['actions']} actions"
+            options.append(prompting.Option(value, title, f"--draft {row['name']} --kind {kind}"))
+    return prompting.choose_one(
+        "outbox item to discard",
+        options,
+        destructive=True,
+        empty_reason="nothing staged to discard (see `outbox ls`)",
+        alternative="give issue/NAME or pr/NAME, or --draft NAME",
+    )
+
+
 @outbox_app.command("discard")
 def discard(
     target: TargetArg = None,
@@ -271,18 +295,23 @@ def discard(
             typer.echo(f"discarded {domain} draft {name}")
             return
         if not target:
-            raise OutboxCommandError(
-                "missing target: give a proposal as issue/NAME or pr/NAME (see `outbox ls`), "
-                "or a draft with --draft NAME",
-                2,
-            )
+            if kind is not None:
+                raise OutboxCommandError("--kind applies only to --draft", 2)
+            picked = _pick_discard_target()
+            if picked.startswith("draft "):
+                draft_kind, _, draft_name = picked[len("draft ") :].partition("/")
+                broker.draft_discard(cast(Kind, draft_kind), draft_name)
+                typer.echo(f"discarded {draft_kind} draft {draft_name}")
+                return
+        else:
+            picked = target
         if kind is not None:
             raise OutboxCommandError("--kind applies only to --draft", 2)
-        if "/" not in target:
+        if "/" not in picked:
             raise OutboxCommandError(
-                f"expected issue/NAME or pr/NAME; for a draft use --draft {target}", 2
+                f"expected issue/NAME or pr/NAME; for a draft use --draft {picked}", 2
             )
-        proposal_kind, name = _target(target)
+        proposal_kind, name = _target(picked)
         broker.drop(proposal_kind, name)
         typer.echo(f"discarded {proposal_kind}/{name}")
 

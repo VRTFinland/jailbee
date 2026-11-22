@@ -81,7 +81,7 @@ Use `--batch NAME` to collect actions, `jailbee outbox ls [--json]` and
 `jailbee outbox show issue/NAME` or `pr/NAME` to inspect staged proposals,
 `jailbee outbox submit NAME --kind issue|pr` to submit a batch, and
 `jailbee outbox discard --draft NAME --kind issue|pr` to discard a draft. Remove a
-staged proposal with `jailbee outbox discard issue/NAME` or `pr/NAME`. For
+staged proposal with `jailbee outbox discard issue/NAME` or `pr/NAME`; with no target it asks which (off a terminal it exits 2 listing the candidates). For
 issue batches, create with `--ref REF` and address it later as `@REF`;
 expected values come from that earlier create. Existing issue changes fetch
 current state for host staleness checks. `jailbee outbox sent [--json]
