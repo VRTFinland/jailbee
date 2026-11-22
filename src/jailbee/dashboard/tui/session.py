@@ -146,6 +146,8 @@ from jailbee.dashboard.overlays import (
     validate_answer,
 )
 from jailbee.dashboard.runner import (
+    OUTPUT_DROPPED_MARKER,
+    OUTPUT_KEEP_CHARS,
     ActionOutcome,
     ActionRun,
     RunProgress,
@@ -4473,23 +4475,34 @@ class DashboardSession:
                 continue
             argv = ["jailbee", *dact.addressed(canonical, target.flags(), transport=self.transport)]
             batch.pending.add(name)
+            entry_id = self.queue.start(f"jailbee {' '.join(canonical)}", name)
             try:
                 self.jobs.start(
                     f"bulk:{action.verb}:{name}",
                     f"{action.verb} {name}…",
                     argv,
                     target.cwd(),
-                    partial(self._bulk_child_done, batch, name),
+                    partial(self._bulk_child_done, batch, name, entry_id),
                 )
             except ValueError:
+                self.queue.drop(entry_id)
                 batch.pending.discard(name)
                 batch.skipped[name] = f"a bulk {action.verb} is already running"
             except OSError as exc:
+                self.queue.drop(entry_id)
                 batch.pending.discard(name)
                 batch.failed[name] = str(exc) or f"'{target.repo_root}' no longer exists"
+        self._queue_changed()
         self._settle(batch)
 
-    def _bulk_child_done(self, batch: BulkBatch, name: str, result: JobResult) -> None:
+    def _bulk_child_done(
+        self, batch: BulkBatch, name: str, entry_id: int, result: JobResult
+    ) -> None:
+        output = result.stderr  # these verbs print nothing on stdout worth keeping
+        if len(output) > OUTPUT_KEEP_CHARS:
+            output = OUTPUT_DROPPED_MARKER + output[-OUTPUT_KEEP_CHARS:]
+        self.queue.finish(entry_id, result.returncode, output)
+        self._queue_changed()
         batch.finish(name, result)
         self.client.refresh()
         self._settle(batch)
