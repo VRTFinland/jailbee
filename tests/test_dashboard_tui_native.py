@@ -2120,3 +2120,21 @@ def test_a_floating_confirm_dims_the_dashboard_behind_it(mocker, tmp_path):
     )
 
     assert seen == [(False, False, False), (True, True, False), (False, False, False)]
+
+
+def test_an_open_menu_box_follows_its_entry_when_new_entries_appear(mocker, tmp_path):
+    group = alpha_group(tmp_path)
+    row = group.containers[0]
+    row.outbox_pr, row.outbox_issue = 0, 0
+
+    def stage(app):  # type: ignore[no-untyped-def]
+        row.outbox_pr = 1  # staged while the menu is open; the next snapshot counts it
+        app.session.client.seq += 1
+
+    run = drive(mocker, ["j", "enter", "j", stage], [group])
+    menu = run.trace[-1].overlay
+    assert isinstance(menu, MenuState)
+    verbs = [e[1] for e in tmenu.menu_entries(menu) if isinstance(e, tuple)]
+    assert "outbox browse" in verbs
+    # the cursor was on "shell" and stays on it as the entries shift under it
+    assert run.natives[-1] == NativeState("menu", verbs.index("shell"), level=None)

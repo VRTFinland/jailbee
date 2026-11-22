@@ -2102,3 +2102,48 @@ def test_publish_foreign_submit_rejects_a_malformed_answer(mocker, tmp_path):
     quiet.assert_not_called()
     assert "Unknown issue action" in session.notice
     assert out.entries[out.start_index].value == "publish-foreign"
+
+
+def _menu_verbs(menu):
+    from jailbee.dashboard.tui.menu_state import menu_entries
+
+    return [e[1] for e in menu_entries(menu) if isinstance(e, tuple)]
+
+
+def test_an_open_menu_gains_the_outbox_entry_when_a_new_snapshot_stages_work(mocker, tmp_path):
+    row = ci("alpha-one", "alpha")
+    row.outbox_pr, row.outbox_issue = 0, 0  # known empty: no Outbox entry
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [row])
+    session, _ = bare_session(mocker, [group])
+    session.handle_key("down")
+    session.tick()
+    session.handle_key("enter")
+    assert isinstance(session.overlay, MenuState)
+    assert "outbox browse" not in _menu_verbs(session.overlay)
+    session.overlay.start_index = 2
+
+    # A proposal is staged while the menu is open; the next snapshot counts it.
+    fresh = ci("alpha-one", "alpha")
+    fresh.outbox_pr, fresh.outbox_issue = 1, 0
+    session.client.groups = [dmodel.RepoGroup("alpha", str(tmp_path), None, [fresh])]
+    session.client.seq += 1
+    session.tick()
+
+    assert isinstance(session.overlay, MenuState)
+    assert session.overlay.container == "alpha-one"
+    assert "outbox browse" in _menu_verbs(session.overlay)
+    assert session.overlay.start_index == 2  # the cursor's start is kept
+
+
+def test_an_open_menu_is_left_alone_when_the_snapshot_changes_nothing_in_it(mocker, tmp_path):
+    row = ci("alpha-one", "alpha")
+    row.outbox_pr, row.outbox_issue = 0, 0
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [row])
+    session, _ = bare_session(mocker, [group])
+    session.handle_key("down")
+    session.tick()
+    session.handle_key("enter")
+    menu = session.overlay
+    session.client.seq += 1
+    session.tick()
+    assert session.overlay is menu
