@@ -1261,19 +1261,146 @@ def test_review_policy_needs_pr_state_right(rig, mocker, granted, allowed):
             check(_state_manifest())
 
 
-@pytest.mark.parametrize(
-    ("binding", "allowed"), [("label", False), ("adopted", False), ("authored", True)]
-)
-def test_review_policy_state_change_requires_authored_binding(rig, mocker, binding, allowed):
+@pytest.mark.parametrize("binding", ["none", "label", "adopted", "authored"])
+def test_review_policy_state_only_needs_no_binding_and_no_pr_reviews(rig, mocker, binding):
     ctx = rig[0]
-    _bound_as(ctx, mocker, binding)
-    rights = PublishRights(pr_reviews=True, pr_state=True)
-    check = publishing._review_policy(rights, 1, ctx.cfg, ctx.incus, ctx.sender.full)
-    if allowed:
-        check(_state_manifest())
+    if binding == "none":
+        mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+        ctx.incus.config_get_checked.return_value = None
     else:
-        with pytest.raises(pr_outbox.GateError, match="authored"):
-            check(_state_manifest())
+        _bound_as(ctx, mocker, binding)
+    check = publishing._review_policy(
+        PublishRights(pr_state=True), 1, ctx.cfg, ctx.incus, ctx.sender.full
+    )
+    check(_state_manifest())
+
+
+def test_review_policy_state_only_refuses_a_foreign_repository(rig, mocker):
+    ctx = rig[0]
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    ctx.incus.config_get_checked.return_value = None
+    manifest = replace(_state_manifest(), repo="other/repo")
+    with pytest.raises(pr_outbox.GateError, match="own repository"):
+        publishing._review_policy(
+            PublishRights(pr_state=True), 1, ctx.cfg, ctx.incus, ctx.sender.full
+        )(manifest)
+
+
+def _mixed_state_manifest():
+    return pr_outbox.parse_manifest(
+        "a.json",
+        json.dumps(
+            {
+                "version": 1,
+                "repo": "org/repo",
+                "pr": 12,
+                "head_sha": "a" * 40,
+                "actions": [
+                    {"type": "comment", "body": "x"},
+                    {"type": "state", "state": "closed", "expected": {"state": "open"}},
+                ],
+            }
+        ),
+        {},
+    )
+
+
+@pytest.mark.parametrize(
+    ("rights", "bound", "error"),
+    [
+        (PublishRights(pr_state=True), True, "pr_reviews"),
+        (PublishRights(pr_reviews=True, pr_state=True), False, "not bound"),
+        (PublishRights(pr_reviews=True), True, "pr_state"),
+        (PublishRights(pr_reviews=True, pr_state=True), True, None),
+    ],
+)
+def test_review_policy_mixed_state_manifest_keeps_the_other_actions_rules(
+    rig, mocker, rights, bound, error
+):
+    ctx = rig[0]
+    if bound:
+        _bound_as(ctx, mocker, "label")
+    else:
+        mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+        ctx.incus.config_get_checked.return_value = None
+    check = publishing._review_policy(rights, 2, ctx.cfg, ctx.incus, ctx.sender.full)
+    if error is None:
+        check(_mixed_state_manifest())
+    else:
+        with pytest.raises(pr_outbox.GateError, match=error):
+            check(_mixed_state_manifest())
+
+
+_STATE_PAYLOAD = {
+    "version": 1,
+    "repo": "org/repo",
+    "pr": 12,
+    "head_sha": "a" * 40,
+    "actions": [{"type": "state", "state": "closed", "expected": {"state": "open"}}],
+}
+
+
+def _grant_state(ctx, rights):
+    ctx.sender = replace(ctx.sender, config={labels.GRANT: Grant(publish=rights).to_label()})
+
+
+def test_unbound_orchestrator_with_pr_state_closes_an_own_repo_pr(rig, mocker):
+    ctx, m, _, _, publish = rig
+    seed_source(ctx.sender.key, _STATE_PAYLOAD)
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    ctx.incus.config_get_checked.return_value = None  # no binding of any kind
+    _grant_state(ctx, PublishRights(pr_state=True))
+    seen = {}
+
+    def publish_state(*args, **kw):
+        # An unbound PR resolves only as `foreign`; the policy is what keeps it own-repo.
+        seen["foreign"] = kw["options"].foreign
+        kw["policy"](pr_outbox.parse_manifest("a.json", json.dumps(_STATE_PAYLOAD), {}))
+        kw["audit_sink"]({"kind": "state", "repo": "org/repo"})
+        kw["result_sink"]("closed PR #12")
+        return 0
+
+    publish.side_effect = publish_state
+    accept((ctx, m.model_copy(update={"outbox": "pr"}), *rig[2:]))
+    replies = []
+    publishing.settle(ctx, lambda ref, out: replies.append(out))
+    assert replies[0].state == "done", replies[0].detail
+    assert seen == {"foreign": True}
+
+
+def test_precheck_refuses_a_foreign_repository_state_change(rig, mocker):
+    ctx, m, *_ = rig
+    seed_source(ctx.sender.key, {**_STATE_PAYLOAD, "repo": "other/repo"})
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    _grant_state(ctx, PublishRights(pr_state=True))
+    out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
+    assert out.state == "refused" and "own repository" in out.detail
+
+
+def test_precheck_refuses_state_change_without_any_pr_right(rig, mocker):
+    ctx, m, *_ = rig
+    seed_source(ctx.sender.key, _STATE_PAYLOAD)
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    _grant_state(ctx, PublishRights(issues=("comment",)))
+    out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
+    assert out.state == "refused" and "pr_state" in out.detail
+
+
+def test_precheck_mixed_state_manifest_needs_pr_reviews_and_stays_bound(rig, mocker):
+    ctx, m, *_ = rig
+    payload = {
+        **_STATE_PAYLOAD,
+        "actions": [{"type": "comment", "body": "x"}, *_STATE_PAYLOAD["actions"]],
+    }
+    seed_source(ctx.sender.key, payload)
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    _grant_state(ctx, PublishRights(pr_state=True))
+    out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
+    assert out.state == "refused" and "pr_reviews" in out.detail
+    _grant_state(ctx, PublishRights(pr_reviews=True, pr_state=True))
+    assert publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"})).state == "started"
+    entry = publishing.inflight(ctx.root)[ctx.sender.full]
+    assert entry["foreign"] is False  # state does not widen the review's binding rule
 
 
 def test_precheck_refuses_state_change_without_the_right(rig, mocker):

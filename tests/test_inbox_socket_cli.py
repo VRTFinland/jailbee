@@ -1322,6 +1322,6 @@ def test_grant_prints_comment_edit_right(broker: FakeBroker, sockdir: Path, tmp_
 
 def test_grant_prints_pr_state_right(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
     for value, text in ((True, "yes"), (False, "no")):
-        broker.on("grant", {**GRANT, "publish": {"pr_reviews": True, "pr_state": value}})
+        broker.on("grant", {**GRANT, "publish": {"pr_state": value}})
         r = run(sockdir, "grant", tmp=tmp_path)
         assert f"publish pr_state: {text}" in r.stdout

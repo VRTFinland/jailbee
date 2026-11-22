@@ -26,8 +26,9 @@ An orchestrator with `publish.pr_reviews` in the output of
 `jailbee inbox send publish --pr NAME.json --wait --until done --json` instead
 of asking the human to apply it. Comments and replies may target review-bound PRs in the own
 repository; a `comment_edit` action also needs `publish.pr_comment_edits` in that
-output, and a `state` action `publish.pr_state`; description rewrites and state changes additionally require an authored, non-adopted
-source-PR binding. No foreign PR, submodule or force override. Source PR manifests instead need
+output; description rewrites additionally require an authored, non-adopted
+source-PR binding. A manifest of only `state` actions (close/reopen) needs just
+`publish.pr_state` and may name any PR of the own repository, bound or not. No foreign PR, submodule or force override. Source PR manifests instead need
 `publish.pull_requests` and the own-branch restrictions described by
 `jailbee-orchestration`. Without `--until done`, `--wait` returns at `started`,
 which is acceptance, not success; the final status carries the returned URLs. An uncertain result requires
@@ -129,8 +130,9 @@ describe the change accurately.
 
 ## Staging PR actions
 
-To close or reopen a PR, stage `jailbee pr state [N] closed|open`. It records the state
-it read as `expected.state`; the host refuses it if the PR changed meanwhile or is
+To close or reopen a PR, stage `jailbee pr state [N ...] closed|open`. Several numbers
+stage one manifest per PR, each published on its own; a numbered PR needs no binding.
+It records the state it read as `expected.state`; the host refuses it if the PR changed meanwhile or is
 merged, shows a `closes PR #N` / `reopens PR #N` warning in the plan, and needs
 `--foreign` for a PR the container does not own. Merging and draft toggling are not
 staged through the outbox.

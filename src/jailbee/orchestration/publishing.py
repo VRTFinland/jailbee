@@ -184,7 +184,7 @@ def _issue_policy(
 def _own_review_repo(cfg: Config, manifest: pr_outbox.Manifest) -> None:
     slug = github_slug(git.get_remote_url(cfg.repo_root, cfg.upstream_remote) or "")
     if slug is None or slug.casefold() != manifest.repo.casefold():
-        raise pr_outbox.GateError("PR reviews may target only the own repository")
+        raise pr_outbox.GateError("PR actions may target only the own repository")
 
 
 def _comment_edit_right(rights: PublishRights, manifest: pr_outbox.Manifest) -> None:
@@ -201,10 +201,28 @@ def _state_right(rights: PublishRights, manifest: pr_outbox.Manifest) -> None:
         raise pr_outbox.GateError("pr_state is not granted for this manifest")
 
 
+def _state_only(manifest: pr_outbox.Manifest) -> bool:
+    """Whether every action is a close/reopen: the one PR action needing no binding."""
+    return bool(manifest.actions) and all(
+        isinstance(action, pr_outbox.StateAction) for action in manifest.actions
+    )
+
+
+def _state_policy(rights: PublishRights, cfg: Config, manifest: pr_outbox.Manifest) -> None:
+    """`publish.pr_state` alone closes or reopens any numbered PR of the own repository."""
+    _state_right(rights, manifest)
+    _own_review_repo(cfg, manifest)
+    if manifest.pr is None:
+        raise pr_outbox.GateError("PR close/reopen needs a numbered PR")
+
+
 def _review_policy(
     rights: PublishRights, count: int, cfg: Config, incus: Incus, full: str
 ) -> Callable[[pr_outbox.Manifest], None]:
     def check(manifest: pr_outbox.Manifest) -> None:
+        if not pr_outbox.is_source_manifest(manifest) and _state_only(manifest):
+            _state_policy(rights, cfg, manifest)
+            return
         if pr_outbox.is_source_manifest(manifest) or not rights.pr_reviews:
             raise pr_outbox.GateError("pr_reviews is not granted for this manifest")
         _own_review_repo(cfg, manifest)
@@ -231,13 +249,6 @@ def _review_policy(
         ):
             raise pr_outbox.GateError(
                 "description rewrite requires an authored, non-adopted PR binding"
-            )
-        if (
-            any(isinstance(action, pr_outbox.StateAction) for action in manifest.actions)
-            and target_number not in authored
-        ):
-            raise pr_outbox.GateError(
-                "PR close/reopen requires an authored, non-adopted PR binding"
             )
 
     return check
@@ -316,9 +327,13 @@ def _precheck(
     if pr_outbox.is_source_manifest(manifest_pr):
         # stored_source accepted every valid source above; this one is not valid.
         raise pr_outbox.GateError("invalid source manifest")
-    if not rights.pr_reviews:
+    state_only = _state_only(manifest_pr)
+    if state_only:
+        _state_policy(rights, ctx.cfg, manifest_pr)
+    elif not rights.pr_reviews:
         raise pr_outbox.GateError("pr_reviews is not granted")
-    _own_review_repo(ctx.cfg, manifest_pr)
+    else:
+        _own_review_repo(ctx.cfg, manifest_pr)
     try:
         progress = pr_outbox._publication_progress(
             snapshot_pr, m.manifest, len(manifest_pr.actions)
@@ -338,7 +353,10 @@ def _precheck(
             }
             for i in indices
         ],
-        False,
+        # A state-only manifest may name any PR of the own repository, bound or
+        # not: resolving an unbound one needs the foreign-PR consent. The repo
+        # lock is `_state_policy`'s own-repository check, before and in the lock.
+        state_only,
     )
 
 

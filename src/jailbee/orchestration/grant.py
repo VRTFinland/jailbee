@@ -233,7 +233,8 @@ class PublishRights(BaseModel):
     pr_state: bool = Field(
         default=False,
         description=(
-            "Close and reopen bound PRs (`pr_reviews` does not imply it, and it needs it)."
+            "Close and reopen any PR of the own repository, bound or not "
+            "(independent of `pr_reviews`)."
         ),
     )
     max_actions_per_hour: int = Field(
@@ -317,7 +318,7 @@ class PublishRights(BaseModel):
             and cap.pr_comment_edits
             and self.pr_reviews
             and cap.pr_reviews,
-            pr_state=self.pr_state and cap.pr_state and self.pr_reviews and cap.pr_reviews,
+            pr_state=self.pr_state and cap.pr_state,
             max_actions_per_hour=min(self.max_actions_per_hour, cap.max_actions_per_hour),
         )
 

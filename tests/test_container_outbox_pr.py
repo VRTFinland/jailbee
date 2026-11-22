@@ -1247,3 +1247,43 @@ def test_state_refuses_a_merged_pr(monkeypatch, broker):
     result = invoke("state", "1234", "open")
     assert result.exit_code == 2 and "merged" in result.output
     assert broker.proposals("pr") == []
+
+
+def _gh_pr_states(monkeypatch, states):
+    def run_json(argv, **kw):
+        number = int(argv[2].rsplit("/", 1)[1])
+        if number in states:
+            return {"state": states[number], "merged": False}
+        pytest.fail(f"unexpected gh call {argv}")
+
+    monkeypatch.setattr(gh, "run_json", run_json)
+
+
+def test_state_stages_one_manifest_per_pr_without_any_binding(monkeypatch, broker):
+    # No PR bindings at all (the autouse fixture points SNAPSHOT at nothing).
+    _gh_pr_states(monkeypatch, {11: "closed", 12: "closed"})
+    result = invoke("state", "11", "12", "open")
+    assert result.exit_code == 0, result.output
+    rows = broker.proposals("pr")
+    assert len(rows) == 2
+    staged = [json.loads(row.manifest) for row in rows]
+    assert sorted(m["pr"] for m in staged) == [11, 12]
+    for manifest in staged:
+        assert manifest["actions"] == [
+            {"type": "state", "state": "open", "expected": {"state": "closed"}}
+        ]
+
+
+def test_state_with_several_prs_reads_each_pr_state(monkeypatch, broker):
+    _gh_pr_states(monkeypatch, {11: "open", 12: "closed"})
+    result = invoke("state", "11", "12", "closed")
+    assert result.exit_code == 2 and "already closed" in result.output
+    # Nothing is staged when one of the PRs cannot be: all are checked first.
+    assert broker.proposals("pr") == []
+
+
+def test_state_with_several_prs_refuses_a_batch(monkeypatch, broker):
+    _gh_pr_states(monkeypatch, {11: "closed", 12: "closed"})
+    result = invoke("state", "11", "12", "open", "--batch", "b")
+    assert result.exit_code == 2 and "--batch takes one PR" in result.output
+    assert broker.proposals("pr") == []

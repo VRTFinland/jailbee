@@ -159,7 +159,7 @@ class PublishRightsConfig(BaseModel):
     )
     pr_state: bool = Field(
         default=False,
-        description="Close and reopen bound PRs (pr_reviews does not imply it).",
+        description="Close and reopen any own-repo PR, bound or not (independent of pr_reviews).",
     )
     max_actions_per_hour: int = Field(
         default=30, ge=1, le=500, description="Maximum reserved actions in a sliding hour."

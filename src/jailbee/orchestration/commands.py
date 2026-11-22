@@ -279,10 +279,6 @@ def _publish_rights(base: PublishRights, flags: GrantFlags) -> PublishRights:
         # Edits ride on reviews: turning reviews off (or a default that holds
         # edits without them) leaves no edit right behind.
         data["pr_comment_edits"] = False
-    if data["pr_state"] and not data["pr_reviews"]:
-        if flags.publish_pr_state:
-            raise GrantError("--publish-pr-state needs --publish-pr-reviews")
-        data["pr_state"] = False
     return PublishRights.model_validate(data)
 
 
