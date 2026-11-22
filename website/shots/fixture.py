@@ -27,6 +27,8 @@ DEFAULT_SIZE = (200, 45)
 TOP_KEYS = {"size", "now", "repos", "steps", "outbox", "accounts", "view"}
 VIEW_KEYS = {"columns", "show_details", "show_system", "sort_field", "sort_desc", "details_rows"}
 STEP_KEYS = {"shot", "key", "keys", "select", "menu"}
+OUTBOX_KEYS = {"id", "kind", "action", "repo", "target", "title", "body", "state"}
+ACCOUNT_KEYS = ("agent", "group", "account", "state", "repos", "containers")
 _DATETIME_FIELDS = {"created_at", "loose_until"}
 
 
@@ -218,7 +220,7 @@ def outbox_listing(world: World, container: str) -> str:
 
 def accounts_listing(world: World) -> str:
     """``jailbee account ls -o json`` rows from the fixture's accounts."""
-    keys = ("agent", "group", "account", "state", "repos", "containers")
+    keys = ACCOUNT_KEYS
     return json.dumps(
         [
             {k: (a.get(k, [] if k in ("repos", "containers") else None)) for k in keys}
@@ -238,6 +240,15 @@ def load_world(source: str | Path) -> World:
     groups = [_group(g) for g in raw.get("repos") or []]
     steps = [_step(s) for s in raw.get("steps") or []]
     outbox = {str(k): list(v) for k, v in _mapping(raw.get("outbox") or {}, "outbox").items()}
+    for container, proposals in outbox.items():
+        for p in proposals:
+            where = f"an outbox proposal of {container!r}"
+            _check(_mapping(p, where), OUTBOX_KEYS, where)
+            if "id" not in p:
+                raise FixtureError(f"{where} has no 'id'")
+    accounts = list(raw.get("accounts") or [])
+    for a in accounts:
+        _check(_mapping(a, "an account"), set(ACCOUNT_KEYS), "an account")
     view = _mapping(raw.get("view") or {}, "view")
     _check(view, VIEW_KEYS, "view")
     return World(
@@ -246,6 +257,6 @@ def load_world(source: str | Path) -> World:
         steps,
         _dt(raw["now"]) if "now" in raw else None,
         outbox,
-        list(raw.get("accounts") or []),
+        accounts,
         view,
     )
