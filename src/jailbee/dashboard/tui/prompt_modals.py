@@ -231,12 +231,21 @@ class OutputScreen(ModalScreen[None]):
         Binding("enter", "close", "Close", priority=True),
         Binding("q", "close", "Close", priority=True),
         Binding("ctrl+c", "close", "Close", priority=True),
+        Binding("b", "background", "Continue in background", priority=True),
     ]
 
-    def __init__(self, title: str, text: str, *, failed: bool = False) -> None:
+    def __init__(
+        self,
+        title: str,
+        text: str,
+        *,
+        failed: bool = False,
+        background: bool = False,
+    ) -> None:
         super().__init__()
         self.title_text = title
         self.text = text
+        self.background = background
         if failed:
             self.add_class("failed")
 
@@ -245,7 +254,10 @@ class OutputScreen(ModalScreen[None]):
             yield Static(Text(self.title_text), classes="title", markup=False)
             with VerticalScroll():
                 yield Static(Text.from_ansi(self.text), id="captured", markup=False)
-            yield Static("Up/Down scroll, Enter or Esc returns", classes="hint", markup=False)
+            hint = "Up/Down scroll, Enter or Esc returns"
+            if self.background:
+                hint = "Up/Down scroll, b, Enter or Esc continues in the background"
+            yield Static(hint, classes="hint", markup=False)
 
     def set_text(self, text: str) -> None:
         """Replace the captured text (a live entry's output); stay at the end if it was there."""
@@ -260,6 +272,11 @@ class OutputScreen(ModalScreen[None]):
 
     def action_close(self) -> None:
         self.dismiss(None)
+
+    def action_background(self) -> None:
+        """Continue in background: leave; the owner of the screen sees the close."""
+        if self.background:
+            self.dismiss(None)
 
 
 def modal_for(prompt: Prompt) -> PromptModal:

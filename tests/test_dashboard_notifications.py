@@ -114,7 +114,8 @@ def test_a_bulk_dispatch_is_one_entry_per_action(mocker, tmp_path):
     assert (second.target, second.state) == ("beta", "failed")
     assert "alpha-a" in first.output and "beta-a" not in first.output
     assert "beta-a" in second.output and "──" not in second.output
-    assert getattr(terminal, "shown", []) == []
+    # `git pull` is critical: the first run's modal opened; nothing else popped up.
+    assert [t for t, _, _ in terminal.shown] == ["jailbee git pull alpha-a"]
 
 
 @pytest.mark.parametrize(
@@ -957,3 +958,173 @@ def test_a_crashed_action_worker_still_settles_its_entries(mocker, tmp_path):
 
     (states,) = seen
     assert "running" not in states  # settled, not left running and undismissable
+
+
+# --- critical actions (#146 ticket 14) ----------------------------------------------
+
+CRITICAL_ARGVS = [
+    ["merge", "alpha-a"],
+    ["git", "push", "alpha-a", "--merge"],
+    ["git", "pull", "alpha-a"],
+    ["pr", "push", "alpha-a"],
+]
+
+
+def _hand_off_attempt(session):  # type: ignore[no-untyped-def]
+    """A foreground hand-off through the session; returns what it answered."""
+    return session.run_dashboard_command(
+        "alpha-a", "container", ["shell", "alpha-a"], foreground=True
+    )
+
+
+@pytest.mark.parametrize("argv", CRITICAL_ARGVS)
+def test_a_critical_action_opens_its_live_modal_and_refuses_hand_offs(mocker, tmp_path, argv):
+    mocker.patch.object(tsession, "_run_cli_foreground", return_value=0)
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+
+    session.run_dashboard_command("alpha-a", "container", argv)
+
+    (entry,) = _entries(session)
+    assert entry.critical and entry.foreground
+    ((title, text, failed),) = terminal.shown  # opened by itself, expanded and live
+    assert title == entry.command and text == "(no output yet)" and not failed
+    assert _hand_off_attempt(session) is None
+    assert terminal.handed == []
+    assert session.notice is not None
+    assert "continue in the background" in session.notice
+
+
+def test_continue_in_background_allows_hand_offs_and_keeps_the_entry(mocker, tmp_path):
+    mocker.patch.object(tsession, "_run_cli_foreground", return_value=0)
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
+    on_background = terminal.modal
+
+    on_background()
+
+    (entry,) = _entries(session)
+    assert entry.state == "running" and not entry.foreground
+    assert _hand_off_attempt(session) == 0
+    assert len(terminal.handed) == 1
+
+
+def test_closing_the_modal_of_a_running_critical_action_continues_it_in_background(
+    mocker, tmp_path
+):
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    session.run_dashboard_command("alpha-a", "container", ["git", "pull", "alpha-a"])
+
+    terminal.modal()  # Esc / Enter
+
+    (entry,) = _entries(session)
+    assert not entry.foreground and entry.state == "running"
+
+
+def test_a_critical_action_that_ends_in_the_modal_keeps_its_result_there(mocker, tmp_path):
+    _children(mocker)
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
+
+    terminal.finish_pending()
+
+    (entry,) = _entries(session)
+    assert entry.state == "done"
+    assert len(terminal.shown) == 1  # no second output screen on top of the modal
+    assert terminal.updated == ["output of jailbee merge alpha-a\n"]  # the final result, live
+
+
+def test_a_critical_action_sent_to_background_pops_no_output_when_it_ends(mocker, tmp_path):
+    _children(mocker, failing=("alpha-a",))
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
+    terminal.modal()
+
+    terminal.finish_pending()
+
+    (entry,) = _entries(session)
+    assert entry.state == "failed" and entry.needs_attention
+    assert len(terminal.shown) == 1  # only the modal it opened with
+
+
+def test_non_critical_verbs_open_no_modal_and_never_block(mocker, tmp_path):
+    mocker.patch.object(tsession, "_run_cli_foreground", return_value=0)
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+
+    for argv in (["start", "alpha-a"], ["git", "push", "alpha-a"], ["pr", "open", "alpha-a"]):
+        session.run_dashboard_command("alpha-a", "container", argv)
+
+    assert [e.critical for e in _entries(session)] == [False, False, False]
+    assert getattr(terminal, "shown", []) == []
+    assert _hand_off_attempt(session) == 0
+
+
+def test_two_critical_actions_each_get_an_entry_and_the_block_holds_while_any_is_foreground(
+    mocker, tmp_path
+):
+    mocker.patch.object(tsession, "_run_cli_foreground", return_value=0)
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
+    session.run_dashboard_command("alpha-a", "container", ["git", "pull", "alpha-a"])
+
+    assert len(_entries(session)) == 2
+    assert len(terminal.shown) == 1  # one modal at a time
+    terminal.modal()  # the first goes to the background; the second's modal opens
+    assert [t for t, _, _ in terminal.shown] == [
+        "jailbee merge alpha-a",
+        "jailbee git pull alpha-a",
+    ]
+    assert _hand_off_attempt(session) is None  # the second is still in the foreground
+
+    terminal.modal()
+
+    assert _hand_off_attempt(session) == 0
+
+
+def _pilot_merge(app):  # type: ignore[no-untyped-def]
+    app.session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
+
+
+def test_pilot_a_critical_action_opens_its_modal_and_the_result_stays_until_closed(
+    mocker, tmp_path
+):
+    from jailbee.dashboard.tui import prompt_modals as pm
+    from tests.dashboard_pilot import drive
+
+    _children(mocker)
+    seen: list[object] = []
+    run = drive(
+        mocker,
+        [
+            _pilot_merge,
+            lambda app: seen.append((app.screen, app.screen.text)),  # still there, finished
+            "enter",
+            lambda app: seen.append(app.screen),
+        ],
+        [_pilot_group(tmp_path)],
+        screens=True,
+    )
+
+    screen, text = seen[0]
+    assert isinstance(screen, pm.OutputScreen)
+    assert text == "output of jailbee merge alpha-a\n"
+    assert "b, Enter or Esc continues in the background" in run.screens[1]
+    assert not isinstance(seen[1], pm.OutputScreen)  # closed by the user
+    (entry,) = list(run.app.session.queue)
+    assert entry.state == "done" and not entry.foreground
+
+
+def test_pilot_b_continues_a_critical_action_in_the_background(mocker, tmp_path):
+    from jailbee.dashboard.tui import prompt_modals as pm
+    from tests.dashboard_pilot import drive
+
+    _children(mocker)
+    seen: list[object] = []
+    run = drive(
+        mocker,
+        [_pilot_merge, "b", lambda app: seen.append(app.screen)],
+        [_pilot_group(tmp_path)],
+    )
+
+    assert not isinstance(seen[0], pm.OutputScreen)
+    (entry,) = list(run.app.session.queue)
+    assert not entry.foreground

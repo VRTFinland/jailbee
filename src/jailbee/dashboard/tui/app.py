@@ -297,10 +297,19 @@ class DashboardApp(App[int], inherit_bindings=False):
         else:
             work()
 
-    def show_output(self, title: str, text: str, *, failed: bool, live: bool = False) -> None:
-        screen = OutputScreen(title, text, failed=failed)
+    def show_output(
+        self,
+        title: str,
+        text: str,
+        *,
+        failed: bool,
+        live: bool = False,
+        background: bool = False,
+        on_close: Callable[[], None] | None = None,
+    ) -> None:
+        screen = OutputScreen(title, text, failed=failed, background=background)
         self._output_screen = screen if live else None  # only a live screen is ever rewritten
-        self.push_screen(screen)
+        self.push_screen(screen, None if on_close is None else lambda _result: on_close())
 
     def update_output(self, text: str) -> None:
         screen = self._output_screen
