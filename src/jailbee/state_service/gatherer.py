@@ -230,9 +230,7 @@ class Gatherer:
                 self._failing = None
             self._prev = groups
             if do_git:
-                self._heads = _running_heads(
-                    groups, self._wall_clock().timestamp(), self._heads
-                )
+                self._heads = _running_heads(groups, self._wall_clock().timestamp(), self._heads)
             self._seq += 1
             result = Snapshot(
                 self._seq,

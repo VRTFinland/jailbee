@@ -183,7 +183,9 @@ def test_a_failed_probe_of_a_running_parent_keeps_its_previous_head(mocker):
     clock = _Clock()
     wall = [datetime(2026, 10, 4, tzinfo=UTC)]
     seen = GitStatus("", "clean", "0", "ok", head_sha="abc")
-    rounds = iter([[_ci("x")], [_ci("x", seen)], [_ci("x", GitStatus("?", "?", "?", "?"))], [_ci("x")]])
+    rounds = iter(
+        [[_ci("x")], [_ci("x", seen)], [_ci("x", GitStatus("?", "?", "?", "?"))], [_ci("x")]]
+    )
     gather = mocker.Mock(side_effect=lambda *a, **k: [RepoGroup("alpha", "/a", None, next(rounds))])
     g = _gatherer(mocker, gather, clock, wall_clock=lambda: wall[0])
 

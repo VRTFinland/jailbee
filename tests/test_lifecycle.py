@@ -13039,7 +13039,12 @@ def test_sync_target_text_names_the_no_pass_case_truthfully():
 
     unknown = _ci_with_status(
         sync_target=SyncTarget(
-            "host", "main", "h" * 40, "refs/heads/main", fallback=True, parent="orch",
+            "host",
+            "main",
+            "h" * 40,
+            "refs/heads/main",
+            fallback=True,
+            parent="orch",
             parent_unknown=True,
         )
     )
@@ -13053,9 +13058,7 @@ def test_sync_target_text_names_the_no_pass_case_truthfully():
     assert "not running or not seen yet" in sync_target_text(stopped.git_status)
 
 
-def test_plain_ls_gives_a_pr_child_its_pr_head_not_the_parent_fallback(
-    make_cfg, tmp_path, mocker
-):
+def test_plain_ls_gives_a_pr_child_its_pr_head_not_the_parent_fallback(make_cfg, tmp_path, mocker):
     from jailbee.host_target import TargetSnapshot
     from jailbee.lifecycle import ContainerInfo, _sync_targets
 
