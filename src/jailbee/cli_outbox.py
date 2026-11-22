@@ -666,19 +666,53 @@ def run_apply(
     apply`, `jailbee issue apply`) all end here, so their prompts, output
     and exit codes cannot drift apart. ``kind`` narrows the candidates and
     lets ``proposal`` be a bare manifest name.
+
+    A PR creation (a description awaiting its PR, a pinned source awaiting its
+    push) is published by handing over to `jailbee pr push`, whose own
+    questions (AI consent, branch name, …) still reach the user.
     """
     from jailbee import prompting
+    from jailbee.outbox import commands as outbox_commands
     from jailbee.outbox.commands import apply_selected
     from jailbee.outbox.markdown_view import print_lines
     from jailbee.outbox.models import OutboxError
     from jailbee.outbox.publish import PublishOptions, ask_publish_mode
 
+    creation: list[tuple[str, dict[str, str]]] = []
+
     def operation(cfg: Config, incus: Incus) -> int:
+        from jailbee.outbox.models import pr_push_argv
+        from jailbee.tui import info_plain
+
         if as_json and not dry_run:
             raise OutboxError("JSON output requires --dry-run")
         name, pid = _pick_target(
             cfg, incus, container, proposal, destructive=not as_json, kind=kind
         )
+        scope = outbox_commands.pr_creation(cfg, incus, name, pid, revision=revision)
+        if scope is not None:
+            refused = [
+                flag
+                for flag, given in (
+                    ("--draft", draft),
+                    ("--force", force),
+                    ("--foreign", foreign),
+                    ("-o json", as_json),
+                )
+                if given
+            ]
+            if refused:
+                raise OutboxError(
+                    f"{pid} is a PR creation, published by jailbee pr push: "
+                    f"{', '.join(refused)} does not apply"
+                )
+            command = "jailbee " + " ".join(pr_push_argv(name, scope) or ())
+            if dry_run:
+                info_plain(f"Dry run: publishing {pid} runs {command}")
+                return 0
+            info_plain(f"Publishing {pid} runs {command}")
+            creation.append((name, scope))
+            return 0
         return apply_selected(
             cfg,
             incus,
@@ -720,6 +754,22 @@ def run_apply(
         )
 
     _run(None, config, operation)
+    for name, scope in creation:
+        _publish_pr_creation(config, name, scope, yes=yes)
+
+
+def _publish_pr_creation(
+    config: Path | None, name: str, scope: dict[str, str], *, yes: bool
+) -> None:
+    """Hand a PR creation to the `pr push` command that publishes it (its exits pass through)."""
+    from jailbee import cli
+
+    if scope.get("kind") == "submodule":
+        cli.submodule_pr_cmd(name, scope["path"], yes=yes, config=config)
+    elif scope.get("kind") == "source":
+        cli.pr_push_cmd(name, source_manifest=scope["manifest"], yes=yes, config=config)
+    else:
+        cli.pr_push_cmd(name, yes=yes, config=config)
 
 
 def _run_sent(

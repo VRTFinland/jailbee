@@ -20,7 +20,12 @@ from typing import TYPE_CHECKING, Literal
 
 from rich.text import Text
 
-from jailbee.outbox.models import AttachmentUploadView, AttachmentUse, AttachmentView
+from jailbee.outbox.models import (
+    AttachmentUploadView,
+    AttachmentUse,
+    AttachmentView,
+    pr_push_argv,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -70,13 +75,7 @@ def _scope(value: object) -> dict[str, str] | None:
 
 
 def create_pr_argv(name: str, scope: dict[str, str] | None) -> list[str] | None:
-    if scope == {"kind": "repo"}:
-        return ["pr", "push", name]
-    if scope is not None and scope.get("kind") == "submodule" and scope.get("path"):
-        return ["submodule", "pr", "push", name, scope["path"]]
-    if scope is not None and scope.get("kind") == "source" and scope.get("manifest"):
-        return ["pr", "push", name, "--source-manifest", scope["manifest"]]
-    return None
+    return pr_push_argv(name, scope)
 
 
 # ---------------------------------------------------------------------------
@@ -828,10 +827,8 @@ def outbox_hint(state: OutboxState, *, standalone: bool) -> str:
         parts.append("Tab Sent")
     if ab.delete:
         parts.append("d delete")
-    if ab.publish or ab.publish_hand_off:
+    if ab.publish or ab.publish_hand_off or ab.create_pr:
         parts.append("p publish")
-    if ab.create_pr:
-        parts.append("c create PR")
     if ab.clear:
         parts.append("X clear")
     parts += ["v preview", "m manifest"]
@@ -851,10 +848,8 @@ def _standalone_hint(ab: Abilities) -> str:
     parts = ["q quit", "Space mark"]
     if ab.delete:
         parts.append("d delete")
-    if ab.publish or ab.publish_hand_off:
+    if ab.publish or ab.publish_hand_off or ab.create_pr:
         parts.append("p publish")
-    if ab.create_pr:
-        parts.append("c PR")
     if ab.clear:
         parts.append("X clear")
     parts += ["v preview", "m raw"]

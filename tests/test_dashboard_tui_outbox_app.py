@@ -325,14 +325,14 @@ def _awaiting_listing() -> str:
     return _listing(_container(_proposal("pr/a.json")), _container(awaiting, name="beta-one"))
 
 
-def test_create_pr_in_all_repos_view_is_addressed_at_the_containers_repo(mocker, repos):
+def test_publish_pr_creation_in_all_repos_view_is_addressed_at_the_containers_repo(mocker, repos):
     repos["beta-one"] = BETA
     mocker.patch.object(
         da, "run_cli_quiet", return_value=da.CliResult(True, "done", _awaiting_listing())
     )
     handed = []
 
-    def foreground(target, argv, *, style):  # type: ignore[no-untyped-def]
+    def foreground(target, argv, *, style, diagnostic_path=None):  # type: ignore[no-untyped-def]
         handed.append((target, argv, target.flags(), target.cwd()))
         return 0
 
@@ -340,7 +340,7 @@ def test_create_pr_in_all_repos_view_is_addressed_at_the_containers_repo(mocker,
     app = OutboxApp(TARGET, container=None, all_repos=True, read_only=False)
 
     async def scenario(pilot):  # type: ignore[no-untyped-def]
-        await pilot.press("down", "c")  # the beta-one proposal
+        await pilot.press("down", "p")  # the beta-one proposal
         await pilot.pause()
 
     drive(app, scenario, size=(160, 30))
@@ -350,7 +350,7 @@ def test_create_pr_in_all_repos_view_is_addressed_at_the_containers_repo(mocker,
     ]  # fmt: skip
 
 
-def test_create_pr_refused_when_the_containers_repo_is_unknown(mocker, repos):
+def test_publish_pr_creation_refused_when_the_containers_repo_is_unknown(mocker, repos):
     repos["beta-one"] = None
     mocker.patch.object(
         da, "run_cli_quiet", return_value=da.CliResult(True, "done", _awaiting_listing())
@@ -359,7 +359,7 @@ def test_create_pr_refused_when_the_containers_repo_is_unknown(mocker, repos):
     app = OutboxApp(TARGET, container=None, all_repos=True, read_only=False)
 
     async def scenario(pilot):  # type: ignore[no-untyped-def]
-        await pilot.press("down", "c")
+        await pilot.press("down", "p")
         await pilot.pause()
 
     drive(app, scenario, size=(160, 30))

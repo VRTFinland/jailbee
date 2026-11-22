@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from jailbee import config as config_api
 from jailbee.config import ConfigError
@@ -346,6 +346,42 @@ def apply_selected(
         raise_errors=True,
         plan_sink=plan_sink,
     )
+
+
+def pr_creation(
+    cfg: Config,
+    incus: Incus,
+    name: str,
+    proposal: ProposalId,
+    *,
+    revision: str | None = None,
+) -> dict[str, str] | None:
+    """The `pr push` scope that publishes ``proposal``; None when `outbox apply` publishes it.
+
+    A pinned source awaiting its push is published by `pr push
+    --source-manifest`; a description awaiting its PR by the `pr push` (or
+    `submodule pr push`) its listing's `create_scope` names. One awaiting its
+    PR without a resolvable scope is refused with what to run instead.
+    """
+    if proposal.kind != "pr" or parse_retained_ref(name) is not None:
+        return None
+    _, container, view = _selected(cfg, incus, name, proposal, revision=revision)
+    if view.error is not None or view.state not in ("awaiting-pr", "awaiting-push"):
+        return None
+    payload = overview_json((container,))
+    _attach_create_scopes(cfg, incus, (container,), payload)
+    rows = cast("list[dict[str, object]]", payload["containers"])
+    proposals = cast("list[dict[str, object]]", rows[0]["proposals"])
+    row = next(p for p in proposals if p.get("id") == str(proposal))
+    if row.get("state") == "pending":
+        return None  # its PR is recorded since: the manifest publishes onto it
+    scope = row.get("create_scope")
+    if not isinstance(scope, dict):
+        raise OutboxError(
+            f"{proposal} awaits its PR, but no PR scope resolves for it; "
+            f"open the PR with jailbee pr push {name} (or jailbee submodule pr push)"
+        )
+    return cast("dict[str, str]", scope)
 
 
 def prepare_clear(
