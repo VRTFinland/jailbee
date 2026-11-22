@@ -14,7 +14,7 @@ host                                              containers
 ────                                              ──────────
 claude-credentials/work/        ◄── group "work" ──►  repo A: all containers
                                                        repo B: all containers
-~/.claude (repo C's own home)   ◄── own login ────►  repo C: all containers
+repo C's own config home        ◄── own login ────►  repo C: all containers
 parked store (not mounted)      ◄── park / use ───►  any holder
 ```
 
@@ -33,7 +33,8 @@ the resulting files.
   generated `global.yaml` already sets; see
   [Agents in containers](agents-guide.md)). With no pooled agent enabled,
   every `jailbee account` listing is empty and says so.
-- A container exists and has been built with `jailbee apply`.
+- For a login to appear at all, someone has signed in inside a container of
+  the repo (or a group) at least once.
 
 ## Which containers share a login
 
@@ -78,8 +79,8 @@ sessions stay per repo) are in
 
 Every command below acts on **this repo's holder**: its credential group, or
 its own login when the repo has none. Run them from the repo directory, or
-pick the repo through the dashboard. `-g <group>` points a command at another
-group's holder instead.
+pick the repo through the dashboard. On `ls`, `park` and `use`,
+`-g <group>` points the command at another group's holder instead.
 
 ### See every login: `jailbee account ls`
 
@@ -113,7 +114,7 @@ $ jailbee account park
 
 This stores the login in use in the parked store and leaves the holder empty.
 Afterwards `jailbee account ls` shows that account as `parked` and the holder
-as `empty`. **Parking is also how you add a new account**: there is no
+as `empty` (`ACCOUNT` blank). **Parking is also how you add a new account**: there is no
 `account add`, because only a browser sign-in creates a credential. Park, then
 run the agent in a container of that holder and sign in as the new account.
 The new login lands in the empty holder. With several agents live at once,
@@ -126,8 +127,9 @@ $ jailbee account use alice@example.com
 ```
 
 Omit the argument to pick from a menu of the stored logins; the live one is
-not offered. The reference is the account's email, or the full slot name if two
-stored logins share an email (the name `ls` shows for the account). Afterwards
+not offered. The reference is the account's email. If two stored logins share one,
+pass the full slot name (`<email>[#<org8>][~<n>]`, see
+[Commands](commands.md)) instead. Afterwards
 the chosen login is `live` and the previous one is parked, not lost.
 
 The switch is **holder-wide**: every repo in the same credential group moves
@@ -158,19 +160,32 @@ between them.
 
 ### Create, assign and remove
 
+Join a group (`create` is optional; `apply` mounts it):
+
 ```console
 $ jailbee account group create work     # an empty group, ready to use
-$ jailbee account group set work        # this repo joins it, permanently
+$ jailbee account group set work        # this repo joins it until unset
 $ jailbee apply                         # mounts it into the repo's containers
+```
+
+Leave it:
+
+```console
 $ jailbee account group unset           # back to the host-wide default
-$ jailbee account group set none        # this repo keeps its own login
-$ jailbee account group rm work         # only when nothing uses it
+$ jailbee account group set none        # or: this repo keeps its own login
+```
+
+Remove a group nothing uses any more:
+
+```console
+$ jailbee account group rm work
 ```
 
 - `create` is optional: `set`, `use` and `account use -g` create the group on
   demand.
 - `set` and `unset` write the repo's host-local file, so they never touch
-  the repo's committed config. They refuse while a pooled agent is running in
+  the repo's committed config (`group set` answers "This repo now uses group
+  `work`." and reminds you to restart the agent). They refuse while a pooled agent is running in
   one of the repo's containers; close the agent first, or pass `--force` and
   restart it afterwards.
 - If both the repo and the group already hold a login when the repo joins,
