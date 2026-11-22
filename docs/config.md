@@ -2919,7 +2919,9 @@ committed-tree comparison with the host target branch, or `jailbee git diff
 `git_status` uses `target_diff`, `behind_count`, `base_source`, `base_sha`,
 `tracking_relation` and `upstream_ref` instead of `ahead_diff`, and adds
 `sync_target`, `host_ahead_count` and `host_behind_count` (see
-[sync target](git-bridge.md#sync-target)); its submodule
+[sync target](git-bridge.md#sync-target)); a count is a digit string, `"?"`
+(unknown) or `"missing"` (the container lacks the target commit: behind by at
+least one, count unknown, shown as `↓•`); its submodule
 line fields are `target_ins`/`target_del` instead of `ahead_ins`/`ahead_del`.
 `local_diff` and `local_count` remain opt-in comparisons with the host's
 currently checked-out HEAD, which can differ from the target branch. If the

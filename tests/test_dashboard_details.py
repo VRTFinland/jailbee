@@ -1486,3 +1486,9 @@ def test_a_missing_target_commit_shows_pull_needed_in_the_git_row() -> None:
     root = panel.git[0]
     assert _plain(root.behind) == "↓•"
     assert (_plain(root.ahead), _plain(root.target)) == ("?", "?")
+
+
+def test_git_value_renders_the_missing_target_marker_as_behind_unknown() -> None:
+    from jailbee.dashboard.details import _git_value
+
+    assert _git_value("•") == "[yellow]↓•[/yellow]"

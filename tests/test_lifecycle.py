@@ -8600,6 +8600,19 @@ def test_ls_field_specs_json_includes_submodules_when_enabled():
     assert "submodules" not in specs_off["git_status"].json(c)
 
 
+def test_json_emits_the_probe_token_not_the_bullet_for_a_missing_target():
+    from jailbee.lifecycle import ls_field_specs
+
+    c = _ci_with_status(behind_count="•", host_behind_count="•")
+    by_name = {f.name: f for f in ls_field_specs(now=_NOW)}
+    assert by_name["behind_count"].json(c) == "missing"
+    payload = by_name["git_status"].json(c)
+    assert payload["behind_count"] == "missing"
+    assert payload["host_behind_count"] == "missing"
+    # display keeps the bullet
+    assert "↓•" in by_name["behind_count"].cell(c)
+
+
 def test_live_target_fields_and_json_metadata():
     from jailbee.git_status import GitStatus
     from jailbee.lifecycle import ls_field_specs

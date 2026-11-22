@@ -32,6 +32,7 @@ from jailbee.dashboard.advisories import owing_repos
 from jailbee.dashboard.hit import Hit, hit_style
 from jailbee.dashboard.model import group_warnings
 from jailbee.dashboard.system_bar import min_usage_bar_cells, usage_bar
+from jailbee.git_status import BEHIND_UNKNOWN
 from jailbee.lifecycle import (
     ContainerInfo,
     _format_bytes,
@@ -305,6 +306,8 @@ def _git_value(value: str) -> str:
         return "[dim]clean[/dim]"
     if value == "?":
         return "[yellow]?[/yellow]"
+    if value == BEHIND_UNKNOWN:  # target commit absent: pull needed, count unknown
+        return "[yellow]↓•[/yellow]"
     return escape(value)
 
 

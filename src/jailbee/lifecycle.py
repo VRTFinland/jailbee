@@ -33,6 +33,7 @@ from jailbee.git import (
 # the container-side probe — duplicating the parser is how the two would drift.
 from jailbee.git_status import (
     BEHIND_UNKNOWN,
+    PROBE_MISSING,
     GitStatus,
     merge_label,
     parse_shortstat,
@@ -308,8 +309,16 @@ def _diff_key(value: str | None) -> table_format.SortKey | None:
     return (1, int(match[1]) + int(match[2]))
 
 
+def _json_count(value: str) -> str:
+    """JSON keeps the ASCII probe token for a missing target, not the display bullet."""
+    return PROBE_MISSING if value == BEHIND_UNKNOWN else value
+
+
 def _count_key(value: str | None) -> table_format.SortKey | None:
-    """A git count string (``"3"``); ``"—"`` / ``"?"`` are None."""
+    """A git count string (``"3"``); ``"•"`` (target missing) above every count;
+    ``"—"`` / ``"?"`` are None."""
+    if value == BEHIND_UNKNOWN:  # at least one commit behind, count unknown
+        return (float("inf"),)
     return (int(value),) if value is not None and value.isdigit() else None
 
 
@@ -3888,7 +3897,7 @@ def ls_field_specs(
         def get(c: ContainerInfo) -> str | None:
             if c.git_status is None:
                 return None
-            return getattr(c.git_status, attr)  # type: ignore[no-any-return]
+            return _json_count(getattr(c.git_status, attr))
 
         return get
 
@@ -3904,7 +3913,7 @@ def ls_field_specs(
             "wt": c.git_status.wt,
             "target_diff": c.git_status.target_diff,
             "ahead_count": c.git_status.ahead_count,
-            "behind_count": c.git_status.behind_count,
+            "behind_count": _json_count(c.git_status.behind_count),
             "base_sha": c.git_status.base_sha,
             "base_source": c.git_status.base_source,
             "tracking_relation": c.git_status.tracking_relation,
@@ -3920,7 +3929,7 @@ def ls_field_specs(
                 asdict(c.git_status.sync_target) if c.git_status.sync_target is not None else None
             ),
             "host_ahead_count": c.git_status.host_ahead_count,
-            "host_behind_count": c.git_status.host_behind_count,
+            "host_behind_count": _json_count(c.git_status.host_behind_count),
         }
         if show_submodules:
             payload["submodules"] = [
