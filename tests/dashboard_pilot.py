@@ -100,6 +100,7 @@ class FakeStateClient:
         self.fail = fail
         self.events: list[tuple[Any, ...]] = []
         self.closed = False
+        self.seq = 1  # a test bumps it to serve a "new" snapshot
 
     def wait_first_snapshot(self, timeout):  # type: ignore[no-untyped-def]
         self.events.append(("wait",))
@@ -109,7 +110,7 @@ class FakeStateClient:
 
     def latest(self):  # type: ignore[no-untyped-def]
         return Snapshot(
-            1,
+            self.seq,
             datetime(2026, 10, 4, tzinfo=UTC),
             self.git_enabled,
             self.groups,
