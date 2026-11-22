@@ -69,6 +69,11 @@ How the web dashboard behaves for one kind of screen — normal or e-ink —
 independently of its theme.
 _Avoid_: e-ink mode, e-ink theme (for the behaviour)
 
+**Sync target**:
+The ref a container's DIFF/↑/↓/MERGE compare against; chosen automatically:
+parent, PR head, or host branch.
+_Avoid_: base — that is `base_branch`
+
 **Prompt channel**:
 The private connection over which a command started by a dashboard puts its
 questions to that dashboard and receives the answers.

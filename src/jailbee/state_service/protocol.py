@@ -22,6 +22,7 @@ from jailbee.agent_status import AgentSummary
 from jailbee.dashboard.model import AppMenuEntry, RepoAdvisory, RepoGroup
 from jailbee.dashboard.system import PoolStatus, SystemStatus
 from jailbee.git_status import GitStatus, SubmoduleChange
+from jailbee.host_target import SyncTarget
 from jailbee.lifecycle import ContainerInfo
 from jailbee.orchestration.view import ChildView, GrantView
 from jailbee.procstat import ProcessActivity, ProcessMemory
@@ -47,7 +48,9 @@ from jailbee.update_check import UpdateNotice
 # 23 adds immutable board-scoped GrantView.publish_projects.
 # 24 adds RepoGroup.default_project for the board picker.
 # 25 adds AgentSummary.session_ids for the web dashboard's session attribution.
-PROTOCOL = 25
+# 26 adds GitStatus.sync_target (the resolved comparison target), the
+# host-branch ↑/↓ host_ahead_count/host_behind_count and host_branch.
+PROTOCOL = 26
 
 
 class ProtocolError(ValueError):
@@ -144,6 +147,7 @@ _NAMESPACE: dict[str, Any] = {
         RepoAdvisory,
         RepoGroup,
         SubmoduleChange,
+        SyncTarget,
         SystemStatus,
         UpdateNotice,
         datetime,

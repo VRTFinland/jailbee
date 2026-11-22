@@ -19,6 +19,7 @@ from jailbee.agent_status import AgentSummary
 from jailbee.dashboard import details as dd
 from jailbee.dashboard import model as dmodel
 from jailbee.git_status import GitStatus, SubmoduleChange
+from jailbee.host_target import SyncTarget
 from jailbee.lifecycle import ContainerInfo, ls_field_specs
 from jailbee.procstat import ProcessActivity, ProcessMemory
 
@@ -590,6 +591,63 @@ def test_git_root_row_reuses_the_table_cells() -> None:
     assert (root.target, root.working) == (cells["target_diff"](c), cells["wt"](c))
     assert _plain(root.note) == f"merge {_plain(cells['conflict'](c))}"
     assert _plain(root.extra) == "host HEAD ↑5 +1 -0"
+
+
+def _pr_status(sync: SyncTarget) -> GitStatus:
+    return GitStatus(
+        wt="clean",
+        ahead_diff="+4 -0",
+        ahead_count="2",
+        conflict="ok",
+        target_diff="+4 -0",
+        behind_count="0",
+        host_ahead_count="5",
+        host_behind_count="1",
+        base_sha="b" * 40,
+        sync_target=sync,
+    )
+
+
+def test_a_pr_bound_card_shows_a_row_per_target_and_marks_the_sync_target() -> None:
+    sync = SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head")
+    c = _c(git_status=_pr_status(sync), base_branch="dev", pr_number=7)
+
+    panel = dd.container_panel(c, NOW)
+
+    assert panel.base == "PR #7"
+    assert panel.git is not None
+    root, host, pr = panel.git[:3]
+    # The `vs PR #7` header already names the target: no marker on the root row.
+    assert [_plain(root.ahead), _plain(root.behind), _plain(root.note)] == ["2", "0", "merge ok"]
+    assert [_plain(host.name), _plain(pr.name)] == ["↳ dev", "↳ PR #7 head"]
+    assert [(_plain(r.ahead), _plain(r.behind)) for r in (host, pr)] == [("5", "1"), ("2", "0")]
+    assert [_plain(r.target) for r in (host, pr)] == ["b" * 10, "a" * 10]
+    assert [_plain(r.note) for r in (host, pr)] == ["", "sync target"]
+
+
+def test_a_pr_card_without_a_pr_head_ref_marks_the_host_row_as_fallback() -> None:
+    sync = SyncTarget("host", "dev", "b" * 40, "refs/heads/dev", fallback=True)
+    status = replace(_pr_status(sync), host_ahead_count="2", host_behind_count="0")
+    c = _c(git_status=status, base_branch="dev", pr_number=7)
+
+    panel = dd.container_panel(c, NOW)
+
+    assert panel.base == "dev"
+    assert panel.git is not None
+    host, pr = panel.git[1:3]
+    assert _plain(host.note) == "sync target (fallback)"
+    assert _plain(pr.name) == "↳ PR #7 head"
+    assert (_plain(pr.ahead), _plain(pr.behind), _plain(pr.target)) == ("—", "—", "not fetched")
+
+
+def test_a_plain_card_has_no_target_rows() -> None:
+    sync = SyncTarget("host", "dev", "b" * 40, "refs/heads/dev")
+    status = replace(_pr_status(sync), host_ahead_count="2", host_behind_count="0")
+
+    panel = dd.container_panel(_c(git_status=status, base_branch="dev"), NOW)
+
+    assert panel.base == "dev"
+    assert panel.git is not None and len(panel.git) == 1
 
 
 def test_submodule_rows_follow_the_root_in_order_and_keep_unknowns() -> None:

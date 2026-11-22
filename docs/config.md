@@ -2864,7 +2864,10 @@ limit **LIMIT**, memory in use **USED**, its share of the limit **MEM%**, loose 
 ◆ waiting, ● busy, ◐ shell, ○ idle — bright when the agent went idle less than 30 minutes ago, dim after that — and ? for an unknown agent state. Full
 **AGENT** remains unchanged. **BASE**'s ↗ marks a remote-tracking base;
 **MODE** uses `cln`/`mnt`. **WT**, **DIFF** and **L DIFF** show ✓ for clean, not
-for an unknown result. **DOING** uses ×N for process counts; **JOB** shortens
+for an unknown result. **DIFF**, **↑**, **↓** and **MERGE** compare with the
+container's [sync target](git-bridge.md#sync-target); for a PR-bound container
+they carry a dim `pr` (PR head) or a yellow `pr?` (PR head not fetched, host
+branch instead), in `jailbee ls` too. **DOING** uses ×N for process counts; **JOB** shortens
 working verbs (`start`, `create`, `clone`, `stop`, `delete`, `destroy`) and
 `autostart:<stage>` to `auto:<stage>`, preserving `failed` and `(dead)`.
 Qt table tooltips expand the labels, exact timestamps and agent details;
@@ -2900,7 +2903,9 @@ explicit `--fields ahead_diff` is an error. Use `target_diff` for the direct
 committed-tree comparison with the host target branch, or `jailbee git diff
 --incoming` for the former branch-contribution patch. Explicit JSON
 `git_status` uses `target_diff`, `behind_count`, `base_source`, `base_sha`,
-`tracking_relation` and `upstream_ref` instead of `ahead_diff`; its submodule
+`tracking_relation` and `upstream_ref` instead of `ahead_diff`, and adds
+`sync_target`, `host_ahead_count` and `host_behind_count` (see
+[sync target](git-bridge.md#sync-target)); its submodule
 line fields are `target_ins`/`target_del` instead of `ahead_ins`/`ahead_del`.
 `local_diff` and `local_count` remain opt-in comparisons with the host's
 currently checked-out HEAD, which can differ from the target branch. If the

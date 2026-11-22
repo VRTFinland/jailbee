@@ -1157,6 +1157,52 @@ def test_listing_snapshots_moved_host_branch_once_for_two_workers(make_cfg, tmp_
     }
 
 
+def test_listing_gives_pr_bound_containers_their_pr_head_as_the_sync_target(
+    make_cfg, tmp_path, mocker
+):
+    """A PR-bound container compares with the PR head the host last fetched;
+    its siblings bound to the same PR share one ref read, and a plain
+    container keeps the host branch."""
+    from jailbee.host_target import SyncTarget, TargetSnapshot
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(
+            name=f"myrepo-review-{n}",
+            user_config={"user.jailbee.repo_dir": "/repo", "user.jailbee.pr": "12"},
+        )
+        for n in (1, 2)
+    ] + [
+        _container(name="myrepo-plain", user_config={"user.jailbee.repo_dir": "/repo"}),
+        _container(
+            name="myrepo-unfetched",
+            user_config={"user.jailbee.repo_dir": "/repo", "user.jailbee.pr": "13"},
+        ),
+    ]
+    host = TargetSnapshot(cfg.default_branch, "host-sha", "local", "refs/x", "equal")
+    mocker.patch("jailbee.lifecycle.resolve_target", return_value=host)
+    rev_parse = mocker.patch(
+        "jailbee.git.rev_parse",
+        side_effect=lambda _root, ref: {"refs/jailbee/pr/12/head": "pr-sha"}.get(ref),
+    )
+    probe = mocker.patch("jailbee.lifecycle.probe_many_parallel", return_value={})
+    mocker.patch("jailbee.lifecycle.get_head_sha", return_value=None)
+
+    list_containers(cfg, incus, with_git_status=True)
+
+    sync = probe.call_args.kwargs["sync_by_name"]
+    pr12 = SyncTarget("pr", "PR #12", "pr-sha", "refs/jailbee/pr/12/head")
+    assert sync["myrepo-review-1"] == sync["myrepo-review-2"] == pr12
+    assert (sync["myrepo-plain"].kind, sync["myrepo-plain"].fallback) == ("host", False)
+    assert sync["myrepo-plain"].sha == "host-sha"
+    assert (sync["myrepo-unfetched"].kind, sync["myrepo-unfetched"].fallback) == ("host", True)
+    pr_reads = [c.args[1] for c in rev_parse.call_args_list]
+    assert sorted(pr_reads) == ["refs/jailbee/pr/12/head", "refs/jailbee/pr/13/head"]
+
+
 def test_all_repos_uses_foreign_config_and_never_reads_excluded_or_orphan_refs(
     make_cfg, tmp_path, mocker, db_session, db_engine
 ):
@@ -12440,3 +12486,73 @@ def test_destroy_guard_lists_a_stopped_containers_outbox_from_a_base_only_gather
     assert "1 unapplied PR action" in reasons
     assert "2 unapplied issue actions" in reasons
     assert not any("could not be read" in r for r in reasons)
+
+
+def _plain(markup: str) -> str:
+    from rich.text import Text
+
+    return Text.from_markup(markup).plain
+
+
+def test_sync_columns_carry_a_pr_marker_only_for_a_pr_head_target():
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ls_field_specs
+
+    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
+    pr = _ci_with_status(
+        target_diff="+3 -1",
+        ahead_count="2",
+        behind_count="0",
+        sync_target=SyncTarget("pr", "PR #7", "p" * 40, "refs/jailbee/pr/7/head"),
+    )
+    plain = _ci_with_status(
+        target_diff="+3 -1",
+        ahead_count="2",
+        behind_count="0",
+        sync_target=SyncTarget("host", "main", "h" * 40, "refs/heads/main"),
+    )
+    columns = ("target_diff", "ahead_count", "behind_count", "conflict")
+
+    assert [_plain(specs[n].cell(pr)) for n in columns] == ["+3 -1 pr", "2 pr", "0 pr", "ok pr"]
+    assert [_plain(specs[n].cell(plain)) for n in columns] == ["+3 -1", "2", "0", "ok"]
+    assert "[dim]pr[/dim]" in specs["ahead_count"].cell(pr)
+    # JSON stays the bare value; the target is in the git_status payload.
+    assert specs["ahead_count"].json(pr) == "2"
+
+
+def test_sync_columns_mark_a_pr_container_that_fell_back_to_the_host_branch():
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ls_field_specs
+
+    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
+    c = _ci_with_status(
+        ahead_count="2",
+        sync_target=SyncTarget("host", "main", "h" * 40, "refs/heads/main", fallback=True),
+    )
+
+    assert _plain(specs["ahead_count"].cell(c)) == "2 pr?"
+    assert "[yellow]pr?[/yellow]" in specs["ahead_count"].cell(c)
+
+
+def test_git_status_json_names_the_sync_target_and_host_counts():
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ls_field_specs
+
+    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
+    c = _ci_with_status(
+        ahead_count="2",
+        host_ahead_count="5",
+        host_behind_count="1",
+        sync_target=SyncTarget("pr", "PR #7", "p" * 40, "refs/jailbee/pr/7/head"),
+    )
+
+    payload = specs["git_status"].json(c)
+
+    assert payload["sync_target"] == {
+        "kind": "pr",
+        "label": "PR #7",
+        "sha": "p" * 40,
+        "ref": "refs/jailbee/pr/7/head",
+        "fallback": False,
+    }
+    assert (payload["host_ahead_count"], payload["host_behind_count"]) == ("5", "1")

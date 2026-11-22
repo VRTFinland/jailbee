@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -32,7 +32,7 @@ from jailbee.git import (
 # fallback below produces byte-identical `clean` / `+N -M` / `?` strings to
 # the container-side probe — duplicating the parser is how the two would drift.
 from jailbee.git_status import GitStatus, merge_label, parse_shortstat, probe_many_parallel
-from jailbee.host_target import TargetSnapshot, resolve_target
+from jailbee.host_target import SyncTarget, TargetSnapshot, resolve_sync_target, resolve_target
 from jailbee.incus import Incus, IncusError
 from jailbee.memory_limit import LIMIT_KEY
 from jailbee.orchestration import labels as orch_labels
@@ -373,7 +373,7 @@ def snapshot_targets_for(
     scope: RemoteRepoScope | None = None,
 ) -> dict[tuple[str, str], TargetSnapshot]:
     """Resolve one immutable host target per visible repository and base branch."""
-    snapshots, _defaults = _snapshot_targets_with_defaults(
+    snapshots, _defaults, _roots = _snapshot_targets_with_defaults(
         cfg, containers, all_repos=all_repos, scope=scope
     )
     return snapshots
@@ -385,8 +385,11 @@ def _snapshot_targets_with_defaults(
     *,
     all_repos: bool = False,
     scope: RemoteRepoScope | None = None,
-) -> tuple[dict[tuple[str, str], TargetSnapshot], dict[str, str]]:
-    """Return snapshots and each loaded repository's effective default branch."""
+) -> tuple[dict[tuple[str, str], TargetSnapshot], dict[str, str], dict[str, Path | None]]:
+    """Return snapshots, each repository's effective default branch and its root.
+
+    The root is None for a repository whose config cannot be loaded.
+    """
     from sqlmodel import Session, col, select
 
     from jailbee.config import load_repo_config
@@ -405,7 +408,7 @@ def _snapshot_targets_with_defaults(
         and c.repo_dir
     ]
     if not eligible:
-        return {}, {}
+        return {}, {}, {}
 
     foreign = {c.repo for c in eligible if c.repo != cfg.container_prefix}
     roots: dict[str, Path] = {}
@@ -418,6 +421,7 @@ def _snapshot_targets_with_defaults(
 
     snapshots: dict[tuple[str, str], TargetSnapshot] = {}
     defaults: dict[str, str] = {}
+    repo_roots: dict[str, Path | None] = {}
     foreign_configs: dict[str, Config | None] = {}
     for c in eligible:
         assert c.repo is not None
@@ -433,6 +437,7 @@ def _snapshot_targets_with_defaults(
                     foreign_configs[c.repo] = None
             repo_cfg = foreign_configs[c.repo]
         defaults[c.repo] = repo_cfg.default_branch if repo_cfg is not None else cfg.default_branch
+        repo_roots[c.repo] = repo_cfg.repo_root if repo_cfg is not None else None
         branch = c.base_branch or defaults[c.repo]
         key = (c.repo, branch)
         if key in snapshots:
@@ -441,7 +446,26 @@ def _snapshot_targets_with_defaults(
             snapshots[key] = TargetSnapshot(branch, None, "unavailable", "", "unavailable")
         else:
             snapshots[key] = resolve_target(repo_cfg.repo_root, branch, repo_cfg.upstream_remote)
-    return snapshots, defaults
+    return snapshots, defaults, repo_roots
+
+
+def _sync_targets(
+    containers: Sequence[ContainerInfo],
+    host_by_name: dict[str, TargetSnapshot],
+    roots: dict[str, Path | None],
+) -> dict[str, SyncTarget]:
+    """Each probed container's sync target, one ref read per (repo, PR, host branch)."""
+    cache: dict[tuple[str, int | None, TargetSnapshot], SyncTarget] = {}
+    out: dict[str, SyncTarget] = {}
+    for c in containers:
+        host = host_by_name.get(c.name)
+        if host is None or c.repo is None:
+            continue
+        key = (c.repo, c.pr_number, host)
+        if key not in cache:
+            cache[key] = resolve_sync_target(roots.get(c.repo), c.pr_number, host)
+        out[c.name] = cache[key]
+    return out
 
 
 def _root_pool(raw: dict[str, Any]) -> str | None:
@@ -696,7 +720,7 @@ def list_containers(
         # its arguments are evaluated first).
         statuses: dict[str, GitStatus] = {}
         if targets:
-            snapshots, defaults = _snapshot_targets_with_defaults(
+            snapshots, defaults, roots = _snapshot_targets_with_defaults(
                 cfg, out, all_repos=all_repos, scope=scope
             )
             target_names = {name for name, _, _ in targets}
@@ -717,6 +741,7 @@ def list_containers(
                 uid=cfg.container_user.uid,
                 host_head=host_head,
                 target_by_name=target_by_name,
+                sync_by_name=_sync_targets(out, target_by_name, roots),
                 host_head_by_name={
                     name: host_head
                     if any(c.name == name and c.repo == cfg.container_prefix for c in out)
@@ -3754,6 +3779,45 @@ LS_FIT_DROP_ORDER: tuple[str, ...] = (
 )
 
 
+def sync_marker(status: GitStatus | None) -> str:
+    """The dim marker a sync cell (DIFF/↑/↓/MERGE) carries for a non-host target.
+
+    ``pr``: the cell compares with the PR head. ``pr?`` (yellow): a PR-bound
+    container whose PR head the host has not fetched, compared with the host
+    branch instead. Empty for the host branch, so plain rows are unchanged.
+    """
+    target = status.sync_target if status is not None else None
+    if target is None:
+        return ""
+    if target.kind == "pr":
+        return "[dim]pr[/dim]"
+    if target.fallback:
+        return "[yellow]pr?[/yellow]"
+    return ""
+
+
+SYNC_FIELDS = ("target_diff", "ahead_count", "behind_count", "conflict")
+"""The columns that compare with the sync target and carry its marker."""
+
+
+def sync_target_text(status: GitStatus | None) -> str:
+    """What the sync columns compare with, as one plain sentence."""
+    target = status.sync_target if status is not None else None
+    if target is None:
+        return "vs the host branch"
+    if target.kind == "pr":
+        return f"vs {target.label} head"
+    if target.fallback:
+        return f"vs host branch {target.label} (PR head not fetched)"
+    return f"vs host branch {target.label}"
+
+
+def with_sync_marker(cell: str, status: GitStatus | None) -> str:
+    """``cell`` followed by its sync-target marker, if any."""
+    marker = sync_marker(status)
+    return f"{cell} {marker}" if marker else cell
+
+
 def ls_field_specs(
     *, now: datetime, all_repos: bool = False, show_submodules: bool = False
 ) -> list[table_format.FieldSpec[ContainerInfo]]:
@@ -3791,8 +3855,10 @@ def ls_field_specs(
         delta = c.loose_until - now
         return max(0, int(delta.total_seconds() // 60))
 
-    def _git_cell(attr: str, zero_dim: bool = False) -> Callable[[ContainerInfo], str]:
-        def cell(c: ContainerInfo) -> str:
+    def _git_cell(
+        attr: str, zero_dim: bool = False, *, sync: bool = False
+    ) -> Callable[[ContainerInfo], str]:
+        def value(c: ContainerInfo) -> str:
             if c.git_status is None:
                 return "[dim]—[/dim]"
             v: str = getattr(c.git_status, attr)
@@ -3803,6 +3869,10 @@ def ls_field_specs(
             if zero_dim and v == "0":
                 return "[dim]0[/dim]"
             return v
+
+        def cell(c: ContainerInfo) -> str:
+            text = value(c)
+            return with_sync_marker(text, c.git_status) if sync else text
 
         return cell
 
@@ -3817,7 +3887,7 @@ def ls_field_specs(
     def _conflict_cell(c: ContainerInfo) -> str:
         text, kind = merge_label(c.git_status)
         style = _MERGE_KIND_STYLE[kind]
-        return f"[{style}]{text}[/{style}]"
+        return with_sync_marker(f"[{style}]{text}[/{style}]", c.git_status)
 
     def _git_status_json(c: ContainerInfo) -> dict[str, object] | None:
         if c.git_status is None:
@@ -3838,6 +3908,11 @@ def ls_field_specs(
             "local_count": c.git_status.local_count,
             "in_progress": c.git_status.in_progress,
             "unmerged": c.git_status.unmerged,
+            "sync_target": (
+                asdict(c.git_status.sync_target) if c.git_status.sync_target is not None else None
+            ),
+            "host_ahead_count": c.git_status.host_ahead_count,
+            "host_behind_count": c.git_status.host_behind_count,
         }
         if show_submodules:
             payload["submodules"] = [
@@ -4455,7 +4530,7 @@ def ls_field_specs(
             sort=_git_key("target_diff", _diff_key),
             sort_desc_first=True,
             header="DIFF ±",
-            cell=_git_cell("target_diff"),
+            cell=_git_cell("target_diff", sync=True),
             json=_git_json("target_diff"),
             default_json=False,
         ),
@@ -4464,7 +4539,7 @@ def ls_field_specs(
             sort=_git_key("ahead_count", _count_key),
             sort_desc_first=True,
             header="↑",
-            cell=_git_cell("ahead_count", zero_dim=True),
+            cell=_git_cell("ahead_count", zero_dim=True, sync=True),
             json=_git_json("ahead_count"),
             justify="right",
             default_json=False,
@@ -4474,7 +4549,7 @@ def ls_field_specs(
             sort=_git_key("behind_count", _count_key),
             sort_desc_first=True,
             header="↓",
-            cell=_git_cell("behind_count", zero_dim=True),
+            cell=_git_cell("behind_count", zero_dim=True, sync=True),
             json=_git_json("behind_count"),
             justify="right",
             default_json=False,

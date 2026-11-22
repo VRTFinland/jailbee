@@ -85,3 +85,72 @@ def test_resolve_target_marks_relation_unavailable_on_ancestor_error(mocker, tmp
     assert snapshot.source == "local"
     assert snapshot.sha == "local-sha"
     assert snapshot.tracking_relation == "unavailable"
+
+
+# ---- resolve_sync_target: the ref a container's DIFF/↑/↓ compare against ----
+
+def _host_snapshot(sha: str | None = "host-sha"):
+    from jailbee.host_target import TargetSnapshot
+
+    return TargetSnapshot("main", sha, "local", "refs/remotes/origin/main", "equal")
+
+
+def test_sync_target_of_a_plain_container_is_the_host_branch(mocker, tmp_path):
+    from jailbee.host_target import resolve_sync_target
+
+    rev_parse = mocker.patch("jailbee.git.rev_parse")
+
+    target = resolve_sync_target(tmp_path, None, _host_snapshot())
+
+    assert (target.kind, target.sha, target.label, target.fallback) == (
+        "host",
+        "host-sha",
+        "main",
+        False,
+    )
+    rev_parse.assert_not_called()
+
+
+def test_sync_target_of_a_pr_bound_container_is_the_pr_head(mocker, tmp_path):
+    from jailbee.host_target import resolve_sync_target
+
+    rev_parse = mocker.patch("jailbee.git.rev_parse", return_value="pr-sha")
+
+    target = resolve_sync_target(tmp_path, 12, _host_snapshot())
+
+    rev_parse.assert_called_once_with(tmp_path, "refs/jailbee/pr/12/head")
+    assert (target.kind, target.sha, target.label, target.ref, target.fallback) == (
+        "pr",
+        "pr-sha",
+        "PR #12",
+        "refs/jailbee/pr/12/head",
+        False,
+    )
+
+
+def test_pr_bound_container_without_a_pr_head_ref_falls_back_to_the_host_branch(
+    mocker, tmp_path
+):
+    from jailbee.host_target import resolve_sync_target
+
+    mocker.patch("jailbee.git.rev_parse", return_value=None)
+
+    target = resolve_sync_target(tmp_path, 12, _host_snapshot())
+
+    assert (target.kind, target.sha, target.label, target.fallback) == (
+        "host",
+        "host-sha",
+        "main",
+        True,
+    )
+
+
+def test_pr_bound_container_of_an_unloadable_repo_falls_back_without_reading_refs(mocker):
+    from jailbee.host_target import resolve_sync_target
+
+    rev_parse = mocker.patch("jailbee.git.rev_parse")
+
+    target = resolve_sync_target(None, 12, _host_snapshot(None))
+
+    assert (target.kind, target.sha, target.fallback) == ("host", None, True)
+    rev_parse.assert_not_called()

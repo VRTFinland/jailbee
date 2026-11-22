@@ -235,6 +235,27 @@ DIFF ± is clean. WT remains separate. Explicit JSON `git_status` exposes
 `behind_commits`. The old `ahead_diff`, `ahead_ins` and `ahead_del` names are
 retired; see [column migration](config.md#ls--dashboard--remembered-columns).
 
+### Sync target
+
+DIFF ±, ↑, ↓ and MERGE compare with the container's **sync target** — where its
+work flows next, chosen automatically:
+
+- a PR-bound container (`jailbee new --pr`, `jailbee pr bind`) compares with the
+  PR head the host last fetched, `refs/jailbee/pr/<N>/head`: ↑ means "push
+  needed", ↓ "someone else pushed to the PR". Its cells carry a dim `pr`
+  marker. Without that ref on the host the container compares with its host
+  branch instead, and the cells carry a yellow `pr?`;
+- every other container compares with its host branch as described above, with
+  no marker.
+
+The dashboard's details card names the sync target in the git table's `vs …`
+header and, for a PR-bound container, adds one row per target (host branch and
+PR head) with its own ↑/↓ and short sha, the sync target's row marked. JSON
+`git_status` carries the target as `sync_target` (`kind` `host`/`pr`, `label`,
+`sha`, `ref`, `fallback`) plus `host_ahead_count`/`host_behind_count`, the
+counts against the host branch whatever the target. `base_sha`, `base_source`,
+`tracking_relation` and `upstream_ref` keep describing the host branch.
+
 `jailbee git diff <name>` uses the same live host target and direct comparison
 by default. `--incoming` selects the former three-dot contribution diff;
 `--stat` applies to either committed view, while `--wt` is unchanged and

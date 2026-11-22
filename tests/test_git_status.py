@@ -207,6 +207,7 @@ def test_probe_passes_env_vars_into_snippet(mocker):
         "DEFAULT_BRANCH": "develop",
         "HOST_HEAD": "",
         "TARGET_SHA": "",
+        "HOST_TARGET_SHA": "",
         "HOST_SOURCE": "/mnt/host-source",
         "GIT_OPTIONAL_LOCKS": "0",
     }
@@ -1191,3 +1192,69 @@ def test_probe_borrows_missing_submodule_commit_from_host_source(mocker, tmp_pat
         assert status.submodules[0].behind_commits == 1
     else:
         assert status.target_diff == "?"
+
+
+def _probe_real(mocker, repo, *, target, sync=None):
+    from jailbee.git_status import _PROBE_SNIPPET
+
+    def exec_snippet(_name, _args, *, env, **_kwargs):
+        return subprocess.run(
+            ["bash", "-c", _PROBE_SNIPPET],
+            env={**os.environ, **env},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+
+    incus = mocker.Mock()
+    incus.exec.side_effect = exec_snippet
+    return probe_container_git(incus, "c", str(repo), "main", "main", target=target, sync=sync)
+
+
+def _commit(repo, name):
+    (repo / name).write_text(f"{name}\n")
+    _real_git(repo, "add", name)
+    _real_git(repo, "commit", "-qm", name)
+    return _real_git(repo, "rev-parse", "HEAD")
+
+
+def test_pr_bound_probe_compares_with_the_pr_head_and_still_counts_the_host_branch(
+    mocker, tmp_path
+):
+    """↑ against the PR head is "push needed"; the host row keeps its own ↑/↓."""
+    from jailbee.host_target import SyncTarget
+
+    repo = tmp_path / "ctr"
+    repo.mkdir()
+    _real_git(repo, "init", "-q")
+    host_sha = _commit(repo, "base")
+    pr_sha = _commit(repo, "pushed")  # the PR head the host last fetched
+    _commit(repo, "local-1")
+    _commit(repo, "local-2")  # two commits beyond the PR head
+
+    host = TargetSnapshot("main", host_sha, "local", "refs/remotes/origin/main", "equal")
+    sync = SyncTarget("pr", "PR #7", pr_sha, "refs/jailbee/pr/7/head")
+    status = _probe_real(mocker, repo, target=host, sync=sync)
+
+    assert (status.ahead_count, status.behind_count) == ("2", "0")
+    assert status.target_diff == "+2 -0"
+    assert (status.host_ahead_count, status.host_behind_count) == ("3", "0")
+    assert status.sync_target == sync
+    # The host snapshot fields keep describing the host branch.
+    assert status.base_sha == host_sha
+
+
+def test_plain_probe_host_counts_equal_the_sync_counts(mocker, tmp_path):
+    repo = tmp_path / "ctr"
+    repo.mkdir()
+    _real_git(repo, "init", "-q")
+    host_sha = _commit(repo, "base")
+    _commit(repo, "local-1")
+
+    host = TargetSnapshot("main", host_sha, "local", "refs/remotes/origin/main", "equal")
+    status = _probe_real(mocker, repo, target=host)
+
+    assert (status.ahead_count, status.behind_count) == ("1", "0")
+    assert (status.host_ahead_count, status.host_behind_count) == ("1", "0")
+    assert status.sync_target is not None
+    assert (status.sync_target.kind, status.sync_target.sha) == ("host", host_sha)

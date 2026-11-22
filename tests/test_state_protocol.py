@@ -14,6 +14,7 @@ from jailbee.accounts.models import ActivityEvent, AgentActivity
 from jailbee.agent_status import AgentSummary
 from jailbee.dashboard.model import AppMenuEntry, RepoAdvisory, RepoGroup
 from jailbee.git_status import GitStatus, SubmoduleChange
+from jailbee.host_target import SyncTarget
 from jailbee.lifecycle import ContainerInfo
 from jailbee.orchestration.view import ChildView, GrantView
 from jailbee.procstat import ProcessActivity, ProcessMemory
@@ -74,6 +75,10 @@ def _full_snapshot() -> Snapshot:
             base_source="branch",
             tracking_relation="ahead",
             upstream_ref="origin/main",
+            sync_target=SyncTarget("pr", "PR #7", "fed987", "refs/jailbee/pr/7/head", True),
+            host_ahead_count="6",
+            host_behind_count="2",
+            host_branch="main",
         )
     )
     container = ContainerInfo(
@@ -423,7 +428,7 @@ def test_wire_schema_leaves_out_docstrings_and_titles():
 # PROTOCOL fails below: a client of another version would misread it. A pydantic
 # upgrade that only reshapes its schema output trips this too; a bump is then
 # harmless (a protocol mismatch makes the dashboard replace the state service).
-WIRE_SCHEMA = (25, "342d287f7716589d69eb374e1e30c4e28dea1790700422f6b9acd22156888490")
+WIRE_SCHEMA = (26, "3de4b34a3615419634111fabfddf8878ebf71b9d84b38636ea872096848d1fae")
 
 
 def test_a_wire_schema_change_bumps_the_protocol():
