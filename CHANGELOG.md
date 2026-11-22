@@ -44,10 +44,6 @@ before editing `## Unreleased`.
 
 ### Changed
 
-- `jailbee apply` rewrites the GitHub token file in every running container,
-  so a rotated token no longer waits for a profile change that restarts them
-  ([#149](https://github.com/VRTFinland/jailbee/issues/149)). Shells and
-  agents that are already open keep the old token until reopened.
 - `jailbee review apply` and `jailbee issue apply` are now `jailbee outbox
   apply` limited to PR or issue proposals, with the same prompts, output and
   exit codes ([#144](https://github.com/VRTFinland/jailbee/issues/144)). Each
@@ -65,6 +61,12 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- **`jailbee apply` refreshes the GitHub token in running containers.** A
+  rotated token no longer waits for a profile change that restarts them
+  ([#149](https://github.com/VRTFinland/jailbee/issues/149)), and removing the
+  token or disabling `github` now deletes it from the containers on apply,
+  start and restart. Shells and agents that are already open keep the old
+  token until reopened.
 - Attachment confirmations in PR creation, submodule PR creation, PR description
   updates and uncertain upload recovery now use the prompt channel instead of
   reading an unattended terminal. Non-interactive runs require explicit consent;

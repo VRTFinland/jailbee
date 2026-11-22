@@ -3242,7 +3242,8 @@ GitHub CLI (`gh`) integration. When enabled, `jailbee`:
   launched through them) authenticate without `gh auth login`.
   `jailbee apply` rewrites the file in every running container, so a
   rotated token needs no restart (stopped containers get it on their next
-  start). Only new login shells read it: shells and agents that are already
+  start). Disabling `github` or removing the token deletes the file the same
+  way. Only new login shells read it: shells and agents that are already
   open keep the old `GH_TOKEN` until they are reopened.
 - Runs `jailbee doctor` checks for token presence, perms, and PAT shape.
 

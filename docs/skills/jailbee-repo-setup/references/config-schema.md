@@ -864,7 +864,7 @@ GitHub CLI (`gh`) integration inside containers.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | bool | `false` | Master switch. Enable globally; a committed repo config may contain only `github: {enabled: false}` to override it. When `true`: auto-adds `api.github.com:443` to strict-mode egress, writes `/etc/profile.d/jailbee-github.sh` (exports the token) at autostart, and enables the `github` doctor checks. The `gh` binary is always in the golden image regardless. |
+| `enabled` | bool | `false` | Master switch. Enable globally; a committed repo config may contain only `github: {enabled: false}` to override it. When `true`: auto-adds `api.github.com:443` to strict-mode egress, writes `/etc/profile.d/jailbee-github.sh` (exports the token) on boot and `jailbee apply` (removed again when disabled or the token is gone), and enables the `github` doctor checks. The `gh` binary is always in the golden image regardless. |
 | `token` | PAT | unset | This repo's fine-grained personal access token. A `SecretStr` (masked in config dumps). **Set only in the host-local file `~/.config/jailbee/repos/<container_prefix>.yaml`**, mode `0600` — `load_config` rejects tokens in the committed repo file and `github.token` in `global.yaml`. |
 | `api_tokens` | map `container_prefix` → PAT | `{}` | **Deprecated; removed in 2.0.0.** The pre-1.6 per-repo map in `global.yaml`; the host operator moves it with `jailbee config migrate --apply`. Don't write new entries. |
 

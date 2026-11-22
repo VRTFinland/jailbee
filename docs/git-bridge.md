@@ -1114,9 +1114,11 @@ an informational reminder: JailBee does not verify or reduce the token's
 JailBee writes the configured token into `/etc/profile.d/jailbee-github.sh`
 inside the container for login shells to export as `GH_TOKEN`. It is readable
 by container processes, not confined to the `gh` binary. New/start/restart and
-apply paths refresh this file when a token is configured; disabling the
-integration or removing the config value does not erase a previously written
-token. Revoke an exposed token at GitHub and remove stale container copies.
+apply paths refresh this file when a token is configured; when the
+integration is disabled or the config value is removed, they delete the file
+instead (running containers on `jailbee apply`, others on their next start).
+Copies the container's own processes already read are not recalled, so revoke
+an exposed token at GitHub.
 
 **Two identities, on purpose.** Supply a read-only token for the container
 and keep the host's publishing credentials separate. The intended workflow

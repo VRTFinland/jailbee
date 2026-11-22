@@ -490,8 +490,8 @@ def test_no_gui_warning_names_apps_not_two_products(tmp_path, capsys, mocker):
 # ---------- github-token autostart step
 
 
-def test_github_token_step_returns_none_when_disabled(tmp_path):
-    from jailbee.autostart import _github_token_step
+def test_github_token_returns_none_when_disabled(tmp_path):
+    from jailbee.autostart import _github_token
     from tests.conftest import make_cfg
 
     cfg = make_cfg(
@@ -499,11 +499,11 @@ def test_github_token_step_returns_none_when_disabled(tmp_path):
         container_prefix="sampleapp",
         github={"enabled": False, "api_tokens": {"sampleapp": "github_pat_xxx"}},
     )
-    assert _github_token_step(cfg) is None
+    assert _github_token(cfg) is None
 
 
-def test_github_token_step_returns_none_when_prefix_absent_from_map(tmp_path):
-    from jailbee.autostart import _github_token_step
+def test_github_token_returns_none_when_prefix_absent_from_map(tmp_path):
+    from jailbee.autostart import _github_token
     from tests.conftest import make_cfg
 
     cfg = make_cfg(
@@ -511,11 +511,11 @@ def test_github_token_step_returns_none_when_prefix_absent_from_map(tmp_path):
         container_prefix="not-in-map",
         github={"enabled": True, "api_tokens": {"sampleapp": "github_pat_xxx"}},
     )
-    assert _github_token_step(cfg) is None
+    assert _github_token(cfg) is None
 
 
-def test_github_token_step_returns_none_for_whitespace_only_token(tmp_path):
-    from jailbee.autostart import _github_token_step
+def test_github_token_returns_none_for_whitespace_only_token(tmp_path):
+    from jailbee.autostart import _github_token
     from tests.conftest import make_cfg
 
     cfg = make_cfg(
@@ -523,42 +523,25 @@ def test_github_token_step_returns_none_for_whitespace_only_token(tmp_path):
         container_prefix="sampleapp",
         github={"enabled": True, "api_tokens": {"sampleapp": "   "}},
     )
-    assert _github_token_step(cfg) is None
+    assert _github_token(cfg) is None
 
 
-def test_github_token_step_emits_step_with_quoted_token(tmp_path):
-    from jailbee.autostart import _github_token_step
+def test_github_token_strips_the_configured_token(tmp_path):
+    from jailbee.autostart import _github_token
     from tests.conftest import make_cfg
 
     cfg = make_cfg(
         tmp_path,
         container_prefix="sampleapp",
-        github={
-            "enabled": True,
-            "api_tokens": {"sampleapp": "github_pat_with's-quote"},
-        },
+        github={"enabled": True, "api_tokens": {"sampleapp": " github_pat_x\n"}},
     )
-    step = _github_token_step(cfg)
-    assert step is not None
-    assert step.name == "github-token"
-    assert step.network is None
-    assert "/etc/profile.d/jailbee-github.sh" in step.run
-    assert "export GH_TOKEN=" in step.run
-    # Step runs as dev user; /etc/profile.d/ is root-owned, so the write
-    # path goes through sudo (passwordless sudo is in the golden image).
-    assert "sudo tee /etc/profile.d/jailbee-github.sh" in step.run
-    assert "sudo chmod 0644" in step.run
-    # shlex.quote of a string containing a single quote becomes
-    # 'github_pat_with'"'"'s-quote'
-    assert "github_pat_with'\"'\"'s-quote" in step.run
-    # SecretStr.repr must not leak into the body.
-    assert "SecretStr" not in step.run
+    assert _github_token(cfg) == "github_pat_x"
 
 
-def test_github_token_step_prefers_the_local_token(tmp_path):
+def test_github_token_prefers_the_local_token(tmp_path):
     from pydantic import SecretStr
 
-    from jailbee.autostart import _github_token_step
+    from jailbee.autostart import _github_token
     from jailbee.config.models_agents import GithubConfig
     from tests.conftest import make_cfg
 
@@ -571,10 +554,7 @@ def test_github_token_step_prefers_the_local_token(tmp_path):
             )
         }
     )
-    step = _github_token_step(cfg)
-    assert step is not None
-    assert "ghp_local" in step.run
-    assert "ghp_legacy" not in step.run
+    assert _github_token(cfg) == "ghp_local"
 
 
 def test_github_token_not_part_of_run_autostart(tmp_path):
@@ -613,47 +593,78 @@ def test_github_token_not_part_of_run_autostart(tmp_path):
 def test_inject_github_token_writes_profile_without_a_tmux_session(tmp_path, mocker):
     """The token file is written by one root `incus exec`, and no tmux session
     is created for it: window 0 inherits the server's environment, so the file
-    has to exist before the first `ensure_session` (see `agents.ensure_agents`)."""
+    has to exist before the first `ensure_session` (see `agents.ensure_agents`).
+    The token travels on stdin, never in argv."""
     from jailbee.autostart import inject_github_token
     from tests.conftest import make_cfg
 
     cfg = make_cfg(
         tmp_path,
         container_prefix="sampleapp",
-        github={"enabled": True, "api_tokens": {"sampleapp": "github_pat_xxx"}},
+        github={"enabled": True, "api_tokens": {"sampleapp": "github_pat_x'y"}},
     )
     incus = MagicMock()
     ensure = mocker.patch("jailbee.autostart.tmux.ensure_session")
     apply_step = mocker.patch("jailbee.autostart._apply_step")
 
-    inject_github_token(cfg, incus, "c1", "/r")
+    inject_github_token(cfg, incus, "c1")
 
     ensure.assert_not_called()
     apply_step.assert_not_called()
-    incus.exec.assert_called_once()
-    name, cmd = incus.exec.call_args.args
+    incus.exec.assert_not_called()
+    incus.exec_with_input.assert_called_once()
+    name, cmd, stdin = incus.exec_with_input.call_args.args
     assert name == "c1"
-    assert incus.exec.call_args.kwargs.get("uid") is None
+    assert incus.exec_with_input.call_args.kwargs.get("uid") is None
     assert "/etc/profile.d/jailbee-github.sh" in cmd[-1]
-    assert "github_pat_xxx" in cmd[-1]
+    assert "github_pat_x" not in " ".join(cmd)
+    assert stdin == "github_pat_x'y\n"
 
 
-def test_inject_github_token_noop_when_disabled(tmp_path, mocker):
-    """No token applies → nothing runs in the container."""
+def test_inject_github_token_script_round_trips_the_token(tmp_path):
+    """The stdin-fed script writes exactly `export GH_TOKEN=<token>`."""
+    import subprocess
+
+    from jailbee.autostart import _WRITE_GITHUB_PROFILE
+
+    target = tmp_path / "out.sh"
+    script = (
+        _WRITE_GITHUB_PROFILE.replace("sudo tee", "tee")
+        .replace("sudo chmod", "chmod")
+        .replace("/etc/profile.d/jailbee-github.sh", str(target))
+    )
+    subprocess.run(["bash", "-c", script], input="tok'en\n", text=True, check=True)
+    assert target.read_text() == "export GH_TOKEN=tok'en\n"
+
+
+@pytest.mark.parametrize(
+    "github",
+    [
+        {"enabled": False},
+        {"enabled": True, "api_tokens": {"other": "github_pat_x"}},
+        {"enabled": True, "api_tokens": {"sampleapp": "   "}},
+    ],
+)
+def test_inject_github_token_removes_stale_file_when_no_token(tmp_path, mocker, github):
+    """No token applies (disabled, removed, empty) -> the old file goes away."""
     from jailbee.autostart import inject_github_token
     from tests.conftest import make_cfg
 
-    cfg = make_cfg(tmp_path, github={"enabled": False})
+    cfg = make_cfg(tmp_path, container_prefix="sampleapp", github=github)
     incus = MagicMock()
     ensure = mocker.patch("jailbee.autostart.tmux.ensure_session")
 
-    inject_github_token(cfg, incus, "c1", "/r")
+    inject_github_token(cfg, incus, "c1")
 
-    incus.exec.assert_not_called()
+    incus.exec_with_input.assert_not_called()
+    incus.exec.assert_called_once()
+    name, cmd = incus.exec.call_args.args
+    assert name == "c1"
+    assert cmd[-1] == "rm -f /etc/profile.d/jailbee-github.sh"
     ensure.assert_not_called()
 
 
-def test_on_start_unchanged_when_github_token_step_returns_none(tmp_path):
+def test_on_start_unchanged_when_github_token_returns_none(tmp_path):
     from jailbee.autostart import AutostartTrigger, run_autostart
     from tests.conftest import make_cfg
 
@@ -683,7 +694,7 @@ def test_on_start_unchanged_when_github_token_step_returns_none(tmp_path):
     assert applied == ["user-step"]
 
 
-def test_on_create_does_not_get_github_token_step(tmp_path):
+def test_on_create_does_not_get_github_token(tmp_path):
     """github-token is only injected into on_start (rotation friendliness),
     not on_create."""
     from jailbee.autostart import AutostartTrigger, run_autostart
@@ -876,7 +887,7 @@ def test_run_autostart_sets_and_clears_progress_flag(mocker):
     cfg = _cfg(steps_on_start=[step])
     incus = MagicMock()
     mocker.patch("jailbee.autostart._apply_step")
-    mocker.patch("jailbee.autostart._github_token_step", return_value=None)
+    mocker.patch("jailbee.autostart._github_token", return_value=None)
 
     run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, repo_dir="/r")
 
@@ -896,7 +907,7 @@ def test_run_autostart_clears_progress_flag_on_exception(mocker):
         "jailbee.autostart._apply_step",
         side_effect=RuntimeError("boom"),
     )
-    mocker.patch("jailbee.autostart._github_token_step", return_value=None)
+    mocker.patch("jailbee.autostart._github_token", return_value=None)
 
     with pytest.raises(RuntimeError):
         run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, repo_dir="/r")
