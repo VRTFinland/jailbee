@@ -228,3 +228,19 @@ def test_same_name_draft_and_proposal_are_not_guessed(home, broker):
     assert broker.draft("b", "issue") is not None
     assert invoke("discard", "--draft", "b", "--kind", "issue").exit_code == 0
     assert broker.draft("b", "issue") is None
+
+
+def test_drop_hint_points_at_discard():
+    assert "outbox discard" in invoke("drop", "issue/x").output
+
+
+def test_old_draft_form_points_at_the_draft_flag(home, broker):
+    result = invoke("discard", "review-12")
+    assert result.exit_code == 2
+    assert "--draft review-12" in result.output
+
+
+def test_empty_draft_name_is_not_ignored(home, broker):
+    result = invoke("discard", "issue/x", "--draft", "")
+    assert result.exit_code == 2
+    assert "not both" in result.output

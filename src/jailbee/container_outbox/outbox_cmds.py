@@ -263,9 +263,9 @@ def discard(
 
     def run() -> None:
         require_role()
-        if target and draft:
+        if target and draft is not None:
             raise OutboxCommandError("give a proposal or --draft NAME, not both", 2)
-        if draft:
+        if draft is not None:
             domain, name = _resolve(draft, kind)
             broker.draft_discard(domain, name)
             typer.echo(f"discarded {domain} draft {name}")
@@ -278,6 +278,10 @@ def discard(
             )
         if kind is not None:
             raise OutboxCommandError("--kind applies only to --draft", 2)
+        if "/" not in target:
+            raise OutboxCommandError(
+                f"expected issue/NAME or pr/NAME; for a draft use --draft {target}", 2
+            )
         proposal_kind, name = _target(target)
         broker.drop(proposal_kind, name)
         typer.echo(f"discarded {proposal_kind}/{name}")
