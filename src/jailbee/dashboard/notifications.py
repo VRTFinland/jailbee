@@ -29,12 +29,13 @@ EntryState = Literal["running", "awaiting", "done", "failed"]
 def is_critical(argv: Sequence[str]) -> bool:
     """Whether ``argv`` (a command without the program name) is a critical action.
 
-    ``merge``, ``git push --merge``, ``git pull`` and ``pr push``: outcomes the
-    user must not miss, so they open as a modal and block terminal hand-offs
-    until the user sends them to the background.
+    ``merge`` (also ``git merge``), ``git push --merge``, ``git pull`` and
+    ``pr push``: outcomes the user must not miss, so they open as a modal and
+    block terminal hand-offs until the user sends them to the background.
+    The verb leads: options come after it, never before.
     """
-    words = [w for w in argv[:2] if not w.startswith("-")]
-    if words[:1] == ["merge"]:
+    words = list(argv[:2])
+    if words[:1] == ["merge"] or words == ["git", "merge"]:
         return True
     if words == ["git", "pull"] or words == ["pr", "push"]:
         return True

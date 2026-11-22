@@ -84,7 +84,7 @@ before editing `## Unreleased`.
   there too as read-only rows with a way to open the job log; they count in the badge
   and go when the job does (a hidden repo's jobs are left out, and a failed job
   already listed does not reopen the queue after a hand-off).
-  The critical actions (`merge`, `git push --merge`, `git pull`, `pr push`) open
+  The critical actions (`merge` or `git merge`, `git push --merge`, `git pull`, `pr push`) open
   directly in their entry's live screen as a modal and refuse every terminal
   hand-off while they run in the foreground; `b` (continue in the background)
   or closing the modal turns them into ordinary entries, and a result that

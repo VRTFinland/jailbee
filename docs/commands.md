@@ -738,8 +738,8 @@ and keeps drawing while it runs; the status line names the running command.
   rows (`target: phase · job`): they cannot be dismissed, count as running
   in the badge (a failed job or a dead worker counts as ⚠) and go when the
   job does. Choosing one offers `Show job log` (`l`).
-- **Critical actions open as a modal and block hand-offs.** `merge`,
-  `git push --merge`, `git pull` and `pr push` open at once in their entry's
+- **Critical actions open as a modal and block hand-offs.** `merge` (also `git merge`),
+  `git push --merge`, `git pull` and `pr push` (typed on the command line with the verb first) open at once in their entry's
   expanded live screen, so a conflict, a question or a result is not missed.
   While one runs in the foreground, every terminal hand-off (shell, tmux, IDE,
   `config edit`, the command line's attach verbs, the outbox publish) is refused

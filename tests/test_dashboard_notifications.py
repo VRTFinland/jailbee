@@ -1254,3 +1254,140 @@ def test_pilot_b_continues_a_critical_action_in_the_background(mocker, tmp_path)
     assert not isinstance(seen[0], pm.OutputScreen)
     (entry,) = list(run.app.session.queue)
     assert not entry.foreground
+
+
+# --- review rework of ticket 14 (#146 ticket 25) -----------------------------------
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["git", "merge", "alpha-a"], ["git", "merge", "alpha-a", "--into", "main"]],
+)
+def test_git_merge_is_critical(argv):
+    from jailbee.dashboard.notifications import is_critical
+
+    assert is_critical(argv)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--repo", "x", "merge", "alpha-a"],  # options come after the verb
+        ["git", "diff", "alpha-a"],
+        ["git", "push", "alpha-a"],
+    ],
+)
+def test_options_before_the_verb_are_not_skipped(argv):
+    from jailbee.dashboard.notifications import is_critical
+
+    assert not is_critical(argv)
+
+
+def _foreground_critical(mocker, tmp_path):  # type: ignore[no-untyped-def]
+    mocker.patch.object(tsession, "_run_cli_foreground", return_value=0)
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
+    return session, terminal
+
+
+def test_dispatching_an_attach_verb_is_refused_while_a_critical_action_is_foreground(
+    mocker, tmp_path
+):
+    session, terminal = _foreground_critical(mocker, tmp_path)
+
+    session.dispatch("alpha-a", "shell")
+
+    assert terminal.handed == []
+    assert session.notice is not None and "continue in the background" in session.notice
+
+
+def test_config_edit_is_refused_while_a_critical_action_is_foreground(mocker, tmp_path):
+    session, terminal = _foreground_critical(mocker, tmp_path)
+    session.edit_config(global_layer=True)
+
+    assert terminal.handed == []
+    assert session.notice is not None and "continue in the background" in session.notice
+
+
+def test_an_attach_command_line_is_refused_while_a_critical_action_is_foreground(mocker, tmp_path):
+    session, terminal = _foreground_critical(mocker, tmp_path)
+
+    session.run_command("shell alpha-a")
+
+    assert terminal.handed == []
+    assert session.notice is not None and "continue in the background" in session.notice
+
+
+def test_a_refused_critical_action_shows_its_reason_in_the_modal(mocker, tmp_path):
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
+    (entry,) = _entries(session)
+
+    session._settle_entries(
+        [entry.id],
+        drunner.ActionOutcome([drunner.RunResult(refused="not allowed here")], "", [""]),
+    )
+
+    assert _entries(session) == []
+    assert terminal.updated == ["not allowed here"]
+
+
+def test_a_critical_action_that_fails_in_the_modal_marks_it_failed(mocker, tmp_path):
+    _children(mocker, failing=("alpha-a",))
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    session.run_dashboard_command("alpha-a", "container", ["merge", "alpha-a"])
+
+    terminal.finish_pending()
+
+    assert terminal.updated_failed == [True]
+
+
+def test_pilot_a_non_critical_output_over_the_modal_does_not_kill_its_live_view(mocker, tmp_path):
+    from tests.dashboard_pilot import drive
+
+    seen: list[str] = []
+
+    def over(app):  # type: ignore[no-untyped-def]
+        app.show_output("jailbee merge", "(no output yet)", failed=False, live=True)
+        modal = app.screen
+        app.show_output("git diff", "diff", failed=False)  # a non-critical screen on top
+        app.update_output("merge result")  # the critical action's final result
+        seen.append(modal.text)
+
+    drive(mocker, [over], [_pilot_group(tmp_path)])
+
+    assert seen == ["merge result"]
+
+
+def test_pilot_failed_class_is_applied_on_the_final_update(mocker, tmp_path):
+    from tests.dashboard_pilot import drive
+
+    seen: list[bool] = []
+
+    def update(app):  # type: ignore[no-untyped-def]
+        app.show_output("jailbee merge", "", failed=False, live=True)
+        modal = app.screen
+        app.update_output("boom", failed=True)
+        seen.append(modal.has_class("failed"))
+
+    drive(mocker, [update], [_pilot_group(tmp_path)])
+
+    assert seen == [True]
+
+
+def test_pilot_b_on_a_non_critical_output_screen_does_nothing(mocker, tmp_path):
+    from jailbee.dashboard.tui import prompt_modals as pm
+    from tests.dashboard_pilot import drive
+
+    seen: list[object] = []
+    drive(
+        mocker,
+        [
+            lambda app: app.show_output("git diff", "x", failed=False),
+            "b",
+            lambda app: seen.append(app.screen),
+        ],
+        [_pilot_group(tmp_path)],
+    )
+
+    assert isinstance(seen[0], pm.OutputScreen)

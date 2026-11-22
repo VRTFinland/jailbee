@@ -309,13 +309,16 @@ class DashboardApp(App[int], inherit_bindings=False):
         on_close: Callable[[], None] | None = None,
     ) -> None:
         screen = OutputScreen(title, text, failed=failed, background=background)
-        self._output_screen = screen if live else None  # only a live screen is ever rewritten
+        if live:  # only a live screen is ever rewritten; a plain one stacked on top leaves it be
+            self._output_screen = screen
         self.push_screen(screen, None if on_close is None else lambda _result: on_close())
 
-    def update_output(self, text: str) -> None:
+    def update_output(self, text: str, failed: bool = False) -> None:
         screen = self._output_screen
         if screen is not None and screen in self.screen_stack:
             screen.set_text(text)
+            if failed:
+                screen.add_class("failed")
 
     def _on_app_thread(self, fn: Callable[[], None]) -> None:
         if threading.get_ident() == self._ui_thread:
