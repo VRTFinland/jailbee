@@ -18,6 +18,7 @@ from jailbee.dashboard.model import RepoGroup
 from jailbee.lifecycle import ContainerInfo
 from jailbee.state_service import StateServiceUnavailable, paths
 from jailbee.state_service import client as client_module
+from jailbee.state_service import server as server_module
 from jailbee.state_service.client import DISCONNECTED, StateClient
 from jailbee.state_service.protocol import PROTOCOL, Hello, Snapshot, encode
 from jailbee.state_service.server import LOCK_WAIT_SECONDS, StateServer
@@ -358,6 +359,40 @@ def test_a_stale_client_leaves_a_newer_server_alone_and_stops(runtime_dir, monke
     finally:
         client.close()
         newer.servers[0]._stopping = True
+
+
+def test_a_client_of_an_older_protocol_leaves_a_newer_server_alone_and_stops(
+    runtime_dir, monkeypatch
+):
+    newer = Spawner(version="1.7.0")
+    newer.start()
+    monkeypatch.setattr(client_module, "PROTOCOL", PROTOCOL - 1)
+    client = _client(Spawner(version="1.6.0"))
+    try:
+        _until(lambda: not client._thread.is_alive())
+        assert "restart this dashboard" in client.status()
+        assert newer.threads[0].is_alive()
+        assert not newer.servers[0]._stopping
+        with pytest.raises(StateServiceUnavailable, match="restart this dashboard"):
+            client.wait_first_snapshot(5)
+    finally:
+        client.close()
+        newer.servers[0]._stopping = True
+
+
+def test_a_newer_protocol_client_replaces_an_older_protocol_server(runtime_dir, monkeypatch):
+    old = Spawner(version="1.6.0")
+    monkeypatch.setattr(server_module, "PROTOCOL", PROTOCOL - 1)
+    old.start()
+    monkeypatch.setattr(server_module, "PROTOCOL", PROTOCOL)
+    new = Spawner(version="1.7.0")
+    client = _client(new)
+    try:
+        client.wait_first_snapshot(5)
+        old.threads[0].join(timeout=3)
+        assert not old.threads[0].is_alive()
+    finally:
+        client.close()
 
 
 def test_client_replaces_an_older_server_even_with_parseable_versions(runtime_dir):

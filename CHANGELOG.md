@@ -242,6 +242,13 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- **A dashboard left running across a JailBee upgrade stops instead of
+  fighting the newer state service.** The "newer wins" rule only applied when
+  both sides spoke the same protocol, so an older dashboard of a different
+  protocol shut the newer service down and the two kept replacing each other.
+  The older dashboard now stops with "jailbee was upgraded; restart this
+  dashboard" ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
+
 - **`jailbee apply` refreshes the GitHub token in running containers.** A
   rotated token no longer waits for a profile change that restarts them
   ([#149](https://github.com/VRTFinland/jailbee/issues/149)), and removing the
