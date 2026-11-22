@@ -13,7 +13,8 @@ before editing `## Unreleased`.
 - `jailbee upgrade --jobs N` (`-j`) builds up to N base images at once, each
   build's output prefixed with its alias; the default of 1 keeps the serial
   behaviour. `apply` and Docker seeding still run one repo at a time, and one
-  failed build fails only the repos using that image
+  failed build fails only the repos using that image. Ctrl-C starts no
+  queued build and keeps the builds that already finished
   ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
 - `agents.default_runner` makes a runner (`claude` or `claude-jb`, an optional
   LiteLLM profile and model tier) the repo's default for every container's
