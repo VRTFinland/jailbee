@@ -71,6 +71,10 @@ class AgentSummary:
 
 
 def _rank(session: AgentSession) -> tuple[int, bool, float]:
+    return rank_key(session.state, session.since)
+
+
+def rank_key(state: str, since: datetime | None) -> tuple[int, bool, float]:
     """Most urgent first; undated last among equals.
 
     Among equal `waiting` states the longest wait comes first: it is the one
@@ -78,14 +82,13 @@ def _rank(session: AgentSession) -> tuple[int, bool, float]:
     a session idle since yesterday does not hide one that just finished.
     """
     try:
-        urgency = URGENCY.index(session.state)
+        urgency = URGENCY.index(state)
     except ValueError:
         urgency = len(URGENCY)
-    since = session.since
     if since is None:
         return (urgency, True, 0.0)
     stamp = since.timestamp()
-    return (urgency, False, stamp if session.state == "waiting" else -stamp)
+    return (urgency, False, stamp if state == "waiting" else -stamp)
 
 
 def _one_per_process(sessions: Iterable[AgentSession]) -> list[AgentSession]:

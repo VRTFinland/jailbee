@@ -3676,8 +3676,8 @@ def agent_compact_cell(
 ) -> str:
     """The `agent_compact` cell: one glyph per live session.
 
-    Each agent's most urgent session carries a coarse age, but only the first
-    of each state does (the others are bare glyphs). When the result is wider
+    Sessions of every agent are ordered by urgency; only the first of each
+    state carries a coarse age (its own, the others are bare glyphs). When the result is wider
     than ``max_cells`` it falls back to bare glyphs, and past that to as many
     glyphs as fit followed by ``+N`` for the rest.
 
@@ -3692,41 +3692,47 @@ def agent_compact_cell(
     if not statuses:
         return "[dim]—[/dim]"
 
-    def text_of(s: AgentSummary) -> str:
-        glyph, colour = _AGENT_GLYPHS.get(s.state, ("?", None))
+    from jailbee.agent_status import rank_key
+
+    def glyph_of(state: str, *, age_from: datetime | None = None, with_age: bool = False) -> str:
+        glyph, colour = _AGENT_GLYPHS.get(state, ("?", None))
         text = glyph
-        if s.state not in _AGENT_GLYPHS:
+        if state not in _AGENT_GLYPHS:
             # The state is raw text from a file the container wrote.
-            text += f" {escape(s.state)}"
-        stamp = (
-            (s.activity.last_event_at if s.activity is not None else None)
-            if activity_age
-            else s.since
-        )
-        if stamp is not None and stamp <= now:
-            age = now - stamp
+            text += f" {escape(state)}"
+        if with_age and age_from is not None and age_from <= now:
+            age = now - age_from
             text += f" {format_duration_coarse(age)}"
-            if recent_idle is not None and s.state == "idle" and age < recent_idle:
+            if recent_idle is not None and state == "idle" and age < recent_idle:
                 colour = recent_idle_style
         return f"[{colour}]{text}[/{colour}]" if colour else text
 
-    def glyph_of(state: str) -> str:
-        glyph, colour = _AGENT_GLYPHS.get(state, ("?", None))
-        if state not in _AGENT_GLYPHS:
-            glyph += f" {escape(state)}"
-        return f"[{colour}]{glyph}[/{colour}]" if colour else glyph
-
-    # Agents arrive in `agent_status._rank` order, so the first of a state is
-    # its longest wait or latest change: that one carries the age.
-    first_of_state = {s.state: s for s in reversed(statuses)}
-    glyphs: list[str] = []
-    full: list[str] = []
+    # One urgency-ordered list over every agent's sessions, so truncation drops
+    # the least urgent session whichever agent owns it.
+    marks: list[tuple[str, datetime | None]] = []
     for s in statuses:
         # Old snapshots carry no per-session marks: `count` stands in for them.
-        states = [m.state for m in s.sessions] or [s.state] * max(s.count, 1)
-        glyphs.extend(glyph_of(state) for state in states)
-        full.append(text_of(s) if first_of_state[s.state] is s else glyph_of(s.state))
-        full.extend(glyph_of(state) for state in states[1:])
+        entries = [(m.state, m.since) for m in s.sessions] or [(s.state, None)] * max(s.count, 1)
+        for i, (state, own) in enumerate(entries):
+            stamp = own
+            if i == 0:
+                # The agent-wide stamps describe the most urgent session; the
+                # event time only when that session produced the latest event.
+                event = s.activity.last_event_at if s.activity is not None else None
+                event_state = s.activity.state if s.activity is not None else None
+                if activity_age and event is not None and event_state in (None, state):
+                    stamp = event
+                elif stamp is None and not activity_age:
+                    stamp = s.since
+            marks.append((state, stamp))
+    marks.sort(key=lambda m: rank_key(m[0], m[1]))
+
+    glyphs = [glyph_of(state) for state, _ in marks]
+    full: list[str] = []
+    seen: set[str] = set()
+    for state, stamp in marks:
+        full.append(glyph_of(state, age_from=stamp, with_age=state not in seen))
+        seen.add(state)
     cell = " ".join(full)
     if max_cells is None or Text.from_markup(cell).cell_len <= max_cells:
         return cell
@@ -3737,6 +3743,8 @@ def agent_compact_cell(
         shown = " ".join([*glyphs[:keep], f"+{len(glyphs) - keep}"])
         if Text.from_markup(shown).cell_len <= max_cells:
             return shown
+    # Even a bare `+N` does not fit: the column is narrower than any useful
+    # answer, so the count wins over the width.
     return f"+{len(glyphs)}"
 
 

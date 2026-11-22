@@ -11035,6 +11035,81 @@ def test_agent_compact_cell_narrow_falls_back_to_glyphs_then_plus_n(max_cells, e
     assert _plain(agent_compact_cell((c,), _AGENT_NOW, max_cells=max_cells)) == expected
 
 
+def _agent_marks(state, marks, *, agent="claude", since=None, activity=None):
+    from jailbee.agent_status import AgentSummary, SessionMark
+
+    return AgentSummary(
+        agent=agent,
+        state=state,
+        since=since,
+        waiting_for=None,
+        count=len(marks),
+        sessions=tuple(SessionMark(st, at) for st, at in marks),
+        activity=activity,
+    )
+
+
+def test_agent_compact_cell_truncation_keeps_another_agents_waiting_session():
+    from jailbee.lifecycle import agent_compact_cell
+
+    t = _AGENT_NOW - timedelta(minutes=2)
+    claude = _agent_marks("waiting", [("waiting", t)] + [("idle", t)] * 11, since=t)
+    codex = _agent_marks("waiting", [("waiting", t)], agent="codex", since=t)
+
+    cell = _plain(agent_compact_cell((claude, codex), _AGENT_NOW, max_cells=24))
+
+    assert cell.startswith("◆ ◆ ")
+    assert cell.endswith(" +2")
+
+
+def test_agent_compact_cell_orders_sessions_across_agents_by_urgency():
+    from jailbee.lifecycle import agent_compact_cell
+
+    t = _AGENT_NOW - timedelta(minutes=2)
+    claude = _agent_marks("idle", [("idle", t), ("idle", t)], since=t)
+    codex = _agent_marks("busy", [("busy", _AGENT_NOW - timedelta(seconds=5))], agent="codex")
+
+    assert _plain(agent_compact_cell((claude, codex), _AGENT_NOW)) == "● 5s ○ 2m ○"
+
+
+def test_agent_compact_cell_age_is_the_sessions_own_not_the_agents_event_age():
+    from jailbee.accounts.models import AgentActivity
+    from jailbee.lifecycle import agent_compact_cell
+
+    own = _AGENT_NOW - timedelta(minutes=4)
+    activity = AgentActivity(
+        last_tool=None,
+        last_message=None,
+        state="busy",
+        last_event_at=_AGENT_NOW - timedelta(seconds=3),
+    )
+    a = _agent_marks("waiting", [("waiting", own), ("busy", None)], since=own, activity=activity)
+
+    assert _plain(agent_compact_cell((a,), _AGENT_NOW, activity_age=True)) == "◆ 4m ●"
+
+
+def test_agent_compact_cell_narrow_tier_counts_cells_not_characters():
+    from rich.text import Text
+
+    from jailbee.lifecycle import agent_compact_cell
+
+    wide = _agent_marks("字字", [("字字", None)] * 2)
+    # Full "? 字字 ? 字字" is 13 cells (9 chars); 10 cells must not be mistaken for fitting.
+    out = _plain(agent_compact_cell((wide,), _AGENT_NOW, max_cells=10))
+
+    assert Text(out).cell_len <= 10
+    assert out == "? 字字 +1"
+
+
+def test_agent_compact_cell_old_snapshot_with_count_zero_shows_one_glyph():
+    from jailbee.agent_status import AgentSummary
+    from jailbee.lifecycle import agent_compact_cell
+
+    old = AgentSummary("claude", "busy", None, None, 0)
+
+    assert _plain(agent_compact_cell((old,), _AGENT_NOW)) == "●"
+
+
 def test_agent_compact_cell_shows_one_glyph_per_distinct_state():
     c = _running(
         agent_status=(
@@ -11044,7 +11119,7 @@ def test_agent_compact_cell_shows_one_glyph_per_distinct_state():
         )
     )
 
-    assert _plain(_agent_spec("agent_compact").cell(c)) == "◆ 4m ● 12s ●"
+    assert _plain(_agent_spec("agent_compact").cell(c)) == "◆ 4m ● 3s ●"
 
 
 def test_agent_compact_cell_colours_the_glyph_by_state():
@@ -11786,7 +11861,7 @@ def test_agent_compact_age_uses_event_time_not_status_duration():
     )
     assert _plain(agent_compact_cell((summary,), _AGENT_NOW)) == "● 2h"
     assert _plain(agent_compact_cell((summary,), _AGENT_NOW, activity_age=True)) == "● 14s"
-    summary = replace(summary, state="idle", activity=None)
+    summary = replace(summary, state="idle", activity=None, sessions=())
     assert (
         agent_compact_cell(
             (summary,), _AGENT_NOW, activity_age=True, recent_idle=timedelta(hours=3)
