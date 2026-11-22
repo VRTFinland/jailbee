@@ -10,8 +10,8 @@ from rich.markup import escape
 
 from jailbee import background
 from jailbee.lifecycle import (
-    DOING_MAX_NAMES,
     AGENT_COMPACT_MAX_CELLS,
+    DOING_MAX_NAMES,
     agent_compact_cell,
     format_duration_short,
     with_sync_marker,

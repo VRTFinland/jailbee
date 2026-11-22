@@ -10986,7 +10986,9 @@ def test_agent_compact_cell_shows_one_indicator_per_session_with_mixed_states():
 def test_agent_compact_cell_two_sessions_of_one_state_are_two_glyphs():
     c = _running(
         agent_status=(
-            _agent("busy", since=_AGENT_NOW - timedelta(seconds=9), count=2, sessions=("busy",) * 2),
+            _agent(
+                "busy", since=_AGENT_NOW - timedelta(seconds=9), count=2, sessions=("busy",) * 2
+            ),
         )
     )
 
