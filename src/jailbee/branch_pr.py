@@ -551,7 +551,10 @@ def publish_source_manifest(
                 )
             )
             if result_sink is not None:
-                result_sink(f"{'opened' if target is None else 'updated'} PR #{number}: {url}")
+                named = f" {safe_text(title)}" if title else ""
+                result_sink(
+                    f"{'opened' if target is None else 'updated'} PR #{number}{named}: {url}"
+                )
             return 0
     except (
         IncusError,

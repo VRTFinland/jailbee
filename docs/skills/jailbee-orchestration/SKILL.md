@@ -202,7 +202,7 @@ for actions already applied. PR publications currently return an empty array.
 `jailbee issue create --json` returns `{"name": "001-....json"}` for the
 staged manifest, suitable for `send publish --issue`. To see what was
 actually published from your container (including `uncertain` outcomes), run
-`jailbee outbox sent`.
+`jailbee outbox sent`; with `--json` it holds the published numbers and URLs.
 
 Plain `--wait` remains compatible and may return at `started`; then read the
 later final status for the printed ref. Staging or `started` is not success.

@@ -232,5 +232,6 @@ The outbox is not a log of what happened — it is a queue of what you'd
 pending manifest, reject it outright, or ask you to fix it before it's
 applied. The record of what actually landed on GitHub is
 `jailbee outbox sent` (add `--kind pr`), which lists what the host published
-from this container. Never assume a manifest you wrote has been published;
+from this container; `jailbee outbox sent --json` holds the published PR
+and comment numbers and URLs. Never assume a manifest you wrote has been published;
 check that list (or ask) instead.

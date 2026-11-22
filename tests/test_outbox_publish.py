@@ -256,7 +256,7 @@ def test_result_sink_gets_urls_and_policy_sees_applied_batch(env, kind):
     assert "001.json" not in env[2][kind].as_dict()
     assert any("https://github.com/acme/repo/" in line for line in lines)
     if kind == "issue":
-        assert any("73" in line for line in lines)
+        assert any("applied #73 " in line for line in lines)
         assert any("#issuecomment-1" in line for line in lines)
         assert len(seen[0].manifests[0].actions) == 3
         assert [r["index"] for r in receipts] == [0, 1, 2]
@@ -1279,9 +1279,12 @@ def test_issue_apply_alias_renders_the_selected_publication_outcome_then_exits(
         }[mode]
         assert expected in result.stderr and expected not in result.stdout
     for text in (result.stdout, selected_output.out):
-        assert "001.json action 0: applied (https://github.com/acme/repo/issues/73)" in text
+        assert (
+            "001.json action 0: applied #73 Example (https://github.com/acme/repo/issues/73)"
+            in text
+        )
         if mode == "success":
-            assert "001.json action 1: applied (https://receipt/2)" in text
+            assert "001.json action 1: applied #73" in text and "(https://receipt/2)" in text
             assert "001.json: fully applied and removed from the outbox" in text
             assert (
                 text.index("001.json action 0: applied")
