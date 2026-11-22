@@ -1367,9 +1367,7 @@ def test_publish_batch_over_ssh_hands_off_each():
 
 
 def _creation(pid: str, **scope: str) -> dict[str, object]:
-    return _proposal(
-        pid, state="awaiting-pr", create_scope=scope or {"kind": "repo"}, actions=[]
-    )
+    return _proposal(pid, state="awaiting-pr", create_scope=scope or {"kind": "repo"}, actions=[])
 
 
 def _hand_offs(runner: FakeRunner) -> list[list[str]]:
@@ -1389,9 +1387,7 @@ def test_publish_batch_mixes_manifests_and_pr_creations_under_one_question():
     q = ctl.state.question
     assert q is not None and q.title == "Publish 3 proposals?"
     assert "pr/c.json" in q.lines and "pr/s.json" in q.lines
-    assert (
-        f"pushes the branch of {C}, opens/updates its PR: jailbee pr push {C}" in q.lines
-    )
+    assert f"pushes the branch of {C}, opens/updates its PR: jailbee pr push {C}" in q.lines
     assert (
         "pushes the pinned source of s.json, opens/updates its PR: "
         f"jailbee pr push {C} --source-manifest s.json"
