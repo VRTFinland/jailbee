@@ -1866,3 +1866,19 @@ def test_service_wait_is_container_command():
     from jailbee.remote_ssh.router import _CONTAINER_COMMANDS
 
     assert "service wait" in _CONTAINER_COMMANDS
+
+
+def test_resolve_aliases_share_one_classification():
+    from jailbee.remote_ssh.router import _CONTAINER_COMMANDS, is_host_command
+
+    paths = ("outbox resolve", "issue resolve", "review resolve")
+    assert len({is_host_command(p) for p in paths}) == 1
+    assert len({p in _CONTAINER_COMMANDS for p in paths}) == 1
+    for path in paths:
+        assert policy_allows(path.split(), FULL) == path
+
+
+@pytest.mark.parametrize("argv", [("outbox", "resolve", "box", "pr/a.json", "0", "--retry")])
+def test_outbox_resolve_is_fail_closed_under_repo_exclusions(argv):
+    with pytest.raises(RouteError, match="unavailable when SSH repository exclusions"):
+        policy_allows(argv, FULL, scope=RemoteRepoScope(frozenset({"secret"})))

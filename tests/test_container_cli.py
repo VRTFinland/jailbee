@@ -31,6 +31,7 @@ def test_host_commands_snapshot():
         ["issue", "apply"],
         ["issue", "resolve"],
         ["outbox", "apply"],
+        ["outbox", "resolve"],
         ["outbox", "browse"],
         ["outbox", "clear"],
         ["config", "edit", "schema"],
