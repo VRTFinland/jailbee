@@ -377,14 +377,10 @@ def test_comment_edit_that_already_landed_points_at_resolve(cfg, incus, github, 
 
 def _refused_edit_with_reply(github):
     github.read_comment.return_value = snapshot(body="Edited on GitHub meanwhile")
-    return stage(
-        manifest(REPLY, COMMENT_EDIT), {"x.md": "Reply text"}, slug="mixed"
-    )
+    return stage(manifest(REPLY, COMMENT_EDIT), {"x.md": "Reply text"}, slug="mixed")
 
 
-def test_gate_dry_run_plan_lists_the_refusal_and_publishes_nothing(
-    cfg, incus, github, capsys
-):
+def test_gate_dry_run_plan_lists_the_refusal_and_publishes_nothing(cfg, incus, github, capsys):
     name = _refused_edit_with_reply(github)
     assert review_apply(cfg, incus, name, dry_run=True) == 1
     captured = capsys.readouterr()
@@ -395,9 +391,7 @@ def test_gate_dry_run_plan_lists_the_refusal_and_publishes_nothing(
     github.reply.assert_not_called()
 
 
-def test_one_refused_edit_holds_back_the_replies_of_its_manifest(
-    cfg, incus, github, capsys
-):
+def test_one_refused_edit_holds_back_the_replies_of_its_manifest(cfg, incus, github, capsys):
     name = _refused_edit_with_reply(github)
     assert review_apply(cfg, incus, name) == 1
     err = capsys.readouterr().err

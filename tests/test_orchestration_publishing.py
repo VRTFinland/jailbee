@@ -1109,7 +1109,12 @@ def _edit_manifest(extra=()):
                 "head_sha": "a" * 40,
                 "actions": [
                     {"type": "comment", "body": "x"},
-                    {"type": "comment_edit", "comment_id": 5, "body": "n", "expected": {"body": "o"}},
+                    {
+                        "type": "comment_edit",
+                        "comment_id": 5,
+                        "body": "n",
+                        "expected": {"body": "o"},
+                    },
                 ][: 2 if not extra else 1 + len(extra)],
             }
         ),
@@ -1119,7 +1124,9 @@ def _edit_manifest(extra=()):
 
 def _bound(ctx, mocker):
     mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
-    ctx.incus.config_get_checked.side_effect = lambda full, key: "12" if key == "user.jailbee.pr" else None
+    ctx.incus.config_get_checked.side_effect = lambda full, key: (
+        "12" if key == "user.jailbee.pr" else None
+    )
 
 
 @pytest.mark.parametrize(("edits", "allowed"), [(False, False), (True, True)])

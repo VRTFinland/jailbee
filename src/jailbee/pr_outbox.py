@@ -934,9 +934,7 @@ def _pending_edit_refusals(
     for index, action in edits:
         context = f"{target.manifest.name} action {index}"
         refusals.extend(
-            _comment_edit_refusals(
-                target, action, login, context, (written or {}).get(index)
-            )
+            _comment_edit_refusals(target, action, login, context, (written or {}).get(index))
         )
     return refusals
 

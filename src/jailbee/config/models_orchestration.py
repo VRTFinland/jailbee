@@ -155,7 +155,7 @@ class PublishRightsConfig(BaseModel):
     )
     pr_comment_edits: bool = Field(
         default=False,
-        description="Edit submitted PR review comments on bound PRs (pr_reviews does not imply it).",
+        description="Edit submitted PR review comments (pr_reviews does not imply it).",
     )
     max_actions_per_hour: int = Field(
         default=30, ge=1, le=500, description="Maximum reserved actions in a sliding hour."
