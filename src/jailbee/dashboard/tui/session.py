@@ -2573,6 +2573,27 @@ class DashboardSession:
             return None
         return dact.services_picker(container, rows)
 
+    def _refresh_services(self, container: str) -> None:
+        """Re-list ``container``'s services into an open service picker, if one is showing.
+
+        Runs when a service operation ends. The cursor stays on the same row;
+        an action picker keeps its place and gets the fresh list as its back.
+        """
+        overlay = self.overlay
+        if not isinstance(overlay, Picker) or overlay.target != container:
+            return
+        shown = overlay.back if overlay.purpose == "container-service-action" else overlay
+        if not isinstance(shown, Picker) or shown.purpose != "container-services":
+            return
+        fresh = self.open_services(container)
+        if fresh is None:
+            return
+        fresh = replace(fresh, start_index=min(shown.start_index, len(fresh.entries) - 1))
+        if shown is overlay:
+            self.overlay = fresh
+        else:
+            self.overlay = replace(overlay, back=fresh)
+
     def open_autostart_rerun(self, container: str) -> Picker | None:
         """Capture the public listing; no worker or config probes in the frontend."""
         repo = self.repo_for(container, "container")
@@ -3296,7 +3317,9 @@ class DashboardSession:
             if not entries:
                 self.set_notice("No service actions are permitted here")
                 return None
-            return replace(actions, entries=entries, back=picker)
+            return replace(
+                actions, entries=entries, back=replace(picker, start_index=int(entry.value))
+            )
         if picker.purpose == "container-service-action":
             if entry.value not in {"start", "stop", "restart", "refresh", "logs"}:
                 return None
@@ -3306,8 +3329,16 @@ class DashboardSession:
                 if entry.value == "logs"
                 else dact.service_op_argv(entry.value, picker.target, name)
             )
-            self.run_dashboard_command(picker.target, "container", argv)
-            return None
+            if entry.value == "logs" or picker.back is None:
+                self.run_dashboard_command(picker.target, "container", argv)
+                return None
+            # An operation runs on in the background (its queue entry holds the
+            # output); the user lands back on the service list, refreshed when it ends.
+            target = picker.target
+            self.run_dashboard_command(
+                target, "container", argv, then=lambda _rc: self._refresh_services(target)
+            )
+            return picker.back
 
         if picker.purpose in ("new-autostart", "restart-autostart"):
             if entry.value == dact.CUSTOM_SERVICES:
