@@ -618,6 +618,10 @@ JSON payload (`jailbee ls -o json`, keys `head_sha` / `remote_contained`) for
 scripting. The same check covers the container's other local branches:
 one whose tip is not on the host or behind a remote-tracking ref is listed
 in the dashboard's context card and named in the destroy warning (no column).
+The guard does not see reflog-only commits (abandoned detached-HEAD work),
+`refs/stash`, tags off any branch or submodule branches; "behind a remote" means
+any remote-tracking ref in the container, stale ones included; an unreadable
+branch list shows as `other branches not checked`.
 
 **Two more bridge commands:**
 

@@ -19,7 +19,13 @@ def _ci(**status_kwargs) -> ContainerInfo:
     ``ContainerInfo`` without it would exercise a state no real listing
     produces.
     """
-    base = {"wt": "clean", "ahead_diff": "clean", "ahead_count": "0", "conflict": "ok"}
+    base = {
+        "wt": "clean",
+        "ahead_diff": "clean",
+        "ahead_count": "0",
+        "conflict": "ok",
+        "other_branches": (),  # measured: none; tests pass None for "unknown"
+    }
     return ContainerInfo(
         name="myrepo-feat-x",
         state="Running",
@@ -560,7 +566,7 @@ def test_unimported_branch_is_a_risk_and_names_branch_and_sha(tmp_path, mocker):
     assert "feat/side" in reason and "01234567" in reason
 
 
-def test_other_branch_on_host_or_remote_or_unmeasured_is_not_a_risk(tmp_path, mocker):
+def test_other_branch_on_host_or_remote_is_not_a_risk(tmp_path, mocker):
     from jailbee.destroy_guard import assess
     from jailbee.git_status import OtherBranch
 
@@ -570,4 +576,24 @@ def test_other_branch_on_host_or_remote_or_unmeasured_is_not_a_risk(tmp_path, mo
     mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
     assert assess(cfg, _ci(other_branches=(OtherBranch("a", "abc", True),))) is None
     assert assess(cfg, _ci(other_branches=())) is None
-    assert assess(cfg, _ci(other_branches=None)) is None
+
+
+def test_unknown_other_branch_listing_is_a_risk_when_head_was_measured(tmp_path, mocker):
+    """`other_branches is None` (probe printed `?`, output cut short, an other-repo
+    container, an old probe) is unknown — at risk, like an unknown HEAD."""
+    from jailbee.destroy_guard import assess
+
+    mocker.patch("jailbee.destroy_guard.has_commit", return_value=True)
+
+    summary = assess(make_cfg(tmp_path), _ci(head_sha="a" * 40, other_branches=None))
+
+    assert summary is not None
+    assert any("other branches not checked" in r for r in summary.reasons)
+
+
+def test_unknown_other_branch_listing_is_silent_when_nothing_else_was_measured(tmp_path, mocker):
+    from jailbee.destroy_guard import assess
+
+    mocker.patch("jailbee.destroy_guard.has_commit", return_value=True)
+
+    assert assess(make_cfg(tmp_path), _ci(other_branches=None)) is None

@@ -243,6 +243,13 @@ def assess(cfg: Config, ci: ContainerInfo) -> RiskSummary | None:
     # Other local branches: the gather already dropped those whose tip is on the
     # host or behind a remote-tracking ref; re-check the host, which may have
     # imported them since.
+    # An unknown listing (`other_branches is None`: the probe printed `?`, its
+    # output was cut short, the container belongs to another repo, or the probe
+    # predates the field) counts as at risk, like an unknown HEAD — but only
+    # once the container's HEAD was measured, so a wholly unprobed container
+    # keeps its single "could not inspect" answer.
+    if status.other_branches is None and status.head_sha:
+        reasons.append("other branches not checked")
     stranded = [
         b
         for b in status.other_branches or ()

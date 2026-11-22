@@ -602,26 +602,45 @@ UNMERGED=$(git ls-files --unmerged 2>/dev/null \
 case "$UNMERGED" in '' | *[!0-9]*) UNMERGED="?" ;; esac
 
 # --- field 16: other local branches, one "name<TAB>sha<TAB>remote" line each ---
-# Every refs/heads tip except the checked-out branch and any tip equal to HEAD
-# (HEAD is judged above). remote: 1 = a remote-tracking ref contains the tip,
-# 0 = none does, ? = the question failed. "?" alone = the listing itself failed.
+# Every refs/heads tip except any tip equal to HEAD (HEAD is judged above, which
+# also covers the checked-out branch). remote: 1 = a remote-tracking ref
+# contains the tip, 0 = none does, ? = the question failed. "?" alone = the
+# listing itself failed. Containment is ONE `rev-list <tips> --not --remotes`
+# whatever the branch count: it prints the commits no remote reaches, so a tip
+# is unpushed exactly when it appears in that output.
 OTHER_BRANCHES=$(
-  if ! REFS=$(git for-each-ref --format='%(HEAD)%09%(refname:short)%09%(objectname)' \
+  if ! REFS=$(git for-each-ref --format='%(refname:short)%09%(objectname)' \
       refs/heads 2>/dev/null); then
     printf '?'
   else
     TAB="$(printf '\t')"
-    printf '%s\n' "$REFS" | while IFS="$TAB" read -r cur bname bsha; do
+    TIPS=$(printf '%s\n' "$REFS" | while IFS="$TAB" read -r bname bsha; do
       [ -z "$bsha" ] && continue
-      [ "$cur" = "*" ] && continue
       [ "$bsha" = "$HEAD_SHA" ] && continue
-      if BR=$(git branch -r --contains "$bsha" 2>/dev/null); then
-        if [ -n "$BR" ]; then rc=1; else rc=0; fi
-      else
-        rc="?"
-      fi
-      printf '%s\t%s\t%s\n' "$bname" "$bsha" "$rc"
-    done
+      printf '%s\n' "$bsha"
+    done | sort -u)
+    if [ -n "$TIPS" ]; then
+      # Tips go in on stdin (no ARG_MAX limit); awk keeps only the tips from the
+      # unpushed-commit stream, so a long history never lands in a variable. A
+      # failed rev-list prints FAIL, which awk passes through.
+      UNPUSHED=$({ printf '%s\n' "$TIPS" | git rev-list --stdin --not --remotes 2>/dev/null \
+        || echo FAIL; } | awk -v t="$TIPS" \
+        'BEGIN { n = split(t, a, "\n"); for (i = 1; i <= n; i++) w[a[i]] = 1
+                 w["FAIL"] = 1 } $0 in w')
+      case "$UNPUSHED" in *FAIL*) RC_OK=0 ;; *) RC_OK=1 ;; esac
+      printf '%s\n' "$REFS" | while IFS="$TAB" read -r bname bsha; do
+        [ -z "$bsha" ] && continue
+        [ "$bsha" = "$HEAD_SHA" ] && continue
+        if [ "$RC_OK" = 0 ]; then
+          rc="?"
+        elif printf '%s\n' "$UNPUSHED" | grep -Fxq "$bsha"; then
+          rc=0
+        else
+          rc=1
+        fi
+        printf '%s\t%s\t%s\n' "$bname" "$bsha" "$rc"
+      done
+    fi
   fi
 )
 

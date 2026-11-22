@@ -12800,3 +12800,63 @@ def test_unimported_branches_drops_host_and_remote_contained_tips(make_cfg, tmp_
 
     assert [b.name for b in kept or ()] == ["d", "e"]
     assert _unimported_branches(cfg, GitStatus("?", "?", "?", "?")).other_branches is None
+
+
+def _list_with_other_branches(make_cfg, tmp_path, mocker, *, container_name, profiles):
+    from jailbee.git_status import GitStatus, OtherBranch
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(
+            name=container_name,
+            state="Running",
+            profiles=profiles,
+            user_config={"user.jailbee.mode": "clone", "user.jailbee.repo_dir": "/home/dev/repo"},
+        )
+    ]
+    mocker.patch(
+        "jailbee.lifecycle.probe_many_parallel",
+        return_value={
+            container_name: GitStatus(
+                "clean",
+                "clean",
+                "0",
+                "ok",
+                head_sha="h" * 40,
+                other_branches=(
+                    OtherBranch("onhost", "1" * 40, False),
+                    OtherBranch("lost", "2" * 40, False),
+                ),
+            )
+        },
+    )
+    mocker.patch("jailbee.lifecycle.has_commit", side_effect=lambda _root, sha: sha == "1" * 40)
+    (info,) = list_containers(cfg, incus, with_git_status=True, all_repos=True)
+    return info
+
+
+def test_list_containers_filters_other_branches_against_the_host(make_cfg, tmp_path, mocker):
+    info = _list_with_other_branches(
+        make_cfg,
+        tmp_path,
+        mocker,
+        container_name="myrepo-a",
+        profiles=["default", "myrepo-base", "myrepo-binds", "myrepo-net-strict"],
+    )
+
+    assert [b.name for b in info.git_status.other_branches] == ["lost"]
+
+
+def test_list_containers_leaves_other_repo_branches_unmeasured(make_cfg, tmp_path, mocker):
+    info = _list_with_other_branches(
+        make_cfg,
+        tmp_path,
+        mocker,
+        container_name="otherrepo-a",
+        profiles=["default", "otherrepo-base", "otherrepo-binds", "otherrepo-net-strict"],
+    )
+
+    assert info.git_status.other_branches is None
