@@ -139,7 +139,13 @@ from jailbee.dashboard.overlays import (
     parse_pr_number,
     validate_answer,
 )
-from jailbee.dashboard.runner import ActionOutcome, ActionRun, RunResult, is_attach_style
+from jailbee.dashboard.runner import (
+    ActionOutcome,
+    ActionRun,
+    RunProgress,
+    RunResult,
+    is_attach_style,
+)
 from jailbee.dashboard.settings import (
     SettingsState,
     Tab,
@@ -303,22 +309,32 @@ def _last_line(text: str) -> str:
 
 QUEUE_DISMISS_FINISHED = "\x00dismiss-finished"
 QUEUE_TAIL_LINES = 3
-# A running entry's output screen: its output is kept once it ends (#151 ticket 13
-# follows it live).
-QUEUE_RUNNING_OUTPUT = "(still running — its output is kept here when it ends)"
+# What an expanded entry shows before its action has printed anything.
+QUEUE_NO_OUTPUT_YET = "(no output yet)"
+QUEUE_ROW_TAIL_CHARS = 60
 
-_QUEUE_ICONS = {"running": "⟳", "done": "✓", "failed": "✗"}
+_QUEUE_ICONS = {"running": "⟳", "awaiting": "⚠", "done": "✓", "failed": "✗"}
 
 
 def _queue_state(entry: QueueEntry) -> str:
     if entry.state == "running":
         return "running"
+    if entry.state == "awaiting":
+        return "awaiting answer"
     return f"{entry.state} (exit {entry.status})"
 
 
 def _queue_label(entry: QueueEntry) -> str:
-    """One line of the queue list: state icon, target, command, state."""
-    return f"{_QUEUE_ICONS[entry.state]} {entry.target}: {entry.command} · {_queue_state(entry)}"
+    """One line of the queue list: icon, target, command, state, a live entry's last line."""
+    label = f"{_QUEUE_ICONS[entry.state]} {entry.target}: {entry.command} · {_queue_state(entry)}"
+    if not entry.finished:
+        last = _tail(entry.output)[-1:]
+        if last:
+            line = last[0].strip()
+            if len(line) > QUEUE_ROW_TAIL_CHARS:
+                line = line[: QUEUE_ROW_TAIL_CHARS - 1] + "…"
+            label += f" — {line}"
+    return label
 
 
 def _tail(text: str) -> tuple[str, ...]:
@@ -361,16 +377,28 @@ class Terminal(Protocol):
         """Give the real terminal to ``fn`` (a child command), take it back, return its result."""
         ...
 
-    def run_actions(self, runs: Sequence[ActionRun], done: Callable[[ActionOutcome], None]) -> None:
+    def run_actions(
+        self,
+        runs: Sequence[ActionRun],
+        done: Callable[[ActionOutcome], None],
+        progress: RunProgress | None = None,
+    ) -> None:
         """Run each action through the action runner without taking the terminal.
 
         The child's questions are asked by the frontend itself. Returns at once;
-        ``done`` is called on the frontend's own thread when the last run ended.
+        ``done`` and every ``progress`` call are made on the frontend's own thread.
         """
         ...
 
-    def show_output(self, title: str, text: str, *, failed: bool) -> None:
-        """Show an action's captured ``text`` until the user dismisses it."""
+    def show_output(self, title: str, text: str, *, failed: bool, live: bool = False) -> None:
+        """Show an action's captured ``text`` until the user dismisses it.
+
+        ``live``: :meth:`update_output` may replace the text while it stays open.
+        """
+        ...
+
+    def update_output(self, text: str) -> None:
+        """Replace the text of the output screen :meth:`show_output` opened last, if still open."""
         ...
 
 
@@ -440,6 +468,20 @@ def _cap_detail(lines: tuple[str, ...]) -> tuple[str, ...]:
     return (*lines[:MAX_DETAIL_LINES], f"…and {len(lines) - MAX_DETAIL_LINES} more")
 
 
+class _EntryProgress:
+    """The runner's live word for a batch, routed to the queue entries of its runs."""
+
+    def __init__(self, session: DashboardSession, ids: Sequence[int]) -> None:
+        self._session = session
+        self._ids = ids
+
+    def output(self, index: int, chunk: str) -> None:
+        self._session._entry_output(self._ids[index], chunk)
+
+    def question(self, index: int, asking: bool) -> None:
+        self._session._entry_question(self._ids[index], asking)
+
+
 class DashboardSession:
     """One open terminal dashboard (see the module docstring).
 
@@ -497,6 +539,7 @@ class DashboardSession:
         self.overlay: Overlay | None = None
         # Every action started through the action runner, until dismissed.
         self.queue = NotificationQueue()
+        self._following: int | None = None  # the entry whose output screen follows it live
         # Grant edits made here, shown until the gathered snapshot catches up (see _patch_grant).
         self._grant_patches: dict[str, _GrantPatch] = {}
         self._grant_pending: dict[str, float] = {}
@@ -791,8 +834,10 @@ class DashboardSession:
         label: str,
         then: Callable[[int | None], None] | None = None,
         target: str | None = None,
-    ) -> None:
+    ) -> int:
         """Run ``jailbee <argv>`` through the action runner, in the dashboard.
+
+        Returns the id of the action's queue entry.
 
         ``argv`` is the command without the program name, already addressed at
         ``repo`` and policy-checked by the caller. Returns at once: the result
@@ -801,7 +846,7 @@ class DashboardSession:
         ``target`` names the container or repo for its queue entry (default:
         the first listed container in ``argv``, else the repo).
         """
-        self._start_actions(
+        (entry_id,) = self._start_actions(
             [ActionRun(argv, repo.cwd())],
             [repo],
             style,
@@ -809,6 +854,7 @@ class DashboardSession:
             then,
             targets=None if target is None else [target],
         )
+        return entry_id
 
     def _start_actions(
         self,
@@ -821,8 +867,8 @@ class DashboardSession:
         settled: Callable[[ActionOutcome], None] | None = None,
         commands: Sequence[str] | None = None,
         targets: Sequence[str] | None = None,
-    ) -> None:
-        """Start ``runs``, one queue entry each; settle them when the last one ended.
+    ) -> list[int]:
+        """Start ``runs``, one queue entry each (their ids returned); settle them at the end.
 
         ``commands``/``targets`` label each run's entry (default: ``label``
         and :meth:`_entry_target`).
@@ -847,7 +893,8 @@ class DashboardSession:
                 if then is not None:
                     then(rc)
 
-        self.terminal.run_actions(runs, finished)
+        self.terminal.run_actions(runs, finished, _EntryProgress(self, ids))
+        return ids
 
     def _entry_target(self, argv: Sequence[str], repo: RepoTarget) -> str:
         """The container ``argv`` names (its first listed one), else ``repo``'s prefix."""
@@ -874,7 +921,30 @@ class DashboardSession:
                 continue
             # (An error with output: the run started and failed after; keep what it printed.)
             self.queue.finish(entry_id, result.status if result.status is not None else 1, output)
+            if entry_id == self._following:
+                self.terminal.update_output(output)  # the screen shows the whole of it
+        if self._following is not None and (
+            (found := self.queue.get(self._following)) is None or found.finished
+        ):
+            self._following = None
         self._queue_changed()
+
+    def _entry_output(self, entry_id: int, chunk: str) -> None:
+        self.queue.append(entry_id, chunk)
+        self._queue_changed()
+        if entry_id == self._following:
+            found = self.queue.get(entry_id)
+            if found is not None:
+                self.terminal.update_output(found.output)
+
+    def _entry_question(self, entry_id: int, asking: bool) -> None:
+        self.queue.set_awaiting(entry_id, asking)
+        self._queue_changed()
+
+    def after_hand_off(self) -> None:
+        """Back from a tmux hand-off: show the queue at once if something waits on the user."""
+        if self.overlay is None and self.queue.counts().attention:
+            self.open_queue()
 
     def _queue_changed(self) -> None:
         """Redraw an open queue list or entry from the queue as it is now."""
@@ -939,8 +1009,11 @@ class DashboardSession:
         if found is None:
             return self.queue_picker()
         if entry.value == "output":
-            text = found.output if found.finished else QUEUE_RUNNING_OUTPUT
-            self.terminal.show_output(found.command, text, failed=found.state == "failed")
+            text = found.output or (QUEUE_NO_OUTPUT_YET if not found.finished else "")
+            self._following = None if found.finished else entry_id
+            self.terminal.show_output(
+                found.command, text, failed=found.state == "failed", live=not found.finished
+            )
             return self.queue_entry_picker(entry_id)
         if entry.value == "dismiss":
             if not self.queue.dismiss(entry_id):

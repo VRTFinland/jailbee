@@ -224,10 +224,24 @@ class _TailBuffer:
         return OUTPUT_DROPPED_MARKER + body if self._dropped else body
 
 
+class RunProgress(Protocol):
+    """Live word of a batch: output as it arrives, a question opening and closing.
+
+    ``index`` is the run's position in the batch. Both are called on the
+    thread that runs the action (the output sink's helper thread, the
+    prompt handler's thread): a frontend moves them to its own thread.
+    """
+
+    def output(self, index: int, chunk: str) -> None: ...
+
+    def question(self, index: int, asking: bool) -> None: ...
+
+
 def run_actions(
     runs: Sequence[ActionRun],
     *,
     run: Callable[..., RunResult] | None = None,
+    progress: RunProgress | None = None,
     **common: Any,
 ) -> ActionOutcome:
     """Run ``runs`` one after another through ``run`` (default `run_action`).
@@ -237,24 +251,32 @@ def run_actions(
     one run each starts with a ``── jailbee <command> ──`` header. The batch
     stops at the first run that was refused or could not start; a run that
     merely exits non-zero does not stop the others. Frontend-agnostic: the
-    terminal and web dashboards both run bulk actions through it.
+    terminal and web dashboards both run bulk actions through it. ``progress``
+    hears each run's output chunks and its questions while it runs.
     """
     runner_fn = run if run is not None else run_action
     chunks = _TailBuffer()
     results: list[RunResult] = []
     outputs: list[str] = []
     try:
-        for item in runs:
+        for index, item in enumerate(runs):
             if len(runs) > 1:
                 chunks.append(f"── jailbee {_command_path(item.argv)} ──\n")
             own = _TailBuffer()
 
-            def sink(chunk: str, own: _TailBuffer = own) -> None:
+            def sink(chunk: str, own: _TailBuffer = own, index: int = index) -> None:
                 chunks.append(chunk)
                 own.append(chunk)
+                if progress is not None:
+                    progress.output(index, chunk)
+
+            run_common = dict(common)
+            handler = common.get("on_prompt")
+            if progress is not None and handler is not None:
+                run_common["on_prompt"] = _announcing(handler, progress, index)
 
             try:
-                result = runner_fn(item.argv, cwd=item.cwd, on_output=sink, **common)
+                result = runner_fn(item.argv, cwd=item.cwd, on_output=sink, **run_common)
             finally:
                 outputs.append(own.text())
             results.append(result)
@@ -263,6 +285,19 @@ def run_actions(
     except Exception as exc:
         results.append(RunResult(error=str(exc)))
     return ActionOutcome(results, chunks.text(), outputs)
+
+
+def _announcing(handler: PromptHandler, progress: RunProgress, index: int) -> PromptHandler:
+    """``handler`` that tells ``progress`` while a question is open."""
+
+    def ask(prompt: Prompt) -> Any:
+        progress.question(index, True)
+        try:
+            return handler(prompt)
+        finally:
+            progress.question(index, False)
+
+    return ask
 
 
 def run_action(

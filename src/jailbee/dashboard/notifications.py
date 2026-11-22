@@ -14,7 +14,9 @@ from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from typing import Literal
 
-EntryState = Literal["running", "done", "failed"]
+from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS
+
+EntryState = Literal["running", "awaiting", "done", "failed"]
 
 
 @dataclass(frozen=True)
@@ -30,11 +32,12 @@ class QueueEntry:
 
     @property
     def finished(self) -> bool:
-        return self.state != "running"
+        return self.state not in ("running", "awaiting")
 
     @property
     def needs_attention(self) -> bool:
-        return self.state == "failed"
+        """Failed, or blocked on a question the user has not answered."""
+        return self.state in ("failed", "awaiting")
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,24 @@ class NotificationQueue:
         self._entries[entry_id] = QueueEntry(entry_id, command, target)
         return entry_id
 
+    def append(self, entry_id: int, chunk: str) -> None:
+        """Output of a running action arrived; kept to the same tail cap as a finished one."""
+        entry = self._entries.get(entry_id)
+        if entry is None or entry.finished:
+            return
+        text = entry.output + chunk
+        if len(text) > OUTPUT_KEEP_CHARS + len(OUTPUT_DROPPED_MARKER):
+            body = text.removeprefix(OUTPUT_DROPPED_MARKER)
+            text = OUTPUT_DROPPED_MARKER + body[-OUTPUT_KEEP_CHARS:]
+        self._entries[entry_id] = replace(entry, output=text)
+
+    def set_awaiting(self, entry_id: int, awaiting: bool) -> None:
+        """A prompt-channel question opened (``awaiting``) or was answered."""
+        entry = self._entries.get(entry_id)
+        if entry is None or entry.finished:
+            return
+        self._entries[entry_id] = replace(entry, state="awaiting" if awaiting else "running")
+
     def finish(self, entry_id: int, status: int, output: str) -> None:
         """The action ended with exit ``status`` after printing ``output``."""
         entry = self._entries.get(entry_id)
@@ -99,6 +120,6 @@ class NotificationQueue:
     def counts(self) -> QueueCounts:
         entries = self._entries.values()
         return QueueCounts(
-            running=sum(not e.finished for e in entries),
+            running=sum(e.state == "running" for e in entries),
             attention=sum(e.needs_attention for e in entries),
         )

@@ -123,7 +123,9 @@ def test_a_bulk_dispatch_is_one_entry_per_action(mocker, tmp_path):
 )
 def test_a_refused_or_unstarted_action_is_a_notice_only(mocker, tmp_path, result):
     session, terminal = _one_repo(mocker, tmp_path)
-    terminal.run_actions = lambda runs, done: done(drunner.ActionOutcome([result], "", [""]))
+    terminal.run_actions = lambda runs, done, progress=None: done(
+        drunner.ActionOutcome([result], "", [""])
+    )
 
     _start(session)
 
@@ -307,7 +309,7 @@ def test_an_entry_that_finishes_while_its_view_is_open_offers_dismiss(mocker, tm
     assert "output of jailbee start alpha-a" in entry_picker.detail  # the output's tail
 
 
-def test_a_running_entry_says_its_output_comes_when_it_ends(mocker, tmp_path):
+def test_a_running_entry_with_no_output_yet_says_so(mocker, tmp_path):
     _children(mocker)
     session, terminal = _one_repo(mocker, tmp_path, defer=True)
     _start(session)
@@ -317,7 +319,7 @@ def test_a_running_entry_says_its_output_comes_when_it_ends(mocker, tmp_path):
     _choose(session, "Show output")
 
     ((_title, text, failed),) = terminal.shown
-    assert "still running" in text and failed is False
+    assert text == "(no output yet)" and failed is False
 
 
 def test_a_dispatched_action_names_its_container_as_the_target(mocker, tmp_path):
@@ -335,7 +337,7 @@ def test_a_dispatched_action_names_its_container_as_the_target(mocker, tmp_path)
 
 def _outcome_terminal(terminal, *, status=0, output="line\n", error=None):  # type: ignore[no-untyped-def]
     result = drunner.RunResult(status=None if error else status, error=error)
-    terminal.run_actions = lambda runs, done: done(
+    terminal.run_actions = lambda runs, done, progress=None: done(
         drunner.ActionOutcome([result], output, [output])
     )
 
@@ -421,3 +423,292 @@ def test_a_start_error_without_output_still_leaves_no_entry(mocker, tmp_path):
     _start(session)
 
     assert _entries(session) == []
+
+
+# --- live output and questions (#146 ticket 13) -----------------------------
+
+
+def test_queue_append_accumulates_chunks_in_order_and_finish_keeps_the_output():
+    from jailbee.dashboard.notifications import NotificationQueue
+
+    queue = NotificationQueue()
+    entry_id = queue.start("jailbee merge a", "a")
+    queue.append(entry_id, "one\n")
+    queue.append(entry_id, "two\n")
+
+    entry = queue.get(entry_id)
+    assert entry is not None and entry.output == "one\ntwo\n" and entry.state == "running"
+
+    queue.finish(entry_id, 0, "one\ntwo\nthree\n")
+    final = queue.get(entry_id)
+    assert final is not None and final.output == "one\ntwo\nthree\n" and final.state == "done"
+
+
+def test_queue_append_respects_the_output_cap_and_marks_the_drop():
+    from jailbee.dashboard.notifications import NotificationQueue
+
+    queue = NotificationQueue()
+    entry_id = queue.start("jailbee merge a", "a")
+    for _ in range(5):
+        queue.append(entry_id, "x" * drunner.OUTPUT_KEEP_CHARS)
+    queue.append(entry_id, "END")
+
+    entry = queue.get(entry_id)
+    assert entry is not None
+    assert entry.output.startswith(drunner.OUTPUT_DROPPED_MARKER)
+    assert entry.output.endswith("xxEND")
+    assert len(entry.output) <= drunner.OUTPUT_KEEP_CHARS + len(drunner.OUTPUT_DROPPED_MARKER)
+    assert entry.output.count(drunner.OUTPUT_DROPPED_MARKER) == 1
+
+
+def test_queue_append_to_a_gone_or_finished_entry_is_ignored():
+    from jailbee.dashboard.notifications import NotificationQueue
+
+    queue = NotificationQueue()
+    entry_id = queue.start("jailbee merge a", "a")
+    queue.finish(entry_id, 0, "done\n")
+    queue.append(entry_id, "late\n")
+    queue.append(99, "nobody\n")
+
+    entry = queue.get(entry_id)
+    assert entry is not None and entry.output == "done\n"
+
+
+def test_queue_question_marks_awaiting_and_answering_returns_to_running():
+    from jailbee.dashboard.notifications import NotificationQueue, QueueCounts
+
+    queue = NotificationQueue()
+    entry_id = queue.start("jailbee merge a", "a")
+
+    queue.set_awaiting(entry_id, True)
+    entry = queue.get(entry_id)
+    assert entry is not None and entry.state == "awaiting" and not entry.finished
+    assert entry.needs_attention
+    assert queue.counts() == QueueCounts(running=0, attention=1)
+    assert not queue.dismiss(entry_id)
+
+    queue.set_awaiting(entry_id, False)
+    entry = queue.get(entry_id)
+    assert entry is not None and entry.state == "running"
+    assert queue.counts() == QueueCounts(running=1, attention=0)
+
+
+def _progress(terminal):  # type: ignore[no-untyped-def]
+    return terminal.progress
+
+
+def test_session_chunks_accumulate_into_the_running_entry_in_order(mocker, tmp_path):
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    _start(session)
+
+    progress = _progress(terminal)
+    progress.output(0, "first\n")
+    progress.output(0, "second\n")
+
+    (entry,) = _entries(session)
+    assert entry.state == "running" and entry.output == "first\nsecond\n"
+
+
+def test_session_question_goes_awaiting_answer_then_running_again(mocker, tmp_path):
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    _start(session)
+    progress = _progress(terminal)
+
+    progress.question(0, True)
+    (entry,) = _entries(session)
+    assert entry.state == "awaiting"
+    assert session.view().queue == QueueCounts(running=0, attention=1)
+
+    progress.question(0, False)
+    (entry,) = _entries(session)
+    assert entry.state == "running"
+    assert session.view().queue == QueueCounts(running=1, attention=0)
+
+
+def test_session_failure_and_pending_question_both_raise_the_attention_count(mocker, tmp_path):
+    _children(mocker, failing=("alpha-a",))
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    _start(session)
+    _progress(terminal).question(0, True)
+    assert session.view().queue == QueueCounts(running=0, attention=1)
+
+    terminal.finish_pending()  # the child ended (exit 3) with the question still open
+
+    (entry,) = _entries(session)
+    assert entry.state == "failed"
+    assert session.view().queue == QueueCounts(running=0, attention=1)
+
+
+def test_the_list_row_of_a_running_entry_shows_its_last_line(mocker, tmp_path):
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    _start(session)
+    _progress(terminal).output(0, "fetching\nmerging 3 commits\n")
+
+    picker = _open_queue(session)
+
+    assert "merging 3 commits" in picker.entries[0].label
+    assert "fetching" not in picker.entries[0].label
+
+
+def test_an_open_list_redraws_as_chunks_arrive(mocker, tmp_path):
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    _start(session)
+    _open_queue(session)
+
+    _progress(terminal).output(0, "step 2\n")
+
+    picker = session.overlay
+    assert isinstance(picker, Picker) and "step 2" in picker.entries[0].label
+
+
+def test_an_expanded_running_entry_follows_its_output_live(mocker, tmp_path):
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    _start(session)
+    _progress(terminal).output(0, "one\n")
+    _open_queue(session)
+    _choose(session, "alpha-a")
+    _choose(session, "Show output")
+    assert terminal.shown[-1][1] == "one\n"  # what has arrived so far, not a placeholder
+
+    _progress(terminal).output(0, "two\n")
+
+    assert terminal.updated[-1] == "one\ntwo\n"
+
+
+def test_returning_from_a_hand_off_shows_the_queue_when_something_needs_attention(mocker, tmp_path):
+    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    _start(session)
+    _progress(terminal).question(0, True)
+
+    session.after_hand_off()
+
+    picker = session.overlay
+    assert isinstance(picker, Picker) and picker.purpose == "queue"
+
+
+def test_returning_from_a_hand_off_leaves_the_screen_alone_when_nothing_needs_attention(
+    mocker, tmp_path
+):
+    session, _ = _one_repo(mocker, tmp_path, defer=True)
+    _start(session)  # running, no question
+
+    session.after_hand_off()
+
+    assert session.overlay is None
+
+
+class _GatedChild:
+    """A child that prints only when the test says so, then exits 0 once released."""
+
+    def __init__(self, sock) -> None:  # type: ignore[no-untyped-def]
+        import os
+        import threading
+
+        read_fd, self._write_fd = os.pipe()
+        self.stdout = os.fdopen(read_fd, "rb")
+        self._sock = sock
+        self._released = threading.Event()
+        self._thread = threading.Thread(target=self._hold)
+        self._thread.start()
+
+    def _hold(self) -> None:
+        import os
+
+        self._released.wait(10)
+        os.close(self._write_fd)
+        self._sock.close()
+
+    def print(self, text: str) -> None:
+        import os
+
+        os.write(self._write_fd, text.encode())
+
+    def release(self) -> None:
+        self._released.set()
+
+    def wait(self) -> int:
+        self._thread.join(10)
+        return 0
+
+    def kill(self) -> None:
+        self._released.set()
+
+
+def test_pilot_an_expanded_running_entry_updates_live(mocker, tmp_path):
+    import asyncio
+    import time
+
+    from jailbee.dashboard.tui import prompt_modals as pm
+    from tests.dashboard_pilot import keys, make_app
+
+    children: list[_GatedChild] = []
+
+    def spawn(argv, *, cwd, env, prompt_sock):  # type: ignore[no-untyped-def]
+        child = _GatedChild(prompt_sock)
+        children.append(child)
+        return child
+
+    app = make_app(mocker, [_pilot_group(tmp_path)])
+    app.threaded_actions = True
+    app.action_runner = drunner.run_action
+    app.action_spawn = spawn
+
+    def shown(app) -> str:  # type: ignore[no-untyped-def]
+        screen = app.screen
+        assert isinstance(screen, pm.OutputScreen)
+        return str(screen.query_one("#captured").render())
+
+    async def until(pilot, condition, what):  # type: ignore[no-untyped-def]
+        deadline = time.monotonic() + 5
+        while not condition():
+            assert time.monotonic() < deadline, what
+            await pilot.pause(0.02)
+
+    async def main() -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            for key in ["j", "!", *keys("start alpha-a"), "enter"]:
+                await pilot.press(key)
+            await until(pilot, lambda: bool(children), "the child")
+            children[0].print("first line\n")
+            await until(pilot, lambda: "first line" in _row(app), "the row's last line")
+            await pilot.press("Q", "enter", "enter")  # list → entry → Show output
+            await until(pilot, lambda: isinstance(app.screen, pm.OutputScreen), "the screen")
+            assert "first line" in shown(app)
+            children[0].print("second line\n")
+            await until(pilot, lambda: "second line" in shown(app), "the live update")
+            assert "first line" in shown(app)
+            children[0].release()
+            await until(pilot, lambda: all(e.finished for e in app.session.queue), "the finish")
+
+    def _row(app) -> str:  # type: ignore[no-untyped-def]
+        return " ".join(e.output for e in app.session.queue)
+
+    asyncio.run(asyncio.wait_for(main(), 20))
+
+
+def test_pilot_returning_from_a_hand_off_surfaces_attention(mocker, tmp_path):
+    from tests.dashboard_pilot import drive
+
+    _children(mocker, failing=("alpha-a",))
+    seen: list[object] = []
+
+    def hand_off(app) -> None:  # type: ignore[no-untyped-def]
+        app.hand_off(lambda: 0)
+        seen.append(app.session.overlay)
+
+    drive(mocker, [_pilot_start, hand_off], [_pilot_group(tmp_path)])
+
+    (overlay,) = seen
+    assert _is_queue(overlay)
+
+
+def test_run_action_returns_the_id_of_its_queue_entry(mocker, tmp_path):
+    session, _ = _one_repo(mocker, tmp_path, defer=True)
+    repo = session.repo_for("alpha-a", "container")
+    assert repo is not None
+
+    entry_id = session.run_action(repo, ["start", "alpha-a"], style="report", label="start alpha-a")
+
+    (entry,) = _entries(session)
+    assert entry.id == entry_id

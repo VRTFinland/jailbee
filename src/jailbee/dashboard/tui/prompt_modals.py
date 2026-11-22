@@ -247,6 +247,17 @@ class OutputScreen(ModalScreen[None]):
                 yield Static(Text.from_ansi(self.text), id="captured", markup=False)
             yield Static("Up/Down scroll, Enter or Esc returns", classes="hint", markup=False)
 
+    def set_text(self, text: str) -> None:
+        """Replace the captured text (a live entry's output); stay at the end if it was there."""
+        self.text = text
+        if not self.is_mounted:
+            return
+        scroll = self.query_one(VerticalScroll)
+        at_end = scroll.scroll_y >= scroll.max_scroll_y - 1
+        self.query_one("#captured", Static).update(Text.from_ansi(text))
+        if at_end:
+            self.call_after_refresh(scroll.scroll_end, animate=False)
+
     def action_close(self) -> None:
         self.dismiss(None)
 
