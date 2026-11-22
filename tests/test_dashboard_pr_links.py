@@ -97,3 +97,12 @@ def test_card_pr_line_is_linked() -> None:
     c = _c()
     panel = dd.container_panel(c, NOW)
     assert _link_of(" ".join(panel.summary)) == URL
+
+
+def test_table_cell_keeps_link_and_width() -> None:
+    from jailbee.dashboard.tui.fleet import _cell
+
+    text = _cell(dfmt.dashboard_cell(_spec(), _c(), NOW), 6, "left")
+    assert text.cell_len == 6
+    assert text.plain.rstrip() == "#12"
+    assert any("link " in str(span.style) for span in text.spans)

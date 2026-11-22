@@ -175,6 +175,7 @@ def _full_snapshot() -> Snapshot:
             orchestrator_running=True,
             agent_runner="grok/sonnet",
             agent_source="container",
+            pr_slug="acme/widgets",
         )
     )
     group = RepoGroup(
