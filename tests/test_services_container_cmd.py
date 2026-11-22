@@ -439,3 +439,20 @@ def test_ls_shows_descriptions(tmp_path: Path, monkeypatch) -> None:
         ("db", "Postgres; start before integration tests"),
         ("web", ""),
     ]
+
+
+def test_ls_text_keeps_a_multiline_description_on_one_line(tmp_path: Path, monkeypatch) -> None:
+    from jailbee.services.runtime import ServiceRuntime, ServiceStatus
+
+    config = tmp_path / ".jailbee" / "config.yaml"
+    config.parent.mkdir()
+    config.write_text(
+        "container_prefix: repo\nservices:\n  db:\n    run: sleep 1\n"
+        "    description: |\n      Postgres.\n      Needed for tests.\n"
+    )
+    monkeypatch.setattr(
+        ServiceRuntime, "status", lambda self: [ServiceStatus("db", "ready", None, None, "")]
+    )
+    result = CliRunner().invoke(container_app, ["service", "--repo", str(tmp_path), "ls"])
+    assert len(result.stdout.strip().splitlines()) == 2
+    assert "Postgres. Needed for tests." in result.stdout

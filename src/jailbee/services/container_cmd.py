@@ -73,7 +73,7 @@ def _list(rt: ServiceRuntime, json_output: bool) -> None:
         for s in statuses:
             typer.echo(
                 f"{s.name}  {s.state}  {s.window or '-'}  {s.since or '-'}  {s.detail}  "
-                f"{descriptions.get(s.name) or '-'}"
+                f"{' '.join(descriptions.get(s.name, '').split()) or '-'}"
             )
 
 
