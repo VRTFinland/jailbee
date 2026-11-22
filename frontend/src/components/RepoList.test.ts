@@ -18,8 +18,8 @@ const view: FrontPageView = {
         {
             prefix: "alpha",
             containers: [
-                {name: "alpha-1", indent: "", agent: "waiting", cells: ["1", "▶", "◆ 5m", ""]},
-                {name: "alpha-2", indent: "└ ", agent: null, cells: ["2", "■", "—", "#7"]},
+                {name: "alpha-1", indent: "", agent: "waiting", state: "Running", phase: "booting", cells: ["1", "▶", "◆ 5m", ""]},
+                {name: "alpha-2", indent: "└ ", agent: null, state: "Stopped", phase: null, cells: ["2", "■", "—", "#7"]},
             ],
         },
         {prefix: "empty", containers: []},
@@ -62,6 +62,20 @@ describe("RepoList", () => {
         expect(rows[0].get(".agent").text()).toBe("waiting for you")
         expect(rows[1].attributes("data-agent")).toBeUndefined()
         expect(rows[1].find(".agent").exists()).toBe(false)
+    })
+
+    it("marks each row with its row phase and state for the theme to style", () => {
+        const rows = mountList().findAll("li.row")
+        expect(rows[0].attributes("data-phase")).toBe("booting")
+        expect(rows[0].attributes("data-state")).toBe("Running")
+        expect(rows[1].attributes("data-phase")).toBeUndefined()
+        expect(rows[1].attributes("data-state")).toBe("Stopped")
+    })
+
+    it("names the phase in text so it does not rely on colour (e-ink)", () => {
+        const rows = mountList().findAll("li.row")
+        expect(rows[0].get(".phase").text()).toBe("booting")
+        expect(rows[1].find(".phase").exists()).toBe(false)
     })
 
     it("shows the core's cells under their headers and skips empty ones", () => {

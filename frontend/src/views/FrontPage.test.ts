@@ -15,7 +15,7 @@ function viewWith(name: string, seq: number): FrontPageView {
         seq,
         gathered_at: "2026-11-21T12:00:00Z",
         columns: [{name: "name", header: "NAME"}],
-        repos: [{prefix: "alpha", containers: [{name, indent: "", agent: null, cells: [name]}]}],
+        repos: [{prefix: "alpha", containers: [{name, indent: "", agent: null, state: "Running", phase: null, cells: [name]}]}],
     }
 }
 

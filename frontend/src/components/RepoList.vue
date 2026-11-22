@@ -31,12 +31,15 @@ function agentLabel(state: string): string {
                 class="row"
                 :data-container="c.name"
                 :data-agent="c.agent ?? undefined"
+                :data-state="c.state"
+                :data-phase="c.phase ?? undefined"
             >
                 <div class="main">
                     <router-link class="name" :to="{name: 'container', params: {name: c.name}}"
                         ><span class="indent">{{ c.indent }}</span
                         >{{ c.cells[0] }}</router-link
                     >
+                    <span v-if="c.phase" class="phase">{{ c.phase }}</span>
                     <span v-if="c.agent" class="agent" :class="`agent-${c.agent}`">{{
                         agentLabel(c.agent)
                     }}</span>
@@ -90,6 +93,59 @@ function agentLabel(state: string): string {
 }
 .row[data-agent="waiting"] {
     border-left-color: var(--accent);
+}
+/* Row phase: the dashboard core's phases (the terminal dashboard's palette),
+   mapped onto each theme's --phase-* tokens. Stopped is dim, as in the TUI. */
+.row[data-phase="booting"] {
+    border-left-color: var(--phase-booting);
+}
+.row[data-phase="autostart"] {
+    border-left-color: var(--phase-autostart);
+}
+.row[data-phase="job"] {
+    border-left-color: var(--phase-job);
+}
+.row[data-phase="failed"] {
+    border-left-color: var(--phase-failed);
+}
+.row[data-state="Stopped"] {
+    opacity: 0.6;
+}
+.phase {
+    font-size: 0.85rem;
+    white-space: nowrap;
+    margin-left: auto;
+}
+.row[data-phase="booting"] .phase {
+    color: var(--phase-booting);
+}
+.row[data-phase="autostart"] .phase {
+    color: var(--phase-autostart);
+}
+.row[data-phase="job"] .phase {
+    color: var(--phase-job);
+}
+.row[data-phase="failed"] .phase {
+    color: var(--phase-failed);
+    font-weight: 700;
+}
+/* E-ink has no colour: phases differ by border-left style, Stopped by a
+   dotted outline instead of a fade (greys repaint badly). */
+:root[data-theme="eink"] .row[data-phase="booting"] {
+    border-left-style: dashed;
+}
+:root[data-theme="eink"] .row[data-phase="autostart"] {
+    border-left-style: dotted;
+}
+:root[data-theme="eink"] .row[data-phase="job"] {
+    border-left-style: double;
+}
+:root[data-theme="eink"] .row[data-phase="failed"] {
+    border-left-width: 8px;
+}
+:root[data-theme="eink"] .row[data-state="Stopped"] {
+    opacity: 1;
+    border-style: dotted;
 }
 .main {
     display: flex;

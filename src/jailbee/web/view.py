@@ -19,6 +19,7 @@ from rich.text import Text
 
 from jailbee.dashboard.columns import default_columns, nonempty_columns, visible_fields
 from jailbee.dashboard.fork_tree import fork_layout, name_prefix
+from jailbee.dashboard.format import row_phase
 from jailbee.dashboard.sorting import DEFAULT_SORT, sort_groups
 from jailbee.dashboard.visibility import visible_repo_groups
 from jailbee.web.protocol import ColumnHead, ContainerRow, FrontPageView, RepoRow
@@ -67,6 +68,8 @@ def _rows(
             name=info.name,
             indent=name_prefix(layout, info.name),
             agent=agent_state(info),
+            state=info.state,
+            phase=row_phase(info),
             cells=[_plain(s.cell(info)) for s in specs],
         )
         for info in containers

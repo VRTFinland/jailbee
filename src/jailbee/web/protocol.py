@@ -107,13 +107,18 @@ class ContainerRow(BaseModel):
 
     ``cells`` is plain text aligned with the page's ``columns``. ``agent`` is
     the most urgent agent state (``waiting``, ``busy``, ``idle``, ...), or
-    None when no agent runs there.
+    None when no agent runs there. ``state`` is the container's Incus state
+    (``Running``, ``Stopped``, ...) and ``phase`` its non-normal row phase
+    (``booting``, ``autostart``, ``job``, ``failed``; the dashboard core's
+    ``row_phase``), or None at rest; the page styles the row from them.
     """
 
     model_config = ConfigDict(frozen=True)
     name: str
     indent: str
     agent: str | None
+    state: str
+    phase: str | None
     cells: list[str]
 
 

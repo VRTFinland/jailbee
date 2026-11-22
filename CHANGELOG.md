@@ -95,7 +95,10 @@ before editing `## Unreleased`.
   while booting, teal during autostart, magenta for other live jobs and red for
   a dead job or failed autostart, in hues legible on light and dark terminals
   ([#146](https://github.com/VRTFinland/jailbee/issues/146)). A Stopped row stays dim
-  and a marked row keeps the mark's blue background without the phase colour.
+  and a marked row keeps the mark's blue background without the phase colour. The web
+  front page styles its rows by the same phases in every theme: a coloured edge and a
+  phase label, in e-ink distinguished by edge style rather than colour; Stopped rows are
+  dim (dotted in e-ink).
 - The terminal dashboard keeps a notification queue of the actions it runs
   in the background ([#151](https://github.com/VRTFinland/jailbee/issues/151)):
   each is an entry with its command, target, state, exit status and output,

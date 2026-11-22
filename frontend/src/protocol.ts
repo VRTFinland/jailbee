@@ -46,6 +46,10 @@ export interface ContainerRow {
     name: string
     indent: string
     agent: string | null
+    /** Incus state: "Running", "Stopped", ... */
+    state: string
+    /** Non-normal row phase from the dashboard core: booting, autostart, job, failed. */
+    phase: string | null
     cells: string[]
 }
 
