@@ -12403,7 +12403,7 @@ def test_restart_captures_before_stop(tmp_path, mocker):
 
 def _outbox_rows(make_cfg, tmp_path, mocker, *, issue, pr):
     repo = tmp_path / "myrepo"
-    repo.mkdir(exist_ok=True)
+    repo.mkdir()
     cfg = make_cfg(repo)
     incus = MagicMock()
     stopped = _container(name="myrepo-feat-a", state="Stopped")
@@ -12423,13 +12423,9 @@ def test_base_only_gather_counts_a_stopped_containers_staged_outbox(make_cfg, tm
 def test_base_only_gather_leaves_counts_unknown_only_when_the_store_is_unreadable(
     make_cfg, tmp_path, mocker
 ):
-    readable = _outbox_rows(make_cfg, tmp_path, mocker, issue={}, pr={})["myrepo-feat-a"]
-    unreadable = _outbox_rows(make_cfg, tmp_path, mocker, issue=None, pr=None)["myrepo-feat-a"]
-
-    # Same base-only gather: a readable empty store is a known zero, an
-    # unreadable one is unknown, never zero.
-    assert (readable.outbox_pr, readable.outbox_issue) == (0, 0)
-    assert (unreadable.outbox_pr, unreadable.outbox_issue) == (None, None)
+    rows = _outbox_rows(make_cfg, tmp_path, mocker, issue=None, pr=None)
+    row = rows["myrepo-feat-a"]
+    assert (row.outbox_pr, row.outbox_issue) == (None, None)
 
 
 def test_destroy_guard_lists_a_stopped_containers_outbox_from_a_base_only_gather(
@@ -12444,64 +12440,3 @@ def test_destroy_guard_lists_a_stopped_containers_outbox_from_a_base_only_gather
     assert "1 unapplied PR action" in reasons
     assert "2 unapplied issue actions" in reasons
     assert not any("could not be read" in r for r in reasons)
-
-
-# ---- columns follow the row's fresh store counts ----
-
-
-def _outbox_ci(*, outbox_pr, outbox_issue, git_pr=None, git_issue=None, probed=True):
-    from jailbee.git_status import GitStatus
-    from jailbee.lifecycle import ContainerInfo
-
-    git = (
-        GitStatus(
-            wt="clean",
-            ahead_diff="clean",
-            ahead_count="0",
-            conflict="ok",
-            pending_pr_actions=git_pr,
-            pending_issue_actions=git_issue,
-        )
-        if probed
-        else None
-    )
-    return ContainerInfo(
-        name="r-x",
-        state="Running" if probed else "Stopped",
-        network=None,
-        ip=None,
-        memory_limit=None,
-        git_status=git,
-        outbox_pr=outbox_pr,
-        outbox_issue=outbox_issue,
-    )
-
-
-def test_outbox_columns_prefer_the_fresh_row_counts_over_the_carried_probe_copy():
-    from jailbee.lifecycle import ls_field_specs
-
-    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
-    ci = _outbox_ci(outbox_pr=3, outbox_issue=1, git_pr=0, git_issue=0)
-
-    assert specs["outbox"].cell(ci) == "✉4"
-    assert specs["outbox"].json(ci) == {"pr": 3, "issues": 1}
-    assert specs["issues"].cell(ci) == "✉1"
-    assert specs["pr"].cell(ci) == "✉3"
-
-
-def test_outbox_columns_count_a_stopped_row_with_no_git_status():
-    from jailbee.lifecycle import ls_field_specs
-
-    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
-    ci = _outbox_ci(outbox_pr=1, outbox_issue=2, probed=False)
-
-    assert specs["outbox"].cell(ci) == "✉3"
-
-
-def test_outbox_columns_fall_back_to_the_probe_copy_when_the_row_counts_are_unknown():
-    from jailbee.lifecycle import ls_field_specs
-
-    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
-    ci = _outbox_ci(outbox_pr=None, outbox_issue=None, git_pr=2, git_issue=1)
-
-    assert specs["outbox"].json(ci) == {"pr": 2, "issues": 1}

@@ -3969,10 +3969,6 @@ def ls_field_specs(
         ]
 
     def _pending_pr_actions(c: ContainerInfo) -> int:
-        # The row's own store count is fresh every tick; the probe's copy is
-        # carried forward between git ticks, so it is only the fallback.
-        if c.outbox_pr is not None:
-            return c.outbox_pr
         return (c.git_status.pending_pr_actions or 0) if c.git_status else 0
 
     def _pr_cell(c: ContainerInfo) -> str:
@@ -3997,8 +3993,6 @@ def ls_field_specs(
         }
 
     def _pending_issue_actions(c: ContainerInfo) -> int:
-        if c.outbox_issue is not None:
-            return c.outbox_issue
         return (c.git_status.pending_issue_actions or 0) if c.git_status else 0
 
     def _issues_cell(c: ContainerInfo) -> str:
