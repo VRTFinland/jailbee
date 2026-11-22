@@ -372,7 +372,9 @@ def pr_creation(
     _attach_create_scopes(cfg, incus, (container,), payload)
     rows = cast("list[dict[str, object]]", payload["containers"])
     proposals = cast("list[dict[str, object]]", rows[0]["proposals"])
-    row = next(p for p in proposals if p.get("id") == str(proposal))
+    row = next((p for p in proposals if p.get("id") == str(proposal)), None)
+    if row is None:
+        raise OutboxChanged("proposal changed; refresh required")
     if row.get("state") == "pending":
         return None  # its PR is recorded since: the manifest publishes onto it
     scope = row.get("create_scope")

@@ -1393,6 +1393,7 @@ def test_publish_batch_mixes_manifests_and_pr_creations_under_one_question():
         f"jailbee pr push {C} --source-manifest s.json"
     ) in q.lines
     assert _hand_offs(runner) == []
+    assert q.choices[1][0].endswith("(PR creations as usual)")
     ctl.intent("answer", None, "publish")
     assert _hand_offs(runner) == []  # the non-interactive publish runs first
     runner.finish(JobResult(0, "applied\n"))

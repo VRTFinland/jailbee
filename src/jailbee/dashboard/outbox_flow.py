@@ -1091,7 +1091,9 @@ class OutboxController:
         lines.extend(excluded)
         choices: list[tuple[str, str]] = [("Publish", "publish")]
         if planned and all(plan.draftable for _, plan in planned):
-            choices.append(_DRAFT_CHOICE)
+            label, value = _DRAFT_CHOICE
+            # A draft review is a manifest's: the PR creations publish as they always do.
+            choices.append((f"{label} (PR creations as usual)" if creations else label, value))
         choices.append(("Cancel", "cancel"))
         self._pending_publish = tuple(target for target, _ in planned)
         self._pending_creations = creations
