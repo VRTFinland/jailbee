@@ -1183,9 +1183,7 @@ def test_config_edit_is_refused_while_a_critical_action_is_foreground(mocker, tm
     assert session.notice is not None and "continue in the background" in session.notice
 
 
-def test_an_attach_command_line_is_refused_while_a_critical_action_is_foreground(
-    mocker, tmp_path
-):
+def test_an_attach_command_line_is_refused_while_a_critical_action_is_foreground(mocker, tmp_path):
     session, terminal = _foreground_critical(mocker, tmp_path)
 
     session.run_command("shell alpha-a")
@@ -1218,9 +1216,7 @@ def test_a_critical_action_that_fails_in_the_modal_marks_it_failed(mocker, tmp_p
     assert terminal.updated_failed == [True]
 
 
-def test_pilot_a_non_critical_output_over_the_modal_does_not_kill_its_live_view(
-    mocker, tmp_path
-):
+def test_pilot_a_non_critical_output_over_the_modal_does_not_kill_its_live_view(mocker, tmp_path):
     from tests.dashboard_pilot import drive
 
     seen: list[str] = []
