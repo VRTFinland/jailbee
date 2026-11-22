@@ -254,7 +254,7 @@ def test_autostart_status_runs_in_the_terminal(mocker, tmp_path, over_ssh):
         ["jailbee", "autostart", "status", "alpha-x", *flags], check=False, cwd=tmp_path
     )
     assert len(run.entries) == 1  # its output is the dashboard's queue entry
-    assert run.app.outputs == []
+    assert len(run.app.outputs) == 1  # a status listing opens its output
 
 
 def test_cancel_autostart_asks_first_and_no_runs_nothing(mocker, tmp_path):

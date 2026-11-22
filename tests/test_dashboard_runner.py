@@ -322,3 +322,20 @@ def test_run_actions_keeps_each_runs_own_output_apart(tmp_path):
 
     # One text per run, without the batch headers, in run order.
     assert outcome.outputs == ["out a\nmore\n", "out b\nmore\n"]
+
+
+def test_run_actions_caps_stored_output_to_a_tail_with_a_marker(tmp_path):
+    big = "x" * 1000 + "\n"
+
+    def fake(argv, *, cwd, on_output, **common):
+        for _ in range(500):
+            on_output(big)
+        on_output("THE END\n")
+        return runner.RunResult(status=0)
+
+    outcome = runner.run_actions([runner.ActionRun(["ls"], tmp_path)], run=fake)
+
+    (own,) = outcome.outputs
+    assert len(own) < 200_000 and own.endswith("THE END\n")
+    assert "earlier output dropped" in own
+    assert len(outcome.output) < 200_000 and "earlier output dropped" in outcome.output

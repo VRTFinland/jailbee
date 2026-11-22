@@ -81,7 +81,7 @@ def test_a_clean_finish_records_status_and_output_without_an_output_screen(mocke
     assert (entry.state, entry.status) == ("done", 0)
     assert entry.output == "output of jailbee start alpha-a\n"
     assert getattr(terminal, "shown", []) == []
-    assert session.notice == "'jailbee start alpha-a' done"
+    assert session.notice == "'jailbee start alpha-a' done · Q: queue"
     assert session.view().queue == QueueCounts(running=0, attention=0)
 
 
@@ -328,3 +328,96 @@ def test_a_dispatched_action_names_its_container_as_the_target(mocker, tmp_path)
 
     (entry,) = _entries(session)
     assert entry.target == "alpha-a"
+
+
+# --- review rework (#146 ticket 18) -------------------------------------------------
+
+
+def _outcome_terminal(terminal, *, status=0, output="line\n", error=None):  # type: ignore[no-untyped-def]
+    result = drunner.RunResult(status=None if error else status, error=error)
+    terminal.run_actions = lambda runs, done: done(
+        drunner.ActionOutcome([result], output, [output])
+    )
+
+
+def test_a_printing_verb_opens_its_output_when_it_finishes(mocker, tmp_path):
+    session, terminal = _one_repo(mocker, tmp_path)
+    _outcome_terminal(terminal, output="+added\n")
+
+    session.run_dashboard_command("alpha-a", "container", ["net", "egress", "ls"], style="output")
+
+    assert terminal.shown == [("jailbee net egress ls", "+added\n", False)]
+    assert session.notice is not None and "Q" in session.notice
+
+
+def test_a_failed_printing_verb_opens_its_output_as_failed(mocker, tmp_path):
+    session, terminal = _one_repo(mocker, tmp_path)
+    _outcome_terminal(terminal, status=2, output="boom\n")
+
+    session.run_dashboard_command("alpha-a", "container", ["doctor"], style="paged")
+
+    assert terminal.shown == [("jailbee doctor", "boom\n", True)]
+
+
+def test_a_plain_action_stays_quiet_but_its_notice_names_the_queue(mocker, tmp_path):
+    _children(mocker)
+    session, terminal = _one_repo(mocker, tmp_path)
+
+    _start(session)
+
+    assert getattr(terminal, "shown", []) == []
+    assert session.notice is not None and session.notice.startswith("'jailbee start alpha-a' done")
+    assert "Q" in session.notice
+
+
+def test_the_command_line_opens_its_output(mocker, tmp_path):
+    session, terminal = _one_repo(mocker, tmp_path)
+    _outcome_terminal(terminal, output="listing\n")
+    repo = session.repo_for("alpha-a", "container")
+    assert repo is not None
+
+    session.run_action(repo, ["ls"], style="output", label="ls")
+
+    assert [text for _t, text, _f in terminal.shown] == ["listing\n"]
+
+
+def test_the_entry_tail_has_no_ansi_escapes(mocker, tmp_path):
+    session, terminal = _one_repo(mocker, tmp_path)
+    _outcome_terminal(terminal, output="\x1b[32m+added line\x1b[0m\n\x1b[31m-gone\x1b[0m\n")
+    _start(session)
+    _open_queue(session)
+
+    _choose(session, "jailbee start alpha-a")
+
+    picker = session.overlay
+    assert isinstance(picker, Picker)
+    assert "+added line" in picker.detail and "-gone" in picker.detail
+    assert all("\x1b" not in line for line in picker.detail)
+
+
+def test_a_failure_notice_carries_the_last_output_line_for_any_style(mocker, tmp_path):
+    session, terminal = _one_repo(mocker, tmp_path)
+    _outcome_terminal(terminal, status=1, output="merging\nCONFLICT in a.py\n")
+
+    session.run_dashboard_command("alpha-a", "container", ["merge", "x"], style="report")
+
+    assert session.notice == "'jailbee merge x' exited 1: CONFLICT in a.py · Q: queue"
+
+
+def test_a_serve_error_after_output_finishes_the_entry_as_failed(mocker, tmp_path):
+    session, terminal = _one_repo(mocker, tmp_path)
+    _outcome_terminal(terminal, output="partial\n", error="prompt channel broke")
+
+    _start(session)
+
+    (entry,) = _entries(session)
+    assert entry.state == "failed" and entry.output == "partial\n"
+
+
+def test_a_start_error_without_output_still_leaves_no_entry(mocker, tmp_path):
+    session, terminal = _one_repo(mocker, tmp_path)
+    _outcome_terminal(terminal, output="", error="spawn failed")
+
+    _start(session)
+
+    assert _entries(session) == []

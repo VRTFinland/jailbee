@@ -866,7 +866,7 @@ def test_a_clean_single_pull_says_it_is_done(mocker, tmp_path):
 
     session.dispatch("alpha-a", "git pull")
 
-    assert session.notice == "'jailbee git pull alpha-a' done"
+    assert session.notice == "'jailbee git pull alpha-a' done · Q: queue"
 
 
 def test_a_successful_run_unmarks_its_names_and_a_failed_one_keeps_them(mocker, tmp_path):

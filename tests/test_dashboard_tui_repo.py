@@ -176,7 +176,10 @@ def test_repo_apply_nonzero_exit_is_a_notice(mocker, tmp_path):
 
     run = drive(mocker, [*repo_menu_keys(group, "apply"), "enter"], [group])
 
-    assert "'jailbee apply' exited 2" in run.notices()
+    assert any(
+        n and n.startswith("'jailbee apply' exited 2") and n.endswith("· Q: queue")
+        for n in run.notices()
+    )
 
 
 def test_run_reports_a_vanished_repo_root_instead_of_crashing(mocker, tmp_path):
@@ -305,7 +308,7 @@ def test_repo_doctor_output_is_kept_in_its_queue_entry(mocker, tmp_path):
         ["jailbee", "doctor", "--config", str(group.config_path)], check=False, cwd=tmp_path
     )
     ((_command, text, failed),) = run.entries  # the paged style: expanded from the queue
-    assert run.app.outputs == []
+    assert [o[0] for o in run.app.outputs] == ["jailbee doctor"]  # doctor opens its output
     assert text.startswith("output of jailbee doctor")  # the command's output, not just a count
     assert failed is False
 
@@ -362,7 +365,7 @@ def test_repo_doctor_failure_is_a_notice(mocker, tmp_path):
 
     run = drive(mocker, repo_menu_keys(group, "doctor"), [group])
 
-    assert "'jailbee doctor' exited 1" in run.notices()
+    assert any(n and n.startswith("'jailbee doctor' exited 1") for n in run.notices())
 
 
 # --- advisory entries in the repo menu ---------------------------------------

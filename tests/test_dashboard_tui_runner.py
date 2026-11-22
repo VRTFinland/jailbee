@@ -75,7 +75,7 @@ def test_prompt_during_action_is_a_modal_and_the_answer_reaches_the_child(mocker
         assert app.session.terminal is app
         await pilot.press("y")
         await _until(pilot, lambda: _finished(app), "the finished entry")
-        assert not isinstance(app.screen, pm.OutputScreen)  # nothing pops up on its own
+        assert isinstance(app.screen, pm.OutputScreen)  # merge prints: its output opens
         (entry,) = app.session.queue
         assert "alku ä" in entry.output  # what the child printed is in its queue entry
         await pilot.press("ctrl+c")

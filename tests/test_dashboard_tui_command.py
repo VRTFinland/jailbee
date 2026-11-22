@@ -24,7 +24,7 @@ def test_inline_command_on_repo_header_leaves_merge_source_for_cli(mocker, tmp_p
     child.assert_called_once_with(["jailbee", "merge"], cwd=tmp_path, check=False)
     # Run through the action runner: what it printed is its queue entry.
     assert [command for command, _text, _failed in run.entries] == ["jailbee merge"]
-    assert run.app.outputs == []
+    assert [o[0] for o in run.app.outputs] == ["jailbee merge"]  # the command line opens it
 
 
 def test_inline_command_on_container_uses_selected_source(mocker, tmp_path):
