@@ -53,7 +53,8 @@ before editing `## Unreleased`.
   settles instead of staying running. Background
   lifecycle jobs (create, start/restart, autostart), whoever started them, are listed
   there too as read-only rows with a way to open the job log; they count in the badge
-  and go when the job does.
+  and go when the job does (a hidden repo's jobs are left out, and a failed job
+  already listed does not reopen the queue after a hand-off).
 - The documentation site has a task-first "User guide" section in place of "Daily use"
   ([#150](https://github.com/VRTFinland/jailbee/issues/150)): Getting started, seven
   new guide pages (being written), Remote GUI, FAQ and Troubleshooting. Commands,

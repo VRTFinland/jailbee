@@ -226,6 +226,7 @@ class DashboardApp(App[int], inherit_bindings=False):
     def hand_off(self, fn: Callable[[], int]) -> int:
         """Run ``fn`` on the real terminal with the dashboard suspended."""
         client = self.session.client
+        attention_before = self.session.queue.counts().attention
         # Nothing of this dashboard is on screen while `fn` runs: let the
         # shared service stop gathering on its behalf.
         client.set_active(False)
@@ -240,7 +241,7 @@ class DashboardApp(App[int], inherit_bindings=False):
             client.set_active(True)
             client.refresh()
             if not self.modal_open:  # an open question is its own modal
-                self.session.after_hand_off()
+                self.session.after_hand_off(attention_before)
             # `fn` may have set its own OSC 2 title: rewrite ours on the next frame.
             self._last_title = None
             self._painted = None
