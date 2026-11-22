@@ -12004,6 +12004,7 @@ def agent_use_cmd(
         typer.Option(
             "--container",
             "-c",
+            autocompletion=completion.complete_container,
             help=(
                 "Set this one container's own agent (its runner label) instead of the repo "
                 "default; with --clear, the container follows the repo again."
@@ -12058,7 +12059,11 @@ def agent_use_cmd(
 @agent_app.command("open")
 def agent_open_cmd(
     container: Annotated[
-        str | None, typer.Argument(help="Container (asked for when omitted).")
+        str | None,
+        typer.Argument(
+            help="Container (asked for when omitted).",
+            autocompletion=completion.complete_container,
+        ),
     ] = None,
     config: ConfigOption = None,
 ) -> None:

@@ -5637,6 +5637,8 @@ def test_container_menu_places_autostart_after_the_job_log_and_snapshots_before_
     assert verbs[verbs.index("snapshots") + 1 : verbs.index("credential-group")] == [
         "services",
         "orchestration",
+        "container-agent",
+        "agent-window",
     ]
     # Credential group… still sits directly above the Network → group
     assert verbs[verbs.index("credential-group") + 1].startswith("net ")
