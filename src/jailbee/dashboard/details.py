@@ -347,16 +347,22 @@ def _join_notes(*parts: str) -> str:
 
 
 def _target_rows(c: ContainerInfo, now: datetime) -> tuple[GitRow, ...]:
-    """One git row per target a PR-bound container could sync with; none otherwise.
+    """One git row per target the container could sync with; none for a plain one.
 
-    Each row has ↑/↓ against that target and the target's short sha; the
-    sync target's note says so. A PR head the host never fetched is a row of
-    dashes, and the host-branch row standing in for it is marked fallback.
+    A child or fork gets the host-branch row and its parent's ``⑂`` row; a
+    PR-bound container the host-branch row and its PR head row. Each row has
+    ↑/↓ against that target and the target's short sha; the sync target's
+    note says so. A target that could not be resolved (a PR head the host
+    never fetched, a parent not running) is a row of dashes, and the
+    host-branch row standing in for it is marked fallback.
     """
     gs = c.git_status
-    if gs is None or c.pr_number is None or gs.sync_target is None:
+    if gs is None or gs.sync_target is None:
         return ()
     sync = gs.sync_target
+    parent = sync.parent
+    if parent is None and c.pr_number is None:
+        return ()
 
     def sha(value: str | None) -> str:
         return f"[dim]{escape(value[:_SHORT_SHA])}[/dim]" if value else "[yellow]?[/yellow]"
@@ -374,6 +380,22 @@ def _target_rows(c: ContainerInfo, now: datetime) -> tuple[GitRow, ...]:
         working="",
         note=host_note,
     )
+    if parent is not None:
+        name = f"⑂ {escape(parent)}"
+        if on_host:
+            return (host, GitRow(name, _DASH, _DASH, "[yellow]not seen running[/yellow]", ""))
+        seen = (
+            f"[dim]seen {_fetch_age(sync.seen_at, now)}[/dim]" if sync.seen_at is not None else ""
+        )
+        row = GitRow(
+            name=name,
+            ahead=_git_value(gs.ahead_count),
+            behind=_git_value(gs.behind_count),
+            target=sha(sync.sha),
+            working="",
+            note=_join_notes("[bold]sync target[/bold]", seen),
+        )
+        return (host, row)
     pr_name = f"↳ PR #{c.pr_number} head"
     if on_host:
         pr = GitRow(
@@ -485,7 +507,12 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
     if (source := fork_source(c)) is not None:
         footer.append(f"⑂ forked from {escape(source)}")
     sync = c.git_status.sync_target if c.git_status is not None else None
-    base = sync.label if sync is not None and sync.kind != "host" else c.base_branch or "base"
+    if sync is not None and sync.kind == "parent":
+        base = f"⑂ {sync.label}"
+    elif sync is not None and sync.kind != "host":
+        base = sync.label
+    else:
+        base = c.base_branch or "base"
     return ContainerPanel(
         tuple(summary),
         escape(base),

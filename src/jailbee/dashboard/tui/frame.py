@@ -152,7 +152,8 @@ def help_lines() -> list[str]:
         " CHILDREN running/limit +queued; INBOX ✉N actionable unread.",
         "BASE ↗: remote-tracking base; MODE: cln clone, mnt mount.",
         "WT / DIFF / L DIFF: ✓ clean; DIFF vs host target, L DIFF vs host HEAD.",
-        "DIFF ↑ ↓ MERGE vs the sync target: pr = PR head; pr? = PR head not fetched, host branch.",
+        "DIFF ↑ ↓ MERGE vs the sync target: pr = PR head; pr? = PR head not fetched, host branch;",
+        "  ⑂ = parent container (↑ not imported); ⑂? = parent not seen running, host branch.",
         "DOING ×N: process count; JOB auto:stage: autostart stage.",  # noqa: RUF001 - intentional multiplication sign
         "Menus: the key in brackets picks that entry, like Enter on it.",
         "Outbox box: Tab switches Outbox/Sent; in Sent, o opens the URL (or shows it), v preview.",

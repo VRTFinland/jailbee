@@ -156,6 +156,22 @@ def test_a_container_without_a_pr_is_left_alone():
     assert c.git_status is before
 
 
+def test_a_pr_child_comparing_with_its_parent_keeps_its_target_untouched():
+    """The PR head is still fetched, but the parent target carries no PR fetch facts."""
+    from dataclasses import replace
+
+    rig = _Rig()
+    c = _container()
+    assert c.git_status is not None
+    parent = SyncTarget("parent", "orch", "c" * 40, "", parent="orch")
+    c.git_status = replace(c.git_status, sync_target=parent)
+
+    rig.annotate(c)
+
+    assert rig.fetches == [(ROOT, 7, "origin")]
+    assert _target(c) is parent
+
+
 def test_a_pr_container_not_yet_probed_is_still_fetched():
     rig = _Rig()
     c = _container()

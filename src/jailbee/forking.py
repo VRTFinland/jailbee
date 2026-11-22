@@ -164,7 +164,12 @@ def fork_pin_ref(cfg: Config, fork_full: str) -> str:
     """
     from jailbee.lifecycle import short_name
 
-    return f"refs/jailbee/{short_name(cfg, fork_full)}/HEAD"
+    return fork_pin_ref_of(short_name(cfg, fork_full))
+
+
+def fork_pin_ref_of(fork_short: str) -> str:
+    """:func:`fork_pin_ref` from the fork's short name, for a caller without its config."""
+    return f"refs/jailbee/{fork_short}/HEAD"
 
 
 def pin_fork_commit(cfg: Config, fork_full: str, commit: str) -> str:

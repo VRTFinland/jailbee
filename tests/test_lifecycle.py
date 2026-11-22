@@ -1231,6 +1231,72 @@ def test_listing_gives_pr_bound_containers_their_pr_head_as_the_sync_target(
     assert sorted(pr_reads) == ["refs/jailbee/pr/12/head", "refs/jailbee/pr/13/head"]
 
 
+def test_listing_gives_children_and_forks_their_parent_as_the_sync_target(
+    make_cfg, tmp_path, mocker
+):
+    """A child (even a pr-kind one) and a fork compare with their parent's
+    HEAD from the previous pass; a stopped or unseen parent falls back to the
+    host branch, marked."""
+    from jailbee.host_target import ParentHead, TargetSnapshot
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    spawned = "user.jailbee.spawned_by"
+    last_import = "user.jailbee.orchestration.last_import"
+    rd = {"user.jailbee.repo_dir": "/repo"}
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(name="myrepo-orch", user_config=rd),
+        _container(name="myrepo-off", state="Stopped", user_config=rd),
+        _container(
+            name="myrepo-kid",
+            user_config={
+                **rd,
+                spawned: "myrepo-orch",
+                last_import: "imported-sha",
+                "user.jailbee.pr": "12",
+            },
+        ),
+        _container(name="myrepo-fork", user_config={**rd, "user.jailbee.fork_of": "myrepo-orch"}),
+        _container(name="myrepo-orphan", user_config={**rd, spawned: "myrepo-off"}),
+        _container(name="myrepo-unseen", user_config={**rd, "user.jailbee.fork_of": "myrepo-gone"}),
+    ]
+    host = TargetSnapshot(cfg.default_branch, "host-sha", "local", "refs/x", "equal")
+    mocker.patch("jailbee.lifecycle.resolve_target", return_value=host)
+    rev_parse = mocker.patch(
+        "jailbee.git.rev_parse",
+        side_effect=lambda _root, ref: {"refs/jailbee/fork/HEAD": "pin-sha"}.get(ref),
+    )
+    probe = mocker.patch("jailbee.lifecycle.probe_many_parallel", return_value={})
+    mocker.patch("jailbee.lifecycle.get_head_sha", return_value=None)
+
+    list_containers(
+        cfg,
+        incus,
+        with_git_status=True,
+        parent_heads={
+            "myrepo-orch": ParentHead("orch-sha", 50.0),
+            "myrepo-off": ParentHead("old-sha", 40.0),
+        },
+    )
+
+    sync = probe.call_args.kwargs["sync_by_name"]
+    kid, fork = sync["myrepo-kid"], sync["myrepo-fork"]
+    assert (kid.kind, kid.label, kid.sha, kid.ahead_sha, kid.seen_at) == (
+        "parent",
+        "orch",
+        "orch-sha",
+        "imported-sha",
+        50.0,
+    )
+    assert (fork.kind, fork.sha, fork.ahead_sha) == ("parent", "orch-sha", "pin-sha")
+    for name, parent in (("myrepo-orphan", "off"), ("myrepo-unseen", "gone")):
+        t = sync[name]
+        assert (t.kind, t.sha, t.fallback, t.parent) == ("host", "host-sha", True, parent)
+    assert "refs/jailbee/pr/12/head" not in [c.args[1] for c in rev_parse.call_args_list]
+
+
 def test_all_repos_uses_foreign_config_and_never_reads_excluded_or_orphan_refs(
     make_cfg, tmp_path, mocker, db_session, db_engine
 ):
@@ -12726,6 +12792,32 @@ def test_sync_columns_mark_a_pr_container_that_fell_back_to_the_host_branch():
     assert "[yellow]pr?[/yellow]" in specs["ahead_count"].cell(c)
 
 
+def test_sync_columns_mark_a_child_comparing_with_its_parent_and_its_fallback():
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ls_field_specs, sync_target_text
+
+    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
+    child = _ci_with_status(
+        ahead_count="2",
+        sync_target=SyncTarget("parent", "orch", "o" * 40, "", parent="orch"),
+    )
+    orphan = _ci_with_status(
+        ahead_count="2",
+        sync_target=SyncTarget(
+            "host", "main", "h" * 40, "refs/heads/main", fallback=True, parent="orch"
+        ),
+    )
+
+    assert _plain(specs["ahead_count"].cell(child)) == "2 ⑂"
+    assert "[dim]⑂[/dim]" in specs["ahead_count"].cell(child)
+    assert _plain(specs["ahead_count"].cell(orphan)) == "2 ⑂?"
+    assert "[yellow]⑂?[/yellow]" in specs["ahead_count"].cell(orphan)
+    assert sync_target_text(child.git_status) == "vs parent orch"
+    assert sync_target_text(orphan.git_status) == (
+        "vs host branch main (parent orch not running or not seen yet)"
+    )
+
+
 def test_git_status_json_names_the_sync_target_and_host_counts():
     from jailbee.host_target import SyncTarget
     from jailbee.lifecycle import ls_field_specs
@@ -12750,6 +12842,9 @@ def test_git_status_json_names_the_sync_target_and_host_counts():
         "fetched_at": None,
         "fetch_error": None,
         "fetch_error_at": None,
+        "parent": None,
+        "ahead_sha": None,
+        "seen_at": None,
     }
     assert (payload["host_ahead_count"], payload["host_behind_count"]) == ("5", "1")
 

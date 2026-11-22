@@ -500,6 +500,17 @@ else
   [ -n "$TARGET_SHA" ] && BEHIND_COUNT="@MISSING@"
 fi
 
+# A parent target counts ↑ from the newest commit the parent certainly has
+# (AHEAD_BASE_SHA), not from the parent's HEAD: the parent moves on without
+# the child, and those commits are ↓, not ↑.
+if [ -n "$AHEAD_BASE" ]; then
+  COUNT="?"
+  if [ -n "$AHEAD_BASE_SHA" ] \
+     && git cat-file -e "${AHEAD_BASE_SHA}^{commit}" >/dev/null 2>&1; then
+    COUNT=$(git rev-list --count "${AHEAD_BASE_SHA}..HEAD" 2>/dev/null) || COUNT="?"
+  fi
+fi
+
 # --- fields 14-15: ↑/↓ against the host branch when the target is another ref ---
 HOST_AHEAD="?"
 HOST_BEHIND="?"
@@ -692,6 +703,7 @@ def probe_container_git(
         sync = host_sync_target(target)
     compare_sha = sync.sha if sync is not None else None
     separate_host = sync is not None and sync.kind != "host"
+    parent_target = sync is not None and sync.kind == "parent"
     unknown = GitStatus(
         wt="?",
         ahead_diff="?",
@@ -714,6 +726,8 @@ def probe_container_git(
                 "DEFAULT_BRANCH": default_branch,
                 "HOST_HEAD": host_head or "",
                 "TARGET_SHA": compare_sha or "",
+                "AHEAD_BASE": "1" if parent_target else "",
+                "AHEAD_BASE_SHA": (sync.ahead_sha or "") if parent_target and sync else "",
                 "HOST_TARGET_SHA": (
                     (target.sha or "") if separate_host and target is not None else ""
                 ),

@@ -7,7 +7,7 @@ dashboard all build on it. Must not import ``jailbee.dashboard.tui``.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from jailbee.agent_activity import ActivityReader
     from jailbee.apps import AppSpec
     from jailbee.config import Config
+    from jailbee.host_target import ParentHead
     from jailbee.incus import Incus
     from jailbee.notices import Notice
     from jailbee.orchestration.runner_model import Runner
@@ -416,6 +417,7 @@ def gather_rows(
     repo_roots: list[Path],
     *,
     with_git: bool,
+    parent_heads: Mapping[str, ParentHead] | None = None,
 ) -> list[RepoGroup]:
     """Build per-repo groups, then append orphan groups.
 
@@ -436,9 +438,12 @@ def gather_rows(
     `notices.collecting()` — a ContextVar, so it is entered in this very
     thread — which turns the deprecation notices into data instead of lines in
     the state-service log.
+
+    ``parent_heads`` (each container's HEAD from the previous gather pass) is
+    what children and forks compare with; see `lifecycle.list_containers`.
     """
     with ExitStack() as stack:
-        return _gather_rows(incus, repo_roots, with_git, stack)
+        return _gather_rows(incus, repo_roots, with_git, stack, parent_heads)
 
 
 def _repo_advisories(
@@ -496,6 +501,7 @@ def _gather_rows(
     repo_roots: list[Path],
     with_git: bool,
     stack: ExitStack,
+    parent_heads: Mapping[str, ParentHead] | None = None,
 ) -> list[RepoGroup]:
     from jailbee.apps import resolve_apps
     from jailbee.remote_ssh.mount_policy import grantable_kinds
@@ -534,6 +540,7 @@ def _gather_rows(
             with_git_status=with_git,
             with_background=True,
             instances=instances,
+            parent_heads=parent_heads,
         )
         from jailbee.autostart_plan import TRIGGER_ORDER, rerunnable_stages
         from jailbee.autostart_profiles import profiled_config
@@ -637,7 +644,13 @@ def _gather_rows(
     return groups
 
 
-def gather_live(incus: Incus, extra_roots: Sequence[Path], *, with_git: bool) -> list[RepoGroup]:
+def gather_live(
+    incus: Incus,
+    extra_roots: Sequence[Path],
+    *,
+    with_git: bool,
+    parent_heads: Mapping[str, ParentHead] | None = None,
+) -> list[RepoGroup]:
     """One snapshot for the state service: repo roots re-resolved per gather.
 
     Both dashboards refresh on a timer, and the set of registered repos moves
@@ -657,10 +670,13 @@ def gather_live(incus: Incus, extra_roots: Sequence[Path], *, with_git: bool) ->
 
     ``extra_roots`` are the connected dashboards' cwd repos, which may not be
     registered. The result is unscoped and unpinned; each dashboard applies
-    its own `present`.
+    its own `present`. ``parent_heads`` is forwarded to `gather_rows`.
     """
     return gather_rows(
-        incus, _dedupe_roots([*extra_roots, *registered_repo_roots()]), with_git=with_git
+        incus,
+        _dedupe_roots([*extra_roots, *registered_repo_roots()]),
+        with_git=with_git,
+        parent_heads=parent_heads,
     )
 
 

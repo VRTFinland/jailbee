@@ -121,6 +121,8 @@ class PrHeadAutofetcher:
                 gs = c.git_status
                 if c.pr_number is None or gs is None or gs.sync_target is None:
                     continue
+                if gs.sync_target.parent is not None:
+                    continue  # a child compares with its parent; no PR head facts apply
                 state = self._state(policy.repo_root, c.pr_number)
                 with self._lock:
                     self._settle_error(state, gs.sync_target.sha)
