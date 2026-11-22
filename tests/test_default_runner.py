@@ -52,7 +52,9 @@ def test_agents_default_runner_layers_local_over_repo_over_global(layers):
     _write(global_path, {"agents": {"default_runner": _runner("sonnet")}})
     _write(repo_path, {"container_prefix": "myrepo"})
     assert _view(repo_path).default_runner_source == "global"
-    _write(repo_path, {"container_prefix": "myrepo", "agents": {"default_runner": _runner("haiku")}})
+    _write(
+        repo_path, {"container_prefix": "myrepo", "agents": {"default_runner": _runner("haiku")}}
+    )
     assert _view(repo_path).default_runner == Runner(agent="claude", model="haiku")
     _write(local_config_path("myrepo"), {"agents": {"default_runner": _runner("opus")}})
     view = _view(repo_path)
@@ -83,9 +85,7 @@ def test_agents_key_beats_the_alias_within_a_layer(layers):
 def test_a_higher_layer_alias_beats_a_lower_layer_agents_key(layers):
     repo_path, _ = layers
     _write(repo_path, {"container_prefix": "myrepo", "agents": {"default_runner": _runner("opus")}})
-    _write(
-        local_config_path("myrepo"), {"orchestration": {"default_runner": _runner("haiku")}}
-    )
+    _write(local_config_path("myrepo"), {"orchestration": {"default_runner": _runner("haiku")}})
     view = _view(repo_path)
     assert view.default_runner == Runner(agent="claude", model="haiku")
     assert view.default_runner_source == "local"

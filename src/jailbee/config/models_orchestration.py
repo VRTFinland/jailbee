@@ -18,7 +18,6 @@ from pydantic import (
 )
 
 from jailbee.config.errors import ConfigError
-
 from jailbee.egress import validate_allow_entry
 from jailbee.inbox.cli import parse_duration
 from jailbee.inbox.errors import InboxUsage
@@ -365,7 +364,9 @@ class OrchestrationView:
     default_runner_source: DefaultRunnerSource | None = None
 
 
-def peel_agents_runner(raw: dict[str, object], origin: str) -> tuple[dict[str, object], Runner | None]:
+def peel_agents_runner(
+    raw: dict[str, object], origin: str
+) -> tuple[dict[str, object], Runner | None]:
     """Split `agents.default_runner` off one raw layer, validated.
 
     `agents` is a mapping of agent name to settings, so the key is not an agent:

@@ -1192,7 +1192,9 @@ def test_run_autostart_asks_prompt_pending_on_start_only(mocker, tmp_path):
     incus.config_get.return_value = None
     steps = mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
     run_autostart(cfg, incus, "c1", AutostartTrigger.ON_START, "/repo")
-    steps.assert_called_once_with(cfg, initial_prompt=True, extra_env={}, runner=None, default_runner=None, resume=None)
+    steps.assert_called_once_with(
+        cfg, initial_prompt=True, extra_env={}, runner=None, default_runner=None, resume=None
+    )
     pending.assert_called_once()
     pending.reset_mock()
     steps.reset_mock()

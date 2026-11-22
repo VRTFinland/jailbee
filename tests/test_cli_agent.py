@@ -58,9 +58,7 @@ def rig(tmp_path, mocker, monkeypatch):
     stopped.name = "myrepo-b"
     mocker.patch("jailbee.lifecycle.list_containers", return_value=[running, stopped])
     mocker.patch("jailbee.agent_default.read_runner", return_value=None)
-    mocker.patch(
-        "jailbee.agent_default.runner_problems", side_effect=lambda cfg, i, g, r: []
-    )
+    mocker.patch("jailbee.agent_default.runner_problems", side_effect=lambda cfg, i, g, r: [])
     return repo_cfg, sync
 
 
@@ -168,9 +166,9 @@ def test_show_prints_each_source(rig, mocker):
 def test_show_lists_containers_with_a_runner_label(rig, mocker):
     mocker.patch(
         "jailbee.agent_default.read_runner",
-        side_effect=lambda inc, name: Runner(agent="claude", model="haiku")
-        if name == "myrepo-a"
-        else None,
+        side_effect=lambda inc, name: (
+            Runner(agent="claude", model="haiku") if name == "myrepo-a" else None
+        ),
     )
     out = runner.invoke(app, ["agent", "show"]).output
     assert "container myrepo-a: claude haiku (source: label)" in out
@@ -183,12 +181,14 @@ def test_clear_with_a_profile_is_a_usage_error(rig):
 
 def test_real_runner_problems_accept_the_selection(rig, mocker):
     mocker.stopall()
+    import jailbee.agent_default as mod
     from jailbee.agent_default import runner_problems as real
 
-    import jailbee.agent_default as mod
-
     mocker.patch.object(mod, "runner_problems", real)
-    mocker.patch("jailbee.cli._load_global", return_value=GlobalConfig.model_validate({"litellm": {"enabled": True}}))
+    mocker.patch(
+        "jailbee.cli._load_global",
+        return_value=GlobalConfig.model_validate({"litellm": {"enabled": True}}),
+    )
     mocker.patch("jailbee.incus.Incus", return_value=MagicMock())
     mocker.patch("jailbee.litellm.container_sync_payload", return_value=PAYLOAD)
     mocker.patch("jailbee.litellm.sync_container")

@@ -60,9 +60,7 @@ def parse_selection(text: str) -> tuple[str, str | None]:
     return profile, model or None
 
 
-def catalog(
-    cfg: Config, incus: Incus, gcfg: GlobalConfig
-) -> dict[str, tuple[str, ...]]:
+def catalog(cfg: Config, incus: Incus, gcfg: GlobalConfig) -> dict[str, tuple[str, ...]]:
     """Profile -> tiers it offers: `claude` plus every LiteLLM profile this repo is served."""
     out: dict[str, tuple[str, ...]] = {PLAIN: RUNNER_TIERS}
     payload = litellm.container_sync_payload(incus, gcfg, view=cfg.litellm_view())
@@ -71,7 +69,8 @@ def catalog(
     if isinstance(profiles, dict):
         for name, body in profiles.items():
             tiers = body.get("tiers") if isinstance(body, dict) else None
-            out[str(name)] = tuple(t for t in RUNNER_TIERS if isinstance(tiers, dict) and t in tiers)
+            known = tiers if isinstance(tiers, dict) else {}
+            out[str(name)] = tuple(t for t in RUNNER_TIERS if t in known)
     return out
 
 
@@ -91,9 +90,7 @@ def problems(cfg: Config, incus: Incus, gcfg: GlobalConfig, runner: Runner) -> l
 
 def write(cfg: Config, runner: Runner | None) -> None:
     """Write (or, with None, remove) `agents.default_runner` in the repo's local layer."""
-    value: object = (
-        DELETE if runner is None else runner.model_dump(mode="json", exclude_none=True)
-    )
+    value: object = DELETE if runner is None else runner.model_dump(mode="json", exclude_none=True)
     patch_local_file(cfg.container_prefix, [YamlChange(KEY_PATH, value)])
 
 
@@ -170,9 +167,7 @@ def effective(cfg: Config, incus: Incus) -> Effective:
 _DEFAULT_TIER = ""  # picker sentinel: a `None` value would read as a cancel
 
 
-def choose(
-    cfg: Config, incus: Incus, gcfg: GlobalConfig, selection: str | None
-) -> Runner:
+def choose(cfg: Config, incus: Incus, gcfg: GlobalConfig, selection: str | None) -> Runner:
     """The runner to write: parsed from `selection`, else asked for (profile, then tier)."""
     from jailbee import prompting
     from jailbee.prompting import Option
