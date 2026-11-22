@@ -107,13 +107,16 @@ class _PrefixRouter:
     Output from a thread that called `claim(prefix)` is split into lines, each
     written whole as `[prefix] line`, so concurrent builds never share a line.
     Other threads write straight through. Claimed threads report not being a
-    terminal, which keeps Rich from drawing spinners that would fight.
+    terminal, which keeps Rich from drawing spinners that would fight. A
+    spinner's own refresh thread is not a claimed thread, so the whole router
+    stops reporting a terminal for as long as `quiet_tty` is set.
     """
 
     def __init__(self, inner: Any, lock: threading.Lock) -> None:
         self._inner = inner
         self._lock = lock
         self._local = threading.local()
+        self.quiet_tty = False
 
     def claim(self, prefix: str) -> None:
         self._local.prefix = prefix
@@ -148,7 +151,7 @@ class _PrefixRouter:
                 self._inner.flush()
 
     def isatty(self) -> bool:
-        if getattr(self._local, "prefix", None) is not None:
+        if self.quiet_tty or getattr(self._local, "prefix", None) is not None:
             return False
         return bool(self._inner.isatty())
 
@@ -176,6 +179,7 @@ def _build_in_parallel(
         try:
             build_golden_image(cfg, incus)
         except Exception as e:  # reported in the summary; the others go on
+            print(f"build failed: {e}")  # prefixed, so it lands beside its build's output
             return e
         finally:
             out.release()
@@ -183,11 +187,18 @@ def _build_in_parallel(
         return None
 
     real_out, real_err = sys.stdout, sys.stderr
+    out.quiet_tty = err.quiet_tty = True
     sys.stdout, sys.stderr = out, err
     try:
-        with ThreadPoolExecutor(max_workers=jobs) as pool:
+        pool = ThreadPoolExecutor(max_workers=jobs)
+        try:
             futures = {a: pool.submit(one, a, c) for a, c in jobs_by_alias.items()}
             return {a: f.result() for a, f in futures.items()}
+        except BaseException:
+            pool.shutdown(wait=True, cancel_futures=True)  # Ctrl-C: start no queued build
+            raise
+        finally:
+            pool.shutdown(wait=True)
     finally:
         sys.stdout, sys.stderr = real_out, real_err
 
