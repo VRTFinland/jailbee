@@ -735,7 +735,7 @@ JSON are unaffected. `hide` only prunes the *built-in* default set.
 Allowed names: `name`, `full_name`, `alias`, `repo`, `mode`, `base`, `state`,
 `created`, `job`, `network`, `ttl`, `loose_until`, `ip`, `memory_limit`,
 `mem`, `wt`, `target_diff`, `ahead_count`, `behind_count`, `conflict`,
-`local_diff`, `local_count`, `git_status`, `pr`. Three things are problems: an unknown
+`host_ahead`, `host_behind`, `local_diff`, `local_count`, `git_status`, `pr`. Three things are problems: an unknown
 name (reported with the allowed set listed), `fields: []` (no columns at
 all — use `fields: null` for the built-in default set), and a name repeated
 inside `fields`. None of these is fatal at load time, in either file — a

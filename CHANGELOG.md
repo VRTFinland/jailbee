@@ -22,6 +22,11 @@ before editing `## Unreleased`.
   agent can tell which service to start; the dashboard shows it in the
   `Services…` list and the custom-services picker.
 
+- Opt-in `host_ahead` / `host_behind` columns (**H↑** / **H↓**) always count commits
+  against the host branch, whatever the row's sync target is
+  ([#145](https://github.com/VRTFinland/jailbee/issues/145)); enable them via
+  `columns.fields` or `ls.fields`.
+
 - A PR-bound container's ↓ follows pushes made elsewhere to its PR
   ([#145](https://github.com/VRTFinland/jailbee/issues/145)): the dashboard's state
   service refetches each bound PR's head every `pr.autofetch_interval` seconds

@@ -438,6 +438,8 @@ _DASHBOARD_COLUMN_BUDGETS = {
     "wt": 9,
     "ahead_count": 6,
     "behind_count": 6,
+    "host_ahead": 6,
+    "host_behind": 6,
     "conflict": 12,
     "pr": 6,
     "issues": 3,

@@ -599,6 +599,8 @@ So a container left mid-merge by `jailbee git push --current` reads
 `conflict!`, not `ok`, even though a clean merge to base is still predicted —
 that's the whole point of tracking the live state separately.
 
+Opt-in **H↑**/**H↓** (`host_ahead`/`host_behind`) always count against the host branch, whatever the sync target (equal to ↑/↓ on host-synced rows).
+
 Two more git-status columns exist but are **off by default** (opt in with
 `--fields` or the `ls:` config block — see [Configuration](../../config.md#ls--dashboard--remembered-columns)):
 **LOCAL ±** (`local_diff`) and **L↑** (`local_count`) — the diff between the
