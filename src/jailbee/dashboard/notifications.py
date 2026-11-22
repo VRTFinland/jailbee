@@ -208,6 +208,12 @@ class NotificationQueue:
             del self._entries[entry_id]
         return len(gone)
 
+    def attention_items(self) -> frozenset[tuple[str, str | int]]:
+        """What waits on the user, by identity: failed job targets and entry ids."""
+        items: set[tuple[str, str | int]] = {("job", j.target) for j in self.jobs if j.failed}
+        items |= {("entry", e.id) for e in self._entries.values() if e.needs_attention}
+        return frozenset(items)
+
     def counts(self) -> QueueCounts:
         entries = self._entries.values()
         return QueueCounts(

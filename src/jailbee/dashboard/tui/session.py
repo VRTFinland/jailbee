@@ -1028,14 +1028,15 @@ class DashboardSession:
         self.queue.set_awaiting(entry_id, asking)
         self._queue_changed()
 
-    def after_hand_off(self, attention_before: int = 0) -> None:
+    def after_hand_off(self, attention_before: frozenset[tuple[str, str | int]]) -> None:
         """Back from a tmux hand-off: show the queue if something new waits on the user.
 
-        ``attention_before`` is the badge's attention count when the hand-off
-        began: a failed job row lingers until `job clear`, so only an increase
-        opens the queue.
+        ``attention_before`` is ``queue.attention_items()`` when the hand-off
+        began: a failed job row lingers until `job clear`, so only an item
+        that was not waiting then opens the queue (a count would miss one
+        item replacing another).
         """
-        if self.overlay is None and self.queue.counts().attention > attention_before:
+        if self.overlay is None and not self.queue.attention_items() <= attention_before:
             self.open_queue()
 
     def _queue_changed(self) -> None:

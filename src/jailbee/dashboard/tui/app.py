@@ -226,7 +226,7 @@ class DashboardApp(App[int], inherit_bindings=False):
     def hand_off(self, fn: Callable[[], int]) -> int:
         """Run ``fn`` on the real terminal with the dashboard suspended."""
         client = self.session.client
-        attention_before = self.session.queue.counts().attention
+        attention_before = self.session.queue.attention_items()
         # Nothing of this dashboard is on screen while `fn` runs: let the
         # shared service stop gathering on its behalf.
         client.set_active(False)

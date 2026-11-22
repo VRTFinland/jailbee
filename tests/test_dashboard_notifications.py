@@ -581,7 +581,7 @@ def test_returning_from_a_hand_off_shows_the_queue_when_something_needs_attentio
     _start(session)
     _progress(terminal).question(0, True)
 
-    session.after_hand_off()
+    session.after_hand_off(frozenset())
 
     picker = session.overlay
     assert isinstance(picker, Picker) and picker.purpose == "queue"
@@ -593,7 +593,7 @@ def test_returning_from_a_hand_off_leaves_the_screen_alone_when_nothing_needs_at
     session, _ = _one_repo(mocker, tmp_path, defer=True)
     _start(session)  # running, no question
 
-    session.after_hand_off()
+    session.after_hand_off(frozenset())
 
     assert session.overlay is None
 
@@ -859,21 +859,56 @@ def test_a_job_log_of_a_hidden_repo_is_not_offered_as_a_row(mocker, tmp_path):
 
 def test_returning_from_a_hand_off_ignores_attention_that_was_already_there(mocker, tmp_path):
     session, _ = _job_session(mocker, tmp_path, [_job_container("alpha-a", "failed")])
-    before = session.queue.counts().attention
-    assert before == 1
+    before = session.queue.attention_items()
+    assert before == {("job", "alpha-a")}
 
     session.after_hand_off(before)
 
     assert session.overlay is None
 
 
-def test_returning_from_a_hand_off_opens_for_attention_that_is_new(mocker, tmp_path):
-    session, _ = _job_session(mocker, tmp_path, [_job_container("alpha-a", "failed")])
-    before = session.queue.counts().attention
+def test_returning_from_a_hand_off_opens_for_an_attention_item_that_is_new(mocker, tmp_path):
+    session, group = _job_session(mocker, tmp_path, [ci("alpha-a", "alpha")])
+    before = session.queue.attention_items()
+    assert before == frozenset()
 
-    session.after_hand_off(before - 1)
+    _retick(session, group, [_job_container("alpha-a", "failed")])
+    session.after_hand_off(before)
 
     assert isinstance(session.overlay, Picker)
+
+
+def test_returning_from_a_hand_off_opens_when_a_different_item_replaced_the_old_one(
+    mocker, tmp_path
+):
+    # The attention count is 1 before and after: one failed job was cleared, another failed.
+    session, group = _job_session(
+        mocker, tmp_path, [_job_container("alpha-a", "failed"), ci("alpha-b", "alpha")]
+    )
+    before = session.queue.attention_items()
+    assert len(before) == 1
+
+    _retick(session, group, [ci("alpha-a", "alpha"), _job_container("alpha-b", "failed")])
+    assert session.queue.counts().attention == 1
+    session.after_hand_off(before)
+
+    assert isinstance(session.overlay, Picker)
+
+
+def test_pilot_a_hand_off_adding_no_attention_leaves_a_failed_job_row_closed(mocker, tmp_path):
+    from tests.dashboard_pilot import drive
+
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_job_container("alpha-a", "failed")])
+    seen: list[object] = []
+
+    def hand_off(app) -> None:  # type: ignore[no-untyped-def]
+        assert app.session.queue.counts().attention == 1  # the stale failed job is there
+        app.hand_off(lambda: 0)
+        seen.append(app.session.overlay)
+
+    drive(mocker, [hand_off], [group])
+
+    assert seen == [None]
 
 
 def test_the_badge_adds_job_rows_to_queue_entries(mocker, tmp_path):
@@ -977,7 +1012,7 @@ def test_pilot_the_queue_cursor_follows_its_entry_as_job_rows_come_and_go(mocker
     from tests.dashboard_pilot import keys
 
     app, children = _pilot_two_entries(mocker, tmp_path)
-    (group,) = app.session.groups
+    (group,) = app.session.client.groups  # what the next tick presents
 
     async def until(pilot, condition, what):  # type: ignore[no-untyped-def]
         deadline = time.monotonic() + 5
@@ -1007,14 +1042,15 @@ def test_pilot_the_queue_cursor_follows_its_entry_as_job_rows_come_and_go(mocker
             selected = highlighted_value()
             original = list(group.containers)
 
-            for containers in (
-                [_job_container("alpha-a", "creating")],  # a job row appears above
-                [_job_container("alpha-a", "failed")],  # it changes phase
-                original,  # it goes
+            for containers, jobs in (
+                ([_job_container("alpha-a", "creating")], [False]),  # a row appears above
+                ([_job_container("alpha-a", "failed")], [True]),  # it changes phase
+                (original, []),  # it goes
             ):
                 group.containers[:] = containers
-                app.session.tick()
+                app.refresh_frame()  # tick + repaint, as the timer does
                 await pilot.pause(0.1)
+                assert [j.failed for j in app.session.queue.jobs] == jobs
                 assert highlighted_value() == selected
 
             for child in children:
