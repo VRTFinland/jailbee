@@ -158,6 +158,9 @@ async def _run(world: World, out_dir: Path) -> list[Path]:
                     path = out_dir / f"{value}.svg"
                     path.write_text(export_svg(app), encoding="utf-8")
                     written.append(path)
+                elif kind == "queue":
+                    _seed_queue(app, world)
+                    await pilot.pause()
                 elif kind == "select":
                     row = dmodel.Row("container", _full_name(world, value))
                     await pilot_support._apply(pilot, app, _select(row))
@@ -169,6 +172,20 @@ async def _run(world: World, out_dir: Path) -> list[Path]:
                     for key in [value] if kind == "key" else value:
                         await pilot_support._apply(pilot, app, key)
     return written
+
+
+def _seed_queue(app: Any, world: World) -> None:
+    """Put the fixture's queue entries in the session's queue, as if those actions had run."""
+    queue = app.session.queue
+    for item in world.queue:
+        entry_id = queue.start(f"jailbee {item['command']}", item["target"])
+        output = str(item.get("output", ""))
+        if item["state"] == "running":
+            queue.append(entry_id, output)
+        else:
+            default = 0 if item["state"] == "done" else 1
+            queue.finish(entry_id, int(item.get("status", default)), output)
+    app.session._queue_changed()
 
 
 def _no_action(argv: Any, **_kwargs: Any) -> Any:

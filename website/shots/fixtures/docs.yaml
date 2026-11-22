@@ -318,6 +318,21 @@ accounts:
   - {agent: claude, group: team, account: "ann@example.com#org12345", state: live, repos: [invoicer, storefront], containers: [invoicer-lead, storefront-lead]}
   - {agent: claude, group: null, account: "ben@example.com~2", state: parked}
   - {agent: claude, group: spare, account: null, state: empty}
+queue:
+  - command: stop
+    target: storefront-theme-dark
+    state: done
+    status: 0
+    output: "Stopped storefront-theme-dark.\n"
+  - command: git push --merge
+    target: invoicer-csv-import
+    state: failed
+    status: 1
+    output: "Fetching invoicer-csv-import...\nMerging into main...\nCONFLICT (content): Merge conflict in src/importer.py\nAutomatic merge failed; fix the conflicts and push again.\n"
+  - command: base build
+    target: invoicer
+    state: running
+    output: "Step 4/9: installing the stacks\nStep 5/9: provisioning node\n"
 steps:
   - shot: dashboard-orchestration
   - select: retries
@@ -333,3 +348,9 @@ steps:
   - keys: [escape, escape]
   - key: A
   - shot: dashboard-accounts
+  - keys: [escape, escape]
+  - queue: seed   # the fixture's queue entries appear (and the badge with them)
+  - key: Q
+  - shot: dashboard-queue
+  - keys: [j, enter]
+  - shot: dashboard-queue-entry
