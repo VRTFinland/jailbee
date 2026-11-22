@@ -10,6 +10,10 @@ before editing `## Unreleased`.
 
 ### Added
 
+- The dashboard's AGENT column draws one indicator per live agent session
+  instead of one per state, so two Claude sessions read `● 12s ●`. A cell
+  too narrow for them drops the ages, then ends with `+N`
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
 - `jailbee upgrade --jobs N` (`-j`) builds up to N base images at once, each
   build's output prefixed with its alias; the default of 1 keeps the serial
   behaviour. `apply` and Docker seeding still run one repo at a time, and one

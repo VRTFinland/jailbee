@@ -10729,8 +10729,10 @@ def test_doing_json_is_a_list_of_objects():
 # ---- AGENT column ----
 
 
-def _agent(state="waiting", *, agent="claude", since=None, waiting_for=None, count=1):
-    from jailbee.agent_status import AgentSummary
+def _agent(
+    state="waiting", *, agent="claude", since=None, waiting_for=None, count=1, sessions=None
+):
+    from jailbee.agent_status import AgentSummary, SessionMark
 
     return AgentSummary(
         agent=agent,
@@ -10738,6 +10740,11 @@ def _agent(state="waiting", *, agent="claude", since=None, waiting_for=None, cou
         since=since,
         waiting_for=waiting_for,
         count=count,
+        sessions=(
+            tuple(SessionMark(st) for st in sessions)
+            if sessions is not None
+            else (SessionMark(state, since),)
+        ),
     )
 
 
@@ -10956,11 +10963,74 @@ def test_agent_compact_cell_is_a_state_glyph_and_the_coarsest_duration(state, se
 
 
 def test_agent_compact_cell_has_no_agent_name_and_no_session_count():
-    c = _running(
-        agent_status=(_agent("waiting", since=_AGENT_NOW - timedelta(minutes=4), count=2),)
-    )
+    c = _running(agent_status=(_agent("waiting", since=_AGENT_NOW - timedelta(minutes=4)),))
 
     assert _plain(_agent_spec("agent_compact").cell(c)) == "◆ 4m"
+
+
+def test_agent_compact_cell_shows_one_indicator_per_session_with_mixed_states():
+    c = _running(
+        agent_status=(
+            _agent(
+                "waiting",
+                since=_AGENT_NOW - timedelta(minutes=4),
+                count=2,
+                sessions=("waiting", "idle"),
+            ),
+        )
+    )
+
+    assert _plain(_agent_spec("agent_compact").cell(c)) == "◆ 4m ○"
+
+
+def test_agent_compact_cell_two_sessions_of_one_state_are_two_glyphs():
+    c = _running(
+        agent_status=(
+            _agent("busy", since=_AGENT_NOW - timedelta(seconds=9), count=2, sessions=("busy",) * 2),
+        )
+    )
+
+    assert _plain(_agent_spec("agent_compact").cell(c)) == "● 9s ●"
+
+
+def test_agent_compact_cell_many_sessions_colours_each_glyph_by_its_own_state():
+    from jailbee.lifecycle import agent_compact_cell
+
+    states = ("waiting", "busy", "busy", "shell", "idle", "idle")
+    c = _agent("waiting", since=_AGENT_NOW, count=6, sessions=states)
+
+    cell = agent_compact_cell((c,), _AGENT_NOW)
+
+    assert _plain(cell) == "◆ 0s ● ● ◐ ○ ○"
+    assert cell.count("[green]") == 2
+    assert cell.count("[dim]") == 2
+
+
+def test_agent_compact_cell_without_session_marks_falls_back_to_count():
+    from jailbee.agent_status import AgentSummary
+    from jailbee.lifecycle import agent_compact_cell
+
+    old = AgentSummary("claude", "busy", None, None, 3)
+
+    assert _plain(agent_compact_cell((old,), _AGENT_NOW)) == "● ● ●"
+
+
+@pytest.mark.parametrize(
+    ("max_cells", "expected"),
+    [
+        (None, "◆ 4m ● ● ◐ ○ ○"),
+        (8, "◆ ● ● +3"),
+        (5, "◆ +5"),
+        (2, "+6"),
+    ],
+)
+def test_agent_compact_cell_narrow_falls_back_to_glyphs_then_plus_n(max_cells, expected):
+    from jailbee.lifecycle import agent_compact_cell
+
+    states = ("waiting", "busy", "busy", "shell", "idle", "idle")
+    c = _agent("waiting", since=_AGENT_NOW - timedelta(minutes=4), count=6, sessions=states)
+
+    assert _plain(agent_compact_cell((c,), _AGENT_NOW, max_cells=max_cells)) == expected
 
 
 def test_agent_compact_cell_shows_one_glyph_per_distinct_state():
@@ -10972,7 +11042,7 @@ def test_agent_compact_cell_shows_one_glyph_per_distinct_state():
         )
     )
 
-    assert _plain(_agent_spec("agent_compact").cell(c)) == "◆ 4m ● 12s"
+    assert _plain(_agent_spec("agent_compact").cell(c)) == "◆ 4m ● 12s ●"
 
 
 def test_agent_compact_cell_colours_the_glyph_by_state():

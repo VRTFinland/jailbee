@@ -18,7 +18,7 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 
 from jailbee.accounts.models import ActivityEvent, AgentActivity
-from jailbee.agent_status import AgentSummary
+from jailbee.agent_status import AgentSummary, SessionMark
 from jailbee.dashboard.model import AppMenuEntry, RepoAdvisory, RepoGroup
 from jailbee.dashboard.system import PoolStatus, SystemStatus
 from jailbee.git_status import GitStatus, SubmoduleChange
@@ -55,7 +55,8 @@ from jailbee.update_check import UpdateNotice
 # 29 adds RepoGroup.service_descriptions, the repo services' optional descriptions.
 # 30 adds SyncTarget.autofetch, .fetched_at, .fetch_error and .fetch_error_at.
 # 31 adds GrantView.publish_pr_comment_edits, the PR comment-edit publish right.
-PROTOCOL = 31
+# 32 adds AgentSummary.sessions, one SessionMark per live session.
+PROTOCOL = 32
 
 
 class ProtocolError(ValueError):
@@ -151,6 +152,7 @@ _NAMESPACE: dict[str, Any] = {
         ProcessMemory,
         RepoAdvisory,
         RepoGroup,
+        SessionMark,
         SubmoduleChange,
         SyncTarget,
         SystemStatus,

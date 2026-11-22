@@ -918,8 +918,10 @@ minutes), `claude: busy 12s`, `claude: shell 20m` (idle, but a background
 shell job it started is still running), `claude: idle 2h`; `·2` counts several
 sessions of one agent, and `—` means none is running. **AGENT_COMPACT** shows
 each state as a mark with only the largest unit of its duration: `◆ 4m`
-(waiting), `● 12s` (busy), `◐ 20m` (shell), `○ 2h` (idle). It names no agent and counts no
-sessions; several agents in one state share one mark. A long idle time says
+(waiting), `● 12s` (busy), `◐ 20m` (shell), `○ 2h` (idle). It names no agent and draws one
+mark per live session: only the first of each state carries the age (`◆ 4m ● 12s ●`), the
+rest are bare glyphs. In the dashboard a cell that outgrows its width drops the ages, then keeps
+as many glyphs as fit and ends with `+N` for the rest. A long idle time says
 how cold the agent's prompt cache is. These columns read the session files and trust a file only
 while a process of *that* container still matches it, so a crashed session
 never reads as live. Under `ls --all`, only the current repo's rows are filled

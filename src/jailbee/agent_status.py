@@ -42,6 +42,14 @@ type ActivityLookup = Callable[[str, AgentSession, int], AgentActivity | None]
 
 
 @dataclass(frozen=True)
+class SessionMark:
+    """One live session's state, for the per-session indicator in the AGENT cell."""
+
+    state: str
+    since: datetime | None = None
+
+
+@dataclass(frozen=True)
 class AgentSummary:
     """One agent's live sessions in one container, as the AGENT cell shows them.
 
@@ -58,6 +66,8 @@ class AgentSummary:
     activity: AgentActivity | None = None
     session_ids: tuple[str, ...] = ()
     """The live sessions' ids (those that have one), for attributing transcripts."""
+    sessions: tuple[SessionMark, ...] = ()
+    """Every live session's state, most urgent first (`count` entries; empty on old data)."""
 
 
 def _rank(session: AgentSession) -> tuple[int, bool, float]:
@@ -116,6 +126,7 @@ def summarize(
             count=len(items),
             activity=None if activity_for is None else activity_for(ordered),
             session_ids=tuple(s.session_id for s in ordered if s.session_id),
+            sessions=tuple(SessionMark(s.state, s.since) for s in ordered),
         )
         ranked.append((_rank(top), agent, summary))
     ranked.sort(key=lambda item: (item[0], item[1]))
