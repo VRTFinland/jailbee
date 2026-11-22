@@ -2691,6 +2691,10 @@ class DashboardSession:
         old = self.outbox
         if old is not None and old.container is not None and not old.sent_only:
             self._outbox_marks[old.container] = (old.state.marks, old.revisions())
+        # A destroyed container's marks go with it.
+        live = {c.name for g in self.groups for c in g.containers}
+        for name in [n for n in self._outbox_marks if n not in live]:
+            del self._outbox_marks[name]
 
     def open_sent(self, prefix: str) -> OutboxState | None:
         """The repo's Sent timeline (all containers, destroyed ones too); None after a notice."""
@@ -2717,6 +2721,7 @@ class DashboardSession:
         )
         controller.load_sent()
         controller.on_change = self._outbox_listener(controller)
+        self._remember_outbox_marks()
         self.outbox = controller
         return controller.state
 
@@ -3863,6 +3868,7 @@ class DashboardSession:
             self.overlay = self.egress_parent
             self.egress_parent = None
         elif isinstance(overlay, OutboxState):
+            self._remember_outbox_marks()
             self.overlay = self.outbox_parent
             self.outbox_parent = None
         elif isinstance(overlay, Picker):
@@ -3879,6 +3885,8 @@ class DashboardSession:
 
     def close_overlay(self) -> None:
         """Close the overlay and everything behind it (a click outside it)."""
+        if isinstance(self.overlay, OutboxState):
+            self._remember_outbox_marks()
         self.overlay = None
         self.egress_parent = None
         self.outbox_parent = None
