@@ -1,6 +1,6 @@
 ---
 name: jailbee-issue-management
-description: Use when creating, editing, commenting on, labeling, closing, reopening, triaging, or organizing GitHub issues from inside a JailBee container — the container's `gh` is read-only, so every write is staged as a manifest in the issue outbox for a human to publish on the host. Trigger on "create an issue", "file a bug", "edit this issue", "update the issue title/body", "comment on issue #N", "edit my comment", "fix my comment on the PR", "add a label", "remove a label", "assign this issue", "assign it to me", "unassign", "close this issue", "reopen this issue", "triage these issues", "organize the issue backlog", "luo GitHub-issue", "muokkaa issueta", "kommentoi issueta", "muokkaa kommenttia", "lisää labeli", "poista labeli", "sulje issue", "avaa issue uudelleen", "järjestele issueja".
+description: Use when creating, editing, commenting on, labeling, closing, reopening, triaging, or organizing GitHub issues from inside a JailBee container — the container's `gh` is read-only, so every write is staged as a manifest in the issue outbox for a human to publish on the host. Trigger on "create an issue", "file a bug", "edit this issue", "update the issue title/body", "comment on issue #N", "edit my comment", "fix my comment on the PR", "add a label", "remove a label", "assign this issue", "assign it to me", "unassign", "make this a sub-issue", "link the parent issue", "mark as blocked by", "close this issue", "reopen this issue", "triage these issues", "organize the issue backlog", "luo GitHub-issue", "muokkaa issueta", "kommentoi issueta", "muokkaa kommenttia", "lisää labeli", "poista labeli", "lisää ali-issueksi", "merkitse blokatuksi", "sulje issue", "avaa issue uudelleen", "järjestele issueja".
 ---
 
 # Managing GitHub issues from inside a container — the outbox
@@ -13,7 +13,7 @@ need a result. Do not write GitHub outbox files or directories by hand.
 
 You are inside a JailBee container working with GitHub issues (creating one,
 editing a title or body, commenting, editing your own comment, adding or removing labels, assigning or
-unassigning people, closing, or reopening). Your `gh` here can **read** GitHub but must never **write** to
+unassigning people, linking sub-issues and blocked-by dependencies, closing, or reopening). Your `gh` here can **read** GitHub but must never **write** to
 it: every issue action you produce is staged as a proposal in the host outbox
 store through the `jailbee issue` commands, and a human on the host reviews and publishes it
 later with `jb issue apply`. Nothing you write here reaches GitHub by
@@ -134,6 +134,21 @@ issue or a pull request. Find `ID` with `jailbee issue comments N`. The command
 records the comment's issue and current body. The host refuses it unless the
 publishing account wrote the comment and it is unchanged since staging, so
 edit only comments that account wrote. Review (line) comments are edited with `jailbee pr comment-edit` (see jailbee-pr-review).
+
+Sub-issues and dependencies are native GitHub relations, staged like any
+other action. `jailbee issue sub-issue PARENT CHILD` makes CHILD a sub-issue of
+PARENT; `jailbee issue blocked-by ISSUE BLOCKER` marks ISSUE as blocked by
+BLOCKER. `--remove` drops the link instead. Either side may be `@REF` for a
+create staged earlier in the same batch; `--remove` needs existing numbers.
+`jailbee issue create … --parent N|@REF --blocked-by N|@REF` (`--blocked-by`
+repeatable) stages the create followed by those links as separate actions that
+target the new issue by its ref, so each link is published, journaled and
+resolved on its own. Both issues must be in `--repo`. The host refuses an add
+that already exists, a removal that does not, and a pull request on either
+side. Use the older `Part of #N` / `Blocked by: #N` lines at the top of a body
+only as a fallback, when the native link cannot be published (the issues are
+in different repositories, or an orchestrator lacks the `sub_issue` /
+`dependency` publish kind).
 
 Assignment: `jailbee issue assign 42 --me` assigns the publishing account
 (`@me`, resolved on the host at publish time), `--unassign-me` removes it,

@@ -1473,7 +1473,7 @@ section covers the host-side workflow the schema is applied through.
 
 ### Reading, triaging, and writing the manifest
 
-Inside the container, use `jailbee issue create|edit|comment|comment-edit|labels|assign|state|project`
+Inside the container, use `jailbee issue create|edit|comment|comment-edit|labels|assign|state|project|sub-issue|blocked-by`
 to stage proposals; `--body-file` accepts long text and `--repo` selects the
 target. `jailbee issue project N [--project OWNER/NUMBER]` stages `--add`,
 repeatable `--set FIELD=VALUE`, repeatable `--clear FIELD`, or `--remove`;
@@ -1509,6 +1509,18 @@ staging). It is published directly, also under `--draft`. Pending
 (unsubmitted) review comments stay with `jailbee pr review`; staging refuses a
 comment of a pending review. A refused edit holds back the other pending actions
 of the same manifest too, so stage edits in their own batch when that matters.
+
+`jailbee issue sub-issue PARENT CHILD` stages a `sub_issue` action and
+`jailbee issue blocked-by ISSUE BLOCKER` a `dependency` action: native GitHub
+sub-issue and "blocked by" links between two issues of `--repo`. `--remove`
+drops the link. Either side may be `@REF` for a create earlier in the batch;
+`jailbee issue create --parent N|@REF --blocked-by N|@REF` stages the create
+and then these actions, so each link is journaled on its own and a failed link
+never makes the create uncertain. Both GitHub APIs take the other issue's
+database id; the host reads it at preflight, or right after the create for an
+`@REF`. The host refuses an add that is already linked, a removal that is not,
+and a pull request on either side, at preflight and again before publishing.
+Two changes of one link conflict.
 
 Use `--batch NAME` and `jailbee outbox submit NAME
 --kind issue` to group actions. Nothing reaches GitHub until a human applies

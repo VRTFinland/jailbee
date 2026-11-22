@@ -127,7 +127,7 @@ expected fields, receipts and journals as manual publication.
 
 ```yaml
 publish:
-  issues: [create, edit, comment, comment_edit, labels, assign_self, state]  # own repo and declared submodules
+  issues: [create, edit, comment, comment_edit, labels, assign_self, state, sub_issue, dependency]  # own repo and submodules
   projects:
     - board: acme/7
       actions: [add, set, remove]                    # set implies add; set covers clear
@@ -171,6 +171,11 @@ right. The repo cap narrows it like the other rights. Turning `pr_reviews` off
 without reviews is refused, while an inherited default that holds edits without
 reviews is narrowed to no edits. The dashboard's orchestration menu has a
 "Publish PR comment edits" row beside "Publish PR reviews".
+
+`sub_issue` and `dependency` cover adding and removing native sub-issue and
+"blocked by" links. `create` does not imply them: a create staged with
+`--parent` or `--blocked-by` carries its links as separate actions, so
+publishing it needs those kinds too.
 
 Assignment has two kinds. `assign_self` covers only assignees changes whose
 logins all equal the publishing account, compared case-insensitively after

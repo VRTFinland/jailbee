@@ -11,10 +11,15 @@ from jailbee import issue_outbox, pr, pr_outbox, prompting
 from jailbee.incus import IncusError
 from jailbee.issue_manifest import (
     CommentEditAction,
+    CreatedIssue,
+    DependencyAction,
+    ExistingIssue,
     ProjectAddAction,
     ProjectClearAction,
     ProjectRemoveAction,
     ProjectSetAction,
+    SubIssueAction,
+    related_issue,
 )
 from jailbee.orchestration.store import StoreError
 from jailbee.outbox import sent
@@ -168,6 +173,10 @@ def print_issue_outcome(
             info_plain(safe_text(line.text))
 
 
+def _related(issue: ExistingIssue | CreatedIssue) -> str:
+    return f"#{issue.number}" if isinstance(issue, ExistingIssue) else f"@{issue.ref}"
+
+
 def issue_plan_json(
     batch: issue_outbox.PreparedBatch, *, proposal: str, revision: str
 ) -> dict[str, object]:
@@ -243,6 +252,14 @@ def issue_plan_json(
                     **(
                         {"comment_id": action.comment_id}
                         if isinstance(action, CommentEditAction)
+                        else {}
+                    ),
+                    **(
+                        {
+                            "related": _related(related_issue(action)),
+                            "operation": "remove" if action.remove else "add",
+                        }
+                        if isinstance(action, (SubIssueAction, DependencyAction))
                         else {}
                     ),
                 }

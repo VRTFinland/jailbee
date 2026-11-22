@@ -268,6 +268,8 @@ _PUBLISH_ISSUE_KINDS = (
     "state",
     "assign_self",
     "assign",
+    "sub_issue",
+    "dependency",
 )
 GRANT_PATCH_SECONDS = 15.0  # how long a local grant edit outlasts a snapshot that lacks it
 NOTICE_SECONDS = 2.5  # how long a transient subtitle message stays up
