@@ -353,7 +353,7 @@ def test_hint_drops_unavailable_abilities():
     hint = dob.outbox_hint(state, standalone=False)
     assert hint == (
         "↑/↓ move · Enter open · Space mark · d delete · p publish · X clear"
-        " · v preview · f full screen · m manifest · r refresh · Esc close"
+        " · v view · f full screen · m manifest · r refresh · Esc close"
     )
     standalone = dob.outbox_hint(state, standalone=True)
     assert "a all repos" in standalone and standalone.startswith("q quit")
