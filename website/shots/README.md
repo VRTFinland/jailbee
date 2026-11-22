@@ -29,10 +29,14 @@ name (`website/shots/fixture.py`).
   use their own field names: `git_status` (ahead/behind/merge cells),
   `agent_status` (`state: waiting` is the ◆), `activity` (the DOING column),
   `grant` (makes an orchestrator) and `child: {orchestrator: <short name>,
-  state: working|done|imported}` (a child, drawn as a tree under it).
+  state: working|done|imported}` (a child, drawn as a tree under it). The
+  OUTBOX column reads `git_status.pending_pr_actions` / `pending_issue_actions`
+  (set `outbox_pr` / `outbox_issue` beside them, as a gathered row has both);
+  `pr_author: true` drops the `↓` a review container's PR number carries.
 - **`outbox`** — `<full container name>: [proposals]`, each `id`, `kind`
-  (`pr`/`issue`), `repo`, `target`, `title`, `body`; served as the outbox
-  listing the dashboard asks for.
+  (`pr`/`issue`), `repo`, `target` (a PR number; empty for a new issue),
+  `title`, `body` (optional `action`, `state`); served as the outbox listing
+  the dashboard asks for. Unknown keys fail, here and in `accounts`.
 - **`accounts`** — rows of the accounts overlay: `agent`, `group`, `account`,
   `state` (`live`/`parked`/`empty`), `repos`, `containers`.
 - **`steps`** — in order: `key: j`, `keys: [escape, escape]`,

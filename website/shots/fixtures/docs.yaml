@@ -3,7 +3,7 @@
 size: [200, 45]
 now: '2026-11-22T12:00:00Z'
 view:
-  columns: [name, base, state, role, children, cpu, doing, agent, mem_used, mem_pct, wt, ahead_count, behind_count, conflict, pr, outbox]
+  columns: [name, base, state, role, children, cpu, doing, agent_compact, mem_pct, wt, ahead_count, behind_count, conflict, pr, outbox]
   show_details: false
 repos:
   - prefix: invoicer
@@ -20,7 +20,7 @@ repos:
         running_children: 4
         orchestrator_running: true
         agent_status: [{agent: claude, state: busy, since: '2026-11-22T11:57:00Z', count: 1}]
-        git_status: {wt: 'clean', ahead_diff: 'clean', ahead_count: '0', conflict: —, behind_count: '0', local_diff: 'clean', local_count: '0', in_progress: ''}
+        git_status: {wt: 'clean', ahead_diff: 'clean', ahead_count: '0', conflict: ok, behind_count: '0', local_diff: 'clean', local_count: '0', in_progress: ''}
       - name: retries
         memory_usage: 4939212390
         memory_limit: 8GiB
@@ -28,6 +28,7 @@ repos:
         created_at: '2026-11-19T09:15:00Z'
         base_branch: lead
         pr_number: 212
+        pr_author: true
         child: {orchestrator: lead, state: working}
         orchestrator_running: true
         agent_status: [{agent: claude, state: busy, since: '2026-11-22T11:48:00Z', count: 1}]
@@ -50,6 +51,7 @@ repos:
         created_at: '2026-11-20T11:15:00Z'
         base_branch: lead
         pr_number: 214
+        pr_author: true
         child: {orchestrator: lead, state: done}
         orchestrator_running: true
         agent_status: [{agent: claude, state: idle, since: '2026-11-22T11:53:00Z', count: 1}]
@@ -64,7 +66,7 @@ repos:
         orchestrator_running: true
         agent_status: [{agent: claude, state: busy, since: '2026-11-22T11:20:00Z', count: 1}]
         activity: [{comm: git, percent: 11.0, count: 1}]
-        git_status: {wt: '+0 -0', ahead_diff: '+138 -24', ahead_count: '6', conflict: merging, behind_count: '0', local_diff: '+138 -24', local_count: '6', in_progress: 'merge', unmerged: 2}
+        git_status: {wt: '+0 -0', ahead_diff: '+138 -24', ahead_count: '6', conflict: ok, behind_count: '0', local_diff: '+138 -24', local_count: '6', in_progress: 'merge', unmerged: 2}
       - name: audit-log
         memory_usage: 2899102924
         memory_limit: 8GiB
@@ -96,7 +98,7 @@ repos:
         running_children: 2
         orchestrator_running: true
         agent_status: [{agent: claude, state: busy, since: '2026-11-22T11:55:00Z', count: 1}]
-        git_status: {wt: 'clean', ahead_diff: 'clean', ahead_count: '0', conflict: —, behind_count: '0', local_diff: 'clean', local_count: '0', in_progress: ''}
+        git_status: {wt: 'clean', ahead_diff: 'clean', ahead_count: '0', conflict: ok, behind_count: '0', local_diff: 'clean', local_count: '0', in_progress: ''}
       - name: monthly-summary
         memory_usage: 3972844748
         memory_limit: 8GiB
@@ -104,6 +106,7 @@ repos:
         created_at: '2026-11-18T16:15:00Z'
         base_branch: reports
         pr_number: 219
+        pr_author: true
         child: {orchestrator: reports, state: working}
         orchestrator_running: true
         agent_status: [{agent: claude, state: busy, since: '2026-11-22T11:51:00Z', count: 1}]
@@ -126,6 +129,7 @@ repos:
         created_at: '2026-11-19T09:15:00Z'
         base_branch: reports
         pr_number: 220
+        pr_author: true
         child: {orchestrator: reports, state: done}
         orchestrator_running: true
         agent_status: [{agent: claude, state: idle, since: '2026-11-22T11:45:00Z', count: 1}]
@@ -147,7 +151,7 @@ repos:
         created_at: '2026-11-20T11:15:00Z'
         base_branch: main
         agent_status: [{agent: claude, state: idle, since: '2026-11-22T11:10:00Z', count: 1}]
-        git_status: {wt: 'clean', ahead_diff: 'clean', ahead_count: '0', conflict: —, behind_count: '0', local_diff: 'clean', local_count: '0', in_progress: ''}
+        git_status: {wt: 'clean', ahead_diff: 'clean', ahead_count: '0', conflict: ok, behind_count: '0', local_diff: 'clean', local_count: '0', in_progress: ''}
       - name: hotfix-tax
         memory_usage: 1825361100
         memory_limit: 8GiB
@@ -155,6 +159,7 @@ repos:
         created_at: '2026-11-19T12:15:00Z'
         base_branch: main
         pr_number: 221
+        pr_author: true
         agent_status: [{agent: claude, state: idle, since: '2026-11-22T11:56:00Z', count: 1}]
         git_status: {wt: '+3 -3', ahead_diff: '+46 -8', ahead_count: '2', conflict: ok, behind_count: '0', local_diff: '+46 -8', local_count: '2', in_progress: ''}
   - prefix: storefront
@@ -171,7 +176,7 @@ repos:
         running_children: 3
         orchestrator_running: true
         agent_status: [{agent: claude, state: busy, since: '2026-11-22T11:54:00Z', count: 1}]
-        git_status: {wt: 'clean', ahead_diff: 'clean', ahead_count: '0', conflict: —, behind_count: '0', local_diff: 'clean', local_count: '0', in_progress: ''}
+        git_status: {wt: 'clean', ahead_diff: 'clean', ahead_count: '0', conflict: ok, behind_count: '0', local_diff: 'clean', local_count: '0', in_progress: ''}
       - name: cart-totals
         memory_usage: 5368709120
         memory_limit: 8GiB
@@ -179,6 +184,7 @@ repos:
         created_at: '2026-11-19T09:15:00Z'
         base_branch: lead
         pr_number: 301
+        pr_author: true
         child: {orchestrator: lead, state: working}
         orchestrator_running: true
         agent_status: [{agent: claude, state: busy, since: '2026-11-22T11:46:00Z', count: 1}]
@@ -201,6 +207,7 @@ repos:
         created_at: '2026-11-20T11:15:00Z'
         base_branch: lead
         pr_number: 303
+        pr_author: true
         child: {orchestrator: lead, state: done}
         orchestrator_running: true
         agent_status: [{agent: claude, state: idle, since: '2026-11-22T11:51:00Z', count: 1}]
@@ -215,7 +222,7 @@ repos:
         orchestrator_running: true
         agent_status: [{agent: claude, state: busy, since: '2026-11-22T11:16:00Z', count: 1}]
         activity: [{comm: git, percent: 9.0, count: 1}]
-        git_status: {wt: '+0 -0', ahead_diff: '+184 -32', ahead_count: '8', conflict: merging, behind_count: '0', local_diff: '+184 -32', local_count: '8', in_progress: 'merge', unmerged: 2}
+        git_status: {wt: '+0 -0', ahead_diff: '+184 -32', ahead_count: '8', conflict: ok, behind_count: '0', local_diff: '+184 -32', local_count: '8', in_progress: 'merge', unmerged: 2}
       - name: img-resize
         memory_usage: 2362232012
         memory_limit: 8GiB
@@ -236,7 +243,7 @@ repos:
         running_children: 2
         orchestrator_running: true
         agent_status: [{agent: claude, state: busy, since: '2026-11-22T11:39:00Z', count: 1}]
-        git_status: {wt: 'clean', ahead_diff: 'clean', ahead_count: '0', conflict: —, behind_count: '0', local_diff: 'clean', local_count: '0', in_progress: ''}
+        git_status: {wt: 'clean', ahead_diff: 'clean', ahead_count: '0', conflict: ok, behind_count: '0', local_diff: 'clean', local_count: '0', in_progress: ''}
       - name: stripe-3ds
         memory_usage: 4724464025
         memory_limit: 8GiB
@@ -244,11 +251,14 @@ repos:
         created_at: '2026-11-19T15:15:00Z'
         base_branch: checkout
         pr_number: 306
+        pr_author: true
+        outbox_pr: 1
+        outbox_issue: 1
         child: {orchestrator: checkout, state: working}
         orchestrator_running: true
         agent_status: [{agent: claude, state: busy, since: '2026-11-22T11:52:00Z', count: 1}]
         activity: [{comm: pytest, percent: 95.0, count: 1}]
-        git_status: {wt: '+64 -8', ahead_diff: '+138 -24', ahead_count: '6', conflict: ok, behind_count: '0', local_diff: '+138 -24', local_count: '6', in_progress: ''}
+        git_status: {pending_pr_actions: 1, pending_issue_actions: 1, wt: '+64 -8', ahead_diff: '+138 -24', ahead_count: '6', conflict: ok, behind_count: '0', local_diff: '+138 -24', local_count: '6', in_progress: ''}
       - name: address-form
         memory_usage: 3006477107
         memory_limit: 8GiB
@@ -266,11 +276,13 @@ repos:
         created_at: '2026-11-20T08:15:00Z'
         base_branch: checkout
         pr_number: 307
+        pr_author: true
         child: {orchestrator: checkout, state: done}
         orchestrator_running: true
         agent_status: [{agent: claude, state: idle, since: '2026-11-22T11:25:00Z', count: 1}]
         git_status: {wt: 'clean', ahead_diff: '+46 -8', ahead_count: '2', conflict: ok, behind_count: '0', local_diff: '+46 -8', local_count: '2', in_progress: ''}
       - name: refund-flow
+        outbox_issue: 1
         memory_usage: 2791728742
         memory_limit: 8GiB
         cpu_percent: 0.0
@@ -279,7 +291,7 @@ repos:
         child: {orchestrator: checkout, state: working}
         orchestrator_running: true
         agent_status: [{agent: claude, state: idle, since: '2026-11-22T11:48:00Z', count: 1}]
-        git_status: {wt: 'clean', ahead_diff: '+23 -4', ahead_count: '1', conflict: ok, behind_count: '2', local_diff: '+23 -4', local_count: '1', in_progress: ''}
+        git_status: {pending_issue_actions: 1, wt: 'clean', ahead_diff: '+23 -4', ahead_count: '1', conflict: ok, behind_count: '2', local_diff: '+23 -4', local_count: '1', in_progress: ''}
       - name: main-dev
         memory_usage: 1932735283
         memory_limit: 8GiB
@@ -287,7 +299,7 @@ repos:
         created_at: '2026-11-18T10:15:00Z'
         base_branch: main
         agent_status: [{agent: claude, state: idle, since: '2026-11-22T11:34:00Z', count: 1}]
-        git_status: {wt: 'clean', ahead_diff: 'clean', ahead_count: '0', conflict: —, behind_count: '0', local_diff: 'clean', local_count: '0', in_progress: ''}
+        git_status: {wt: 'clean', ahead_diff: 'clean', ahead_count: '0', conflict: ok, behind_count: '0', local_diff: 'clean', local_count: '0', in_progress: ''}
       - name: theme-dark
         memory_usage: 1717986918
         memory_limit: 8GiB
@@ -295,12 +307,13 @@ repos:
         created_at: '2026-11-20T11:15:00Z'
         base_branch: main
         pr_number: 309
+        pr_author: true
         agent_status: [{agent: claude, state: idle, since: '2026-11-22T11:54:00Z', count: 1}]
         git_status: {wt: 'clean', ahead_diff: '+69 -12', ahead_count: '3', conflict: ok, behind_count: '0', local_diff: '+69 -12', local_count: '3', in_progress: ''}
 outbox:
   storefront-stripe-3ds:
-    - {id: pr/stripe-3ds.json, kind: pr, repo: storefront/storefront, target: "main <- stripe-3ds", title: "Add 3-D Secure confirmation to checkout", body: "Handles the authentication redirect and retries the intent."}
-    - {id: issue/3ds-docs.json, kind: issue, repo: storefront/storefront, target: "new issue", title: "Document the 3-D Secure test cards", body: "The sandbox cards are only listed in a wiki page."}
+    - {id: pr/stripe-3ds.json, kind: pr, repo: storefront/storefront, target: "306", title: "Add 3-D Secure confirmation to checkout", body: "Handles the authentication redirect and retries the intent."}
+    - {id: issue/3ds-docs.json, kind: issue, repo: storefront/storefront, title: "Document the 3-D Secure test cards", body: "The sandbox cards are only listed in a wiki page."}
 accounts:
   - {agent: claude, group: team, account: "ann@example.com#org12345", state: live, repos: [invoicer, storefront], containers: [invoicer-lead, storefront-lead]}
   - {agent: claude, group: null, account: "ben@example.com~2", state: parked}
