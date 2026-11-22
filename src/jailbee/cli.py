@@ -4566,11 +4566,8 @@ if TYPE_CHECKING:
     from jailbee.doctor_scroll import ScrollState
     from jailbee.forking import ForkSource
     from jailbee.incus import Incus as IncusType
-    from jailbee.issue_outbox import OutboxSnapshot
     from jailbee.lifecycle import ContainerInfo, ResolvedContainer
-    from jailbee.outbox_io import ContainerIdentity, IssueJournal
     from jailbee.pool import Pool
-    from jailbee.pr_outbox import Outbox
     from jailbee.registry_cache import CacheProgress, CacheReport
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
     from jailbee.setup_command import StepKey
@@ -14041,82 +14038,6 @@ def _review_count(counts: dict[str, int] | None, uuid: str | None) -> int | None
     return counts.get(uuid, 0)
 
 
-def _resolve_review_container(
-    cfg: "Config", name: str | None, *, retained: bool = False
-) -> tuple["IncusType", str | None]:
-    """The container to review; ``None`` when nothing anywhere is pending.
-
-    With an explicit ``name`` this is the usual :func:`_resolve_existing`.
-    Without one the candidate set is narrower than that helper's — only
-    containers, running or stopped, whose PR proposal count in the host
-    outbox store is not zero — so the common case (one container wrote a
-    review, six others did not) never asks.
-
-    Only an explicit count of 0 means "nothing here". An unknown count (the
-    store could not be read, or the container has no uuid) makes the
-    container a candidate and its outbox is read, exactly as `outbox ls`
-    does — inferring "nothing pending" from "the count is unknown" is how a
-    written review gets silently lost, which is the one thing this feature
-    exists to prevent.
-    """
-    from jailbee import prompting
-    from jailbee.incus import Incus
-    from jailbee.lifecycle import list_containers, pr_outbox_counts
-    from jailbee.outbox.service import parse_retained_ref
-    from jailbee.tui import container_options, pick_container
-
-    if name is not None and retained and parse_retained_ref(name) is not None:
-        # A destroyed instance's kept proposals (`jb outbox` lists them as full@uuid).
-        return Incus(), name
-    if name is not None:
-        return _resolve_existing(cfg, name)
-
-    incus = Incus()
-    counts = pr_outbox_counts()
-    pending = [
-        c for c in list_containers(cfg, incus, fast=True) if _review_count(counts, c.uuid) != 0
-    ]
-    if not pending:
-        return incus, None
-    if len(pending) == 1:
-        return incus, pending[0].name
-    # `tui.pick_container` renders unconditionally and leaves the TTY check to
-    # its caller (its own docstring says so), so a scripted run must refuse
-    # here rather than drop prompt_toolkit onto a pipe — the same rule
-    # `lifecycle.resolve_container_for_interactive_detailed` follows, and the
-    # same rule the confirmation below follows.
-    if not prompting.is_interactive():
-        names = ", ".join(c.display_name for c in pending)
-        error_plain(
-            f"several containers may have PR actions waiting; name one explicitly "
-            f"(or run in a TTY): {names}"
-        )
-        raise typer.Exit(2)
-    try:
-        picked = prompting.choose_one(
-            "container",
-            container_options(pending),
-            question="Select a container:",
-            picker=lambda _opts: pick_container(pending),
-        )
-    except prompting.Cancelled:
-        raise typer.Exit(1) from None
-    return incus, picked
-
-
-def _read_review_outbox_or_exit(
-    cfg: "Config", incus: "IncusType", container: str, short: str
-) -> "Outbox":
-    """Read ``container``'s outbox, or exit 2 saying what to do about it."""
-    from jailbee import pr_outbox
-
-    try:
-        return pr_outbox.read_outbox(incus, container, uid=cfg.container_user.uid)
-    except pr_outbox.OutboxReadError as e:
-        error_plain(str(e))
-        raise typer.Exit(2) from e
-
-
 @review_app.command("apply")
 def review_apply_cmd(
     name: KindApplyContainerArg = None,
@@ -14192,65 +14113,9 @@ def review_resolve_cmd(
     `--retry` forgets the outcome so `jailbee outbox apply` attempts it again.
     An alias of `jailbee outbox resolve` for PR proposals.
     """
-    run_review_resolve(config, name, manifest, action, url=url, retry=retry)
+    from jailbee.cli_outbox_resolve import run_review_resolve
 
-
-def run_review_resolve(
-    config: Path | None,
-    name: str | None,
-    manifest: str | None,
-    action: int | None,
-    *,
-    url: str | None,
-    retry: bool,
-) -> None:
-    """Resolve one uncertain PR action: the body shared by `review resolve` and `outbox resolve`."""
-    from jailbee import branch_pr, pr_outbox, prompting
-    from jailbee.lifecycle import short_name
-    from jailbee.outbox.models import OutboxError
-
-    if (url is None) == (not retry):
-        error_plain("Exactly one of --applied URL or --retry is required.")
-        raise typer.Exit(2)
-    cfg = _load_or_exit(config)
-    incus, container = _resolve_review_container(cfg, name, retained=True)
-    if container is None:
-        info("Nothing pending: no container in this repo has PR actions waiting.")
-        return
-    short = short_name(cfg, container)
-    outbox = _read_review_outbox_or_exit(cfg, incus, container, short)
-    if manifest is None:
-        uncertain = [m for m in outbox.manifest_names if pr_outbox.uncertain_actions(outbox, m)]
-        manifest = prompting.choose_one(
-            "manifest",
-            [prompting.Option(m, m, m) for m in uncertain],
-            destructive=True,
-            empty_reason=f"nothing uncertain to resolve in {short}",
-        )
-    if action is None:
-        action = prompting.choose_one(
-            "action",
-            [
-                prompting.Option(i, f"action {i}", str(i))
-                for i in pr_outbox.uncertain_actions(outbox, manifest)
-            ],
-            destructive=True,
-            empty_reason=f"{manifest} has no uncertain action",
-        )
-    try:
-        removed = branch_pr.resolve_uncertain_source(
-            cfg, incus, container, manifest, action, landed_url=url
-        )
-    except OutboxError as e:
-        error_plain(str(e))
-        raise typer.Exit(1) from e
-    if url is not None:
-        success_plain(
-            f"recorded {manifest} action {action} as published"
-            + ("; the proposal is complete" if removed else "")
-        )
-    else:
-        success_plain(f"{manifest} action {action} will be attempted again")
+    run_review_resolve(_load_or_exit(config), name, manifest, action, url=url, retry=retry)
 
 
 # ---- Issue outbox commands ----
@@ -14266,80 +14131,6 @@ issue_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(issue_app)
-
-
-def _resolve_issue_container(
-    cfg: "Config", name: str | None, *, retained: bool = False
-) -> tuple["IncusType", str | None]:
-    """The container to act on; ``None`` when nothing anywhere is pending.
-
-    Candidates are this repo's containers with staged issue proposals in the
-    host outbox store (keyed by instance uuid): one Incus listing, no
-    `incus exec`, stopped containers included. Zero candidates is success
-    ("nothing pending"); one auto-selects; several prompt on a TTY and exit 2,
-    naming short names, off one. With ``retained``, a ``full@uuid`` name (a
-    destroyed instance's kept proposals) is taken as it is.
-    """
-    from jailbee import issue_outbox, prompting
-    from jailbee.incus import Incus
-    from jailbee.lifecycle import list_containers
-    from jailbee.orchestration.store import StoreError
-    from jailbee.outbox.service import parse_retained_ref
-    from jailbee.tui import container_options, pick_container
-
-    if name is not None and retained and parse_retained_ref(name) is not None:
-        # A destroyed instance's kept proposals (`jb outbox` lists them as full@uuid).
-        return Incus(), name
-    if name is not None:
-        return _resolve_existing(cfg, name)
-
-    incus = Incus()
-    pending = []
-    for ci in list_containers(cfg, incus):
-        if not ci.uuid:
-            continue
-        try:
-            outbox = issue_outbox.store_outbox(ci.uuid)
-        except StoreError:
-            continue
-        if outbox.manifest_names:
-            pending.append(ci)
-
-    if not pending:
-        return incus, None
-    picked = prompting.choose_one(
-        "container",
-        container_options(pending),
-        question="Select a container:",
-        picker=lambda _options: pick_container(pending),
-    )
-    return incus, picked
-
-
-def _read_issue_store_or_exit(
-    incus: "IncusType", container: str
-) -> tuple["OutboxSnapshot", "ContainerIdentity", str, dict[str, "IssueJournal"]]:
-    """``container``'s staged issue proposals and journals from the host outbox store.
-
-    Exits 1 when the instance's identity or the store cannot be read.
-    """
-    from jailbee import issue_outbox
-    from jailbee.incus import IncusError
-    from jailbee.orchestration.store import StoreError
-    from jailbee.outbox.service import instance_identity
-    from jailbee.outbox_io import JournalError
-
-    try:
-        identity, uuid = instance_identity(incus, container)
-        return (
-            issue_outbox.store_outbox(uuid),
-            identity,
-            uuid,
-            issue_outbox.store_journals(identity, uuid),
-        )
-    except (JournalError, IncusError, StoreError) as e:
-        error_plain(str(e))
-        raise typer.Exit(1) from e
 
 
 @issue_app.command("apply")
@@ -14422,172 +14213,19 @@ def issue_resolve_cmd(
     actually happened on GitHub. An alias of `jailbee outbox resolve` for
     issue proposals.
     """
+    from jailbee.cli_outbox_resolve import run_issue_resolve
+
     run_issue_resolve(
-        config, name, manifest, action, applied=applied, url=url, issue=issue, retry=retry, yes=yes
+        _load_or_exit(config),
+        name,
+        manifest,
+        action,
+        applied=applied,
+        url=url,
+        issue=issue,
+        retry=retry,
+        yes=yes,
     )
-
-
-def run_issue_resolve(
-    config: Path | None,
-    name: str | None,
-    manifest: str | None,
-    action: int | None,
-    *,
-    applied: bool,
-    url: str | None,
-    issue: int | None,
-    retry: bool,
-    yes: bool,
-) -> None:
-    """Resolve one uncertain issue action; shared by `issue resolve` and `outbox resolve`."""
-    from jailbee import issue_outbox, prompting
-    from jailbee.issue_manifest import CreateAction, IssueManifestError, parse_manifest
-    from jailbee.lifecycle import short_name
-    from jailbee.orchestration.store import StoreError
-    from jailbee.outbox.markdown_view import print_lines
-    from jailbee.outbox_io import JournalError, journal_has_uncertainty, proposal_digest
-    from jailbee.tui import console
-
-    if applied and retry:
-        error_plain("Exactly one of --applied or --retry is required.")
-        raise typer.Exit(2)
-    if retry and (url is not None or issue is not None):
-        error_plain("--retry accepts neither --url nor --issue.")
-        raise typer.Exit(2)
-
-    cfg = _load_or_exit(config)
-    incus, container = _resolve_issue_container(cfg, name, retained=True)
-    if container is None:
-        info("Nothing pending: no container in this repo has issue actions waiting.")
-        return
-    short = short_name(cfg, container)
-    outbox, _identity, uuid, journals = _read_issue_store_or_exit(incus, container)
-
-    def _journal(manifest_name: str) -> "IssueJournal | None":
-        return journals.get(manifest_name)
-
-    if manifest is None:
-        uncertain = [
-            m
-            for m in outbox.manifest_names
-            if (j := _journal(m)) is not None and journal_has_uncertainty(j)
-        ]
-        manifest = prompting.choose_one(
-            "manifest",
-            [prompting.Option(m, m, m) for m in uncertain],
-            destructive=True,
-            empty_reason=f"nothing uncertain to resolve in {short}",
-        )
-    text = outbox.files.get(manifest)
-    if text is None:
-        error_plain(f"{short} has no pending manifest named {manifest}")
-        if outbox.manifest_names:
-            error_plain(f"Pending there: {', '.join(outbox.manifest_names)}")
-        raise typer.Exit(2)
-    try:
-        parsed = parse_manifest(manifest, text, outbox.files)
-    except IssueManifestError as e:
-        error_plain(str(e))
-        raise typer.Exit(1) from e
-    journal = _journal(manifest)
-    if action is None:
-        open_actions = sorted(
-            a.index for a in (journal.actions if journal else ()) if a.state == "uncertain"
-        )
-        action = prompting.choose_one(
-            "action",
-            [prompting.Option(i, f"action {i}", str(i)) for i in open_actions],
-            destructive=True,
-            empty_reason=f"{manifest} has no uncertain action",
-        )
-    if not 0 <= action < len(parsed.actions):
-        error_plain(f"{manifest} has no action {action}")
-        raise typer.Exit(2)
-    resolved_action = parsed.actions[action]
-    if not applied and not retry:
-        mode = prompting.choose_one(
-            "resolution",
-            [
-                prompting.Option("applied", "applied: it did land on GitHub", "--applied"),
-                prompting.Option(
-                    "retry", "retry: forget the outcome and attempt it again", "--retry"
-                ),
-            ],
-        )
-        applied, retry = mode == "applied", mode == "retry"
-    if applied and not isinstance(resolved_action, CreateAction) and issue is not None:
-        error_plain("--issue is only valid for a create action.")
-        raise typer.Exit(2)
-
-    if applied and url is None:
-        url = prompting.ask_text(
-            "GitHub URL the mutation produced",
-            validate=lambda s: None if s.startswith("https://") else "enter an https:// URL",
-            alternative="--url",
-        )
-
-    if applied and isinstance(resolved_action, CreateAction) and issue is None:
-
-        def _number_problem(s: str) -> str | None:
-            s = s.strip()
-            return None if s.isascii() and s.isdecimal() and int(s) > 0 else "enter a number"
-
-        issue = int(
-            prompting.ask_text(
-                "created issue number", validate=_number_problem, alternative="--issue"
-            )
-        )
-
-    body_files = {body: outbox.files[body] for body in parsed.body_files if body in outbox.files}
-    digest = proposal_digest(manifest, text, body_files)
-
-    console.print()
-    print_lines(issue_outbox.show_lines(parsed, journal, short))
-
-    resolution: issue_outbox.Resolution
-    if retry:
-        resolution = issue_outbox.RetryResolution()
-    else:
-        assert url is not None, "validated above: --applied requires --url"
-        resolution = issue_outbox.AppliedResolution(url=url, issue=issue)
-
-    if not yes:
-        if not prompting.is_interactive():
-            error_plain(
-                "Refusing to resolve without a confirmation. Re-run with -y, or from a terminal."
-            )
-            raise typer.Exit(2)
-        verb = "Retry" if retry else "Mark applied"
-        if not prompting.ask_confirm(f"{verb} {manifest} action {action}?", default=False):
-            info("Nothing changed.")
-            return
-
-    try:
-        targets = issue_outbox.resolve_repo_targets(cfg)
-    except ValueError as e:
-        error_plain(str(e))
-        raise typer.Exit(1) from e
-    repo = issue_outbox.target_for(targets, resolved_action.repo, cfg.repo_root)
-    if repo is None:
-        error_plain(f"{manifest} action {action}: forbidden repo path {resolved_action.repo!r}")
-        raise typer.Exit(1)
-
-    try:
-        removed = issue_outbox.reconcile_action(
-            uuid=uuid,
-            index=action,
-            resolution=resolution,
-            repo=repo,
-            manifest=parsed,
-            digest=digest,
-        )
-    except (JournalError, StoreError) as e:
-        error_plain(str(e))
-        raise typer.Exit(1) from e
-
-    success_plain(f"{manifest} action {action}: {'retried' if retry else 'marked applied'}")
-    if removed:
-        success_plain(f"{manifest}: fully applied and removed from the outbox")
 
 
 apps_app = typer.Typer(

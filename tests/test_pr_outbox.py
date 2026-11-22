@@ -4587,3 +4587,12 @@ def test_reused_review_manifest_name_keeps_earlier_sent_rows(mocker, make_cfg, t
     _sent_apply(mocker, make_cfg, tmp_path, [{"type": "comment", "body": "second"}])
     rows = sorted(sent_records(), key=lambda r: r.id)
     assert [r.content for r in rows] == ["first", "second"]
+
+
+def test_resolve_hint_is_a_runnable_command():
+    from jailbee.pr_outbox import resolve_hint
+
+    assert resolve_hint("m.json", 2, "c1") == (
+        "`jailbee outbox resolve c1 pr/m.json 2 --applied --url URL` or `--retry`"
+    )
+    assert "<container> pr/m.json 0" in resolve_hint("m.json", 0)

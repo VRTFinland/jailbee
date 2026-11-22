@@ -325,7 +325,6 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "apps run",
         "console",
         "outbox attachment-resolve",
-        "outbox resolve",
         "outbox attachments",
         "orphan",
     }
@@ -498,6 +497,7 @@ _CONTAINER_COMMANDS = frozenset(
         "outbox drop",
         "outbox clear",
         "outbox apply",
+        "outbox resolve",
         "outbox sent ls",
         "outbox sent show",
         "outbox sent clear",

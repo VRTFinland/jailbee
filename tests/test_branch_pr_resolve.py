@@ -88,6 +88,10 @@ def test_review_resolve_applied_settles_a_source_publication(
     p["resolve"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
     mocker.patch("jailbee.cli._load_or_exit", return_value=p["cfg"])
     mocker.patch("jailbee.cli._resolve_existing", return_value=(p["incus"], "full"))
+    mocker.patch("jailbee.incus.Incus", return_value=p["incus"])
+    mocker.patch("jailbee.config.load_repo_config", return_value=p["cfg"])
+    mocker.patch("jailbee.cli_outbox_resolve._existing_container", return_value="full")
+    mocker.patch("jailbee.cli_outbox_resolve._review_container", return_value="full")
     mocker.patch("jailbee.lifecycle.short_name", return_value="c")
 
     result = CliRunner().invoke(app, ["review", "resolve", "c", "m.json", "0", "--applied", LANDED])
@@ -115,6 +119,10 @@ def test_outbox_resolve_applied_settles_a_source_publication_like_review_resolve
     p["resolve"].return_value = PrInfo(42, "feature/a", "b" * 40, "OPEN", "main")
     mocker.patch("jailbee.cli._load_or_exit", return_value=p["cfg"])
     mocker.patch("jailbee.cli._resolve_existing", return_value=(p["incus"], "full"))
+    mocker.patch("jailbee.incus.Incus", return_value=p["incus"])
+    mocker.patch("jailbee.config.load_repo_config", return_value=p["cfg"])
+    mocker.patch("jailbee.cli_outbox_resolve._existing_container", return_value="full")
+    mocker.patch("jailbee.cli_outbox_resolve._review_container", return_value="full")
     mocker.patch("jailbee.lifecycle.short_name", return_value="c")
 
     result = CliRunner().invoke(

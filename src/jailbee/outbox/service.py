@@ -184,11 +184,15 @@ def _source_uncertainty(
     for view in proposals:
         journal = journals.get(("pr", view.id.name)) if view.id.kind == "pr" else None
         if journal is not None and journal.uncertain:
-            detail = (
-                "publication outcome uncertain; check GitHub, then rerun jb pr push"
-                if view.state == "awaiting-push"
-                else "publication outcome uncertain; check GitHub, then jb outbox resolve"
-            )
+            if view.state == "awaiting-push":
+                detail = "publication outcome uncertain; check GitHub, then rerun jb pr push"
+            else:
+                from jailbee.pr_outbox import resolve_hint
+
+                first = next((a.index for a in journal.actions if a.state != "applied"), 0)
+                detail = "publication outcome uncertain; check GitHub, then " + resolve_hint(
+                    view.id.name, first
+                )
             view = replace(
                 view,
                 state="uncertain",

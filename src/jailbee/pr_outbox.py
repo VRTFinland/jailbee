@@ -620,6 +620,12 @@ class Progress:
     urls: dict[str, str]
 
 
+def resolve_hint(name: str, index: int, container: str | None = None) -> str:
+    """A runnable ``jailbee outbox resolve`` command for one uncertain PR action."""
+    target = container if container is not None else "<container>"
+    return f"`jailbee outbox resolve {target} pr/{name} {index} --applied --url URL` or `--retry`"
+
+
 def _journal_progress(outbox: Outbox, name: str, action_count: int | None) -> Progress:
     """Progress of a store-held proposal from its publication journal.
 
@@ -639,7 +645,7 @@ def _journal_progress(outbox: Outbox, name: str, action_count: int | None) -> Pr
         index = next(a.index for a in journal.actions if a.state == "uncertain")
         raise OutboxError(
             f"{name}: the outcome of action {index} from an earlier run is uncertain; "
-            "check the PR on GitHub, then settle it with `jailbee outbox resolve`"
+            f"check the PR on GitHub, then settle it with {resolve_hint(name, index)}"
         )
     applied = {a.index: a.url or "" for a in journal.actions if a.state == "applied"}
     return Progress(frozenset(applied), {str(i): url for i, url in applied.items()})
@@ -1079,7 +1085,8 @@ def apply_manifest(
                 (),
                 (),
                 f"the outcome of action {uncertain[0]} from an earlier run is uncertain; "
-                "check the PR on GitHub, then settle it with `jailbee outbox resolve`",
+                f"check the PR on GitHub, then settle it with "
+                f"{resolve_hint(manifest.name, uncertain[0], container)}",
                 draft,
             )
         for index in _apply_order(manifest.actions):
