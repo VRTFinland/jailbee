@@ -643,7 +643,11 @@ def _stage_structure(state: EditorState, path: KeyPath, value: object) -> Editor
     Callers that want the old descendants *preserved* rather than discarded
     fold them into `value` first, with `_materialised`.
     """
-    staged = {key: val for key, val in state.staged.items() if not _under(key, path)}
+    staged = {
+        key: val
+        for key, val in state.staged.items()
+        if not _under(key, path) or _is_runner_path(key)
+    }
     staged[path] = value
     return replace(state, staged=staged)
 
@@ -948,7 +952,33 @@ def _superseded(path: KeyPath, staged: Mapping[KeyPath, object]) -> bool:
     it through would write the edit onto whichever entry happened to inherit
     that index — a wrong write rather than a missing one.
     """
+    if _is_runner_path(path):
+        # Not an entry of the `agents` collection (see `layers.lookup`), so a
+        # staged `agents` neither contains nor supersedes it.
+        return any(path[:i] in staged for i in range(2, len(path)))
     return any(path[:i] in staged for i in range(1, len(path)))
+
+
+_RUNNER_PATH: KeyPath = ("agents", "default_runner")
+
+
+def _is_runner_path(path: KeyPath) -> bool:
+    """Whether `path` is `agents.default_runner` or a field of it."""
+    return path[:2] == _RUNNER_PATH
+
+
+def _with_runner(state: EditorState, value: object) -> object:
+    """A staged `agents` collection plus the layer's own `default_runner`.
+
+    The collection the editor shows holds the agents alone, but it is written
+    as the whole `agents` mapping; without this the runner would vanish from
+    the file whenever an agent is added or removed.
+    """
+    raw_agents = state.layer_raw.get("agents")
+    if not isinstance(raw_agents, dict) or "default_runner" not in raw_agents:
+        return value
+    base = value if isinstance(value, dict) else {}
+    return {**base, "default_runner": raw_agents["default_runner"]}
 
 
 def changes(state: EditorState) -> tuple[YamlChange, ...]:
@@ -970,6 +1000,11 @@ def changes(state: EditorState) -> tuple[YamlChange, ...]:
             continue
         value = state.staged[path]
         present, existing = lookup(state.layer_raw, path)
+        if path == ("agents",) and (present or value is not UNSET) and existing != value:
+            kept = _with_runner(state, {} if value is UNSET else value)
+            if kept != ({} if value is UNSET else value):
+                out.append(YamlChange(path, kept))
+                continue
         if value is UNSET:
             if present:
                 # Repo GitHub overrides only permit enabled: false, not an empty block.
