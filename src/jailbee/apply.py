@@ -592,16 +592,9 @@ def run_apply(
         # restart; rewrite the profile.d file in place. Only new login shells
         # read it: open shells and running agents keep the old GH_TOKEN.
         from jailbee.autostart import inject_github_token
-        from jailbee.lifecycle import container_repo_dir
 
         try:
-            inject_github_token(
-                cfg,
-                incus,
-                ci.name,
-                container_repo_dir(cfg, incus, ci.name),
-                mirror_endpoint=mirror_endpoint,
-            )
+            inject_github_token(cfg, incus, ci.name, mirror_endpoint=mirror_endpoint)
         except (IncusError, OSError) as e:
             warn(f"Could not refresh GH_TOKEN on {short}: {e}; run `jailbee apply` to retry.")
 
@@ -960,7 +953,7 @@ def _restart_one(
     repo_dir = container_repo_dir(cfg, incus, name)
     # Re-inject GH_TOKEN (infrastructure, not a user autostart step) so a
     # rotated PAT is picked up on `jailbee apply`.
-    inject_github_token(cfg, incus, name, repo_dir, mirror_endpoint=mirror_endpoint)
+    inject_github_token(cfg, incus, name, mirror_endpoint=mirror_endpoint)
     effective = effective_autostart_config(cfg, incus, name)
     effective = profiled_config(effective, resolve_profile(effective, incus, name))
     run_autostart(

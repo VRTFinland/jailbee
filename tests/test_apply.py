@@ -3625,3 +3625,50 @@ def test_run_apply_reinjects_github_token_without_a_profile_change(
     assert [c.args[2] for c in inject.call_args_list] == ["a"]
     restart_one.assert_not_called()
     assert result.restarted == []
+
+
+def test_run_apply_warns_and_continues_when_token_injection_fails(
+    make_cfg, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """A failed injection is a warning, not a failure: the next container is
+    still refreshed and apply does not raise."""
+    from jailbee.apply import run_apply
+    from jailbee.global_config import GlobalConfig
+    from jailbee.lifecycle import ContainerInfo
+
+    cfg = make_cfg(tmp_path)
+    incus = MagicMock(spec=Incus)
+    incus.list_containers.return_value = []
+    incus.network_acl_list.return_value = []
+    incus.network_get.return_value = ""
+    mocker.patch("jailbee.apply._profile_differs", return_value=False)
+    mocker.patch("jailbee.apply._acl_differs", return_value=False)
+    mocker.patch(
+        "jailbee.apply._list_containers",
+        return_value=[
+            ContainerInfo(
+                name=name,
+                state=state,
+                network="loose",
+                ip=None,
+                memory_limit="16GiB",
+                repo=tmp_path.name,
+            )
+            for name, state in (("a", "Running"), ("b", "Running"))
+        ],
+    )
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/work")
+    inject = mocker.patch(
+        "jailbee.autostart.inject_github_token", side_effect=[IncusError("boom"), None]
+    )
+    warn = mocker.patch("jailbee.tui.warn")
+    restart_one = mocker.patch("jailbee.apply._restart_one")
+
+    result = run_apply(cfg, incus, GlobalConfig(), confirm_fn=lambda _m: False)
+
+    assert [c.args[2] for c in inject.call_args_list] == ["a", "b"]
+    assert any(
+        "Could not refresh GH_TOKEN" in str(c) and "boom" in str(c) for c in warn.call_args_list
+    )
+    restart_one.assert_not_called()
+    assert result.restarted == []

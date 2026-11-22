@@ -55,8 +55,9 @@ including `~/.config/jailbee/global.yaml` while it contains the legacy
 written into the Incus profile and are visible with `incus profile show`.
 Arbitrary `agents.<name>.env` values are not masked by `config show` either.
 Injected `GH_TOKEN` is also written into the container's
-`/etc/profile.d/jailbee-github.sh`; disabling the integration does not remove
-an existing copy. Revoke exposed credentials at the provider when needed.
+`/etc/profile.d/jailbee-github.sh`; disabling the integration or removing the
+token deletes the file on the next `jailbee apply`, start or restart. Revoke
+exposed credentials at the provider when needed.
 
 ### Remote policy
 

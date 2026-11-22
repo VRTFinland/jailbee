@@ -2456,11 +2456,11 @@ def _new_container(
     # this is jailbee's own step, and the fork's tree is already cloned in by
     # now, so the branch's `autostart` must not reach it. Infrastructure, not a
     # user autostart command — written regardless of --no-autostart so `gh`
-    # works in every container. No-op when the github integration is off or no
+    # works in every container. Removes the file when the github integration is off or no
     # token applies.
     from jailbee.autostart import inject_github_token
 
-    inject_github_token(cfg, incus, name, repo_dir, mirror_endpoint=opts.mirror_endpoint)
+    inject_github_token(cfg, incus, name, mirror_endpoint=opts.mirror_endpoint)
 
     # The container is running by now and autostart has not run. Written even
     # with --no-autostart (a later start consumes it). Not best-effort: a

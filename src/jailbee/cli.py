@@ -5016,7 +5016,7 @@ def _post_start_actions(
     # GH_TOKEN injection is infrastructure, not a user autostart command —
     # write it before the --no-autostart guard so `gh` works after a plain
     # `jailbee start --no-autostart` (and to pick up a rotated PAT on every boot).
-    inject_github_token(cfg, incus, name, repo_dir, mirror_endpoint=mirror_endpoint)
+    inject_github_token(cfg, incus, name, mirror_endpoint=mirror_endpoint)
 
     from jailbee.autostart_profiles import missing_on_create, profiled_config, resolve_profile
     from jailbee.branch_config import effective_autostart_config
