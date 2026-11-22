@@ -30,6 +30,7 @@ from jailbee.issue_manifest import (
     CommentEditAction,
     CreateAction,
     CreatedIssue,
+    DependencyAction,
     EditAction,
     ExistingIssue,
     IssueAction,
@@ -41,9 +42,12 @@ from jailbee.issue_manifest import (
     ProjectRemoveAction,
     ProjectSetAction,
     StateAction,
+    SubIssueAction,
     foreign_slug,
     mutation_keys,
     parse_manifest,
+    related_issue,
+    relation_change,
 )
 from jailbee.outbox import publication_db, sent
 from jailbee.outbox.markdown_view import render_markdown
@@ -186,6 +190,8 @@ class ResolvedAction:
     project_target: issue_projects.ProjectTarget | None = None
     project_field: issue_projects.ResolvedField | None = None
     established_item: str | None = None
+    # A relation's other issue, as its database id, when known at preflight.
+    related_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -377,6 +383,43 @@ def _comment_edit_refusals(
         new_body=action.body,
         context=context,
     )
+
+
+def _relation_refusals(
+    host_repo_root: Path,
+    repo: RepoTarget,
+    action: SubIssueAction | DependencyAction,
+    number: int | None,
+    context: str,
+) -> tuple[int | None, list[str]]:
+    """The related issue's database id, and refusals from the relation's live state.
+
+    A relation is refused when it already is in the state the action asks for
+    (an add already linked, a remove not linked) or its other end is a pull
+    request. Without both issue numbers (one is created in this batch) only
+    what is known is checked. Raises `IssueGithubReadError`.
+    """
+    related = related_issue(action)
+    if not isinstance(related, ExistingIssue):
+        return None, []
+    identity = issue_github.get_issue_identity(host_repo_root, repo.slug, related.number)
+    if identity.is_pull_request:
+        return identity.id, [f"{context}: #{related.number} is a pull request, not an issue"]
+    if number is None:
+        return identity.id, []
+    sub = isinstance(action, SubIssueAction)
+    current = (
+        issue_github.list_sub_issue_ids(host_repo_root, repo.slug, number)
+        if sub
+        else issue_github.list_blocked_by_ids(host_repo_root, repo.slug, number)
+    )
+    linked = identity.id in current
+    if linked == action.remove:
+        return identity.id, []
+    child, other = (related.number, number) if sub else (number, related.number)
+    relation = f"a sub-issue of #{other}" if sub else f"blocked by #{other}"
+    state = "already" if linked else "not"
+    return identity.id, [f"{context}: #{child} is {state} {relation}"]
 
 
 def _load_proposals(
@@ -640,6 +683,17 @@ def prepare_batch(
                     execution_errors.append(exc)
                     refusals.append(f"{context}: {exc}")
 
+            related_id = None
+            if isinstance(action, (SubIssueAction, DependencyAction)) and status == "pending":
+                try:
+                    related_id, found = _relation_refusals(
+                        cfg.repo_root, repo, action, issue.number, context
+                    )
+                    refusals.extend(found)
+                except IssueGithubReadError as exc:
+                    execution_errors.append(exc)
+                    refusals.append(f"{context}: {exc}")
+
             labels = None
             if isinstance(action, (CreateAction, LabelsAction)) and status == "pending":
                 if repo.identity not in label_maps and repo.identity not in label_errors:
@@ -770,6 +824,7 @@ def prepare_batch(
                     project_target,
                     project_field,
                     own_item,
+                    related_id,
                 )
             )
         prepared.append(PreparedManifest(manifest, digest, journal, tuple(actions)))
@@ -851,6 +906,24 @@ def revalidate_batch(batch: PreparedBatch) -> None:
                     refusals.append(f"{context}: {exc}")
                 continue
             if (
+                isinstance(resolved.action, (SubIssueAction, DependencyAction))
+                and resolved.status == "pending"
+            ):
+                context = f"{manifest.manifest.name} action {resolved.index}"
+                try:
+                    _, found = _relation_refusals(
+                        batch.host_repo_root,
+                        resolved.repo,
+                        resolved.action,
+                        resolved.issue.number,
+                        context,
+                    )
+                    refusals.extend(found)
+                except IssueGithubReadError as exc:
+                    execution_errors.append(exc)
+                    refusals.append(f"{context}: {exc}")
+                continue
+            if (
                 resolved.status != "pending"
                 or resolved.issue.number is None
                 or not _expected_fields(resolved.action)
@@ -919,6 +992,10 @@ def _action_lines(
         )
     if not isinstance(action, CreateAction) and issue.ref is not None:
         lines.append(f"  depends on create ref {issue.ref}")
+    if isinstance(action, (SubIssueAction, DependencyAction)):
+        related = related_issue(action)
+        if isinstance(related, CreatedIssue):
+            lines.append(f"  depends on create ref {related.ref}")
     if isinstance(action, CreateAction):
         if issue.number is not None:
             lines.append(f"  create ref: {action.ref}")
@@ -983,6 +1060,8 @@ def _action_lines(
         lines.append(f"  state: {action.expected_state} -> {action.state}")
         if action.reason is not None:
             lines.append(f"  reason: {action.reason}")
+    elif isinstance(action, (SubIssueAction, DependencyAction)):
+        lines.append(f"  {relation_change(action)}")
     else:
         assert_never(action)
     return lines
@@ -1352,6 +1431,25 @@ def _execute_one(
         return issue_github.set_state(
             host_repo_root, repo, number, state=action.state, reason=action.reason
         )
+    if isinstance(action, (SubIssueAction, DependencyAction)):
+        related_id = resolved.related_id
+        if related_id is None:
+            # The other end was created earlier in this batch: read its id now.
+            related = related_issue(action)
+            other = (
+                related.number
+                if isinstance(related, ExistingIssue)
+                else _resolved_number(ResolvedIssue(None, related.ref), created)
+            )
+            try:
+                related_id = issue_github.get_issue_identity(host_repo_root, repo, other).id
+            except IssueGithubReadError as exc:
+                raise IssueGithubMutationError(str(exc), uncertain=False) from exc
+        if isinstance(action, SubIssueAction):
+            sub = issue_github.remove_sub_issue if action.remove else issue_github.add_sub_issue
+            return sub(host_repo_root, repo, number, sub_issue_id=related_id)
+        dep = issue_github.remove_blocked_by if action.remove else issue_github.add_blocked_by
+        return dep(host_repo_root, repo, number, blocker_id=related_id)
     assert_never(action)
 
 
@@ -1420,6 +1518,8 @@ def _sent_action(
     elif isinstance(action, StateAction):
         kind = "state"
         content = f"state {action.state}" + (f" ({action.reason})" if action.reason else "")
+    elif isinstance(action, (SubIssueAction, DependencyAction)):
+        kind, content = action.kind, relation_change(action)
     else:
         assert_never(action)
     return sent.SentAction(

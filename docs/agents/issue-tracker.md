@@ -22,10 +22,16 @@ it). Never run `gh issue create|edit|comment|close|reopen` or a mutating
 - **Related actions**: stage them in one batch with `--batch NAME`; a create may
   set `--ref REF` and later actions in the batch target `@REF`. Submit with
   `jailbee outbox submit NAME --kind issue`.
-- **Sub-issues and dependencies** need mutating `gh api` calls, which the
-  outbox does not stage. Put `Part of #<parent>` / `Blocked by: #<n>, #<n>` at
-  the top of the child body instead, and ask the human if the native GitHub
-  links are wanted.
+- **Sub-issues and dependencies** are native GitHub relations:
+  `jailbee issue sub-issue <parent> <child>` and
+  `jailbee issue blocked-by <issue> <blocker>` (`--remove` drops a link).
+  Either side may be `@REF` for a create in the same batch, and
+  `jailbee issue create --parent N|@REF --blocked-by N|@REF` stages the
+  create with those links as separate follow-up actions. Both issues must be
+  in the same repository. Fall back to `Part of #<parent>` /
+  `Blocked by: #<n>, #<n>` text at the top of the child body only when the
+  native links cannot be published (another repository, no grant for the
+  `sub_issue`/`dependency` kinds).
 
 `--repo .` (the default) is this repository; never use `owner/repo` there.
 

@@ -65,11 +65,14 @@ def _run_api(
     payload: Mapping[str, object] | None = None,
     mutation: bool = False,
     paginate: bool = False,
+    allow_empty: bool = False,
 ) -> object:
     """Run the module's sole subprocess boundary and return decoded JSON."""
     cmd = ["gh", "api", endpoint]
     if method != "GET":
-        cmd.extend(["--method", method, "--input", "-"])
+        cmd.extend(["--method", method])
+        if payload is not None:
+            cmd.extend(["--input", "-"])
     if paginate:
         cmd.extend(["--paginate", "--slurp"])
 
@@ -117,6 +120,8 @@ def _run_api(
             raise IssueGithubMutationError(message, uncertain=not definite)
         raise IssueGithubReadError("GitHub read failed")
 
+    if allow_empty and not proc.stdout.strip():
+        return None
     try:
         return json.loads(proc.stdout)
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -426,3 +431,111 @@ def edit_issue_comment(
         mutation=True,
     )
     return _mutation_receipt(data, issue=issue)
+
+
+# --------------------------------------------------------------------------
+# Native relations: sub-issues and "blocked by" dependencies
+#
+# Both APIs name the other issue by its numeric database id (`id`), not its
+# number. A mutation's receipt is the target issue's own URL, built from the
+# request: a removal may answer with an empty body.
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class IssueIdentity:
+    """The database id of one issue-shaped object, and whether it is a pull request."""
+
+    number: int
+    id: int
+    is_pull_request: bool
+
+
+def get_issue_identity(repo_root: Path, repo: str, number: int) -> IssueIdentity:
+    """Return the database id the relation APIs need for issue ``number``."""
+    data = _read_object(_run_api(repo_root, f"repos/{repo}/issues/{number}"))
+    issue_id = _read_number(data.get("id"))
+    if issue_id <= 0:
+        raise IssueGithubReadError("GitHub read failed: unexpected response")
+    return IssueIdentity(_read_number(data.get("number")), issue_id, "pull_request" in data)
+
+
+def _issue_ids(repo_root: Path, endpoint: str) -> frozenset[int]:
+    data = _run_api(repo_root, endpoint, paginate=True)
+    if not _is_array(data):
+        raise IssueGithubReadError("GitHub read failed: unexpected response")
+    ids: set[int] = set()
+    for page in data:
+        if not _is_array(page):
+            raise IssueGithubReadError("GitHub read failed: unexpected response")
+        ids.update(_read_number(_read_object(item).get("id")) for item in page)
+    return frozenset(ids)
+
+
+def list_sub_issue_ids(repo_root: Path, repo: str, parent: int) -> frozenset[int]:
+    """Database ids of the sub-issues of ``parent``."""
+    return _issue_ids(repo_root, f"repos/{repo}/issues/{parent}/sub_issues")
+
+
+def list_blocked_by_ids(repo_root: Path, repo: str, number: int) -> frozenset[int]:
+    """Database ids of the issues ``number`` is blocked by."""
+    return _issue_ids(repo_root, f"repos/{repo}/issues/{number}/dependencies/blocked_by")
+
+
+def _relation_receipt(repo: str, number: int) -> MutationReceipt:
+    return MutationReceipt(issue=number, url=f"https://github.com/{repo}/issues/{number}")
+
+
+def add_sub_issue(repo_root: Path, repo: str, parent: int, *, sub_issue_id: int) -> MutationReceipt:
+    """Make the issue with database id ``sub_issue_id`` a sub-issue of ``parent``."""
+    _run_api(
+        repo_root,
+        f"repos/{repo}/issues/{parent}/sub_issues",
+        method="POST",
+        payload={"sub_issue_id": sub_issue_id},
+        mutation=True,
+        allow_empty=True,
+    )
+    return _relation_receipt(repo, parent)
+
+
+def remove_sub_issue(
+    repo_root: Path, repo: str, parent: int, *, sub_issue_id: int
+) -> MutationReceipt:
+    """Detach the sub-issue with database id ``sub_issue_id`` from ``parent``."""
+    _run_api(
+        repo_root,
+        f"repos/{repo}/issues/{parent}/sub_issue",
+        method="DELETE",
+        payload={"sub_issue_id": sub_issue_id},
+        mutation=True,
+        allow_empty=True,
+    )
+    return _relation_receipt(repo, parent)
+
+
+def add_blocked_by(repo_root: Path, repo: str, number: int, *, blocker_id: int) -> MutationReceipt:
+    """Mark ``number`` as blocked by the issue with database id ``blocker_id``."""
+    _run_api(
+        repo_root,
+        f"repos/{repo}/issues/{number}/dependencies/blocked_by",
+        method="POST",
+        payload={"issue_id": blocker_id},
+        mutation=True,
+        allow_empty=True,
+    )
+    return _relation_receipt(repo, number)
+
+
+def remove_blocked_by(
+    repo_root: Path, repo: str, number: int, *, blocker_id: int
+) -> MutationReceipt:
+    """Drop the "blocked by" dependency of ``number`` on database id ``blocker_id``."""
+    _run_api(
+        repo_root,
+        f"repos/{repo}/issues/{number}/dependencies/blocked_by/{blocker_id}",
+        method="DELETE",
+        mutation=True,
+        allow_empty=True,
+    )
+    return _relation_receipt(repo, number)

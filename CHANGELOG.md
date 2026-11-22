@@ -234,6 +234,15 @@ before editing `## Unreleased`.
   and one refused edit holds back the rest of its manifest. Turning `publish.pr_reviews`
   off also clears the edit right (the dashboard has a row for it too), and only pending
   edits need it.
+- Native GitHub sub-issues and "blocked by" dependencies through the issue
+  outbox: `jailbee issue sub-issue PARENT CHILD` and `jailbee issue blocked-by
+  ISSUE BLOCKER` (`--remove` to drop a link) stage `sub_issue` and `dependency`
+  actions, either side may be `@REF` for a create in the same batch, and
+  `jailbee issue create --parent N|@REF --blocked-by N|@REF` stages the create
+  followed by its links. The host refuses an add that already exists, a
+  removal that does not, and a pull request on either side. Orchestrator
+  publication needs the new `sub_issue` and `dependency` issue kinds
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 
 ### Changed
 

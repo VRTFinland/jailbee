@@ -95,7 +95,16 @@ class Grantable(BaseModel):
 
 
 IssueActionKind = Literal[
-    "create", "edit", "comment", "comment_edit", "labels", "state", "assign_self", "assign"
+    "create",
+    "edit",
+    "comment",
+    "comment_edit",
+    "labels",
+    "state",
+    "assign_self",
+    "assign",
+    "sub_issue",
+    "dependency",
 ]
 ISSUE_ACTION_KINDS: tuple[IssueActionKind, ...] = (
     "assign",
@@ -103,9 +112,11 @@ ISSUE_ACTION_KINDS: tuple[IssueActionKind, ...] = (
     "comment",
     "comment_edit",
     "create",
+    "dependency",
     "edit",
     "labels",
     "state",
+    "sub_issue",
 )
 
 

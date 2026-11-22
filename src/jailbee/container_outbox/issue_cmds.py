@@ -126,6 +126,21 @@ def state_action(
     return action
 
 
+def relation_action(
+    kind: str, repo: str, target: int | str, related: int | str, remove: bool
+) -> dict[str, object]:
+    """A ``sub_issue`` (target = parent) or ``dependency`` (target = blocked issue)."""
+    field = "sub_issue" if kind == "sub_issue" else "blocked_by"
+    other = {field: related} if isinstance(related, int) else {f"{field}_ref": related[1:]}
+    return {
+        "type": kind,
+        "repo": repo,
+        **_target(target),
+        **other,
+        "op": "remove" if remove else "add",
+    }
+
+
 def _body(body: str | None, body_file: Path | None, required: bool) -> str | None:
     if body is not None and body_file is not None:
         raise OutboxCommandError("choose --body or --body-file", 2)
@@ -200,7 +215,9 @@ def _stage(
     batch: str | None,
     file_body: bool = False,
     as_json: bool = False,
+    follow_up: list[dict[str, object]] | None = None,
 ) -> None:
+    """Stage ``action`` (plus ``follow_up`` actions after it) as one proposal or draft step."""
     bodies: dict[str, str] = {}
     body = action.get("body")
     if isinstance(body, str) and (file_body or len(body.encode("utf-8")) > 4096):
@@ -209,7 +226,10 @@ def _stage(
         del action["body"]
         action["body_file"] = name
     if batch is not None:
-        broker.draft_append("issue", batch, action, bodies)
+        if follow_up:
+            broker.draft_append_many("issue", batch, [action, *follow_up], bodies)
+        else:
+            broker.draft_append("issue", batch, action, bodies)
         typer.echo(f"staged issue draft {batch}")
     else:
         slug = (
@@ -218,7 +238,9 @@ def _stage(
             ]
             or "issue"
         )
-        name = broker.put("issue", slug, {"version": 1, "actions": [action]}, bodies)
+        name = broker.put(
+            "issue", slug, {"version": 1, "actions": [action, *(follow_up or [])]}, bodies
+        )
         if as_json:
             typer.echo(json.dumps({"name": name}))
         else:
@@ -247,12 +269,24 @@ def create(
         str | None,
         typer.Option(help="Name for later batch actions to target as @REF (default: issue)."),
     ] = None,
+    parent: Annotated[
+        str | None,
+        typer.Option(help="Make the new issue a sub-issue of this issue number or @REF."),
+    ] = None,
+    blocked_by: Annotated[
+        list[str] | None,
+        typer.Option(help="Mark the new issue blocked by this issue number or @REF; repeatable."),
+    ] = None,
     batch: BatchOpt = None,
     as_json: Annotated[
         bool, typer.Option("--json", help="Print the staged manifest name as JSON.")
     ] = False,
 ) -> None:
-    """Stage a new issue; give the body with --body or --body-file."""
+    """Stage a new issue; give the body with --body or --body-file.
+
+    --parent and --blocked-by stage native sub_issue / dependency actions after
+    the create, targeting it by its ref.
+    """
 
     def run() -> None:
         require_role()
@@ -264,11 +298,21 @@ def create(
             raise OutboxCommandError("missing title", 2)
         text = _body(body, body_file, True)
         assert text is not None
+        own = f"@{ref or 'issue'}"
+        follow_up = [
+            relation_action("dependency", repo, own, _parse_target(item), False)
+            for item in blocked_by or []
+        ]
+        if parent is not None:
+            follow_up.insert(
+                0, relation_action("sub_issue", repo, _parse_target(parent), own, False)
+            )
         _stage(
             create_action(repo, title, text, label or [], ref or "issue"),
             batch,
             body_file is not None,
             as_json,
+            follow_up,
         )
 
     _run(run)
@@ -545,3 +589,70 @@ def state(
         _stage(state_action(repo, target, state, reason, _view(repo, target)), batch)
 
     _run(run)
+
+
+def _stage_relation(
+    kind: str,
+    target_arg: str | None,
+    related_arg: str | None,
+    missing: str,
+    remove: bool,
+    repo: str,
+    batch: str | None,
+) -> None:
+    require_role()
+    target = _parse_target(target_arg)
+    if not related_arg:
+        raise OutboxCommandError(f"missing {missing}", 2)
+    related = _parse_target(related_arg)
+    if related == target:
+        raise OutboxCommandError("an issue cannot be related to itself", 2)
+    if remove and not (isinstance(target, int) and isinstance(related, int)):
+        raise OutboxCommandError("--remove needs existing issue numbers, not @REF", 2)
+    _stage(relation_action(kind, repo, target, related, remove), batch)
+
+
+@issue_app.command("sub-issue")
+def sub_issue(
+    parent: Annotated[
+        str | None, typer.Argument(help="Parent issue number, or @REF for a staged create.")
+    ] = None,
+    child: Annotated[
+        str | None, typer.Argument(help="Sub-issue number, or @REF for a staged create.")
+    ] = None,
+    remove: Annotated[
+        bool, typer.Option("--remove", help="Detach the sub-issue instead of adding it.")
+    ] = False,
+    repo: RepoOpt = ".",
+    batch: BatchOpt = None,
+) -> None:
+    """Stage making CHILD a native sub-issue of PARENT (or detaching it with --remove).
+
+    Both issues are in --repo. The host refuses an add that is already linked
+    and a removal that is not.
+    """
+    _run(lambda: _stage_relation("sub_issue", parent, child, "sub-issue", remove, repo, batch))
+
+
+@issue_app.command("blocked-by")
+def blocked_by_cmd(
+    issue: Annotated[
+        str | None, typer.Argument(help="Blocked issue number, or @REF for a staged create.")
+    ] = None,
+    blocker: Annotated[
+        str | None, typer.Argument(help="Blocking issue number, or @REF for a staged create.")
+    ] = None,
+    remove: Annotated[
+        bool, typer.Option("--remove", help="Drop the dependency instead of adding it.")
+    ] = False,
+    repo: RepoOpt = ".",
+    batch: BatchOpt = None,
+) -> None:
+    """Stage a native "ISSUE is blocked by BLOCKER" dependency (or drop it with --remove).
+
+    Both issues are in --repo. The host refuses an add that already exists and
+    a removal of a dependency that does not.
+    """
+    _run(
+        lambda: _stage_relation("dependency", issue, blocker, "blocking issue", remove, repo, batch)
+    )

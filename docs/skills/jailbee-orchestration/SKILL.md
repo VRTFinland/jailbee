@@ -172,6 +172,9 @@ Project actions are separate: `publish.projects` grants actions per board
 foreign issue rights or other boards.
 Editing an existing issue or PR conversation comment is its own issue kind,
 `comment_edit`; `comment` does not imply it.
+Native sub-issue and "blocked by" links are the issue kinds `sub_issue` and
+`dependency`; `create` does not imply them, so a create staged with
+`--parent`/`--blocked-by` needs them as well.
 Assignment is an issue kind too: `assign_self` covers only assigning or
 unassigning the publisher's own login (so it can also unassign the host user
 from issues the user claimed by hand), `assign` covers any login and implies

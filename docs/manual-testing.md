@@ -2280,6 +2280,70 @@ gh issue view <N> --repo <owner>/<repo> --json comments -q '.comments[].body'
 # expect: the direct comment above is NOT present
 ```
 
+### 9. Native sub-issue and blocked-by links (`sub_issue`, `dependency`)
+
+The GitHub sub-issue and dependency APIs have never run against the real
+service: the unit suite fakes them. This step checks the endpoints, the
+database-id payloads, the receipts and the refusals. `<N>` is the issue from
+step 0 (reopen it first if step 3 closed it); `<M>` is another open issue of
+the same repository, for example `<bug-b-number>` from step 2.
+
+```bash
+jailbee shell feat-issuesmoke
+jailbee issue create --title "Relation smoke parent" --body "Parent." --ref epic --batch rel
+jailbee issue create --title "Relation smoke child" --body "Child." --ref task \
+  --parent @epic --blocked-by <N> --batch rel
+jailbee issue blocked-by <M> @task --batch rel
+jailbee outbox submit rel --kind issue
+jailbee outbox ls               # note the proposal name -> <rel>
+exit
+
+jailbee outbox apply feat-issuesmoke issue/<rel> -y
+# expect: the plan shows two creates, then "sub_issue ref epic" with
+#         "add sub-issue ref task", "dependency ref task" with
+#         "add blocked by #<N>", and "dependency #<M>" with
+#         "add blocked by ref task"; every action is applied, and each relation
+#         receipt is the target issue's own /issues/<n> URL
+gh api repos/<owner>/<repo>/issues/<epic-number>/sub_issues -q '.[].number'
+# expect: <task-number>
+gh api repos/<owner>/<repo>/issues/<task-number>/dependencies/blocked_by -q '.[].number'
+# expect: <N>
+gh api repos/<owner>/<repo>/issues/<M>/dependencies/blocked_by -q '.[].number'
+# expect: <task-number>
+
+# The same links again are refused before anything is sent:
+jailbee shell feat-issuesmoke
+jailbee issue sub-issue <epic-number> <task-number>
+exit
+jailbee outbox apply feat-issuesmoke issue/<that-name> -y
+# expect: refused — "#<task-number> is already a sub-issue of #<epic-number>"
+
+# Removal, and a removal of a link that does not exist:
+jailbee shell feat-issuesmoke
+jailbee outbox discard issue/<that-name>
+jailbee issue sub-issue <epic-number> <task-number> --remove --batch unrel
+jailbee issue blocked-by <task-number> <N> --remove --batch unrel
+jailbee outbox submit unrel --kind issue
+jailbee issue blocked-by <task-number> <M> --remove   # never linked that way round
+exit
+jailbee outbox apply feat-issuesmoke issue/<unrel> -y
+# expect: both applied; the two gh api reads above for <epic-number> and
+#         <task-number> now print nothing
+jailbee outbox apply feat-issuesmoke issue/<never-linked> -y
+# expect: refused — "#<task-number> is not blocked by #<M>"
+
+# A pull request on either side is refused at preflight:
+jailbee shell feat-issuesmoke
+jailbee issue sub-issue <N> <some-open-PR-number>
+exit
+jailbee outbox apply feat-issuesmoke issue/<that-name> -y
+# expect: refused — "#<pr> is a pull request, not an issue"
+```
+
+Also note in the result whether the publishing account needed more than the
+usual Issues write permission, and what GitHub answers for a link whose issues
+are in different repositories (the outbox stages same-repository links only).
+
 ```bash
 jailbee destroy feat-issuesmoke --force
 # Cleanup (does not touch GitHub — close the smoke issues by hand):

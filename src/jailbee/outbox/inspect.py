@@ -123,6 +123,8 @@ def _issue_action(index: int, action: issues.IssueAction) -> ActionView:
         elif isinstance(action, issues.StateAction):
             body = action.state + (f" ({action.reason})" if action.reason else "")
             kind, markdown = "state", False
+        elif isinstance(action, (issues.SubIssueAction, issues.DependencyAction)):
+            body, kind, markdown = issues.relation_change(action), action.kind, False
         else:
             assert_never(action)
     return ActionView(index, kind, action.repo, target, title, body, markdown, "pending", None, ())

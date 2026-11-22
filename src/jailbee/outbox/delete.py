@@ -191,7 +191,9 @@ def plan_delete(
                 dependents = tuple(
                     i
                     for i, a in enumerate(actions)
-                    if is_create and a.get("issue_ref") == action["ref"]
+                    if is_create
+                    and action["ref"]
+                    in (a.get("issue_ref"), a.get("sub_issue_ref"), a.get("blocked_by_ref"))
                 )
                 if dependents and not selection.with_dependents:
                     raise OutboxError(

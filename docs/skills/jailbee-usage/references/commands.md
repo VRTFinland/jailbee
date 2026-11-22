@@ -22,7 +22,8 @@ Common conventions:
 ## In-container outbox commands
 
 Inside a non-child container, stage GitHub proposals with `jailbee issue
-create|edit|comment|comment-edit|labels|assign|state|project` and `jailbee pr
+create|edit|comment|comment-edit|labels|assign|state|project|sub-issue|blocked-by`
+and `jailbee pr
 comment|comment-edit|reply|state|description|source`. `jailbee pr state [N] closed|open` stages closing or reopening a PR (refused on a merged PR; the host guards the staged state). `jailbee issue comment-edit ID` replaces the
 body of an issue or PR conversation comment the publishing account wrote, and
 `jailbee pr comment-edit ID` that of a submitted PR review comment; the
@@ -38,6 +39,10 @@ board number are required. Omit `--project` to use committed `github.project`.
 Repeat `--set FIELD=VALUE` or `--clear FIELD` to change fields; set adds an
 item if absent, while `--remove` removes it. Batch actions may target a prior
 create with `@REF`.
+`jailbee issue sub-issue PARENT CHILD` and `jailbee issue blocked-by ISSUE
+BLOCKER` stage native sub-issue and "blocked by" links (`--remove` drops one;
+either side may be `@REF`), and `jailbee issue create --parent N|@REF
+--blocked-by N|@REF` stages those links after the create.
 
 Use `--batch NAME` to collect actions, `jailbee outbox ls [--json]` and
 `jailbee outbox show issue/NAME` or `pr/NAME` to inspect staged proposals,

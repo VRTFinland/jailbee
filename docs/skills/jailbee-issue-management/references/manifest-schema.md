@@ -25,7 +25,9 @@ the host outbox's stored proposal files by hand.
     {"type": "project_add", "repo": ".", "issue": 42, "project": "acme/7",
      "expected": {"present": false}},
     {"type": "project_remove", "repo": ".", "issue": 43, "project": "acme/7",
-     "expected": {"present": true}}
+     "expected": {"present": true}},
+    {"type": "sub_issue", "repo": ".", "issue": 40, "sub_issue_ref": "new-bug", "op": "add"},
+    {"type": "dependency", "repo": ".", "issue_ref": "new-bug", "blocked_by": 41, "op": "add"}
   ]
 }
 ```
@@ -284,6 +286,32 @@ option names and validates the value type before publishing.
 
 `project_add` stores membership in `expected.present`; the host captures it
 when staging (or derives `false` for a new `issue_ref`).
+
+## Relations: `type: "sub_issue"` and `type: "dependency"`
+
+Native GitHub sub-issue and "blocked by" links. Each action adds or removes one
+link between two issues in the same `repo`.
+
+| Field | Rule |
+|---|---|
+| `repo`, `issue`/`issue_ref` | As above. For `sub_issue` the target is the **parent**; for `dependency` it is the **blocked** issue. |
+| `sub_issue` / `sub_issue_ref` | `sub_issue` only, exactly one: the child, as a positive issue number or the `ref` of an earlier `create` in the same manifest and repo. |
+| `blocked_by` / `blocked_by_ref` | `dependency` only, exactly one: the blocking issue, as a number or an earlier `create`'s `ref`. |
+| `op` | Required, `"add"` or `"remove"`. `"remove"` needs existing numbers on both sides (a new issue has no links). |
+
+No `expected` block: the action names its end state. At preflight, and again
+just before publishing, the host reads the link and refuses an add that is
+already linked, a removal that is not, and a pull request on either side. The
+APIs take the other issue's numeric database id, which the host reads itself;
+for an issue created earlier in the batch it reads the id after the create.
+The field being changed is `sub_issue:<child>` or `blocked_by:<blocker>` on the
+target, so two changes of one link conflict. A link to a new issue (`*_ref`)
+has no field and never conflicts.
+
+`create` has no `parent` or `blocked_by` field. `jailbee issue create --parent
+N|@REF --blocked-by N|@REF` stages the create and then these actions, targeting
+the new issue by its `ref`, so a failed link never makes the create itself
+uncertain.
 
 ## One field, one action, per target
 

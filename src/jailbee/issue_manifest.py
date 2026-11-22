@@ -166,6 +166,31 @@ class ProjectRemoveAction:
 ProjectAction = ProjectAddAction | ProjectSetAction | ProjectClearAction | ProjectRemoveAction
 
 
+@dataclass(frozen=True)
+class SubIssueAction:
+    """Add or remove ``child`` as a native sub-issue of ``target`` (the parent)."""
+
+    kind: ClassVar[Literal["sub_issue"]] = "sub_issue"
+    repo: str
+    target: IssueTarget
+    child: IssueTarget
+    remove: bool
+
+
+@dataclass(frozen=True)
+class DependencyAction:
+    """Add or remove a native "blocked by ``blocker``" dependency of ``target``."""
+
+    kind: ClassVar[Literal["dependency"]] = "dependency"
+    repo: str
+    target: IssueTarget
+    blocker: IssueTarget
+    remove: bool
+
+
+RelationAction = SubIssueAction | DependencyAction
+
+
 IssueAction = (
     CreateAction
     | EditAction
@@ -178,6 +203,8 @@ IssueAction = (
     | ProjectSetAction
     | ProjectClearAction
     | ProjectRemoveAction
+    | SubIssueAction
+    | DependencyAction
 )
 
 
@@ -201,9 +228,29 @@ def mutation_keys(action: IssueAction) -> set[str]:
         return {f"project:{action.project.casefold()}:membership"}
     if isinstance(action, (ProjectSetAction, ProjectClearAction)):
         return {f"project:{action.project.casefold()}:field:{action.field.casefold()}"}
+    if isinstance(action, (SubIssueAction, DependencyAction)):
+        # A relation to an issue created in this batch cannot collide with anything.
+        related = related_issue(action)
+        if not isinstance(related, ExistingIssue):
+            return set()
+        field = "sub_issue" if isinstance(action, SubIssueAction) else "blocked_by"
+        return {f"{field}:{related.number}"}
     if isinstance(action, (CreateAction, CommentAction)):
         return set()
     assert_never(action)
+
+
+def related_issue(action: RelationAction) -> IssueTarget:
+    """The other end of a relation: the sub-issue, or the blocking issue."""
+    return action.child if isinstance(action, SubIssueAction) else action.blocker
+
+
+def relation_change(action: RelationAction) -> str:
+    """One-line description: ``add sub-issue #12``, ``remove blocked by ref bug``."""
+    related = related_issue(action)
+    shown = f"#{related.number}" if isinstance(related, ExistingIssue) else f"ref {related.ref}"
+    noun = "sub-issue" if isinstance(action, SubIssueAction) else "blocked by"
+    return f"{'remove' if action.remove else 'add'} {noun} {shown}"
 
 
 @dataclass(frozen=True)
@@ -676,6 +723,55 @@ def _parse_state_action(
     )
 
 
+def _parse_relation(
+    item: dict[str, object],
+    refs: Mapping[str, str],
+    context: str,
+) -> RelationAction:
+    sub_issue = item.get("type") == "sub_issue"
+    field = "sub_issue" if sub_issue else "blocked_by"
+    _reject_unknown(
+        item, {"type", "repo", "issue", "issue_ref", field, f"{field}_ref", "op"}, context
+    )
+    repo = _repo(item, context)
+    target = _target(item, repo, refs, context)
+    if (field in item) == (f"{field}_ref" in item):
+        raise IssueManifestError(f"{context}: exactly one of {field} or {field}_ref is required")
+    related: IssueTarget
+    if field in item:
+        value = item[field]
+        if type(value) is not int or value <= 0:
+            raise IssueManifestError(f"{context}: {field} must be a positive integer")
+        related = ExistingIssue(value)
+    else:
+        ref = item[f"{field}_ref"]
+        if not isinstance(ref, str) or not ref:
+            raise IssueManifestError(f"{context}: {field}_ref must name an earlier create action")
+        ref_repo = refs.get(ref)
+        if ref_repo is None:
+            raise IssueManifestError(
+                f"{context}: {field}_ref {ref!r} does not name an earlier create action"
+            )
+        if ref_repo != repo:
+            raise IssueManifestError(
+                f"{context}: {field}_ref {ref!r} must target a create in the same repo"
+            )
+        related = CreatedIssue(ref)
+    if related == target:
+        raise IssueManifestError(f"{context}: an issue cannot be related to itself")
+    op = item.get("op")
+    if op not in ("add", "remove"):
+        raise IssueManifestError(f"{context}: op must be 'add' or 'remove'")
+    remove = op == "remove"
+    if remove and not (isinstance(target, ExistingIssue) and isinstance(related, ExistingIssue)):
+        raise IssueManifestError(
+            f"{context}: remove needs existing issue numbers; a new issue has no relations"
+        )
+    if sub_issue:
+        return SubIssueAction(repo=repo, target=target, child=related, remove=remove)
+    return DependencyAction(repo=repo, target=target, blocker=related, remove=remove)
+
+
 def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManifest:
     """Parse one issue manifest using only its text and outbox file snapshot."""
     if _utf8_size(text, "manifest", name) > MAX_MANIFEST_BYTES:
@@ -719,6 +815,8 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             action = _parse_assignees_action(item, refs, changed, context)
         elif action_type == "state":
             action = _parse_state_action(item, refs, changed, context)
+        elif action_type in ("sub_issue", "dependency"):
+            action = _parse_relation(item, refs, context)
         elif action_type in ("project_add", "project_set", "project_clear", "project_remove"):
             _reject_unknown(
                 item,
@@ -788,10 +886,19 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
         else:
             raise IssueManifestError(
                 f"{context}: type must be one of create, edit, comment, comment_edit, labels, "
-                "assignees, state, project_add, project_set, project_clear, or project_remove"
+                "assignees, state, project_add, project_set, project_clear, project_remove, "
+                "sub_issue, or dependency"
             )
         if not isinstance(action, CreateAction):
             _record_mutations(changed, action.repo, action.target, mutation_keys(action), context)
+        if isinstance(action, (SubIssueAction, DependencyAction)):
+            related = related_issue(action)
+            if isinstance(related, CreatedIssue):
+                # Manifest-local: a ref names one create only within this manifest.
+                field = "sub_issue" if isinstance(action, SubIssueAction) else "blocked_by"
+                _record_mutations(
+                    changed, action.repo, action.target, {f"{field}:@{related.ref}"}, context
+                )
         actions.append(action)
 
     bodies = [
