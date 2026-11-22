@@ -307,7 +307,11 @@ def parse_service_rows(stdout: str) -> tuple[ServiceRow, ...]:
             seen.add(name)
             description = item.get("description")
             rows.append(
-                ServiceRow(name, state, description if isinstance(description, str) else "")
+                ServiceRow(
+                    name,
+                    state,
+                    " ".join(description.split()) if isinstance(description, str) else "",
+                )
             )
         return tuple(rows)
     except (ValueError, TypeError) as exc:

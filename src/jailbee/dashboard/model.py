@@ -584,7 +584,9 @@ def _gather_rows(
                 autostart_profiles=profile_names(cfg.autostart),
                 autostart_services=tuple(cfg.services),
                 service_descriptions={
-                    name: svc.description for name, svc in cfg.services.items() if svc.description
+                    name: " ".join(svc.description.split())
+                    for name, svc in cfg.services.items()
+                    if svc.description.strip()
                 },
                 autostart_default_profile=cfg.autostart.default_profile or "all",
                 orchestration_profiles=tuple(sorted(orch_view.profiles)),

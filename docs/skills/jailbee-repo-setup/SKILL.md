@@ -80,7 +80,7 @@ If the repo has none of these and is just docs/scripts, the defaulted config is 
 Give each service a one-line `description` saying what it does and when it is
 needed (for example `Postgres; start before integration tests`). An in-container
 agent sees it in `jailbee service ls` and decides what to start; the dashboard
-shows it in the custom-services picker.
+shows it in the `Services…` list and the custom-services picker.
 
 ### Service status and log filters
 
