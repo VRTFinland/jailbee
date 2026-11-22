@@ -345,3 +345,11 @@ def test_comment_edit_dry_run_shows_a_before_after_diff_and_publishes_nothing(
     out = capsys.readouterr().out
     assert "-Old wording" in out and "+Fixed wording" in out
     github.edit_comment.assert_not_called()
+
+
+def test_comment_edit_that_already_landed_points_at_resolve(cfg, incus, github, capsys):
+    github.read_comment.return_value = snapshot(body="Fixed wording")
+    name = stage(manifest(COMMENT_EDIT))
+    assert review_apply(cfg, incus, name) == 1
+    github.edit_comment.assert_not_called()
+    assert "already reads the new body" in capsys.readouterr().err

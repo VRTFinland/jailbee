@@ -117,7 +117,14 @@ def _stage(
         broker.draft_append("pr", batch, action, bodies, envelope=envelope)
         typer.echo(f"staged pr draft {batch}")
     else:
-        _announce(broker.put("pr", str(action["type"]), {**envelope, "actions": [action]}, bodies))
+        _announce(
+            broker.put(
+                "pr",
+                str(action["type"]).replace("_", "-"),
+                {**envelope, "actions": [action]},
+                bodies,
+            )
+        )
 
 
 @pr_app.command("comment")
