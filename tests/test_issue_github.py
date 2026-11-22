@@ -527,3 +527,87 @@ def test_assignee_mutations_without_an_assignees_field_are_uncertain(tmp_path, m
     with pytest.raises(IssueGithubMutationError) as error:
         call(tmp_path, "acme/widgets", 42, logins=("alice",))
     assert error.value.uncertain is True
+
+
+def _comment_payload(**overrides: object) -> str:
+    payload: dict[str, object] = {
+        "id": 9001,
+        "user": {"login": "alice"},
+        "body": "Confirmed",
+        "html_url": "https://github.com/acme/widgets/pull/42#issuecomment-9001",
+        "issue_url": "https://api.github.com/repos/acme/widgets/issues/42",
+    }
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
+def test_get_issue_comment_returns_author_body_and_parent_number(tmp_path, mocker):
+    from jailbee.comment_edit import CommentSnapshot
+    from jailbee.issue_github import get_issue_comment
+
+    run = mocker.patch(
+        "jailbee.issue_github.subprocess.run", return_value=_completed(stdout=_comment_payload())
+    )
+
+    snapshot = get_issue_comment(tmp_path, "acme/widgets", 9001)
+
+    assert snapshot == CommentSnapshot(
+        9001, "alice", "Confirmed", "https://github.com/acme/widgets/pull/42#issuecomment-9001", 42
+    )
+    _assert_api_call(
+        run, tmp_path, ["gh", "api", "repos/acme/widgets/issues/comments/9001"], None
+    )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"user": None}, {"user": {"login": 3}}, {"body": 5}, {"id": "9001"}, {"html_url": ""}],
+)
+def test_get_issue_comment_rejects_wrongly_shaped_responses(tmp_path, mocker, overrides):
+    from jailbee.issue_github import get_issue_comment
+
+    mocker.patch(
+        "jailbee.issue_github.subprocess.run",
+        return_value=_completed(stdout=_comment_payload(**overrides)),
+    )
+    with pytest.raises(IssueGithubReadError):
+        get_issue_comment(tmp_path, "acme/widgets", 9001)
+
+
+def test_get_issue_comment_normalizes_null_body_and_unknown_parent(tmp_path, mocker):
+    from jailbee.issue_github import get_issue_comment
+
+    mocker.patch(
+        "jailbee.issue_github.subprocess.run",
+        return_value=_completed(stdout=_comment_payload(body=None, issue_url=None)),
+    )
+    snapshot = get_issue_comment(tmp_path, "acme/widgets", 9001)
+    assert (snapshot.body, snapshot.parent) == ("", None)
+
+
+def test_edit_issue_comment_patches_only_the_body(tmp_path, mocker):
+    from jailbee.issue_github import edit_issue_comment
+
+    run = mocker.patch(
+        "jailbee.issue_github.subprocess.run", return_value=_completed(stdout=_comment_payload())
+    )
+
+    receipt = edit_issue_comment(tmp_path, "acme/widgets", 9001, issue=42, body="Fixed")
+
+    assert receipt == MutationReceipt(
+        42, "https://github.com/acme/widgets/pull/42#issuecomment-9001"
+    )
+    _assert_api_call(
+        run,
+        tmp_path,
+        [
+            "gh",
+            "api",
+            "repos/acme/widgets/issues/comments/9001",
+            "--method",
+            "PATCH",
+            "--input",
+            "-",
+        ],
+        '{"body": "Fixed"}',
+    )

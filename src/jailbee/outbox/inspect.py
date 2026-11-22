@@ -80,6 +80,8 @@ def _issue_action(index: int, action: issues.IssueAction) -> ActionView:
             title, body, kind = action.title, action.body, "edit"
         elif isinstance(action, issues.CommentAction):
             body, kind = action.body, "comment"
+        elif isinstance(action, issues.CommentEditAction):
+            body, kind = action.body, "comment_edit"
         elif isinstance(action, issues.LabelsAction):
             body, kind, markdown = (
                 f"add: {', '.join(action.add)}\nremove: {', '.join(action.remove)}",

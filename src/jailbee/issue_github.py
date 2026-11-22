@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeGuard
 
+from jailbee.comment_edit import CommentSnapshot
+
 _HTTP_STATUS_RE = re.compile(r"\bHTTP\s+([45]\d{2})\b", re.IGNORECASE)
 _TIMEOUT_SECONDS = 60
 
@@ -383,3 +385,43 @@ def set_state(
         mutation=True,
     )
     return _mutation_receipt(data)
+
+
+_ISSUE_API_URL_RE = re.compile(r"https://api\.github\.com/repos/[^/]+/[^/]+/issues/([1-9][0-9]*)")
+
+
+def get_issue_comment(repo_root: Path, repo: str, comment_id: int) -> CommentSnapshot:
+    """Return one issue or PR conversation comment (both live under issues/comments)."""
+    data = _read_object(_run_api(repo_root, f"repos/{repo}/issues/comments/{comment_id}"))
+    user = _read_object(data.get("user"))
+    raw_body = data.get("body")
+    if raw_body is not None and not isinstance(raw_body, str):
+        raise IssueGithubReadError("GitHub read failed: unexpected response")
+    issue_url = data.get("issue_url")
+    match = _ISSUE_API_URL_RE.fullmatch(issue_url) if isinstance(issue_url, str) else None
+    return CommentSnapshot(
+        id=_read_number(data.get("id")),
+        author=_read_string(user.get("login")),
+        body=raw_body or "",
+        url=_read_string(data.get("html_url")),
+        parent=int(match.group(1)) if match else None,
+    )
+
+
+def edit_issue_comment(
+    repo_root: Path,
+    repo: str,
+    comment_id: int,
+    *,
+    issue: int,
+    body: str,
+) -> MutationReceipt:
+    """Replace the body of one issue or PR conversation comment."""
+    data = _run_api(
+        repo_root,
+        f"repos/{repo}/issues/comments/{comment_id}",
+        method="PATCH",
+        payload={"body": body},
+        mutation=True,
+    )
+    return _mutation_receipt(data, issue=issue)
