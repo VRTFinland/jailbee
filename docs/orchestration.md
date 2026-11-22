@@ -161,7 +161,7 @@ editors; its board picker supports adding a board and editing its action rights.
 comment. Publication still refuses a comment written by any account other than the
 host's publishing account, or one changed since staging. `comment` does not
 imply it. Editing a submitted PR review (line) comment is a `comment_edit` action in
-the PR manifest and needs its own right, `publish.pr_comment_edits`, on top of
+the PR manifest and needs its own right, `publish.pr_comment_edits`, which requires
 `publish.pr_reviews`: `pr_reviews` does not imply it, and a PR manifest containing a
 `comment_edit` is refused at the publish gate without it. Replies and comments
 are unaffected. The repo cap narrows it like the other rights.

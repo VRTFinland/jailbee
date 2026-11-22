@@ -295,7 +295,10 @@ class PublishRights(BaseModel):
             ),
             pull_requests=self.pull_requests and cap.pull_requests,
             pr_reviews=self.pr_reviews and cap.pr_reviews,
-            pr_comment_edits=self.pr_comment_edits and cap.pr_comment_edits,
+            pr_comment_edits=self.pr_comment_edits
+            and cap.pr_comment_edits
+            and self.pr_reviews
+            and cap.pr_reviews,
             max_actions_per_hour=min(self.max_actions_per_hour, cap.max_actions_per_hour),
         )
 

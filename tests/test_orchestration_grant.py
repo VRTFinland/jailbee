@@ -488,3 +488,4 @@ def test_pr_comment_edits_is_capped_and_not_implied_by_pr_reviews() -> None:
     assert PublishRights(pr_comment_edits=True).empty() is False
     assert wanted.narrowed(PublishRights(pr_reviews=True)).pr_comment_edits is False
     assert wanted.narrowed(wanted).pr_comment_edits is True
+    assert wanted.narrowed(PublishRights(pr_comment_edits=True)).pr_comment_edits is False

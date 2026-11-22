@@ -265,6 +265,8 @@ def _publish_rights(base: PublishRights, flags: GrantFlags) -> PublishRights:
     for name in ("pull_requests", "pr_reviews", "pr_comment_edits", "max_actions_per_hour"):
         if changes[name] is not None:
             data[name] = changes[name]
+    if data["pr_comment_edits"] and not data["pr_reviews"]:
+        raise GrantError("--publish-pr-comment-edits needs --publish-pr-reviews")
     return PublishRights.model_validate(data)
 
 

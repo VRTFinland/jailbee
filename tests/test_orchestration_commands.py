@@ -983,3 +983,12 @@ def test_local_grant_is_unbounded(make_cfg, tmp_path, incus, ensure):
     cfg = _wide_cfg(make_cfg, tmp_path, profile_loose=True)
     g = commands.grant(cfg, incus, "myrepo-a", GrantFlags(profile="wide"))
     assert g.grantable.loose is True and g.grantable.mounts == ("data",)
+
+
+def test_comment_edits_right_needs_pr_reviews(cfg):
+    with pytest.raises(GrantError, match="needs --publish-pr-reviews"):
+        commands.build_grant(cfg, None, GrantFlags(publish_pr_comment_edits=True))
+    rights = commands.build_grant(
+        cfg, None, GrantFlags(publish_pr_reviews=True, publish_pr_comment_edits=True)
+    ).publish
+    assert rights.pr_comment_edits is True
