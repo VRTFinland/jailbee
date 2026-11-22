@@ -199,7 +199,7 @@ Live, auto-refreshing TUI of containers across all repos; the Outbox box has a S
 
 ### Rows, columns and sorting
 
-- Fitted column widths never make the NAME column wider than 20 cells (tree indent and `⎈` included); a longer name ends in `…`, and a failed-autostart `⚠` stays visible after the cut.
+- Fitted column widths never make the NAME column wider than 20 cells (tree indent and `⎈` included); a longer name ends in `…`, and a failed-autostart `⚠` stays visible after the cut. A container stopped mid-merge (a conflict left its tree in merge state) carries a white-on-red `⑂` after its name, ahead of any `⚠`; it is cut the same way and disappears at the next refresh once the merge is concluded or aborted.
 - The details panel's title shows the whole label uncut (`⎈`, alias and name).
 - A stopped container's row is drawn dim.
 - Orchestration children are listed directly under their orchestrator, indented with `└`, whatever the sort; a child whose orchestrator is not listed is marked `⑂`.
