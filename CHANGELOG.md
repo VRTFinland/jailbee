@@ -93,12 +93,13 @@ before editing `## Unreleased`.
   keeps its cursor on the same entry while output streams, a background action
   keeps running during a tmux hand-off, and an action whose worker crashes
   settles instead of staying running. Background
-  lifecycle jobs (create, start/restart, autostart), whoever started them, are listed
+  lifecycle jobs (create, start/restart, autostart, destroy), whoever started them, are listed
   there too as read-only rows with a way to open the job log; they count in the badge
   and go when the job does (a hidden repo's jobs are left out, and a failed job
   already listed does not reopen the queue after a hand-off). A bulk verb run in
-  parallel (stop, destroy, outbox clear, …) is one entry per container, with its
-  exit status and error output.
+  parallel (stop, outbox clear, …) is one entry per container, with its
+  exit status and output; start, restart and destroy run as background jobs, so
+  their progress and failure are the job row, not an entry.
   The critical actions (`merge` or `git merge`, `git push --merge`, `git pull`, `pr push`) open
   directly in their entry's live screen as a modal and refuse every terminal
   hand-off while they run in the foreground; `b` (continue in the background)

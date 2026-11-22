@@ -318,7 +318,7 @@ def _snapshot_jobs(mocker, session):
     original = session.jobs.start
 
     def start(key, label, argv, cwd, on_done, **kwargs):
-        if kwargs.get("capture_stdout"):
+        if key.startswith("clear-snapshot:"):
             name = argv[3]
             items = tuple(
                 ClearItem(
@@ -330,7 +330,7 @@ def _snapshot_jobs(mocker, session):
             session.jobs._labels[key] = label
             session.jobs._finished.append((key, on_done, JobResult(0, "", token)))
         else:
-            original(key, label, argv, cwd, on_done)
+            original(key, label, argv, cwd, on_done, **kwargs)
 
     return mocker.patch.object(session.jobs, "start", side_effect=start)
 
@@ -1382,3 +1382,121 @@ def test_marked_orphans_offer_a_bulk_destroy_run_from_home(mocker):
         ["jailbee", "orphan", "destroy", "ghost-b", "--force"],
     ]
     assert all(c.kwargs["cwd"] == dmodel.RepoTarget.orphan().cwd() for c in child.call_args_list)
+
+
+def _finishing_jobs(session, result):
+    """Replace ``session.jobs.start`` so each child ends at the next tick with ``result``."""
+
+    def start(key, label, argv, cwd, on_done, **kwargs):
+        session.jobs._labels[key] = label
+        session.jobs._finished.append((key, on_done, result))
+
+    return start
+
+
+def test_a_successful_bulk_entry_shows_what_the_child_printed_on_stdout(mocker, tmp_path):
+    from jailbee.dashboard.jobs import JobResult
+
+    session, _, _ = _session(mocker, tmp_path, "Running")
+    mocker.patch.object(
+        session.jobs, "start", side_effect=_finishing_jobs(session, JobResult(0, "", "now strict"))
+    )
+
+    session.run_bulk(plan_bulk(session.groups, ["alpha-a"], "stop"))
+    session.tick()
+
+    (entry,) = list(session.queue)
+    assert (entry.state, entry.output) == ("done", "now strict")
+
+
+def test_bulk_children_capture_stdout(mocker, tmp_path):
+    session, _, _ = _session(mocker, tmp_path, "Running")
+    start = mocker.patch.object(session.jobs, "start")
+
+    _stop(session, "alpha-a")
+
+    assert start.call_args.kwargs.get("capture_stdout") is True
+
+
+def test_a_bulk_entry_keeps_only_the_tail_of_long_output(mocker, tmp_path):
+    from jailbee.dashboard.jobs import JobResult
+    from jailbee.dashboard.runner import OUTPUT_DROPPED_MARKER, OUTPUT_KEEP_CHARS
+
+    session, _, _ = _session(mocker, tmp_path, "Running")
+    big = "x" * (OUTPUT_KEEP_CHARS + 10) + "END"
+    mocker.patch.object(
+        session.jobs, "start", side_effect=_finishing_jobs(session, JobResult(0, "", big))
+    )
+
+    _stop(session, "alpha-a")
+    session.tick()
+
+    (entry,) = list(session.queue)
+    assert entry.output.startswith(OUTPUT_DROPPED_MARKER)
+    assert entry.output.endswith("END")
+    assert len(entry.output) == len(OUTPUT_DROPPED_MARKER) + OUTPUT_KEEP_CHARS
+
+
+def test_a_finishing_bulk_child_updates_an_open_queue_overlay(mocker, tmp_path):
+    _children(mocker, failing=("alpha-a",), stderr="boom")
+    session, _, _ = _session(mocker, tmp_path, "Running")
+    _stop(session, "alpha-a")
+    session.open_queue()
+    changed = mocker.patch.object(session, "_queue_changed")
+
+    session.tick()
+
+    changed.assert_called()
+
+
+def test_a_bulk_child_refused_as_already_running_leaves_no_queue_entry(mocker, tmp_path):
+    session, _, _ = _session(mocker, tmp_path, "Running")
+    mocker.patch.object(session.jobs, "start", side_effect=ValueError("running"))
+
+    _stop(session, "alpha-a")
+
+    assert list(session.queue) == []
+
+
+def test_an_unexpected_start_error_does_not_leave_a_running_entry(mocker, tmp_path):
+    session, _, _ = _session(mocker, tmp_path, "Running")
+    mocker.patch.object(session.jobs, "start", side_effect=RuntimeError("bug"))
+
+    with pytest.raises(RuntimeError):
+        _stop(session, "alpha-a")
+
+    assert list(session.queue) == []
+    assert session.bulk_running() == frozenset()
+
+
+def test_tracked_bulk_verbs_have_no_entry_of_their_own(mocker, tmp_path):
+    _children(mocker)
+    session, _, _ = _session(mocker, tmp_path, "Stopped")
+
+    session.run_bulk(plan_bulk(session.groups, ["alpha-a"], "start"))
+    session.tick()
+
+    assert list(session.queue) == []
+
+
+def test_untracked_parallel_verbs_keep_their_entry(mocker, tmp_path):
+    _children(mocker)
+    session, _, _ = _session(mocker, tmp_path, "Running")
+
+    _stop(session, "alpha-a")
+
+    assert len(list(session.queue)) == 1
+
+
+def test_a_failed_background_destroy_is_a_queue_row():
+    from jailbee import background
+    from jailbee.dashboard.notifications import LIFECYCLE_JOB_KINDS
+
+    assert background.JOB_DESTROY in LIFECYCLE_JOB_KINDS
+
+
+def test_parallel_verbs_are_never_critical():
+    from jailbee.dashboard.bulk import PARALLEL_VERBS
+    from jailbee.dashboard.notifications import is_critical
+
+    assert not any(is_critical(verb.split()) for verb in PARALLEL_VERBS)
