@@ -1487,6 +1487,7 @@ def test_publish_batch_over_ssh_hands_off_manifests_then_pr_creations():
         dob.outbox_apply_argv(C, "pr/a.json", "r1", yes=False),
         ["pr", "push", C],
     ]
+    assert ctl.state.marks == frozenset()
 
 
 def test_publish_batch_across_containers_prefixes_headers():

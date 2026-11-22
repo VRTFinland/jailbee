@@ -359,7 +359,8 @@ def test_hint_drops_unavailable_abilities():
     assert "a all repos" in standalone and standalone.startswith("q quit")
     none = dob.outbox_hint(_state(_proposal()), standalone=False)
     assert "d delete" not in none and "p publish" not in none and "a all" not in none
-    create_only = _state(_proposal(), abilities=dob.Abilities(False, False, False, True, False, False))
+    create = dob.Abilities(False, False, False, True, False, False)
+    create_only = _state(_proposal(), abilities=create)
     assert "p publish" in dob.outbox_hint(create_only, standalone=False)
     assert "p publish" in dob.outbox_hint(create_only, standalone=True)
     q = dob.Question("p", "T", (), (), "")
