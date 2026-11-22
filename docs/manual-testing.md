@@ -2244,7 +2244,7 @@ jailbee issue apply feat-issuesmoke 007-uncertain.json -y
 gh issue list --repo <owner>/<repo> --search "Uncertain outcome smoke test in:title" --json number,url
 
 # 7a. It did NOT land — forget it and let the next apply create it for real.
-jailbee issue resolve feat-issuesmoke 007-uncertain.json 0 --retry -y
+jailbee outbox resolve feat-issuesmoke issue/007-uncertain.json 0 --retry -y
 # expect: "007-uncertain.json action 0: retried"
 jailbee outbox ls feat-issuesmoke   # STATE=pending again
 jailbee issue apply feat-issuesmoke 007-uncertain.json -y   # now creates it
@@ -2254,7 +2254,7 @@ gh issue list --repo <owner>/<repo> --search "Uncertain outcome smoke test in:ti
 # 7b. To exercise the OTHER branch (it DID land despite the transport
 #     error): repeat the block-then-apply steps above with a fresh manifest
 #     (a new ref/title), confirm the issue exists on GitHub this time, then:
-jailbee issue resolve feat-issuesmoke <manifest> 0 --applied --issue <the-number-that-appeared> \
+jailbee outbox resolve feat-issuesmoke issue/<manifest> 0 --applied --issue <the-number-that-appeared> \
   --url https://github.com/<owner>/<repo>/issues/<the-number-that-appeared> -y
 # expect: "<manifest> action 0: marked applied" — no duplicate issue created,
 #         and re-running `jailbee issue apply feat-issuesmoke <manifest>` finds
