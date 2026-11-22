@@ -474,3 +474,68 @@ def test_refresh_failure_keeps_source_hint_visible():
     rendered = run(controller.state, scenario, size=(80, 30), standalone=True)
     assert "non-fast-forward update" in rendered
     assert "--source-manifest a.json --force" in rendered
+
+
+# -- the full-screen reader (`f`) ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("preview", "size", "value"),
+    [
+        ("auto", (140, 30), "full"),  # beside the list at ≥110 columns: still preview-only
+        ("auto", (80, 30), "full"),
+        ("on", (80, 30), "full"),
+    ],
+)
+def test_f_opens_the_reader(preview, size, value):
+    async def scenario(app, box, pilot):
+        return await press(box, "f", "f")
+
+    got = run(state2(preview=preview), scenario, size=size)
+    assert (got.name, got.value) == ("preview", value)
+
+
+@pytest.mark.parametrize("key", ["escape", "enter", "f", "v"])
+def test_reader_keys_return_to_the_list(key):
+    async def scenario(app, box, pilot):
+        return await press(box, key, key if len(key) == 1 else None)
+
+    got = run(state2(preview="full"), scenario, size=(140, 30))
+    assert isinstance(got, OutboxBox.Intent)
+    assert (got.name, got.value) == ("preview", "auto")
+
+
+@pytest.mark.parametrize("size", [(80, 30), (140, 30)])
+def test_reader_shows_only_the_preview_at_any_width(size):
+    async def scenario(app, box, pilot):
+        return (
+            app.query_one(f"#{NATIVE_LIST_ID}").display,
+            app.query_one("#outbox-right").display,
+        )
+
+    assert run(state2(preview="full"), scenario, size=size) == (False, True)
+
+
+def test_reader_scrolls_with_the_keys():
+    many = [_action(i, body="line\n" * 5) for i in range(12)]
+
+    async def scenario(app, box, pilot):
+        scroll = app.query_one("#outbox-preview")
+        assert scroll.max_scroll_y > 0
+        await press(box, "pagedown")
+        await pilot.pause(1.0)  # the scroll animates
+        moved = scroll.scroll_y
+        await press(box, "home")
+        await pilot.pause(1.0)
+        return moved, scroll.scroll_y
+
+    spec = _state(_proposal(A, actions=many), preview="full", abilities=ALL)
+    moved, back = run(spec, scenario, size=(140, 14))
+    assert moved > 0 and back < moved
+
+
+def test_a_question_brings_the_list_back_out_of_the_reader():
+    async def scenario(app, box, pilot):
+        return app.query_one("#outbox-right").display
+
+    assert run(state2(preview="full", question=question()), scenario, size=(140, 30)) is True

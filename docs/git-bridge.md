@@ -1387,7 +1387,7 @@ in the hint line: ↑/↓ move, Enter/→ expand, ← collapse, `Space` mark a r
 and everything under it (unmarking a row also unmarks the rows above it), `d`
 delete the marked rows (or the highlighted one), `p` publish the marked
 proposals (or the highlighted one) — PR creations included,
-`X` clear the outbox, `v` preview on/off, `m` the raw manifest, `r` refresh;
+`X` clear the outbox, `v` preview on/off, `f` read the preview full screen (any width; `f` or Esc returns to the list with the cursor kept), `m` the raw manifest, `r` refresh;
 in `jb outbox`, `a` switches between this repository and all registered ones
 and `q` or Esc quits, while in the dashboard Esc goes back to the container
 menu. Below 110 columns the preview is not beside the list: Enter on a row

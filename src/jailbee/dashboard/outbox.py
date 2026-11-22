@@ -192,7 +192,7 @@ class OutboxState:
     expanded: frozenset[RowKey] = frozenset()
     marks: frozenset[RowKey] = frozenset()
     cursor: RowKey | None = None
-    preview: Literal["auto", "on", "off"] = "auto"
+    preview: Literal["auto", "on", "off", "full"] = "auto"
     raw: bool = False
     question: Question | None = None
     busy: str | None = None
@@ -816,7 +816,7 @@ def outbox_hint(state: OutboxState, *, standalone: bool) -> str:
         return "↑/↓ choose · Enter confirm · Esc cancel"
     ab = state.abilities
     if state.tab == "sent":
-        parts = ["↑/↓ move", "o open URL", "v preview"]
+        parts = ["↑/↓ move", "o open URL", "v preview", "f full screen"]
         if not state.sent_repo:
             parts.append("Tab Outbox")
         return " · ".join([*parts, "r refresh", "Esc close"])
@@ -831,7 +831,7 @@ def outbox_hint(state: OutboxState, *, standalone: bool) -> str:
         parts.append("p publish")
     if ab.clear:
         parts.append("X clear")
-    parts += ["v preview", "m manifest"]
+    parts += ["v preview", "f full screen", "m manifest"]
     if standalone and ab.scope:
         parts.append("a all repos")
     parts.append("r refresh")
@@ -852,7 +852,7 @@ def _standalone_hint(ab: Abilities) -> str:
         parts.append("p publish")
     if ab.clear:
         parts.append("X clear")
-    parts += ["v preview", "m raw"]
+    parts += ["v view", "f full", "m raw"]
     if ab.scope:
         parts.append("a all repos")
     parts.append("r refresh")

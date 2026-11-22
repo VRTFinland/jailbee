@@ -6,8 +6,9 @@ it never changes the state itself. Keys reach it only through `handle_key`.
 
 Layout: the row list and the preview sit side by side from
 `SIDE_BY_SIDE_MIN_COLS` columns of content; below that the preview replaces the
-list while it is on (`v`), or while a question is open (the question's lines
-live in the preview and must be readable). A question's choices are a second
+list while it is on (`v`), while the full-screen reader is open (`f`, at any width;
+Esc or `f` leaves it), or while a question is open (the question's lines live in
+the preview and must be readable). A question's choices are a second
 list under the preview and take the keys.
 """
 
@@ -210,16 +211,18 @@ class OutboxBox(OverlayBox):
             return 80
 
     def _side(self) -> bool:
-        return self._width >= SIDE_BY_SIDE_MIN_COLS and self.panel.preview != "off"
+        return self._width >= SIDE_BY_SIDE_MIN_COLS and self.panel.preview not in ("off", "full")
 
     def _preview_shown(self) -> bool:
         if self.panel.question is not None:
             return True
         if self.panel.preview == "off":
             return False
-        return self._width >= SIDE_BY_SIDE_MIN_COLS or self.panel.preview == "on"
+        return self._width >= SIDE_BY_SIDE_MIN_COLS or self.panel.preview in ("on", "full")
 
     def _list_shown(self) -> bool:
+        if self.panel.preview == "full" and self.panel.question is None:
+            return False  # the full-screen reader: the preview alone, at any width
         return not (self._preview_shown() and self._width < SIDE_BY_SIDE_MIN_COLS)
 
     def _list_width(self) -> int:
@@ -476,6 +479,8 @@ class OutboxBox(OverlayBox):
             return self.Cancelled(self.key) if self.standalone else False
         if key == "v":
             return self._intent("preview", self._preview_toggle())
+        if key == "f":
+            return self._intent("preview", "auto" if self.panel.preview == "full" else "full")
         if key == "enter" and not self._preview_shown():
             row = self._cursor_key()
             if row is not None and not has_children(self.panel, row):
