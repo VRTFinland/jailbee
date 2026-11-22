@@ -725,7 +725,9 @@ and keeps drawing while it runs; the status line names the running command.
   entry offers `Show output` (`o`: the full output on a scrollable screen;
   Enter, Esc or `q` closes it) and, once it has finished, `Dismiss` (`d`);
   `Dismiss finished` (`D`) clears every finished entry. A running entry
-  cannot be dismissed. The queue lives as long as the dashboard.
+  cannot be dismissed. The cursor stays on its entry while output streams in,
+  and a running action keeps going while a tmux hand-off has the terminal.
+  The queue lives as long as the dashboard.
 - **Attach-style actions still hand over the terminal:** shell, tmux, IDE,
   browsers and `apps run`, the orphan tmux and shell entries, `config edit`
   (a full-screen editor), a followed `job log` and the outbox publish
