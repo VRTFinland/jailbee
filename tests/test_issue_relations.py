@@ -156,7 +156,7 @@ def test_two_changes_of_one_relation_in_a_manifest_conflict():
 # --------------------------------------------------------------------------
 
 
-def _issue_json(number, repo="acme/app", pull=False):
+def _issue_json(number, repo="acme/app", pull=False, parent=None):
     data = {
         "id": 1000 + number,
         "number": number,
@@ -169,6 +169,9 @@ def _issue_json(number, repo="acme/app", pull=False):
     }
     if pull:
         data["pull_request"] = {}
+    data["parent_issue_url"] = (
+        f"https://api.github.com/repos/{repo}/issues/{parent}" if parent else None
+    )
     return data
 
 
@@ -183,6 +186,8 @@ class FakeGitHub:
         self.created: list[int] = []
         self.mutations: list[tuple[str, str, object]] = []
         self.fail_mutation: str | None = None
+        self.parents: dict[int, int] = {}
+        self.calls: list[tuple[list[str], object]] = []
 
     def _number(self, issue_id):
         return issue_id - 1000
@@ -194,6 +199,11 @@ class FakeGitHub:
         assert cmd[:2] == ["gh", "api"], cmd
         endpoint = cmd[2]
         method = cmd[cmd.index("--method") + 1] if "--method" in cmd else "GET"
+        self.calls.append((cmd, kwargs.get("input")))
+        if "--input" in cmd:
+            assert kwargs.get("input") is not None, "--input - would wait on stdin"
+        elif method != "GET":
+            assert kwargs.get("input") is None
         payload = json.loads(kwargs["input"]) if kwargs.get("input") else None
         prefix = "repos/acme/app/"
         assert endpoint.startswith(prefix), endpoint
@@ -210,7 +220,7 @@ class FakeGitHub:
             out = _issue_json(number)
         elif len(parts) == 2 and method == "GET":
             number = int(parts[1])
-            out = _issue_json(number, pull=number in self.pulls)
+            out = _issue_json(number, pull=number in self.pulls, parent=self.parents.get(number))
         elif parts[2:] == ["sub_issues"] and method == "GET":
             return subprocess.CompletedProcess(
                 cmd, 0, self._page(self.sub_issues.get(int(parts[1]), set())), ""
@@ -224,7 +234,7 @@ class FakeGitHub:
         elif parts[2:] == ["sub_issue"] and method == "DELETE":
             assert set(payload) == {"sub_issue_id"}
             self.sub_issues[int(parts[1])].discard(self._number(payload["sub_issue_id"]))
-            out = _issue_json(int(parts[1]))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
         elif parts[2:] == ["dependencies", "blocked_by"] and method == "GET":
             return subprocess.CompletedProcess(
                 cmd, 0, self._page(self.blocked_by.get(int(parts[1]), set())), ""
@@ -236,7 +246,7 @@ class FakeGitHub:
         elif parts[2:4] == ["dependencies", "blocked_by"] and method == "DELETE":
             assert payload is None
             self.blocked_by[int(parts[1])].discard(self._number(int(parts[4])))
-            out = _issue_json(int(parts[1]))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
         else:
             raise AssertionError(f"unexpected gh api call: {method} {endpoint}")
         return subprocess.CompletedProcess(cmd, 0, json.dumps(out), "")
@@ -314,6 +324,22 @@ def test_remove_sub_issue_and_dependency(preflight, github):  # noqa: F811
     ]
 
 
+def test_removals_send_the_payload_only_where_the_api_takes_one(preflight, github):  # noqa: F811
+    github.sub_issues = {10: {12}}
+    github.blocked_by = {12: {10}}
+    batch = preflight["prepare"]({"a.json": [_sub(op="remove"), _dep(op="remove")]})
+
+    assert _publish(preflight, batch).failure is None
+
+    deletes = {cmd[2]: (cmd, stdin) for cmd, stdin in github.calls if "DELETE" in cmd}
+    sub_cmd, sub_stdin = deletes["repos/acme/app/issues/10/sub_issue"]
+    assert sub_cmd[-2:] == ["--input", "-"]
+    assert json.loads(sub_stdin) == {"sub_issue_id": 1012}
+    dep_cmd, dep_stdin = deletes["repos/acme/app/issues/12/dependencies/blocked_by/1010"]
+    assert "--input" not in dep_cmd
+    assert dep_stdin is None
+
+
 def test_relations_to_a_create_resolve_after_it(preflight, github):  # noqa: F811
     from jailbee import issue_outbox
 
@@ -376,6 +402,92 @@ def test_preflight_refuses_a_relation_already_in_its_end_state(
     with pytest.raises(issue_outbox.IssueGateError, match=message):
         preflight["prepare"]({"a.json": actions})
     assert github.mutations == []
+
+
+def test_preflight_refuses_a_child_that_already_has_another_parent(preflight, github):  # noqa: F811
+    from jailbee import issue_outbox
+
+    github.parents = {12: 11}
+    with pytest.raises(issue_outbox.IssueGateError, match="#12 is already a sub-issue of #11"):
+        preflight["prepare"]({"a.json": [_sub()]})
+    assert github.mutations == []
+
+
+def test_child_with_another_parent_is_refused_when_the_parent_is_a_new_issue(
+    preflight,  # noqa: F811
+    github,
+):
+    from jailbee import issue_outbox
+
+    github.parents = {12: 11}
+    actions = [_create(), {**_sub(), "issue": None, "issue_ref": "bug"}]
+    actions[1].pop("issue")
+    with pytest.raises(issue_outbox.IssueGateError, match="#12 is already a sub-issue of #11"):
+        preflight["prepare"]({"a.json": actions})
+    assert github.mutations == []
+
+
+def test_child_can_move_to_another_parent_within_one_batch(preflight, github):  # noqa: F811
+    github.sub_issues = {11: {12}}
+    github.parents = {12: 11}
+    batch = preflight["prepare"]({"a.json": [_sub(issue=11, op="remove"), _sub()]})
+    from jailbee import issue_outbox
+
+    issue_outbox.revalidate_batch(batch)
+
+
+def test_child_with_another_parent_is_refused_on_revalidate(preflight, github):  # noqa: F811
+    from jailbee import issue_outbox
+
+    batch = preflight["prepare"]({"a.json": [_sub()]})
+    github.parents = {12: 11}
+    with pytest.raises(issue_outbox.IssueStaleError, match="#12 is already a sub-issue of #11"):
+        issue_outbox.revalidate_batch(batch)
+
+
+def test_one_child_under_two_parents_conflicts_across_manifests(preflight, github):  # noqa: F811
+    from jailbee import issue_outbox
+
+    with pytest.raises(issue_outbox.IssueGateError, match="conflict on parent"):
+        preflight["prepare"]({"a.json": [_sub()], "b.json": [_sub(issue=11)]})
+
+
+def test_one_child_under_two_parents_conflicts_in_a_manifest():
+    with pytest.raises(IssueManifestError, match="already changes field 'parent'"):
+        _manifest(_sub(), _sub(issue=11))
+
+
+def test_direct_dependency_cycle_in_a_batch_is_refused(preflight, github):  # noqa: F811
+    from jailbee import issue_outbox
+
+    with pytest.raises(issue_outbox.IssueGateError, match="dependency cycle between #10 and #12"):
+        preflight["prepare"](
+            {"a.json": [_dep()], "b.json": [_dep(issue=10, blocked_by=12)]},
+        )
+    assert github.mutations == []
+
+
+def test_removing_one_direction_is_not_a_cycle(preflight, github):  # noqa: F811
+    github.blocked_by = {12: {10}}
+    preflight["prepare"]({"a.json": [_dep(op="remove"), _dep(issue=10, blocked_by=12)]})
+
+
+def test_uncertain_relation_points_at_resolve_applied_before_retry():
+    from jailbee import issue_outbox
+    from jailbee.outbox_io import IssueJournal, JournalAction
+
+    manifest = _manifest(_sub(), _dep())
+    journal = IssueJournal(
+        issue_outbox.ContainerIdentity("c", ""),
+        "a.json",
+        "d",
+        2,
+        (JournalAction(0, "uncertain", "acme/app"), JournalAction(1, "uncertain", "acme/app")),
+    )
+    lines = issue_outbox.show_lines(manifest, journal, "box")
+    hints = [line for line in lines if "Check the issue first" in line]
+    assert len(hints) == 2
+    assert all("--applied" in line for line in hints)
 
 
 def test_relation_changed_after_the_plan_is_stale(preflight, github):  # noqa: F811

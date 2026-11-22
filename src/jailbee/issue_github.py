@@ -449,6 +449,17 @@ class IssueIdentity:
     number: int
     id: int
     is_pull_request: bool
+    # The parent's ``(owner/repo, number)``, when the issue is already a sub-issue.
+    parent: tuple[str, int] | None = None
+
+
+def _parent_of(value: object) -> tuple[str, int] | None:
+    """Read an issue object's ``parent_issue_url``; None when absent or not parseable."""
+    if isinstance(value, str):
+        match = re.search(r"/repos/([^/]+/[^/]+)/issues/([0-9]+)/?$", value)
+        if match:
+            return match.group(1), int(match.group(2))
+    return None
 
 
 def get_issue_identity(repo_root: Path, repo: str, number: int) -> IssueIdentity:
@@ -457,7 +468,12 @@ def get_issue_identity(repo_root: Path, repo: str, number: int) -> IssueIdentity
     issue_id = _read_number(data.get("id"))
     if issue_id <= 0:
         raise IssueGithubReadError("GitHub read failed: unexpected response")
-    return IssueIdentity(_read_number(data.get("number")), issue_id, "pull_request" in data)
+    return IssueIdentity(
+        _read_number(data.get("number")),
+        issue_id,
+        "pull_request" in data,
+        _parent_of(data.get("parent_issue_url")),
+    )
 
 
 def _issue_ids(repo_root: Path, endpoint: str) -> frozenset[int]:
