@@ -63,3 +63,17 @@ def test_non_github_upstream_falls_back_to_the_given_remote(tmp_path: Path) -> N
 def test_no_github_remote_is_none(tmp_path: Path) -> None:
     root = _repo(tmp_path / "r", {"origin": "https://example.com/x/y.git"})
     assert pr.pr_repo_slug(root, "origin") is None
+
+
+def test_gh_set_default_with_an_explicit_slug_is_used_directly(tmp_path: Path) -> None:
+    root = _repo(
+        tmp_path / "r",
+        {
+            "origin": "https://github.com/me/widgets.git",
+            "upstream": "https://github.com/acme/widgets.git",
+        },
+    )
+    subprocess.run(
+        ["git", "-C", str(root), "config", "remote.origin.gh-resolved", "other/repo"], check=True
+    )
+    assert pr.pr_repo_slug(root, "origin") == "other/repo"

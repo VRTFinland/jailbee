@@ -1087,7 +1087,7 @@ def pr_repo_slug(repo_root: Path, remote: str) -> str | None:
     named ``upstream``, else `remote`. A candidate that is not on GitHub is skipped.
     """
     from jailbee import git
-    from jailbee.github_repo import github_slug
+    from jailbee.github_repo import github_slug, is_github_slug
 
     candidates: list[str] = []
     try:
@@ -1104,10 +1104,13 @@ def pr_repo_slug(repo_root: Path, remote: str) -> str | None:
     if proc is not None and proc.returncode == 0:
         for line in proc.stdout.splitlines():
             key, _, value = line.partition(" ")
-            if value.strip() == "base":
+            value = value.strip()
+            if is_github_slug(value):
+                return value
+            if value == "base":
                 candidates.append(key.removeprefix("remote.").removesuffix(".gh-resolved"))
     candidates += ["upstream", remote]
-    for name in candidates:
+    for name in dict.fromkeys(candidates):
         slug = github_slug(git.get_remote_url(repo_root, name) or "")
         if slug is not None:
             return slug
