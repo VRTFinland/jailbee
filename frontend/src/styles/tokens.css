@@ -11,6 +11,11 @@
     --accent-text: #ffffff;
     --danger: #a3261b;
     --notice-bg: #f3ecd2;
+    /* Row phases (the TUI's orange3 / dark_cyan / magenta / red). */
+    --phase-booting: #b5651d;
+    --phase-autostart: #00797f;
+    --phase-job: #a1308f;
+    --phase-failed: #c0281c;
 
     --font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -41,6 +46,10 @@
     --accent-text: #1a1204;
     --danger: #e06c6c;
     --notice-bg: #3a3420;
+    --phase-booting: #e8923a;
+    --phase-autostart: #3ec3c9;
+    --phase-job: #d57fd0;
+    --phase-failed: #ef6b62;
 }
 
 /* E-ink: pure black on white, no greys for text, hairline borders only,
@@ -57,6 +66,10 @@
     --accent-text: #ffffff;
     --danger: #000000;
     --notice-bg: #ffffff;
+    --phase-booting: #000000;
+    --phase-autostart: #000000;
+    --phase-job: #000000;
+    --phase-failed: #000000;
 }
 :root[data-theme="eink"] a {
     text-decoration: underline;

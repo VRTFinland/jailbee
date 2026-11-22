@@ -142,6 +142,47 @@ def test_row_without_an_agent_has_no_agent_state(
     assert view["repos"][0]["containers"][0]["agent"] is None
 
 
+def test_row_carries_state_and_no_phase_at_rest(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    client, token = started
+    snap = snapshot_of(repo_group("alpha", container("alpha-1")))
+    row = json.loads(first_page(client, token, factory, snap))["view"]["repos"][0]["containers"][0]
+    assert row["state"] == "Running"
+    assert row["phase"] is None
+
+
+def test_stopped_row_carries_its_state(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    client, token = started
+    snap = snapshot_of(repo_group("alpha", container("alpha-1", state="Stopped")))
+    row = json.loads(first_page(client, token, factory, snap))["view"]["repos"][0]["containers"][0]
+    assert row["state"] == "Stopped"
+
+
+@pytest.mark.parametrize(
+    ("fields", "phase"),
+    [
+        ({"job_kind": "boot", "job_phase": "starting", "job_pid": 1, "job_live": True}, "booting"),
+        ({"job_kind": "autostart", "job_phase": "starting", "job_pid": 1}, "autostart"),
+        ({"job_kind": "create", "job_phase": "creating", "job_pid": 1}, "job"),
+        ({"autostart_failed": True}, "failed"),
+    ],
+)
+def test_row_carries_the_shared_row_phase(
+    started: tuple[TestClient, str],
+    factory: FakeSourceFactory,
+    fields: dict[str, Any],
+    phase: str,
+) -> None:
+    client, token = started
+    info = container("alpha-1", **fields)
+    snap = snapshot_of(repo_group("alpha", info))
+    row = json.loads(first_page(client, token, factory, snap))["view"]["repos"][0]["containers"][0]
+    assert row["phase"] == phase
+
+
 def test_excluded_repo_appears_nowhere_in_the_message(factory: FakeSourceFactory) -> None:
     snap = snapshot_of(
         repo_group("alpha", container("alpha-1")),
