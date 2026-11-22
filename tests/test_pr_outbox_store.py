@@ -554,3 +554,17 @@ def test_state_foreign_pr_is_refused_without_the_foreign_flag(cfg, incus, mocker
     assert review_apply(cfg, incus, name) == 1
     pr.set_state.assert_not_called()
     assert "not owned" in capsys.readouterr().err
+
+
+def test_show_lines_render_a_state_change_with_its_warning():
+    parsed = pr_outbox.parse_manifest("m.json", json.dumps(manifest(STATE_CLOSE)), {})
+    assert "closes PR #12" in "\n".join(pr_outbox.show_lines(parsed))
+
+
+def test_refused_state_holds_back_the_whole_manifest(cfg, incus, github, capsys):
+    _pr_state(github, "CLOSED")
+    name = stage(manifest(COMMENT, STATE_CLOSE))
+    assert review_apply(cfg, incus, name) == 1
+    github.comment.assert_not_called()
+    github.set_state.assert_not_called()
+    assert "held back as a whole" in capsys.readouterr().err

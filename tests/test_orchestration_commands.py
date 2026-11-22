@@ -1054,3 +1054,11 @@ def test_pr_state_right_needs_pr_reviews_and_goes_with_them(cfg):
     current = Grant(publish=PublishRights(pr_reviews=True, pr_state=True))
     off = commands.build_grant(cfg, current, GrantFlags(publish_pr_reviews=False)).publish
     assert off.pr_state is False
+
+
+def test_publish_summary_names_pr_state():
+    from jailbee.orchestration.grant import PublishRights
+
+    assert "PR close/reopen" in commands.publish_summary(
+        PublishRights(pr_reviews=True, pr_state=True)
+    )

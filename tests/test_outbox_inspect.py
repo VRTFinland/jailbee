@@ -585,3 +585,19 @@ def test_issue_comment_edit_is_its_own_action_kind():
     }
     (view,) = build_views(IDENTITY, (store("issue", files),))
     assert [a.kind for a in view.actions] == ["comment_edit"]
+
+
+def test_pr_state_is_its_own_action_kind():
+    files = {
+        "001.json": json.dumps(
+            {
+                "version": 1,
+                "repo": "acme/repo",
+                "pr": 42,
+                "head_sha": "a" * 40,
+                "actions": [{"type": "state", "state": "closed", "expected": {"state": "open"}}],
+            }
+        )
+    }
+    (view,) = build_views(IDENTITY, (store("pr", files),))
+    assert [a.kind for a in view.actions] == ["state"]

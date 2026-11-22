@@ -651,3 +651,12 @@ def test_grant_says_comment_edits_were_revoked_with_reviews(patched):
     res = runner.invoke(app, ["orchestrate", "grant", "a", "--no-publish-pr-reviews"])
     assert res.exit_code == 0, res.output
     assert "PR comment edits revoked with PR reviews" in " ".join(res.output.split())
+
+
+def test_pr_state_flag_reaches_commands(patched):
+    res = runner.invoke(
+        app, ["orchestrate", "grant", "a", "--publish-pr-reviews", "--publish-pr-state"]
+    )
+    assert res.exit_code == 0, res.output
+    flags = patched.grant.call_args.args[3]
+    assert (flags.publish_pr_reviews, flags.publish_pr_state) == (True, True)
