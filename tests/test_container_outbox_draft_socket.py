@@ -50,7 +50,7 @@ def test_a_batch_with_a_ref_submits_as_one_proposal_over_the_socket(broker: Brok
 
 def test_discard_removes_a_draft_over_the_socket(broker: Broker) -> None:
     invoke("issue", "comment", "7", "--body", "x", "--batch", "b")
-    assert invoke("outbox", "discard", "b", "--kind", "issue").exit_code == 0
+    assert invoke("outbox", "discard", "--draft", "b", "--kind", "issue").exit_code == 0
     assert drafts(broker) == []
 
 

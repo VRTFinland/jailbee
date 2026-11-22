@@ -72,7 +72,7 @@ def test_show_and_drop_route_a_store_source_to_the_broker(home, broker):
     shown = run("outbox", "show", f"pr/{name}")
     assert shown.exit_code == 0, shown.output
     assert json.loads(shown.stdout)["source"] == "refs/heads/topic"
-    dropped = run("outbox", "drop", f"pr/{name}")
+    dropped = run("outbox", "discard", f"pr/{name}")
     assert dropped.exit_code == 0, dropped.output
     assert broker.proposals("pr") == []
 
@@ -82,7 +82,7 @@ def test_show_and_drop_reach_a_staged_comment(home, broker, monkeypatch):
     shown = run("outbox", "show", f"pr/{comment}")
     assert shown.exit_code == 0, shown.output
     assert json.loads(shown.stdout)["actions"] == [{"type": "comment", "body": "hi"}]
-    dropped = run("outbox", "drop", f"pr/{comment}")
+    dropped = run("outbox", "discard", f"pr/{comment}")
     assert dropped.exit_code == 0, dropped.output
     assert broker.proposals("pr") == []
 
@@ -90,6 +90,6 @@ def test_show_and_drop_reach_a_staged_comment(home, broker, monkeypatch):
 def test_a_child_cannot_drop_a_store_source(home, broker, monkeypatch):
     name = stage_source()
     monkeypatch.setenv("JAILBEE_ROLE", "child")
-    result = run("outbox", "drop", f"pr/{name}")
+    result = run("outbox", "discard", f"pr/{name}")
     assert result.exit_code == 1
     assert [row.name for row in broker.proposals("pr")] == [name]

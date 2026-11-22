@@ -80,8 +80,8 @@ Both outboxes cap pending manifests at 20; issue batches cap actions at 100.
 Use `--batch NAME` to collect actions, `jailbee outbox ls [--json]` and
 `jailbee outbox show issue/NAME` or `pr/NAME` to inspect staged proposals,
 `jailbee outbox submit NAME --kind issue|pr` to submit a batch, and
-`jailbee outbox discard NAME --kind issue|pr` to discard a draft. Drop a
-staged proposal with `jailbee outbox drop issue/NAME` or `pr/NAME`. For
+`jailbee outbox discard --draft NAME --kind issue|pr` to discard a draft. Remove a
+staged proposal with `jailbee outbox discard issue/NAME` or `pr/NAME`. For
 issue batches, create with `--ref REF` and address it later as `@REF`;
 expected values come from that earlier create. Existing issue changes fetch
 current state for host staleness checks. `jailbee outbox sent [--json]
