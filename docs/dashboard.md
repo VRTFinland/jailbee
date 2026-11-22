@@ -110,6 +110,10 @@ See [Marking several containers](#marking-and-bulk-actions).
 Choose `Outbox` in a container's menu, mark proposals with `Space`, press `p`
 to publish (after one question showing the plan) or `d` to delete. The Sent tab
 (`Tab`) lists what was published; `o` opens the selected URL in your browser.
+A click outside the box closes it and then acts on what was clicked, like a
+container menu; it is ignored while a question is open or a publish is running.
+Marks are kept for the session and come back when you reopen the box, minus
+proposals that vanished or changed.
 Background: [the git bridge](git-bridge.md#inspecting-and-publishing-proposals).
 
 ### Switch accounts

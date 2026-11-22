@@ -136,6 +136,7 @@ from jailbee.dashboard.notifications import (
     job_rows,
 )
 from jailbee.dashboard.outbox import OutboxState
+from jailbee.dashboard.outbox_flow import LOADING as OUTBOX_LOADING
 from jailbee.dashboard.outbox_flow import Intent as OutboxIntent
 from jailbee.dashboard.outbox_flow import OutboxController
 from jailbee.dashboard.overlays import (
@@ -574,6 +575,8 @@ class DashboardSession:
         self.notice_until = time.monotonic() + STARTUP_NOTICE_SECONDS if startup.notice else 0.0
         # The open Outbox box's controller and the menu its Esc returns to.
         self.outbox: OutboxController | None = None
+        # Marks of a closed Outbox box, per container, for the next box of that container.
+        self._outbox_marks: dict[str, tuple[frozenset[dob.RowKey], dict[str, str]]] = {}
         # Opens a URL in the desktop's browser; the app sets it (Textual's `App.open_url`).
         self.url_opener: Callable[[str], object] | None = None
         self.outbox_parent: MenuState | RepoMenuState | None = None
@@ -2675,9 +2678,19 @@ class DashboardSession:
         controller.sent_loader = read
         controller.load_sent()
         controller.on_change = self._outbox_listener(controller)
+        self._remember_outbox_marks()
+        saved = self._outbox_marks.get(container)
+        if saved is not None and saved[0]:
+            controller.restore_marks(*saved)
         self.outbox = controller
         controller.load_later()
         return controller.state
+
+    def _remember_outbox_marks(self) -> None:
+        """Keep the marks of the box being replaced or closed, for its container's next box."""
+        old = self.outbox
+        if old is not None and old.container is not None and not old.sent_only:
+            self._outbox_marks[old.container] = (old.state.marks, old.revisions())
 
     def open_sent(self, prefix: str) -> OutboxState | None:
         """The repo's Sent timeline (all containers, destroyed ones too); None after a notice."""
@@ -4698,7 +4711,12 @@ class DashboardSession:
             self._merge_pick_click(hit, toggle=toggle)
             return
         overlay = self.overlay
-        if overlay is not None and not (
+        if isinstance(overlay, OutboxState):
+            if overlay.question is not None or (
+                overlay.busy is not None and overlay.busy != OUTBOX_LOADING
+            ):
+                return  # a question or a running publish keeps the focus
+        elif overlay is not None and not (
             isinstance(overlay, (MenuState, RepoMenuState, Picker)) or overlay == "help"
         ):
             return  # a prompt, the command line, settings, egress or accounts keep the focus

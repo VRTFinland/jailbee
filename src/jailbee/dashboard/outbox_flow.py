@@ -59,6 +59,7 @@ _PREVIEW_MODES: dict[str, _Preview] = {"auto": "auto", "on": "on", "off": "off",
 
 _ASK_AGAIN = "outbox refreshed; ask again"
 _LOADING = "reading the outbox…"
+LOADING = _LOADING  # the busy line of a listing in flight (not a running publish)
 _BAD_PLAN = "unexpected plan output"
 _FOREIGN_FALLBACK = "⚠ foreign target: check where this will be published"
 # Phrases of the plan's foreign warnings (`pr_outbox.foreign_warning`,
@@ -395,6 +396,18 @@ class OutboxController:
         self._pending_delete: (
             tuple[frozenset[dob.RowKey], tuple[dob.ContainerListing, ...]] | None
         ) = None
+        # Marks carried over from an earlier box of this container, with the revision
+        # each proposal had; checked against the first listing, then forgotten.
+        self._restored_revisions: dict[str, str] | None = None
+
+    def revisions(self) -> dict[str, str]:
+        """Proposal id -> revision of the listing shown now (for `restore_marks`)."""
+        return {p.id: p.revision for c in self.state.containers for p in c.proposals}
+
+    def restore_marks(self, marks: frozenset[dob.RowKey], revisions: dict[str, str]) -> None:
+        """Re-mark ``marks`` once the first listing arrives, minus changed or vanished proposals."""
+        self._restored_revisions = revisions
+        self.state = replace(self.state, marks=marks)
 
     # -- plumbing -----------------------------------------------------------
 
@@ -457,6 +470,10 @@ class OutboxController:
         first = next(((c.name, p.id, None, None) for c in containers for p in c.proposals), None)
         chosen = next((k for k in candidates if k is not None and k in keys), first)
         marks = {k for k in self.state.marks if k in keys}
+        if self._restored_revisions is not None:
+            now = {p.id: p.revision for c in containers for p in c.proposals}
+            marks = {k for k in marks if now.get(k[1]) == self._restored_revisions.get(k[1])}
+            self._restored_revisions = None
         # A marked proposal or action also covers the rows listed under it since.
         for key in [k for k in marks if k[3] is None]:
             marks |= _subtree(containers, key)
