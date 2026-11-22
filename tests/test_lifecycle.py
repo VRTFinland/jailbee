@@ -12561,6 +12561,7 @@ def test_git_status_json_names_the_sync_target_and_host_counts():
     }
     assert (payload["host_ahead_count"], payload["host_behind_count"]) == ("5", "1")
 
+
 # ---- columns follow the row's fresh store counts ----
 
 
