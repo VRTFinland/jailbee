@@ -140,6 +140,11 @@ def lookup(raw: dict[str, object], path: KeyPath) -> tuple[bool, object]:
     read path must never crash on a document it didn't write.
     """
     node: object = raw
+    if path == ("agents",) and isinstance(raw.get("agents"), dict):
+        # `agents.default_runner` is the repo's default runner, not an agent: the
+        # collection the editor shows is the agents alone (it has its own fields).
+        agents = {k: v for k, v in raw["agents"].items() if k != "default_runner"}  # type: ignore[attr-defined] # narrowed by isinstance above
+        return (True, agents) if agents or "default_runner" not in raw["agents"] else (False, None)  # type: ignore[operator] # same
     for key in path:
         if isinstance(key, int):
             if not isinstance(node, list) or not 0 <= key < len(node):

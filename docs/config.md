@@ -3129,6 +3129,12 @@ prefers an explicit runner, then the container's runner, then a non-null
 host-local default, the repo default, and finally the global default. It is a
 preference, not a right, and does not grant orchestration permissions.
 
+!!! warning "The alias is no longer children-only"
+    Before `agents.default_runner` existed, `orchestration.default_runner` affected
+    only spawned children. As its alias it now also sets the runner of every
+    container's autostart, relaunch and refresh. To keep a children-only default,
+    set `default_runner` on a grant profile instead (see the profile keys below).
+
 **Per repo** (`.jailbee/config.yaml`): rights may only be narrowed; the repo
 may set `default_runner`, idle-report thresholds and follower notifications freely.
 

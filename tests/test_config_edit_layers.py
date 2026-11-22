@@ -908,3 +908,33 @@ def test_git_user_is_editable_outside_the_repo_layer(layer):
 
 def test_git_identity_is_editable_in_the_repo_layer():
     assert layers.disabled_reason(_spec("git.identity"), "repo") is None
+
+
+def _runner_layers(tmp_path):
+    repo = _write(
+        tmp_path / "repo.yaml",
+        "agents:\n  claude:\n    enabled: true\n",
+    )
+    local = _write(
+        tmp_path / "local.yaml",
+        "agents:\n  default_runner:\n    agent: claude-jb\n    profile: grok\n",
+    )
+    return layers.read_layers(repo, tmp_path / "global.yaml", local)
+
+
+def test_default_runner_is_not_an_agent_entry(tmp_path):
+    """`agents.default_runner` in the local layer must not shadow the repo's agents."""
+    got = _runner_layers(tmp_path)
+    origins = layers.resolve(local_specs(), got)
+    assert origins[("agents",)].source == "repo"
+    assert "default_runner" not in origins[("agents",)].value
+    present, value = layers.lookup(got.local_raw, ("agents",))
+    assert not present
+
+
+def test_default_runner_has_its_own_fields(tmp_path):
+    got = _runner_layers(tmp_path)
+    for specs in (repo_specs(), global_specs(), local_specs()):
+        assert ("agents", "default_runner", "agent") in {s.path for s in specs}
+    origins = layers.resolve(local_specs(), got)
+    assert origins[("agents", "default_runner", "profile")] == layers.Origin("local", "grok")

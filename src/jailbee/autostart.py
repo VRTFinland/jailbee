@@ -353,6 +353,9 @@ def agent_autostart_steps(
     to a container with no ``runner`` label: it rewrites the Claude command the
     same way, but does not change which agent is the prompted primary. Order:
     runner label, then ``default_runner``, then the `litellm.autostart` path.
+    A ``default_runner`` on `claude-jb` while `litellm.enabled` is off is not
+    applied (warning, legacy path): the repo-committed key cannot make a host
+    without the proxy autostart a failing window.
     """
     from jailbee.agents import enabled_agent_specs, primary_agent
     from jailbee.initial_prompt import CONSUMED_PATH, PROMPT_ENV, prompted_run
@@ -361,7 +364,16 @@ def agent_autostart_steps(
     if initial_prompt:
         primary = "claude" if runner is not None else primary_agent(cfg).name
     steps: list[AutostartStep] = []
-    effective = runner or default_runner
+    effective = runner
+    if effective is None and default_runner is not None:
+        if default_runner.agent == "claude-jb" and not cfg.litellm_view().config.enabled:
+            log.warning(
+                "default runner %s not applied: litellm is not enabled, "
+                "so `claude-jb` has no proxy to use",
+                default_runner.describe(),
+            )
+        else:
+            effective = default_runner
     for spec in enabled_agent_specs(cfg):
         is_primary = spec.name == primary
         if not (spec.autostart or is_primary) or not spec.command.strip():

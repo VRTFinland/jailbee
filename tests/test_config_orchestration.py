@@ -446,3 +446,13 @@ def test_default_runner_unknown_tier_rejected():
     assert errors[0]["loc"] == ("default_runner", "model")
     assert errors[0]["type"] == "value_error"
     assert "model must be a runner tier" in errors[0]["msg"]
+
+
+def test_resolve_agents_raw_validates_a_default_runner_it_drops():
+    from jailbee.config.errors import ConfigError
+    from jailbee.config.loader import resolve_agents_raw
+
+    ok = resolve_agents_raw({"agents": {"default_runner": {"agent": "claude"}}})
+    assert "default_runner" not in ok.get("agents", {})
+    with pytest.raises(ConfigError, match="default_runner"):
+        resolve_agents_raw({"agents": {"default_runner": {"agent": "bogus"}}})
