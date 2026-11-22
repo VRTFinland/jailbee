@@ -453,9 +453,10 @@ class WebLoginLink(SQLModel, table=True):
 class WebAuthEvent(SQLModel, table=True):
     """One entry of the web dashboard's login audit log (#109).
 
-    `event` is login, login_failed, logout, revoke or key_added (a FIDO2 key
-    registered in setup mode); `method` the login method tried (pin, totp,
-    link, fido2, setup-pin) or "cli" for a revocation from the command line;
+    `event` is login, login_failed, backoff (a PIN or TOTP wait lengthened),
+    logout, revoke or key_added (a FIDO2 key registered in setup mode);
+    `method` the login method tried (pin, totp, link, fido2, setup-pin) or
+    "cli" for a revocation from the command line;
     `source` the client address when there was one. Pruned to the newest
     rows by `jailbee.web.auth_admin`.
     """

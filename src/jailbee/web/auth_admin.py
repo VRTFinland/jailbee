@@ -54,7 +54,7 @@ TOTP_REPLAY_WINDOW = timedelta(seconds=90)
 
 TOTP_ISSUER = "JailBee"
 
-AuthEventKind = Literal["login", "login_failed", "logout", "revoke", "key_added"]
+AuthEventKind = Literal["login", "login_failed", "backoff", "logout", "revoke", "key_added"]
 LoginMethod = Literal["pin", "totp", "fido2"]
 
 _PIN_ENABLED = "pin_enabled"
@@ -316,7 +316,7 @@ def record_event(
     every other row past `AUDIT_KEEP`. A write never evicts the other class.
     """
     at = clock()
-    level = logging.WARNING if event == "login_failed" else logging.INFO
+    level = logging.WARNING if event in ("login_failed", "backoff") else logging.INFO
     log.log(
         level,
         "web auth %s method=%s device=%r source=%s at=%s",

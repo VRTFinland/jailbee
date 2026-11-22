@@ -134,12 +134,17 @@ Every login, failure, logout and revocation is audited
   in with it. `jb remote web auth pin off` turns PIN login off once a TOTP key
   exists.
 - **Attempt limits.** PIN and TOTP attempts are limited to five a minute per
-  method; one-time links (single use, 60 seconds, high entropy) and FIDO2
-  signatures are not limited, so a PIN guesser cannot lock the owner out.
-  The limits slow guessing but do not stop it: at the full rate a TOTP code
-  has even odds of being guessed in about a month
-  ([the numbers](web-dashboard.md#logging-in)). Use FIDO2 keys with the PIN
-  off for an internet-facing dashboard, or do not expose it.
+  method, and after five consecutive failures the wait before the next
+  attempt doubles with each failure from 2 seconds up to 30 minutes, until a
+  successful login by that method. Attempts during the wait are refused
+  without being checked. One-time links (single use, 60 seconds, high
+  entropy) and FIDO2 signatures are not limited, so a PIN guesser cannot lock
+  the owner out. At the cap a TOTP code has about a 0.4 % chance of being
+  guessed in a month, even odds in about 13 years
+  ([the numbers](web-dashboard.md#logging-in)). The waits live in memory and
+  a restart of the server clears them; under systemd it restarts only on an
+  upgrade or a crash. Use FIDO2 keys with the PIN off for an internet-facing
+  dashboard, or do not expose it.
 - **Audit retention.** Failed link and FIDO2 logins are pruned on their own
   budget, so an unthrottled flood of them cannot evict the PIN and TOTP
   failures that show a guessing run.

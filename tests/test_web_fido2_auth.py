@@ -9,6 +9,7 @@ or a browser would.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -248,6 +249,19 @@ def test_a_wrong_setup_pin_starts_no_registration_and_spends_the_pin(
 
     assert begin.status_code == 401
     assert setup_pin.current != before
+
+
+def test_setup_pin_guessing_is_limited_and_says_when_to_retry(
+    setup_client: TestClient, clock: FakeClock
+) -> None:
+    def guess() -> tuple[int, str | None]:
+        r = setup_client.post("/api/setup/fido2/begin", json={"pin": "999999"}, headers=proxied())
+        return r.status_code, r.headers.get("Retry-After")
+
+    assert [guess()[0] for _ in range(5)] == [401] * 5
+    clock.advance(timedelta(seconds=15))
+
+    assert guess() == (429, "45")
 
 
 def test_setup_mode_lists_nothing_but_its_mode_and_registration(setup_client: TestClient) -> None:
