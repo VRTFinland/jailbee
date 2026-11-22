@@ -2649,3 +2649,108 @@ def test_marks_are_kept_while_the_listing_is_not_loaded_yet(mocker, tmp_path):
     session._remember_outbox_marks()
 
     assert "alpha-x" in session._outbox_marks
+
+
+def _rows_json(*pairs):
+    return json.dumps(
+        [{"name": n, "state": s, "window": None, "since": None, "detail": ""} for n, s in pairs]
+    )
+
+
+def _drain(session, key="services:alpha-one"):
+    import time
+
+    deadline = time.monotonic() + 10
+    while session.jobs.busy(key) and time.monotonic() < deadline:
+        session.jobs.poll()
+        time.sleep(0.01)
+
+
+def test_service_refresh_result_is_dropped_when_the_overlay_closes_meanwhile(mocker, tmp_path):
+    session, run = _services_session(mocker, tmp_path, [[("db", "stopped")], [("db", "ready")]])
+    back, then = _start_first_service(session, run)
+    session.overlay = back
+    then(0)
+    session.overlay = None  # the user left the menu while the listing ran
+    _drain(session)
+    assert session.overlay is None
+
+
+def test_service_refresh_result_is_dropped_when_another_list_opens_meanwhile(mocker, tmp_path):
+    session, run = _services_session(
+        mocker,
+        tmp_path,
+        [[("db", "stopped")], [("cache", "ready")], [("db", "ready")], [("x", "ready")]],
+        containers=("alpha-one", "alpha-two"),
+    )
+    back, then = _start_first_service(session, run)
+    session.overlay = back
+    then(0)
+    other = session.open_services("alpha-two")
+    session.overlay = other  # another container's list replaces it while listing
+    _drain(session)
+    assert session.overlay is other
+
+
+def test_failed_service_refresh_tells_the_user_and_keeps_the_list(mocker, tmp_path):
+    session, run = _services_session(mocker, tmp_path, [[("db", "stopped")]])
+    back, then = _start_first_service(session, run)
+    session.overlay = back
+    mocker.patch(
+        "jailbee.dashboard.accounts.run_cli_quiet",
+        return_value=mocker.Mock(ok=False, message="boom", stdout=""),
+    )
+    then(0)
+    _drain(session)
+    assert "could not list services: boom" in session.notice
+    assert session.overlay is back
+
+
+def test_failed_service_refresh_notice_is_not_raised_once_the_user_left(mocker, tmp_path):
+    session, run = _services_session(mocker, tmp_path, [[("db", "stopped")]])
+    back, then = _start_first_service(session, run)
+    session.overlay = back
+    mocker.patch(
+        "jailbee.dashboard.accounts.run_cli_quiet",
+        return_value=mocker.Mock(ok=False, message="boom", stdout=""),
+    )
+    then(0)
+    session.overlay = None
+    _drain(session)
+    assert "could not list services" not in (session.notice or "")
+
+
+def test_service_refresh_that_raises_does_not_leave_the_job_busy(mocker, tmp_path):
+    session, run = _services_session(mocker, tmp_path, [[("db", "stopped")]])
+    back, then = _start_first_service(session, run)
+    session.overlay = back
+    mocker.patch("jailbee.dashboard.accounts.run_cli_quiet", side_effect=OSError("gone"))
+    then(0)
+    _drain(session)
+    assert not session.jobs.busy("services:alpha-one")
+    assert "could not list services" in session.notice
+
+
+def test_older_service_listing_does_not_overwrite_a_reopened_list(mocker, tmp_path):
+    import threading
+
+    session, run = _services_session(mocker, tmp_path, [[("db", "stopped")]])
+    back, then = _start_first_service(session, run)
+    session.overlay = back
+    release = threading.Event()
+    main = threading.current_thread()
+
+    def quiet(argv, cwd=None):
+        if threading.current_thread() is main:
+            return mocker.Mock(ok=True, stdout=_rows_json(("db", "ready")))
+        release.wait(10)
+        return mocker.Mock(ok=True, stdout=_rows_json(("db", "stopped")))
+
+    mocker.patch("jailbee.dashboard.accounts.run_cli_quiet", side_effect=quiet)
+    then(0)  # slow listing in flight
+    reopened = session.open_services("alpha-one")  # fresher list shown meanwhile
+    session.overlay = reopened
+    release.set()
+    _drain(session)
+    assert session.overlay is reopened
+    assert "db  (ready)" in session.overlay.entries[0].label
