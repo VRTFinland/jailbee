@@ -31,9 +31,9 @@ from jailbee.tui import DIAGNOSTICS_ENV, console
 
 log = logging.getLogger(__name__)
 
-# The printing verbs long enough to want a pager instead of a pause. `Live`
-# repaints the moment the dashboard resumes, so the rest get the pause: without
-# one their output is gone before it can be read.
+# The printing verbs long enough to want a pager (`git diff`). In the queue
+# dashboard "paged" and "output" both open the finished entry's output screen;
+# "report" opens nothing (a failure notice carries the last line).
 _PAGED_VERBS: frozenset[str] = frozenset({"git diff"})
 # The printing verbs whose clean run leaves nothing to read: the pause is kept
 # for a failure or a warning only. `git push --pr` is not one — its PR URL is.
