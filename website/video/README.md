@@ -158,8 +158,13 @@ layout around them:
 The same rules as the terminal clips (`../demo/README.md`), for the same
 reason: the videos are worth making only if they show the real thing.
 
-- Every picture of JailBee's interface is a real screenshot of real use.
-  Private names are blurred, never retyped.
+- Every picture of JailBee's interface is a real screenshot of real use, or a
+  seeded one: the real dashboard rendered from a fictional fixture
+  (`../shots/README.md`, `make shots`). Seeded screens are allowed and need no
+  stamp on docs images; put a "[not a real session]" stamp on one only where a
+  staged screen could pass for a real session (a "this is my machine" scene,
+  a demo of speed or load). Private names in real screenshots are blurred,
+  never retyped; seeded ones contain none.
 - Any command or output on screen was really run. Output is never invented; a
   scene without recorded output shows the commands only.
 - AI illustrations are visibly illustrations (bees, honeycomb, cells) and never
