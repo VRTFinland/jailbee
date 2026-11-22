@@ -164,7 +164,13 @@ imply it. Editing a submitted PR review (line) comment is a `comment_edit` actio
 the PR manifest and needs its own right, `publish.pr_comment_edits`, which requires
 `publish.pr_reviews`: `pr_reviews` does not imply it, and a PR manifest containing a
 `comment_edit` is refused at the publish gate without it. Replies and comments
-are unaffected. The repo cap narrows it like the other rights.
+are unaffected, and an edit an earlier run already published no longer needs the
+right. The repo cap narrows it like the other rights. Turning `pr_reviews` off
+(`--no-publish-pr-reviews`, or the dashboard toggle) also clears
+`pr_comment_edits`, and `grant` says so; explicitly requesting the edit right
+without reviews is refused, while an inherited default that holds edits without
+reviews is narrowed to no edits. The dashboard's orchestration menu has a
+"Publish PR comment edits" row beside "Publish PR reviews".
 
 Assignment has two kinds. `assign_self` covers only assignees changes whose
 logins all equal the publishing account, compared case-insensitively after

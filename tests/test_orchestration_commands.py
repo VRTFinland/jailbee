@@ -992,3 +992,31 @@ def test_comment_edits_right_needs_pr_reviews(cfg):
         cfg, None, GrantFlags(publish_pr_reviews=True, publish_pr_comment_edits=True)
     ).publish
     assert rights.pr_comment_edits is True
+
+
+def test_revoking_pr_reviews_also_clears_comment_edits(cfg):
+    from jailbee.orchestration.grant import PublishRights
+
+    current = Grant(publish=PublishRights(pr_reviews=True, pr_comment_edits=True))
+    rights = commands.build_grant(cfg, current, GrantFlags(publish_pr_reviews=False)).publish
+    assert rights.pr_reviews is False and rights.pr_comment_edits is False
+    with pytest.raises(GrantError, match="needs --publish-pr-reviews"):
+        commands.build_grant(
+            cfg, current, GrantFlags(publish_pr_reviews=False, publish_pr_comment_edits=True)
+        )
+
+
+def test_inherited_edits_without_reviews_are_narrowed_not_fatal(cfg):
+    from jailbee.orchestration.grant import PublishRights
+
+    current = Grant(publish=PublishRights(pr_comment_edits=True, issues=("comment",)))
+    rights = commands.build_grant(cfg, current, GrantFlags(publish_rate=5)).publish
+    assert rights.pr_comment_edits is False
+    assert rights.issues == ("comment",) and rights.max_actions_per_hour == 5
+
+
+def test_publish_summary_names_comment_edits():
+    from jailbee.orchestration.grant import PublishRights
+
+    rights = PublishRights(pr_reviews=True, pr_comment_edits=True)
+    assert "PR comment edits" in commands.publish_summary(rights)

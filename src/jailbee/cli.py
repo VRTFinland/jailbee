@@ -13374,6 +13374,14 @@ def orchestrate_grant_cmd(
         and granted.default_runner is None
     ):
         summary += "; container default runner cleared"
+    if (
+        previous
+        and previous[0] is not None
+        and previous[0].publish.pr_comment_edits
+        and not granted.publish.pr_comment_edits
+        and not granted.publish.pr_reviews
+    ):
+        summary += "; PR comment edits revoked with PR reviews"
     success(f"Granted '{short_name(cfg, full)}': {summary}")
     if granted.default_runner is not None:
         for problem in runner_problems(cfg, incus, _load_global(), granted.default_runner):

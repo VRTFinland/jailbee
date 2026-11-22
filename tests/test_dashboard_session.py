@@ -2147,3 +2147,47 @@ def test_an_open_menu_is_left_alone_when_the_snapshot_changes_nothing_in_it(mock
     session.client.seq += 1
     session.tick()
     assert session.overlay is menu
+
+
+def test_comment_edits_row_needs_reviews_or_the_right(mocker, tmp_path):
+    def values(publish):
+        session, _ = _orchestration_session(mocker, tmp_path, grant=True, publish=publish)
+        return {e.value: e.label for e in session.open_orchestration("alpha-one").entries}
+
+    assert "publish:pr-comment-edits" not in values({})
+    assert values({"publish_pr_reviews": True})["publish:pr-comment-edits"] == (
+        "Publish PR comment edits: off"
+    )
+    both = {"publish_pr_reviews": True, "publish_pr_comment_edits": True}
+    assert values(both)["publish:pr-comment-edits"] == "Publish PR comment edits: on"
+
+
+@pytest.mark.parametrize(
+    ("on", "flag"),
+    [(False, "--publish-pr-comment-edits"), (True, "--no-publish-pr-comment-edits")],
+)
+def test_publish_pr_comment_edits_toggle(mocker, tmp_path, on, flag):
+    publish = {"publish_pr_reviews": True, "publish_pr_comment_edits": on}
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True, publish=publish)
+    session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "publish:pr-comment-edits")
+    )
+    assert quiet.call_args.args[1] == ["orchestrate", "grant", flag, "--", "alpha-one"]
+    assert session.groups[0].containers[0].grant.publish_pr_comment_edits is (not on)
+
+
+def test_turning_reviews_off_clears_comment_edits_in_the_view(mocker, tmp_path):
+    publish = {"publish_pr_reviews": True, "publish_pr_comment_edits": True}
+    session, quiet = _orchestration_session(mocker, tmp_path, grant=True, publish=publish)
+    session.submit_picker(
+        session.open_orchestration("alpha-one"), PickerEntry("", "publish:pr-reviews")
+    )
+    assert quiet.call_args.args[1] == [
+        "orchestrate",
+        "grant",
+        "--no-publish-pr-reviews",
+        "--",
+        "alpha-one",
+    ]
+    grant = session.groups[0].containers[0].grant
+    assert (grant.publish_pr_reviews, grant.publish_pr_comment_edits) == (False, False)

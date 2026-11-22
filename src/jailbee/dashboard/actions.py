@@ -602,6 +602,7 @@ def orchestrate_grant_argv(
     publish_foreign: tuple[Sequence[str], Sequence[str]] | None = None,
     publish_prs: bool | None = None,
     publish_pr_reviews: bool | None = None,
+    publish_pr_comment_edits: bool | None = None,
     publish_rate: int | None = None,
 ) -> list[str]:
     """`jailbee orchestrate grant`: options before the separator, in signature order.
@@ -647,6 +648,12 @@ def orchestrate_grant_argv(
         options.append("--publish-prs" if publish_prs else "--no-publish-prs")
     if publish_pr_reviews is not None:
         options.append("--publish-pr-reviews" if publish_pr_reviews else "--no-publish-pr-reviews")
+    if publish_pr_comment_edits is not None:
+        options.append(
+            "--publish-pr-comment-edits"
+            if publish_pr_comment_edits
+            else "--no-publish-pr-comment-edits"
+        )
     if publish_rate is not None:
         options += ["--publish-rate", str(publish_rate)]
     return ["orchestrate", "grant", *options, "--", name]

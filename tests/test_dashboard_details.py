@@ -1550,3 +1550,17 @@ def test_a_never_fetched_pr_row_shows_the_fetch_failure_too() -> None:
     panel = dd.container_panel(c, NOW)
     assert panel.git is not None
     assert _plain(panel.git[2].note) == "fetch failed 30s ago"
+
+
+def test_orchestrator_card_shows_comment_edit_right() -> None:
+    p = dd.container_panel(
+        _orch(
+            publish={
+                "publish_pr_reviews": True,
+                "publish_pr_comment_edits": True,
+                "publish_rate": 12,
+            }
+        ),
+        NOW,
+    )
+    assert "PR comment edits" in p.orchestration[4]

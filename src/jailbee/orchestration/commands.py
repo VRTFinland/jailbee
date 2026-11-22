@@ -266,7 +266,11 @@ def _publish_rights(base: PublishRights, flags: GrantFlags) -> PublishRights:
         if changes[name] is not None:
             data[name] = changes[name]
     if data["pr_comment_edits"] and not data["pr_reviews"]:
-        raise GrantError("--publish-pr-comment-edits needs --publish-pr-reviews")
+        if flags.publish_pr_comment_edits:
+            raise GrantError("--publish-pr-comment-edits needs --publish-pr-reviews")
+        # Edits ride on reviews: turning reviews off (or a default that holds
+        # edits without them) leaves no edit right behind.
+        data["pr_comment_edits"] = False
     return PublishRights.model_validate(data)
 
 

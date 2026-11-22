@@ -1311,3 +1311,10 @@ def test_send_refusal_always_prints_detail_not_status(
     assert r.returncode == 1
     assert len(r.stdout.splitlines()) == 1 and r.stdout.startswith(f"{args[0]}-")
     assert detail in r.stderr
+
+
+def test_grant_prints_comment_edit_right(broker: FakeBroker, sockdir: Path, tmp_path: Path) -> None:
+    for value, text in ((True, "yes"), (False, "no")):
+        broker.on("grant", {**GRANT, "publish": {"pr_reviews": True, "pr_comment_edits": value}})
+        r = run(sockdir, "grant", tmp=tmp_path)
+        assert f"publish pr_comment_edits: {text}" in r.stdout
