@@ -14189,8 +14189,22 @@ def review_resolve_cmd(
     """Resolve one PR action whose GitHub outcome an earlier run left uncertain.
 
     Check the PR on GitHub first. `--applied URL` records that it landed;
-    `--retry` forgets the outcome so `jailbee review apply` attempts it again.
+    `--retry` forgets the outcome so `jailbee outbox apply` attempts it again.
+    An alias of `jailbee outbox resolve` for PR proposals.
     """
+    run_review_resolve(config, name, manifest, action, url=url, retry=retry)
+
+
+def run_review_resolve(
+    config: Path | None,
+    name: str | None,
+    manifest: str | None,
+    action: int | None,
+    *,
+    url: str | None,
+    retry: bool,
+) -> None:
+    """Resolve one uncertain PR action: the body shared by `review resolve` and `outbox resolve`."""
     from jailbee import branch_pr, pr_outbox, prompting
     from jailbee.lifecycle import short_name
     from jailbee.outbox.models import OutboxError
@@ -14405,8 +14419,27 @@ def issue_resolve_cmd(
     `--retry` is required; whatever is left out is asked for on a terminal.
     `--retry` forgets the uncertain record so the action is attempted again;
     `--applied` durably records the human's own confirmation of what
-    actually happened on GitHub.
+    actually happened on GitHub. An alias of `jailbee outbox resolve` for
+    issue proposals.
     """
+    run_issue_resolve(
+        config, name, manifest, action, applied=applied, url=url, issue=issue, retry=retry, yes=yes
+    )
+
+
+def run_issue_resolve(
+    config: Path | None,
+    name: str | None,
+    manifest: str | None,
+    action: int | None,
+    *,
+    applied: bool,
+    url: str | None,
+    issue: int | None,
+    retry: bool,
+    yes: bool,
+) -> None:
+    """Resolve one uncertain issue action; shared by `issue resolve` and `outbox resolve`."""
     from jailbee import issue_outbox, prompting
     from jailbee.issue_manifest import CreateAction, IssueManifestError, parse_manifest
     from jailbee.lifecycle import short_name

@@ -113,6 +113,13 @@ before editing `## Unreleased`.
   exit codes change: with nothing pending both now exit 2 (they exited 0 with
   "Nothing pending"), and off a terminal a missing manifest exits 2 even when
   exactly one is pending, because the destructive picker never auto-takes it.
+- `jailbee outbox resolve [<container>] [pr|issue/<manifest>] [<action>]` settles
+  an uncertain PR or issue action in one place
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)): `--applied --url
+  <url>` (plus `--issue <n>` for an issue create) records that it landed,
+  `--retry` forgets the outcome. `jailbee review resolve` and `jailbee issue
+  resolve` remain as aliases, and the hints printed after an uncertain
+  publication, a refused clear or a destroyed container name the new command.
 - Publishing in the outbox manager covers PR creations too: `p` on a
   description awaiting its PR, or on a pinned source awaiting its push, hands
   the terminal to `jailbee pr push` (or `submodule pr push`, `pr push

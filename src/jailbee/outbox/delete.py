@@ -284,8 +284,8 @@ def plan_clear(container: ContainerView) -> ContainerClearPlan:
             if any(action.state == "uncertain" for action in view.actions):
                 index = next(action.index for action in view.actions if action.state == "uncertain")
                 reason = (
-                    "uncertain — reconcile with: jailbee issue resolve "
-                    f"{container.name} {view.id.name} {index} (--applied --url <url> | --retry)"
+                    "uncertain — reconcile with: jailbee outbox resolve "
+                    f"{container.name} {view.id} {index} (--applied --url <url> | --retry)"
                 )
             elif view.id.kind == "pr" and view.edit_block:
                 reason = (

@@ -1757,14 +1757,20 @@ cannot durably resolve one way or the other (nothing later in that manifest
 is attempted); re-running `apply` resumes, skipping actions the
 journal already shows applied and restoring a `create` action's issue
 number for any `issue_ref` still ahead of it. An action left `uncertain` by
-an earlier run blocks the whole manifest until `jailbee issue resolve`
+an earlier run blocks the whole manifest until `jailbee outbox resolve`
 reconciles it.
 
 Pending issue proposals are listed with `jailbee outbox ls` and discarded
 unpublished with `jailbee outbox drop` (`--archive-journal` keeps settled
 progress); inspect one with `jailbee outbox show`.
 
-### `jailbee issue resolve [NAME] [MANIFEST] [ACTION] (--applied --url URL [--issue N] | --retry) [-y]`
+### `jailbee outbox resolve [CONTAINER] [PROPOSAL] [ACTION] (--applied --url URL [--issue N] | --retry) [-y]`
+
+The one command for uncertain PR and issue actions. `PROPOSAL` is
+`pr/<manifest>.json` or `issue/<manifest>.json` (asked for with the kind when
+omitted). `jailbee issue resolve [NAME] [MANIFEST] ...` and `jailbee review
+resolve [NAME] [MANIFEST] [ACTION] (--applied URL | --retry)` are aliases of it
+for one kind; `--yes` only applies to issue proposals.
 
 Reconcile one action an earlier `apply` left `uncertain` (its GitHub
 outcome could not be determined for certain). On a terminal the container,

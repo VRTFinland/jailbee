@@ -19,7 +19,18 @@ if TYPE_CHECKING:
     from jailbee.outbox.models import Kind, ProposalId
 
 _COMMANDS = frozenset(
-    ("browse", "ls", "show", "drop", "clear", "apply", "sent", "attachments", "attachment-resolve")
+    (
+        "browse",
+        "ls",
+        "show",
+        "drop",
+        "clear",
+        "apply",
+        "sent",
+        "attachments",
+        "attachment-resolve",
+        "resolve",
+    )
 )
 
 
@@ -382,6 +393,91 @@ def attachments(
         return 0
 
     _run(ctx, config, operation)
+
+
+@app.command("resolve")
+def resolve(
+    ctx: typer.Context,
+    container: ContainerArgument = None,
+    proposal: ProposalArgument = None,
+    action: Annotated[
+        int | None,
+        typer.Argument(help="Zero-based index of the uncertain action. Asked for when omitted."),
+    ] = None,
+    applied: Annotated[
+        bool, typer.Option("--applied", help="Confirm the action actually landed on GitHub.")
+    ] = False,
+    url: Annotated[
+        str | None, typer.Option("--url", help="The GitHub URL the action produced (--applied).")
+    ] = None,
+    issue: Annotated[
+        int | None,
+        typer.Option("--issue", help="The created issue's number (issue create actions only)."),
+    ] = None,
+    retry: Annotated[
+        bool, typer.Option("--retry", help="Forget the uncertain outcome and retry it.")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Skip the confirmation (issue proposals).")
+    ] = False,
+    config: ConfigOption = None,
+) -> None:
+    """Resolve one PR or issue action whose GitHub outcome an earlier run left uncertain.
+
+    Check GitHub first. Exactly one of `--applied` (with `--url`, and `--issue`
+    for an issue create) or `--retry` is required; `--retry` forgets the
+    uncertain record so `jailbee outbox apply` attempts it again. Also
+    available as `jailbee review resolve` and `jailbee issue resolve`.
+    """
+    from jailbee import prompting
+    from jailbee.cli import run_issue_resolve, run_review_resolve
+    from jailbee.outbox.models import OutboxError, ProposalId
+    from jailbee.tui import error_plain
+
+    cfg_path = config if config is not None else ctx.obj
+    kind: str
+    manifest: str | None = None
+    if proposal is None:
+        kind = prompting.choose_one(
+            "kind",
+            [
+                prompting.Option("pr", "pr: a pull request action", "pr/<manifest>.json"),
+                prompting.Option("issue", "issue: an issue action", "issue/<manifest>.json"),
+            ],
+        )
+    else:
+        try:
+            pid = ProposalId.parse(proposal)
+        except OutboxError as exc:
+            error_plain(str(exc))
+            raise typer.Exit(2) from exc
+        kind, manifest = pid.kind, pid.name
+    if kind == "pr":
+        if applied == retry:
+            error_plain("Exactly one of --applied --url URL or --retry is required.")
+            raise typer.Exit(2)
+        if applied and url is None:
+            error_plain("--applied requires --url URL.")
+            raise typer.Exit(2)
+        if retry and url is not None:
+            error_plain("--retry accepts neither --url nor --issue.")
+            raise typer.Exit(2)
+        if issue is not None:
+            error_plain("--issue is only valid for an issue create action.")
+            raise typer.Exit(2)
+        run_review_resolve(cfg_path, container, manifest, action, url=url, retry=retry)
+    else:
+        run_issue_resolve(
+            cfg_path,
+            container,
+            manifest,
+            action,
+            applied=applied,
+            url=url,
+            issue=issue,
+            retry=retry,
+            yes=yes,
+        )
 
 
 @app.command("attachment-resolve")

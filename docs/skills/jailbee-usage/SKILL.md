@@ -1778,8 +1778,7 @@ commit, since destroying the container deletes its staged proposals from the
 host outbox store (stopped and mount-mode containers included) — and about
 unapplied issue actions the same way. Only a proposal whose publication outcome
 is uncertain survives the destroy: `jailbee outbox` lists it as
-`<container>@<uuid>` (destroyed) for `jailbee issue resolve` / `jailbee review
-resolve` and `jailbee outbox drop`.
+`<container>@<uuid>` (destroyed) for `jailbee outbox resolve` and `jailbee outbox drop`.
 
 See the **jailbee-pr-review** skill for the manifest format and how the
 in-container agent is expected to use it — this section only covers
@@ -1805,8 +1804,8 @@ manifest per run and, on a terminal, asks for a missing container or manifest.
 It refuses the whole manifest if any action's `expected` block (the issue
 state the agent read) no longer matches GitHub, and checks again right before
 it mutates anything. An action whose outcome could not be confirmed is
-journaled `uncertain` and blocks its manifest until `jailbee issue resolve
-[NAME] [MANIFEST] [ACTION] --applied --url URL` (it did land) or `--retry`;
+journaled `uncertain` and blocks its manifest until `jailbee outbox resolve
+[CONTAINER] issue/MANIFEST [ACTION] --applied --url URL` (it did land) or `--retry`;
 off a terminal the container, manifest, action, mode and URL must all be given. Pending
 issue actions show in `jailbee ls`'s ISSUES column and the dashboards' OUTBOX column, as an "Apply N issue
 action(s)" dashboard entry and in the pre-destroy warning. The manifest format
@@ -1872,7 +1871,7 @@ the deletion confirmation, not selection or safety checks. `--dry-run` never
 deletes or asks for deletion confirmation. Shared body files stay while
 another pending manifest in that store uses them; settled issue journals are
 archived automatically. Issue manifests with uncertain actions stay until
-`jailbee issue resolve` reconciles them. PR manifests with publication evidence
+`jailbee outbox resolve` reconciles them. PR manifests with publication evidence
 (including partial publication) stay: inspect with `jailbee outbox` or finish
 with `outbox apply`. Changed-since-listing proposals stay and newly arrived
 ones are not included. Exit 0 means no kept/failed items (also empty or declined);

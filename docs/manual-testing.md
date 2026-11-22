@@ -5399,7 +5399,7 @@ fixture proposal before injecting the journal. Action 0 is applied, action 1
 pending, and neither child nor whole PR deletion may discard that evidence.
 An injected **uncertain** entry for action 1 must keep `outbox clear` from
 deleting the proposal until
-`jb review resolve smoke <review-proposal>.json 1 --retry` settles it. For issues,
+`jb outbox resolve smoke pr/<review-proposal>.json 1 --retry` settles it. For issues,
 inject a settled journal into the same store: a
 create applied with its number/receipt and its dependent comment pending.
 Selective deletion refuses. First run `jb outbox show smoke

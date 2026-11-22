@@ -187,7 +187,7 @@ def _source_uncertainty(
             detail = (
                 "publication outcome uncertain; check GitHub, then rerun jb pr push"
                 if view.state == "awaiting-push"
-                else "publication outcome uncertain; check GitHub, then jb review resolve"
+                else "publication outcome uncertain; check GitHub, then jb outbox resolve"
             )
             view = replace(
                 view,

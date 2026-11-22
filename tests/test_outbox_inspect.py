@@ -470,7 +470,7 @@ def test_overview_json_delete_eligibility_matches_plan_clear(tmp_path):
     assert delete[ProposalId("issue", "001.json")].selection.archive_journal
     stuck = out["issue/002.json"]
     assert stuck["deletable"] is False
-    assert "jailbee issue resolve" in stuck["delete_block"]
+    assert "jailbee outbox resolve" in stuck["delete_block"]
 
 
 def test_overview_json_action_delete_scope(tmp_path):
