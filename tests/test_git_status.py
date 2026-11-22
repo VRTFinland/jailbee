@@ -1424,7 +1424,8 @@ def _real_git_incus(repo):
 
 def test_probe_reports_unknown_host_counts_when_the_host_branch_object_is_missing(tmp_path):
     """A PR-bound container that lacks the host branch tip: PR-head counts are
-    measured, host counts are "?" (the destroy guard then falls back to head_sha)."""
+    measured, host ↑ is "?" (the destroy guard then falls back to head_sha) and
+    host ↓ is "•" (behind, count unknown)."""
     import subprocess
 
     from jailbee.host_target import SyncTarget, TargetSnapshot
@@ -1455,4 +1456,4 @@ def test_probe_reports_unknown_host_counts_when_the_host_branch_object_is_missin
     )
 
     assert status.ahead_count == "1"
-    assert (status.host_ahead_count, status.host_behind_count) == ("?", "?")
+    assert (status.host_ahead_count, status.host_behind_count) == ("?", "•")
