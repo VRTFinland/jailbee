@@ -217,3 +217,134 @@ def test_a_served_profile_named_claude_does_not_replace_plain_claude(rig, mocker
     payload = {"json": {"profiles": {"claude": {"tiers": {"haiku": "z"}}}}}
     mocker.patch("jailbee.litellm.container_sync_payload", return_value=payload)
     assert runner.invoke(app, ["agent", "use", "claude/opus"]).exit_code == 0
+
+
+# --- per-container override (#146 ticket 10) -------------------------------
+
+
+@pytest.fixture
+def labels(rig, mocker):
+    """The one container's runner label, held in a dict behind the mocked Incus."""
+    store: dict[str, str] = {}
+    incus = MagicMock()
+    incus.config_get.side_effect = lambda name, key: store.get(key)
+    incus.config_set.side_effect = lambda name, key, value: store.__setitem__(key, value)
+    incus.config_unset_checked.side_effect = lambda name, key: store.pop(key, None)
+    mocker.patch("jailbee.incus.Incus", return_value=incus)
+    mocker.patch("jailbee.lifecycle.resolve_container_name", side_effect=lambda c, i, n: n)
+    mocker.patch("jailbee.agent_default.read_runner", side_effect=read_runner_real(store))
+    return store, incus
+
+
+def read_runner_real(store):
+    from jailbee.orchestration.runner import parse_runner_label
+
+    return lambda inc, name: parse_runner_label(store.get("user.jailbee.orchestration.runner"))
+
+
+LABEL = "user.jailbee.orchestration.runner"
+
+
+def test_use_container_sets_the_label_not_the_repo_layer(labels):
+    store, _ = labels
+    result = runner.invoke(app, ["agent", "use", "grok/sonnet", "--container", "myrepo-a"])
+    assert result.exit_code == 0, result.output
+    assert Runner.from_label(store[LABEL]) == Runner(
+        agent="claude-jb", profile="grok", model="sonnet"
+    )
+    assert not local_config_path("myrepo").exists()
+
+
+def test_use_container_validates_like_the_repo_default(labels):
+    store, _ = labels
+    result = runner.invoke(app, ["agent", "use", "nope", "--container", "myrepo-a"])
+    assert result.exit_code == 1 and "claude, grok, gpt" in result.output
+    assert LABEL not in store
+
+
+def test_clear_container_removes_the_label(labels):
+    store, _ = labels
+    runner.invoke(app, ["agent", "use", "claude/opus", "--container", "myrepo-a"])
+    result = runner.invoke(app, ["agent", "use", "--container", "myrepo-a", "--clear"])
+    assert result.exit_code == 0, result.output
+    assert LABEL not in store
+
+
+def test_container_picker_offers_repo_default_which_clears(labels, mocker):
+    store, _ = labels
+    runner.invoke(app, ["agent", "use", "claude/opus", "--container", "myrepo-a"])
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    select = mocker.patch("jailbee.prompting._select", side_effect=["(repo default)"])
+    result = runner.invoke(app, ["agent", "use", "--container", "myrepo-a"])
+    assert result.exit_code == 0, result.output
+    assert select.call_count == 1  # no tier question after "repo default"
+    assert LABEL not in store
+
+
+def test_container_picker_asks_profile_then_tier(labels, mocker):
+    store, _ = labels
+    mocker.patch("jailbee.prompting.is_interactive", return_value=True)
+    mocker.patch("jailbee.prompting._select", side_effect=["grok", "sonnet"])
+    result = runner.invoke(app, ["agent", "use", "--container", "myrepo-a"])
+    assert result.exit_code == 0, result.output
+    assert Runner.from_label(store[LABEL]).model == "sonnet"
+
+
+def test_running_sessions_are_untouched(labels):
+    _, incus = labels
+    runner.invoke(app, ["agent", "use", "claude/opus", "--container", "myrepo-a"])
+    assert not incus.exec.called  # nothing is sent into the container
+
+
+def test_show_marks_the_label_source(labels):
+    runner.invoke(app, ["agent", "use", "claude/haiku", "--container", "myrepo-a"])
+    out = runner.invoke(app, ["agent", "show"]).output
+    assert "container myrepo-a: claude haiku (source: label)" in out
+
+
+def test_the_label_is_what_autostart_launches(labels, mocker):
+    from jailbee.autostart import agent_autostart_steps
+
+    runner.invoke(app, ["agent", "use", "grok/sonnet", "--container", "myrepo-a"])
+    store, _ = labels
+    from jailbee.cli import _load_or_exit
+
+    cfg = _load_or_exit(None)
+    steps = agent_autostart_steps(
+        cfg,
+        runner=Runner.from_label(store[LABEL]),
+        default_runner=Runner(agent="claude"),
+        launch="claude",
+    )
+    assert "claude-jb" in steps[0].run and "-P grok" in steps[0].run
+
+
+def test_open_starts_the_effective_agent_in_a_new_window(labels, mocker):
+    runner.invoke(app, ["agent", "use", "grok/sonnet", "--container", "myrepo-a"])
+    _, incus = labels
+    incus.exec.return_value = "claude\nbash\n"  # a `claude` window already runs
+    mocker.patch("jailbee.tmux.ensure_session")
+    result = runner.invoke(app, ["agent", "open", "myrepo-a"])
+    assert result.exit_code == 0, result.output
+    assert "window claude-2" in result.output
+    sent = " ".join(str(c) for c in incus.exec.call_args_list)
+    assert "new-window" in sent and "claude-jb" in sent and "-P grok" in sent
+    assert "kill-window" not in sent  # the running agent is never replaced
+
+
+def test_open_refuses_a_stopped_container(labels):
+    result = runner.invoke(app, ["agent", "open", "myrepo-b"])
+    assert result.exit_code == 1 and "not running" in result.output
+
+
+def test_container_agent_names_the_source(labels, mocker):
+    from jailbee.agent_default import container_agent
+    from jailbee.cli import _load_or_exit
+
+    cfg = _load_or_exit(None)
+    _, incus = labels
+    assert container_agent(cfg, incus, "myrepo-a") is None  # legacy path
+    runner.invoke(app, ["agent", "use", "claude/opus"])
+    assert container_agent(_load_or_exit(None), incus, "myrepo-a") == ("claude/opus", "local")
+    runner.invoke(app, ["agent", "use", "grok/sonnet", "--container", "myrepo-a"])
+    assert container_agent(cfg, incus, "myrepo-a") == ("grok/sonnet", "container")

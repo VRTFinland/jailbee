@@ -180,11 +180,19 @@ def effective(cfg: Config, incus: Incus) -> Effective:
     return Effective(None, "legacy", legacy=via, labels=labels)
 
 
-def choose(cfg: Config, incus: Incus, gcfg: GlobalConfig, selection: str | None) -> Runner:
+def choose(
+    cfg: Config,
+    incus: Incus,
+    gcfg: GlobalConfig,
+    selection: str | None,
+    *,
+    container: str | None = None,
+) -> Runner | None:
     """The runner to write: parsed from `selection`, else asked for (profile, then tier).
 
     The rows come from `dashboard.agent_choice`, shared with the dashboards; the
-    current default is marked and the cursor starts on it.
+    current default is marked and the cursor starts on it. For one ``container``
+    the picker starts with a "repo default" row, which answers None (no label).
     """
     from jailbee import prompting
     from jailbee.dashboard import agent_choice
@@ -193,13 +201,28 @@ def choose(cfg: Config, incus: Incus, gcfg: GlobalConfig, selection: str | None)
         profile, model = parse_selection(selection)
         return build_runner(profile, model)
     offered = catalog(cfg, incus, gcfg)
-    now_profile, now_tier = agent_choice.split_current(cfg.orchestration_view().default_runner)
+    current = (
+        read_runner(incus, container)
+        if container is not None
+        else cfg.orchestration_view().default_runner
+    )
+    now_profile, now_tier = agent_choice.split_current(current)
     profile = prompting.choose_one(
         "agent profile",
-        agent_choice.profile_options(offered, now_profile),
-        question="Default agent profile for this repo's containers:",
-        default=now_profile if now_profile in offered else None,
+        agent_choice.profile_options(offered, now_profile, repo_default=container is not None),
+        question=(
+            f"Agent for {container}:"
+            if container is not None
+            else "Default agent profile for this repo's containers:"
+        ),
+        default=now_profile
+        if now_profile in offered
+        else agent_choice.REPO_DEFAULT
+        if container is not None
+        else None,
     )
+    if profile == agent_choice.REPO_DEFAULT:
+        return None
     tier_now = now_tier if profile == now_profile else None
     tier = prompting.choose_one(
         "model tier",
@@ -234,6 +257,7 @@ def use(
     runner: Runner | None = None
     if not clear:
         runner = choose(cfg, incus, gcfg, selection)
+        assert runner is not None  # only a container picker answers "repo default"
         found = problems(cfg, incus, gcfg, runner)
         if found:
             raise SelectionError("; ".join(found))
@@ -241,3 +265,86 @@ def use(
     now = reload().orchestration_view().default_runner
     profile = now.profile if now is not None and now.agent == "claude-jb" else None
     return UseResult(runner, resync(cfg, incus, gcfg, profile))
+
+
+def use_for_container(
+    cfg: Config,
+    incus: Incus,
+    gcfg: GlobalConfig,
+    container: str,
+    selection: str | None,
+    *,
+    clear: bool = False,
+) -> Runner | None:
+    """`jailbee agent use --container`: set (or remove) the container's runner label.
+
+    The label outranks `agents.default_runner` at the next autostart. Nothing is
+    sent into the container: a running agent session keeps the agent it has.
+    Returns the new label's runner, None when the container now follows the repo.
+    """
+    from jailbee.orchestration.labels import RUNNER
+
+    runner = None if clear else choose(cfg, incus, gcfg, selection, container=container)
+    if runner is None:
+        incus.config_unset_checked(container, RUNNER)
+        return None
+    found = problems(cfg, incus, gcfg, runner)
+    if found:
+        raise SelectionError("; ".join(found))
+    incus.config_set(container, RUNNER, runner.to_label())
+    return runner
+
+
+def container_agent(cfg: Config, incus: Incus, container: str) -> tuple[str, str] | None:
+    """(`profile/model`, source) of the agent ``container`` launches next, or None.
+
+    The source is ``container`` for its own label, else the layer of the repo's
+    default runner. None when only the legacy `primary_agent` path applies.
+    """
+    from jailbee.dashboard.agent_choice import runner_label
+
+    label = read_runner(incus, container)
+    if label is not None:
+        return runner_label(label), "container"
+    view = cfg.orchestration_view()
+    if view.default_runner is not None and view.default_runner_source is not None:
+        return runner_label(view.default_runner), view.default_runner_source
+    return None
+
+
+def open_window(cfg: Config, incus: Incus, container: str) -> str:
+    """Start the effective agent in a new tmux window of a running container.
+
+    Returns the window's name. The window is new (never replaces a running
+    agent's) and the choice is the one autostart would make.
+    """
+    from jailbee import tmux
+    from jailbee.agents import primary_agent
+    from jailbee.autostart import agent_autostart_steps
+    from jailbee.lifecycle import container_repo_dir, list_containers
+    from jailbee.orchestration.labels import child_env, orchestrator_env
+
+    if not any(c.name == container and c.state == "Running" for c in list_containers(cfg, incus)):
+        raise SelectionError(f"{container} is not running")
+    runner = read_runner(incus, container)
+    default = cfg.orchestration_view().default_runner
+    name = "claude" if runner is not None or default is not None else primary_agent(cfg).name
+    if name is None:
+        raise SelectionError("no agent is enabled in this repo")
+    extra_env = {**child_env(cfg, incus, container), **orchestrator_env(cfg, incus, container)}
+    steps = agent_autostart_steps(
+        cfg, extra_env=extra_env, runner=runner, default_runner=default, launch=name
+    )
+    step = next((s for s in steps if s.name == name), None)
+    if step is None:
+        raise SelectionError(f"agent {name!r} has no launch command")
+    repo_dir = container_repo_dir(cfg, incus, container)
+    tmux.ensure_session(incus, container, start_dir=repo_dir)
+    return tmux.open_window(
+        incus,
+        container,
+        name,
+        step.run,
+        {**cfg.autostart.env, **step.env, "REPO_DIR": repo_dir},
+        repo_dir,
+    )

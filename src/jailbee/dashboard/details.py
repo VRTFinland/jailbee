@@ -403,6 +403,13 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
     agent = cell("agent")
     if _present(agent):
         summary.append(agent)
+    if c.agent_runner:
+        where = (
+            "this container"
+            if c.agent_source == "container"
+            else f"repo default, {escape(c.agent_source or 'repo')}"
+        )
+        summary.append(f"[dim]agent[/dim] {escape(c.agent_runner)} [dim]({where})[/dim]")
     # Every busy process, unlike the cell, which stops at DOING_MAX_NAMES.
     doing = ", ".join(
         escape(p.comm) if p.count == 1 else f"{escape(p.comm)} x{p.count}" for p in c.activity

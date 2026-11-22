@@ -11999,12 +11999,24 @@ def agent_use_cmd(
     clear: Annotated[
         bool, typer.Option("--clear", help="Remove the choice; fall back to the other layers.")
     ] = False,
+    container: Annotated[
+        str | None,
+        typer.Option(
+            "--container",
+            "-c",
+            help=(
+                "Set this one container's own agent (its runner label) instead of the repo "
+                "default; with --clear, the container follows the repo again."
+            ),
+        ),
+    ] = None,
     config: ConfigOption = None,
 ) -> None:
     """Set the repo's default agent runner (`agents.default_runner`, local layer).
 
     Written to this repo's host-local config. Containers' `claude-jb` default
-    profile is resynced; running agent sessions are not touched.
+    profile is resynced; running agent sessions are not touched. With
+    `--container` only that container's label changes, for its next session.
     """
     from jailbee import agent_default
     from jailbee.incus import Incus, IncusError
@@ -12014,6 +12026,18 @@ def agent_use_cmd(
         raise typer.Exit(2)
     cfg = _load_or_exit(config)
     incus, gcfg = Incus(), _load_global()
+    if container is not None:
+        incus, full = _resolve_existing(cfg, container)
+        try:
+            chosen = agent_default.use_for_container(cfg, incus, gcfg, full, selection, clear=clear)
+        except (agent_default.SelectionError, IncusError) as e:
+            error(str(e))
+            raise typer.Exit(1) from e
+        if chosen is None:
+            success(f"{full} follows the repo's default agent again (next session)")
+        else:
+            success(f"Agent for {full}: {chosen.describe()} (next session)")
+        return
     try:
         result = agent_default.use(
             cfg, incus, gcfg, selection, reload=lambda: _load_or_exit(config), clear=clear
@@ -12029,6 +12053,31 @@ def agent_use_cmd(
         info(f"Resynced claude-jb settings in {len(result.resync.synced)} running container(s)")
     for name, why in result.resync.failed:
         warn_plain(f"Could not resync {name}: {why}; run `jailbee apply` to retry.")
+
+
+@agent_app.command("open")
+def agent_open_cmd(
+    container: Annotated[
+        str | None, typer.Argument(help="Container (asked for when omitted).")
+    ] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Start the container's effective agent in a new tmux window, now.
+
+    The agent is the one autostart would launch (the container's own choice,
+    else the repo default). Running agent windows are left alone.
+    """
+    from jailbee import agent_default
+    from jailbee.incus import IncusError
+
+    cfg = _load_or_exit(config)
+    incus, full = _resolve_existing(cfg, container)
+    try:
+        window = agent_default.open_window(cfg, incus, full)
+    except (agent_default.SelectionError, IncusError) as e:
+        error(str(e))
+        raise typer.Exit(1) from e
+    success(f"Started the agent in window {window} of {full}")
 
 
 @agent_app.command("show")

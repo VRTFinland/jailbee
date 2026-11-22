@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 PLAIN = "claude"
 DEFAULT_TIER = ""  # picker sentinel: a `None` value would read as a cancel
 CURRENT = " (current)"
+REPO_DEFAULT = "(repo default)"  # picker sentinel: a container with no choice of its own
 
 
 def split_current(runner: Runner | None) -> tuple[str | None, str | None]:
@@ -36,9 +37,27 @@ def runner_label(runner: Runner) -> str:
     return f"{profile}/{model}" if model else str(profile)
 
 
-def profile_options(offered: Mapping[str, Sequence[str]], current: str | None) -> list[Option[str]]:
-    """One row per offered profile (the config's served ones), the current marked."""
-    return [
+def profile_options(
+    offered: Mapping[str, Sequence[str]], current: str | None, *, repo_default: bool = False
+) -> list[Option[str]]:
+    """One row per offered profile (the config's served ones), the current marked.
+
+    ``repo_default`` (the per-container picker) puts a "repo default" row first;
+    it is the current one when ``current`` is None.
+    """
+    head = (
+        [
+            Option(
+                REPO_DEFAULT,
+                "repo default" + (CURRENT if current is None else ""),
+                "repo default",
+                "drop this container's own choice and follow the repo",
+            )
+        ]
+        if repo_default
+        else []
+    )
+    return head + [
         Option(
             name,
             name + (CURRENT if name == current else ""),

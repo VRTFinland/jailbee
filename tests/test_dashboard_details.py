@@ -1492,3 +1492,19 @@ def test_git_value_renders_the_missing_target_marker_as_behind_unknown() -> None
     from jailbee.dashboard.details import _git_value
 
     assert _git_value("•") == "[yellow]↓•[/yellow]"
+
+
+def test_summary_says_where_the_agent_runner_comes_from() -> None:
+    own = _panel_plain(
+        dd.container_panel(_c(agent_runner="grok/sonnet", agent_source="container"), NOW).summary
+    )
+    assert "agent grok/sonnet (this container)" in own
+    repo = _panel_plain(
+        dd.container_panel(_c(agent_runner="claude/opus", agent_source="local"), NOW).summary
+    )
+    assert "agent claude/opus (repo default, local)" in repo
+    legacy = _panel_plain(
+        dd.container_panel(_c(agent_runner="(claude)", agent_source="legacy"), NOW).summary
+    )
+    assert "agent (claude) (repo default, legacy)" in legacy
+    assert not any("agent" in p for p in _panel_plain(dd.container_panel(_c(), NOW).summary))

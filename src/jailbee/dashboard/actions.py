@@ -56,6 +56,15 @@ def agent_use_argv() -> list[str]:
     return ["agent", "use"]
 
 
+def container_agent_argv(name: str) -> list[str]:
+    """The same picker for one container, with a "repo default" row first."""
+    return ["agent", "use", "--container", name]
+
+
+def agent_window_argv(name: str) -> list[str]:
+    return ["agent", "open", name]
+
+
 DIAGNOSTICS_LABEL = "Diagnostics →"
 
 APPLY_RESTART = "restart"
@@ -213,8 +222,12 @@ SNAPSHOTS = "snapshots"
 MOUNTS = "mounts"
 SERVICES = "services"
 ORCHESTRATION = "orchestration"
+CONTAINER_AGENT = "container-agent"
+AGENT_WINDOW = "agent-window"
 CONTAINER_VERBS = frozenset(
     {
+        CONTAINER_AGENT,
+        AGENT_WINDOW,
         AUTOSTART_RERUN,
         AUTOSTART_STATUS,
         AUTOSTART_CANCEL,
@@ -793,6 +806,10 @@ def container_extras(
         before.append(("Services…", SERVICES))
     if orchestration_offered(container, ssh_policy, transport=transport, rows=rows):
         before.append(("Orchestration…", ORCHESTRATION))
+    if container.state in _EXISTING_STATES and allowed(container_agent_argv(name)):
+        before.append(("Agent for this container…", CONTAINER_AGENT))
+    if container.state == "Running" and allowed(agent_window_argv(name)):
+        before.append(("New agent window", AGENT_WINDOW))
     return ContainerExtras(tuple(after_job), tuple(before))
 
 

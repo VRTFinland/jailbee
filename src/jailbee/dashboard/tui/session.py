@@ -1506,6 +1506,13 @@ class DashboardSession:
             return self.open_services(container)
         if verb == dact.ORCHESTRATION:
             return self.open_orchestration(container)
+        if verb == dact.CONTAINER_AGENT:
+            # The command's own questions are the picker (prompt channel).
+            self.run_dashboard_command(container, "container", dact.container_agent_argv(container))
+            return None
+        if verb == dact.AGENT_WINDOW:
+            self.run_dashboard_command(container, "container", dact.agent_window_argv(container))
+            return None
         return None
 
     def open_orchestration(self, container: str, start_index: int = 0) -> Picker | None:

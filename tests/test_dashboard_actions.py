@@ -488,6 +488,8 @@ def test_container_extras_order_and_labels():
         ("Mounts…", "mounts"),
         ("Services…", "services"),
         ("Orchestration…", "orchestration"),
+        ("Agent for this container…", "container-agent"),
+        ("New agent window", "agent-window"),
     )
 
 
