@@ -108,7 +108,10 @@ before editing `## Unreleased`.
   ([#144](https://github.com/VRTFinland/jailbee/issues/144)). The host refuses
   the edit unless the publishing account wrote the comment and it is unchanged
   since staging, and the plan shows the change as a line diff. Orchestrator
-  publication needs the new `comment_edit` issue kind.
+  publication needs the new `comment_edit` issue kind. `jailbee pr comment-edit ID`
+  does the same for a submitted PR review (line) comment or reply, as a
+  `comment_edit` action in the PR manifest (published with the other PR actions
+  under `publish.pr_reviews`).
 
 ### Changed
 

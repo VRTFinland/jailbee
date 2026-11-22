@@ -167,8 +167,8 @@ state.
 ## `type: "comment_edit"`
 
 Replaces the body of one existing conversation comment on an issue or a pull
-request (both use GitHub's issue-comments API). Review (line) comments are not
-covered. Stage it with `jailbee issue comment-edit ID --body …`; it reads the
+request (both use GitHub's issue-comments API). Review (line) comments use the
+PR manifest's `comment_edit`. Stage it with `jailbee issue comment-edit ID --body …`; it reads the
 comment and fills in `issue` and `expected.body` for you.
 
 | Field | Rule |

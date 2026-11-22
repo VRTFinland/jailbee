@@ -133,8 +133,13 @@ Use `jailbee pr comment N --body "..."`, `jailbee pr reply N --to ID
 To correct a general (conversation) comment the publishing account already
 posted, stage `jailbee issue comment-edit ID --body "..."` (find ID with
 `jailbee issue comments N`). It goes through the issue outbox, because GitHub
-stores PR conversation comments as issue comments. Review (line) comments cannot
-be edited yet.
+stores PR conversation comments as issue comments. To correct a submitted review
+(line) comment or reply the account already posted, stage `jailbee pr comment-edit
+ID [N] --body "..."` (ID is the review comment id from `gh api
+repos/OWNER/REPO/pulls/N/comments`); it reads the comment and records its body as
+`expected.body`. The host refuses it unless that account wrote the comment, it is on
+that PR and it is unchanged since staging. Pending (unsubmitted) review comments are
+not edited this way; they belong to `jailbee pr review`.
 Omitting N selects the unique actual container binding (primary, stacked,
 imported-head or submodule), never the currently checked-out branch. Multiple
 bindings require N. For a new PR description, `--new` requires a readable, empty

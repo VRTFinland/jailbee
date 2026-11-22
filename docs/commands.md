@@ -41,8 +41,9 @@ The height is remembered with the rest of the view.
 
 Inside a non-child container, stage GitHub proposals with `jailbee issue
 create|edit|comment|comment-edit|labels|assign|state|project` and `jailbee pr
-comment|reply|description|source`. `jailbee issue comment-edit ID` replaces the
-body of an issue or PR conversation comment the publishing account wrote; the
+comment|comment-edit|reply|description|source`. `jailbee issue comment-edit ID` replaces the
+body of an issue or PR conversation comment the publishing account wrote, and
+`jailbee pr comment-edit ID` that of a submitted PR review comment; the
 read-only `jailbee issue comments ISSUE [--json]` lists comment ids. `jailbee issue assign ISSUE|@REF` takes `--me`
 (the publishing account, `@me`), `--unassign-me`, and repeatable `--add LOGIN` /
 `--remove LOGIN`; at least one is required. Use `--body` or `--body-file`; issue

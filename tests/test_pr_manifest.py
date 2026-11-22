@@ -79,3 +79,49 @@ def test_host_wrapper_keeps_injected_git_validation(mocker):
     assert pr_manifest.parse_manifest("001-source.json", text, {}).source == "refs/heads/topic"
     assert pr_outbox.Manifest is pr_manifest.Manifest
     assert pr_outbox.DescriptionAction is pr_manifest.DescriptionAction
+
+
+def _edit_item(**changes):
+    item = {"type": "comment_edit", "comment_id": 7, "body": "new", "expected": {"body": "old"}}
+    return {**item, **changes}
+
+
+def _parse_edit(*items):
+    import json
+
+    from jailbee.pr_manifest import parse_manifest
+
+    text = json.dumps({"version": 1, "repo": "a/b", "pr": 3, "actions": list(items)})
+    return parse_manifest("m.json", text, {})
+
+
+def test_parse_comment_edit_carries_the_expected_body():
+    from jailbee.pr_manifest import CommentEditAction
+
+    (action,) = _parse_edit(_edit_item()).actions
+    assert action == CommentEditAction(comment_id=7, body="new", expected_body="old")
+
+
+@pytest.mark.parametrize(
+    ("item", "message"),
+    [
+        (_edit_item(expected=None), "expected.body is required"),
+        (_edit_item(expected={}), "expected.body is required"),
+        (_edit_item(expected={"body": 3}), "expected.body must be a string"),
+        (_edit_item(body=""), "non-empty"),
+        (_edit_item(comment_id=0), "positive"),
+        (_edit_item(comment_id="7"), "comment_id must be an integer"),
+    ],
+)
+def test_parse_comment_edit_rejects_malformed_actions(item, message):
+    from jailbee.pr_manifest import ManifestError
+
+    with pytest.raises(ManifestError, match=message):
+        _parse_edit(item)
+
+
+def test_parse_rejects_two_edits_of_one_comment():
+    from jailbee.pr_manifest import ManifestError
+
+    with pytest.raises(ManifestError, match="edited twice"):
+        _parse_edit(_edit_item(), _edit_item(body="other"))

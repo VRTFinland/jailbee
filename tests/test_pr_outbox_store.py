@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from jailbee import pr, pr_outbox
+from jailbee.comment_edit import CommentSnapshot
 from jailbee.db import state_dir
 from jailbee.outbox import publication_db, store_db
 from jailbee.outbox_io import proposal_digest
@@ -95,11 +96,35 @@ def github(mocker, cfg):
     mocker.patch.object(pr, "reply_to_review_comment", side_effect=calls.reply)
     mocker.patch.object(pr, "submit_review", side_effect=calls.review)
     mocker.patch.object(pr, "edit_pr", side_effect=calls.edit)
+    mocker.patch.object(pr, "get_review_comment", side_effect=calls.read_comment)
+    mocker.patch.object(pr, "edit_review_comment", side_effect=calls.edit_comment)
+    calls.read_comment.return_value = snapshot()
+    calls.edit_comment.return_value = "https://github.com/acme/widgets/pull/12#discussion_r7"
     calls.comment.return_value = "https://github.com/acme/widgets/pull/12#c1"
     calls.reply.return_value = "https://github.com/acme/widgets/pull/12#r1"
     calls.review.return_value = "https://github.com/acme/widgets/pull/12#rev"
     calls.edit.return_value = None
     return calls
+
+
+COMMENT_EDIT = {
+    "type": "comment_edit",
+    "comment_id": 7,
+    "body": "Fixed wording",
+    "expected": {"body": "Old wording"},
+}
+
+
+def snapshot(**kw: Any) -> CommentSnapshot:
+    fields: dict[str, Any] = {
+        "id": 7,
+        "author": "me",
+        "body": "Old wording",
+        "url": "https://github.com/acme/widgets/pull/12#discussion_r7",
+        "parent": 12,
+        "repo": REPO,
+    }
+    return CommentSnapshot(**{**fields, **kw})
 
 
 def review_apply(cfg, incus, name: str, **kw: Any) -> int:
@@ -264,3 +289,67 @@ def test_only_an_uncertain_action_can_be_resolved(incus):
     name = stage(manifest(COMMENT))
     with pytest.raises(pr_outbox.OutboxError, match="no uncertain action 0"):
         pr_outbox.resolve_uncertain(incus, FULL, name, 0, landed_url=None)
+
+
+def test_comment_edit_publishes_through_the_review_comments_endpoint(cfg, incus, github):
+    name = stage(manifest(COMMENT_EDIT))
+    assert review_apply(cfg, incus, name) == 0
+    github.edit_comment.assert_called_once_with(cfg.repo_root, REPO, 7, "Fixed wording")
+    assert rows() == []
+    (record,) = sent()
+    assert (record.kind, record.manifest, record.state) == ("comment_edit", name, "applied")
+
+
+@pytest.mark.parametrize(
+    ("changed", "message"),
+    [
+        ({"author": "someone-else"}, "authored by someone-else"),
+        ({"body": "Edited on GitHub meanwhile"}, "expected.body differs"),
+        ({"parent": 99}, "belongs to #99"),
+        ({"repo": "other/repo"}, "belongs to other/repo"),
+    ],
+)
+def test_comment_edit_is_refused_and_nothing_is_published(
+    cfg, incus, github, capsys, changed, message
+):
+    github.read_comment.return_value = snapshot(**changed)
+    name = stage(manifest(COMMENT_EDIT))
+    assert review_apply(cfg, incus, name) == 1
+    github.edit_comment.assert_not_called()
+    assert message in capsys.readouterr().err
+    assert [r.name for r in rows()] == [name]
+
+
+def test_comment_edit_refused_when_the_publishing_account_is_unknown(
+    cfg, incus, github, mocker, capsys
+):
+    mocker.patch.object(pr, "gh_login", return_value=None)
+    name = stage(manifest(COMMENT_EDIT))
+    assert review_apply(cfg, incus, name) == 1
+    github.edit_comment.assert_not_called()
+    assert "unresolved publishing account" in capsys.readouterr().err
+
+
+def test_comment_edit_rechecks_the_comment_just_before_publishing(cfg, incus, github):
+    github.read_comment.side_effect = [snapshot(), snapshot(body="Changed under us")]
+    name = stage(manifest(COMMENT_EDIT))
+    assert review_apply(cfg, incus, name) == 1
+    github.edit_comment.assert_not_called()
+
+
+def test_comment_edit_dry_run_shows_a_before_after_diff_and_publishes_nothing(
+    cfg, incus, github, capsys
+):
+    name = stage(manifest(COMMENT_EDIT))
+    review_apply(cfg, incus, name, dry_run=True)
+    out = capsys.readouterr().out
+    assert "-Old wording" in out and "+Fixed wording" in out
+    github.edit_comment.assert_not_called()
+
+
+def test_comment_edit_that_already_landed_points_at_resolve(cfg, incus, github, capsys):
+    github.read_comment.return_value = snapshot(body="Fixed wording")
+    name = stage(manifest(COMMENT_EDIT))
+    assert review_apply(cfg, incus, name) == 1
+    github.edit_comment.assert_not_called()
+    assert "already reads the new body" in capsys.readouterr().err

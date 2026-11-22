@@ -1536,3 +1536,40 @@ def test_graphql_maps_auth_and_missing_binary(mocker):
     )
     with pytest.raises(PrReviewError, match="not authenticated"):
         _run_gh_graphql(Path("/repo"), "query {}", {}, "lookup")
+
+
+def test_get_review_comment_reads_author_body_and_pull_request(mocker):
+    from jailbee.pr import get_review_comment
+
+    run = mocker.patch(
+        "subprocess.run",
+        return_value=_completed(
+            stdout=json.dumps(
+                {
+                    "id": 9,
+                    "user": {"login": "me"},
+                    "body": "text",
+                    "html_url": "https://x/9",
+                    "pull_request_url": "https://api.github.com/repos/acme/widgets/pulls/7",
+                }
+            )
+        ),
+    )
+    snapshot = get_review_comment(Path("/repo"), "acme/widgets", 9)
+    assert (snapshot.id, snapshot.author, snapshot.body) == (9, "me", "text")
+    assert (snapshot.parent, snapshot.repo) == (7, "acme/widgets")
+    assert run.call_args.args[0][-1] == "repos/acme/widgets/pulls/comments/9"
+
+
+def test_edit_review_comment_patches_the_review_comments_endpoint(mocker):
+    from jailbee.pr import edit_review_comment
+
+    run = mocker.patch(
+        "subprocess.run",
+        return_value=_completed(stdout=json.dumps({"html_url": "https://x/9"})),
+    )
+    assert edit_review_comment(Path("/repo"), "acme/widgets", 9, "new") == "https://x/9"
+    cmd = run.call_args.args[0]
+    assert cmd[cmd.index("--method") + 1] == "PATCH"
+    assert "repos/acme/widgets/pulls/comments/9" in cmd
+    assert json.loads(run.call_args.kwargs["input"]) == {"body": "new"}

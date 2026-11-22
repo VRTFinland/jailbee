@@ -159,7 +159,8 @@ editors; its board picker supports adding a board and editing its action rights.
 `comment_edit` covers editing the body of an existing issue or PR conversation
 comment. Publication still refuses a comment written by any account other than the
 host's publishing account, or one changed since staging. `comment` does not
-imply it.
+imply it. Editing a submitted PR review (line) comment is a `comment_edit` action in
+the PR manifest and needs `publish.pr_reviews`, like a reply.
 
 Assignment has two kinds. `assign_self` covers only assignees changes whose
 logins all equal the publishing account, compared case-insensitively after

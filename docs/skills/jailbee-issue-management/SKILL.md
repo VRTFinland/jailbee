@@ -133,7 +133,7 @@ Editing a comment: `jailbee issue comment-edit ID --body "…"` (or
 issue or a pull request. Find `ID` with `jailbee issue comments N`. The command
 records the comment's issue and current body. The host refuses it unless the
 publishing account wrote the comment and it is unchanged since staging, so
-edit only comments that account wrote. Review (line) comments are not covered.
+edit only comments that account wrote. Review (line) comments are edited with `jailbee pr comment-edit` (see jailbee-pr-review).
 
 Assignment: `jailbee issue assign 42 --me` assigns the publishing account
 (`@me`, resolved on the host at publish time), `--unassign-me` removes it,

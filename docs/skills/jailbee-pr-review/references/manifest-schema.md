@@ -24,6 +24,7 @@ the host outbox's stored proposal files by hand.
       ]
     },
     {"type": "reply", "comment_id": 99887, "body": "…"},
+    {"type": "comment_edit", "comment_id": 99888, "body": "…", "expected": {"body": "…"}},
     {"type": "comment", "body_file": "001-general.md", "reply_to": 4455},
     {"type": "description", "body_file": "001-body.md", "title": "Improve onboarding", "branch": null}
   ]
@@ -74,7 +75,7 @@ For rework of PR 1234, a numbered source can have no description action:
 }
 ```
 
-Every PR proposal — review, reply, comment, description and source — is
+Every PR proposal — review, reply, comment, comment_edit, description and source — is
 staged in the host outbox store over the broker socket (never as a file in
 the container); the broker re-validates it and refuses a child container. `jailbee outbox ls|show|drop`
 cover it as `pr/NNN-source.json`, and `jailbee outbox sent` lists it once
@@ -152,6 +153,22 @@ nothing partial lands.
 `POST /repos/{owner}/{repo}/pulls/{n}/comments/{comment_id}/replies`.
 `comment_id` is a review-comment id you read via `gh api`. Replies are
 separate calls, one per action, and are applied after the review.
+
+## `type: "comment_edit"`
+
+`PATCH /repos/{owner}/{repo}/pulls/comments/{comment_id}`. Replaces the body of
+one submitted review (line) comment or reply. `comment_id` is a review-comment
+id; `body`/`body_file` is the new text (non-empty); `expected.body` is required
+and is the body you read when staging. Stage it with
+`jailbee pr comment-edit ID [N] --body …`, which fills in `expected.body`.
+
+Before publishing the host re-reads the comment and refuses unless it is on the
+manifest's repository and PR, was written by the account the host publishes with
+(compared case-insensitively) and still reads `expected.body`; a comment that
+already reads the new body is reported as landed. The plan shows a line diff. The
+action does not depend on `head_sha`, and it is published directly even in
+`--draft` mode. Two edits of one comment in a manifest are refused. Pending
+(unsubmitted) review comments are not covered.
 
 ## `type: "comment"`
 

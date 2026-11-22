@@ -72,13 +72,26 @@ class CommentAction:
 
 
 @dataclass(frozen=True)
+class CommentEditAction:
+    """Replace the body of one of the publisher's own submitted review comments.
+
+    ``comment_id`` is a review (line) comment or reply; ``expected_body`` is the
+    body the agent saw when staging, which the host re-reads before publishing.
+    """
+
+    comment_id: int
+    body: str
+    expected_body: str
+
+
+@dataclass(frozen=True)
 class DescriptionAction:
     body: str
     title: str | None = None
     branch: str | None = None
 
 
-Action = ReviewAction | ReplyAction | CommentAction | DescriptionAction
+Action = ReviewAction | ReplyAction | CommentAction | CommentEditAction | DescriptionAction
 
 
 @dataclass(frozen=True)
@@ -256,6 +269,26 @@ def _parse_comment(
     return CommentAction(body=body, reply_to=reply_to)
 
 
+def _parse_comment_edit(
+    name: str, index: int, item: dict[str, Any], bodies: Mapping[str, str]
+) -> CommentEditAction:
+    comment_id = _require_int(name, index, item.get("comment_id"), "comment_id")
+    if comment_id < 1:
+        raise ManifestError(f"{name} action {index}: comment_id must be a positive integer")
+    body = _resolve_body(name, index, item, bodies)
+    if not body:
+        raise ManifestError(f"{name} action {index}: comment body must be non-empty")
+    expected = item.get("expected")
+    if not isinstance(expected, dict) or "body" not in expected:
+        raise ManifestError(f"{name} action {index}: expected.body is required")
+    expected_body = expected["body"]
+    if not isinstance(expected_body, str):
+        raise ManifestError(f"{name} action {index}: expected.body must be a string")
+    if len(expected_body.encode()) > MAX_BODY_BYTES:
+        raise ManifestError(f"{name} action {index}: expected.body is larger than the body cap")
+    return CommentEditAction(comment_id=comment_id, body=body, expected_body=expected_body)
+
+
 def _parse_description(
     name: str, index: int, item: dict[str, Any], bodies: Mapping[str, str]
 ) -> DescriptionAction:
@@ -304,6 +337,16 @@ def _parse_actions(
             parsed.append(_parse_reply(name, index, item, bodies))
         elif action_type == "comment":
             parsed.append(_parse_comment(name, index, item, bodies))
+        elif action_type == "comment_edit":
+            edited = _parse_comment_edit(name, index, item, bodies)
+            if any(
+                isinstance(a, CommentEditAction) and a.comment_id == edited.comment_id
+                for a in parsed
+            ):
+                raise ManifestError(
+                    f"{name} action {index}: comment {edited.comment_id} is edited twice"
+                )
+            parsed.append(edited)
         elif action_type == "description":
             if seen_description:
                 raise ManifestError(
