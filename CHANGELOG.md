@@ -123,7 +123,9 @@ before editing `## Unreleased`.
   Reference; page URLs are unchanged. The terminal dashboard has its own page
   with screenshots, a keys cheat sheet, a menu map and the full reference that
   used to be one `commands.md` table cell; the built site now ships the images
-  the published pages reference.
+  the published pages reference. The everyday-use page walks through creating,
+  entering, stopping, snapshotting and destroying a container, services,
+  strict and loose networking, egress overrides and port forwards.
 - A container that lacks the comparison target commit altogether (for example a
   commit that lives only in another container, or a shared object store it cannot
   read) shows `↓•` — pull needed, count unknown — in the dashboard, its card and
