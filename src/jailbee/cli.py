@@ -2224,7 +2224,8 @@ def list_cmd(
                 "full_name, alias, repo, mode, base, state, created, job, network, "
                 "ttl, loose_until, mounts, ip, memory_limit, mem, mem_used, mem_pct, "
                 "cpu, doing, agent, agent_compact, "
-                "wt, target_diff, ahead_count, behind_count, conflict, local_diff, local_count, "
+                "wt, target_diff, ahead_count, behind_count, conflict, host_ahead, host_behind, "
+                "local_diff, local_count, "
                 "git_status, "
                 "group, pr, issues, outbox, role, children, inbox, autostart_profile."
             ),

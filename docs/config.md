@@ -2912,7 +2912,7 @@ the command line still wins in **every** format, table or JSON.
 Allowed names (also the `jailbee ls --fields` vocabulary): `name`, `full_name`, `alias`,
 `repo`, `mode`, `base`, `state`, `created`, `job`, `network`, `ttl`,
 `loose_until`, `mounts`, `ip`, `memory_limit`, `mem`, `mem_used`, `mem_pct`, `wt`, `target_diff`,
-`ahead_count`, `behind_count`, `conflict`, `local_diff`, `local_count`, `git_status`, `pr`,
+`ahead_count`, `behind_count`, `conflict`, `host_ahead`, `host_behind`, `local_diff`, `local_count`, `git_status`, `pr`,
 `issues`, `outbox`, `group`, `autostart_profile`, `role`, `children`, `inbox`, `cpu`, `doing`, `agent`, `agent_compact`. `claude` and `claude_group`
 are accepted aliases for `group`.
 
@@ -2927,6 +2927,7 @@ committed-tree comparison with the host target branch, or `jailbee git diff
 (unknown) or `"missing"` (the container lacks the target commit: behind by at
 least one, count unknown, shown as `↓•`); its submodule
 line fields are `target_ins`/`target_del` instead of `ahead_ins`/`ahead_del`.
+`host_ahead` (**H↑**) and `host_behind` (**H↓**) are opt-in columns that always count commits against the host branch, whatever the row's sync target is: on a PR-bound or child row they differ from ↑/↓, on a row syncing with the host branch they equal them. They are off by default in the dashboard and `jailbee ls`; enable them via `columns.fields` / `ls.fields`.
 `local_diff` and `local_count` remain opt-in comparisons with the host's
 currently checked-out HEAD, which can differ from the target branch. If the
 host's local target branch is absent, status uses the configured upstream's

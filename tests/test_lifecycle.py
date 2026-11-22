@@ -12666,3 +12666,40 @@ def test_outbox_columns_fall_back_to_the_probe_copy_when_the_row_counts_are_unkn
     ci = _outbox_ci(outbox_pr=None, outbox_issue=None, git_pr=2, git_issue=1)
 
     assert specs["outbox"].json(ci) == {"pr": 2, "issues": 1}
+
+
+def test_host_columns_show_host_counts_unlike_pr_sync_counts():
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ls_field_specs
+
+    pr = SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head")
+    ci = _ci_with_status(
+        ahead_count="2",
+        behind_count="1",
+        host_ahead_count="5",
+        host_behind_count="9",
+        sync_target=pr,
+    )
+    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
+
+    assert specs["host_ahead"].header == "H↑"
+    assert specs["host_behind"].header == "H↓"
+    assert specs["host_ahead"].cell(ci) == "5"
+    assert specs["host_behind"].cell(ci) == "9"
+    assert specs["ahead_count"].cell(ci).startswith("2")
+    assert specs["host_ahead"].json(ci) == "5"
+
+
+def test_host_columns_are_off_by_default_and_render_unknowns():
+    from jailbee.git_status import BEHIND_UNKNOWN
+    from jailbee.lifecycle import ls_field_specs
+
+    specs = {f.name: f for f in ls_field_specs(now=_NOW)}
+    for name in ("host_ahead", "host_behind"):
+        assert specs[name].default_table is False
+        assert specs[name].default_dashboard is False
+        assert specs[name].default_json is False
+    ci = _ci_with_status(host_ahead_count="0", host_behind_count=BEHIND_UNKNOWN)
+    assert specs["host_ahead"].cell(ci) == "[dim]0[/dim]"
+    assert specs["host_behind"].cell(ci) == "[yellow]↓•[/yellow]"
+    assert specs["host_behind"].json(ci) is None or specs["host_behind"].json(ci) != BEHIND_UNKNOWN

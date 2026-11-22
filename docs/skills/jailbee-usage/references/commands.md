@@ -873,7 +873,7 @@ full selected field sets.
 | `--all` | Containers from every jailbee-managed repo (adds a REPO column). Default: cwd repo only. |
 | `--wide` / `-w` | Show every selected column without fitting to terminal width. |
 | `-o` / `--format <fmt>` | `table` (default) or `json`. |
-| `--fields <list>` | Comma-separated columns. Allowed: `name, full_name, alias, repo, mode, base, state, created, job, network, ttl, loose_until, mounts, ip, memory_limit, mem, mem_used, mem_pct, wt, target_diff, ahead_count, behind_count, conflict, local_diff, local_count, git_status, pr, issues, outbox, group, autostart_profile, role, children, inbox, cpu, doing, agent, agent_compact`. `claude` and `claude_group` are accepted aliases for `group`. Wins outright over the `ls:` config block, and applies to every `--format`. |
+| `--fields <list>` | Comma-separated columns. Allowed: `name, full_name, alias, repo, mode, base, state, created, job, network, ttl, loose_until, mounts, ip, memory_limit, mem, mem_used, mem_pct, wt, target_diff, ahead_count, behind_count, conflict, host_ahead, host_behind, local_diff, local_count, git_status, pr, issues, outbox, group, autostart_profile, role, children, inbox, cpu, doing, agent, agent_compact`. `claude` and `claude_group` are accepted aliases for `group`. Wins outright over the `ls:` config block, and applies to every `--format`. |
 
 Git-status columns: **BASE** (base branch), **WT** (uncommitted: `+adds -dels`),
 **DIFF ±** (direct tree diff against the sync target), **↑** / **↓** (unique
@@ -956,7 +956,7 @@ against base is clean — a container left mid-merge by `jailbee git push
 --current` shows `conflict!`, not `ok`, until you finish or abort it in
 `jailbee shell <name>`.
 
-Two more git-status columns exist, **off by default**: **LOCAL ±**
+Two more git-status columns exist, **off by default** (plus **H↑**/**H↓** — `host_ahead`/`host_behind` — which always count against the host branch, unlike ↑/↓ on a PR-bound or child row): **LOCAL ±**
 (`local_diff`) and **L↑** (`local_count`) — the diff/commit-count between
 the container's HEAD and the *host's currently checked-out branch*, as
 opposed to `DIFF ±`/`↑`/`↓`'s comparison against the host target branch.

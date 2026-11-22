@@ -3829,6 +3829,8 @@ def plain_sync_marker(status: GitStatus | None) -> str:
     return re.sub(r"\[/?[a-z]+\]", "", sync_marker(status))
 
 
+_BEHIND_ATTRS = ("behind_count", "host_behind_count")
+
 SYNC_FIELDS = ("target_diff", "ahead_count", "behind_count", "conflict")
 """The columns that compare with the sync target and carry its marker."""
 
@@ -3901,7 +3903,7 @@ def ls_field_specs(
                 return "[yellow]?[/yellow]"
             if zero_dim and v == "0":
                 return "[dim]0[/dim]"
-            if attr == "behind_count" and v == BEHIND_UNKNOWN:
+            if attr in _BEHIND_ATTRS and v == BEHIND_UNKNOWN:
                 return "[yellow]↓•[/yellow]"
             return v
 
@@ -3916,7 +3918,7 @@ def ls_field_specs(
             if c.git_status is None:
                 return None
             v: str = getattr(c.git_status, attr)
-            return _json_count(v) if attr == "behind_count" else v
+            return _json_count(v) if attr in _BEHIND_ATTRS else v
 
         return get
 
@@ -4603,6 +4605,33 @@ def ls_field_specs(
             header="MERGE",
             cell=_conflict_cell,
             json=lambda c: c.git_status.conflict if c.git_status else None,
+            default_json=False,
+        ),
+        table_format.FieldSpec(
+            name="host_ahead",
+            sort=_git_key("host_ahead_count", _count_key),
+            sort_desc_first=True,
+            header="H↑",
+            cell=_git_cell("host_ahead_count", zero_dim=True),
+            json=_git_json("host_ahead_count"),
+            justify="right",
+            # Always the host branch, whatever the sync target is; equals ↑ on
+            # rows that sync with the host branch. Opt in via --fields or
+            # `ls.fields` / `columns.fields`.
+            default_table=False,
+            default_dashboard=False,
+            default_json=False,
+        ),
+        table_format.FieldSpec(
+            name="host_behind",
+            sort=_git_key("host_behind_count", _count_key),
+            sort_desc_first=True,
+            header="H↓",
+            cell=_git_cell("host_behind_count", zero_dim=True),
+            json=_git_json("host_behind_count"),
+            justify="right",
+            default_table=False,
+            default_dashboard=False,
             default_json=False,
         ),
         table_format.FieldSpec(
