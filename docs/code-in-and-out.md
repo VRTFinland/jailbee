@@ -32,7 +32,8 @@ listening port or SSH key, and only objects the other side lacks are sent. Each
 container records the **base branch** it was forked from; `jailbee git pull`
 merges into that branch. Publishing to GitHub (`jailbee pr push`) runs on the
 host with your credentials. In mount mode the container works in your host
-checkout directly, so there is nothing to transfer. See
+checkout directly, so there is nothing to transfer and the bridge commands
+below do not apply. See
 [Mount mode vs clone mode](git-bridge.md#mount-mode-vs-clone-mode).
 
 Commands that take a container name ask for one with a picker when you leave
@@ -123,8 +124,9 @@ jailbee git push feat-foo --follow-tags   # only tags reachable from the pushed 
 jailbee git fetch feat-foo --no-tags
 ```
 
-No setting ever moves an existing tag, and a conflicting tag fails the
-transfer. `--ff` / `--no-ff` on `pull`, `push --merge` and `merge` control
+No setting ever moves an existing tag. A conflicting tag is skipped silently
+on `pull` under `reachable` (the default) and fails the transfer otherwise,
+including on `push`. `jailbee git merge` transports no tags. `--ff` / `--no-ff` on `pull`, `push --merge` and `merge` control
 whether a merge must fast-forward. See [Tags](git-bridge.md#tags) and
 [Fast-forward policy](git-bridge.md#fast-forward-policy); the config keys are
 under [`pull`](config.md#pull) and [`push`](config.md#push).
@@ -134,7 +136,8 @@ under [`pull`](config.md#pull) and [`push`](config.md#push).
 Submodules travel with the superproject in both directions, so `fetch`,
 `checkout`, `pull`, `push` and `merge` need no extra step. The report has a
 separate `Submodules` block. To put the host's working trees on a branch, use
-`jailbee branch`:
+`jailbee branch`; with `--container` it aligns that container's submodules
+and does not switch its branch:
 
 ```bash
 jailbee branch master                    # host: whole tree to master
@@ -159,7 +162,7 @@ jailbee new --pr 1234
 
 This needs the [`gh` CLI](https://cli.github.com/) authenticated on the host.
 JailBee fetches the PR head and checks the container out at that commit; your
-own branches stay untouched. Fork PRs work too.
+own branches stay untouched. Fork PRs work too, but `jailbee pr push` refuses to push into a fork PR's head.
 
 When the author pushes more commits, refresh the container from the PR head
 (the fetch runs on the host, so no network change is needed):
@@ -198,8 +201,9 @@ jailbee pr push review-1234 --yes                          # push into PR 1234's
 jailbee pr push review-1234 --stacked --as fix/review      # open a PR based on PR 1234
 ```
 
-`jailbee pr ls`, `jailbee pr open`, `jailbee pr bind`, `jailbee pr unbind` and
-`jailbee pr fetch` list, open and manage a container's PR binding. More:
+`jailbee pr ls` and `jailbee pr open` list and open a container's PRs;
+`jailbee pr bind` and `jailbee pr unbind` manage the binding; `jailbee pr fetch`
+refreshes the PR head. More:
 [A PR against the PR](git-bridge.md#a-pr-against-the-pr----stacked),
 [Updating an adopted PR](git-bridge.md#updating-an-adopted-pr).
 
@@ -219,10 +223,11 @@ jailbee new feat/b feat/a --no-attach
 jailbee pr push feat-b --base feat/a
 ```
 
-After a review fix in `feat-a`, send it up the chain:
+After a review fix in `feat-a`, publish it to PR 1 and send it up the chain:
 
 ```bash
-jailbee git checkout feat-a
+jailbee git checkout feat-a     # also puts feat/a on the host, which `jailbee new feat/b feat/a` needs
+jailbee pr push feat-a
 jailbee git push feat-b --from feat/a --from-local --merge
 ```
 
