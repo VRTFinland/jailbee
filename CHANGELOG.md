@@ -22,7 +22,7 @@ before editing `## Unreleased`.
   The terminal dashboard's repo menu has `Agent…` (key `g`, also over remote
   SSH) which runs `jailbee agent use` as a two-step picker (profile, then tier,
   the current choice marked), and the repo row shows the effective agent as
-  `profile/model` (`claude/opus`, `codex`).
+  `profile/model` (`claude/opus`, `codex`; in parentheses, `(grok)`, while only the legacy launch applies).
   `orchestration.default_runner` stays as a deprecated alias. **Behaviour
   change for alias users:** `orchestration.default_runner` used to affect only
   spawned children; as an alias it now sets the runner of every container's

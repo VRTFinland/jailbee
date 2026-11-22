@@ -223,7 +223,10 @@ class RepoGroup:
 
 
 def _agent_label(cfg: Config, runner: Runner | None) -> str | None:
-    """The repo's effective agent for its row: the default runner, else the legacy launch."""
+    """The repo's effective agent for its row: the default runner, else the legacy launch.
+
+    A legacy value is parenthesised: no runner is set, so the picker marks no row current.
+    """
     from jailbee.dashboard.agent_choice import runner_label
 
     if runner is not None:
@@ -232,8 +235,10 @@ def _agent_label(cfg: Config, runner: Runner | None) -> str | None:
     from jailbee.autostart import litellm_autostart_on
 
     if litellm_autostart_on(cfg):
-        return cfg.litellm_view().config.default_profile or None
-    return primary_agent(cfg).name
+        profile = cfg.litellm_view().config.default_profile
+        return f"({profile})" if profile else None
+    name = primary_agent(cfg).name
+    return f"({name})" if name else None
 
 
 @dataclass(frozen=True)
