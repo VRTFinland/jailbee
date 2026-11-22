@@ -2588,7 +2588,7 @@ class DashboardSession:
         fresh = self.open_services(container)
         if fresh is None:
             return
-        fresh = replace(fresh, start_index=min(shown.start_index, len(fresh.entries) - 1))
+        fresh = replace(fresh, start_index=max(0, min(shown.start_index, len(fresh.entries) - 1)))
         if shown is overlay:
             self.overlay = fresh
         else:
