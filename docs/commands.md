@@ -720,7 +720,9 @@ and keeps drawing while it runs; the status line names the running command.
   also open their output on the scrollable screen when they end; it stays in
   the queue too. An entry keeps only the last ~64 KB of output, marked
   `… earlier output dropped …`. A bulk run over
-  several repos is one entry per run. An action refused by the policy or
+  several repos is one entry per run, and a parallel bulk verb (stop, destroy,
+  outbox clear, …) is one entry per container, with the child's error output.
+  An action refused by the policy or
   that could not start is only a notice. The badge `⟳ R · ⚠ A` at the top of
   the dashboard (R running, A needs attention: failed or awaiting an answer) appears once
   anything has run; coming back from a tmux hand-off opens the queue at once

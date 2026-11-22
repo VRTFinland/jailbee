@@ -142,16 +142,58 @@ def test_a_child_that_cannot_start_fails_only_itself(mocker, tmp_path):
     session, _, _ = _session(mocker, tmp_path, "Running", "Running")
     real_start = session.jobs.start
 
-    def start(key, label, argv, cwd, on_done):
+    def start(key, label, argv, cwd, on_done, **kw):
         if "alpha-a" in argv:
             raise OSError("gone")
-        real_start(key, label, argv, cwd, on_done)
+        real_start(key, label, argv, cwd, on_done, **kw)
 
     mocker.patch.object(session.jobs, "start", side_effect=start)
     _stop(session, "alpha-a", "alpha-b")
     session.tick()
 
     assert session.notice.startswith("stop: 1 ok, 1 failed (alpha-a: ")
+
+
+def test_each_parallel_bulk_action_is_a_queue_entry(mocker, tmp_path):
+    _children(mocker, failing=("alpha-b",), stderr="boom")
+    session, _, _ = _session(mocker, tmp_path, "Running", "Running")
+
+    _stop(session, "alpha-a", "alpha-b")
+
+    running = list(session.queue)
+    assert [(e.command, e.target, e.state) for e in running] == [
+        ("jailbee stop alpha-a", "alpha-a", "running"),
+        ("jailbee stop alpha-b", "alpha-b", "running"),
+    ]
+    assert session.queue.counts().running == 2
+
+    session.tick()
+
+    done, failed = list(session.queue)
+    assert (done.state, done.status) == ("done", 0)
+    assert (failed.state, failed.status, failed.output) == ("failed", 1, "boom")
+    assert session.queue.counts().attention == 1
+    assert not any(e.critical for e in session.queue)
+
+
+def test_a_bulk_child_that_cannot_start_leaves_no_queue_entry(mocker, tmp_path):
+    _children(mocker)
+    session, _, _ = _session(mocker, tmp_path, "Running")
+    mocker.patch.object(session.jobs, "start", side_effect=OSError("gone"))
+
+    _stop(session, "alpha-a")
+
+    assert list(session.queue) == []
+
+
+def test_a_bulk_entry_opens_in_an_open_queue_overlay(mocker, tmp_path):
+    _children(mocker)
+    session, _, _ = _session(mocker, tmp_path, "Running")
+    session.open_queue()
+
+    _stop(session, "alpha-a")
+
+    assert any("stop alpha-a" in e.label for e in session.overlay.entries)
 
 
 def test_enter_with_marks_opens_the_bulk_picker(mocker, tmp_path):
