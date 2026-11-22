@@ -68,6 +68,16 @@ def published_pages(path: Path = CONFIG) -> list[str]:
     return pages
 
 
+_IMAGE_MD = re.compile(r"!\[[^\]]*\]\(([^)\s]+)")
+_IMAGE_TAG = re.compile(r'<img\s[^>]*\bsrc="([^"]+)"', re.IGNORECASE)
+
+
+def relative_images(text: str) -> list[str]:
+    """Relative image paths a page references (Markdown and `<img>` forms)."""
+    found = _IMAGE_MD.findall(text) + _IMAGE_TAG.findall(text)
+    return [t for t in found if not t.startswith(("http://", "https://", "//"))]
+
+
 def stage(
     docs: Path = DOCS,
     stage_dir: Path = STAGE,
@@ -90,6 +100,13 @@ def stage(
         target = stage_dir / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+        for image in relative_images(source.read_text()):
+            image_source = source.parent / image
+            if not image_source.is_file():
+                raise SystemExit(f"{name} references a missing image: {image}")
+            image_target = target.parent / image
+            image_target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(image_source, image_target)
 
 
 # Any absolute or protocol-relative URL in a fetched attribute. `<a href>` is

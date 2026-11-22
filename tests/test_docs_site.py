@@ -51,22 +51,37 @@ def test_the_index_page_is_first_in_the_nav() -> None:
     assert docs_site.published_pages()[0] == "README.md"
 
 
-def test_no_published_page_references_a_relative_image() -> None:
-    """Staging copies only the `.md` files `nav` names — an image referenced
-    by a relative path would 404 on the site, and `--strict` does not flag a
+def test_every_relative_image_of_a_published_page_exists() -> None:
+    """Staging copies the images a published page references, so a relative
+    reference has to point at a file in `docs/` — `--strict` does not flag a
     missing image the way it flags a missing page or anchor."""
-    import re
-
-    image_md = re.compile(r"!\[[^\]]*\]\(([^)\s]+)")
-    img_tag = re.compile(r'<img\s[^>]*\bsrc="([^"]+)"', re.IGNORECASE)
-
     for name in docs_site.published_pages():
         text = (DOCS / name).read_text()
-        for pattern in (image_md, img_tag):
-            for target in pattern.findall(text):
-                assert target.startswith(("http://", "https://")), (
-                    f"{name}: relative image reference {target!r} would 404 on the site"
-                )
+        for target in docs_site.relative_images(text):
+            assert (DOCS / name).parent.joinpath(target).is_file(), (
+                f"{name}: image {target!r} does not exist"
+            )
+
+
+def test_staging_copies_the_images_a_published_page_references(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    (docs / "images").mkdir(parents=True)
+    (docs / "images" / "used.png").write_bytes(b"png")
+    (docs / "images" / "unused.png").write_bytes(b"png")
+    (docs / "published.md").write_text("# p\n\n![alt](images/used.png)\n")
+    stage_dir = tmp_path / "_build" / "docs"
+
+    docs_site.stage(docs=docs, stage_dir=stage_dir, pages=["published.md"])
+
+    assert (stage_dir / "images" / "used.png").read_bytes() == b"png"
+    assert not (stage_dir / "images" / "unused.png").exists()
+
+
+def test_relative_images_ignores_absolute_urls() -> None:
+    text = (
+        '![a](https://x.test/a.png) ![b](images/b.png "t") <img src="c.png"> <img src="//x/y.png">'
+    )
+    assert docs_site.relative_images(text) == ["images/b.png", "c.png"]
 
 
 def test_staging_copies_exactly_the_published_pages(tmp_path: Path) -> None:
