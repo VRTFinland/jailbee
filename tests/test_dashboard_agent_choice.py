@@ -65,7 +65,7 @@ def test_the_repo_row_shows_the_effective_selection():
     group = dmodel.RepoGroup("alpha", "/r", None, [], agent_label="codex/sonnet")
     assert "codex/sonnet" in fleet.repo_heading(group, None, frozenset()).plain
     plain = dmodel.RepoGroup("alpha", "/r", None, [])
-    assert "/" not in fleet.repo_heading(plain, None, frozenset()).plain
+    assert "codex" not in fleet.repo_heading(plain, None, frozenset()).plain
 
 
 def test_the_repo_menu_offers_agent_and_it_runs_agent_use(mocker, tmp_path):
@@ -130,3 +130,22 @@ def test_choose_marks_the_current_choice_and_starts_the_cursor_on_it(mocker):
         "sonnet (current)",
     ]
     assert tier_call.kwargs["default"] == "sonnet"
+
+
+def test_agent_label_follows_the_runner_then_the_legacy_launch(mocker):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    cfg = MagicMock()
+    runner = Runner(agent="claude-jb", profile="codex", model="sonnet")
+    assert dmodel._agent_label(cfg, runner) == "codex/sonnet"
+
+    mocker.patch("jailbee.autostart.litellm_autostart_on", return_value=True)
+    cfg.litellm_view.return_value.config.default_profile = "grok"
+    assert dmodel._agent_label(cfg, None) == "grok"
+
+    mocker.patch("jailbee.autostart.litellm_autostart_on", return_value=False)
+    mocker.patch(
+        "jailbee.agents.primary_agent", return_value=SimpleNamespace(name="claude", problem=None)
+    )
+    assert dmodel._agent_label(cfg, None) == "claude"

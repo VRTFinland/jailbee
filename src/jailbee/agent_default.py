@@ -22,6 +22,7 @@ from pydantic import ValidationError
 
 from jailbee import litellm
 from jailbee.config_writer import DELETE, YamlChange, patch_local_file
+from jailbee.dashboard.agent_choice import PLAIN
 from jailbee.incus import IncusError
 from jailbee.orchestration.runner import read_runner, runner_problems
 from jailbee.orchestration.runner_model import RUNNER_TIERS, Runner, model_tier
@@ -33,7 +34,6 @@ if TYPE_CHECKING:
     from jailbee.global_config import GlobalConfig
     from jailbee.incus import Incus
 
-PLAIN = "claude"
 KEY_PATH = ("agents", "default_runner")
 
 
