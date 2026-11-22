@@ -548,6 +548,7 @@ class OutboxController:
             self._pending_delete = None
             self._pending_publish = None
             self._pending_creations = ()
+            self._pending_skipped = ()
             self._batch_token = None
             status = (_ASK_AGAIN, *status)
         state, ok = self._reloaded(cursor=cursor, status=status)
@@ -593,6 +594,7 @@ class OutboxController:
             self._pending_delete = None
             self._pending_publish = None
             self._pending_creations = ()
+            self._pending_skipped = ()
             status = (_ASK_AGAIN,)
         self.state = replace(self.state, busy=_LOADING, question=None, status=())
         argv = self._ls_argv()
@@ -1387,6 +1389,7 @@ class OutboxController:
         self._pending_delete = None
         self._pending_publish = None
         self._pending_creations = ()
+        self._pending_skipped = ()
         self._batch_token = None
         message = {
             "publish": "Nothing published.",

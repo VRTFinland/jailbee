@@ -768,8 +768,9 @@ def _publish_pr_creations(
     """Hand each PR creation to the `pr push` body that publishes it (its exits pass through).
 
     `yes` skips only the publish confirmation, which `outbox apply` already
-    asked: the choices `pr push` makes (a foreign PR head, which submodules)
-    are asked again, and off a terminal they exit 2 naming the missing choice.
+    asked (a source manifest's "Publish?", a submodule's plan): the choices
+    `pr push` makes (a foreign PR head, which submodules) are asked again,
+    and off a terminal they exit 2 naming the missing choice.
     """
     from jailbee import pr_push_run
     from jailbee.lifecycle import resolve_container_for_interactive
@@ -785,7 +786,7 @@ def _publish_pr_creations(
         if scope.get("kind") == "submodule":
             pr_push_run.run_submodule_pr_push(cfg, incus, full, path=scope["path"], yes=yes)
         elif scope.get("kind") == "source":
-            pr_push_run.run_pr_push(cfg, incus, full, source_manifest=scope["manifest"])
+            pr_push_run.run_pr_push(cfg, incus, full, source_manifest=scope["manifest"], yes=yes)
         else:
             pr_push_run.run_pr_push(cfg, incus, full)
     return 0

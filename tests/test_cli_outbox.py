@@ -1563,7 +1563,7 @@ def test_apply_on_a_source_manifest_runs_its_source_push(env, mocker):
     assert result.exit_code == 0, result.output
     push.assert_called_once()
     assert push.call_args.args[2] == "acme-feature"
-    assert push.call_args.kwargs == {"source_manifest": "002.json"}  # -y is not forwarded
+    assert push.call_args.kwargs == {"source_manifest": "002.json", "yes": True}
     applied.assert_not_called()
     assert "jailbee pr push feature --source-manifest 002.json" in result.output
 
@@ -1596,7 +1596,7 @@ def test_apply_on_a_proposal_awaiting_its_pr_runs_pr_push(env, mocker, scope, ta
     [
         ({"kind": "repo"}, "jailbee.pr_push_run.run_pr_push", {}),
         ({"kind": "source", "manifest": "s.json"}, "jailbee.pr_push_run.run_pr_push",
-         {"source_manifest": "s.json"}),
+         {"source_manifest": "s.json", "yes": True}),
         ({"kind": "submodule", "path": "libs/x"}, "jailbee.pr_push_run.run_submodule_pr_push",
          {"path": "libs/x", "yes": True}),
     ],
