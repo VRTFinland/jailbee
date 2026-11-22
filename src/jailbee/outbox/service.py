@@ -190,9 +190,8 @@ def _source_uncertainty(
                 from jailbee.pr_outbox import resolve_hint
 
                 first = next((a.index for a in journal.actions if a.state != "applied"), 0)
-                detail = (
-                    "publication outcome uncertain; check GitHub, then "
-                    + resolve_hint(view.id.name, first)
+                detail = "publication outcome uncertain; check GitHub, then " + resolve_hint(
+                    view.id.name, first
                 )
             view = replace(
                 view,
