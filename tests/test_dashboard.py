@@ -7703,3 +7703,30 @@ def test_gather_rows_gives_each_container_its_agent_and_where_it_comes_from(
         "alpha-own": ("grok/sonnet", "container"),  # its own label wins
         "alpha-plain": ("claude/opus", "local"),
     }
+
+
+def test_dashboard_agent_compact_cell_abbreviates_past_the_column_cap():
+    from rich.text import Text
+
+    from jailbee.agent_status import AgentSummary, SessionMark
+    from jailbee.dashboard.format import dashboard_cell
+    from jailbee.lifecycle import ContainerInfo, ls_field_specs
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    spec = next(f for f in ls_field_specs(now=now) if f.name == "agent_compact")
+    c = ContainerInfo(
+        name="myrepo-b",
+        state="Running",
+        network=None,
+        ip=None,
+        memory_limit=None,
+        repo="myrepo",
+        agent_status=(
+            AgentSummary("claude", "idle", None, None, 20, sessions=(SessionMark("idle"),) * 20),
+        ),
+    )
+
+    cell = dashboard_cell(spec, c, now)
+
+    assert "+" in cell
+    assert Text.from_markup(cell).cell_len <= 24

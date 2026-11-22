@@ -25,7 +25,8 @@ before editing `## Unreleased`.
   ([#145](https://github.com/VRTFinland/jailbee/issues/145)).
 
 - The dashboard's AGENT column draws one indicator per live agent session
-  instead of one per state, so two Claude sessions read `● 12s ●`. A cell
+  instead of one per state, ordered by urgency across agents, so two Claude
+  sessions read `● 12s ●`; the age beside a glyph is that session's own. A cell
   wider than 24 columns drops the ages, then ends with `+N`
   ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
 - `jailbee upgrade --jobs N` (`-j`) builds up to N base images at once, each
