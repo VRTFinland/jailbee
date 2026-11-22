@@ -893,6 +893,14 @@ def parse_manifest(name: str, text: str, files: Mapping[str, str]) -> IssueManif
             )
         if not isinstance(action, CreateAction):
             _record_mutations(changed, action.repo, action.target, mutation_keys(action), context)
+        if isinstance(action, (SubIssueAction, DependencyAction)):
+            related = related_issue(action)
+            if isinstance(related, CreatedIssue):
+                # Manifest-local: a ref names one create only within this manifest.
+                field = "sub_issue" if isinstance(action, SubIssueAction) else "blocked_by"
+                _record_mutations(
+                    changed, action.repo, action.target, {f"{field}:@{related.ref}"}, context
+                )
         actions.append(action)
 
     bodies = [

@@ -581,3 +581,34 @@ def test_deleting_a_create_cascades_to_relations_naming_it(tmp_path):
     )
     assert plan.removed_actions == (0, 1, 2)
     assert json.loads(plan.new_text)["actions"] == [_dep()]
+
+
+def test_one_relation_to_a_new_issue_twice_in_a_manifest_conflicts():
+    with pytest.raises(IssueManifestError, match="already changes field 'sub_issue:@bug'"):
+        _manifest(
+            _create(),
+            {"type": "sub_issue", "repo": ".", "issue": 10, "sub_issue_ref": "bug", "op": "add"},
+            {"type": "sub_issue", "repo": ".", "issue": 10, "sub_issue_ref": "bug", "op": "add"},
+        )
+
+
+def test_staged_verbs_publish_add_and_remove_end_to_end(broker, preflight, github):  # noqa: F811
+    github.sub_issues = {10: {12}}
+    github.blocked_by = {12: {10}}
+    for args in (
+        ("sub-issue", "10", "12", "--remove"),
+        ("blocked-by", "12", "10", "--remove"),
+        ("sub-issue", "20", "12"),
+        ("create", "--title", "Bug", "--body", "b", "--parent", "20", "--blocked-by", "12"),
+    ):
+        result = _stage(*args, "--batch", "b")
+        assert result.exit_code == 0, result.output
+    _submit("b")
+    (proposal,) = broker.proposals("issue")
+
+    batch = preflight["prepare"]({"a.json": json.loads(proposal.manifest)["actions"]})
+    report = _publish(preflight, batch)
+
+    assert report.failure is None, report.failure
+    assert github.sub_issues == {10: set(), 20: {12, 901}}
+    assert github.blocked_by == {12: set(), 901: {12}}
