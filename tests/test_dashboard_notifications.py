@@ -701,3 +701,14 @@ def test_pilot_returning_from_a_hand_off_surfaces_attention(mocker, tmp_path):
 
     (overlay,) = seen
     assert _is_queue(overlay)
+
+
+def test_run_action_returns_the_id_of_its_queue_entry(mocker, tmp_path):
+    session, _ = _one_repo(mocker, tmp_path, defer=True)
+    repo = session.repo_for("alpha-a", "container")
+    assert repo is not None
+
+    entry_id = session.run_action(repo, ["start", "alpha-a"], style="report", label="start alpha-a")
+
+    (entry,) = _entries(session)
+    assert entry.id == entry_id

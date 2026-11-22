@@ -241,9 +241,9 @@ class DashboardApp(App[int], inherit_bindings=False):
         else:
             work()
 
-    def show_output(self, title: str, text: str, *, failed: bool) -> None:
+    def show_output(self, title: str, text: str, *, failed: bool, live: bool = False) -> None:
         screen = OutputScreen(title, text, failed=failed)
-        self._output_screen = screen
+        self._output_screen = screen if live else None  # only a live screen is ever rewritten
         self.push_screen(screen)
 
     def update_output(self, text: str) -> None:

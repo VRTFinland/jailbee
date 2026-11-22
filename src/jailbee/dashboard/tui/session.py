@@ -390,8 +390,11 @@ class Terminal(Protocol):
         """
         ...
 
-    def show_output(self, title: str, text: str, *, failed: bool) -> None:
-        """Show an action's captured ``text`` until the user dismisses it."""
+    def show_output(self, title: str, text: str, *, failed: bool, live: bool = False) -> None:
+        """Show an action's captured ``text`` until the user dismisses it.
+
+        ``live``: :meth:`update_output` may replace the text while it stays open.
+        """
         ...
 
     def update_output(self, text: str) -> None:
@@ -831,8 +834,10 @@ class DashboardSession:
         label: str,
         then: Callable[[int | None], None] | None = None,
         target: str | None = None,
-    ) -> None:
+    ) -> int:
         """Run ``jailbee <argv>`` through the action runner, in the dashboard.
+
+        Returns the id of the action's queue entry.
 
         ``argv`` is the command without the program name, already addressed at
         ``repo`` and policy-checked by the caller. Returns at once: the result
@@ -841,7 +846,7 @@ class DashboardSession:
         ``target`` names the container or repo for its queue entry (default:
         the first listed container in ``argv``, else the repo).
         """
-        self._start_actions(
+        (entry_id,) = self._start_actions(
             [ActionRun(argv, repo.cwd())],
             [repo],
             style,
@@ -849,6 +854,7 @@ class DashboardSession:
             then,
             targets=None if target is None else [target],
         )
+        return entry_id
 
     def _start_actions(
         self,
@@ -861,8 +867,8 @@ class DashboardSession:
         settled: Callable[[ActionOutcome], None] | None = None,
         commands: Sequence[str] | None = None,
         targets: Sequence[str] | None = None,
-    ) -> None:
-        """Start ``runs``, one queue entry each; settle them when the last one ended.
+    ) -> list[int]:
+        """Start ``runs``, one queue entry each (their ids returned); settle them at the end.
 
         ``commands``/``targets`` label each run's entry (default: ``label``
         and :meth:`_entry_target`).
@@ -888,6 +894,7 @@ class DashboardSession:
                     then(rc)
 
         self.terminal.run_actions(runs, finished, _EntryProgress(self, ids))
+        return ids
 
     def _entry_target(self, argv: Sequence[str], repo: RepoTarget) -> str:
         """The container ``argv`` names (its first listed one), else ``repo``'s prefix."""
@@ -1004,7 +1011,9 @@ class DashboardSession:
         if entry.value == "output":
             text = found.output or (QUEUE_NO_OUTPUT_YET if not found.finished else "")
             self._following = None if found.finished else entry_id
-            self.terminal.show_output(found.command, text, failed=found.state == "failed")
+            self.terminal.show_output(
+                found.command, text, failed=found.state == "failed", live=not found.finished
+            )
             return self.queue_entry_picker(entry_id)
         if entry.value == "dismiss":
             if not self.queue.dismiss(entry_id):
