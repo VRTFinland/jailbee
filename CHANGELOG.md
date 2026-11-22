@@ -16,6 +16,10 @@ before editing `## Unreleased`.
   since staging (or is merged) is refused, a foreign PR needs `--foreign`, and an
   orchestrator needs the new `publish.pr_state` right
   ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
+- The terminal dashboard's `Services…` menu returns to the service list after a
+  start, stop, restart or refresh and refreshes it when the action ends, so the
+  next service can be acted on at once
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
 - The terminal dashboard marks a container whose tree is stopped mid-merge with
   a white-on-red `⑂` after its name, so an unfinished merge is visible without
   opening the context card; it clears at the next refresh once the merge is

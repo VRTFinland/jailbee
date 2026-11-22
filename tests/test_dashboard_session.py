@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 
 import pytest
 
@@ -1744,8 +1745,13 @@ def test_services_flow_and_malformed_notice(mocker, tmp_path):
     actions = session.submit_picker(picker, picker.entries[0])
     assert isinstance(actions, Picker)
     run = mocker.patch.object(session, "run_dashboard_command")
-    session.submit_picker(actions, next(e for e in actions.entries if e.value == "refresh"))
-    run.assert_called_once_with("alpha-one", "container", ["service", "refresh", "alpha-one", "db"])
+    back = session.submit_picker(actions, next(e for e in actions.entries if e.value == "refresh"))
+    assert back is not None and back.purpose == "container-services"
+    assert run.call_args.args == (
+        "alpha-one",
+        "container",
+        ["service", "refresh", "alpha-one", "db"],
+    )
     result.stdout = "broken"
     assert session.open_container_entry("alpha-one", "services") is None
     assert "could not list services" in session.notice
@@ -1779,6 +1785,81 @@ def test_services_menu_order_and_ssh_action_gates(mocker, tmp_path):
     actions = session.submit_picker(picker, picker.entries[0])
     assert isinstance(actions, Picker)
     assert {e.value for e in actions.entries} == {"stop", "restart", "logs"}
+
+
+def _services_session(mocker, tmp_path, states):
+    """A session whose `service ls` answers each call from ``states`` (a list of lists)."""
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [ci("alpha-one", "alpha")])
+    session, _ = bare_session(mocker, [group])
+    answers = iter(states)
+
+    def ls(argv, cwd=None):
+        rows = [
+            {"name": n, "state": st, "window": None, "since": None, "detail": ""}
+            for n, st in next(answers)
+        ]
+        return mocker.Mock(ok=True, stdout=json.dumps(rows))
+
+    mocker.patch("jailbee.dashboard.accounts.run_cli_quiet", side_effect=ls)
+    run = mocker.patch.object(session, "run_dashboard_command")
+    return session, run
+
+
+def test_service_operation_returns_to_the_list_then_refreshes_it(mocker, tmp_path):
+    session, run = _services_session(
+        mocker,
+        tmp_path,
+        [[("db", "stopped"), ("web", "stopped")], [("db", "ready"), ("web", "stopped")]],
+    )
+    services = session.open_services("alpha-one")
+    actions = session.submit_picker(services, services.entries[1])  # web
+    after = session.submit_picker(actions, next(e for e in actions.entries if e.value == "start"))
+    # back on the service list at once, cursor on the service just acted on
+    assert after.purpose == "container-services"
+    assert after.start_index == 1
+    argv = run.call_args.args[2]
+    assert argv == ["service", "start", "alpha-one", "web"]
+    # the operation ends: the open list is re-listed in place
+    session.overlay = after
+    run.call_args.kwargs["then"](0)
+    assert session.overlay.purpose == "container-services"
+    assert "db  (ready)" in session.overlay.entries[0].label
+    assert session.overlay.start_index == 1
+
+
+def test_a_second_service_can_be_started_while_the_first_runs(mocker, tmp_path):
+    session, run = _services_session(mocker, tmp_path, [[("db", "stopped"), ("web", "stopped")]])
+    services = session.open_services("alpha-one")
+    actions = session.submit_picker(services, services.entries[0])
+    again = session.submit_picker(actions, next(e for e in actions.entries if e.value == "start"))
+    actions2 = session.submit_picker(again, again.entries[1])
+    assert actions2.purpose == "container-service-action"
+    assert actions2.carry == ("web",)
+    session.submit_picker(actions2, next(e for e in actions2.entries if e.value == "start"))
+    assert [c.args[2] for c in run.call_args_list] == [
+        ["service", "start", "alpha-one", "db"],
+        ["service", "start", "alpha-one", "web"],
+    ]
+
+
+def test_service_refresh_after_the_user_left_the_list_changes_nothing(mocker, tmp_path):
+    session, run = _services_session(mocker, tmp_path, [[("db", "stopped")]])
+    services = session.open_services("alpha-one")
+    actions = session.submit_picker(services, services.entries[0])
+    session.submit_picker(actions, next(e for e in actions.entries if e.value == "start"))
+    session.overlay = None
+    run.call_args.kwargs["then"](0)
+    assert session.overlay is None
+
+
+def test_service_logs_still_leave_the_menu(mocker, tmp_path):
+    session, _run = _services_session(mocker, tmp_path, [[("db", "ready")]])
+    services = session.open_services("alpha-one")
+    actions = session.submit_picker(services, services.entries[0])
+    assert (
+        session.submit_picker(actions, next(e for e in actions.entries if e.value == "logs"))
+        is None
+    )
 
 
 # --- publish rights -------------------------------------------------------
