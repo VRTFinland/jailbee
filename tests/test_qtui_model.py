@@ -563,3 +563,8 @@ def test_sync_cell_tooltip_names_the_target():
 
     assert "vs PR #7 head" in m.cell_tooltip(pr, spec)
     assert "PR head not fetched" in m.cell_tooltip(fallback, spec)
+
+
+def test_git_segments_missing_target_shows_one_arrow():
+    cc = _cc(wt="clean", behind_count="↓•")
+    assert m.git_segments(cc) == [("↓•", "ahead")]

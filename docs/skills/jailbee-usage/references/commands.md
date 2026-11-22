@@ -897,7 +897,7 @@ ref, not the remote server. Equal trees can have nonzero ↑/↓ commit counts.
 JSON `git_status` names the direct line diff `target_diff` and includes
 `behind_count`, `base_source`, `base_sha`, `tracking_relation`,
 `upstream_ref`, `sync_target` (`kind`, `label`, `sha`, `ref`, `fallback`) and
-`host_ahead_count`/`host_behind_count` (against the host branch); old `ahead_diff` field selection was retired (configured uses
+`host_ahead_count`/`host_behind_count` (against the host branch; a count is digits, `"?"` or `"missing"` when the container lacks the target commit); old `ahead_diff` field selection was retired (configured uses
 warn, explicit selection errors). Submodule line fields are `target_ins` /
 `target_del` rather than `ahead_ins` / `ahead_del`.
 

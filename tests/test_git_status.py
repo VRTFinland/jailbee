@@ -1272,7 +1272,7 @@ def _git(cwd, *args):
     ).stdout.strip()
 
 
-def _run_probe(repo, target_sha):
+def _run_probe(repo, target_sha, host_target_sha=""):
     import os
     import subprocess
 
@@ -1282,6 +1282,7 @@ def _run_probe(repo, target_sha):
         **os.environ,
         "REPO_DIR": str(repo),
         "TARGET_SHA": target_sha,
+        "HOST_TARGET_SHA": host_target_sha,
         "HOST_SOURCE": "",
         "HOST_HEAD": "",
     }
@@ -1309,6 +1310,55 @@ def test_probe_missing_target_commit_reports_behind_unknown(tmp_path):
     assert parts[2] == "?"  # ahead
     assert parts[3] == "?"  # MERGE
     assert parts[12] == "missing"  # behind: pull needed, count unknown
+
+
+def test_probe_shared_clone_sees_new_host_commits_and_counts_them(tmp_path):
+    """Clone-mode containers are `git clone --shared`: a new host commit is readable."""
+    host, container = tmp_path / "host", tmp_path / "container"
+    host.mkdir()
+    _git(host, "init", "-q")
+    (host / "a").write_text("1")
+    _git(host, "add", "a")
+    _git(host, "commit", "-qm", "one")
+    _git(tmp_path, "clone", "-q", "--shared", str(host), str(container))
+    (host / "a").write_text("2")
+    _git(host, "commit", "-qam", "two")
+
+    parts = _run_probe(container, _git(host, "rev-parse", "HEAD"))
+
+    assert parts[12] == "1"
+
+
+def test_probe_missing_host_target_reports_host_behind_missing(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / "a").write_text("1")
+    _git(repo, "add", "a")
+    _git(repo, "commit", "-qm", "one")
+
+    parts = _run_probe(repo, _git(repo, "rev-parse", "HEAD"), "f" * 40)
+
+    assert parts[14] == "missing"
+
+
+def test_probe_missing_token_is_one_constant():
+    from jailbee.git_status import _PROBE_SNIPPET, PROBE_MISSING
+
+    assert PROBE_MISSING == "missing"
+    assert f'="{PROBE_MISSING}"' in _PROBE_SNIPPET
+    assert "@MISSING@" not in _PROBE_SNIPPET
+
+
+def test_probe_parses_missing_host_behind_marker(mocker):
+    incus = mocker.MagicMock()
+    incus.exec.return_value = _payload(*_TWELVE, "3", "1", "missing")
+    target = TargetSnapshot("main", "a" * 40, "local", "", "unavailable")
+    sync = SyncTarget("container", "other", "b" * 40, "refs/x")
+
+    status = probe_container_git(incus, "c", "/r", "main", "main", target=target, sync=sync)
+
+    assert status.host_behind_count == "•"
 
 
 def test_probe_present_target_commit_still_counts(tmp_path):

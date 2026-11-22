@@ -578,7 +578,7 @@ after the host branch moves naturally reads its new tip.
 
 The JSON `git_status` object exposes `target_diff`, `ahead_count`,
 `behind_count`, `base_source`, `base_sha`, `tracking_relation`,
-`upstream_ref`, `sync_target` and `host_ahead_count`/`host_behind_count`. `ahead_diff` was removed; configured uses warn and explicit
+`upstream_ref`, `sync_target` and `host_ahead_count`/`host_behind_count` (counts are digits, `"?"` or `"missing"` when the container lacks the target commit). `ahead_diff` was removed; configured uses warn and explicit
 `--fields ahead_diff` errors. Per-submodule `ahead_ins`/`ahead_del` are
 replaced by `target_ins`/`target_del`; use `target_diff` for the direct line
 diff or `jailbee git diff --incoming` for the former contribution view.

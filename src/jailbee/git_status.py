@@ -360,6 +360,8 @@ def _parse_submodules(committed_raw: str, wt_raw: str) -> tuple[SubmoduleChange,
 
 # `behind_count` when the target commit is absent from the container.
 BEHIND_UNKNOWN = "•"
+# The same state on the wire (ASCII, locale-proof) and in JSON output.
+PROBE_MISSING = "missing"
 
 _PROBE_SNIPPET = r"""
 set +e
@@ -463,7 +465,7 @@ else
   CONFLICT="?"
   # A target the host knows but this container's object store lacks proves the
   # container is behind it: "missing" = pull needed, count unknown. Nothing is written.
-  [ -n "$TARGET_SHA" ] && BEHIND_COUNT="missing"
+  [ -n "$TARGET_SHA" ] && BEHIND_COUNT="@MISSING@"
 fi
 
 # --- fields 14-15: ↑/↓ against the host branch when the target is another ref ---
@@ -478,6 +480,8 @@ if [ -n "$HOST_TARGET_SHA" ] \
     HOST_BEHIND=$1
     HOST_AHEAD=$2
   fi
+elif [ -n "$HOST_TARGET_SHA" ]; then
+  HOST_BEHIND="@MISSING@"
 fi
 
 # --- per-submodule breakdown (fields 5 and 6) ---
@@ -569,7 +573,7 @@ printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
   "$WT" "$COMMITTED" "$COUNT" "$CONFLICT" "$SUB_COMMITTED_STRUCT" "$SUB_WT_STRUCT" \
   "$HEAD_SHA" "$REMOTE_CONTAINED" "$LOCAL_DIFF" "$LOCAL_COUNT" \
   "$IN_PROGRESS" "$UNMERGED" "$BEHIND_COUNT" "$HOST_AHEAD" "$HOST_BEHIND"
-"""
+""".replace("@MISSING@", PROBE_MISSING)
 
 
 def probe_container_git(
@@ -715,7 +719,7 @@ def probe_container_git(
         unmerged = None
 
     raw_behind = parts[12].strip() if len(parts) >= 13 else "?"
-    if raw_behind == "missing" and sync is not None:  # ASCII on the wire; locale-proof
+    if raw_behind == PROBE_MISSING and sync is not None:  # ASCII on the wire; locale-proof
         behind_count = BEHIND_UNKNOWN
     else:
         behind_count = raw_behind if raw_behind.isdigit() and sync is not None else "?"
@@ -724,7 +728,10 @@ def probe_container_git(
         raw_host_ahead = parts[13].strip() if len(parts) >= 15 else "?"
         raw_host_behind = parts[14].strip() if len(parts) >= 15 else "?"
         host_ahead = raw_host_ahead if raw_host_ahead.isdigit() else "?"
-        host_behind = raw_host_behind if raw_host_behind.isdigit() else "?"
+        if raw_host_behind == PROBE_MISSING:
+            host_behind = BEHIND_UNKNOWN
+        else:
+            host_behind = raw_host_behind if raw_host_behind.isdigit() else "?"
     else:
         host_ahead, host_behind = ahead_count, behind_count
 

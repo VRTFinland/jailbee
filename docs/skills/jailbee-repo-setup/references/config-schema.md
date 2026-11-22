@@ -762,7 +762,8 @@ unknown comparison values rather than using a pinned anchor. Explicit JSON
 `host_ahead_count` and `host_behind_count` (the DIFF/↑/↓/MERGE columns compare
 with the sync target: the PR head for a PR container, otherwise the host
 branch; the `git_status` text column and picker titles carry a `pr` marker
-for a PR-head comparison); its submodule line fields
+for a PR-head comparison); `behind_count` is digits, `"?"` or `"missing"` (the
+container lacks the target commit: behind, count unknown); its submodule line fields
 are `target_ins`/`target_del` (with `ahead_commits`/`behind_commits` for graph
 counts).
 
