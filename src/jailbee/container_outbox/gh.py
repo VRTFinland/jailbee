@@ -189,6 +189,7 @@ class CommentView:
     created_at: str
     url: str
     issue: int | None
+    review_id: int | None = None
 
 
 _ISSUE_API_URL_RE = re.compile(r"https://api\.github\.com/repos/[^/]+/[^/]+/issues/([1-9][0-9]*)")
@@ -222,7 +223,16 @@ def _comment_view(
     if not isinstance(url, str) or not isinstance(created, str):
         raise ValueError("comment needs a URL and a creation time")
     match = parent_re.fullmatch(issue_url) if isinstance(issue_url, str) else None
-    return CommentView(cid, author, body or "", created, url, int(match[1]) if match else None)
+    review = value.get("pull_request_review_id")
+    return CommentView(
+        cid,
+        author,
+        body or "",
+        created,
+        url,
+        int(match[1]) if match else None,
+        review if type(review) is int else None,
+    )
 
 
 def issue_comment(repo: str | None, comment_id: int) -> CommentView:
@@ -249,6 +259,20 @@ def review_comment(repo: str | None, comment_id: int) -> CommentView:
         raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
     except ValueError as exc:
         raise GhError(f"invalid comment response; retry `{' '.join(argv)}`: {exc}") from exc
+
+
+def review_state(repo: str | None, pr: int, review_id: int) -> str:
+    """The state (``PENDING``, ``COMMENTED``, ...) of one review on PR #`pr`."""
+    cwd, prefix = _api_repo(repo)
+    argv = ["gh", "api", f"{prefix}/pulls/{pr}/reviews/{review_id}"]
+    try:
+        value = run_json(argv, cwd=cwd)
+    except GhError as exc:
+        raise GhError(f"{exc}; retry `{' '.join(argv)}`") from exc
+    state = value.get("state") if isinstance(value, dict) else None
+    if not isinstance(state, str):
+        raise GhError(f"invalid review response; retry `{' '.join(argv)}`")
+    return state
 
 
 def _decode_pages(text: str) -> list[list[object]]:

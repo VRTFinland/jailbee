@@ -62,6 +62,7 @@ def test_default_grant_label_is_the_spec_shape() -> None:
             "foreign_issues": {"repos": [], "actions": []},
             "pull_requests": False,
             "pr_reviews": False,
+            "pr_comment_edits": False,
             "max_actions_per_hour": 30,
         },
     }
@@ -477,3 +478,13 @@ def test_comment_edit_is_a_grantable_issue_kind_not_implied_by_comment():
     assert not PublishRights(issues=("comment",)).covers_issue(
         "comment_edit", "org/repo", foreign=False
     )
+
+
+def test_pr_comment_edits_is_capped_and_not_implied_by_pr_reviews() -> None:
+    from jailbee.orchestration.grant import PublishRights
+
+    wanted = PublishRights(pr_reviews=True, pr_comment_edits=True)
+    assert PublishRights(pr_reviews=True).pr_comment_edits is False
+    assert PublishRights(pr_comment_edits=True).empty() is False
+    assert wanted.narrowed(PublishRights(pr_reviews=True)).pr_comment_edits is False
+    assert wanted.narrowed(wanted).pr_comment_edits is True

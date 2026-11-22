@@ -1498,7 +1498,9 @@ review (line) comment or reply: a `comment_edit` action in the PR manifest,
 published with `PATCH pulls/comments/ID` after the same checks (the comment is on
 that PR and repository, written by the publishing account, unchanged since
 staging). It is published directly, also under `--draft`. Pending
-(unsubmitted) review comments stay with `jailbee pr review`.
+(unsubmitted) review comments stay with `jailbee pr review`; staging refuses a
+comment of a pending review. A refused edit holds back the other pending actions
+of the same manifest too, so stage edits in their own batch when that matters.
 
 Use `--batch NAME` and `jailbee outbox submit NAME
 --kind issue` to group actions. Nothing reaches GitHub until a human applies

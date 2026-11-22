@@ -110,8 +110,10 @@ before editing `## Unreleased`.
   since staging, and the plan shows the change as a line diff. Orchestrator
   publication needs the new `comment_edit` issue kind. `jailbee pr comment-edit ID`
   does the same for a submitted PR review (line) comment or reply, as a
-  `comment_edit` action in the PR manifest (published with the other PR actions
-  under `publish.pr_reviews`).
+  `comment_edit` action in the PR manifest. Orchestrator publication of it needs
+  its own right, `publish.pr_comment_edits` (`--publish-pr-comment-edits`),
+  beyond `publish.pr_reviews`; a comment of a pending review is refused when staging,
+  and one refused edit holds back the rest of its manifest.
 
 ### Changed
 

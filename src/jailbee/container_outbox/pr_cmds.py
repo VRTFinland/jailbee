@@ -209,6 +209,14 @@ def comment_edit(
             raise OutboxCommandError(f"comment {comment.id} is not on PR #{view.number}", 1)
         if text == comment.body:
             raise OutboxCommandError(f"comment {comment.id} body is unchanged", 2)
+        if comment.review_id is not None and (
+            gh.review_state(view.repo, view.number, comment.review_id) == "PENDING"
+        ):
+            raise OutboxCommandError(
+                f"comment {comment.id} belongs to a pending (unsubmitted) review; "
+                "edit it through `pr review`",
+                1,
+            )
         _stage(
             _envelope(view),
             {

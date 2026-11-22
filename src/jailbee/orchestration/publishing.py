@@ -186,6 +186,13 @@ def _own_review_repo(cfg: Config, manifest: pr_outbox.Manifest) -> None:
         raise pr_outbox.GateError("PR reviews may target only the own repository")
 
 
+def _comment_edit_right(rights: PublishRights, manifest: pr_outbox.Manifest) -> None:
+    if not rights.pr_comment_edits and any(
+        isinstance(action, pr_outbox.CommentEditAction) for action in manifest.actions
+    ):
+        raise pr_outbox.GateError("pr_comment_edits is not granted for this manifest")
+
+
 def _review_policy(
     rights: PublishRights, count: int, cfg: Config, incus: Incus, full: str
 ) -> Callable[[pr_outbox.Manifest], None]:
@@ -193,6 +200,7 @@ def _review_policy(
         if pr_outbox.is_source_manifest(manifest) or not rights.pr_reviews:
             raise pr_outbox.GateError("pr_reviews is not granted for this manifest")
         _own_review_repo(cfg, manifest)
+        _comment_edit_right(rights, manifest)
         from jailbee.pr_flow import PR_LABEL_PREFIX, STACKED_LABEL_PREFIX
 
         entries = branch_pr.BranchPrMap(incus, full).read().values()
@@ -295,6 +303,7 @@ def _precheck(
     if not rights.pr_reviews:
         raise pr_outbox.GateError("pr_reviews is not granted")
     _own_review_repo(ctx.cfg, manifest_pr)
+    _comment_edit_right(rights, manifest_pr)
     try:
         progress = pr_outbox._publication_progress(
             snapshot_pr, m.manifest, len(manifest_pr.actions)

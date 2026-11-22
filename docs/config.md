@@ -3111,6 +3111,7 @@ orchestration:
           actions: [comment]
         pull_requests: false     # own source PR manifests
         pr_reviews: false        # bound own-repository PRs
+        pr_comment_edits: false  # edit submitted PR review comments
         max_actions_per_hour: 30 # 1..500; reserved; refunded only when the in-lock policy refuses before any mutation
 ```
 

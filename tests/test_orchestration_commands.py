@@ -143,6 +143,7 @@ def test_build_grant_foreign_issues_none_clears_only_the_foreign_block(cfg):
         {"publish_issues": ()},
         {"publish_prs": False},
         {"publish_pr_reviews": True},
+        {"publish_pr_comment_edits": True},
         {"publish_rate": 10},
         {"publish_foreign_issues": ()},
     ],
@@ -159,6 +160,7 @@ def test_no_publish_is_exclusive(cfg, changes):
         ("foreign_issues", "issue apply"),
         ("pull_requests", "pr push"),
         ("pr_reviews", "review apply"),
+        ("pr_comment_edits", "review apply"),
     ],
 )
 def test_remote_publish_requires_equivalent_manual_permission(cfg, incus, right, allowed):
@@ -424,6 +426,7 @@ def test_save_profile_writes_global_block(cfg, incus_with_grant, tmp_path):
             "foreign_issues": {"repos": [], "actions": []},
             "pull_requests": False,
             "pr_reviews": False,
+            "pr_comment_edits": False,
             "max_actions_per_hour": 30,
         },
     }

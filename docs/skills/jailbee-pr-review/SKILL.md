@@ -25,7 +25,8 @@ An orchestrator with `publish.pr_reviews` in the output of
 `jailbee inbox grant` stages normally, then runs
 `jailbee inbox send publish --pr NAME.json --wait --until done --json` instead
 of asking the human to apply it. Comments and replies may target review-bound PRs in the own
-repository; description rewrites additionally require an authored, non-adopted
+repository; a `comment_edit` action also needs `publish.pr_comment_edits` in that
+output; description rewrites additionally require an authored, non-adopted
 source-PR binding. No foreign PR, submodule or force override. Source PR manifests instead need
 `publish.pull_requests` and the own-branch restrictions described by
 `jailbee-orchestration`. Without `--until done`, `--wait` returns at `started`,
