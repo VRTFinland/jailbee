@@ -143,7 +143,13 @@ def test_destructive_question_is_styled_and_defaults_to_no(mocker, tmp_path):
     seen: dict[str, Any] = {}
 
     async def script(app, pilot):
-        await _until(pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "the modal")
+        # The modal sets its preset focus on mount; under load the screen can be
+        # current a frame before that, so wait for the focus too.
+        await _until(
+            pilot,
+            lambda: isinstance(app.screen, pm.ConfirmModal) and app.focused is not None,
+            "the modal with its preset focus",
+        )
         seen["styled"] = app.screen.has_class("destructive")
         seen["focus"] = app.focused
         await pilot.press("enter")  # Enter on the preset focus
