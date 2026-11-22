@@ -60,6 +60,10 @@ class PublishOptions:
     # or not), or to an issue action on a foreign repository
     # (`github:<owner>/<name>`); the plan warns about each.
     foreign: bool = False
+    # Consent to a PR the container does not own in its own repository only:
+    # relaxes the PR lock, never the repository lock (the broker's state-only
+    # consent, where no human reads a foreign-repository warning).
+    foreign_pr: bool = False
     draft: bool = False
 
 
@@ -403,9 +407,10 @@ def publish_selected(
                     expected_revision=revision,
                     raise_errors=raise_errors,
                     plan_sink=plan_sink,
-                    allow_foreign=options.foreign,
+                    allow_foreign=options.foreign or options.foreign_pr,
                     # The outbox alone relaxes the repository lock, under the
-                    # same consent: the plan names the repository it is not.
+                    # user's consent: the plan names the repository it is not.
+                    # `foreign_pr` never does: the lock refuses before any `gh`.
                     allow_foreign_repo=options.foreign,
                     policy=cast("Callable[[pr_outbox.Manifest], None] | None", policy),
                     result_sink=result_sink,

@@ -1355,6 +1355,7 @@ def test_unbound_orchestrator_with_pr_state_closes_an_own_repo_pr(rig, mocker):
     def publish_state(*args, **kw):
         # An unbound PR resolves only as `foreign`; the policy is what keeps it own-repo.
         seen["foreign"] = kw["options"].foreign
+        seen["foreign_pr"] = kw["options"].foreign_pr
         kw["policy"](pr_outbox.parse_manifest("a.json", json.dumps(_STATE_PAYLOAD), {}))
         kw["audit_sink"]({"kind": "state", "repo": "org/repo"})
         kw["result_sink"]("closed PR #12")
@@ -1365,7 +1366,8 @@ def test_unbound_orchestrator_with_pr_state_closes_an_own_repo_pr(rig, mocker):
     replies = []
     publishing.settle(ctx, lambda ref, out: replies.append(out))
     assert replies[0].state == "done", replies[0].detail
-    assert seen == {"foreign": True}
+    # Only the PR lock is relaxed; the repository lock stays (#144 ticket 31).
+    assert seen == {"foreign": False, "foreign_pr": True}
 
 
 def test_precheck_refuses_a_foreign_repository_state_change(rig, mocker):
@@ -1421,3 +1423,29 @@ def test_precheck_refuses_state_change_without_the_right(rig, mocker):
     )
     out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
     assert out.state == "refused" and "pr_state" in out.detail
+
+
+def test_precheck_refuses_a_foreign_repository_review(rig, mocker):
+    """The non-state path checks the own repository at precheck too."""
+    ctx, m, *_ = rig
+    seed_source(
+        ctx.sender.key,
+        {**_STATE_PAYLOAD, "repo": "other/repo", "actions": [{"type": "comment", "body": "x"}]},
+    )
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    _grant_state(ctx, PublishRights(pr_reviews=True))
+    out = publishing.handle_publish(ctx, m.model_copy(update={"outbox": "pr"}))
+    assert out.state == "refused" and "own repository" in out.detail
+
+
+def test_state_policy_refuses_a_state_change_without_a_pr_number(rig, mocker):
+    """`parse_manifest` already refuses `pr: null` with a state action; the policy
+    still refuses it on its own, since an unbound target would otherwise resolve."""
+    ctx = rig[0]
+    mocker.patch("jailbee.git.get_remote_url", return_value="https://github.com/org/repo.git")
+    ctx.incus.config_get_checked.return_value = None
+    check = publishing._review_policy(
+        PublishRights(pr_state=True), 1, ctx.cfg, ctx.incus, ctx.sender.full
+    )
+    with pytest.raises(pr_outbox.GateError, match="numbered PR"):
+        check(replace(_state_manifest(), pr=None))
