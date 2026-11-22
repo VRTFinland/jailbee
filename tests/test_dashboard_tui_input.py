@@ -28,12 +28,12 @@ def _texts(run):  # type: ignore[no-untyped-def]
 
 
 def test_keys_after_the_command_runs_reach_the_table(mocker, tmp_path):
-    """`!ls⏎`, the output screen dismissed, `j`: `j` moves the table, not the dead line."""
+    """`!ls⏎`, then `j`: `j` moves the table, not the dead line."""
     child = mocker.patch.object(tsession.subprocess, "run")
     child.return_value.returncode = 0
     run = drive(
         mocker,
-        [burst(("exclamation_mark", "!"), *_typed("ls"), ("enter", "\r")), "enter", "j"],
+        [burst(("exclamation_mark", "!"), *_typed("ls"), ("enter", "\r")), "j"],
         [_group(tmp_path)],
     )
     child.assert_called_once()

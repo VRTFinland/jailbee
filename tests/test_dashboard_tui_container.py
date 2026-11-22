@@ -253,7 +253,8 @@ def test_autostart_status_runs_in_the_terminal(mocker, tmp_path, over_ssh):
     child.assert_called_once_with(
         ["jailbee", "autostart", "status", "alpha-x", *flags], check=False, cwd=tmp_path
     )
-    assert len(run.app.outputs) == 1  # its output is shown by the dashboard
+    assert len(run.entries) == 1  # its output is the dashboard's queue entry
+    assert run.app.outputs == []
 
 
 def test_cancel_autostart_asks_first_and_no_runs_nothing(mocker, tmp_path):
@@ -401,7 +402,8 @@ def test_snapshot_create_with_a_timestamp_runs_in_the_terminal(mocker, tmp_path,
     child.assert_called_once_with(
         ["jailbee", "snapshot", "create", *flags, "--", "alpha-x"], check=False, cwd=tmp_path
     )
-    assert len(run.app.outputs) == 1  # its output is shown by the dashboard
+    assert len(run.entries) == 1  # its output is the dashboard's queue entry
+    assert run.app.outputs == []
 
 
 def test_snapshot_create_named_takes_an_option_like_tag_as_a_tag(mocker, tmp_path):
@@ -650,7 +652,8 @@ def test_snapshot_restore_and_delete_run_after_a_yes(
         check=False,
         cwd=tmp_path,
     )
-    assert len(run.app.outputs) == 1  # its output is shown by the dashboard
+    assert len(run.entries) == 1  # its output is the dashboard's queue entry
+    assert run.app.outputs == []
 
 
 @pytest.mark.parametrize("action_downs", [0, 1], ids=["restore", "delete"])

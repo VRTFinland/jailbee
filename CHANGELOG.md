@@ -25,6 +25,12 @@ before editing `## Unreleased`.
   a dead job or failed autostart, in hues legible on light and dark terminals
   ([#146](https://github.com/VRTFinland/jailbee/issues/146)). A Stopped row stays dim
   and a marked row keeps the mark's blue background without the phase colour.
+- The terminal dashboard keeps a notification queue of the actions it runs
+  in the background ([#151](https://github.com/VRTFinland/jailbee/issues/151)):
+  each is an entry with its command, target, state, exit status and output,
+  until dismissed. Output screens no longer pop up when an action ends; a
+  short notice says it finished. The `⟳ running · ⚠ failed` badge at the top,
+  or `Q`, opens the queue, where an entry expands to its full output.
 - Interactive Claude Code sessions receive managed, non-acknowledging inbox
   notifications through `jailbee inbox follow`
   ([#135](https://github.com/VRTFinland/jailbee/issues/135)). The repo's

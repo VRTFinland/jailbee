@@ -45,6 +45,7 @@ from jailbee.dashboard.tui.frame import (
     _hint_line,
     frame_title,
     notice_parts,
+    queue_badge,
     update_line,
 )
 from jailbee.dashboard.tui.layout import FRAME_INSET_COLS, FrameLayout, frame_layout
@@ -481,6 +482,21 @@ class _CropTop:
             yield Segment.line()
 
 
+_BADGE_GAP = "  "
+
+
+def _system_row(view: DashboardView, width: int, *, shown: bool) -> Text:
+    """The queue badge (while the queue holds entries), then the host status in what is left."""
+    line = Text(no_wrap=True, overflow="ellipsis")
+    if view.queue is not None:
+        line.append_text(queue_badge(view.queue))
+        if shown:
+            line.append(_BADGE_GAP)
+    if shown and view.system is not None:
+        line.append_text(system_line(view.system, max(0, width - line.cell_len)))
+    return line
+
+
 class DashboardFrame(Vertical):
     """The whole dashboard inside one rounded border.
 
@@ -624,7 +640,9 @@ class DashboardFrame(Vertical):
     def show(self, view: DashboardView) -> None:
         width = max(0, self.app.size.width - FRAME_INSET_COLS)
         height = max(0, self.app.size.height - FRAME_BORDER_ROWS)
-        system_row = int(view.show_system and view.system is not None and height > 0)
+        system_shown = view.show_system and view.system is not None
+        # The queue badge shares the status row, and keeps it while the status is hidden.
+        system_row = int((system_shown or view.queue is not None) and height > 0)
         # The status row is one line above the table; the layout budgets what is left.
         height -= system_row
         console = self.app.console
@@ -736,10 +754,10 @@ class DashboardFrame(Vertical):
         )
         system = self.query_one("#system", Static)
         system.display = bool(system_row)
-        if system_row and view.system is not None:
-            system_input = (view.system, width)
+        if system_row:
+            system_input = (view.system if system_shown else None, view.queue, width)
             if system_input != self._system_input:
-                system.update(system_line(view.system, max(0, width)))
+                system.update(_system_row(view, width, shown=system_shown))
                 self._system_input = system_input
         table = self.table
         table.display = layout.table_rows > 0

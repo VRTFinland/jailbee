@@ -23,7 +23,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any, Protocol
 
@@ -89,6 +89,8 @@ class ActionOutcome:
 
     results: list[RunResult]  # one per run that was started, in order
     output: str
+    # What each run of ``results`` printed on its own, without the batch headers.
+    outputs: list[str] = field(default_factory=list)
 
 
 # The orphan rows' own attach verbs (terminal dashboard only, never remote).
@@ -208,17 +210,27 @@ def run_actions(
     runner_fn = run if run is not None else run_action
     chunks: list[str] = []
     results: list[RunResult] = []
+    outputs: list[str] = []
     try:
         for item in runs:
             if len(runs) > 1:
                 chunks.append(f"── jailbee {_command_path(item.argv)} ──\n")
-            result = runner_fn(item.argv, cwd=item.cwd, on_output=chunks.append, **common)
+            own: list[str] = []
+
+            def sink(chunk: str, own: list[str] = own) -> None:
+                chunks.append(chunk)
+                own.append(chunk)
+
+            try:
+                result = runner_fn(item.argv, cwd=item.cwd, on_output=sink, **common)
+            finally:
+                outputs.append("".join(own))
             results.append(result)
             if result.error is not None or result.refused is not None:
                 break
     except Exception as exc:
         results.append(RunResult(error=str(exc)))
-    return ActionOutcome(results, "".join(chunks))
+    return ActionOutcome(results, "".join(chunks), outputs)
 
 
 def run_action(

@@ -309,3 +309,16 @@ def test_run_actions_a_single_run_has_no_header_and_a_failed_exit_does_not_stop_
         [runner.ActionRun(["ls", "x"], tmp_path), runner.ActionRun(["ls", "y"], tmp_path)], run=fake
     )
     assert seen[-2:] == ["x", "y"] and len(two.results) == 2
+
+
+def test_run_actions_keeps_each_runs_own_output_apart(tmp_path):
+    def fake(argv, *, cwd, on_output, **common):
+        on_output(f"out {argv[-1]}\n")
+        on_output("more\n")
+        return runner.RunResult(status=0)
+
+    runs = [runner.ActionRun(["git", "pull", n], tmp_path) for n in ("a", "b")]
+    outcome = runner.run_actions(runs, run=fake)
+
+    # One text per run, without the batch headers, in run order.
+    assert outcome.outputs == ["out a\nmore\n", "out b\nmore\n"]

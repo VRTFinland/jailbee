@@ -3306,14 +3306,17 @@ jailbee new feat/dashsmoke --background
 # Workflow entries (the menu block above tmux/shell). Make a commit inside the
 # container first, so there is something for git pull and git diff to show:
 jailbee shell feat-dashsmoke -- bash -lc 'cd ~/*/ && echo x >> README.md && git commit -am wip'
-#  d (or the "Show diff (git diff)" entry) -> the dashboard keeps drawing and
-#     the diff opens in a scrollable output screen WITH colour; Enter/Esc/q
-#     returns to the dashboard with the table intact.
+#  d (or the "Show diff (git diff)" entry) -> the dashboard keeps drawing, no
+#     screen pops up; the ⟳/⚠ badge appears at the top. Q (or a click on the
+#     badge) opens the queue; Enter on the entry, then o, shows the diff in a
+#     scrollable output screen WITH colour; Enter/Esc/q returns to the
+#     dashboard with the table intact. A click outside the queue closes it.
 #  u ("Update from base (git push)") -> in a repo with push.default_action:
 #     ask, the merge/rebase question appears as a dashboard modal (the screen
 #     is NOT handed over); Esc cancels exactly as Esc at the CLI picker. On
-#     success expect a short "done" notice, on failure an output screen.
-#  "Send commits to host (git pull)" -> same notice / output-screen behaviour.
+#     success expect a short "done" notice, on failure an "exited N" notice
+#     and the badge's ⚠ count goes up; the output is in the queue entry.
+#  "Send commits to host (git pull)" -> same notice / queue behaviour.
 #  Destroy from the menu -> a "DESTRUCTIVE:" red-bordered confirmation modal
 #     with "No" focused. Quit the dashboard (q) while it is open -> the
 #     dashboard exits at once and no `jailbee destroy` process is left behind. On a container
