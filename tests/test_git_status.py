@@ -1539,9 +1539,7 @@ def test_snippet_prints_question_mark_when_the_branch_listing_fails(tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     shim = bin_dir / "git"
-    shim.write_text(
-        f'#!/bin/sh\ncase "$1" in for-each-ref) exit 1;; esac\nexec {real} "$@"\n'
-    )
+    shim.write_text(f'#!/bin/sh\ncase "$1" in for-each-ref) exit 1;; esac\nexec {real} "$@"\n')
     shim.chmod(0o755)
     env = {
         **os.environ,
