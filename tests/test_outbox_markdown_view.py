@@ -121,6 +121,24 @@ def test_scheme_the_parser_rejects_is_never_linked() -> None:
         assert not any("\x1b]8" in line for line in lines), href
 
 
+def test_raw_controls_in_a_target_never_reach_the_output() -> None:
+    for href in ("https://e.com/%E2%80%AE", "https://e.com/\u202ex", "https://e.com/a\x07b"):
+        lines = render_markdown(f"[t](<{href}>)", width=60)
+        joined = "\n".join(lines).replace("\x1b\\", "")
+        assert "\x07" not in joined and "\u202e" not in joined, href
+        assert all("\u202e" not in u and "\x07" not in u for u in _links(lines)), href
+
+
+def test_port_or_userinfo_in_the_target_is_shown_despite_a_matching_label() -> None:
+    for target in ("https://e.com:8443/", "https://e.com:pw@e.com"):
+        out = plain(render_markdown(f"[https://e.com]({target})", width=60))
+        assert out == ["https://e.com \u2192 e.com"], target
+
+
+def test_encoded_bracket_in_userinfo_is_left_alone() -> None:
+    assert _links(render_markdown("<https://a%5Bb@e.com/>", width=60)) == ["https://a%5Bb@e.com/"]
+
+
 def test_link_host_guard_rejects_raw_controls_and_non_ascii() -> None:
     from jailbee.outbox.markdown_view import _link_host
 

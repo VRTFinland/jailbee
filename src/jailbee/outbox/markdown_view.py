@@ -83,7 +83,11 @@ def _normalise_href(href: str) -> str:
     if not sep:
         return href
     end = min((i for i in (rest.find(c) for c in "/?#") if i >= 0), default=len(rest))
-    authority = _BRACKETS.sub(lambda m: "[" if m[1] in "bB" else "]", rest[:end])
+    authority = rest[:end]
+    userinfo, at, hostport = authority.rpartition("@")
+    if hostport[:3].upper() == "%5B":  # only an IPv6 literal, never userinfo
+        hostport = _BRACKETS.sub(lambda m: "[" if m[1] in "bB" else "]", hostport)
+    authority = f"{userinfo}{at}{hostport}"
     return f"{scheme.lower()}://{authority}{rest[end:]}"
 
 
@@ -96,6 +100,8 @@ def _text_token(content: str) -> Token:
 def _plain_origin(label: str, href: str, host: str) -> bool:
     """Whether `label` is exactly the scheme and host of `href`, so it cannot mislead."""
     scheme = href.partition("://")[0]
+    if urlsplit(href).netloc.lower() != host:  # a port or userinfo is worth showing
+        return False
     return label.lower() in (f"{scheme}://{host}".lower(), f"{scheme}://{host}/".lower())
 
 
