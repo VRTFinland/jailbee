@@ -96,7 +96,7 @@ class ServiceProbe:
         with self._lock:
             self._closed = True
 
-    def _job(self, root: Path, name: str) -> Callable[[], None]:
+    def _job(self, root: Path, name: str, token: float) -> Callable[[], None]:
         def job() -> None:
             from jailbee.container_app import JailbeeAbsentError
 
@@ -109,9 +109,11 @@ class ServiceProbe:
                 log.debug("service probe of %s failed", name, exc_info=True)
                 services = None
             with self._lock:
-                if self._closed:
+                # Only the run that is still registered may land: a container
+                # pruned (stopped, recreated) mid-probe has no entry or a newer one.
+                if self._closed or self._in_flight.get(name) != token:
                     return
-                self._in_flight.pop(name, None)
+                del self._in_flight[name]
                 self._cache[name] = _Entry(self._clock(), services, absent)
 
         return job
@@ -128,7 +130,7 @@ class ServiceProbe:
     def annotate(self, groups: Sequence[RepoGroup]) -> None:
         """Start the probes that are due and write what is known onto every container."""
         now = self._clock()
-        start: list[tuple[Path, str]] = []
+        start: list[tuple[Path, str, float]] = []
         with self._lock:
             if self._closed:
                 return
@@ -142,13 +144,13 @@ class ServiceProbe:
                     running.add(c.name)
                     if self._due(c.name, now):
                         self._in_flight[c.name] = now
-                        start.append((Path(group.repo_root), c.name))
+                        start.append((Path(group.repo_root), c.name, now))
             for gone in set(self._cache) - running:
                 del self._cache[gone]
             for gone in set(self._in_flight) - running:
                 del self._in_flight[gone]
-        for root, name in start:
-            self._submit(self._job(root, name))
+        for root, name, token in start:
+            self._submit(self._job(root, name, token))
         with self._lock:
             for group in groups:
                 for c in group.containers:

@@ -157,7 +157,9 @@ def run_in_container(
             raise ContainerJailbeeError(
                 f"container still sees jailbee {their} after restaging {expected}"
             )
-    if result.returncode == EXIT_NOT_MOUNTED or b"not mounted" in result.stderr.lower():
+    if result.returncode == EXIT_NOT_MOUNTED or (
+        result.returncode != 0 and b"not mounted" in result.stderr.lower()
+    ):
         raise JailbeeAbsentError("in-container jailbee is not mounted - run `jb apply` on the host")
     if result.returncode == 127:
         raise JailbeeAbsentError(
