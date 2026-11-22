@@ -12888,6 +12888,7 @@ def test_git_status_json_names_the_sync_target_and_host_counts():
         "parent": None,
         "ahead_sha": None,
         "seen_at": None,
+        "parent_unknown": False,
     }
     assert (payload["host_ahead_count"], payload["host_behind_count"]) == ("5", "1")
 
@@ -13073,3 +13074,52 @@ def test_list_containers_leaves_other_repo_branches_unmeasured(make_cfg, tmp_pat
     )
 
     assert info.git_status.other_branches is None
+
+
+def test_sync_target_text_names_the_no_pass_case_truthfully():
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import sync_target_text
+
+    unknown = _ci_with_status(
+        sync_target=SyncTarget(
+            "host",
+            "main",
+            "h" * 40,
+            "refs/heads/main",
+            fallback=True,
+            parent="orch",
+            parent_unknown=True,
+        )
+    )
+    stopped = _ci_with_status(
+        sync_target=SyncTarget(
+            "host", "main", "h" * 40, "refs/heads/main", fallback=True, parent="orch"
+        )
+    )
+
+    assert "head unknown outside the dashboard" in sync_target_text(unknown.git_status)
+    assert "not running or not seen yet" in sync_target_text(stopped.git_status)
+
+
+def test_plain_ls_gives_a_pr_child_its_pr_head_not_the_parent_fallback(make_cfg, tmp_path, mocker):
+    from jailbee.host_target import TargetSnapshot
+    from jailbee.lifecycle import ContainerInfo, _sync_targets
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.git.rev_parse", return_value="pr-sha")
+    child = ContainerInfo(
+        "myrepo-kid",
+        "Running",
+        "strict",
+        None,
+        None,
+        repo="myrepo",
+        pr_number=12,
+        fork_of="myrepo-orch",
+    )
+    host = TargetSnapshot(cfg.default_branch, "host-sha", "local", "refs/x", "equal")
+    targets = _sync_targets(
+        [child], {child.name: host}, {child.repo: tmp_path}, running={"myrepo-orch"}
+    )
+
+    assert targets[child.name].kind == "pr"

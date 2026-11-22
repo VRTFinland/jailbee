@@ -109,6 +109,7 @@ class SyncTarget:
     parent: str | None = None
     ahead_sha: str | None = None
     seen_at: float | None = None
+    parent_unknown: bool = False
 
 
 def host_sync_target(host: TargetSnapshot, *, fallback: bool = False) -> SyncTarget:
@@ -134,7 +135,9 @@ class SyncInputs:
     None when the parent was stopped, missing or not yet seen. ``last_import``
     is the orchestration label of the child's last imported commit, and
     ``fork_pin_ref`` the host ref pinning a fork's starting commit: the ↑ base
-    is the first of the two that resolves.
+    is the first of the two that resolves. ``heads_known`` is False when no
+    gather pass exists (plain ``jb ls``): no parent's head is then known, which
+    says nothing about the parent.
     """
 
     pr_number: int | None = None
@@ -142,6 +145,7 @@ class SyncInputs:
     parent_head: ParentHead | None = None
     last_import: str | None = None
     fork_pin_ref: str | None = None
+    heads_known: bool = True
 
 
 def resolve_sync_target(
@@ -157,7 +161,13 @@ def resolve_sync_target(
     if inputs.parent is not None:
         head = inputs.parent_head
         if head is None:
-            return replace(host_sync_target(host, fallback=True), parent=inputs.parent)
+            if not inputs.heads_known and inputs.pr_number is not None:
+                return _pr_target(repo_root, inputs.pr_number, host)
+            return replace(
+                host_sync_target(host, fallback=True),
+                parent=inputs.parent,
+                parent_unknown=not inputs.heads_known,
+            )
         ahead = inputs.last_import
         if ahead is None and inputs.fork_pin_ref is not None and repo_root is not None:
             ahead = git.rev_parse(repo_root, inputs.fork_pin_ref)
@@ -172,10 +182,15 @@ def resolve_sync_target(
         )
     if inputs.pr_number is None:
         return host_sync_target(host)
+    return _pr_target(repo_root, inputs.pr_number, host)
+
+
+def _pr_target(repo_root: Path | None, pr_number: int, host: TargetSnapshot) -> SyncTarget:
+    """The PR head the host last fetched, else the host branch marked as its fallback."""
     from jailbee.pr import pr_head_ref
 
-    ref = pr_head_ref(inputs.pr_number)
+    ref = pr_head_ref(pr_number)
     sha = git.rev_parse(repo_root, ref) if repo_root is not None else None
     if sha is None:
         return host_sync_target(host, fallback=True)
-    return SyncTarget("pr", f"PR #{inputs.pr_number}", sha, ref)
+    return SyncTarget("pr", f"PR #{pr_number}", sha, ref)

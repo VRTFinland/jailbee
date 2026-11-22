@@ -1678,3 +1678,38 @@ def test_parent_probe_missing_parent_head_reads_pull_needed(mocker, tmp_path):
     status = _probe_real(mocker, repo, target=host, sync=sync)
 
     assert (status.ahead_count, status.behind_count) == ("1", BEHIND_UNKNOWN)
+
+
+def test_parent_probe_drops_up_for_work_that_reached_the_parent_another_way(mocker, tmp_path):
+    """A commit the parent head already contains is no longer ↑, though it lies
+    beyond the ahead point (the work reached the parent by another route)."""
+    from jailbee.host_target import SyncTarget
+
+    repo = tmp_path / "ctr"
+    repo.mkdir()
+    _real_git(repo, "init", "-q")
+    base = _commit(repo, "base")
+    _commit(repo, "child-1")
+    head = _commit(repo, "child-2")  # the parent has merged both already
+
+    host = TargetSnapshot("main", base, "local", "refs/remotes/origin/main", "equal")
+    # ahead point is the old fork pin; the parent head already contains child-2.
+    sync = SyncTarget("parent", "orch", head, "", ahead_sha=base, parent="orch")
+    status = _probe_real(mocker, repo, target=host, sync=sync)
+
+    assert status.ahead_count == "0"
+
+
+def test_parent_probe_counts_up_even_when_the_parent_sha_is_not_in_the_child(mocker, tmp_path):
+    from jailbee.host_target import SyncTarget
+
+    repo = tmp_path / "ctr"
+    repo.mkdir()
+    _real_git(repo, "init", "-q")
+    base = _commit(repo, "base")
+    _commit(repo, "child-1")
+
+    host = TargetSnapshot("main", base, "local", "refs/remotes/origin/main", "equal")
+    sync = SyncTarget("parent", "orch", "e" * 40, "", ahead_sha=base, parent="orch")
+
+    assert _probe_real(mocker, repo, target=host, sync=sync).ahead_count == "1"

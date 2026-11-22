@@ -253,9 +253,14 @@ work flows next, chosen automatically:
   imported — since the orchestrator's last import, else since the fork's
   starting commit (`?` when neither is known); a `jailbee fork` has no imports, so its ↑
   keeps counting from the fork point. Its cells carry a dim `⑂`
-  marker. A stopped or missing parent, or the first gather pass (and a plain
-  `jailbee ls`, which has no previous pass), compares with the host branch
-  instead, and the cells carry a yellow `⑂?`;
+  marker. A stopped or missing parent, or the first gather pass, compares with the
+  host branch instead, and the cells carry a yellow `⑂?`. A plain
+  `jailbee ls` has no previous pass, so no parent's head is known: a PR-bound
+  child there compares with its PR head as before, any other child or fork
+  with the host branch (`⑂?`, described as "parent head unknown outside the
+  dashboard"). A parent whose probe fails while it runs keeps its previous head,
+  with its older "seen" time, so the child does not flap. When the parent's HEAD
+  is in the child, ↑ also excludes everything the parent already has;
 - a PR-bound container (`jailbee new --pr`, `jailbee pr bind`) compares with the
   PR head the host last fetched, `refs/jailbee/pr/<N>/head`: ↑ means "push
   needed", ↓ "someone else pushed to the PR". Its cells carry a dim `pr`

@@ -266,7 +266,8 @@ before editing `## Unreleased`.
   dashboard's previous pass saw it). Those cells carry a dim `⑂`, or a yellow
   `⑂?` when the parent is stopped, missing or not yet seen and the host branch
   stands in; the card gains a `⑂ <parent>` row with the parent's sha and the
-  pass age. Other containers are unchanged.
+  pass age. Plain `jailbee ls` has no previous pass, so a PR-bound child there
+  keeps comparing with its PR head. Other containers are unchanged.
 - `jailbee review apply` and `jailbee issue apply` are now `jailbee outbox
   apply` limited to PR or issue proposals, with the same prompts, output and
   exit codes ([#144](https://github.com/VRTFinland/jailbee/issues/144)). Each

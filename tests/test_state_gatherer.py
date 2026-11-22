@@ -77,7 +77,7 @@ def _ci(name, git=None):
     return ContainerInfo(name, "Running", "strict", None, None, repo="alpha", git_status=git)
 
 
-def _gatherer(mocker, gather, clock, sent_counts=lambda: SentCounts()):
+def _gatherer(mocker, gather, clock, sent_counts=lambda: SentCounts(), wall_clock=None):
     mocker.patch("jailbee.state_service.gatherer.sample_activity")
     return Gatherer(
         mocker.Mock(),
@@ -86,7 +86,7 @@ def _gatherer(mocker, gather, clock, sent_counts=lambda: SentCounts()):
         gather=gather,
         clock=clock,
         sleep=lambda _s: None,
-        wall_clock=lambda: datetime(2026, 10, 4, tzinfo=UTC),
+        wall_clock=wall_clock or (lambda: datetime(2026, 10, 4, tzinfo=UTC)),
     )
 
 
@@ -148,6 +148,59 @@ def test_the_next_gather_gets_the_heads_the_last_git_pass_saw(mocker):
         expected,
         expected,
     ]
+
+
+def test_a_base_pass_keeps_the_head_stamp_of_the_last_git_pass(mocker):
+    """The card's "seen Nm ago" must not claim a fresher head than a git pass saw."""
+    from jailbee.host_target import ParentHead
+
+    clock = _Clock()
+    wall = [datetime(2026, 10, 4, tzinfo=UTC)]
+    seen = GitStatus("", "clean", "0", "ok", head_sha="abc")
+    rounds = iter([[_ci("x")], [_ci("x", seen)], [_ci("x", seen)], [_ci("x", seen)]])
+    gather = mocker.Mock(side_effect=lambda *a, **k: [RepoGroup("alpha", "/a", None, next(rounds))])
+    g = _gatherer(mocker, gather, clock, wall_clock=lambda: wall[0])
+
+    g.tick(active=True, refresh=False, roots=[])  # base
+    g.tick(active=True, refresh=False, roots=[])  # git, stamps the heads
+    stamp = wall[0].timestamp()
+    clock.t = 3.0
+    wall[0] += timedelta(minutes=5)
+    g.tick(active=True, refresh=False, roots=[])  # base only
+    clock.t = 6.5
+    wall[0] += timedelta(minutes=5)
+    g.tick(active=True, refresh=False, roots=[])  # base only
+
+    assert [c.kwargs["parent_heads"] for c in gather.call_args_list][2:] == [
+        {"x": ParentHead("abc", stamp)},
+        {"x": ParentHead("abc", stamp)},
+    ]
+
+
+def test_a_failed_probe_of_a_running_parent_keeps_its_previous_head(mocker):
+    from jailbee.host_target import ParentHead
+
+    clock = _Clock()
+    wall = [datetime(2026, 10, 4, tzinfo=UTC)]
+    seen = GitStatus("", "clean", "0", "ok", head_sha="abc")
+    rounds = iter(
+        [[_ci("x")], [_ci("x", seen)], [_ci("x", GitStatus("?", "?", "?", "?"))], [_ci("x")]]
+    )
+    gather = mocker.Mock(side_effect=lambda *a, **k: [RepoGroup("alpha", "/a", None, next(rounds))])
+    g = _gatherer(mocker, gather, clock, wall_clock=lambda: wall[0])
+
+    g.tick(active=True, refresh=False, roots=[])  # base
+    g.tick(active=True, refresh=False, roots=[])  # git ok
+    stamp = wall[0].timestamp()
+    clock.t = 20.0
+    wall[0] += timedelta(minutes=1)
+    g.tick(active=True, refresh=False, roots=[])  # git, probe failed
+    clock.t = 40.0
+    g.tick(active=True, refresh=False, roots=[])  # git again
+
+    heads = [c.kwargs["parent_heads"] for c in gather.call_args_list]
+    assert heads[2] == {"x": ParentHead("abc", stamp)}
+    assert heads[3] == {"x": ParentHead("abc", stamp)}  # kept, stamp not refreshed
 
 
 def test_the_sampler_is_primed_once(mocker):

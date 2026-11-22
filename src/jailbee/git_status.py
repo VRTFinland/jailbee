@@ -502,12 +502,19 @@ fi
 
 # A parent target counts ↑ from the newest commit the parent certainly has
 # (AHEAD_BASE_SHA), not from the parent's HEAD: the parent moves on without
-# the child, and those commits are ↓, not ↑.
+# the child, and those commits are ↓, not ↑. When the parent's HEAD is in this
+# container (BASE set) its commits are excluded too, so work that reached the
+# parent by another route drops out. An AHEAD_BASE_SHA this repository lacks
+# makes rev-list fail, which leaves "?".
 if [ -n "$AHEAD_BASE" ]; then
   COUNT="?"
-  if [ -n "$AHEAD_BASE_SHA" ] \
-     && git cat-file -e "${AHEAD_BASE_SHA}^{commit}" >/dev/null 2>&1; then
-    COUNT=$(git rev-list --count "${AHEAD_BASE_SHA}..HEAD" 2>/dev/null) || COUNT="?"
+  if [ -n "$AHEAD_BASE_SHA" ]; then
+    if [ -n "$BASE" ]; then
+      COUNT=$(git rev-list --count HEAD "^${AHEAD_BASE_SHA}" "^${BASE}" 2>/dev/null) \
+        || COUNT="?"
+    else
+      COUNT=$(git rev-list --count "${AHEAD_BASE_SHA}..HEAD" 2>/dev/null) || COUNT="?"
+    fi
   fi
 fi
 

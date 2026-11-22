@@ -211,3 +211,41 @@ def test_a_parent_not_seen_running_falls_back_to_the_host_branch_marked(mocker, 
         True,
         "orch",
     )
+
+
+def test_without_a_gather_pass_a_pr_child_compares_with_its_pr_head(mocker, tmp_path):
+    """Plain `jb ls` has no parent heads at all: the PR binding wins, as before."""
+    from jailbee.host_target import SyncInputs, resolve_sync_target
+
+    mocker.patch("jailbee.git.rev_parse", return_value="pr-sha")
+
+    target = resolve_sync_target(
+        tmp_path,
+        SyncInputs(pr_number=12, parent="orch", heads_known=False),
+        _host_snapshot(),
+    )
+
+    assert (target.kind, target.label, target.sha) == ("pr", "PR #12", "pr-sha")
+
+
+def test_without_a_gather_pass_a_plain_child_falls_back_marked_unknown(tmp_path):
+    from jailbee.host_target import SyncInputs, resolve_sync_target
+
+    target = resolve_sync_target(
+        tmp_path, SyncInputs(parent="orch", heads_known=False), _host_snapshot()
+    )
+
+    assert (target.kind, target.fallback, target.parent) == ("host", True, "orch")
+    assert target.parent_unknown is True
+
+
+def test_a_gather_pass_that_lacks_the_parent_keeps_the_stopped_parent_fallback(mocker, tmp_path):
+    from jailbee.host_target import SyncInputs, resolve_sync_target
+
+    mocker.patch("jailbee.git.rev_parse", return_value="pr-sha")
+
+    target = resolve_sync_target(
+        tmp_path, SyncInputs(pr_number=12, parent="orch", heads_known=True), _host_snapshot()
+    )
+
+    assert (target.kind, target.fallback, target.parent_unknown) == ("host", True, False)

@@ -897,7 +897,8 @@ those four cells carry a dim `pr`; a yellow `pr?` means that ref is missing and
 the host branch stands in. An orchestration child or fork compares with its
 parent container instead, ahead of any PR (↑ = not yet imported, ↓ = parent
 commits it lacks, dim `⑂`; yellow `⑂?` when the parent is stopped or not yet
-seen by the dashboard). The **JOB** column shows in-flight and failed
+seen by the dashboard; plain `jailbee ls` has no gather pass, so a PR-bound
+child keeps its PR head there and others show `⑂?`). The **JOB** column shows in-flight and failed
 background-job phases (`jailbee new`/`jailbee destroy --background`), and
 renders a detached autostart run as `autostart:<stage>` (`<stage>` is
 whichever stage the supervisor is on) — see `jailbee job` and `jailbee

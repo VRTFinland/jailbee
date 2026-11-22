@@ -61,7 +61,8 @@ from jailbee.update_check import UpdateNotice
 # 35 adds ContainerInfo.services (ServiceState) and .services_unknown.
 # 36 adds SyncTarget kind "parent" and .parent, .ahead_sha, .seen_at: children and
 # forks compare with their parent container.
-PROTOCOL = 36
+# 37 adds SyncTarget.parent_unknown: the parent's head is unknown (no gather pass).
+PROTOCOL = 37
 
 
 class ProtocolError(ValueError):
