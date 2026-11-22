@@ -44,8 +44,8 @@ from jailbee.dashboard.tui.frame import (
     DashboardView,
     _hint_line,
     frame_title,
-    queue_badge,
     notice_parts,
+    queue_badge,
     update_line,
 )
 from jailbee.dashboard.tui.layout import FRAME_INSET_COLS, FrameLayout, frame_layout

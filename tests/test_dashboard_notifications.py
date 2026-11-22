@@ -57,7 +57,11 @@ def test_a_started_action_is_a_running_entry_and_counts_on_the_badge(mocker, tmp
     _start(session)
 
     (entry,) = _entries(session)
-    assert (entry.command, entry.target, entry.state) == ("jailbee start alpha-a", "alpha-a", "running")
+    assert (entry.command, entry.target, entry.state) == (
+        "jailbee start alpha-a",
+        "alpha-a",
+        "running",
+    )
     assert session.view().queue == QueueCounts(running=1, attention=0)
 
 
@@ -165,9 +169,7 @@ def test_an_entry_expands_to_its_full_output(mocker, tmp_path):
     _choose(session, "jailbee start alpha-a")
     _choose(session, "Show output")
 
-    assert terminal.shown == [
-        ("jailbee start alpha-a", "output of jailbee start alpha-a\n", False)
-    ]
+    assert terminal.shown == [("jailbee start alpha-a", "output of jailbee start alpha-a\n", False)]
 
 
 def test_dismiss_one_finished_entry(mocker, tmp_path):
@@ -201,7 +203,7 @@ def test_dismiss_finished_keeps_the_running_entries(mocker, tmp_path):
 
 def test_a_running_entry_cannot_be_dismissed(mocker, tmp_path):
     _children(mocker)
-    session, terminal = _one_repo(mocker, tmp_path, defer=True)
+    session, _ = _one_repo(mocker, tmp_path, defer=True)
     _start(session)
     picker = _open_queue(session)
     assert not any("Dismiss finished" in e.label for e in picker.entries)
@@ -249,9 +251,7 @@ def test_pilot_the_badge_shows_and_a_click_on_it_opens_the_queue(mocker, tmp_pat
     from tests.dashboard_pilot import Click, drive
 
     _children(mocker, failing=("alpha-a",))
-    run = drive(
-        mocker, [_pilot_start, Click(Hit("queue"))], [_pilot_group(tmp_path)], screens=True
-    )
+    run = drive(mocker, [_pilot_start, Click(Hit("queue"))], [_pilot_group(tmp_path)], screens=True)
 
     assert "⟳ 0 · ⚠ 1" in run.screens[1]
     assert _is_queue(run.trace[2].overlay)
@@ -290,4 +290,3 @@ def test_pilot_an_entry_expands_to_its_full_output(mocker, tmp_path):
         ("jailbee start alpha-a", "output of jailbee start alpha-a\n", False)
     ]
     assert isinstance(seen[0], pm.OutputScreen)
-

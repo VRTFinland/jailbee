@@ -100,7 +100,9 @@ def queue_badge(counts: QueueCounts) -> Text:
     """
     hit = Style(meta={dhit.HIT_KEY: dhit.Hit("queue").meta_value()})
     badge = Text()
-    badge.append(f"⟳ {counts.running}", style=Style(bold=counts.running > 0, dim=not counts.running) + hit)
+    badge.append(
+        f"⟳ {counts.running}", style=Style(bold=counts.running > 0, dim=not counts.running) + hit
+    )
     badge.append(" · ", style=Style(dim=True) + hit)
     badge.append(
         f"⚠ {counts.attention}",

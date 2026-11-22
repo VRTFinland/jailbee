@@ -918,9 +918,7 @@ class DashboardSession:
         if found is None:
             return self.queue_picker()
         if entry.value == "output":
-            self.terminal.show_output(
-                found.command, found.output, failed=found.state == "failed"
-            )
+            self.terminal.show_output(found.command, found.output, failed=found.state == "failed")
             return self.queue_entry_picker(entry_id)
         if entry.value == "dismiss":
             if not self.queue.dismiss(entry_id):
