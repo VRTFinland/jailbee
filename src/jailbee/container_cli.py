@@ -105,7 +105,7 @@ container_app.add_typer(
     outbox_app,
     name="outbox",
     cls=SharedGroup,
-    help="Inspect, submit and drop staged issue and PR proposals.",
+    help="Inspect, submit and discard staged issue and PR proposals.",
 )
 
 
