@@ -48,6 +48,7 @@ class QueuedRequest:
     pr_base: str | None = None
     fork_base: str | None = None
     fork_base_pinned: bool = False
+    fork_base_explicit: str | None = None
     resume: str | None = None
     services: list[str] | None = None
     warm_paths: list[str] | None = None

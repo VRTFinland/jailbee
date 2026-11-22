@@ -249,7 +249,9 @@ def sync_container_base_to_pr(
     if current == base_ref:
         return
     marker = incus.config_get(full, BASE_EXPLICIT_LABEL) or None
-    chosen = marker == "true" or (marker is None and current != cfg.default_branch)
+    chosen = marker == "true" or (
+        marker is None and current is not None and current != cfg.default_branch
+    )
     if chosen or incus.config_get(full, f"{STACKED_LABEL_PREFIX}_base"):
         info(f"Container '{short}' keeps its explicitly chosen base '{current}'.")
         return

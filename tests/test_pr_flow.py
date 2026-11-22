@@ -2427,6 +2427,16 @@ def test_sync_base_to_pr_keeps_explicit_base(mocker, labels):
     retarget.assert_not_called()
 
 
+def test_sync_base_to_pr_missing_base_label_is_not_explicit(mocker):
+    _fetch, retarget = _base_patches(mocker)
+    incus = _base_incus(mocker)
+    incus.config_get.side_effect = lambda name, key: None
+    info = mocker.patch("jailbee.pr_flow.info")
+    pr_flow.sync_container_base_to_pr(_base_cfg(), incus, "f", short="c", base_ref="dev")
+    retarget.assert_called_once()
+    assert not any("explicitly chosen" in c.args[0] for c in info.call_args_list)
+
+
 def test_sync_base_to_pr_warns_with_hint_when_retarget_fails(mocker):
     from jailbee.sync import SyncError
 

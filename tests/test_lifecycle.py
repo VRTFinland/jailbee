@@ -1698,7 +1698,8 @@ def test_new_container_uses_explicit_base_branch_label_when_provided(make_cfg, t
     [
         ({"base": "develop"}, "true"),
         ({}, "false"),
-        # `jailbee new --pr N --base X`: the PR's base labels it, the user still named one.
+        # Lifecycle-level contract only: an explicit `base` marks "true" whatever
+        # label override accompanies it (the CLI itself rejects `--pr N --base X`).
         ({"base": "develop", "base_branch_label": "dev"}, "true"),
         ({"base_branch_label": "dev"}, "false"),
         # A fork inherits its source's marker; a legacy source leaves none.
