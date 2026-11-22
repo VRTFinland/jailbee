@@ -623,10 +623,6 @@ class DashboardSession:
             present(snapshot.groups, self.cwd_root, self.scope)
         )
         self._apply_grant_patches()
-        jobs = job_rows(self.presented)
-        if jobs != self.queue.jobs:
-            self.queue.set_jobs(jobs)
-            self._queue_changed()
         self.all_groups = self._sorted(self.presented)
         self.git_enabled = snapshot.git_enabled
         self.update = None if (self.transport != "none") else snapshot.update
@@ -635,6 +631,12 @@ class DashboardSession:
             self.all_groups, show_empty_repos=self.show_empty_repos, hidden_repos=self.hidden_repos
         )
         self.rows = selectable_rows(self.groups, self.folded)
+        # Job rows come from what the table shows: a hidden repo's jobs are not
+        # dispatchable (`dispatchable` looks the target up in `self.groups`).
+        jobs = job_rows(self.groups)
+        if jobs != self.queue.jobs:
+            self.queue.set_jobs(jobs)
+            self._queue_changed()
         # Every refresh: a column appears once it has content (a mount attached,
         # a container turned loose) and goes once it has none.
         self._recompute_shown()
@@ -1024,9 +1026,14 @@ class DashboardSession:
         self.queue.set_awaiting(entry_id, asking)
         self._queue_changed()
 
-    def after_hand_off(self) -> None:
-        """Back from a tmux hand-off: show the queue at once if something waits on the user."""
-        if self.overlay is None and self.queue.counts().attention:
+    def after_hand_off(self, attention_before: int = 0) -> None:
+        """Back from a tmux hand-off: show the queue if something new waits on the user.
+
+        ``attention_before`` is the badge's attention count when the hand-off
+        began: a failed job row lingers until `job clear`, so only an increase
+        opens the queue.
+        """
+        if self.overlay is None and self.queue.counts().attention > attention_before:
             self.open_queue()
 
     def _queue_changed(self) -> None:

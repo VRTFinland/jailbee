@@ -59,7 +59,8 @@ before editing `## Unreleased`.
   settles instead of staying running. Background
   lifecycle jobs (create, start/restart, autostart), whoever started them, are listed
   there too as read-only rows with a way to open the job log; they count in the badge
-  and go when the job does.
+  and go when the job does (a hidden repo's jobs are left out, and a failed job
+  already listed does not reopen the queue after a hand-off).
   The critical actions (`merge`, `git push --merge`, `git pull`, `pr push`) open
   directly in their entry's live screen as a modal and refuse every terminal
   hand-off while they run in the foreground; `b` (continue in the background)

@@ -695,10 +695,15 @@ def test_pilot_returning_from_a_hand_off_surfaces_attention(mocker, tmp_path):
     seen: list[object] = []
 
     def hand_off(app) -> None:  # type: ignore[no-untyped-def]
-        app.hand_off(lambda: 0)
+        def run() -> int:
+            # Attention that arrives while the terminal is handed over.
+            _pilot_start(app)
+            return 0
+
+        app.hand_off(run)
         seen.append(app.session.overlay)
 
-    drive(mocker, [_pilot_start, hand_off], [_pilot_group(tmp_path)])
+    drive(mocker, [hand_off], [_pilot_group(tmp_path)])
 
     (overlay,) = seen
     assert _is_queue(overlay)
@@ -827,6 +832,72 @@ def test_a_job_row_opens_the_job_log(mocker, tmp_path):
     assert any(a[:3] == ["jailbee", "job", "log"] and "alpha-a" in a for a in argvs)
 
 
+def test_a_live_job_log_follows_through_the_terminal_hand_off(mocker, tmp_path):
+    run = _children(mocker)
+    session, _ = _job_session(mocker, tmp_path, [_job_container("alpha-a", "creating")])
+    session.terminal.handed.clear()
+    _open_queue(session)
+    _choose(session, "alpha-a")
+    _choose(session, "Show job log")
+
+    assert len(session.terminal.handed) == 1
+    argvs = [call.args[0] for call in run.call_args_list]
+    assert any(a[:3] == ["jailbee", "job", "log"] and "--follow" in a for a in argvs)
+
+
+def test_a_job_log_of_a_hidden_repo_is_not_offered_as_a_row(mocker, tmp_path):
+    group = dmodel.RepoGroup("alpha", str(tmp_path), None, [_job_container("alpha-a", "failed")])
+    session, _ = bare_session(mocker, [group])
+    assert [j.target for j in session.queue.jobs] == ["alpha-a"]
+
+    session.hidden_repos = frozenset({"alpha"})
+    session.tick()
+
+    assert session.queue.jobs == ()
+    assert session.view().queue is None
+
+
+def test_returning_from_a_hand_off_ignores_attention_that_was_already_there(mocker, tmp_path):
+    session, _ = _job_session(mocker, tmp_path, [_job_container("alpha-a", "failed")])
+    before = session.queue.counts().attention
+    assert before == 1
+
+    session.after_hand_off(before)
+
+    assert session.overlay is None
+
+
+def test_returning_from_a_hand_off_opens_for_attention_that_is_new(mocker, tmp_path):
+    session, _ = _job_session(mocker, tmp_path, [_job_container("alpha-a", "failed")])
+    before = session.queue.counts().attention
+
+    session.after_hand_off(before - 1)
+
+    assert isinstance(session.overlay, Picker)
+
+
+def test_the_badge_adds_job_rows_to_queue_entries(mocker, tmp_path):
+    _children(mocker, failing=("alpha-b",))
+    group = dmodel.RepoGroup(
+        "alpha",
+        str(tmp_path),
+        None,
+        [
+            _job_container("alpha-a", "creating"),
+            _job_container("alpha-c", "failed"),
+            ci("alpha-b", "alpha"),
+        ],
+    )
+    session, terminal = bare_session(mocker, [group])
+    terminal.defer = True
+    session.run_dashboard_command("alpha-b", "container", ["start", "alpha-b"])
+    # one live job + one running entry; one failed job
+    assert session.queue.counts() == QueueCounts(running=2, attention=1)
+    terminal.finish_pending()
+    # the entry failed: attention = failed entry + failed job
+    assert session.queue.counts() == QueueCounts(running=1, attention=2)
+
+
 def _pilot_two_entries(mocker, tmp_path):  # type: ignore[no-untyped-def]
     children: list[_GatedChild] = []
 
@@ -891,6 +962,61 @@ def test_pilot_the_queue_cursor_stays_while_output_streams(mocker, tmp_path):
             await pilot.press("enter")  # opens the cursor's entry, not a dropped key
             await pilot.pause(0.1)
             assert app.session.overlay.purpose == "queue-entry"
+            for child in children:
+                child.release()
+            await until(pilot, lambda: all(e.finished for e in app.session.queue), "the finish")
+
+    asyncio.run(asyncio.wait_for(main(), 30))
+
+
+def test_pilot_the_queue_cursor_follows_its_entry_as_job_rows_come_and_go(mocker, tmp_path):
+    import asyncio
+    import time
+
+    from jailbee.dashboard.tui.native import OverlayList, PickerBox
+    from tests.dashboard_pilot import keys
+
+    app, children = _pilot_two_entries(mocker, tmp_path)
+    (group,) = app.session.groups
+
+    async def until(pilot, condition, what):  # type: ignore[no-untyped-def]
+        deadline = time.monotonic() + 5
+        while not condition():
+            assert time.monotonic() < deadline, what
+            await pilot.pause(0.02)
+
+    def highlighted_value() -> str:
+        found = app.frame.native_box
+        assert isinstance(found, PickerBox)
+        row = found.query_one(OverlayList).highlighted
+        assert row is not None
+        return app.session.overlay.entries[row].value
+
+    async def main() -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("j")
+            for _ in range(2):
+                for key in ["!", *keys("start alpha-a"), "enter"]:
+                    await pilot.press(key)
+                await until(pilot, lambda: len(app.session.queue) >= len(children), "the entry")
+            await until(pilot, lambda: len(children) == 2, "both children")
+            await pilot.press("Q")
+            await until(pilot, lambda: app.frame.native_box is not None, "the list")
+            await pilot.press("j")
+            selected = highlighted_value()
+            original = list(group.containers)
+
+            for containers in (
+                [_job_container("alpha-a", "creating")],  # a job row appears above
+                [_job_container("alpha-a", "failed")],  # it changes phase
+                original,  # it goes
+            ):
+                group.containers[:] = containers
+                app.session.tick()
+                await pilot.pause(0.1)
+                assert highlighted_value() == selected
+
             for child in children:
                 child.release()
             await until(pilot, lambda: all(e.finished for e in app.session.queue), "the finish")

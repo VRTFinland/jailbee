@@ -723,7 +723,8 @@ and keeps drawing while it runs; the status line names the running command.
   that could not start is only a notice. The badge `⟳ R · ⚠ A` at the top of
   the dashboard (R running, A needs attention: failed or awaiting an answer) appears once
   anything has run; coming back from a tmux hand-off opens the queue at once
-  when something needs attention; a click
+  when something *new* needs attention (a failed job row that was already
+  there does not reopen it); a click
   on it, or `Q`, opens the queue list (a click outside closes it). Choosing an
   entry offers `Show output` (`o`: the full output on a scrollable screen;
   Enter, Esc or `q` closes it) and, once it has finished, `Dismiss` (`d`);
