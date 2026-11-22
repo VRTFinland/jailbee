@@ -13,7 +13,7 @@ here. A repo heading keeps the label/value grid.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -313,6 +313,58 @@ def _present(markup: str) -> bool:
     return Text.from_markup(markup).plain.strip() not in ("", "—")
 
 
+_SHORT_SHA = 10
+
+
+def _target_rows(c: ContainerInfo) -> tuple[GitRow, ...]:
+    """One git row per target a PR-bound container could sync with; none otherwise.
+
+    Each row has ↑/↓ against that target and the target's short sha; the
+    sync target's note says so. A PR head the host never fetched is a row of
+    dashes, and the host-branch row standing in for it is marked fallback.
+    """
+    gs = c.git_status
+    if gs is None or c.pr_number is None or gs.sync_target is None:
+        return ()
+    sync = gs.sync_target
+
+    def sha(value: str | None) -> str:
+        return f"[dim]{escape(value[:_SHORT_SHA])}[/dim]" if value else "[yellow]?[/yellow]"
+
+    on_host = sync.kind == "host"
+    host_note = ""
+    if on_host:
+        fallback = " [yellow](fallback)[/yellow]" if sync.fallback else ""
+        host_note = f"[bold]sync target[/bold]{fallback}"
+    host = GitRow(
+        name=f"↳ {escape(gs.host_branch or c.base_branch or 'host branch')}",
+        ahead=_git_value(gs.host_ahead_count),
+        behind=_git_value(gs.host_behind_count),
+        target=sha(gs.base_sha),
+        working="",
+        note=host_note,
+    )
+    pr_name = f"↳ PR #{c.pr_number} head"
+    if on_host:
+        pr = GitRow(
+            name=pr_name,
+            ahead=_DASH,
+            behind=_DASH,
+            target="[yellow]not fetched[/yellow]",
+            working="",
+        )
+    else:
+        pr = GitRow(
+            name=pr_name,
+            ahead=_git_value(gs.ahead_count),
+            behind=_git_value(gs.behind_count),
+            target=sha(sync.sha),
+            working="",
+            note="[bold]sync target[/bold]",
+        )
+    return (host, pr)
+
+
 def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
     """The container's details panel content: summary, git table, footer."""
     cells = {f.name: f.cell for f in ls_field_specs(now=now, all_repos=False)}
@@ -357,13 +409,20 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
 
     git: tuple[GitRow, ...] | None = None
     if c.git_status is not None:
+        # The table's `vs …` header names the sync target, so the root row
+        # leaves out the marker the table cells carry.
+        bare = replace(c, git_status=replace(c.git_status, sync_target=None))
+
+        def sync_cell(name: str) -> str:
+            return cells[name](bare)
+
         root = GitRow(
             name=f"[bold]{escape(c.display_name)}[/bold]",
-            ahead=cell("ahead_count"),
-            behind=cell("behind_count"),
-            target=cell("target_diff"),
+            ahead=sync_cell("ahead_count"),
+            behind=sync_cell("behind_count"),
+            target=sync_cell("target_diff"),
             working=cell("wt"),
-            note=f"[dim]merge[/dim] {cell('conflict')}",
+            note=f"[dim]merge[/dim] {sync_cell('conflict')}",
             extra=f"[dim]host HEAD[/dim] ↑{cell('local_count')} {cell('local_diff')}",
         )
         subs = tuple(
@@ -377,7 +436,7 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
             )
             for sub, row in zip(c.git_status.submodules, submodule_sub_rows(c), strict=True)
         )
-        git = (root, *subs)
+        git = (root, *_target_rows(c), *subs)
 
     # What no other row says: the base is the git table's "vs" header, memory and
     # CPU are the summary bar and the process lines, the table has the age, the
@@ -387,9 +446,11 @@ def container_panel(c: ContainerInfo, now: datetime) -> ContainerPanel:
         footer.append(f"memory {escape(c.memory_limit)}* (override)")
     if (source := fork_source(c)) is not None:
         footer.append(f"⑂ forked from {escape(source)}")
+    sync = c.git_status.sync_target if c.git_status is not None else None
+    base = sync.label if sync is not None and sync.kind != "host" else c.base_branch or "base"
     return ContainerPanel(
         tuple(summary),
-        escape(c.base_branch or "base"),
+        escape(base),
         git,
         tuple(footer),
         _exceptions(c, now, cell("ttl")),

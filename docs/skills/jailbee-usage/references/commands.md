@@ -873,9 +873,13 @@ full selected field sets.
 | `--fields <list>` | Comma-separated columns. Allowed: `name, full_name, alias, repo, mode, base, state, created, job, network, ttl, loose_until, mounts, ip, memory_limit, mem, mem_used, mem_pct, wt, target_diff, ahead_count, behind_count, conflict, local_diff, local_count, git_status, pr, issues, outbox, group, autostart_profile, role, children, inbox, cpu, doing, agent, agent_compact`. `claude` and `claude_group` are accepted aliases for `group`. Wins outright over the `ls:` config block, and applies to every `--format`. |
 
 Git-status columns: **BASE** (base branch), **WT** (uncommitted: `+adds -dels`),
-**DIFF ±** (direct tree diff against the host target), **↑** / **↓** (unique
-commits unique to container / host target), **MERGE** (see
-below). The **JOB** column shows in-flight and failed
+**DIFF ±** (direct tree diff against the sync target), **↑** / **↓** (unique
+commits unique to container / sync target), **MERGE** (see
+below). The **sync target** is the host target branch, except for a PR-bound
+container: it compares with the PR head the host last fetched
+(`refs/jailbee/pr/<N>/head`; ↑ = push needed, ↓ = someone else pushed), and
+those four cells carry a dim `pr`; a yellow `pr?` means that ref is missing and
+the host branch stands in. The **JOB** column shows in-flight and failed
 background-job phases (`jailbee new`/`jailbee destroy --background`), and
 renders a detached autostart run as `autostart:<stage>` (`<stage>` is
 whichever stage the supervisor is on) — see `jailbee job` and `jailbee
@@ -891,8 +895,9 @@ unreadable in a container, comparison fields show `?`. Local always wins when
 both refs exist; tracking-ahead/diverged notices describe the last-fetched
 ref, not the remote server. Equal trees can have nonzero ↑/↓ commit counts.
 JSON `git_status` names the direct line diff `target_diff` and includes
-`behind_count`, `base_source`, `base_sha`, `tracking_relation` and
-`upstream_ref`; old `ahead_diff` field selection was retired (configured uses
+`behind_count`, `base_source`, `base_sha`, `tracking_relation`,
+`upstream_ref`, `sync_target` (`kind`, `label`, `sha`, `ref`, `fallback`) and
+`host_ahead_count`/`host_behind_count` (against the host branch); old `ahead_diff` field selection was retired (configured uses
 warn, explicit selection errors). Submodule line fields are `target_ins` /
 `target_del` rather than `ahead_ins` / `ahead_del`.
 
@@ -992,8 +997,11 @@ results count; prompts and metadata do not. Unknown event ages have no duration.
 A bright ○ has activity under 30 minutes old. Container details show activity age
 and the selected session's state duration separately, e.g. `active 14s ago (busy for 23m)`.
 USED / MEM% = memory in use and its share of the limit; OUTBOX = `✉N` staged PR and issue manifests (the dashboards' PR cell shows only `#N` / `#N↓`). BASE ↗ means tracking; MODE uses cln/mnt; WT/DIFF/L DIFF
-use ✓ for clean. DIFF compares against the host target, L DIFF against
-checked-out host HEAD. TUI details and Qt tooltips retain network expiry times;
+use ✓ for clean. DIFF compares against the sync target (dim `pr`: the PR head;
+yellow `pr?`: PR head not fetched, host branch instead), L DIFF against
+checked-out host HEAD. A PR-bound container's details card adds a git row per
+target (host branch, PR #N head) with its ↑/↓ and short sha, the sync target
+marked. TUI details and Qt tooltips retain network expiry times;
 Qt cards show the same LOOSE text without the colour. DOING uses ×N process counts. JOB
 shortens working verbs and uses auto:stage, while failed and (dead) remain distinct.
 Full AGENT and MERGE stay unchanged. Qt table tooltips provide full

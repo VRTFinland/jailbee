@@ -555,8 +555,12 @@ container to merge into instead of quietly merging into the host.
 
 `jailbee ls` surfaces the same picture per container without a diff: **BASE** (base
 branch), **WT** (uncommitted changes), **DIFF ±** (direct committed-tree line
-diff from the host target), **↑** (commits unique to the container), **↓**
-(commits unique to the host target), and **MERGE**. Equal trees can still have
+diff from the sync target), **↑** (commits unique to the container), **↓**
+(commits unique to the sync target), and **MERGE**. The sync target is the
+host target branch, except for a PR-bound container, which compares with the
+PR head the host last fetched (↑ = push needed, ↓ = someone else pushed; cells
+marked dim `pr`, or yellow `pr?` when that ref is missing and the host branch
+stands in). Equal trees can still have
 nonzero commit counts. Stopped and mount-mode containers show `—` in the git
 columns.
 
@@ -573,8 +577,8 @@ refresh the host target or trigger an anchor fan-out. The next status gather
 after the host branch moves naturally reads its new tip.
 
 The JSON `git_status` object exposes `target_diff`, `ahead_count`,
-`behind_count`, `base_source`, `base_sha`, `tracking_relation`, and
-`upstream_ref`. `ahead_diff` was removed; configured uses warn and explicit
+`behind_count`, `base_source`, `base_sha`, `tracking_relation`,
+`upstream_ref`, `sync_target` and `host_ahead_count`/`host_behind_count`. `ahead_diff` was removed; configured uses warn and explicit
 `--fields ahead_diff` errors. Per-submodule `ahead_ins`/`ahead_del` are
 replaced by `target_ins`/`target_del`; use `target_diff` for the direct line
 diff or `jailbee git diff --incoming` for the former contribution view.

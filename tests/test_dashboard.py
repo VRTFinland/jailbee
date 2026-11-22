@@ -7507,3 +7507,65 @@ def test_web_dashboard_offers_the_actions_its_own_policy_permits():
     assert dmenus.actions_for_container(groups, "alpha-1", transport="web", ssh_policy=policy) == [
         ("Open shell", "shell")
     ]
+
+
+def test_dashboard_clean_diff_cell_keeps_the_pr_target_marker():
+    from rich.text import Text
+
+    from jailbee.dashboard.format import dashboard_cell
+    from jailbee.git_status import GitStatus
+    from jailbee.host_target import SyncTarget
+    from jailbee.lifecycle import ContainerInfo, ls_field_specs
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    specs = {f.name: f for f in ls_field_specs(now=now)}
+
+    def container(sync: SyncTarget) -> ContainerInfo:
+        return ContainerInfo(
+            name="myrepo-b",
+            state="Running",
+            network=None,
+            ip=None,
+            memory_limit=None,
+            git_status=GitStatus(
+                wt="clean",
+                ahead_diff="clean",
+                ahead_count="1",
+                conflict="ok",
+                target_diff="clean",
+                sync_target=sync,
+            ),
+        )
+
+    pr = container(SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head"))
+    host = container(SyncTarget("host", "main", "b" * 40, "refs/heads/main"))
+
+    def plain(name: str, c: ContainerInfo) -> str:
+        return Text.from_markup(dashboard_cell(specs[name], c, now)).plain
+
+    assert [plain(n, pr) for n in ("target_diff", "ahead_count", "conflict")] == [
+        "✓ pr",
+        "1 pr",
+        "ok pr",
+    ]
+    assert [plain(n, host) for n in ("target_diff", "wt")] == ["✓", "✓"]
+
+
+def test_pr_container_level_with_its_pr_head_still_offers_git_pull_and_diff():
+    """↑ against the PR head is 0, but the host branch lacks those commits:
+    `git pull` / `git diff` act on the host branch, so they stay offered."""
+    from jailbee.git_status import GitStatus
+    from jailbee.host_target import SyncTarget
+
+    status = GitStatus(
+        wt="clean",
+        ahead_diff="clean",
+        ahead_count="0",
+        conflict="ok",
+        host_ahead_count="3",
+        sync_target=SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head"),
+    )
+    verbs = [verb for _, verb in dmenus.menu_actions(_ctx(mode="clone", git_status=status))]
+
+    assert "git pull" in verbs
+    assert "git diff" in verbs

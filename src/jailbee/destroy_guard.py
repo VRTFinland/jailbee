@@ -114,7 +114,7 @@ def _nothing_measurable(status: GitStatus) -> bool:
     """
     return (
         status.wt in _UNMEASURED
-        and not status.ahead_count.isdigit()
+        and not status.ahead_of_host.isdigit()
         and not status.head_sha
         and status.remote_contained is None
         and not status.submodules
@@ -228,12 +228,13 @@ def assess(cfg: Config, ci: ContainerInfo) -> RiskSummary | None:
     # ref — a container parked on its base tip still answers "on the host",
     # and one parked on a commit any remote-tracking ref reaches answers
     # `remote_contained`. Neither warns.
-    ahead_known = status.ahead_count.isdigit()
-    if (ahead_known and int(status.ahead_count) > 0) or (not ahead_known and status.head_sha):
+    ahead = status.ahead_of_host
+    ahead_known = ahead.isdigit()
+    if (ahead_known and int(ahead) > 0) or (not ahead_known and status.head_sha):
         on_host = bool(status.head_sha) and has_commit(cfg.repo_root, status.head_sha)
         if not on_host and status.remote_contained is not True:
             reasons.append(
-                f"{status.ahead_count} commits not on the host"
+                f"{ahead} commits not on the host"
                 if ahead_known
                 else "commits not on the host (count unknown)"
             )

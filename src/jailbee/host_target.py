@@ -65,3 +65,50 @@ def resolve_target(repo_root: Path, branch: str, upstream_remote: str) -> Target
         upstream_ref=upstream_ref,
         tracking_relation=relation,
     )
+
+
+SyncKind = Literal["host", "pr"]
+
+
+@dataclass(frozen=True)
+class SyncTarget:
+    """The ref a container's DIFF/↑/↓/MERGE compare against (its sync target).
+
+    Chosen automatically: a PR-bound container syncs with its PR head, anything
+    else with its host branch. ``fallback`` marks a host-branch target standing
+    in for one that could not be resolved (a PR-bound container whose PR head
+    the host has never fetched). ``label`` is what the user reads: the branch
+    name, or ``PR #N``; ``ref`` the host ref it came from.
+    """
+
+    kind: SyncKind
+    label: str
+    sha: str | None
+    ref: str
+    fallback: bool = False
+
+
+def host_sync_target(host: TargetSnapshot, *, fallback: bool = False) -> SyncTarget:
+    """The host branch as a sync target."""
+    ref = f"refs/heads/{host.branch}" if host.source != "tracking" else host.upstream_ref
+    return SyncTarget("host", host.branch, host.sha, ref, fallback)
+
+
+def resolve_sync_target(
+    repo_root: Path | None, pr_number: int | None, host: TargetSnapshot
+) -> SyncTarget:
+    """Choose a container's sync target from its PR binding and host branch.
+
+    ``repo_root`` is None when the container's repository cannot be loaded;
+    then only the (already unavailable) host snapshot is used. Reads refs
+    only, never fetches.
+    """
+    if pr_number is None:
+        return host_sync_target(host)
+    from jailbee.pr import pr_head_ref
+
+    ref = pr_head_ref(pr_number)
+    sha = git.rev_parse(repo_root, ref) if repo_root is not None else None
+    if sha is None:
+        return host_sync_target(host, fallback=True)
+    return SyncTarget("pr", f"PR #{pr_number}", sha, ref)

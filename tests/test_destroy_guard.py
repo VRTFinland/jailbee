@@ -506,3 +506,26 @@ def test_unknown_status_warning_uses_singular_pronoun_for_one_container() -> Non
 
     assert "could not measure it" in msg
     assert "could not measure them" not in msg
+
+
+def test_a_pr_container_counts_the_commits_missing_from_the_host_branch(tmp_path, mocker):
+    """A PR-bound container's ↑ is against its PR head; the destroy warning
+    still counts what the host branch lacks."""
+    from jailbee.destroy_guard import assess
+    from jailbee.host_target import SyncTarget
+
+    mocker.patch("jailbee.destroy_guard.has_commit", return_value=False)
+
+    summary = assess(
+        make_cfg(tmp_path),
+        _ci(
+            ahead_count="1",
+            host_ahead_count="4",
+            head_sha="abc123",
+            remote_contained=False,
+            sync_target=SyncTarget("pr", "PR #7", "a" * 40, "refs/jailbee/pr/7/head"),
+        ),
+    )
+
+    assert summary is not None
+    assert summary.reasons == ("4 commits not on the host",)
