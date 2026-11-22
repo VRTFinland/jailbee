@@ -620,11 +620,13 @@ OTHER_BRANCHES=$(
       printf '%s\n' "$bsha"
     done | sort -u)
     if [ -n "$TIPS" ]; then
-      if UNPUSHED=$(git rev-list $TIPS --not --remotes 2>/dev/null); then
-        RC_OK=1
-      else
-        RC_OK=0
-      fi
+      # Tips go in on stdin (no ARG_MAX limit); awk keeps only the tips from the
+      # unpushed-commit stream, so a long history never lands in a variable. A
+      # failed rev-list prints FAIL, which awk passes through.
+      UNPUSHED=$({ printf '%s\n' "$TIPS" | git rev-list --stdin --not --remotes 2>/dev/null \
+        || echo FAIL; } | awk -v t="$TIPS" \
+        'BEGIN { n = split(t, a, "\n"); for (i = 1; i <= n; i++) w[a[i]] = 1; w["FAIL"] = 1 } $0 in w')
+      case "$UNPUSHED" in *FAIL*) RC_OK=0 ;; *) RC_OK=1 ;; esac
       printf '%s\n' "$REFS" | while IFS="$TAB" read -r bname bsha; do
         [ -z "$bsha" ] && continue
         [ "$bsha" = "$HEAD_SHA" ] && continue
