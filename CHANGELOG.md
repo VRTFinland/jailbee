@@ -39,7 +39,7 @@ before editing `## Unreleased`.
 - A container that lacks the comparison target commit altogether (for example a
   commit that lives only in another container, or a shared object store it cannot
   read) shows `↓•` — pull needed, count unknown — in the dashboard, its card and
-  `jailbee ls`, sorting above every count, while DIFF, ↑ and MERGE stay `?`; JSON
+  `jailbee ls`, sorting as the largest count, while DIFF, ↑ and MERGE stay `?`; JSON
   output carries `"missing"` in `behind_count` and `host_behind_count`
   ([#145](https://github.com/VRTFinland/jailbee/issues/145)).
 - Interactive Claude Code sessions receive managed, non-acknowledging inbox

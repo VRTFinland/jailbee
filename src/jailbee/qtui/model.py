@@ -208,7 +208,8 @@ def git_segments(cc: CardContent) -> list[tuple[str, str]]:
         segs.append((f"↑{ahead_count}", "ahead"))
     behind_count = card_field(cc, "behind_count")
     if behind_count not in (None, "0"):
-        segs.append((f"↓{behind_count}", "ahead"))
+        # The missing-target cell is already "↓•"; counts are bare digits.
+        segs.append((behind_count if behind_count.startswith("↓") else f"↓{behind_count}", "ahead"))
     target_diff = card_field(cc, "target_diff")
     if target_diff not in (None, "clean", "✓"):
         segs.append((target_diff, "diff"))

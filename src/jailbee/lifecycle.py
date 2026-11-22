@@ -3897,7 +3897,8 @@ def ls_field_specs(
         def get(c: ContainerInfo) -> str | None:
             if c.git_status is None:
                 return None
-            return _json_count(getattr(c.git_status, attr))
+            v: str = getattr(c.git_status, attr)
+            return _json_count(v) if attr == "behind_count" else v
 
         return get
 
