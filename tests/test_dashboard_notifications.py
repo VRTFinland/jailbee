@@ -824,3 +824,136 @@ def test_a_job_row_opens_the_job_log(mocker, tmp_path):
 
     argvs = [call.args[0] for call in run.call_args_list]
     assert any(a[:3] == ["jailbee", "job", "log"] and "alpha-a" in a for a in argvs)
+
+
+def _pilot_two_entries(mocker, tmp_path):  # type: ignore[no-untyped-def]
+    children: list[_GatedChild] = []
+
+    def spawn(argv, *, cwd, env, prompt_sock):  # type: ignore[no-untyped-def]
+        child = _GatedChild(prompt_sock)
+        children.append(child)
+        return child
+
+    from tests.dashboard_pilot import make_app
+
+    app = make_app(mocker, [_pilot_group(tmp_path)])
+    app.threaded_actions = True
+    app.action_runner = drunner.run_action
+    app.action_spawn = spawn
+    return app, children
+
+
+def test_pilot_the_queue_cursor_stays_while_output_streams(mocker, tmp_path):
+    import asyncio
+    import time
+
+    from jailbee.dashboard.tui.native import OverlayList, PickerBox
+    from tests.dashboard_pilot import keys
+
+    app, children = _pilot_two_entries(mocker, tmp_path)
+
+    async def until(pilot, condition, what):  # type: ignore[no-untyped-def]
+        deadline = time.monotonic() + 5
+        while not condition():
+            assert time.monotonic() < deadline, what
+            await pilot.pause(0.02)
+
+    def box():  # type: ignore[no-untyped-def]
+        found = app.frame.native_box
+        assert isinstance(found, PickerBox)
+        return found
+
+    async def main() -> None:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("j")
+            for _ in range(2):
+                for key in ["!", *keys("start alpha-a"), "enter"]:
+                    await pilot.press(key)
+                await until(pilot, lambda: len(app.session.queue) >= len(children), "the entry")
+            await until(pilot, lambda: len(children) == 2, "both children")
+            await pilot.press("Q")
+            await until(pilot, lambda: app.frame.native_box is not None, "the list")
+            first = box()
+            await pilot.press("j")
+            assert first.query_one(OverlayList).highlighted == 1
+            for n in range(5):
+                children[0].print(f"chunk {n}\n")  # the older entry: the list's second row
+                await until(
+                    pilot,
+                    lambda n=n: f"chunk {n}" in app.session.queue_picker().entries[1].label,
+                    "the row's last line",
+                )
+                await pilot.pause(0.05)
+                assert box() is first  # the box stays mounted
+                assert first.query_one(OverlayList).highlighted == 1
+            await pilot.press("enter")  # opens the cursor's entry, not a dropped key
+            await pilot.pause(0.1)
+            assert app.session.overlay.purpose == "queue-entry"
+            for child in children:
+                child.release()
+            await until(pilot, lambda: all(e.finished for e in app.session.queue), "the finish")
+
+    asyncio.run(asyncio.wait_for(main(), 30))
+
+
+class _Recorder:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def output(self, index: int, chunk: str) -> None:
+        self.calls.append(("output", index, chunk))
+
+    def question(self, index: int, asking: bool) -> None:
+        self.calls.append(("question", index, asking))
+
+
+def test_output_never_waits_for_the_app_thread_and_is_coalesced():
+    from jailbee.dashboard.tui.app import _OnAppThread
+
+    inner = _Recorder()
+    posted: list = []
+
+    def blocked_app_thread(fn):  # type: ignore[no-untyped-def]
+        raise AssertionError("output must not block on the app thread")
+
+    relay = _OnAppThread(inner, blocked_app_thread, posted.append)
+    for n in range(100):
+        relay.output(0, f"{n}\n")  # returns at once although the app thread is busy
+    relay.output(1, "other\n")
+
+    assert len(posted) == 1  # one flush is scheduled, however many chunks arrive
+    assert inner.calls == []
+    posted[0]()
+    assert [c[:2] for c in inner.calls] == [("output", 0), ("output", 1)]
+    assert inner.calls[0][2] == "".join(f"{n}\n" for n in range(100))
+    relay.output(0, "later\n")
+    assert len(posted) == 2  # a new flush after the first ran
+
+
+def test_a_question_drains_the_output_before_it():
+    from jailbee.dashboard.tui.app import _OnAppThread
+
+    inner = _Recorder()
+    relay = _OnAppThread(inner, lambda fn: fn(), lambda fn: None)
+    relay.output(0, "before\n")
+    relay.question(0, True)
+
+    assert inner.calls == [("output", 0, "before\n"), ("question", 0, True)]
+
+
+def test_a_crashed_action_worker_still_settles_its_entries(mocker, tmp_path):
+    from tests.dashboard_pilot import drive
+
+    mocker.patch.object(drunner, "run_actions", side_effect=RuntimeError("boom"))
+    seen: list[list[str]] = []
+
+    def start_and_look(app) -> None:  # type: ignore[no-untyped-def]
+        app.threaded_actions = False  # the worker body runs inline
+        _pilot_start(app)
+        seen.append([e.state for e in app.session.queue])
+
+    drive(mocker, [start_and_look], [_pilot_group(tmp_path)])
+
+    (states,) = seen
+    assert "running" not in states  # settled, not left running and undismissable

@@ -91,6 +91,10 @@ def overlay_key(overlay: Overlay | None) -> tuple[object, ...] | None:
     if isinstance(overlay, RepoMenuState):
         return ("repo-menu", overlay.repo)
     if isinstance(overlay, Picker):
+        # The queue list's rows change with every output chunk: the box is kept
+        # and `PickerBox.show` follows the cursor's entry by value.
+        if overlay.purpose == "queue":
+            return ("picker", overlay.purpose, overlay.target, overlay.title, overlay.detail)
         return ("picker", overlay.purpose, overlay.target, overlay.title, overlay.entries)
     if isinstance(overlay, SettingsState):
         return ("settings",)

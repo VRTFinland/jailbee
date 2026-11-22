@@ -725,7 +725,9 @@ and keeps drawing while it runs; the status line names the running command.
   entry offers `Show output` (`o`: the full output on a scrollable screen;
   Enter, Esc or `q` closes it) and, once it has finished, `Dismiss` (`d`);
   `Dismiss finished` (`D`) clears every finished entry. A running entry
-  cannot be dismissed. The queue lives as long as the dashboard.
+  cannot be dismissed. The cursor stays on its entry while output streams in,
+  and a running action keeps going while a tmux hand-off has the terminal.
+  The queue lives as long as the dashboard.
   Background lifecycle jobs (create, start/restart, autostart) the snapshot
   shows, whoever started them, are listed above the entries as read-only
   rows (`target: phase · job`): they cannot be dismissed, count as running

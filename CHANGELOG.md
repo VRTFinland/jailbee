@@ -47,7 +47,10 @@ before editing `## Unreleased`.
   running entry shows its last output line in the list, an expanded one
   follows the output live, and an entry waiting on a question reads
   "awaiting answer"; failed and awaiting entries count as needing attention,
-  and returning from a tmux hand-off opens the queue when any do. Background
+  and returning from a tmux hand-off opens the queue when any do. The list
+  keeps its cursor on the same entry while output streams, a background action
+  keeps running during a tmux hand-off, and an action whose worker crashes
+  settles instead of staying running. Background
   lifecycle jobs (create, start/restart, autostart), whoever started them, are listed
   there too as read-only rows with a way to open the job log; they count in the badge
   and go when the job does.

@@ -830,6 +830,28 @@ class PickerBox(OverlayBox):
         ]
         yield OverlayList(*options, mouse_enabled=self.mouse_enabled)
 
+    def show(self, spec: Overlay) -> None:
+        """New entries for the same list: the cursor stays on its entry (by value)."""
+        super().show(spec)
+        assert isinstance(spec, Picker)
+        old, self.picker = self.picker, spec
+        if not self.is_mounted or old.entries == spec.entries:
+            return
+        lst = self.query_one(OverlayList)
+        at = lst.highlighted
+        followed = old.entries[at].value if at is not None and at < len(old.entries) else None
+        cursor = next(
+            (i for i, e in enumerate(spec.entries) if e.value == followed),
+            min(at or 0, max(0, len(spec.entries) - 1)),
+        )
+        lst.clear_options()
+        lst.add_options(
+            [Option(_one_line(_keyed_label(entry))) for entry in spec.entries]
+            or [Option(_one_line("(nothing to choose)", "dim"), disabled=True)]
+        )
+        lst.highlighted = cursor
+        self.post_message(self.Changed())
+
     def content_rows(self) -> int:
         return max(1, len(self.picker.entries))
 
