@@ -482,6 +482,9 @@ _CONTAINER_COMMANDS = frozenset(
         # Writes only the repo's local-layer `agents.default_runner` and resyncs
         # `claude-jb` defaults in its containers; the repo scope check applies.
         "agent use",
+        # Starts the agent in a tmux window of a container the repo scope covers;
+        # no more than `shell` or `exec`, which are allowed.
+        "agent open",
         "litellm ls",
         "litellm status",
         "net egress export",

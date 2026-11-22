@@ -414,6 +414,8 @@ _ALL_CONTAINER = {
     "mounts",
     "services",
     "orchestration",
+    "container-agent",
+    "agent-window",
 }
 
 
@@ -446,6 +448,7 @@ def _container_verbs(case: PolicyCase, container: ContainerInfo | None = None) -
         (_allow("autostart status"), {"autostart-status"}),
         (_allow("autostart cancel"), {"autostart-cancel"}),
         (_allow("snapshot ls"), {"snapshots"}),
+        (_allow("agent use", "agent open"), {"container-agent", "agent-window"}),
         (_SSH_ALLOW_OTHER, set()),
         (_SSH_EXCLUDED, {"snapshots"}),
         (_SSH_NO_POLICY, set()),
@@ -462,6 +465,7 @@ def _container_verbs(case: PolicyCase, container: ContainerInfo | None = None) -
         "ssh-allowlist-autostart-status",
         "ssh-allowlist-autostart-cancel",
         "ssh-allowlist-snapshot-ls",
+        "ssh-allowlist-agent",
         "ssh-allowlist-without",
         "ssh-excluded-repos",
         "ssh-no-policy",
@@ -488,6 +492,8 @@ def test_container_extras_order_and_labels():
         ("Mounts…", "mounts"),
         ("Services…", "services"),
         ("Orchestration…", "orchestration"),
+        ("Agent for this container…", "container-agent"),
+        ("New agent window", "agent-window"),
     )
 
 

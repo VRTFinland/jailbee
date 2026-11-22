@@ -547,6 +547,10 @@ def _gather_rows(
         covered.add(cfg.container_prefix)
         orch_view = cfg.orchestration_view()
         runner = orch_view.default_runner
+        for c in containers:
+            if c.agent_runner is None:  # no label of its own: the repo default applies
+                c.agent_runner = _agent_label(cfg, runner)
+                c.agent_source = orch_view.default_runner_source if runner else "legacy"
         litellm_config = cfg.litellm_view().config
         groups.append(
             RepoGroup(

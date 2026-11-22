@@ -162,6 +162,12 @@ class ContainerInfo:
     running_children: int = 0
     queued_children: int = 0
     orchestrator_running: bool | None = None
+    # The agent the next session launches, as `profile/model`, and where the
+    # choice comes from: `container` (its own runner label), a layer of the
+    # repo's default runner (`local`/`repo`/`global`) or `legacy`. `list_containers`
+    # sets only the label; the dashboard gatherer fills in the repo default.
+    agent_runner: str | None = None
+    agent_source: str | None = None
 
     @property
     def display_name(self) -> str:
@@ -641,6 +647,11 @@ def list_containers(
             config.get(orch_labels.RUNNER),
         )
 
+        from jailbee.dashboard.agent_choice import runner_label
+        from jailbee.orchestration.runner import parse_runner_label
+
+        own_runner = parse_runner_label(config.get(orch_labels.RUNNER))
+
         repo_dir_raw = config.get("user.jailbee.repo_dir")
         repo_dir = repo_dir_raw if isinstance(repo_dir_raw, str) and repo_dir_raw else None
 
@@ -705,6 +716,8 @@ def list_containers(
                 root_pool=_root_pool(raw),
                 grant=grant_view,
                 child=child_view,
+                agent_runner=runner_label(own_runner) if own_runner is not None else None,
+                agent_source="container" if own_runner is not None else None,
             )
         )
 

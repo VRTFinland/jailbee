@@ -296,8 +296,13 @@ def agent_autostart_steps(
     runner: Runner | None = None,
     default_runner: Runner | None = None,
     resume: str | None = None,
+    launch: str | None = None,
 ) -> list[AutostartStep]:
     """One backgrounded tmux window per agent with `autostart`.
+
+    ``launch`` names one agent that gets a step whether or not it has `autostart`
+    (the dashboard's "open a new agent window"); its command is resolved exactly
+    as at autostart.
 
     Appended (not prepended) to on_start so user steps finish first, and
     ordered with `claude` last (see `agents.enabled_agent_specs`) because
@@ -376,7 +381,7 @@ def agent_autostart_steps(
             effective = default_runner
     for spec in enabled_agent_specs(cfg):
         is_primary = spec.name == primary
-        if not (spec.autostart or is_primary) or not spec.command.strip():
+        if not (spec.autostart or is_primary or spec.name == launch) or not spec.command.strip():
             continue
         command = _agent_command(cfg, spec.name, spec.command)
         if effective is not None and spec.name == "claude":

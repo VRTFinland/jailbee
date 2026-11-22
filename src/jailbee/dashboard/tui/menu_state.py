@@ -294,6 +294,8 @@ _MENU_KEYS: dict[str, str] = {
     dact.MOUNTS: "m",
     dact.SERVICES: "V",  # lowercase `v` belongs to the table's details panel
     dact.ORCHESTRATION: "G",  # grants; `O` is the table's optimize-widths key
+    dact.CONTAINER_AGENT: "g",
+    dact.AGENT_WINDOW: "A",
     "credential-group": "c",
     "Network →": "w",
     "fork": "f",

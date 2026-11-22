@@ -30,6 +30,12 @@ before editing `## Unreleased`.
   `default_runner` if that is not wanted. A `claude-jb` default is ignored (with
   a warning) while `litellm.enabled` is off. `jailbee config edit` shows the key
   as its own fields rather than as an agent.
+  One container can override the repo default: `jailbee agent use PROFILE[/MODEL] --container NAME`
+  sets its own runner label (`--clear` returns it to the repo default) and applies to its
+  next session only; `jailbee agent open [NAME]` starts the effective agent in a new tmux
+  window of a running container now. The container menu has `Agent for this container…`
+  (key `g`, with a "repo default" row) and `New agent window` (key `A`), and the context
+  card says whether the agent comes from the container or the repo default.
 - The terminal dashboard colours a whole container row by its non-normal phase: orange
   while booting, teal during autostart, magenta for other live jobs and red for
   a dead job or failed autostart, in hues legible on light and dark terminals

@@ -300,7 +300,7 @@ repo's host-local config, and `jailbee agent show` prints the effective choice a
 its source. In the terminal dashboard the repo menu's `Agent…` entry (key `g`) runs
 the same command: a profile picker (`claude` plus every LiteLLM profile the repo is
 served), then a tier picker ("profile default" plus the tiers the profile maps), the
-current choice marked. The repo row shows the effective agent as `profile/model`
+current choice marked. One container can override the default: `jailbee agent use PROFILE/MODEL --container NAME` (or the container menu's `Agent for this container…`, with a "repo default" row that removes the override) sets its runner label, applying to its next session only, and `jailbee agent open` / `New agent window` starts the effective agent in a new tmux window now; the context card says whether the agent comes from the container or the repo default. The repo row shows the effective agent as `profile/model`
 (`claude/opus`, `codex/sonnet`, `codex` when no tier is set); with no runner set it shows the legacy launch in parentheses (`(grok)`, `(claude)`), since the picker then marks no row current. Only the Claude family
 is offered. A `claude-jb` default is ignored,
 with a warning in the autostart log, while `litellm.enabled` is off, so a

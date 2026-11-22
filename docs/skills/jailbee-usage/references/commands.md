@@ -236,6 +236,8 @@ speculatively.
 | Command | What it does |
 |---|---|
 | `jailbee agent use [PROFILE[/MODEL]] [--clear]` | Write `agents.default_runner` to the repo's host-local config (`claude/opus` = plain Claude, other profile = `claude-jb` on it; model optional), validated against the LiteLLM config, then resync `claude-jb`'s default profile in running containers. `--clear` removes it. Allowed in a restricted remote SSH session. |
+| `jailbee agent use [PROFILE[/MODEL]] --container NAME [--clear]` | Set or remove one container's own runner label (outranks the repo default at its next autostart; running sessions untouched). Without an argument the picker starts with a "repo default" row. |
+| `jailbee agent open [NAME]` | Start the effective agent in a new tmux window of a running container. |
 | `jailbee agent show` | Effective default runner and its source (`local`/`repo`/`global`/`legacy`); lists containers whose own runner label overrides it. Host-only. |
 
 ## LiteLLM proxy

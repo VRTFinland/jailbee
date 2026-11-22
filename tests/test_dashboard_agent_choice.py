@@ -183,3 +183,53 @@ def test_gather_labels_the_repo_from_the_local_layer_runner(tmp_path, mocker, mo
     assert gather() == "grok/sonnet"
     agent_default.write(load_repo_config(repo), None)
     assert gather() != "grok/sonnet"
+
+
+def _running(tmp_path, **fields):
+    import dataclasses
+
+    from tests.dashboard_fixtures import ci
+
+    return cfg_group(tmp_path, (dataclasses.replace(ci("alpha-x", "alpha"), **fields),))
+
+
+def test_the_container_menu_offers_agent_and_a_new_window_when_running(mocker, tmp_path):
+    group = _running(tmp_path)
+    mocker.patch.object(tsession.subprocess, "run").return_value.returncode = 0
+    session, terminal = bare_session(mocker, [group])
+    session.open_container_entry("alpha-x", "container-agent")
+    session.open_container_entry("alpha-x", "agent-window")
+    assert [r.argv[:4] for r in terminal.ran] == [
+        ["agent", "use", "--container", "alpha-x"],
+        ["agent", "open", "alpha-x", "--config"],
+    ]
+
+
+@pytest.mark.parametrize(
+    ("state", "verbs"),
+    [
+        ("Running", {"container-agent", "agent-window"}),
+        ("Stopped", {"container-agent"}),
+        ("—", set()),
+    ],
+)
+def test_container_agent_entries_follow_the_state(tmp_path, state, verbs):
+    menu = tmenu.open_menu([_running(tmp_path, state=state)], "alpha-x")
+    found = {v for _, v in menu.actions} if menu else set()
+    assert found & {"container-agent", "agent-window"} == verbs
+
+
+def test_container_agent_entries_are_allowed_over_ssh_by_default(tmp_path):
+    menu = tmenu.open_menu(
+        [_running(tmp_path)], "alpha-x", ssh_policy=RemoteSSHConfig(), transport="ssh"
+    )
+    assert "container-agent" in {v for _, v in menu.actions}
+
+
+def test_the_container_picker_has_a_repo_default_row_current_when_no_label():
+    options = ac.profile_options(OFFERED, None, repo_default=True)
+    assert options[0].value == ac.REPO_DEFAULT
+    assert options[0].title == "repo default (current)"
+    marked = ac.profile_options(OFFERED, "grok", repo_default=True)
+    assert marked[0].title == "repo default"
+    assert ac.profile_options(OFFERED, None)[0].value == "claude"

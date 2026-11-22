@@ -5637,6 +5637,8 @@ def test_container_menu_places_autostart_after_the_job_log_and_snapshots_before_
     assert verbs[verbs.index("snapshots") + 1 : verbs.index("credential-group")] == [
         "services",
         "orchestration",
+        "container-agent",
+        "agent-window",
     ]
     # Credential group… still sits directly above the Network → group
     assert verbs[verbs.index("credential-group") + 1].startswith("net ")
@@ -7640,3 +7642,33 @@ def test_container_picker_title_and_ls_git_status_carry_the_pr_marker():
     title = tui._format_choice_title(c, tui._choice_widths([c]))
     assert "12 pr" in title
     assert "4 pr" in title
+
+
+def test_gather_rows_gives_each_container_its_agent_and_where_it_comes_from(
+    tmp_path, mocker, make_cfg
+):
+    from jailbee.config.models_orchestration import OrchestrationView, RepoOrchestration
+    from jailbee.orchestration.runner_model import Runner
+
+    root = tmp_path / "alpha"
+    cfg = make_cfg(root)
+    cfg._orchestration_view = OrchestrationView(
+        profiles={},
+        default_profile=None,
+        repo=RepoOrchestration(),
+        default_runner=Runner(agent="claude", model="opus"),
+        default_runner_source="local",
+    )
+    from tests.dashboard_fixtures import ci
+
+    own = ci("alpha-own", "alpha")
+    own.agent_runner, own.agent_source = "grok/sonnet", "container"
+    plain = ci("alpha-plain", "alpha")
+    mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
+    mocker.patch.object(dmodel, "list_containers", return_value=[own, plain])
+    group = dmodel.gather_rows(mocker.MagicMock(), [root], with_git=False)[0]
+    got = {c.name: (c.agent_runner, c.agent_source) for c in group.containers}
+    assert got == {
+        "alpha-own": ("grok/sonnet", "container"),  # its own label wins
+        "alpha-plain": ("claude/opus", "local"),
+    }

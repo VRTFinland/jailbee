@@ -941,6 +941,7 @@ resyncs the `claude-jb` default profile in running containers (running sessions 
 untouched). The profile and tier are validated against the LiteLLM config; an omitted
 argument is asked for on a terminal (exit 2 otherwise). `jailbee agent show` prints the
 effective choice and its source (`label`, `local`, `repo`, `global`, `legacy`). The terminal dashboard's repo menu `Agent…` (key `g`) runs the same picker; the repo row shows `profile/model` (`(profile)` in parentheses while only the legacy launch applies and no runner is set).
+`jailbee agent use ... --container NAME` sets one container's own runner label instead (`--clear`, or the picker's "repo default" row, removes it); it applies to the next session only. `jailbee agent open [NAME]` starts the effective agent in a new tmux window of a running container. The dashboard's container menu has `Agent for this container…` (`g`) and `New agent window` (`A`); the context card shows `agent X (this container)` or `(repo default, <source>)`.
 A `claude-jb` default is ignored (warning) while `litellm.enabled` is off. The old
 `orchestration.default_runner` is an alias that now applies to every container, not
 only spawned children. Allowed in a restricted remote SSH session.
