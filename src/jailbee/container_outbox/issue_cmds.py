@@ -322,9 +322,7 @@ def comment(
 
 @issue_app.command("comments")
 def comments(
-    issue: Annotated[
-        str | None, typer.Argument(help="Issue or pull request number.")
-    ] = None,
+    issue: Annotated[str | None, typer.Argument(help="Issue or pull request number.")] = None,
     repo: RepoOpt = ".",
     as_json: Annotated[
         bool, typer.Option("--json", help="Print every comment, with its full body, as JSON.")

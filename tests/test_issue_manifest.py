@@ -914,8 +914,6 @@ def test_comment_edit_requires_an_existing_issue_not_a_create_ref() -> None:
 
 
 def test_two_edits_of_one_comment_conflict_but_different_comments_do_not() -> None:
-    parse_manifest(
-        "001-work.json", _manifest(_comment_edit(), _comment_edit(comment_id=556)), {}
-    )
+    parse_manifest("001-work.json", _manifest(_comment_edit(), _comment_edit(comment_id=556)), {})
     with pytest.raises(IssueManifestError, match=r"action 1.*already changes.*comment:555"):
         parse_manifest("001-work.json", _manifest(_comment_edit(), _comment_edit()), {})

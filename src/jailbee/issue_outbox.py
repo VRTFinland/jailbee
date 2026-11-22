@@ -837,7 +837,11 @@ def revalidate_batch(batch: PreparedBatch) -> None:
                 try:
                     refusals.extend(
                         _comment_edit_refusals(
-                            batch.host_repo_root, resolved.repo, resolved.action, batch.login, context
+                            batch.host_repo_root,
+                            resolved.repo,
+                            resolved.action,
+                            batch.login,
+                            context,
                         )
                     )
                 except IssueGithubReadError as exc:

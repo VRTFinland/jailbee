@@ -585,7 +585,9 @@ def test_comment_edit_reads_foreign_and_submodule_repos_at_their_own_slug(monkey
     )
     monkeypatch.setattr(gh.subprocess, "run", fake)
 
-    assert invoke("comment-edit", "555", "--body", "x", "--repo", "github:acme/other").exit_code == 0
+    assert (
+        invoke("comment-edit", "555", "--body", "x", "--repo", "github:acme/other").exit_code == 0
+    )
     assert invoke("comment-edit", "556", "--body", "y", "--repo", "libs/parser").exit_code == 0
 
     assert fake.calls[0][1] is None

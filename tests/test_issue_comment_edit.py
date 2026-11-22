@@ -120,7 +120,7 @@ def test_changed_comment_is_refused_at_preflight(preflight, mocker):  # noqa: F8
     fake = FakeGh(body="Someone already fixed it")
     mocker.patch("jailbee.issue_github.subprocess.run", side_effect=fake)
 
-    with pytest.raises(issue_outbox.IssueGateError, match="expected.body differs"):
+    with pytest.raises(issue_outbox.IssueGateError, match=r"expected\.body differs"):
         preflight["prepare"]({"a.json": [_action()]})
     assert fake.patches == []
 
@@ -131,7 +131,7 @@ def test_comment_changed_after_the_plan_is_stale(preflight, gh):  # noqa: F811
     batch = preflight["prepare"]({"a.json": [_action()]})
     gh.comment = {**gh.comment, "body": "Edited meanwhile"}
 
-    with pytest.raises(issue_outbox.IssueStaleError, match="expected.body differs"):
+    with pytest.raises(issue_outbox.IssueStaleError, match=r"expected\.body differs"):
         issue_outbox.revalidate_batch(batch)
     assert gh.patches == []
 
@@ -154,9 +154,7 @@ def test_show_lines_render_the_staged_diff_without_github(gh):
     from jailbee import issue_outbox
     from jailbee.issue_manifest import parse_manifest
 
-    manifest = parse_manifest(
-        "a.json", json.dumps({"version": 1, "actions": [_action()]}), {}
-    )
+    manifest = parse_manifest("a.json", json.dumps({"version": 1, "actions": [_action()]}), {})
     lines = "\n".join(issue_outbox.show_lines(manifest, None, "box"))
     assert "comment 555" in lines and "+Fixed wording" in lines
 
