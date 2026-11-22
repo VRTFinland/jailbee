@@ -137,9 +137,16 @@ Every login, failure, logout and revocation is audited
   method, and after five consecutive failures the wait before the next
   attempt doubles with each failure from 2 seconds up to 30 minutes, until a
   successful login by that method. Attempts during the wait are refused
-  without being checked. One-time links (single use, 60 seconds, high
-  entropy) and FIDO2 signatures are not limited, so a PIN guesser cannot lock
-  the owner out. At the cap a TOTP code has about a 0.4 % chance of being
+  without being checked. The waits are global, so a guesser can keep PIN and
+  TOTP logins refused for the owner at about four requests an hour; that is
+  the cost of the backoff. One-time links (single use, 60 seconds, high
+  entropy) and FIDO2 signatures are not limited, and a successful login by
+  any method resets every wait, so the owner recovers with a security key,
+  `jailbee remote web open` (a localhost link, for example over SSH) or by
+  restarting the service. A successful PIN login resets the count, so an owner
+  who logs in by PIN daily gives a patient guesser about 30 % more guesses.
+  Setup mode (`fido2 setup`) has only the five-a-minute limit and should not be
+  left running. At the cap a TOTP code has about a 0.4 % chance of being
   guessed in a month, even odds in about 13 years
   ([the numbers](web-dashboard.md#logging-in)). The waits live in memory and
   a restart of the server clears them; under systemd it restarts only on an

@@ -196,14 +196,15 @@ class RateLimiter:
     At most ``max_attempts`` attempts per sliding ``window`` seconds. On top of
     that, from the ``backoff_threshold``-th consecutive failure on, the next
     attempt waits ``backoff_base`` seconds, doubling with each further failure
-    up to ``backoff_cap``; a success resets it. Attempts refused by either
+    up to ``backoff_cap``; a login success by any method resets every
+    bucket's backoff (`reset`). Attempts refused by either
     limit are not counted and must not be checked, so they buy no guesses.
     An admitted attempt holds the bucket for the wait its failure would earn
-    until ``failed`` or ``succeeded`` settles it, so parallel requests cannot
+    until ``failed`` or ``reset`` settles it, so parallel requests cannot
     share one opening.
 
-    Each bucket counts on its own, so guessing one method never locks out
-    another. Rotation already makes each PIN guess a one-in-a-million shot;
+    Each bucket counts failures on its own, so a few typos on one method cost
+    another nothing. Rotation already makes each PIN guess a one-in-a-million shot;
     this bounds how many such shots a month allows. State lives in memory: a
     server restart (an upgrade, under systemd) starts every bucket afresh.
     """
@@ -266,9 +267,14 @@ class RateLimiter:
                 b.blocked_until = now + wait
             return wait if wait > self._wait_after(b.failures - 1) else None
 
-    def succeeded(self, bucket: str = "") -> None:
-        """A login by ``bucket`` succeeded: its backoff starts afresh."""
+    def reset(self) -> None:
+        """A login succeeded, by any method: every bucket's backoff starts afresh.
+
+        Buckets are global, not per source, so a guesser can hold every
+        method at its cap; a success the owner can still make (a security key,
+        a localhost link) must therefore lift them all.
+        """
         with self._lock:
-            b = self._bucket(bucket)
-            b.failures = 0
-            b.blocked_until = 0.0
+            for b in self._buckets.values():
+                b.failures = 0
+                b.blocked_until = 0.0

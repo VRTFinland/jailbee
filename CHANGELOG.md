@@ -68,7 +68,8 @@ before editing `## Unreleased`.
   log keeps unthrottled link and FIDO2 failures on their own budget so they
   cannot evict PIN or TOTP failures; PIN and TOTP logins back off
   exponentially after five failures in a row (2 seconds doubling to
-  30 minutes, refused attempts answered with `Retry-After`), each step
+  30 minutes, refused attempts answered with `Retry-After`; any
+  successful login resets every method's wait), each step
   audited once; and because the state database now holds
   TOTP secrets, JailBee keeps its state directory `0700` and `state.sqlite`
   `0600`, tightening existing ones on first use.
