@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from jailbee.config.models_remote import RemoteSSHConfig
+from jailbee.config.models_remote import RemoteCommandPolicy, RemoteSSHConfig
 from jailbee.dashboard import agent_choice as ac
 from jailbee.dashboard import model as dmodel
 from jailbee.dashboard.tui import fleet
@@ -223,7 +223,18 @@ def test_container_agent_entries_are_allowed_over_ssh_by_default(tmp_path):
     menu = tmenu.open_menu(
         [_running(tmp_path)], "alpha-x", ssh_policy=RemoteSSHConfig(), transport="ssh"
     )
-    assert "container-agent" in {v for _, v in menu.actions}
+    assert {"container-agent", "agent-window"} <= {v for _, v in menu.actions}
+
+
+@pytest.mark.parametrize(
+    ("allow", "verb"),
+    [(["agent use"], "container-agent"), (["agent open"], "agent-window")],
+)
+def test_each_container_agent_entry_is_gated_by_its_own_command(tmp_path, allow, verb):
+    policy = RemoteSSHConfig(commands=RemoteCommandPolicy(mode="allowlist", allow=allow))
+    menu = tmenu.open_menu([_running(tmp_path)], "alpha-x", ssh_policy=policy, transport="ssh")
+    found = {v for _, v in menu.actions} if menu else set()
+    assert found & {"container-agent", "agent-window"} == {verb}
 
 
 def test_the_container_picker_has_a_repo_default_row_current_when_no_label():

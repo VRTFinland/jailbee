@@ -288,6 +288,32 @@ def _agent_command(cfg: Config, name: str, command: str) -> str:
     return claude_jb_command(command) or command
 
 
+def effective_runner(
+    cfg: Config, runner: Runner | None, default_runner: Runner | None, *, warn: bool = True
+) -> Runner | None:
+    """The runner a container's Claude window is launched with, or None (legacy path).
+
+    The container's own ``runner`` label wins; else the repo's ``default_runner``,
+    unless it is on `claude-jb` while `litellm.enabled` is off (warning, ignored).
+    Autostart, "open a new agent window" and the dashboard card all resolve
+    through this one function, so they name the same agent. ``warn=False`` is for
+    callers that only display the answer (the dashboard's gather loop).
+    """
+    if runner is not None:
+        return runner
+    if default_runner is None:
+        return None
+    if default_runner.agent == "claude-jb" and not cfg.litellm_view().config.enabled:
+        if warn:
+            log.warning(
+                "default runner %s not applied: litellm is not enabled, "
+                "so `claude-jb` has no proxy to use",
+                default_runner.describe(),
+            )
+        return None
+    return default_runner
+
+
 def agent_autostart_steps(
     cfg: Config,
     *,
@@ -369,16 +395,7 @@ def agent_autostart_steps(
     if initial_prompt:
         primary = "claude" if runner is not None else primary_agent(cfg).name
     steps: list[AutostartStep] = []
-    effective = runner
-    if effective is None and default_runner is not None:
-        if default_runner.agent == "claude-jb" and not cfg.litellm_view().config.enabled:
-            log.warning(
-                "default runner %s not applied: litellm is not enabled, "
-                "so `claude-jb` has no proxy to use",
-                default_runner.describe(),
-            )
-        else:
-            effective = default_runner
+    effective = effective_runner(cfg, runner, default_runner)
     for spec in enabled_agent_specs(cfg):
         is_primary = spec.name == primary
         if not (spec.autostart or is_primary or spec.name == launch) or not spec.command.strip():

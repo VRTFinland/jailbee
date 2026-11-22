@@ -835,7 +835,7 @@ def container_extras(
     if container.state in _EXISTING_STATES and allowed(container_agent_argv(name)):
         before.append(("Agent for this container…", CONTAINER_AGENT))
     if container.state == "Running" and allowed(agent_window_argv(name)):
-        before.append(("New agent window", AGENT_WINDOW))
+        before.append(("Open a new agent window now", AGENT_WINDOW))
     return ContainerExtras(tuple(after_job), tuple(before))
 
 

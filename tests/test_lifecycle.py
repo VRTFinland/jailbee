@@ -186,6 +186,34 @@ def test_list_containers_parses_orchestration_labels(make_cfg, tmp_path, mocker)
     assert infos["myrepo-k1"].orchestrator_running is True
 
 
+def test_list_containers_reads_the_runner_label_into_the_card_fields(make_cfg, tmp_path, mocker):
+    from jailbee.orchestration import labels
+    from jailbee.orchestration.runner import Runner
+
+    mocker.patch("jailbee.orchestration.view.queued_counts", return_value={})
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(
+            name="myrepo-own",
+            user_config={
+                labels.RUNNER: Runner(agent="claude-jb", profile="grok", model="sonnet").to_label()
+            },
+        ),
+        _container(name="myrepo-plain"),
+        _container(name="myrepo-bad", user_config={labels.RUNNER: "not a runner"}),
+    ]
+    infos = {c.name: c for c in list_containers(cfg, incus)}
+    assert (infos["myrepo-own"].agent_runner, infos["myrepo-own"].agent_source) == (
+        "grok/sonnet",
+        "container",
+    )
+    assert (infos["myrepo-plain"].agent_runner, infos["myrepo-plain"].agent_source) == (None, None)
+    assert infos["myrepo-bad"].agent_runner is None  # a corrupt label is no label
+
+
 def test_list_containers_reads_queue_file(make_cfg, tmp_path, mocker):
     from jailbee.orchestration import labels
 

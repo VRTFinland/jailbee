@@ -2036,6 +2036,8 @@ def test_container_menu_keys_never_move_whatever_else_is_shown(state, lifecycle)
         ("Mounts…", tsession.dact.MOUNTS),
         ("Services…", tsession.dact.SERVICES),
         ("Orchestration…", tsession.dact.ORCHESTRATION),
+        ("Agent for this container…", tsession.dact.CONTAINER_AGENT),
+        ("Open a new agent window now", tsession.dact.AGENT_WINDOW),
     )
     for pr_number, pr_author, job, network, extras, pending in itertools.product(
         (None, 7),
@@ -7645,6 +7647,32 @@ def test_container_picker_title_and_ls_git_status_carry_the_pr_marker():
     title = tui._format_choice_title(c, tui._choice_widths([c]))
     assert "12 pr" in title
     assert "4 pr" in title
+
+
+def test_gather_rows_card_says_legacy_when_the_default_cannot_apply(tmp_path, mocker, make_cfg):
+    """A `claude-jb` default with litellm off is what autostart skips; the card agrees."""
+    from jailbee.config.models_orchestration import OrchestrationView, RepoOrchestration
+    from jailbee.orchestration.runner_model import Runner
+
+    root = tmp_path / "alpha"
+    cfg = make_cfg(root)
+    assert not cfg.litellm_view().config.enabled
+    cfg._orchestration_view = OrchestrationView(
+        profiles={},
+        default_profile=None,
+        repo=RepoOrchestration(),
+        default_runner=Runner(agent="claude-jb", profile="grok", model="sonnet"),
+        default_runner_source="repo",
+    )
+    from tests.dashboard_fixtures import ci
+
+    plain = ci("alpha-plain", "alpha")
+    mocker.patch.object(dmodel, "load_repo_config", return_value=cfg)
+    mocker.patch.object(dmodel, "list_containers", return_value=[plain])
+    group = dmodel.gather_rows(mocker.MagicMock(), [root], with_git=False)[0]
+    [c] = group.containers
+    assert c.agent_source == "legacy"
+    assert c.agent_runner != "grok/sonnet"  # not the default autostart skips
 
 
 def test_gather_rows_gives_each_container_its_agent_and_where_it_comes_from(
