@@ -79,15 +79,16 @@ def test_the_repo_menu_offers_agent_and_it_runs_agent_use(mocker, tmp_path):
     assert ran.argv[:2] == ["agent", "use"]
 
 
-@pytest.mark.parametrize("allowed", [True, False])
-def test_the_agent_entry_respects_the_ssh_policy(mocker, tmp_path, allowed):
-    policy = RemoteSSHConfig(restrict_host=False)
-    permitted = mocker.patch.object(tmenu, "permitted", return_value=allowed)
+def test_the_agent_entry_shows_over_ssh_under_the_default_policy(tmp_path):
+    # The real policy, not a mock: a default restricted session may run `agent use`.
     menu = tmenu.open_repo_menu(
-        [cfg_group(tmp_path)], "alpha", frozenset(), ssh_policy=policy, transport="ssh"
+        [cfg_group(tmp_path)],
+        "alpha",
+        frozenset(),
+        ssh_policy=RemoteSSHConfig(),
+        transport="ssh",
     )
-    assert ("agent" in repo_menu_verbs(menu)) is allowed
-    permitted.assert_any_call(["agent", "use"], policy, transport="ssh")
+    assert "agent" in repo_menu_verbs(menu)
 
 
 def test_pilot_repo_menu_agent_runs_agent_use_and_the_row_label_follows(mocker, tmp_path):
@@ -142,10 +143,43 @@ def test_agent_label_follows_the_runner_then_the_legacy_launch(mocker):
 
     mocker.patch("jailbee.autostart.litellm_autostart_on", return_value=True)
     cfg.litellm_view.return_value.config.default_profile = "grok"
-    assert dmodel._agent_label(cfg, None) == "grok"
+    assert dmodel._agent_label(cfg, None) == "(grok)"
 
     mocker.patch("jailbee.autostart.litellm_autostart_on", return_value=False)
     mocker.patch(
         "jailbee.agents.primary_agent", return_value=SimpleNamespace(name="claude", problem=None)
     )
-    assert dmodel._agent_label(cfg, None) == "claude"
+    assert dmodel._agent_label(cfg, None) == "(claude)"
+
+
+def test_gather_labels_the_repo_from_the_local_layer_runner(tmp_path, mocker, monkeypatch):
+    """`agent use` writes the local layer; the next gather's row carries the new label."""
+    import yaml
+
+    from jailbee import agent_default
+    from jailbee.config.loader import load_repo_config
+
+    repo = tmp_path / "myrepo"
+    (repo / ".jailbee").mkdir(parents=True)
+    (repo / ".git").mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setenv("JAILBEE_NO_UPDATE_CHECK", "1")
+    mocker.patch("jailbee.config.loader.detect_default_branch", return_value="main")
+    (repo / ".jailbee" / "config.yaml").write_text(
+        yaml.safe_dump({"container_prefix": "myrepo", "agents": {"claude": {"enabled": True}}})
+    )
+    mocker.patch.object(dmodel, "list_containers", return_value=[])
+
+    def gather() -> str | None:
+        groups = dmodel.gather_rows(mocker.MagicMock(), [repo], with_git=False)
+        return groups[0].agent_label
+
+    agent_default.write(
+        load_repo_config(repo), Runner(agent="claude-jb", profile="grok", model="sonnet")
+    )
+    assert gather() == "grok/sonnet"
+    agent_default.write(load_repo_config(repo), None)
+    assert gather() != "grok/sonnet"

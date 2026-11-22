@@ -940,10 +940,10 @@ every container's autostart unless a container carries its own runner label, and
 resyncs the `claude-jb` default profile in running containers (running sessions are
 untouched). The profile and tier are validated against the LiteLLM config; an omitted
 argument is asked for on a terminal (exit 2 otherwise). `jailbee agent show` prints the
-effective choice and its source (`label`, `local`, `repo`, `global`, `legacy`). The terminal dashboard's repo menu `Agent…` (key `g`) runs the same picker; the repo row shows `profile/model`.
+effective choice and its source (`label`, `local`, `repo`, `global`, `legacy`). The terminal dashboard's repo menu `Agent…` (key `g`) runs the same picker; the repo row shows `profile/model` (`(profile)` in parentheses while only the legacy launch applies and no runner is set).
 A `claude-jb` default is ignored (warning) while `litellm.enabled` is off. The old
 `orchestration.default_runner` is an alias that now applies to every container, not
-only spawned children. Host-only.
+only spawned children. Allowed in a restricted remote SSH session.
 
 ## Port forwarding — `jailbee port`
 

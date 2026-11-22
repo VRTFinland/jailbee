@@ -301,7 +301,6 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "display up",
         "display attach",
         "display down",
-        "agent use",
         "litellm up",
         "litellm down",
         "litellm login",
@@ -481,6 +480,9 @@ _CONTAINER_COMMANDS = frozenset(
         "job ls",
         "ls",
         "agent show",
+        # Writes only the repo's local-layer `agents.default_runner` and resyncs
+        # `claude-jb` defaults in its containers; the repo scope check applies.
+        "agent use",
         "litellm ls",
         "litellm status",
         "net egress export",

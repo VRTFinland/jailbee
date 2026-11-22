@@ -630,3 +630,37 @@ def test_containers_multi_picker_asks_the_same_question(at_terminal, at_dashboar
     assert terminal[0].question == "Select containers to merge FROM:"
     assert dashboard == terminal
     assert t_result == d_result == ["myrepo-b"]
+
+
+def test_agent_use_asks_the_same_profile_and_tier_questions(mocker, at_terminal, at_dashboard):
+    from unittest.mock import MagicMock
+
+    from jailbee import agent_default
+    from jailbee.orchestration.runner_model import Runner
+
+    cfg = MagicMock()
+    cfg.orchestration_view.return_value.default_runner = Runner(
+        agent="claude-jb", profile="grok", model="sonnet"
+    )
+    mocker.patch.object(
+        agent_default,
+        "catalog",
+        return_value={"claude": ("opus",), "grok": ("opus", "sonnet"), "codex": ()},
+    )
+
+    def answer(asked: Asked) -> Any:
+        return asked.options[0] if asked.question.startswith("Default agent") else asked.options[1]
+
+    def run() -> Any:
+        return agent_default.choose(cfg, MagicMock(), MagicMock(), None)
+
+    terminal, dashboard, t_result, d_result = _both(at_terminal, at_dashboard, answer, run)
+
+    assert [a.question for a in terminal] == [
+        "Default agent profile for this repo's containers:",
+        "Model tier for claude:",
+    ]
+    assert terminal[0].options == ("claude", "grok (current)", "codex")
+    assert terminal[0].default == "grok (current)"
+    assert dashboard == terminal
+    assert t_result == d_result

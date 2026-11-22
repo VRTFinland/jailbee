@@ -301,7 +301,7 @@ its source. In the terminal dashboard the repo menu's `Agent…` entry (key `g`)
 the same command: a profile picker (`claude` plus every LiteLLM profile the repo is
 served), then a tier picker ("profile default" plus the tiers the profile maps), the
 current choice marked. The repo row shows the effective agent as `profile/model`
-(`claude/opus`, `codex/sonnet`, `codex` when no tier is set). Only the Claude family
+(`claude/opus`, `codex/sonnet`, `codex` when no tier is set); with no runner set it shows the legacy launch in parentheses (`(grok)`, `(claude)`), since the picker then marks no row current. Only the Claude family
 is offered. A `claude-jb` default is ignored,
 with a warning in the autostart log, while `litellm.enabled` is off, so a
 repo-committed value cannot start a failing window on a host without the proxy.
