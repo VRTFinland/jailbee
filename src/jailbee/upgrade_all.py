@@ -213,10 +213,11 @@ def _build_in_parallel(
     done: dict[str, Exception | None] = {}
 
     def one(alias: str, cfg: Config) -> Exception | None:
-        done[alias] = error = _one(alias, cfg)
+        error = build_one(alias, cfg)
+        done[alias] = error
         return error
 
-    def _one(alias: str, cfg: Config) -> Exception | None:
+    def build_one(alias: str, cfg: Config) -> Exception | None:
         out.claim(alias)
         err.claim(alias)
         try:
@@ -238,7 +239,7 @@ def _build_in_parallel(
             futures = {a: pool.submit(one, a, c) for a, c in jobs_by_alias.items()}
             try:
                 results = {a: f.result() for a, f in futures.items()}
-            except BaseException as interrupt:
+            except KeyboardInterrupt as interrupt:
                 try:
                     pool.shutdown(wait=True, cancel_futures=True)  # start no queued build
                 except KeyboardInterrupt:
