@@ -2284,3 +2284,23 @@ def test_marks_of_changed_or_vanished_proposals_are_dropped_on_reopen(mocker, tm
     _settle(session)
 
     assert session.overlay.marks == frozenset()
+
+
+def test_marks_survive_a_box_closed_before_its_listing_arrived(mocker, tmp_path):
+    from jailbee.dashboard.hit import Hit
+
+    _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    _open_box(session)
+    session.outbox_intent("mark", _ROW)
+    session.click(Hit("row", ("alpha-x",)))
+    session.jobs = _HeldJobs()  # type: ignore[assignment]  # the listing never arrives
+    session.select(dmodel.Row("container", "alpha-x"))
+    session.handle_key("enter")
+    session.menu_chosen("outbox browse", None, 0)
+    session.click(Hit("row", ("alpha-x",)))  # closed again at once
+
+    session._remember_outbox_marks()
+
+    assert _ROW in session._outbox_marks["alpha-x"][0]
+    assert session._outbox_marks["alpha-x"][1] == {"pr/a.json": "r1"}

@@ -402,6 +402,8 @@ class OutboxController:
 
     def revisions(self) -> dict[str, str]:
         """Proposal id -> revision of the listing shown now (for `restore_marks`)."""
+        if self._restored_revisions is not None:
+            return self._restored_revisions  # closed again before its first listing arrived
         return {p.id: p.revision for c in self.state.containers for p in c.proposals}
 
     def restore_marks(self, marks: frozenset[dob.RowKey], revisions: dict[str, str]) -> None:
