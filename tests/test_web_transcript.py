@@ -319,9 +319,8 @@ def test_injected_user_records_are_meta_and_cannot_supply_session_titles(
     assert (body["entries"][0]["meta"], body["title"]) == (True, "Fix the title")
 
 
-def test_a_compaction_summary_is_meta_and_cannot_supply_the_session_title(
-    client: TestClient, home: Path
-) -> None:
+def _compacted_session(home: Path) -> None:
+    """A recorded compaction summary followed by a typed prompt."""
     corpus = (
         Path(__file__).parent
         / "fixtures/transcripts/claude-corpus/projects/-work-toy"
@@ -336,6 +335,29 @@ def test_a_compaction_summary_is_meta_and_cannot_supply_the_session_title(
     path.write_text(
         json.dumps(summary) + "\n" + json.dumps(_record(2, "user", "Fix the title")) + "\n"
     )
+
+
+def test_a_collapsed_compaction_summary_expands_through_the_entries_endpoint(
+    client: TestClient, home: Path
+) -> None:
+    _compacted_session(home)
+
+    summarised, _ = client.get(URL, params={"meta": "collapsed"}).json()["entries"]
+    assert (summarised["label"], summarised["html"], summarised["expandable"]) == (
+        "Agent context",
+        "",
+        True,
+    )
+    res = client.get(f"{URL}/entries/{summarised['id']}")
+
+    assert res.status_code == 200
+    assert "This session is being continued" in res.json()["html"]
+
+
+def test_a_compaction_summary_is_meta_and_cannot_supply_the_session_title(
+    client: TestClient, home: Path
+) -> None:
+    _compacted_session(home)
 
     body = client.get(URL, params={"meta": "shown"}).json()
 
