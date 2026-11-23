@@ -5,7 +5,7 @@ import {
     type Router,
     type RouterHistory,
 } from "vue-router"
-import {authIsDisabled, getToken, NO_LOGIN_TOKEN, setToken} from "./api"
+import {authIsDisabled, fetchServerMode, getToken, NO_LOGIN_TOKEN, setToken} from "./api"
 import FrontPage from "./views/FrontPage.vue"
 import RepoView from "./views/RepoView.vue"
 import ContainerView from "./views/ContainerView.vue"
@@ -33,7 +33,15 @@ export const routes: RouteRecordRaw[] = [
 /** Hash routing, so bookmarks work behind any reverse-proxy path. */
 export function createAppRouter(history: RouterHistory = createWebHashHistory()): Router {
     const router = createRouter({history, routes})
+    // The server's mode is asked once, on the first navigation, so later clicks
+    // cost no request. A server replaced while the tab is open is noticed by
+    // App.vue instead (the socket's setup close code, or the login page's poll).
+    let mode: Promise<"setup" | "dashboard" | null> | null = null
     router.beforeEach(async (to) => {
+        mode ??= fetchServerMode()
+        if (await mode === "setup") {
+            return to.name === "setup" ? true : {name: "setup", replace: true}
+        }
         if (to.meta.public || getToken()) return true
         if (await authIsDisabled()) {
             setToken(NO_LOGIN_TOKEN)

@@ -14,7 +14,7 @@ from jailbee.db.models import WebFido2Key
 from jailbee.web import auth_admin
 from tests.web_fakes import snapshot_of
 from tests_e2e.browser_errors import BrowserErrors
-from tests_e2e.flows import DERIVED_DEVICE
+from tests_e2e.flows import DERIVED_DEVICE, log_in_with_pin
 from tests_e2e.server import E2EServer
 
 if TYPE_CHECKING:
@@ -90,6 +90,58 @@ def register_key(page: Page, server: E2EServer) -> str:
     return url
 
 
+@pytest.mark.parametrize(
+    ("path", "stale_token"),
+    [
+        ("/index.html#/login", False),
+        ("/index.html#/", True),
+        ("/#/login", False),
+        ("/#/", True),
+    ],
+)
+def test_setup_mode_routes_old_dashboard_urls_to_key_registration(
+    make_server: Callable[..., E2EServer],
+    page: Page,
+    virtual_key: VirtualKey,
+    path: str,
+    stale_token: bool,
+) -> None:
+    server = make_server(setup=True)
+    url = f"http://localhost:{server.port}"
+    if stale_token:
+        page.add_init_script("localStorage.setItem('jailbee.token', 'expired-session')")
+    page.goto(f"{url}{path}")
+
+    expect(page.get_by_label("Setup PIN")).to_be_visible(timeout=2_000)
+    page.get_by_label("Key name").fill("Recovered tab key")
+    page.get_by_label("Setup PIN").fill(server.pin.current)
+    page.get_by_role("button", name="Register key", exact=True).click()
+    expect(page.get_by_text("Registered Recovered tab key.", exact=True)).to_be_visible()
+
+
+@pytest.mark.parametrize("signed_in", [False, True], ids=["login", "dashboard"])
+def test_open_tab_switches_to_setup_without_a_reload(
+    make_server: Callable[..., E2EServer], page: Page, virtual_key: VirtualKey, signed_in: bool
+) -> None:
+    server = make_server()
+    server.push(snapshot_of())
+    url = f"http://localhost:{server.port}"
+    if signed_in:
+        log_in_with_pin(page, url, server.pin.current)
+    else:
+        page.goto(f"{url}/#/login")
+        expect(page.get_by_label("PIN")).to_be_visible()
+
+    server.stop()
+    server.start(setup=True)
+
+    expect(page.get_by_label("Setup PIN")).to_be_visible()
+    page.get_by_label("Key name").fill("Open tab key")
+    page.get_by_label("Setup PIN").fill(server.pin.current)
+    page.get_by_role("button", name="Register key", exact=True).click()
+    expect(page.get_by_text("Registered Open tab key.", exact=True)).to_be_visible()
+
+
 @pytest.mark.parametrize("counter_rollback", [1, 2], ids=["equal-counter", "lower-counter"])
 def test_registered_security_key_updates_its_counter_and_refuses_a_clone(
     make_server: Callable[..., E2EServer],
@@ -107,6 +159,7 @@ def test_registered_security_key_updates_its_counter_and_refuses_a_clone(
     server.start()
     page.goto(f"{url}/#/login")
     previous_count = virtual_key.credential()["signCount"]
+    previous_used = None
     for _ in range(2):
         page.get_by_role("button", name="Use security key", exact=True).click()
 
@@ -115,6 +168,9 @@ def test_registered_security_key_updates_its_counter_and_refuses_a_clone(
         expect(page.get_by_text("No repositories.", exact=True)).to_be_visible()
         (key,) = auth_admin.list_fido2_keys(server.engine)
         assert key.last_used_at is not None
+        if previous_used is not None:
+            assert key.last_used_at > previous_used
+        previous_used = key.last_used_at
         current_count = virtual_key.credential()["signCount"]
         assert current_count > previous_count
         with Session(server.engine) as session:
@@ -139,6 +195,12 @@ def test_registered_security_key_updates_its_counter_and_refuses_a_clone(
     expect(page).to_have_url(f"{url}/#/login")
     assert virtual_key.credential()["signCount"] == previous_count - counter_rollback + 1
     assert auth_admin.list_sessions(server.engine) == []
+    event = auth_admin.recent_events(server.engine)[-1]
+    assert (event.event, event.method) == ("login_failed", "fido2")
+    assert event.device_name.startswith(DERIVED_DEVICE)
+    with Session(server.engine) as session:
+        (stored_key,) = session.exec(select(WebFido2Key)).all()
+        assert stored_key.sign_count == previous_count
 
 
 def test_a_removed_security_key_is_refused_visibly(

@@ -64,7 +64,7 @@ from jailbee.tui import ConfirmFn, default_confirm, info, warn, warn_plain
 
 if TYPE_CHECKING:
     from jailbee.accounts.models import AgentSession
-    from jailbee.agent_status import ActivityLookup, AgentSummary
+    from jailbee.agent_status import ActivityLookup, AgentSummary, StateSettler
     from jailbee.autostart_plan import AutostartPlan
     from jailbee.branch_config import EscalationVerdict
     from jailbee.config import Autostart
@@ -1092,9 +1092,50 @@ def annotate_agent_status(
         c.name: {pid: sample.starttime for pid, sample in sampler.processes(c.name).items()}
         for c in containers
     }
-    results = agent_status.match_sessions(sessions, processes, sampler.nspid, activity)
+    results = agent_status.match_sessions(
+        sessions, processes, sampler.nspid, activity, settle=_follower_settler(sampler)
+    )
     for c in containers:
         c.agent_status = results.get(c.name, ())
+
+
+def _follower_settler(sampler: ActivitySampler) -> StateSettler:
+    """Show a ``shell`` session as idle when only inbox waiters run as its tasks.
+
+    Claude reports ``shell`` while any background task runs, and the JailBee
+    plugin's inbox follower is one in every session. A task is a shell child
+    of the agent process, with everything under it. The processes come from
+    the sampler's reading already taken; argv is read from /proc only for the
+    processes under a ``shell`` session. A process that vanished in between
+    leaves the state as Claude reported it.
+    """
+    from jailbee import inbox_waiters, procstat
+
+    home = Path(f"/home/{CONTAINER_USERNAME}")
+
+    def settle(container: str, host_pid: int, state: str) -> str:
+        if state != "shell":
+            return state
+        procs = sampler.processes(container)
+        # Claude runs every background task in a shell wrapper; other direct
+        # children (stdio MCP servers, language servers) are not tasks.
+        roots = [
+            pid
+            for pid, sample in procs.items()
+            if sample.ppid == host_pid and sample.comm in procstat.SHELL_COMMS
+        ]
+        argvs: list[tuple[str, ...]] = []
+        for pid in roots + [p for root in roots for p in procstat.descendants(procs, root)]:
+            argv = sampler.cmdline(pid)
+            if argv is None:
+                return state
+            argvs.append(argv)
+        try:
+            return inbox_waiters.settle_state(state, argvs, home=home)
+        except ValueError:  # shlex on argv the container wrote: never fail the tick
+            return state
+
+    return settle
 
 
 def agent_homes(cfg: Config, containers: Iterable[str]) -> tuple[tuple[str, str, Path], ...]:
@@ -3775,6 +3816,8 @@ _AGENT_GLYPHS: dict[str, tuple[str, str | None]] = {
     "idle": ("○", "dim"),
 }
 """The `agent_compact` mark and Rich style per known state."""
+_AGENT_ERROR_GLYPH: tuple[str, str] = ("✖", "red")
+"""The mark of any `error:<kind>` state, followed by the kind."""
 
 
 def agent_compact_cell(
@@ -3804,12 +3847,15 @@ def agent_compact_cell(
     if not statuses:
         return "[dim]—[/dim]"
 
-    from jailbee.agent_status import rank_key
+    from jailbee.agent_status import ERROR_PREFIX, rank_key
 
     def glyph_of(state: str, *, age_from: datetime | None = None, with_age: bool = False) -> str:
         glyph, colour = _AGENT_GLYPHS.get(state, ("?", None))
         text = glyph
-        if state not in _AGENT_GLYPHS:
+        if state.startswith(ERROR_PREFIX):
+            glyph, colour = _AGENT_ERROR_GLYPH
+            text = f"{glyph} {escape(state.removeprefix(ERROR_PREFIX))}"
+        elif state not in _AGENT_GLYPHS:
             # The state is raw text from a file the container wrote.
             text += f" {escape(state)}"
         if with_age and age_from is not None and age_from <= now:
@@ -4307,6 +4353,8 @@ def ls_field_specs(
             text += f"·{s.count}"
         # The state is raw text from a file the container wrote.
         text = escape(text)
+        if s.state.startswith(agent_status.ERROR_PREFIX):
+            return f"[red]{text}[/red]"
         return f"[yellow]{text}[/yellow]" if s.state == "waiting" else text
 
     def _agent_cell(c: ContainerInfo) -> str:
@@ -4322,9 +4370,21 @@ def ls_field_specs(
                 "since": s.since.isoformat() if s.since is not None else None,
                 "waiting_for": s.waiting_for,
                 "count": s.count,
+                "error": _api_error_json(s),
             }
             for s in c.agent_status
         ]
+
+    def _api_error_json(s: AgentSummary) -> dict[str, object] | None:
+        error = s.activity.api_error if s.activity is not None else None
+        if error is None:
+            return None
+        return {
+            "kind": error.kind,
+            "at": error.at.isoformat() if error.at is not None else None,
+            "detail": error.detail,
+            "resets_at": error.resets_at.isoformat() if error.resets_at is not None else None,
+        }
 
     def _pending_pr_actions(c: ContainerInfo) -> int:
         # The row's own store count is fresh every tick; the probe's copy is
@@ -4508,11 +4568,7 @@ def ls_field_specs(
         if not c.agent_status:
             return None
         s = c.agent_status[0]
-        urgency = (
-            agent_status.URGENCY.index(s.state)
-            if s.state in agent_status.URGENCY
-            else len(agent_status.URGENCY)
-        )
+        urgency = agent_status.urgency(s.state)
         # Within a state, the latest change first: "just finished" above "idle since yesterday".
         return (urgency, -s.since.timestamp() if s.since is not None else 0.0)
 

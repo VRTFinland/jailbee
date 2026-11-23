@@ -45,7 +45,7 @@ def server(make_server: Callable[..., E2EServer], corpus_home: Path) -> E2EServe
 
 @pytest.fixture
 def reader(server: E2EServer, page: Page) -> Page:
-    log_in_with_pin(page, server.url, server.pin.current, "corpus reader")
+    log_in_with_pin(page, server.url, server.pin.current)
     return page
 
 

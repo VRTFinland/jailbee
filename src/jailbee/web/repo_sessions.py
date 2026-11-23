@@ -7,10 +7,12 @@ snapshot, tests point it at a temporary directory.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import builtins
+import threading
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from jailbee.transcripts.base import (
@@ -18,6 +20,7 @@ from jailbee.transcripts.base import (
     SessionFiles,
     SessionInfo,
     SessionInfoCache,
+    SessionInfoStore,
     TranscriptSource,
     get_source,
 )
@@ -28,6 +31,10 @@ if TYPE_CHECKING:
 
 AgentHomes = Callable[[str], Sequence[tuple[str, Path]] | None]
 """Repo prefix → ``(agent, config home)`` pairs, or None for an unknown repo."""
+
+RepoDirs = Callable[[str], Collection[str] | None]
+"""Repo prefix → the in-container paths its sessions are started in, or None
+when unknown (then every session in its homes is listed)."""
 
 
 def snapshot_homes(latest: Callable[[], Snapshot | None]) -> AgentHomes:
@@ -43,6 +50,33 @@ def snapshot_homes(latest: Callable[[], Snapshot | None]) -> AgentHomes:
                 return list(
                     dict.fromkeys((agent, home) for _, agent, home in group.agent_config_homes)
                 )
+        return None
+
+    return resolve
+
+
+def snapshot_repo_dirs(latest: Callable[[], Snapshot | None]) -> RepoDirs:
+    """Resolve the repository's in-container paths from the dashboard snapshot.
+
+    Each container's `repo_dir` label, plus where a container of the repo
+    would have it without one (`/home/<user>/<prefix>`, and the legacy
+    `/home/<user>/<repo root name>`), so a repository whose containers are
+    gone still lists its sessions. Several repositories may share a config
+    home by mistake; these paths keep each list to its own sessions.
+    """
+    from jailbee.config.common import CONTAINER_USERNAME
+
+    def resolve(prefix: str) -> Collection[str] | None:
+        snapshot = latest()
+        if snapshot is None:
+            return None
+        for group in snapshot.groups:
+            if group.prefix == prefix:
+                dirs = {c.repo_dir for c in group.containers if c.repo_dir}
+                dirs.add(f"/home/{CONTAINER_USERNAME}/{prefix}")
+                if group.repo_root:
+                    dirs.add(f"/home/{CONTAINER_USERNAME}/{PurePosixPath(group.repo_root).name}")
+                return dirs
         return None
 
     return resolve
@@ -71,9 +105,15 @@ class SessionTranscript:
 class RepoSessions:
     """Lists sessions across a repository's agents; owns the info cache."""
 
-    def __init__(self, homes: AgentHomes) -> None:
+    def __init__(
+        self,
+        homes: AgentHomes,
+        store: SessionInfoStore | None = None,
+        repo_dirs: RepoDirs | None = None,
+    ) -> None:
         self._homes = homes
-        self._cache = SessionInfoCache()
+        self._repo_dirs = repo_dirs
+        self._cache = SessionInfoCache(store)
 
     def known(self, prefix: str) -> bool:
         return self._homes(prefix) is not None
@@ -83,7 +123,34 @@ class RepoSessions:
         homes = self._homes(prefix)
         if homes is None:
             return None
-        rows: list[SessionRow] = []
+        return self._rows(homes, self._repo_dirs(prefix) if self._repo_dirs else None)
+
+    def warm(
+        self,
+        prefixes: Iterable[str],
+        homes: AgentHomes,
+        repo_dirs: RepoDirs | None,
+        stop: threading.Event,
+    ) -> None:
+        """Read every listed repository's session info into the cache.
+
+        Run once at start-up, in a thread of its own, so the first list a
+        browser asks for finds the rows already read. ``homes`` and
+        ``repo_dirs`` answer as the server's resolvers would, but from the
+        snapshot the warm-up started with. ``stop`` is checked between
+        repositories.
+        """
+        for prefix in prefixes:
+            if stop.is_set():
+                return
+            found = homes(prefix)
+            if found is not None:
+                self._rows(found, repo_dirs(prefix) if repo_dirs else None)
+
+    def _rows(
+        self, homes: Sequence[tuple[str, Path]], cwds: Collection[str] | None
+    ) -> builtins.list[SessionRow]:
+        rows: builtins.list[SessionRow] = []
         for agent, home in homes:
             try:
                 source = get_source(agent)
@@ -91,12 +158,30 @@ class RepoSessions:
                 continue
             rows.extend(
                 SessionRow(i.session_id, agent, i.title, i.last_activity, i.models)
-                for i in source.list_sessions(home, self._cache)
+                for i in source.list_sessions(home, self._cache, cwds)
             )
+        self._cache.flush()
         rows.sort(
             key=lambda r: r.last_activity.timestamp() if r.last_activity else 0.0, reverse=True
         )
         return rows
+
+    def rows(
+        self, prefix: str, keys: Iterable[tuple[str, str]]
+    ) -> dict[tuple[str, str], SessionRow]:
+        """These ``(agent, session id)`` sessions' list rows, each found by its id
+        alone, without listing the repository. A key `transcript` would not
+        find is absent."""
+        found: dict[tuple[str, str], SessionRow] = {}
+        for agent, session_id in keys:
+            located = self._locate(prefix, agent, session_id, flush=False)
+            if located is not None:
+                info = located[3]
+                found[(agent, session_id)] = SessionRow(
+                    info.session_id, agent, info.title, info.last_activity, info.models
+                )
+        self._cache.flush()
+        return found
 
     def transcript(self, prefix: str, agent: str, session_id: str) -> SessionTranscript | None:
         """One session read whole; None for an unknown repository, agent or session.
@@ -127,6 +212,7 @@ class RepoSessions:
         if path is None:
             return None
         info = source.session_info(session_id, path, self._cache)
+        self._cache.flush()
         if info is None:
             return None
         entries = source.read(files.transcript).entries
@@ -154,7 +240,7 @@ class RepoSessions:
         return None if path is None else (source, path)
 
     def _locate(
-        self, prefix: str, agent: str, session_id: str
+        self, prefix: str, agent: str, session_id: str, *, flush: bool = True
     ) -> tuple[TranscriptSource, Path, SessionFiles, SessionInfo] | None:
         homes = self._homes(prefix)
         if homes is None:
@@ -170,6 +256,8 @@ class RepoSessions:
             if files is None:
                 continue
             info = source.session_info(session_id, files.transcript, self._cache)
+            if flush:
+                self._cache.flush()
             if info is None:
                 return None
             return source, home, files, info

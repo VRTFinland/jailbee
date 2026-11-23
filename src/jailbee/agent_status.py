@@ -29,16 +29,38 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-URGENCY: tuple[str, ...] = ("waiting", "busy", "shell", "idle")
+URGENCY: tuple[str, ...] = ("error", "waiting", "busy", "shell", "idle")
 """Known states, most urgent first. Any other state ranks after all of them.
 
-`shell` is Claude Code's idle with a background shell job still running: the
-agent wants nothing from you yet, but it is not finished either.
+`error` stands for every `error:<kind>` state: the latest turn ended in an API
+error (quota, rate limit, auth, …) the agent gave up retrying, so nothing
+moves until someone acts. `shell` is Claude Code's idle with a background
+shell job still running: the agent wants nothing from you yet, but it is not
+finished either.
 """
+
+ERROR_PREFIX = "error:"
+
+
+def error_state(kind: str) -> str:
+    """The AGENT state of a session whose latest turn ended in an API error."""
+    return f"{ERROR_PREFIX}{kind}"
+
+
+def urgency(state: str) -> int:
+    """`state`'s place in `URGENCY`; unknown states rank after every known one."""
+    family = "error" if state.startswith(ERROR_PREFIX) else state
+    try:
+        return URGENCY.index(family)
+    except ValueError:
+        return len(URGENCY)
 
 
 type ActivityLookup = Callable[[str, AgentSession, int], AgentActivity | None]
 """`(container, session, host pid)` → what that session is doing, or None."""
+
+type StateSettler = Callable[[str, int, str], str]
+"""`(container, host pid, recorded state)` → the state to show for that session."""
 
 
 @dataclass(frozen=True)
@@ -81,14 +103,11 @@ def rank_key(state: str, since: datetime | None) -> tuple[int, bool, float]:
     to answer. Among any other equal states the latest change comes first, so
     a session idle since yesterday does not hide one that just finished.
     """
-    try:
-        urgency = URGENCY.index(state)
-    except ValueError:
-        urgency = len(URGENCY)
+    rank = urgency(state)
     if since is None:
-        return (urgency, True, 0.0)
+        return (rank, True, 0.0)
     stamp = since.timestamp()
-    return (urgency, False, stamp if state == "waiting" else -stamp)
+    return (rank, False, stamp if state == "waiting" else -stamp)
 
 
 def _one_per_process(sessions: Iterable[AgentSession]) -> list[AgentSession]:
@@ -113,6 +132,8 @@ def summarize(
     """One summary per agent, most urgent first, agent name as the tiebreak.
 
     `activity_for` receives all live sessions of an agent, ordered by urgency.
+    When the chosen activity carries an API error, the agent's state is
+    `error:<kind>` from the error's time, and so is its session's mark.
     """
     by_agent: dict[str, list[AgentSession]] = {}
     for session in live:
@@ -121,19 +142,42 @@ def summarize(
     for agent, items in by_agent.items():
         ordered = sorted(items, key=_rank)
         top = ordered[0]
+        activity = None if activity_for is None else activity_for(ordered)
+        marks = [SessionMark(s.state, s.since) for s in ordered]
+        state, since, waiting_for = top.state, top.since, top.waiting_for
+        if activity is not None and activity.api_error is not None:
+            error = activity.api_error
+            state, since, waiting_for = error_state(error.kind), error.at, None
+            # The activity carries the state of the session it was read from.
+            failed = next((i for i, m in enumerate(marks) if m.state == activity.state), 0)
+            marks[failed] = SessionMark(state, since)
+            marks.sort(key=lambda m: rank_key(m.state, m.since))
         summary = AgentSummary(
             agent=agent,
-            state=top.state,
-            since=top.since,
-            waiting_for=top.waiting_for,
+            state=state,
+            since=since,
+            waiting_for=waiting_for,
             count=len(items),
-            activity=None if activity_for is None else activity_for(ordered),
+            activity=activity,
             session_ids=tuple(s.session_id for s in ordered if s.session_id),
-            sessions=tuple(SessionMark(s.state, s.since) for s in ordered),
+            sessions=tuple(marks),
         )
-        ranked.append((_rank(top), agent, summary))
+        ranked.append((rank_key(state, since), agent, summary))
     ranked.sort(key=lambda item: (item[0], item[1]))
     return tuple(summary for _, _, summary in ranked)
+
+
+def _speaks_over(found: AgentActivity, chosen: AgentActivity) -> bool:
+    """Whether `found` should speak for the agent instead of the earlier-ranked `chosen`.
+
+    A session stuck on an API error wins; otherwise the later event wins, and
+    the strict comparison keeps rank order for equal or unknown event dates.
+    """
+    if (found.api_error is None) != (chosen.api_error is None):
+        return found.api_error is not None
+    if found.last_event_at is None:
+        return False
+    return chosen.last_event_at is None or found.last_event_at > chosen.last_event_at
 
 
 def _lookup_for(
@@ -148,11 +192,7 @@ def _lookup_for(
             found = activity(container, session, host_pids[(session.pid, session.proc_start)])
             if found is None:
                 continue
-            # Strict comparison preserves rank order for equal or unknown event dates.
-            if chosen is None or (
-                found.last_event_at is not None
-                and (chosen.last_event_at is None or found.last_event_at > chosen.last_event_at)
-            ):
+            if chosen is None or _speaks_over(found, chosen):
                 chosen = replace(found, state=session.state, since=session.since)
         return chosen
 
@@ -164,6 +204,8 @@ def match_sessions(
     processes: Mapping[str, Mapping[int, int]],
     nspid: Callable[[int], int | None],
     activity: ActivityLookup | None = None,
+    *,
+    settle: StateSettler | None = None,
 ) -> dict[str, tuple[AgentSummary, ...]]:
     """Container name → its live agents, most urgent first.
 
@@ -176,7 +218,10 @@ def match_sessions(
     per live session, not one per process. Every container in `processes`
     gets an entry. `activity`, when given, is asked about every live session
     with the container name and the session's host pid;
-    it must not raise.
+    it must not raise. `settle`, when given, turns each live session's
+    recorded state into the one shown (an idle session whose only background
+    job is the inbox follower reads `idle`, not `shell`); ranking uses the
+    shown state. It must not raise either.
     """
     out: dict[str, tuple[AgentSummary, ...]] = {}
     for name, procs in processes.items():
@@ -192,6 +237,10 @@ def match_sessions(
             inner = nspid(host_pid)
             for session in claims:
                 if session.pid == inner:
+                    if settle is not None:
+                        shown = settle(name, host_pid, session.state)
+                        if shown != session.state:
+                            session = replace(session, state=shown)
                     live[(session.pid, session.proc_start)] = session
                     host_pids[(session.pid, session.proc_start)] = host_pid
         out[name] = summarize(live.values(), _lookup_for(name, host_pids, activity))

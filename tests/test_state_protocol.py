@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from jailbee.accounts.models import ActivityEvent, AgentActivity
+from jailbee.accounts.models import ActivityEvent, AgentActivity, AgentApiError
 from jailbee.agent_status import AgentSummary
 from jailbee.dashboard.model import AppMenuEntry, RepoAdvisory, RepoGroup
 from jailbee.git_status import GitStatus, OtherBranch, SubmoduleChange
@@ -137,6 +137,17 @@ def _full_snapshot() -> Snapshot:
                             recent=(
                                 ActivityEvent("tool", "Read  /a.py"),
                                 ActivityEvent("message", "[b]plan[/b]"),
+                            ),
+                            api_error=AgentApiError(
+                                **_non_defaults(
+                                    AgentApiError,
+                                    kind="quota",
+                                    at=T0 - timedelta(minutes=3),
+                                    status=429,
+                                    detail="limit <b>reached</b>",
+                                    resets_at=T0 + timedelta(hours=2),
+                                    key="2026|e1",
+                                )
                             ),
                         )
                     ),
@@ -437,7 +448,7 @@ def test_wire_schema_leaves_out_docstrings_and_titles():
 # PROTOCOL fails below: a client of another version would misread it. A pydantic
 # upgrade that only reshapes its schema output trips this too; a bump is then
 # harmless (a protocol mismatch makes the dashboard replace the state service).
-WIRE_SCHEMA = (38, "4ca4637e03946c222982263aa7dddc949e4b0543f4c9ca10f65a513b88be37c3")
+WIRE_SCHEMA = (39, "4a5a9980174c6fcc7a739d881a9ed17ba3212d047ece2f5fdcffa11f42256b58")
 
 
 def test_a_wire_schema_change_bumps_the_protocol():

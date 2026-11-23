@@ -3,6 +3,7 @@ import {describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"
 import {setToken} from "../api"
 import {createAppRouter} from "../router"
+import {withDashboardMode} from "../test-http"
 import ContainerView from "./ContainerView.vue"
 import {DASHBOARD, Dashboard} from "../dashboard"
 import {orchestrationView} from "../test-fixtures"
@@ -14,7 +15,7 @@ function jsonResponse(status: number, body: unknown): Response {
     })
 }
 
-const list = {
+const liveList = {
     container: "alpha-1",
     repo: "alpha",
     sessions: [
@@ -26,6 +27,12 @@ const list = {
             last_activity: "2026-11-01T10:05:00Z",
             models: ["claude-opus-4"],
         },
+    ],
+}
+
+const historyList = {
+    ...liveList,
+    sessions: [
         {
             session_id: "s-past",
             agent: "claude",
@@ -37,9 +44,16 @@ const list = {
     ],
 }
 
-async function mountContainer(fetchMock: ReturnType<typeof vi.fn>, dashboard?: Dashboard, name = "alpha-1") {
+/** A fetch that answers the live and the history request with these bodies. */
+function serve(live: unknown = liveList, history: unknown = historyList, status = 200) {
+    return vi.fn<typeof fetch>((input) => Promise.resolve(
+        jsonResponse(status, String(input).endsWith("/sessions/history") ? history : live),
+    ))
+}
+
+async function mountContainer(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>, dashboard?: Dashboard, name = "alpha-1") {
     setToken("tok")
-    vi.stubGlobal("fetch", fetchMock)
+    vi.stubGlobal("fetch", withDashboardMode(fetchMock))
     const router = createAppRouter(createMemoryHistory())
     await router.push(`/containers/${name}`)
     await router.isReady()
@@ -52,7 +66,7 @@ describe("ContainerView", () => {
     it("links an orchestrator's children and updates the list live", async () => {
         const dashboard = new Dashboard(() => ({start() {}, stop() {}, send() {}}))
         dashboard.state.view = orchestrationView()
-        const {wrapper} = await mountContainer(vi.fn().mockResolvedValue(jsonResponse(200, list)), dashboard, "alpha-orch")
+        const {wrapper} = await mountContainer(serve(), dashboard, "alpha-orch")
         expect(wrapper.findAll(".children a").map(a => a.attributes("href"))).toEqual([
             "/containers/alpha-task-a", "/containers/alpha-task-b",
         ])
@@ -67,7 +81,7 @@ describe("ContainerView", () => {
         const view = orchestrationView()
         view.repos[0].containers.shift()
         dashboard.state.view = view
-        const {wrapper} = await mountContainer(vi.fn().mockResolvedValue(jsonResponse(200, list)), dashboard, "alpha-task-a")
+        const {wrapper} = await mountContainer(serve(), dashboard, "alpha-task-a")
         expect(wrapper.get(".parent a").attributes("href")).toBe("/containers/alpha-orch")
         expect(wrapper.get(".parent").text()).toContain("Child of orch · working · codex/opus")
         expect(wrapper.get(".parent").text()).toContain("orchestrator not listed")
@@ -76,21 +90,23 @@ describe("ContainerView", () => {
     it("loads the selected child's sessions when following a relationship link", async () => {
         const dashboard = new Dashboard(() => ({start() {}, stop() {}, send() {}}))
         dashboard.state.view = orchestrationView()
-        const fetchMock = vi.fn()
-            .mockResolvedValueOnce(jsonResponse(200, list))
-            .mockResolvedValueOnce(jsonResponse(200, {...list, sessions: []}))
+        const fetchMock = serve()
         const {wrapper} = await mountContainer(fetchMock, dashboard, "alpha-orch")
+        fetchMock.mockImplementation(() => Promise.resolve(jsonResponse(200, {...liveList, sessions: []})))
         await wrapper.get(".children a").trigger("click")
         await flushPromises()
         expect(fetchMock.mock.calls.map(call => call[0])).toEqual([
-            "/api/containers/alpha-orch/sessions", "/api/containers/alpha-task-a/sessions",
+            "/api/containers/alpha-orch/sessions",
+            "/api/containers/alpha-orch/sessions/history",
+            "/api/containers/alpha-task-a/sessions",
+            "/api/containers/alpha-task-a/sessions/history",
         ])
         expect(wrapper.text()).not.toContain("Fix the login bug")
         expect(wrapper.text()).toContain("No sessions")
     })
 
     it("lists live sessions first, marked live, then the recorded ones", async () => {
-        const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, list))
+        const fetchMock = serve()
         const {wrapper} = await mountContainer(fetchMock)
 
         expect(fetchMock.mock.calls[0][0]).toBe("/api/containers/alpha-1/sessions")
@@ -103,22 +119,58 @@ describe("ContainerView", () => {
     })
 
     it("opens a row's transcript through the session route", async () => {
-        const {wrapper} = await mountContainer(vi.fn().mockResolvedValue(jsonResponse(200, list)))
+        const {wrapper} = await mountContainer(serve())
         expect(wrapper.findAll("li.session a")[0].attributes("href")).toBe(
             "/repos/alpha/sessions/claude/s-live",
         )
     })
 
     it("says so when the container has no sessions", async () => {
-        const empty = {...list, sessions: []}
-        const {wrapper} = await mountContainer(vi.fn().mockResolvedValue(jsonResponse(200, empty)))
+        const empty = {...liveList, sessions: []}
+        const {wrapper} = await mountContainer(serve(empty, empty))
         expect(wrapper.text()).toContain("No sessions")
     })
 
     it("says the container was not found on a 404", async () => {
-        const {wrapper} = await mountContainer(
-            vi.fn().mockResolvedValue(jsonResponse(404, {detail: "x"})),
-        )
+        const {wrapper} = await mountContainer(serve({detail: "x"}, {detail: "x"}, 404))
         expect(wrapper.text()).toContain("Container not found")
+    })
+
+    it("shows the live sessions while the history is still loading", async () => {
+        let answerHistory: (r: Response) => void = () => {}
+        const fetchMock = vi.fn<typeof fetch>((url) => String(url).endsWith("/sessions/history")
+            ? new Promise<Response>(resolve => { answerHistory = resolve })
+            : Promise.resolve(jsonResponse(200, liveList)))
+        const {wrapper} = await mountContainer(fetchMock)
+
+        expect(wrapper.findAll("li.session")).toHaveLength(1)
+        expect(wrapper.text()).toContain("Fix the login bug")
+        expect(wrapper.text()).toContain("Loading earlier sessions…")
+        expect(wrapper.text()).not.toContain("No sessions")
+
+        answerHistory(jsonResponse(200, historyList))
+        await flushPromises()
+        expect(wrapper.findAll("li.session")).toHaveLength(2)
+        expect(wrapper.text()).not.toContain("Loading earlier sessions…")
+    })
+
+    it("keeps the live sessions when the history fails", async () => {
+        const fetchMock = vi.fn<typeof fetch>((url) => Promise.resolve(String(url).endsWith("/sessions/history")
+            ? jsonResponse(500, {detail: "x"})
+            : jsonResponse(200, liveList)))
+        const {wrapper} = await mountContainer(fetchMock)
+
+        expect(wrapper.findAll("li.session")).toHaveLength(1)
+        expect(wrapper.text()).toContain("Earlier sessions could not be loaded.")
+    })
+
+    it("shows a session in both answers once, as live", async () => {
+        const both = {...historyList, sessions: [{...liveList.sessions[0], live: false}, ...historyList.sessions]}
+        const {wrapper} = await mountContainer(serve(liveList, both))
+
+        const rows = wrapper.findAll("li.session")
+        expect(rows).toHaveLength(2)
+        expect(rows[0].find(".live").exists()).toBe(true)
+        expect(rows[1].text()).toContain("Untitled session")
     })
 })

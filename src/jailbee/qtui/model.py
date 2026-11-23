@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from rich.text import Text
 
+from jailbee import agent_status
 from jailbee.agent_activity import describe
 from jailbee.background import DEAD_SUFFIX, job_label_or_empty
 from jailbee.dashboard import format as dashboard_format
@@ -167,7 +168,10 @@ def card_content(
         fields=card_fields,
         job_error=c.job_error,
         agent_tooltip=tooltip or None,
-        agent_waiting=any(s.state == "waiting" for s in c.agent_status),
+        # An API error needs a person as much as a question does.
+        agent_waiting=any(
+            agent_status.urgency(s.state) <= agent_status.urgency("waiting") for s in c.agent_status
+        ),
         memory_limit=c.memory_limit,
         memory_override=c.memory_override,
         doing=_strip_markup(dashboard_format.doing_cell(c)) or None,
@@ -313,7 +317,7 @@ _FIELD_MEANINGS = {
     "issues": "Pending issue outbox actions",
     "outbox": "Staged PR and issue outbox manifests waiting to be published (✉N)",
     "group": "Credential group",
-    "agent_compact": ("Agent status: ◆ waiting, ● busy, ◐ shell, ○ idle; ? unknown"),
+    "agent_compact": ("Agent status: ✖ API error, ◆ waiting, ● busy, ◐ shell, ○ idle; ? unknown"),
     "agent": "Full agent state and duration",
 }
 

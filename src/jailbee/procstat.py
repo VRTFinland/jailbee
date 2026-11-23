@@ -79,6 +79,38 @@ def count_children(
     return sum(1 for sample in procs.values() if sample.ppid == parent and sample.comm in comms)
 
 
+def descendants(procs: Mapping[int, ProcSample], parent: int) -> list[int]:
+    """Every pid under host pid `parent`, at any depth; `parent` itself is never included."""
+    children: dict[int, list[int]] = {}
+    for pid, sample in procs.items():
+        children.setdefault(sample.ppid, []).append(pid)
+    found: list[int] = []
+    seen = {parent}
+    stack = [parent]
+    while stack:
+        for child in children.get(stack.pop(), ()):
+            if child not in seen:
+                seen.add(child)
+                found.append(child)
+                stack.append(child)
+    return found
+
+
+def read_cmdline(pid: int, *, proc_root: Path = PROC_ROOT) -> tuple[str, ...] | None:
+    """A process's argv, or None if it is gone or unreadable.
+
+    A kernel thread or a zombie has an empty argv. Undecodable bytes are
+    replaced: argv is shown and classified, never executed.
+    """
+    try:
+        raw = (proc_root / str(pid) / "cmdline").read_bytes()
+    except OSError:
+        return None
+    if not raw:
+        return ()
+    return tuple(raw.rstrip(b"\0").decode("utf-8", errors="replace").split("\0"))
+
+
 def read_process(
     pid: int, *, proc_root: Path = PROC_ROOT, strict: bool = False
 ) -> ProcSample | None:
@@ -413,6 +445,14 @@ class ActivitySampler:
     def nspid(self, pid: int) -> int | None:
         """`read_nspid` against this sampler's own /proc root."""
         return read_nspid(pid, proc_root=self._proc_root)
+
+    def cmdline(self, pid: int) -> tuple[str, ...] | None:
+        """`read_cmdline` against this sampler's own /proc root.
+
+        Read on demand, not per sample: only the processes under a session
+        Claude reports as ``shell`` are ever asked about.
+        """
+        return read_cmdline(pid, proc_root=self._proc_root)
 
     def _read(self, item: SampleInput) -> _Reading:
         processes: dict[int, ProcSample] = {}

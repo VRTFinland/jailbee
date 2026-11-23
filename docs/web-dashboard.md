@@ -15,13 +15,34 @@ Session titles use the first typed prompt, skipping agent wrapper records,
 local command output, caveats and injected context. A session with only slash
 commands uses its first command (for example, `/model`) instead of raw markup.
 Once a command fallback is available, title lookup stops after 32 candidate user
-records rather than parsing a command-only transcript to the end. Task
+records rather than parsing a command-only transcript to the end, and it never
+reads past a transcript's first 4 MiB. Task
 notifications, `!`-mode input/output and prompt hooks are agent metadata too.
 A leading wrapper followed by typed text is split in the transcript: the wrapper
 is shown as metadata, and only the typed text is shown as the prompt. Unknown
 XML-like tags, such as `<example>`, remain part of the typed prompt. The summary
 Claude Code writes after `/compact` and its "[Request interrupted by user]"
 notices are metadata too: they are shown as context and never become a title.
+
+Session lists stay fast on large transcripts. A list row reads only the
+opening of a transcript (title and start time) and its last 256 KiB (last
+activity and recent model), so a model used only in the middle of a long
+session is not named in the list; the transcript itself shows every entry's
+model. What was read is kept in the state database (`session_info_cache`),
+keyed by the file's path, size and modification time, so a restarted or
+upgraded server rereads only transcripts that changed. The server also reads
+every visible repository's sessions in the background when it starts; no
+request waits for it.
+
+A container page shows its live sessions as soon as they are known (they come
+from the state service's snapshot) and appends the sessions it ran before when
+that separate request answers. A repository lists only the sessions started in
+its own containers' checkout (each container's repository directory, or below
+it): repositories that share one agent config home by mistake do not list each
+other's sessions. Claude names a session's project directory after its working
+directory with every character but letters and digits turned into `-`, so
+`/home/dev/app-api` cannot be told from a directory `api` below
+`/home/dev/app`; a repository `app` then lists `app-api`'s sessions too.
 
 Rows on the front page are styled like the terminal dashboard's: a container
 booting, in autostart, running another background job or in a failed job gets a
@@ -156,6 +177,12 @@ restart catch-up without lost or duplicated replies. Reuse
 watch. Copy the fixture home to a temporary directory before appending; with
 the server stopped the helper only writes, leaving reconnect to catch up.
 
+`tests_e2e/test_display.py` covers visible themes and font sizes after a reload,
+e-ink page turns, held transcript messages and manual snapshot refresh. It also
+walks the front page, repository, container, transcript and settings at phone
+width in both display profiles, and checks the linked PWA manifest and decoded
+icons through the real server.
+
 `test_front_page_live.py` covers snapshot additions, changes and removals without
 navigation; phase labels and computed monochrome edges in the e-ink theme;
 the connecting notice during downtime; and current state after a real server
@@ -167,7 +194,9 @@ then render a subsequent state push before the reload count is checked.
 reloads automatically at most once within a minute, then shows
 "This page is out of date; reload" with a manual Reload button. If session
 storage is unavailable, it offers manual reload immediately rather than risk
-a loop.
+a loop. A connection that authenticates ends that window, so a later
+server upgrade reloads again; the banner sits above a view's sticky header,
+never over it.
 
 `tests_e2e/test_corpus.py` walks the recorded corpus
 (`tests/fixtures/transcripts/claude-corpus`, re-recorded with `make web-corpus`)
@@ -304,8 +333,14 @@ is taken from the browser's `Origin` header. Registration therefore has to
 happen through the same HTTPS address you will log in at. `fido2 setup` runs a
 temporary server that serves a registration page instead of the dashboard
 (stop the dashboard first if it uses that port; `--listen` and `--port`
-apply). Register the key in the browser, then press Ctrl-C and start the
-dashboard again. The setup PIN keeps only the five-a-minute limit, without
+apply). During setup, open the dashboard's root URL in a fresh browser tab.
+An already-open tab switches to the setup view by itself, even with a saved
+session or a bookmarked login route: a signed-in page when its live connection
+reconnects (the setup server closes it with code 4003), a login page within a
+few seconds while visible or when brought back to the foreground. Enter the printed
+**setup PIN** on that page and register the key, then press Ctrl-C and start the
+dashboard again. A server that is not accepting logins is reported as unavailable,
+not as a wrong PIN. The setup PIN keeps only the five-a-minute limit, without
 the backoff: setup mode runs only while you register a key, so do not leave it
 running.
 
@@ -377,16 +412,20 @@ the new offset.
 
 The display profile **E-ink** is for e-paper readers and slow-refresh
 screens: no animation, content moves in page turns instead of scrolling, live
-transcript entries are held back until you turn the page rather than moving
-the text you are reading, and the front page refreshes slowly.
+transcript entries are held behind the **N new messages** button until you tap
+it, without moving the text you are reading. The front page refreshes every
+minute, or immediately when you tap **Refresh**. The front-page header wraps
+its controls on narrow screens, including with the e-ink profile's side margins.
 
 Session transcripts keep their title, agent/model context and connection notice
 in a compact header while you read. **Latest answer** appears only when the
 newest assistant reply is outside the readable area (below the header and above
 the bottom controls, including the device's safe-area inset). A truncated title
 keeps its full text as a tooltip and accessible heading name. Page turns use the
-actual readable height even on short landscape screens; a partial keyboard or
-system scroll stays on its current page so Next never skips unread text.
+actual readable height even on short landscape screens, with a stable page grid
+as the header becomes sticky and a last page bounded by the browser's scroll
+limit; a partial keyboard or system scroll stays on its current page so Next
+never skips unread text, and Next stays enabled until the real bottom.
 Jumping aligns the newest reply's start just below the measured header, even
 for a short final reply, with trailing room to scroll it there. Jumping or
 scrolling to the reply hides the button; moving

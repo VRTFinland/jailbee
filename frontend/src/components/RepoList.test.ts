@@ -112,6 +112,16 @@ describe("RepoList", () => {
         expect(rows[1].find(".agent").exists()).toBe(false)
     })
 
+    it("words an API-error agent state and styles it like a waiting one", async () => {
+        const wrapper = mountList()
+        const stuck = {...view.repos[0].containers[0], agent: "error:quota"}
+        await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [stuck]}]}})
+        const row = wrapper.get("li.row")
+        expect(row.attributes("data-agent")).toBe("error")
+        expect(row.get(".agent").text()).toBe("API error: quota")
+        expect(row.get(".agent").classes()).toContain("agent-error")
+    })
+
     it("marks each row with its row phase and state for the theme to style", () => {
         const rows = mountList().findAll("li.row")
         expect(rows[0].attributes("data-phase")).toBe("booting")

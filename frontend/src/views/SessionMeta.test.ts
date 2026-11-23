@@ -5,6 +5,7 @@ import {setToken} from "../api"
 import type {RenderedEntry, TranscriptView} from "../protocol"
 import {createAppRouter} from "../router"
 import {updateSettings} from "../settings"
+import {withDashboardMode} from "../test-http"
 import SessionView from "./SessionView.vue"
 
 enableAutoUnmount(afterEach)
@@ -58,9 +59,9 @@ const collapsed = view([
     typed,
 ])
 
-async function mountSession(fetchMock: ReturnType<typeof vi.fn>) {
+async function mountSession(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>) {
     setToken("tok")
-    vi.stubGlobal("fetch", fetchMock)
+    vi.stubGlobal("fetch", withDashboardMode(fetchMock))
     const router = createAppRouter(createMemoryHistory())
     await router.push("/repos/alpha/sessions/claude/s-1")
     await router.isReady()
@@ -78,7 +79,7 @@ afterEach(() => {
 describe("SessionView agent context", () => {
     it("asks for the stored mode and renders collapsed records as closed one-line labels", async () => {
         updateSettings({agentContext: "collapsed"})
-        const fetchMock = vi.fn().mockResolvedValue(json(collapsed))
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(json(collapsed))
         const wrapper = await mountSession(fetchMock)
 
         expect(fetchMock.mock.calls[0][0]).toBe("/api/repos/alpha/sessions/claude/s-1?meta=collapsed")
@@ -119,7 +120,7 @@ describe("SessionView agent context", () => {
 
     it("shows a label line for a slash command in hidden mode and nothing else", async () => {
         const hidden = view([meta("m3", "Command: /model opus", {expandable: false}), typed])
-        const wrapper = await mountSession(vi.fn().mockResolvedValue(json(hidden)))
+        const wrapper = await mountSession(vi.fn<typeof fetch>().mockResolvedValue(json(hidden)))
         expect(wrapper.find("details").exists()).toBe(false)
         expect(wrapper.get(".meta-label").text()).toBe("Command: /model opus")
         expect(wrapper.findAll(".entry.user")).toHaveLength(2)
@@ -134,7 +135,7 @@ describe("SessionView agent context", () => {
             }),
             typed,
         ])
-        const wrapper = await mountSession(vi.fn().mockResolvedValue(json(shown)))
+        const wrapper = await mountSession(vi.fn<typeof fetch>().mockResolvedValue(json(shown)))
         expect(wrapper.find("details").exists()).toBe(false)
         expect(wrapper.get(".meta-label").text()).toBe("Task notification")
         expect(wrapper.text()).toContain("<task-notification>")
@@ -142,7 +143,7 @@ describe("SessionView agent context", () => {
     })
 
     it("re-reads the transcript when the setting changes", async () => {
-        const fetchMock = vi.fn().mockResolvedValueOnce(json(view([typed]))).mockResolvedValue(json(collapsed))
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(json(view([typed]))).mockResolvedValue(json(collapsed))
         const wrapper = await mountSession(fetchMock)
         expect(wrapper.find("details").exists()).toBe(false)
 

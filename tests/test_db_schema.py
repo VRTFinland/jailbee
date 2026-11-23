@@ -1427,4 +1427,35 @@ def test_v26_database_migrates_to_v27_with_the_fido2_key_table() -> None:
         session.commit()
         assert session.exec(select(WebFido2Key)).one().rp_id == "jb.example.com"
         meta = session.get(SchemaMeta, 1)
-        assert meta is not None and meta.version == 27
+        assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
+
+
+def test_v27_database_migrates_to_v28_with_the_session_info_cache_table() -> None:
+    from jailbee.db import _ensure_schema
+    from jailbee.db.models import SchemaMeta, SessionInfoRow
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(SchemaMeta(id=1, version=27))
+        session.commit()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE session_info_cache")
+
+    _ensure_schema(engine)
+
+    with Session(engine) as session:
+        session.add(
+            SessionInfoRow(
+                path="/h/projects/-p/s.jsonl",
+                size=10,
+                mtime_ns=2**62,
+                format=1,
+                session_id="s",
+                title="t",
+            )
+        )
+        session.commit()
+        assert session.exec(select(SessionInfoRow)).one().mtime_ns == 2**62
+        meta = session.get(SchemaMeta, 1)
+        assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION

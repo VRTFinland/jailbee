@@ -11,6 +11,7 @@ import {
     type TranscriptView,
 } from "../protocol"
 import {createAppRouter} from "../router"
+import {withDashboardMode} from "../test-http"
 import {reloadSettings, updateSettings} from "../settings"
 import type {SocketHandlers} from "../socket"
 import SessionView from "./SessionView.vue"
@@ -37,15 +38,13 @@ const answer: RenderedEntry = {
 
 async function mountLive(path: string) {
     setToken("tok")
-    vi.stubGlobal(
-        "fetch",
-        vi.fn().mockImplementation(async () =>
-            new Response(JSON.stringify(transcript), {
-                status: 200,
-                headers: {"Content-Type": "application/json"},
-            }),
-        ),
+    const fetchMock = vi.fn().mockImplementation(async () =>
+        new Response(JSON.stringify(transcript), {
+            status: 200,
+            headers: {"Content-Type": "application/json"},
+        }),
     )
+    vi.stubGlobal("fetch", withDashboardMode(fetchMock))
     let handlers: SocketHandlers | null = null
     const sent: ClientMessage[] = []
     const dashboard = new Dashboard((h): SocketLike => {
@@ -74,6 +73,7 @@ async function mountLive(path: string) {
         sent,
         append,
         hello,
+        fetchMock,
         connection: (connected: boolean) => handlers!.onConnectionChange?.(connected),
     }
 }
@@ -116,7 +116,7 @@ describe("SessionView live follow", () => {
     })
 
     it("resubscribes with the new mode when Agent context changes", async () => {
-        const {sent} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        const {sent, fetchMock} = await mountLive("/repos/alpha/sessions/claude/s-1")
         sent.length = 0
         updateSettings({agentContext: "collapsed"})
         try {
@@ -125,7 +125,7 @@ describe("SessionView live follow", () => {
                 {type: "unsubscribe", v: PROTOCOL_VERSION, key: sessionKey},
                 {type: "subscribe", v: PROTOCOL_VERSION, key: sessionKey, offset: 420, meta: "collapsed"},
             ])
-            const urls = (fetch as unknown as {mock: {calls: unknown[][]}}).mock.calls.map((c) => c[0])
+            const urls = fetchMock.mock.calls.map((c) => c[0])
             expect(urls.at(-1)).toBe("/api/repos/alpha/sessions/claude/s-1?meta=collapsed")
         } finally {
             updateSettings({agentContext: "hidden"})

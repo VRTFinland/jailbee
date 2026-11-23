@@ -271,13 +271,25 @@ class OutboxApp(App[int], inherit_bindings=False):
         if isinstance(outcome, Message):
             getattr(self, outcome.handler_name)(outcome)
         elif not outcome and event.key in ("ctrl+c", "ctrl+q"):
-            self.exit(0)
+            self._quit()
+
+    def _quit(self) -> None:
+        """Exit, unless a mutation is on its way: leaving would stop it half-way, unreported.
+
+        The delete, publish or clear finishes (its children cannot be cancelled
+        part-way), its outcome shows on the status line, and the next quit exits.
+        """
+        # Only while its busy line shows: a flag left behind must never trap the user.
+        if self.controller.mutation_running and self.controller.state.busy is not None:
+            self.controller.refuse_while_busy()
+            return
+        self.exit(0)
 
     def on_outbox_box_intent(self, message: OutboxBox.Intent) -> None:
         message.stop()
         controller = self.controller
         if message.name == "cancel" and controller.state.question is None:
-            self.exit(0)
+            self._quit()
             return
         if (
             message.name == "scope"
@@ -289,7 +301,7 @@ class OutboxApp(App[int], inherit_bindings=False):
 
     def on_overlay_box_cancelled(self, message: OverlayBox.Cancelled) -> None:
         message.stop()
-        self.exit(0)
+        self._quit()
 
     def on_overlay_box_changed(self, message: OverlayBox.Changed) -> None:
         message.stop()  # full screen: nothing to lay out again

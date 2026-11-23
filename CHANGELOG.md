@@ -10,6 +10,16 @@ before editing `## Unreleased`.
 
 ### Added
 
+- A child agent stuck on an API error (quota or usage limit exhausted, rate limit,
+  authentication, provider overloaded) is no longer shown as `alive:busy`: once the
+  agent gives up retrying, `jailbee inbox status` shows `alive:error:<kind>` with the
+  error's detail and reset time in `--json`, the broker sends the orchestrator one
+  `blocked` message per episode ("agent stopped on an API error (quota): …; resets at
+  …") instead of a later, misleading `idle`, and the error no longer counts as agent
+  activity. `jb ls` and the terminal, web and Qt dashboards show the state in the
+  AGENT column (a red `✖` and the kind, ranked before waiting), with the kind, age,
+  reset time and a short detail in place of the raw `API Error:` text
+  ([#147](https://github.com/VRTFinland/jailbee/issues/147)).
 - Container agents can stage closing or reopening pull requests with `jailbee pr state
   [N ...] closed|open`: a `state` action in the PR manifest, one manifest per PR, published
   with `jb outbox apply` or the dashboard. The plan warns `closes PR #N` / `reopens PR #N`,
@@ -202,7 +212,11 @@ before editing `## Unreleased`.
   skipping routine success acks. Quiet-child notifications default to 120
   minutes and digests are off; both intervals can be tuned or disabled.
   Filtered items stay unread and ackable, and child followers stay unfiltered
-  ([#141](https://github.com/VRTFinland/jailbee/issues/141)).
+  ([#141](https://github.com/VRTFinland/jailbee/issues/141)). The follower is
+  not a background job in the AGENT column: an idle session whose only
+  background processes are inbox waiters reads idle, not `shell`, in every
+  dashboard and `jailbee ls`
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
 - Web dashboard: `jailbee remote web serve` (alias `jailbee serve`) runs a
   host-side, read-only browser dashboard, included in every install
   ([#109](https://github.com/VRTFinland/jailbee/issues/109)). The front page
@@ -221,7 +235,12 @@ before editing `## Unreleased`.
   document. Session titles use the first typed prompt rather than agent wrapper
   markup, falling back to the first slash command in command-only sessions;
   injected context, including a compaction summary or an interruption notice,
-  is shown as context rather than as a prompt;
+  is shown as context rather than as a prompt.
+  Session lists read only each transcript's opening and end, keep what they
+  read in the state database across server restarts (filled in the background
+  at start-up), list only the sessions started in the repository's own
+  containers, and a container page shows its live sessions before its history
+  has loaded ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Session
   titles and connection notices stay visible while reading; **Latest answer**
   appears only when the newest reply is out of view and aligns its start below
   the header, including short final replies. E-ink page turns never skip unread
@@ -233,16 +252,23 @@ before editing `## Unreleased`.
   interruption notices always show as a label line
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Themes
   (light, dark, e-ink) and an e-ink display profile with page turns are chosen
-  per device, and the app installs as a PWA with no CDN assets. The login page
-  asks for no device name: sessions are named from the browser's User-Agent
-  ("Firefox on Linux") and renamed in Settings
+  per device. Page numbering stays stable as the transcript header becomes
+  sticky, and page turns stop at the reachable last page rather than stalling
+  on browser scroll limits; the front-page controls wrap at phone width even
+  with e-ink margins. The app installs as a PWA with no CDN assets. The login
+  page asks for no device name: sessions are named from the browser's
+  User-Agent ("Firefox on Linux") and renamed in Settings
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Login uses a
   one-time PIN, TOTP or a FIDO2 key (registered in a CLI-started setup mode),
   with 30-day device sessions managed only through `jailbee remote web auth`;
   `jailbee remote web open` logs the local browser in through a one-time link,
-  including when the login page is already open. Login errors show the server's
-  remaining rate-limit wait (minutes for long waits). A protocol mismatch reloads
-  the tab at most once per minute, then offers manual reload if assets stay stale
+  including when the login page is already open. Open dashboard and login tabs
+  switch automatically to the key-registration view during FIDO2 setup, including
+  bookmarked routes and saved sessions. Login errors distinguish an unavailable
+  endpoint from refused credentials and show the server's remaining rate-limit wait
+  (minutes for long waits). A protocol mismatch reloads the tab at most once per
+  minute until it connects again, then offers manual reload (above the session
+  title bar) if assets stay stale
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)).
   `remote.web` sets the listen address, port, auth and excluded repositories,
   and `enable|disable|status` manage a systemd user unit that restarts the
@@ -363,7 +389,9 @@ before editing `## Unreleased`.
   longer freezes the interface. Revision checks, drops and post-mutation
   reloads run in the background with a busy line; navigation stays usable,
   concurrent mutations are refused, and a closed dashboard box reports the
-  result as a notice. PR-creation preflight listing is asynchronous too
+  result as a notice. PR-creation preflight listing is asynchronous too; a
+  `pr push` whose box was closed meanwhile is not handed the terminal (a notice
+  says so), and quitting `jailbee outbox` waits for a running mutation
   ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 - **A dashboard left running across a JailBee upgrade stops instead of
   fighting the newer state service.** The "newer wins" rule only applied when

@@ -5,6 +5,7 @@ export const PROTOCOL_VERSION = 5
 
 export const CLOSE_UNAUTHORIZED = 4001
 export const CLOSE_PROTOCOL_MISMATCH = 4002
+export const CLOSE_SETUP_MODE = 4003
 export const CLOSE_BAD_MESSAGE = 4400
 
 export interface ClientAuth {

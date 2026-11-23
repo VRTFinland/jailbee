@@ -39,6 +39,18 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     return (await res.json()) as T
 }
 
+/** Ask the live server, not a cached dashboard response from before setup. */
+export async function fetchServerMode(): Promise<"setup" | "dashboard" | null> {
+    try {
+        const res = await fetch("/api/mode", {cache: "no-store"})
+        if (!res.ok) return null
+        const data = (await res.json()) as {mode?: string}
+        return data.mode === "setup" || data.mode === "dashboard" ? data.mode : null
+    } catch {
+        return null
+    }
+}
+
 export type LoginResult = {ok: true} | {ok: false; error: string}
 
 export type AuthMethod = "pin" | "totp" | "fido2"
@@ -88,7 +100,11 @@ async function login(
             : "a while"
         return {ok: false, error: `Too many attempts. Wait ${wait} and try again.`}
     }
-    return {ok: false, error: refused}
+    if (res.status === 401) return {ok: false, error: refused}
+    return {
+        ok: false,
+        error: "The server is not accepting logins right now (is it in setup mode?)",
+    }
 }
 
 /** Exchange the one-time token of `jailbee remote web open` for a session. */
