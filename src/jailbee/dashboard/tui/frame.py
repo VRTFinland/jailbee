@@ -153,7 +153,7 @@ def help_lines() -> list[str]:
         "BASE ↗: remote-tracking base; MODE: cln clone, mnt mount.",
         "WT / SYNC diff / L DIFF: ✓ clean; L DIFF vs host HEAD.",
         "SYNC: target marker, ↑ahead, ↓behind, diff; MERGE uses the same target.",
-        "  pr = PR head; pr? = PR head not fetched, host branch;" ,
+        "  pr = PR head; pr? = PR head not fetched, host branch;",
         "  ⑂ = parent container (↑ not imported); ⑂? = parent not seen running, host branch.",
         "DOING ×N: process count; JOB auto:stage: autostart stage.",  # noqa: RUF001 - intentional multiplication sign
         "Menus: the key in brackets picks that entry, like Enter on it.",
