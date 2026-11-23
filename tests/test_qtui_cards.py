@@ -91,6 +91,26 @@ def test_compact_card_hides_git_row_when_clean(qtbot):
     assert "MERGE" not in texts  # no per-field git labels in compact
 
 
+@pytest.mark.parametrize("style", ["compact", "grid"])
+def test_default_sync_clean_card_uses_clean_ui_path(qtbot, style):
+    from jailbee.git_status import GitStatus
+    from jailbee.host_target import SyncTarget
+
+    groups = _groups()
+    groups[0].containers = groups[0].containers[:1]
+    groups[0].containers[0].git_status = GitStatus(
+        "clean", "clean", "0", "ok", behind_count="0", target_diff="clean",
+        sync_target=SyncTarget("pr", "PR #7", "p", "pr"),
+    )
+    view = CardView()
+    qtbot.addWidget(view)
+    view.set_card_style(style)
+    view.set_groups(groups, now=datetime.now().astimezone())
+    texts = _label_texts(_cards(view)[0])
+    assert not any("↑" in text or "↓" in text for text in texts)
+    assert ("clean" in texts) == (style == "grid")
+
+
 def test_compact_card_shows_git_segments_when_dirty(qtbot):
     from jailbee.qtui.cards import _Card
     from jailbee.qtui.model import CardContent, CardField

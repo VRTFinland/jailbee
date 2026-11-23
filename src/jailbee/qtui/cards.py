@@ -37,6 +37,7 @@ from jailbee.qtui.model import (
     git_segments,
     group_header,
     group_header_warning,
+    is_git_clean,
     job_badge,
 )
 
@@ -229,7 +230,7 @@ class _Card(QFrame):
                 line.setToolTip(f"<p>{escaped}</p>")
             self._outer.addWidget(line)
         segs = git_segments(self._content)
-        if segs:
+        if segs and not is_git_clean(self._content):
             git = QHBoxLayout()
             for text, kind in segs:
                 s = QLabel(text)

@@ -199,6 +199,19 @@ def test_default_sync_field_keeps_comparison_in_compact_cards():
     assert m.is_git_clean(card)
 
 
+def test_standalone_card_sync_ignores_other_containers_count_widths():
+    from dataclasses import replace
+
+    from jailbee.git_status import GitStatus
+
+    c = _container()
+    c.git_status = GitStatus("clean", "clean", "1", "ok", behind_count="2", target_diff="+3 -4")
+    wide = replace(c, name="wide", git_status=replace(c.git_status, ahead_count="123456", behind_count="123456"))
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    fields = dcolumns.visible_fields(now, [c, wide])
+    assert m.card_field(m.card_content(c, fields, now), "sync") == "    ↑1 ↓2 +3 -4"
+
+
 def test_git_segments_empty_when_clean():
     from jailbee.qtui.model import git_segments, is_git_clean
 

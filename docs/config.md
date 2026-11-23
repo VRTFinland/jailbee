@@ -2921,9 +2921,11 @@ Allowed names (also the `jailbee ls --fields` vocabulary): `name`, `full_name`, 
 `loose_until`, `mounts`, `ip`, `memory_limit`, `mem`, `mem_used`, `mem_pct`, `wt`, `sync`, `target_diff`,
 `ahead_count`, `behind_count`, `conflict`, `host_ahead`, `host_behind`, `local_diff`, `local_count`, `git_status`, `pr`,
 `issues`, `outbox`, `group`, `autostart_profile`, `role`, `children`, `inbox`, `cpu`, `doing`, `agent`, `agent_compact`. `claude` and `claude_group`
-are accepted aliases for `group`. `sync` is also available as an explicit
-JSON field selection and returns the same structured object as `git_status`; it
-is an alias, not an addition to the default JSON output.
+are accepted aliases for `group`. `sync` is table-only; use `git_status` for
+structured JSON. Saved dashboard column sets replace `target_diff` with `sync`
+and remove the separate `ahead_count`/`behind_count` columns once on upgrade.
+Explicit YAML field lists keep their legacy fields, and dashboard settings can
+turn them back on afterwards. User-selected `host_ahead`/`host_behind` stay unchanged.
 
 `ahead_diff` was retired: configured uses produce a migration warning and
 explicit `--fields ahead_diff` is an error. Use `target_diff` for the direct
@@ -2934,9 +2936,8 @@ committed-tree comparison with the host target branch, or `jailbee git diff
 `sync_target`, `host_ahead_count` and `host_behind_count` (see
 [sync target](git-bridge.md#sync-target)); a count is a digit string, `"?"`
 (unknown) or `"missing"` (the container lacks the target commit: behind by at
-least one, count unknown, shown as `↓•`); explicit `--format json --fields
-sync` returns this same structured object as `git_status`, without changing
-default JSON. Its submodule line fields are `target_ins`/`target_del` instead
+least one, count unknown, shown as `↓•`). Default JSON is unchanged.
+Its submodule line fields are `target_ins`/`target_del` instead
 of `ahead_ins`/`ahead_del`.
 `host_ahead` (**H↑**) and `host_behind` (**H↓**) are opt-in columns that always count commits against the host branch, whatever the row's sync target is: on a PR-bound row they differ from ↑/↓, on a row syncing with the host branch they equal them. They are off by default in the dashboard and `jailbee ls`; enable them in the dashboard's column settings, or with `ls.fields` / `--fields`.
 `local_diff` and `local_count` remain opt-in comparisons with the host's

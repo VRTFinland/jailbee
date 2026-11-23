@@ -920,8 +920,10 @@ unreadable in a container, comparison fields show `?`. Local always wins when
 both refs exist; tracking-ahead/diverged notices describe the last-fetched
 ref, not the remote server. Equal trees can have nonzero ↑/↓ commit counts. The opt-in legacy `target_diff`,
 `ahead_count` and `behind_count` fields are independently sortable and do not
-show target markers. Explicit `--format json --fields sync` returns the same
-structured value as `git_status`; default JSON is unchanged.
+show target markers. `sync` is table-only; use `git_status` for structured
+JSON. Default JSON is unchanged. Saved dashboard column sets migrate once to
+SYNC, removing separate ahead/behind counts; explicit YAML field lists and
+user-added host counts stay unchanged. Settings can restore legacy columns.
 JSON `git_status` names the direct line diff `target_diff` and includes
 `behind_count`, `base_source`, `base_sha`, `tracking_relation`,
 `upstream_ref`, `sync_target` (`kind`, `label`, `sha`, `ref`, `fallback`) and

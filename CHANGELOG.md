@@ -278,9 +278,12 @@ before editing `## Unreleased`.
   stands in. The target marker appears once per row, not in separate fields or
   MERGE. The legacy `target_diff`, `ahead_count` and `behind_count` columns
   remain explicitly selectable without markers; SYNC sorts by diff size and
-  those count fields sort by their own values. Default JSON is unchanged;
-  explicit `--format json --fields sync` returns the same structured object as
-  `git_status`. The details card shows a git row per target (host branch, PR
+  those count fields sort by their own values. Saved dashboard sets migrate
+  once to SYNC, leaving explicit YAML lists and host-count columns unchanged.
+  SYNC is table-only (`git_status` supplies structured JSON), remains among the
+  last columns dropped in narrow listings, and truncates long diffs on phones.
+  Clean Qt cards omit the git row; standalone cards pad only their own counts.
+  Default JSON is unchanged. The details card shows a git row per target (host branch, PR
   head) with its ↑/↓ and short sha, the sync target marked, and JSON
   `git_status` gains `sync_target`, `host_ahead_count` and `host_behind_count`.
   The card also gains a `⑂ <parent>` row with the parent's sha and pass age.

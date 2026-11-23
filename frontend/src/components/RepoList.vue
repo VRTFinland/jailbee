@@ -218,9 +218,11 @@ a.name:hover {
 .cell {
     display: flex;
     gap: var(--space-1);
+    max-width: 100%;
 }
 dt {
     color: var(--muted);
+    flex-shrink: 0;
 }
 dd {
     margin: 0;
@@ -232,5 +234,7 @@ dd pre {
     margin: 0;
     font: inherit;
     white-space: pre;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 </style>
