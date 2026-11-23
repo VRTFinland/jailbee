@@ -41,7 +41,7 @@ from jailbee.transcripts.base import (
     register,
 )
 
-from jailbee.transcripts.markup import command_name, is_meta_wrapper
+from jailbee.transcripts.markup import command_name, prompt_text
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -340,10 +340,10 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
             for user in users:
                 if not first_command:
                     first_command = command_name(user.text)
-                if not is_meta_wrapper(user.text):
-                    title = one_line(user.text[: TITLE_CHARS * 8], TITLE_CHARS)
-                    if title:
-                        break
+                typed = prompt_text(user.text)
+                if typed:
+                    title = one_line(typed[: TITLE_CHARS * 8], TITLE_CHARS)
+                    break
     models: dict[str, None] = {}
     for match in _MODEL.finditer(data):
         if match.group(1).decode("utf-8", "replace") in models:
