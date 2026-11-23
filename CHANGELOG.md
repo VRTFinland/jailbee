@@ -221,7 +221,12 @@ before editing `## Unreleased`.
   document. Session titles use the first typed prompt rather than agent wrapper
   markup, falling back to the first slash command in command-only sessions;
   injected context, including a compaction summary or an interruption notice,
-  is shown as context rather than as a prompt;
+  is shown as context rather than as a prompt.
+  Session lists read only each transcript's opening and end, keep what they
+  read in the state database across server restarts (filled in the background
+  at start-up), list only the sessions started in the repository's own
+  containers, and a container page shows its live sessions before its history
+  has loaded ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Session
   titles and connection notices stay visible while reading; **Latest answer**
   appears only when the newest reply is out of view and aligns its start below
   the header, including short final replies. E-ink page turns never skip unread
