@@ -508,3 +508,62 @@ def test_read_container_cache_is_none_when_unreadable(tmp_path):
     assert procstat.read_container_cache(500, "gie-demo", proc_root=proc, cgroup_root=cg) is None
     _write_memory_stat(cg, "/lxc.payload.gie-demo", "anon 100\n")
     assert procstat.read_container_cache(500, "gie-demo", proc_root=proc, cgroup_root=cg) is None
+
+
+# --- what runs under an agent: the inbox-follower check ---------------------
+
+
+def test_descendants_walks_every_depth_and_skips_other_branches():
+    procs = {
+        10: procstat.ProcSample("claude", 0, 1, ppid=1),
+        11: procstat.ProcSample("bash", 0, 1, ppid=10),
+        12: procstat.ProcSample("python", 0, 1, ppid=11),
+        13: procstat.ProcSample("sleep", 0, 1, ppid=12),
+        20: procstat.ProcSample("other", 0, 1, ppid=1),
+        21: procstat.ProcSample("child", 0, 1, ppid=20),
+    }
+
+    assert sorted(procstat.descendants(procs, 10)) == [11, 12, 13]
+    assert procstat.descendants(procs, 13) == []
+
+
+def test_descendants_survives_a_ppid_cycle():
+    procs = {
+        1: procstat.ProcSample("a", 0, 1, ppid=2),
+        2: procstat.ProcSample("b", 0, 1, ppid=1),
+    }
+
+    assert procstat.descendants(procs, 1) == [2]
+
+
+def test_read_cmdline_splits_on_nul(tmp_path):
+    d = tmp_path / "proc" / "42"
+    d.mkdir(parents=True)
+    (d / "cmdline").write_bytes(b"jailbee\0inbox\0follow\0")
+
+    assert procstat.read_cmdline(42, proc_root=tmp_path / "proc") == ("jailbee", "inbox", "follow")
+
+
+def test_read_cmdline_of_a_kernel_thread_is_empty_and_a_gone_pid_none(tmp_path):
+    d = tmp_path / "proc" / "42"
+    d.mkdir(parents=True)
+    (d / "cmdline").write_bytes(b"")
+
+    assert procstat.read_cmdline(42, proc_root=tmp_path / "proc") == ()
+    assert procstat.read_cmdline(43, proc_root=tmp_path / "proc") is None
+
+
+def test_read_cmdline_survives_non_utf8_bytes(tmp_path):
+    d = tmp_path / "proc" / "42"
+    d.mkdir(parents=True)
+    (d / "cmdline").write_bytes(b"x\xff\0y\0")
+
+    assert procstat.read_cmdline(42, proc_root=tmp_path / "proc") == ("x�", "y")
+
+
+def test_sampler_cmdline_reads_its_own_proc_root(tmp_path):
+    d = tmp_path / "proc" / "42"
+    d.mkdir(parents=True)
+    (d / "cmdline").write_bytes(b"sleep\x00600\x00")
+
+    assert make_sampler(tmp_path, [0.0]).cmdline(42) == ("sleep", "600")

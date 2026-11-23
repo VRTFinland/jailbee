@@ -454,3 +454,49 @@ def test_a_summary_names_the_live_sessions_of_the_agent():
     out = _match(sessions, {"a": {1: 500, 2: 501, 3: 502}}, {1: 10, 2: 11, 3: 12})
 
     assert sorted(out["a"][0].session_ids) == ["s-1", "s-2"]  # a session without an id is skipped
+
+
+# --- settling a session's shown state (the inbox follower is not a job) ------
+
+
+def test_settle_decides_the_shown_state_with_container_and_host_pid():
+    asked: list[tuple[str, int, str]] = []
+
+    def settle(container: str, host_pid: int, state: str) -> str:
+        asked.append((container, host_pid, state))
+        return "idle"
+
+    out = agent_status.match_sessions(
+        {"a": [_s(10, 500, "shell"), _s(11, 501, "busy")]},
+        {"a": {1010: 500, 1011: 501}},
+        {1010: 10, 1011: 11}.get,
+        settle=settle,
+    )
+
+    (summary,) = out["a"]
+    assert summary.state == "idle"
+    assert [m.state for m in summary.sessions] == ["idle", "idle"]
+    assert sorted(asked) == [("a", 1010, "shell"), ("a", 1011, "busy")]
+
+
+def test_a_settled_session_is_ranked_by_its_shown_state():
+    """An idle-by-follower session must not outrank a real `shell` one."""
+
+    def settle(container: str, host_pid: int, state: str) -> str:
+        return "idle" if host_pid == 1010 else state
+
+    (summary,) = agent_status.match_sessions(
+        {"a": [_s(10, 500, "shell"), _s(11, 501, "shell", since=T0 - timedelta(hours=1))]},
+        {"a": {1010: 500, 1011: 501}},
+        {1010: 10, 1011: 11}.get,
+        settle=settle,
+    )["a"]
+
+    assert summary.state == "shell"
+    assert [m.state for m in summary.sessions] == ["shell", "idle"]
+
+
+def test_without_settle_claudes_state_stands():
+    (summary,) = _match({"a": [_s(10, 500, "shell")]}, {"a": {1010: 500}}, {1010: 10})["a"]
+
+    assert summary.state == "shell"
