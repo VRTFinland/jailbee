@@ -20,8 +20,8 @@ notifications, `!`-mode input/output and prompt hooks are agent metadata too.
 A leading wrapper followed by typed text is split in the transcript: the wrapper
 is shown as metadata, and only the typed text is shown as the prompt. Unknown
 XML-like tags, such as `<example>`, remain part of the typed prompt. The summary
-Claude Code writes after `/compact` is metadata too: it is shown as context and
-never becomes a title.
+Claude Code writes after `/compact` and its "[Request interrupted by user]"
+notices are metadata too: they are shown as context and never become a title.
 
 Rows on the front page are styled like the terminal dashboard's: a container
 booting, in autostart, running another background job or in a failed job gets a

@@ -327,8 +327,11 @@ def test_a_compaction_summary_is_meta_and_cannot_supply_the_session_title(
         / "fixtures/transcripts/claude-corpus/projects/-work-toy"
         / "00000001-0000-4000-8000-000000000001.jsonl"
     )
-    summary = json.loads(corpus.read_text().splitlines()[20])
-    assert summary["isCompactSummary"] is True
+    (summary,) = [
+        record
+        for line in corpus.read_text().splitlines()
+        if (record := json.loads(line)).get("isCompactSummary") is True
+    ]
     path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
     path.write_text(
         json.dumps(summary) + "\n" + json.dumps(_record(2, "user", "Fix the title")) + "\n"
@@ -341,6 +344,29 @@ def test_a_compaction_summary_is_meta_and_cannot_supply_the_session_title(
     assert summarised["meta"] is True
     assert '<pre class="meta">' in summarised["html"]
     assert "This session is being continued" in summarised["html"]
+    assert typed["meta"] is False
+
+
+@pytest.mark.parametrize(
+    "notice", ["[Request interrupted by user]", "[Request interrupted by user for tool use]"]
+)
+def test_an_interruption_notice_is_meta_and_cannot_supply_the_session_title(
+    client: TestClient, home: Path, notice: str
+) -> None:
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    path.write_text(
+        json.dumps(_record(1, "user", [{"type": "text", "text": notice}]))
+        + "\n"
+        + json.dumps(_record(2, "user", "Fix the title"))
+        + "\n"
+    )
+
+    body = client.get(URL).json()
+
+    assert body["title"] == "Fix the title"
+    interrupted, typed = body["entries"]
+    assert interrupted["meta"] is True
+    assert "Request interrupted by user" in interrupted["html"]
     assert typed["meta"] is False
 
 
