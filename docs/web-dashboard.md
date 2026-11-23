@@ -211,6 +211,14 @@ screens: no animation, content moves in page turns instead of scrolling, live
 transcript entries are held back until you turn the page rather than moving
 the text you are reading, and the front page refreshes slowly.
 
+Session transcripts keep their title, agent/model context and connection notice
+in a compact header while you read. **Latest answer** appears only when the
+newest assistant reply is outside the readable area (below the header and above
+the bottom controls). Jumping to it or scrolling to it hides the button; moving
+away or receiving a newer reply out of view shows it again. In the e-ink display
+profile the same rule applies, but the button turns to the page containing the
+reply, and live entries remain behind the new-messages notice until tapped.
+
 ## Install as an app
 
 The dashboard serves a web app manifest, so a browser can install it

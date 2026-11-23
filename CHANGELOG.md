@@ -207,7 +207,9 @@ before editing `## Unreleased`.
   session opens as a typeset transcript with rendered Markdown, folded tool
   calls, optional thinking, subagent transcripts and live updates. Session
   titles use the first typed prompt rather than agent wrapper markup, falling
-  back to the first slash command in command-only sessions
+  back to the first slash command in command-only sessions; titles and
+  connection notices stay visible while reading; **Latest answer** appears
+  only when the newest reply is out of view, also with e-ink page turns
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Themes
   (light, dark, e-ink) and an e-ink display profile with page turns are chosen
   per device, and the app installs as a PWA with no CDN assets. Login uses a
