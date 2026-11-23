@@ -148,9 +148,7 @@ def test_server_restart_reconnects_to_current_state_without_reloading(
     assert navigations == [], "an ordinary reconnect must not reload the page"
 
 
-def test_protocol_mismatch_on_reconnect_reloads_the_page(
-    server: E2EServer, page: Page
-) -> None:
+def test_protocol_mismatch_on_reconnect_reloads_the_page(server: E2EServer, page: Page) -> None:
     sockets: list[WebSocketRoute] = []
     closes: list[int | None] = []
     navigations: list[str] = []
@@ -182,9 +180,9 @@ def test_protocol_mismatch_on_reconnect_reloads_the_page(
     expect(page.get_by_role("link", name="before", exact=True)).to_be_visible()
     page.on(
         "request",
-        lambda request: navigations.append(request.url)
-        if request.resource_type == "document"
-        else None,
+        lambda request: (
+            navigations.append(request.url) if request.resource_type == "document" else None
+        ),
     )
 
     with page.expect_navigation(wait_until="load", timeout=10_000):
