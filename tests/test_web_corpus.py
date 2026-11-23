@@ -21,6 +21,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from jailbee.transcripts.claude import ClaudeSource
+from scripts import web_corpus
 from scripts.web_corpus import (
     CORPUS_DIR,
     MANIFEST,
@@ -512,6 +513,30 @@ def test_short_secrets_match_whole_words_only(tmp_path: Path) -> None:
     assert find_leaks("user ann", identity)
 
 
+def _snapshot(path: str) -> str:
+    """A shell snapshot shaped like Claude Code's own (shell-snapshots/*.sh)."""
+    return (
+        "# Snapshot file\n"
+        "# Unset all aliases to avoid conflicts with functions\n"
+        "unalias -a 2>/dev/null || true\n"
+        "# Shopt\n"
+        "shopt -u array_expand_once\n"
+        "shopt -s sourcepath\n"
+        "# Functions\n"
+        "eval $'__toy_fn () \\n{ \\n    true\\n}'\n"
+        "# Shell Options\n"
+        "set -o braceexpand\n"
+        "set -o hashall\n"
+        "shopt -s expand_aliases\n"
+        "# Aliases\n"
+        "# Check for rg availability\n"
+        "if ! command -v rg >/dev/null 2>&1; then\n"
+        "  alias rg='claude --ripgrep'\n"
+        "fi\n"
+        f"export PATH={path}\n"
+    )
+
+
 @pytest.mark.parametrize("fail", [False, True])
 @pytest.mark.parametrize("custom_config", [False, True])
 @pytest.mark.parametrize("broken_config", [False, True])
@@ -573,7 +598,8 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
                             {
                                 "type": "text",
                                 "text": "Will Read Zed Committer Read Edit Bash"
-                                " author@example.invalid committer@example.invalid",
+                                " author@example.invalid committer@example.invalid"
+                                f" saved {kwargs['env']['HOME']}/notes.txt",
                             },
                             {"type": "tool_use", "name": "Bash", "input": {"command": "true"}},
                         ],
@@ -591,8 +617,13 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
         if broken_config:
             config_file.write_text("{invalid")
         (snapshots / f"{sid}.sh").write_text("private shell")
-        (snapshots / "snapshot-own.sh").write_text(f"export HOME={kwargs['env']['HOME']}\n")
-        (snapshots / "snapshot-foreign.sh").write_text("export HOME=/home/someone-else\n")
+        # Real snapshots carry no session id and no HOME line; the recorder's
+        # own PATH (its no-op hook directory) names the recording root.
+        path = kwargs["env"]["PATH"]
+        (snapshots / "snapshot-bash-1779955948101-z5d7y6.sh").write_text(_snapshot(path))
+        (snapshots / "snapshot-bash-1779955948102-f0r31g.sh").write_text(
+            _snapshot("/home/someone-else/.local/bin:/usr/bin:/bin")
+        )
         process = mocker.Mock()
         process.communicate.return_value = (None, "failed" if fail else "")
         process.returncode = 1 if fail else 0
@@ -626,6 +657,7 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
         text = "".join(p.read_text() for p in out.rglob("*.jsonl"))
         assert all(secret not in text for secret in ("Will Read", "Zed Committer"))
         assert "Read Edit Bash" in text
+        assert "saved /home/user/notes.txt" in text
     if not broken_config:
         expected_config = {"projects": {"/existing": {"keep": True}}, "other": 1}
         if custom_config:
@@ -634,7 +666,10 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
         assert replace.call_count == int(custom_config)
         if custom_config:
             assert replace.call_args.args[1] == config_file
-    assert sorted(p.name for p in snapshots.iterdir()) == ["old.sh", "snapshot-foreign.sh"]
+    assert sorted(p.name for p in snapshots.iterdir()) == [
+        "old.sh",
+        "snapshot-bash-1779955948102-f0r31g.sh",
+    ]
     assert not list((config / "projects").iterdir())
 
 
@@ -719,3 +754,80 @@ def test_claude_scratch_paths_name_the_toy_project_only(tmp_path: Path) -> None:
         "00000001-0000-4000-8000-000000000001/tasks/b1.output",
     }
     assert find_leaks("/var/cache/claude-53023", identity) != []
+
+
+# --- Leak gate strictness (review of ticket 21) -------------------------------
+
+
+def test_host_identity_reports_each_name_part_alone(
+    tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    mocker.patch("scripts.web_corpus.socket.gethostname", return_value="placeholder-host")
+    mocker.patch("scripts.web_corpus.getpass.getuser", return_value="placeholder-user")
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        ident = "Wilhelmina Placeholder <author@example.invalid> 123 +0000"
+        return subprocess.CompletedProcess(command, 0, ident, "")
+
+    mocker.patch("scripts.web_corpus.subprocess.run", side_effect=run)
+    identity = web_corpus._host_identity(tmp_path / "toy", tmp_path / "tmp", tmp_path / "home")
+
+    assert find_leaks("Hi Wilhelmina", identity)
+    assert find_leaks("Placeholder wrote this", identity)
+    assert find_leaks("PLACEHOLDER", identity)
+
+
+def test_host_identity_skips_tool_words_in_a_name(
+    tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    mocker.patch("scripts.web_corpus.socket.gethostname", return_value="placeholder-host")
+    mocker.patch("scripts.web_corpus.getpass.getuser", return_value="placeholder-user")
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        ident = "Agent Write <author@example.invalid> 123 +0000"
+        return subprocess.CompletedProcess(command, 0, ident, "")
+
+    mocker.patch("scripts.web_corpus.subprocess.run", side_effect=run)
+    identity = web_corpus._host_identity(tmp_path / "toy", tmp_path / "tmp", tmp_path / "home")
+
+    assert find_leaks("Use the Agent tool, then Write the file", identity) == []
+    assert find_leaks("Agent Write", identity)
+
+
+@pytest.mark.parametrize(
+    "leak",
+    ["claude-someuser-1000", "someuser_backup", "prefix-c-proj-dev-3", "c-proj-dev-3_x"],
+)
+def test_find_leaks_reports_long_secrets_inside_other_words(leak: str) -> None:
+    identity = Identity(
+        toy_dir="/recording/toy",
+        home="/recording/home",
+        secrets=("someuser", "c-proj-dev-3"),
+    )
+    assert find_leaks(f"session in {leak} here", identity)
+
+
+@pytest.mark.parametrize(
+    ("text", "normalised"),
+    [
+        ("dev@box7:~$ ls", "dev@REDACTED:~$ ls"),
+        ("ssh box7", "ssh REDACTED"),
+        ("box7:/srv$ ls", "REDACTED:/srv$ ls"),
+        ("mail to ann@box7", "mail to REDACTED@REDACTED"),
+    ],
+)
+def test_short_host_names_are_caught_in_prompt_and_ssh_forms(
+    tmp_path: Path, text: str, normalised: str
+) -> None:
+    identity = Identity(toy_dir="/recording/toy", home="/recording/home", secrets=("box7", "ann"))
+    assert find_leaks(text, identity)
+    raw = tmp_path / "raw"
+    _write(raw / f"{RAW_SID}.jsonl", [_user(identity, text)])
+    out = tmp_path / "out"
+    normalise_home(raw, out, identity, [RAW_SID])
+    [kept] = _read(next((out / "projects" / TOY_PROJECT).glob("*.jsonl")))
+    assert kept["message"] == {"role": "user", "content": normalised}
