@@ -1,0 +1,74 @@
+{
+  "claude_code_version": "2.1.330",
+  "model": "haiku",
+  "toy_files": {
+    "calc.py": "\"\"\"A toy calculator. TOY-MARKER-CALC\"\"\"\n\n\ndef add(a, b):\n    return a - b\n\n\ndef mul(a, b):\n    return a * b\n",
+    "test_calc.py": "from calc import add, mul\n\nassert add(2, 3) == 5, add(2, 3)\nassert mul(2, 3) == 6\nprint(\"TOY-TESTS-PASSED\")\n",
+    "README.md": "# Toy calculator\n\nA two-function module used to record Claude Code transcripts.\n\nThe marker word is TOY-MARKER-README.\n"
+  },
+  "sessions": [
+    {
+      "session_id": "00000001-0000-4000-8000-000000000001",
+      "name": "tools",
+      "prompts": [
+        "CORPUS-TOOLS: Read calc.py, fix the bug in add() with the Edit tool, then run `python3 test_calc.py` with the Bash tool and report the result in one sentence.",
+        "CORPUS-FAILING: Use the Read tool on missing.txt (it does not exist), then run `python3 no_such_script.py` with the Bash tool. Report both errors in one sentence each; do not try to fix them.",
+        "CORPUS-LONG-OUTPUT: Run exactly this command with the Bash tool, unchanged and not piped through tail, head or any other filter, so that I see all of its output: `python3 -c \"for i in range(1, 401): print(f'line {i}: TOY-LONG-OUTPUT')\"`. Then tell me its last line.",
+        "/compact",
+        "CORPUS-AFTER-COMPACT: In one sentence, what does add() in calc.py return now?"
+      ],
+      "shapes": [
+        "tool_call",
+        "tool_error",
+        "long_output",
+        "thinking",
+        "compaction"
+      ]
+    },
+    {
+      "session_id": "00000002-0000-4000-8000-000000000002",
+      "name": "markdown",
+      "prompts": [
+        "CORPUS-MARKDOWN: Without using any tools, write a short Markdown note about calc.py with a level-2 heading, a bulleted list, a numbered list, a two-column table and a fenced python code block."
+      ],
+      "shapes": [
+        "markdown",
+        "thinking"
+      ]
+    },
+    {
+      "session_id": "00000003-0000-4000-8000-000000000003",
+      "name": "subagent",
+      "prompts": [
+        "CORPUS-SUBAGENT: Use the Agent tool with subagent_type general-purpose and model haiku to read README.md and report the marker word it contains. Then tell me the marker in one sentence."
+      ],
+      "shapes": [
+        "tool_call",
+        "subagent"
+      ]
+    },
+    {
+      "session_id": "00000004-0000-4000-8000-000000000004",
+      "name": "thinking",
+      "prompts": [
+        "CORPUS-THINKING: Think it through step by step first, then answer in one line: is 221 a prime number?"
+      ],
+      "shapes": [
+        "thinking"
+      ]
+    },
+    {
+      "session_id": "00000005-0000-4000-8000-000000000005",
+      "name": "interrupted",
+      "prompts": [
+        "CORPUS-INTERRUPT: Run exactly this with the Bash tool in the foreground and wait for it: python3 -c 'import time; time.sleep(120)'"
+      ],
+      "shapes": [
+        "tool_call",
+        "tool_error",
+        "interrupted"
+      ]
+    }
+  ],
+  "missing_shapes": []
+}

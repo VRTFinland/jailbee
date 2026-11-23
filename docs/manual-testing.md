@@ -5986,6 +5986,27 @@ directories keep the login database away from the real one; the server
 only binds `127.0.0.1`. Use another `--port` (and `--url` for the check) if
 8919 is taken.
 
+## Re-recording the web transcript corpus
+
+`tests/fixtures/transcripts/claude-corpus/` is a fixture Claude home of
+genuine Claude Code sessions, recorded on a toy repository. Re-record it when
+Claude Code's transcript format changes. Needs a logged-in `claude`, and
+spends a little quota (haiku):
+
+```bash
+make web-corpus
+git diff --stat tests/fixtures/transcripts/claude-corpus/
+```
+
+Expected: one `  <session>: <prompt>` line per scripted step, then
+`corpus written to ...`. A `shapes not captured:` line names the shapes
+(tool call, failing tool call, long output, Markdown, subagent, thinking,
+interruption, compaction) this Claude version did not produce; `corpus.json`
+lists them under `missing_shapes`. The recorder deletes its raw sessions from
+the Claude home and refuses to write anything `find_leaks` flags. Still read
+the diff before committing: it is public. `uv run pytest
+tests/test_web_corpus.py` then checks the committed files again.
+
 ## Orchestration broker (real host)
 
 Use a disposable rig, a registered repo, a running container `<c>`, and an

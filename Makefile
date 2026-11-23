@@ -1,5 +1,5 @@
 .PHONY: install install-gui install-web install-skill check build publish-testpypi \
-        changelog release site site-check docs-serve web web-test shots
+        changelog release site site-check docs-serve web web-test web-corpus shots
 
 # Use bash for recipe lines — the `release` target relies on bash features
 # (`set -euo pipefail`, `read -r -p`) that /bin/sh does not provide.
@@ -75,6 +75,17 @@ web:
 # The browser app's unit tests (Vitest).
 web-test:
 	cd frontend && npm ci && npm test
+
+# Re-record the web dashboard's corpus of genuine Claude Code sessions
+# (tests/fixtures/transcripts/claude-corpus/). Needs a logged-in `claude`;
+# it runs headless Claude (haiku) on a throwaway toy repository through the
+# scripted prompts in scripts/web_corpus.py, so it spends a little quota. The
+# output is normalised (stable ids, /work/toy paths, no host, account or
+# credential) and refused if `find_leaks` still finds anything; the raw
+# sessions are deleted from the Claude home afterwards. Review the diff before
+# committing it, and re-record when Claude Code's transcript format changes.
+web-corpus:
+	uv run python -m scripts.web_corpus
 
 # Run the full CI gate locally: lint, format check, type check, tests.
 check:
