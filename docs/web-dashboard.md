@@ -119,6 +119,12 @@ restart catch-up without lost or duplicated replies. Reuse
 watch. Copy the fixture home to a temporary directory before appending; with
 the server stopped the helper only writes, leaving reconnect to catch up.
 
+`tests_e2e/test_display.py` covers visible themes and font sizes after a reload,
+e-ink page turns, held transcript messages and manual snapshot refresh. It also
+walks the front page, repository, container, transcript and settings at phone
+width in both display profiles, and checks the linked PWA manifest and decoded
+icons through the real server.
+
 ## Run it
 
 ```bash
@@ -290,8 +296,10 @@ blocks are shown. These choices are stored in the browser on that device only.
 
 The display profile **E-ink** is for e-paper readers and slow-refresh
 screens: no animation, content moves in page turns instead of scrolling, live
-transcript entries are held back until you turn the page rather than moving
-the text you are reading, and the front page refreshes slowly.
+transcript entries are held behind the **N new messages** button until you tap
+it, without moving the text you are reading. The front page refreshes every
+minute, or immediately when you tap **Refresh**. The front-page header wraps
+its controls on narrow screens, including with the e-ink profile's side margins.
 
 Session transcripts keep their title, agent/model context and connection notice
 in a compact header while you read. **Latest answer** appears only when the

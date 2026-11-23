@@ -84,7 +84,11 @@ const latestVisible = ref(false)
 function measureVisibility() {
     const headerRect = header.value?.getBoundingClientRect()
     headerHeight.value = headerRect ? headerRect.bottom - headerRect.top : 0
-    headerInset.value = Math.max(0, headerRect?.bottom ?? 0)
+    // Keep the page grid stable when the header becomes sticky after the first turn.
+    const topPadding = header.value?.parentElement
+        ? parseFloat(getComputedStyle(header.value.parentElement).paddingTop) || 0
+        : 0
+    headerInset.value = headerHeight.value + topPadding
     const el = latestAnswer.value === null ? null : document.getElementById(entryDomId(latestAnswer.value))
     if (el === null) {
         latestVisible.value = false

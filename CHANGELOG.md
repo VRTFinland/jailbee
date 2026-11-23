@@ -223,7 +223,10 @@ before editing `## Unreleased`.
   appears only when the newest reply is out of view, also with e-ink page turns
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Themes
   (light, dark, e-ink) and an e-ink display profile with page turns are chosen
-  per device, and the app installs as a PWA with no CDN assets. Login uses a
+  per device. Page numbering stays stable as the transcript header becomes
+  sticky; the front-page controls wrap at phone width even with e-ink margins
+  ([#152](https://github.com/VRTFinland/jailbee/issues/152)). The app installs
+  as a PWA with no CDN assets. Login uses a
   one-time PIN, TOTP or a FIDO2 key (registered in a CLI-started setup mode),
   with 30-day device sessions managed only through `jailbee remote web auth`;
   `jailbee remote web open` logs the local browser in through a one-time link,
