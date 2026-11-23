@@ -25,8 +25,9 @@ def is_meta_wrapper(text: str) -> bool:
 
 def command_name(text: str) -> str:
     """The slash command in an agent wrapper, never its arguments or local output."""
-    match = _META_WRAPPER.match(text)
-    if match is None or match.group(1) != "command-name":
-        return ""
-    name = match.group(2).strip()
-    return name if name.startswith("/") and not any(c in name for c in "<>\n\r") else ""
+    while match := _META_WRAPPER.match(text):
+        if match.group(1) == "command-name":
+            name = match.group(2).strip()
+            return name if name.startswith("/") and not any(c in name for c in "<>\n\r") else ""
+        text = text[match.end() :]
+    return ""

@@ -18,6 +18,11 @@ def test_typed_text_is_not_classified_as_agent_metadata(text: str) -> None:
     assert not is_meta_wrapper(text)
 
 
+def test_command_title_can_follow_other_agent_wrappers() -> None:
+    text = "<local-command-caveat>Local only</local-command-caveat> <command-name>/model</command-name>"
+    assert command_name(text) == "/model"
+
+
 @pytest.mark.parametrize(
     "text",
     [
