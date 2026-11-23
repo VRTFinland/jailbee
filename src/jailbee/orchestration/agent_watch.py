@@ -6,8 +6,8 @@ import json
 import shlex
 import signal
 from dataclasses import dataclass, replace
-from enum import Enum
 from datetime import datetime
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from jailbee.incus import IncusError
@@ -283,7 +283,7 @@ def advance_idle(
 
 
 def advance_api_error(
-    entry: WatchEntry, error: AgentApiError | None | Unknown
+    entry: WatchEntry, error: AgentApiError | Unknown | None
 ) -> tuple[WatchEntry, str | None]:
     """One `blocked` report per API-error episode; progress (None) closes the episode.
 
@@ -310,7 +310,7 @@ def advance_api_error(
 
 def api_error(
     cfg: Config, name: str, status: AgentStatus, *, now: datetime
-) -> AgentApiError | None | Unknown:
+) -> AgentApiError | Unknown | None:
     """The API error this prompted agent's latest turn ended in, read now.
 
     None means the transcript was read and shows no open error; `UNKNOWN`
