@@ -9,9 +9,11 @@ account, and no credential.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import socket
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -253,6 +255,29 @@ def test_nested_objects_keep_only_known_fields(
     assert "PRIVATE" not in json.dumps(kept)
 
 
+def test_common_tool_inputs_survive_and_are_still_scanned(tmp_path: Path) -> None:
+    identity = _identity(tmp_path)
+    tools = [
+        {"type": "tool_use", "name": "Grep", "input": {"pattern": "TOY-MARKER"}},
+        {"type": "tool_use", "name": "Write", "input": {"content": "toy text"}},
+        {"type": "tool_use", "name": "WebFetch", "input": {"url": "https://example.invalid/"}},
+        {"type": "tool_use", "name": "TodoWrite", "input": {"todos": [
+            {"content": "Read toy", "status": "pending", "activeForm": "Reading toy", "account": "PRIVATE"}
+        ]}},
+    ]
+    _, project = _normalise(tmp_path, [_user(identity, "", message={"content": tools})])
+    [kept] = _read(next(project.glob("*.jsonl")))
+    expected = json.loads(json.dumps(tools))
+    del expected[3]["input"]["todos"][0]["account"]
+    assert kept["message"] == {"content": expected}
+    assert scan_corpus(project) == {}
+    for tool in tools[:3]:
+        key = next(iter(tool["input"]))
+        tool["input"][key] = "/srv/private"
+    _, project = _normalise(tmp_path, [_user(identity, "", message={"content": tools})])
+    assert scan_corpus(project)
+
+
 def test_names_and_credentials_are_redacted(tmp_path: Path) -> None:
     identity = _identity(tmp_path)
     text = (
@@ -370,7 +395,6 @@ def test_find_leaks_reports_each_identifying_string(tmp_path: Path, leak: str) -
         "/opt/company/config",
         "/workspace/private/repo",
         "/var/lib/private/state",
-        "/usr/bin/python3",
         "/data/private",
         "/home/user2/file",
         "/work/toy-other/file",
@@ -393,6 +417,26 @@ def test_scan_corpus_rejects_non_placeholder_identity(tmp_path: Path, leak: str)
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        "/dev/null /usr/bin/env /usr/bin/python3",
+        "https://example.invalid/docs/page https://example.invalid/",
+        '"cwd": "/work/toy/nested"',
+        "Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+    ],
+)
+def test_find_leaks_allows_system_paths_urls_and_toy_subdirectories(text: str) -> None:
+    assert find_leaks(text) == []
+
+
+@pytest.mark.parametrize("path", [r"C:\Users\x\secret", r"\\server\share\x", "~alice/private"])
+def test_scan_corpus_rejects_windows_and_named_home_paths(tmp_path: Path, path: str) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(json.dumps({"message": {"content": path}}) + "\n")
+    assert list(scan_corpus(tmp_path)) == [transcript.name]
+
+
+@pytest.mark.parametrize(
     "credential",
     [
         "sk-0123456789abcdefghijklmnopqrstuvwxyz",
@@ -409,14 +453,33 @@ def test_credentials_are_redacted_and_detected(tmp_path: Path, credential: str) 
     assert record["message"] == {"role": "user", "content": "token: REDACTED"}
 
 
-def test_short_secrets_match_whole_words_only(tmp_path: Path) -> None:
-    identity = Identity(toy_dir="/recording/toy", home="/recording/home", secrets=("ann",))
+def test_identity_redaction_preserves_commands_and_tool_names(tmp_path: Path) -> None:
+    identity = Identity(
+        toy_dir="/recording/toy", home="/home/dev", secrets=("dev", "Will Read")
+    )
     raw = tmp_path / "raw"
-    _write(raw / f"{RAW_SID}.jsonl", [_user(identity, "ann ANN annual banner")])
+    text = "npm run dev; /dev/null; dev-ork; Read Edit Bash; Will Read; user dev; /home/dev/x"
+    _write(raw / f"{RAW_SID}.jsonl", [_user(identity, text)])
     out = tmp_path / "out"
     normalise_home(raw, out, identity, [RAW_SID])
     [kept] = _read(next((out / "projects" / TOY_PROJECT).glob("*.jsonl")))
-    assert kept["message"] == {"role": "user", "content": "REDACTED REDACTED annual banner"}
+    assert kept["message"] == {
+        "role": "user",
+        "content": "npm run dev; /dev/null; dev-ork; Read Edit Bash; REDACTED; user REDACTED; /home/user/x",
+    }
+    assert find_leaks("npm run dev; dev-ork; Read Edit Bash", identity) == []
+    assert find_leaks("user dev", identity)
+    assert find_leaks("Will Read", identity)
+
+
+def test_short_secrets_match_whole_words_only(tmp_path: Path) -> None:
+    identity = Identity(toy_dir="/recording/toy", home="/recording/home", secrets=("ann",))
+    raw = tmp_path / "raw"
+    _write(raw / f"{RAW_SID}.jsonl", [_user(identity, "user ann user ANN annual banner")])
+    out = tmp_path / "out"
+    normalise_home(raw, out, identity, [RAW_SID])
+    [kept] = _read(next((out / "projects" / TOY_PROJECT).glob("*.jsonl")))
+    assert kept["message"] == {"role": "user", "content": "user REDACTED user REDACTED annual banner"}
     assert find_leaks("annual banner", identity) == []
     assert find_leaks("user ann", identity)
 
@@ -431,6 +494,7 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
     fail: bool,
     custom_config: bool,
     broken_config: bool,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
@@ -452,7 +516,7 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
         if command == ["claude", "--version"]:
             return subprocess.CompletedProcess(command, 0, "2.1.0 Claude Code", "")
         identity = {
-            "GIT_AUTHOR_IDENT": "Qix Author <author@example.invalid> 123 +0000",
+            "GIT_AUTHOR_IDENT": "Will Read <author@example.invalid> 123 +0000",
             "GIT_COMMITTER_IDENT": "Zed Committer <committer@example.invalid> 123 +0000",
         }
         output = identity.get(command[-1], "") if command[:2] == ["git", "var"] else ""
@@ -480,7 +544,7 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
                         "content": [
                             {
                                 "type": "text",
-                                "text": "Qix Author Zed Committer Qix Zed"
+                                "text": "Will Read Zed Committer Read Edit Bash"
                                 " author@example.invalid committer@example.invalid",
                             },
                             {"type": "tool_use", "name": "Bash", "input": {"command": "true"}},
@@ -496,6 +560,8 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
             data["projects"][str(toy)] = {"private": "recording"}
             config_file.write_text(json.dumps(data))
         (snapshots / f"{sid}.sh").write_text("private shell")
+        (snapshots / "snapshot-own.sh").write_text(f"export HOME={kwargs['env']['HOME']}\n")
+        (snapshots / "snapshot-foreign.sh").write_text("export HOME=/home/someone-else\n")
         process = mocker.Mock()
         process.communicate.return_value = (None, "failed" if fail else "")
         process.returncode = 1 if fail else 0
@@ -503,10 +569,23 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
         return process
 
     mocker.patch("scripts.web_corpus.subprocess.Popen", side_effect=start)
+    original_temp = tempfile.NamedTemporaryFile
+    replace = mocker.spy(os, "replace")
+
+    def create_temp(*args: Any, **kwargs: Any) -> Any:
+        # A different session updates unrelated config after cleanup's first read.
+        data = json.loads(config_file.read_text())
+        data["concurrent"] = 2
+        config_file.write_text(json.dumps(data))
+        return original_temp(*args, **kwargs)
+
+    mocker.patch("scripts.web_corpus.tempfile.NamedTemporaryFile", side_effect=create_temp)
     out = tmp_path / "corpus"
     if broken_config:
-        with pytest.raises(SystemExit, match="cleanup"):
+        with pytest.raises(SystemExit, match="claude exited" if fail else "cleanup"):
             record(out)
+        if fail:
+            assert "cleanup failed" in capsys.readouterr().err
         assert config_file.read_text() == "{invalid"
     elif fail:
         with pytest.raises(SystemExit, match="claude exited"):
@@ -514,13 +593,17 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
     else:
         record(out)
         text = "".join(p.read_text() for p in out.rglob("*.jsonl"))
-        assert all(secret not in text for secret in ("Qix", "Author", "Zed", "Committer"))
+        assert all(secret not in text for secret in ("Will Read", "Zed Committer"))
+        assert "Read Edit Bash" in text
     if not broken_config:
         assert json.loads(config_file.read_text()) == {
             "projects": {"/existing": {"keep": True}},
             "other": 1,
+            "concurrent": 2,
         }
-    assert sorted(p.name for p in snapshots.iterdir()) == ["old.sh"]
+        assert replace.call_count == 1
+        assert replace.call_args.args[1] == config_file
+    assert sorted(p.name for p in snapshots.iterdir()) == ["old.sh", "snapshot-foreign.sh"]
     assert not list((config / "projects").iterdir())
 
 

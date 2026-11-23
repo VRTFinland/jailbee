@@ -124,9 +124,14 @@ NESTED_FIELDS: dict[str, frozenset[str]] = {
         }
     ),
     "caller": frozenset({"type"}),
+    "todos": frozenset({"content", "status", "activeForm"}),
     "input": frozenset(
         {
             "command",
+            "pattern",
+            "content",
+            "url",
+            "todos",
             "description",
             "file_path",
             "old_string",
@@ -223,7 +228,14 @@ def _replace_path(text: str, raw: str, new: str) -> str:
 
 def _secret_pattern(secret: str) -> str:
     pattern = re.escape(secret)
-    return r"(?<!\w)" + pattern + r"(?!\w)" if len(secret) < 5 else pattern
+    if len(secret) < 5:
+        # Short names are also ordinary commands and path components (e.g. dev).
+        return (
+            r"(?:\A" + pattern + r"\Z|(?:(?<=\buser )|(?<=\busername: )"
+            r"|(?<=\buser=)|(?<=/home/)|(?<=/Users/)|(?<=~))"
+            + pattern + r"(?![\w.-]))"
+        )
+    return r"(?<![\w-])" + pattern + r"(?![\w-])"
 
 
 class _Ids:
@@ -369,7 +381,14 @@ def normalise_home(raw_project: Path, out_home: Path, identity: Identity, order:
 
 _NORMAL_UUID = re.compile(r"([0-9a-f]{8})-0000-4000-8000-0000\1")
 _HOST_PATH = re.compile(r"(?<![\w.-])/[\w.~/-]+")
-_ALLOWED_PATHS = (TOY_DIR, HOME_DIR, "/work/claude-tmp")
+_ALLOWED_PATHS = (
+    TOY_DIR, HOME_DIR, "/work/claude-tmp", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+)
+_HTTP_URL = re.compile(r"https?://[^\s<>\"']+")
+_NON_POSIX_PATH = re.compile(r"(?i)(?:\b[A-Z]:\\+[^\s\"'<>]+|\\\\[^\s\"'<>]+|(?<!\w)~[\w.-]+/[^\s\"'<>]*)")
+_CLAUDE_TRAILER = re.compile(
+    r"(?im)^Co-Authored-By: Claude(?: [A-Za-z0-9._-]+)* <noreply@anthropic\.com>\s*$"
+)
 # Slash commands and XML closing tags are not filesystem paths.
 _SLASH_COMMANDS = frozenset({"/compact"})
 _IDENTITY_FIELD = re.compile(
@@ -409,14 +428,17 @@ def find_leaks(text: str, identity: Identity | None = None) -> list[str]:
     leaks += _CREDENTIAL.findall(text)
     leaks += [m for m in _EMAIL.findall(text) if m not in EMAILS_ALLOWED]
     leaks += [m for m in _UUID.findall(text) if not _NORMAL_UUID.fullmatch(m)]
-    for match in _HOST_PATH.finditer(text):
+    # URLs are not host filesystem paths; still scan them for credentials above.
+    paths_text = _HTTP_URL.sub("URL", text)
+    leaks += [m[0] for m in _NON_POSIX_PATH.finditer(paths_text)]
+    for match in _HOST_PATH.finditer(paths_text):
         path = match[0].rstrip(".")
-        if path in _SLASH_COMMANDS:
+        if path in _SLASH_COMMANDS or path == "/dev/null":
             continue
         if (
             match.start() > 0
-            and text[match.start() - 1] == "<"
-            and text[match.end() :].startswith(">")
+            and paths_text[match.start() - 1] == "<"
+            and paths_text[match.end() :].startswith(">")
             and "/" not in path[1:]
         ):
             continue
@@ -425,11 +447,16 @@ def find_leaks(text: str, identity: Identity | None = None) -> list[str]:
             leaks.append(path)
     # Decode JSON strings too: free-text tool output can contain escaped fields.
     decoded = text.replace('\\"', '"').replace(r"\n", "\n")
-    leaks += [
-        m[1].strip()
-        for m in _IDENTITY_FIELD.finditer(decoded)
-        if m[1].strip() not in _IDENTITY_PLACEHOLDERS
-    ]
+    decoded = _CLAUDE_TRAILER.sub("", decoded)
+    for match in _IDENTITY_FIELD.finditer(decoded):
+        value = match[1].strip()
+        if value in _IDENTITY_PLACEHOLDERS:
+            continue
+        if re.search(r"\bcwd[\"']?\s*[:=]", match[0], re.IGNORECASE):
+            normal = posixpath.normpath(value)
+            if normal == TOY_DIR or normal.startswith(TOY_DIR + "/"):
+                continue
+        leaks.append(value)
     return leaks
 
 
@@ -686,7 +713,7 @@ def _host_identity(toy_dir: Path, claude_tmp: Path) -> Identity:
         match = re.fullmatch(r"(.*?) <([^>]*)> \d+ [+-]\d{4}", result.stdout.strip())
         if result.returncode == 0 and match:
             name, email = match.groups()
-            secrets.update([name, *name.split(), email])
+            secrets.update([name, email])
     for path, keys in (
         (Path("/etc/jailbee/container.json"), ("name", "short_name", "container_prefix", "branch")),
         (Path.home() / ".claude.json", ()),
@@ -703,7 +730,7 @@ def _host_identity(toy_dir: Path, claude_tmp: Path) -> Identity:
         if isinstance(account, dict):
             for value in account.values():
                 if isinstance(value, str):
-                    secrets.update([value, *value.split()])
+                    secrets.add(value)
     kept = sorted((s for s in secrets if s), key=len, reverse=True)
     # Claude puts its scratch files under `<CLAUDE_CODE_TMPDIR>/claude-<uid>`.
     scratch = str(claude_tmp / f"claude-{os.getuid()}")
@@ -813,6 +840,45 @@ def _claude_version(env: dict[str, str]) -> str:
     return result.stdout.split()[0]
 
 
+def _clean_project_config(config_file: Path, toy: Path) -> None:
+    """Remove only our project, replacing the latest config atomically.
+
+    Re-read after opening the temporary file: another session may have saved
+    unrelated settings since the initial check. Retry if it changes mid-write.
+    """
+    if not config_file.is_file():
+        return
+    temporary: Path | None = None
+    try:
+        for _ in range(3):
+            original = config_file.read_bytes()
+            data = json.loads(original)
+            if not isinstance(data, dict):
+                raise ValueError("config is not an object")
+            projects = data.get("projects")
+            if not isinstance(projects, dict) or str(toy) not in projects:
+                return
+            with tempfile.NamedTemporaryFile(dir=config_file.parent, delete=False) as stream:
+                temporary = Path(stream.name)
+                original = config_file.read_bytes()
+                data = json.loads(original)
+                if not isinstance(data, dict):
+                    raise ValueError("config is not an object")
+                projects = data.get("projects")
+                if isinstance(projects, dict):
+                    projects.pop(str(toy), None)
+                stream.write((json.dumps(data) + "\n").encode("utf-8"))
+            if config_file.read_bytes() == original:
+                os.replace(temporary, config_file)
+                return
+            temporary.unlink()
+            temporary = None
+        raise ValueError("config kept changing during cleanup")
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def record(out_dir: Path) -> list[str]:
     """Record every session, normalise it into `out_dir`; the shapes missing."""
     if shutil.which("claude") is None:
@@ -822,8 +888,16 @@ def record(out_dir: Path) -> list[str]:
         toy = _make_toy(root)
         claude_tmp = root / "tmp"
         claude_tmp.mkdir()
+        recording_home = root / "home"
+        recording_home.mkdir()
+        # Keep the logged-in config, but mark shell snapshots with a unique HOME.
+        (recording_home / ".claude").symlink_to(_config_home(), target_is_directory=True)
+        host_config = Path.home() / ".claude.json"
+        if host_config.is_file():
+            shutil.copyfile(host_config, recording_home / ".claude.json")
         env = {
             **os.environ,
+            "HOME": str(recording_home),
             "PATH": f"{_no_op_hooks(root)}{os.pathsep}{os.environ['PATH']}",
             "CLAUDE_CODE_TMPDIR": str(claude_tmp),
             # The recording host's CLAUDE.md files and memory stay out of the
@@ -854,6 +928,7 @@ def record(out_dir: Path) -> list[str]:
             )
         finally:
             # Attempt every cleanup even if another state file is unreadable.
+            recording_error = sys.exception()
             cleanup_errors: list[str] = []
             try:
                 if raw_project.exists():
@@ -866,17 +941,23 @@ def record(out_dir: Path) -> list[str]:
                 else Path.home() / ".claude.json"
             )
             try:
-                if config_file.is_file():
-                    data = json.loads(config_file.read_text(encoding="utf-8"))
-                    if not isinstance(data, dict):
-                        raise ValueError("config is not an object")
-                    projects = data.get("projects")
-                    if isinstance(projects, dict) and str(toy) in projects:
-                        del projects[str(toy)]
-                        config_file.write_text(json.dumps(data) + "\n", encoding="utf-8")
+                _clean_project_config(config_file, toy)
             except (OSError, ValueError) as exc:
                 cleanup_errors.append(f"{config_file}: {exc}")
-            paths = set(snapshots.glob("*")) - old_snapshots
+            paths: set[Path] = set()
+            session_ids = {sid for _, sid in sessions}
+            for path in set(snapshots.glob("*")) - old_snapshots:
+                try:
+                    if path.is_symlink() or not path.is_file():
+                        continue
+                    text = path.read_text(encoding="utf-8")
+                    if (
+                        any(sid in path.name or sid in text for sid in session_ids)
+                        or str(recording_home) in text
+                    ):
+                        paths.add(path)
+                except (OSError, UnicodeError) as exc:
+                    cleanup_errors.append(f"{path}: {exc}")
             for _, session_id in sessions:
                 for kind in ("session-env", "file-history", "tasks", "todos"):
                     paths.update((config_home / kind).glob(f"{session_id}*"))
@@ -889,7 +970,11 @@ def record(out_dir: Path) -> list[str]:
                 except OSError as exc:
                     cleanup_errors.append(f"{path}: {exc}")
             if cleanup_errors:
-                raise SystemExit("error: recording cleanup failed: " + "; ".join(cleanup_errors))
+                message = "error: recording cleanup failed: " + "; ".join(cleanup_errors)
+                if recording_error is not None:
+                    print(message, file=sys.stderr)
+                else:
+                    raise SystemExit(message)
 
 
 def _write_corpus(
