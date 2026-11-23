@@ -644,7 +644,13 @@ def _reminder_session(home: Path, output: str = "line one\nline two") -> None:
         _record(
             2,
             "user",
-            [{"type": "tool_result", "tool_use_id": "toolu_read", "content": output + "\n\n" + REMINDER}],
+            [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_read",
+                    "content": output + "\n\n" + REMINDER,
+                }
+            ],
         ),
     )
 
@@ -687,9 +693,7 @@ def test_a_collapsed_tool_result_reminder_is_a_label_fetched_on_expand(
     assert "line one" not in body["html"]
 
 
-def test_a_shown_tool_result_reminder_is_its_own_meta_entry(
-    client: TestClient, home: Path
-) -> None:
+def test_a_shown_tool_result_reminder_is_its_own_meta_entry(client: TestClient, home: Path) -> None:
     _reminder_session(home)
     result, reminder = _kinds(client, "shown")[1:]
     assert "shorter than the offset" not in result["html"]
@@ -824,7 +828,9 @@ def test_an_interruption_notice_keeps_its_label_line(
 ) -> None:
     _write(
         home,
-        _record(1, "user", [{"type": "text", "text": "[Request interrupted by user for tool use]"}]),
+        _record(
+            1, "user", [{"type": "text", "text": "[Request interrupted by user for tool use]"}]
+        ),
         _record(2, "user", "Go on"),
     )
     notice, typed = _kinds(client, mode)
