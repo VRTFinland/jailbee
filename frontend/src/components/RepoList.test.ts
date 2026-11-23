@@ -56,6 +56,19 @@ describe("RepoList", () => {
         expect(row.text()).toContain("orchestrator not listed")
     })
 
+    it("finds a listed orchestrator in another repository, including a repo-only view", async () => {
+        const wrapper = mountList()
+        const parent = view.repos[0].containers[0]
+        const child = {...view.repos[0].containers[1], name: "beta-task", child: {
+            orchestrator: parent.name, orchestrator_short_name: "1", state: "working", runner: null,
+        }}
+        const beta = {prefix: "beta", containers: [child]}
+        await wrapper.setProps({view: {...view, repos: [view.repos[0], beta]}})
+        expect(wrapper.get('[data-container="beta-task"]').text()).not.toContain("orchestrator not listed")
+        await wrapper.setProps({view: {...view, repos: [beta]}, listedContainers: [parent.name, child.name]})
+        expect(wrapper.get('[data-container="beta-task"]').text()).not.toContain("orchestrator not listed")
+    })
+
     it("labels a hidden orchestrator without creating a link", async () => {
         const wrapper = mountList()
         const child = {...view.repos[0].containers[1], child: {

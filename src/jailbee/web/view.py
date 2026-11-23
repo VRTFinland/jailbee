@@ -12,6 +12,7 @@ WebSocket message.
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -50,25 +51,35 @@ def front_page_view(snapshot: Snapshot, scope: RemoteRepoScope, now: datetime) -
     prefixes = sorted(
         {g.prefix for g in snapshot.groups} | set(scope.excluded), key=len, reverse=True
     )
+    parent_repos = {c.name: g.prefix for g in snapshot.groups for c in g.containers}
+    child_counts = Counter(c.child.orchestrator for c in containers if c.child is not None)
     specs = visible_fields(now, containers, shown)
     return FrontPageView(
         seq=snapshot.seq,
         gathered_at=snapshot.gathered_at,
         columns=[ColumnHead(name=s.name, header=s.header) for s in specs],
         repos=[
-            RepoRow(prefix=group.prefix, containers=_rows(group.containers, specs, prefixes, scope))
+            RepoRow(
+                prefix=group.prefix,
+                containers=_rows(group.containers, specs, prefixes, parent_repos, child_counts, scope),
+            )
             for group in groups
         ],
     )
 
 
 def _child_relation(
-    info: ContainerInfo, prefixes: list[str], scope: RemoteRepoScope
+    info: ContainerInfo,
+    prefixes: list[str],
+    parent_repos: dict[str, str],
+    scope: RemoteRepoScope,
 ) -> ChildRelation | None:
     if info.child is None:
         return None
     parent = info.child.orchestrator
-    prefix = next((p for p in prefixes if parent.startswith(f"{p}-")), info.repo)
+    prefix = parent_repos.get(parent)
+    if prefix is None:
+        prefix = next((p for p in prefixes if parent.startswith(f"{p}-")), info.repo)
     hidden = not scope.allows(prefix)
     return ChildRelation(
         orchestrator=None if hidden else parent,
@@ -84,6 +95,8 @@ def _rows(
     containers: list[ContainerInfo],
     specs: list[FieldSpec[ContainerInfo]],
     prefixes: list[str],
+    parent_repos: dict[str, str],
+    child_counts: Counter[str],
     scope: RemoteRepoScope,
 ) -> list[ContainerRow]:
     layout = fork_layout(containers)
@@ -97,10 +110,8 @@ def _rows(
             cells=[_plain(s.cell(info)) for s in specs],
             depth=layout.depth.get(info.name, 0),
             orchestrator=info.grant is not None,
-            child_count=sum(
-                c.child is not None and c.child.orchestrator == info.name for c in containers
-            ),
-            child=_child_relation(info, prefixes, scope),
+            child_count=child_counts[info.name],
+            child=_child_relation(info, prefixes, parent_repos, scope),
         )
         for info in containers
     ]

@@ -123,6 +123,29 @@ def test_orchestration_relation_survives_the_web_snapshot(
     }
 
 
+def test_interleaved_children_stay_with_their_own_orchestrator(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    from jailbee.orchestration.view import ChildView, GrantView
+
+    client, token = started
+    snap = snapshot_of(repo_group(
+        "alpha",
+        container("alpha-a", grant=GrantView(4, (), (), False, ())),
+        container("alpha-b", grant=GrantView(4, (), (), False, ())),
+        container("alpha-a1", child=ChildView("alpha-a", "working", (), False, ())),
+        container("alpha-b1", child=ChildView("alpha-b", "working", (), False, ())),
+        container("alpha-a2", child=ChildView("alpha-a", "working", (), False, ())),
+        container("alpha-b2", child=ChildView("alpha-b", "working", (), False, ())),
+    ))
+    view = json.loads(first_page(client, token, factory, snap))["view"]
+    rows = view["repos"][0]["containers"]
+    assert [(row["name"], row["depth"], row["child_count"]) for row in rows] == [
+        ("alpha-a", 0, 2), ("alpha-a1", 1, 0), ("alpha-a2", 1, 0),
+        ("alpha-b", 0, 2), ("alpha-b1", 1, 0), ("alpha-b2", 1, 0),
+    ]
+
+
 def test_absent_orchestrator_keeps_the_child_relation(
     started: tuple[TestClient, str], factory: FakeSourceFactory
 ) -> None:
@@ -279,6 +302,50 @@ def test_excluded_orchestrator_is_redacted_from_a_visible_child(
     relation = json.loads(raw)["view"]["repos"][0]["containers"][0]["child"]
     assert relation["orchestrator"] is None
     assert relation["orchestrator_short_name"] == "hidden orchestrator"
+
+
+def test_present_orchestrator_repo_wins_over_an_excluded_longer_prefix(
+    factory: FakeSourceFactory,
+) -> None:
+    from jailbee.orchestration.view import ChildView
+
+    snap = snapshot_of(
+        repo_group(
+            "web",
+            container("web-admin-fix", repo="web"),
+            container(
+                "web-task", repo="web", child=ChildView("web-admin-fix", "working", (), False, ())
+            ),
+        ),
+        repo_group("web-admin"),
+    )
+    for client, token in open_client(factory, frozenset({"web-admin"})):
+        view = json.loads(first_page(client, token, factory, snap))["view"]
+    child = next(row for row in view["repos"][0]["containers"] if row["name"] == "web-task")
+    assert child["child"]["orchestrator"] == "web-admin-fix"
+    assert child["child"]["orchestrator_short_name"] == "admin-fix"
+
+
+def test_orchestrator_counts_children_across_visible_repositories(
+    factory: FakeSourceFactory,
+) -> None:
+    from jailbee.orchestration.view import ChildView
+
+    snap = snapshot_of(
+        repo_group("alpha", container("alpha-orch")),
+        repo_group(
+            "beta",
+            container("beta-task", repo="beta", child=ChildView("alpha-orch", "working", (), False, ())),
+        ),
+        repo_group(
+            "secret",
+            container("secret-task", repo="secret", child=ChildView("alpha-orch", "working", (), False, ())),
+        ),
+    )
+    for client, token in open_client(factory, frozenset({"secret"})):
+        view = json.loads(first_page(client, token, factory, snap))["view"]
+    assert view["repos"][0]["containers"][0]["child_count"] == 1
+    assert "secret" not in json.dumps(view)
 
 
 def test_cross_repo_orchestrator_uses_its_own_repo_prefix(
