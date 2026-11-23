@@ -233,3 +233,15 @@ def test_the_running_server_prints_audit_lines(serve_ready: Any) -> None:
 
     assert result.exit_code == 0, result.output
     assert "web auth login method=totp device='boox'" in flat_output(result.stderr)
+
+
+def test_a_stored_device_name_with_escape_characters_prints_escaped() -> None:
+    make_session("a\x1b]0;pwn\x07\nb\u202e")
+
+    result = run("sessions", "ls")
+
+    assert result.exit_code == 0, result.output
+    assert "\x1b" not in result.output
+    assert "\u202e" not in result.output
+    assert "a\\x1b]0;pwn\\x07\\nb\\u202e" in result.output
+    assert len(result.output.splitlines()) == 1

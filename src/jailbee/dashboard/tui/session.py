@@ -2859,6 +2859,7 @@ class DashboardSession:
             previous, seen[0] = seen[0], state.status
             self._outbox_changed(controller, state, previous)
 
+        controller.shown = lambda: self._outbox_shown(controller, controller.state)
         return changed
 
     def _outbox_changed(
@@ -2875,10 +2876,14 @@ class DashboardSession:
                 self._outbox_running[controller.container] = controller
             elif self._outbox_running.get(controller.container) is controller:
                 del self._outbox_running[controller.container]
-        if controller is self.outbox and overlay_key(self.overlay) == overlay_key(state):
+        if self._outbox_shown(controller, state):
             self.overlay = state
         elif state.status and state.status != previous:
             self.set_notice(state.status[-1], seconds=FAILURE_NOTICE_SECONDS)
+
+    def _outbox_shown(self, controller: OutboxController, state: OutboxState) -> bool:
+        """Whether the open box is ``controller``'s (showing ``state``)."""
+        return controller is self.outbox and overlay_key(self.overlay) == overlay_key(state)
 
     def outbox_intent(
         self, name: OutboxIntent, row: dob.RowKey | None, value: str | None = None

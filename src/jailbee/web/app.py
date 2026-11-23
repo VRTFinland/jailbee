@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -30,7 +31,10 @@ def create_app(deps: WebDeps) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         ctx.sessions.purge_expired()
+        warm_up = asyncio.create_task(ctx.start_warm_up())
         yield
+        warm_up.cancel()
+        ctx.stop_warm_up()
         ctx.follows.close()
         await ctx.hub.aclose()
 

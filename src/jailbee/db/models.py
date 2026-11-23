@@ -470,7 +470,8 @@ class WebAuthEvent(SQLModel, table=True):
     """One entry of the web dashboard's login audit log (#109).
 
     `event` is login, login_failed, backoff (a PIN or TOTP wait lengthened),
-    logout, revoke or key_added (a FIDO2 key registered in setup mode);
+    logout, revoke, rename (a session renamed in Settings) or key_added (a FIDO2 key
+    registered in setup mode);
     `method` the login method tried (pin, totp, link, fido2, setup-pin) or
     "cli" for a revocation from the command line;
     `source` the client address when there was one. Pruned to the newest
@@ -531,3 +532,28 @@ class WebFido2Key(SQLModel, table=True):
     last_used_at: datetime | None = Field(
         default=None, sa_column=Column(_UTCDateTime, nullable=True)
     )
+
+
+class SessionInfoRow(SQLModel, table=True):
+    """One agent transcript's session-list row, as last read (#152).
+
+    The web dashboard's `SessionInfoCache` keeps these so a restarted server
+    does not read every transcript again: a row answers while the file's
+    `size` and `mtime_ns` are unchanged. `format` is the reader's
+    `SESSION_INFO_FORMAT`; a row of another format is read again. `models` is
+    a JSON list. Rebuildable: losing the table costs one slow listing.
+    """
+
+    __tablename__ = "session_info_cache"
+
+    path: str = Field(primary_key=True)
+    size: int
+    mtime_ns: int
+    format: int
+    session_id: str
+    title: str
+    started: datetime | None = Field(default=None, sa_column=Column(_UTCDateTime, nullable=True))
+    last_activity: datetime | None = Field(
+        default=None, sa_column=Column(_UTCDateTime, nullable=True)
+    )
+    models: str = "[]"

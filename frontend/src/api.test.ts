@@ -9,14 +9,14 @@ describe("login failure classification", () => {
         async (status) => {
             vi.stubGlobal("fetch", vi.fn(async () => new Response(null, {status})))
 
-            expect(await loginWithPin("123456", "tablet")).toEqual({ok: false, error: unavailable})
+            expect(await loginWithPin("123456")).toEqual({ok: false, error: unavailable})
             expect(getToken()).toBeNull()
         },
     )
 
     it.each([
-        [() => loginWithPin("123456", "tablet"), "Wrong or used PIN. The server printed a new one."],
-        [() => loginWithTotp("123456", "tablet"), "Wrong or already used code. Wait for the next one and try again."],
+        [() => loginWithPin("123456"), "Wrong or used PIN. The server printed a new one."],
+        [() => loginWithTotp("123456"), "Wrong or already used code. Wait for the next one and try again."],
         [() => loginWithLink("expired"), "This login link was already used or has expired. Run `jailbee remote web open` again."],
     ])("keeps credential-specific errors for 401", async (login, error) => {
         vi.stubGlobal("fetch", vi.fn(async () => new Response(null, {status: 401})))
@@ -29,7 +29,9 @@ describe("login rate-limit message", () => {
     it.each([
         ["1", "1 second"],
         ["59", "59 seconds"],
-        ["1800", "1800 seconds"],
+        ["60", "1 minute"],
+        ["61", "2 minutes"],
+        ["1800", "30 minutes"],
         [null, "a while"],
         ["invalid", "a while"],
         ["0", "a while"],
@@ -38,7 +40,7 @@ describe("login rate-limit message", () => {
         if (retryAfter !== null) headers.set("Retry-After", retryAfter)
         vi.stubGlobal("fetch", vi.fn(async () => new Response(null, {status: 429, headers})))
 
-        const result = await loginWithPin("123456", "shared tablet")
+        const result = await loginWithPin("123456")
 
         expect(result).toEqual({ok: false, error: `Too many attempts. Wait ${wait} and try again.`})
         expect(getToken()).toBeNull()

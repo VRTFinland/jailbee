@@ -16,9 +16,26 @@ export interface SocketHandlers {
     onUnauthorized(): void
     /** The server runs FIDO2 setup mode: the caller opens the setup view. */
     onSetupMode?(): void
+    /** Reloading did not recover a compatible client; ask the user to retry. */
+    onOutdated?(): void
 }
 
 const BACKOFF_MS = [1000, 2000, 4000, 8000, 15000]
+const RELOAD_KEY = "jailbee.protocolReload"
+const RELOAD_WINDOW_MS = 60_000
+
+function mayReload(): boolean {
+    try {
+        const last = Number(sessionStorage.getItem(RELOAD_KEY))
+        const now = Date.now()
+        if (last > 0 && now - last < RELOAD_WINDOW_MS) return false
+        sessionStorage.setItem(RELOAD_KEY, String(now))
+        return true
+    } catch {
+        // Without durable tab storage an automatic reload could loop forever.
+        return false
+    }
+}
 
 export class DashboardSocket {
     private ws: WebSocket | null = null
@@ -78,8 +95,10 @@ export class DashboardSocket {
                 return
             }
             if (event.code === CLOSE_PROTOCOL_MISMATCH) {
-                // The server was upgraded under this tab.
-                location.reload()
+                // Retry fresh assets once, but stop if a cache keeps serving
+                // the stale client (or tab storage cannot guard the retry).
+                if (mayReload()) location.reload()
+                else this.handlers.onOutdated?.()
                 return
             }
             const delay = BACKOFF_MS[Math.min(this.attempt, BACKOFF_MS.length - 1)]

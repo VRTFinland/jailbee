@@ -42,22 +42,21 @@ async function mountLogin() {
     return {wrapper, router}
 }
 
-async function submit(wrapper: Awaited<ReturnType<typeof mountLogin>>["wrapper"], pin: string, device: string) {
-    await wrapper.get("input[name=device]").setValue(device)
+async function submit(wrapper: Awaited<ReturnType<typeof mountLogin>>["wrapper"], pin: string) {
     await wrapper.get("input[name=pin]").setValue(pin)
     await wrapper.get("form").trigger("submit")
     await flushPromises()
 }
 
 describe("LoginView", () => {
-    it("logs in with the PIN and a device name, then opens the front page", async () => {
+    it("logs in with the PIN alone, then opens the front page", async () => {
         const fetchMock = routedFetch({"/api/auth": {status: 200, body: {token: "tok-1"}}})
         vi.stubGlobal("fetch", fetchMock)
         const {wrapper, router} = await mountLogin()
 
-        await submit(wrapper, "123456", "Boox")
+        await submit(wrapper, "123456")
 
-        expect(authCalls(fetchMock)).toEqual([{method: "pin", pin: "123456", device_name: "Boox"}])
+        expect(authCalls(fetchMock)).toEqual([{method: "pin", pin: "123456"}])
         expect(getToken()).toBe("tok-1")
         expect(router.currentRoute.value.path).toBe("/")
     })
@@ -66,7 +65,7 @@ describe("LoginView", () => {
         vi.stubGlobal("fetch", routedFetch({"/api/auth": {status: 401, body: {detail: "no"}}}))
         const {wrapper, router} = await mountLogin()
 
-        await submit(wrapper, "000000", "Boox")
+        await submit(wrapper, "000000")
 
         expect(wrapper.text()).toContain("new one")
         expect((wrapper.get("input[name=pin]").element as HTMLInputElement).value).toBe("")
@@ -74,28 +73,26 @@ describe("LoginView", () => {
         expect(router.currentRoute.value.path).toBe("/login")
     })
 
-    it("does not submit until the PIN has six digits and a device is named", async () => {
+    it("does not submit until the PIN has six digits", async () => {
         const fetchMock = routedFetch({})
         vi.stubGlobal("fetch", fetchMock)
         const {wrapper} = await mountLogin()
 
-        await submit(wrapper, "12345", "Boox")
-        await submit(wrapper, "123456", "   ")
+        await submit(wrapper, "12345")
 
         expect(authCalls(fetchMock)).toEqual([])
         expect(wrapper.get("button[type=submit]").attributes("disabled")).toBeDefined()
     })
 
-    it("remembers the device name of the last login", async () => {
-        vi.stubGlobal("fetch", routedFetch({"/api/auth": {status: 200, body: {token: "t"}}}))
-        const first = await mountLogin()
-        await submit(first.wrapper, "123456", "Kitchen tablet")
+    it("has no device-name field and sends none", async () => {
+        const fetchMock = routedFetch({"/api/auth": {status: 200, body: {token: "t"}}})
+        vi.stubGlobal("fetch", fetchMock)
+        const {wrapper} = await mountLogin()
 
-        const second = await mountLogin()
-
-        expect((second.wrapper.get("input[name=device]").element as HTMLInputElement).value).toBe(
-            "Kitchen tablet",
-        )
+        expect(wrapper.find("input[name=device]").exists()).toBe(false)
+        expect(wrapper.text()).not.toContain("This device")
+        await submit(wrapper, "123456")
+        expect(Object.keys(authCalls(fetchMock)[0])).not.toContain("device_name")
     })
 
     it("offers an authenticator code once a TOTP key exists and logs in with it", async () => {
@@ -107,12 +104,11 @@ describe("LoginView", () => {
         const {wrapper, router} = await mountLogin()
 
         await wrapper.get("button[data-method=totp]").trigger("click")
-        await wrapper.get("input[name=device]").setValue("Phone")
         await wrapper.get("input[name=code]").setValue("654321")
         await wrapper.get("form").trigger("submit")
         await flushPromises()
 
-        expect(authCalls(fetchMock)).toEqual([{method: "totp", code: "654321", device_name: "Phone"}])
+        expect(authCalls(fetchMock)).toEqual([{method: "totp", code: "654321"}])
         expect(getToken()).toBe("tok-2")
         expect(router.currentRoute.value.path).toBe("/")
     })
@@ -139,7 +135,6 @@ describe("LoginView", () => {
         )
         const {wrapper} = await mountLogin()
 
-        await wrapper.get("input[name=device]").setValue("Phone")
         await wrapper.get("input[name=code]").setValue("111111")
         await wrapper.get("form").trigger("submit")
         await flushPromises()

@@ -6,6 +6,7 @@
 // To add a setting: extend `Settings`,
 // give it a key, a default and a parser in `FIELDS`.
 import {reactive, watch} from "vue"
+import type {MetaMode} from "./protocol"
 import {readItem, writeItem} from "./storage"
 
 export type Theme = "light" | "dark" | "eink"
@@ -13,6 +14,8 @@ export const THEMES: readonly Theme[] = ["light", "dark", "eink"]
 /** How the UI behaves: "eink" pages instead of scrolling and never animates. */
 export type DisplayProfile = "normal" | "eink"
 export const DISPLAY_PROFILES: readonly DisplayProfile[] = ["normal", "eink"]
+/** Agent context: what transcripts show of the agent's own wrapper records. */
+export const AGENT_CONTEXT_MODES: readonly MetaMode[] = ["hidden", "collapsed", "shown"]
 export const FONT_SIZE_RANGE = {min: 12, max: 28} as const
 
 export interface Settings {
@@ -21,6 +24,7 @@ export interface Settings {
     bodyFontSize: number
     codeFontSize: number
     showThinking: boolean
+    agentContext: MetaMode
 }
 
 interface Field<K extends keyof Settings> {
@@ -76,6 +80,12 @@ const FIELDS: {[K in keyof Settings]: Field<K>} = {
         serialize: (v) => (v ? "1" : "0"),
         fallback: () => false,
     },
+    agentContext: {
+        key: "jailbee.agentContext",
+        parse: (raw) => AGENT_CONTEXT_MODES.find((m) => m === raw),
+        serialize: String,
+        fallback: () => "hidden",
+    },
 }
 
 function load<K extends keyof Settings>(name: K): Settings[K] {
@@ -90,6 +100,7 @@ function loadAll(): Settings {
         bodyFontSize: load("bodyFontSize"),
         codeFontSize: load("codeFontSize"),
         showThinking: load("showThinking"),
+        agentContext: load("agentContext"),
     }
 }
 

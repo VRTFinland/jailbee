@@ -14,7 +14,7 @@ from jailbee.db.models import WebFido2Key
 from jailbee.web import auth_admin
 from tests.web_fakes import snapshot_of
 from tests_e2e.browser_errors import BrowserErrors
-from tests_e2e.flows import log_in_with_pin
+from tests_e2e.flows import DERIVED_DEVICE, log_in_with_pin
 from tests_e2e.server import E2EServer
 
 if TYPE_CHECKING:
@@ -127,10 +127,10 @@ def test_open_tab_switches_to_setup_without_a_reload(
     server.push(snapshot_of())
     url = f"http://localhost:{server.port}"
     if signed_in:
-        log_in_with_pin(page, url, server.pin.current, "open dashboard")
+        log_in_with_pin(page, url, server.pin.current)
     else:
         page.goto(f"{url}/#/login")
-        expect(page.get_by_label("This device")).to_be_visible()
+        expect(page.get_by_label("PIN")).to_be_visible()
 
     server.stop()
     server.start(setup=True)
@@ -161,11 +161,10 @@ def test_registered_security_key_updates_its_counter_and_refuses_a_clone(
     previous_count = virtual_key.credential()["signCount"]
     previous_used = None
     for _ in range(2):
-        page.get_by_label("This device").fill("security-key tablet")
         page.get_by_role("button", name="Use security key", exact=True).click()
 
         expect(page.get_by_role("button", name="Log out")).to_be_visible()
-        expect(page.get_by_role("banner")).to_contain_text("security-key tablet")
+        expect(page.get_by_role("banner")).to_contain_text(DERIVED_DEVICE)
         expect(page.get_by_text("No repositories.", exact=True)).to_be_visible()
         (key,) = auth_admin.list_fido2_keys(server.engine)
         assert key.last_used_at is not None
@@ -197,11 +196,8 @@ def test_registered_security_key_updates_its_counter_and_refuses_a_clone(
     assert virtual_key.credential()["signCount"] == previous_count - counter_rollback + 1
     assert auth_admin.list_sessions(server.engine) == []
     event = auth_admin.recent_events(server.engine)[-1]
-    assert (event.event, event.method, event.device_name) == (
-        "login_failed",
-        "fido2",
-        "security-key tablet",
-    )
+    assert (event.event, event.method) == ("login_failed", "fido2")
+    assert event.device_name.startswith(DERIVED_DEVICE)
     with Session(server.engine) as session:
         (stored_key,) = session.exec(select(WebFido2Key)).all()
         assert stored_key.sign_count == previous_count
@@ -218,7 +214,6 @@ def test_a_removed_security_key_is_refused_visibly(
     server.stop()
     server.start()
     page.goto(f"{url}/#/login")
-    page.get_by_label("This device").fill("revoked-key tablet")
 
     def revoke_before_delivery(route: Route) -> None:
         # Pause the real signed request, not the ceremony or the server response.
@@ -244,7 +239,9 @@ def test_a_removed_security_key_is_refused_visibly(
     # FIDO2 is deliberately exempt from rate limits (UNLIMITED_METHODS): each
     # attempt signs a fresh challenge, so a failure is audited, not backed off.
     events = auth_admin.recent_events(server.engine)
-    assert [(event.event, event.method, event.device_name) for event in events] == [
-        ("key_added", "fido2", "Desk security key"),
-        ("login_failed", "fido2", "revoked-key tablet"),
+    assert [(event.event, event.method) for event in events] == [
+        ("key_added", "fido2"),
+        ("login_failed", "fido2"),
     ]
+    assert events[0].device_name == "Desk security key"
+    assert events[1].device_name.startswith(DERIVED_DEVICE)

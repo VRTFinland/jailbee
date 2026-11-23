@@ -25,7 +25,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
 
 CLOSE_UNAUTHORIZED = 4001
 """No valid session token: the browser goes back to the login page."""
@@ -54,6 +54,14 @@ class ClientAuth(_Message):
     token: str
 
 
+MetaMode = Literal["hidden", "collapsed", "shown"]
+"""The *Agent context* display setting: what the server sends of the agent's own
+wrapper records (task notifications, reminders, command output, ...). ``hidden``
+(the default) omits them, ``collapsed`` sends only a label and the content is
+fetched on expand, ``shown`` sends everything. A slash command the user typed
+keeps its label line in every mode."""
+
+
 class FollowKey(BaseModel):
     """Which transcript a subscription follows: a session, or one of its
     subagents when ``subagent_id`` is set. Hashable, so it keys a connection's
@@ -73,6 +81,8 @@ class Subscribe(_Message):
     type: Literal["subscribe"] = "subscribe"
     key: FollowKey
     offset: int = Field(ge=0)
+    meta: MetaMode = "hidden"
+    """The Agent context setting the appends are rendered with."""
 
 
 class Unsubscribe(_Message):
@@ -175,11 +185,17 @@ class _Rendered(BaseModel):
 
 class RenderedUser(_Rendered):
     """A prompt. ``meta`` marks an agent's own wrapper text (``<command-name>``,
-    ``<system-reminder>``, ...), shown verbatim and muted."""
+    ``<system-reminder>``, ...). A meta record carries a short ``label`` ("Task
+    notification", "Command: /model", "Shell: ls"); its ``html`` is the wrapper
+    text verbatim when the Agent context setting is ``shown``, and empty
+    otherwise. ``expandable`` says the content was withheld and `EntryContent`
+    serves it."""
 
     kind: Literal["user"] = "user"
     html: str
     meta: bool = False
+    label: str | None = None
+    expandable: bool = False
 
 
 class RenderedAssistant(_Rendered):
@@ -242,6 +258,15 @@ RenderedEntry = Annotated[
 ]
 """One transcript entry, ready to display. The REST session view and the
 WebSocket's live appends carry the same shape."""
+
+
+class EntryContent(BaseModel):
+    """`GET .../entries/{entry_id}`: one entry's full rendering, for a
+    withheld meta record the browser expands."""
+
+    model_config = ConfigDict(frozen=True)
+    id: str
+    html: str
 
 
 class TranscriptView(BaseModel):

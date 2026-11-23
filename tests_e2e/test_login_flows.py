@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from datetime import timedelta
 
@@ -13,7 +14,7 @@ from jailbee.web.auth_admin import add_totp_key, list_sessions, revoke_session
 from jailbee.web.login_link import mint
 from tests.web_fakes import FakeClock, snapshot_of
 from tests_e2e.browser_errors import BrowserErrors
-from tests_e2e.flows import log_in_with_pin
+from tests_e2e.flows import DERIVED_DEVICE, log_in_with_pin
 from tests_e2e.server import E2EServer
 
 
@@ -24,7 +25,6 @@ def test_wrong_pin_shows_an_error_and_rate_limit_shows_the_remaining_wait(
     server = make_server(clock=clock, monotonic=clock.monotonic)
     server.push(snapshot_of())
     page.goto(server.url)
-    page.get_by_label("This device").fill("hall tablet")
     browser_errors.expect(
         "console", "Failed to load resource: the server responded with a status of 401", times=5
     )
@@ -48,8 +48,9 @@ def test_wrong_pin_shows_an_error_and_rate_limit_shows_the_remaining_wait(
             page.get_by_role("button", name="Log in", exact=True).click()
         assert limited.value.status == 429
         assert limited.value.headers["retry-after"] == str(remaining)
+        wait = "1 minute" if remaining == 60 else "59 seconds"
         expect(page.get_by_role("alert")).to_have_text(
-            f"Too many attempts. Wait {remaining} seconds and try again."
+            f"Too many attempts. Wait {wait} and try again."
         )
         expect(page.get_by_label("PIN")).to_have_value("")
         clock.advance(timedelta(seconds=1))
@@ -68,12 +69,11 @@ def test_authenticator_code_signs_in(make_server: Callable[..., E2EServer], page
 
     page.goto(server.url)
     page.get_by_role("tab", name="Authenticator code").click()
-    page.get_by_label("This device").fill("authenticator phone")
     page.get_by_label("Code", exact=True).fill(pyotp.TOTP(key.secret).at(clock()))
     page.get_by_role("button", name="Log in", exact=True).click()
 
     expect(page.get_by_role("button", name="Log out")).to_be_visible()
-    expect(page.get_by_role("banner")).to_contain_text("authenticator phone")
+    expect(page.get_by_role("banner")).to_contain_text(DERIVED_DEVICE)
     expect(page.get_by_text("No repositories.")).to_be_visible()
 
 
@@ -106,7 +106,7 @@ def test_one_time_link_signs_in_only_while_fresh(
 
     if link_state == "fresh":
         expect(page.get_by_role("button", name="Log out")).to_be_visible()
-        expect(page.get_by_role("banner")).to_contain_text("Local browser")
+        expect(page.get_by_role("banner")).to_contain_text(DERIVED_DEVICE)
         expect(page.get_by_text("No repositories.")).to_be_visible()
         expect(page).to_have_url(server.url + "/#/")
     else:
@@ -134,17 +134,41 @@ def test_a_fresh_link_signs_in_when_the_login_page_is_already_open(
     assert page.evaluate("performance.timeOrigin") == document_started
 
 
-def test_login_device_name_appears_in_the_header(server: E2EServer, page: Page) -> None:
-    log_in_with_pin(page, server.url, server.pin.current, "reading room tablet")
+def test_login_asks_for_no_name_and_the_header_shows_the_derived_one(
+    server: E2EServer, page: Page
+) -> None:
+    page.goto(server.url)
+    expect(page.get_by_label("This device")).to_have_count(0)
+    expect(page.get_by_label("PIN")).to_be_visible()
 
+    log_in_with_pin(page, server.url, server.pin.current)
+
+    expect(page.get_by_role("banner")).to_contain_text(DERIVED_DEVICE)
+
+
+def test_renaming_the_session_in_settings_updates_the_header_and_the_listing(
+    server: E2EServer, page: Page
+) -> None:
+    log_in_with_pin(page, server.url, server.pin.current)
+
+    page.get_by_role("link", name="Settings").click()
+    name = page.get_by_label("Name shown in the header")
+    expect(name).to_have_value(re.compile(r"^Chrome on "))
+    name.fill("reading room tablet")
+    page.get_by_role("button", name="Save name").click()
+
+    expect(page.get_by_text("Saved.")).to_be_visible()
+    page.get_by_role("link", name="JailBee").click()
     expect(page.get_by_role("banner")).to_contain_text("reading room tablet")
+    (session,) = list_sessions(server.engine)
+    assert session.device_name == "reading room tablet"
 
 
 def test_logout_returns_to_login_and_invalidates_the_old_token(
     server: E2EServer, page: Page
 ) -> None:
     with page.expect_response(server.url + "/api/auth") as login:
-        log_in_with_pin(page, server.url, server.pin.current, "shared device")
+        log_in_with_pin(page, server.url, server.pin.current)
     token = login.value.json()["token"]
     headers = {"Authorization": "Bearer " + token}
     assert page.request.get(server.url + "/api/session", headers=headers).status == 200
@@ -174,9 +198,10 @@ def test_admin_revocation_closes_the_live_socket_and_returns_to_login(
             }
         };
     """)
-    log_in_with_pin(page, server.url, server.pin.current, "revoked tablet")
-    expect(page.get_by_role("banner")).to_contain_text("revoked tablet")
+    log_in_with_pin(page, server.url, server.pin.current)
+    expect(page.get_by_role("banner")).to_contain_text(DERIVED_DEVICE)
     (session,) = list_sessions(server.engine)
+    document_started = page.evaluate("performance.timeOrigin")
 
     revoke_session(server.engine, session.id)
     server.push(snapshot_of())
@@ -185,6 +210,7 @@ def test_admin_revocation_closes_the_live_socket_and_returns_to_login(
     expect(page).to_have_url(server.url + "/#/login")
     expect(page.get_by_role("button", name="Log in", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="Log out")).to_have_count(0)
+    assert page.evaluate("performance.timeOrigin") == document_started
 
 
 def test_auth_disabled_opens_the_dashboard_without_a_login(

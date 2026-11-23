@@ -1,7 +1,7 @@
 // Mirror of src/jailbee/web/protocol.py. Bump PROTOCOL_VERSION in both files
 // on any change either side could misread.
 
-export const PROTOCOL_VERSION = 4
+export const PROTOCOL_VERSION = 5
 
 export const CLOSE_UNAUTHORIZED = 4001
 export const CLOSE_PROTOCOL_MISMATCH = 4002
@@ -22,12 +22,16 @@ export interface FollowKey {
     subagent_id: string | null
 }
 
+/** The Agent context setting: what the server sends of the agent's wrapper records. */
+export type MetaMode = "hidden" | "collapsed" | "shown"
+
 /** Follow a transcript from `offset` (`TranscriptView.offset`). */
 export interface Subscribe {
     type: "subscribe"
     v: number
     key: FollowKey
     offset: number
+    meta: MetaMode
 }
 
 export interface Unsubscribe {
@@ -158,6 +162,16 @@ export interface RenderedUser extends RenderedBase {
     html: string
     /** An agent's own wrapper text (`<command-name>`, `<system-reminder>`, ...). */
     meta: boolean
+    /** What a meta record is ("Task notification", "Command: /model", "Shell: ls"). */
+    label: string | null
+    /** Content withheld by the Agent context setting; `entries/{id}` serves it. */
+    expandable: boolean
+}
+
+/** `GET .../entries/{id}`: a withheld meta record's content. */
+export interface EntryContent {
+    id: string
+    html: string
 }
 
 export interface RenderedAssistant extends RenderedBase {

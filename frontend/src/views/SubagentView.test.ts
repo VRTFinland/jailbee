@@ -62,7 +62,7 @@ const child: TranscriptView = {
     last_activity: null,
     models: ["claude-haiku-5"],
     entries: [
-        {kind: "user", id: "u1", timestamp: null, html: "<p>Review it.</p>", meta: false},
+        {kind: "user", id: "u1", timestamp: null, html: "<p>Review it.</p>", meta: false, label: null, expandable: false},
         {
             kind: "assistant",
             id: "a1",
@@ -110,11 +110,11 @@ describe("subagent transcripts", () => {
     it("fetches and renders the subagent transcript like a session", async () => {
         const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, child))
         const {wrapper} = await mountAt(
-            "/repos/alpha/sessions/claude/s-1/subagents/a1b2c3",
+            "/repos/alpha/sessions/claude/s-1/subagents/a1b2c3?meta=hidden",
             fetchMock,
         )
         expect(fetchMock.mock.calls[0][0]).toBe(
-            "/api/repos/alpha/sessions/claude/s-1/subagents/a1b2c3",
+            "/api/repos/alpha/sessions/claude/s-1/subagents/a1b2c3?meta=hidden",
         )
         expect(wrapper.get("h1").text()).toBe("Review auth")
         expect(wrapper.get(".entry.assistant").html()).toContain("<p>Looks fine.</p>")
@@ -123,7 +123,7 @@ describe("subagent transcripts", () => {
 
     it("goes back to the parent session", async () => {
         const {wrapper, router} = await mountAt(
-            "/repos/alpha/sessions/claude/s-1/subagents/a1b2c3",
+            "/repos/alpha/sessions/claude/s-1/subagents/a1b2c3?meta=hidden",
             vi.fn().mockResolvedValue(jsonResponse(200, child)),
         )
         await wrapper.get("a.back-to-session").trigger("click")
@@ -134,7 +134,7 @@ describe("subagent transcripts", () => {
 
     it("says the subagent was not found on a 404", async () => {
         const {wrapper} = await mountAt(
-            "/repos/alpha/sessions/claude/s-1/subagents/a1b2c3",
+            "/repos/alpha/sessions/claude/s-1/subagents/a1b2c3?meta=hidden",
             vi.fn().mockResolvedValue(jsonResponse(404, {detail: "x"})),
         )
         expect(wrapper.text()).toContain("Subagent not found")

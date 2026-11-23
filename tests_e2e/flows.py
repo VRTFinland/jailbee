@@ -10,10 +10,13 @@ if TYPE_CHECKING:
     from playwright.sync_api import Page
 
 
-def log_in_with_pin(page: Page, url: str, pin: str, device: str) -> None:
+DERIVED_DEVICE = "Chrome on"
+"""What the header shows for the e2e browser: the server names a session after its User-Agent."""
+
+
+def log_in_with_pin(page: Page, url: str, pin: str) -> None:
     """Open the dashboard at ``url``, land on the login page and log in with ``pin``."""
     page.goto(url)
-    page.get_by_label("This device").fill(device)
     page.get_by_label("PIN").fill(pin)
     page.get_by_role("button", name="Log in").click()
     expect(page.get_by_role("button", name="Log out")).to_be_visible()
