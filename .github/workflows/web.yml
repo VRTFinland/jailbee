@@ -1,0 +1,64 @@
+name: Web dashboard
+on:
+  push:
+    # Test direct integration pushes as well as pull requests, but leave
+    # unrelated changes to the ordinary CI workflow.
+    branches: [main, dev]
+    paths:
+      - "frontend/**"
+      - "src/jailbee/web/**"
+      - "src/jailbee/transcripts/**"
+      - "tests_e2e/**"
+      - "tests/web_fakes.py"
+      - "tests/fixtures/transcripts/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "Makefile"
+      - ".github/workflows/web.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "src/jailbee/web/**"
+      - "src/jailbee/transcripts/**"
+      - "tests_e2e/**"
+      - "tests/web_fakes.py"
+      - "tests/fixtures/transcripts/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "Makefile"
+      - ".github/workflows/web.yml"
+  workflow_dispatch:
+# Browser tests only; no repository writes or authentication secrets needed.
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          # frontend/package.json requires ^24.15.0 (or a supported newer line).
+          node-version: "24"
+      - name: Install Qt runtime libraries
+        # The dev group's pytest-qt plugin loads Qt even for browser tests.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1
+      - name: Install uv
+        # setup-uv stopped publishing floating major tags after v7.
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+      - run: uv sync --locked --group e2e
+      - run: make web-test
+      # web-e2e builds the browser app and uses the runner's installed Chrome;
+      # no Playwright browser download and no live Incus or agent required.
+      - run: make web-e2e
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-e2e-failure
+          path: _build/e2e-results/
+          if-no-files-found: ignore

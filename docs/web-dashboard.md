@@ -34,6 +34,23 @@ make web && uv sync                 # editable checkout: build once, in place
 
 Without the built app, `jb remote web serve` exits with a message saying so.
 
+## Testing from a checkout
+
+Run `make web-test` for the browser app's Vitest suite and `make web-e2e` to
+build the app and exercise the real server in the system Chrome. The latter
+installs the separate `e2e` dependency group; it needs Node.js, npm and Chrome,
+but no Incus or live agent. Browser tests stay outside the ordinary pytest
+suite. Failed browser tests retain Playwright traces and screenshots under
+`_build/e2e-results/`.
+
+The **Web dashboard** GitHub Actions workflow runs both targets for pull
+requests and pushes to `main` or `dev` that change the frontend, web server,
+transcript reader, browser tests or their shared fixtures, dependency
+manifests, Makefile or workflow. It can also be started with
+`workflow_dispatch`. It uses the runner's Chrome and uploads browser failure
+evidence as the `web-e2e-failure` artifact. Unrelated changes do not trigger
+this workflow; the ordinary CI gate stays separate.
+
 ## Run it
 
 ```bash
