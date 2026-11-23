@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
-from jailbee.transcripts.markup import command_name, is_meta_wrapper
+from jailbee.transcripts.markup import command_name, is_meta_wrapper, prompt_text, split_prompt
 
 
 @pytest.mark.parametrize(
@@ -38,3 +40,22 @@ def test_command_title_can_follow_other_agent_wrappers() -> None:
 )
 def test_only_a_well_formed_slash_command_can_supply_a_command_title(text: str) -> None:
     assert command_name(text) == ""
+
+
+@pytest.mark.parametrize("tag", ["system-reminder", "command-name", "terminal"])
+@pytest.mark.parametrize("tail", ["", "x", "\t\n"])
+def test_an_unterminated_known_tag_with_long_whitespace_is_linear_time(tag: str, tail: str) -> None:
+    for text in (f"<{tag}" + " " * 100_000 + tail, f"<{tag}>x</{tag}" + " " * 100_000):
+        started = time.perf_counter()
+        assert split_prompt(text) == ("", text.strip())
+        assert prompt_text(text) == text.strip()
+        assert time.perf_counter() - started < 0.5
+
+
+def test_an_unclosed_inner_tag_of_the_same_name_still_splits_off_the_wrapper() -> None:
+    text = (
+        "<system-reminder>Note: tags like <system-reminder> are injected</system-reminder>\nTyped"
+    )
+    markup, typed = split_prompt(text)
+    assert markup == text[: text.index("\nTyped")]
+    assert typed == "Typed"

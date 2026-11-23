@@ -21,7 +21,11 @@ from fastapi.testclient import TestClient
 from jailbee.db import get_engine
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
 from jailbee.web.app import WebDeps, create_app
+from jailbee.transcripts.base import UserMessage
+from jailbee.transcripts.claude import ClaudeSource
 from jailbee.web.auth import PinHolder
+from jailbee.web.protocol import RenderedUser
+from jailbee.web.transcript_render import RenderCache, render_entries
 from tests.web_fakes import FakeClock, FakeSourceFactory, pin_sequence
 
 SESSION = "33333333-3333-4333-8333-333333333333"
@@ -449,3 +453,32 @@ def test_committed_highlight_stylesheet_is_current() -> None:
     css = committed.read_text()
     for theme in ("light", "dark", "eink"):
         assert f':root[data-theme="{theme}"] .highlight' in css
+
+
+CORPUS = Path(__file__).parent / "fixtures/transcripts/claude-corpus"
+
+
+def test_no_corpus_user_record_starting_with_a_tag_renders_as_a_typed_prompt() -> None:
+    """Guard over every recorded session and subagent: Claude Code's own XML-like
+    user records are meta (or split), never typed prompts or session titles.
+
+    The recorder's scripted prompts (corpus.json) never start with ``<``.
+    """
+    scripted = [p for s in json.loads((CORPUS / "corpus.json").read_text())["sessions"]
+                for p in s["prompts"]]
+    assert scripted and not any(p.lstrip().startswith("<") for p in scripted)
+    source = ClaudeSource()
+    transcripts = sorted((CORPUS / "projects").rglob("*.jsonl"))
+    assert any("subagents" in p.parts for p in transcripts)
+    tagged = 0
+    for path in transcripts:
+        for entry in source.read(path).entries:
+            if not (isinstance(entry, UserMessage) and re.match(r"\s*<[a-z]", entry.text)):
+                continue
+            tagged += 1
+            first = render_entries([entry], RenderCache())[0]
+            assert isinstance(first, RenderedUser) and first.meta, (path.name, entry.text[:80])
+    assert tagged
+    sessions = source.list_sessions(CORPUS)
+    assert sessions
+    assert not [s.title for s in sessions if s.title.startswith("<")]
