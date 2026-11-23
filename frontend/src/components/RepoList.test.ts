@@ -107,10 +107,10 @@ describe("RepoList", () => {
         expect(rows[1].attributes("data-state")).toBe("Stopped")
     })
 
-    it("names the phase in text so it does not rely on colour (e-ink)", () => {
+    it("names the phase and stopped state in text so neither relies on colour (e-ink)", () => {
         const rows = mountList().findAll("li.row")
         expect(rows[0].get(".phase").text()).toBe("booting")
-        expect(rows[1].find(".phase").exists()).toBe(false)
+        expect(rows[1].get(".phase").text()).toBe("Stopped")
     })
 
     it("shows the core's cells under their headers and skips empty ones", () => {
