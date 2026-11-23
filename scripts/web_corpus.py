@@ -108,29 +108,83 @@ RECORD_FIELDS = frozenset(
 MESSAGE_FIELDS = frozenset({"id", "type", "role", "model", "content", "stop_reason"})
 NESTED_FIELDS: dict[str, frozenset[str]] = {
     "message": MESSAGE_FIELDS,
-    "content": frozenset({
-        "type", "text", "thinking", "signature", "id", "name", "input", "caller",
-        "tool_use_id", "content", "is_error",
-    }),
+    "content": frozenset(
+        {
+            "type",
+            "text",
+            "thinking",
+            "signature",
+            "id",
+            "name",
+            "input",
+            "caller",
+            "tool_use_id",
+            "content",
+            "is_error",
+        }
+    ),
     "caller": frozenset({"type"}),
-    "input": frozenset({
-        "command", "description", "file_path", "old_string", "new_string", "replace_all",
-        "prompt", "subagent_type", "model", "timeout", "run_in_background", "offset", "limit",
-    }),
-    "toolUseResult": frozenset({
-        "status", "agentId", "agentType", "canContinueAgent", "canReadOutputFile", "description",
-        "file", "filePath", "interrupted", "isAsync", "isImage", "newString", "noOutputExpected",
-        "oldString", "originalFile", "outputFile", "prompt", "replaceAll", "resolvedModel",
-        "stderr", "stdout", "structuredPatch", "type", "userModified",
-    }),
+    "input": frozenset(
+        {
+            "command",
+            "description",
+            "file_path",
+            "old_string",
+            "new_string",
+            "replace_all",
+            "prompt",
+            "subagent_type",
+            "model",
+            "timeout",
+            "run_in_background",
+            "offset",
+            "limit",
+        }
+    ),
+    "toolUseResult": frozenset(
+        {
+            "status",
+            "agentId",
+            "agentType",
+            "canContinueAgent",
+            "canReadOutputFile",
+            "description",
+            "file",
+            "filePath",
+            "interrupted",
+            "isAsync",
+            "isImage",
+            "newString",
+            "noOutputExpected",
+            "oldString",
+            "originalFile",
+            "outputFile",
+            "prompt",
+            "replaceAll",
+            "resolvedModel",
+            "stderr",
+            "stdout",
+            "structuredPatch",
+            "type",
+            "userModified",
+        }
+    ),
     "file": frozenset({"content", "filePath", "numLines", "startLine", "totalLines"}),
     "structuredPatch": frozenset({"lines", "newLines", "newStart", "oldLines", "oldStart"}),
     "attachment": frozenset({"type", "date", "filename", "filePath", "content", "command"}),
-    "compactMetadata": frozenset({
-        "trigger", "preTokens", "postTokens", "cumulativeDroppedTokens", "durationMs",
-        "preservedMessages", "preservedSegment", "preCompactOrganizations",
-        "preCompactOrganizationsCoverStart",
-    }),
+    "compactMetadata": frozenset(
+        {
+            "trigger",
+            "preTokens",
+            "postTokens",
+            "cumulativeDroppedTokens",
+            "durationMs",
+            "preservedMessages",
+            "preservedSegment",
+            "preCompactOrganizations",
+            "preCompactOrganizationsCoverStart",
+        }
+    ),
     "preservedMessages": frozenset({"allUuids", "anchorUuid", "uuids"}),
     "preservedSegment": frozenset({"anchorUuid", "headUuid", "tailUuid"}),
 }
@@ -226,8 +280,11 @@ class _Normaliser:
             return [self.value(item, fields) for item in value]
         if isinstance(value, dict):
             return {
-                key: "signature" if key == "signature" else self.value(item, NESTED_FIELDS.get(key, frozenset()))
-                for key, item in value.items() if key in fields
+                key: "signature"
+                if key == "signature"
+                else self.value(item, NESTED_FIELDS.get(key, frozenset()))
+                for key, item in value.items()
+                if key in fields
             }
         return value
 
@@ -316,11 +373,11 @@ _ALLOWED_PATHS = (TOY_DIR, HOME_DIR, "/work/claude-tmp")
 # Slash commands and XML closing tags are not filesystem paths.
 _SLASH_COMMANDS = frozenset({"/compact"})
 _IDENTITY_FIELD = re.compile(
-    r'(?i)(?:(?:\b(?:author|committer|commit|co-authored-by|cwd)'
-    r'|\b(?:git_)?(?:author|committer)_(?:name|email|ident)'
+    r"(?i)(?:(?:\b(?:author|committer|commit|co-authored-by|cwd)"
+    r"|\b(?:git_)?(?:author|committer)_(?:name|email|ident)"
     r'|\b(?:author|committer|user)(?:Name|Email))["\']?\s*[:=]\s*'
     r'|\buser\.(?:name|email)["\']?(?:\s*[:=]\s*|\s+)'
-    r'|\bgit\s+(?:author|committer)\s+is\s+)'
+    r"|\bgit\s+(?:author|committer)\s+is\s+)"
     r'["\']?([^\n<>"\']+)'
 )
 _IDENTITY_PLACEHOLDERS = frozenset({"Toy", "Claude", REDACTED, *EMAILS_ALLOWED, TOY_DIR})
@@ -345,7 +402,8 @@ def find_leaks(text: str, identity: Identity | None = None) -> list[str]:
             *(raw for raw, _ in identity.renames),
         ]
         leaks += [
-            literal for literal in literals
+            literal
+            for literal in literals
             if literal and re.search(_secret_pattern(literal), text, re.IGNORECASE)
         ]
     leaks += _CREDENTIAL.findall(text)
@@ -355,8 +413,12 @@ def find_leaks(text: str, identity: Identity | None = None) -> list[str]:
         path = match[0].rstrip(".")
         if path in _SLASH_COMMANDS:
             continue
-        if (match.start() > 0 and text[match.start() - 1] == "<"
-                and text[match.end():].startswith(">") and "/" not in path[1:]):
+        if (
+            match.start() > 0
+            and text[match.start() - 1] == "<"
+            and text[match.end() :].startswith(">")
+            and "/" not in path[1:]
+        ):
             continue
         normal = "/" + posixpath.normpath(path).lstrip("/")
         if not any(normal == root or normal.startswith(root + "/") for root in _ALLOWED_PATHS):
@@ -364,7 +426,8 @@ def find_leaks(text: str, identity: Identity | None = None) -> list[str]:
     # Decode JSON strings too: free-text tool output can contain escaped fields.
     decoded = text.replace('\\"', '"').replace(r"\n", "\n")
     leaks += [
-        m[1].strip() for m in _IDENTITY_FIELD.finditer(decoded)
+        m[1].strip()
+        for m in _IDENTITY_FIELD.finditer(decoded)
         if m[1].strip() not in _IDENTITY_PLACEHOLDERS
     ]
     return leaks
@@ -619,9 +682,7 @@ def _host_identity(toy_dir: Path, claude_tmp: Path) -> Identity:
     """The recording host's names, so `find_leaks` can prove they are gone."""
     secrets: set[str] = {socket.gethostname(), getpass.getuser()}
     for key in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"):
-        result = subprocess.run(
-            ["git", "var", key], capture_output=True, text=True, check=False
-        )
+        result = subprocess.run(["git", "var", key], capture_output=True, text=True, check=False)
         match = re.fullmatch(r"(.*?) <([^>]*)> \d+ [+-]\d{4}", result.stdout.strip())
         if result.returncode == 0 and match:
             name, email = match.groups()
@@ -801,7 +862,8 @@ def record(out_dir: Path) -> list[str]:
                 cleanup_errors.append(f"{raw_project}: {exc}")
             config_file = (
                 config_home / ".claude.json"
-                if os.environ.get("CLAUDE_CONFIG_DIR") else Path.home() / ".claude.json"
+                if os.environ.get("CLAUDE_CONFIG_DIR")
+                else Path.home() / ".claude.json"
             )
             try:
                 if config_file.is_file():

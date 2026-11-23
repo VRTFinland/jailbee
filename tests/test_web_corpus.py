@@ -25,12 +25,12 @@ from scripts.web_corpus import (
     SHAPES,
     TOY_PROJECT,
     Identity,
+    claude_project_name,
     detect_shapes,
     find_leaks,
     normalise_home,
-    scan_corpus,
     record,
-    claude_project_name,
+    scan_corpus,
 )
 
 RAW_SID = "3f2a9c1e-8b7d-4e6f-9a1b-2c3d4e5f6a7b"
@@ -186,26 +186,63 @@ def test_only_transcript_records_and_fields_survive(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("field", "value", "expected"),
     [
-        ("message", {"role": "user", "content": "hello", "accountName": "PRIVATE"},
-         {"role": "user", "content": "hello"}),
-        ("toolUseResult", {"status": "completed", "account": {"name": "PRIVATE"}},
-         {"status": "completed"}),
-        ("attachment", {"type": "date", "date": "2026-11-23", "accountName": "PRIVATE"},
-         {"type": "date", "date": "2026-11-23"}),
-        ("compactMetadata", {"trigger": "manual", "accountName": "PRIVATE",
-                             "preservedSegment": {"headUuid": RAW_SID, "account": "PRIVATE"}},
-         {"trigger": "manual", "preservedSegment": {
-             "headUuid": "00000001-0000-4000-8000-000000000001"}}),
-        ("toolUseResult", {"file": {"content": "toy file", "accountName": "PRIVATE"}},
-         {"file": {"content": "toy file"}}),
-        ("message", {"role": "user", "content": [{"type": "tool_result",
-            "content": [{"type": "text", "text": "result", "accountName": "PRIVATE"}]}]},
-         {"role": "user", "content": [{"type": "tool_result",
-            "content": [{"type": "text", "text": "result"}]}]}),
+        (
+            "message",
+            {"role": "user", "content": "hello", "accountName": "PRIVATE"},
+            {"role": "user", "content": "hello"},
+        ),
+        (
+            "toolUseResult",
+            {"status": "completed", "account": {"name": "PRIVATE"}},
+            {"status": "completed"},
+        ),
+        (
+            "attachment",
+            {"type": "date", "date": "2026-11-23", "accountName": "PRIVATE"},
+            {"type": "date", "date": "2026-11-23"},
+        ),
+        (
+            "compactMetadata",
+            {
+                "trigger": "manual",
+                "accountName": "PRIVATE",
+                "preservedSegment": {"headUuid": RAW_SID, "account": "PRIVATE"},
+            },
+            {
+                "trigger": "manual",
+                "preservedSegment": {"headUuid": "00000001-0000-4000-8000-000000000001"},
+            },
+        ),
+        (
+            "toolUseResult",
+            {"file": {"content": "toy file", "accountName": "PRIVATE"}},
+            {"file": {"content": "toy file"}},
+        ),
+        (
+            "message",
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "content": [{"type": "text", "text": "result", "accountName": "PRIVATE"}],
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "content": [{"type": "text", "text": "result"}]}
+                ],
+            },
+        ),
     ],
 )
 def test_nested_objects_keep_only_known_fields(
-    tmp_path: Path, field: str, value: object, expected: object,
+    tmp_path: Path,
+    field: str,
+    value: object,
+    expected: object,
 ) -> None:
     record = _user(_identity(tmp_path), "hello", **{field: value})
     if field == "attachment":
@@ -325,15 +362,26 @@ def test_find_leaks_reports_each_identifying_string(tmp_path: Path, leak: str) -
 @pytest.mark.parametrize(
     "leak",
     [
-        "/srv/private/data", "path:/srv/private", "cat </srv/private/customer-data",
-        "file:///srv/private/customer-data", "cat </secret", "/opt/company/config", "/workspace/private/repo",
-        "/var/lib/private/state", "/usr/bin/python3", "/data/private", "/home/user2/file",
-        "/work/toy-other/file", "/work/toy/../../private", "/work/toy/../private",
+        "/srv/private/data",
+        "path:/srv/private",
+        "cat </srv/private/customer-data",
+        "file:///srv/private/customer-data",
+        "cat </secret",
+        "/opt/company/config",
+        "/workspace/private/repo",
+        "/var/lib/private/state",
+        "/usr/bin/python3",
+        "/data/private",
+        "/home/user2/file",
+        "/work/toy-other/file",
+        "/work/toy/../../private",
+        "/work/toy/../private",
         "Author: Fictional Maintainer <toy@example.invalid>",
         "Commit: Another Person <noreply@anthropic.com>",
         '"authorName": "Fictional Maintainer"',
         "GIT_AUTHOR_IDENT=Fictional Maintainer <toy@example.invalid> 123 +0000",
-        "user.name Fictional Maintainer", "git author is Fictional Maintainer",
+        "user.name Fictional Maintainer",
+        "git author is Fictional Maintainer",
         '"cwd": "/work/claude-tmp"',
     ],
 )
@@ -377,8 +425,12 @@ def test_short_secrets_match_whole_words_only(tmp_path: Path) -> None:
 @pytest.mark.parametrize("custom_config", [False, True])
 @pytest.mark.parametrize("broken_config", [False, True])
 def test_record_redacts_effective_git_identity_and_cleans_its_state(
-    tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, fail: bool,
-    custom_config: bool, broken_config: bool,
+    tmp_path: Path,
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    fail: bool,
+    custom_config: bool,
+    broken_config: bool,
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
@@ -410,13 +462,33 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
 
     def start(command: list[str], **kwargs: Any) -> Any:
         toy = kwargs["cwd"]
-        sid = command[command.index("--session-id") + 1] if "--session-id" in command else command[command.index("--resume") + 1]
+        sid = (
+            command[command.index("--session-id") + 1]
+            if "--session-id" in command
+            else command[command.index("--resume") + 1]
+        )
         project = config / "projects" / claude_project_name(str(toy))
-        _write(project / f"{sid}.jsonl", [{"type": "user", "cwd": str(toy), "sessionId": sid,
-            "message": {"role": "user", "content": [
-                {"type": "text", "text": "Qix Author Zed Committer Qix Zed author@example.invalid committer@example.invalid"},
-                {"type": "tool_use", "name": "Bash", "input": {"command": "true"}},
-            ]}}])
+        _write(
+            project / f"{sid}.jsonl",
+            [
+                {
+                    "type": "user",
+                    "cwd": str(toy),
+                    "sessionId": sid,
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Qix Author Zed Committer Qix Zed"
+                                " author@example.invalid committer@example.invalid",
+                            },
+                            {"type": "tool_use", "name": "Bash", "input": {"command": "true"}},
+                        ],
+                    },
+                }
+            ],
+        )
         if broken_config:
             config_file.write_text("{invalid")
         else:
@@ -444,7 +516,10 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
         text = "".join(p.read_text() for p in out.rglob("*.jsonl"))
         assert all(secret not in text for secret in ("Qix", "Author", "Zed", "Committer"))
     if not broken_config:
-        assert json.loads(config_file.read_text()) == {"projects": {"/existing": {"keep": True}}, "other": 1}
+        assert json.loads(config_file.read_text()) == {
+            "projects": {"/existing": {"keep": True}},
+            "other": 1,
+        }
     assert sorted(p.name for p in snapshots.iterdir()) == ["old.sh"]
     assert not list((config / "projects").iterdir())
 
