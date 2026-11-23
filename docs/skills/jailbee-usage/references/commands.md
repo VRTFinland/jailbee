@@ -1853,7 +1853,9 @@ navigation and preview keys work; refresh waits for the completion reload,
 and another delete, publish, clear or scope change is refused while busy.
 Closing the dashboard box leaves the work running and reports its result as a notice.
 PR-creation verification is background work too; the interactive `pr push` still
-uses the terminal.
+uses the terminal, and is not run if the box was closed meanwhile (a notice
+says so). The standalone manager refuses Esc, `q` and Ctrl-C while a mutation
+runs: quitting waits for it to finish.
 
 | Command | What it does |
 |---|---|

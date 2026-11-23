@@ -371,7 +371,9 @@ before editing `## Unreleased`.
   longer freezes the interface. Revision checks, drops and post-mutation
   reloads run in the background with a busy line; navigation stays usable,
   concurrent mutations are refused, and a closed dashboard box reports the
-  result as a notice. PR-creation preflight listing is asynchronous too
+  result as a notice. PR-creation preflight listing is asynchronous too; a
+  `pr push` whose box was closed meanwhile is not handed the terminal (a notice
+  says so), and quitting `jailbee outbox` waits for a running mutation
   ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 - **A dashboard left running across a JailBee upgrade stops instead of
   fighting the newer state service.** The "newer wins" rule only applied when
