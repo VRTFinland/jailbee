@@ -626,8 +626,12 @@ class DashboardSession:
             self._optimize_widths()
             self._auto_optimize_seq = snapshot.seq
 
-    def tick(self) -> None:
-        """One refresh: finished jobs, the latest snapshot, overlays and cursor kept honest."""
+    def tick(self, *, spin: bool = False) -> None:
+        """One refresh: finished jobs, the latest snapshot, overlays and cursor kept honest.
+
+        The queue spinner steps only when ``spin`` (the periodic timer), so
+        hover, keys and resizes do not speed it up.
+        """
         self.jobs.poll()
         snapshot = self.client.latest()
         assert snapshot is not None  # `wait_first_snapshot` returned
@@ -670,7 +674,10 @@ class DashboardSession:
             self._auto_optimize_seq = None
             self._optimize_widths()
         self.column_offset = self._clamped(self.column_offset)
-        self._queue_frame = (self._queue_frame + 1) % 4 if self.queue.counts().running else 0
+        if not self.queue.counts().running:
+            self._queue_frame = 0
+        elif spin:
+            self._queue_frame = (self._queue_frame + 1) % 4
 
     def _without_dismissed(self, groups: list[RepoGroup]) -> list[RepoGroup]:
         """``groups`` minus the advisories dismissed since the snapshot was gathered.

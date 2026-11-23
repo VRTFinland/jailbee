@@ -551,10 +551,12 @@ def test_the_badge_has_accent_and_non_colour_emphasis(
     mocker, tmp_path, monkeypatch, theme, running
 ):
     from textual.color import Color
+    from textual.theme import BUILTIN_THEMES
 
     from jailbee.dashboard.hit import Hit
     from tests.dashboard_pilot import hit_offset, make_app
 
+    assert BUILTIN_THEMES["nord"].accent != BUILTIN_THEMES["gruvbox"].accent
     if theme == "monochrome":
         monkeypatch.setenv("NO_COLOR", "1")
     else:
@@ -567,7 +569,8 @@ def test_the_badge_has_accent_and_non_colour_emphasis(
 
     async def script():
         async with app.run_test(size=(100, 25)) as pilot:
-            for active_theme in ("textual-dark", "textual-light", "textual-dark"):
+            seen = {}
+            for active_theme in ("nord", "gruvbox", "nord"):
                 app.theme = active_theme
                 await pilot.pause()
                 x, y = hit_offset(app, Hit("queue"))
@@ -585,8 +588,11 @@ def test_the_badge_has_accent_and_non_colour_emphasis(
                 elif running:
                     expected = Color.parse(app.get_css_variables()["accent"]).rich_color
                     assert glyph.color == expected
+                    seen[active_theme] = glyph.color
                 if theme != "monochrome":
                     assert attention.color.number == 1  # ANSI red
+            if theme == "colour" and running:
+                assert seen["nord"] != seen["gruvbox"]  # the glyph really follows the theme
 
     asyncio.run(script())
 
@@ -605,7 +611,7 @@ def test_spinner_only_refreshes_do_not_redraw_the_body(mocker, tmp_path):
             await pilot.pause()
             shown = mocker.spy(app.frame, "show")
             before = screen_text(app).splitlines()
-            app.refresh_frame()
+            app._timer_tick()
             await pilot.pause()
             after = screen_text(app).splitlines()
             assert after[0] != before[0] and after[1:] == before[1:]
@@ -618,7 +624,7 @@ def test_spinner_only_refreshes_do_not_redraw_the_body(mocker, tmp_path):
     asyncio.run(script())
 
 
-def test_the_queue_spinner_uses_refresh_frames_and_stops_when_idle(mocker, tmp_path):
+def test_the_queue_spinner_uses_timer_ticks_and_stops_when_idle(mocker, tmp_path):
     from datetime import timedelta
 
     from tests.dashboard_pilot import FROZEN_NOW, make_app, screen_text
@@ -632,12 +638,12 @@ def test_the_queue_spinner_uses_refresh_frames_and_stops_when_idle(mocker, tmp_p
     async def script():
         async with app.run_test(size=(100, 25)) as pilot:
             await pilot.pause()
-            app.refresh_frame()
+            app._timer_tick()
             await pilot.pause()
             for delay in (0, 100, 600, 1100, 250):
                 tops.append(screen_text(app).splitlines()[0])
                 now[0] += timedelta(milliseconds=delay)
-                app.refresh_frame()
+                app._timer_tick()
                 await pilot.pause()
             app.session.queue.finish(entry, status=1, output="failed")
             app.refresh_frame()
@@ -657,3 +663,27 @@ def test_the_queue_spinner_uses_refresh_frames_and_stops_when_idle(mocker, tmp_p
     cycle = "⟳◷◶◵"
     start = cycle.index(glyphs[0])
     assert "".join(glyphs) == (cycle * 2)[start : start + 5]
+
+
+def test_spinner_advances_only_on_timer_ticks(mocker, tmp_path):
+    from tests.dashboard_pilot import make_app
+
+    app = make_app(mocker, [_long(tmp_path, 3)])
+    entry = app.session.queue.start("jailbee doctor", "alpha")
+
+    async def script():
+        async with app.run_test(size=(100, 25)) as pilot:
+            await pilot.pause()
+            app._timer_tick()
+            frame = app.session._queue_frame
+            for _ in range(5):  # hover, keys, scroll, resize
+                app.refresh_frame()
+            assert app.session._queue_frame == frame
+            for step in (1, 2):
+                app._timer_tick()
+                assert app.session._queue_frame == (frame + step) % 4
+            app.session.queue.finish(entry, status=0, output="ok")
+            app._timer_tick()
+            assert app.session._queue_frame == 0
+
+    asyncio.run(script())

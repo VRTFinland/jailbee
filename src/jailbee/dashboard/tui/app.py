@@ -397,7 +397,7 @@ class DashboardApp(App[int], inherit_bindings=False):
     def on_mount(self) -> None:
         self.refresh_frame()
         if self._tick_seconds is not None:
-            self.set_interval(self._tick_seconds, self.refresh_frame)
+            self.set_interval(self._tick_seconds, self._timer_tick)
 
     def on_resize(self, _event: events.Resize) -> None:
         self._painted = None
@@ -535,9 +535,13 @@ class DashboardApp(App[int], inherit_bindings=False):
 
     # --- frame -------------------------------------------------------------
 
-    def refresh_frame(self) -> None:
+    def _timer_tick(self) -> None:
+        """The periodic refresh: the only caller that steps the queue spinner."""
+        self.refresh_frame(spin=True)
+
+    def refresh_frame(self, *, spin: bool = False) -> None:
         """Refresh the session and repaint if anything visible changed."""
-        self.session.tick()
+        self.session.tick(spin=spin)
         title = self.session.title()
         if title != self._last_title:
             # Only on change: an OSC 2 write on every frame makes some
