@@ -528,8 +528,14 @@ def test_a_narrow_title_ellipsises_before_the_queue_badge(tmp_path, width):
 
 @pytest.mark.parametrize(
     ("width", "label"),
-    [(18, " ⟳ 12 · ⚠ 34"), (17, "⟳ 12 · ⚠ 34"), (16, "⟳ 12 · ⚠ …"),
-     (10, "⟳ 1…"), (7, "…"), (6, "")],
+    [
+        (18, " ⟳ 12 · ⚠ 34"),
+        (17, "⟳ 12 · ⚠ 34"),
+        (16, "⟳ 12 · ⚠ …"),
+        (10, "⟳ 1…"),
+        (7, "…"),
+        (6, ""),
+    ],
 )
 def test_a_tiny_title_keeps_the_badge_instead_of_the_dashboard_name(tmp_path, width, label):
     from jailbee.dashboard.notifications import QueueCounts
@@ -651,4 +657,3 @@ def test_the_queue_spinner_uses_refresh_frames_and_stops_when_idle(mocker, tmp_p
     cycle = "⟳◷◶◵"
     start = cycle.index(glyphs[0])
     assert "".join(glyphs) == (cycle * 2)[start : start + 5]
-

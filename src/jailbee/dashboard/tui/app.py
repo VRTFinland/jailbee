@@ -548,9 +548,11 @@ class DashboardApp(App[int], inherit_bindings=False):
         painted = (view, self.size)
         if painted == self._painted:
             return
-        if self._painted is not None and (
-            replace(view, queue_frame=self._painted[0].queue_frame), self.size
-        ) == self._painted:
+        if (
+            self._painted is not None
+            and (replace(view, queue_frame=self._painted[0].queue_frame), self.size)
+            == self._painted
+        ):
             self.frame.show_title(view)
         else:
             self.frame.show(view)
