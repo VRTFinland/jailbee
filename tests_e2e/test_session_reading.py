@@ -59,12 +59,26 @@ def open_transcript(
     return server, transcript
 
 
+def assert_latest_starts_below_header(page: Page) -> None:
+    page.wait_for_function("""() => {
+        const replies = document.querySelectorAll('.entry.assistant');
+        const reply = replies[replies.length - 1].getBoundingClientRect();
+        const header = document.querySelector('.session-header').getBoundingClientRect();
+        return Math.abs(reply.top - header.bottom) <= 2;
+    }""")
+
+
 @pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
+@pytest.mark.parametrize("profile", ["normal", "eink"])
 def test_latest_answer_and_sticky_title_follow_the_readable_area(
-    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int, profile: str
 ) -> None:
     page.set_viewport_size({"width": width, "height": 800})
     server, transcript = open_transcript(page, make_server, tmp_path)
+    if profile == "eink":
+        page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink')")
+        page.reload()
+        expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
     latest = page.get_by_role("button", name="Latest answer")
     title = page.get_by_role("heading", name=TITLE, exact=True)
     expect(title).to_have_attribute("title", TITLE)
@@ -73,6 +87,7 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
     latest.click()
     expect(latest).to_be_hidden()
     expect(page.get_by_text("Reply 24", exact=True)).to_be_in_viewport()
+    assert_latest_starts_below_header(page)
     expect(title).to_be_in_viewport()
     assert page.locator(".session-header").evaluate("el => el.getBoundingClientRect().top") == 0
 
@@ -92,6 +107,8 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
     with transcript.open("a") as stream:
         stream.write(record(25, "assistant", "The live answer below the fold."))
     server.watches.open[0].fire()
+    if profile == "eink":
+        page.get_by_role("button", name="1 new message — tap to show").click()
     expect(page.get_by_text("The live answer below the fold.", exact=True)).to_be_attached()
     expect(latest).to_be_visible()
     assert page.evaluate("window.scrollY") == position
@@ -99,6 +116,32 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
     latest.click()
     expect(latest).to_be_hidden()
     expect(page.get_by_text("The live answer below the fold.", exact=True)).to_be_in_viewport()
+    assert_latest_starts_below_header(page)
+
+
+def test_partial_keyboard_scroll_keeps_the_current_eink_page(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path
+) -> None:
+    open_transcript(page, make_server, tmp_path)
+    page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink')")
+    page.reload()
+    expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
+    expect(page.locator(".page-indicator")).to_contain_text("Page 1 /")
+    readable = page.locator(".page-nav").evaluate(
+        "el => el.getBoundingClientRect().top - "
+        "document.querySelector('.session-header').getBoundingClientRect().bottom"
+    )
+    page.evaluate("height => window.scrollTo(0, height * 0.6)", readable)
+    page.wait_for_function(
+        "document.querySelector('.session-header').getBoundingClientRect().top === 0"
+    )
+    expect(page.locator(".page-indicator")).to_contain_text("Page 1 /")
+    readable = page.locator(".page-nav").evaluate(
+        "el => Math.floor(el.getBoundingClientRect().top - "
+        "document.querySelector('.session-header').getBoundingClientRect().bottom)"
+    )
+    page.get_by_role("button", name="Next", exact=False).last.click()
+    page.wait_for_function("height => Math.abs(window.scrollY - height) <= 1", arg=readable)
 
 
 def test_short_landscape_page_turns_do_not_skip_text(

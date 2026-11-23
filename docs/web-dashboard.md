@@ -121,12 +121,13 @@ an exact count, while `at_least` sets a minimum with no upper limit. Overlapping
 patterns are matched jointly, not greedily in declaration or arrival order.
 Extra hits and unmet expectations fail the test.
 
-The restart tracer deliberately waits for a refused WebSocket reconnect. It
+The restart test in `tests_e2e/test_front_page_live.py` deliberately waits for a
+refused WebSocket reconnect. It
 allows only `WebSocket connection to 'ws://127.0.0.1:<server-port>/api/ws'
 failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED`,
 matched as a whole message for that server's actual port. No other connection
 failure shapes are excused, and ordinary tests do not suppress reconnect errors.
-A failed stop is reported directly; the tracer starts the server again only
+A failed stop is reported directly; the test starts the server again only
 once stopping and observing the expected reconnect have succeeded.
 
 `tests_e2e/test_sessions.py` exercises the hand-written fixture sessions at
@@ -143,7 +144,13 @@ navigation; phase labels and computed monochrome edges in the e-ink theme;
 the connecting notice during downtime; and current state after a real server
 restart. Its protocol-upgrade test forwards traffic to the real server but
 rewrites the reconnect's auth version to simulate an outdated tab. The real
-server's 4002 rejection must trigger one document reload and a fresh connection.
+server's 4002 rejection must trigger one document reload and a fresh connection,
+then render a subsequent state push before the reload count is checked.
+`test_protocol_reload.py` keeps the client stale across that reload: a tab
+reloads automatically at most once within a minute, then shows
+"This page is out of date; reload" with a manual Reload button. If session
+storage is unavailable, it offers manual reload immediately rather than risk
+a loop.
 
 ## Run it
 
@@ -200,7 +207,8 @@ until that lifts. The ways in that the waits do not touch are a security key,
 `serve`, which clears the waits; any successful login lifts the PIN and TOTP
 waits at once. Links and security keys are not limited. An attempt during the
 wait is refused unchecked with HTTP 429 and a `Retry-After` header; the login
-page shows that remaining wait in seconds. It buys no guess, and an attempt
+page shows that remaining wait in seconds below a minute, otherwise in minutes
+rounded up. It buys no guess, and an attempt
 still being checked holds back a parallel one. An
 owner who mistypes up to four times waits not at all, a fifth or sixth time a
 few seconds. The waits are kept in memory, so a restart of `serve` clears
@@ -324,11 +332,15 @@ in a compact header while you read. **Latest answer** appears only when the
 newest assistant reply is outside the readable area (below the header and above
 the bottom controls, including the device's safe-area inset). A truncated title
 keeps its full text as a tooltip and accessible heading name. Page turns use the
-actual readable height even on short landscape screens. Jumping to the reply or
-scrolling to it hides the button; moving
+actual readable height even on short landscape screens; a partial keyboard or
+system scroll stays on its current page so Next never skips unread text.
+Jumping aligns the newest reply's start just below the measured header, even
+for a short final reply, with trailing room to scroll it there. Jumping or
+scrolling to the reply hides the button; moving
 away or receiving a newer reply out of view shows it again. In the e-ink display
-profile the same rule applies, but the button turns to the page containing the
-reply, and live entries remain behind the new-messages notice until tapped.
+profile the same rule applies: the button starts a page at the reply, with
+subsequent page turns continuing from there, and live entries remain behind
+the new-messages notice until tapped.
 
 ## Install as an app
 

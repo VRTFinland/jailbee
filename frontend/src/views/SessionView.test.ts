@@ -95,7 +95,6 @@ describe("SessionView", () => {
         expect(fetchMock.mock.calls[0][0]).toBe("/api/repos/alpha/sessions/claude/s-1")
         expect(wrapper.get("h1").text()).toBe("Fix the login bug")
         expect(wrapper.get("h1").attributes("title")).toBe("Fix the login bug")
-        expect(wrapper.get("h1").attributes("aria-label")).toBe("Fix the login bug")
         const answers = wrapper.findAll(".entry.assistant")
         expect(answers).toHaveLength(2)
         expect(answers[0].html()).toContain("<h2>Plan</h2>")

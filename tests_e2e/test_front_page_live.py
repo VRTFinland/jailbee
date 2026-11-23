@@ -71,12 +71,24 @@ def test_row_phases_have_distinct_edges_and_labels_in_the_eink_theme(
                 container("work-build", "work", job_kind="create", job_phase="creating", job_pid=1),
                 container("work-broken", "work", job_kind="create", job_phase="failed"),
                 container("work-off", "work", state="Stopped"),
+                container("work-running", "work"),
             )
         )
     )
     logged_in.get_by_role("link", name="Settings", exact=True).click()
     logged_in.get_by_role("radio", name="E-ink", exact=True).check()
     logged_in.get_by_role("link", name="JailBee").click()
+
+    running = logged_in.get_by_role("listitem").filter(
+        has=logged_in.get_by_role("link", name="running", exact=True)
+    )
+    expect(running).to_be_visible()
+    expect(running.locator(".phase")).to_have_count(0)
+    edge_signature = """el => {
+        const s = getComputedStyle(el);
+        return [s.borderLeftStyle, s.borderLeftWidth, s.borderTopStyle];
+    }"""
+    running_edge = running.evaluate(edge_signature)
 
     # Check rendered edges, not CSS source or phase attributes: this catches
     # broken scoped selectors and distinguishes states on a monochrome screen.
@@ -91,6 +103,7 @@ def test_row_phases_have_distinct_edges_and_labels_in_the_eink_theme(
             has=logged_in.get_by_role("link", name=name, exact=True)
         )
         expect(row).to_be_visible()
+        assert row.evaluate(edge_signature) != running_edge
         expect(row.locator(".phase")).to_have_text(label)
         expect(row.locator(".phase")).to_be_visible()
         expect(row).to_have_css("border-left-style", style)
@@ -110,15 +123,13 @@ def test_connection_loss_shows_connecting_while_the_last_snapshot_stays_visible(
     expect(logged_in.get_by_text("Connecting…", exact=True)).to_have_count(0)
     refused = expect_refused_reconnect(server, browser_errors)
 
-    try:
-        with logged_in.expect_console_message(
-            predicate=lambda message: refused.fullmatch(message.text) is not None
-        ):
-            server.stop()
-        expect(logged_in.get_by_text("Connecting…", exact=True)).to_be_visible()
-        expect(main).to_be_visible()
-    finally:
-        server.start()
+    with logged_in.expect_console_message(
+        predicate=lambda message: refused.fullmatch(message.text) is not None
+    ):
+        server.stop()
+    expect(logged_in.get_by_text("Connecting…", exact=True)).to_be_visible()
+    expect(main).to_be_visible()
+    server.start()
     expect(logged_in.get_by_text("Connecting…", exact=True)).to_have_count(0)
 
 
@@ -131,16 +142,14 @@ def test_server_restart_reconnects_to_current_state_without_reloading(
     logged_in.on("framenavigated", lambda frame: navigations.append(frame.url))
     refused = expect_refused_reconnect(server, browser_errors)
 
-    try:
-        with logged_in.expect_console_message(
-            predicate=lambda message: refused.fullmatch(message.text) is not None
-        ):
-            server.stop()
-        # Change state while no browser is connected: the reconnect must fetch
-        # the current snapshot, not just resume updates from the old socket.
-        server.push(snapshot_of(repo_group("work", container("work-after", "work"))))
-    finally:
-        server.start()
+    with logged_in.expect_console_message(
+        predicate=lambda message: refused.fullmatch(message.text) is not None
+    ):
+        server.stop()
+    # Change state while no browser is connected: the reconnect must fetch
+    # the current snapshot, not just resume updates from the old socket.
+    server.push(snapshot_of(repo_group("work", container("work-after", "work"))))
+    server.start()
 
     expect(logged_in.get_by_role("link", name="after", exact=True)).to_be_visible()
     expect(logged_in.get_by_role("link", name="before", exact=True)).to_have_count(0)
@@ -200,6 +209,9 @@ def test_protocol_mismatch_on_reconnect_reloads_the_page(server: E2EServer, page
     expect(page.get_by_role("link", name="before", exact=True)).to_be_visible()
     expect(page.get_by_text("Connecting…", exact=True)).to_have_count(0)
     expect(page.get_by_role("banner")).to_contain_text("upgrade tablet")
+    server.push(snapshot_of(repo_group("work", container("work-live-after-reload", "work"))))
+    expect(page.get_by_role("link", name="live-after-reload", exact=True)).to_be_visible()
+    expect(page.get_by_role("link", name="before", exact=True)).to_have_count(0)
     assert closes[0] == 4002, "the real server must reject the stale protocol"
     assert len(sockets) == 3, "the reloaded document must establish a fresh connection"
     assert navigations == [f"{server.url}/"], "exactly one automatic document reload is needed"

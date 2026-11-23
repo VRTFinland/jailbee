@@ -25,6 +25,7 @@ export interface DashboardState {
     view: FrontPageView | null
     status: string | null
     connected: boolean
+    outdated: boolean
     device: string
 }
 
@@ -50,6 +51,7 @@ export class Dashboard {
         view: null,
         status: null,
         connected: false,
+        outdated: false,
         device: "",
     })
     private socket: SocketLike | null = null
@@ -71,6 +73,7 @@ export class Dashboard {
                 this.state.connected = connected
             },
             onUnauthorized: () => this.unauthorized(),
+            onOutdated: () => { this.state.outdated = true },
         })
         this.socket.start()
     }

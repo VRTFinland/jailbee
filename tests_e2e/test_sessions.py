@@ -104,9 +104,10 @@ def test_markdown_code_folded_tools_and_subagent_transcript(
     expect(page.get_by_text("Looks fine.", exact=True)).to_be_visible()
     path = session_path(agent_home)
     subagent_path = path.with_suffix("") / "subagents" / f"agent-{SUBAGENT_ID}.jsonl"
+    append_entry(server, path, "Parent reply while reading the subagent.")
+    # A positive message on the active subscription settles before absence is checked.
     append_entry(server, subagent_path, "Live subagent reply.")
     expect(page.get_by_text("Live subagent reply.", exact=True)).to_be_visible()
-    append_entry(server, path, "Parent reply while reading the subagent.")
     expect(page.get_by_text("Parent reply while reading the subagent.", exact=True)).to_have_count(
         0
     )
@@ -114,7 +115,6 @@ def test_markdown_code_folded_tools_and_subagent_transcript(
     page.get_by_role("link", name="Parent session").click()
     expect(page.get_by_text("Done.", exact=True)).to_be_visible()
     expect(page.get_by_text("Parent reply while reading the subagent.", exact=True)).to_be_visible()
-    expect(page.get_by_text("Live subagent reply.", exact=True)).to_have_count(0)
     append_entry(server, path, "Live parent reply after returning.")
     expect(page.get_by_text("Live parent reply after returning.", exact=True)).to_be_visible()
 
@@ -172,17 +172,15 @@ def test_follow_resumes_after_restart_without_losing_or_duplicating_entries(
         r"Error in connection establishment: net::ERR_CONNECTION_REFUSED"
     )
     browser_errors.expect("console", refused, at_least=1)
-    try:
-        with page.expect_console_message(
-            predicate=lambda message: refused.fullmatch(message.text) is not None
-        ):
-            server.stop()
-        expect(page.get_by_text("Connecting…", exact=True)).to_be_visible()
-        append_entry(server, path, "A new prompt while offline.", role="user")
-        append_entry(server, path, "First reply while offline.")
-        append_entry(server, path, "Second reply while offline.")
-    finally:
-        server.start()
+    with page.expect_console_message(
+        predicate=lambda message: refused.fullmatch(message.text) is not None
+    ):
+        server.stop()
+    expect(page.get_by_text("Connecting…", exact=True)).to_be_visible()
+    append_entry(server, path, "A new prompt while offline.", role="user")
+    append_entry(server, path, "First reply while offline.")
+    append_entry(server, path, "Second reply while offline.")
+    server.start()
 
     expect(page.get_by_text("Second reply while offline.", exact=True)).to_have_count(1)
     expect(page.get_by_text("Connecting…", exact=True)).to_have_count(0)

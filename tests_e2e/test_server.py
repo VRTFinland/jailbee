@@ -29,7 +29,7 @@ def test_all_servers_are_cleaned_up_when_disposal_fails(
                     raise RuntimeError("disposal broke")
                 print("second engine disposed")
             monkeypatch.setattr(Engine, "dispose", dispose)
-            monkeypatch.setattr(E2EServer, "start", lambda self: None)
+            monkeypatch.setattr(E2EServer, "start", lambda self, **kwargs: None)
             monkeypatch.setattr(E2EServer, "stop", lambda self: print("server stopped"))
     """)
     pytester.makepyfile("""
@@ -46,7 +46,7 @@ def test_all_servers_are_cleaned_up_when_disposal_fails(
     assert str(result.stdout).count("server stopped") == 2
 
 
-def test_restart_tracer_preserves_a_stop_failure(
+def test_front_page_restart_preserves_a_stop_failure(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytester.makeconftest("""
@@ -63,7 +63,10 @@ def test_restart_tracer_preserves_a_stop_failure(
             monkeypatch.setattr(server, "start", fail_start)
     """)
     pytester.makepyfile("""
-        from tests_e2e.test_tracer import test_the_dashboard_comes_back_after_a_server_restart
+        from tests_e2e.test_front_page_live import (
+            test_connection_loss_shows_connecting_while_the_last_snapshot_stays_visible,
+            test_server_restart_reconnects_to_current_state_without_reloading,
+        )
     """)
     monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
 

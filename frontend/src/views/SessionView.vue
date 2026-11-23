@@ -19,8 +19,7 @@ import {settings} from "../settings"
 
 const header = ref<HTMLElement | null>(null)
 const headerHeight = ref(0)
-const headerInset = ref(0)
-const pager = usePager(() => headerInset.value)
+const pager = usePager(() => headerHeight.value)
 const eink = computed(() => settings.displayProfile === "eink")
 /** E-ink: live entries wait here until the reader taps the notice. */
 const pending = ref<RenderedEntry[]>([])
@@ -84,7 +83,6 @@ const latestVisible = ref(false)
 function measureVisibility() {
     const headerRect = header.value?.getBoundingClientRect()
     headerHeight.value = headerRect ? headerRect.bottom - headerRect.top : 0
-    headerInset.value = Math.max(0, headerRect?.bottom ?? 0)
     const el = latestAnswer.value === null ? null : document.getElementById(entryDomId(latestAnswer.value))
     if (el === null) {
         latestVisible.value = false
@@ -238,7 +236,7 @@ onMounted(async () => {
             <router-link class="toggle" :to="{name: 'settings'}">Settings</router-link>
             </div>
             <template v-if="transcript">
-                <h1 :title="title" :aria-label="title">{{ title }}</h1>
+                <h1 :title="title">{{ title }}</h1>
                 <p class="session-meta muted">
                     <span>{{ transcript.agent }}</span>
                     <span v-if="transcript.models.length" class="mono" :title="transcript.models.join(', ')">{{
@@ -331,7 +329,8 @@ onMounted(async () => {
 .page {
     max-width: 48rem;
     margin: 0 auto;
-    padding: var(--space-3) var(--space-3) 5rem;
+    /* Even a short final reply can start just below the sticky header. */
+    padding: 0 var(--space-3) max(5rem, calc(100dvh - var(--session-header-height)));
 }
 .session-header {
     position: sticky;
@@ -399,7 +398,7 @@ h1 {
 }
 .entry {
     margin: var(--space-4) 0;
-    scroll-margin-top: calc(var(--session-header-height, 0px) + var(--space-3));
+    scroll-margin-top: var(--session-header-height, 0px);
 }
 .entry.user {
     padding: var(--space-2) var(--space-3);

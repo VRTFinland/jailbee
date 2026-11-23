@@ -124,6 +124,35 @@ describe("page turns", () => {
         expect(wrapper.get(".page-indicator").text()).toBe("Page 1 / 4")
     })
 
+    it("does not skip unread content after a partial keyboard scroll", async () => {
+        const scrollTo = fakeLayout(1750)
+        updateSettings({displayProfile: "eink"})
+        const wrapper = mount(Harness, {attachTo: document.body})
+        vi.spyOn(window, "scrollY", "get").mockReturnValue(300)
+        window.dispatchEvent(new Event("scroll"))
+        await wrapper.vm.$nextTick()
+        expect(wrapper.get(".page-indicator").text()).toBe("Page 1 / 4")
+        await wrapper.get("button.next").trigger("click")
+        expect(scrollTo).toHaveBeenLastCalledWith(0, 500)
+    })
+
+    it("keeps page turns advancing when the browser rounds fractional scroll offsets", async () => {
+        const scrollTo = fakeLayout(1750, 588.4)
+        let y = 0
+        vi.spyOn(window, "scrollY", "get").mockImplementation(() => y)
+        scrollTo.mockImplementation((_x, top) => {
+            y = Math.round(top ?? 0)
+            window.dispatchEvent(new Event("scroll"))
+        })
+        updateSettings({displayProfile: "eink"})
+        const wrapper = mount(Harness, {attachTo: document.body})
+        await wrapper.vm.$nextTick()
+        await wrapper.get("button.next").trigger("click")
+        await wrapper.get("button.next").trigger("click")
+        expect(y).toBe(1000)
+        expect(wrapper.get(".page-indicator").text()).toBe("Page 3 / 4")
+    })
+
     it("follows the scroll position, e.g. after a keyboard or system scroll", async () => {
         fakeLayout(1750)
         updateSettings({displayProfile: "eink"})

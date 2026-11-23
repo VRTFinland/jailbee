@@ -5,7 +5,9 @@ describe("login rate-limit message", () => {
     it.each([
         ["1", "1 second"],
         ["59", "59 seconds"],
-        ["1800", "1800 seconds"],
+        ["60", "1 minute"],
+        ["61", "2 minutes"],
+        ["1800", "30 minutes"],
         [null, "a while"],
         ["invalid", "a while"],
         ["0", "a while"],
