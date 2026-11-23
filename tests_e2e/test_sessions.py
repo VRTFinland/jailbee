@@ -18,6 +18,7 @@ from tests_e2e.sessions import (
     OTHER_TITLE,
     SESSION_ID,
     SESSION_TITLE,
+    SUBAGENT_ID,
     append_entry,
     open_session,
     session_path,
@@ -96,9 +97,19 @@ def test_markdown_code_folded_tools_and_subagent_transcript(
     page.get_by_role("link", name="Subagent: Review auth", exact=True).click()
     expect(page.get_by_text("Review it.", exact=True)).to_be_visible()
     expect(page.get_by_text("Looks fine.", exact=True)).to_be_visible()
+    path = session_path(agent_home)
+    subagent_path = path.with_suffix("") / "subagents" / f"agent-{SUBAGENT_ID}.jsonl"
+    append_entry(server, subagent_path, "Live subagent reply.")
+    expect(page.get_by_text("Live subagent reply.", exact=True)).to_be_visible()
+    append_entry(server, path, "Parent reply while reading the subagent.")
+    expect(page.get_by_text("Parent reply while reading the subagent.", exact=True)).to_have_count(0)
     assert_no_horizontal_scroll(page)
     page.get_by_role("link", name="Parent session").click()
     expect(page.get_by_text("Done.", exact=True)).to_be_visible()
+    expect(page.get_by_text("Parent reply while reading the subagent.", exact=True)).to_be_visible()
+    expect(page.get_by_text("Live subagent reply.", exact=True)).to_have_count(0)
+    append_entry(server, path, "Live parent reply after returning.")
+    expect(page.get_by_text("Live parent reply after returning.", exact=True)).to_be_visible()
 
 
 def test_live_append_and_latest_answer_jump(
@@ -158,6 +169,7 @@ def test_follow_resumes_after_restart_without_losing_or_duplicating_entries(
         ):
             server.stop()
         expect(page.get_by_text("Connecting…", exact=True)).to_be_visible()
+        append_entry(server, path, "A new prompt while offline.", role="user")
         append_entry(server, path, "First reply while offline.")
         append_entry(server, path, "Second reply while offline.")
     finally:
@@ -166,11 +178,14 @@ def test_follow_resumes_after_restart_without_losing_or_duplicating_entries(
     expect(page.get_by_text("Second reply while offline.", exact=True)).to_have_count(1)
     expect(page.get_by_text("Connecting…", exact=True)).to_have_count(0)
     append_entry(server, path, "Reply after restart.")
-    replies = page.locator("article.transcript .entry.assistant .prose")
-    expect(replies).to_have_text([
+    entries = page.locator("article.transcript .entry .prose")
+    expect(entries).to_have_text([
+        SESSION_TITLE,
         "I'll read the file.",
+        "Thanks, now add a test",
         "Done.",
         "Reply before restart.",
+        "A new prompt while offline.",
         "First reply while offline.",
         "Second reply while offline.",
         "Reply after restart.",
