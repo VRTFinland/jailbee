@@ -16,6 +16,7 @@ with the default, and nothing fails. Whenever `NewContainerOptions` or
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
@@ -99,14 +100,20 @@ class ClearOutcome:
     pid: int | None = None
 
 
-def clearable(phase: str, pid: int) -> bool:
+def clearable(phase: str, pid: int, *, live: bool | None = None) -> bool:
     """True when a job row is safe to delete: it reached a terminal phase, or
     its worker process is gone. Single source of truth for "this job is dead"
-    — used by the attach guards, `jailbee job clear` and the dashboard action."""
-    return phase in TERMINAL_PHASES or not worker_alive(pid)
+    — used by the attach guards, `jailbee job clear` and the dashboard action.
+
+    Snapshot readers pass ``live`` from the same observation as the phase;
+    commands acting on a current row omit it to probe the worker now.
+    """
+    return phase in TERMINAL_PHASES or not (worker_alive(pid) if live is None else live)
 
 
-def job_label(phase: str, pid: int, *, kind: str | None = None) -> str:
+def job_label(
+    phase: str, pid: int, *, kind: str | None = None, live: bool | None = None
+) -> str:
     """Plain-text label for a job's state.
 
     A terminal phase speaks for itself. A working phase whose worker has
@@ -129,7 +136,7 @@ def job_label(phase: str, pid: int, *, kind: str | None = None) -> str:
     """
     if phase in TERMINAL_PHASES:
         return phase
-    if not worker_alive(pid):
+    if clearable(phase, pid, live=live):
         return f"{phase}{DEAD_SUFFIX}"
     if kind == JOB_AUTOSTART:
         return f"autostart:{phase}"
@@ -138,7 +145,13 @@ def job_label(phase: str, pid: int, *, kind: str | None = None) -> str:
     return phase
 
 
-def job_label_or_empty(phase: str | None, pid: int | None, *, kind: str | None = None) -> str:
+def job_label_or_empty(
+    phase: str | None,
+    pid: int | None,
+    *,
+    kind: str | None = None,
+    live: bool | None = None,
+) -> str:
     """`job_label` for a container's optional job fields: "" when there is no
     job at all, and the bare phase for a row that somehow carries no pid
     (only reachable from a hand-built ContainerInfo — every populated row has
@@ -147,7 +160,7 @@ def job_label_or_empty(phase: str | None, pid: int | None, *, kind: str | None =
         return ""
     if pid is None:
         return phase
-    return job_label(phase, pid, kind=kind)
+    return job_label(phase, pid, kind=kind, live=live)
 
 
 def get_job(session: Session, container_name: str) -> BackgroundJob | None:
@@ -363,13 +376,40 @@ def list_jobs(session: Session, container_prefix: str) -> dict[str, BackgroundJo
     rows = session.exec(
         select(BackgroundJob).where(BackgroundJob.container_prefix == container_prefix)
     ).all()
-    return {r.container_name: r for r in rows}
+    return _observe_jobs(session, rows)
 
 
 def list_all_jobs(session: Session) -> dict[str, BackgroundJob]:
     """Return {container_name: row} for every repo's jobs (`--all-repos`)."""
     rows = session.exec(select(BackgroundJob)).all()
-    return {r.container_name: r for r in rows}
+    return _observe_jobs(session, rows)
+
+
+def _observe_jobs(session: Session, rows: Sequence[BackgroundJob]) -> dict[str, BackgroundJob]:
+    """Sample liveness once; confirm a dead worker's row still exists.
+
+    Success deletes the row before process exit. A row read before that
+    deletion must not be combined with a PID probe made after exit.
+    """
+    result: dict[str, BackgroundJob] = {}
+    for row in rows:
+        live = not clearable(row.phase, row.pid)
+        if not live:
+            # Bypass the identity map: it still holds the pre-completion row.
+            identity = (row.pid, row.started_at)
+            current = session.exec(
+                select(BackgroundJob)
+                .where(BackgroundJob.container_name == row.container_name)
+                .execution_options(populate_existing=True)
+            ).first()
+            if current is None:
+                continue
+            if (current.pid, current.started_at) != identity:
+                live = not clearable(current.phase, current.pid)
+            row = current
+        row.observe_live(live)
+        result[row.container_name] = row
+    return result
 
 
 def worker_alive(pid: int) -> bool:

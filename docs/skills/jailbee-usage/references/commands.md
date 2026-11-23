@@ -1273,6 +1273,11 @@ Fresh installs default to the Cards layout.
 
 ### `jailbee job`
 
+Job liveness is sampled with its tracking row, consistently with `jailbee ls`
+and the dashboard snapshot. A worker finishing successfully does not turn an
+older snapshot into a dead-job warning between refreshes. A worker killed
+mid-job still shows as dead on the next snapshot while its tracking row remains.
+
 | Command | Notes |
 |---|---|
 | `jailbee job ls [--all-repos] [-o json] [--fields …]` | List in-flight and failed background jobs with phase, pid, age, error and log path |

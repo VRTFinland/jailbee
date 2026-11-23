@@ -328,6 +328,11 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- **Successful background jobs no longer flash as dead.** A snapshot now keeps
+  its gathered job liveness instead of rechecking an exited worker against an
+  older phase. Autostart, create, start/restart and destroy stay consistent in
+  the dashboards, `jailbee ls` and `jailbee job ls`; a worker killed mid-job
+  still shows as dead ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
 - **A dashboard left running across a JailBee upgrade stops instead of
   fighting the newer state service.** The "newer wins" rule only applied when
   both sides spoke the same protocol, so an older dashboard of a different
