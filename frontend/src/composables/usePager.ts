@@ -31,7 +31,11 @@ export function usePager(topInset: () => number = () => 0): Pager {
     )
 
     function measure() {
-        availableHeight.value = Math.max(1, readableBottom() - topInset())
+        const height = Math.max(1, readableBottom() - topInset())
+        if (height !== availableHeight.value) {
+            availableHeight.value = height
+            page.value = Math.max(0, Math.floor(window.scrollY / height))
+        }
         contentHeight.value = document.documentElement.scrollHeight
     }
 
@@ -72,8 +76,14 @@ export function usePager(topInset: () => number = () => 0): Pager {
     return {
         page,
         pageCount,
-        next: () => goTo(page.value + 1),
-        prev: () => goTo(page.value - 1),
+        next: () => {
+            measure()
+            goTo(page.value + 1)
+        },
+        prev: () => {
+            measure()
+            goTo(page.value - 1)
+        },
         goToElement: (el) => {
             measure()
             const top = el.getBoundingClientRect().top + window.scrollY

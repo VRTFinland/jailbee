@@ -76,6 +76,34 @@ describe("page turns", () => {
         wrapper.unmount()
     })
 
+    it("keeps the next turn within readable content after the bottom guard shrinks", async () => {
+        const scrollTo = fakeLayout(900, 320, 60)
+        let boundary = 204
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            return {top: this.classList.contains("page-nav") ? boundary : 0} as DOMRect
+        })
+        let y = 0
+        vi.spyOn(window, "scrollY", "get").mockImplementation(() => y)
+        scrollTo.mockImplementation((_x, top) => {
+            y = top ?? 0
+            window.dispatchEvent(new Event("scroll"))
+        })
+        updateSettings({displayProfile: "eink"})
+        const ShortViewport = defineComponent({
+            setup() {
+                const pager = usePager(() => 200)
+                return () => h(PageNav, {pager})
+            },
+        })
+        const wrapper = mount(ShortViewport, {attachTo: document.body})
+        await wrapper.vm.$nextTick()
+        for (let i = 0; i < 10; i++) await wrapper.get("button.next").trigger("click")
+        expect(y).toBe(40)
+        boundary = 232
+        await wrapper.get("button.next").trigger("click")
+        expect(y).toBe(64)
+    })
+
     it("stops at the first and last page", async () => {
         fakeLayout(1750)
         updateSettings({displayProfile: "eink"})
