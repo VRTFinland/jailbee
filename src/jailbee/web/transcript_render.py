@@ -109,7 +109,9 @@ def _meta_user(
     )
 
 
-def render_entry(entry: Entry, cache: RenderCache, meta: MetaMode = "shown") -> RenderedEntry | None:
+def render_entry(
+    entry: Entry, cache: RenderCache, meta: MetaMode = "shown"
+) -> RenderedEntry | None:
     """One entry rendered; None when the Agent context setting leaves it out."""
     match entry:
         case UserMessage():

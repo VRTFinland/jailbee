@@ -66,7 +66,10 @@ def test_an_unclosed_inner_tag_of_the_same_name_still_splits_off_the_wrapper() -
     [
         ("<task-notification>x</task-notification>", "Task notification"),
         ("<system-reminder>x</system-reminder>", "System reminder"),
-        ("<command-name>/model</command-name><command-message>m</command-message>", "Command: /model"),
+        (
+            "<command-name>/model</command-name><command-message>m</command-message>",
+            "Command: /model",
+        ),
         (
             "<command-name>/clear</command-name><command-args>old stuff</command-args>",
             "Command: /clear old stuff",

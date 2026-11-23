@@ -212,7 +212,10 @@ def test_live_appends_follow_the_agent_context_setting(
 
         message = ws.receive_json()
         got = [
-            (e["kind"], None if e["kind"] != "user" else ("Job done" if "Job done" in e["html"] else ""))
+            (
+                e["kind"],
+                None if e["kind"] != "user" else ("Job done" if "Job done" in e["html"] else ""),
+            )
             for e in message["entries"]
         ]
         assert got == expected
