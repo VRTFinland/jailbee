@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Collection
     from datetime import datetime
     from pathlib import Path
 
@@ -200,11 +200,16 @@ class TranscriptSource(Protocol):
         ...
 
     def list_sessions(
-        self, config_home: Path, cache: SessionInfoCache | None = None
+        self,
+        config_home: Path,
+        cache: SessionInfoCache | None = None,
+        cwds: Collection[str] | None = None,
     ) -> list[SessionInfo]:
         """Every session under `config_home`, newest activity first.
 
-        With a `cache`, a transcript unchanged since the last call is not read."""
+        With a `cache`, a transcript unchanged since the last call is not read.
+        With `cwds`, only sessions started in one of those directories (or
+        below one) are listed, and no other transcript is read."""
         ...
 
     def session_info(

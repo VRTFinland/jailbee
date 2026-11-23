@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import builtins
 import threading
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from jailbee.transcripts.base import (
@@ -32,6 +32,10 @@ if TYPE_CHECKING:
 AgentHomes = Callable[[str], Sequence[tuple[str, Path]] | None]
 """Repo prefix → ``(agent, config home)`` pairs, or None for an unknown repo."""
 
+RepoDirs = Callable[[str], Collection[str] | None]
+"""Repo prefix → the in-container paths its sessions are started in, or None
+when unknown (then every session in its homes is listed)."""
+
 
 def snapshot_homes(latest: Callable[[], Snapshot | None]) -> AgentHomes:
     """Resolve homes from the dashboard snapshot (`RepoGroup.agent_config_homes`)."""
@@ -46,6 +50,33 @@ def snapshot_homes(latest: Callable[[], Snapshot | None]) -> AgentHomes:
                 return list(
                     dict.fromkeys((agent, home) for _, agent, home in group.agent_config_homes)
                 )
+        return None
+
+    return resolve
+
+
+def snapshot_repo_dirs(latest: Callable[[], Snapshot | None]) -> RepoDirs:
+    """Resolve the repository's in-container paths from the dashboard snapshot.
+
+    Each container's `repo_dir` label, plus where a container of the repo
+    would have it without one (`/home/<user>/<prefix>`, and the legacy
+    `/home/<user>/<repo root name>`), so a repository whose containers are
+    gone still lists its sessions. Several repositories may share a config
+    home by mistake; these paths keep each list to its own sessions.
+    """
+    from jailbee.config.common import CONTAINER_USERNAME
+
+    def resolve(prefix: str) -> Collection[str] | None:
+        snapshot = latest()
+        if snapshot is None:
+            return None
+        for group in snapshot.groups:
+            if group.prefix == prefix:
+                dirs = {c.repo_dir for c in group.containers if c.repo_dir}
+                dirs.add(f"/home/{CONTAINER_USERNAME}/{prefix}")
+                if group.repo_root:
+                    dirs.add(f"/home/{CONTAINER_USERNAME}/{PurePosixPath(group.repo_root).name}")
+                return dirs
         return None
 
     return resolve
@@ -74,8 +105,14 @@ class SessionTranscript:
 class RepoSessions:
     """Lists sessions across a repository's agents; owns the info cache."""
 
-    def __init__(self, homes: AgentHomes, store: SessionInfoStore | None = None) -> None:
+    def __init__(
+        self,
+        homes: AgentHomes,
+        store: SessionInfoStore | None = None,
+        repo_dirs: RepoDirs | None = None,
+    ) -> None:
         self._homes = homes
+        self._repo_dirs = repo_dirs
         self._cache = SessionInfoCache(store)
 
     def known(self, prefix: str) -> bool:
@@ -86,23 +123,32 @@ class RepoSessions:
         homes = self._homes(prefix)
         if homes is None:
             return None
-        return self._rows(homes)
+        return self._rows(homes, self._repo_dirs(prefix) if self._repo_dirs else None)
 
-    def warm(self, prefixes: Iterable[str], homes: AgentHomes, stop: threading.Event) -> None:
+    def warm(
+        self,
+        prefixes: Iterable[str],
+        homes: AgentHomes,
+        repo_dirs: RepoDirs | None,
+        stop: threading.Event,
+    ) -> None:
         """Read every listed repository's session info into the cache.
 
         Run once at start-up, in a thread of its own, so the first list a
         browser asks for finds the rows already read. ``homes`` resolves as
-        the server's resolver would; ``stop`` ends the warm-up early.
+        and ``repo_dirs`` resolve as the server's resolvers would; ``stop``
+        ends the warm-up early.
         """
         for prefix in prefixes:
             if stop.is_set():
                 return
             found = homes(prefix)
             if found is not None:
-                self._rows(found)
+                self._rows(found, repo_dirs(prefix) if repo_dirs else None)
 
-    def _rows(self, homes: Sequence[tuple[str, Path]]) -> builtins.list[SessionRow]:
+    def _rows(
+        self, homes: Sequence[tuple[str, Path]], cwds: Collection[str] | None
+    ) -> builtins.list[SessionRow]:
         rows: builtins.list[SessionRow] = []
         for agent, home in homes:
             try:
@@ -111,7 +157,7 @@ class RepoSessions:
                 continue
             rows.extend(
                 SessionRow(i.session_id, agent, i.title, i.last_activity, i.models)
-                for i in source.list_sessions(home, self._cache)
+                for i in source.list_sessions(home, self._cache, cwds)
             )
         rows.sort(
             key=lambda r: r.last_activity.timestamp() if r.last_activity else 0.0, reverse=True

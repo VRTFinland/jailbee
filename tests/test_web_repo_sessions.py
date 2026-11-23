@@ -179,7 +179,10 @@ def test_without_an_injected_resolver_homes_come_from_the_snapshot(home: Path) -
         pin=pin,
         repo_scope=RemoteRepoScope(frozenset()),
     )
-    group = repo_group("alpha", container("alpha-1"), container("alpha-2"))
+    # The fixture sessions were started in /work/repo.
+    group = repo_group(
+        "alpha", container("alpha-1", repo_dir="/work/repo"), container("alpha-2")
+    )
     group.agent_config_homes = (("alpha-1", "claude", home), ("alpha-2", "claude", home))
     with TestClient(create_app(deps)) as client:
         body = {"method": "pin", "pin": pin.current, "device_name": "boox"}
@@ -296,3 +299,48 @@ def test_requests_are_answered_while_the_warm_up_is_still_running(home: Path) ->
         assert not client.app.state.web.sessions_warmed.is_set()  # type: ignore[attr-defined]  # ASGIApp
         homes.release.set()
         _warmed(client)
+
+
+def _session_file(home: Path, project: str, session_id: str, prompt: str) -> None:
+    path = home / "projects" / project / f"{session_id}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "type": "user",
+        "timestamp": "2026-11-20T10:00:00.000Z",
+        "message": {"role": "user", "content": prompt},
+    }
+    path.write_text(json.dumps(record) + "\n")
+
+
+def test_a_repo_lists_only_sessions_started_in_its_own_containers_repo_dir(
+    tmp_path: Path,
+) -> None:
+    from tests.web_fakes import container, repo_group, snapshot_of
+
+    shared = tmp_path / "shared-claude"  # a misconfigured home both repos point at
+    _session_file(shared, "-home-dev-alpha", SESSION_A, "alpha at the root")
+    _session_file(shared, "-home-dev-alpha-src", "33333333-3333-4333-8333-333333333333", "alpha below")
+    _session_file(shared, "-home-dev-beta", SESSION_B, "beta's own")
+    alpha = repo_group("alpha", container("alpha-1", repo_dir="/home/dev/alpha"))
+    beta = repo_group("beta", container("beta-1", repo="beta", repo_dir="/home/dev/beta"))
+    alpha.agent_config_homes = (("alpha-1", "claude", shared),)
+    beta.agent_config_homes = (("beta-1", "claude", shared),)
+    clock = FakeClock()
+    pin = PinHolder(generate=pin_sequence())
+    deps = WebDeps(
+        snapshot_source=FakeSourceFactory(initial=snapshot_of(alpha, beta)),
+        engine=get_engine(),
+        clock=clock,
+        monotonic=clock.monotonic,
+        pin=pin,
+        repo_scope=RemoteRepoScope(frozenset()),
+    )
+    with TestClient(create_app(deps)) as client:
+        body = {"method": "pin", "pin": pin.current, "device_name": "boox"}
+        token = client.post("/api/auth", json=body).json()["token"]
+        client.headers["Authorization"] = f"Bearer {token}"
+        alpha_rows = client.get("/api/repos/alpha/sessions").json()["sessions"]
+        beta_rows = client.get("/api/repos/beta/sessions").json()["sessions"]
+
+    assert sorted(r["title"] for r in alpha_rows) == ["alpha at the root", "alpha below"]
+    assert [r["title"] for r in beta_rows] == ["beta's own"]

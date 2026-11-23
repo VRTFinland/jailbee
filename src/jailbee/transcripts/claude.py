@@ -43,7 +43,7 @@ from jailbee.transcripts.base import (
 from jailbee.transcripts.markup import command_name, prompt_text
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Collection, Iterator
     from pathlib import Path
 
     from jailbee.transcripts.base import SessionInfoCache
@@ -458,15 +458,40 @@ def _cached_info(session_id: str, path: Path, cache: SessionInfoCache | None) ->
     return cache.get(path, lambda: session_info(session_id, path), (st.st_size, st.st_mtime_ns))
 
 
-def _session_files(config_home: Path) -> list[tuple[str, Path]]:
-    """Every `<sessionId>.jsonl` directly in a project directory; no links followed."""
+_NOT_IN_NAME = re.compile(r"[^A-Za-z0-9]")
+
+
+def project_dirname(cwd: str) -> str:
+    """The `projects/` directory Claude Code keeps a session started in `cwd`
+    in: every character but an ASCII letter or digit becomes `-`."""
+    return _NOT_IN_NAME.sub("-", cwd)
+
+
+def _in_cwds(project: str, names: Collection[str]) -> bool:
+    """`project` is one of `names`, or a directory below one.
+
+    The encoding is lossy: `/r/a-b` and `/r/a/b` share a name, so a session
+    started in a sibling `/r/a-b` counts as below `/r/a`.
+    """
+    return any(project == name or project.startswith(name + "-") for name in names)
+
+
+def _session_files(
+    config_home: Path, cwds: Collection[str] | None = None
+) -> list[tuple[str, Path]]:
+    """Every `<sessionId>.jsonl` directly in a project directory; no links followed.
+
+    With `cwds`, only the project directories of sessions started there or below."""
     try:
         projects = sorted((config_home / PROJECTS_DIRNAME).iterdir())
     except OSError:
         return []
+    wanted = None if cwds is None else {project_dirname(cwd) for cwd in cwds}
     found: list[tuple[str, Path]] = []
     for project in projects:
         if project.is_symlink():
+            continue
+        if wanted is not None and not _in_cwds(project.name, wanted):
             continue
         try:
             names = sorted(os.listdir(project))
@@ -504,11 +529,14 @@ class ClaudeSource:
         return SessionFiles(paths.transcript, subagents)
 
     def list_sessions(
-        self, config_home: Path, cache: SessionInfoCache | None = None
+        self,
+        config_home: Path,
+        cache: SessionInfoCache | None = None,
+        cwds: Collection[str] | None = None,
     ) -> list[SessionInfo]:
         sessions = [
             info
-            for session_id, path in _session_files(config_home)
+            for session_id, path in _session_files(config_home, cwds)
             if (info := _cached_info(session_id, path, cache)) is not None
         ]
         oldest = datetime.min.replace(tzinfo=UTC)

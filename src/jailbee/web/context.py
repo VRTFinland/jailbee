@@ -12,7 +12,12 @@ from typing import TYPE_CHECKING
 from jailbee.web.auth import Clock, PinHolder, RateLimiter, SessionStore, utcnow
 from jailbee.web.auth_admin import TotpVerifier
 from jailbee.web.fido2_auth import Fido2Auth
-from jailbee.web.repo_sessions import AgentHomes, RepoSessions, snapshot_homes
+from jailbee.web.repo_sessions import (
+    AgentHomes,
+    RepoSessions,
+    snapshot_homes,
+    snapshot_repo_dirs,
+)
 from jailbee.web.session_info_store import DbSessionInfoStore
 from jailbee.web.state import (
     DEFAULT_GRACE_SECONDS,
@@ -127,10 +132,11 @@ class WebContext:
         # Resolve against this snapshot: the hub may close its source before
         # the warm-up is done, and the live resolver would then know nothing.
         homes = self.deps.agent_homes or snapshot_homes(lambda: snapshot)
+        dirs = None if self.deps.agent_homes else snapshot_repo_dirs(lambda: snapshot)
 
         def run() -> None:
             try:
-                self.repo_sessions.warm(prefixes, homes, self._warm_stop)
+                self.repo_sessions.warm(prefixes, homes, dirs, self._warm_stop)
             finally:
                 self.sessions_warmed.set()
 
@@ -151,9 +157,12 @@ class WebContext:
             self.deps.engine, clock=self.deps.clock, monotonic=self.deps.monotonic
         )
         self.hub = StateHub(self.deps.snapshot_source, grace_seconds=self.deps.grace_seconds)
+        # Injected homes (tests) list everything in them; homes from the
+        # snapshot list only the sessions started in the repo's own containers.
         self.repo_sessions = RepoSessions(
             self.deps.agent_homes or snapshot_homes(self.hub.latest),
             DbSessionInfoStore(self.deps.engine),
+            None if self.deps.agent_homes else snapshot_repo_dirs(self.hub.latest),
         )
         self.render_cache = RenderCache()
         watch: WatchFactory
