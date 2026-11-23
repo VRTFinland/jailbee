@@ -26,7 +26,7 @@ const transcript: TranscriptView = {
     last_activity: "2026-11-01T10:05:00Z",
     models: ["claude-opus-5-5"],
     entries: [
-        {kind: "user", id: "u1", timestamp: null, html: "<p>Fix it</p>", meta: false},
+        {kind: "user", id: "u1", timestamp: null, html: "<p>Fix it</p>", meta: false, label: null, expandable: false},
         {kind: "thinking", id: "t1", timestamp: null, html: "<p>Hmm, auth</p>", model: "m"},
         {
             kind: "assistant",
@@ -59,8 +59,10 @@ const transcript: TranscriptView = {
             kind: "user",
             id: "u2",
             timestamp: null,
-            html: '<pre class="meta">&lt;command-name&gt;/clear&lt;/command-name&gt;</pre>',
+            html: "",
             meta: true,
+            label: "Command: /clear",
+            expandable: false,
         },
         {kind: "assistant", id: "a2", timestamp: null, html: "<p>Done.</p>", model: "claude-sonnet-5"},
     ],
@@ -79,7 +81,7 @@ async function mountSession(fetchMock: ReturnType<typeof vi.fn>) {
 
 afterEach(() => {
     removeItem("jailbee.showThinking")
-    updateSettings({displayProfile: "normal", showThinking: false})
+    updateSettings({displayProfile: "normal", showThinking: false, agentContext: "hidden"})
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
     if (originalScrollIntoView) Object.defineProperty(Element.prototype, "scrollIntoView", originalScrollIntoView)
@@ -92,7 +94,7 @@ describe("SessionView", () => {
         const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, transcript))
         const {wrapper} = await mountSession(fetchMock)
 
-        expect(fetchMock.mock.calls[0][0]).toBe("/api/repos/alpha/sessions/claude/s-1")
+        expect(fetchMock.mock.calls[0][0]).toBe("/api/repos/alpha/sessions/claude/s-1?meta=hidden")
         expect(wrapper.get("h1").text()).toBe("Fix the login bug")
         expect(wrapper.get("h1").attributes("title")).toBe("Fix the login bug")
         const answers = wrapper.findAll(".entry.assistant")

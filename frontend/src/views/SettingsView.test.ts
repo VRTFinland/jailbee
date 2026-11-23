@@ -1,6 +1,7 @@
 import {beforeEach, describe, expect, it, vi} from "vitest"
 import {mount} from "@vue/test-utils"
 import SettingsView from "./SettingsView.vue"
+import {readItem} from "../storage"
 import {reloadSettings, settings, startSettings} from "../settings"
 
 describe("SettingsView", () => {
@@ -16,6 +17,15 @@ describe("SettingsView", () => {
         expect(document.documentElement.dataset.theme).toBe("dark")
         await wrapper.get("input[name=theme][value=eink]").setValue(true)
         expect(document.documentElement.dataset.theme).toBe("eink")
+    })
+
+    it("defaults Agent context to hidden and stores the choice", async () => {
+        const wrapper = mount(SettingsView, {global: {stubs: {RouterLink: true}}})
+        expect((wrapper.get("select.agent-context").element as HTMLSelectElement).value).toBe("hidden")
+        await wrapper.get("select.agent-context").setValue("collapsed")
+        expect(settings.agentContext).toBe("collapsed")
+        expect(readItem("jailbee.agentContext")).toBe("collapsed")
+        await wrapper.get("select.agent-context").setValue("hidden")
     })
 
     it("edits font sizes and the thinking toggle", async () => {
