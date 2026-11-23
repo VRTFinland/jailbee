@@ -38,6 +38,7 @@ from jailbee.web.protocol import (
 
 DEFAULT_CACHE_ENTRIES = 4096
 
+
 class RenderCache:
     """HTML by (entry id, text), least recently used dropped beyond ``limit``.
 

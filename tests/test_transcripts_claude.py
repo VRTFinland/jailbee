@@ -312,8 +312,11 @@ def test_session_title_uses_the_typed_prompt_after_local_command_records(
 ) -> None:
     _write(
         _transcript(home),
-        _user_text("command", "<command-name>/clear</command-name>"
-                   " <command-message>clear</command-message> <command-args></command-args>"),
+        _user_text(
+            "command",
+            "<command-name>/clear</command-name>"
+            " <command-message>clear</command-message> <command-args></command-args>",
+        ),
         _user_text("caveat", "<local-command-caveat>Ignore local output</local-command-caveat>"),
         _user_text("stdout", "<local-command-stdout>Cleared</local-command-stdout>"),
         _user_text("prompt", "Fix the session titles"),
@@ -330,8 +333,11 @@ def test_a_command_only_session_uses_its_first_command_as_the_title(
     _write(
         _transcript(home),
         _user_text("caveat", "<local-command-caveat>Ignore local output</local-command-caveat>"),
-        _user_text("command", "<command-name>/model</command-name>"
-                   " <command-message>model</command-message> <command-args>opus</command-args>"),
+        _user_text(
+            "command",
+            "<command-name>/model</command-name>"
+            " <command-message>model</command-message> <command-args>opus</command-args>",
+        ),
         _user_text("stdout", "<local-command-stdout>Model changed</local-command-stdout>"),
         _user_text("next", "<command-name>/clear</command-name>"),
     )
@@ -349,17 +355,26 @@ def test_a_command_only_session_uses_its_first_command_as_the_title(
         _user_text("reminder", "  <system-reminder>Injected\ncontext</system-reminder>"),
         _user_text("mixed", "<system-reminder>Injected</system-reminder>\nFix the session titles"),
         {"type": "user", "isMeta": True, "message": {"content": "Injected context"}},
-        {"type": "user", "message": {"content": [
-            {"type": "text", "text": "<command-name>/model</command-name>"},
-            {"type": "text", "text": "Fix the session titles"},
-        ]}},
+        {
+            "type": "user",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "<command-name>/model</command-name>"},
+                    {"type": "text", "text": "Fix the session titles"},
+                ]
+            },
+        },
     ],
 )
 def test_session_title_skips_each_kind_of_agent_preamble(
     home: Path, source: ClaudeSource, preamble: object
 ) -> None:
-    _write(_transcript(home), preamble, _user_text("prompt", "Fix the session titles"),
-           _user_text("later", "A later prompt"))
+    _write(
+        _transcript(home),
+        preamble,
+        _user_text("prompt", "Fix the session titles"),
+        _user_text("later", "A later prompt"),
+    )
 
     info = next(s for s in source.list_sessions(home) if s.session_id == SID)
 
@@ -370,17 +385,27 @@ def test_session_title_skips_each_kind_of_agent_preamble(
     ("content", "expected"),
     [
         ("<example>broken</example>", "<example>broken</example>"),
-        ("<system-reminder>Injected</system-reminder>\nFix the session titles",
-         "Fix the session titles"),
-        ([{"type": "text", "text": "<command-name>/model</command-name>"},
-          {"type": "text", "text": "Fix the session titles"}], "Fix the session titles"),
+        (
+            "<system-reminder>Injected</system-reminder>\nFix the session titles",
+            "Fix the session titles",
+        ),
+        (
+            [
+                {"type": "text", "text": "<command-name>/model</command-name>"},
+                {"type": "text", "text": "Fix the session titles"},
+            ],
+            "Fix the session titles",
+        ),
     ],
 )
 def test_the_first_typed_text_survives_markup_and_text_block_boundaries(
     home: Path, source: ClaudeSource, content: object, expected: str
 ) -> None:
-    _write(_transcript(home), {"type": "user", "message": {"content": content}},
-           _user_text("later", "A later prompt"))
+    _write(
+        _transcript(home),
+        {"type": "user", "message": {"content": content}},
+        _user_text("later", "A later prompt"),
+    )
 
     info = next(s for s in source.list_sessions(home) if s.session_id == SID)
 

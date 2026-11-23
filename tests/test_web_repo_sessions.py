@@ -100,9 +100,9 @@ def test_session_list_shows_the_typed_prompt_after_slash_commands(
         "<local-command-stdout>Model changed</local-command-stdout>",
         "Fix the session titles",
     ]
-    path.write_text("".join(
-        json.dumps({"type": "user", "message": {"content": text}}) + "\n" for text in texts
-    ))
+    path.write_text(
+        "".join(json.dumps({"type": "user", "message": {"content": text}}) + "\n" for text in texts)
+    )
 
     res = client.get("/api/repos/alpha/sessions")
 

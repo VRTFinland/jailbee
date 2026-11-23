@@ -40,7 +40,6 @@ from jailbee.transcripts.base import (
     UserMessage,
     register,
 )
-
 from jailbee.transcripts.markup import command_name, prompt_text
 
 if TYPE_CHECKING:

@@ -15,7 +15,7 @@ _META_WRAPPER = re.compile(
 def prompt_text(text: str) -> str:
     """Keep typed text after any leading agent wrappers."""
     while match := _META_WRAPPER.match(text):
-        text = text[match.end():]
+        text = text[match.end() :]
     return text.strip()
 
 
