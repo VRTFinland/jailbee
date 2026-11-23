@@ -145,10 +145,19 @@ def test_server_restart_reconnects_to_current_state_without_reloading(
     expect(logged_in.get_by_role("link", name="after", exact=True)).to_be_visible()
     expect(logged_in.get_by_role("link", name="before", exact=True)).to_have_count(0)
     expect(logged_in.get_by_text("Connecting…", exact=True)).to_have_count(0)
+    server.push(snapshot_of(repo_group("work", container("work-live-again", "work"))))
+    expect(logged_in.get_by_role("link", name="live-again", exact=True)).to_be_visible()
+    expect(logged_in.get_by_role("link", name="after", exact=True)).to_have_count(0)
     assert navigations == [], "an ordinary reconnect must not reload the page"
 
 
 def test_protocol_mismatch_on_reconnect_reloads_the_page(server: E2EServer, page: Page) -> None:
+    """Simulate a stale app without faking the server's upgrade handling.
+
+    Forward every connection to the real server; only the reconnect's auth
+    version is rewritten to -1. The actual 4002 close and browser reload stay
+    real, and the reloaded document sends its normal current version again.
+    """
     sockets: list[WebSocketRoute] = []
     closes: list[int | None] = []
     navigations: list[str] = []
