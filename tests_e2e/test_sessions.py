@@ -44,8 +44,9 @@ def server(make_server: Callable[..., E2EServer], agent_home: Path) -> E2EServer
     return server
 
 
-@pytest.fixture(params=[{"width": 1280, "height": 800}, {"width": 390, "height": 844}],
-                ids=["desktop", "phone"])
+@pytest.fixture(
+    params=[{"width": 1280, "height": 800}, {"width": 390, "height": 844}], ids=["desktop", "phone"]
+)
 def session_page(logged_in: Page, request: pytest.FixtureRequest) -> Page:
     logged_in.set_viewport_size(request.param)
     return logged_in
@@ -81,7 +82,11 @@ def test_markdown_code_folded_tools_and_subagent_transcript(
     session_page: Page, server: E2EServer, agent_home: Path
 ) -> None:
     page = session_page
-    append_entry(server, session_path(agent_home), "## Result\n\nA **working** fix.\n\n```python\ndef verified():\n    return True\n```")
+    append_entry(
+        server,
+        session_path(agent_home),
+        "## Result\n\nA **working** fix.\n\n```python\ndef verified():\n    return True\n```",
+    )
     page.get_by_role("link", name="work", exact=True).click()
     open_session(page)
     expect(page.get_by_role("heading", name="Result", exact=True)).to_be_visible()
@@ -102,7 +107,9 @@ def test_markdown_code_folded_tools_and_subagent_transcript(
     append_entry(server, subagent_path, "Live subagent reply.")
     expect(page.get_by_text("Live subagent reply.", exact=True)).to_be_visible()
     append_entry(server, path, "Parent reply while reading the subagent.")
-    expect(page.get_by_text("Parent reply while reading the subagent.", exact=True)).to_have_count(0)
+    expect(page.get_by_text("Parent reply while reading the subagent.", exact=True)).to_have_count(
+        0
+    )
     assert_no_horizontal_scroll(page)
     page.get_by_role("link", name="Parent session").click()
     expect(page.get_by_text("Done.", exact=True)).to_be_visible()
@@ -118,7 +125,9 @@ def test_live_append_and_latest_answer_jump(
     page = session_page
     path = session_path(agent_home)
     # A long prompt makes the newest answer genuinely outside the viewport.
-    append_entry(server, path, "\n\n".join(f"Context paragraph {n}." for n in range(50)), role="user")
+    append_entry(
+        server, path, "\n\n".join(f"Context paragraph {n}." for n in range(50)), role="user"
+    )
     page.get_by_role("link", name="work", exact=True).click()
     open_session(page)
     page.get_by_role("heading", name=SESSION_TITLE, exact=True).scroll_into_view_if_needed()
@@ -179,17 +188,19 @@ def test_follow_resumes_after_restart_without_losing_or_duplicating_entries(
     expect(page.get_by_text("Connecting…", exact=True)).to_have_count(0)
     append_entry(server, path, "Reply after restart.")
     entries = page.locator("article.transcript .entry .prose")
-    expect(entries).to_have_text([
-        SESSION_TITLE,
-        "I'll read the file.",
-        "Thanks, now add a test",
-        "Done.",
-        "Reply before restart.",
-        "A new prompt while offline.",
-        "First reply while offline.",
-        "Second reply while offline.",
-        "Reply after restart.",
-    ])
+    expect(entries).to_have_text(
+        [
+            SESSION_TITLE,
+            "I'll read the file.",
+            "Thanks, now add a test",
+            "Done.",
+            "Reply before restart.",
+            "A new prompt while offline.",
+            "First reply while offline.",
+            "Second reply while offline.",
+            "Reply after restart.",
+        ]
+    )
     page.get_by_text("Reply after restart.", exact=True).scroll_into_view_if_needed()
     expect(page.get_by_text("Reply after restart.", exact=True)).to_be_in_viewport()
     assert_no_horizontal_scroll(page)
