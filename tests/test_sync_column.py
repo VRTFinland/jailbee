@@ -61,7 +61,15 @@ def test_saved_previous_column_set_migrates_once(frontend, fold_saved):
 
     engine = create_engine("sqlite:///:memory:")
     SQLModel.metadata.create_all(engine)
-    columns = ("name", "target_diff", "ahead_count", "behind_count", "host_ahead", "host_behind", "wt")
+    columns = (
+        "name",
+        "target_diff",
+        "ahead_count",
+        "behind_count",
+        "host_ahead",
+        "host_behind",
+        "wt",
+    )
     save_view_state(engine, frontend, ViewState(columns=columns, columns_version=3))
     if fold_saved:
         save_view_state(engine, frontend, ViewState(columns=columns, folded=frozenset({"repo"})))
@@ -87,7 +95,10 @@ def test_first_launch_explicit_dashboard_fields_stay_legacy(mocker):
     engine = create_engine("sqlite:///:memory:")
     SQLModel.metadata.create_all(engine)
     fields = ["name", "target_diff", "ahead_count", "behind_count"]
-    mocker.patch("jailbee.dashboard.model.load_global_config", return_value=(GlobalConfig(dashboard={"fields": fields}), []))
+    mocker.patch(
+        "jailbee.dashboard.model.load_global_config",
+        return_value=(GlobalConfig(dashboard={"fields": fields}), []),
+    )
     assert seed_view_state(engine, "tui").columns == tuple(fields)
     assert seed_view_state(engine, "tui").columns == tuple(fields)
     engine.dispose()
@@ -176,7 +187,10 @@ def test_ls_fit_keeps_sync_until_after_base_and_merge(tmp_path, mocker, make_cfg
     mocker.patch("jailbee.lifecycle.list_containers", return_value=mixed_rows())
     mocker.patch("jailbee.incus.Incus")
     output = StringIO()
-    mocker.patch("jailbee.tui.console", Console(file=output, width=30, force_terminal=True, color_system=None))
+    mocker.patch(
+        "jailbee.tui.console",
+        Console(file=output, width=30, force_terminal=True, color_system=None),
+    )
     result = CliRunner().invoke(app, ["ls"])
     assert result.exit_code == 0, result.output
     notice = " ".join(output.getvalue().split()).split("hidden to fit:")[1]
@@ -243,13 +257,22 @@ def test_sync_count_widths_follow_only_unfolded_repo_rows():
     from jailbee.dashboard.tui.fleet import entry_line, table_model
 
     rows = mixed_rows()
-    groups = [RepoGroup("wide", "/wide", None, rows[:2]), RepoGroup("small", "/small", None, rows[2:3])]
+    groups = [
+        RepoGroup("wide", "/wide", None, rows[:2]),
+        RepoGroup("small", "/small", None, rows[2:3]),
+    ]
 
     def rendered(folded):
         model = table_model(
-            groups, now=NOW, enabled=("name", "sync"), folded=folded,
-            column_widths=None, shown_columns=None, column_offset=0,
-            hidden_by_preferences=False, width=100,
+            groups,
+            now=NOW,
+            enabled=("name", "sync"),
+            folded=folded,
+            column_widths=None,
+            shown_columns=None,
+            column_offset=0,
+            hidden_by_preferences=False,
+            width=100,
         )
         entry = next(entry for entry in model.entries if entry.container is rows[2])
         return entry_line(entry, model.geometry, folded, selected=False, width=100).plain

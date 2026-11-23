@@ -99,7 +99,12 @@ def test_default_sync_clean_card_uses_clean_ui_path(qtbot, style):
     groups = _groups()
     groups[0].containers = groups[0].containers[:1]
     groups[0].containers[0].git_status = GitStatus(
-        "clean", "clean", "0", "ok", behind_count="0", target_diff="clean",
+        "clean",
+        "clean",
+        "0",
+        "ok",
+        behind_count="0",
+        target_diff="clean",
         sync_target=SyncTarget("pr", "PR #7", "p", "pr"),
     )
     view = CardView()
