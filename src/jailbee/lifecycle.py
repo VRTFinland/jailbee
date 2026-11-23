@@ -64,7 +64,7 @@ from jailbee.tui import ConfirmFn, default_confirm, info, warn, warn_plain
 
 if TYPE_CHECKING:
     from jailbee.accounts.models import AgentSession
-    from jailbee.agent_status import ActivityLookup, AgentSummary
+    from jailbee.agent_status import ActivityLookup, AgentSummary, StateSettler
     from jailbee.autostart_plan import AutostartPlan
     from jailbee.branch_config import EscalationVerdict
     from jailbee.config import Autostart
@@ -1092,9 +1092,41 @@ def annotate_agent_status(
         c.name: {pid: sample.starttime for pid, sample in sampler.processes(c.name).items()}
         for c in containers
     }
-    results = agent_status.match_sessions(sessions, processes, sampler.nspid, activity)
+    results = agent_status.match_sessions(
+        sessions, processes, sampler.nspid, activity, settle=_follower_settler(sampler)
+    )
     for c in containers:
         c.agent_status = results.get(c.name, ())
+
+
+def _follower_settler(sampler: ActivitySampler) -> StateSettler:
+    """Show a ``shell`` session as idle when only inbox waiters run under it.
+
+    Claude reports ``shell`` while any background task runs, and the JailBee
+    plugin's inbox follower is one in every session. The processes come from
+    the sampler's reading already taken; argv is read from /proc only for the
+    processes under a ``shell`` session. A process that vanished in between
+    leaves the state as Claude reported it.
+    """
+    from jailbee import inbox_waiters, procstat
+
+    home = Path(f"/home/{CONTAINER_USERNAME}")
+
+    def settle(container: str, host_pid: int, state: str) -> str:
+        if state != "shell":
+            return state
+        argvs: list[tuple[str, ...]] = []
+        for pid in procstat.descendants(sampler.processes(container), host_pid):
+            argv = sampler.cmdline(pid)
+            if argv is None:
+                return state
+            argvs.append(argv)
+        try:
+            return inbox_waiters.settle_state(state, argvs, home=home)
+        except ValueError:  # shlex on argv the container wrote: never fail the tick
+            return state
+
+    return settle
 
 
 def agent_homes(cfg: Config, containers: Iterable[str]) -> tuple[tuple[str, str, Path], ...]:

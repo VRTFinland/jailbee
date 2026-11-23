@@ -202,7 +202,11 @@ before editing `## Unreleased`.
   skipping routine success acks. Quiet-child notifications default to 120
   minutes and digests are off; both intervals can be tuned or disabled.
   Filtered items stay unread and ackable, and child followers stay unfiltered
-  ([#141](https://github.com/VRTFinland/jailbee/issues/141)).
+  ([#141](https://github.com/VRTFinland/jailbee/issues/141)). The follower is
+  not a background job in the AGENT column: an idle session whose only
+  background processes are inbox waiters reads idle, not `shell`, in every
+  dashboard and `jailbee ls`
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
 - Web dashboard: `jailbee remote web serve` (alias `jailbee serve`) runs a
   host-side, read-only browser dashboard, included in every install
   ([#109](https://github.com/VRTFinland/jailbee/issues/109)). The front page
