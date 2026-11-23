@@ -633,25 +633,33 @@ def test_session_info_reads_a_bounded_head_and_tail_of_a_large_transcript(
     assert info.models[-1] == "claude-late"
 
 
+@pytest.mark.skipif(not Path("/proc/self/io").exists(), reason="needs Linux /proc/self/io")
 def test_the_last_activity_is_found_behind_one_huge_last_record(
     tmp_path: Path, source: ClaudeSource
 ) -> None:
+    # Claude writes `timestamp` near the end of a record, after the message: a
+    # pasted image makes the last line longer than the whole tail budget.
     path = tmp_path / "projects" / "-p" / f"{SID}.jsonl"
     _large_session(path, prompt="Fix it", middle_bytes=2 * 1024 * 1024)
+    image = {"type": "image", "source": {"type": "base64", "data": "y" * 5_000_000}}
     huge = {
-        "timestamp": "2026-11-03T08:00:00.000Z",
+        "parentUuid": "p",
+        "isSidechain": False,
         "type": "user",
-        "message": {
-            "content": [{"type": "tool_result", "tool_use_id": "t", "content": "y" * 900_000}]
-        },
+        "message": {"role": "user", "content": [image]},
+        "uuid": "u",
+        "timestamp": "2026-11-03T08:00:00.000Z",
     }
     with path.open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps(huge))  # the last line, still without its newline
+        stream.write(json.dumps(huge) + "\n")
 
+    before = _bytes_read()
     info = source.session_info(SID, path)
+    read = _bytes_read() - before
 
     assert info is not None
     assert info.last_activity == datetime(2026, 11, 3, 8, 0, 0, tzinfo=UTC)
+    assert read < 1024 * 1024
 
 
 class _FlakyStore:

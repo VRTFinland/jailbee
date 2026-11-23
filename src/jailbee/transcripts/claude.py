@@ -426,7 +426,8 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
     TITLE_CANDIDATES user lines held none, and never past HEAD_BYTES; its
     first timestamp is when the session started. The last TAIL_BYTES (more,
     up to TAIL_MAX_BYTES, while they hold no timestamp) give the last
-    activity. Models are those named in the head and the tail, in first-use
+    activity: the last complete timestamp in that window, even one in a
+record that began before it. Models are those named in the head and the tail, in first-use
     order: a model used only in the middle of a long session is not listed
     (the transcript itself shows every entry's model). A line is parsed only
     when it is a title candidate or names a model not seen yet. A caller
@@ -456,10 +457,13 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
         while True:
             start = max(head_end, size - window)
             data = os.pread(fd, size - start, start) if start < size else b""
+            # Searched before the cut's partial line is dropped: a record puts
+            # its timestamp near its end, so one record longer than the whole
+            # window (a pasted image) still shows its own.
+            last_activity = _time_at(data, data.rfind(b'"timestamp"'))
             if start > head_end:
                 # The cut lands inside a line: drop that partial line.
                 data = data[data.find(b"\n") + 1 :] if b"\n" in data else b""
-            last_activity = _time_at(data, data.rfind(b'"timestamp"'))
             if last_activity is not None or start <= head_end or window >= TAIL_MAX_BYTES:
                 break
             window *= 4
