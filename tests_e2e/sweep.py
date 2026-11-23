@@ -32,13 +32,16 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import expect
 
 from jailbee.transcripts.claude import ClaudeSource
+from tests.web_fakes import repo_group, snapshot_of
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from playwright.sync_api import Page
 
     from tests_e2e.browser_errors import BrowserErrors
+    from tests_e2e.server import E2EServer
 
 SWEEP_PREFIX = "sweep"
 """The repository prefix the sweep server serves the home under."""
@@ -55,7 +58,8 @@ RENDERED_BLOCKS = frozenset(
         ("assistant", "tool_use"),
     }
 )
-"""Content blocks the transcript reader turns into entries."""
+"""Content blocks the transcript reader turns into entries: mirrors `_entries`
+in `jailbee.transcripts.claude`, which keeps no such set; update both together."""
 
 SKIPPED_RECORDS = frozenset(
     {
@@ -194,6 +198,13 @@ class SweepResult:
             out += [f"- {line}" for line in s.lines(self.slow_ms)]
             out.append("")
         return "\n".join(out)
+
+
+def serve_home(make_server: Callable[..., E2EServer], home: Path) -> E2EServer:
+    """A test server whose one repository, `SWEEP_PREFIX`, has ``home`` as its Claude home."""
+    server = make_server(agent_homes={SWEEP_PREFIX: [("claude", home)]}.get)
+    server.push(snapshot_of(repo_group(SWEEP_PREFIX)))
+    return server
 
 
 def scan(path: Path, result: SessionResult) -> None:

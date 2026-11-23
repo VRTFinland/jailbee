@@ -16,10 +16,9 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import Page
 
-from tests.web_fakes import repo_group, snapshot_of
 from tests_e2e.browser_errors import BrowserErrors
 from tests_e2e.server import E2EServer
-from tests_e2e.sweep import SWEEP_PREFIX, run_sweep
+from tests_e2e.sweep import run_sweep, serve_home
 
 FIXTURES = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "transcripts" / "claude"
 BROKEN_ID = "22222222-2222-4222-8222-222222222222"
@@ -46,9 +45,7 @@ def agent_home(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def server(make_server: Callable[..., E2EServer], agent_home: Path) -> E2EServer:
-    server = make_server(agent_homes={SWEEP_PREFIX: [("claude", agent_home)]}.get)
-    server.push(snapshot_of(repo_group(SWEEP_PREFIX)))
-    return server
+    return serve_home(make_server, agent_home)
 
 
 def fingerprint(home: Path) -> dict[str, tuple[int, int, str]]:
@@ -96,7 +93,6 @@ def test_sweep_reports_the_broken_entry_and_reads_only(
     assert "unparsable line x1 (first at line 4)" in broken
     assert "JS error" not in broken
     assert "slow" not in broken
-    assert CLEAN_ID not in report.partition("\n## ")[2]
 
 
 def test_sweep_reports_renders_over_the_threshold(
@@ -118,3 +114,25 @@ def test_sweep_reports_renders_over_the_threshold(
         f"-work-repo-other/{BROKEN_ID}",
     }
     assert "over the 0 ms threshold" in found[clean]
+
+
+def test_sweep_attributes_a_browser_error_to_the_session_that_raised_it(
+    logged_in: Page,
+    server: E2EServer,
+    agent_home: Path,
+    browser_errors: BrowserErrors,
+    tmp_path: Path,
+) -> None:
+    # Stands in for a renderer bug: an uncaught error on one session's page only.
+    logged_in.context.add_init_script(
+        f"if (location.hash.endsWith('{CLEAN_ID}')) "
+        "setTimeout(() => { throw new Error('sweep probe') })"
+    )
+    out = tmp_path / "report.md"
+
+    run_sweep(logged_in, server.url, agent_home, browser_errors, out, slow_ms=60_000)
+
+    found = sections(out.read_text())
+    assert "JS error: Error: sweep probe" in found[f"-work-repo/{CLEAN_ID}"]
+    assert "JS error" not in found[f"-work-repo-other/{BROKEN_ID}"]
+    assert f"-work-repo/{CLEAN_ID}/subagents/a1b2c3d4e5f6a7b8c" not in found

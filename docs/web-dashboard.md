@@ -89,7 +89,9 @@ line and the unknown entry types across the home, then lists each session with
 a finding: load errors, JS errors, CSP violations, renders slower than
 `SWEEP_SLOW_MS` (default 2000) and entry types the transcript reader neither
 renders nor knowingly skips, each with its first line in the file. Clean
-sessions are only counted. The Makefile's comment on the target describes the
+sessions are only counted. Unlike the browser tests, the sweep records browser
+errors in the report (`BrowserErrors.drain`) instead of failing on them. The
+Makefile's comment on the target describes the
 format in full.
 
 ### Writing browser tests

@@ -15,10 +15,9 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import Page
 
-from tests.web_fakes import repo_group, snapshot_of
 from tests_e2e.browser_errors import BrowserErrors
 from tests_e2e.server import E2EServer
-from tests_e2e.sweep import DEFAULT_SLOW_MS, SWEEP_PREFIX, run_sweep
+from tests_e2e.sweep import DEFAULT_SLOW_MS, run_sweep, serve_home
 
 
 def _required(name: str) -> str:
@@ -38,9 +37,7 @@ def agent_home() -> Path:
 
 @pytest.fixture
 def server(make_server: Callable[..., E2EServer], agent_home: Path) -> E2EServer:
-    server = make_server(agent_homes={SWEEP_PREFIX: [("claude", agent_home)]}.get)
-    server.push(snapshot_of(repo_group(SWEEP_PREFIX)))
-    return server
+    return serve_home(make_server, agent_home)
 
 
 def test_local_sweep(
