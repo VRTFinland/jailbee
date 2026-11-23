@@ -151,8 +151,9 @@ def help_lines() -> list[str]:
         "ROLE: orch orchestrator, child (child! orchestrator not running);"
         " CHILDREN running/limit +queued; INBOX ✉N actionable unread.",
         "BASE ↗: remote-tracking base; MODE: cln clone, mnt mount.",
-        "WT / DIFF / L DIFF: ✓ clean; DIFF vs host target, L DIFF vs host HEAD.",
-        "DIFF ↑ ↓ MERGE vs the sync target: pr = PR head; pr? = PR head not fetched, host branch;",
+        "WT / SYNC diff / L DIFF: ✓ clean; L DIFF vs host HEAD.",
+        "SYNC: target marker, ↑ahead, ↓behind, diff; MERGE uses the same target.",
+        "  pr = PR head; pr? = PR head not fetched, host branch;" ,
         "  ⑂ = parent container (↑ not imported); ⑂? = parent not seen running, host branch.",
         "DOING ×N: process count; JOB auto:stage: autostart stage.",  # noqa: RUF001 - intentional multiplication sign
         "Menus: the key in brackets picks that entry, like Enter on it.",

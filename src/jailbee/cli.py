@@ -2287,7 +2287,9 @@ def list_cmd(
     for notice in tracking_notices(containers):
         warn(notice)
     now = _now()
-    all_fields = ls_field_specs(now=now, all_repos=all_repos, show_submodules=show_submodules)
+    all_fields = ls_field_specs(
+        now=now, all_repos=all_repos, show_submodules=show_submodules, containers=containers
+    )
     # `_load_global()` rather than `load_global_config()` directly: a
     # host-level validation error in global.yaml (bad YAML, a malformed
     # docker_registry_mirror, ...) passes `load_config` (which only merges
@@ -2353,7 +2355,9 @@ def list_cmd(
         console=console,
         title="🐝 jailbee containers" if fmt == "table" else None,
         empty_message="[dim](no containers found)[/dim]",
-        sub_rows=submodule_sub_rows if show_submodules else None,
+        sub_rows=(
+            (lambda c: submodule_sub_rows(c, containers=containers)) if show_submodules else None
+        ),
         fit_order=LS_FIT_DROP_ORDER if fit else None,
     )
 

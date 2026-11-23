@@ -7590,7 +7590,7 @@ def test_web_dashboard_offers_the_actions_its_own_policy_permits():
     ]
 
 
-def test_dashboard_clean_diff_cell_keeps_the_pr_target_marker():
+def test_dashboard_clean_diff_cell_leaves_the_marker_to_sync():
     from rich.text import Text
 
     from jailbee.dashboard.format import dashboard_cell
@@ -7625,9 +7625,9 @@ def test_dashboard_clean_diff_cell_keeps_the_pr_target_marker():
         return Text.from_markup(dashboard_cell(specs[name], c, now)).plain
 
     assert [plain(n, pr) for n in ("target_diff", "ahead_count", "conflict")] == [
-        "✓ pr",
-        "1 pr",
-        "ok pr",
+        "✓",
+        "1",
+        "ok",
     ]
     assert [plain(n, host) for n in ("target_diff", "wt")] == ["✓", "✓"]
 
@@ -7652,8 +7652,8 @@ def test_pr_container_level_with_its_pr_head_still_offers_git_pull_and_diff():
     assert "git diff" in verbs
 
 
-def test_dashboard_sync_columns_are_wide_enough_for_the_target_marker():
-    """At default widths a PR row's ↑12 / ↓4 / conflict keep their ``pr`` marker."""
+def test_dashboard_sync_column_is_wide_enough_for_the_target_marker():
+    """At default widths SYNC keeps its marker, counts and clean diff."""
     from rich.text import Text
 
     from jailbee.git_status import GitStatus
@@ -7685,12 +7685,12 @@ def test_dashboard_sync_columns_are_wide_enough_for_the_target_marker():
         enabled=None,
         folded=frozenset(),
         column_widths=None,
-        shown_columns=("ahead_count", "behind_count", "conflict"),
+        shown_columns=("sync", "conflict"),
     )
     for spec, width in zip(fields, widths, strict=True):
         cell = Text.from_markup(spec.cell(c))
         assert cell.cell_len <= width, (spec.name, cell.plain, width)
-    assert Text.from_markup(fields[0].cell(c)).plain == "12 pr"
+    assert Text.from_markup(fields[0].cell(c)).plain == "pr  ↑12 ↓4 ✓"
 
 
 def test_container_picker_title_and_ls_git_status_carry_the_pr_marker():

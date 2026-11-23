@@ -885,26 +885,26 @@ full selected field sets.
 | `--all` | Containers from every jailbee-managed repo (adds a REPO column). Default: cwd repo only. |
 | `--wide` / `-w` | Show every selected column without fitting to terminal width. |
 | `-o` / `--format <fmt>` | `table` (default) or `json`. |
-| `--fields <list>` | Comma-separated columns. Allowed: `name, full_name, alias, repo, mode, base, state, created, job, network, ttl, loose_until, mounts, ip, memory_limit, mem, mem_used, mem_pct, wt, target_diff, ahead_count, behind_count, conflict, host_ahead, host_behind, local_diff, local_count, git_status, pr, issues, outbox, group, autostart_profile, role, children, inbox, cpu, doing, agent, agent_compact`. `claude` and `claude_group` are accepted aliases for `group`. Wins outright over the `ls:` config block, and applies to every `--format`. |
+| `--fields <list>` | Comma-separated columns. Allowed: `name, full_name, alias, repo, mode, base, state, created, job, network, ttl, loose_until, mounts, ip, memory_limit, mem, mem_used, mem_pct, wt, sync, target_diff, ahead_count, behind_count, conflict, host_ahead, host_behind, local_diff, local_count, git_status, pr, issues, outbox, group, autostart_profile, role, children, inbox, cpu, doing, agent, agent_compact`. `claude` and `claude_group` are accepted aliases for `group`. Wins outright over the `ls:` config block, and applies to every `--format`. |
 
 Git-status columns: **BASE** (base branch), **WT** (uncommitted: `+adds -dels`),
-**DIFF ±** (direct tree diff against the sync target), **↑** / **↓** (unique
-commits unique to container / sync target), **MERGE** (see
-below). The **sync target** is the host target branch, except for a PR-bound
-container: it compares with the PR head the host last fetched
-(`refs/jailbee/pr/<N>/head`; ↑ = push needed, ↓ = someone else pushed), and
-those four cells carry a dim `pr`; a yellow `pr?` means that ref is missing and
-the host branch stands in. An orchestration child or fork compares with its
-parent container instead, ahead of any PR (↑ = not yet imported, ↓ = parent
-commits it lacks, dim `⑂`; yellow `⑂?` when the parent is stopped or not yet
-seen by the dashboard; plain `jailbee ls` has no gather pass, so a PR-bound
-child keeps its PR head there and others show `⑂?`). The **JOB** column shows in-flight and failed
+**SYNC** (target marker, right-aligned ↑/↓ unique-commit counts, then the direct
+committed-tree diff), **MERGE** (see below). SYNC's target marker occupies a
+fixed three-terminal-cell slot and appears once per row: dim `pr` for a PR head,
+yellow `pr?` when that ref is missing and the host branch stands in; dim `⑂`
+for a parent target, yellow `⑂?` when the parent cannot be used, and blank for
+the host branch. On parent targets, ↑ means not yet imported and ↓ counts parent
+commits the child lacks. The counts align across visible rows and the variable-
+width diff comes last. Legacy `target_diff`, `ahead_count` and `behind_count`
+fields remain explicitly selectable without markers; MERGE is unmarked too.
+A plain `jailbee ls` has no gather pass, so a PR-bound child keeps its PR head
+there and other children show `⑂?`. The **JOB** column shows in-flight and failed
 background-job phases (`jailbee new`/`jailbee destroy --background`), and
 renders a detached autostart run as `autostart:<stage>` (`<stage>` is
 whichever stage the supervisor is on) — see `jailbee job` and `jailbee
 autostart status|cancel` below to inspect or clear one. **TTL** appears
 only while a container is in loose mode. Stopped/mount-mode containers show
-`—` in the four git columns.
+`—` in the git-status columns.
 
 Status snapshots the host's local `refs/heads/<base>` once per branch and
 shares that SHA across matching containers. If absent, it uses
@@ -912,7 +912,10 @@ shares that SHA across matching containers. If absent, it uses
 not fetch or update anchors. If neither ref resolves or its commit object is
 unreadable in a container, comparison fields show `?`. Local always wins when
 both refs exist; tracking-ahead/diverged notices describe the last-fetched
-ref, not the remote server. Equal trees can have nonzero ↑/↓ commit counts.
+ref, not the remote server. Equal trees can have nonzero ↑/↓ commit counts. The opt-in legacy `target_diff`,
+`ahead_count` and `behind_count` fields are independently sortable and do not
+show target markers. Explicit `--format json --fields sync` returns the same
+structured value as `git_status`; default JSON is unchanged.
 JSON `git_status` names the direct line diff `target_diff` and includes
 `behind_count`, `base_source`, `base_sha`, `tracking_relation`,
 `upstream_ref`, `sync_target` (`kind`, `label`, `sha`, `ref`, `fallback`) and
@@ -943,8 +946,7 @@ while a process of *that* container still matches it, so a crashed session
 never reads as live. Under `ls --all`, only the current repo's rows are filled
 in.
 
-The default table is NAME, BASE, STATE, CREATED, NETWORK and the four git
-columns. **IP**, **MEM**, **CPU**, **DOING**, **AGENT** and **AGENT_COMPACT** are *not* in
+The default table is NAME, BASE, STATE, CREATED, NETWORK, WT, SYNC and MERGE. **IP**, **MEM**, **CPU**, **DOING**, **AGENT** and **AGENT_COMPACT** are *not* in
 it — reach any of them from `ls` with `--fields ip,mem,mem_used,mem_pct,cpu,doing,agent,agent_compact,outbox`.
 The dashboards' own default set adds **USED** and **MEM%** (`mem_used`, `mem_pct`), **CPU**, **AGENT_COMPACT** and **OUTBOX**, and drops **ISSUES** (OUTBOX counts PR and issue manifests together); **MEM**, **DOING** and **ISSUES** stay selectable in the dashboard settings;
 choose either agent column in dashboard settings. **IP** is off by default in
@@ -1017,10 +1019,10 @@ not the time spent in that state. Assistant text, thinking, tool calls and tool
 results count; prompts and metadata do not. Unknown event ages have no duration.
 A bright ○ has activity under 30 minutes old. Container details show activity age
 and the selected session's state duration separately, e.g. `active 14s ago (busy for 23m)`.
-USED / MEM% = memory in use and its share of the limit; OUTBOX = `✉N` staged PR and issue manifests (the dashboards' PR cell shows only `#N` / `#N↓`). BASE ↗ means tracking; MODE uses cln/mnt; WT/DIFF/L DIFF
-use ✓ for clean. DIFF compares against the sync target (dim `pr`: the PR head;
-yellow `pr?`: PR head not fetched, host branch instead), L DIFF against
-checked-out host HEAD. A PR-bound container's details card adds a git row per
+USED / MEM% = memory in use and its share of the limit; OUTBOX = `✉N` staged PR and issue manifests (the dashboards' PR cell shows only `#N` / `#N↓`). BASE ↗ means tracking; MODE uses cln/mnt; WT/SYNC/L DIFF
+use ✓ for clean. SYNC compares against the sync target and shows its marker
+once, followed by aligned ↑/↓ counts and the diff last; separate legacy fields
+are unmarked. L DIFF compares against checked-out host HEAD. A PR-bound container's details card adds a git row per
 target (host branch, PR #N head) with its ↑/↓ and short sha, the sync target
 marked. TUI details and Qt tooltips retain network expiry times;
 Qt cards show the same LOOSE text without the colour. DOING uses ×N process counts. JOB

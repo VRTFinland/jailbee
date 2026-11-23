@@ -2862,7 +2862,10 @@ output and JSON are never fitted. A notice below the table lists hidden columns.
 
 **The two views have different built-in defaults.** `jailbee ls` is a
 one-shot listing and stays narrow: NAME, BASE, STATE, CREATED, NETWORK, WT,
-DIFF ±, ↑, ↓, MERGE, plus the dynamic columns below when they apply. The
+SYNC, MERGE, plus the dynamic columns below when they apply. The legacy
+`target_diff`, `ahead_count` and `behind_count` fields remain explicitly
+selectable (and can remain in saved dashboard columns), but are off by default;
+`SYNC` sorts by diff size, while the legacy count fields sort by their counts. The
 dashboards add USED and MEM% (`mem_used`, `mem_pct`), CPU, AI
 (`agent_compact`) and OUTBOX (`outbox`), and leave out ISSUES — OUTBOX carries
 that count together with the PR outbox's. The compact agent status omits agent
@@ -2882,10 +2885,14 @@ limit **LIMIT**, memory in use **USED**, its share of the limit **MEM%**, loose 
 ◆ waiting, ● busy, ◐ shell, ○ idle — bright when the agent went idle less than 30 minutes ago, dim after that — and ? for an unknown agent state. One glyph per live session, all agents ordered by urgency; past 24 columns the ages drop, then the least urgent sessions fold into `+N`. Full
 **AGENT** remains unchanged. **BASE**'s ↗ marks a remote-tracking base;
 **MODE** uses `cln`/`mnt`. **WT**, **DIFF** and **L DIFF** show ✓ for clean, not
-for an unknown result. **DIFF**, **↑**, **↓** and **MERGE** compare with the
-container's [sync target](git-bridge.md#sync-target); for a PR-bound container
-they carry a dim `pr` (PR head) or a yellow `pr?` (PR head not fetched, host
-branch instead), in `jailbee ls` too. **DOING** uses ×N for process counts; **JOB** shortens
+for an unknown result. **SYNC** and **MERGE** compare with the
+container's [sync target](git-bridge.md#sync-target). SYNC shows its target
+marker once in a fixed-width three-cell leading slot (`pr` or `⑂` when known,
+`pr?` or `⑂?` when the preferred target is unavailable, blank for the host
+branch), followed by right-aligned ↑/↓ commit counts and the diff last. The
+marker is not repeated in separate fields or on MERGE. The same ordered
+presentation applies in `jailbee ls` and the dashboards; a clean diff is shown
+as `clean` in `ls` and `✓` in the dashboards. **DOING** uses ×N for process counts; **JOB** shortens
 working verbs (`start`, `create`, `clone`, `stop`, `delete`, `destroy`) and
 `autostart:<stage>` to `auto:<stage>`, preserving `failed` and `(dead)`.
 Qt table tooltips expand the labels, exact timestamps and agent details;
@@ -2911,10 +2918,12 @@ the command line still wins in **every** format, table or JSON.
 
 Allowed names (also the `jailbee ls --fields` vocabulary): `name`, `full_name`, `alias`,
 `repo`, `mode`, `base`, `state`, `created`, `job`, `network`, `ttl`,
-`loose_until`, `mounts`, `ip`, `memory_limit`, `mem`, `mem_used`, `mem_pct`, `wt`, `target_diff`,
+`loose_until`, `mounts`, `ip`, `memory_limit`, `mem`, `mem_used`, `mem_pct`, `wt`, `sync`, `target_diff`,
 `ahead_count`, `behind_count`, `conflict`, `host_ahead`, `host_behind`, `local_diff`, `local_count`, `git_status`, `pr`,
 `issues`, `outbox`, `group`, `autostart_profile`, `role`, `children`, `inbox`, `cpu`, `doing`, `agent`, `agent_compact`. `claude` and `claude_group`
-are accepted aliases for `group`.
+are accepted aliases for `group`. `sync` is also available as an explicit
+JSON field selection and returns the same structured object as `git_status`; it
+is an alias, not an addition to the default JSON output.
 
 `ahead_diff` was retired: configured uses produce a migration warning and
 explicit `--fields ahead_diff` is an error. Use `target_diff` for the direct
@@ -2925,8 +2934,10 @@ committed-tree comparison with the host target branch, or `jailbee git diff
 `sync_target`, `host_ahead_count` and `host_behind_count` (see
 [sync target](git-bridge.md#sync-target)); a count is a digit string, `"?"`
 (unknown) or `"missing"` (the container lacks the target commit: behind by at
-least one, count unknown, shown as `↓•`); its submodule
-line fields are `target_ins`/`target_del` instead of `ahead_ins`/`ahead_del`.
+least one, count unknown, shown as `↓•`); explicit `--format json --fields
+sync` returns this same structured object as `git_status`, without changing
+default JSON. Its submodule line fields are `target_ins`/`target_del` instead
+of `ahead_ins`/`ahead_del`.
 `host_ahead` (**H↑**) and `host_behind` (**H↓**) are opt-in columns that always count commits against the host branch, whatever the row's sync target is: on a PR-bound row they differ from ↑/↓, on a row syncing with the host branch they equal them. They are off by default in the dashboard and `jailbee ls`; enable them in the dashboard's column settings, or with `ls.fields` / `--fields`.
 `local_diff` and `local_count` remain opt-in comparisons with the host's
 currently checked-out HEAD, which can differ from the target branch. If the

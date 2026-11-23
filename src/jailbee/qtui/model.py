@@ -25,7 +25,6 @@ from jailbee.git_status import IN_PROGRESS_CELL_LABELS
 from jailbee.lifecycle import (
     SYNC_FIELDS,
     fork_source,
-    sync_marker,
     sync_target_text,
     tracking_warning,
 )
@@ -131,12 +130,6 @@ def card_content(
     """Split a container's visible fields into NAME + STATE plus the rest,
     each addressable by ``FieldSpec.name`` so a renderer can place it."""
     cells = container_cells(c, fields)
-    # The card's git pieces read the bare values; the marker is the table's.
-    marker = _strip_markup(sync_marker(c.git_status))
-    if marker:
-        for index, field in enumerate(fields):
-            if field.name in SYNC_FIELDS and cells[index].endswith(f" {marker}"):
-                cells[index] = cells[index][: -len(marker) - 1]
     if now is not None:
         for index, field in enumerate(fields):
             if field.name == "network":

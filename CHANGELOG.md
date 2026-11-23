@@ -255,23 +255,27 @@ before editing `## Unreleased`.
 
 ### Changed
 
-- DIFF, ↑, ↓ and MERGE in the dashboards and `jailbee ls` compare a PR-bound
-  container with the PR head the host last fetched (`refs/jailbee/pr/<N>/head`)
-  instead of its host branch, so ↑ reads "push needed" and ↓ "someone else
-  pushed" ([#145](https://github.com/VRTFinland/jailbee/issues/145)). Those
-  cells carry a dim `pr`, or a yellow `pr?` when the host has no such ref and
-  the host branch stands in (also in the `git_status` text column and the
-  container pickers). The details card shows a git row per target (host
-  branch, PR head) with its ↑/↓ and short sha, the sync target marked, and JSON
+- The dashboards and `jailbee ls` show the sync comparison in one **SYNC**
+  column: a fixed three-terminal-cell target-marker slot, aligned ↑/↓ commit
+  counts, then the diff. PR-bound containers compare with the PR head the host
+  last fetched (`refs/jailbee/pr/<N>/head`), so ↑ reads "push needed" and ↓
+  "someone else pushed"; SYNC shows dim `pr`, or yellow `pr?` when the host
+  branch stands in ([#145](https://github.com/VRTFinland/jailbee/issues/145)).
+  Orchestration children (including PR children) and forks compare with their
+  parent ahead of a PR binding: ↑ counts commits not yet imported, ↓ the
+  parent's commits they lack (the parent's HEAD as the dashboard's previous
+  pass saw it), and SYNC shows dim `⑂` or yellow `⑂?` when the host branch
+  stands in. The target marker appears once per row, not in separate fields or
+  MERGE. The legacy `target_diff`, `ahead_count` and `behind_count` columns
+  remain explicitly selectable without markers; SYNC sorts by diff size and
+  those count fields sort by their own values. Default JSON is unchanged;
+  explicit `--format json --fields sync` returns the same structured object as
+  `git_status`. The details card shows a git row per target (host branch, PR
+  head) with its ↑/↓ and short sha, the sync target marked, and JSON
   `git_status` gains `sync_target`, `host_ahead_count` and `host_behind_count`.
-  An orchestration child (of any kind, PR children included) or a fork compares
-  with its parent container instead, ahead of a PR binding: ↑ counts commits not
-  yet imported, ↓ the parent's commits it lacks (the parent's HEAD as the
-  dashboard's previous pass saw it). Those cells carry a dim `⑂`, or a yellow
-  `⑂?` when the parent is stopped, missing or not yet seen and the host branch
-  stands in; the card gains a `⑂ <parent>` row with the parent's sha and the
-  pass age. Plain `jailbee ls` has no previous pass, so a PR-bound child there
-  keeps comparing with its PR head. Other containers are unchanged.
+  The card also gains a `⑂ <parent>` row with the parent's sha and pass age.
+  Plain `jailbee ls` has no previous pass, so a PR-bound child there keeps
+  comparing with its PR head.
 - `jailbee review apply` and `jailbee issue apply` are now `jailbee outbox
   apply` limited to PR or issue proposals, with the same prompts, output and
   exit codes ([#144](https://github.com/VRTFinland/jailbee/issues/144)). Each

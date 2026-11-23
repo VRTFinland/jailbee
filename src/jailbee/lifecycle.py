@@ -3879,7 +3879,9 @@ def _sub_count_str(count: int | None) -> str:
     return str(count) if count else ""
 
 
-def submodule_sub_rows(c: ContainerInfo) -> list[dict[str, str]]:
+def submodule_sub_rows(
+    c: ContainerInfo, *, containers: Sequence[ContainerInfo] = ()
+) -> list[dict[str, str]]:
     """Continuation rows (one per changed submodule) for ``jailbee ls``.
 
     Keys match the ``ls`` field names (``name``/``wt``/``target_diff``/
@@ -3889,9 +3891,17 @@ def submodule_sub_rows(c: ContainerInfo) -> list[dict[str, str]]:
     if c.git_status is None:
         return []
     rows: list[dict[str, str]] = []
+    widths = _sync_count_widths(containers or (c,), show_submodules=True)
     for s in c.git_status.submodules:
         rows.append(
             {
+                "sync": _sync_comparison(
+                    "",
+                    "?" if s.ahead_commits is None else str(s.ahead_commits),
+                    "?" if s.behind_commits is None else str(s.behind_commits),
+                    _sub_stat_str(s.target_ins, s.target_del),
+                    widths,
+                ),
                 "name": f"  └ {s.path}",
                 "wt": _sub_stat_str(s.wt_ins, s.wt_del),
                 "target_diff": _sub_stat_str(s.target_ins, s.target_del),
@@ -3968,6 +3978,7 @@ LS_FIT_DROP_ORDER: tuple[str, ...] = (
     "network",
     "outbox",
     "target_diff",
+    "sync",
     "base",
     "conflict",
     "behind_count",
@@ -3981,7 +3992,7 @@ LS_FIT_DROP_ORDER: tuple[str, ...] = (
 
 
 def sync_marker(status: GitStatus | None) -> str:
-    """The dim marker a sync cell (DIFF/↑/↓/MERGE) carries for a non-host target.
+    """The leading SYNC marker for a non-host target.
 
     ``pr``: the cell compares with the PR head. ``pr?`` (yellow): a PR-bound
     container whose PR head the host has not fetched, compared with the host
@@ -4009,8 +4020,8 @@ def plain_sync_marker(status: GitStatus | None) -> str:
 
 _BEHIND_ATTRS = ("behind_count", "host_behind_count")
 
-SYNC_FIELDS = ("target_diff", "ahead_count", "behind_count", "conflict")
-"""The columns that compare with the sync target and carry its marker."""
+SYNC_FIELDS = ("sync", "target_diff", "ahead_count", "behind_count", "conflict")
+"""The columns that compare with the sync target (only SYNC carries a marker)."""
 
 
 def sync_target_text(status: GitStatus | None) -> str:
@@ -4034,14 +4045,43 @@ def sync_target_text(status: GitStatus | None) -> str:
     return f"vs host branch {target.label}"
 
 
-def with_sync_marker(cell: str, status: GitStatus | None) -> str:
-    """``cell`` followed by its sync-target marker, if any."""
-    marker = sync_marker(status)
-    return f"{cell} {marker}" if marker else cell
+def _sync_count_widths(
+    containers: Sequence[ContainerInfo], *, show_submodules: bool = False
+) -> tuple[int, int]:
+    ahead = ["0"]
+    behind = ["0"]
+    for c in containers:
+        if c.git_status is None:
+            continue
+        ahead.append(c.git_status.ahead_count)
+        behind.append(c.git_status.behind_count)
+        if show_submodules:
+            for sub in c.git_status.submodules:
+                ahead.append("?" if sub.ahead_commits is None else str(sub.ahead_commits))
+                behind.append("?" if sub.behind_commits is None else str(sub.behind_commits))
+    return (
+        max(Text(v).cell_len for v in ahead),
+        max(Text(v).cell_len for v in behind),
+    )
+
+
+def _sync_comparison(
+    marker: str, ahead: str, behind: str, diff: str, widths: tuple[int, int]
+) -> str:
+    marker_width = max(Text(m).cell_len for m in ("pr", "pr?", "⑂", "⑂?"))
+    parts = [marker + " " * (marker_width - Text.from_markup(marker).cell_len)]
+    for arrow, value, width in zip(("↑", "↓"), (ahead, behind), widths, strict=True):
+        pad = " " * max(0, width - Text.from_markup(value).cell_len)
+        parts.append(f"{arrow}{pad}{value}")
+    return " ".join((*parts, diff))
 
 
 def ls_field_specs(
-    *, now: datetime, all_repos: bool = False, show_submodules: bool = False
+    *,
+    now: datetime,
+    all_repos: bool = False,
+    show_submodules: bool = False,
+    containers: Sequence[ContainerInfo] = (),
 ) -> list[table_format.FieldSpec[ContainerInfo]]:
     """Build the FieldSpec list for ``jailbee ls``.
 
@@ -4077,9 +4117,7 @@ def ls_field_specs(
         delta = c.loose_until - now
         return max(0, int(delta.total_seconds() // 60))
 
-    def _git_cell(
-        attr: str, zero_dim: bool = False, *, sync: bool = False
-    ) -> Callable[[ContainerInfo], str]:
+    def _git_cell(attr: str, zero_dim: bool = False) -> Callable[[ContainerInfo], str]:
         def value(c: ContainerInfo) -> str:
             if c.git_status is None:
                 return "[dim]—[/dim]"
@@ -4094,11 +4132,25 @@ def ls_field_specs(
                 return "[yellow]↓•[/yellow]"
             return v
 
-        def cell(c: ContainerInfo) -> str:
-            text = value(c)
-            return with_sync_marker(text, c.git_status) if sync else text
+        return value
 
-        return cell
+    def _count_cell(c: ContainerInfo, attr: str) -> str:
+        value = _git_cell(attr, zero_dim=True)(c)
+        # The combined cell supplies the arrow, including for a missing target.
+        return value.replace("↓•", "•")
+
+    count_widths = _sync_count_widths(containers, show_submodules=show_submodules)
+
+    def _sync_cell(c: ContainerInfo) -> str:
+        if c.git_status is None:
+            return "[dim]—[/dim]"
+        return _sync_comparison(
+            sync_marker(c.git_status),
+            _count_cell(c, "ahead_count"),
+            _count_cell(c, "behind_count"),
+            _git_cell("target_diff")(c),
+            count_widths,
+        )
 
     def _git_json(attr: str) -> Callable[[ContainerInfo], str | None]:
         def get(c: ContainerInfo) -> str | None:
@@ -4112,7 +4164,7 @@ def ls_field_specs(
     def _conflict_cell(c: ContainerInfo) -> str:
         text, kind = merge_label(c.git_status)
         style = _MERGE_KIND_STYLE[kind]
-        return with_sync_marker(f"[{style}]{text}[/{style}]", c.git_status)
+        return f"[{style}]{text}[/{style}]"
 
     def _git_status_json(c: ContainerInfo) -> dict[str, object] | None:
         if c.git_status is None:
@@ -4758,12 +4810,22 @@ def ls_field_specs(
             default_json=False,
         ),
         table_format.FieldSpec(
+            name="sync",
+            sort=_git_key("target_diff", _diff_key),
+            sort_desc_first=True,
+            header="SYNC",
+            cell=_sync_cell,
+            json=_git_status_json,
+            default_json=False,
+        ),
+        table_format.FieldSpec(
             name="target_diff",
             sort=_git_key("target_diff", _diff_key),
             sort_desc_first=True,
             header="DIFF ±",
-            cell=_git_cell("target_diff", sync=True),
+            cell=_git_cell("target_diff"),
             json=_git_json("target_diff"),
+            default_table=False,
             default_json=False,
         ),
         table_format.FieldSpec(
@@ -4771,9 +4833,10 @@ def ls_field_specs(
             sort=_git_key("ahead_count", _count_key),
             sort_desc_first=True,
             header="↑",
-            cell=_git_cell("ahead_count", zero_dim=True, sync=True),
+            cell=_git_cell("ahead_count", zero_dim=True),
             json=_git_json("ahead_count"),
             justify="right",
+            default_table=False,
             default_json=False,
         ),
         table_format.FieldSpec(
@@ -4781,9 +4844,10 @@ def ls_field_specs(
             sort=_git_key("behind_count", _count_key),
             sort_desc_first=True,
             header="↓",
-            cell=_git_cell("behind_count", zero_dim=True, sync=True),
+            cell=_git_cell("behind_count", zero_dim=True),
             json=_git_json("behind_count"),
             justify="right",
+            default_table=False,
             default_json=False,
         ),
         table_format.FieldSpec(
