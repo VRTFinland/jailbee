@@ -225,11 +225,6 @@ def _tool_result(
     return found
 
 
-def _is_notice(text: str) -> bool:
-    """Claude Code's own note in the person's turn, such as an interruption."""
-    return is_interruption(text)
-
-
 def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
     """The normalised entries of one JSONL record."""
     message = record.get("message")
@@ -250,7 +245,7 @@ def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
                         id=f"{record_id}:0",
                         timestamp=when,
                         text=content,
-                        meta=meta or _is_notice(content),
+                        meta=meta or is_interruption(content),
                     )
                 ]
                 if content
@@ -269,7 +264,7 @@ def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
                         id=entry_id,
                         timestamp=when,
                         text=block["text"],
-                        meta=meta or _is_notice(block["text"]),
+                        meta=meta or is_interruption(block["text"]),
                     )
                 )
             elif block_type == "tool_result":

@@ -734,6 +734,7 @@ def test_expanding_an_entry_does_not_render_the_whole_transcript(
 
     monkeypatch.setattr(render, "render_entries", boom)
     monkeypatch.setattr(routes, "render_entries", boom)
+    monkeypatch.setattr(render, "render_entry", boom)
     monkeypatch.setattr(render, "render_markdown", boom)
     monkeypatch.setattr(render, "highlight_json", boom)
     for entry_id in ids:

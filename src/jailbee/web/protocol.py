@@ -314,7 +314,7 @@ class Status(_Message):
 
 class TranscriptAppend(_Message):
     """Entries a followed transcript gained; ``offset`` is where the next read
-        starts. Sent only when the offset moved: ``entries`` is empty when the Agent
+    starts. Sent only when the offset moved: ``entries`` is empty when the Agent
     context setting left out everything read. A partly written line waits until
     complete."""
 

@@ -236,21 +236,16 @@ def render_entries(
     rendered: list[RenderedEntry] = []
     for e in entries:
         context = _context(e)
-        part = None
+        split = None
         if context is not None and context[0] != e.id:
             # Context split off an entry is its own meta record: before a
             # typed prompt, after a tool result.
-            part = _meta_user(context[0], e.timestamp, context[1], meta)
-            if isinstance(e, UserMessage):
-                if part is not None:
-                    rendered.append(part)
-                part = None
-                e = replace(e, text=prompt_text(e.text))
+            split = _meta_user(context[0], e.timestamp, context[1], meta)
+        before, after = (split, None) if isinstance(e, UserMessage) else (None, split)
+        if isinstance(e, UserMessage) and context is not None and context[0] != e.id:
+            e = replace(e, text=prompt_text(e.text))
         r = render_entry(e, cache, meta)
-        if r is not None:
-            if isinstance(r, RenderedSubagent) and r.description is None:
-                r = r.model_copy(update={"description": described.get(r.agent_id)})
-            rendered.append(r)
-        if part is not None:
-            rendered.append(part)
+        if r is not None and isinstance(r, RenderedSubagent) and r.description is None:
+            r = r.model_copy(update={"description": described.get(r.agent_id)})
+        rendered.extend(x for x in (before, r, after) if x is not None)
     return rendered

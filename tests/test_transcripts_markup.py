@@ -108,6 +108,8 @@ R = "<system-reminder>note</system-reminder>"
         (f"inline {R}", (f"inline {R}", "")),  # not on its own line: output
         ("output\n<system-reminder>cut", ("output\n<system-reminder>cut", "")),
         ("x </system-reminder>", ("x </system-reminder>", "")),
+        (f"out\nx {R}\n{R}", (f"out\nx {R}", R)),  # only the block on its own line
+        (f"{R}\n{R}", ("", f"{R}\n{R}")),
     ],
 )
 def test_split_trailing_reminders(text: str, expected: tuple[str, str]) -> None:

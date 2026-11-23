@@ -393,7 +393,7 @@ blocks are shown. These choices are stored in the browser on that device only.
 
 **Agent context** controls the agent's own wrapper records in a transcript:
 task notifications, system reminders (including the ones Claude Code appends to
-a tool result), command output and shell input/output.
+the end of a tool result; a tag elsewhere in the output is the tool's own text), command output and shell input/output.
 *Hidden* (the default) sends none of them, so they cost neither bandwidth nor
 page weight. *Collapsed* sends a one-line label (for example "Task
 notification" or "Shell: ls") and loads the content from the server only when
