@@ -20,9 +20,9 @@ from fastapi.testclient import TestClient
 
 from jailbee.db import get_engine
 from jailbee.remote_ssh.repo_scope import RemoteRepoScope
-from jailbee.web.app import WebDeps, create_app
 from jailbee.transcripts.base import UserMessage
 from jailbee.transcripts.claude import ClaudeSource
+from jailbee.web.app import WebDeps, create_app
 from jailbee.web.auth import PinHolder
 from jailbee.web.protocol import RenderedUser
 from jailbee.web.transcript_render import RenderCache, render_entries
@@ -464,8 +464,11 @@ def test_no_corpus_user_record_starting_with_a_tag_renders_as_a_typed_prompt() -
 
     The recorder's scripted prompts (corpus.json) never start with ``<``.
     """
-    scripted = [p for s in json.loads((CORPUS / "corpus.json").read_text())["sessions"]
-                for p in s["prompts"]]
+    scripted = [
+        p
+        for s in json.loads((CORPUS / "corpus.json").read_text())["sessions"]
+        for p in s["prompts"]
+    ]
     assert scripted and not any(p.lstrip().startswith("<") for p in scripted)
     source = ClaudeSource()
     transcripts = sorted((CORPUS / "projects").rglob("*.jsonl"))
