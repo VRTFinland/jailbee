@@ -55,6 +55,7 @@ class DbSessionInfoStore:
                 "started": info.started,
                 "last_activity": info.last_activity,
                 "models": json.dumps(list(info.models)),
+                "cwd": info.cwd,
             }
             for path, stamp, info in entries
         ]
@@ -89,5 +90,6 @@ def _entry(row: SessionInfoRow) -> tuple[Stamp, SessionInfo] | None:
         started=row.started,
         last_activity=row.last_activity,
         models=tuple(models),
+        cwd=row.cwd,
     )
     return (row.size, row.mtime_ns), info

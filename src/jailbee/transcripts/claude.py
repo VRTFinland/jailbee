@@ -71,6 +71,7 @@ READ_CHUNK = 64 * 1024
 _TIMESTAMP = re.compile(rb'"timestamp"\s*:\s*"([^"]{1,64})"')
 """Found without parsing the line."""
 _USER_RECORD = (b'"type":"user"', b'"type": "user"')
+_CWD = re.compile(rb'"cwd"\s*:\s*("(?:[^"\\]|\\.){1,4096}")')
 _MODEL = re.compile(rb'"model"\s*:\s*"([^"]{1,200})"')
 """Candidate model names in a line; only a parse says which one is the record's."""
 
@@ -326,6 +327,17 @@ def _time_at(data: bytes, at: int) -> datetime | None:
     return _parse_time(match.group(1).decode("utf-8", "replace"))
 
 
+def _cwd_in(line: bytes) -> str | None:
+    match = _CWD.search(line)
+    if match is None:
+        return None
+    try:
+        cwd = json.loads(match.group(1))
+    except ValueError:
+        return None
+    return cwd if isinstance(cwd, str) and cwd.startswith("/") else None
+
+
 def _record(line: bytes) -> dict[str, object] | None:
     try:
         record = json.loads(line)
@@ -349,6 +361,7 @@ class _InfoScan:
         self.first_command = ""
         self.candidates = 0
         self.started: datetime | None = None
+        self.cwd: str | None = None
         self.models: dict[str, None] = {}
 
     @property
@@ -362,6 +375,8 @@ class _InfoScan:
     def head_line(self, line: bytes) -> None:
         if self.started is None:
             self.started = _time_at(line, line.find(b'"timestamp"'))
+        if self.cwd is None:
+            self.cwd = _cwd_in(line)
         self.model_line(line)
         if self.title_settled or not any(marker in line for marker in _USER_RECORD):
             return
@@ -480,6 +495,7 @@ record that began before it. Models are those named in the head and the tail, in
         started=scan.started,
         last_activity=last_activity or last_line_time,
         models=tuple(scan.models),
+        cwd=scan.cwd,
     )
 
 
@@ -502,31 +518,40 @@ def project_dirname(cwd: str) -> str:
     return _NOT_IN_NAME.sub("-", cwd)
 
 
-def _in_cwds(project: str, names: Collection[str]) -> bool:
-    """`project` is one of `names`, or a directory below one.
+def _dir_match(project: str, names: Collection[str]) -> bool | None:
+    """True when `project` is one of `names`; False when it only extends one
+    with a dash (a directory below it, or a sibling: `/r/a/b` and `/r/a-b`
+    share the name `-r-a-b`); None when it is neither."""
+    if project in names:
+        return True
+    return False if any(project.startswith(name + "-") for name in names) else None
 
-    The encoding is lossy: `/r/a-b` and `/r/a/b` share a name, so a session
-    started in a sibling `/r/a-b` counts as below `/r/a`.
-    """
-    return any(project == name or project.startswith(name + "-") for name in names)
+
+def _below(cwd: str, cwds: Collection[str]) -> bool:
+    """`cwd` is one of `cwds` or a directory below one."""
+    return any(cwd == c or cwd.startswith(c.rstrip("/") + "/") for c in cwds)
 
 
 def _session_files(
     config_home: Path, cwds: Collection[str] | None = None
-) -> list[tuple[str, Path]]:
+) -> list[tuple[str, Path, bool]]:
     """Every `<sessionId>.jsonl` directly in a project directory; no links followed.
 
-    With `cwds`, only the project directories of sessions started there or below."""
+    With `cwds`, only the project directories whose name is that of one of
+    `cwds` or extends it with a dash. Each file comes with whether its
+    directory's name is exactly one of theirs: the dash form is ambiguous,
+    and only the session's own `cwd` tells a subdirectory from a sibling."""
     try:
         projects = sorted((config_home / PROJECTS_DIRNAME).iterdir())
     except OSError:
         return []
     wanted = None if cwds is None else {project_dirname(cwd) for cwd in cwds}
-    found: list[tuple[str, Path]] = []
+    found: list[tuple[str, Path, bool]] = []
     for project in projects:
         if project.is_symlink():
             continue
-        if wanted is not None and not _in_cwds(project.name, wanted):
+        exact = True if wanted is None else _dir_match(project.name, wanted)
+        if exact is None:
             continue
         try:
             names = sorted(os.listdir(project))
@@ -536,8 +561,17 @@ def _session_files(
             session_id = name.removesuffix(".jsonl")
             if name.endswith(".jsonl") and SESSION_ID.fullmatch(session_id):
                 if _is_regular(project / name):
-                    found.append((session_id, project / name))
+                    found.append((session_id, project / name, exact))
     return found
+
+
+def _wanted(info: SessionInfo, exact: bool, cwds: Collection[str] | None) -> bool:
+    """A session read from a candidate directory belongs to `cwds`: by its own
+    `cwd` when the transcript names one, else only from an exactly named
+    directory."""
+    if cwds is None:
+        return True
+    return _below(info.cwd, cwds) if info.cwd is not None else exact
 
 
 class ClaudeSource:
@@ -571,8 +605,9 @@ class ClaudeSource:
     ) -> list[SessionInfo]:
         sessions = [
             info
-            for session_id, path in _session_files(config_home, cwds)
+            for session_id, path, exact in _session_files(config_home, cwds)
             if (info := _cached_info(session_id, path, cache)) is not None
+            and _wanted(info, exact, cwds)
         ]
         oldest = datetime.min.replace(tzinfo=UTC)
         return sorted(sessions, key=lambda s: s.last_activity or oldest, reverse=True)

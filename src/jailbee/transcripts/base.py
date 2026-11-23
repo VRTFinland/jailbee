@@ -137,11 +137,13 @@ class SessionInfo:
     last_activity: datetime | None
     models: tuple[str, ...]
     """Every model that answered, in first-use order."""
+    cwd: str | None = None
+    """The directory the session was started in, when its transcript says."""
 
 
-SESSION_INFO_FORMAT = 1
+SESSION_INFO_FORMAT = 2
 """Bump when what a source derives for a `SessionInfo` changes (how the title
-is chosen, which models are named), so infos a `SessionInfoStore` kept from an
+is chosen, which models are named, `cwd`), so infos a `SessionInfoStore` kept from an
 older reader are read again instead of served."""
 
 Stamp = tuple[int, int]

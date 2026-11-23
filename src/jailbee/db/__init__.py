@@ -28,7 +28,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 28
+CURRENT_SCHEMA_VERSION = 29
 
 
 def state_dir() -> Path:
@@ -352,6 +352,17 @@ def _migrate_to_v28(conn: Connection) -> None:
     return None
 
 
+def _migrate_to_v29(conn: Connection) -> None:
+    """v28 -> v29: add `session_info_cache.cwd` (where a session started).
+
+    Guarded by `PRAGMA table_info` so replaying the chain is a no-op. Old
+    rows keep NULL and an older `format`, so they are read again anyway.
+    """
+    cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(session_info_cache)")}
+    if "cwd" not in cols:
+        conn.exec_driver_sql("ALTER TABLE session_info_cache ADD COLUMN cwd VARCHAR")
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -381,6 +392,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     26: _migrate_to_v26,
     27: _migrate_to_v27,
     28: _migrate_to_v28,
+    29: _migrate_to_v29,
 }
 
 
