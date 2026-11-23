@@ -11,6 +11,7 @@ not need the web dashboard to do so.
 
 from __future__ import annotations
 
+import os
 import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
@@ -143,8 +144,8 @@ class SessionInfo:
 
 SESSION_INFO_FORMAT = 2
 """Bump when what a source derives for a `SessionInfo` changes (how the title
-is chosen, which models are named, `cwd`), so infos a `SessionInfoStore` kept from an
-older reader are read again instead of served."""
+is chosen, which models are named, `cwd`), so infos a `SessionInfoStore` kept
+from an older reader are read again instead of served."""
 
 Stamp = tuple[int, int]
 """A transcript file's ``(size, mtime_ns)``: while it is unchanged, so is its info."""
@@ -159,8 +160,8 @@ class SessionInfoStore(Protocol):
         ...
 
     def prune_missing(self) -> None:
-        """Forget every stored info whose transcript no longer exists, and any
-        an older reader stored. Never raises."""
+        """Forget every stored info whose transcript no longer exists (or may
+        not be looked at), and any an older reader stored. Never raises."""
         ...
 
     def save(self, entries: Sequence[tuple[Path, Stamp, SessionInfo]]) -> bool:
@@ -224,7 +225,7 @@ class SessionInfoCache:
         the store. Stats every remembered file: not for a request path."""
         with self._lock:
             paths = list(self._entries)
-        gone = [path for path in paths if not path.exists()]
+        gone = [path for path in paths if not os.path.exists(path)]
         with self._lock:
             for path in gone:
                 self._entries.pop(path, None)

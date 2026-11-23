@@ -142,3 +142,27 @@ def test_the_warm_up_prunes_the_rows_of_deleted_transcripts(
     sessions.warm([], lambda _prefix: None, None, threading.Event())
 
     assert store.load_dir(gone.parent) == {}
+
+
+def test_pruning_drops_older_readers_rows_but_keeps_newer_ones(
+    tmp_path: Path, db_engine: Engine
+) -> None:
+    from sqlmodel import select
+
+    path = _session(tmp_path, "-home-dev-p", SID_A, "kept")
+    with Session(db_engine) as db:
+        for fmt in (SESSION_INFO_FORMAT - 1, SESSION_INFO_FORMAT + 1):
+            db.add(
+                SessionInfoRow(
+                    path=f"{path}.{fmt}", size=1, mtime_ns=1, format=fmt, session_id="s", title=""
+                )
+            )
+        db.commit()
+    for fmt in (SESSION_INFO_FORMAT - 1, SESSION_INFO_FORMAT + 1):
+        Path(f"{path}.{fmt}").touch()
+
+    DbSessionInfoStore(db_engine).prune_missing()
+
+    with Session(db_engine) as db:
+        formats = db.exec(select(SessionInfoRow.format)).all()
+    assert formats == [SESSION_INFO_FORMAT + 1]

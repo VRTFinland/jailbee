@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -58,16 +59,19 @@ class DbSessionInfoStore:
         }
 
     def prune_missing(self) -> None:
+        # os.path.exists answers False for a path it may not stat (on 3.12
+        # Path.exists raises PermissionError): such a row is only re-read.
+        table = SessionInfoRow.__table__  # type: ignore[attr-defined]  # SQLModel sets it on table classes
         try:
             with Session(self._engine) as db:
-                rows = db.exec(select(SessionInfoRow.path, SessionInfoRow.format)).all()
-            dead = [
-                path for path, fmt in rows if fmt != SESSION_INFO_FORMAT or not Path(path).exists()
-            ]
-            table = SessionInfoRow.__table__  # type: ignore[attr-defined]  # SQLModel sets it on table classes
+                paths = db.exec(select(SessionInfoRow.path)).all()
+            gone = [path for path in paths if not os.path.exists(path)]
             with self._engine.begin() as conn:
-                for at in range(0, len(dead), _PRUNE_BATCH):
-                    batch = dead[at : at + _PRUNE_BATCH]
+                # One statement, so a row a live flush writes meanwhile (always
+                # of the current format) is never caught; newer formats are kept.
+                conn.execute(table.delete().where(table.c.format < SESSION_INFO_FORMAT))
+                for at in range(0, len(gone), _PRUNE_BATCH):
+                    batch = gone[at : at + _PRUNE_BATCH]
                     conn.execute(table.delete().where(table.c.path.in_(batch)))
         except SQLAlchemyError:
             log.debug("session info cache not pruned", exc_info=True)
