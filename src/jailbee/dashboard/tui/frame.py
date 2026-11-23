@@ -148,7 +148,7 @@ def help_lines() -> list[str]:
         "  [bold red]∞[/bold red] [bold dark_orange]>4h[/bold dark_orange]"
         " [bold yellow]<4h[/bold yellow] [bold green]<1h[/bold green]"
         " [bold cyan]<15m[/bold cyan]; names and times in the details panel.",
-        "AGE: container age; AI: agent status (◆ waiting, ● busy, ◐ shell, ○ idle;",
+        "AGE: container age; AI: agent status (✖ API error, ◆ waiting, ● busy, ◐ shell, ○ idle;",
         "  age: latest event; bright ○: activity <30 min ago). OUTBOX ✉N: staged PR/issue actions.",
         "ROLE: orch orchestrator, child (child! orchestrator not running);"
         " CHILDREN running/limit +queued; INBOX ✉N actionable unread.",

@@ -734,6 +734,32 @@ accepted child-sent `blocked` suppresses idle until its next accepted message.
 A refused `done` does not suppress monitoring. `wait` only filters these
 messages; it neither detects idle nor configures the threshold.
 
+#### API errors
+
+An agent whose model provider keeps failing does not exit: Claude Code
+retries the request silently for a few minutes, then writes one error into
+its transcript and sits at the prompt, its session often still `busy`. The
+broker reads that error from the transcript of the prompted session. While
+no real model reply has followed it (prompts, task notifications, further
+retries and other metadata do not count), the agent is stuck, and the broker
+sends the orchestrator one `blocked` message for the episode:
+
+```text
+[jailbee] child `proj-kid` agent stopped on an API error (quota): The usage limit has been reached; resets at 2026-11-24 03:39 UTC
+```
+
+The kind is `quota` (usage limit or quota exhausted, even when the provider
+answers 429), `rate_limit`, `auth` (401/403), `overloaded` (503/529) or
+`other`. The detail is a short cleaned summary, never the raw response body;
+the reset time appears only when the provider gave one. The episode is keyed
+on the error record and kept across broker restarts, so it is reported once;
+a later real reply closes it, and a new error afterwards is a new episode. An
+error the agent recovered from on its own is never reported. While an
+episode is open the `idle` report is held back. The error does not count as
+agent activity for `activity_at` or `--quiet-after`. `jailbee inbox status`,
+`jb ls` and the dashboards' AGENT column show the state as `error:<kind>`,
+ranked before `waiting`. Unsupported agents report no API errors.
+
 The broker is non-interactive. Anything that would prompt the operator (the
 autostart escalation gate for an untrusted source, an autofetch that needs a
 hardware-key touch) is refused with that reason; the broker never answers a
@@ -985,7 +1011,8 @@ existed), so an idle broker does that once a minute.
 `jailbee inbox status [--child C] [--json]` shows how each child is doing
 without asking it. It queries the broker and prints one line per child:
 `NAME STATE AGENT ACTIVE CPU MEM HEAD DIRTY LONGEST LAST-MSG`. `STATE` is
-`running`, `stopped` or `done` (done wins); `AGENT` is `alive:<state>`, `starting`
+`running`, `stopped` or `done` (done wins); `AGENT` is `alive:<state>` (`alive:error:quota`
+and the like for an agent stuck on an [API error](#api-errors)), `starting`
 (the agent has not been launched yet: create or restart still running), `dead`
 (a recorded agent is gone) or `?`; `ACTIVE` is the age of `activity_at`; `LAST-MSG` shows the age of the
 last message from the child (`↑`) and the last
@@ -1004,7 +1031,7 @@ readers and brokers interoperate):
 | Field | Meaning |
 |---|---|
 | `observed_at` | Epoch seconds the object was last refreshed. |
-| `agent` | `{"alive", "state", "since", "last_event_at", "last_tool"}`: the prompted agent's liveness and session state (currently Claude). `alive` is `null` with `state: "starting"` while no agent has been recorded yet. |
+| `agent` | `{"alive", "state", "session_state", "since", "last_event_at", "last_tool", "error"}`: the prompted agent's liveness and session state (currently Claude). `alive` is `null` with `state: "starting"` while no agent has been recorded yet. When the agent's latest turn ended in an API error it gave up retrying, `state` is `error:<kind>` and `error` is `{"kind", "at", "detail", "resets_at"}` (kind `quota`, `rate_limit`, `auth`, `overloaded` or `other`; times in epoch seconds, `resets_at` only when the provider said so); otherwise `error` is `null`. `session_state` always holds the agent session's own state. |
 | `cpu_percent` | Container CPU over the last sample, in % of one core. |
 | `memory_bytes` | Container memory in bytes, net of page cache. |
 | `longest_command` | `{"command", "seconds"}`: the process name (not the command line) of the longest-running non-shell process a shell started below the agent, excluding the agent and any `jailbee inbox wait` or `inbox send --wait` waiter (recognised by its command line, e.g. `python -m jailbee.container_main inbox wait`); `null` if none or the agent is unknown. |

@@ -18,7 +18,17 @@ const AGENT_LABELS: Record<string, string> = {
     shell: "shell",
 }
 
+const ERROR_PREFIX = "error:"
+
+/** `error:<kind>` states share one style; the kind is only worded. */
+function agentFamily(state: string): string {
+    return state.startsWith(ERROR_PREFIX) ? "error" : state
+}
+
 function agentLabel(state: string): string {
+    if (state.startsWith(ERROR_PREFIX)) {
+        return `API error: ${state.slice(ERROR_PREFIX.length)}`
+    }
     return AGENT_LABELS[state] ?? state
 }
 </script>
@@ -39,7 +49,7 @@ function agentLabel(state: string): string {
                 class="row"
                 :class="{nested: c.depth > 0}"
                 :data-container="c.name"
-                :data-agent="c.agent ?? undefined"
+                :data-agent="c.agent ? agentFamily(c.agent) : undefined"
                 :data-state="c.state"
                 :data-phase="c.phase ?? undefined"
             >
@@ -50,7 +60,7 @@ function agentLabel(state: string): string {
                     >
                     <span v-if="c.phase" class="phase">{{ c.phase }}</span>
                     <span v-else-if="c.state === 'Stopped'" class="phase">Stopped</span>
-                    <span v-if="c.agent" class="agent" :class="`agent-${c.agent}`">{{
+                    <span v-if="c.agent" class="agent" :class="`agent-${agentFamily(c.agent)}`">{{
                         agentLabel(c.agent)
                     }}</span>
                 </div>
@@ -122,6 +132,9 @@ function agentLabel(state: string): string {
 }
 .row[data-agent="waiting"] {
     border-left-color: var(--accent);
+}
+.row[data-agent="error"] {
+    border-left-color: var(--danger);
 }
 /* Row phase: the dashboard core's phases (the terminal dashboard's palette),
    mapped onto each theme's --phase-* tokens. Stopped is dim, as in the TUI.
@@ -210,6 +223,10 @@ a.name:hover {
 .agent-waiting {
     font-weight: 700;
     color: var(--accent);
+}
+.agent-error {
+    font-weight: 700;
+    color: var(--danger);
 }
 .agent-busy,
 .agent-idle,

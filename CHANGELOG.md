@@ -10,6 +10,16 @@ before editing `## Unreleased`.
 
 ### Added
 
+- A child agent stuck on an API error (quota or usage limit exhausted, rate limit,
+  authentication, provider overloaded) is no longer shown as `alive:busy`: once the
+  agent gives up retrying, `jailbee inbox status` shows `alive:error:<kind>` with the
+  error's detail and reset time in `--json`, the broker sends the orchestrator one
+  `blocked` message per episode ("agent stopped on an API error (quota): …; resets at
+  …") instead of a later, misleading `idle`, and the error no longer counts as agent
+  activity. `jb ls` and the terminal, web and Qt dashboards show the state in the
+  AGENT column (a red `✖` and the kind, ranked before waiting), with the kind, age,
+  reset time and a short detail in place of the raw `API Error:` text
+  ([#147](https://github.com/VRTFinland/jailbee/issues/147)).
 - Container agents can stage closing or reopening pull requests with `jailbee pr state
   [N ...] closed|open`: a `state` action in the PR manifest, one manifest per PR, published
   with `jb outbox apply` or the dashboard. The plan warns `closes PR #N` / `reopens PR #N`,

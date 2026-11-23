@@ -717,9 +717,38 @@ def test_agent_snapshot_busy_session_has_last_event(tmp_path, mocker):
     assert snap == {
         "alive": True,
         "state": "busy",
+        "session_state": "busy",
         "since": NOW.timestamp(),
         "last_event_at": event.timestamp(),
         "last_tool": "Bash?[0m",
+        "error": None,
+    }
+
+
+def test_agent_snapshot_reports_an_open_api_error_as_the_state(tmp_path, mocker):
+    from jailbee.accounts.models import AgentActivity, AgentSession
+    from jailbee.orchestration.agent_watch import AgentStatus, agent_snapshot
+    from tests.conftest import make_config
+
+    resets = datetime(2026, 11, 2, 12, 30, tzinfo=UTC)
+    error = _api_error()
+    adapter = MagicMock()
+    adapter.read_sessions.return_value = [AgentSession("claude", 123, 42, "idle", None, NOW, 1)]
+    adapter.read_activity.return_value = AgentActivity(
+        None,
+        "API Error: raw",
+        api_error=error.__class__("quota", NOW, 429, "limit \x1b[0m reached", resets, "k"),
+    )
+    mocker.patch("jailbee.accounts.adapters.base.get_adapter", return_value=adapter)
+    status = AgentStatus(True, "claude", pid=123, proc_start=42)
+    snap = agent_snapshot(make_config(tmp_path), "kid", status, now=NOW)
+    assert snap["state"] == "error:quota"
+    assert snap["session_state"] == "idle"
+    assert snap["error"] == {
+        "kind": "quota",
+        "at": NOW.timestamp(),
+        "detail": "limit ?[0m reached",
+        "resets_at": resets.timestamp(),
     }
 
 
@@ -732,9 +761,11 @@ def test_agent_snapshot_adapter_error_keeps_alive(tmp_path, mocker):
     assert agent_snapshot(make_config(tmp_path), "kid", status, now=NOW) == {
         "alive": True,
         "state": None,
+        "session_state": None,
         "since": None,
         "last_event_at": None,
         "last_tool": None,
+        "error": None,
     }
 
 
@@ -759,3 +790,80 @@ def test_agent_snapshot_recorded_or_exited_agent_is_dead(tmp_path, status_kwargs
     )
     assert snap["alive"] is False
     assert snap["state"] is None
+
+
+def _api_error(key="2026-10-30T00:00:00+00:00|e1", kind="quota"):
+    from jailbee.accounts.models import AgentApiError
+
+    return AgentApiError(
+        kind=kind,
+        at=NOW,
+        status=429,
+        detail="The usage limit has been reached",
+        resets_at=datetime(2026, 11, 2, 12, 30, tzinfo=UTC),
+        key=key,
+    )
+
+
+def test_api_error_reports_once_per_episode_and_clears_on_progress() -> None:
+    from jailbee.orchestration.agent_watch import advance_api_error
+
+    entry = supervised(confirmed=True)
+    entry, body = advance_api_error(entry, _api_error())
+    assert body == (
+        "[jailbee] child `proj-kid` agent stopped on an API error (quota): "
+        "The usage limit has been reached; resets at 2026-11-02 12:30 UTC"
+    )
+    assert entry.api_error_key == "2026-10-30T00:00:00+00:00|e1"
+    entry, body = advance_api_error(entry, _api_error())
+    assert body is None
+    entry, body = advance_api_error(entry, None)
+    assert body is None and entry.api_error_key is None
+    entry, body = advance_api_error(entry, _api_error("later|e2", kind="overloaded"))
+    assert body is not None and "(overloaded)" in body and "resets at" in body
+
+
+def test_api_error_episode_survives_a_watch_reload(tmp_path) -> None:
+    from jailbee.orchestration.agent_watch import advance_api_error
+
+    entry, body = advance_api_error(supervised(confirmed=True), _api_error())
+    assert body is not None
+    watch.save_watch(tmp_path, {"proj-orch": [entry]})
+    (reloaded,) = watch.load_watch(tmp_path)["proj-orch"]
+    assert advance_api_error(reloaded, _api_error())[1] is None
+
+
+def test_api_error_without_reset_or_detail() -> None:
+    from dataclasses import replace
+
+    from jailbee.orchestration.agent_watch import advance_api_error
+
+    error = replace(_api_error(kind="auth"), resets_at=None, detail="")
+    body = advance_api_error(supervised(confirmed=True), error)[1]
+    assert body == "[jailbee] child `proj-kid` agent stopped on an API error (auth)"
+
+
+def test_open_api_error_suppresses_idle() -> None:
+    from jailbee.orchestration.agent_watch import advance_idle
+
+    entry = supervised(confirmed=True, api_error_key="k", idle_since=NOW.isoformat())
+    assert advance_idle(entry, "turn", now=NOW + timedelta(hours=1), after=900)[1] is None
+
+
+def test_an_unreadable_transcript_keeps_the_episode_open() -> None:
+    from jailbee.orchestration.agent_watch import UNKNOWN, advance_api_error
+
+    entry, body = advance_api_error(supervised(confirmed=True), _api_error())
+    assert body is not None
+    entry, body = advance_api_error(entry, UNKNOWN)
+    assert body is None and entry.api_error_key is not None
+    assert advance_api_error(entry, _api_error())[1] is None
+
+
+def test_api_error_read_failure_is_unknown_not_progress(tmp_path, mocker):
+    from jailbee.orchestration.agent_watch import UNKNOWN, AgentStatus, api_error
+    from tests.conftest import make_config
+
+    mocker.patch("jailbee.accounts.adapters.base.get_adapter", side_effect=RuntimeError("boom"))
+    status = AgentStatus(True, "claude", pid=123, proc_start=42)
+    assert api_error(make_config(tmp_path), "kid", status, now=NOW) is UNKNOWN
