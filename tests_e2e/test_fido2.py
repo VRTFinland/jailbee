@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING
 
 import pytest
-from playwright.sync_api import CDPSession, Page, Route, expect
+from playwright.sync_api import Page, Route, expect
 from sqlmodel import Session, select
 
 from jailbee.db.models import WebFido2Key
@@ -15,6 +15,11 @@ from jailbee.web import auth_admin
 from tests.web_fakes import snapshot_of
 from tests_e2e.browser_errors import BrowserErrors
 from tests_e2e.server import E2EServer
+
+if TYPE_CHECKING:
+    from typing import Any
+
+    from playwright.sync_api import CDPSession
 
 
 @dataclass(frozen=True)
