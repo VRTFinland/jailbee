@@ -513,6 +513,28 @@ def test_late_job_result_does_not_overwrite_a_reopened_box(mocker, tmp_path):
     assert reopened.question is None
 
 
+def test_reopening_outbox_cannot_start_a_concurrent_delete(mocker, tmp_path):
+    quiet = _quiet(mocker)
+    session, _ = bare_session(mocker, [_outbox_group(tmp_path)])
+    jobs = _HeldJobs()
+    session.jobs = jobs  # type: ignore[assignment]  # test double
+    _open_box(session)
+    key = ("alpha-x", "pr/a.json", None, None)
+    session.outbox_intent("delete", key)
+    session.outbox_intent("answer", None, "yes")
+    controller = session.outbox
+    session.overlay_cancel()
+    session.menu_chosen("outbox browse", None, 0)
+    assert session.overlay.busy == "Deleting 1 from the outbox…"
+    session.outbox_intent("delete", key)
+    assert session.overlay.question is None
+    while jobs.calls:
+        jobs.poll()
+    assert session.outbox is controller
+    assert sum(c.args[0][:2] == ["outbox", "drop"] for c in quiet.call_args_list) == 1
+    assert session.overlay.status == ("Deleted 1 from the outbox.",)
+
+
 def test_outbox_mutation_refreshes_client(mocker, tmp_path):
     quiet = _quiet(mocker)
     session, _ = bare_session(mocker, [_outbox_group(tmp_path)])

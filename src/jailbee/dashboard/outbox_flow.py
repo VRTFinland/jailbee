@@ -384,6 +384,8 @@ class OutboxController:
             tab="sent" if sent_only else "outbox",
             sent_repo=sent_only,
         )
+        # Frontends may retain a busy mutation across close/reopen; plans are disposable.
+        self.mutation_running = False
         self._publish_token: object | None = None
         # The batch being planned; dropped by a reload or a cancel, so late plans do nothing.
         self._batch_token: object | None = None
@@ -414,6 +416,8 @@ class OutboxController:
     # -- plumbing -----------------------------------------------------------
 
     def _set(self, state: dob.OutboxState) -> None:
+        if state.busy is None:
+            self.mutation_running = False
         self.state = state
         self.on_change(state)
 
@@ -518,6 +522,7 @@ class OutboxController:
         return self._listed(fetched, cursor=cursor, status=status), True
 
     def _after_mutation(self, status: tuple[str, ...], *, prioritize: bool = False) -> None:
+        self.mutation_running = True
         self.state = replace(self.state, busy=self.state.busy or "refreshing the outbox…")
 
         def done(result: CliResult) -> None:
@@ -789,13 +794,15 @@ class OutboxController:
         self.state = replace(
             self.state, busy=f"Deleting {len(keys)} from the outbox…", question=None, status=()
         )
+        marks = self.state.marks
+        self.mutation_running = True
         steps = self._delete_steps(keys, shown)
 
         def advance(result: CliResult | None = None) -> None:
             try:
                 argv = next(steps) if result is None else steps.send(result)
             except StopIteration as finished:
-                self.state = replace(self.state, marks=frozenset())
+                self.state = replace(self.state, marks=self.state.marks - marks)
                 self._after_mutation(finished.value)
                 return
             self._quiet_later(argv, advance)
@@ -945,6 +952,7 @@ class OutboxController:
 
     def _run_publish(self, question: dob.Question, value: str) -> None:
         name, pid, revision, foreign = question.carry
+        self.mutation_running = True
         argv = dob.outbox_apply_argv(
             name, pid, revision, yes=True, draft=value == "draft", foreign=foreign == "foreign"
         )
@@ -1250,6 +1258,7 @@ class OutboxController:
             self._set(replace(self.state, question=None, status=("Nothing published.",)))
             return
         results: list[str] = []
+        self.mutation_running = True
 
         def finish() -> None:
             # The non-interactive publishes are done: now each PR creation in turn.
@@ -1334,6 +1343,7 @@ class OutboxController:
         done: Callable[[bool, bool, tuple[str, ...]], None],
     ) -> None:
         """Re-check off-thread, then hand off on the UI thread (where the terminal lives)."""
+        self.mutation_running = True
         self.state = replace(self.state, busy="checking the proposal…", question=None, status=())
 
         def checked(result: CliResult) -> None:
@@ -1423,6 +1433,7 @@ class OutboxController:
 
     def _run_clear(self, question: dob.Question) -> None:
         name, token = question.carry
+        self.mutation_running = True
 
         def done(result: JobResult) -> None:
             self.state = replace(self.state, busy=None)

@@ -395,6 +395,21 @@ def test_delete_stays_busy_across_async_steps_and_refuses_concurrent_mutations()
     assert [a[1] for _, a in runner.calls] == ["ls", "ls", "drop", "ls"]
 
 
+def test_marks_added_during_delete_are_kept_for_next_action():
+    runner = FakeRunner(_listing(_proposal(), _proposal("pr/b.json")))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("mark", _key())
+    ctl.intent("delete", None)
+    runner.hold_loads = True
+    ctl.intent("answer", None, "yes")
+    ctl.intent("mark", _key("pr/b.json"))
+    while runner.held:
+        runner.finish_loads()
+    assert _key("pr/b.json") in ctl.state.marks
+    assert _key() not in ctl.state.marks
+
+
 def test_delete_worker_start_failure_is_reported_and_clears_busy():
     runner = FakeRunner(_listing(_proposal()))
     ctl = _controller(runner)
