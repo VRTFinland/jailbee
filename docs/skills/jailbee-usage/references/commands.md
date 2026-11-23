@@ -453,7 +453,7 @@ indentation and a `Child of` label, not the e-ink job-phase edge style.
 | `jailbee remote web auth pin on\|off` | Allow or refuse PIN login (off needs a TOTP key). |
 | `jailbee remote web auth totp add [--name N]` / `ls` / `rm` | Authenticator-app keys. |
 | `jailbee remote web auth fido2 setup` / `ls` / `rm` | Security keys; `setup` serves a registration page until Ctrl-C. |
-| `jailbee remote web auth sessions ls` / `revoke [ID]` | Logged-in devices; revoke ends a session and its live view. |
+| `jailbee remote web auth sessions ls` / `revoke [ID]` | Logged-in devices, named automatically from the browser ("Firefox on Linux"; rename in the web app's Settings); revoke ends a session and its live view. |
 
 Config: `remote.web.listen`, `port`, `auth.enabled`,
 `auth.allow_unauthenticated_remote`, `excluded_repos` and the shared remote

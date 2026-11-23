@@ -16,7 +16,7 @@ describe("login rate-limit message", () => {
         if (retryAfter !== null) headers.set("Retry-After", retryAfter)
         vi.stubGlobal("fetch", vi.fn(async () => new Response(null, {status: 429, headers})))
 
-        const result = await loginWithPin("123456", "shared tablet")
+        const result = await loginWithPin("123456")
 
         expect(result).toEqual({ok: false, error: `Too many attempts. Wait ${wait} and try again.`})
         expect(getToken()).toBeNull()

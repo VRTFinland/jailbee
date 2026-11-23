@@ -10,7 +10,6 @@ import {
     loginWithPin,
     loginWithSecurityKey,
     loginWithTotp,
-    rememberedDeviceName,
 } from "../api"
 
 type CodeMethod = Exclude<AuthMethod, "fido2">
@@ -26,7 +25,6 @@ const securityKey = computed(() => methods.value.includes("fido2"))
 const active = ref<CodeMethod>("pin")
 const pin = ref("")
 const code = ref("")
-const device = ref(rememberedDeviceName())
 const error = ref("")
 const loading = ref(false)
 
@@ -49,7 +47,7 @@ onMounted(async () => {
 })
 
 const secret = computed(() => (active.value === "pin" ? pin.value : code.value))
-const ready = computed(() => /^\d{6}$/.test(secret.value) && device.value.trim().length > 0)
+const ready = computed(() => /^\d{6}$/.test(secret.value))
 
 function choose(method: CodeMethod) {
     active.value = method
@@ -66,13 +64,9 @@ async function finish(result: Awaited<ReturnType<typeof loginWithPin>>) {
 
 async function useSecurityKey() {
     if (loading.value) return
-    if (!device.value.trim()) {
-        error.value = "Name this device first."
-        return
-    }
     error.value = ""
     loading.value = true
-    const result = await loginWithSecurityKey(device.value.trim())
+    const result = await loginWithSecurityKey()
     loading.value = false
     await finish(result)
 }
@@ -81,9 +75,8 @@ async function submit() {
     if (!ready.value || loading.value) return
     error.value = ""
     loading.value = true
-    const name = device.value.trim()
     const result =
-        active.value === "pin" ? await loginWithPin(pin.value, name) : await loginWithTotp(code.value, name)
+        active.value === "pin" ? await loginWithPin(pin.value) : await loginWithTotp(code.value)
     loading.value = false
     if (result.ok) {
         await router.push({name: "front"})
@@ -116,17 +109,6 @@ async function submit() {
         <p v-else-if="active === 'pin'">Enter the PIN printed by <code>jailbee remote web serve</code>.</p>
         <p v-else>Enter the 6-digit code from your authenticator app.</p>
         <form class="form" @submit.prevent="submit">
-            <label>
-                <span>This device</span>
-                <input
-                    v-model="device"
-                    name="device"
-                    type="text"
-                    autocomplete="off"
-                    maxlength="100"
-                    placeholder="e.g. Boox tablet"
-                />
-            </label>
             <label v-if="codeMethods.length > 0 && active === 'pin'">
                 <span>PIN</span>
                 <input

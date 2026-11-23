@@ -50,7 +50,7 @@ def test_a_client_that_stays_stale_after_reload_stops_and_offers_manual_reload(
             documents.append(request.url) if request.resource_type == "document" else None
         ),
     )
-    log_in_with_pin(page, server.url, server.pin.current, "stale tablet")
+    log_in_with_pin(page, server.url, server.pin.current)
     expect(page.get_by_role("alert")).to_have_text("This page is out of date; reload.")
     expect(page.get_by_role("button", name="Reload", exact=True)).to_be_visible()
     server.push(snapshot_of(repo_group("work", container("work-unseen", "work"))))

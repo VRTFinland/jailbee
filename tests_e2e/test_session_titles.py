@@ -32,7 +32,7 @@ def test_session_list_prefers_the_typed_prompt_and_transcript_marks_clear_as_met
     server = make_server(
         agent_homes=lambda prefix: [("claude", home)] if prefix == "work" else None
     )
-    log_in_with_pin(page, server.url, server.pin.current, "session reader")
+    log_in_with_pin(page, server.url, server.pin.current)
 
     page.goto(f"{server.url}/#/repos/work")
 
