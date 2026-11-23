@@ -48,8 +48,9 @@ def test_wrong_pin_shows_an_error_and_rate_limit_shows_the_remaining_wait(
             page.get_by_role("button", name="Log in", exact=True).click()
         assert limited.value.status == 429
         assert limited.value.headers["retry-after"] == str(remaining)
+        wait = "1 minute" if remaining == 60 else "59 seconds"
         expect(page.get_by_role("alert")).to_have_text(
-            f"Too many attempts. Wait {remaining} seconds and try again."
+            f"Too many attempts. Wait {wait} and try again."
         )
         expect(page.get_by_label("PIN")).to_have_value("")
         clock.advance(timedelta(seconds=1))
@@ -177,6 +178,7 @@ def test_admin_revocation_closes_the_live_socket_and_returns_to_login(
     log_in_with_pin(page, server.url, server.pin.current, "revoked tablet")
     expect(page.get_by_role("banner")).to_contain_text("revoked tablet")
     (session,) = list_sessions(server.engine)
+    document_started = page.evaluate("performance.timeOrigin")
 
     revoke_session(server.engine, session.id)
     server.push(snapshot_of())
@@ -185,6 +187,7 @@ def test_admin_revocation_closes_the_live_socket_and_returns_to_login(
     expect(page).to_have_url(server.url + "/#/login")
     expect(page.get_by_role("button", name="Log in", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="Log out")).to_have_count(0)
+    assert page.evaluate("performance.timeOrigin") == document_started
 
 
 def test_auth_disabled_opens_the_dashboard_without_a_login(

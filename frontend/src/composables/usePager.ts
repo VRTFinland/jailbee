@@ -31,7 +31,9 @@ export function usePager(topInset: () => number = () => 0): Pager {
     )
 
     function measure() {
-        const height = Math.max(1, readableBottom() - topInset())
+        // Integer steps survive browser scroll-offset rounding without advancing
+        // past the readable area or falling back onto the previous page.
+        const height = Math.max(1, Math.floor(readableBottom() - topInset()))
         if (height !== availableHeight.value) {
             availableHeight.value = height
             page.value = Math.max(0, Math.floor(window.scrollY / height))

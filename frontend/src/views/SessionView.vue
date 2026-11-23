@@ -238,7 +238,7 @@ onMounted(async () => {
             <router-link class="toggle" :to="{name: 'settings'}">Settings</router-link>
             </div>
             <template v-if="transcript">
-                <h1 :title="title" :aria-label="title">{{ title }}</h1>
+                <h1 :title="title">{{ title }}</h1>
                 <p class="session-meta muted">
                     <span>{{ transcript.agent }}</span>
                     <span v-if="transcript.models.length" class="mono" :title="transcript.models.join(', ')">{{
@@ -331,7 +331,8 @@ onMounted(async () => {
 .page {
     max-width: 48rem;
     margin: 0 auto;
-    padding: var(--space-3) var(--space-3) 5rem;
+    /* Even a short final reply can start just below the sticky header. */
+    padding: var(--space-3) var(--space-3) max(5rem, calc(100dvh - var(--session-header-height)));
 }
 .session-header {
     position: sticky;
@@ -399,7 +400,7 @@ h1 {
 }
 .entry {
     margin: var(--space-4) 0;
-    scroll-margin-top: calc(var(--session-header-height, 0px) + var(--space-3));
+    scroll-margin-top: var(--session-header-height, 0px);
 }
 .entry.user {
     padding: var(--space-2) var(--space-3);

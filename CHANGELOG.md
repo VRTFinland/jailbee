@@ -221,7 +221,9 @@ before editing `## Unreleased`.
   document. Session titles use the first typed prompt rather than agent wrapper
   markup, falling back to the first slash command in command-only sessions;
   titles and connection notices stay visible while reading; **Latest answer**
-  appears only when the newest reply is out of view, also with e-ink page turns
+  appears only when the newest reply is out of view and aligns its start below
+  the header, including short final replies. E-ink page turns never skip unread
+  text after partial keyboard scrolling
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Themes
   (light, dark, e-ink) and an e-ink display profile with page turns are chosen
   per device, and the app installs as a PWA with no CDN assets. Login uses a
@@ -229,7 +231,8 @@ before editing `## Unreleased`.
   with 30-day device sessions managed only through `jailbee remote web auth`;
   `jailbee remote web open` logs the local browser in through a one-time link,
   including when the login page is already open. Login errors show the server's
-  remaining rate-limit wait
+  remaining rate-limit wait (minutes for long waits). A protocol mismatch reloads
+  the tab at most once per minute, then offers manual reload if assets stay stale
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)).
   `remote.web` sets the listen address, port, auth and excluded repositories,
   and `enable|disable|status` manage a systemd user unit that restarts the
