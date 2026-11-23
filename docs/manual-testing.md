@@ -5965,6 +5965,10 @@ also registers and logs in with a virtual FIDO2 key against the real setup and
 dashboard servers, and checks visible refusal after key removal; no physical
 security key is needed.
 
+To render your own Claude sessions and get a report of what breaks, run
+`make web-e2e-sweep CLAUDE_HOME=~/.claude` on the host; see
+[Sweeping your own sessions](web-dashboard.md#sweeping-your-own-sessions).
+
 The older manual smoke check below covers a narrower navigation path.
 
 Checks that the built browser app logs in, lists a repo and container, lists
