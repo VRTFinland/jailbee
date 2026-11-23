@@ -1,5 +1,5 @@
 .PHONY: install install-gui install-web install-skill check build publish-testpypi \
-        changelog release site site-check docs-serve web web-test shots
+        changelog release site site-check docs-serve web web-test web-e2e shots
 
 # Use bash for recipe lines — the `release` target relies on bash features
 # (`set -euo pipefail`, `read -r -p`) that /bin/sh does not provide.
@@ -76,10 +76,25 @@ web:
 web-test:
 	cd frontend && npm ci && npm test
 
+# The web dashboard's end-to-end browser suite (tests_e2e/, #152): builds the
+# browser app as `make web` does, type-checks the suite, then drives the real
+# server in the system Chrome. Its Python dependencies are the `e2e` group,
+# which neither the ordinary suite nor the CI matrix installs. A failing
+# test's Playwright trace and screenshot land in $(E2E_OUTPUT) (gitignored).
+# Pass more pytest arguments with E2E_ARGS, e.g. `make web-e2e E2E_ARGS=-x`.
+E2E_OUTPUT ?= _build/e2e-results
+web-e2e:
+	@command -v npm >/dev/null 2>&1 || { echo "error: npm not found; the e2e suite needs the browser app built (Node.js 22.22+ or 24.15+ and npm)" >&2; exit 1; }
+	$(MAKE) web
+	MYPYPATH=src uv run --group e2e mypy tests_e2e
+	uv run --group e2e pytest tests_e2e -q --timeout 300 \
+		--tracing retain-on-failure --screenshot only-on-failure \
+		--output $(E2E_OUTPUT) $(E2E_ARGS)
+
 # Run the full CI gate locally: lint, format check, type check, tests.
 check:
-	uv run ruff check src/ tests/
-	uv run ruff format --check src/ tests/
+	uv run ruff check src/ tests/ tests_e2e/
+	uv run ruff format --check src/ tests/ tests_e2e/
 	uv run mypy src/
 	uv run pytest -n auto -q
 
