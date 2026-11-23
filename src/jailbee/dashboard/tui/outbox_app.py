@@ -279,7 +279,8 @@ class OutboxApp(App[int], inherit_bindings=False):
         The delete, publish or clear finishes (its children cannot be cancelled
         part-way), its outcome shows on the status line, and the next quit exits.
         """
-        if self.controller.mutation_running:
+        # Only while its busy line shows: a flag left behind must never trap the user.
+        if self.controller.mutation_running and self.controller.state.busy is not None:
             self.controller.refuse_while_busy()
             return
         self.exit(0)

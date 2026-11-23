@@ -419,7 +419,7 @@ class OutboxController:
 
     def refuse_while_busy(self) -> None:
         """Say that a quit waits for the running mutation (the frontend refused it)."""
-        self._status(f"busy: {self.state.busy or 'working'} — wait for it to finish")
+        self._status(f"busy: {self.state.busy} — wait for it to finish")
 
     # -- plumbing -----------------------------------------------------------
 
