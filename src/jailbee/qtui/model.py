@@ -122,6 +122,8 @@ class CardContent:
     # Short name of the container this one was forked from (`jailbee fork`);
     # the card names it next to the base, which the BASE field leaves out.
     fork_of: str | None = None
+    # SYNC's target marker is meaningful even when the comparison itself is clean.
+    sync_clean: bool = False
 
 
 def card_content(
@@ -163,11 +165,17 @@ def card_content(
         doing=_strip_markup(dashboard_format.doing_cell(c)) or None,
         warning=tracking_warning(c),
         fork_of=fork_source(c),
+        sync_clean=(
+            c.git_status is not None
+            and c.git_status.ahead_count == "0"
+            and c.git_status.behind_count == "0"
+            and c.git_status.target_diff == "clean"
+        ),
     )
 
 
 # Git field values that mean "nothing to report".
-_GIT_FIELD_NAMES = ("wt", "target_diff", "ahead_count", "behind_count", "conflict")
+_GIT_FIELD_NAMES = ("wt", *SYNC_FIELDS)
 
 
 def card_field(cc: CardContent, name: str) -> str | None:
@@ -194,16 +202,19 @@ def job_badge(cc: CardContent) -> tuple[str, str] | None:
 
 
 def git_segments(cc: CardContent) -> list[tuple[str, str]]:
-    """Coloured git pieces; empty when the working tree is clean."""
+    """Coloured git pieces, retaining SYNC's target even when the comparison is clean."""
     segs: list[tuple[str, str]] = []
-    ahead_count = card_field(cc, "ahead_count")
+    sync = card_field(cc, "sync")
+    if sync is not None:
+        segs.append((sync, "diff"))
+    ahead_count = card_field(cc, "ahead_count") if sync is None else None
     if ahead_count not in (None, "0"):
         segs.append((f"↑{ahead_count}", "ahead"))
-    behind_count = card_field(cc, "behind_count")
+    behind_count = card_field(cc, "behind_count") if sync is None else None
     if behind_count not in (None, "0"):
         # The missing-target cell is already "↓•"; counts are bare digits.
         segs.append((behind_count if behind_count.startswith("↓") else f"↓{behind_count}", "ahead"))
-    target_diff = card_field(cc, "target_diff")
+    target_diff = card_field(cc, "target_diff") if sync is None else None
     if target_diff not in (None, "clean", "✓"):
         segs.append((target_diff, "diff"))
     wt = card_field(cc, "wt")
@@ -225,7 +236,10 @@ def git_segments(cc: CardContent) -> list[tuple[str, str]]:
 
 
 def is_git_clean(cc: CardContent) -> bool:
-    return not git_segments(cc)
+    segments = git_segments(cc)
+    if cc.sync_clean and (sync := card_field(cc, "sync")) is not None:
+        segments = [segment for segment in segments if segment != (sync, "diff")]
+    return not segments
 
 
 def compact_meta(cc: CardContent) -> list[str]:
@@ -280,7 +294,8 @@ _FIELD_MEANINGS = {
     "doing": "Active processes; ×N = process count",  # noqa: RUF001 - intentional multiplication sign
     "job": "Background job phase; failed and (dead) identify failures",
     "wt": "Working-tree diff; ✓ = clean",
-    "target_diff": "Diff against host target branch; ✓ = clean",
+    "sync": "Sync target marker, commits ahead / behind, then tree diff; ✓ = clean",
+    "target_diff": "Diff against sync target; ✓ = clean",
     "local_diff": "Diff against checked-out host HEAD; ✓ = clean",
     "ahead_count": "Commits ahead of sync target",
     "behind_count": "Commits behind sync target",

@@ -979,7 +979,7 @@ against base is clean — a container left mid-merge by `jailbee git push
 Two more git-status columns exist, **off by default** (plus **H↑**/**H↓** — `host_ahead`/`host_behind` — which always count against the host branch, unlike ↑/↓ on a PR-bound row): **LOCAL ±**
 (`local_diff`) and **L↑** (`local_count`) — the diff/commit-count between
 the container's HEAD and the *host's currently checked-out branch*, as
-opposed to `DIFF ±`/`↑`/`↓`'s comparison against the host target branch.
+opposed to SYNC's comparison against the sync target.
 Opt in with `--fields` or the `ls:` config block. Either can show `?`: the
 comparison needs one side to already hold the other's commit as an object
 in the same repository, and JailBee never fetches or pushes to force an answer
@@ -991,7 +991,7 @@ also feed the destroy guard's "commits not on the host" check (see `jailbee
 destroy` above).
 
 The two pairs count submodules differently, which is worth knowing when they
-sit side by side. `DIFF ±` excludes gitlink lines
+sit side by side. SYNC's diff (`target_diff`) excludes gitlink lines
 (`--ignore-submodules=all`) and instead folds in each submodule's *own*
 committed diff, so a pointer bump contributes the submodule's real content
 delta. `LOCAL ±` uses `--ignore-submodules=dirty` with no per-submodule pass

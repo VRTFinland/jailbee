@@ -3045,7 +3045,7 @@ repo-level `dashboard:` block is reported and dropped rather than seeded.
 
 The Qt dashboard's **Compact** card style is the one exception: it renders a
 hardcoded selection — name, state, `mode`/`base`/`network`, a job badge and
-a folded `wt`/`target_diff`/`ahead_count`/`behind_count`/`conflict` summary — so a
+a folded `wt`/`sync`/`conflict` summary (or the selected legacy diff/count fields) — so a
 configured column outside that set (`local_diff`, say) reaches the tree and
 the Grid card style but never Compact. Switch card style to see it.
 

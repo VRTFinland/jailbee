@@ -48,7 +48,7 @@ function agentLabel(state: string): string {
                     <template v-for="(col, i) in view.columns" :key="col.name">
                         <div v-if="i > 0 && c.cells[i] !== ''" class="cell">
                             <dt>{{ col.header }}</dt>
-                            <dd>{{ c.cells[i] }}</dd>
+                            <dd><pre v-if="col.name === 'sync'">{{ c.cells[i] }}</pre><template v-else>{{ c.cells[i] }}</template></dd>
                         </div>
                     </template>
                 </dl>
@@ -203,5 +203,10 @@ dt {
 dd {
     margin: 0;
     font-family: var(--font-mono);
+}
+dd pre {
+    margin: 0;
+    font: inherit;
+    white-space: pre;
 }
 </style>
