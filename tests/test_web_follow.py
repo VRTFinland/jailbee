@@ -439,3 +439,23 @@ def test_a_failing_read_is_logged_not_lost(
         asyncio.run(run())
 
     assert any(r.exc_info and "disk on fire" in str(r.exc_info[1]) for r in caplog.records)
+
+
+def test_a_batch_of_only_hidden_records_still_advances_the_offset(
+    started: tuple[TestClient, str], transcript: Path, watches: FakeWatchFactory
+) -> None:
+    """Hidden mode renders nothing for it, but the browser must learn the new
+    offset, or a reconnect re-reads the batch."""
+    client, token = started
+    offset = rest_offset(client)
+    with connect(client, token) as ws:
+        subscribe(ws, offset, meta="hidden")
+        wait_until(lambda: len(watches.open) == 1)
+
+        append(transcript, record(2, "user", "<task-notification>Job done</task-notification>"))
+        watches.open[0].fire()
+
+        message = ws.receive_json()
+        assert message["type"] == "append"
+        assert message["entries"] == []
+        assert message["offset"] == transcript.stat().st_size

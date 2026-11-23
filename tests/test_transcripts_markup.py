@@ -6,7 +6,14 @@ import time
 
 import pytest
 
-from jailbee.transcripts.markup import command_name, is_meta_wrapper, prompt_text, split_prompt
+from jailbee.transcripts.markup import (
+    command_name,
+    interruption_label,
+    is_meta_wrapper,
+    prompt_text,
+    split_prompt,
+    split_trailing_reminders,
+)
 
 
 @pytest.mark.parametrize(
@@ -85,3 +92,27 @@ def test_meta_label_names_the_wrapper(text: str, label: str) -> None:
     from jailbee.transcripts.markup import meta_label
 
     assert meta_label(text) == label
+
+
+R = "<system-reminder>note</system-reminder>"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("output", ("output", "")),
+        (f"output\n\n{R}", ("output", R)),
+        (f"output\n{R}\n{R}\n", ("output", f"{R}\n{R}")),
+        (R, ("", R)),
+        (f"{R}\nfile text", (f"{R}\nfile text", "")),  # quoted at the start: output
+        (f"inline {R}", (f"inline {R}", "")),  # not on its own line: output
+        ("output\n<system-reminder>cut", ("output\n<system-reminder>cut", "")),
+        ("x </system-reminder>", ("x </system-reminder>", "")),
+    ],
+)
+def test_split_trailing_reminders(text: str, expected: tuple[str, str]) -> None:
+    assert split_trailing_reminders(text) == expected
+
+
+def test_interruption_label_drops_the_brackets() -> None:
+    assert interruption_label("[Request interrupted by user]") == "Request interrupted by user"

@@ -39,7 +39,7 @@ async function mountLive(path: string) {
     setToken("tok")
     vi.stubGlobal(
         "fetch",
-        vi.fn().mockResolvedValue(
+        vi.fn().mockImplementation(async () =>
             new Response(JSON.stringify(transcript), {
                 status: 200,
                 headers: {"Content-Type": "application/json"},
@@ -68,7 +68,14 @@ async function mountLive(path: string) {
         handlers!.onMessage({type: "append", v: PROTOCOL_VERSION, key, entries, offset: 999})
         await flushPromises()
     }
-    return {wrapper, sent, append, connection: (connected: boolean) => handlers!.onConnectionChange?.(connected)}
+    const hello = () => handlers!.onMessage({type: "hello", v: PROTOCOL_VERSION, device_name: "boox"})
+    return {
+        wrapper,
+        sent,
+        append,
+        hello,
+        connection: (connected: boolean) => handlers!.onConnectionChange?.(connected),
+    }
 }
 
 const sessionKey: FollowKey = {prefix: "alpha", agent: "claude", session_id: "s-1", subagent_id: null}
@@ -93,6 +100,48 @@ describe("SessionView live follow", () => {
         const {sent} = await mountLive("/repos/alpha/sessions/claude/s-1")
         expect(sent).toEqual([
             {type: "subscribe", v: PROTOCOL_VERSION, key: sessionKey, offset: 420, meta: "hidden"},
+        ])
+    })
+
+    it("subscribes with the stored Agent context setting", async () => {
+        updateSettings({agentContext: "collapsed"})
+        try {
+            const {sent} = await mountLive("/repos/alpha/sessions/claude/s-1")
+            expect(sent).toEqual([
+                {type: "subscribe", v: PROTOCOL_VERSION, key: sessionKey, offset: 420, meta: "collapsed"},
+            ])
+        } finally {
+            updateSettings({agentContext: "hidden"})
+        }
+    })
+
+    it("resubscribes with the new mode when Agent context changes", async () => {
+        const {sent} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        sent.length = 0
+        updateSettings({agentContext: "collapsed"})
+        try {
+            await flushPromises()
+            expect(sent).toEqual([
+                {type: "unsubscribe", v: PROTOCOL_VERSION, key: sessionKey},
+                {type: "subscribe", v: PROTOCOL_VERSION, key: sessionKey, offset: 420, meta: "collapsed"},
+            ])
+            const urls = (fetch as unknown as {mock: {calls: unknown[][]}}).mock.calls.map((c) => c[0])
+            expect(urls.at(-1)).toBe("/api/repos/alpha/sessions/claude/s-1?meta=collapsed")
+        } finally {
+            updateSettings({agentContext: "hidden"})
+        }
+    })
+
+    it("an empty append moves the offset a reconnect resubscribes from", async () => {
+        const {wrapper, sent, append, hello, connection} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        await append(sessionKey, [])
+        expect(wrapper.findAll(".entry")).toHaveLength(1)
+        sent.length = 0
+        connection(false)
+        connection(true)
+        hello()
+        expect(sent).toEqual([
+            {type: "subscribe", v: PROTOCOL_VERSION, key: sessionKey, offset: 999, meta: "hidden"},
         ])
     })
 

@@ -134,3 +134,39 @@ def meta_label(text: str) -> str:
             return f"Shell: {detail}" if detail else "Shell"
         return _LABELS.get(tag, "Agent context")
     return ""
+
+
+_REMINDER_OPEN = "<system-reminder>"
+_REMINDER_CLOSE = "</system-reminder>"
+
+
+def split_trailing_reminders(text: str) -> tuple[str, str]:
+    """Separate the ``<system-reminder>`` blocks Claude Code appends to a tool
+    result from the tool's own output: ``(output, reminders)``.
+
+    Only complete blocks at the very end count, each starting a line (or the
+    text); a tag earlier in the output (a file that quotes one) stays output.
+    """
+    end = len(text.rstrip())
+    start = end
+    while text.endswith(_REMINDER_CLOSE, 0, start):
+        opening = text.rfind(_REMINDER_OPEN, 0, start - len(_REMINDER_CLOSE))
+        if opening < 0 or (opening > 0 and text[opening - 1] != "\n"):
+            break
+        start = len(text[:opening].rstrip())
+    if start == end:
+        return text, ""
+    return text[:start], text[start:end].strip()
+
+
+_INTERRUPTED = "[Request interrupted by user"
+
+
+def is_interruption(text: str) -> bool:
+    """Claude Code's own note that the person interrupted the agent."""
+    return text.startswith(_INTERRUPTED)
+
+
+def interruption_label(text: str) -> str:
+    """The interruption notice as a label line, without its brackets."""
+    return _one_line(text.strip().strip("[]"))

@@ -40,7 +40,12 @@ from jailbee.transcripts.base import (
     UserMessage,
     register,
 )
-from jailbee.transcripts.markup import command_name, prompt_text
+from jailbee.transcripts.markup import (
+    command_name,
+    is_interruption,
+    prompt_text,
+    split_trailing_reminders,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -179,7 +184,7 @@ def _tool_result(
     call_id = block.get("tool_use_id")
     if not isinstance(call_id, str):
         return []
-    text = _result_text(block.get("content"))
+    text, context = split_trailing_reminders(_result_text(block.get("content")))
     found: list[Entry] = [
         ToolResult(
             id=entry_id,
@@ -189,6 +194,7 @@ def _tool_result(
             truncated=len(text) > RESULT_CHARS,
             full_length=len(text),
             is_error=block.get("is_error") is True,
+            context=context[:RESULT_CHARS],
         )
     ]
     outcome = record.get("toolUseResult")
@@ -210,12 +216,9 @@ def _tool_result(
     return found
 
 
-_INTERRUPTED = "[Request interrupted by user"
-
-
 def _is_notice(text: str) -> bool:
     """Claude Code's own note in the person's turn, such as an interruption."""
-    return text.startswith(_INTERRUPTED)
+    return is_interruption(text)
 
 
 def _entries(record: dict[str, object], record_id: str) -> list[Entry]:

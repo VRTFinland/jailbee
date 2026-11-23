@@ -12,13 +12,12 @@ from jailbee.web.deps import Context, RequireSession
 from jailbee.web.protocol import (
     EntryContent,
     MetaMode,
-    RenderedUser,
     SessionListView,
     SessionView,
     TranscriptView,
 )
 from jailbee.web.repo_sessions import SessionTranscript
-from jailbee.web.transcript_render import render_entries
+from jailbee.web.transcript_render import entry_content, render_entries
 
 router = APIRouter()
 
@@ -124,11 +123,20 @@ async def _entry_content(
     load: Callable[[], SessionTranscript | None],
     entry_id: str,
 ) -> EntryContent:
-    view = await _transcript_view(ctx, prefix, load, "shown")
-    for entry in view.entries:
-        if entry.id == entry_id and isinstance(entry, RenderedUser) and entry.meta:
-            return EntryContent(id=entry.id, html=entry.html)
-    raise HTTPException(status_code=404, detail="Unknown session")
+    # The same 404 for an excluded repository, an unknown transcript and an
+    # entry that carries no agent context. Only the requested entry is rendered.
+    if not ctx.scope.allows(prefix):
+        raise HTTPException(status_code=404, detail="Unknown session")
+    await ctx.homes_ready()
+
+    def build() -> str | None:
+        found = load()
+        return None if found is None else entry_content(found.entries, entry_id)
+
+    html = await run_in_threadpool(build)
+    if html is None:
+        raise HTTPException(status_code=404, detail="Unknown session")
+    return EntryContent(id=entry_id, html=html)
 
 
 @router.get("/api/repos/{prefix}/sessions/{agent}/{session_id}/entries/{entry_id}")

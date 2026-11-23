@@ -86,6 +86,9 @@ class ToolResult:
     full_length: int = 0
     """Length of the untruncated text, in characters."""
     is_error: bool = False
+    context: str = ""
+    """Agent context Claude Code appended to the result (``<system-reminder>``
+    blocks), kept apart from ``text``; cut to the same limit."""
     kind: Literal["tool_result"] = "tool_result"
 
 

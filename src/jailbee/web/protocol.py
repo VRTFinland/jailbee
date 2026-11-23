@@ -57,7 +57,7 @@ MetaMode = Literal["hidden", "collapsed", "shown"]
 wrapper records (task notifications, reminders, command output, ...). ``hidden``
 (the default) omits them, ``collapsed`` sends only a label and the content is
 fetched on expand, ``shown`` sends everything. A slash command the user typed
-keeps its label line in every mode."""
+and an interruption notice keep their label line in every mode."""
 
 
 class FollowKey(BaseModel):
@@ -187,7 +187,9 @@ class RenderedUser(_Rendered):
     notification", "Command: /model", "Shell: ls"); its ``html`` is the wrapper
     text verbatim when the Agent context setting is ``shown``, and empty
     otherwise. ``expandable`` says the content was withheld and `EntryContent`
-    serves it."""
+    serves it. Context split off another entry (wrappers before a typed prompt,
+    ``<system-reminder>`` blocks appended to a tool result) is its own record
+    with the id ``<entry id>:meta``."""
 
     kind: Literal["user"] = "user"
     html: str
@@ -310,7 +312,9 @@ class Status(_Message):
 
 class TranscriptAppend(_Message):
     """Entries a followed transcript gained; ``offset`` is where the next read
-    starts. Never sent empty, and a partly written line waits until complete."""
+    starts. Sent only when the offset moved: ``entries`` is empty when the Agent
+context setting left out everything read. A partly written line waits until
+complete."""
 
     type: Literal["append"] = "append"
     key: FollowKey

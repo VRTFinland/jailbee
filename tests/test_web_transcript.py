@@ -621,3 +621,217 @@ def test_no_corpus_user_record_starting_with_a_tag_renders_as_a_typed_prompt() -
     sessions = source.list_sessions(CORPUS)
     assert sessions
     assert not [s.title for s in sessions if s.title.startswith("<")]
+
+
+# ---- agent context: review rework (ticket 33) --------------------------------
+
+REMINDER = "<system-reminder>\nWarning: the file is shorter than the offset.\n</system-reminder>"
+
+
+def _write(home: Path, *records: dict[str, object]) -> None:
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in records))
+
+
+def _reminder_session(home: Path, output: str = "line one\nline two") -> None:
+    _write(
+        home,
+        _record(
+            1,
+            "assistant",
+            [{"type": "tool_use", "id": "toolu_read", "name": "Read", "input": {"file_path": "x"}}],
+        ),
+        _record(
+            2,
+            "user",
+            [{"type": "tool_result", "tool_use_id": "toolu_read", "content": output + "\n\n" + REMINDER}],
+        ),
+    )
+
+
+def _kinds(client: TestClient, mode: str) -> list[dict[str, object]]:
+    res = client.get(URL, params={"meta": mode})
+    assert res.status_code == 200, res.text
+    got: list[dict[str, object]] = res.json()["entries"]
+    return got
+
+
+def test_a_reminder_inside_a_tool_result_is_hidden_by_default(
+    client: TestClient, home: Path
+) -> None:
+    _reminder_session(home)
+    res = client.get(URL)
+    assert "shorter than the offset" not in res.text
+    (result,) = [e for e in res.json()["entries"] if e["kind"] == "tool_result"]
+    assert result["html"] == '<pre class="tool-output">line one\nline two</pre>'
+    assert [e["kind"] for e in res.json()["entries"]] == ["tool_call", "tool_result"]
+
+
+def test_a_collapsed_tool_result_reminder_is_a_label_fetched_on_expand(
+    client: TestClient, home: Path
+) -> None:
+    _reminder_session(home)
+    entries = _kinds(client, "collapsed")
+    result, reminder = entries[1], entries[2]
+    assert result["html"] == '<pre class="tool-output">line one\nline two</pre>'
+    assert reminder["kind"] == "user"
+    assert (reminder["meta"], reminder["label"], reminder["html"], reminder["expandable"]) == (
+        True,
+        "System reminder",
+        "",
+        True,
+    )
+    assert reminder["id"] == f"{result['id']}:meta"
+    body = client.get(f"{URL}/entries/{reminder['id']}").json()
+    assert "shorter than the offset" in body["html"]
+    assert "line one" not in body["html"]
+
+
+def test_a_shown_tool_result_reminder_is_its_own_meta_entry(
+    client: TestClient, home: Path
+) -> None:
+    _reminder_session(home)
+    result, reminder = _kinds(client, "shown")[1:]
+    assert "shorter than the offset" not in result["html"]
+    assert reminder["label"] == "System reminder"
+    assert "shorter than the offset" in reminder["html"]
+
+
+def test_a_reminder_tag_inside_tool_output_stays_output(client: TestClient, home: Path) -> None:
+    """A file that merely mentions the tag is the tool's own output, not context."""
+    _write(
+        home,
+        _record(
+            1,
+            "user",
+            [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_x",
+                    "content": "<system-reminder>quoted</system-reminder>\nthen more file text",
+                }
+            ],
+        ),
+    )
+    (result,) = _kinds(client, "hidden")
+    assert "quoted" in result["html"] and "more file text" in result["html"]
+
+
+def test_expanding_an_entry_does_not_render_the_whole_transcript(
+    client: TestClient, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _meta_session(client, home)
+    ids = [e["id"] for e in _kinds(client, "collapsed") if e.get("expandable")]
+    import jailbee.web.routes.repo_routes as routes
+    import jailbee.web.transcript_render as render
+
+    def boom(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("the whole transcript was rendered")
+
+    monkeypatch.setattr(render, "render_entries", boom)
+    monkeypatch.setattr(routes, "render_entries", boom)
+    monkeypatch.setattr(render, "render_markdown", boom)
+    monkeypatch.setattr(render, "highlight_json", boom)
+    for entry_id in ids:
+        assert client.get(f"{URL}/entries/{entry_id}").status_code == 200
+
+
+SUBAGENT_URL = f"{URL}/subagents/{AGENT_ID}"
+
+
+def _subagent_session(home: Path) -> None:
+    directory = home / "projects" / "-work-repo" / SESSION / "subagents"
+    directory.mkdir(parents=True)
+    (directory / f"agent-{AGENT_ID}.jsonl").write_text(
+        json.dumps(_record(1, "user", "<task-notification>Sub job</task-notification>"))
+        + "\n"
+        + json.dumps(_record(2, "assistant", [{"type": "text", "text": "ok"}]))
+        + "\n"
+    )
+
+
+def test_a_subagent_meta_record_is_fetched_on_expand(client: TestClient, home: Path) -> None:
+    _subagent_session(home)
+    res = client.get(SUBAGENT_URL, params={"meta": "collapsed"})
+    assert res.status_code == 200, res.text
+    first = res.json()["entries"][0]
+    assert first["expandable"] is True and "Sub job" not in res.text
+    body = client.get(f"{SUBAGENT_URL}/entries/{first['id']}")
+    assert body.status_code == 200
+    assert "Sub job" in body.json()["html"]
+    assert client.get(f"{SUBAGENT_URL}/entries/nope").status_code == 404
+
+
+@pytest.mark.parametrize("base", [URL, SUBAGENT_URL])
+def test_entry_content_requires_login(client: TestClient, home: Path, base: str) -> None:
+    _subagent_session(home)
+    client.headers.pop("Authorization")
+    assert client.get(f"{base}/entries/r0000001-0000-4000-8000-000000000000:0").status_code == 401
+
+
+@pytest.mark.parametrize("base", [URL, SUBAGENT_URL])
+def test_entry_content_of_an_excluded_repo_is_404_and_never_resolved(
+    client: TestClient, home: Path, homes: Homes, base: str
+) -> None:
+    _subagent_session(home)
+    _write(home, _record(1, "user", "<task-notification>Job done</task-notification>"))
+    entry_id = "r0000001-0000-4000-8000-000000000000:0"
+    assert client.get(f"{base}/entries/{entry_id}").status_code == 200
+    homes.calls.clear()
+    res = client.get(f"{base.replace('/alpha/', '/secret/')}/entries/{entry_id}")
+    assert res.status_code == 404
+    assert res.json() == {"detail": "Unknown session"}
+    assert "secret" not in homes.calls
+
+
+def _compaction_summary() -> dict[str, object]:
+    corpus = (
+        Path(__file__).parent
+        / "fixtures/transcripts/claude-corpus/projects/-work-toy"
+        / "00000001-0000-4000-8000-000000000001.jsonl"
+    )
+    (summary,) = [
+        record
+        for line in corpus.read_text().splitlines()
+        if (record := json.loads(line)).get("isCompactSummary") is True
+    ]
+    return summary
+
+
+def test_a_compaction_summary_follows_the_agent_context_setting(
+    client: TestClient, home: Path
+) -> None:
+    _write(home, _compaction_summary(), _record(2, "user", "Fix the title"))
+    hidden = client.get(URL, params={"meta": "hidden"})
+    assert "being continued" not in hidden.text
+    assert [e["meta"] for e in hidden.json()["entries"]] == [False]
+
+    collapsed = client.get(URL, params={"meta": "collapsed"})
+    assert "being continued" not in collapsed.text
+    summary = collapsed.json()["entries"][0]
+    assert (summary["meta"], summary["label"], summary["expandable"]) == (
+        True,
+        "Agent context",
+        True,
+    )
+    body = client.get(f"{URL}/entries/{summary['id']}").json()
+    assert "This session is being continued" in body["html"]
+
+
+@pytest.mark.parametrize("mode", ["hidden", "collapsed"])
+def test_an_interruption_notice_keeps_its_label_line(
+    client: TestClient, home: Path, mode: str
+) -> None:
+    _write(
+        home,
+        _record(1, "user", [{"type": "text", "text": "[Request interrupted by user for tool use]"}]),
+        _record(2, "user", "Go on"),
+    )
+    notice, typed = _kinds(client, mode)
+    assert (notice["meta"], notice["label"], notice["html"], notice["expandable"]) == (
+        True,
+        "Request interrupted by user for tool use",
+        "",
+        False,
+    )
+    assert typed["meta"] is False
