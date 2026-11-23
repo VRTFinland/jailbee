@@ -41,6 +41,7 @@ function agentLabel(state: string): string {
                         >{{ c.cells[0] }}</router-link
                     >
                     <span v-if="c.phase" class="phase">{{ c.phase }}</span>
+                    <span v-else-if="c.state === 'Stopped'" class="phase">Stopped</span>
                     <span v-if="c.agent" class="agent" :class="`agent-${c.agent}`">{{
                         agentLabel(c.agent)
                     }}</span>
