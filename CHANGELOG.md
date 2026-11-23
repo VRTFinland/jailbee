@@ -220,7 +220,11 @@ before editing `## Unreleased`.
   per device, and the app installs as a PWA with no CDN assets. Login uses a
   one-time PIN, TOTP or a FIDO2 key (registered in a CLI-started setup mode),
   with 30-day device sessions managed only through `jailbee remote web auth`;
-  `jailbee remote web open` logs the local browser in through a one-time link.
+  `jailbee remote web open` logs the local browser in through a one-time link,
+  including when the login page is already open. Login errors show the server's
+  remaining rate-limit wait, with browser coverage for PIN, TOTP, login links,
+  logout and live session revocation
+  ([#152](https://github.com/VRTFinland/jailbee/issues/152)).
   `remote.web` sets the listen address, port, auth and excluded repositories,
   and `enable|disable|status` manage a systemd user unit that restarts the
   server when JailBee is upgraded. Every response carries a strict
