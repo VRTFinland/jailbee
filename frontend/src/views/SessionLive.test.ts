@@ -1,4 +1,4 @@
-import {flushPromises, mount} from "@vue/test-utils"
+import {enableAutoUnmount, flushPromises, mount} from "@vue/test-utils"
 import {afterEach, describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"
 import {setToken} from "../api"
@@ -14,6 +14,8 @@ import {createAppRouter} from "../router"
 import {reloadSettings, updateSettings} from "../settings"
 import type {SocketHandlers} from "../socket"
 import SessionView from "./SessionView.vue"
+
+enableAutoUnmount(afterEach)
 
 const transcript: TranscriptView = {
     session_id: "s-1",
@@ -66,7 +68,7 @@ async function mountLive(path: string) {
         handlers!.onMessage({type: "append", v: PROTOCOL_VERSION, key, entries, offset: 999})
         await flushPromises()
     }
-    return {wrapper, sent, append}
+    return {wrapper, sent, append, connection: (connected: boolean) => handlers!.onConnectionChange?.(connected)}
 }
 
 const sessionKey: FollowKey = {prefix: "alpha", agent: "claude", session_id: "s-1", subagent_id: null}
@@ -117,6 +119,32 @@ describe("SessionView live follow", () => {
         const {append} = await mountLive("/repos/alpha/sessions/claude/s-1")
         await append(sessionKey, [answer])
         expect(scrollTo).not.toHaveBeenCalled()
+    })
+
+    it("shows Latest answer when a newer reply arrives below the fold", async () => {
+        setPageGeometry(5000, 100)
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            const top = this.id === "entry-a2" ? 1200 : this.id === "entry-a1" ? 200 : 0
+            return {top, bottom: top + 100} as DOMRect
+        })
+        const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        await append(sessionKey, [answer])
+        expect(wrapper.find(".jump-latest").exists()).toBe(false)
+        await append(sessionKey, [{...answer, id: "a2"}])
+        expect(wrapper.find(".jump-latest").exists()).toBe(true)
+        wrapper.unmount()
+    })
+
+    it("keeps the connection notice with the session context", async () => {
+        const {wrapper, connection} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        connection(false)
+        await flushPromises()
+        expect(wrapper.get("header .notice").text()).toBe("Connecting…")
+        expect(wrapper.get("header h1").text()).toBe("Fix the login bug")
+        connection(true)
+        await flushPromises()
+        expect(wrapper.find("header .notice").exists()).toBe(false)
+        wrapper.unmount()
     })
 
     it("unsubscribes when the view goes away", async () => {
@@ -178,6 +206,30 @@ describe("SessionView in the e-ink profile", () => {
         updateSettings({displayProfile: "eink"})
         const {wrapper} = await mountLive("/repos/alpha/sessions/claude/s-1/subagents/a1b2c3")
         expect(wrapper.find(".page-indicator").exists()).toBe(true)
+    })
+
+    it("reserves the sticky header on e-ink page turns and hides Latest answer on its page", async () => {
+        updateSettings({displayProfile: "eink"})
+        setPageGeometry(3000, 0)
+        let y = 0
+        Object.defineProperty(window, "scrollY", {get: () => y, configurable: true})
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            const top = this.id === "entry-a1" ? 1400 - y : 0
+            return {top, bottom: top + (this.id === "entry-a1" ? 50 : 120)} as DOMRect
+        })
+        const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation((_x, top) => {
+            y = top ?? 0
+            window.dispatchEvent(new Event("scroll"))
+        })
+        const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        await append(sessionKey, [answer])
+        await wrapper.get(".new-messages").trigger("click")
+        await wrapper.get(".jump-latest").trigger("click")
+        expect(scrollTo).toHaveBeenLastCalledWith(0, 1184)
+        expect(wrapper.find(".jump-latest").exists()).toBe(false)
+        await wrapper.get("button.prev").trigger("click")
+        expect(wrapper.find(".jump-latest").exists()).toBe(true)
+        wrapper.unmount()
     })
 
     it("jumps to the page that holds the latest answer", async () => {

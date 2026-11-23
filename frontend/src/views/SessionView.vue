@@ -6,7 +6,7 @@ import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
 import PageNav from "../components/PageNav.vue"
 import ToolCall from "../components/ToolCall.vue"
-import {usePager} from "../composables/usePager"
+import {RESERVED_PX, usePager} from "../composables/usePager"
 import {useDashboard} from "../dashboard"
 import type {
     RenderedEntry,
@@ -16,7 +16,8 @@ import type {
 } from "../protocol"
 import {settings} from "../settings"
 
-const pager = usePager()
+const headerHeight = ref(0)
+const pager = usePager(() => headerHeight.value)
 const eink = computed(() => settings.displayProfile === "eink")
 /** E-ink: live entries wait here until the reader taps the notice. */
 const pending = ref<RenderedEntry[]>([])
@@ -72,6 +73,43 @@ const latestAnswer = computed(() => {
         if (entries[i].kind === "assistant") return entries[i].id
     }
     return null
+})
+
+const header = ref<HTMLElement | null>(null)
+const latestVisible = ref(false)
+
+function measureVisibility() {
+    const headerRect = header.value?.getBoundingClientRect()
+    headerHeight.value = headerRect ? headerRect.bottom - headerRect.top : 0
+    const el = latestAnswer.value === null ? null : document.getElementById(entryDomId(latestAnswer.value))
+    if (el === null) {
+        latestVisible.value = false
+        return
+    }
+    const rect = el.getBoundingClientRect()
+    const top = Math.max(0, headerRect?.bottom ?? 0)
+    const bottom = window.innerHeight - (eink.value ? RESERVED_PX : 32)
+    // Any visible part counts, including a reply taller than the viewport.
+    latestVisible.value = rect.bottom > top && rect.top < bottom && rect.bottom > rect.top
+}
+
+watch(shown, () => void nextTick(measureVisibility))
+watch(eink, () => void nextTick(measureVisibility))
+
+let layoutObserver: ResizeObserver | null = null
+onMounted(() => {
+    window.addEventListener("scroll", measureVisibility, {passive: true})
+    window.addEventListener("resize", measureVisibility)
+    if (typeof ResizeObserver !== "undefined") {
+        layoutObserver = new ResizeObserver(measureVisibility)
+        layoutObserver.observe(document.body)
+        if (header.value) layoutObserver.observe(header.value)
+    }
+})
+onBeforeUnmount(() => {
+    window.removeEventListener("scroll", measureVisibility)
+    window.removeEventListener("resize", measureVisibility)
+    layoutObserver?.disconnect()
 })
 
 function entryDomId(id: string): string {
@@ -148,6 +186,7 @@ function jumpToLatest() {
     if (el === null) return
     if (eink.value) pager.goToElement(el)
     else el.scrollIntoView({block: "start"})
+    measureVisibility()
 }
 
 onMounted(async () => {
@@ -179,8 +218,9 @@ onMounted(async () => {
 </script>
 
 <template>
-    <div class="page">
-        <header class="bar">
+    <div class="page" :style="{'--session-header-height': `${headerHeight}px`}">
+        <header ref="header" class="session-header">
+            <div class="bar">
             <router-link
                 v-if="agentId !== null"
                 class="back back-to-session"
@@ -192,17 +232,21 @@ onMounted(async () => {
                 &larr; {{ prefix }}
             </router-link>
             <router-link class="toggle" :to="{name: 'settings'}">Settings</router-link>
+            </div>
+            <template v-if="transcript">
+                <h1>{{ transcript.title || (agentId === null ? "Untitled session" : "Subagent") }}</h1>
+                <p class="session-meta muted">
+                    <span>{{ transcript.agent }}</span>
+                    <span v-if="transcript.models.length" class="mono">{{
+                        transcript.models.join(", ")
+                    }}</span>
+                </p>
+            </template>
+            <p v-if="dashboard && !dashboard.state.connected" class="notice">Connecting…</p>
         </header>
         <p v-if="error" class="notice">{{ error }}</p>
         <p v-else-if="transcript === null" class="muted">Loading…</p>
         <template v-else>
-            <h1>{{ transcript.title || (agentId === null ? "Untitled session" : "Subagent") }}</h1>
-            <p class="session-meta muted">
-                <span>{{ transcript.agent }}</span>
-                <span v-if="transcript.models.length" class="mono">{{
-                    transcript.models.join(", ")
-                }}</span>
-            </p>
             <p v-if="transcript.entries.length === 0" class="muted">This session is empty.</p>
             <article class="transcript">
                 <template v-for="e in shown" :key="e.id">
@@ -267,7 +311,7 @@ onMounted(async () => {
                 {{ pending.length }} new {{ pending.length === 1 ? "message" : "messages" }} &mdash; tap to show
             </button>
             <button
-                v-if="latestAnswer"
+                v-if="latestAnswer && !latestVisible"
                 type="button"
                 class="jump-latest"
                 @click="jumpToLatest"
@@ -285,13 +329,19 @@ onMounted(async () => {
     margin: 0 auto;
     padding: var(--space-3) var(--space-3) 5rem;
 }
+.session-header {
+    position: sticky;
+    top: 0;
+    z-index: 12;
+    padding: var(--space-2) 0;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+}
 .bar {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
     gap: var(--space-3);
-    padding-bottom: var(--space-2);
-    border-bottom: 1px solid var(--border);
 }
 .back {
     color: var(--muted);
@@ -310,14 +360,17 @@ onMounted(async () => {
 h1 {
     font-size: 1.4rem;
     line-height: 1.3;
-    margin: var(--space-4) 0 var(--space-1);
-    word-break: break-word;
+    margin: 0 0 var(--space-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .session-meta {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-1) var(--space-3);
-    margin: 0 0 var(--space-4);
+    margin: 0;
+    overflow-wrap: anywhere;
     font-size: 0.85rem;
 }
 .mono {
@@ -334,7 +387,7 @@ h1 {
 }
 .entry {
     margin: var(--space-4) 0;
-    scroll-margin-top: var(--space-3);
+    scroll-margin-top: calc(var(--session-header-height, 0px) + var(--space-3));
 }
 .entry.user {
     padding: var(--space-2) var(--space-3);

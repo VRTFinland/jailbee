@@ -1,7 +1,7 @@
 // Page turns for the e-ink profile: the document is cut into viewport-sized
 // pages and moved a page at a time, jumping (never smooth-scrolling) so the
 // screen repaints once per turn. Only the bar and the bottom guard are
-// reserved; the layout numbers match tokens.css.
+// reserved by default; a view with a sticky header reserves that too.
 import {computed, onBeforeUnmount, onMounted, ref, type ComputedRef, type Ref} from "vue"
 
 /** The page-turn bar (56px) plus the bottom guard (32px). */
@@ -19,11 +19,11 @@ export interface Pager {
     measure(): void
 }
 
-function pageHeight(): number {
-    return Math.max(100, window.innerHeight - RESERVED_PX)
-}
+export function usePager(topInset: () => number = () => 0): Pager {
+    function pageHeight(): number {
+        return Math.max(100, window.innerHeight - RESERVED_PX - topInset())
+    }
 
-export function usePager(): Pager {
     const page = ref(0)
     const contentHeight = ref(0)
     const pageCount = computed(() =>
@@ -68,7 +68,7 @@ export function usePager(): Pager {
         prev: () => goTo(page.value - 1),
         goToElement: (el) => {
             const top = el.getBoundingClientRect().top + window.scrollY
-            goTo(Math.floor(top / pageHeight()))
+            goTo(Math.floor(Math.max(0, top - topInset()) / pageHeight()))
         },
         measure,
     }

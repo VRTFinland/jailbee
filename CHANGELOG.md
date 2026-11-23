@@ -205,7 +205,10 @@ before editing `## Unreleased`.
   shows repositories and containers with the terminal dashboard's core columns
   and agent state; a container or repository opens its agent sessions, and a
   session opens as a typeset transcript with rendered Markdown, folded tool
-  calls, optional thinking, subagent transcripts and live updates. Themes
+  calls, optional thinking, subagent transcripts and live updates. Session
+  titles and connection notices stay visible while reading; **Latest answer**
+  appears only when the newest reply is out of view, also with e-ink page turns
+  ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Themes
   (light, dark, e-ink) and an e-ink display profile with page turns are chosen
   per device, and the app installs as a PWA with no CDN assets. Login uses a
   one-time PIN, TOTP or a FIDO2 key (registered in a CLI-started setup mode),

@@ -1,4 +1,4 @@
-import {flushPromises, mount} from "@vue/test-utils"
+import {enableAutoUnmount, flushPromises, mount} from "@vue/test-utils"
 import {afterEach, describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"
 import {setToken} from "../api"
@@ -7,6 +7,8 @@ import {createAppRouter} from "../router"
 import {reloadSettings, updateSettings} from "../settings"
 import {removeItem} from "../storage"
 import SessionView from "./SessionView.vue"
+
+enableAutoUnmount(afterEach)
 
 function jsonResponse(status: number, body: unknown): Response {
     return new Response(JSON.stringify(body), {
@@ -126,6 +128,59 @@ describe("SessionView", () => {
         const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
         await wrapper.get("button.jump-latest").trigger("click")
         expect(scrolled).toEqual(["entry-a2"])
+    })
+
+    it("hides Latest answer after jumping or scrolling to the reply, and restores it away", async () => {
+        let answerTop = 1200
+        Object.defineProperty(window, "innerHeight", {value: 800, configurable: true})
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            return {
+                top: this.id === "entry-a2" ? answerTop : 0,
+                bottom: this.id === "entry-a2" ? answerTop + 100 : 120,
+            } as DOMRect
+        })
+        Element.prototype.scrollIntoView = vi.fn(() => {
+            answerTop = 140
+            window.dispatchEvent(new Event("scroll"))
+        })
+        const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
+        expect(wrapper.find(".jump-latest").exists()).toBe(true)
+
+        await wrapper.get(".jump-latest").trigger("click")
+        expect(wrapper.find(".jump-latest").exists()).toBe(false)
+
+        answerTop = 1200
+        window.dispatchEvent(new Event("scroll"))
+        await wrapper.vm.$nextTick()
+        expect(wrapper.find(".jump-latest").exists()).toBe(true)
+
+        answerTop = 650
+        window.dispatchEvent(new Event("scroll"))
+        await wrapper.vm.$nextTick()
+        expect(wrapper.find(".jump-latest").exists()).toBe(false)
+        wrapper.unmount()
+        vi.restoreAllMocks()
+    })
+
+    it("keeps title and context in the header and treats replies hidden behind it as out of view", async () => {
+        let answerTop = 10
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            return {
+                top: this.id === "entry-a2" ? answerTop : 0,
+                bottom: this.id === "entry-a2" ? answerTop + 50 : 120,
+            } as DOMRect
+        })
+        const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
+        expect(wrapper.get("header h1").text()).toBe("Fix the login bug")
+        expect(wrapper.get("header .session-meta").text()).toContain("claude-opus-5-5")
+        expect(wrapper.find(".jump-latest").exists()).toBe(true)
+
+        answerTop = 130
+        window.dispatchEvent(new Event("resize"))
+        await wrapper.vm.$nextTick()
+        expect(wrapper.find(".jump-latest").exists()).toBe(false)
+        wrapper.unmount()
+        vi.restoreAllMocks()
     })
 
     it("says the session was not found on a 404", async () => {
