@@ -109,8 +109,11 @@ class BrowserErrors:
             for text in texts
         ]
         matches = [
-            [i for i, expected in enumerate(self._expected)
-             if expected.category == category and expected.matches(text)]
+            [
+                i
+                for i, expected in enumerate(self._expected)
+                if expected.category == category and expected.matches(text)
+            ]
             for category, _, text in entries
         ]
         slots = [i for i, expected in enumerate(self._expected) for _ in range(expected.minimum)]

@@ -21,18 +21,18 @@ def test_logout_and_login_work_in_either_order(
 ) -> None:
     pytester.makeconftest('pytest_plugins = ["tests_e2e.conftest"]')
     actions = {
-        "logout": '''
+        "logout": """
     logged_in.get_by_role("button", name="Log out").click()
     expect(logged_in.get_by_role("button", name="Log in", exact=True)).to_be_visible()
-''',
-        "revoke": '''
+""",
+        "revoke": """
     from jailbee.web.auth_admin import list_sessions, revoke_session
     session, = list_sessions(server.engine)
     revoke_session(server.engine, session.id)
     logged_in.reload()
     expect(logged_in.get_by_role("button", name="Log in", exact=True)).to_be_visible()
-''',
-        "rate_limit": '''
+""",
+        "rate_limit": """
     import httpx
     from jailbee.web.auth import BACKOFF_THRESHOLD
     logged_in.get_by_role("button", name="Log out").click()
@@ -48,12 +48,13 @@ def test_logout_and_login_work_in_either_order(
         "method": "pin", "pin": server.pin.current, "device_name": "limited"
     })
     assert response.status_code == 429
-''',
+""",
     }
     pytester.makepyfile(
-        'from playwright.sync_api import expect\n'
-        'def test_mutate(server, logged_in):\n' + actions[mutation]
-        + '\ndef test_login(logged_in):\n'
+        "from playwright.sync_api import expect\n"
+        "def test_mutate(server, logged_in):\n"
+        + actions[mutation]
+        + "\ndef test_login(logged_in):\n"
         '    expect(logged_in.get_by_role("button", name="Log out")).to_be_visible()\n'
     )
     names = ["test_mutate", "test_login"]
@@ -62,7 +63,12 @@ def test_logout_and_login_work_in_either_order(
     monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
 
     result = pytester.runpytest_subprocess(
-        "-p", "no:cacheprovider", "-p", "no:randomly", "--output", "results",
+        "-p",
+        "no:cacheprovider",
+        "-p",
+        "no:randomly",
+        "--output",
+        "results",
         *(f"test_logout_and_login_work_in_either_order.py::{name}" for name in names),
     )
 

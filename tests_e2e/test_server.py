@@ -13,9 +13,7 @@ def test_stop_reports_a_thread_that_survives_forced_exit() -> None:
     thread.is_alive.return_value = True
     uvicorn_server = Mock()
     sock = Mock()
-    server = E2EServer(
-        Mock(), Path("unused"), _server=uvicorn_server, _thread=thread, _sock=sock
-    )
+    server = E2EServer(Mock(), Path("unused"), _server=uvicorn_server, _thread=thread, _sock=sock)
 
     with pytest.raises(RuntimeError, match="server thread is still alive"):
         server.stop()
