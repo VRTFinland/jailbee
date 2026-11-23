@@ -337,7 +337,10 @@ def _select_visible_fields(
     """
 
     names = default_columns() if enabled is None else enabled
-    by_name = {spec.name: spec for spec in ls_field_specs(now=now, all_repos=False)}
+    by_name = {
+        spec.name: spec
+        for spec in ls_field_specs(now=now, all_repos=False, containers=all_containers)
+    }
     fields = [
         by_name[name]
         for name in dict.fromkeys(names)
@@ -436,11 +439,12 @@ _DASHBOARD_COLUMN_BUDGETS = {
     "mem_pct": 4,
     "mode": 5,
     "wt": 9,
-    "ahead_count": 6,
-    "behind_count": 6,
+    "sync": 24,
+    "ahead_count": 3,
+    "behind_count": 3,
     "host_ahead": 6,
     "host_behind": 6,
-    "conflict": 12,
+    "conflict": 9,
     "pr": 6,
     "issues": 3,
     "outbox": 3,
@@ -457,7 +461,7 @@ _DASHBOARD_COLUMN_BUDGETS = {
     "group": 16,
     "git_status": 36,
     "local_diff": 16,
-    "target_diff": 16,
+    "target_diff": 12,
 }
 
 

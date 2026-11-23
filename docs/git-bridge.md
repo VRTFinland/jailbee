@@ -224,16 +224,21 @@ from the container, comparison-dependent values are `?`; JailBee does not
 fall back to a pinned anchor or another branch. Live worktree and merge-state
 information remain independently available.
 
-In status output, **DIFF ±** is the direct committed-tree line diff
-(`git diff <host-target> HEAD`); equal trees are `clean` even when histories
-differ. **↑** counts commits unique to the container and **↓** counts commits
-unique to the host target, using graph ancestry, so both can be nonzero when
-DIFF ± is clean. When the container does not hold the target commit at all
+In status output, **SYNC** combines the target marker, **↑** and **↓** commit
+counts, and the direct committed-tree line diff (`git diff <host-target>
+HEAD`), in that order. Equal trees have a clean diff even when histories
+differ. ↑ counts commits unique to the container and ↓ counts commits unique
+to the sync target, using graph ancestry, so both can be nonzero when the diff
+is clean. The target marker occupies a fixed three-terminal-cell slot at the
+start of SYNC and appears once per row; the count portions are right-aligned
+over visible rows, and the variable-width diff comes last. Separate
+`target_diff`, `ahead_count` and `behind_count` fields remain opt-in legacy
+columns without a marker; MERGE is also unmarked. When the container does not hold the target commit at all
 (for example a target commit that exists only in another container, or a shared
 object store the container cannot read; a clone-mode container shares the host's
 object store, so a new host commit is counted normally), **↓** shows `↓•`
 (pull needed, count unknown; `behind_count` and `host_behind_count` are the string
-`"missing"` in JSON, never a number) while DIFF ±, ↑ and MERGE stay `?`. Nothing is written into the container. WT remains separate. Explicit JSON `git_status` exposes
+`"missing"` in JSON, never a number) while the SYNC diff and ↑ remain `?`. Nothing is written into the container. WT remains separate. Explicit JSON `git_status` exposes
 `target_diff`, `ahead_count`, `behind_count`, `base_source`, `base_sha`,
 `tracking_relation` and `upstream_ref`; per-submodule line fields are
 `target_ins`/`target_del`, while commit counts remain `ahead_commits` and
@@ -242,7 +247,7 @@ retired; see [column migration](config.md#ls--dashboard--remembered-columns).
 
 ### Sync target
 
-DIFF ±, ↑, ↓ and MERGE compare with the container's **sync target** — where its
+SYNC and MERGE compare with the container's **sync target** — where its
 work flows next, chosen automatically:
 
 - an orchestration child (any kind, `pr`-kind children included) or a fork
@@ -252,20 +257,20 @@ work flows next, chosen automatically:
   not in the child's object store); ↑ counts the child's commits not yet
   imported — since the orchestrator's last import, else since the fork's
   starting commit (`?` when neither is known); a `jailbee fork` has no imports, so its ↑
-  keeps counting from the fork point. Its cells carry a dim `⑂`
-  marker. A stopped or missing parent, or the first gather pass, compares with the
-  host branch instead, and the cells carry a yellow `⑂?`. A plain
+  keeps counting from the fork point. SYNC shows a dim `⑂` marker. A stopped or
+  missing parent, or the first gather pass, compares with the host branch instead,
+  and SYNC shows a yellow `⑂?`. A plain
   `jailbee ls` has no previous pass, so no parent's head is known: a PR-bound
   child there compares with its PR head as before, any other child or fork
-  with the host branch (`⑂?`, described as "parent head unknown outside the
-  dashboard"). A parent whose probe fails while it runs keeps its previous head,
+  with the host branch and the SYNC marker `⑂?` ("parent head unknown outside
+  the dashboard"). A parent whose probe fails while it runs keeps its previous head,
   with its older "seen" time, so the child does not flap. When the parent's HEAD
   is in the child, ↑ also excludes everything the parent already has;
 - a PR-bound container (`jailbee new --pr`, `jailbee pr bind`) compares with the
   PR head the host last fetched, `refs/jailbee/pr/<N>/head`: ↑ means "push
-  needed", ↓ "someone else pushed to the PR". Its cells carry a dim `pr`
-  marker. Without that ref on the host the container compares with its host
-  branch instead, and the cells carry a yellow `pr?`. The dashboard's state
+  needed", ↓ "someone else pushed to the PR". SYNC shows a dim `pr` marker.
+  Without that ref on the host the container compares with its host branch
+  instead, and SYNC shows a yellow `pr?`. The dashboard's state
   service refetches the ref every `pr.autofetch_interval` seconds (default 300)
   while [`pr.autofetch`](config.md#pr) is on, so ↓ follows pushes made elsewhere.
   The fetch never prompts (git's terminal prompt off, `ssh -o BatchMode=yes`,

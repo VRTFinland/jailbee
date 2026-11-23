@@ -113,6 +113,21 @@ describe("RepoList", () => {
         expect(rows[1].find(".phase").exists()).toBe(false)
     })
 
+    it("preserves sync padding in a preformatted value", () => {
+        const syncView: FrontPageView = {
+            ...view,
+            columns: [{name: "name", header: "NAME"}, {name: "sync", header: "SYNC"}],
+            repos: [{prefix: "alpha", containers: [
+                {...view.repos[0].containers[0], cells: ["1", "    ↑  1 ↓123 +1 -0"]},
+                {...view.repos[0].containers[1], cells: ["2", "pr  ↑123 ↓  2 +42 -7"]},
+            ]}],
+        }
+        const wrapper = mount(RepoList, {props: {view: syncView}, global: {plugins: [createAppRouter(createMemoryHistory())]}})
+        expect(wrapper.findAll("dd pre").map((value) => value.element.textContent)).toEqual([
+            "    ↑  1 ↓123 +1 -0", "pr  ↑123 ↓  2 +42 -7",
+        ])
+    })
+
     it("shows the core's cells under their headers and skips empty ones", () => {
         const wrapper = mountList()
         const rows = wrapper.findAll("li.row")

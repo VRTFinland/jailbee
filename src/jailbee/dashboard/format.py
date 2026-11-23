@@ -16,7 +16,6 @@ from jailbee.lifecycle import (
     DOING_MAX_NAMES,
     agent_compact_cell,
     format_duration_short,
-    with_sync_marker,
 )
 
 if TYPE_CHECKING:
@@ -363,10 +362,10 @@ def dashboard_cell(field: FieldSpec[ContainerInfo], container: ContainerInfo, no
         return f"[{colour}]{escape(phase + suffix)}[/{colour}]"
     if field.name == "doing" and container.activity:
         return doing_cell(container)
+    if field.name == "sync" and container.git_status is not None:
+        return value.replace("[dim]clean[/dim]", "[dim]✓[/dim]")
     if field.name in ("wt", "target_diff", "local_diff") and container.git_status is not None:
         if getattr(container.git_status, field.name) == "clean":
-            if field.name == "target_diff":
-                return with_sync_marker("[dim]✓[/dim]", container.git_status)
             return "[dim]✓[/dim]"
     if field.name == "ttl":
         return value.replace(" ", "")

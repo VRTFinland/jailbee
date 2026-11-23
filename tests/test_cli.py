@@ -5234,7 +5234,7 @@ def test_git_diff_without_the_flag_follows_stdout(tmp_path, mocker):
 
 
 def test_ls_renders_base_and_git_columns(tmp_path, mocker):
-    """`jailbee ls` table includes BASE / WT / DIFF ± / ↑ / ↓ columns."""
+    """`jailbee ls` table includes BASE / WT / SYNC with both counts and diff."""
     from jailbee.git_status import GitStatus
     from jailbee.lifecycle import ContainerInfo
 
@@ -5284,7 +5284,7 @@ def test_ls_renders_base_and_git_columns(tmp_path, mocker):
     out = result.stdout
     assert "BASE" in out
     assert "WT" in out
-    assert "DIFF" in out and "↓" in out
+    assert "SYNC" in out and "↓1" in out
     assert "main" in out  # base for feat-a
     assert "+12 -3" in out  # WT for feat-a
     assert "+245 -18" in out  # DIFF ± for feat-a
