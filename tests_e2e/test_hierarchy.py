@@ -19,8 +19,14 @@ def test_hierarchy_links_counts_and_live_renesting(
     page = logged_in
     page.set_viewport_size({"width": width, "height": 800})
     parent = container("work-orch", repo="work", grant=GrantView(4, (), (), False, ()))
-    first = container("work-first", repo="work", child=ChildView(parent.name, "working", (), False, (), "codex/opus"))
-    second = container("work-second", repo="work", child=ChildView(parent.name, "imported", (), False, ()))
+    first = container(
+        "work-first",
+        repo="work",
+        child=ChildView(parent.name, "working", (), False, (), "codex/opus"),
+    )
+    second = container(
+        "work-second", repo="work", child=ChildView(parent.name, "imported", (), False, ())
+    )
     server.push(snapshot_of(repo_group("work", first, parent, second)))
     rows = page.locator("li.row")
     expect(rows).to_have_count(3)
@@ -40,7 +46,9 @@ def test_hierarchy_links_counts_and_live_renesting(
     page.locator(".parent").get_by_role("link", name="orch", exact=True).click()
     expect(page.get_by_role("heading", name="Children (2)")).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-    page.get_by_role("region", name="Children").get_by_role("link", name="second", exact=True).click()
+    page.get_by_role("region", name="Children").get_by_role(
+        "link", name="second", exact=True
+    ).click()
     expect(page.get_by_role("heading", name=second.name, exact=True)).to_be_visible()
     page.get_by_role("link", name="Repositories").click()
     page.locator(".repo-heading").get_by_role("link", name="work", exact=True).click()
@@ -58,7 +66,9 @@ def test_cross_repo_counts_and_missing_parent_labels_agree_across_views(
 ) -> None:
     page = logged_in
     parent = container("alpha-orch")
-    child = container("beta-task", repo="beta", child=ChildView(parent.name, "working", (), False, ()))
+    child = container(
+        "beta-task", repo="beta", child=ChildView(parent.name, "working", (), False, ())
+    )
     server.push(snapshot_of(repo_group("alpha", parent), repo_group("beta", child)))
     parent_row = page.locator('[data-container="alpha-orch"]')
     child_row = page.locator('[data-container="beta-task"]')
@@ -89,8 +99,23 @@ def test_nested_eink_rows_keep_phase_edges_distinct(server: E2EServer, logged_in
     parent = container("work-orch", repo="work")
     children = [
         container("work-rest", repo="work", child=ChildView(parent.name, "working", (), False, ())),
-        container("work-job", repo="work", child=ChildView(parent.name, "working", (), False, ()), job_kind="create", job_phase="creating", job_pid=1),
-        container("work-boot", repo="work", child=ChildView(parent.name, "working", (), False, ()), job_kind="boot", job_phase="starting", job_pid=1, job_live=True),
+        container(
+            "work-job",
+            repo="work",
+            child=ChildView(parent.name, "working", (), False, ()),
+            job_kind="create",
+            job_phase="creating",
+            job_pid=1,
+        ),
+        container(
+            "work-boot",
+            repo="work",
+            child=ChildView(parent.name, "working", (), False, ()),
+            job_kind="boot",
+            job_phase="starting",
+            job_pid=1,
+            job_live=True,
+        ),
     ]
     server.push(snapshot_of(repo_group("work", parent, *children)))
     rest = page.locator('[data-container="work-rest"]')
@@ -110,19 +135,37 @@ def test_related_container_navigation_resets_eink_page_and_scroll(
     page = logged_in
     page.set_viewport_size({"width": 800, "height": 600})
     page.get_by_role("link", name="Settings", exact=True).click()
-    page.get_by_role("group", name="Display profile", exact=True).get_by_label(re.compile("E-ink")).check()
+    page.get_by_role("group", name="Display profile", exact=True).get_by_label(
+        re.compile("E-ink")
+    ).check()
     page.get_by_role("link", name="JailBee", exact=False).last.click()
     parent = container("work-orch", repo="work")
-    children = [container(f"work-task-{i:02}", repo="work", child=ChildView(parent.name, "working", (), False, ())) for i in range(40)]
+    children = [
+        container(
+            f"work-task-{i:02}", repo="work", child=ChildView(parent.name, "working", (), False, ())
+        )
+        for i in range(40)
+    ]
     selected = children[20]
-    grandchildren = [container(f"work-sub-{i:02}", repo="work", child=ChildView(selected.name, "working", (), False, ())) for i in range(40)]
+    grandchildren = [
+        container(
+            f"work-sub-{i:02}",
+            repo="work",
+            child=ChildView(selected.name, "working", (), False, ()),
+        )
+        for i in range(40)
+    ]
     server.push(snapshot_of(repo_group("work", parent, *children, *grandchildren)))
     page.reload()
     page.locator('[data-container="work-orch"] .name').click()
     expect(page.get_by_role("heading", name="Children (40)")).to_be_visible()
-    page.get_by_role("navigation", name="Pages").get_by_role("button", name=re.compile("Next")).click()
+    page.get_by_role("navigation", name="Pages").get_by_role(
+        "button", name=re.compile("Next")
+    ).click()
     expect(page.locator(".page-indicator")).to_contain_text("Page 2 /")
-    page.get_by_role("region", name="Children").get_by_role("link", name="task-20", exact=True).click()
+    page.get_by_role("region", name="Children").get_by_role(
+        "link", name="task-20", exact=True
+    ).click()
     expect(page.get_by_role("heading", name=selected.name, exact=True)).to_have_count(1)
     expect(page.locator(".page-indicator")).to_contain_text("Page 1 /")
     page.wait_for_function("window.scrollY === 0")

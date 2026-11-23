@@ -61,7 +61,9 @@ def front_page_view(snapshot: Snapshot, scope: RemoteRepoScope, now: datetime) -
         repos=[
             RepoRow(
                 prefix=group.prefix,
-                containers=_rows(group.containers, specs, prefixes, parent_repos, child_counts, scope),
+                containers=_rows(
+                    group.containers, specs, prefixes, parent_repos, child_counts, scope
+                ),
             )
             for group in groups
         ],
