@@ -546,7 +546,7 @@ web_auth_app.add_typer(web_auth_sessions_app)
 
 @contextlib.contextmanager
 def _web_auth_errors() -> Iterator[None]:
-    """Map refused actions and a missing `web` extra to a message and exit 1."""
+    """Map refused actions and missing web dependencies to a message and exit 1."""
     from jailbee.web.auth_admin import AuthAdminError
     from jailbee.web.errors import WebDependencyError, web_extra_required
 

@@ -6,18 +6,25 @@
 SHELL := /bin/bash
 
 # Install/reinstall the `jailbee` CLI globally from the current checkout WITH
-# the optional Qt GUI extra (PySide6), the optional SSH extra (asyncssh) and
-# the optional web dashboard extra (FastAPI, uvicorn, ...), then run the post-install steps: shell completions for `jailbee` and `jb`,
+# the optional Qt GUI extra (PySide6) and the optional SSH extra (asyncssh),
+# then run the post-install steps: shell completions for `jailbee` and `jb`,
 # the egress-refresh user timer, and the bundled agent skills when host-level
 # `install_host_skills` is on (off by default). `jailbee setup` is idempotent
 # and `--yes` keeps it non-interactive (it never edits a shell rc in that
 # mode), so re-running this target is safe. Requires libGL on the host;
 # `jailbee gui` and `jailbee dashboard --gui` work after this, and `jailbee
 # remote ssh enable`/`serve` no longer need a separate `uv tool install`.
-# The web extra brings only the Python side: the browser app is built by
-# `make web` (Node.js and npm), which `make install-web` runs first.
+# The web dashboard's Python dependencies are core. Its browser app is
+# gitignored and must be in the tree when the wheel is built, so it is built
+# first whenever npm is available; without npm the install goes on and
+# `jailbee serve` reports the missing app.
 install:
-	uv tool install '.[gui,ssh,web]' --force --reinstall
+	@if command -v npm >/dev/null 2>&1; then \
+		$(MAKE) web; \
+	else \
+		echo "warning: npm not found; the web dashboard's browser app is not built (needs Node.js 22.22+ or 24.15+)" >&2; \
+	fi
+	uv tool install '.[gui,ssh]' --force --reinstall
 	jailbee setup --yes
 	@# The SSH, broker and web dashboard services run the old code until
 	@# restarted (the broker restarts itself when the version changes, but a
@@ -39,12 +46,13 @@ install:
 	@pkill -u "$$(id -u)" -f -- ' -m jailbee [_]state-service$$' || true
 
 # Alias for `make install` — kept for back-compat and discoverability now that
-# `make install` includes the optional Qt GUI, SSH and web extras by default.
+# `make install` includes the optional Qt GUI and SSH extras by default.
 install-gui: install
 
-# `make install` with a freshly built browser app: builds it first (needs
-# Node.js and npm) so the installed wheel carries it.
-install-web: web
+# `make install` that requires the web dashboard's browser app: fails without
+# npm instead of installing without it.
+install-web:
+	@command -v npm >/dev/null 2>&1 || { echo "error: npm not found; the web dashboard needs Node.js 22.22+ or 24.15+ and npm to build" >&2; exit 1; }
 	$(MAKE) install
 
 # Just the bundled agent skills, for when only they changed and host-level

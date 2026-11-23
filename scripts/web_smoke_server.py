@@ -6,7 +6,7 @@ repo's Claude home, so a browser sees a populated front page and session list
 without Incus. Run it with `XDG_STATE_HOME` and `XDG_CONFIG_HOME` pointing at a
 throwaway directory: the login database lives there.
 
-    uv run --extra web python scripts/web_smoke_server.py --port 8919
+    uv run python scripts/web_smoke_server.py --port 8919
 
 See docs/manual-testing.md ("Web dashboard headless smoke test").
 """

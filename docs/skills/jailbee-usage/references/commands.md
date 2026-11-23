@@ -428,7 +428,7 @@ suggestions, in its own style, instead of a generic router message.
 
 ## Web dashboard
 
-Host-side only; needs the `jailbee[web]` extra. Full guide: `docs/web-dashboard.md`.
+Host-side only; included in every install. Full guide: `docs/web-dashboard.md`.
 
 | Command | What it does |
 |---|---|

@@ -191,7 +191,7 @@ def test_totp_add_without_the_web_extra_names_it(mocker: MockerFixture) -> None:
     result = run("totp", "add")
 
     assert result.exit_code == 1
-    assert "jailbee[web]" in flat_output(result.output)
+    assert "uv tool install --reinstall jailbee" in flat_output(result.output)
     assert auth_admin.list_totp_keys(get_engine()) == []
 
 

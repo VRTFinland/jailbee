@@ -1,4 +1,4 @@
-"""The web dashboard server (#109): host-side only, behind the optional `web` extra.
+"""The web dashboard server (#109): host-side only, its dependencies are imported lazily.
 
 Import-free on purpose: `jailbee.cli` imports `jailbee.web.assets` and
 `jailbee.web.errors` (standard library only) before it knows whether FastAPI

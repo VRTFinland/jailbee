@@ -200,7 +200,7 @@ before editing `## Unreleased`.
   Filtered items stay unread and ackable, and child followers stay unfiltered
   ([#141](https://github.com/VRTFinland/jailbee/issues/141)).
 - Web dashboard: `jailbee remote web serve` (alias `jailbee serve`) runs a
-  host-side, read-only browser dashboard, installed with the `web` extra
+  host-side, read-only browser dashboard, included in every install
   ([#109](https://github.com/VRTFinland/jailbee/issues/109)). The front page
   shows repositories and containers with the terminal dashboard's core columns
   and agent state; a container or repository opens its agent sessions, and a

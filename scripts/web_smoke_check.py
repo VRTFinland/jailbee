@@ -1,9 +1,9 @@
 """Drive the web dashboard with headless Chrome over CDP and check what renders.
 
-Not part of the test suite. Needs the `web` extra (it uses `websockets`) and a
-Chrome binary; talks to a server such as `scripts/web_smoke_server.py`.
+Not part of the test suite. Needs a Chrome binary; talks to a server such as
+`scripts/web_smoke_server.py`.
 
-    uv run --extra web python scripts/web_smoke_check.py --url http://127.0.0.1:8919 --pin 123456
+    uv run python scripts/web_smoke_check.py --url http://127.0.0.1:8919 --pin 123456
 
 Checks: login (skipped with --no-auth) -> front page lists the repo and
 container -> repo page lists the fixture sessions -> session view renders the

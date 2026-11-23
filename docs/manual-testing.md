@@ -5968,12 +5968,12 @@ export XDG_STATE_HOME=$T/state XDG_CONFIG_HOME=$T/config XDG_DATA_HOME=$T/data
 
 # 1. The real app over a fake snapshot (repo "work", container "work-main")
 #    and tests/fixtures/transcripts/claude/ as its Claude home.
-uv run --extra web python scripts/web_smoke_server.py --port 8919 &
+uv run python scripts/web_smoke_server.py --port 8919 &
 SERVER=$!
 sleep 5
 
 # 2. Headless Chrome over CDP: PIN login -> front page -> repo -> session.
-uv run --extra web python scripts/web_smoke_check.py --screenshots "$T"
+uv run python scripts/web_smoke_check.py --screenshots "$T"
 echo "exit $?"
 
 kill $SERVER

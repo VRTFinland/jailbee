@@ -6,7 +6,7 @@ entries below, so a dashboard renders every agent's session the same way. A
 new agent is a new source module that calls `register`, not a change here.
 
 Standard library only: the terminal dashboard reads transcripts too, and must
-not need the `web` extra to do so.
+not need the web dashboard to do so.
 """
 
 from __future__ import annotations

@@ -3,7 +3,7 @@
 The CLI (`jailbee remote web auth ...`) is the only writer of settings and
 keys; the server reads them on every login, so a change applies without a
 restart. Imports no FastAPI, so the CLI works without loading the server;
-`pyotp` (from the `web` extra) is imported only where a TOTP secret is used.
+`pyotp` is imported only where a TOTP secret is used.
 
 Audit: every login, failed login, logout and revocation is a `WebAuthEvent`
 row (the CLI revokes from another process than the server, so the database is

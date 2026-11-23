@@ -1,6 +1,6 @@
 """`jailbee remote web serve` (and `auth fido2 setup`) below the CLI: overrides, extra, server.
 
-Imports no FastAPI at module level, so a missing `web` extra surfaces as
+Imports no FastAPI at module level, so missing web dependencies surfaces as
 `WebDependencyError` rather than an import traceback. The CLI only maps the
 errors raised here to an exit status.
 """

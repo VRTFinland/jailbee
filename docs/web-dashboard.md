@@ -19,20 +19,20 @@ heavy) and the label, and a Stopped row is drawn without top, right and bottom e
 
 ## Install
 
+The web dashboard comes with every JailBee install: its dependencies are part
+of the package, and released wheels carry the built browser app. The old
+`jailbee[web]` extra still installs, and adds nothing.
+
+From a source checkout the browser app must be built (needs Node.js 22.22+ or
+24.15+, and npm) before the package is installed. `make install` builds it
+when npm is available, and `make install-web` fails without npm instead:
+
 ```bash
-uv tool install 'jailbee[web]'      # or: pipx install 'jailbee[web]'
+make install-web                    # builds frontend/, then installs
+make web && uv sync                 # editable checkout: build once, in place
 ```
 
-Released wheels carry the built browser app. From a source checkout the app
-must be built once (needs Node.js 22.22+ or 24.15+, and npm), then the package
-installed with the extra:
-
-```bash
-make web                            # builds frontend/ into src/jailbee/web/static/
-uv sync --extra web                 # or: uv tool install -e '.[web]'
-```
-
-Without the extra, `jb remote web serve` exits with a message naming it.
+Without the built app, `jb remote web serve` exits with a message saying so.
 
 ## Run it
 

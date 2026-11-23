@@ -29,33 +29,34 @@ SERVICE_UPDATED_EXIT = 75
 
 
 class WebDependencyError(WebServeError):
-    """The optional `web` extra is not installed."""
+    """The web dashboard's dependencies are missing (a partial or broken install)."""
 
     def __init__(self) -> None:
         super().__init__(
-            "The web dashboard requires the optional 'web' extra. "
-            "Install it with: uv tool install 'jailbee[web]'"
+            "The web dashboard's dependencies are missing. "
+            "Reinstall JailBee: uv tool install --reinstall jailbee"
         )
 
 
 class FrontendNotBuiltError(WebServeError):
-    """The package carries no built browser app (an editable install before `make web`)."""
+    """The package carries no built browser app (a checkout install without `make web`)."""
 
     def __init__(self, directory: object) -> None:
         super().__init__(
             f"The web dashboard's browser app is not built (no index.html in {directory}). "
-            "Run `make web` in the jailbee checkout first."
+            "In the jailbee checkout, run `make install-web` (or `make web` for an "
+            "editable install)."
         )
 
 
 def is_missing_web_extra(exc: ModuleNotFoundError) -> bool:
-    """Whether ``exc`` is a module of the `web` extra failing to import."""
+    """Whether ``exc`` is a web dashboard dependency failing to import."""
     return (exc.name or "").split(".")[0] in WEB_EXTRA_MODULES
 
 
 @contextmanager
 def web_extra_required() -> Iterator[None]:
-    """Turn a missing `web` extra module, imported inside the block, into `WebDependencyError`."""
+    """Turn a web dashboard dependency missing inside the block into `WebDependencyError`."""
     try:
         yield
     except ModuleNotFoundError as exc:

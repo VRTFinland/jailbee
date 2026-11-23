@@ -1,6 +1,6 @@
 """Install and inspect the web dashboard's systemd user service.
 
-Never imports FastAPI: `enable` and `status` work without the `web` extra
+Never imports FastAPI: `enable` and `status` work without the web dependencies
 (the unit's `serve` then reports the missing extra itself).
 """
 
