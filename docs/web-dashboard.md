@@ -138,6 +138,13 @@ restart catch-up without lost or duplicated replies. Reuse
 watch. Copy the fixture home to a temporary directory before appending; with
 the server stopped the helper only writes, leaving reconnect to catch up.
 
+`test_front_page_live.py` covers snapshot additions, changes and removals without
+navigation; phase labels and computed monochrome edges in the e-ink theme;
+the connecting notice during downtime; and current state after a real server
+restart. Its protocol-upgrade test forwards traffic to the real server but
+rewrites the reconnect's auth version to simulate an outdated tab. The real
+server's 4002 rejection must trigger one document reload and a fresh connection.
+
 ## Run it
 
 ```bash

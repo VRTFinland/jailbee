@@ -207,7 +207,8 @@ before editing `## Unreleased`.
   host-side, read-only browser dashboard, included in every install
   ([#109](https://github.com/VRTFinland/jailbee/issues/109)). The front page
   shows repositories and containers with the terminal dashboard's core columns
-  and agent state. Front-page and repository container lists nest children under
+  and agent state. Stopped rows include a readable state label alongside their
+  distinct e-ink outline. Front-page and repository container lists nest children under
   their orchestrator, showing child counts across all visible repositories,
   states and runners; container pages link between children and their
   orchestrator and reset page turns when following those links. Nesting keeps
