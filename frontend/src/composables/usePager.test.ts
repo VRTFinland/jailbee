@@ -202,6 +202,57 @@ describe("page turns", () => {
         expect(scrollTo).toHaveBeenLastCalledWith(0, 600)
     })
 
+    // The browser clamps a scroll to the reachable range and reports it back.
+    function clampScrolls(scrollTo: ReturnType<typeof fakeLayout>, maxScroll: number) {
+        let y = 0
+        vi.spyOn(window, "scrollY", "get").mockImplementation(() => y)
+        scrollTo.mockImplementation((_x, top) => {
+            y = Math.min(top ?? 0, maxScroll)
+            window.dispatchEvent(new Event("scroll"))
+        })
+        return () => y
+    }
+
+    it("ends page turns at the reachable bottom without trailing space", async () => {
+        // 1550px of content in a 588px viewport: the browser stops at 962px, short
+        // of where the content's end would meet the bar (1050px).
+        const y = clampScrolls(fakeLayout(1550), 1550 - VIEWPORT)
+        updateSettings({displayProfile: "eink"})
+        const wrapper = mount(Harness, {attachTo: document.body})
+        await wrapper.vm.$nextTick()
+        expect(wrapper.get(".page-indicator").text()).toBe("Page 1 / 3")
+        for (let i = 0; i < 2; i++) await wrapper.get("button.next").trigger("click")
+        expect(y()).toBe(962)
+        expect(wrapper.get(".page-indicator").text()).toBe("Page 3 / 3")
+        expect(wrapper.get("button.next").attributes("disabled")).toBeDefined()
+    })
+
+    it("counts a fractional real bottom as the last page", async () => {
+        // The computed bottom is 1162px; a fractional viewport stops the browser at 1161.5px.
+        const y = clampScrolls(fakeLayout(1750), 1161.5)
+        updateSettings({displayProfile: "eink"})
+        const wrapper = mount(Harness, {attachTo: document.body})
+        await wrapper.vm.$nextTick()
+        for (let i = 0; i < 3; i++) await wrapper.get("button.next").trigger("click")
+        expect(y()).toBe(1161.5)
+        expect(wrapper.get(".page-indicator").text()).toBe("Page 4 / 4")
+        expect(wrapper.get("button.next").attributes("disabled")).toBeDefined()
+    })
+
+    it("adds no extra page for content ending under a pixel past a page boundary", async () => {
+        // The bar's top is at 500.6px, so pages are 500px; the content (2001px
+        // document, 500px spacer) is readable from 1000.4px: still three pages.
+        const scrollTo = fakeLayout(2001, 588.6)
+        clampScrolls(scrollTo, 2001 - 588.6)
+        updateSettings({displayProfile: "eink"})
+        const wrapper = mount(SpacerHarness, {attachTo: document.body})
+        await wrapper.vm.$nextTick()
+        expect(wrapper.get(".page-indicator").text()).toBe("Page 1 / 3")
+        for (let i = 0; i < 2; i++) await wrapper.get("button.next").trigger("click")
+        expect(wrapper.get(".page-indicator").text()).toBe("Page 3 / 3")
+        expect(wrapper.get("button.next").attributes("disabled")).toBeDefined()
+    })
+
     it("follows the scroll position, e.g. after a keyboard or system scroll", async () => {
         fakeLayout(1750)
         updateSettings({displayProfile: "eink"})
