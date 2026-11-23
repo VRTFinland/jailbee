@@ -47,7 +47,9 @@ def front_page_view(snapshot: Snapshot, scope: RemoteRepoScope, now: datetime) -
     shown = nonempty_columns(groups, now=now, enabled=enabled)
     groups = sort_groups(groups, DEFAULT_SORT, shown, now=now)
     containers = [c for g in groups for c in g.containers]
-    prefixes = sorted({g.prefix for g in snapshot.groups} | set(scope.excluded), key=len, reverse=True)
+    prefixes = sorted(
+        {g.prefix for g in snapshot.groups} | set(scope.excluded), key=len, reverse=True
+    )
     specs = visible_fields(now, containers, shown)
     return FrontPageView(
         seq=snapshot.seq,

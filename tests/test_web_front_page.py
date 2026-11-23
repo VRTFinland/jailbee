@@ -288,7 +288,10 @@ def test_cross_repo_orchestrator_uses_its_own_repo_prefix(
 
     client, token = started
     snap = snapshot_of(
-        repo_group("alpha", container("alpha-task", child=ChildView("other-repo-orch", "working", (), False, ()))),
+        repo_group(
+            "alpha",
+            container("alpha-task", child=ChildView("other-repo-orch", "working", (), False, ())),
+        ),
         repo_group("other-repo"),
     )
     page = json.loads(first_page(client, token, factory, snap))
