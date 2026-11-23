@@ -3775,6 +3775,8 @@ _AGENT_GLYPHS: dict[str, tuple[str, str | None]] = {
     "idle": ("○", "dim"),
 }
 """The `agent_compact` mark and Rich style per known state."""
+_AGENT_ERROR_GLYPH: tuple[str, str] = ("✖", "red")
+"""The mark of any `error:<kind>` state, followed by the kind."""
 
 
 def agent_compact_cell(
@@ -3804,12 +3806,15 @@ def agent_compact_cell(
     if not statuses:
         return "[dim]—[/dim]"
 
-    from jailbee.agent_status import rank_key
+    from jailbee.agent_status import ERROR_PREFIX, rank_key
 
     def glyph_of(state: str, *, age_from: datetime | None = None, with_age: bool = False) -> str:
         glyph, colour = _AGENT_GLYPHS.get(state, ("?", None))
         text = glyph
-        if state not in _AGENT_GLYPHS:
+        if state.startswith(ERROR_PREFIX):
+            glyph, colour = _AGENT_ERROR_GLYPH
+            text = f"{glyph} {escape(state.removeprefix(ERROR_PREFIX))}"
+        elif state not in _AGENT_GLYPHS:
             # The state is raw text from a file the container wrote.
             text += f" {escape(state)}"
         if with_age and age_from is not None and age_from <= now:
@@ -4307,6 +4312,8 @@ def ls_field_specs(
             text += f"·{s.count}"
         # The state is raw text from a file the container wrote.
         text = escape(text)
+        if s.state.startswith(agent_status.ERROR_PREFIX):
+            return f"[red]{text}[/red]"
         return f"[yellow]{text}[/yellow]" if s.state == "waiting" else text
 
     def _agent_cell(c: ContainerInfo) -> str:
@@ -4322,9 +4329,21 @@ def ls_field_specs(
                 "since": s.since.isoformat() if s.since is not None else None,
                 "waiting_for": s.waiting_for,
                 "count": s.count,
+                "error": _api_error_json(s),
             }
             for s in c.agent_status
         ]
+
+    def _api_error_json(s: AgentSummary) -> dict[str, object] | None:
+        error = s.activity.api_error if s.activity is not None else None
+        if error is None:
+            return None
+        return {
+            "kind": error.kind,
+            "at": error.at.isoformat() if error.at is not None else None,
+            "detail": error.detail,
+            "resets_at": error.resets_at.isoformat() if error.resets_at is not None else None,
+        }
 
     def _pending_pr_actions(c: ContainerInfo) -> int:
         # The row's own store count is fresh every tick; the probe's copy is
@@ -4508,11 +4527,7 @@ def ls_field_specs(
         if not c.agent_status:
             return None
         s = c.agent_status[0]
-        urgency = (
-            agent_status.URGENCY.index(s.state)
-            if s.state in agent_status.URGENCY
-            else len(agent_status.URGENCY)
-        )
+        urgency = agent_status.urgency(s.state)
         # Within a state, the latest change first: "just finished" above "idle since yesterday".
         return (urgency, -s.since.timestamp() if s.since is not None else 0.0)
 

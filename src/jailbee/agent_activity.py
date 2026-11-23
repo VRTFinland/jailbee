@@ -18,6 +18,7 @@ import logging
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from datetime import UTC
 from typing import TYPE_CHECKING
 
 from jailbee.lifecycle import format_duration_short
@@ -143,6 +144,8 @@ def describe(summary: AgentSummary, now: datetime) -> ActivityText | None:
     activity = summary.activity
     if activity is None:
         return None
+    if activity.api_error is not None:
+        return _describe_api_error(activity, now)
     # A supplied state identifies the selected session, even when it has no date.
     state, since = (
         (summary.state, summary.since)
@@ -166,3 +169,15 @@ def describe(summary: AgentSummary, now: datetime) -> ActivityText | None:
         head += f" · {_counted(activity.shells, 'shell')}"
     tool = None if state == "idle" else activity.last_tool
     return ActivityText(head, tool, activity.last_message, activity.recent)
+
+
+def _describe_api_error(activity: AgentActivity, now: datetime) -> ActivityText:
+    """The error's kind, age and reset time, and its short detail instead of the raw text."""
+    error = activity.api_error
+    assert error is not None
+    head = f"stopped on an API error ({error.kind})"
+    if error.at is not None and error.at <= now:
+        head += f" {format_duration_short(now - error.at)} ago"
+    if error.resets_at is not None:
+        head += f" · resets {error.resets_at.astimezone(UTC).strftime('%Y-%m-%d %H:%M')} UTC"
+    return ActivityText(head, None, error.detail or None, activity.recent)

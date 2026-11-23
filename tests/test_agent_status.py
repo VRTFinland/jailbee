@@ -454,3 +454,42 @@ def test_a_summary_names_the_live_sessions_of_the_agent():
     out = _match(sessions, {"a": {1: 500, 2: 501, 3: 502}}, {1: 10, 2: 11, 3: 12})
 
     assert sorted(out["a"][0].session_ids) == ["s-1", "s-2"]  # a session without an id is skipped
+
+
+def _quota(at: datetime = T0 + timedelta(minutes=5)):
+    from jailbee.accounts.models import AgentApiError
+
+    return AgentApiError("quota", at, 429, "The usage limit has been reached", None, "k")
+
+
+def test_an_api_error_becomes_the_agents_state_and_outranks_waiting():
+    def lookup(container, session, host_pid):
+        if session.pid == 10:
+            return AgentActivity("t", None, last_event_at=T0, api_error=_quota())
+        return AgentActivity("u", None, last_event_at=T0 + timedelta(hours=1))
+
+    (summary,) = agent_status.match_sessions(
+        {"a": [_s(10, 500, "idle"), _s(11, 600, "waiting")]},
+        {"a": {1010: 500, 1111: 600}},
+        {1010: 10, 1111: 11}.get,
+        lookup,
+    )["a"]
+
+    assert (summary.state, summary.since) == ("error:quota", T0 + timedelta(minutes=5))
+    assert summary.activity is not None and summary.activity.api_error is not None
+    assert [m.state for m in summary.sessions] == ["error:quota", "waiting"]
+
+
+def test_an_erroring_agent_ranks_before_a_waiting_one():
+    def lookup(container, session, host_pid):
+        return AgentActivity("t", None, api_error=_quota()) if session.agent == "b" else None
+
+    out = agent_status.match_sessions(
+        {"a": [_s(10, 500, "waiting", agent="a"), _s(11, 600, "busy", agent="b")]},
+        {"a": {1010: 500, 1111: 600}},
+        {1010: 10, 1111: 11}.get,
+        lookup,
+    )["a"]
+
+    assert [s.agent for s in out] == ["b", "a"]
+    assert agent_status.urgency("error:quota") < agent_status.urgency("waiting")
