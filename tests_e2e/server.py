@@ -121,6 +121,8 @@ class E2EServer:
             self._thread.join(timeout=START_TIMEOUT)
         if self._sock is not None:
             self._sock.close()
+        if self._thread.is_alive():
+            raise RuntimeError("the e2e server thread is still alive after forced exit")
         self._server = self._thread = self._sock = None
 
     def restart(self) -> None:

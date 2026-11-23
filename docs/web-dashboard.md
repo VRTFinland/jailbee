@@ -64,6 +64,29 @@ manifests, Makefile or workflow. It can also be started with
 evidence as the `web-e2e-failure` artifact. Unrelated changes do not trigger
 this workflow; the ordinary CI gate stays separate.
 
+### Writing browser tests
+
+Each test's `server` has a fresh database and rate limits. `logged_in` performs
+a real PIN login against that test's server (including a fixture override),
+so logout and revocation cannot invalidate another test's token.
+
+The automatic `browser_errors` collector watches all pages, including popups
+and contexts created with `browser.new_context()`. It checks at the end of the
+test body and again at teardown after settling pending browser events. Declare
+only intentional errors, by category, for example:
+
+```python
+browser_errors.expect("console", "intentional message")
+browser_errors.expect("page", re.compile(r"Error: exact message"), times=2)
+browser_errors.expect("csp", "script-src", at_least=1)
+```
+
+Strings match literal substrings; compiled regexes must match the whole
+message. Each declaration consumes one hit by default. Extra hits and unmet
+expectations fail the test. The restart tracer deliberately waits for a
+refused WebSocket reconnect and allows only that server's exact connection
+error; ordinary tests do not suppress reconnect errors.
+
 ## Run it
 
 ```bash

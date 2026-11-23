@@ -3,14 +3,14 @@
 Run it with `make web-e2e`, which builds the browser app first. The browser is
 the system Chrome (Playwright's `chrome` channel); nothing is downloaded.
 
-- `server`: the session's dashboard server (`tests_e2e.server.E2EServer`),
-  running, with an empty snapshot pushed. Tests push their own state.
-- `make_server`: a fresh server with its own database, for tests that need
-  clean auth state or different `WebDeps` overrides.
-- `browser_errors`: every test fails on a console error, page error or CSP
-  violation it did not declare with `browser_errors.expect(...)`.
-- `logged_in`: a page on the front page, its token from one real PIN login
-  made once per session.
+- `server`: a fresh dashboard server (`tests_e2e.server.E2EServer`) per test,
+  with isolated sessions/rate limits and an empty snapshot. Tests push state.
+- `make_server`: additional fresh servers with their own databases and optional
+  `WebDeps` overrides. Override `server` to point `logged_in` at one of these.
+- `browser_errors`: automatically watches every context made by `browser` and
+  checks errors after the test body and again during teardown.
+- `logged_in`: a fresh real PIN login against the test's `server`; no token is
+  shared between tests.
 """
 
 from __future__ import annotations
@@ -65,25 +65,12 @@ def browser_type_launch_args(browser_type_launch_args: dict[str, Any]) -> dict[s
     return {"channel": "chrome", **browser_type_launch_args}
 
 
-@pytest.fixture(scope="session")
-def e2e_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[E2EServer]:
-    server = E2EServer(_engine_in(tmp_path_factory.mktemp("state")), _static_dir())
-    server.start()
-    yield server
-    server.stop()
-
-
-@pytest.fixture(scope="session")
-def base_url(e2e_server: E2EServer) -> str:
-    return e2e_server.url
-
-
 @pytest.fixture
-def server(e2e_server: E2EServer) -> E2EServer:
-    if not e2e_server.running:
-        e2e_server.start()
-    e2e_server.push(snapshot_of())
-    return e2e_server
+def server(make_server: Callable[..., E2EServer]) -> E2EServer:
+    """Fresh auth database and in-memory rate limits for every test."""
+    fresh = make_server()
+    fresh.push(snapshot_of())
+    return fresh
 
 
 @pytest.fixture
@@ -101,54 +88,44 @@ def make_server(
         return fresh
 
     yield make
+    failures: list[Exception] = []
     for fresh in made:
-        fresh.stop()
+        try:
+            fresh.stop()
+        except Exception as error:
+            failures.append(error)
+        finally:
+            fresh.engine.dispose()
+    if failures:
+        raise ExceptionGroup("e2e servers failed to stop", failures)
 
 
-@pytest.fixture
-def browser_errors() -> BrowserErrors:
-    return BrowserErrors()
-
-
-@pytest.fixture(scope="session")
-def auth_state(
-    browser: Browser,
-    browser_context_args: dict[str, Any],
-    e2e_server: E2EServer,
-    tmp_path_factory: pytest.TempPathFactory,
-) -> Path:
-    """The browser storage after one real PIN login on the session server."""
-    context = browser.new_context(**browser_context_args)
+@pytest.fixture(autouse=True)
+def browser_errors(browser: Browser, monkeypatch: pytest.MonkeyPatch) -> Iterator[BrowserErrors]:
+    """Watch even contexts made directly by a test or another fixture."""
     errors = BrowserErrors()
-    errors.attach(context)
-    try:
-        log_in_with_pin(context.new_page(), e2e_server.url, e2e_server.pin.current, SESSION_DEVICE)
-        path = tmp_path_factory.mktemp("auth") / "storage.json"
-        context.storage_state(path=path)
-    finally:
-        context.close()
+    original = browser.new_context
+
+    def new_context(**kwargs: Any) -> BrowserContext:
+        made = original(**kwargs)
+        errors.attach(made)
+        close = made.close
+
+        def close_settled(**kwargs: Any) -> None:
+            errors.settle()
+            close(**kwargs)
+
+        monkeypatch.setattr(made, "close", close_settled)
+        return made
+
+    monkeypatch.setattr(browser, "new_context", new_context)
+    yield errors
     errors.assert_clean()
-    return path
-
-
-@pytest.fixture
-def context(
-    new_context: Callable[..., BrowserContext],
-    browser_errors: BrowserErrors,
-    request: pytest.FixtureRequest,
-) -> BrowserContext:
-    kwargs: dict[str, Any] = {}
-    if "logged_in" in request.fixturenames:
-        kwargs["storage_state"] = request.getfixturevalue("auth_state")
-    made = new_context(**kwargs)
-    browser_errors.attach(made)
-    return made
 
 
 @pytest.fixture
 def logged_in(server: E2EServer, page: Page) -> Page:
-    page.goto(server.url)
-    expect(page.get_by_role("button", name="Log out")).to_be_visible()
+    log_in_with_pin(page, server.url, server.pin.current, SESSION_DEVICE)
     return page
 
 
@@ -158,5 +135,5 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
     result = yield
     errors = getattr(item, "funcargs", {}).get("browser_errors")
     if isinstance(errors, BrowserErrors):
-        errors.assert_clean()
+        errors.assert_clean(require_expected=False)
     return result
