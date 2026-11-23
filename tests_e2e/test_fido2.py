@@ -89,7 +89,8 @@ def test_a_removed_security_key_is_refused_visibly(
 
     page.route(f"{url}/api/auth", revoke_before_delivery, times=1)
     browser_errors.expect(
-        "console", "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+        "console",
+        "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
     )
     page.get_by_role("button", name="Use security key", exact=True).click()
 
