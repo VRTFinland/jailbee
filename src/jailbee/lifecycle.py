@@ -96,6 +96,10 @@ class ContainerInfo:
     loose_until: datetime | None = None
     base_branch: str | None = None
     repo_dir: str | None = None
+    # The branch the container was created on (`user.jailbee.branch`), as typed;
+    # None for a mount-mode container. The web dashboard attributes past
+    # agent sessions by it.
+    branch: str | None = None
     pr_number: int | None = None
     pr_author: bool = False
     # `owner/name` of the repo's GitHub upstream, set by the dashboard gather
@@ -759,6 +763,8 @@ def list_containers(
 
         repo_dir_raw = config.get("user.jailbee.repo_dir")
         repo_dir = repo_dir_raw if isinstance(repo_dir_raw, str) and repo_dir_raw else None
+        branch_raw = config.get("user.jailbee.branch")
+        branch = branch_raw if isinstance(branch_raw, str) and branch_raw else None
 
         pr_raw = config.get("user.jailbee.pr")
         pr_number: int | None = None
@@ -803,6 +809,7 @@ def list_containers(
                 loose_until=loose_until,
                 base_branch=base_branch,
                 repo_dir=repo_dir,
+                branch=branch,
                 pr_number=pr_number,
                 pr_author=pr_author,
                 credential_group=credential_group_raw or None,

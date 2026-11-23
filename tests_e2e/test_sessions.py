@@ -13,6 +13,7 @@ from playwright.sync_api import Page, Route, expect
 from jailbee.agent_status import AgentSummary
 from tests.web_fakes import container, repo_group, snapshot_of
 from tests_e2e.browser_errors import BrowserErrors
+from tests_e2e.flows import log_in_with_pin
 from tests_e2e.server import E2EServer
 from tests_e2e.sessions import (
     OTHER_TITLE,
@@ -243,3 +244,42 @@ def test_a_containers_live_sessions_show_while_its_history_is_still_loading(
 
     expect(page.get_by_role("link", name=OTHER_TITLE)).to_be_visible()
     expect(page.get_by_text("Loading earlier sessions…", exact=True)).to_have_count(0)
+
+
+def test_a_container_page_lists_a_past_session_the_recorder_never_saw(
+    make_server: Callable[..., E2EServer], agent_home: Path, page: Page
+) -> None:
+    import json
+    from datetime import UTC, datetime
+
+    past_id = "33333333-3333-4333-8333-333333333333"
+    record = {
+        "type": "user",
+        "uuid": "past-1",
+        "timestamp": "2026-11-03T09:00:00.000Z",
+        "sessionId": past_id,
+        "cwd": "/work/repo",
+        "gitBranch": "main",
+        "message": {"role": "user", "content": "Tidy the release notes"},
+    }
+    (agent_home / "projects" / "-work-repo" / f"{past_id}.jsonl").write_text(
+        json.dumps(record) + "\n"
+    )
+    server = make_server(agent_homes={"work": [("claude", agent_home)]}.get)
+    work_main = container(
+        "work-main",
+        "work",
+        branch="main",
+        created_at=datetime(2026, 11, 1, tzinfo=UTC),
+        repo_dir="/work/repo",
+        uuid="u-main",
+    )
+    server.push(snapshot_of(repo_group("work", work_main)))
+    log_in_with_pin(page, server.url, server.pin.current)
+
+    page.get_by_role("link", name="work", exact=True).click()
+    page.get_by_role("link", name="main", exact=True).click()
+
+    expect(page.get_by_role("heading", name="work-main", exact=True)).to_be_visible()
+    expect(page.get_by_role("link", name="Tidy the release notes")).to_be_visible()
+    expect(page.get_by_role("link", name="Tidy the release notes")).not_to_contain_text("live")

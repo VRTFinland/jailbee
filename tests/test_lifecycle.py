@@ -840,6 +840,23 @@ def test_list_containers_populates_base_branch_from_label(make_cfg, tmp_path):
     assert infos[0].git_status is None
 
 
+def test_list_containers_reads_the_containers_own_branch_label(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(
+            name="myrepo-feat-x",
+            user_config={"user.jailbee.mode": "clone", "user.jailbee.branch": "Feat/X"},
+        ),
+        _container(name="myrepo-mounted", user_config={"user.jailbee.mode": "mount"}),
+    ]
+
+    infos = list_containers(cfg, incus)
+    assert [i.branch for i in infos] == ["Feat/X", None]
+
+
 def test_list_containers_base_branch_is_none_when_label_absent(make_cfg, tmp_path):
     repo = tmp_path / "myrepo"
     repo.mkdir()

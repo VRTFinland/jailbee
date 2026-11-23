@@ -37,7 +37,7 @@ async def repo_sessions(prefix: str, ctx: Context, _auth: RequireSession) -> Ses
     if rows is None:
         raise HTTPException(status_code=404, detail="Unknown repository")
     containers = await run_in_threadpool(
-        session_containers, ctx.hub.latest(), prefix, ctx.deps.engine
+        session_containers, ctx.hub.latest(), prefix, ctx.deps.engine, rows
     )
     return SessionListView(
         sessions=[

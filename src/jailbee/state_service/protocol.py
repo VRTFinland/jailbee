@@ -63,7 +63,8 @@ from jailbee.update_check import UpdateNotice
 # forks compare with their parent container.
 # 37 adds SyncTarget.parent_unknown: the parent's head is unknown (no gather pass).
 # 38 makes ContainerInfo.job_live nullable: None means no gathered observation.
-PROTOCOL = 38
+# 39 adds ContainerInfo.branch, the branch the container was created on.
+PROTOCOL = 39
 
 
 class ProtocolError(ValueError):

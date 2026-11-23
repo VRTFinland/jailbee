@@ -350,6 +350,8 @@ class _InfoScan:
         self.candidates = 0
         self.started: datetime | None = None
         self.models: dict[str, None] = {}
+        self.cwd: str | None = None
+        self.git_branch: str | None = None
 
     @property
     def title_settled(self) -> bool:
@@ -362,6 +364,8 @@ class _InfoScan:
     def head_line(self, line: bytes) -> None:
         if self.started is None:
             self.started = _time_at(line, line.find(b'"timestamp"'))
+        if self.cwd is None and b'"cwd"' in line:
+            self.place_line(line)
         self.model_line(line)
         if self.title_settled or not any(marker in line for marker in _USER_RECORD):
             return
@@ -377,6 +381,17 @@ class _InfoScan:
             if typed:
                 self.title = one_line(typed[: TITLE_CHARS * 8], TITLE_CHARS)
                 return
+
+    def place_line(self, line: bytes) -> None:
+        """Where the session started: the first record with a ``cwd``, and its
+        ``gitBranch`` (empty or missing is no branch)."""
+        record = _record(line)
+        cwd = record.get("cwd") if record is not None else None
+        if record is None or not isinstance(cwd, str) or not cwd:
+            return
+        self.cwd = cwd
+        branch = record.get("gitBranch")
+        self.git_branch = branch if isinstance(branch, str) and branch else None
 
     def model_line(self, line: bytes) -> None:
         """Parse `line` only when it names a model not seen yet: a tool input may
@@ -476,6 +491,8 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
         started=scan.started,
         last_activity=last_activity or last_line_time,
         models=tuple(scan.models),
+        cwd=scan.cwd,
+        git_branch=scan.git_branch,
     )
 
 
