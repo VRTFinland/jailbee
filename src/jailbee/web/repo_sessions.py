@@ -159,6 +159,7 @@ class RepoSessions:
                 SessionRow(i.session_id, agent, i.title, i.last_activity, i.models)
                 for i in source.list_sessions(home, self._cache, cwds)
             )
+        self._cache.flush()
         rows.sort(
             key=lambda r: r.last_activity.timestamp() if r.last_activity else 0.0, reverse=True
         )
@@ -201,6 +202,7 @@ class RepoSessions:
         if path is None:
             return None
         info = source.session_info(session_id, path, self._cache)
+        self._cache.flush()
         if info is None:
             return None
         entries = source.read(files.transcript).entries
@@ -244,6 +246,7 @@ class RepoSessions:
             if files is None:
                 continue
             info = source.session_info(session_id, files.transcript, self._cache)
+            self._cache.flush()
             if info is None:
                 return None
             return source, home, files, info
