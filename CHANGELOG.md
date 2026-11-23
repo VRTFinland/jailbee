@@ -253,7 +253,8 @@ before editing `## Unreleased`.
   `jailbee remote web open` logs the local browser in through a one-time link,
   including when the login page is already open. Login errors show the server's
   remaining rate-limit wait (minutes for long waits). A protocol mismatch reloads
-  the tab at most once per minute, then offers manual reload if assets stay stale
+  the tab at most once per minute until it connects again, then offers manual
+  reload (above the session title bar) if assets stay stale
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)).
   `remote.web` sets the listen address, port, auth and excluded repositories,
   and `enable|disable|status` manage a systemd user unit that restarts the
