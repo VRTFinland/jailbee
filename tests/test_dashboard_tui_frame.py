@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 
 import pytest
@@ -493,23 +494,103 @@ def test_every_saved_view_state_keeps_a_stored_show_system_preference(mocker, tm
 # --- the notification queue badge ----------------------------------------------
 
 
-def test_the_queue_badge_leads_the_system_row(tmp_path):
+def test_the_queue_badge_is_at_the_right_end_of_the_title(tmp_path):
     from jailbee.dashboard.notifications import QueueCounts
 
     view = view_of(
         [_long(tmp_path, 3)], system=_system(), show_system=True, queue=QueueCounts(2, 1)
     )
     lines = paint(view, size=(100, 25))
-    assert "⟳ 2 · ⚠ 1" in lines[1] and "Mem" in lines[1]
+    assert lines[0].endswith(" ⟳ 2 · ⚠ 1 ─╮")
+    assert "Mem" in lines[1] and "⚠" not in lines[1]
     assert "NAME" in lines[2]
 
 
-def test_the_queue_badge_keeps_its_row_while_the_status_is_hidden(tmp_path):
+def test_the_queue_badge_takes_no_body_row_while_the_status_is_hidden(tmp_path):
     from jailbee.dashboard.notifications import QueueCounts
 
     view = view_of(
         [_long(tmp_path, 3)], system=_system(), show_system=False, queue=QueueCounts(0, 0)
     )
     lines = paint(view, size=(100, 25))
-    assert "⟳ 0 · ⚠ 0" in lines[1] and "Mem" not in lines[1]
-    assert "NAME" in lines[2]
+    assert lines[0].endswith(" ⟳ 0 · ⚠ 0 ─╮")
+    assert "NAME" in lines[1] and "Mem" not in lines[1]
+
+
+@pytest.mark.parametrize("width", [20, 32, 42, 80])
+def test_a_narrow_title_ellipsises_before_the_queue_badge(tmp_path, width):
+    from jailbee.dashboard.notifications import QueueCounts
+
+    lines = paint(view_of([_long(tmp_path)], queue=QueueCounts(12, 34)), size=(width, 12))
+    assert lines[0].endswith("…  ⟳ 12 · ⚠ 34 ─╮")
+    assert all(cell_len(line) == width for line in lines)
+
+
+@pytest.mark.parametrize("theme", ["textual-light", "textual-dark", "monochrome"])
+def test_the_badge_has_accent_and_non_colour_emphasis(mocker, tmp_path, monkeypatch, theme):
+    from jailbee.dashboard.hit import Hit
+    from tests.dashboard_pilot import hit_offset, make_app
+
+    if theme == "monochrome":
+        monkeypatch.setenv("NO_COLOR", "1")
+    else:
+        monkeypatch.delenv("NO_COLOR")
+    app = make_app(mocker, [_long(tmp_path, 3)])
+    entry = app.session.queue.start("jailbee doctor", "alpha")
+    app.session.queue.finish(entry, status=1, output="failed")
+
+    async def script():
+        async with app.run_test(size=(100, 25)) as pilot:
+            app.theme = "textual-light" if theme == "textual-light" else "textual-dark"
+            await pilot.pause()
+            x, y = hit_offset(app, Hit("queue"))
+            assert y == 0 and x > 80
+            glyph = app.screen.get_style_at(x, y)
+            attention = app.screen.get_style_at(x + 6, y)
+            assert glyph.bold and attention.bold
+            if theme != "monochrome":
+                assert glyph.color.number == 6  # ANSI cyan
+                assert attention.color.number == 1  # ANSI red
+
+    asyncio.run(script())
+
+
+def test_the_queue_spinner_uses_refresh_frames_and_stops_when_idle(mocker, tmp_path):
+    from datetime import timedelta
+
+    from tests.dashboard_pilot import FROZEN_NOW, make_app, screen_text
+
+    now = [FROZEN_NOW]
+    mocker.patch.object(tsession, "_now", side_effect=lambda: now[0])
+    app = make_app(mocker, [_long(tmp_path, 3)])
+    entry = app.session.queue.start("jailbee doctor", "alpha")
+    tops = []
+
+    async def script():
+        async with app.run_test(size=(100, 25)) as pilot:
+            await pilot.pause()
+            for _ in range(4):
+                tops.append(screen_text(app).splitlines()[0])
+                now[0] += timedelta(milliseconds=250)
+                app.refresh_frame()
+                await pilot.pause()
+            app.session.queue.finish(entry, status=1, output="failed")
+            app.refresh_frame()
+            await pilot.pause()
+            idle = screen_text(app).splitlines()[0]
+            assert idle.endswith(" ⟳ 0 · ⚠ 1 ─╮")
+            shown = mocker.spy(app.frame, "show")
+            for _ in range(3):
+                now[0] += timedelta(milliseconds=250)
+                app.refresh_frame()
+                await pilot.pause()
+                assert screen_text(app).splitlines()[0] == idle
+            assert shown.call_count == 0
+
+    asyncio.run(script())
+    assert [top[-14:] for top in tops] == [
+        "  ⟳ 1 · ⚠ 0 ─╮",
+        "  ◷ 1 · ⚠ 0 ─╮",
+        "  ◶ 1 · ⚠ 0 ─╮",
+        "  ◵ 1 · ⚠ 0 ─╮",
+    ]

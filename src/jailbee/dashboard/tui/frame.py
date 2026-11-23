@@ -92,16 +92,18 @@ def update_line(notice: UpdateNotice, *, hover: dhit.Hit | None = None) -> Text:
     return line
 
 
-def queue_badge(counts: QueueCounts) -> Text:
+def queue_badge(counts: QueueCounts, *, frame: int = 0) -> Text:
     """The notification queue's badge: ``⟳ running · ⚠ needs attention``, one click target.
 
-    A zero count is dim; a non-zero one is bold, the attention count also red,
-    so it reads in light, dark and monochrome themes alike.
+    The running count is cyan and bold; attention is red and bold when non-zero.
+    Only a running queue cycles through frames; an idle one keeps its static glyph.
     """
     hit = Style(meta={dhit.HIT_KEY: dhit.Hit("queue").meta_value()})
     badge = Text()
+    glyph = ("⟳", "◷", "◶", "◵")[frame % 4] if counts.running else "⟳"
     badge.append(
-        f"⟳ {counts.running}", style=Style(bold=counts.running > 0, dim=not counts.running) + hit
+        f"{glyph} {counts.running}",
+        style=Style(color="cyan", bold=True) + hit,
     )
     badge.append(" · ", style=Style(dim=True) + hit)
     badge.append(
@@ -250,6 +252,7 @@ class DashboardView:
     show_system: bool = True
     # The notification queue's badge counts; None while the queue is empty.
     queue: QueueCounts | None = None
+    queue_frame: int = 0
     # Content rows scrolled off the top of the details panel.
     details_scroll: int = 0
     # The details panel's chosen content height; None: the built-in one.
