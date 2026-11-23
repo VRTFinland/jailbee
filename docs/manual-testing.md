@@ -5954,6 +5954,16 @@ Never `tmux kill-server`. The private socket vanishes with its last session.
 
 ## Web dashboard headless smoke test
 
+For the automated browser gate, run `make web-test` and `make web-e2e` from
+the checkout. The latter builds the app and uses the system Chrome, without
+Incus or live agents; failure traces and screenshots land in
+`_build/e2e-results/`. The separate **Web dashboard** GitHub Actions workflow
+runs both on web-related pull requests and `main`/`dev` pushes (or manual
+dispatch) and uploads browser failure evidence. See the
+[testing guide](web-dashboard.md#testing-from-a-checkout).
+
+The older manual smoke check below covers a narrower navigation path.
+
 Checks that the built browser app logs in, lists a repo and container, lists
 sessions and renders a transcript without tripping its Content-Security-Policy,
 against fixture data and without Incus.
