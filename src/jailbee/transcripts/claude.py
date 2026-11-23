@@ -41,6 +41,8 @@ from jailbee.transcripts.base import (
     register,
 )
 
+from jailbee.transcripts.markup import command_name, is_meta_wrapper
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -53,7 +55,7 @@ SYNTHETIC_MODEL = "<synthetic>"
 """What Claude writes as the model of a message no model wrote (an API error)."""
 
 TITLE_CHARS = 120
-"""A session title is the first user message on one line, cut to this."""
+"""A session title is the first typed prompt (or command) on one line, cut to this."""
 
 _TIMESTAMP = re.compile(rb'"timestamp"\s*:\s*"([^"]{1,64})"')
 """Found without parsing the line: a listing reads every line of every session."""
@@ -312,8 +314,9 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
 
     Sessions run to tens of megabytes and a listing reads every one, so the
     bytes are searched rather than parsed line by line: the first and last
-    timestamps bound the session, the title comes from the first user record,
-    and only a line naming a model not seen yet is parsed to tell whether that
+    timestamps bound the session, only candidate user lines are parsed until
+    the first typed prompt (falling back to the first command), and only a
+    line naming a model not seen yet is parsed to tell whether that
     is the record's model or a tool input's. A caller listing many sessions
     should cache the result by the file's size and mtime.
     """
@@ -322,6 +325,7 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
         return None
     data = read[1]
     title = ""
+    first_command = ""
     at = 0
     while not title and at < len(data):
         end = data.find(b"\n", at)
@@ -333,8 +337,13 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
             users = (
                 [e for e in _entries(record, "") if isinstance(e, UserMessage)] if record else []
             )
-            if users:
-                title = one_line(users[0].text[: TITLE_CHARS * 8], TITLE_CHARS)
+            for user in users:
+                if not first_command:
+                    first_command = command_name(user.text)
+                if not is_meta_wrapper(user.text):
+                    title = one_line(user.text[: TITLE_CHARS * 8], TITLE_CHARS)
+                    if title:
+                        break
     models: dict[str, None] = {}
     for match in _MODEL.finditer(data):
         if match.group(1).decode("utf-8", "replace") in models:
@@ -346,7 +355,7 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
     return SessionInfo(
         session_id=session_id,
         path=path,
-        title=title,
+        title=title or one_line(first_command[: TITLE_CHARS * 8], TITLE_CHARS),
         started=_time_at(data, data.find(b'"timestamp"')),
         last_activity=_time_at(data, data.rfind(b'"timestamp"')),
         models=tuple(models),

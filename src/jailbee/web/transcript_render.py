@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import html
 import json
-import re
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
@@ -24,6 +23,7 @@ from jailbee.transcripts.base import (
     ToolResult,
     UserMessage,
 )
+from jailbee.transcripts.markup import is_meta_wrapper
 from jailbee.web.highlight import highlight_json
 from jailbee.web.markdown_render import render_markdown
 from jailbee.web.protocol import (
@@ -37,10 +37,6 @@ from jailbee.web.protocol import (
 )
 
 DEFAULT_CACHE_ENTRIES = 4096
-
-_META_WRAPPER = re.compile(r"\A\s*<([a-z][a-z0-9-]*)>.*</\1>", re.DOTALL)
-"""An agent's own markup in a user record: ``<command-name>``, ``<system-reminder>``..."""
-
 
 class RenderCache:
     """HTML by (entry id, text), least recently used dropped beyond ``limit``.
@@ -72,10 +68,6 @@ class RenderCache:
 
     def __len__(self) -> int:
         return len(self._items)
-
-
-def is_meta_wrapper(text: str) -> bool:
-    return _META_WRAPPER.match(text) is not None
 
 
 def _pre(text: str, css_class: str) -> str:

@@ -307,6 +307,87 @@ def test_session_metadata_comes_from_the_transcript(home: Path, source: ClaudeSo
     assert info.models == ("claude-opus-5-5", "claude-sonnet-5")
 
 
+def test_session_title_uses_the_typed_prompt_after_local_command_records(
+    home: Path, source: ClaudeSource
+) -> None:
+    _write(
+        _transcript(home),
+        _user_text("command", "<command-name>/clear</command-name>"
+                   " <command-message>clear</command-message> <command-args></command-args>"),
+        _user_text("caveat", "<local-command-caveat>Ignore local output</local-command-caveat>"),
+        _user_text("stdout", "<local-command-stdout>Cleared</local-command-stdout>"),
+        _user_text("prompt", "Fix the session titles"),
+    )
+
+    info = next(s for s in source.list_sessions(home) if s.session_id == SID)
+
+    assert info.title == "Fix the session titles"
+
+
+def test_a_command_only_session_uses_its_first_command_as_the_title(
+    home: Path, source: ClaudeSource
+) -> None:
+    _write(
+        _transcript(home),
+        _user_text("caveat", "<local-command-caveat>Ignore local output</local-command-caveat>"),
+        _user_text("command", "<command-name>/model</command-name>"
+                   " <command-message>model</command-message> <command-args>opus</command-args>"),
+        _user_text("stdout", "<local-command-stdout>Model changed</local-command-stdout>"),
+        _user_text("next", "<command-name>/clear</command-name>"),
+    )
+
+    info = next(s for s in source.list_sessions(home) if s.session_id == SID)
+
+    assert info.title == "/model"
+
+
+@pytest.mark.parametrize(
+    "preamble",
+    [
+        _user_text("caveat", "<local-command-caveat>Local only</local-command-caveat>"),
+        _user_text("stdout", "<local-command-stdout>Output</local-command-stdout>"),
+        _user_text("reminder", "  <system-reminder>Injected\ncontext</system-reminder>"),
+        {"type": "user", "isMeta": True, "message": {"content": "Injected context"}},
+        {"type": "user", "message": {"content": [
+            {"type": "text", "text": "<command-name>/model</command-name>"},
+            {"type": "text", "text": "Fix the session titles"},
+        ]}},
+    ],
+)
+def test_session_title_skips_each_kind_of_agent_preamble(
+    home: Path, source: ClaudeSource, preamble: object
+) -> None:
+    _write(_transcript(home), preamble, _user_text("prompt", "Fix the session titles"))
+
+    info = next(s for s in source.list_sessions(home) if s.session_id == SID)
+
+    assert info.title == "Fix the session titles"
+
+
+def test_listing_parses_only_candidate_lines_even_when_commands_precede_a_large_session(
+    home: Path, source: ClaudeSource, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(
+        _transcript(home),
+        _user_text("command", "<command-name>/model</command-name>"),
+        *({"type": "assistant", "message": {"content": "x" * 10_000}} for _ in range(200)),
+        _user_text("prompt", "Fix the session titles"),
+    )
+    loads = json.loads
+    parsed: list[object] = []
+
+    def count_loads(data: object) -> object:
+        parsed.append(data)
+        return loads(data)
+
+    monkeypatch.setattr(json, "loads", count_loads)
+
+    info = source.session_info(SID, _transcript(home))
+
+    assert info is not None and info.title == "Fix the session titles"
+    assert len(parsed) == 2
+
+
 def test_a_claude_jb_session_reports_its_gateway_model_names(
     home: Path, source: ClaudeSource
 ) -> None:

@@ -257,6 +257,28 @@ def test_an_agent_wrapper_prompt_is_meta_and_shown_verbatim(client: TestClient) 
     assert "&lt;command-name&gt;/clear&lt;/command-name&gt;" in html
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "<command-name>/model</command-name> <command-message>model</command-message>",
+        "<local-command-caveat>Local only</local-command-caveat>",
+        "<local-command-stdout>Model changed</local-command-stdout>",
+        "  <system-reminder>Injected\ncontext</system-reminder>",
+    ],
+)
+def test_agent_preambles_are_meta_in_the_rendered_transcript(
+    client: TestClient, home: Path, text: str
+) -> None:
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    path.write_text(json.dumps(_record(1, "user", text)) + "\n")
+
+    (entry,) = of_kind(client, "user")
+
+    assert entry["meta"] is True
+    assert '<pre class="meta">' in str(entry["html"])
+    assert "&lt;" in str(entry["html"])
+
+
 def test_a_subagent_is_referenced_as_data(client: TestClient) -> None:
     ref = of_kind(client, "subagent")[0]
     assert ref["agent_id"] == AGENT_ID
