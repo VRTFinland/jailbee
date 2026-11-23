@@ -119,17 +119,20 @@ def test_successful_exit_during_job_collection_does_not_publish_a_dead_row(
     assert list_containers(cfg, incus, with_background=True) == []
 
 
-def test_replacement_job_finishing_during_collection_is_not_dead(
-    tmp_path, monkeypatch, mocker
-):
+def test_replacement_job_finishing_during_collection_is_not_dead(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     name = "repo-work"
 
     def start(pid):
         with Session(get_engine()) as session:
             background.start_job(
-                session, container_name=name, container_prefix="repo", branch="work",
-                pid=pid, log_path="/log", now=datetime.now(UTC),
+                session,
+                container_name=name,
+                container_prefix="repo",
+                branch="work",
+                pid=pid,
+                log_path="/log",
+                now=datetime.now(UTC),
             )
 
     start(4242)
