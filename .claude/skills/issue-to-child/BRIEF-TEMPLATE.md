@@ -37,6 +37,7 @@ Acceptance:
 - <the behavioural tests that must pass>
 - `uv run pytest -n auto` runs the full suite in the foreground. Also run `uv run mypy src/`, `uv run ruff check src/ tests/` and `uv run ruff format --check src/ tests/`. All of them must be clean.
 - Commit any ruff fixes separately, as a `style:` commit.
+- If your diff touches the browser app (`frontend/`) or the web server package (`src/jailbee/web/`), also run `make web-e2e` (Node comes from `stacks.node`); it must pass, and `done` states its test count.
 - CHANGELOG: add a `### Fixed` entry under `## Unreleased` only for a regression against a released version. If the change completes unreleased work, fold it into that work's existing entry.
 - Docs and skills under `docs/` must match the changed behaviour.
 
