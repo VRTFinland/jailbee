@@ -476,6 +476,39 @@ def test_closing_the_box_during_pr_preflight_runs_no_terminal_hand_off(mocker, t
     handed.assert_not_called()
 
 
+def test_pr_preflight_with_the_box_open_runs_the_terminal_hand_off_once(mocker, tmp_path):
+    import asyncio
+
+    from tests.dashboard_pilot import container_menu_keys
+    from tests.test_dashboard_outbox import _container, _listing, _proposal
+
+    awaiting = _proposal("pr/d.json", state="awaiting-pr", create_scope={"kind": "repo"})
+    app, group, entered, release, _calls, gate = _blocking_outbox_app(
+        mocker, tmp_path, [_listing(_container(awaiting))], "ls"
+    )
+    handed = mocker.patch.object(app.session, "run_dashboard_command", return_value=0)
+
+    async def scenario():
+        async with app.run_test(size=(120, 35)) as pilot:
+            try:
+                for key in container_menu_keys(group, "outbox browse"):
+                    await pilot.press(key)
+                controller = app.session.outbox
+                assert controller is not None
+                await _settle_outbox(app, pilot, controller)
+                gate["on"] = True
+                await pilot.press("p")
+                assert await asyncio.to_thread(entered.wait, 2), "the preflight never started"
+                release.set()
+                await _settle_outbox(app, pilot, controller)
+                assert app.session.notice != "pr push not run: outbox box closed"
+            finally:
+                release.set()
+
+    asyncio.run(scenario())
+    handed.assert_called_once()
+
+
 def test_reopen_after_a_background_delete_shows_no_stale_marks(mocker, tmp_path):
     import asyncio
 

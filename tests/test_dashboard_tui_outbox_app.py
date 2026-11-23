@@ -486,3 +486,16 @@ def test_quit_during_a_delete_is_refused_and_the_delete_completes(mocker, quit_k
     assert sum(argv[:2] == ["outbox", "drop"] for argv in calls) == 1
     assert app.controller.state.status == ("Deleted 1 from the outbox.",)
     assert app.return_value is None  # drive's exit, not the refused quit
+
+
+def test_stale_mutation_flag_without_a_busy_line_does_not_trap_quit(quiet):
+    app = make()
+
+    async def scenario(pilot):  # type: ignore[no-untyped-def]
+        app.controller.mutation_running = True
+        assert app.controller.state.busy is None
+        await pilot.press("q")
+        await pilot.pause()
+
+    drive(app, scenario)
+    assert app.return_value == 0
