@@ -85,6 +85,14 @@ Each test's `server` has a fresh database and rate limits. `logged_in` performs
 a real PIN login against that test's server (including a fixture override),
 so logout and revocation cannot invalidate another test's token.
 
+The security-key tests use Chrome's virtual WebAuthn authenticator, with no
+physical key needed. `make_server(setup=True)` serves the real registration-only
+`create_setup_app(SetupDeps)`: the dashboard itself has no setup API. Stopping
+that server and calling `start()` serves `create_app(WebDeps)` at the same
+origin over the same database. Tests register at `http://localhost` (a secure
+WebAuthn context with a domain RP ID), log in with the key, and check that a
+removed key is visibly refused. Console, page and CSP checks stay enabled.
+
 The automatic `browser_errors` collector watches all pages, including popups
 and contexts created with `browser.new_context()`. It checks at the end of the
 test body and again at teardown after settling pending browser events. Declare
