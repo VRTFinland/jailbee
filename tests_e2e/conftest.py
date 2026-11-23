@@ -6,7 +6,9 @@ the system Chrome (Playwright's `chrome` channel); nothing is downloaded.
 - `server`: a fresh dashboard server (`tests_e2e.server.E2EServer`) per test,
   with isolated sessions/rate limits and an empty snapshot. Tests push state.
 - `make_server`: additional fresh servers with their own databases and optional
-  `WebDeps` overrides. Override `server` to point `logged_in` at one of these.
+  `WebDeps` overrides. `setup=True` starts the real registration-only setup app;
+  `stop()` then `start()` serves the dashboard at the same origin and database.
+  Override `server` to point `logged_in` at one of these.
 - `browser_errors`: automatically watches every context made by `browser` and
   checks errors after the test body and again during teardown.
 - `logged_in`: a fresh real PIN login against the test's `server`; no token is
@@ -79,11 +81,11 @@ def make_server(
 ) -> Iterator[Callable[..., E2EServer]]:
     made: list[E2EServer] = []
 
-    def make(**overrides: Any) -> E2EServer:
+    def make(*, setup: bool = False, **overrides: Any) -> E2EServer:
         fresh = E2EServer(
             _engine_in(tmp_path_factory.mktemp("state")), _static_dir(), overrides=overrides
         )
-        fresh.start()
+        fresh.start(setup=setup)
         made.append(fresh)
         return fresh
 

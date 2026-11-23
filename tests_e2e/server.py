@@ -21,6 +21,7 @@ import uvicorn
 from jailbee.web.app import create_app
 from jailbee.web.auth import PinHolder
 from jailbee.web.context import WebDeps
+from jailbee.web.setup_app import SetupDeps, create_setup_app
 from tests.web_fakes import FakeSourceFactory, FakeWatchFactory, pin_sequence
 
 if TYPE_CHECKING:
@@ -90,12 +91,28 @@ class E2EServer:
         self._seq += 1
         self.snapshots.push(replace(snapshot, seq=self._seq))
 
-    def start(self) -> None:
+    def start(self, *, setup: bool = False) -> None:
+        """Serve setup or the dashboard, preserving the database and origin."""
         assert not self.running, "server already running"
+        deps = self.deps
+        app = (
+            create_setup_app(
+                SetupDeps(
+                    engine=deps.engine,
+                    pin=deps.pin,
+                    clock=deps.clock,
+                    monotonic=deps.monotonic,
+                    static_dir=deps.static_dir,
+                    fido2=deps.fido2,
+                )
+            )
+            if setup
+            else create_app(deps)
+        )
         sock = _listening_socket(self.port)
         self.port = sock.getsockname()[1]
         config = uvicorn.Config(
-            create_app(self.deps),
+            app,
             log_level="warning",
             timeout_graceful_shutdown=1,
         )
