@@ -135,6 +135,11 @@ class SessionInfo:
     """Every model that answered, in first-use order."""
 
 
+SESSION_INFO_FORMAT = 1
+"""Bump when what a source derives for a `SessionInfo` changes (how the title
+is chosen, which models are named), so infos a `SessionInfoStore` kept from an
+older reader are read again instead of served."""
+
 Stamp = tuple[int, int]
 """A transcript file's ``(size, mtime_ns)``: while it is unchanged, so is its info."""
 
@@ -146,8 +151,9 @@ class SessionInfoStore(Protocol):
         """Every stored info by path, with the stamp it was read at. Never raises."""
         ...
 
-    def save(self, entries: Sequence[tuple[Path, Stamp, SessionInfo]]) -> None:
-        """Remember these infos, all at once. Never raises."""
+    def save(self, entries: Sequence[tuple[Path, Stamp, SessionInfo]]) -> bool:
+        """Remember these infos, all at once; False when they were not stored.
+        Never raises."""
         ...
 
 
@@ -192,8 +198,11 @@ class SessionInfoCache:
             return
         with self._lock:
             unsaved, self._unsaved = self._unsaved, {}
-        if unsaved:
-            self._store.save([(path, stamp, info) for path, (stamp, info) in unsaved.items()])
+        if not unsaved:
+            return
+        if not self._store.save([(path, stamp, info) for path, (stamp, info) in unsaved.items()]):
+            with self._lock:  # kept for the next flush; anything newer wins
+                self._unsaved = {**unsaved, **self._unsaved}
 
     def _load_store(self) -> None:
         if self._loaded or self._store is None:

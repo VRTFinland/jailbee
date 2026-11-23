@@ -76,9 +76,10 @@ def _live_keys(c: ContainerInfo) -> list[tuple[str, str]]:
 def _views(
     repo_sessions: RepoSessions, prefix: str, keys: list[tuple[str, str]], live: bool
 ) -> list[ContainerSessionView]:
+    rows = repo_sessions.rows(prefix, keys)
     views: list[ContainerSessionView] = []
     for agent, sid in keys:
-        row = repo_sessions.row(prefix, agent, sid)
+        row = rows.get((agent, sid))
         views.append(
             ContainerSessionView(
                 session_id=sid,

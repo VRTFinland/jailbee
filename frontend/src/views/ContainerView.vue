@@ -21,7 +21,13 @@ const historyFailed = ref(false)
 const error = ref<string | null>(null)
 /** Live sessions first: they come from the snapshot and render at once. The
  * history is a request of its own and joins the list when it arrives. */
-const sessions = computed(() => [...(live.value?.sessions ?? []), ...(history.value?.sessions ?? [])])
+const sessions = computed(() => {
+    // The two answers come from different snapshots: a session that went live
+    // in between is in both, and is shown once, as live.
+    const shown = new Set((live.value?.sessions ?? []).map(s => `${s.agent}/${s.session_id}`))
+    const earlier = (history.value?.sessions ?? []).filter(s => !shown.has(`${s.agent}/${s.session_id}`))
+    return [...(live.value?.sessions ?? []), ...earlier]
+})
 const historyPending = computed(() => history.value === null && !historyFailed.value)
 
 const dateFormat = new Intl.DateTimeFormat(undefined, {dateStyle: "medium", timeStyle: "short"})

@@ -58,8 +58,7 @@ TITLE_CHARS = 120
 """A session title is the first typed prompt (or command) on one line, cut to this."""
 
 TITLE_CANDIDATES = 32
-"""Inspect at most this many user lines for the title; then the first command
-(if any) stands in for it."""
+"""Once a command fallback exists, inspect at most this many user candidates."""
 
 HEAD_BYTES = 4 * 1024 * 1024
 """The title search never reads past this many bytes from the start."""
@@ -329,8 +328,11 @@ class _InfoScan:
 
     @property
     def title_settled(self) -> bool:
-        """The title is found, or the candidate budget is spent."""
-        return bool(self.title) or self.candidates >= TITLE_CANDIDATES
+        """The title is found, or a command stands in for it and the candidate
+        budget is spent."""
+        return bool(self.title) or (
+            bool(self.first_command) and self.candidates >= TITLE_CANDIDATES
+        )
 
     def head_line(self, line: bytes) -> None:
         if self.started is None:
@@ -401,7 +403,8 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
     order: a model used only in the middle of a long session is not listed
     (the transcript itself shows every entry's model). A line is parsed only
     when it is a title candidate or names a model not seen yet. A caller
-    listing many sessions should cache the result by the file's size and mtime.
+    listing many sessions should cache the result by the file's size and mtime;
+    a change to what is derived here bumps `SESSION_INFO_FORMAT`.
     """
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -415,7 +418,8 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
         scan = _InfoScan()
         head_end = 0
         last_line_time: datetime | None = None
-        for head_end, line in _lines(fd, 0, min(size, HEAD_BYTES)):
+        for end, line in _lines(fd, 0, min(size, HEAD_BYTES)):
+            head_end = end
             scan.head_line(line)
             last_line_time = _time_at(line, line.rfind(b'"timestamp"')) or last_line_time
             if scan.title_settled:

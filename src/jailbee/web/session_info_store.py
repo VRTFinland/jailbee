@@ -17,7 +17,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
 from jailbee.db.models import SessionInfoRow
-from jailbee.transcripts.base import SessionInfo, Stamp
+from jailbee.transcripts.base import SESSION_INFO_FORMAT, SessionInfo, Stamp
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -25,11 +25,6 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
 log = logging.getLogger(__name__)
-
-SESSION_INFO_FORMAT = 1
-"""Bump when what a source derives for a `SessionInfo` changes, so rows
-stored by an older reader are read again instead of served."""
-
 
 class DbSessionInfoStore:
     def __init__(self, engine: Engine) -> None:
@@ -47,7 +42,7 @@ class DbSessionInfoStore:
             return {}
         return {path: entry for path, entry in found.items() if entry is not None}
 
-    def save(self, entries: Sequence[tuple[Path, Stamp, SessionInfo]]) -> None:
+    def save(self, entries: Sequence[tuple[Path, Stamp, SessionInfo]]) -> bool:
         rows = [
             {
                 "path": str(path),
@@ -63,7 +58,7 @@ class DbSessionInfoStore:
             for path, stamp, info in entries
         ]
         if not rows:
-            return
+            return True
         table = SessionInfoRow.__table__  # type: ignore[attr-defined]  # SQLModel sets it on table classes
         statement = sqlite_insert(table)
         statement = statement.on_conflict_do_update(
@@ -75,6 +70,8 @@ class DbSessionInfoStore:
                 conn.execute(statement, rows)
         except SQLAlchemyError:
             log.debug("session info cache not written", exc_info=True)
+            return False
+        return True
 
 
 def _entry(row: SessionInfoRow) -> tuple[Stamp, SessionInfo] | None:

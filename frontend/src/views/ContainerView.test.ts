@@ -162,4 +162,14 @@ describe("ContainerView", () => {
         expect(wrapper.findAll("li.session")).toHaveLength(1)
         expect(wrapper.text()).toContain("Earlier sessions could not be loaded.")
     })
+
+    it("shows a session in both answers once, as live", async () => {
+        const both = {...historyList, sessions: [{...liveList.sessions[0], live: false}, ...historyList.sessions]}
+        const {wrapper} = await mountContainer(serve(liveList, both))
+
+        const rows = wrapper.findAll("li.session")
+        expect(rows).toHaveLength(2)
+        expect(rows[0].find(".live").exists()).toBe(true)
+        expect(rows[1].text()).toContain("Untitled session")
+    })
 })

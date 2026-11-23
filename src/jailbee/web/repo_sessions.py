@@ -135,9 +135,10 @@ class RepoSessions:
         """Read every listed repository's session info into the cache.
 
         Run once at start-up, in a thread of its own, so the first list a
-        browser asks for finds the rows already read. ``homes`` resolves as
-        and ``repo_dirs`` resolve as the server's resolvers would; ``stop``
-        ends the warm-up early.
+        browser asks for finds the rows already read. ``homes`` and
+        ``repo_dirs`` answer as the server's resolvers would, but from the
+        snapshot the warm-up started with. ``stop`` is checked between
+        repositories.
         """
         for prefix in prefixes:
             if stop.is_set():
@@ -165,13 +166,22 @@ class RepoSessions:
         )
         return rows
 
-    def row(self, prefix: str, agent: str, session_id: str) -> SessionRow | None:
-        """One session's list row, found by its id alone; None as `transcript`."""
-        found = self._locate(prefix, agent, session_id)
-        if found is None:
-            return None
-        info = found[3]
-        return SessionRow(info.session_id, agent, info.title, info.last_activity, info.models)
+    def rows(
+        self, prefix: str, keys: Iterable[tuple[str, str]]
+    ) -> dict[tuple[str, str], SessionRow]:
+        """These ``(agent, session id)`` sessions' list rows, each found by its id
+        alone, without listing the repository. A key `transcript` would not
+        find is absent."""
+        found: dict[tuple[str, str], SessionRow] = {}
+        for agent, session_id in keys:
+            located = self._locate(prefix, agent, session_id, flush=False)
+            if located is not None:
+                info = located[3]
+                found[(agent, session_id)] = SessionRow(
+                    info.session_id, agent, info.title, info.last_activity, info.models
+                )
+        self._cache.flush()
+        return found
 
     def transcript(self, prefix: str, agent: str, session_id: str) -> SessionTranscript | None:
         """One session read whole; None for an unknown repository, agent or session.
@@ -230,7 +240,7 @@ class RepoSessions:
         return None if path is None else (source, path)
 
     def _locate(
-        self, prefix: str, agent: str, session_id: str
+        self, prefix: str, agent: str, session_id: str, *, flush: bool = True
     ) -> tuple[TranscriptSource, Path, SessionFiles, SessionInfo] | None:
         homes = self._homes(prefix)
         if homes is None:
@@ -246,7 +256,8 @@ class RepoSessions:
             if files is None:
                 continue
             info = source.session_info(session_id, files.transcript, self._cache)
-            self._cache.flush()
+            if flush:
+                self._cache.flush()
             if info is None:
                 return None
             return source, home, files, info

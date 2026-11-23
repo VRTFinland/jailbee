@@ -14,8 +14,9 @@ repository, but not attributed to a container.
 Session titles use the first typed prompt, skipping agent wrapper records,
 local command output, caveats and injected context. A session with only slash
 commands uses its first command (for example, `/model`) instead of raw markup.
-Title lookup stops after 32 candidate user records (and never reads past the
-first 4 MiB) rather than parsing a command-only transcript to the end. Task
+Once a command fallback is available, title lookup stops after 32 candidate user
+records rather than parsing a command-only transcript to the end, and it never
+reads past a transcript's first 4 MiB. Task
 notifications, `!`-mode input/output and prompt hooks are agent metadata too.
 A leading wrapper followed by typed text is split in the transcript: the wrapper
 is shown as metadata, and only the typed text is shown as the prompt. Unknown

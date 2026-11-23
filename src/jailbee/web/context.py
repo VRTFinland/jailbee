@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections.abc import Callable
@@ -34,6 +35,9 @@ if TYPE_CHECKING:
     from jailbee.remote_ssh.repo_scope import RemoteRepoScope
     from jailbee.state_service.protocol import Snapshot
     from jailbee.web.file_watch import WatchFactory
+
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -95,7 +99,6 @@ class WebContext:
     sessions_warmed: threading.Event = field(init=False)
     """Set once the start-up warm-up has finished (or was not asked for)."""
     _warm_stop: threading.Event = field(init=False)
-    _warm_thread: threading.Thread | None = field(init=False, default=None)
 
     @property
     def scope(self) -> RemoteRepoScope:
@@ -124,7 +127,12 @@ class WebContext:
         if not self.deps.warm_session_cache:
             self.sessions_warmed.set()
             return
-        snapshot = await self.snapshot()
+        try:
+            snapshot = await self.snapshot()
+        except Exception:
+            # A failed warm-up only costs a slower first list.
+            log.debug("session warm-up skipped", exc_info=True)
+            snapshot = None
         if snapshot is None:
             self.sessions_warmed.set()
             return
@@ -140,8 +148,7 @@ class WebContext:
             finally:
                 self.sessions_warmed.set()
 
-        self._warm_thread = threading.Thread(target=run, name="jailbee-web-warm", daemon=True)
-        self._warm_thread.start()
+        threading.Thread(target=run, name="jailbee-web-warm", daemon=True).start()
 
     def stop_warm_up(self) -> None:
         """Ask the warm-up to stop after the repository it is reading."""

@@ -321,6 +321,7 @@ def test_a_repo_lists_only_sessions_started_in_its_own_containers_repo_dir(
     _session_file(shared, "-home-dev-alpha", SESSION_A, "alpha at the root")
     _session_file(shared, "-home-dev-alpha-src", "33333333-3333-4333-8333-333333333333", "alpha below")
     _session_file(shared, "-home-dev-beta", SESSION_B, "beta's own")
+    _session_file(shared, "-home-dev-alpha2", "44444444-4444-4444-8444-444444444444", "alpha2's")
     alpha = repo_group("alpha", container("alpha-1", repo_dir="/home/dev/alpha"))
     beta = repo_group("beta", container("beta-1", repo="beta", repo_dir="/home/dev/beta"))
     alpha.agent_config_homes = (("alpha-1", "claude", shared),)
