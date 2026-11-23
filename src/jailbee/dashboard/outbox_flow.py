@@ -687,7 +687,8 @@ class OutboxController:
             self.state = replace(self.state, cursor=key)
         key = key if key is not None else self.state.cursor
         if self.state.busy and (
-            name in ("delete", "publish", "clear") or (name == "scope" and self.state.busy != _LOADING)
+            name in ("delete", "publish", "clear")
+            or (name == "scope" and self.state.busy != _LOADING)
         ):
             self._status(f"busy: {self.state.busy}")
             return
@@ -1100,6 +1101,7 @@ class OutboxController:
                 status.append(f"{_safe(pid)}: outbox apply exited {rc}")
                 failed = True
         marks = self._unmarked(targets)
+
         def finish(created: tuple[_Creation, ...], lines: tuple[str, ...]) -> None:
             self.state = replace(self.state, marks=marks - self._creation_keys(created))
             self._after_mutation((*status, *lines))
@@ -1263,6 +1265,7 @@ class OutboxController:
         def finish() -> None:
             # The non-interactive publishes are done: now each PR creation in turn.
             marks = self._unmarked(targets)
+
             def created_done(created: tuple[_Creation, ...], lines: tuple[str, ...]) -> None:
                 self.state = replace(self.state, marks=marks - self._creation_keys(created))
                 self._after_mutation((*results, *lines))
@@ -1327,6 +1330,7 @@ class OutboxController:
         if not self.state.abilities.create_pr:
             self._status("creating a PR is not available here")
             return
+
         def done(handed: bool, ok: bool, lines: tuple[str, ...]) -> None:
             if handed:
                 self._after_mutation(lines, prioritize=True)
@@ -1368,8 +1372,12 @@ class OutboxController:
                 return
             rc, diagnostic = self.runner.hand_off_diagnostic(argv)
             what = "source push" if listed.state == "awaiting-push" else "pr push"
-            lines = () if rc == 0 else (
-                diagnostic or (f"{what} did not run" if rc is None else f"{what} exited {rc}"),
+            lines = (
+                ()
+                if rc == 0
+                else (
+                    diagnostic or (f"{what} did not run" if rc is None else f"{what} exited {rc}"),
+                )
             )
             done(True, rc == 0, lines)
 
