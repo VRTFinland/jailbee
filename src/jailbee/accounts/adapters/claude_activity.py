@@ -18,7 +18,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from jailbee.accounts.models import RECENT_EVENTS, ActivityEvent, ActivityPaths, AgentActivity
+from jailbee.accounts.models import (
+    RECENT_EVENTS,
+    ActivityEvent,
+    ActivityPaths,
+    AgentActivity,
+    AgentApiError,
+)
 
 TAIL_BYTES = 64 * 1024
 MESSAGE_CHARS = 200
@@ -142,6 +148,8 @@ class TailActivity:
     last_event_at: datetime | None = None
     recent: tuple[ActivityEvent, ...] = ()
     """Up to `RECENT_EVENTS` tool calls and messages, oldest first."""
+    api_error: AgentApiError | None = None
+    """The API error the latest turn ended in, unless real progress followed it."""
 
 
 def parse_tail(raw: bytes, *, now: float | None = None) -> TailActivity:
@@ -157,6 +165,8 @@ def parse_tail(raw: bytes, *, now: float | None = None) -> TailActivity:
     last_message: str | None = None
     newest_first: list[ActivityEvent] = []
     last_event_at: datetime | None = None
+    api_error: AgentApiError | None = None
+    settled = False  # The newest error record or real-model reply has been seen.
     for line in reversed(raw.splitlines()):
         try:
             record = json.loads(line)
@@ -164,6 +174,13 @@ def parse_tail(raw: bytes, *, now: float | None = None) -> TailActivity:
             continue
         if not isinstance(record, dict) or record.get("type") not in ("assistant", "user"):
             continue
+        failed = record["type"] == "assistant" and record.get("isApiErrorMessage") is True
+        if not settled:
+            if failed:
+                api_error = classify_api_error(record, now=now)
+                settled = True
+            elif _real_reply(record):
+                settled = True
         message = record.get("message")
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, list):
@@ -180,8 +197,12 @@ def parse_tail(raw: bytes, *, now: float | None = None) -> TailActivity:
                     date = parsed.astimezone(UTC)
             except (ValueError, OverflowError, OSError):
                 pass
-        if date is not None and any(
-            isinstance(block, dict) and block.get("type") in kinds for block in content
+        if (
+            not failed
+            and date is not None
+            and any(
+                isinstance(block, dict) and block.get("type") in kinds for block in content
+            )
         ):
             if last_event_at is None or date > last_event_at:
                 last_event_at = date
@@ -213,7 +234,125 @@ def parse_tail(raw: bytes, *, now: float | None = None) -> TailActivity:
                 continue
             if len(newest_first) < RECENT_EVENTS:
                 newest_first.append(event)
-    return TailActivity(last_tool, last_message, last_event_at, tuple(reversed(newest_first)))
+    return TailActivity(
+        last_tool, last_message, last_event_at, tuple(reversed(newest_first)), api_error
+    )
+
+
+SYNTHETIC_MODEL = "<synthetic>"
+"""The model name Claude Code writes on records it made up itself (errors, interrupts)."""
+API_ERROR_DETAIL_CHARS = 160
+_API_ERROR_SCAN_CHARS = 4096
+"""Only the head of an error text is searched: the body is untrusted and unbounded."""
+_QUOTA_MARKERS = ("usage_limit_reached", "usage limit", "insufficient_quota", "quota")
+_RESETS_AT = re.compile(r'"resets_at"\s*:\s*(\d{1,12})\b')
+_EMBEDDED_MESSAGE = re.compile(r'"message"\s*:\s*"([^"\\]{1,300})"')
+_RESET_WINDOW_SECONDS = 400 * 86400
+"""A reset further than this from now is not believed."""
+
+
+def _real_reply(record: dict[str, object]) -> bool:
+    """An assistant record a model actually produced: progress after an error."""
+    if record.get("type") != "assistant" or record.get("isApiErrorMessage") is True:
+        return False
+    message = record.get("message")
+    if not isinstance(message, dict) or message.get("model") == SYNTHETIC_MODEL:
+        return False
+    content = message.get("content")
+    return isinstance(content, list) and any(
+        isinstance(block, dict) and block.get("type") in ("text", "thinking", "tool_use")
+        for block in content
+    )
+
+
+def _record_time(record: dict[str, object], now: float | None) -> datetime | None:
+    stamp = record.get("timestamp")
+    if not isinstance(stamp, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(stamp)
+        if parsed.tzinfo is None or (now is not None and parsed.timestamp() > now):
+            return None
+        return parsed.astimezone(UTC)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _error_text(record: dict[str, object]) -> str:
+    message = record.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return ""
+    parts = [
+        block["text"]
+        for block in content
+        if isinstance(block, dict) and isinstance(block.get("text"), str)
+    ]
+    return "\n".join(parts)[:_API_ERROR_SCAN_CHARS]
+
+
+def _resets_at(text: str, now: float | None) -> datetime | None:
+    match = _RESETS_AT.search(text)
+    if match is None:
+        return None
+    value = int(match[1])
+    reference = now if now is not None else datetime.now(UTC).timestamp()
+    if abs(value - reference) > _RESET_WINDOW_SECONDS:
+        return None
+    try:
+        return datetime.fromtimestamp(value, UTC)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _error_detail(text: str) -> str:
+    """One short line about the error, never the raw response body."""
+    embedded = _EMBEDDED_MESSAGE.search(text)
+    if embedded is not None:
+        summary = embedded[1]
+    else:
+        summary = next(iter(text.split("{", 1)[0].splitlines()), "")
+        summary = summary.removeprefix("API Error:").strip(" ·-:")
+    return one_line(summary, API_ERROR_DETAIL_CHARS)
+
+
+def classify_api_error(record: dict[str, object], *, now: float | None = None) -> AgentApiError:
+    """What kind of API error a synthetic `isApiErrorMessage` record reports.
+
+    Tolerant of absent or mistyped fields: an unknown shape is `other`.
+    """
+    text = _error_text(record)
+    raw_status = record.get("apiErrorStatus")
+    status = raw_status if type(raw_status) is int and 100 <= raw_status <= 599 else None
+    names = " ".join(
+        value.lower()
+        for value in (record.get("error"), record.get("apiErrorType"))
+        if isinstance(value, str)
+    )[:200]
+    lowered = text.lower()
+    resets_at: datetime | None = None
+    if any(marker in lowered or marker in names for marker in _QUOTA_MARKERS):
+        kind = "quota"
+        resets_at = _resets_at(text, now)
+    elif status == 429 or "rate_limit" in names:
+        kind = "rate_limit"
+    elif status in (401, 403) or "authentication" in names or "permission" in names:
+        kind = "auth"
+    elif status in (503, 529) or "overloaded" in names:
+        kind = "overloaded"
+    else:
+        kind = "other"
+    at = _record_time(record, now)
+    uuid = record.get("uuid")
+    ident = one_line(uuid, 64) if isinstance(uuid, str) else ""
+    return AgentApiError(
+        kind=kind,
+        at=at,
+        status=status,
+        detail=_error_detail(text),
+        resets_at=resets_at,
+        key=f"{at.isoformat() if at is not None else ''}|{ident}",
+    )
 
 
 def locate(config_home: Path, session_id: str | None) -> ActivityPaths | None:
@@ -302,4 +441,5 @@ def read_activity(paths: ActivityPaths, *, now: float) -> AgentActivity | None:
         modified=modified,
         recent=parsed.recent,
         last_event_at=parsed.last_event_at,
+        api_error=parsed.api_error,
     )

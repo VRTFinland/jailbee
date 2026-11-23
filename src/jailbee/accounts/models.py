@@ -280,6 +280,26 @@ class ActivityEvent:
 
 
 @dataclass(frozen=True)
+class AgentApiError:
+    """The API error a session's latest turn ended in, after the agent gave up retrying.
+
+    `kind` is one of `API_ERROR_KINDS`. `detail` is a cleaned, capped one-line
+    summary, never the raw response body. `key` identifies the error record,
+    so one episode is reported once.
+    """
+
+    kind: str
+    at: datetime | None
+    status: int | None
+    detail: str
+    resets_at: datetime | None = None
+    key: str = ""
+
+
+API_ERROR_KINDS: tuple[str, ...] = ("quota", "rate_limit", "auth", "overloaded", "other")
+
+
+@dataclass(frozen=True)
 class AgentActivity:
     """What one live agent session is doing, from what the agent itself wrote.
 
@@ -301,6 +321,9 @@ class AgentActivity:
     """Up to `RECENT_EVENTS` steps, oldest first; `()` for an agent whose adapter reads none."""
     background_clear: bool | None = None
     """Positive adapter evidence of no background agents, not an mtime estimate."""
+    api_error: AgentApiError | None = None
+    """The API error the latest turn ended in, while no progress followed it;
+    None for an agent whose adapter does not detect them."""
 
 
 @dataclass(frozen=True)
