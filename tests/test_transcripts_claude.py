@@ -669,7 +669,7 @@ class _FlakyStore:
         self.saved: dict[Path, object] = {}
         self.attempts = 0
 
-    def load_all(self) -> dict[Path, object]:
+    def load_dir(self, directory: Path) -> dict[Path, object]:
         return {}
 
     def save(self, entries: list[tuple[Path, object, object]]) -> bool:

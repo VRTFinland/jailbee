@@ -26,22 +26,53 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+_PRUNE_BATCH = 500
+
 
 class DbSessionInfoStore:
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
 
-    def load_all(self) -> dict[Path, tuple[Stamp, SessionInfo]]:
+    def load_dir(self, directory: Path) -> dict[Path, tuple[Stamp, SessionInfo]]:
+        # Rows are keyed by path: the paths below `directory/` sort between it
+        # and `directory0` ('0' follows '/'), a range the primary key serves.
+        low = f"{directory}/"
+        high = f"{directory}0"
         try:
             with Session(self._engine) as db:
                 rows = db.exec(
-                    select(SessionInfoRow).where(SessionInfoRow.format == SESSION_INFO_FORMAT)
+                    select(SessionInfoRow).where(
+                        SessionInfoRow.path >= low,
+                        SessionInfoRow.path < high,
+                        SessionInfoRow.format == SESSION_INFO_FORMAT,
+                    )
                 ).all()
                 found = {Path(row.path): _entry(row) for row in rows}
         except SQLAlchemyError:
             log.debug("session info cache unreadable", exc_info=True)
             return {}
-        return {path: entry for path, entry in found.items() if entry is not None}
+        return {
+            path: entry
+            for path, entry in found.items()
+            if entry is not None and path.parent == directory
+        }
+
+    def prune_missing(self) -> None:
+        try:
+            with Session(self._engine) as db:
+                rows = db.exec(select(SessionInfoRow.path, SessionInfoRow.format)).all()
+            dead = [
+                path
+                for path, fmt in rows
+                if fmt != SESSION_INFO_FORMAT or not Path(path).exists()
+            ]
+            table = SessionInfoRow.__table__  # type: ignore[attr-defined]  # SQLModel sets it on table classes
+            with self._engine.begin() as conn:
+                for at in range(0, len(dead), _PRUNE_BATCH):
+                    batch = dead[at : at + _PRUNE_BATCH]
+                    conn.execute(table.delete().where(table.c.path.in_(batch)))
+        except SQLAlchemyError:
+            log.debug("session info cache not pruned", exc_info=True)
 
     def save(self, entries: Sequence[tuple[Path, Stamp, SessionInfo]]) -> bool:
         rows = [

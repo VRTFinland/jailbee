@@ -138,8 +138,9 @@ class RepoSessions:
         browser asks for finds the rows already read. ``homes`` and
         ``repo_dirs`` answer as the server's resolvers would, but from the
         snapshot the warm-up started with. ``stop`` is checked between
-        repositories.
+        repositories. The cache first forgets the rows of deleted transcripts.
         """
+        self._cache.prune()
         for prefix in prefixes:
             if stop.is_set():
                 return
