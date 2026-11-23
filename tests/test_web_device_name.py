@@ -132,9 +132,7 @@ def test_an_old_client_that_sends_a_device_name_keeps_it(
     )
 
 
-def test_the_login_audit_row_carries_the_derived_name(
-    client: TestClient, pin: PinHolder
-) -> None:
+def test_the_login_audit_row_carries_the_derived_name(client: TestClient, pin: PinHolder) -> None:
     pin_login(client, pin, CHROME_ANDROID)
 
     with Session(get_engine()) as s:

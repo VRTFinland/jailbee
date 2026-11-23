@@ -15,8 +15,8 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from jailbee.web import auth_admin, login_link
-from jailbee.web.device_name import derive_device_name
 from jailbee.web.deps import Context, RequestRp, RequireSession, request_rp
+from jailbee.web.device_name import derive_device_name
 from jailbee.web.fido2_auth import Fido2Error
 
 router = APIRouter(prefix="/api", tags=["auth"])
