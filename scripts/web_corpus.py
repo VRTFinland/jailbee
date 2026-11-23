@@ -209,6 +209,9 @@ class Identity:
     """Literal strings to redact: host, container, user and account names."""
     renames: tuple[tuple[str, str], ...] = ()
     """Other recording paths and what they become, replaced before the rest."""
+    name_parts: tuple[str, ...] = ()
+    """Words of the git names: the gate reports them, the normaliser keeps them
+    (they may be ordinary words), so one in a transcript stops the recording."""
 
 
 def claude_project_name(path: str) -> str:
@@ -226,19 +229,81 @@ def _replace_path(text: str, raw: str, new: str) -> str:
     return re.sub(re.escape(raw) + r"(?![\w.-]*[\w-])", new.replace("\\", "\\\\"), text)
 
 
-def _secret_pattern(secret: str) -> str:
+SHORT_SECRET = 5
+"""Secrets shorter than this are also ordinary words (e.g. `dev`), so they
+are matched only in identity, home-path, `user@host`, prompt and ssh forms."""
+
+
+def _short_secret_pattern(secret: str, *, gate: bool) -> str:
     pattern = re.escape(secret)
-    if len(secret) < 5:
-        # Short names are also ordinary commands and path components (e.g. dev).
-        return (
-            r"(?P<prefix>\b(?:user(?:name)?|author|committer)[\"']?(?:\s*[:=]\s*|\s+)[\"']?)"
-            + pattern
-            + r"(?![\w.-])|\A"
-            + pattern
-            + r"\Z"
-            r"|(?:(?<=/home/)|(?<=/Users/)|(?<=~))" + pattern + r"(?![\w.-])"
-        )
-    return r"(?<![\w-])" + pattern + r"(?![\w-])"
+    shared = (
+        r"(?P<prefix>\b(?:user(?:name)?|author|committer)[\"']?(?:\s*[:=]\s*|\s+)[\"']?)"
+        + pattern
+        + r"(?![\w.-])|\A"
+        + pattern
+        + r"\Z"
+        r"|(?:(?<=/home/)|(?<=/Users/)|(?<=~)|(?<=\bssh ))" + pattern + r"(?![\w.-])"
+    )
+    if gate:
+        # Any `@host`, `user@` or `host:` form; `@dev/pkg` or `dev:/data`
+        # only stop a recording.
+        return shared + r"|(?<=@)" + pattern + r"(?![\w-])|(?<![\w.-])" + pattern + r"(?=@[\w-]|:)"
+    # Only a shell prompt (`user@host:~`, `host:~`), never npm scopes or volumes.
+    return (
+        shared
+        + r"|(?<=[\w-]@)"
+        + pattern
+        + r"(?=:[~/])|(?<![\w./-])"
+        + pattern
+        + r"(?=@[\w-]+:[~/]|:~)"
+    )
+
+
+def _secret_pattern(secret: str) -> str:
+    """Where the normaliser redacts `secret`: never inside an ordinary word."""
+    if len(secret) < SHORT_SECRET:
+        return _short_secret_pattern(secret, gate=False)
+    return r"(?<![\w-])" + re.escape(secret) + r"(?![\w-])"
+
+
+def _leak_pattern(secret: str) -> str:
+    """Where the gate finds `secret`: anywhere, when it is long enough."""
+    if len(secret) < SHORT_SECRET:
+        return _short_secret_pattern(secret, gate=True)
+    return re.escape(secret)
+
+
+NAME_PART_ALLOWED = frozenset(
+    {
+        "agent",
+        "bash",
+        "claude",
+        "edit",
+        "glob",
+        "grep",
+        "notebookedit",
+        "python",
+        "python3",
+        "pytest",
+        "read",
+        "skill",
+        "task",
+        "todowrite",
+        "webfetch",
+        "websearch",
+        "write",
+    }
+)
+"""Tool and command words a git name part may be without becoming a secret."""
+
+
+def reportable_name_words(name: str) -> list[str]:
+    """The words of `name` the leak gate looks for on their own."""
+    return [
+        part
+        for part in name.split()
+        if len(part) >= SHORT_SECRET and part.lower() not in NAME_PART_ALLOWED
+    ]
 
 
 class _Ids:
@@ -436,12 +501,13 @@ def find_leaks(text: str, identity: Identity | None = None) -> list[str]:
             claude_project_name(toy),
             identity.home.rstrip("/"),
             *identity.secrets,
+            *identity.name_parts,
             *(raw for raw, _ in identity.renames),
         ]
         leaks += [
             literal
             for literal in literals
-            if literal and re.search(_secret_pattern(literal), text, re.IGNORECASE)
+            if literal and re.search(_leak_pattern(literal), text, re.IGNORECASE)
         ]
     leaks += _CREDENTIAL.findall(text)
     leaks += [m for m in _EMAIL.findall(text) if m not in EMAILS_ALLOWED]
@@ -723,15 +789,17 @@ def _config_home() -> Path:
     return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 
 
-def _host_identity(toy_dir: Path, claude_tmp: Path) -> Identity:
+def _host_identity(toy_dir: Path, claude_tmp: Path, recording_home: Path) -> Identity:
     """The recording host's names, so `find_leaks` can prove they are gone."""
     secrets: set[str] = {socket.gethostname(), getpass.getuser()}
+    parts: set[str] = set()
     for key in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"):
         result = subprocess.run(["git", "var", key], capture_output=True, text=True, check=False)
         match = re.fullmatch(r"(.*?) <([^>]*)> \d+ [+-]\d{4}", result.stdout.strip())
         if result.returncode == 0 and match:
             name, email = match.groups()
             secrets.update([name, email])
+            parts.update(reportable_name_words(name))
     for path, keys in (
         (Path("/etc/jailbee/container.json"), ("name", "short_name", "container_prefix", "branch")),
         (Path.home() / ".claude.json", ()),
@@ -756,7 +824,13 @@ def _host_identity(toy_dir: Path, claude_tmp: Path) -> Identity:
         toy_dir=str(toy_dir),
         home=str(Path.home()),
         secrets=tuple(kept),
-        renames=((scratch, posixpath.join(posixpath.dirname(TOY_DIR), "claude-tmp")),),
+        # The temporary HOME lives under the recording root, which becomes
+        # /work: rename it first, so `$HOME` paths read as HOME_DIR.
+        renames=(
+            (scratch, posixpath.join(posixpath.dirname(TOY_DIR), "claude-tmp")),
+            (str(recording_home), HOME_DIR),
+        ),
+        name_parts=tuple(sorted(parts - set(kept))),
     )
 
 
@@ -908,7 +982,7 @@ def record(out_dir: Path) -> list[str]:
         claude_tmp.mkdir()
         recording_home = root / "home"
         recording_home.mkdir()
-        # Keep the logged-in config, but mark shell snapshots with a unique HOME.
+        # Keep the logged-in config under a HOME of our own.
         (recording_home / ".claude").symlink_to(_config_home(), target_is_directory=True)
         host_config = Path.home() / ".claude.json"
         if host_config.is_file():
@@ -940,7 +1014,7 @@ def record(out_dir: Path) -> list[str]:
             return _write_corpus(
                 raw_project,
                 out_dir,
-                _host_identity(toy, claude_tmp),
+                _host_identity(toy, claude_tmp, recording_home),
                 sessions,
                 _claude_version(env),
             )
@@ -969,9 +1043,10 @@ def record(out_dir: Path) -> list[str]:
                     if path.is_symlink() or not path.is_file():
                         continue
                     text = path.read_text(encoding="utf-8")
-                    if (
-                        any(sid in path.name or sid in text for sid in session_ids)
-                        or str(recording_home) in text
+                    # Claude's snapshots name no session; ours carry the
+                    # recording root in PATH (the no-op hook directory).
+                    if any(sid in path.name or sid in text for sid in session_ids) or (
+                        re.search(re.escape(str(root)) + r"(?![\w.-])", text)
                     ):
                         paths.add(path)
                 except (OSError, UnicodeError) as exc:
