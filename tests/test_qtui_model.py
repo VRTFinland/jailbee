@@ -166,7 +166,12 @@ def test_default_sync_field_keeps_comparison_in_compact_cards():
 
     c = _container()
     c.git_status = GitStatus(
-        "clean", "clean", "12", "ok", behind_count="4", target_diff="+42 -7",
+        "clean",
+        "clean",
+        "12",
+        "ok",
+        behind_count="4",
+        target_diff="+42 -7",
         sync_target=SyncTarget("pr", "PR #7", "p", "pr"),
     )
     now = datetime(2026, 1, 1, tzinfo=UTC)
@@ -181,7 +186,12 @@ def test_default_sync_field_keeps_comparison_in_compact_cards():
     assert m.is_git_clean(card)
 
     c.git_status = GitStatus(
-        "clean", "clean", "0", "ok", behind_count="0", target_diff="clean",
+        "clean",
+        "clean",
+        "0",
+        "ok",
+        behind_count="0",
+        target_diff="clean",
         sync_target=SyncTarget("pr", "PR #7", "p", "pr"),
     )
     card = m.card_content(c, dcolumns.visible_fields(now, [c]), now)

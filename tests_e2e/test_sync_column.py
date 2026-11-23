@@ -15,9 +15,7 @@ def test_sync_preserves_marker_slots_and_right_aligned_counts(
 ) -> None:
     host = replace(
         container("work-host", "work"),
-        git_status=GitStatus(
-            "clean", "clean", "1", "ok", behind_count="123", target_diff="+1 -0"
-        ),
+        git_status=GitStatus("clean", "clean", "1", "ok", behind_count="123", target_diff="+1 -0"),
     )
     pr = replace(
         container("work-pr", "work"),
