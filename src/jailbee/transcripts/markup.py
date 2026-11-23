@@ -111,7 +111,7 @@ def _one_line(text: str) -> str:
     return line
 
 
-def command_args(text: str) -> str:
+def _command_args(text: str) -> str:
     """The arguments of the slash command in an agent wrapper, one line."""
     for tag, content, _ in _wrappers(text):
         if tag == "command-args":
@@ -126,7 +126,7 @@ def meta_label(text: str) -> str:
     ``Shell: ls``; every other wrapper has a fixed name. Empty without markup.
     """
     if name := command_name(text):
-        args = command_args(text)
+        args = _command_args(text)
         return f"Command: {name} {args}" if args else f"Command: {name}"
     for tag, content, _ in _wrappers(text):
         if tag == "bash-input":

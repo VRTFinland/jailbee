@@ -258,7 +258,12 @@ onMounted(load)
 // Changing Agent context re-reads the transcript and resubscribes with the new mode.
 watch(
     () => settings.agentContext,
-    () => void load(),
+    () => {
+        // Stop the old-mode appends at once; `load` resubscribes with the new mode.
+        unfollow?.()
+        unfollow = null
+        void load()
+    },
 )
 </script>
 
@@ -306,7 +311,7 @@ watch(
                             class="meta-record"
                             @toggle="expandMeta(e.id, $event)"
                         >
-                            <summary>{{ e.label }}</summary>
+                            <summary>{{ e.label || 'Agent context' }}</summary>
                             <div
                                 v-if="e.id in loadedContent"
                                 class="prose"
@@ -317,7 +322,7 @@ watch(
                             </p>
                             <p v-else class="muted">Loading…</p>
                         </details>
-                        <p v-else-if="e.meta && !e.html" class="meta-label">{{ e.label }}</p>
+                        <p v-else-if="e.meta && !e.html" class="meta-label">{{ e.label || 'Agent context' }}</p>
                         <template v-else>
                             <p v-if="e.meta && e.label" class="meta-label">{{ e.label }}</p>
                             <div class="prose" v-html="e.html" />
