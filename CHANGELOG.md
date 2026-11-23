@@ -241,9 +241,12 @@ before editing `## Unreleased`.
   as a label line
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Themes
   (light, dark, e-ink) and an e-ink display profile with page turns are chosen
-  per device, and the app installs as a PWA with no CDN assets. The login page
-  asks for no device name: sessions are named from the browser's User-Agent
-  ("Firefox on Linux") and renamed in Settings
+  per device. Page numbering stays stable as the transcript header becomes
+  sticky, and page turns stop at the reachable last page rather than stalling
+  on browser scroll limits; the front-page controls wrap at phone width even
+  with e-ink margins. The app installs as a PWA with no CDN assets. The login
+  page asks for no device name: sessions are named from the browser's
+  User-Agent ("Firefox on Linux") and renamed in Settings
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Login uses a
   one-time PIN, TOTP or a FIDO2 key (registered in a CLI-started setup mode),
   with 30-day device sessions managed only through `jailbee remote web auth`;

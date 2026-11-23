@@ -177,6 +177,12 @@ restart catch-up without lost or duplicated replies. Reuse
 watch. Copy the fixture home to a temporary directory before appending; with
 the server stopped the helper only writes, leaving reconnect to catch up.
 
+`tests_e2e/test_display.py` covers visible themes and font sizes after a reload,
+e-ink page turns, held transcript messages and manual snapshot refresh. It also
+walks the front page, repository, container, transcript and settings at phone
+width in both display profiles, and checks the linked PWA manifest and decoded
+icons through the real server.
+
 `test_front_page_live.py` covers snapshot additions, changes and removals without
 navigation; phase labels and computed monochrome edges in the e-ink theme;
 the connecting notice during downtime; and current state after a real server
@@ -392,16 +398,20 @@ live `subscribe` message; a withheld record's content is served by
 
 The display profile **E-ink** is for e-paper readers and slow-refresh
 screens: no animation, content moves in page turns instead of scrolling, live
-transcript entries are held back until you turn the page rather than moving
-the text you are reading, and the front page refreshes slowly.
+transcript entries are held behind the **N new messages** button until you tap
+it, without moving the text you are reading. The front page refreshes every
+minute, or immediately when you tap **Refresh**. The front-page header wraps
+its controls on narrow screens, including with the e-ink profile's side margins.
 
 Session transcripts keep their title, agent/model context and connection notice
 in a compact header while you read. **Latest answer** appears only when the
 newest assistant reply is outside the readable area (below the header and above
 the bottom controls, including the device's safe-area inset). A truncated title
 keeps its full text as a tooltip and accessible heading name. Page turns use the
-actual readable height even on short landscape screens; a partial keyboard or
-system scroll stays on its current page so Next never skips unread text.
+actual readable height even on short landscape screens, with a stable page grid
+as the header becomes sticky and a last page bounded by the browser's scroll
+limit; a partial keyboard or system scroll stays on its current page so Next
+never skips unread text, and Next stays enabled until the real bottom.
 Jumping aligns the newest reply's start just below the measured header, even
 for a short final reply, with trailing room to scroll it there. Jumping or
 scrolling to the reply hides the button; moving

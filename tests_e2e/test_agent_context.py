@@ -57,7 +57,7 @@ def open_session(
         + record(4, "assistant", "Noted.")
     )
     server = make_server(agent_homes={"work": [("claude", home)]}.get)
-    log_in_with_pin(page, server.url, server.pin.current, "context reader")
+    log_in_with_pin(page, server.url, server.pin.current)
     if mode is not None:
         page.evaluate(f"localStorage.setItem('jailbee.agentContext', '{mode}')")
     fetched: list[str] = []
