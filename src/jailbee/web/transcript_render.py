@@ -14,6 +14,7 @@ import threading
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from dataclasses import replace
+from datetime import datetime
 
 from jailbee.transcripts.base import (
     AssistantText,
@@ -24,10 +25,11 @@ from jailbee.transcripts.base import (
     ToolResult,
     UserMessage,
 )
-from jailbee.transcripts.markup import is_meta_wrapper, split_prompt
+from jailbee.transcripts.markup import command_name, is_meta_wrapper, meta_label, split_prompt
 from jailbee.web.highlight import highlight_json
 from jailbee.web.markdown_render import render_markdown
 from jailbee.web.protocol import (
+    MetaMode,
     RenderedAssistant,
     RenderedEntry,
     RenderedSubagent,
@@ -80,13 +82,39 @@ def _input_json(value: dict[str, object]) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False, sort_keys=False, default=str)
 
 
-def render_entry(entry: Entry, cache: RenderCache) -> RenderedEntry:
+def _meta_user(
+    entry_id: str, timestamp: datetime | None, markup: str, mode: MetaMode
+) -> RenderedUser | None:
+    """An agent wrapper record under the Agent context setting.
+
+    ``hidden`` drops it (a slash command the user typed keeps its label line),
+    ``collapsed`` sends only the label and withholds the content (``expandable``:
+    the browser fetches it on expand), ``shown`` sends everything.
+    """
+    is_command = bool(command_name(markup))
+    if mode == "hidden" and not is_command:
+        return None
+    label = meta_label(markup)
+    if mode == "shown":
+        return RenderedUser(
+            id=entry_id, timestamp=timestamp, html=_pre(markup, "meta"), meta=True, label=label
+        )
+    return RenderedUser(
+        id=entry_id,
+        timestamp=timestamp,
+        html="",
+        meta=True,
+        label=label,
+        expandable=mode == "collapsed",
+    )
+
+
+def render_entry(entry: Entry, cache: RenderCache, meta: MetaMode = "shown") -> RenderedEntry | None:
+    """One entry rendered; None when the Agent context setting leaves it out."""
     match entry:
         case UserMessage():
             if is_meta_wrapper(entry.text):
-                return RenderedUser(
-                    id=entry.id, timestamp=entry.timestamp, html=_pre(entry.text, "meta"), meta=True
-                )
+                return _meta_user(entry.id, entry.timestamp, entry.text, meta)
             return RenderedUser(
                 id=entry.id,
                 timestamp=entry.timestamp,
@@ -155,8 +183,13 @@ def subagent_descriptions(entries: Iterable[Entry]) -> dict[str, str]:
     return found
 
 
-def render_entries(entries: Iterable[Entry], cache: RenderCache) -> list[RenderedEntry]:
-    """Every entry in order, rendered; HTML reused from ``cache`` where it can be."""
+def render_entries(
+    entries: Iterable[Entry], cache: RenderCache, meta: MetaMode = "shown"
+) -> list[RenderedEntry]:
+    """Every entry in order, rendered; HTML reused from ``cache`` where it can be.
+
+    ``meta`` is the Agent context setting: what happens to the agent's wrapper
+    records (see `_meta_user`)."""
     entries = tuple(entries)
     described = subagent_descriptions(entries)
     rendered: list[RenderedEntry] = []
@@ -164,16 +197,13 @@ def render_entries(entries: Iterable[Entry], cache: RenderCache) -> list[Rendere
         if isinstance(e, UserMessage):
             markup, typed = split_prompt(e.text)
             if markup and typed:
-                rendered.append(
-                    RenderedUser(
-                        id=f"{e.id}:meta",
-                        timestamp=e.timestamp,
-                        html=_pre(markup, "meta"),
-                        meta=True,
-                    )
-                )
+                part = _meta_user(f"{e.id}:meta", e.timestamp, markup, meta)
+                if part is not None:
+                    rendered.append(part)
                 e = replace(e, text=typed)
-        r = render_entry(e, cache)
+        r = render_entry(e, cache, meta)
+        if r is None:
+            continue
         if isinstance(r, RenderedSubagent) and r.description is None:
             r = r.model_copy(update={"description": described.get(r.agent_id)})
         rendered.append(r)

@@ -59,3 +59,26 @@ def test_an_unclosed_inner_tag_of_the_same_name_still_splits_off_the_wrapper() -
     markup, typed = split_prompt(text)
     assert markup == text[: text.index("\nTyped")]
     assert typed == "Typed"
+
+
+@pytest.mark.parametrize(
+    ("text", "label"),
+    [
+        ("<task-notification>x</task-notification>", "Task notification"),
+        ("<system-reminder>x</system-reminder>", "System reminder"),
+        ("<command-name>/model</command-name><command-message>m</command-message>", "Command: /model"),
+        (
+            "<command-name>/clear</command-name><command-args>old stuff</command-args>",
+            "Command: /clear old stuff",
+        ),
+        ("<local-command-stdout>ok</local-command-stdout>", "Command output"),
+        ("<bash-input>ls -la</bash-input>", "Shell: ls -la"),
+        ("<bash-stdout>x</bash-stdout>", "Shell output"),
+        ('<terminal name="b">x</terminal>', "Terminal"),
+        ("plain text", ""),
+    ],
+)
+def test_meta_label_names_the_wrapper(text: str, label: str) -> None:
+    from jailbee.transcripts.markup import meta_label
+
+    assert meta_label(text) == label
