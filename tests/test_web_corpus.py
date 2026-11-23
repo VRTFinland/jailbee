@@ -325,12 +325,15 @@ def test_find_leaks_reports_each_identifying_string(tmp_path: Path, leak: str) -
 @pytest.mark.parametrize(
     "leak",
     [
-        "/srv/private/data", "/opt/company/config", "/workspace/private/repo",
+        "/srv/private/data", "path:/srv/private", "cat </srv/private/customer-data",
+        "file:///srv/private/customer-data", "cat </secret", "/opt/company/config", "/workspace/private/repo",
         "/var/lib/private/state", "/usr/bin/python3", "/data/private", "/home/user2/file",
         "/work/toy-other/file", "/work/toy/../../private", "/work/toy/../private",
         "Author: Fictional Maintainer <toy@example.invalid>",
         "Commit: Another Person <noreply@anthropic.com>",
         '"authorName": "Fictional Maintainer"',
+        "GIT_AUTHOR_IDENT=Fictional Maintainer <toy@example.invalid> 123 +0000",
+        "user.name Fictional Maintainer", "git author is Fictional Maintainer",
         '"cwd": "/work/claude-tmp"',
     ],
 )
@@ -371,19 +374,25 @@ def test_short_secrets_match_whole_words_only(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("fail", [False, True])
+@pytest.mark.parametrize("custom_config", [False, True])
+@pytest.mark.parametrize("broken_config", [False, True])
 def test_record_redacts_effective_git_identity_and_cleans_its_state(
     tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, fail: bool,
+    custom_config: bool, broken_config: bool,
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
-    config = tmp_path / "claude-config"
+    config = tmp_path / "claude-config" if custom_config else home / ".claude"
     config.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    if custom_config:
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    else:
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     snapshots = config / "shell-snapshots"
     snapshots.mkdir()
     (snapshots / "old.sh").write_text("keep")
-    config_file = config / ".claude.json"
+    config_file = (config if custom_config else home) / ".claude.json"
     config_file.write_text(json.dumps({"projects": {"/existing": {"keep": True}}, "other": 1}))
     mocker.patch("scripts.web_corpus.shutil.which", return_value="/bin/claude")
 
@@ -408,9 +417,12 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
                 {"type": "text", "text": "Qix Author Zed Committer Qix Zed author@example.invalid committer@example.invalid"},
                 {"type": "tool_use", "name": "Bash", "input": {"command": "true"}},
             ]}}])
-        data = json.loads(config_file.read_text())
-        data["projects"][str(toy)] = {"private": "recording"}
-        config_file.write_text(json.dumps(data))
+        if broken_config:
+            config_file.write_text("{invalid")
+        else:
+            data = json.loads(config_file.read_text())
+            data["projects"][str(toy)] = {"private": "recording"}
+            config_file.write_text(json.dumps(data))
         (snapshots / f"{sid}.sh").write_text("private shell")
         process = mocker.Mock()
         process.communicate.return_value = (None, "failed" if fail else "")
@@ -420,14 +432,19 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
 
     mocker.patch("scripts.web_corpus.subprocess.Popen", side_effect=start)
     out = tmp_path / "corpus"
-    if fail:
+    if broken_config:
+        with pytest.raises(SystemExit, match="cleanup"):
+            record(out)
+        assert config_file.read_text() == "{invalid"
+    elif fail:
         with pytest.raises(SystemExit, match="claude exited"):
             record(out)
     else:
         record(out)
         text = "".join(p.read_text() for p in out.rglob("*.jsonl"))
         assert all(secret not in text for secret in ("Qix", "Author", "Zed", "Committer"))
-    assert json.loads(config_file.read_text()) == {"projects": {"/existing": {"keep": True}}, "other": 1}
+    if not broken_config:
+        assert json.loads(config_file.read_text()) == {"projects": {"/existing": {"keep": True}}, "other": 1}
     assert sorted(p.name for p in snapshots.iterdir()) == ["old.sh"]
     assert not list((config / "projects").iterdir())
 

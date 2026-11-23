@@ -6003,8 +6003,9 @@ Expected: one `  <session>: <prompt>` line per scripted step, then
 (tool call, failing tool call, long output, Markdown, subagent, thinking,
 interruption, compaction) this Claude version did not produce; `corpus.json`
 lists them under `missing_shapes`. The recorder deletes its raw sessions,
-project entry in the effective config directory's `.claude.json`, and new
-shell snapshots, including after a failed run. Do not run other Claude sessions
+project entry in `$CLAUDE_CONFIG_DIR/.claude.json` (or `~/.claude.json`
+without an override), and new shell snapshots, including after a failed run.
+A cleanup error is reported after attempting the remaining cleanup actions. Do not run other Claude sessions
 against that config directory during recording: new shell snapshots are treated
 as recording state.
 

@@ -311,15 +311,17 @@ def normalise_home(raw_project: Path, out_home: Path, identity: Identity, order:
 
 
 _NORMAL_UUID = re.compile(r"([0-9a-f]{8})-0000-4000-8000-0000\1")
-_HOST_PATH = re.compile(r"(?<![\w.<:/-])/(?!/)[\w.~/-]+")
+_HOST_PATH = re.compile(r"(?<![\w.-])/[\w.~/-]+")
 _ALLOWED_PATHS = (TOY_DIR, HOME_DIR, "/work/claude-tmp")
 # Slash commands and XML closing tags are not filesystem paths.
 _SLASH_COMMANDS = frozenset({"/compact"})
 _IDENTITY_FIELD = re.compile(
-    r'(?i)(?:\b(?:author|committer|commit|co-authored-by|user\.name|user\.email|cwd)'
-    r'|\b(?:git_)?(?:author|committer)_(?:name|email)'
-    r'|\b(?:author|committer|user)(?:Name|Email))'
-    r'["\']?\s*[:=]\s*["\']?([^\n<>"\']+)'
+    r'(?i)(?:(?:\b(?:author|committer|commit|co-authored-by|cwd)'
+    r'|\b(?:git_)?(?:author|committer)_(?:name|email|ident)'
+    r'|\b(?:author|committer|user)(?:Name|Email))["\']?\s*[:=]\s*'
+    r'|\buser\.(?:name|email)["\']?(?:\s*[:=]\s*|\s+)'
+    r'|\bgit\s+(?:author|committer)\s+is\s+)'
+    r'["\']?([^\n<>"\']+)'
 )
 _IDENTITY_PLACEHOLDERS = frozenset({"Toy", "Claude", REDACTED, *EMAILS_ALLOWED, TOY_DIR})
 
@@ -353,7 +355,10 @@ def find_leaks(text: str, identity: Identity | None = None) -> list[str]:
         path = match[0].rstrip(".")
         if path in _SLASH_COMMANDS:
             continue
-        normal = posixpath.normpath(path)
+        if (match.start() > 0 and text[match.start() - 1] == "<"
+                and text[match.end():].startswith(">") and "/" not in path[1:]):
+            continue
+        normal = "/" + posixpath.normpath(path).lstrip("/")
         if not any(normal == root or normal.startswith(root + "/") for root in _ALLOWED_PATHS):
             leaks.append(path)
     # Decode JSON strings too: free-text tool output can contain escaped fields.
@@ -787,24 +792,42 @@ def record(out_dir: Path) -> list[str]:
                 _claude_version(env),
             )
         finally:
-            # The raw sessions hold the account's context; nothing of them stays.
-            shutil.rmtree(raw_project, ignore_errors=True)
-            config_file = config_home / ".claude.json"
-            if config_file.is_file():
-                data = json.loads(config_file.read_text(encoding="utf-8"))
-                projects = data.get("projects")
-                if isinstance(projects, dict) and str(toy) in projects:
-                    del projects[str(toy)]
-                    config_file.write_text(json.dumps(data) + "\n", encoding="utf-8")
-            for snapshot in set(snapshots.glob("*")) - old_snapshots:
-                snapshot.unlink(missing_ok=True)
+            # Attempt every cleanup even if another state file is unreadable.
+            cleanup_errors: list[str] = []
+            try:
+                if raw_project.exists():
+                    shutil.rmtree(raw_project)
+            except OSError as exc:
+                cleanup_errors.append(f"{raw_project}: {exc}")
+            config_file = (
+                config_home / ".claude.json"
+                if os.environ.get("CLAUDE_CONFIG_DIR") else Path.home() / ".claude.json"
+            )
+            try:
+                if config_file.is_file():
+                    data = json.loads(config_file.read_text(encoding="utf-8"))
+                    if not isinstance(data, dict):
+                        raise ValueError("config is not an object")
+                    projects = data.get("projects")
+                    if isinstance(projects, dict) and str(toy) in projects:
+                        del projects[str(toy)]
+                        config_file.write_text(json.dumps(data) + "\n", encoding="utf-8")
+            except (OSError, ValueError) as exc:
+                cleanup_errors.append(f"{config_file}: {exc}")
+            paths = set(snapshots.glob("*")) - old_snapshots
             for _, session_id in sessions:
                 for kind in ("session-env", "file-history", "tasks", "todos"):
-                    for path in (_config_home() / kind).glob(f"{session_id}*"):
-                        if path.is_dir() and not path.is_symlink():
-                            shutil.rmtree(path, ignore_errors=True)
-                        else:
-                            path.unlink(missing_ok=True)
+                    paths.update((config_home / kind).glob(f"{session_id}*"))
+            for path in paths:
+                try:
+                    if path.is_dir() and not path.is_symlink():
+                        shutil.rmtree(path)
+                    else:
+                        path.unlink(missing_ok=True)
+                except OSError as exc:
+                    cleanup_errors.append(f"{path}: {exc}")
+            if cleanup_errors:
+                raise SystemExit("error: recording cleanup failed: " + "; ".join(cleanup_errors))
 
 
 def _write_corpus(
