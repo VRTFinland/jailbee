@@ -27,5 +27,6 @@ onBeforeUnmount(() => dashboard?.stop())
 </script>
 
 <template>
-    <router-view />
+    <!-- Route-specific documents must reload and release their live follow on navigation. -->
+    <router-view :key="route.path" />
 </template>

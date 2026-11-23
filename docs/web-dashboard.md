@@ -110,6 +110,15 @@ expectations fail the test. The restart tracer deliberately waits for a
 refused WebSocket reconnect and allows only that server's exact connection
 error; ordinary tests do not suppress reconnect errors.
 
+`tests_e2e/test_sessions.py` exercises the hand-written fixture sessions at
+both desktop and phone widths: repository/container lists, Markdown and code,
+folded tools, subagent navigation, thinking settings, live appends and
+restart catch-up without lost or duplicated replies. Reuse
+`tests_e2e.sessions.open_session(page)` from a session list and
+`append_entry(server, path, text)` to write a fixture entry and fire its fake
+watch. Copy the fixture home to a temporary directory before appending; with
+the server stopped the helper only writes, leaving reconnect to catch up.
+
 ## Run it
 
 ```bash
