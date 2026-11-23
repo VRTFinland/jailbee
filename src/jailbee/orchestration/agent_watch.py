@@ -6,7 +6,7 @@ import json
 import shlex
 import signal
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from jailbee.incus import IncusError
@@ -14,7 +14,7 @@ from jailbee.initial_prompt import AGENT_EXIT_PATH, AGENT_PID_PATH
 
 if TYPE_CHECKING:
     from jailbee.accounts.adapters.base import AccountAdapter
-    from jailbee.accounts.models import AgentActivity, AgentSession
+    from jailbee.accounts.models import AgentActivity, AgentApiError, AgentSession
     from jailbee.config import Config
     from jailbee.incus import Incus
     from jailbee.orchestration.actions import Node, Outcome
@@ -182,6 +182,8 @@ def agent_snapshot(
 
     Unlike `idle_signal` this also covers busy sessions. Times are epoch
     seconds; unknown fields are None. Any adapter failure leaves only `alive`.
+    An open API error makes `state` `error:<kind>`; `session_state` keeps the
+    session's own state and `error` holds the kind, time, detail and reset.
     """
     from jailbee.orchestration.child_status import clean_text
 
@@ -191,9 +193,11 @@ def agent_snapshot(
     snap: dict[str, object] = {
         "alive": None if starting else status.alive,
         "state": "starting" if starting else None,
+        "session_state": None,
         "since": None,
         "last_event_at": None,
         "last_tool": None,
+        "error": None,
     }
     try:
         matched = _matched_session(cfg, name, status)
@@ -204,12 +208,23 @@ def agent_snapshot(
         activity = adapter.read_activity(paths, now=now.timestamp()) if paths is not None else None
         result = dict(snap)
         result["state"] = session.state
+        result["session_state"] = session.state
         result["since"] = session.since.timestamp() if session.since else None
         if activity is not None:
             if activity.last_event_at is not None:
                 result["last_event_at"] = activity.last_event_at.timestamp()
             if activity.last_tool is not None:
                 result["last_tool"] = clean_text(activity.last_tool, 160)
+            error = activity.api_error
+            if error is not None:
+                # The session may say idle or busy; the turn itself has failed.
+                result["state"] = f"error:{error.kind}"
+                result["error"] = {
+                    "kind": error.kind,
+                    "at": error.at.timestamp() if error.at else None,
+                    "detail": clean_text(error.detail, 160),
+                    "resets_at": error.resets_at.timestamp() if error.resets_at else None,
+                }
         return result
     except Exception:
         return snap
@@ -219,7 +234,7 @@ def advance_idle(
     entry: WatchEntry, token: str | None, *, now: datetime, after: int
 ) -> tuple[WatchEntry, str | None]:
     """One durable idle episode, with at most one notification per interval."""
-    if token is None or entry.last_message_kind == "blocked":
+    if token is None or entry.last_message_kind == "blocked" or entry.api_error_key is not None:
         return replace(entry, idle_since=None, idle_reported_at=None, idle_token=None), None
     if entry.idle_token != token or entry.idle_since is None:
         return replace(
@@ -240,6 +255,41 @@ def advance_idle(
         f"last message: {last}"
     )
     return replace(entry, idle_reported_at=now.isoformat()), body
+
+
+def advance_api_error(
+    entry: WatchEntry, error: AgentApiError | None
+) -> tuple[WatchEntry, str | None]:
+    """One `blocked` report per API-error episode; progress (None) closes the episode.
+
+    `error` must come from this tick's read: a stale error is never reported.
+    The episode key lives on the durable entry, so a broker restart does not
+    report it again.
+    """
+    if error is None:
+        return (replace(entry, api_error_key=None) if entry.api_error_key else entry), None
+    if entry.api_error_key == error.key:
+        return entry, None
+    body = f"[jailbee] child `{entry.child_full}` agent stopped on an API error ({error.kind})"
+    if error.detail:
+        body += f": {error.detail}"
+    if error.resets_at is not None:
+        body += f"; resets at {error.resets_at.astimezone(UTC).strftime('%Y-%m-%d %H:%M')} UTC"
+    return replace(entry, api_error_key=error.key), body
+
+
+def api_error(cfg: Config, name: str, status: AgentStatus, *, now: datetime) -> AgentApiError | None:
+    """The API error this prompted agent's latest turn ended in, read now; None if unknown."""
+    try:
+        matched = _matched_session(cfg, name, status)
+        if matched is None:
+            return None
+        adapter, session = matched
+        paths = adapter.locate_activity(adapter.config_home(cfg), session)
+        activity = adapter.read_activity(paths, now=now.timestamp()) if paths is not None else None
+        return activity.api_error if activity is not None else None
+    except Exception:
+        return None
 
 
 # Read /proc identity as well as kill(0): a reused PID or a zombie is not our agent.

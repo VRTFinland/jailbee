@@ -274,6 +274,14 @@ def _settle_agent_watch(
         else:
             reply(ctx, entry.ref, outcome, memory)
     if updated is not None and updated.confirmed and child is not None:
+        error = (
+            agent_watch.api_error(ctx.cfg, child.full, status, now=ctx.now)
+            if status is not None and status.alive
+            else None
+        )
+        updated, error_body = agent_watch.advance_api_error(updated, error)
+        if error_body is not None:
+            _deliver_child_message(ctx, memory, child, entry.ref, "blocked", error_body)
         token = (
             agent_watch.idle_signal(ctx.cfg, child.full, status, now=ctx.now)
             if status is not None
@@ -291,34 +299,46 @@ def _settle_agent_watch(
             )
             if tail:
                 idle_body += f"\nLast agent output:\n{tail}"
-            message = InboxMessage.model_validate(
-                {
-                    "version": 1,
-                    "id": new_host_id(),
-                    "type": "message",
-                    "from": child.short,
-                    "kind": "idle",
-                    "body": idle_body,
-                    "in_reply_to": entry.ref,
-                }
-            )
-            deliver(
-                ctx.incus,
-                ctx.root,
-                ctx.sender.full,
-                message,
-                running=ctx.sender.running,
-                uid=ctx.cfg.container_user.uid,
-                now=ctx.now,
-                seq=next(memory.seq),
-                recipient_uuid=ctx.sender.config.get("volatile.uuid"),
-            )
+            _deliver_child_message(ctx, memory, child, entry.ref, "idle", idle_body)
     index = entries.index(entry)
     if updated is None:
         entries.pop(index)
     else:
         entries[index] = updated
     watch.save_watch(ctx.root, watches)
+
+
+def _deliver_child_message(
+    ctx: ActionContext,
+    memory: broker_state.BrokerMemory,
+    child: Node,
+    ref: str,
+    kind: Literal["blocked", "idle"],
+    body: str,
+) -> None:
+    """A broker-written message on behalf of a supervised child, to its orchestrator."""
+    message = InboxMessage.model_validate(
+        {
+            "version": 1,
+            "id": new_host_id(),
+            "type": "message",
+            "from": child.short,
+            "kind": kind,
+            "body": body,
+            "in_reply_to": ref,
+        }
+    )
+    deliver(
+        ctx.incus,
+        ctx.root,
+        ctx.sender.full,
+        message,
+        running=ctx.sender.running,
+        uid=ctx.cfg.container_user.uid,
+        now=ctx.now,
+        seq=next(memory.seq),
+        recipient_uuid=ctx.sender.config.get("volatile.uuid"),
+    )
 
 
 def settle_all_watches(
