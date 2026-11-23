@@ -21,6 +21,8 @@ from tests.follower_fixture import CLAUDE, FOLLOWER, WRAPPER, gather
 from tests.web_fakes import snapshot_of
 
 NOW = datetime(2026, 11, 23, 12, 0, tzinfo=UTC)
+
+
 def _shown(info, group) -> tuple[str, str, str]:
     """(TUI AGENT cell, web row state, `jb ls --json` state)."""
     specs = {s.name: s for s in ls_field_specs(now=NOW)}

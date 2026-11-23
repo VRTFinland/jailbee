@@ -76,5 +76,3 @@ def gather(
     sampler = procstat.ActivitySampler(proc_root=proc, cgroup_root=cgroup)
     sample_activity([group], sampler)
     return info, group
-
-
