@@ -202,7 +202,9 @@ def test_registered_security_key_updates_its_counter_and_refuses_a_clone(
     assert auth_admin.list_sessions(server.engine) == []
     event = auth_admin.recent_events(server.engine)[-1]
     assert (event.event, event.method, event.device_name) == (
-        "login_failed", "fido2", "security-key tablet"
+        "login_failed",
+        "fido2",
+        "security-key tablet",
     )
     with Session(server.engine) as session:
         (stored_key,) = session.exec(select(WebFido2Key)).all()

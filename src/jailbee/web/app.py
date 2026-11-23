@@ -51,6 +51,7 @@ def create_app(deps: WebDeps) -> FastAPI:
         ),
     )
     app.add_middleware(SecurityHeaders)
+
     @app.get("/api/mode")
     def mode(response: Response) -> dict[str, str]:
         response.headers["Cache-Control"] = "no-store"
