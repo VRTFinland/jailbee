@@ -45,9 +45,12 @@ tree beside a preview. You mark, delete or publish from there:
 
 Every action the dashboard starts becomes an entry in its notification queue.
 Once anything has run, a badge `⟳ R · ⚠ A` appears at the top-right of the
-title (R running, A failed or awaiting an answer). Its accent-coloured, bold
-running glyph animates while work runs; the attention count stays red and bold.
-On narrow terminals the title shortens before the badge. Click it or press `Q`
+title (R running, A failed or awaiting an answer). Its bold running glyph uses
+the active theme's accent and advances one frame per refresh while work runs;
+a zero running count stays dim, and a non-zero attention count stays red and bold.
+`NO_COLOR` keeps the emphasis without emitting colours. On narrow terminals the
+title shortens before the badge; when both cannot fit, only the badge remains,
+ellipsised if needed (at six columns or fewer, only the border fits). Click it or press `Q`
 to open the list, newest first. Here a base build is still running (its last output line is on the row),
 a push failed and a stop finished:
 

@@ -12,6 +12,7 @@ import sys
 import threading
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
+from dataclasses import replace
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -547,7 +548,14 @@ class DashboardApp(App[int], inherit_bindings=False):
         painted = (view, self.size)
         if painted == self._painted:
             return
-        self.frame.show(view)
+        if (
+            self._painted is not None
+            and (replace(view, queue_frame=self._painted[0].queue_frame), self.size)
+            == self._painted
+        ):
+            self.frame.show_title(view)
+        else:
+            self.frame.show(view)
         self.session.details_furthest = self.frame.details_furthest
         self.session.details_shown = self.frame.details_shown
         self.session.details_room = self.frame.details_room

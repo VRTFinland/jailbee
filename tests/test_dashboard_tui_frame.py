@@ -526,8 +526,32 @@ def test_a_narrow_title_ellipsises_before_the_queue_badge(tmp_path, width):
     assert all(cell_len(line) == width for line in lines)
 
 
-@pytest.mark.parametrize("theme", ["textual-light", "textual-dark", "monochrome"])
-def test_the_badge_has_accent_and_non_colour_emphasis(mocker, tmp_path, monkeypatch, theme):
+@pytest.mark.parametrize(
+    ("width", "label"),
+    [
+        (18, " ⟳ 12 · ⚠ 34"),
+        (17, "⟳ 12 · ⚠ 34"),
+        (16, "⟳ 12 · ⚠ …"),
+        (10, "⟳ 1…"),
+        (7, "…"),
+        (6, ""),
+    ],
+)
+def test_a_tiny_title_keeps_the_badge_instead_of_the_dashboard_name(tmp_path, width, label):
+    from jailbee.dashboard.notifications import QueueCounts
+
+    lines = paint(view_of([_long(tmp_path)], queue=QueueCounts(12, 34)), size=(width, 12))
+    assert lines[0] == (f"╭─ {label} ─╮" if label else "╭" + "─" * (width - 2) + "╮")
+    assert all(cell_len(line) == width for line in lines)
+
+
+@pytest.mark.parametrize("running", [0, 2])
+@pytest.mark.parametrize("theme", ["colour", "monochrome"])
+def test_the_badge_has_accent_and_non_colour_emphasis(
+    mocker, tmp_path, monkeypatch, theme, running
+):
+    from textual.color import Color
+
     from jailbee.dashboard.hit import Hit
     from tests.dashboard_pilot import hit_offset, make_app
 
@@ -538,19 +562,58 @@ def test_the_badge_has_accent_and_non_colour_emphasis(mocker, tmp_path, monkeypa
     app = make_app(mocker, [_long(tmp_path, 3)])
     entry = app.session.queue.start("jailbee doctor", "alpha")
     app.session.queue.finish(entry, status=1, output="failed")
+    for _ in range(running):
+        app.session.queue.start("jailbee doctor", "alpha")
 
     async def script():
         async with app.run_test(size=(100, 25)) as pilot:
-            app.theme = "textual-light" if theme == "textual-light" else "textual-dark"
+            for active_theme in ("textual-dark", "textual-light", "textual-dark"):
+                app.theme = active_theme
+                await pilot.pause()
+                x, y = hit_offset(app, Hit("queue"))
+                assert y == 0 and x > 80
+                glyph = app.screen.get_style_at(x, y)
+                attention = app.screen.get_style_at(x + 6, y)
+                assert attention.bold
+                assert glyph.bold if running else glyph.dim and not glyph.bold
+                if theme == "monochrome":
+                    for strip in app.screen._compositor.render_strips():
+                        for segment in strip:
+                            if segment.style:
+                                for color in (segment.style.color, segment.style.bgcolor):
+                                    assert color is None or color.is_default
+                elif running:
+                    expected = Color.parse(app.get_css_variables()["accent"]).rich_color
+                    assert glyph.color == expected
+                if theme != "monochrome":
+                    assert attention.color.number == 1  # ANSI red
+
+    asyncio.run(script())
+
+
+def test_spinner_only_refreshes_do_not_redraw_the_body(mocker, tmp_path):
+    from tests.dashboard_pilot import FROZEN_NOW, make_app, screen_text
+
+    mocker.patch.object(tsession, "_now", return_value=FROZEN_NOW)
+    app = make_app(mocker, [_long(tmp_path, 3)])
+    app.session.queue.start("jailbee doctor", "alpha")
+
+    async def script():
+        async with app.run_test(size=(100, 25)) as pilot:
             await pilot.pause()
-            x, y = hit_offset(app, Hit("queue"))
-            assert y == 0 and x > 80
-            glyph = app.screen.get_style_at(x, y)
-            attention = app.screen.get_style_at(x + 6, y)
-            assert glyph.bold and attention.bold
-            if theme != "monochrome":
-                assert glyph.color.number == 6  # ANSI cyan
-                assert attention.color.number == 1  # ANSI red
+            app.refresh_frame()
+            await pilot.pause()
+            shown = mocker.spy(app.frame, "show")
+            before = screen_text(app).splitlines()
+            app.refresh_frame()
+            await pilot.pause()
+            after = screen_text(app).splitlines()
+            assert after[0] != before[0] and after[1:] == before[1:]
+            shown.assert_not_called()
+            app.session.handle_key("down")
+            app.refresh_frame()
+            await pilot.pause()
+            shown.assert_called_once()
 
     asyncio.run(script())
 
@@ -569,9 +632,11 @@ def test_the_queue_spinner_uses_refresh_frames_and_stops_when_idle(mocker, tmp_p
     async def script():
         async with app.run_test(size=(100, 25)) as pilot:
             await pilot.pause()
-            for _ in range(4):
+            app.refresh_frame()
+            await pilot.pause()
+            for delay in (0, 100, 600, 1100, 250):
                 tops.append(screen_text(app).splitlines()[0])
-                now[0] += timedelta(milliseconds=250)
+                now[0] += timedelta(milliseconds=delay)
                 app.refresh_frame()
                 await pilot.pause()
             app.session.queue.finish(entry, status=1, output="failed")
@@ -588,9 +653,7 @@ def test_the_queue_spinner_uses_refresh_frames_and_stops_when_idle(mocker, tmp_p
             assert shown.call_count == 0
 
     asyncio.run(script())
-    assert [top[-14:] for top in tops] == [
-        "  ⟳ 1 · ⚠ 0 ─╮",
-        "  ◷ 1 · ⚠ 0 ─╮",
-        "  ◶ 1 · ⚠ 0 ─╮",
-        "  ◵ 1 · ⚠ 0 ─╮",
-    ]
+    glyphs = [top[-12] for top in tops]
+    cycle = "⟳◷◶◵"
+    start = cycle.index(glyphs[0])
+    assert "".join(glyphs) == (cycle * 2)[start : start + 5]

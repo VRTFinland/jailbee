@@ -154,9 +154,10 @@ before editing `## Unreleased`.
   finished, with a `Q` hint and, for a failure, the last output line. Verbs run
   for their output (diff, job log, egress list, merge, PR push, doctor,
   disk usage, the command line) open it automatically. The `⟳ running · ⚠ attention` badge
-  sits at the top-right of the title, in bold accent colour with a red/bold attention
-  count; its running glyph animates on the dashboard refresh and stops when idle,
-  and narrow terminals shorten the title first ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
+  sits at the top-right of the title, using the active theme's bold accent colour
+  for running work and red/bold for non-zero attention; zero counts stay dim.
+  Its running glyph advances once per refresh without redrawing the body and stops
+  when idle. Narrow terminals shorten or hide the title before clipping the badge ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
   A click on the badge, or `Q`, opens the queue, where an entry expands to its full output. A
   running entry shows its last output line in the list, an expanded one
   follows the output live, and an entry waiting on a question reads
