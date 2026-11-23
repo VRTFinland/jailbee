@@ -237,7 +237,7 @@ onMounted(async () => {
                 <h1>{{ transcript.title || (agentId === null ? "Untitled session" : "Subagent") }}</h1>
                 <p class="session-meta muted">
                     <span>{{ transcript.agent }}</span>
-                    <span v-if="transcript.models.length" class="mono">{{
+                    <span v-if="transcript.models.length" class="mono" :title="transcript.models.join(', ')">{{
                         transcript.models.join(", ")
                     }}</span>
                 </p>
@@ -367,11 +367,19 @@ h1 {
 }
 .session-meta {
     display: flex;
-    flex-wrap: wrap;
     gap: var(--space-1) var(--space-3);
     margin: 0;
-    overflow-wrap: anywhere;
     font-size: 0.85rem;
+}
+.session-meta > span {
+    flex-shrink: 0;
+}
+.session-meta .mono {
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .mono {
     font-family: var(--font-mono);

@@ -2,7 +2,7 @@
 // pages and moved a page at a time, jumping (never smooth-scrolling) so the
 // screen repaints once per turn. Only the bar and the bottom guard are
 // reserved by default; a view with a sticky header reserves that too.
-import {computed, onBeforeUnmount, onMounted, ref, type ComputedRef, type Ref} from "vue"
+import {computed, onBeforeUnmount, onMounted, ref, watch, type ComputedRef, type Ref} from "vue"
 
 /** The page-turn bar (56px) plus the bottom guard (32px). */
 export const RESERVED_PX = 88
@@ -38,6 +38,12 @@ export function usePager(topInset: () => number = () => 0): Pager {
         page.value = Math.max(0, Math.round(window.scrollY / pageHeight()))
         measure()
     }
+
+    watch(topInset, () => {
+        // A resized header changes the page grid without moving the reader.
+        page.value = Math.max(0, Math.floor(window.scrollY / pageHeight()))
+        measure()
+    }, {flush: "sync"})
 
     function goTo(index: number) {
         const target = Math.min(Math.max(0, index), pageCount.value - 1)

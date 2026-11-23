@@ -232,6 +232,35 @@ describe("SessionView in the e-ink profile", () => {
         wrapper.unmount()
     })
 
+    it("keeps page turns forward when the connection notice makes the header taller", async () => {
+        updateSettings({displayProfile: "eink"})
+        setPageGeometry(10000, 0)
+        let y = 0
+        let height = 120
+        const observers: (() => void)[] = []
+        vi.stubGlobal("ResizeObserver", class {
+            constructor(callback: () => void) { observers.push(callback) }
+            observe() {}
+            disconnect() {}
+        })
+        Object.defineProperty(window, "scrollY", {get: () => y, configurable: true})
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(() => ({top: 0, bottom: height} as DOMRect))
+        vi.spyOn(window, "scrollTo").mockImplementation((_x, top) => {
+            y = top ?? 0
+            window.dispatchEvent(new Event("scroll"))
+        })
+        const {wrapper, connection} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        for (let i = 0; i < 5; i++) await wrapper.get("button.next").trigger("click")
+        expect(y).toBe(2960)
+        connection(false)
+        height = 320
+        observers.forEach((notify) => notify())
+        await flushPromises()
+        await wrapper.get("button.next").trigger("click")
+        expect(y).toBe(3136)
+        wrapper.unmount()
+    })
+
     it("jumps to the page that holds the latest answer", async () => {
         reloadSettings()
         updateSettings({displayProfile: "eink"})
