@@ -7,11 +7,12 @@ CLI-only (spec #109).
 from __future__ import annotations
 
 import math
+import unicodedata
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 
 from jailbee.web import auth_admin, login_link
 from jailbee.web.deps import Context, RequestRp, RequireSession, request_rp
@@ -20,7 +21,19 @@ from jailbee.web.fido2_auth import Fido2Error
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
-DeviceName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+
+def _no_control_characters(name: str) -> str:
+    """Reject Unicode categories Cc and Cf: they would mangle the operator's terminal."""
+    if any(unicodedata.category(c) in ("Cc", "Cf") for c in name):
+        raise ValueError("must not contain control characters")
+    return name
+
+
+DeviceName = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
+    AfterValidator(_no_control_characters),
+]
 
 
 class PinLogin(BaseModel):
@@ -209,7 +222,7 @@ def rename_session(
         ctx.deps.engine,
         "rename",
         clock=ctx.deps.clock,
-        device_name=body.device_name,
+        device_name=f"{authed.session.device_name} \u2192 {renamed.device_name}",
         source=_source(request),
     )
     return SessionResponse(

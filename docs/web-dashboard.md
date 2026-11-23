@@ -226,7 +226,10 @@ the browser's User-Agent ("Firefox on Linux", "Safari on iPhone", "Chrome on
 Android", or "Browser" when it recognises none). The name shows in the header,
 in `jb remote web auth sessions ls` and in the audit log; rename the current
 session under **Settings → This session** (`PUT /api/session`, audited as a
-`rename` event). Older clients may still send a `device_name`, which is kept.
+`rename` event, recording the old and new name). Older clients may still send a
+`device_name`, which is kept. A name is 1-100 characters after trimming and may
+not contain control or format characters (the server answers 422); the CLI also
+prints any such character escaped.
 PIN and TOTP attempts are limited to five a minute, and after five failures
 in a row each further failure doubles the wait before the next attempt:
 2 seconds after the fifth, 4 after the sixth, up to 30 minutes. A successful login by any method (PIN, TOTP, security key or link) resets

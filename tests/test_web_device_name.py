@@ -101,6 +101,19 @@ def bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+BAD_NAMES = [
+    "",
+    "   ",
+    "x" * 101,
+    "a\nb",
+    "\x1b[31m",
+    "a\x1b]0;pwn\x07\nb\tc",
+    "\u202e",
+    "a\x00b",
+    "a\x7fb",
+]
+
+
 def pin_login(client: TestClient, pin: PinHolder, agent: str, **extra: str) -> str:
     response = client.post(
         "/api/auth",
@@ -159,7 +172,20 @@ def test_a_rename_is_audited(client: TestClient, pin: PinHolder) -> None:
 
     with Session(get_engine()) as s:
         rows = s.exec(select(WebAuthEvent).where(WebAuthEvent.event == "rename")).all()
-    assert [r.device_name for r in rows] == ["hall tablet"]
+    assert [r.device_name for r in rows] == ["Firefox on Linux \u2192 hall tablet"]
+
+
+@pytest.mark.parametrize("name", BAD_NAMES[3:])
+def test_a_login_with_a_control_character_in_the_device_name_is_refused(
+    client: TestClient, pin: PinHolder, name: str
+) -> None:
+    response = client.post(
+        "/api/auth",
+        json={"method": "pin", "pin": pin.current, "device_name": name},
+        headers={"User-Agent": FIREFOX_LINUX},
+    )
+
+    assert response.status_code == 422
 
 
 def test_renaming_needs_a_session(client: TestClient) -> None:
@@ -168,7 +194,7 @@ def test_renaming_needs_a_session(client: TestClient) -> None:
     assert response.status_code == 401
 
 
-@pytest.mark.parametrize("name", ["", "   ", "x" * 101])
+@pytest.mark.parametrize("name", BAD_NAMES)
 def test_a_rename_needs_a_sensible_name(client: TestClient, pin: PinHolder, name: str) -> None:
     token = pin_login(client, pin, FIREFOX_LINUX)
 
