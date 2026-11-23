@@ -1,7 +1,7 @@
 // Mirror of src/jailbee/web/protocol.py. Bump PROTOCOL_VERSION in both files
 // on any change either side could misread.
 
-export const PROTOCOL_VERSION = 3
+export const PROTOCOL_VERSION = 4
 
 export const CLOSE_UNAUTHORIZED = 4001
 export const CLOSE_PROTOCOL_MISMATCH = 4002
@@ -51,6 +51,15 @@ export interface ContainerRow {
     /** Non-normal row phase from the dashboard core: booting, autostart, job, failed. */
     phase: string | null
     cells: string[]
+    depth: number
+    orchestrator: boolean
+    child_count: number
+    child: {
+        orchestrator: string | null
+        orchestrator_short_name: string
+        state: string
+        runner: string | null
+    } | null
 }
 
 export interface RepoRow {

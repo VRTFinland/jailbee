@@ -5,6 +5,8 @@ import {setToken} from "../api"
 import {createAppRouter} from "../router"
 import {updateSettings} from "../settings"
 import RepoView from "./RepoView.vue"
+import {DASHBOARD, Dashboard} from "../dashboard"
+import {orchestrationView} from "../test-fixtures"
 
 function jsonResponse(status: number, body: unknown): Response {
     return new Response(JSON.stringify(body), {
@@ -32,19 +34,36 @@ const sessions = [
     },
 ]
 
-async function mountRepo(fetchMock: ReturnType<typeof vi.fn>) {
+async function mountRepo(fetchMock: ReturnType<typeof vi.fn>, dashboard?: Dashboard) {
     setToken("tok")
     vi.stubGlobal("fetch", fetchMock)
     const router = createAppRouter(createMemoryHistory())
     await router.push("/repos/alpha")
     await router.isReady()
-    const wrapper = mount(RepoView, {global: {plugins: [router]}})
+    const wrapper = mount(RepoView, {global: {plugins: [router], provide: dashboard ? {[DASHBOARD]: dashboard} : {}}})
     await flushPromises()
     return {wrapper, router}
 }
 
 describe("RepoView", () => {
     afterEach(() => updateSettings({displayProfile: "normal"}))
+
+    it("shows the repository's nested containers and updates when a child disappears", async () => {
+        const dashboard = new Dashboard(() => ({start() {}, stop() {}, send() {}}))
+        dashboard.state.view = orchestrationView()
+        const {wrapper} = await mountRepo(vi.fn().mockResolvedValue(jsonResponse(200, {sessions})), dashboard)
+        expect(wrapper.findAll("li.row").map(row => row.attributes("data-container"))).toEqual([
+            "alpha-orch", "alpha-task-a", "alpha-task-b",
+        ])
+        expect(wrapper.findAll("li.nested")).toHaveLength(2)
+        const next = orchestrationView()
+        next.repos[0].containers.pop()
+        next.repos[0].containers[0].child_count = 1
+        dashboard.state.view = next
+        await flushPromises()
+        expect(wrapper.findAll("li.nested")).toHaveLength(1)
+        expect(wrapper.text()).toContain("Orchestrator · 1 child")
+    })
 
     it("offers page turns instead of scrolling in the e-ink profile", async () => {
         updateSettings({displayProfile: "eink"})

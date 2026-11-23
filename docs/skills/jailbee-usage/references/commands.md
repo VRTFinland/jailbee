@@ -431,6 +431,10 @@ suggestions, in its own style, instead of a generic router message.
 Host-side only; included in every install. Full guide: `docs/web-dashboard.md`.
 Session lists are titled by the first typed prompt, ignoring agent wrappers and
 injected context; command-only sessions use their first slash command.
+The front page and repository container lists nest children under their
+orchestrator, show its child count and each child's state/runner, and keep
+absent-parent children labelled. Container pages link between parent and
+children; the hierarchy follows live snapshots.
 
 | Command | What it does |
 |---|---|

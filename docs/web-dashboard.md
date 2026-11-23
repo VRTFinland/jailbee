@@ -21,6 +21,15 @@ coloured edge and a phase label, and a Stopped container is dimmed. The e-ink
 theme has no colour, so phases differ by edge style (dashed, dotted, double,
 heavy) and the label, and a Stopped row is drawn without top, right and bottom edges instead of a fade.
 
+Children appear indented under their orchestrator on the front page and in
+repository container lists, with a child count on the orchestrator and each
+child's state and runner when known. A child whose orchestrator is absent
+stays visible with a `Child of` label. Container pages link to their children
+or back to their orchestrator. These relationships update with the live
+snapshot; indentation, borders and text keep them readable without colour.
+An orchestrator in an excluded repository is labelled `hidden orchestrator`,
+without its name or a link.
+
 ## Install
 
 The web dashboard comes with every JailBee install: its dependencies are part
