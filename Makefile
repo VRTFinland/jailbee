@@ -19,21 +19,19 @@ SHELL := /bin/bash
 install:
 	uv tool install '.[gui,ssh,web]' --force --reinstall
 	jailbee setup --yes
-	@# The SSH service runs the old code until restarted. try-restart is a
-	@# no-op when the unit is not running, so users without it are unaffected.
+	@# The SSH, broker and web dashboard services run the old code until
+	@# restarted (the broker restarts itself when the version changes, but a
+	@# reinstall of the same version needs this). Only installed units are
+	@# touched: try-restart is a no-op for a stopped unit but fails for a
+	@# missing one.
 	@if command -v systemctl >/dev/null 2>&1; then \
-		systemctl --user try-restart jailbee-ssh.service; \
+		for unit in jailbee-ssh jailbee-broker jailbee-web; do \
+			if systemctl --user cat "$$unit.service" >/dev/null 2>&1; then \
+				systemctl --user try-restart "$$unit.service"; \
+			fi; \
+		done; \
 	fi
-	@# So does the orchestration broker. It restarts itself when the version
-	@# changes, but a reinstall of the same version needs this.
-	@if command -v systemctl >/dev/null 2>&1; then \
-		systemctl --user try-restart jailbee-broker.service; \
-	fi
-	@# And the web dashboard service.
-	@if command -v systemctl >/dev/null 2>&1; then \
-		systemctl --user try-restart jailbee-web.service; \
-	fi
-	@# So does the dashboards' state service, and a reinstall of the same
+	@# The dashboards' state service too, and a reinstall of the same
 	@# version never replaces it (the handshake compares versions only). Open
 	@# dashboards reconnect and respawn it from the new code. The pattern is
 	@# the service's whole argv tail (`spawn_server`), so a shell or editor that
