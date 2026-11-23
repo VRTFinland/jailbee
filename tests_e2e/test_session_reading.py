@@ -183,30 +183,50 @@ def test_out_of_date_banner_leaves_the_session_title_bar_visible(
 ) -> None:
     page.set_viewport_size({"width": width, "height": 800})
     open_transcript(page, make_server, tmp_path)
+    stale = False
+    links: list[tuple[WebSocketRoute, WebSocketRoute]] = []
+    hellos: list[str] = []
 
-    # A stale client whose tab cannot guard an automatic reload shows the banner.
-    page.add_init_script("""
-        Object.defineProperty(window, 'sessionStorage', {get() {
-            throw new DOMException('Storage blocked', 'SecurityError');
-        }});
-    """)
-
-    def stale(route: WebSocketRoute) -> None:
+    def connect(route: WebSocketRoute) -> None:
         upstream = route.connect_to_server()
+        links.append((route, upstream))
 
         def stale_auth(message: str | bytes) -> None:
             payload = json.loads(message)
-            if payload["type"] == "auth":
+            if stale and payload["type"] == "auth":
                 payload["v"] = -1
             upstream.send(json.dumps(payload))
 
+        def from_server(message: str | bytes) -> None:
+            if json.loads(message)["type"] == "hello":
+                hellos.append("hello")
+            route.send(message)
+
         route.on_message(stale_auth)
+        upstream.on_message(from_server)
         upstream.on_close(lambda code, reason: route.close(code=code, reason=reason))
 
-    page.route_web_socket("**/api/ws", stale)
+    # Routed only now: Playwright forwards routed frames only while it is
+    # called, which open_transcript's plain polling would starve.
+    page.route_web_socket("**/api/ws", connect)
     page.reload()
-    expect(page.get_by_role("alert")).to_have_text("This page is out of date; reload.")
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
+    for _ in range(100):
+        if hellos:
+            break
+        page.wait_for_timeout(100)
+    assert hellos == ["hello"]
+    page.evaluate("window.scrollTo(0, 3000)")
+    page.wait_for_function("window.scrollY > 2000")
+
+    # The server is upgraded while the reader is mid-transcript; this tab just
+    # reloaded for an upgrade, so it shows the banner instead of reloading.
+    page.evaluate("sessionStorage.setItem('jailbee.protocolReload', String(Date.now()))")
+    stale = True
+    route, upstream = links[-1]
+    upstream.close(code=1012, reason="restart")
+    route.close(code=1012, reason="restart")
+    expect(page.get_by_role("alert")).to_have_text("This page is out of date; reload.")
 
     title_bar_clear = """() => {
         const banner = document.querySelector('.outdated').getBoundingClientRect();
@@ -214,7 +234,10 @@ def test_out_of_date_banner_leaves_the_session_title_bar_visible(
         return header.top >= banner.bottom - 0.5;
     }"""
     page.wait_for_function(title_bar_clear)
-    page.evaluate("window.scrollTo(0, 3000)")
-    page.wait_for_function("window.scrollY > 2000")
-    page.wait_for_function(title_bar_clear)
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_in_viewport()
+    # The readable area now starts below banner and header together.
+    page.get_by_role("button", name="Latest answer").click()
+    assert_latest_starts_below_header(page)
+    page.wait_for_function(title_bar_clear)
+    page.evaluate("window.scrollTo(0, 0)")
+    page.wait_for_function(title_bar_clear)
