@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -67,6 +68,10 @@ class WebDeps:
     file_watch: WatchFactory | None = None
     """Starts a watch on a followed transcript; None uses inotify (polling
     where it is unavailable)."""
+    warm_session_cache: bool = False
+    """Read every visible repository's session info in the background at
+    start-up (`WebContext.start_warm_up`). The real server turns it on; tests
+    that do not exercise it leave it off."""
 
 
 @dataclass
@@ -82,6 +87,10 @@ class WebContext:
     repo_sessions: RepoSessions = field(init=False)
     render_cache: RenderCache = field(init=False)
     follows: TranscriptFollows = field(init=False)
+    sessions_warmed: threading.Event = field(init=False)
+    """Set once the start-up warm-up has finished (or was not asked for)."""
+    _warm_stop: threading.Event = field(init=False)
+    _warm_thread: threading.Thread | None = field(init=False, default=None)
 
     @property
     def scope(self) -> RemoteRepoScope:
@@ -100,7 +109,41 @@ class WebContext:
         if self.deps.agent_homes is None:
             await self.snapshot()
 
+    async def start_warm_up(self) -> None:
+        """Start reading every visible repository's session info in a thread.
+
+        Waits only for the first snapshot (which names the repositories); the
+        reading itself runs on a thread of its own, never the request pool, so
+        no request waits for it. A no-op unless `WebDeps.warm_session_cache`.
+        """
+        if not self.deps.warm_session_cache:
+            self.sessions_warmed.set()
+            return
+        snapshot = await self.snapshot()
+        if snapshot is None:
+            self.sessions_warmed.set()
+            return
+        prefixes = [g.prefix for g in snapshot.groups if self.scope.allows(g.prefix)]
+        # Resolve against this snapshot: the hub may close its source before
+        # the warm-up is done, and the live resolver would then know nothing.
+        homes = self.deps.agent_homes or snapshot_homes(lambda: snapshot)
+
+        def run() -> None:
+            try:
+                self.repo_sessions.warm(prefixes, homes, self._warm_stop)
+            finally:
+                self.sessions_warmed.set()
+
+        self._warm_thread = threading.Thread(target=run, name="jailbee-web-warm", daemon=True)
+        self._warm_thread.start()
+
+    def stop_warm_up(self) -> None:
+        """Ask the warm-up to stop after the repository it is reading."""
+        self._warm_stop.set()
+
     def __post_init__(self) -> None:
+        self.sessions_warmed = threading.Event()
+        self._warm_stop = threading.Event()
         self.sessions = SessionStore(self.deps.engine, self.deps.clock)
         self.limiter = RateLimiter(self.deps.monotonic)
         self.totp = TotpVerifier(self.deps.engine, self.deps.clock)

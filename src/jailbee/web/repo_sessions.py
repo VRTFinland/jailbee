@@ -7,7 +7,9 @@ snapshot, tests point it at a temporary directory.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import builtins
+import threading
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -84,7 +86,24 @@ class RepoSessions:
         homes = self._homes(prefix)
         if homes is None:
             return None
-        rows: list[SessionRow] = []
+        return self._rows(homes)
+
+    def warm(self, prefixes: Iterable[str], homes: AgentHomes, stop: threading.Event) -> None:
+        """Read every listed repository's session info into the cache.
+
+        Run once at start-up, in a thread of its own, so the first list a
+        browser asks for finds the rows already read. ``homes`` resolves as
+        the server's resolver would; ``stop`` ends the warm-up early.
+        """
+        for prefix in prefixes:
+            if stop.is_set():
+                return
+            found = homes(prefix)
+            if found is not None:
+                self._rows(found)
+
+    def _rows(self, homes: Sequence[tuple[str, Path]]) -> builtins.list[SessionRow]:
+        rows: builtins.list[SessionRow] = []
         for agent, home in homes:
             try:
                 source = get_source(agent)

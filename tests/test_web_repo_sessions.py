@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
+import time
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 
@@ -48,11 +50,18 @@ def home(tmp_path: Path) -> Path:
     return target
 
 
-def open_client(homes: Homes, excluded: frozenset[str] = frozenset()) -> Iterator[TestClient]:
+def open_client(
+    homes: Homes,
+    excluded: frozenset[str] = frozenset(),
+    *,
+    snapshots: FakeSourceFactory | None = None,
+    warm: bool = False,
+) -> Iterator[TestClient]:
     clock = FakeClock()
     pin = PinHolder(generate=pin_sequence())
     deps = WebDeps(
-        snapshot_source=FakeSourceFactory(),
+        snapshot_source=snapshots or FakeSourceFactory(),
+        warm_session_cache=warm,
         engine=get_engine(),
         clock=clock,
         monotonic=clock.monotonic,
@@ -225,3 +234,65 @@ def test_a_restarted_server_rereads_a_transcript_that_changed_since(
         rows = client.get("/api/repos/alpha/sessions").json()["sessions"]
 
     assert rows[1]["title"] == "HELLO THERE"
+
+
+def _snapshots(*prefixes: str) -> FakeSourceFactory:
+    from tests.web_fakes import container, repo_group, snapshot_of
+
+    groups = [repo_group(p, container(f"{p}-1", repo=p)) for p in prefixes]
+    return FakeSourceFactory(initial=snapshot_of(*groups))
+
+
+def _warmed(client: TestClient) -> None:
+    assert client.app.state.web.sessions_warmed.wait(10)  # type: ignore[attr-defined]  # Starlette's app is typed as ASGIApp
+
+
+def test_the_server_reads_session_info_at_start_up_before_any_list_is_asked(
+    homes: Homes, home: Path
+) -> None:
+    path = home / "projects" / "-work-repo-other" / f"{SESSION_B}.jsonl"
+    for client in open_client(homes, snapshots=_snapshots("alpha"), warm=True):
+        _warmed(client)
+        _same_stamp_rewrite(path, "hello there", "HELLO THERE")
+        rows = client.get("/api/repos/alpha/sessions").json()["sessions"]
+
+    # The warm-up read the file before the rewrite; the list served what it read.
+    assert rows[1]["title"] == "hello there"
+
+
+def test_the_warm_up_skips_excluded_repositories(homes: Homes) -> None:
+    for client in open_client(
+        homes, frozenset({"secret"}), snapshots=_snapshots("secret", "alpha"), warm=True
+    ):
+        _warmed(client)
+
+    assert "secret" not in homes.calls
+
+
+class _StuckFirstCall(Homes):
+    """The first resolution (the warm-up's) blocks until released."""
+
+    def __init__(self, table: dict[str, Sequence[tuple[str, Path]]]) -> None:
+        super().__init__(table)
+        self.release = threading.Event()
+
+    def __call__(self, prefix: str) -> Sequence[tuple[str, Path]] | None:
+        first = not self.calls
+        found = super().__call__(prefix)
+        if first:
+            self.release.wait(10)
+        return found
+
+
+def test_requests_are_answered_while_the_warm_up_is_still_running(home: Path) -> None:
+    homes = _StuckFirstCall({"alpha": [("claude", home)]})
+    for client in open_client(homes, snapshots=_snapshots("alpha"), warm=True):
+        deadline = time.monotonic() + 10
+        while not homes.calls and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert homes.calls, "the warm-up never started"
+        res = client.get("/api/repos/alpha/sessions")
+        assert res.status_code == 200
+        assert not client.app.state.web.sessions_warmed.is_set()  # type: ignore[attr-defined]  # ASGIApp
+        homes.release.set()
+        _warmed(client)
