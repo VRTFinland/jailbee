@@ -73,7 +73,9 @@ describe("SetupView", () => {
         await register(wrapper)
 
         const bodies = Object.fromEntries(
-            fetchMock.mock.calls.map(([url, init]) => [url, JSON.parse((init as RequestInit).body as string)]),
+            fetchMock.mock.calls
+                .filter(([, init]) => init?.body !== undefined)
+                .map(([url, init]) => [url, JSON.parse((init as RequestInit).body as string)]),
         )
         expect(bodies["/api/setup/fido2/begin"]).toEqual({pin: "123456"})
         const publicKey = create.mock.calls[0][0].publicKey!

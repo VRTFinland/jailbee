@@ -222,3 +222,41 @@ def test_parse_wait_rejects_invalid_tokens(value):
 
     with pytest.raises(InboxUsage):
         parse_wait_args("30m", value, None, None)
+
+
+def _error_agent(detail: str = "The usage limit has been reached") -> dict[str, object]:
+    return {
+        "alive": True,
+        "state": "error:quota",
+        "session_state": "idle",
+        "since": STATUS_NOW - 600,
+        "last_event_at": STATUS_NOW - 300,
+        "last_tool": "Bash",
+        "error": {
+            "kind": "quota",
+            "at": STATUS_NOW - 200,
+            "detail": detail,
+            "resets_at": STATUS_NOW + 3600,
+        },
+    }
+
+
+def test_status_table_shows_an_api_error_state():
+    from jailbee.inbox.render import render_status
+
+    status = {**_full_status(), "agent": _error_agent()}
+    out = render_status([_status_child(status=status)], now=STATUS_NOW, from_child={}).splitlines()
+    assert _cells(out[1])[2] == "alive:error:quota"
+
+
+def test_status_json_carries_the_api_error_cleaned():
+    from jailbee.inbox.render import sanitize_json_value
+
+    status = {**_full_status(), "agent": _error_agent("limit\x1b[31m " + "x" * 500)}
+    safe = sanitize_json_value([_status_child(status=status)])
+    assert isinstance(safe, list)
+    error = safe[0]["status"]["agent"]["error"]
+    assert error["kind"] == "quota"
+    assert error["resets_at"] == STATUS_NOW + 3600
+    assert not BAD_CHARS.search(error["detail"])
+    assert len(error["detail"]) <= 160

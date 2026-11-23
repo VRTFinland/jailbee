@@ -1660,3 +1660,22 @@ def test_the_rendered_card_draws_the_services_line() -> None:
     view = dd.DetailsView(c.display_name, (), panel=dd.container_panel(c, NOW))
 
     assert "services web ready · db failed" in _panel_body(view, None, 100)
+
+
+def test_an_api_error_shows_its_kind_and_escaped_detail_not_the_raw_text() -> None:
+    from jailbee.accounts.models import AgentApiError
+
+    error = AgentApiError("auth", NOW - timedelta(minutes=2), 401, "bad key [red]x", None, "k")
+    summary = AgentSummary(
+        "claude",
+        "error:auth",
+        error.at,
+        None,
+        1,
+        activity=AgentActivity(None, "API Error: 401 {raw}", api_error=error),
+    )
+    block = dd.activity_block(_c(agent_status=(summary,)), NOW)
+
+    assert [_plain(line) for line in block.lines] == ["stopped on an API error (auth) 2m ago"]
+    assert block.message is not None
+    assert block.message.text == "bad key [red]x"

@@ -59,12 +59,18 @@ export class Dashboard {
     private socket: SocketLike | null = null
     private readonly follows = new Map<string, Follow>()
     private unauthorized: () => void = () => {}
+    private setupMode: () => void = () => {}
 
     constructor(private readonly factory: SocketFactory) {}
 
     /** Where to go when the session is gone (App.vue sends the user to login). */
     onUnauthorized(handler: () => void): void {
         this.unauthorized = handler
+    }
+
+    /** Where to go when the server turns out to run setup mode (App.vue opens setup). */
+    onSetupMode(handler: () => void): void {
+        this.setupMode = handler
     }
 
     start(): void {
@@ -75,6 +81,7 @@ export class Dashboard {
                 this.state.connected = connected
             },
             onUnauthorized: () => this.unauthorized(),
+            onSetupMode: () => this.setupMode(),
             onOutdated: () => { this.state.outdated = true },
         })
         this.socket.start()

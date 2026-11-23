@@ -68,6 +68,15 @@ describe("App", () => {
         expect(sockets[0].started).toBe(false)
     })
 
+    it("opens the setup view when the socket says the server is in setup mode", async () => {
+        setToken("tok")
+        const {router, sockets} = await mountAt("/repos/alpha")
+        sockets[0].handlers.onSetupMode?.()
+        await flushPromises()
+        expect(router.currentRoute.value.name).toBe("setup")
+        expect(sockets[0].started).toBe(false)
+    })
+
     it("sends the user to login when the socket says the session is gone", async () => {
         setToken("tok")
         const {router, sockets} = await mountAt("/repos/alpha")
