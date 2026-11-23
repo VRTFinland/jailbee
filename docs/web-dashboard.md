@@ -213,7 +213,11 @@ as the agent home of repository `toy`: every session opens from the list, every
 tool call folds and expands, every subagent link opens its transcript and
 thinking follows the setting. It parametrises over `corpus.json`, so a
 re-recorded session is covered without editing the tests, and asserts content
-only on the markers the recorder's prompts guarantee.
+only on the markers the recorder's prompts guarantee. Re-record it when Claude
+Code's transcript format changes: `make web-corpus` needs a logged-in `claude`,
+spends a little (haiku) quota on a throwaway toy repository, and refuses output
+that still holds a host, account or credential. Review the diff before
+committing it.
 
 ## Run it
 

@@ -24,6 +24,11 @@ export interface Pager {
  * top): page turns stop once the content's end is readable, while a jump to an
  * element may still use that room.
  */
+// Fractional layout leaves sub-pixel remainders: content ending under a pixel
+// past a page boundary adds no page, and a real bottom under a pixel short of
+// the computed one is still the bottom.
+const SUBPIXEL_SLACK = 1
+
 export function usePager(
     topInset: () => number = () => 0,
     trailingSpace: () => number = () => 0,
@@ -44,11 +49,13 @@ export function usePager(
     // A jump into the trailing space extends the grid to that anchor.
     const anchorStop = ref(0)
     const maxScroll = computed(() => Math.max(lastStop.value, anchorStop.value))
-    const pageCount = computed(() => Math.ceil((maxScroll.value + gridShift.value) / pageHeight()) + 1)
+    const pageCount = computed(
+        () => Math.ceil((maxScroll.value + gridShift.value - SUBPIXEL_SLACK) / pageHeight()) + 1,
+    )
 
     function currentPage(): number {
         // Only the real bottom is the last page: short of it, Next must still reach the rest.
-        if (window.scrollY >= maxScroll.value) {
+        if (window.scrollY >= maxScroll.value - SUBPIXEL_SLACK) {
             return pageCount.value - 1
         }
         const index = Math.floor((window.scrollY + gridShift.value) / pageHeight())

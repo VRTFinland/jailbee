@@ -178,11 +178,15 @@ def test_short_landscape_page_turns_do_not_skip_text(
 
 
 @pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
+@pytest.mark.parametrize("profile", ["normal", "eink"])
 def test_out_of_date_banner_leaves_the_session_title_bar_visible(
-    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int, profile: str
 ) -> None:
     page.set_viewport_size({"width": width, "height": 800})
     open_transcript(page, make_server, tmp_path)
+    if profile == "eink":
+        # Applied by the reload below.
+        page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink')")
     stale = False
     links: list[tuple[WebSocketRoute, WebSocketRoute]] = []
     hellos: list[str] = []
@@ -239,5 +243,16 @@ def test_out_of_date_banner_leaves_the_session_title_bar_visible(
     page.get_by_role("button", name="Latest answer").click()
     assert_latest_starts_below_header(page)
     page.wait_for_function(title_bar_clear)
+    if profile == "eink":
+        # A page turn back moves by at most the area between header and bar.
+        before = page.evaluate("window.scrollY")
+        readable = page.locator(".page-nav").evaluate(
+            "el => el.getBoundingClientRect().top - "
+            "document.querySelector('.session-header').getBoundingClientRect().bottom"
+        )
+        page.get_by_role("button", name="Previous", exact=False).last.click()
+        page.wait_for_function("previous => window.scrollY < previous", arg=before)
+        assert 0 < before - page.evaluate("window.scrollY") <= readable + 1
+        page.wait_for_function(title_bar_clear)
     page.evaluate("window.scrollTo(0, 0)")
     page.wait_for_function(title_bar_clear)
