@@ -11,10 +11,12 @@ from __future__ import annotations
 import json
 import shutil
 import socket
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
+from pytest_mock import MockerFixture
 
 from jailbee.transcripts.claude import ClaudeSource
 from scripts.web_corpus import (
@@ -27,6 +29,8 @@ from scripts.web_corpus import (
     find_leaks,
     normalise_home,
     scan_corpus,
+    record,
+    claude_project_name,
 )
 
 RAW_SID = "3f2a9c1e-8b7d-4e6f-9a1b-2c3d4e5f6a7b"
@@ -179,6 +183,39 @@ def test_only_transcript_records_and_fields_survive(tmp_path: Path) -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [
+        ("message", {"role": "user", "content": "hello", "accountName": "PRIVATE"},
+         {"role": "user", "content": "hello"}),
+        ("toolUseResult", {"status": "completed", "account": {"name": "PRIVATE"}},
+         {"status": "completed"}),
+        ("attachment", {"type": "date", "date": "2026-11-23", "accountName": "PRIVATE"},
+         {"type": "date", "date": "2026-11-23"}),
+        ("compactMetadata", {"trigger": "manual", "accountName": "PRIVATE",
+                             "preservedSegment": {"headUuid": RAW_SID, "account": "PRIVATE"}},
+         {"trigger": "manual", "preservedSegment": {
+             "headUuid": "00000001-0000-4000-8000-000000000001"}}),
+        ("toolUseResult", {"file": {"content": "toy file", "accountName": "PRIVATE"}},
+         {"file": {"content": "toy file"}}),
+        ("message", {"role": "user", "content": [{"type": "tool_result",
+            "content": [{"type": "text", "text": "result", "accountName": "PRIVATE"}]}]},
+         {"role": "user", "content": [{"type": "tool_result",
+            "content": [{"type": "text", "text": "result"}]}]}),
+    ],
+)
+def test_nested_objects_keep_only_known_fields(
+    tmp_path: Path, field: str, value: object, expected: object,
+) -> None:
+    record = _user(_identity(tmp_path), "hello", **{field: value})
+    if field == "attachment":
+        record["type"] = "attachment"
+    _, project = _normalise(tmp_path, [record])
+    [kept] = _read(next(project.glob("*.jsonl")))
+    assert kept[field] == expected
+    assert "PRIVATE" not in json.dumps(kept)
+
+
 def test_names_and_credentials_are_redacted(tmp_path: Path) -> None:
     identity = _identity(tmp_path)
     text = (
@@ -248,7 +285,7 @@ def test_subagents_follow_their_session_with_stable_agent_ids(tmp_path: Path) ->
 
 CLEAN = (
     "cwd /work/toy, settings /home/user/.claude, session 00000002-0000-4000-8000-000000000002,"
-    " tool toolu_000003, Co-Authored-By: Claude <noreply@anthropic.com>, see /usr/bin/python3"
+    " tool toolu_000003, Co-Authored-By: Claude <noreply@anthropic.com>"
 )
 
 
@@ -283,6 +320,116 @@ def test_find_leaks_reports_each_identifying_string(tmp_path: Path, leak: str) -
     leak = leak.format(toy=identity.toy_dir)
 
     assert find_leaks(f"{CLEAN} {leak} end", identity) != []
+
+
+@pytest.mark.parametrize(
+    "leak",
+    [
+        "/srv/private/data", "/opt/company/config", "/workspace/private/repo",
+        "/var/lib/private/state", "/usr/bin/python3", "/data/private", "/home/user2/file",
+        "/work/toy-other/file", "/work/toy/../../private", "/work/toy/../private",
+        "Author: Fictional Maintainer <toy@example.invalid>",
+        "Commit: Another Person <noreply@anthropic.com>",
+        '"authorName": "Fictional Maintainer"',
+        '"cwd": "/work/claude-tmp"',
+    ],
+)
+def test_scan_corpus_rejects_non_placeholder_identity(tmp_path: Path, leak: str) -> None:
+    path = tmp_path / "transcript.jsonl"
+    path.write_text(json.dumps({"message": {"content": f"output: {leak}"}}) + "\n")
+
+    assert list(scan_corpus(tmp_path)) == [path.name]
+
+
+@pytest.mark.parametrize(
+    "credential",
+    [
+        "sk-0123456789abcdefghijklmnopqrstuvwxyz",
+        "sk-proj-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdef",
+        "AIzaSy0123456789abcdefghijklmnopqrstuvwx",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "dGhpcyBpcyBhIHN5bnRoZXRpYyBzZWNyZXQgYmxvYiBmb3IgdGhlIHRlc3Q=",
+    ],
+)
+def test_credentials_are_redacted_and_detected(tmp_path: Path, credential: str) -> None:
+    assert find_leaks(f"token: {credential}")
+    _, project = _normalise(tmp_path, [_user(_identity(tmp_path), f"token: {credential}")])
+    [record] = _read(next(project.glob("*.jsonl")))
+    assert record["message"] == {"role": "user", "content": "token: REDACTED"}
+
+
+def test_short_secrets_match_whole_words_only(tmp_path: Path) -> None:
+    identity = Identity(toy_dir="/recording/toy", home="/recording/home", secrets=("ann",))
+    raw = tmp_path / "raw"
+    _write(raw / f"{RAW_SID}.jsonl", [_user(identity, "ann ANN annual banner")])
+    out = tmp_path / "out"
+    normalise_home(raw, out, identity, [RAW_SID])
+    [kept] = _read(next((out / "projects" / TOY_PROJECT).glob("*.jsonl")))
+    assert kept["message"] == {"role": "user", "content": "REDACTED REDACTED annual banner"}
+    assert find_leaks("annual banner", identity) == []
+    assert find_leaks("user ann", identity)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_record_redacts_effective_git_identity_and_cleans_its_state(
+    tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, fail: bool,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    config = tmp_path / "claude-config"
+    config.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    snapshots = config / "shell-snapshots"
+    snapshots.mkdir()
+    (snapshots / "old.sh").write_text("keep")
+    config_file = config / ".claude.json"
+    config_file.write_text(json.dumps({"projects": {"/existing": {"keep": True}}, "other": 1}))
+    mocker.patch("scripts.web_corpus.shutil.which", return_value="/bin/claude")
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if command == ["claude", "--version"]:
+            return subprocess.CompletedProcess(command, 0, "2.1.0 Claude Code", "")
+        identity = {
+            "GIT_AUTHOR_IDENT": "Qix Author <author@example.invalid> 123 +0000",
+            "GIT_COMMITTER_IDENT": "Zed Committer <committer@example.invalid> 123 +0000",
+        }
+        output = identity.get(command[-1], "") if command[:2] == ["git", "var"] else ""
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    mocker.patch("scripts.web_corpus.subprocess.run", side_effect=run)
+
+    def start(command: list[str], **kwargs: Any) -> Any:
+        toy = kwargs["cwd"]
+        sid = command[command.index("--session-id") + 1] if "--session-id" in command else command[command.index("--resume") + 1]
+        project = config / "projects" / claude_project_name(str(toy))
+        _write(project / f"{sid}.jsonl", [{"type": "user", "cwd": str(toy), "sessionId": sid,
+            "message": {"role": "user", "content": [
+                {"type": "text", "text": "Qix Author Zed Committer Qix Zed author@example.invalid committer@example.invalid"},
+                {"type": "tool_use", "name": "Bash", "input": {"command": "true"}},
+            ]}}])
+        data = json.loads(config_file.read_text())
+        data["projects"][str(toy)] = {"private": "recording"}
+        config_file.write_text(json.dumps(data))
+        (snapshots / f"{sid}.sh").write_text("private shell")
+        process = mocker.Mock()
+        process.communicate.return_value = (None, "failed" if fail else "")
+        process.returncode = 1 if fail else 0
+        process.poll.return_value = None
+        return process
+
+    mocker.patch("scripts.web_corpus.subprocess.Popen", side_effect=start)
+    out = tmp_path / "corpus"
+    if fail:
+        with pytest.raises(SystemExit, match="claude exited"):
+            record(out)
+    else:
+        record(out)
+        text = "".join(p.read_text() for p in out.rglob("*.jsonl"))
+        assert all(secret not in text for secret in ("Qix", "Author", "Zed", "Committer"))
+    assert json.loads(config_file.read_text()) == {"projects": {"/existing": {"keep": True}}, "other": 1}
+    assert sorted(p.name for p in snapshots.iterdir()) == ["old.sh"]
+    assert not list((config / "projects").iterdir())
 
 
 # --- The committed corpus ----------------------------------------------------

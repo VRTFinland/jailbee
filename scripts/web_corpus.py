@@ -46,7 +46,10 @@ _API_ID = re.compile(r"\b(msg|toolu|srvtoolu|req)_01[0-9A-Za-z]{6,}")
 
 REDACTED = "REDACTED"
 _CREDENTIAL = re.compile(
-    r"sk-ant-[0-9A-Za-z_-]{8,}"
+    r"\bsk-(?:ant-|proj-)?[0-9A-Za-z_-]{8,}"
+    r"|\bAIza[0-9A-Za-z_-]{30,}"
+    r"|(?<![\w-])[0-9a-fA-F]{40,}(?![\w-])"
+    r"|(?<![\w./+-])[0-9A-Za-z/+]{48,}={0,2}(?![\w/+_-])"
     r"|\bgh[pousr]_[0-9A-Za-z]{20,}"
     r"|\bgithub_pat_[0-9A-Za-z_]{20,}"
     r"|\bglpat-[0-9A-Za-z_-]{20,}"
@@ -103,6 +106,34 @@ RECORD_FIELDS = frozenset(
     }
 )
 MESSAGE_FIELDS = frozenset({"id", "type", "role", "model", "content", "stop_reason"})
+NESTED_FIELDS: dict[str, frozenset[str]] = {
+    "message": MESSAGE_FIELDS,
+    "content": frozenset({
+        "type", "text", "thinking", "signature", "id", "name", "input", "caller",
+        "tool_use_id", "content", "is_error",
+    }),
+    "caller": frozenset({"type"}),
+    "input": frozenset({
+        "command", "description", "file_path", "old_string", "new_string", "replace_all",
+        "prompt", "subagent_type", "model", "timeout", "run_in_background", "offset", "limit",
+    }),
+    "toolUseResult": frozenset({
+        "status", "agentId", "agentType", "canContinueAgent", "canReadOutputFile", "description",
+        "file", "filePath", "interrupted", "isAsync", "isImage", "newString", "noOutputExpected",
+        "oldString", "originalFile", "outputFile", "prompt", "replaceAll", "resolvedModel",
+        "stderr", "stdout", "structuredPatch", "type", "userModified",
+    }),
+    "file": frozenset({"content", "filePath", "numLines", "startLine", "totalLines"}),
+    "structuredPatch": frozenset({"lines", "newLines", "newStart", "oldLines", "oldStart"}),
+    "attachment": frozenset({"type", "date", "filename", "filePath", "content", "command"}),
+    "compactMetadata": frozenset({
+        "trigger", "preTokens", "postTokens", "cumulativeDroppedTokens", "durationMs",
+        "preservedMessages", "preservedSegment", "preCompactOrganizations",
+        "preCompactOrganizationsCoverStart",
+    }),
+    "preservedMessages": frozenset({"allUuids", "anchorUuid", "uuids"}),
+    "preservedSegment": frozenset({"anchorUuid", "headUuid", "tailUuid"}),
+}
 META_FIELDS = frozenset({"agentType", "description", "toolUseId"})
 """A subagent's `.meta.json` keys kept."""
 
@@ -134,6 +165,11 @@ def minted_uuid(n: int) -> str:
 def _replace_path(text: str, raw: str, new: str) -> str:
     """`raw` replaced by `new` where it is a whole path or a path's prefix."""
     return re.sub(re.escape(raw) + r"(?![\w.-]*[\w-])", new.replace("\\", "\\\\"), text)
+
+
+def _secret_pattern(secret: str) -> str:
+    pattern = re.escape(secret)
+    return r"(?<!\w)" + pattern + r"(?!\w)" if len(secret) < 5 else pattern
 
 
 class _Ids:
@@ -175,7 +211,7 @@ class _Normaliser:
         value = _replace_path(value, posixpath.dirname(toy), posixpath.dirname(TOY_DIR))
         value = _replace_path(value, self.identity.home.rstrip("/"), HOME_DIR)
         for secret in self.identity.secrets:
-            value = re.sub(re.escape(secret), REDACTED, value, flags=re.IGNORECASE)
+            value = re.sub(_secret_pattern(secret), REDACTED, value, flags=re.IGNORECASE)
         value = _CREDENTIAL.sub(REDACTED, value)
         value = _EMAIL.sub(lambda m: m[0] if m[0] in EMAILS_ALLOWED else REDACTED, value)
         for raw, agent in self.ids.agents.items():
@@ -183,15 +219,15 @@ class _Normaliser:
         value = _API_ID.sub(lambda m: self.ids.api_id(m.group(1), m.group(0)), value)
         return _UUID.sub(lambda m: self.ids.uuid(m.group(0)), value)
 
-    def value(self, value: object) -> object:
+    def value(self, value: object, fields: frozenset[str] = frozenset()) -> object:
         if isinstance(value, str):
             return self.text(value)
         if isinstance(value, list):
-            return [self.value(item) for item in value]
+            return [self.value(item, fields) for item in value]
         if isinstance(value, dict):
             return {
-                key: "signature" if key == "signature" else self.value(item)
-                for key, item in value.items()
+                key: "signature" if key == "signature" else self.value(item, NESTED_FIELDS.get(key, frozenset()))
+                for key, item in value.items() if key in fields
             }
         return value
 
@@ -207,11 +243,7 @@ class _Normaliser:
             not isinstance(attachment, dict) or attachment.get("type") not in ATTACHMENT_TYPES
         ):
             return None
-        kept = {key: item for key, item in record.items() if key in RECORD_FIELDS}
-        message = kept.get("message")
-        if isinstance(message, dict) and message.get("role") == "assistant":
-            kept["message"] = {k: v for k, v in message.items() if k in MESSAGE_FIELDS}
-        result = self.value(kept)
+        result = self.value(record, RECORD_FIELDS)
         assert isinstance(result, dict)
         return result
 
@@ -273,22 +305,31 @@ def normalise_home(raw_project: Path, out_home: Path, identity: Identity, order:
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
                 kept = {k: v for k, v in meta.items() if k in META_FIELDS}
                 target.with_suffix(".meta.json").write_text(
-                    json.dumps(normaliser.value(kept), ensure_ascii=False) + "\n",
+                    json.dumps(normaliser.value(kept, META_FIELDS), ensure_ascii=False) + "\n",
                     encoding="utf-8",
                 )
 
 
 _NORMAL_UUID = re.compile(r"([0-9a-f]{8})-0000-4000-8000-0000\1")
-_HOST_PATH = re.compile(
-    r"(?<![\w.-])/(?:home|root|tmp|mnt|media|Users|run/user|var/folders)(?:/[^\s\"'`)\]]*)?"
+_HOST_PATH = re.compile(r"(?<![\w.<:/-])/(?!/)[\w.~/-]+")
+_ALLOWED_PATHS = (TOY_DIR, HOME_DIR, "/work/claude-tmp")
+# Slash commands and XML closing tags are not filesystem paths.
+_SLASH_COMMANDS = frozenset({"/compact"})
+_IDENTITY_FIELD = re.compile(
+    r'(?i)(?:\b(?:author|committer|commit|co-authored-by|user\.name|user\.email|cwd)'
+    r'|\b(?:git_)?(?:author|committer)_(?:name|email)'
+    r'|\b(?:author|committer|user)(?:Name|Email))'
+    r'["\']?\s*[:=]\s*["\']?([^\n<>"\']+)'
 )
+_IDENTITY_PLACEHOLDERS = frozenset({"Toy", "Claude", REDACTED, *EMAILS_ALLOWED, TOY_DIR})
 
 
 def find_leaks(text: str, identity: Identity | None = None) -> list[str]:
     """Everything in `text` that identifies the recording; empty when clean.
 
-    Without `identity` only the shapes are checked: credentials, e-mail
-    addresses, host paths and UUIDs `normalise_home` did not mint.
+    The fixed deny list checks identity fields against toy placeholders, as
+    well as credentials, e-mail addresses, absolute paths and unminted UUIDs.
+    `identity` adds the recording host's literal names.
     """
     leaks: list[str] = []
     if identity is not None:
@@ -301,13 +342,25 @@ def find_leaks(text: str, identity: Identity | None = None) -> list[str]:
             *identity.secrets,
             *(raw for raw, _ in identity.renames),
         ]
-        folded = text.casefold()
-        leaks += [literal for literal in literals if literal and literal.casefold() in folded]
+        leaks += [
+            literal for literal in literals
+            if literal and re.search(_secret_pattern(literal), text, re.IGNORECASE)
+        ]
     leaks += _CREDENTIAL.findall(text)
     leaks += [m for m in _EMAIL.findall(text) if m not in EMAILS_ALLOWED]
     leaks += [m for m in _UUID.findall(text) if not _NORMAL_UUID.fullmatch(m)]
+    for match in _HOST_PATH.finditer(text):
+        path = match[0].rstrip(".")
+        if path in _SLASH_COMMANDS:
+            continue
+        normal = posixpath.normpath(path)
+        if not any(normal == root or normal.startswith(root + "/") for root in _ALLOWED_PATHS):
+            leaks.append(path)
+    # Decode JSON strings too: free-text tool output can contain escaped fields.
+    decoded = text.replace('\\"', '"').replace(r"\n", "\n")
     leaks += [
-        m for m in _HOST_PATH.findall(text) if m != HOME_DIR and not m.startswith(HOME_DIR + "/")
+        m[1].strip() for m in _IDENTITY_FIELD.finditer(decoded)
+        if m[1].strip() not in _IDENTITY_PLACEHOLDERS
     ]
     return leaks
 
@@ -560,12 +613,14 @@ def _config_home() -> Path:
 def _host_identity(toy_dir: Path, claude_tmp: Path) -> Identity:
     """The recording host's names, so `find_leaks` can prove they are gone."""
     secrets: set[str] = {socket.gethostname(), getpass.getuser()}
-    for key in ("user.name", "user.email"):
+    for key in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"):
         result = subprocess.run(
-            ["git", "config", "--global", key], capture_output=True, text=True, check=False
+            ["git", "var", key], capture_output=True, text=True, check=False
         )
-        value = result.stdout.strip()
-        secrets.update([value, *value.split()])
+        match = re.fullmatch(r"(.*?) <([^>]*)> \d+ [+-]\d{4}", result.stdout.strip())
+        if result.returncode == 0 and match:
+            name, email = match.groups()
+            secrets.update([name, *name.split(), email])
     for path, keys in (
         (Path("/etc/jailbee/container.json"), ("name", "short_name", "container_prefix", "branch")),
         (Path.home() / ".claude.json", ()),
@@ -583,9 +638,7 @@ def _host_identity(toy_dir: Path, claude_tmp: Path) -> Identity:
             for value in account.values():
                 if isinstance(value, str):
                     secrets.update([value, *value.split()])
-    # A secret this short would match ordinary words; the user's name is in
-    # the home path, which is checked separately.
-    kept = sorted((s for s in secrets if len(s) >= 5), key=len, reverse=True)
+    kept = sorted((s for s in secrets if s), key=len, reverse=True)
     # Claude puts its scratch files under `<CLAUDE_CODE_TMPDIR>/claude-<uid>`.
     scratch = str(claude_tmp / f"claude-{os.getuid()}")
     return Identity(
@@ -714,7 +767,10 @@ def record(out_dir: Path) -> list[str]:
         }
         env.pop("CLAUDECODE", None)
         sessions: list[tuple[Session, str]] = []
-        raw_project = _config_home() / "projects" / claude_project_name(str(toy))
+        config_home = _config_home()
+        raw_project = config_home / "projects" / claude_project_name(str(toy))
+        snapshots = config_home / "shell-snapshots"
+        old_snapshots = set(snapshots.glob("*"))
         try:
             for session in SESSIONS:
                 session_id = str(uuid.uuid4())
@@ -733,6 +789,15 @@ def record(out_dir: Path) -> list[str]:
         finally:
             # The raw sessions hold the account's context; nothing of them stays.
             shutil.rmtree(raw_project, ignore_errors=True)
+            config_file = config_home / ".claude.json"
+            if config_file.is_file():
+                data = json.loads(config_file.read_text(encoding="utf-8"))
+                projects = data.get("projects")
+                if isinstance(projects, dict) and str(toy) in projects:
+                    del projects[str(toy)]
+                    config_file.write_text(json.dumps(data) + "\n", encoding="utf-8")
+            for snapshot in set(snapshots.glob("*")) - old_snapshots:
+                snapshot.unlink(missing_ok=True)
             for _, session_id in sessions:
                 for kind in ("session-env", "file-history", "tasks", "todos"):
                     for path in (_config_home() / kind).glob(f"{session_id}*"):
