@@ -4,8 +4,7 @@
 // reserved by default; a view with a sticky header reserves that too.
 import {computed, onBeforeUnmount, onMounted, ref, watch, type ComputedRef, type Ref} from "vue"
 
-/** The page-turn bar (56px) plus the bottom guard (32px). */
-export const RESERVED_PX = 88
+import {readableBottom} from "./readableBottom"
 
 export interface Pager {
     /** Zero-based current page. */
@@ -20,8 +19,9 @@ export interface Pager {
 }
 
 export function usePager(topInset: () => number = () => 0): Pager {
+    const availableHeight = ref(1)
     function pageHeight(): number {
-        return Math.max(100, window.innerHeight - RESERVED_PX - topInset())
+        return availableHeight.value
     }
 
     const page = ref(0)
@@ -31,21 +31,23 @@ export function usePager(topInset: () => number = () => 0): Pager {
     )
 
     function measure() {
+        availableHeight.value = Math.max(1, readableBottom() - topInset())
         contentHeight.value = document.documentElement.scrollHeight
     }
 
     function syncFromScroll() {
-        page.value = Math.max(0, Math.round(window.scrollY / pageHeight()))
         measure()
+        page.value = Math.max(0, Math.round(window.scrollY / pageHeight()))
     }
 
     watch(topInset, () => {
         // A resized header changes the page grid without moving the reader.
-        page.value = Math.max(0, Math.floor(window.scrollY / pageHeight()))
         measure()
+        page.value = Math.max(0, Math.floor(window.scrollY / pageHeight()))
     }, {flush: "sync"})
 
     function goTo(index: number) {
+        measure()
         const target = Math.min(Math.max(0, index), pageCount.value - 1)
         page.value = target
         window.scrollTo(0, target * pageHeight())
@@ -73,6 +75,7 @@ export function usePager(topInset: () => number = () => 0): Pager {
         next: () => goTo(page.value + 1),
         prev: () => goTo(page.value - 1),
         goToElement: (el) => {
+            measure()
             const top = el.getBoundingClientRect().top + window.scrollY
             goTo(Math.floor(Math.max(0, top - topInset()) / pageHeight()))
         },

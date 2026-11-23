@@ -212,7 +212,9 @@ before editing `## Unreleased`.
   titles use the first typed prompt rather than agent wrapper markup, falling
   back to the first slash command in command-only sessions; titles and
   connection notices stay visible while reading; **Latest answer** appears
-  only when the newest reply is out of view, also with e-ink page turns
+  only when the newest reply is out of view, including behind a device's safe
+  area. Truncated titles retain their full accessible text, and e-ink page turns
+  use the readable height even on short landscape screens
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Themes
   (light, dark, e-ink) and an e-ink display profile with page turns are chosen
   per device, and the app installs as a PWA with no CDN assets. Login uses a

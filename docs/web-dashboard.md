@@ -214,7 +214,10 @@ the text you are reading, and the front page refreshes slowly.
 Session transcripts keep their title, agent/model context and connection notice
 in a compact header while you read. **Latest answer** appears only when the
 newest assistant reply is outside the readable area (below the header and above
-the bottom controls). Jumping to it or scrolling to it hides the button; moving
+the bottom controls, including the device's safe-area inset). A truncated title
+keeps its full text as a tooltip and accessible heading name. Page turns use the
+actual readable height even on short landscape screens. Jumping to the reply or
+scrolling to it hides the button; moving
 away or receiving a newer reply out of view shows it again. In the e-ink display
 profile the same rule applies, but the button turns to the page containing the
 reply, and live entries remain behind the new-messages notice until tapped.

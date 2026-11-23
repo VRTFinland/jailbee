@@ -214,6 +214,7 @@ describe("SessionView in the e-ink profile", () => {
         let y = 0
         Object.defineProperty(window, "scrollY", {get: () => y, configurable: true})
         vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            if (this.classList.contains("page-nav")) return {top: 712, bottom: 768} as DOMRect
             const top = this.id === "entry-a1" ? 1400 - y : 0
             return {top, bottom: top + (this.id === "entry-a1" ? 50 : 120)} as DOMRect
         })
@@ -244,7 +245,11 @@ describe("SessionView in the e-ink profile", () => {
             disconnect() {}
         })
         Object.defineProperty(window, "scrollY", {get: () => y, configurable: true})
-        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(() => ({top: 0, bottom: height} as DOMRect))
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            return this.classList.contains("page-nav")
+                ? {top: 712, bottom: 768} as DOMRect
+                : {top: 0, bottom: height} as DOMRect
+        })
         vi.spyOn(window, "scrollTo").mockImplementation((_x, top) => {
             y = top ?? 0
             window.dispatchEvent(new Event("scroll"))
@@ -265,12 +270,15 @@ describe("SessionView in the e-ink profile", () => {
         reloadSettings()
         updateSettings({displayProfile: "eink"})
         setPageGeometry(3000, 0) // pages of 800 - 88 = 712px
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            if (this.classList.contains("page-nav")) return {top: 712, bottom: 768} as DOMRect
+            if (this.id === "entry-a1") return {top: 1500, bottom: 1550} as DOMRect
+            return {top: 0, bottom: 0} as DOMRect
+        })
         const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {})
         const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
         await append(sessionKey, [answer])
         await wrapper.get(".new-messages").trigger("click")
-        const el = document.getElementById("entry-a1")!
-        vi.spyOn(el, "getBoundingClientRect").mockReturnValue({top: 1500} as DOMRect)
         await wrapper.get(".jump-latest").trigger("click")
         expect(scrollTo).toHaveBeenLastCalledWith(0, 2 * 712)
         expect(wrapper.get(".page-indicator").text()).toContain("Page 3 /")
