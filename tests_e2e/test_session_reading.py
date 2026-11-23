@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page, WebSocketRoute, expect
 
 from tests.web_fakes import wait_until
 from tests_e2e.flows import log_in_with_pin
@@ -175,3 +175,46 @@ def test_short_landscape_page_turns_do_not_skip_text(
         page.wait_for_function("previous => window.scrollY > previous", arg=before)
         moved = page.evaluate("window.scrollY") - before
         assert 0 < moved <= readable + 1
+
+
+@pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
+def test_out_of_date_banner_leaves_the_session_title_bar_visible(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int
+) -> None:
+    page.set_viewport_size({"width": width, "height": 800})
+    open_transcript(page, make_server, tmp_path)
+
+    # A stale client whose tab cannot guard an automatic reload shows the banner.
+    page.add_init_script("""
+        Object.defineProperty(window, 'sessionStorage', {get() {
+            throw new DOMException('Storage blocked', 'SecurityError');
+        }});
+    """)
+
+    def stale(route: WebSocketRoute) -> None:
+        upstream = route.connect_to_server()
+
+        def stale_auth(message: str | bytes) -> None:
+            payload = json.loads(message)
+            if payload["type"] == "auth":
+                payload["v"] = -1
+            upstream.send(json.dumps(payload))
+
+        route.on_message(stale_auth)
+        upstream.on_close(lambda code, reason: route.close(code=code, reason=reason))
+
+    page.route_web_socket("**/api/ws", stale)
+    page.reload()
+    expect(page.get_by_role("alert")).to_have_text("This page is out of date; reload.")
+    expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
+
+    title_bar_clear = """() => {
+        const banner = document.querySelector('.outdated').getBoundingClientRect();
+        const header = document.querySelector('.session-header').getBoundingClientRect();
+        return header.top >= banner.bottom - 0.5;
+    }"""
+    page.wait_for_function(title_bar_clear)
+    page.evaluate("window.scrollTo(0, 3000)")
+    page.wait_for_function("window.scrollY > 2000")
+    page.wait_for_function(title_bar_clear)
+    expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_in_viewport()

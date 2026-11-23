@@ -150,7 +150,9 @@ then render a subsequent state push before the reload count is checked.
 reloads automatically at most once within a minute, then shows
 "This page is out of date; reload" with a manual Reload button. If session
 storage is unavailable, it offers manual reload immediately rather than risk
-a loop.
+a loop. A connection that authenticates ends that window, so a later
+server upgrade reloads again; the banner sits above a view's sticky header,
+never over it.
 
 ## Run it
 
