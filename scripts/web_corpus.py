@@ -232,7 +232,10 @@ def _secret_pattern(secret: str) -> str:
         # Short names are also ordinary commands and path components (e.g. dev).
         return (
             r"(?P<prefix>\b(?:user(?:name)?|author|committer)[\"']?(?:\s*[:=]\s*|\s+)[\"']?)"
-            + pattern + r"(?![\w.-])|\A" + pattern + r"\Z"
+            + pattern
+            + r"(?![\w.-])|\A"
+            + pattern
+            + r"\Z"
             r"|(?:(?<=/home/)|(?<=/Users/)|(?<=~))" + pattern + r"(?![\w.-])"
         )
     return r"(?<![\w-])" + pattern + r"(?![\w-])"
@@ -387,7 +390,13 @@ def normalise_home(raw_project: Path, out_home: Path, identity: Identity, order:
 _NORMAL_UUID = re.compile(r"([0-9a-f]{8})-0000-4000-8000-0000\1")
 _HOST_PATH = re.compile(r"(?<![\w.-])/[\w.~/-]+")
 _ALLOWED_PATHS = (
-    TOY_DIR, HOME_DIR, "/work/claude-tmp", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+    TOY_DIR,
+    HOME_DIR,
+    "/work/claude-tmp",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
 )
 _HTTP_URL = re.compile(r"https?://[^\s<>\"']+")
 _NON_POSIX_PATH = re.compile(

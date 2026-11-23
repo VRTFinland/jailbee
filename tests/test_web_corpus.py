@@ -256,15 +256,28 @@ def test_nested_objects_keep_only_known_fields(
 
 
 @pytest.mark.parametrize("leaking_tool", range(4))
-def test_common_tool_inputs_survive_and_are_still_scanned(tmp_path: Path, leaking_tool: int) -> None:
+def test_common_tool_inputs_survive_and_are_still_scanned(
+    tmp_path: Path, leaking_tool: int
+) -> None:
     identity = _identity(tmp_path)
     tools = [
         {"type": "tool_use", "name": "Grep", "input": {"pattern": "TOY-MARKER"}},
         {"type": "tool_use", "name": "Write", "input": {"content": "toy text"}},
         {"type": "tool_use", "name": "WebFetch", "input": {"url": "https://example.invalid/"}},
-        {"type": "tool_use", "name": "TodoWrite", "input": {"todos": [
-            {"content": "Read toy", "status": "pending", "activeForm": "Reading toy", "account": "PRIVATE"}
-        ]}},
+        {
+            "type": "tool_use",
+            "name": "TodoWrite",
+            "input": {
+                "todos": [
+                    {
+                        "content": "Read toy",
+                        "status": "pending",
+                        "activeForm": "Reading toy",
+                        "account": "PRIVATE",
+                    }
+                ]
+            },
+        },
     ]
     _, project = _normalise(tmp_path, [_user(identity, "", message={"content": tools})])
     [kept] = _read(next(project.glob("*.jsonl")))
@@ -466,9 +479,7 @@ def test_credentials_are_redacted_and_detected(tmp_path: Path, credential: str) 
 
 @pytest.mark.parametrize("context", ["user dev", "user: dev", "username=dev", '"user": "dev"'])
 def test_identity_redaction_preserves_commands_and_tool_names(tmp_path: Path, context: str) -> None:
-    identity = Identity(
-        toy_dir="/recording/toy", home="/home/dev", secrets=("dev", "Will Read")
-    )
+    identity = Identity(toy_dir="/recording/toy", home="/home/dev", secrets=("dev", "Will Read"))
     raw = tmp_path / "raw"
     text = f"npm run dev; /dev/null; dev-ork; Read Edit Bash; Will Read; {context}; /home/dev/x"
     _write(raw / f"{RAW_SID}.jsonl", [_user(identity, text)])
@@ -478,7 +489,8 @@ def test_identity_redaction_preserves_commands_and_tool_names(tmp_path: Path, co
     assert kept["message"] == {
         "role": "user",
         "content": "npm run dev; /dev/null; dev-ork; Read Edit Bash; REDACTED; "
-        + context.replace("dev", "REDACTED") + "; /home/user/x",
+        + context.replace("dev", "REDACTED")
+        + "; /home/user/x",
     }
     assert find_leaks("npm run dev; dev-ork; Read Edit Bash", identity) == []
     assert find_leaks(context, identity)
@@ -492,7 +504,10 @@ def test_short_secrets_match_whole_words_only(tmp_path: Path) -> None:
     out = tmp_path / "out"
     normalise_home(raw, out, identity, [RAW_SID])
     [kept] = _read(next((out / "projects" / TOY_PROJECT).glob("*.jsonl")))
-    assert kept["message"] == {"role": "user", "content": "user REDACTED user REDACTED annual banner"}
+    assert kept["message"] == {
+        "role": "user",
+        "content": "user REDACTED user REDACTED annual banner",
+    }
     assert find_leaks("annual banner", identity) == []
     assert find_leaks("user ann", identity)
 
