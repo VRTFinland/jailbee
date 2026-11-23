@@ -132,7 +132,9 @@ def test_partial_keyboard_scroll_keeps_the_current_eink_page(
         "document.querySelector('.session-header').getBoundingClientRect().bottom"
     )
     page.evaluate("height => window.scrollTo(0, height * 0.6)", readable)
-    page.wait_for_function("document.querySelector('.session-header').getBoundingClientRect().top === 0")
+    page.wait_for_function(
+        "document.querySelector('.session-header').getBoundingClientRect().top === 0"
+    )
     expect(page.locator(".page-indicator")).to_contain_text("Page 1 /")
     readable = page.locator(".page-nav").evaluate(
         "el => Math.floor(el.getBoundingClientRect().top - "
