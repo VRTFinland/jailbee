@@ -34,7 +34,6 @@ from tests_e2e.browser_errors import BrowserErrors
 from tests_e2e.flows import log_in_with_pin
 from tests_e2e.server import E2EServer
 
-SESSION_DEVICE = "e2e browser"
 
 expect.set_options(timeout=10_000)
 
@@ -190,7 +189,7 @@ def browser_errors(
 
 @pytest.fixture
 def logged_in(server: E2EServer, page: Page) -> Page:
-    log_in_with_pin(page, server.url, server.pin.current, SESSION_DEVICE)
+    log_in_with_pin(page, server.url, server.pin.current)
     return page
 
 

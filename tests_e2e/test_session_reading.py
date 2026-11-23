@@ -52,7 +52,7 @@ def open_transcript(
     )
     homes = {"work": [("claude", home)]}
     server = make_server(agent_homes=homes.get)
-    log_in_with_pin(page, server.url, server.pin.current, "session reader")
+    log_in_with_pin(page, server.url, server.pin.current)
     page.goto(f"{server.url}/#/repos/work/sessions/claude/{SESSION}")
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
     wait_until(lambda: len(server.watches.open) == 1)

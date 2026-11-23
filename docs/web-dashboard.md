@@ -195,7 +195,13 @@ can be combined:
 | FIDO2 security key or passkey | `jb remote web auth fido2 setup` | See below. `fido2 ls` and `fido2 rm` manage keys. |
 | One-time link | `jb remote web open` | Localhost only, single use. |
 
-A successful login gives the browser a session that slides for 30 days.
+A successful login gives the browser a session that slides for 30 days. The
+login page asks for nothing but the secret: the server names the session after
+the browser's User-Agent ("Firefox on Linux", "Safari on iPhone", "Chrome on
+Android", or "Browser" when it recognises none). The name shows in the header,
+in `jb remote web auth sessions ls` and in the audit log; rename the current
+session under **Settings → This session** (`PUT /api/session`, audited as a
+`rename` event). Older clients may still send a `device_name`, which is kept.
 PIN and TOTP attempts are limited to five a minute, and after five failures
 in a row each further failure doubles the wait before the next attempt:
 2 seconds after the fifth, 4 after the sixth, up to 30 minutes. A successful login by any method (PIN, TOTP, security key or link) resets
@@ -244,7 +250,7 @@ do not expose the server at all and reach it over an SSH tunnel or a VPN.
 jb remote web auth status           # methods on, devices logged in
 jb remote web auth sessions ls      # logged-in devices
 jb remote web auth sessions revoke ID
-jb remote web auth log [-n 50]      # logins, failures, backoffs, logouts, revocations
+jb remote web auth log [-n 50]      # logins, failures, backoffs, logouts, revocations, renames
 ```
 
 Revoking a session refuses the device's next request and closes its open live

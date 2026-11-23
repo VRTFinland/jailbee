@@ -54,7 +54,7 @@ TOTP_REPLAY_WINDOW = timedelta(seconds=90)
 
 TOTP_ISSUER = "JailBee"
 
-AuthEventKind = Literal["login", "login_failed", "backoff", "logout", "revoke", "key_added"]
+AuthEventKind = Literal["login", "login_failed", "backoff", "logout", "revoke", "key_added", "rename"]
 LoginMethod = Literal["pin", "totp", "fido2"]
 
 _PIN_ENABLED = "pin_enabled"
