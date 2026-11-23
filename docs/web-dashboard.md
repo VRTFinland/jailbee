@@ -14,12 +14,32 @@ repository, but not attributed to a container.
 Session titles use the first typed prompt, skipping agent wrapper records,
 local command output, caveats and injected context. A session with only slash
 commands uses its first command (for example, `/model`) instead of raw markup.
-Once a command fallback is available, title lookup stops after 32 candidate user
-records rather than parsing a command-only transcript to the end. Task
+Title lookup stops after 32 candidate user records (and never reads past the
+first 4 MiB) rather than parsing a command-only transcript to the end. Task
 notifications, `!`-mode input/output and prompt hooks are agent metadata too.
 A leading wrapper followed by typed text is split in the transcript: the wrapper
 is shown as metadata, and only the typed text is shown as the prompt. Unknown
 XML-like tags, such as `<example>`, remain part of the typed prompt.
+
+Session lists stay fast on large transcripts. A list row reads only the
+opening of a transcript (title and start time) and its last 256 KiB (last
+activity and recent model), so a model used only in the middle of a long
+session is not named in the list; the transcript itself shows every entry's
+model. What was read is kept in the state database (`session_info_cache`),
+keyed by the file's path, size and modification time, so a restarted or
+upgraded server rereads only transcripts that changed. The server also reads
+every visible repository's sessions in the background when it starts; no
+request waits for it.
+
+A container page shows its live sessions as soon as they are known (they come
+from the state service's snapshot) and appends the sessions it ran before when
+that separate request answers. A repository lists only the sessions started in
+its own containers' checkout (each container's repository directory, or below
+it): repositories that share one agent config home by mistake do not list each
+other's sessions. Claude names a session's project directory after its working
+directory with every character but letters and digits turned into `-`, so
+`/home/dev/app-api` cannot be told from a directory `api` below
+`/home/dev/app`; a repository `app` then lists `app-api`'s sessions too.
 
 Rows on the front page are styled like the terminal dashboard's: a container
 booting, in autostart, running another background job or in a failed job gets a
