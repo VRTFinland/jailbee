@@ -200,3 +200,26 @@ def test_worker_killed_mid_phase_still_publishes_one_error(
     containers = list_containers(cfg, incus, with_background=True)
     queue.set_jobs(job_rows([RepoGroup(cfg.container_prefix, str(tmp_path), None, containers)]))
     assert queue.counts().attention == 0
+
+
+def test_observed_live_is_none_on_a_db_loaded_row(make_cfg, tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    cfg = make_cfg(tmp_path)
+    name = f"{cfg.container_prefix}-work"
+    with Session(get_engine()) as session:
+        background.start_job(
+            session,
+            container_name=name,
+            container_prefix=cfg.container_prefix,
+            branch="work",
+            pid=4242,
+            log_path="/log",
+            now=datetime.now(UTC),
+            op_kind="create",
+        )
+    with Session(get_engine()) as session:
+        job = background.get_job(session, name)
+        assert job is not None
+        assert job.observed_live is None
+        job.observe_live(True)
+        assert job.observed_live is True

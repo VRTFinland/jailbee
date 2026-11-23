@@ -153,9 +153,14 @@ class BackgroundJob(SQLModel, table=True):
 
     @property
     def observed_live(self) -> bool | None:
-        return self._observed_live
+        # Rows loaded by SQLAlchemy skip pydantic's __init__, so
+        # __pydantic_private__ is None and the PrivateAttr default never applies.
+        private = getattr(self, "__pydantic_private__", None)
+        return None if private is None else private.get("_observed_live")
 
     def observe_live(self, live: bool) -> None:
+        if getattr(self, "__pydantic_private__", None) is None:
+            object.__setattr__(self, "__pydantic_private__", {})
         self._observed_live = live
 
     container_name: str = Field(primary_key=True)
