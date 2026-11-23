@@ -140,12 +140,18 @@ class SessionInfo:
     last_activity: datetime | None
     models: tuple[str, ...]
     """Every model that answered, in first-use order."""
+    cwd: str | None = None
+    """The directory the session started in, from its first record naming one."""
+    git_branch: str | None = None
+    """The git branch checked out where the session started (that same record's),
+    None when it named none. With ``cwd`` and ``started``, what attributes a
+    session to a container nobody saw it run in."""
 
 
-SESSION_INFO_FORMAT = 1
+SESSION_INFO_FORMAT = 2
 """Bump when what a source derives for a `SessionInfo` changes (how the title
-is chosen, which models are named), so infos a `SessionInfoStore` kept from an
-older reader are read again instead of served."""
+is chosen, which models are named, which fields are kept), so infos a
+`SessionInfoStore` kept from an older reader are read again instead of served."""
 
 Stamp = tuple[int, int]
 """A transcript file's ``(size, mtime_ns)``: while it is unchanged, so is its info."""

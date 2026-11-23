@@ -716,3 +716,32 @@ def test_infos_a_failed_save_lost_are_saved_by_the_next_flush(
     cache.flush()
 
     assert sorted(p.stem for p in store.saved) == [SID, OTHER_SID]
+
+
+def test_session_info_names_where_and_on_which_branch_the_session_started(
+    tmp_path: Path, source: ClaudeSource
+) -> None:
+    path = tmp_path / "projects" / "-home-dev-repo" / f"{SID}.jsonl"
+    _write(
+        path,
+        {"type": "file-history-snapshot", "messageId": "m"},
+        {**_user_text("one", "Fix it"), "cwd": "/home/dev/repo", "gitBranch": "feat/x"},
+        {**_user_text("two", "And this"), "cwd": "/home/dev/repo/sub", "gitBranch": "other"},
+    )
+
+    info = source.session_info(SID, path)
+
+    assert info is not None
+    assert (info.cwd, info.git_branch) == ("/home/dev/repo", "feat/x")
+
+
+def test_session_info_without_a_cwd_or_branch_names_none(
+    tmp_path: Path, source: ClaudeSource
+) -> None:
+    path = tmp_path / "projects" / "-r" / f"{SID}.jsonl"
+    _write(path, {**_user_text("one", "Fix it"), "cwd": "/r", "gitBranch": ""})
+
+    info = source.session_info(SID, path)
+
+    assert info is not None
+    assert (info.cwd, info.git_branch) == ("/r", None)

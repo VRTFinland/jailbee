@@ -62,9 +62,11 @@ def test_a_mixed_user_record_titles_by_the_typed_text_and_shows_the_reminder_as_
     log_in_with_pin(page, server.url, server.pin.current)
     # Reminders are hidden by default; showing agent context renders them as meta.
     page.evaluate("localStorage.setItem('jailbee.agentContext', 'shown')")
-    page.reload()
 
+    # A hash-only goto right after a reload can race the app's router; load
+    # the repository's URL afresh instead, as test_agent_context does.
     page.goto(f"{server.url}/#/repos/work")
+    page.reload()
 
     expect(page.locator(".session .title")).to_have_text(typed)
     page.get_by_role("link", name=typed).click()

@@ -96,6 +96,7 @@ def _full_snapshot() -> Snapshot:
             loose_until=T0 + timedelta(hours=1),
             base_branch="main",
             repo_dir="/home/u/alpha",
+            branch="feat/x",
             pr_number=7,
             pr_author=True,
             credential_group="team",
@@ -448,7 +449,7 @@ def test_wire_schema_leaves_out_docstrings_and_titles():
 # PROTOCOL fails below: a client of another version would misread it. A pydantic
 # upgrade that only reshapes its schema output trips this too; a bump is then
 # harmless (a protocol mismatch makes the dashboard replace the state service).
-WIRE_SCHEMA = (39, "4a5a9980174c6fcc7a739d881a9ed17ba3212d047ece2f5fdcffa11f42256b58")
+WIRE_SCHEMA = (40, "4f3fd76fffbfef3d17478fde0ef7b4de6ca7adf986befb1066271e5dde71c8df")
 
 
 def test_a_wire_schema_change_bumps_the_protocol():
