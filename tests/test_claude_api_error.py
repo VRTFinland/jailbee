@@ -9,8 +9,8 @@ byte buffer.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from datetime import UTC, datetime
+from pathlib import Path
 
 from jailbee.accounts.adapters import claude_activity as ca
 

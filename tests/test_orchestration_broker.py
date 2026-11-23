@@ -2206,9 +2206,7 @@ def test_api_error_reports_one_blocked_per_episode(rig: Rig, monkeypatch) -> Non
 
     def kinds(at: int) -> list[tuple[str, str]]:
         rig.deliver.reset_mock()
-        broker.tick(
-            rig.incus, root=rig.root, journal=rig.journal, now=NOW + timedelta(seconds=at)
-        )
+        broker.tick(rig.incus, root=rig.root, journal=rig.journal, now=NOW + timedelta(seconds=at))
         return [
             (c.args[3].kind, c.args[3].body)
             for c in rig.deliver.call_args_list

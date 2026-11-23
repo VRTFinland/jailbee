@@ -200,9 +200,7 @@ def parse_tail(raw: bytes, *, now: float | None = None) -> TailActivity:
         if (
             not failed
             and date is not None
-            and any(
-                isinstance(block, dict) and block.get("type") in kinds for block in content
-            )
+            and any(isinstance(block, dict) and block.get("type") in kinds for block in content)
         ):
             if last_event_at is None or date > last_event_at:
                 last_event_at = date

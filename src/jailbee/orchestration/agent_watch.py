@@ -278,7 +278,9 @@ def advance_api_error(
     return replace(entry, api_error_key=error.key), body
 
 
-def api_error(cfg: Config, name: str, status: AgentStatus, *, now: datetime) -> AgentApiError | None:
+def api_error(
+    cfg: Config, name: str, status: AgentStatus, *, now: datetime
+) -> AgentApiError | None:
     """The API error this prompted agent's latest turn ended in, read now; None if unknown."""
     try:
         matched = _matched_session(cfg, name, status)
