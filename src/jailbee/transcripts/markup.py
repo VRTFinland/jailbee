@@ -43,8 +43,8 @@ def _wrappers(text: str) -> Iterator[tuple[str, str, int]]:
 def split_prompt(text: str) -> tuple[str, str]:
     """Separate the leading agent markup from typed text for titles and rendering."""
     end = 0
-    for _, _, end in _wrappers(text):
-        pass
+    for _, _, wrapper_end in _wrappers(text):
+        end = wrapper_end
     return text[:end], text[end:].strip()
 
 

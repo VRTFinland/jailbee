@@ -29,7 +29,9 @@ def test_session_list_prefers_the_typed_prompt_and_transcript_marks_clear_as_met
     (project / f"{SESSION}.jsonl").write_text(
         "".join(json.dumps(record) + "\n" for record in records)
     )
-    server = make_server(agent_homes=lambda prefix: [("claude", home)] if prefix == "work" else None)
+    server = make_server(
+        agent_homes=lambda prefix: [("claude", home)] if prefix == "work" else None
+    )
     log_in_with_pin(page, server.url, server.pin.current, "session reader")
 
     page.goto(f"{server.url}/#/repos/work")
