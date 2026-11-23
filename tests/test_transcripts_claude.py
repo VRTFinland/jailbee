@@ -560,3 +560,72 @@ def test_a_synthetic_message_names_no_model(tmp_path: Path, source: ClaudeSource
     assert info.models == ()
     assert isinstance(entry, AssistantText)
     assert entry.model is None
+
+
+def _bytes_read() -> int:
+    """This process's `rchar`: every byte a read syscall returned."""
+    with open("/proc/self/io") as stream:
+        for line in stream:
+            if line.startswith("rchar:"):
+                return int(line.split()[1])
+    raise AssertionError("no rchar")
+
+
+def _large_session(path: Path, *, prompt: str | None, middle_bytes: int) -> None:
+    """A session of about `middle_bytes`: an opening, a long middle, a recent close."""
+    blob = "x" * 8000
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as stream:
+        opening = {
+            "type": "user",
+            "timestamp": "2026-11-01T10:00:00.000Z",
+            "message": {"content": prompt if prompt is not None else "<command-name>/x</command-name>"},
+        }
+        stream.write(json.dumps(opening) + "\n")
+        early = {
+            "type": "assistant",
+            "timestamp": "2026-11-01T10:00:01.000Z",
+            "message": {"model": "claude-early", "content": [{"type": "text", "text": "hi"}]},
+        }
+        stream.write(json.dumps(early) + "\n")
+        written = 0
+        while written < middle_bytes:
+            middle = {
+                "type": "assistant",
+                "timestamp": "2026-11-01T11:00:00.000Z",
+                "message": {"model": "claude-middle", "content": [{"type": "text", "text": blob}]},
+            }
+            line = json.dumps(middle) + "\n"
+            stream.write(line)
+            written += len(line)
+        late = {
+            "type": "assistant",
+            "timestamp": "2026-11-02T09:30:00.000Z",
+            "message": {"model": "claude-late", "content": [{"type": "text", "text": "bye"}]},
+        }
+        stream.write(json.dumps(late) + "\n")
+
+
+@pytest.mark.skipif(not Path("/proc/self/io").exists(), reason="needs Linux /proc/self/io")
+@pytest.mark.parametrize(
+    ("prompt", "bound"),
+    [("Fix the slow list", 512 * 1024), (None, 5 * 1024 * 1024)],
+    ids=["typed-prompt", "no-prompt"],
+)
+def test_session_info_reads_a_bounded_head_and_tail_of_a_large_transcript(
+    tmp_path: Path, source: ClaudeSource, prompt: str | None, bound: int
+) -> None:
+    path = tmp_path / "projects" / "-p" / f"{SID}.jsonl"
+    _large_session(path, prompt=prompt, middle_bytes=40 * 1024 * 1024)
+
+    before = _bytes_read()
+    info = source.session_info(SID, path)
+    read = _bytes_read() - before
+
+    assert info is not None
+    assert read < bound
+    assert info.title == (prompt or "/x")
+    assert info.started == datetime(2026, 11, 1, 10, 0, 0, tzinfo=UTC)
+    assert info.last_activity == datetime(2026, 11, 2, 9, 30, 0, tzinfo=UTC)
+    # Models come from what the head and the tail read; the most recent is last.
+    assert info.models[-1] == "claude-late"
