@@ -25,7 +25,10 @@ transcripts:
   creation time: sessions older than it stay out of its history.
 - A branch renamed inside the container: sessions started after the rename
   name the new branch, which no label matches, so they stay unattributed
-  unless the recorder saw them.
+  unless the recorder saw them. Likewise a detached HEAD. A session started
+  after checking out another container's labelled branch goes to that
+  container: the transcript cannot tell them apart, since every container of
+  a repository has the same `repo_dir`.
 - Several candidates (two containers on one branch and path): the most
   recently created one that already existed when the session started wins;
   equal creation times go to the first name in sort order.
@@ -151,7 +154,11 @@ def backfill(
     """``(agent, session id)`` → container name for sessions no recorder row
     names, from where and when each started; the rules are in the module
     docstring."""
-    eligible = [c for c in containers if c.branch is not None and c.created_at is not None]
+    eligible = [
+        (c.branch, _aware(c.created_at), c)
+        for c in containers
+        if c.branch is not None and c.created_at is not None
+    ]
     found: dict[tuple[str, str], str] = {}
     for row in rows:
         key = (row.agent, row.session_id)
@@ -159,18 +166,12 @@ def backfill(
             continue
         started = _aware(row.started)
         candidates = [
-            c
-            for c in eligible
-            if c.branch == row.git_branch
-            and c.created_at is not None
-            and _aware(c.created_at) <= started
-            and _under(row.cwd, c.repo_dir)
+            (created, c)
+            for branch, created, c in eligible
+            if branch == row.git_branch and created <= started and _under(row.cwd, c.repo_dir)
         ]
         if candidates:
-            best = min(
-                candidates,
-                key=lambda c: (-_aware(c.created_at).timestamp() if c.created_at else 0.0, c.name),
-            )
+            _created, best = min(candidates, key=lambda pair: (-pair[0].timestamp(), pair[1].name))
             found[key] = best.name
     return found
 
