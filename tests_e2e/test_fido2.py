@@ -3,18 +3,56 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import pytest
 from playwright.sync_api import Page, Route, expect
+from sqlmodel import Session, select
 
+from jailbee.db.models import WebFido2Key
 from jailbee.web import auth_admin
 from tests.web_fakes import snapshot_of
 from tests_e2e.browser_errors import BrowserErrors
 from tests_e2e.server import E2EServer
 
+if TYPE_CHECKING:
+    from typing import Any
+
+    from playwright.sync_api import CDPSession
+
+
+@dataclass(frozen=True)
+class VirtualKey:
+    cdp: CDPSession
+    authenticator_id: str
+
+    def credential(self) -> dict[str, Any]:
+        (credential,) = self.cdp.send(
+            "WebAuthn.getCredentials", {"authenticatorId": self.authenticator_id}
+        )["credentials"]
+        return dict(credential)
+
+    def set_sign_count(self, count: int) -> None:
+        credential = self.credential()
+        self.cdp.send(
+            "WebAuthn.removeCredential",
+            {
+                "authenticatorId": self.authenticator_id,
+                "credentialId": credential["credentialId"],
+            },
+        )
+        self.cdp.send(
+            "WebAuthn.addCredential",
+            {
+                "authenticatorId": self.authenticator_id,
+                "credential": {**credential, "signCount": count},
+            },
+        )
+
 
 @pytest.fixture
-def virtual_key(page: Page) -> Iterator[None]:
+def virtual_key(page: Page) -> Iterator[VirtualKey]:
     cdp = page.context.new_cdp_session(page)
     cdp.send("WebAuthn.enable")
     authenticator = cdp.send(
@@ -30,7 +68,7 @@ def virtual_key(page: Page) -> Iterator[None]:
         },
     )["authenticatorId"]
     try:
-        yield
+        yield VirtualKey(cdp, authenticator)
     finally:
         cdp.send("WebAuthn.removeVirtualAuthenticator", {"authenticatorId": authenticator})
         cdp.detach()
@@ -45,11 +83,19 @@ def register_key(page: Page, server: E2EServer) -> str:
     page.get_by_label("Setup PIN").fill(server.pin.current)
     page.get_by_role("button", name="Register key", exact=True).click()
     expect(page.get_by_text("Registered Desk security key.", exact=True)).to_be_visible()
+    (key,) = auth_admin.list_fido2_keys(server.engine)
+    assert key.rp_id == "localhost"
+    assert key.last_used_at is None
     return url
 
 
-def test_registered_security_key_logs_in_to_the_dashboard(
-    make_server: Callable[..., E2EServer], page: Page, virtual_key: None
+@pytest.mark.parametrize("counter_rollback", [1, 2], ids=["equal-counter", "lower-counter"])
+def test_registered_security_key_updates_its_counter_and_refuses_a_clone(
+    make_server: Callable[..., E2EServer],
+    page: Page,
+    virtual_key: VirtualKey,
+    browser_errors: BrowserErrors,
+    counter_rollback: int,
 ) -> None:
     server = make_server(setup=True)
     server.push(snapshot_of())
@@ -59,18 +105,46 @@ def test_registered_security_key_logs_in_to_the_dashboard(
     server.stop()
     server.start()
     page.goto(f"{url}/#/login")
-    page.get_by_label("This device").fill("security-key tablet")
-    page.get_by_role("button", name="Use security key", exact=True).click()
+    previous_count = virtual_key.credential()["signCount"]
+    for _ in range(2):
+        page.get_by_label("This device").fill("security-key tablet")
+        page.get_by_role("button", name="Use security key", exact=True).click()
 
-    expect(page.get_by_role("button", name="Log out")).to_be_visible()
-    expect(page.get_by_role("banner")).to_contain_text("security-key tablet")
-    expect(page.get_by_text("No repositories.", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="Log out")).to_be_visible()
+        expect(page.get_by_role("banner")).to_contain_text("security-key tablet")
+        expect(page.get_by_text("No repositories.", exact=True)).to_be_visible()
+        (key,) = auth_admin.list_fido2_keys(server.engine)
+        assert key.last_used_at is not None
+        current_count = virtual_key.credential()["signCount"]
+        assert current_count > previous_count
+        with Session(server.engine) as session:
+            (stored_key,) = session.exec(select(WebFido2Key)).all()
+            assert stored_key.sign_count == current_count
+        previous_count = current_count
+
+        page.get_by_role("button", name="Log out").click()
+        expect(page).to_have_url(f"{url}/#/login")
+
+    # A cloned key can still sign a fresh challenge but has an outdated counter.
+    # Chrome increments before signing, so roll back one extra step for equality.
+    virtual_key.set_sign_count(previous_count - counter_rollback)
+    browser_errors.expect(
+        "console",
+        "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+    )
+    with page.expect_response(f"{url}/api/auth") as refused:
+        page.get_by_role("button", name="Use security key", exact=True).click()
+    assert refused.value.status == 401
+    expect(page.get_by_role("alert")).to_have_text("The security key was not accepted.")
+    expect(page).to_have_url(f"{url}/#/login")
+    assert virtual_key.credential()["signCount"] == previous_count - counter_rollback + 1
+    assert auth_admin.list_sessions(server.engine) == []
 
 
 def test_a_removed_security_key_is_refused_visibly(
     make_server: Callable[..., E2EServer],
     page: Page,
-    virtual_key: None,
+    virtual_key: VirtualKey,
     browser_errors: BrowserErrors,
 ) -> None:
     server = make_server(setup=True)
@@ -83,9 +157,11 @@ def test_a_removed_security_key_is_refused_visibly(
     def revoke_before_delivery(route: Route) -> None:
         # Pause the real signed request, not the ceremony or the server response.
         # This models the host revoking the key while its login is in flight.
-        key = auth_admin.list_fido2_keys(server.engine)[0]
-        auth_admin.remove_fido2_key(server.engine, key.id)
-        route.continue_()
+        try:
+            (key,) = auth_admin.list_fido2_keys(server.engine)
+            auth_admin.remove_fido2_key(server.engine, key.id)
+        finally:
+            route.continue_()
 
     page.route(f"{url}/api/auth", revoke_before_delivery, times=1)
     browser_errors.expect(
@@ -98,3 +174,11 @@ def test_a_removed_security_key_is_refused_visibly(
     expect(page).to_have_url(f"{url}/#/login")
     expect(page.get_by_role("button", name="Use security key", exact=True)).to_be_enabled()
     expect(page.get_by_role("button", name="Log out")).not_to_be_visible()
+    assert auth_admin.list_sessions(server.engine) == []
+    # FIDO2 is deliberately exempt from rate limits (UNLIMITED_METHODS): each
+    # attempt signs a fresh challenge, so a failure is audited, not backed off.
+    events = auth_admin.recent_events(server.engine)
+    assert [(event.event, event.method, event.device_name) for event in events] == [
+        ("key_added", "fido2", "Desk security key"),
+        ("login_failed", "fido2", "revoked-key tablet"),
+    ]
