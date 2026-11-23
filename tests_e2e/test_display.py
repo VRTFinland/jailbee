@@ -110,6 +110,20 @@ def test_eink_page_turns_hold_new_messages_and_refresh_snapshot(
     expect(indicator).to_have_text(re.compile(r"Page 1 / \d+"))
     assert page.evaluate("window.scrollY") == start
 
+    total = int(indicator.inner_text().split("/")[1])
+    next_page = pages.get_by_role("button", name=re.compile("Next"))
+    for number in range(2, total + 1):
+        next_page.click()
+        # Let the browser deliver scroll/layout events before checking the counter.
+        page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+        expect(indicator).to_have_text(f"Page {number} / {total}")
+    expect(next_page).to_be_disabled()
+    expect(page.get_by_text("Reading paragraph 39.", exact=True)).to_be_in_viewport()
+    for number in range(total - 1, 0, -1):
+        pages.get_by_role("button", name=re.compile("Prev")).click()
+        expect(indicator).to_have_text(f"Page {number} / {total}")
+    assert page.evaluate("window.scrollY") == start
+
     append_entry(server, path, "Held reply one.")
     expect(page.get_by_role("button", name="1 new message", exact=False)).to_be_visible()
     expect(page.get_by_text("Held reply one.", exact=True)).to_have_count(0)

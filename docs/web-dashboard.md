@@ -306,8 +306,9 @@ in a compact header while you read. **Latest answer** appears only when the
 newest assistant reply is outside the readable area (below the header and above
 the bottom controls, including the device's safe-area inset). A truncated title
 keeps its full text as a tooltip and accessible heading name. Page turns use the
-actual readable height even on short landscape screens. Jumping to the reply or
-scrolling to it hides the button; moving
+actual readable height even on short landscape screens, with a stable page grid
+as the header becomes sticky and a last page bounded by the browser's scroll
+limit. Jumping to the reply or scrolling to it hides the button; moving
 away or receiving a newer reply out of view shows it again. In the e-ink display
 profile the same rule applies, but the button turns to the page containing the
 reply, and live entries remain behind the new-messages notice until tapped.

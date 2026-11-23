@@ -26,9 +26,9 @@ export function usePager(topInset: () => number = () => 0): Pager {
 
     const page = ref(0)
     const contentHeight = ref(0)
-    const pageCount = computed(() =>
-        Math.max(1, Math.ceil(contentHeight.value / pageHeight())),
-    )
+    const viewportHeight = ref(window.innerHeight)
+    const maxScroll = computed(() => Math.max(0, contentHeight.value - viewportHeight.value))
+    const pageCount = computed(() => Math.ceil(maxScroll.value / pageHeight()) + 1)
 
     function measure() {
         const height = Math.max(1, readableBottom() - topInset())
@@ -37,11 +37,14 @@ export function usePager(topInset: () => number = () => 0): Pager {
             page.value = Math.max(0, Math.floor(window.scrollY / height))
         }
         contentHeight.value = document.documentElement.scrollHeight
+        viewportHeight.value = window.innerHeight
     }
 
     function syncFromScroll() {
         measure()
-        page.value = Math.max(0, Math.round(window.scrollY / pageHeight()))
+        page.value = window.scrollY >= maxScroll.value
+            ? pageCount.value - 1
+            : Math.max(0, Math.round(window.scrollY / pageHeight()))
     }
 
     watch(topInset, () => {

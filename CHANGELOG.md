@@ -224,7 +224,8 @@ before editing `## Unreleased`.
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Themes
   (light, dark, e-ink) and an e-ink display profile with page turns are chosen
   per device. Page numbering stays stable as the transcript header becomes
-  sticky; the front-page controls wrap at phone width even with e-ink margins
+  sticky, and page turns stop at the reachable last page rather than stalling
+  on browser scroll limits; the front-page controls wrap at phone width even with e-ink margins
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)). The app installs
   as a PWA with no CDN assets. Login uses a
   one-time PIN, TOTP or a FIDO2 key (registered in a CLI-started setup mode),
