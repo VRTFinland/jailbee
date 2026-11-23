@@ -196,9 +196,10 @@ def test_sweep_reports_an_unknown_record_type(
 
     report = out.read_text()
     assert "- `teleport`: x1 in 1 session" in report.partition("\n## ")[0]
-    assert f"unknown entry type `teleport` x1 (first at line {lines})" in sections(report)[
-        f"-work-repo/{CLEAN_ID}"
-    ]
+    assert (
+        f"unknown entry type `teleport` x1 (first at line {lines})"
+        in sections(report)[f"-work-repo/{CLEAN_ID}"]
+    )
 
 
 def test_sweep_attributes_a_csp_violation_to_the_session_that_caused_it(
@@ -237,7 +238,8 @@ def test_sweep_reports_a_page_that_says_the_subagent_is_missing(
 
     def with_a_missing_subagent(home: Path) -> list[tuple[sweep.SessionResult, Path]]:
         found = real(home)
-        url = f"/#/repos/{sweep.SWEEP_PREFIX}/sessions/claude/{CLEAN_ID}/subagents/afeedfeedfeedfeed"
+        base = f"/#/repos/{sweep.SWEEP_PREFIX}/sessions/claude"
+        url = f"{base}/{CLEAN_ID}/subagents/afeedfeedfeedfeed"
         return [*found, (sweep.SessionResult(missing, url), found[0][1])]
 
     monkeypatch.setattr(sweep, "targets", with_a_missing_subagent)
@@ -269,6 +271,7 @@ def test_sweep_records_a_browser_failure_and_still_writes_the_report(
     result = run_sweep(logged_in, server.url, agent_home, browser_errors, out, slow_ms=60_000)
 
     assert len(result.sessions) == 3
-    assert "load error: navigation failed: Target crashed" in sections(out.read_text())[
-        f"-work-repo-other/{BROKEN_ID}"
-    ]
+    assert (
+        "load error: navigation failed: Target crashed"
+        in sections(out.read_text())[f"-work-repo-other/{BROKEN_ID}"]
+    )
