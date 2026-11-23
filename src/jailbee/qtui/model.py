@@ -131,6 +131,14 @@ def card_content(
 ) -> CardContent:
     """Split a container's visible fields into NAME + STATE plus the rest,
     each addressable by ``FieldSpec.name`` so a renderer can place it."""
+    # Standalone cards have no neighbouring rows to align counts with.
+    if any(field.name == "sync" for field in fields):
+        from jailbee.dashboard.columns import visible_fields
+
+        local_sync = next(
+            field for field in visible_fields(now or datetime.now(UTC), [c], enabled=("sync",))
+        )
+        fields = [local_sync if field.name == "sync" else field for field in fields]
     cells = container_cells(c, fields)
     if now is not None:
         for index, field in enumerate(fields):
@@ -264,7 +272,7 @@ def grid_rows(cc: CardContent) -> list[tuple[str, str]]:
     if cc.fork_of:
         rows.append(("FORK OF", cc.fork_of))
     segs = git_segments(cc)
-    rows.append(("GIT", "clean" if not segs else "  ".join(t for t, _ in segs)))
+    rows.append(("GIT", "clean" if is_git_clean(cc) else "  ".join(t for t, _ in segs)))
     return rows
 
 

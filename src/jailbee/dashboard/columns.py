@@ -47,8 +47,11 @@ _COLUMN_SET_MIGRATIONS: tuple[tuple[int, str, tuple[str, ...]], ...] = (
     (1, "doing", ()),
     (2, "network", ("network", "mounts")),
     (3, "outbox", ("outbox", "role", "children", "inbox")),
+    (4, "target_diff", ("sync",)),
+    (4, "ahead_count", ()),
+    (4, "behind_count", ()),
 )
-COLUMNS_VERSION = 3
+COLUMNS_VERSION = 4
 """The newest version in `_COLUMN_SET_MIGRATIONS`; a seeded view starts here."""
 
 
