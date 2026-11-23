@@ -823,6 +823,21 @@ def test_api_error_reports_once_per_episode_and_clears_on_progress() -> None:
     assert body is not None and "(overloaded)" in body and "resets at" in body
 
 
+def test_a_new_error_key_inside_an_open_episode_sends_nothing() -> None:
+    from jailbee.orchestration.agent_watch import advance_api_error
+
+    entry, body = advance_api_error(supervised(confirmed=True), _api_error("t|e1"))
+    assert body is not None
+    entry, body = advance_api_error(entry, _api_error("t2|e2"))
+    assert body is None
+    assert entry.api_error_key == "t2|e2"
+    entry, body = advance_api_error(entry, _api_error("t2|e2"))
+    assert body is None
+    entry, _ = advance_api_error(entry, None)
+    entry, body = advance_api_error(entry, _api_error("t3|e3"))
+    assert body is not None
+
+
 def test_api_error_episode_survives_a_watch_reload(tmp_path) -> None:
     from jailbee.orchestration.agent_watch import advance_api_error
 

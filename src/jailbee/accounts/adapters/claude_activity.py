@@ -236,8 +236,14 @@ SYNTHETIC_MODEL = "<synthetic>"
 API_ERROR_DETAIL_CHARS = 160
 _API_ERROR_SCAN_CHARS = 4096
 """Only the head of an error text is searched: the body is untrusted and unbounded."""
-_QUOTA_MARKERS = ("usage_limit_reached", "usage limit", "insufficient_quota", "quota")
-_RESETS_AT = re.compile(r'"resets_at"\s*:\s*(\d{1,12})\b')
+_QUOTA_MARKERS = re.compile(
+    r"usage_limit_reached|usage limit|insufficient_quota|quota[ _]exceeded"
+    r"|exceeded[^.\n]{0,40}quota|quota[ _]exhausted"
+)
+"""Real quota signals only: a bare "quota" also appears in 500s ("quota project")."""
+_RESETS_AT = re.compile(
+    r'"resets_at"\s*:\s*(\d{1,12})\b|usage limit reached\|(\d{1,12})\b', re.IGNORECASE
+)
 _EMBEDDED_MESSAGE = re.compile(r'"message"\s*:\s*"([^"\\]{1,300})"')
 _RESET_WINDOW_SECONDS = 400 * 86400
 """A reset further than this from now is not believed."""
@@ -287,7 +293,7 @@ def _resets_at(text: str, now: float | None) -> datetime | None:
     match = _RESETS_AT.search(text)
     if match is None:
         return None
-    value = int(match[1])
+    value = int(match[1] or match[2])
     reference = now if now is not None else datetime.now(UTC).timestamp()
     if abs(value - reference) > _RESET_WINDOW_SECONDS:
         return None
@@ -324,7 +330,7 @@ def classify_api_error(record: dict[str, object], *, now: float | None = None) -
     lowered = text.lower()
     resets_at: datetime | None = None
     kind: ApiErrorKind
-    if any(marker in lowered or marker in names for marker in _QUOTA_MARKERS):
+    if _QUOTA_MARKERS.search(lowered) or _QUOTA_MARKERS.search(names):
         kind = "quota"
         resets_at = _resets_at(text, now)
     elif status == 429 or "rate_limit" in names:

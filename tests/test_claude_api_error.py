@@ -231,3 +231,64 @@ def test_errors_without_time_or_uuid_still_have_distinct_keys() -> None:
     assert first is not None and second is not None
     assert first.key != second.key
     assert first.key == _parse(bare("API Error: one")).api_error.key  # type: ignore[union-attr]
+
+
+def test_a_500_mentioning_a_quota_project_is_not_a_quota_error() -> None:
+    record = _error(
+        text="API Error: 500 Internal error. Check your quota project settings.",
+        error=None,
+        status=500,
+        error_type=None,
+    )
+    error = _parse(record).api_error
+    assert error is not None
+    assert error.kind == "other"
+    assert error.resets_at is None
+
+
+def test_quota_phrasings_still_classify_as_quota() -> None:
+    for text in (
+        "Quota exceeded for metric",
+        "You have exceeded your monthly quota",
+        '{"error":{"type":"insufficient_quota"}}',
+    ):
+        error = _parse(_error(text=text, error=None, status=429, error_type=None)).api_error
+        assert error is not None and error.kind == "quota", text
+
+
+def test_the_legacy_text_form_carries_its_reset_epoch() -> None:
+    epoch = int(NOW) + 3600
+    error = _parse(
+        _error(text=f"Claude AI usage limit reached|{epoch}", error=None, status=None)
+    ).api_error
+    assert error is not None
+    assert error.kind == "quota"
+    assert error.resets_at == datetime.fromtimestamp(epoch, UTC)
+
+
+def test_the_legacy_reset_epoch_outside_the_window_is_ignored() -> None:
+    error = _parse(
+        _error(text="Claude AI usage limit reached|99999999999", error=None, status=None)
+    ).api_error
+    assert error is not None and error.kind == "quota" and error.resets_at is None
+
+
+def _user(text_block: dict[str, object]) -> dict[str, object]:
+    return {
+        "type": "user",
+        "timestamp": "2026-11-23T19:50:00Z",
+        "message": {"role": "user", "content": [text_block]},
+    }
+
+
+def test_quoting_an_error_is_not_an_api_error() -> None:
+    quoted = "usage_limit_reached 429 API Error: Request rejected (429)"
+    records = [
+        _real("2026-11-23T19:37:59Z"),
+        _user({"type": "text", "text": quoted}),
+        _user({"type": "tool_result", "tool_use_id": "t", "content": quoted}),
+        _real("2026-11-23T19:55:00Z", text=quoted),
+    ]
+    assert _parse(*records).api_error is None
+    for record in records[1:]:
+        assert _parse(record).api_error is None

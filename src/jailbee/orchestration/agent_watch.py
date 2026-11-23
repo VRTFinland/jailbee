@@ -289,6 +289,8 @@ def advance_api_error(
 ) -> tuple[WatchEntry, str | None]:
     """One `blocked` report per API-error episode; progress (None) closes the episode.
 
+    A new error key while the episode is open updates the key silently.
+
     `UNKNOWN` (an unreadable transcript) leaves the episode as it is.
 
     `error` must come from this tick's read: a stale error is never reported.
@@ -301,6 +303,10 @@ def advance_api_error(
         return (replace(entry, api_error_key=None) if entry.api_error_key else entry), None
     if entry.api_error_key == error.key:
         return entry, None
+    if entry.api_error_key is not None:
+        # The episode is still open (no recovery seen): another error record
+        # is the same stoppage, so only the stored key moves.
+        return replace(entry, api_error_key=error.key), None
     body = f"[jailbee] child `{entry.child_full}` agent stopped on an API error ({error.kind})"
     if error.detail:
         body += f": {error.detail}"
