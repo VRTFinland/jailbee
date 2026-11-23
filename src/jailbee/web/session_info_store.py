@@ -62,9 +62,7 @@ class DbSessionInfoStore:
             with Session(self._engine) as db:
                 rows = db.exec(select(SessionInfoRow.path, SessionInfoRow.format)).all()
             dead = [
-                path
-                for path, fmt in rows
-                if fmt != SESSION_INFO_FORMAT or not Path(path).exists()
+                path for path, fmt in rows if fmt != SESSION_INFO_FORMAT or not Path(path).exists()
             ]
             table = SessionInfoRow.__table__  # type: ignore[attr-defined]  # SQLModel sets it on table classes
             with self._engine.begin() as conn:

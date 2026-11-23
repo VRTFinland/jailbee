@@ -435,19 +435,19 @@ def _lines(fd: int, start: int, end: int) -> Iterator[tuple[int, bytes]]:
 def session_info(session_id: str, path: Path) -> SessionInfo | None:
     """A session's list metadata, from a bounded head and tail of its transcript.
 
-    Sessions run to tens of megabytes and a listing reads every one, so only
-    the ends are read. The head is read line by line until the title is
-    settled: the first typed prompt, or the first command once
-    TITLE_CANDIDATES user lines held none, and never past HEAD_BYTES; its
-    first timestamp is when the session started. The last TAIL_BYTES (more,
-    up to TAIL_MAX_BYTES, while they hold no timestamp) give the last
-    activity: the last complete timestamp in that window, even one in a
-record that began before it. Models are those named in the head and the tail, in first-use
-    order: a model used only in the middle of a long session is not listed
-    (the transcript itself shows every entry's model). A line is parsed only
-    when it is a title candidate or names a model not seen yet. A caller
-    listing many sessions should cache the result by the file's size and mtime;
-    a change to what is derived here bumps `SESSION_INFO_FORMAT`.
+        Sessions run to tens of megabytes and a listing reads every one, so only
+        the ends are read. The head is read line by line until the title is
+        settled: the first typed prompt, or the first command once
+        TITLE_CANDIDATES user lines held none, and never past HEAD_BYTES; its
+        first timestamp is when the session started. The last TAIL_BYTES (more,
+        up to TAIL_MAX_BYTES, while they hold no timestamp) give the last
+        activity: the last complete timestamp in that window, even one in a
+    record that began before it. Models are those named in the head and the tail, in first-use
+        order: a model used only in the middle of a long session is not listed
+        (the transcript itself shows every entry's model). A line is parsed only
+        when it is a title candidate or names a model not seen yet. A caller
+        listing many sessions should cache the result by the file's size and mtime;
+        a change to what is derived here bumps `SESSION_INFO_FORMAT`.
     """
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
