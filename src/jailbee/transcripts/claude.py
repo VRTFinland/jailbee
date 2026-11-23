@@ -210,6 +210,14 @@ def _tool_result(
     return found
 
 
+_INTERRUPTED = "[Request interrupted by user"
+
+
+def _is_notice(text: str) -> bool:
+    """Claude Code's own note in the person's turn, such as an interruption."""
+    return text.startswith(_INTERRUPTED)
+
+
 def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
     """The normalised entries of one JSONL record."""
     message = record.get("message")
@@ -222,9 +230,19 @@ def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
     if kind == "user":
         if record.get("isMeta") is True:
             return []
+        meta = record.get("isCompactSummary") is True
         if isinstance(content, str):
             return (
-                [UserMessage(id=f"{record_id}:0", timestamp=when, text=content)] if content else []
+                [
+                    UserMessage(
+                        id=f"{record_id}:0",
+                        timestamp=when,
+                        text=content,
+                        meta=meta or _is_notice(content),
+                    )
+                ]
+                if content
+                else []
             )
         if not isinstance(content, list):
             return []
@@ -234,7 +252,14 @@ def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
             entry_id = f"{record_id}:{index}"
             block_type = block.get("type")
             if block_type == "text" and isinstance(block.get("text"), str) and block["text"]:
-                found.append(UserMessage(id=entry_id, timestamp=when, text=block["text"]))
+                found.append(
+                    UserMessage(
+                        id=entry_id,
+                        timestamp=when,
+                        text=block["text"],
+                        meta=meta or _is_notice(block["text"]),
+                    )
+                )
             elif block_type == "tool_result":
                 found.extend(_tool_result(block, record, entry_id, when))
     elif kind == "assistant":
@@ -345,6 +370,8 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
                 [e for e in _entries(record, "") if isinstance(e, UserMessage)] if record else []
             )
             for user in users:
+                if user.meta:
+                    continue
                 if not first_command:
                     first_command = command_name(user.text)
                 typed = prompt_text(user.text)

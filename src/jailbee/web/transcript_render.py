@@ -83,7 +83,7 @@ def _input_json(value: dict[str, object]) -> str:
 def render_entry(entry: Entry, cache: RenderCache) -> RenderedEntry:
     match entry:
         case UserMessage():
-            if is_meta_wrapper(entry.text):
+            if entry.meta or is_meta_wrapper(entry.text):
                 return RenderedUser(
                     id=entry.id, timestamp=entry.timestamp, html=_pre(entry.text, "meta"), meta=True
                 )
@@ -161,7 +161,7 @@ def render_entries(entries: Iterable[Entry], cache: RenderCache) -> list[Rendere
     described = subagent_descriptions(entries)
     rendered: list[RenderedEntry] = []
     for e in entries:
-        if isinstance(e, UserMessage):
+        if isinstance(e, UserMessage) and not e.meta:
             markup, typed = split_prompt(e.text)
             if markup and typed:
                 rendered.append(

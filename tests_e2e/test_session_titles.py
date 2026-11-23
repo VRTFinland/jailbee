@@ -43,3 +43,27 @@ def test_session_list_prefers_the_typed_prompt_and_transcript_marks_clear_as_met
     expect(page.get_by_role("heading", name=prompt, exact=True)).to_be_visible()
     expect(page.locator(".entry.user.meta pre.meta")).to_have_text(wrapper)
     expect(page.locator(".entry.user:not(.meta)")).to_have_text(prompt)
+
+
+def test_a_mixed_user_record_titles_by_the_typed_text_and_shows_the_reminder_as_meta(
+    make_server: Callable[..., E2EServer], page: Page, tmp_path: Path
+) -> None:
+    home = tmp_path / "claude"
+    project = home / "projects" / "-work-repo"
+    project.mkdir(parents=True)
+    reminder = "<system-reminder>Injected context</system-reminder>"
+    typed = "Fix the mixed title"
+    record = {"type": "user", "uuid": "mixed", "message": {"content": f"{reminder}\n{typed}"}}
+    (project / f"{SESSION}.jsonl").write_text(json.dumps(record) + "\n")
+    server = make_server(
+        agent_homes=lambda prefix: [("claude", home)] if prefix == "work" else None
+    )
+    log_in_with_pin(page, server.url, server.pin.current, "session reader")
+
+    page.goto(f"{server.url}/#/repos/work")
+
+    expect(page.locator(".session .title")).to_have_text(typed)
+    page.get_by_role("link", name=typed).click()
+    expect(page.get_by_role("heading", name=typed, exact=True)).to_be_visible()
+    expect(page.locator(".entry.user.meta pre.meta")).to_have_text(reminder)
+    expect(page.locator(".entry.user:not(.meta)")).to_have_text(typed)

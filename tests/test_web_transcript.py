@@ -319,6 +319,57 @@ def test_injected_user_records_are_meta_and_cannot_supply_session_titles(
     assert (body["entries"][0]["meta"], body["title"]) == (True, "Fix the title")
 
 
+def test_a_compaction_summary_is_meta_and_cannot_supply_the_session_title(
+    client: TestClient, home: Path
+) -> None:
+    corpus = (
+        Path(__file__).parent
+        / "fixtures/transcripts/claude-corpus/projects/-work-toy"
+        / "00000001-0000-4000-8000-000000000001.jsonl"
+    )
+    (summary,) = [
+        record
+        for line in corpus.read_text().splitlines()
+        if (record := json.loads(line)).get("isCompactSummary") is True
+    ]
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    path.write_text(
+        json.dumps(summary) + "\n" + json.dumps(_record(2, "user", "Fix the title")) + "\n"
+    )
+
+    body = client.get(URL).json()
+
+    assert body["title"] == "Fix the title"
+    summarised, typed = body["entries"]
+    assert summarised["meta"] is True
+    assert '<pre class="meta">' in summarised["html"]
+    assert "This session is being continued" in summarised["html"]
+    assert typed["meta"] is False
+
+
+@pytest.mark.parametrize(
+    "notice", ["[Request interrupted by user]", "[Request interrupted by user for tool use]"]
+)
+def test_an_interruption_notice_is_meta_and_cannot_supply_the_session_title(
+    client: TestClient, home: Path, notice: str
+) -> None:
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    path.write_text(
+        json.dumps(_record(1, "user", [{"type": "text", "text": notice}]))
+        + "\n"
+        + json.dumps(_record(2, "user", "Fix the title"))
+        + "\n"
+    )
+
+    body = client.get(URL).json()
+
+    assert body["title"] == "Fix the title"
+    interrupted, typed = body["entries"]
+    assert interrupted["meta"] is True
+    assert "Request interrupted by user" in interrupted["html"]
+    assert typed["meta"] is False
+
+
 @pytest.mark.parametrize(
     "context",
     ["Injected context", "Injected <system-reminder>nested</system-reminder> context"],

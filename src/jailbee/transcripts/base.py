@@ -29,6 +29,10 @@ class UserMessage:
     was read whole or incrementally."""
     timestamp: datetime | None
     text: str
+    meta: bool = False
+    """The agent wrote this into the person's turn (a compaction summary or an
+    interruption notice), so it is shown as context and never becomes a session
+    title."""
     kind: Literal["user"] = "user"
 
 

@@ -220,6 +220,8 @@ before editing `## Unreleased`.
   transcript and switches the live subscription instead of retaining the previous
   document. Session titles use the first typed prompt rather than agent wrapper
   markup, falling back to the first slash command in command-only sessions;
+  injected context, including a compaction summary or an interruption notice,
+  is shown as context rather than as a prompt;
   titles and connection notices stay visible while reading; **Latest answer**
   appears only when the newest reply is out of view and aligns its start below
   the header, including short final replies. E-ink page turns never skip unread
