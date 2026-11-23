@@ -47,13 +47,11 @@ def test_the_dashboard_comes_back_after_a_server_restart(
     )
     browser_errors.expect("console", refused, at_least=1)
     # Exercise a real reconnect gap, rather than racing its exponential backoff.
-    try:
-        with logged_in.expect_console_message(
-            predicate=lambda message: refused.fullmatch(message.text) is not None
-        ):
-            server.stop()
-    finally:
-        server.start()
+    with logged_in.expect_console_message(
+        predicate=lambda message: refused.fullmatch(message.text) is not None
+    ):
+        server.stop()
+    server.start()
     server.push(snapshot_of(repo_group("work", container("work-next", "work"))))
 
     expect(logged_in.get_by_role("link", name="next", exact=True)).to_be_visible()

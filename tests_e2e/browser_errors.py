@@ -117,31 +117,37 @@ class BrowserErrors:
             for category, _, text in entries
         ]
         slots = [i for i, expected in enumerate(self._expected) for _ in range(expected.minimum)]
+        required = len(slots)
+        slots.extend(
+            i
+            for i, expected in enumerate(self._expected)
+            if expected.maximum is None
+            for _ in entries
+        )
         assigned: dict[int, int] = {}
 
-        def assign(entry: int, seen: set[int]) -> bool:
-            # Reassign an earlier hit when overlapping expectations need it.
-            for slot, expected in enumerate(slots):
-                if expected not in matches[entry] or slot in seen:
+        def assign(slot: int, seen: set[int]) -> bool:
+            # Augment the matching without evicting an already satisfied slot.
+            for entry, candidates in enumerate(matches):
+                if slots[slot] not in candidates or entry in seen:
                     continue
-                seen.add(slot)
-                if slot not in assigned or assign(assigned[slot], seen):
-                    assigned[slot] = entry
+                seen.add(entry)
+                if entry not in assigned or assign(assigned[entry], seen):
+                    assigned[entry] = slot
                     return True
             return False
 
-        for entry in range(len(entries)):
-            assign(entry, set())
-        consumed = set(assigned.values())
+        # Satisfy every minimum before allocating unbounded expectations' extras.
+        for slot in range(len(slots)):
+            assign(slot, set())
         found = [
             f"{label}: {text}"
             for entry, (_, label, text) in enumerate(entries)
-            if entry not in consumed
-            and not any(self._expected[i].maximum is None for i in matches[entry])
+            if entry not in assigned
         ]
         if require_expected:
             for i, expected in enumerate(self._expected):
-                count = sum(slots[slot] == i for slot in assigned)
+                count = sum(slot < required and slots[slot] == i for slot in assigned.values())
                 if count < expected.minimum:
                     found.append(
                         f"unmet {expected.category} expectation {expected.pattern!r}: "

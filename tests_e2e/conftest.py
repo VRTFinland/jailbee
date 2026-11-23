@@ -7,8 +7,9 @@ the system Chrome (Playwright's `chrome` channel); nothing is downloaded.
   with isolated sessions/rate limits and an empty snapshot. Tests push state.
 - `make_server`: additional fresh servers with their own databases and optional
   `WebDeps` overrides. Override `server` to point `logged_in` at one of these.
-- `browser_errors`: automatically watches every context made by `browser` and
-  checks errors after the test body and again during teardown.
+- `browser_errors`: watches function-scoped sync contexts from any browser,
+  including `browser.new_page`; rejects shared/persistent contexts and checks
+  errors after the test body and again during teardown.
 - `logged_in`: a fresh real PIN login against the test's `server`; no token is
   shared between tests.
 """
@@ -21,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from playwright.sync_api import Browser, BrowserContext, Page, expect
+from playwright.sync_api import Browser, BrowserContext, BrowserType, Page, expect
 from sqlalchemy.engine import Engine
 
 from jailbee.db import get_engine
@@ -94,33 +95,87 @@ def make_server(
             fresh.stop()
         except Exception as error:
             failures.append(error)
-        finally:
+        try:
             fresh.engine.dispose()
+        except Exception as error:
+            failures.append(error)
     if failures:
-        raise ExceptionGroup("e2e servers failed to stop", failures)
+        raise ExceptionGroup("e2e server cleanup failed", failures)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def collector_guard() -> Iterator[Callable[[BrowserErrors | None], None]]:
+    """Guard public sync creation APIs even before function-scoped fixtures run."""
+    active: BrowserErrors | None = None
+
+    def select(errors: BrowserErrors | None) -> None:
+        nonlocal active
+        active = errors
+
+    def collector() -> BrowserErrors:
+        if active is None:
+            pytest.fail("browser contexts require the function-scoped browser_errors collector")
+        return active
+
+    with pytest.MonkeyPatch.context() as patch:
+        original_context = Browser.new_context
+        original_page = Browser.new_page
+
+        def watch(context: BrowserContext, errors: BrowserErrors) -> None:
+            errors.attach(context)
+            close = context.close
+
+            def close_settled(**kwargs: Any) -> None:
+                errors.settle()
+                close(**kwargs)
+
+            def watch_page(page: Page) -> None:
+                close_page = page.close
+
+                def close_page_settled(**kwargs: Any) -> None:
+                    errors.settle()
+                    close_page(**kwargs)
+
+                patch.setattr(page, "close", close_page_settled)
+
+            patch.setattr(context, "close", close_settled)
+            context.on("page", watch_page)
+            for page in context.pages:
+                watch_page(page)
+
+        def new_context(browser: Browser, **kwargs: Any) -> BrowserContext:
+            errors = collector()
+            made = original_context(browser, **kwargs)
+            watch(made, errors)
+            return made
+
+        def new_page(browser: Browser, **kwargs: Any) -> Page:
+            errors = collector()
+            page = original_page(browser, **kwargs)
+            watch(page.context, errors)
+            return page
+
+        def persistent_context(*args: Any, **kwargs: Any) -> BrowserContext:
+            pytest.fail("launch_persistent_context is not supported by the browser_errors collector")
+
+        patch.setattr(Browser, "new_context", new_context)
+        patch.setattr(Browser, "new_page", new_page)
+        patch.setattr(BrowserType, "launch_persistent_context", persistent_context)
+        yield select
 
 
 @pytest.fixture(autouse=True)
-def browser_errors(browser: Browser, monkeypatch: pytest.MonkeyPatch) -> Iterator[BrowserErrors]:
-    """Watch even contexts made directly by a test or another fixture."""
+def browser_errors(
+    collector_guard: Callable[[BrowserErrors | None], None],
+) -> Iterator[BrowserErrors]:
+    """Watch function-scoped contexts from any sync browser, including new_page."""
     errors = BrowserErrors()
-    original = browser.new_context
-
-    def new_context(**kwargs: Any) -> BrowserContext:
-        made = original(**kwargs)
-        errors.attach(made)
-        close = made.close
-
-        def close_settled(**kwargs: Any) -> None:
-            errors.settle()
-            close(**kwargs)
-
-        monkeypatch.setattr(made, "close", close_settled)
-        return made
-
-    monkeypatch.setattr(browser, "new_context", new_context)
-    yield errors
-    errors.assert_clean()
+    collector_guard(errors)
+    try:
+        yield errors
+        errors.assert_clean()
+    finally:
+        collector_guard(None)
 
 
 @pytest.fixture

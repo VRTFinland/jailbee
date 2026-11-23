@@ -70,10 +70,19 @@ Each test's `server` has a fresh database and rate limits. `logged_in` performs
 a real PIN login against that test's server (including a fixture override),
 so logout and revocation cannot invalidate another test's token.
 
-The automatic `browser_errors` collector watches all pages, including popups
-and contexts created with `browser.new_context()`. It checks at the end of the
-test body and again at teardown after settling pending browser events. Declare
-only intentional errors, by category, for example:
+The automatic `browser_errors` collector watches all pages and popups in
+function-scoped contexts created through the synchronous Playwright API:
+`browser.new_context()` and `browser.new_page()`, including on a second
+launched browser. Close these pages/contexts in the test or its function-scoped
+fixture teardown; closing them first settles pending reports. Creation from
+module/session-scoped fixtures fails loudly rather than sharing a collector
+between tests. `launch_persistent_context()` is rejected before launch; use
+`browser.new_context()` instead. The harness supports the sync API, not async
+Playwright or direct Playwright internals.
+
+It checks at the end of the test body and again at teardown after settling
+pending browser events. Declare only intentional errors, by category, for
+example:
 
 ```python
 browser_errors.expect("console", "intentional message")
@@ -82,10 +91,18 @@ browser_errors.expect("csp", "script-src", at_least=1)
 ```
 
 Strings match literal substrings; compiled regexes must match the whole
-message. Each declaration consumes one hit by default. Extra hits and unmet
-expectations fail the test. The restart tracer deliberately waits for a
-refused WebSocket reconnect and allows only that server's exact connection
-error; ordinary tests do not suppress reconnect errors.
+message. Each declaration consumes one distinct hit by default; `times` sets
+an exact count, while `at_least` sets a minimum with no upper limit. Overlapping
+patterns are matched jointly, not greedily in declaration or arrival order.
+Extra hits and unmet expectations fail the test.
+
+The restart tracer deliberately waits for a refused WebSocket reconnect. It
+allows only `WebSocket connection to 'ws://127.0.0.1:<server-port>/api/ws'
+failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED`,
+matched as a whole message for that server's actual port. No other connection
+failure shapes are excused, and ordinary tests do not suppress reconnect errors.
+A failed stop is reported directly; the tracer starts the server again only
+once stopping and observing the expected reconnect have succeeded.
 
 ## Run it
 
