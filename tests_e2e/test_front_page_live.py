@@ -232,7 +232,11 @@ def test_an_idle_agent_with_only_the_inbox_follower_reads_idle(
     _, shell = gather(
         busy_root,
         "shell",
-        [*follower_only, (1013, CLAUDE, "npm", ("npm", "run", "dev"))],
+        [
+            *follower_only,
+            (1013, CLAUDE, "bash", ("/bin/bash", "-c", "npm run dev")),
+            (1014, 1013, "npm", ("npm", "run", "dev")),
+        ],
         name="work-dev",
         prefix="work",
     )

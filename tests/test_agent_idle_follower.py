@@ -57,7 +57,8 @@ def test_follower_beside_another_job_stays_shell(tmp_path, other):
         [
             (1011, CLAUDE, "bash", WRAPPER),
             (1012, 1011, "python", FOLLOWER),
-            (1013, CLAUDE, "node", other),
+            (1013, CLAUDE, "bash", ("/bin/bash", "-c", " ".join(other))),
+            (1014, 1013, other[0], other),
         ],
     )
 
@@ -79,3 +80,31 @@ def test_shell_without_children_is_left_as_claude_said(tmp_path):
 
     _, web, ls_json = _shown(info, group)
     assert (web, ls_json) == ("shell", "shell")
+
+
+
+def test_a_child_gone_before_its_argv_was_read_leaves_shell(tmp_path):
+    """The sampler saw the process; its /proc entry vanished before the argv read."""
+    info, group = gather(tmp_path, "shell", [(1012, CLAUDE, "python", FOLLOWER)], no_argv={1012})
+
+    _, web, ls_json = _shown(info, group)
+    assert (web, ls_json) == ("shell", "shell")
+
+
+def test_non_shell_children_such_as_mcp_servers_are_not_background_jobs(tmp_path):
+    """Claude runs every background task in a shell wrapper; a stdio MCP server
+    or language server is a direct non-shell child and no task."""
+    info, group = gather(
+        tmp_path,
+        "shell",
+        [
+            (1011, CLAUDE, "bash", WRAPPER),
+            (1012, 1011, "python", FOLLOWER),
+            (1013, CLAUDE, "node", ("node", "/usr/lib/mcp/server.js")),
+            (1014, 1013, "node", ("node", "worker.js")),
+        ],
+    )
+
+    _, web, ls_json = _shown(info, group)
+    assert (web, ls_json) == ("idle", "idle")
+

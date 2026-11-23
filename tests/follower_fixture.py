@@ -32,12 +32,15 @@ WRAPPER = (
 )
 
 
-def _process(proc: Path, pid: int, ppid: int, comm: str, argv: tuple[str, ...]) -> None:
+def _process(
+    proc: Path, pid: int, ppid: int, comm: str, argv: tuple[str, ...], *, cmdline: bool = True
+) -> None:
     d = proc / str(pid)
     d.mkdir(parents=True)
     before = ["S", str(ppid)] + ["0"] * 9
     (d / "stat").write_text(f"{pid} ({comm}) " + " ".join([*before, "0", "0", *["0"] * 6, "777"]))
-    (d / "cmdline").write_bytes(b"".join(a.encode() + b"\0" for a in argv))
+    if cmdline:
+        (d / "cmdline").write_bytes(b"".join(a.encode() + b"\0" for a in argv))
     (d / "status").write_text(f"Name:\t{comm}\nNSpid:\t{pid}\t{pid - CLAUDE + 42}\n")
 
 
@@ -48,18 +51,20 @@ def gather(
     *,
     name: str = "alpha-1",
     prefix: str = "alpha",
+    no_argv: frozenset[int] | set[int] = frozenset(),
 ) -> tuple[ContainerInfo, RepoGroup]:
     """Gather one container whose Claude session file says `state`.
 
     `children` are `(host pid, parent host pid, comm, argv)` under the Claude
-    process (host pid `CLAUDE`).
+    process (host pid `CLAUDE`). A pid in `no_argv` has no readable cmdline,
+    as if it exited between the sample and the argv read.
     """
     proc, cgroup = tmp_path / "proc", tmp_path / "cgroup"
     (proc / "500").mkdir(parents=True)
     (proc / "500" / "cgroup").write_text(f"0::/lxc.payload.{name}/init.scope\n")
     _process(proc, CLAUDE, 1, "claude", ("claude",))
     for pid, ppid, comm, argv in children:
-        _process(proc, pid, ppid, comm, argv)
+        _process(proc, pid, ppid, comm, argv, cmdline=pid not in no_argv)
     procs = cgroup / f"lxc.payload.{name}"
     procs.mkdir(parents=True)
     pids = [CLAUDE, *(pid for pid, *_ in children)]

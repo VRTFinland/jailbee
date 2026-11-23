@@ -1100,10 +1100,11 @@ def annotate_agent_status(
 
 
 def _follower_settler(sampler: ActivitySampler) -> StateSettler:
-    """Show a ``shell`` session as idle when only inbox waiters run under it.
+    """Show a ``shell`` session as idle when only inbox waiters run as its tasks.
 
     Claude reports ``shell`` while any background task runs, and the JailBee
-    plugin's inbox follower is one in every session. The processes come from
+    plugin's inbox follower is one in every session. A task is a shell child
+    of the agent process, with everything under it. The processes come from
     the sampler's reading already taken; argv is read from /proc only for the
     processes under a ``shell`` session. A process that vanished in between
     leaves the state as Claude reported it.
@@ -1115,8 +1116,16 @@ def _follower_settler(sampler: ActivitySampler) -> StateSettler:
     def settle(container: str, host_pid: int, state: str) -> str:
         if state != "shell":
             return state
+        procs = sampler.processes(container)
+        # Claude runs every background task in a shell wrapper; other direct
+        # children (stdio MCP servers, language servers) are not tasks.
+        roots = [
+            pid
+            for pid, sample in procs.items()
+            if sample.ppid == host_pid and sample.comm in procstat.SHELL_COMMS
+        ]
         argvs: list[tuple[str, ...]] = []
-        for pid in procstat.descendants(sampler.processes(container), host_pid):
+        for pid in roots + [p for root in roots for p in procstat.descendants(procs, root)]:
             argv = sampler.cmdline(pid)
             if argv is None:
                 return state
