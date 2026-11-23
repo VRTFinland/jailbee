@@ -81,6 +81,21 @@ manifests, Makefile or workflow. It can also be started with
 evidence as the `web-e2e-failure` artifact. Unrelated changes do not trigger
 this workflow; the ordinary CI gate stays separate.
 
+### Sweeping your own sessions
+
+`make web-e2e-sweep CLAUDE_HOME=<path>` (default `~/.claude`) renders every
+session and subagent of a Claude home through the same test server and Chrome,
+and writes a Markdown report under `.local/web-e2e-sweep/`. It reads the home
+only, commits nothing and never runs in CI. The report starts with a summary
+line and the unknown entry types across the home, then lists each session with
+a finding: load errors, JS errors, CSP violations, renders slower than
+`SWEEP_SLOW_MS` (default 2000) and entry types the transcript reader neither
+renders nor knowingly skips, each with its first line in the file. Clean
+sessions are only counted. Unlike the browser tests, the sweep records browser
+errors in the report (`BrowserErrors.drain`) instead of failing on them. The
+Makefile's comment on the target describes the
+format in full.
+
 ### Writing browser tests
 
 Each test's `server` has a fresh database and rate limits. `logged_in` performs

@@ -66,6 +66,22 @@ def test_console_errors_page_errors_and_csp_violations_are_reported(
     errors.expect("console", "Content Security Policy")
 
 
+def test_drained_errors_are_handed_over_and_no_longer_fail(
+    watched: tuple[Page, BrowserErrors],
+) -> None:
+    page, errors = watched
+
+    break_the_page(page)
+    drained = errors.drain()
+
+    assert "kaboom" in drained.console
+    assert "Error: boom" in drained.page
+    assert any(v.startswith("script-src") for v in drained.csp)
+    errors.assert_clean()
+    page.evaluate("() => console.error('after the drain')")
+    assert errors.drain().console == ["after the drain"]
+
+
 def test_expected_errors_do_not_fail(watched: tuple[Page, BrowserErrors]) -> None:
     page, errors = watched
 

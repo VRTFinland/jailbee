@@ -48,6 +48,15 @@ class ExpectedError:
         return self.pattern.fullmatch(text) is not None
 
 
+@dataclass(frozen=True)
+class Reported:
+    """What a page reported over some stretch, by kind."""
+
+    console: list[str]
+    page: list[str]
+    csp: list[str]
+
+
 @dataclass
 class BrowserErrors:
     """Everything a browser context reported as an error, by kind."""
@@ -170,6 +179,19 @@ class BrowserErrors:
             for page in context.pages:
                 with contextlib.suppress(Error):  # closed meanwhile
                     page.evaluate("() => new Promise(resolve => setTimeout(resolve, 0))")
+
+    def drain(self) -> Reported:
+        """Hand over everything reported so far and forget it.
+
+        For a caller that records errors instead of failing on them (the local
+        sweep): settled first, so nothing already sent is left behind.
+        """
+        self.settle()
+        drained = Reported(list(self.console), list(self.page), list(self.csp))
+        self.console.clear()
+        self.page.clear()
+        self.csp.clear()
+        return drained
 
     def assert_clean(self, *, require_expected: bool = True) -> None:
         """Fail on errors; defer unmet declarations until teardown when requested."""
