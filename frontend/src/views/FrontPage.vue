@@ -63,6 +63,7 @@ async function signOut() {
 }
 .bar {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     gap: var(--space-3);
     padding-bottom: var(--space-2);

@@ -14,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 
 from jailbee.web.protocol import (
     FollowKey,
+    MetaMode,
     RenderedEntry,
     Subscribe,
     SubscribeError,
@@ -49,13 +50,13 @@ class ConnectionFollows:
         if isinstance(message, Unsubscribe):
             self._drop(message.key)
             return
-        await self._subscribe(message.key, message.offset)
+        await self._subscribe(message.key, message.offset, message.meta)
 
     def close(self) -> None:
         for key in list(self._followers):
             self._drop(key)
 
-    async def _subscribe(self, key: FollowKey, offset: int) -> None:
+    async def _subscribe(self, key: FollowKey, offset: int, meta: MetaMode) -> None:
         self._drop(key)
         if len(self._followers) >= MAX_SUBSCRIPTIONS:
             await self._send(SubscribeError(key=key, message=TOO_MANY_SUBSCRIPTIONS))
@@ -81,7 +82,7 @@ class ConnectionFollows:
                 return  # revoked: the socket is closed, nothing more is sent
             await self._send(TranscriptAppend(key=key, entries=entries, offset=next_offset))
 
-        self._followers[key] = ctx.follows.follow(key, source, path, offset, deliver)
+        self._followers[key] = ctx.follows.follow(key, source, path, offset, deliver, meta)
 
     def _drop(self, key: FollowKey) -> None:
         follower = self._followers.pop(key, None)

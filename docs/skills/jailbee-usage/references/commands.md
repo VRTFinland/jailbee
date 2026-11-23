@@ -453,7 +453,7 @@ indentation and a `Child of` label, not the e-ink job-phase edge style.
 | `jailbee remote web auth pin on\|off` | Allow or refuse PIN login (off needs a TOTP key). |
 | `jailbee remote web auth totp add [--name N]` / `ls` / `rm` | Authenticator-app keys. |
 | `jailbee remote web auth fido2 setup` / `ls` / `rm` | Security keys; `setup` serves a registration page until Ctrl-C. |
-| `jailbee remote web auth sessions ls` / `revoke [ID]` | Logged-in devices; revoke ends a session and its live view. |
+| `jailbee remote web auth sessions ls` / `revoke [ID]` | Logged-in devices, named automatically from the browser ("Firefox on Linux"; rename in the web app's Settings); revoke ends a session and its live view. |
 
 Config: `remote.web.listen`, `port`, `auth.enabled`,
 `auth.allow_unauthenticated_remote`, `excluded_repos` and the shared remote
@@ -950,7 +950,9 @@ so they cost no command inside the container.
 **AGENT** says whether an agent session inside the container needs you:
 `claude: waiting 4m` (it is waiting for input, and has been for four
 minutes), `claude: busy 12s`, `claude: shell 20m` (idle, but a background
-shell job it started is still running), `claude: idle 2h`; `·2` counts several
+shell job it started is still running; the JailBee plugin's inbox follower and
+other inbox waiters do not count, so a session running only those reads idle),
+`claude: idle 2h`; `·2` counts several
 sessions of one agent, and `—` means none is running. **AGENT_COMPACT** shows
 each state as a mark with only the largest unit of its duration: `◆ 4m`
 (waiting), `● 12s` (busy), `◐ 20m` (shell), `○ 2h` (idle). It names no agent and draws one
@@ -1030,7 +1032,7 @@ ignores `fields` entirely.
 Both dashboards use compact presentation, without changing `ls` or JSON:
 ST = state (▶ Running, ■ Stopped, Ⅱ Frozen), LOOSE = empty for strict, red ● plus the remaining auto-revert time (`● 45m`, `● ∞` = no deadline) for loose,
 AGE = elapsed container age, AI = compact agent status (◆ waiting, ● busy,
-◐ shell, ○ idle) plus the age of the latest real event across live sessions,
+◐ shell = idle with a background job other than the inbox follower, ○ idle) plus the age of the latest real event across live sessions,
 not the time spent in that state. Assistant text, thinking, tool calls and tool
 results count; prompts and metadata do not. Unknown event ages have no duration.
 A bright ○ has activity under 30 minutes old. Container details show activity age
@@ -1851,7 +1853,9 @@ navigation and preview keys work; refresh waits for the completion reload,
 and another delete, publish, clear or scope change is refused while busy.
 Closing the dashboard box leaves the work running and reports its result as a notice.
 PR-creation verification is background work too; the interactive `pr push` still
-uses the terminal.
+uses the terminal, and is not run if the box was closed meanwhile (a notice
+says so). The standalone manager refuses Esc, `q` and Ctrl-C while a mutation
+runs: quitting waits for it to finish.
 
 | Command | What it does |
 |---|---|

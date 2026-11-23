@@ -6023,17 +6023,26 @@ lists them under `missing_shapes`. The recorder uses a temporary HOME while
 sharing the logged-in Claude config directory. It deletes its raw sessions,
 project entry in `$CLAUDE_CONFIG_DIR/.claude.json` (or `~/.claude.json`
 without an override), and shell snapshots attributable to its session ids or
-temporary HOME, including after a failed run. Other sessions' snapshots are
+temporary recording directory (its no-op hook directory is on the snapshot's
+`PATH`), including after a failed run. Other sessions' snapshots are
 left alone. Config cleanup re-reads the latest file and replaces it atomically;
 unrelated settings are kept. Cleanup errors are reported after attempting the
 remaining actions, without replacing an original recording error.
 
 The normaliser keeps only known nested transcript fields (including common tool
 inputs) and redacts effective git author/committer identities as complete names
-(including environment and system config), short usernames in identity/home-path
-contexts, and credential-shaped strings. Words in a name are not individually
-redacted: `Will Read` must not erase the `Read` tool, nor `dev` erase `/dev/null`
-or `npm run dev`. The leak gate allows `/work/toy`, `/home/user`,
+(including environment and system config), short (under five characters) user
+and host names in identity, home-path, shell-prompt (`user@host:~`, `host:~`)
+and `ssh host` contexts, and credential-shaped strings. Paths under the temporary
+HOME become `/home/user`. Words in a name are not individually redacted:
+`Will Read` must not erase the `Read` tool, nor `dev` erase `/dev/null` or
+`npm run dev`. The leak gate is stricter than the normaliser: it finds every
+host, user, container and account name of five or more characters anywhere,
+even inside another word (`claude-<user>-1000`), and each git name word of five
+or more characters that is not a tool or command name; short names also in any
+`@host`, `user@` or `host:` form. A hit stops the
+recording; edit the prompts or the identity rather than loosening the gate.
+The leak gate allows `/work/toy`, `/home/user`,
 `/work/claude-tmp`, system executable directories and `/dev/null`; HTTP(S) URLs
 are not host paths. Other absolute paths, Windows drive/UNC paths and named
 homes (`~name/`) are rejected. Identity fields must use toy placeholders;

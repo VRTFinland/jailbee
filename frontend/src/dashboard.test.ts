@@ -61,11 +61,11 @@ describe("Dashboard", () => {
         const {dashboard, sockets} = setup()
         dashboard.start()
         const onAppend = vi.fn()
-        dashboard.follow(key, 120, {onAppend})
+        dashboard.follow(key, 120, "hidden", {onAppend})
         expect(sockets[0].sent).toEqual([])
 
         sockets[0].hello()
-        expect(sockets[0].sent).toEqual([{type: "subscribe", v: PROTOCOL_VERSION, key, offset: 120}])
+        expect(sockets[0].sent).toEqual([{type: "subscribe", v: PROTOCOL_VERSION, key, offset: 120, meta: "hidden"}])
 
         sockets[0].deliver({type: "append", v: PROTOCOL_VERSION, key, entries: [entry], offset: 200})
         expect(onAppend).toHaveBeenCalledWith([entry])
@@ -75,12 +75,12 @@ describe("Dashboard", () => {
         const {dashboard, sockets} = setup()
         dashboard.start()
         sockets[0].hello()
-        dashboard.follow(key, 120, {onAppend: vi.fn()})
+        dashboard.follow(key, 120, "hidden", {onAppend: vi.fn()})
         sockets[0].deliver({type: "append", v: PROTOCOL_VERSION, key, entries: [entry], offset: 200})
         sockets[0].drop()
         sockets[0].sent = []
         sockets[0].hello()
-        expect(sockets[0].sent).toEqual([{type: "subscribe", v: PROTOCOL_VERSION, key, offset: 200}])
+        expect(sockets[0].sent).toEqual([{type: "subscribe", v: PROTOCOL_VERSION, key, offset: 200, meta: "hidden"}])
     })
 
     it("stops delivering after unfollow and tells the server", () => {
@@ -88,7 +88,7 @@ describe("Dashboard", () => {
         dashboard.start()
         sockets[0].hello()
         const onAppend = vi.fn()
-        const unfollow = dashboard.follow(key, 0, {onAppend})
+        const unfollow = dashboard.follow(key, 0, "hidden", {onAppend})
         unfollow()
         expect(sockets[0].sent.at(-1)).toEqual({type: "unsubscribe", v: PROTOCOL_VERSION, key})
         sockets[0].deliver({type: "append", v: PROTOCOL_VERSION, key, entries: [entry], offset: 9})
@@ -100,7 +100,7 @@ describe("Dashboard", () => {
         dashboard.start()
         sockets[0].hello()
         const onError = vi.fn()
-        dashboard.follow(key, 0, {onAppend: vi.fn(), onError})
+        dashboard.follow(key, 0, "hidden", {onAppend: vi.fn(), onError})
         sockets[0].deliver({type: "subscribe_error", v: PROTOCOL_VERSION, key, message: "Unknown session"})
         expect(onError).toHaveBeenCalledWith("Unknown session")
     })
@@ -112,8 +112,8 @@ describe("Dashboard", () => {
         const session = vi.fn()
         const subagent = vi.fn()
         const subKey = {...key, subagent_id: "a1"}
-        dashboard.follow(key, 0, {onAppend: session})
-        dashboard.follow(subKey, 0, {onAppend: subagent})
+        dashboard.follow(key, 0, "hidden", {onAppend: session})
+        dashboard.follow(subKey, 0, "hidden", {onAppend: subagent})
         sockets[0].deliver({type: "append", v: PROTOCOL_VERSION, key: subKey, entries: [entry], offset: 9})
         expect(subagent).toHaveBeenCalledOnce()
         expect(session).not.toHaveBeenCalled()

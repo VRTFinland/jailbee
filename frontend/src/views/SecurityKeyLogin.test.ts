@@ -82,7 +82,7 @@ describe("LoginView security key", () => {
         vi.stubGlobal("navigator", {credentials: {get}})
         const {wrapper, router} = await mountLogin()
 
-        await wrapper.get("input[name=device]").setValue("Laptop")
+        expect(wrapper.find("input[name=device]").exists()).toBe(false)
         await wrapper.get("[data-test=security-key]").trigger("click")
         await flushPromises()
 
@@ -93,7 +93,6 @@ describe("LoginView security key", () => {
         expect(JSON.parse((init as RequestInit).body as string)).toEqual({
             method: "fido2",
             challenge_id: "c-1",
-            device_name: "Laptop",
             credential: {
                 id: "AQI",
                 rawId: "AQI",

@@ -10,6 +10,7 @@ import {readableBottom} from "../composables/readableBottom"
 import {usePager} from "../composables/usePager"
 import {useDashboard} from "../dashboard"
 import type {
+    EntryContent,
     RenderedEntry,
     RenderedSubagent,
     RenderedToolResult,
@@ -18,8 +19,15 @@ import type {
 import {settings} from "../settings"
 
 const header = ref<HTMLElement | null>(null)
-const headerHeight = ref(0)
-const pager = usePager(() => headerHeight.value)
+// The sticky header's bottom edge: below an app banner, not just its height.
+const readableTop = ref(0)
+const pageEl = ref<HTMLElement | null>(null)
+const pager = usePager(
+    () => readableTop.value,
+    // The bottom spacer lets a short final reply start below the header; page
+    // turns end where the transcript does, not inside that blank room.
+    () => (pageEl.value ? parseFloat(getComputedStyle(pageEl.value).paddingBottom) || 0 : 0),
+)
 const eink = computed(() => settings.displayProfile === "eink")
 /** E-ink: live entries wait here until the reader taps the notice. */
 const pending = ref<RenderedEntry[]>([])
@@ -82,7 +90,7 @@ const latestVisible = ref(false)
 
 function measureVisibility() {
     const headerRect = header.value?.getBoundingClientRect()
-    headerHeight.value = headerRect ? headerRect.bottom - headerRect.top : 0
+    readableTop.value = headerRect ? Math.max(0, headerRect.bottom) : 0
     const el = latestAnswer.value === null ? null : document.getElementById(entryDomId(latestAnswer.value))
     if (el === null) {
         latestVisible.value = false
@@ -172,6 +180,7 @@ function startFollowing(view: TranscriptView) {
             subagent_id: agentId.value,
         },
         view.offset,
+        settings.agentContext,
         {onAppend: (entries) => void onLiveAppend(entries)},
     ) ?? null
 }
@@ -191,8 +200,9 @@ function jumpToLatest() {
     measureVisibility()
 }
 
-onMounted(async () => {
-    const path = [
+/** The REST path of this transcript, without the leading `/api/repos/`. */
+const transcriptPath = computed(() =>
+    [
         prefix.value,
         "sessions",
         agent.value,
@@ -200,9 +210,42 @@ onMounted(async () => {
         ...(agentId.value === null ? [] : ["subagents", agentId.value]),
     ]
         .map(encodeURIComponent)
-        .join("/")
+        .join("/"),
+)
+
+// ---- agent context (meta records) -------------------------------------------
+/** Withheld meta content fetched so far, by entry id; filled on first expand. */
+const loadedContent = ref<Record<string, string>>({})
+const contentFailed = ref<Record<string, boolean>>({})
+
+async function expandMeta(id: string, event: Event) {
+    const open = (event.target as HTMLDetailsElement).open
+    if (!open || id in loadedContent.value) return
     try {
-        const view = await apiFetch<TranscriptView>(`/api/repos/${path}`)
+        const body = await apiFetch<EntryContent>(
+            `/api/repos/${transcriptPath.value}/entries/${encodeURIComponent(id)}`,
+        )
+        loadedContent.value[id] = body.html
+        await nextTick()
+        pager.measure()
+        contentFailed.value[id] = false
+    } catch {
+        contentFailed.value[id] = true
+    }
+}
+
+async function load() {
+    try {
+        const mode = settings.agentContext
+        const view = await apiFetch<TranscriptView>(
+            `/api/repos/${transcriptPath.value}?meta=${mode}`,
+        )
+        if (mode !== settings.agentContext) return // the setting changed meanwhile: a newer load runs
+        unfollow?.()
+        unfollow = null
+        loadedContent.value = {}
+        contentFailed.value = {}
+        pending.value = []
         transcript.value = view
         startFollowing(view)
         await nextTick()
@@ -216,11 +259,23 @@ onMounted(async () => {
             error.value = "The session could not be loaded."
         }
     }
-})
+}
+
+onMounted(load)
+// Changing Agent context re-reads the transcript and resubscribes with the new mode.
+watch(
+    () => settings.agentContext,
+    () => {
+        // Stop the old-mode appends at once; `load` resubscribes with the new mode.
+        unfollow?.()
+        unfollow = null
+        void load()
+    },
+)
 </script>
 
 <template>
-    <div class="page" :style="{'--session-header-height': `${headerHeight}px`}">
+    <div ref="pageEl" class="page" :style="{'--session-readable-top': `${readableTop}px`}">
         <header ref="header" class="session-header">
             <div class="bar">
             <router-link
@@ -258,7 +313,27 @@ onMounted(async () => {
                         class="entry user"
                         :class="{meta: e.meta}"
                     >
-                        <div class="prose" v-html="e.html" />
+                        <details
+                            v-if="e.meta && e.expandable"
+                            class="meta-record"
+                            @toggle="expandMeta(e.id, $event)"
+                        >
+                            <summary>{{ e.label || 'Agent context' }}</summary>
+                            <div
+                                v-if="e.id in loadedContent"
+                                class="prose"
+                                v-html="loadedContent[e.id]"
+                            />
+                            <p v-else-if="contentFailed[e.id]" class="muted">
+                                The content could not be loaded.
+                            </p>
+                            <p v-else class="muted">Loading…</p>
+                        </details>
+                        <p v-else-if="e.meta && !e.html" class="meta-label">{{ e.label || 'Agent context' }}</p>
+                        <template v-else>
+                            <p v-if="e.meta && e.label" class="meta-label">{{ e.label }}</p>
+                            <div class="prose" v-html="e.html" />
+                        </template>
                     </section>
                     <section
                         v-else-if="e.kind === 'assistant'"
@@ -330,11 +405,12 @@ onMounted(async () => {
     max-width: 48rem;
     margin: 0 auto;
     /* Even a short final reply can start just below the sticky header. */
-    padding: 0 var(--space-3) max(5rem, calc(100dvh - var(--session-header-height)));
+    padding: 0 var(--space-3) max(5rem, calc(100dvh - var(--session-readable-top)));
 }
 .session-header {
     position: sticky;
-    top: 0;
+    /* Stick below App's out-of-date banner rather than under it. */
+    top: var(--app-banner-height, 0px);
     z-index: 12;
     padding: var(--space-2) 0;
     background: var(--bg);
@@ -398,7 +474,7 @@ h1 {
 }
 .entry {
     margin: var(--space-4) 0;
-    scroll-margin-top: var(--session-header-height, 0px);
+    scroll-margin-top: var(--session-readable-top, 0px);
 }
 .entry.user {
     padding: var(--space-2) var(--space-3);
@@ -411,6 +487,14 @@ h1 {
     background: none;
     color: var(--muted);
     font-size: 0.8rem;
+}
+.entry.user.meta .meta-label,
+.entry.user.meta summary {
+    margin: 0;
+    font-weight: 600;
+}
+.entry.user.meta summary {
+    cursor: pointer;
 }
 .entry.thinking {
     padding-left: var(--space-3);

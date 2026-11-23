@@ -115,9 +115,12 @@ def follow_key(**key: str | None) -> dict[str, str | None]:
     return {"prefix": "alpha", "agent": "claude", "session_id": SESSION, **key}
 
 
-def subscribe(ws: WebSocketTestSession, offset: int, **key: str | None) -> None:
+def subscribe(
+    ws: WebSocketTestSession, offset: int, meta: str | None = None, **key: str | None
+) -> None:
     message = {"type": "subscribe", "v": PROTOCOL_VERSION, "key": follow_key(**key)}
-    ws.send_text(json.dumps({**message, "offset": offset}))
+    extra = {"meta": meta} if meta else {}
+    ws.send_text(json.dumps({**message, "offset": offset, **extra}))
 
 
 def unsubscribe(ws: WebSocketTestSession, **key: str | None) -> None:
@@ -178,6 +181,47 @@ def test_an_appended_entry_arrives_rendered(
         }
         assert [e["kind"] for e in message["entries"]] == ["assistant"]
         assert "<strong>now</strong>" in message["entries"][0]["html"]
+        assert message["offset"] == transcript.stat().st_size
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        (None, [("assistant", None)]),
+        ("hidden", [("assistant", None)]),
+        ("collapsed", [("user", ""), ("assistant", None)]),
+        ("shown", [("user", "Job done"), ("assistant", None)]),
+    ],
+)
+def test_live_appends_follow_the_agent_context_setting(
+    started: tuple[TestClient, str],
+    transcript: Path,
+    watches: FakeWatchFactory,
+    mode: str | None,
+    expected: list[tuple[str, str | None]],
+) -> None:
+    client, token = started
+    offset = rest_offset(client)
+    with connect(client, token) as ws:
+        subscribe(ws, offset, meta=mode)
+        wait_until(lambda: len(watches.open) == 1)
+
+        append(transcript, record(2, "user", "<task-notification>Job done</task-notification>"))
+        append(transcript, record(3, "assistant", "Done."))
+        watches.open[0].fire()
+
+        message = ws.receive_json()
+        got = [
+            (
+                e["kind"],
+                None if e["kind"] != "user" else ("Job done" if "Job done" in e["html"] else ""),
+            )
+            for e in message["entries"]
+        ]
+        assert got == expected
+        if mode == "collapsed":
+            assert message["entries"][0]["label"] == "Task notification"
+            assert message["entries"][0]["expandable"] is True
         assert message["offset"] == transcript.stat().st_size
 
 
@@ -377,7 +421,7 @@ def test_a_failing_read_is_logged_not_lost(
             raise OSError("disk on fire")
 
     async def run() -> None:
-        follows = TranscriptFollows(watches, lambda entries: [])
+        follows = TranscriptFollows(watches, lambda entries, meta: [])
 
         async def deliver(entries: object, offset: int) -> None:
             raise AssertionError("nothing to deliver")

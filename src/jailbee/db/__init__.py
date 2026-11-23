@@ -28,7 +28,7 @@ from jailbee.db.models import SchemaMeta
 
 log = logging.getLogger(__name__)
 
-CURRENT_SCHEMA_VERSION = 27
+CURRENT_SCHEMA_VERSION = 28
 
 
 def state_dir() -> Path:
@@ -347,6 +347,11 @@ def _migrate_to_v27(conn: Connection) -> None:
     return None
 
 
+def _migrate_to_v28(conn: Connection) -> None:
+    """v27 -> v28 adds `session_info_cache` (transcript list rows) via create_all."""
+    return None
+
+
 # target_version -> non-destructive migration step
 _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     2: _migrate_to_v2,
@@ -375,6 +380,7 @@ _MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     25: _migrate_to_v25,
     26: _migrate_to_v26,
     27: _migrate_to_v27,
+    28: _migrate_to_v28,
 }
 
 

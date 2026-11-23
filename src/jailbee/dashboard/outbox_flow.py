@@ -386,6 +386,10 @@ class OutboxController:
         )
         # Frontends may retain a busy mutation across close/reopen; plans are disposable.
         self.mutation_running = False
+        # Whether a box shows this controller now: a PR creation's terminal hand-off,
+        # due when its off-thread re-check returns, must not seize a terminal the
+        # user has since moved on from. The standalone app is always shown.
+        self.shown: Callable[[], bool] = lambda: True
         self._publish_token: object | None = None
         # The batch being planned; dropped by a reload or a cancel, so late plans do nothing.
         self._batch_token: object | None = None
@@ -412,6 +416,10 @@ class OutboxController:
         """Re-mark ``marks`` once the first listing arrives, minus changed or vanished proposals."""
         self._restored_revisions = revisions
         self.state = replace(self.state, marks=marks)
+
+    def refuse_while_busy(self) -> None:
+        """Say that a quit waits for the running mutation (the frontend refused it)."""
+        self._status(f"busy: {self.state.busy} — wait for it to finish")
 
     # -- plumbing -----------------------------------------------------------
 
@@ -1370,8 +1378,11 @@ class OutboxController:
                 # Checked per container: abilities were judged on the first one listed.
                 done(False, False, (f"{_safe(name)}: creating a PR is not available here",))
                 return
-            rc, diagnostic = self.runner.hand_off_diagnostic(argv)
             what = "source push" if listed.state == "awaiting-push" else "pr push"
+            if not self.shown():
+                done(False, False, (f"{what} not run: outbox box closed",))
+                return
+            rc, diagnostic = self.runner.hand_off_diagnostic(argv)
             lines = (
                 ()
                 if rc == 0

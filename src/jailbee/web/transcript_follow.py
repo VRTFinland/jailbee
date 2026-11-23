@@ -23,11 +23,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from jailbee.transcripts.base import Entry, TranscriptSource
     from jailbee.web.file_watch import FileWatch, WatchFactory
-    from jailbee.web.protocol import FollowKey, RenderedEntry
+    from jailbee.web.protocol import FollowKey, MetaMode, RenderedEntry
 
 log = logging.getLogger(__name__)
 
-Render = Callable[[Sequence["Entry"]], list["RenderedEntry"]]
+Render = Callable[[Sequence["Entry"], "MetaMode"], list["RenderedEntry"]]
 Deliver = Callable[[list["RenderedEntry"], int], Awaitable[None]]
 """Sends one append: the rendered entries and the offset after them."""
 
@@ -43,8 +43,10 @@ class Follower:
         offset: int,
         deliver: Deliver,
         render: Render,
+        meta: MetaMode = "hidden",
     ) -> None:
         self.key = key
+        self.meta = meta
         self.path = path
         self.offset = offset
         self._source = source
@@ -81,7 +83,7 @@ class Follower:
 
     def _read(self) -> tuple[list[RenderedEntry], int]:
         read = self._source.read_from(self.path, self.offset)
-        return (self._render(read.entries) if read.entries else []), read.offset
+        return (self._render(read.entries, self.meta) if read.entries else []), read.offset
 
 
 class _Watched:
@@ -102,10 +104,17 @@ class TranscriptFollows:
         return path in self._files
 
     def follow(
-        self, key: FollowKey, source: TranscriptSource, path: Path, offset: int, deliver: Deliver
+        self,
+        key: FollowKey,
+        source: TranscriptSource,
+        path: Path,
+        offset: int,
+        deliver: Deliver,
+        meta: MetaMode = "hidden",
     ) -> Follower:
-        """Start following; catches up from ``offset`` at once."""
-        follower = Follower(key, source, path, offset, deliver, self._render)
+        """Start following; catches up from ``offset`` at once. ``meta`` is the
+        Agent context setting the appends are rendered with."""
+        follower = Follower(key, source, path, offset, deliver, self._render, meta)
         watched = self._files.get(path)
         if watched is None:
             loop = asyncio.get_running_loop()

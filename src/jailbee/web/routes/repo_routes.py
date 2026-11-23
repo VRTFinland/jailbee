@@ -9,7 +9,14 @@ from starlette.concurrency import run_in_threadpool
 
 from jailbee.web.container_sessions import session_containers
 from jailbee.web.deps import Context, RequireSession
-from jailbee.web.protocol import SessionListView, SessionView, TranscriptView
+from jailbee.web.protocol import (
+    EntryContent,
+    MetaMode,
+    RenderedUser,
+    SessionListView,
+    SessionView,
+    TranscriptView,
+)
 from jailbee.web.repo_sessions import SessionTranscript
 from jailbee.web.transcript_render import render_entries
 
@@ -48,7 +55,10 @@ async def repo_sessions(prefix: str, ctx: Context, _auth: RequireSession) -> Ses
 
 
 async def _transcript_view(
-    ctx: Context, prefix: str, load: Callable[[], SessionTranscript | None]
+    ctx: Context,
+    prefix: str,
+    load: Callable[[], SessionTranscript | None],
+    meta: MetaMode = "hidden",
 ) -> TranscriptView:
     # Unknown and excluded repositories, agents, sessions and subagents all
     # answer the same 404, so the answer reveals nothing about what exists.
@@ -66,7 +76,7 @@ async def _transcript_view(
             title=found.info.title,
             last_activity=found.info.last_activity,
             models=list(found.info.models),
-            entries=render_entries(found.entries, ctx.render_cache),
+            entries=render_entries(found.entries, ctx.render_cache, meta),
             offset=found.offset,
         )
 
@@ -78,19 +88,73 @@ async def _transcript_view(
 
 @router.get("/api/repos/{prefix}/sessions/{agent}/{session_id}")
 async def session_transcript(
-    prefix: str, agent: str, session_id: str, ctx: Context, _auth: RequireSession
+    prefix: str,
+    agent: str,
+    session_id: str,
+    ctx: Context,
+    _auth: RequireSession,
+    meta: MetaMode = "hidden",
 ) -> TranscriptView:
     return await _transcript_view(
-        ctx, prefix, lambda: ctx.repo_sessions.transcript(prefix, agent, session_id)
+        ctx, prefix, lambda: ctx.repo_sessions.transcript(prefix, agent, session_id), meta
     )
 
 
 @router.get("/api/repos/{prefix}/sessions/{agent}/{session_id}/subagents/{agent_id}")
 async def subagent_transcript(
-    prefix: str, agent: str, session_id: str, agent_id: str, ctx: Context, _auth: RequireSession
+    prefix: str,
+    agent: str,
+    session_id: str,
+    agent_id: str,
+    ctx: Context,
+    _auth: RequireSession,
+    meta: MetaMode = "hidden",
 ) -> TranscriptView:
     return await _transcript_view(
         ctx,
         prefix,
         lambda: ctx.repo_sessions.subagent_transcript(prefix, agent, session_id, agent_id),
+        meta,
+    )
+
+
+async def _entry_content(
+    ctx: Context,
+    prefix: str,
+    load: Callable[[], SessionTranscript | None],
+    entry_id: str,
+) -> EntryContent:
+    view = await _transcript_view(ctx, prefix, load, "shown")
+    for entry in view.entries:
+        if entry.id == entry_id and isinstance(entry, RenderedUser) and entry.meta:
+            return EntryContent(id=entry.id, html=entry.html)
+    raise HTTPException(status_code=404, detail="Unknown session")
+
+
+@router.get("/api/repos/{prefix}/sessions/{agent}/{session_id}/entries/{entry_id}")
+async def session_entry(
+    prefix: str, agent: str, session_id: str, entry_id: str, ctx: Context, _auth: RequireSession
+) -> EntryContent:
+    return await _entry_content(
+        ctx, prefix, lambda: ctx.repo_sessions.transcript(prefix, agent, session_id), entry_id
+    )
+
+
+@router.get(
+    "/api/repos/{prefix}/sessions/{agent}/{session_id}/subagents/{agent_id}/entries/{entry_id}"
+)
+async def subagent_entry(
+    prefix: str,
+    agent: str,
+    session_id: str,
+    agent_id: str,
+    entry_id: str,
+    ctx: Context,
+    _auth: RequireSession,
+) -> EntryContent:
+    return await _entry_content(
+        ctx,
+        prefix,
+        lambda: ctx.repo_sessions.subagent_transcript(prefix, agent, session_id, agent_id),
+        entry_id,
     )

@@ -40,6 +40,9 @@ agent wants nothing from you yet, but it is not finished either.
 type ActivityLookup = Callable[[str, AgentSession, int], AgentActivity | None]
 """`(container, session, host pid)` → what that session is doing, or None."""
 
+type StateSettler = Callable[[str, int, str], str]
+"""`(container, host pid, recorded state)` → the state to show for that session."""
+
 
 @dataclass(frozen=True)
 class SessionMark:
@@ -164,6 +167,8 @@ def match_sessions(
     processes: Mapping[str, Mapping[int, int]],
     nspid: Callable[[int], int | None],
     activity: ActivityLookup | None = None,
+    *,
+    settle: StateSettler | None = None,
 ) -> dict[str, tuple[AgentSummary, ...]]:
     """Container name → its live agents, most urgent first.
 
@@ -176,7 +181,10 @@ def match_sessions(
     per live session, not one per process. Every container in `processes`
     gets an entry. `activity`, when given, is asked about every live session
     with the container name and the session's host pid;
-    it must not raise.
+    it must not raise. `settle`, when given, turns each live session's
+    recorded state into the one shown (an idle session whose only background
+    job is the inbox follower reads `idle`, not `shell`); ranking uses the
+    shown state. It must not raise either.
     """
     out: dict[str, tuple[AgentSummary, ...]] = {}
     for name, procs in processes.items():
@@ -192,6 +200,10 @@ def match_sessions(
             inner = nspid(host_pid)
             for session in claims:
                 if session.pid == inner:
+                    if settle is not None:
+                        shown = settle(name, host_pid, session.state)
+                        if shown != session.state:
+                            session = replace(session, state=shown)
                     live[(session.pid, session.proc_start)] = session
                     host_pids[(session.pid, session.proc_start)] = host_pid
         out[name] = summarize(live.values(), _lookup_for(name, host_pids, activity))

@@ -1,10 +1,12 @@
-"""A container's agent sessions: the live ones, then those it has had.
+"""A container's agent sessions: the live ones, and separately those it has had.
 
 Live sessions come from the latest state-service snapshot, past ones from the
 `container_session` rows the gatherer records. Both are keyed to the
 container's Incus instance uuid, so a container recreated under the same name
-starts with a clean history. Titles, activity and models come from the
-repository's transcripts (`RepoSessions`).
+starts with a clean history. Titles, activity and models come from each
+session's own transcript (`RepoSessions.row`), never from listing the whole
+repository: the live list costs one lookup per live session, and the history,
+however long, is a request of its own that never delays it.
 """
 
 from __future__ import annotations
@@ -39,7 +41,8 @@ class ContainerSessionView(BaseModel):
 
 
 class ContainerSessionListView(BaseModel):
-    """`GET /api/containers/{name}/sessions`: live sessions first."""
+    """`GET /api/containers/{name}/sessions` (the live sessions) and
+    `GET /api/containers/{name}/sessions/history` (the recorded, not live ones)."""
 
     model_config = ConfigDict(frozen=True)
     container: str
@@ -62,43 +65,69 @@ def find_container(
     return None
 
 
-def container_sessions(
+def _live_keys(c: ContainerInfo) -> list[tuple[str, str]]:
+    keys: dict[tuple[str, str], None] = {}
+    for summary in c.agent_status:
+        for sid in summary.session_ids:
+            keys.setdefault((summary.agent, sid), None)
+    return list(keys)
+
+
+def _views(
+    repo_sessions: RepoSessions, prefix: str, keys: list[tuple[str, str]], live: bool
+) -> list[ContainerSessionView]:
+    rows = repo_sessions.rows(prefix, keys)
+    views: list[ContainerSessionView] = []
+    for agent, sid in keys:
+        row = rows.get((agent, sid))
+        views.append(
+            ContainerSessionView(
+                session_id=sid,
+                agent=agent,
+                live=live,
+                title=row.title if row else "",
+                last_activity=row.last_activity if row else None,
+                models=list(row.models) if row else [],
+            )
+        )
+    return views
+
+
+def live_sessions(
+    snapshot: Snapshot | None,
+    name: str,
+    scope: RemoteRepoScope,
+    repo_sessions: RepoSessions,
+) -> ContainerSessionListView | None:
+    """The container's running sessions; None when the container is unknown or
+    its repository excluded."""
+    found = find_container(snapshot, name, scope)
+    if found is None:
+        return None
+    group, c = found
+    views = _views(repo_sessions, group.prefix, _live_keys(c), live=True)
+    return ContainerSessionListView(container=c.name, repo=group.prefix, sessions=views)
+
+
+def session_history(
     snapshot: Snapshot | None,
     name: str,
     scope: RemoteRepoScope,
     engine: Engine,
     repo_sessions: RepoSessions,
 ) -> ContainerSessionListView | None:
-    """None when the container is unknown or its repository excluded."""
+    """The sessions the container ran before and is not running now, in recorded
+    order; None as `live_sessions`."""
     found = find_container(snapshot, name, scope)
     if found is None:
         return None
     group, c = found
-    ordered: list[tuple[str, str, bool]] = []
-    seen: set[tuple[str, str]] = set()
-    for summary in c.agent_status:
-        for sid in summary.session_ids:
-            if (summary.agent, sid) not in seen:
-                seen.add((summary.agent, sid))
-                ordered.append((summary.agent, sid, True))
+    live = set(_live_keys(c))
+    keys: dict[tuple[str, str], None] = {}
     for rec in recorded_sessions(engine, c.name, c.uuid):
-        if (rec.agent, rec.session_id) not in seen:
-            seen.add((rec.agent, rec.session_id))
-            ordered.append((rec.agent, rec.session_id, False))
-    info = {(r.agent, r.session_id): r for r in repo_sessions.list(group.prefix) or []}
-    views: list[ContainerSessionView] = []
-    for agent, sid, is_live in ordered:
-        row = info.get((agent, sid))
-        views.append(
-            ContainerSessionView(
-                session_id=sid,
-                agent=agent,
-                live=is_live,
-                title=row.title if row else "",
-                last_activity=row.last_activity if row else None,
-                models=list(row.models) if row else [],
-            )
-        )
+        if (rec.agent, rec.session_id) not in live:
+            keys.setdefault((rec.agent, rec.session_id), None)
+    views = _views(repo_sessions, group.prefix, list(keys), live=False)
     return ContainerSessionListView(container=c.name, repo=group.prefix, sessions=views)
 
 

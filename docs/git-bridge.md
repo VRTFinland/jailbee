@@ -1455,7 +1455,11 @@ re-lists in the background (and the dashboard refreshes, so the OUTBOX column
 follows). While a mutation is busy, another delete, publish, clear or scope
 change is refused; refresh leaves the busy line alone and the completion
 reloads. Closing the dashboard's box does not cancel the work: its result
-appears as a notice without reopening the box. In the
+appears as a notice without reopening the box, and a PR creation (`pr push`)
+still being checked when the box closed is not run ("pr push not run: outbox
+box closed"). In the standalone `jailbee outbox`, Esc, `q` and Ctrl-C are
+refused while a mutation runs ("busy: … — wait for it to finish"); quit once it
+has finished. In the
 dashboard over remote SSH a key works, and appears in the hint line, only
 when the session's policy permits its command; `outbox apply -y` is refused there, so `p` hands the
 terminal to the interactive `outbox apply … --revision`, which asks under

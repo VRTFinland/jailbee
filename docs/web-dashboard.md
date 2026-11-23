@@ -15,13 +15,34 @@ Session titles use the first typed prompt, skipping agent wrapper records,
 local command output, caveats and injected context. A session with only slash
 commands uses its first command (for example, `/model`) instead of raw markup.
 Once a command fallback is available, title lookup stops after 32 candidate user
-records rather than parsing a command-only transcript to the end. Task
+records rather than parsing a command-only transcript to the end, and it never
+reads past a transcript's first 4 MiB. Task
 notifications, `!`-mode input/output and prompt hooks are agent metadata too.
 A leading wrapper followed by typed text is split in the transcript: the wrapper
 is shown as metadata, and only the typed text is shown as the prompt. Unknown
 XML-like tags, such as `<example>`, remain part of the typed prompt. The summary
 Claude Code writes after `/compact` and its "[Request interrupted by user]"
 notices are metadata too: they are shown as context and never become a title.
+
+Session lists stay fast on large transcripts. A list row reads only the
+opening of a transcript (title and start time) and its last 256 KiB (last
+activity and recent model), so a model used only in the middle of a long
+session is not named in the list; the transcript itself shows every entry's
+model. What was read is kept in the state database (`session_info_cache`),
+keyed by the file's path, size and modification time, so a restarted or
+upgraded server rereads only transcripts that changed. The server also reads
+every visible repository's sessions in the background when it starts; no
+request waits for it.
+
+A container page shows its live sessions as soon as they are known (they come
+from the state service's snapshot) and appends the sessions it ran before when
+that separate request answers. A repository lists only the sessions started in
+its own containers' checkout (each container's repository directory, or below
+it): repositories that share one agent config home by mistake do not list each
+other's sessions. Claude names a session's project directory after its working
+directory with every character but letters and digits turned into `-`, so
+`/home/dev/app-api` cannot be told from a directory `api` below
+`/home/dev/app`; a repository `app` then lists `app-api`'s sessions too.
 
 Rows on the front page are styled like the terminal dashboard's: a container
 booting, in autostart, running another background job or in a failed job gets a
@@ -156,6 +177,12 @@ restart catch-up without lost or duplicated replies. Reuse
 watch. Copy the fixture home to a temporary directory before appending; with
 the server stopped the helper only writes, leaving reconnect to catch up.
 
+`tests_e2e/test_display.py` covers visible themes and font sizes after a reload,
+e-ink page turns, held transcript messages and manual snapshot refresh. It also
+walks the front page, repository, container, transcript and settings at phone
+width in both display profiles, and checks the linked PWA manifest and decoded
+icons through the real server.
+
 `test_front_page_live.py` covers snapshot additions, changes and removals without
 navigation; phase labels and computed monochrome edges in the e-ink theme;
 the connecting notice during downtime; and current state after a real server
@@ -167,7 +194,9 @@ then render a subsequent state push before the reload count is checked.
 reloads automatically at most once within a minute, then shows
 "This page is out of date; reload" with a manual Reload button. If session
 storage is unavailable, it offers manual reload immediately rather than risk
-a loop.
+a loop. A connection that authenticates ends that window, so a later
+server upgrade reloads again; the banner sits above a view's sticky header,
+never over it.
 
 `tests_e2e/test_corpus.py` walks the recorded corpus
 (`tests/fixtures/transcripts/claude-corpus`, re-recorded with `make web-corpus`)
@@ -220,7 +249,16 @@ can be combined:
 | FIDO2 security key or passkey | `jb remote web auth fido2 setup` | See below. `fido2 ls` and `fido2 rm` manage keys. |
 | One-time link | `jb remote web open` | Localhost only, single use. |
 
-A successful login gives the browser a session that slides for 30 days.
+A successful login gives the browser a session that slides for 30 days. The
+login page asks for nothing but the secret: the server names the session after
+the browser's User-Agent ("Firefox on Linux", "Safari on iPhone", "Chrome on
+Android", or "Browser" when it recognises none). The name shows in the header,
+in `jb remote web auth sessions ls` and in the audit log; rename the current
+session under **Settings → This session** (`PUT /api/session`, audited as a
+`rename` event, recording the old and new name). Older clients may still send a
+`device_name`, which is kept. A name is 1-100 characters after trimming and may
+not contain control or format characters (the server answers 422); the CLI also
+prints any such character escaped.
 PIN and TOTP attempts are limited to five a minute, and after five failures
 in a row each further failure doubles the wait before the next attempt:
 2 seconds after the fifth, 4 after the sixth, up to 30 minutes. A successful login by any method (PIN, TOTP, security key or link) resets
@@ -269,7 +307,7 @@ do not expose the server at all and reach it over an SSH tunnel or a VPN.
 jb remote web auth status           # methods on, devices logged in
 jb remote web auth sessions ls      # logged-in devices
 jb remote web auth sessions revoke ID
-jb remote web auth log [-n 50]      # logins, failures, backoffs, logouts, revocations
+jb remote web auth log [-n 50]      # logins, failures, backoffs, logouts, revocations, renames
 ```
 
 Revoking a session refuses the device's next request and closes its open live
@@ -347,18 +385,35 @@ Open the settings page (the Settings link on the front page) to choose
 a theme (light, dark, e-ink), body and code font sizes, and whether thinking
 blocks are shown. These choices are stored in the browser on that device only.
 
+**Agent context** controls the agent's own wrapper records in a transcript:
+task notifications, system reminders, command output and shell input/output.
+*Hidden* (the default) sends none of them, so they cost neither bandwidth nor
+page weight. *Collapsed* sends a one-line label (for example "Task
+notification" or "Shell: ls") and loads the content from the server only when
+you expand it. *Shown* sends and displays everything. A slash command you typed
+(`/model`, `/clear`) always appears as a one-line label, in every mode. Changing
+the setting reloads the open transcript. The choice is a `meta=hidden|collapsed|shown`
+query parameter on the session and subagent endpoints and a `meta` field on the
+live `subscribe` message; a withheld record's content is served by
+`GET /api/repos/{prefix}/sessions/{agent}/{session_id}/entries/{entry_id}`
+(also under `.../subagents/{agent_id}/`).
+
 The display profile **E-ink** is for e-paper readers and slow-refresh
 screens: no animation, content moves in page turns instead of scrolling, live
-transcript entries are held back until you turn the page rather than moving
-the text you are reading, and the front page refreshes slowly.
+transcript entries are held behind the **N new messages** button until you tap
+it, without moving the text you are reading. The front page refreshes every
+minute, or immediately when you tap **Refresh**. The front-page header wraps
+its controls on narrow screens, including with the e-ink profile's side margins.
 
 Session transcripts keep their title, agent/model context and connection notice
 in a compact header while you read. **Latest answer** appears only when the
 newest assistant reply is outside the readable area (below the header and above
 the bottom controls, including the device's safe-area inset). A truncated title
 keeps its full text as a tooltip and accessible heading name. Page turns use the
-actual readable height even on short landscape screens; a partial keyboard or
-system scroll stays on its current page so Next never skips unread text.
+actual readable height even on short landscape screens, with a stable page grid
+as the header becomes sticky and a last page bounded by the browser's scroll
+limit; a partial keyboard or system scroll stays on its current page so Next
+never skips unread text, and Next stays enabled until the real bottom.
 Jumping aligns the newest reply's start just below the measured header, even
 for a short final reply, with trailing room to scroll it there. Jumping or
 scrolling to the reply hides the button; moving

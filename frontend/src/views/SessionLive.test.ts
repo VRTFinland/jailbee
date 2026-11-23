@@ -24,7 +24,7 @@ const transcript: TranscriptView = {
     last_activity: null,
     models: [],
     offset: 420,
-    entries: [{kind: "user", id: "u1", timestamp: null, html: "<p>Fix it</p>", meta: false}],
+    entries: [{kind: "user", id: "u1", timestamp: null, html: "<p>Fix it</p>", meta: false, label: null, expandable: false}],
 }
 
 const answer: RenderedEntry = {
@@ -92,7 +92,7 @@ describe("SessionView live follow", () => {
     it("subscribes from the offset the transcript was read to", async () => {
         const {sent} = await mountLive("/repos/alpha/sessions/claude/s-1")
         expect(sent).toEqual([
-            {type: "subscribe", v: PROTOCOL_VERSION, key: sessionKey, offset: 420},
+            {type: "subscribe", v: PROTOCOL_VERSION, key: sessionKey, offset: 420, meta: "hidden"},
         ])
     })
 
@@ -161,6 +161,7 @@ describe("SessionView live follow", () => {
                 v: PROTOCOL_VERSION,
                 key: {...sessionKey, subagent_id: "a1b2c3"},
                 offset: 420,
+                meta: "hidden",
             },
         ])
     })

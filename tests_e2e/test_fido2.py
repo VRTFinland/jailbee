@@ -14,6 +14,7 @@ from jailbee.db.models import WebFido2Key
 from jailbee.web import auth_admin
 from tests.web_fakes import snapshot_of
 from tests_e2e.browser_errors import BrowserErrors
+from tests_e2e.flows import DERIVED_DEVICE
 from tests_e2e.server import E2EServer
 
 if TYPE_CHECKING:
@@ -107,11 +108,10 @@ def test_registered_security_key_updates_its_counter_and_refuses_a_clone(
     page.goto(f"{url}/#/login")
     previous_count = virtual_key.credential()["signCount"]
     for _ in range(2):
-        page.get_by_label("This device").fill("security-key tablet")
         page.get_by_role("button", name="Use security key", exact=True).click()
 
         expect(page.get_by_role("button", name="Log out")).to_be_visible()
-        expect(page.get_by_role("banner")).to_contain_text("security-key tablet")
+        expect(page.get_by_role("banner")).to_contain_text(DERIVED_DEVICE)
         expect(page.get_by_text("No repositories.", exact=True)).to_be_visible()
         (key,) = auth_admin.list_fido2_keys(server.engine)
         assert key.last_used_at is not None
@@ -152,7 +152,6 @@ def test_a_removed_security_key_is_refused_visibly(
     server.stop()
     server.start()
     page.goto(f"{url}/#/login")
-    page.get_by_label("This device").fill("revoked-key tablet")
 
     def revoke_before_delivery(route: Route) -> None:
         # Pause the real signed request, not the ceremony or the server response.
@@ -178,7 +177,9 @@ def test_a_removed_security_key_is_refused_visibly(
     # FIDO2 is deliberately exempt from rate limits (UNLIMITED_METHODS): each
     # attempt signs a fresh challenge, so a failure is audited, not backed off.
     events = auth_admin.recent_events(server.engine)
-    assert [(event.event, event.method, event.device_name) for event in events] == [
-        ("key_added", "fido2", "Desk security key"),
-        ("login_failed", "fido2", "revoked-key tablet"),
+    assert [(event.event, event.method) for event in events] == [
+        ("key_added", "fido2"),
+        ("login_failed", "fido2"),
     ]
+    assert events[0].device_name == "Desk security key"
+    assert events[1].device_name.startswith(DERIVED_DEVICE)

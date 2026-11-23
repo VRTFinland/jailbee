@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page, WebSocketRoute, expect
 
 from tests.web_fakes import wait_until
 from tests_e2e.flows import log_in_with_pin
@@ -52,7 +52,7 @@ def open_transcript(
     )
     homes = {"work": [("claude", home)]}
     server = make_server(agent_homes=homes.get)
-    log_in_with_pin(page, server.url, server.pin.current, "session reader")
+    log_in_with_pin(page, server.url, server.pin.current)
     page.goto(f"{server.url}/#/repos/work/sessions/claude/{SESSION}")
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
     wait_until(lambda: len(server.watches.open) == 1)
@@ -131,9 +131,17 @@ def test_partial_keyboard_scroll_keeps_the_current_eink_page(
         "el => el.getBoundingClientRect().top - "
         "document.querySelector('.session-header').getBoundingClientRect().bottom"
     )
-    page.evaluate("height => window.scrollTo(0, height * 0.6)", readable)
-    page.wait_for_function(
-        "document.querySelector('.session-header').getBoundingClientRect().top === 0"
+    # Sync point: the scroll has landed and its handler has run (scroll events
+    # fire before the next animation frame's callbacks).
+    page.evaluate(
+        """async height => {
+            const target = Math.floor(height * 0.6);
+            window.scrollTo(0, target);
+            const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+            while (Math.abs(window.scrollY - target) > 1) await frame();
+            await frame();
+        }""",
+        readable,
     )
     expect(page.locator(".page-indicator")).to_contain_text("Page 1 /")
     readable = page.locator(".page-nav").evaluate(
@@ -167,3 +175,69 @@ def test_short_landscape_page_turns_do_not_skip_text(
         page.wait_for_function("previous => window.scrollY > previous", arg=before)
         moved = page.evaluate("window.scrollY") - before
         assert 0 < moved <= readable + 1
+
+
+@pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
+def test_out_of_date_banner_leaves_the_session_title_bar_visible(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int
+) -> None:
+    page.set_viewport_size({"width": width, "height": 800})
+    open_transcript(page, make_server, tmp_path)
+    stale = False
+    links: list[tuple[WebSocketRoute, WebSocketRoute]] = []
+    hellos: list[str] = []
+
+    def connect(route: WebSocketRoute) -> None:
+        upstream = route.connect_to_server()
+        links.append((route, upstream))
+
+        def stale_auth(message: str | bytes) -> None:
+            payload = json.loads(message)
+            if stale and payload["type"] == "auth":
+                payload["v"] = -1
+            upstream.send(json.dumps(payload))
+
+        def from_server(message: str | bytes) -> None:
+            if json.loads(message)["type"] == "hello":
+                hellos.append("hello")
+            route.send(message)
+
+        route.on_message(stale_auth)
+        upstream.on_message(from_server)
+        upstream.on_close(lambda code, reason: route.close(code=code, reason=reason))
+
+    # Routed only now: Playwright forwards routed frames only while it is
+    # called, which open_transcript's plain polling would starve.
+    page.route_web_socket("**/api/ws", connect)
+    page.reload()
+    expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
+    for _ in range(100):
+        if hellos:
+            break
+        page.wait_for_timeout(100)
+    assert hellos == ["hello"]
+    page.evaluate("window.scrollTo(0, 3000)")
+    page.wait_for_function("window.scrollY > 2000")
+
+    # The server is upgraded while the reader is mid-transcript; this tab just
+    # reloaded for an upgrade, so it shows the banner instead of reloading.
+    page.evaluate("sessionStorage.setItem('jailbee.protocolReload', String(Date.now()))")
+    stale = True
+    route, upstream = links[-1]
+    upstream.close(code=1012, reason="restart")
+    route.close(code=1012, reason="restart")
+    expect(page.get_by_role("alert")).to_have_text("This page is out of date; reload.")
+
+    title_bar_clear = """() => {
+        const banner = document.querySelector('.outdated').getBoundingClientRect();
+        const header = document.querySelector('.session-header').getBoundingClientRect();
+        return header.top >= banner.bottom - 0.5;
+    }"""
+    page.wait_for_function(title_bar_clear)
+    expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_in_viewport()
+    # The readable area now starts below banner and header together.
+    page.get_by_role("button", name="Latest answer").click()
+    assert_latest_starts_below_header(page)
+    page.wait_for_function(title_bar_clear)
+    page.evaluate("window.scrollTo(0, 0)")
+    page.wait_for_function(title_bar_clear)

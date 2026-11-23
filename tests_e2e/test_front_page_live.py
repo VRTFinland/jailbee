@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import json
 import re
+from typing import TYPE_CHECKING
 
-from playwright.sync_api import Page, WebSocketRoute, expect
+from playwright.sync_api import Locator, Page, WebSocketRoute, expect
 
+from tests.follower_fixture import CLAUDE, FOLLOWER, WRAPPER, gather
 from tests.web_fakes import container, repo_group, snapshot_of
 from tests_e2e.browser_errors import BrowserErrors
-from tests_e2e.flows import log_in_with_pin
+from tests_e2e.flows import DERIVED_DEVICE, log_in_with_pin
 from tests_e2e.server import E2EServer
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def expect_refused_reconnect(server: E2EServer, errors: BrowserErrors) -> re.Pattern[str]:
@@ -194,7 +199,7 @@ def test_protocol_mismatch_on_reconnect_reloads_the_page(server: E2EServer, page
 
     page.route_web_socket("**/api/ws", connect)
     server.push(snapshot_of(repo_group("work", container("work-before", "work"))))
-    log_in_with_pin(page, server.url, server.pin.current, "upgrade tablet")
+    log_in_with_pin(page, server.url, server.pin.current)
     expect(page.get_by_role("link", name="before", exact=True)).to_be_visible()
     page.on(
         "request",
@@ -208,10 +213,41 @@ def test_protocol_mismatch_on_reconnect_reloads_the_page(server: E2EServer, page
 
     expect(page.get_by_role("link", name="before", exact=True)).to_be_visible()
     expect(page.get_by_text("Connecting…", exact=True)).to_have_count(0)
-    expect(page.get_by_role("banner")).to_contain_text("upgrade tablet")
+    expect(page.get_by_role("banner")).to_contain_text(DERIVED_DEVICE)
     server.push(snapshot_of(repo_group("work", container("work-live-after-reload", "work"))))
     expect(page.get_by_role("link", name="live-after-reload", exact=True)).to_be_visible()
     expect(page.get_by_role("link", name="before", exact=True)).to_have_count(0)
     assert closes[0] == 4002, "the real server must reject the stale protocol"
     assert len(sockets) == 3, "the reloaded document must establish a fresh connection"
     assert navigations == [f"{server.url}/"], "exactly one automatic document reload is needed"
+
+
+def test_an_idle_agent_with_only_the_inbox_follower_reads_idle(
+    server: E2EServer, logged_in: Page, tmp_path: Path
+) -> None:
+    """#146 ticket 38: the follower is not a background job, so not `shell`."""
+    idle_root, busy_root = tmp_path / "idle", tmp_path / "busy"
+    follower_only = [(1011, CLAUDE, "bash", WRAPPER), (1012, 1011, "python", FOLLOWER)]
+    _, idle = gather(idle_root, "shell", follower_only, name="work-quiet", prefix="work")
+    _, shell = gather(
+        busy_root,
+        "shell",
+        [
+            *follower_only,
+            (1013, CLAUDE, "bash", ("/bin/bash", "-c", "npm run dev")),
+            (1014, 1013, "npm", ("npm", "run", "dev")),
+        ],
+        name="work-dev",
+        prefix="work",
+    )
+    server.push(snapshot_of(repo_group("work", *idle.containers, *shell.containers)))
+
+    def row(name: str) -> Locator:
+        return logged_in.get_by_role("listitem").filter(
+            has=logged_in.get_by_role("link", name=name, exact=True)
+        )
+
+    expect(row("quiet").locator(".agent")).to_have_text("idle")
+    expect(row("quiet")).not_to_contain_text("shell")
+    expect(row("quiet")).not_to_contain_text("working")
+    expect(row("dev").locator(".agent")).to_have_text("shell")

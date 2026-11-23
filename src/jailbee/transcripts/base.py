@@ -11,11 +11,12 @@ not need the web dashboard to do so.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Collection, Sequence
     from datetime import datetime
     from pathlib import Path
 
@@ -138,29 +139,85 @@ class SessionInfo:
     """Every model that answered, in first-use order."""
 
 
+SESSION_INFO_FORMAT = 1
+"""Bump when what a source derives for a `SessionInfo` changes (how the title
+is chosen, which models are named), so infos a `SessionInfoStore` kept from an
+older reader are read again instead of served."""
+
+Stamp = tuple[int, int]
+"""A transcript file's ``(size, mtime_ns)``: while it is unchanged, so is its info."""
+
+
+class SessionInfoStore(Protocol):
+    """Where a `SessionInfoCache` keeps its entries beyond the process (a database)."""
+
+    def load_all(self) -> dict[Path, tuple[Stamp, SessionInfo]]:
+        """Every stored info by path, with the stamp it was read at. Never raises."""
+        ...
+
+    def save(self, entries: Sequence[tuple[Path, Stamp, SessionInfo]]) -> bool:
+        """Remember these infos, all at once; False when they were not stored.
+        Never raises."""
+        ...
+
+
 class SessionInfoCache:
     """Remembers `SessionInfo` by the file's path, size and mtime.
 
     Listing reads every transcript; a long-lived caller (the web server) passes
-    one cache so only a file that grew or was rewritten is read again. Owned by
-    the caller, never a module global.
+    one cache so only a file that grew or was rewritten is read again. With a
+    `store`, what was read survives a restart: the store's entries are loaded
+    once, on first use, and what was read since is written back by `flush`
+    (one write per listing, not per file). Owned by the caller, never a module
+    global. Safe to share between threads.
     """
 
-    def __init__(self) -> None:
-        self._entries: dict[Path, tuple[tuple[int, int], SessionInfo | None]] = {}
+    def __init__(self, store: SessionInfoStore | None = None) -> None:
+        self._entries: dict[Path, tuple[Stamp, SessionInfo | None]] = {}
+        self._store = store
+        self._loaded = store is None
+        self._unsaved: dict[Path, tuple[Stamp, SessionInfo]] = {}
+        self._lock = threading.Lock()
 
     def get(
-        self, path: Path, load: Callable[[], SessionInfo | None], stamp: tuple[int, int] | None
+        self, path: Path, load: Callable[[], SessionInfo | None], stamp: Stamp | None
     ) -> SessionInfo | None:
         """`load()`'s result, reused while `stamp` (size, mtime_ns) is unchanged."""
         if stamp is None:
             return load()
+        self._load_store()
         hit = self._entries.get(path)
         if hit is not None and hit[0] == stamp:
             return hit[1]
         info = load()
-        self._entries[path] = (stamp, info)
+        with self._lock:
+            self._entries[path] = (stamp, info)
+            if info is not None and self._store is not None:
+                self._unsaved[path] = (stamp, info)
         return info
+
+    def flush(self) -> None:
+        """Write what was read since the last flush to the store."""
+        if self._store is None:
+            return
+        with self._lock:
+            unsaved, self._unsaved = self._unsaved, {}
+        if not unsaved:
+            return
+        if not self._store.save([(path, stamp, info) for path, (stamp, info) in unsaved.items()]):
+            with self._lock:  # kept for the next flush; anything newer wins
+                self._unsaved = {**unsaved, **self._unsaved}
+
+    def _load_store(self) -> None:
+        if self._loaded or self._store is None:
+            return
+        with self._lock:
+            if self._loaded:
+                return
+            stored = self._store.load_all()
+            for path, entry in stored.items():
+                self._entries.setdefault(path, entry)
+            self._loaded = True
 
 
 @runtime_checkable
@@ -179,11 +236,16 @@ class TranscriptSource(Protocol):
         ...
 
     def list_sessions(
-        self, config_home: Path, cache: SessionInfoCache | None = None
+        self,
+        config_home: Path,
+        cache: SessionInfoCache | None = None,
+        cwds: Collection[str] | None = None,
     ) -> list[SessionInfo]:
         """Every session under `config_home`, newest activity first.
 
-        With a `cache`, a transcript unchanged since the last call is not read."""
+        With a `cache`, a transcript unchanged since the last call is not read.
+        With `cwds`, only sessions started in one of those directories (or
+        below one) are listed, and no other transcript is read."""
         ...
 
     def session_info(

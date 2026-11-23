@@ -81,3 +81,56 @@ def command_name(text: str) -> str:
             name = content.strip()
             return name if name.startswith("/") and not any(c in name for c in "<>\n\r") else ""
     return ""
+
+
+_LABELS = {
+    "task-notification": "Task notification",
+    "task_notification": "Task notification",
+    "system-reminder": "System reminder",
+    "local-command-stdout": "Command output",
+    "local-command-stderr": "Command output",
+    "local-command-caveat": "Command caveat",
+    "command-message": "Command",
+    "command-args": "Command",
+    "bash-stdout": "Shell output",
+    "bash-stderr": "Shell output",
+    "user-prompt-submit-hook": "Hook",
+    "teammate-message": "Teammate message",
+    "coordinator-task": "Coordinator task",
+    "ide_selection": "IDE selection",
+    "terminal": "Terminal",
+    "webhook-payload": "Webhook payload",
+}
+_LABEL_DETAIL_MAX = 60
+
+
+def _one_line(text: str) -> str:
+    line = " ".join(text.split())
+    if len(line) > _LABEL_DETAIL_MAX:
+        return line[: _LABEL_DETAIL_MAX - 1] + "…"
+    return line
+
+
+def _command_args(text: str) -> str:
+    """The arguments of the slash command in an agent wrapper, one line."""
+    for tag, content, _ in _wrappers(text):
+        if tag == "command-args":
+            return _one_line(content)
+    return ""
+
+
+def meta_label(text: str) -> str:
+    """A short label for leading agent markup: one mapping from wrapper tag to name.
+
+    A slash command reads ``Command: /model`` (with its arguments), shell input
+    ``Shell: ls``; every other wrapper has a fixed name. Empty without markup.
+    """
+    if name := command_name(text):
+        args = _command_args(text)
+        return f"Command: {name} {args}" if args else f"Command: {name}"
+    for tag, content, _ in _wrappers(text):
+        if tag == "bash-input":
+            detail = _one_line(content)
+            return f"Shell: {detail}" if detail else "Shell"
+        return _LABELS.get(tag, "Agent context")
+    return ""
