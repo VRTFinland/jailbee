@@ -255,7 +255,8 @@ def test_nested_objects_keep_only_known_fields(
     assert "PRIVATE" not in json.dumps(kept)
 
 
-def test_common_tool_inputs_survive_and_are_still_scanned(tmp_path: Path) -> None:
+@pytest.mark.parametrize("leaking_tool", range(4))
+def test_common_tool_inputs_survive_and_are_still_scanned(tmp_path: Path, leaking_tool: int) -> None:
     identity = _identity(tmp_path)
     tools = [
         {"type": "tool_use", "name": "Grep", "input": {"pattern": "TOY-MARKER"}},
@@ -271,8 +272,11 @@ def test_common_tool_inputs_survive_and_are_still_scanned(tmp_path: Path) -> Non
     del expected[3]["input"]["todos"][0]["account"]
     assert kept["message"] == {"content": expected}
     assert scan_corpus(project) == {}
-    for tool in tools[:3]:
-        key = next(iter(tool["input"]))
+    tool = tools[leaking_tool]
+    key = next(iter(tool["input"]))
+    if key == "todos":
+        tool["input"][key][0]["content"] = "/srv/private"
+    else:
         tool["input"][key] = "/srv/private"
     _, project = _normalise(tmp_path, [_user(identity, "", message={"content": tools})])
     assert scan_corpus(project)
@@ -427,6 +431,13 @@ def test_scan_corpus_rejects_non_placeholder_identity(tmp_path: Path, leak: str)
 )
 def test_find_leaks_allows_system_paths_urls_and_toy_subdirectories(text: str) -> None:
     assert find_leaks(text) == []
+    assert find_leaks(json.dumps({"message": {"content": text}})) == []
+
+
+def test_scan_corpus_allows_shell_escapes(tmp_path: Path) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(json.dumps({"command": r"printf '\n'"}) + "\n")
+    assert scan_corpus(tmp_path) == {}
 
 
 @pytest.mark.parametrize("path", [r"C:\Users\x\secret", r"\\server\share\x", "~alice/private"])
@@ -453,22 +464,24 @@ def test_credentials_are_redacted_and_detected(tmp_path: Path, credential: str) 
     assert record["message"] == {"role": "user", "content": "token: REDACTED"}
 
 
-def test_identity_redaction_preserves_commands_and_tool_names(tmp_path: Path) -> None:
+@pytest.mark.parametrize("context", ["user dev", "user: dev", "username=dev", '"user": "dev"'])
+def test_identity_redaction_preserves_commands_and_tool_names(tmp_path: Path, context: str) -> None:
     identity = Identity(
         toy_dir="/recording/toy", home="/home/dev", secrets=("dev", "Will Read")
     )
     raw = tmp_path / "raw"
-    text = "npm run dev; /dev/null; dev-ork; Read Edit Bash; Will Read; user dev; /home/dev/x"
+    text = f"npm run dev; /dev/null; dev-ork; Read Edit Bash; Will Read; {context}; /home/dev/x"
     _write(raw / f"{RAW_SID}.jsonl", [_user(identity, text)])
     out = tmp_path / "out"
     normalise_home(raw, out, identity, [RAW_SID])
     [kept] = _read(next((out / "projects" / TOY_PROJECT).glob("*.jsonl")))
     assert kept["message"] == {
         "role": "user",
-        "content": "npm run dev; /dev/null; dev-ork; Read Edit Bash; REDACTED; user REDACTED; /home/user/x",
+        "content": "npm run dev; /dev/null; dev-ork; Read Edit Bash; REDACTED; "
+        + context.replace("dev", "REDACTED") + "; /home/user/x",
     }
     assert find_leaks("npm run dev; dev-ork; Read Edit Bash", identity) == []
-    assert find_leaks("user dev", identity)
+    assert find_leaks(context, identity)
     assert find_leaks("Will Read", identity)
 
 
@@ -553,12 +566,15 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
                 }
             ],
         )
+        effective_config = (
+            config_file if custom_config else Path(kwargs["env"]["HOME"]) / ".claude.json"
+        )
+        if not broken_config:
+            data = json.loads(effective_config.read_text())
+            data["projects"][str(toy)] = {"private": "recording"}
+            effective_config.write_text(json.dumps(data))
         if broken_config:
             config_file.write_text("{invalid")
-        else:
-            data = json.loads(config_file.read_text())
-            data["projects"][str(toy)] = {"private": "recording"}
-            config_file.write_text(json.dumps(data))
         (snapshots / f"{sid}.sh").write_text("private shell")
         (snapshots / "snapshot-own.sh").write_text(f"export HOME={kwargs['env']['HOME']}\n")
         (snapshots / "snapshot-foreign.sh").write_text("export HOME=/home/someone-else\n")
@@ -596,13 +612,13 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
         assert all(secret not in text for secret in ("Will Read", "Zed Committer"))
         assert "Read Edit Bash" in text
     if not broken_config:
-        assert json.loads(config_file.read_text()) == {
-            "projects": {"/existing": {"keep": True}},
-            "other": 1,
-            "concurrent": 2,
-        }
-        assert replace.call_count == 1
-        assert replace.call_args.args[1] == config_file
+        expected_config = {"projects": {"/existing": {"keep": True}}, "other": 1}
+        if custom_config:
+            expected_config["concurrent"] = 2
+        assert json.loads(config_file.read_text()) == expected_config
+        assert replace.call_count == int(custom_config)
+        if custom_config:
+            assert replace.call_args.args[1] == config_file
     assert sorted(p.name for p in snapshots.iterdir()) == ["old.sh", "snapshot-foreign.sh"]
     assert not list((config / "projects").iterdir())
 

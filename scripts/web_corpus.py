@@ -231,9 +231,9 @@ def _secret_pattern(secret: str) -> str:
     if len(secret) < 5:
         # Short names are also ordinary commands and path components (e.g. dev).
         return (
-            r"(?:\A" + pattern + r"\Z|(?:(?<=\buser )|(?<=\busername: )"
-            r"|(?<=\buser=)|(?<=/home/)|(?<=/Users/)|(?<=~))"
-            + pattern + r"(?![\w.-]))"
+            r"(?P<prefix>\b(?:user(?:name)?|author|committer)[\"']?(?:\s*[:=]\s*|\s+)[\"']?)"
+            + pattern + r"(?![\w.-])|\A" + pattern + r"\Z"
+            r"|(?:(?<=/home/)|(?<=/Users/)|(?<=~))" + pattern + r"(?![\w.-])"
         )
     return r"(?<![\w-])" + pattern + r"(?![\w-])"
 
@@ -277,7 +277,12 @@ class _Normaliser:
         value = _replace_path(value, posixpath.dirname(toy), posixpath.dirname(TOY_DIR))
         value = _replace_path(value, self.identity.home.rstrip("/"), HOME_DIR)
         for secret in self.identity.secrets:
-            value = re.sub(_secret_pattern(secret), REDACTED, value, flags=re.IGNORECASE)
+            value = re.sub(
+                _secret_pattern(secret),
+                lambda match: (match.groupdict().get("prefix") or "") + REDACTED,
+                value,
+                flags=re.IGNORECASE,
+            )
         value = _CREDENTIAL.sub(REDACTED, value)
         value = _EMAIL.sub(lambda m: m[0] if m[0] in EMAILS_ALLOWED else REDACTED, value)
         for raw, agent in self.ids.agents.items():
@@ -385,9 +390,13 @@ _ALLOWED_PATHS = (
     TOY_DIR, HOME_DIR, "/work/claude-tmp", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
 )
 _HTTP_URL = re.compile(r"https?://[^\s<>\"']+")
-_NON_POSIX_PATH = re.compile(r"(?i)(?:\b[A-Z]:\\+[^\s\"'<>]+|\\\\[^\s\"'<>]+|(?<!\w)~[\w.-]+/[^\s\"'<>]*)")
+_NON_POSIX_PATH = re.compile(
+    r"(?i)(?:\b[A-Z]:\\+[^\s\"'<>]+|\\\\[\w.-]+\\+[\w.-]+"
+    r"|(?<!\w)~[\w.-]+/[^\s\"'<>]*)"
+)
 _CLAUDE_TRAILER = re.compile(
-    r"(?im)^Co-Authored-By: Claude(?: [A-Za-z0-9._-]+)* <noreply@anthropic\.com>\s*$"
+    r"(?im)(?<![\w-])Co-Authored-By: Claude(?: [A-Za-z0-9._-]+)* <noreply@anthropic\.com>"
+    r"(?=\s*(?:$|[\"'}]))"
 )
 # Slash commands and XML closing tags are not filesystem paths.
 _SLASH_COMMANDS = frozenset({"/compact"})
