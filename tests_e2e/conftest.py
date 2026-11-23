@@ -88,11 +88,16 @@ def make_server(
         return fresh
 
     yield make
+    failures: list[Exception] = []
     for fresh in made:
         try:
             fresh.stop()
+        except Exception as error:
+            failures.append(error)
         finally:
             fresh.engine.dispose()
+    if failures:
+        raise ExceptionGroup("e2e servers failed to stop", failures)
 
 
 @pytest.fixture(autouse=True)
@@ -130,5 +135,5 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
     result = yield
     errors = getattr(item, "funcargs", {}).get("browser_errors")
     if isinstance(errors, BrowserErrors):
-        errors.assert_clean()
+        errors.assert_clean(require_expected=False)
     return result

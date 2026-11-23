@@ -98,35 +98,52 @@ class BrowserErrors:
             ExpectedError(category, pattern, count, None if at_least is not None else count)
         )
 
-    def unexpected(self) -> list[str]:
-        counts = [0] * len(self._expected)
-        found: list[str] = []
-        for category, label, entries in (
-            ("console", "console error", self.console),
-            ("page", "page error", self.page),
-            ("csp", "CSP violation", self.csp),
-        ):
-            for text in entries:
-                matches = [
-                    i for i, expected in enumerate(self._expected)
-                    if expected.category == category and expected.matches(text)
-                    and (expected.maximum is None or counts[i] < expected.maximum)
-                ]
-                # Satisfy required hits before an unbounded expectation takes extras.
-                match = next(
-                    (i for i in matches if counts[i] < self._expected[i].minimum),
-                    matches[0] if matches else None,
-                )
-                if match is None:
-                    found.append(f"{label}: {text}")
-                else:
-                    counts[match] += 1
-        for expected, count in zip(self._expected, counts, strict=True):
-            if count < expected.minimum:
-                found.append(
-                    f"unmet {expected.category} expectation {expected.pattern!r}: "
-                    f"wanted {expected.minimum}, got {count}"
-                )
+    def unexpected(self, *, require_expected: bool = True) -> list[str]:
+        entries = [
+            (category, label, text)
+            for category, label, texts in (
+                ("console", "console error", self.console),
+                ("page", "page error", self.page),
+                ("csp", "CSP violation", self.csp),
+            )
+            for text in texts
+        ]
+        matches = [
+            [i for i, expected in enumerate(self._expected)
+             if expected.category == category and expected.matches(text)]
+            for category, _, text in entries
+        ]
+        slots = [i for i, expected in enumerate(self._expected) for _ in range(expected.minimum)]
+        assigned: dict[int, int] = {}
+
+        def assign(entry: int, seen: set[int]) -> bool:
+            # Reassign an earlier hit when overlapping expectations need it.
+            for slot, expected in enumerate(slots):
+                if expected not in matches[entry] or slot in seen:
+                    continue
+                seen.add(slot)
+                if slot not in assigned or assign(assigned[slot], seen):
+                    assigned[slot] = entry
+                    return True
+            return False
+
+        for entry in range(len(entries)):
+            assign(entry, set())
+        consumed = set(assigned.values())
+        found = [
+            f"{label}: {text}"
+            for entry, (_, label, text) in enumerate(entries)
+            if entry not in consumed
+            and not any(self._expected[i].maximum is None for i in matches[entry])
+        ]
+        if require_expected:
+            for i, expected in enumerate(self._expected):
+                count = sum(slots[slot] == i for slot in assigned)
+                if count < expected.minimum:
+                    found.append(
+                        f"unmet {expected.category} expectation {expected.pattern!r}: "
+                        f"wanted {expected.minimum}, got {count}"
+                    )
         return found
 
     def settle(self) -> None:
@@ -142,9 +159,9 @@ class BrowserErrors:
                 with contextlib.suppress(Error):  # closed meanwhile
                     page.evaluate("() => new Promise(resolve => setTimeout(resolve, 0))")
 
-    def assert_clean(self) -> None:
-        """Fail the current test when anything unexpected was reported."""
+    def assert_clean(self, *, require_expected: bool = True) -> None:
+        """Fail on errors; defer unmet declarations until teardown when requested."""
         self.settle()
-        found = self.unexpected()
+        found = self.unexpected(require_expected=require_expected)
         if found:
             pytest.fail("the browser reported errors:\n  " + "\n  ".join(found), pytrace=False)

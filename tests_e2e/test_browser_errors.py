@@ -78,8 +78,9 @@ def test_expected_errors_do_not_fail(watched: tuple[Page, BrowserErrors]) -> Non
     errors.assert_clean()
 
 
+@pytest.mark.parametrize("from_body", [False, True])
 def test_an_error_after_the_test_body_fails(
-    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, from_body: bool
 ) -> None:
     pytester.makeconftest(
         '''
@@ -92,9 +93,27 @@ def test_an_error_after_the_test_body_fails(
             page.evaluate("setTimeout(() => { throw new Error('late kaboom') }, 0)")
         '''
     )
-    pytester.makepyfile(
-        "def test_late(page, late_error):\n    page.goto('about:blank')\n"
-    )
+    if from_body:
+        # Schedule while the sync API is idle after the test body; the fixture
+        # sleeps without pumping Playwright, then teardown must drain the event.
+        pytester.makeconftest('''
+            pytest_plugins = ["tests_e2e.conftest"]
+            import pytest
+            import time
+
+            @pytest.fixture
+            def late_error(page):
+                yield
+                time.sleep(0.15)
+        ''')
+        pytester.makepyfile('''
+            def test_late(page, late_error):
+                page.evaluate("setTimeout(() => { throw new Error('late kaboom') }, 100)")
+        ''')
+    else:
+        pytester.makepyfile(
+            "def test_late(page, late_error):\n    page.goto('about:blank')\n"
+        )
     monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
 
     result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--output", "results")
@@ -159,6 +178,38 @@ def test_popup_errors_from_a_fixture_created_context_fail(
 
     assert result.ret == pytest.ExitCode.TESTS_FAILED
     result.stdout.fnmatch_lines(["*page error: Error: popup kaboom*"])
+
+
+def test_overlapping_expectations_each_consume_a_distinct_hit(
+    page: Page, browser_errors: BrowserErrors
+) -> None:
+    browser_errors.expect("console", "error")
+    browser_errors.expect("console", "specific error")
+    page.evaluate("console.error('specific error'); console.error('other error')")
+    browser_errors.assert_clean()
+
+
+def test_expected_teardown_errors_do_not_fail_early(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytester.makeconftest('''
+        pytest_plugins = ["tests_e2e.conftest"]
+        import pytest
+
+        @pytest.fixture
+        def teardown_error(page):
+            yield
+            page.evaluate("console.error('expected teardown error')")
+    ''')
+    pytester.makepyfile('''
+        def test_expected(page, browser_errors, teardown_error):
+            browser_errors.expect("console", "expected teardown error")
+    ''')
+    monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
+
+    result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--output", "results")
+
+    result.assert_outcomes(passed=1)
 
 
 @pytest.mark.parametrize("count", ['times=2', 'at_least=1'])
