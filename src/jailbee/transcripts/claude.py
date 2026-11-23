@@ -439,7 +439,8 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
     the ends are read. The head is read line by line until the title is
     settled: the first typed prompt, or the first command once
     TITLE_CANDIDATES user lines held none, and never past HEAD_BYTES; its
-    first timestamp is when the session started. The last TAIL_BYTES (more,
+    first timestamp is when the session started, and its first record with a
+    ``cwd`` says where and on which ``gitBranch``. The last TAIL_BYTES (more,
     up to TAIL_MAX_BYTES, while they hold no timestamp) give the last
     activity. Models are those named in the head and the tail, in first-use
     order: a model used only in the middle of a long session is not listed

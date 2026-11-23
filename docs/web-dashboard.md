@@ -8,8 +8,17 @@ and is installed as an optional extra.
 
 Which container ran a session is recorded by the shared state service, which
 runs only while some dashboard (terminal, Qt or web) is connected. A session
-that starts and ends with no dashboard open is still listed under its
-repository, but not attributed to a container.
+it never saw (one that started and ended with no dashboard open, or predates
+the recorder) is attributed from its own transcript instead: the directory and
+git branch it started in, and when. It belongs to a container whose branch
+label (the branch the container was created on) is that branch, whose
+repository directory holds that directory, and which already existed when the
+session started; of several, the most recently created one wins (equal times:
+the first name). So a container recreated under the same name does not inherit
+the older one's sessions. A recorded attribution always wins over this one. A
+mount-mode container has no branch label and lists only recorded sessions, and
+a session started after the branch was renamed inside its container names the
+new branch and stays unattributed unless it was recorded.
 
 Session titles use the first typed prompt, skipping agent wrapper records,
 local command output, caveats and injected context. A session with only slash
@@ -35,8 +44,8 @@ every visible repository's sessions in the background when it starts; no
 request waits for it.
 
 A container page shows its live sessions as soon as they are known (they come
-from the state service's snapshot) and appends the sessions it ran before when
-that separate request answers. A repository lists only the sessions started in
+from the state service's snapshot) and appends the sessions it ran before,
+recorded and attributed, newest first, when that separate request answers. A repository lists only the sessions started in
 its own containers' checkout (each container's repository directory, or below
 it): repositories that share one agent config home by mistake do not list each
 other's sessions. Claude names a session's project directory after its working
