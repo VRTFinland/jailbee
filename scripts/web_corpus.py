@@ -247,9 +247,7 @@ def _short_secret_pattern(secret: str, *, gate: bool) -> str:
     if gate:
         # Any `@host`, `user@` or `host:` form; `@dev/pkg` or `dev:/data`
         # only stop a recording.
-        return (
-            shared + r"|(?<=@)" + pattern + r"(?![\w-])|(?<![\w.-])" + pattern + r"(?=@[\w-]|:)"
-        )
+        return shared + r"|(?<=@)" + pattern + r"(?![\w-])|(?<![\w.-])" + pattern + r"(?=@[\w-]|:)"
     # Only a shell prompt (`user@host:~`, `host:~`), never npm scopes or volumes.
     return (
         shared
