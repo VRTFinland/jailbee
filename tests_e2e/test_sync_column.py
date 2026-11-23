@@ -10,6 +10,28 @@ from tests.web_fakes import container, repo_group, snapshot_of
 from tests_e2e.server import E2EServer
 
 
+def test_phone_sync_wide_diff_does_not_scroll_horizontally(
+    server: E2EServer, logged_in: Page
+) -> None:
+    logged_in.set_viewport_size({"width": 375, "height": 812})
+    c = replace(
+        container("work-host", "work"),
+        git_status=GitStatus(
+            "clean",
+            "clean",
+            "1",
+            "ok",
+            behind_count="2",
+            target_diff="+" + "1234567890" * 12 + " -" + "9876543210" * 12,
+        ),
+    )
+    server.push(snapshot_of(repo_group("work", c)))
+    cell = logged_in.locator(".cell", has=logged_in.get_by_text("SYNC", exact=True))
+    expect(cell).to_contain_text("↑1 ↓2")
+    assert logged_in.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    assert cell.evaluate("el => el.scrollWidth <= el.clientWidth")
+
+
 def test_sync_preserves_marker_slots_and_right_aligned_counts(
     server: E2EServer, logged_in: Page
 ) -> None:

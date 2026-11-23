@@ -207,7 +207,8 @@ before editing `## Unreleased`.
   host-side, read-only browser dashboard, included in every install
   ([#109](https://github.com/VRTFinland/jailbee/issues/109)). The front page
   shows repositories and containers with the terminal dashboard's core columns
-  and agent state. Front-page and repository container lists nest children under
+  and agent state. Stopped rows include a readable state label alongside their
+  distinct e-ink outline. Front-page and repository container lists nest children under
   their orchestrator, showing child counts across all visible repositories,
   states and runners; container pages link between children and their
   orchestrator and reset page turns when following those links. Nesting keeps
@@ -215,7 +216,9 @@ before editing `## Unreleased`.
   A container or repository opens
   its agent sessions, and a session opens as a typeset transcript with rendered
   Markdown, folded tool calls, optional thinking, subagent transcripts and live
-  updates. Session titles use the first typed prompt rather than agent wrapper
+  updates. Following a subagent link or returning to its parent loads that
+  transcript and switches the live subscription instead of retaining the previous
+  document. Session titles use the first typed prompt rather than agent wrapper
   markup, falling back to the first slash command in command-only sessions;
   titles and connection notices stay visible while reading; **Latest answer**
   appears only when the newest reply is out of view, also with e-ink page turns
@@ -287,9 +290,12 @@ before editing `## Unreleased`.
   stands in. The target marker appears once per row, not in separate fields or
   MERGE. The legacy `target_diff`, `ahead_count` and `behind_count` columns
   remain explicitly selectable without markers; SYNC sorts by diff size and
-  those count fields sort by their own values. Default JSON is unchanged;
-  explicit `--format json --fields sync` returns the same structured object as
-  `git_status`. The details card shows a git row per target (host branch, PR
+  those count fields sort by their own values. Saved dashboard sets migrate
+  once to SYNC, leaving explicit YAML lists and host-count columns unchanged.
+  SYNC is table-only (`git_status` supplies structured JSON), remains among the
+  last columns dropped in narrow listings, and truncates long diffs on phones.
+  Clean Qt cards omit the git row; standalone cards pad only their own counts.
+  Default JSON is unchanged. The details card shows a git row per target (host branch, PR
   head) with its ↑/↓ and short sha, the sync target marked, and JSON
   `git_status` gains `sync_target`, `host_ahead_count` and `host_behind_count`.
   The card also gains a `⑂ <parent>` row with the parent's sha and pass age.
@@ -337,6 +343,17 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- **Successful background jobs no longer flash as dead.** A snapshot now keeps
+  its gathered job liveness instead of rechecking an exited worker against an
+  older phase. Autostart, create, start/restart and destroy stay consistent in
+  the dashboards, `jailbee ls` and `jailbee job ls`; a worker killed mid-job
+  still shows as dead ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
+- Deleting from the terminal dashboard's Outbox box or `jailbee outbox` no
+  longer freezes the interface. Revision checks, drops and post-mutation
+  reloads run in the background with a busy line; navigation stays usable,
+  concurrent mutations are refused, and a closed dashboard box reports the
+  result as a notice. PR-creation preflight listing is asynchronous too
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 - **A dashboard left running across a JailBee upgrade stops instead of
   fighting the newer state service.** The "newer wins" rule only applied when
   both sides spoke the same protocol, so an older dashboard of a different

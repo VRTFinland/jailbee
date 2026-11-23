@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 from io import StringIO
 
+import pytest
 from rich.console import Console
 from rich.text import Text
 
@@ -48,6 +49,59 @@ def mixed_rows():
             "?",
         ),
     ]
+
+
+@pytest.mark.parametrize("frontend", ["tui", "qt", "web"])
+@pytest.mark.parametrize("fold_saved", [False, True])
+def test_saved_previous_column_set_migrates_once(frontend, fold_saved):
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.dashboard.columns import seed_view_state
+    from jailbee.db.view_prefs import ViewState, load_view_state, save_view_state
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    columns = (
+        "name",
+        "target_diff",
+        "ahead_count",
+        "behind_count",
+        "host_ahead",
+        "host_behind",
+        "wt",
+    )
+    save_view_state(engine, frontend, ViewState(columns=columns, columns_version=3))
+    if fold_saved:
+        save_view_state(engine, frontend, ViewState(columns=columns, folded=frozenset({"repo"})))
+    notices = []
+    state = seed_view_state(engine, frontend, on_migration=notices.append)
+    assert state.columns == ("name", "sync", "host_ahead", "host_behind", "wt")
+    assert state.folded == (frozenset({"repo"}) if fold_saved else frozenset())
+    assert state.columns_version == 4
+    assert load_view_state(engine, frontend) == state
+    assert len(notices) == 1
+    assert "target_diff" in notices[0] and "sync" in notices[0]
+    save_view_state(engine, frontend, ViewState(columns=(*state.columns, "ahead_count")))
+    assert seed_view_state(engine, frontend).columns == (*state.columns, "ahead_count")
+    engine.dispose()
+
+
+def test_first_launch_explicit_dashboard_fields_stay_legacy(mocker):
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.dashboard.columns import seed_view_state
+    from jailbee.global_config import GlobalConfig
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    fields = ["name", "target_diff", "ahead_count", "behind_count"]
+    mocker.patch(
+        "jailbee.dashboard.model.load_global_config",
+        return_value=(GlobalConfig(dashboard={"fields": fields}), []),
+    )
+    assert seed_view_state(engine, "tui").columns == tuple(fields)
+    assert seed_view_state(engine, "tui").columns == tuple(fields)
+    engine.dispose()
 
 
 def test_dashboard_sync_aligns_markers_counts_and_diff_across_visible_rows():
@@ -108,7 +162,7 @@ def test_ls_sync_uses_the_visible_rows_for_count_alignment(tmp_path, mocker, mak
     assert "    ↑  1 ↓123 +1 -0" in result.output
 
 
-def test_sync_json_is_opt_in_and_reuses_the_existing_git_status_payload(capsys):
+def test_sync_is_table_only_and_git_status_remains_the_json_boundary(capsys):
     import json
 
     rows = mixed_rows()
@@ -118,9 +172,30 @@ def test_sync_json_is_opt_in_and_reuses_the_existing_git_status_payload(capsys):
     assert "sync" not in payload[0]
     assert payload[1]["git_status"]["ahead_count"] == "123"
     assert payload[1]["git_status"]["target_diff"] == "+12345 -9"
-    table_format.emit(rows, specs, fmt="json", fields="sync,git_status", console=Console())
-    explicit = json.loads(capsys.readouterr().out)
-    assert explicit[1]["sync"] == explicit[1]["git_status"]
+    import typer
+
+    with pytest.raises(typer.BadParameter, match="sync"):
+        table_format.emit(rows, specs, fmt="json", fields="sync,git_status", console=Console())
+
+
+def test_ls_fit_keeps_sync_until_after_base_and_merge(tmp_path, mocker, make_cfg):
+    from typer.testing import CliRunner
+
+    from jailbee.cli import app
+
+    mocker.patch("jailbee.cli._load_or_exit", return_value=make_cfg(tmp_path))
+    mocker.patch("jailbee.lifecycle.list_containers", return_value=mixed_rows())
+    mocker.patch("jailbee.incus.Incus")
+    output = StringIO()
+    mocker.patch(
+        "jailbee.tui.console",
+        Console(file=output, width=30, force_terminal=True, color_system=None),
+    )
+    result = CliRunner().invoke(app, ["ls"])
+    assert result.exit_code == 0, result.output
+    notice = " ".join(output.getvalue().split()).split("hidden to fit:")[1]
+    assert notice.index("BASE") < notice.index("SYNC")
+    assert notice.index("MERGE") < notice.index("SYNC")
 
 
 def test_sync_sorts_by_diff_size_and_legacy_count_sorts_remain_available():
@@ -177,7 +252,30 @@ def test_sync_preserves_missing_target_and_unprobed_status():
     assert Text.from_markup(fields["sync"].cell(stopped)).plain == "—"
 
 
-def test_sync_count_widths_follow_only_the_visible_rows():
+def test_sync_count_widths_follow_only_unfolded_repo_rows():
+    from jailbee.dashboard.model import RepoGroup
+    from jailbee.dashboard.tui.fleet import entry_line, table_model
+
     rows = mixed_rows()
-    [field] = visible_fields(NOW, [rows[2]], enabled=("sync",))
-    assert Text.from_markup(field.cell(rows[2])).plain == "⑂   ↑12 ↓0 ✓"
+    groups = [
+        RepoGroup("wide", "/wide", None, rows[:2]),
+        RepoGroup("small", "/small", None, rows[2:3]),
+    ]
+
+    def rendered(folded):
+        model = table_model(
+            groups,
+            now=NOW,
+            enabled=("name", "sync"),
+            folded=folded,
+            column_widths=None,
+            shown_columns=None,
+            column_offset=0,
+            hidden_by_preferences=False,
+            width=100,
+        )
+        entry = next(entry for entry in model.entries if entry.container is rows[2])
+        return entry_line(entry, model.geometry, folded, selected=False, width=100).plain
+
+    assert "⑂   ↑ 12 ↓  0 ✓" in rendered(frozenset())
+    assert "⑂   ↑12 ↓0 ✓" in rendered(frozenset({"wide"}))

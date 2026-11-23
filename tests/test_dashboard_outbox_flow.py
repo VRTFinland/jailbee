@@ -338,6 +338,125 @@ def test_relist_cascades_mark_onto_new_children():
 # --- delete ----------------------------------------------------------------
 
 
+def test_confirm_delete_returns_busy_before_running_any_command():
+    from threading import get_ident
+
+    ui_thread = get_ident()
+
+    class DeferredRunner(FakeRunner):
+        defer = False
+
+        def run_quiet(self, argv: Sequence[str]) -> CliResult:
+            assert not self.defer or get_ident() != ui_thread, "outbox command blocks the UI thread"
+            return super().run_quiet(argv)
+
+        def run_quiet_later(self, key, label, argv, on_done):
+            self.held.append((key, lambda: on_done(self.run_quiet(argv))))
+
+    runner = DeferredRunner(_listing(_proposal()))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("delete", _key())
+    runner.defer = True
+    before = list(runner.calls)
+
+    ctl.intent("answer", None, "yes")
+
+    assert runner.calls == before
+    assert ctl.state.busy == "Deleting 1 from the outbox…"
+    assert ctl.state.question is None
+    assert runner.held
+
+
+def test_delete_stays_busy_across_async_steps_and_refuses_concurrent_mutations():
+    runner = FakeRunner(_listing(_proposal()))
+    ctl = _controller(runner, standalone=True)
+    ctl.load()
+    ctl.intent("delete", _key())
+    runner.hold_loads = True
+    ctl.intent("answer", None, "yes")
+    busy = ctl.state.busy
+    assert busy == "Deleting 1 from the outbox…"
+    before = list(runner.calls)
+    ctl.intent("refresh", None)
+    for intent in ("publish", "delete", "clear", "scope"):
+        ctl.intent(intent, None)
+        assert ctl.state.status == (f"busy: {busy}",)
+    assert runner.calls == before
+    assert not ctl.state.all_repos
+    runner.finish_loads()  # verification -> drop
+    assert ctl.state.busy == busy
+    runner.finish_loads()  # drop -> reload
+    assert ctl.state.busy == busy
+    runner.finish_loads()
+    assert ctl.state.busy is None
+    assert ctl.state.status == ("Deleted 1 from the outbox.",)
+    assert runner.changes == 1
+    assert [a[1] for _, a in runner.calls] == ["ls", "ls", "drop", "ls"]
+
+
+def test_marks_added_during_delete_are_kept_for_next_action():
+    runner = FakeRunner(_listing(_proposal(), _proposal("pr/b.json")))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("mark", _key())
+    ctl.intent("delete", None)
+    runner.hold_loads = True
+    ctl.intent("answer", None, "yes")
+    ctl.intent("mark", _key("pr/b.json"))
+    while runner.held:
+        runner.finish_loads()
+    assert _key("pr/b.json") in ctl.state.marks
+    assert _key() not in ctl.state.marks
+
+
+def test_delete_worker_start_failure_is_reported_and_clears_busy():
+    runner = FakeRunner(_listing(_proposal()))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("delete", _key())
+    runner.start_error = OSError("worker unavailable")
+    ctl.intent("answer", None, "yes")
+    assert ctl.state.busy is None
+    assert ctl.state.question is None
+    assert ctl.state.status == (
+        "pr/a.json: could not list the outbox: worker unavailable",
+        "could not list the outbox: worker unavailable",
+    )
+    assert runner.argvs("drop") == []
+    assert runner.changes == 1
+
+
+def test_publish_completion_reloads_without_blocking():
+    runner = FakeRunner(_listing(_proposal()))
+    ctl = _controller(runner)
+    ctl.load()
+    ctl.intent("publish", _key())
+    runner.finish(JobResult(0, "", _plan()))
+    ctl.intent("answer", None, "publish")
+    runner.hold_loads = True
+    runner.finish(JobResult(0, "", "Published 2 actions"))
+    assert ctl.state.busy is not None
+    assert not ctl.state.status
+    runner.finish_loads()
+    assert ctl.state.busy is None
+    assert ctl.state.status == ("Published 2 actions",)
+
+
+def test_pr_creation_checks_listing_asynchronously_before_terminal_handoff():
+    runner = FakeRunner(_listing(_proposal(state="awaiting-pr", create_scope={"kind": "repo"})))
+    ctl = _controller(runner)
+    ctl.load()
+    runner.hold_loads = True
+    ctl.intent("publish", _key())
+    assert ctl.state.busy is not None
+    assert not any(kind == "hand_off" for kind, _ in runner.calls)
+    runner.finish_loads()  # verification -> terminal -> reload
+    assert runner.argvs("push") == [dob.create_pr_argv(C, {"kind": "repo"})]
+    runner.finish_loads()
+    assert ctl.state.busy is None
+
+
 def test_delete_one_confirmation_lists_scope():
     runner = FakeRunner(_listing(_proposal()))
     ctl = _controller(runner)
@@ -1028,12 +1147,13 @@ def test_scope_switched_while_listing_lists_the_new_scope():
     assert ctl.state.busy is None and not ctl.state.all_repos
 
 
-def test_load_later_while_another_child_runs_lists_in_place():
-    runner, ctl, _ = _held(_listing(_proposal()))
+def test_load_later_while_another_child_runs_keeps_busy_without_listing():
+    runner, ctl, seen = _held(_listing(_proposal()))
     ctl.state = replace(ctl.state, busy="publishing…")
     ctl.load_later()
-    assert runner.held == [] and ctl.state.containers  # read synchronously
+    assert runner.held == [] and runner.calls == []
     assert ctl.state.busy == "publishing…"
+    assert seen == [ctl.state]
 
 
 def test_load_later_withdraws_an_open_question():

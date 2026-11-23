@@ -131,6 +131,14 @@ def card_content(
 ) -> CardContent:
     """Split a container's visible fields into NAME + STATE plus the rest,
     each addressable by ``FieldSpec.name`` so a renderer can place it."""
+    # Standalone cards have no neighbouring rows to align counts with.
+    if any(field.name == "sync" for field in fields):
+        from jailbee.dashboard.columns import visible_fields
+
+        local_sync = next(
+            field for field in visible_fields(now or datetime.now(UTC), [c], enabled=("sync",))
+        )
+        fields = [local_sync if field.name == "sync" else field for field in fields]
     cells = container_cells(c, fields)
     if now is not None:
         for index, field in enumerate(fields):
@@ -264,7 +272,7 @@ def grid_rows(cc: CardContent) -> list[tuple[str, str]]:
     if cc.fork_of:
         rows.append(("FORK OF", cc.fork_of))
     segs = git_segments(cc)
-    rows.append(("GIT", "clean" if not segs else "  ".join(t for t, _ in segs)))
+    rows.append(("GIT", "clean" if is_git_clean(cc) else "  ".join(t for t, _ in segs)))
     return rows
 
 
@@ -347,7 +355,7 @@ def cell_tooltip(c: ContainerInfo, field: FieldSpec[ContainerInfo]) -> str:
                 details.extend(activity.lines())
         detail = "\n".join(details) or "No agent status"
     elif field.name == "job":
-        label = job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind)
+        label = job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind, live=c.job_live)
         detail = "\n".join(part for part in (label, c.job_error) if part)
     elif field.name in SYNC_FIELDS:
         detail = f"{_strip_markup(field.cell(c))}\n{sync_target_text(c.git_status)}"
