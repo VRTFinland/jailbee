@@ -24,7 +24,7 @@ const transcript: TranscriptView = {
     last_activity: null,
     models: [],
     offset: 420,
-    entries: [{kind: "user", id: "u1", timestamp: null, html: "<p>Fix it</p>", meta: false}],
+    entries: [{kind: "user", id: "u1", timestamp: null, html: "<p>Fix it</p>", meta: false, label: null, expandable: false}],
 }
 
 const answer: RenderedEntry = {
@@ -92,7 +92,7 @@ describe("SessionView live follow", () => {
     it("subscribes from the offset the transcript was read to", async () => {
         const {sent} = await mountLive("/repos/alpha/sessions/claude/s-1")
         expect(sent).toEqual([
-            {type: "subscribe", v: PROTOCOL_VERSION, key: sessionKey, offset: 420},
+            {type: "subscribe", v: PROTOCOL_VERSION, key: sessionKey, offset: 420, meta: "hidden"},
         ])
     })
 
@@ -161,6 +161,7 @@ describe("SessionView live follow", () => {
                 v: PROTOCOL_VERSION,
                 key: {...sessionKey, subagent_id: "a1b2c3"},
                 offset: 420,
+                meta: "hidden",
             },
         ])
     })
@@ -226,7 +227,10 @@ describe("SessionView in the e-ink profile", () => {
         await append(sessionKey, [answer])
         await wrapper.get(".new-messages").trigger("click")
         await wrapper.get(".jump-latest").trigger("click")
-        expect(scrollTo).toHaveBeenLastCalledWith(0, 1184)
+        expect(scrollTo).toHaveBeenLastCalledWith(0, 1280)
+        await wrapper.get("button.next").trigger("click")
+        expect(scrollTo).toHaveBeenLastCalledWith(0, 1872)
+        await wrapper.get("button.prev").trigger("click")
         expect(wrapper.find(".jump-latest").exists()).toBe(false)
         await wrapper.get("button.prev").trigger("click")
         expect(wrapper.find(".jump-latest").exists()).toBe(true)
@@ -266,7 +270,7 @@ describe("SessionView in the e-ink profile", () => {
         wrapper.unmount()
     })
 
-    it("jumps to the page that holds the latest answer", async () => {
+    it("starts a page at the latest answer", async () => {
         reloadSettings()
         updateSettings({displayProfile: "eink"})
         setPageGeometry(3000, 0) // pages of 800 - 88 = 712px
@@ -280,7 +284,7 @@ describe("SessionView in the e-ink profile", () => {
         await append(sessionKey, [answer])
         await wrapper.get(".new-messages").trigger("click")
         await wrapper.get(".jump-latest").trigger("click")
-        expect(scrollTo).toHaveBeenLastCalledWith(0, 2 * 712)
-        expect(wrapper.get(".page-indicator").text()).toContain("Page 3 /")
+        expect(scrollTo).toHaveBeenLastCalledWith(0, 1500)
+        expect(wrapper.get(".page-indicator").text()).toContain("Page 4 /")
     })
 })

@@ -115,53 +115,67 @@ def client(home: Path) -> Iterator[TestClient]:
     )
 
 
-def test_a_container_lists_its_live_sessions_before_its_recorded_ones(client: TestClient) -> None:
+def test_a_containers_live_sessions_come_from_the_snapshot_alone(client: TestClient) -> None:
     res = client.get("/api/containers/alpha-1/sessions")
 
     assert res.status_code == 200
     body = res.json()
     assert (body["container"], body["repo"]) == ("alpha-1", "alpha")
-    assert [(r["session_id"], r["live"]) for r in body["sessions"]] == [
-        (SESSION_A, True),
-        (SESSION_B, False),
-    ]
+    assert [(r["session_id"], r["live"]) for r in body["sessions"]] == [(SESSION_A, True)]
     first = body["sessions"][0]
     assert first["agent"] == "claude" and first["title"]
     assert first["last_activity"].startswith("2026-11-01T")
-    assert body["sessions"][1]["title"] == "hello there"
+
+
+def test_a_containers_history_is_its_recorded_sessions_that_are_not_live(
+    client: TestClient,
+) -> None:
+    res = client.get("/api/containers/alpha-1/sessions/history")
+
+    assert res.status_code == 200
+    body = res.json()
+    assert (body["container"], body["repo"]) == ("alpha-1", "alpha")
+    assert [(r["session_id"], r["live"]) for r in body["sessions"]] == [(SESSION_B, False)]
+    assert body["sessions"][0]["title"] == "hello there"
+    assert body["sessions"][0]["models"] == ["jb.codex.standard"]
 
 
 def test_a_recreated_container_does_not_inherit_the_old_ones_sessions(client: TestClient) -> None:
     ids = [
-        r["session_id"] for r in client.get("/api/containers/alpha-1/sessions").json()["sessions"]
+        r["session_id"]
+        for part in ("sessions", "sessions/history")
+        for r in client.get(f"/api/containers/alpha-1/{part}").json()["sessions"]
     ]
 
     assert "ffffffff-ffff-4fff-8fff-ffffffffffff" not in ids
 
 
-def test_a_live_session_without_a_transcript_is_still_listed(home: Path) -> None:
+def test_a_recorded_session_without_a_transcript_is_still_listed(home: Path) -> None:
     for client in open_client(home, seen("alpha-1", "u-1", "gone-from-disk")):
-        rows = client.get("/api/containers/alpha-1/sessions").json()["sessions"]
+        rows = client.get("/api/containers/alpha-1/sessions/history").json()["sessions"]
         gone = next(r for r in rows if r["session_id"] == "gone-from-disk")
         assert gone["title"] == "" and gone["last_activity"] is None and gone["models"] == []
 
 
-def test_a_container_without_sessions_has_an_empty_list(client: TestClient) -> None:
-    res = client.get("/api/containers/alpha-2/sessions")
+@pytest.mark.parametrize("part", ["sessions", "sessions/history"])
+def test_a_container_without_sessions_has_an_empty_list(client: TestClient, part: str) -> None:
+    res = client.get(f"/api/containers/alpha-2/{part}")
     assert res.status_code == 200
     assert res.json()["sessions"] == []
 
 
-def test_excluded_and_unknown_containers_give_the_same_404(client: TestClient) -> None:
-    excluded = client.get("/api/containers/secret-1/sessions")
-    unknown = client.get("/api/containers/nope/sessions")
+@pytest.mark.parametrize("part", ["sessions", "sessions/history"])
+def test_excluded_and_unknown_containers_give_the_same_404(client: TestClient, part: str) -> None:
+    excluded = client.get(f"/api/containers/secret-1/{part}")
+    unknown = client.get(f"/api/containers/nope/{part}")
     assert excluded.status_code == unknown.status_code == 404
     assert excluded.json() == unknown.json()
 
 
-def test_the_container_view_requires_login(client: TestClient) -> None:
+@pytest.mark.parametrize("part", ["sessions", "sessions/history"])
+def test_the_container_view_requires_login(client: TestClient, part: str) -> None:
     client.headers.pop("Authorization")
-    assert client.get("/api/containers/alpha-1/sessions").status_code == 401
+    assert client.get(f"/api/containers/alpha-1/{part}").status_code == 401
 
 
 def test_the_repo_list_marks_each_session_with_its_container_or_none(home: Path) -> None:

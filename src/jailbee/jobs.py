@@ -75,8 +75,8 @@ def _phase_cell(job: BackgroundJob) -> str:
     """
     from jailbee import background
 
-    label = background.job_label(job.phase, job.pid, kind=job.op_kind)
-    if background.clearable(job.phase, job.pid):
+    label = background.job_label(job.phase, job.pid, kind=job.op_kind, live=job.observed_live)
+    if background.clearable(job.phase, job.pid, live=job.observed_live):
         return f"[red]{label}[/red]"
     return f"[yellow]{label}[/yellow]"
 

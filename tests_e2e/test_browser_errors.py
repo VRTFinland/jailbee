@@ -66,6 +66,22 @@ def test_console_errors_page_errors_and_csp_violations_are_reported(
     errors.expect("console", "Content Security Policy")
 
 
+def test_drained_errors_are_handed_over_and_no_longer_fail(
+    watched: tuple[Page, BrowserErrors],
+) -> None:
+    page, errors = watched
+
+    break_the_page(page)
+    drained = errors.drain()
+
+    assert "kaboom" in drained.console
+    assert "Error: boom" in drained.page
+    assert any(v.startswith("script-src") for v in drained.csp)
+    errors.assert_clean()
+    page.evaluate("() => console.error('after the drain')")
+    assert errors.drain().console == ["after the drain"]
+
+
 def test_expected_errors_do_not_fail(watched: tuple[Page, BrowserErrors]) -> None:
     page, errors = watched
 
@@ -78,9 +94,8 @@ def test_expected_errors_do_not_fail(watched: tuple[Page, BrowserErrors]) -> Non
     errors.assert_clean()
 
 
-@pytest.mark.parametrize("from_body", [False, True])
 def test_an_error_after_the_test_body_fails(
-    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, from_body: bool
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytester.makeconftest(
         """
@@ -90,28 +105,11 @@ def test_an_error_after_the_test_body_fails(
         @pytest.fixture
         def late_error(page):
             yield
+            # Arm only after the call hook's check; no body-side wait can drain it.
             page.evaluate("setTimeout(() => { throw new Error('late kaboom') }, 0)")
         """
     )
-    if from_body:
-        # Schedule while the sync API is idle after the test body; the fixture
-        # sleeps without pumping Playwright, then teardown must drain the event.
-        pytester.makeconftest("""
-            pytest_plugins = ["tests_e2e.conftest"]
-            import pytest
-            import time
-
-            @pytest.fixture
-            def late_error(page):
-                yield
-                time.sleep(0.15)
-        """)
-        pytester.makepyfile("""
-            def test_late(page, late_error):
-                page.evaluate("setTimeout(() => { throw new Error('late kaboom') }, 100)")
-        """)
-    else:
-        pytester.makepyfile("def test_late(page, late_error):\n    page.goto('about:blank')\n")
+    pytester.makepyfile("def test_late(page, late_error):\n    page.goto('about:blank')\n")
     monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
 
     result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--output", "results")
@@ -154,6 +152,123 @@ def test_expectations_are_strict(
     result.stdout.fnmatch_lines([f"*{message}*"])
 
 
+def test_browser_convenience_page_errors_fail(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytester.makeconftest('pytest_plugins = ["tests_e2e.conftest"]')
+    pytester.makepyfile("""
+        def test_error(browser):
+            page = browser.new_page()
+            page.evaluate("console.error('convenience kaboom')")
+            page.close()
+    """)
+    monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
+
+    result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--output", "results")
+
+    assert result.ret == pytest.ExitCode.TESTS_FAILED
+    result.stdout.fnmatch_lines(["*console error: convenience kaboom*"])
+
+
+def test_convenience_page_collects_csp_before_navigation(
+    browser: Browser, browser_errors: BrowserErrors
+) -> None:
+    page = browser.new_page()
+    try:
+        page.evaluate("""() => {
+            const policy = document.createElement("meta")
+            policy.httpEquiv = "Content-Security-Policy"
+            policy.content = "script-src 'none'"
+            document.head.append(policy)
+        }""")
+        page.evaluate("""() => {
+            const script = document.createElement("script")
+            script.textContent = "window.inlineRan = true"
+            document.body.append(script)
+        }""")
+        browser_errors.settle()
+        assert any("script-src" in violation for violation in browser_errors.csp)
+    finally:
+        browser_errors.expect("console", "Content Security Policy")
+        browser_errors.expect("csp", "script-src")
+        page.close()
+
+
+def test_replacing_the_document_is_rejected_loudly(browser: Browser) -> None:
+    page = browser.new_page()
+    try:
+        with pytest.raises(
+            pytest.fail.Exception, match=r"page\.set_content replaces collector listeners"
+        ):
+            page.set_content("<p>replacement</p>")
+    finally:
+        page.close()
+
+
+def test_errors_in_a_second_launched_browser_fail(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytester.makeconftest('pytest_plugins = ["tests_e2e.conftest"]')
+    pytester.makepyfile("""
+        def test_error(browser_type, browser_type_launch_args):
+            second = browser_type.launch(**browser_type_launch_args)
+            try:
+                context = second.new_context()
+                page = context.new_page()
+                page.evaluate("console.error('second browser kaboom')")
+                context.close()
+            finally:
+                second.close()
+    """)
+    monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
+
+    result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--output", "results")
+
+    assert result.ret == pytest.ExitCode.TESTS_FAILED
+    result.stdout.fnmatch_lines(["*console error: second browser kaboom*"])
+
+
+def test_persistent_contexts_are_rejected_before_launch(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytester.makeconftest('pytest_plugins = ["tests_e2e.conftest"]')
+    pytester.makepyfile("""
+        def test_persistent(browser_type, tmp_path):
+            browser_type.launch_persistent_context(tmp_path)
+    """)
+    monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
+
+    result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--output", "results")
+
+    result.assert_outcomes(failed=1)
+    result.stdout.fnmatch_lines(["*launch_persistent_context is not supported*"])
+
+
+@pytest.mark.parametrize("scope", ["module", "session"])
+def test_shared_contexts_are_rejected(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, scope: str
+) -> None:
+    pytester.makeconftest(f"""
+        pytest_plugins = ["tests_e2e.conftest"]
+        import pytest
+
+        @pytest.fixture(scope={scope!r})
+        def shared_page(browser):
+            context = browser.new_context()
+            yield context.new_page()
+            context.close()
+    """)
+    pytester.makepyfile("def test_shared(shared_page): pass")
+    monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
+
+    result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--output", "results")
+
+    result.assert_outcomes(errors=1)
+    result.stdout.fnmatch_lines(
+        ["*browser contexts require the function-scoped browser_errors collector*"]
+    )
+
+
 def test_popup_errors_from_a_fixture_created_context_fail(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -187,6 +302,15 @@ def test_overlapping_expectations_each_consume_a_distinct_hit(
     browser_errors.expect("console", "error")
     browser_errors.expect("console", "specific error")
     page.evaluate("console.error('specific error'); console.error('other error')")
+    browser_errors.assert_clean()
+
+
+def test_unbounded_and_exact_overlapping_expectations_share_hits_optimally(
+    page: Page, browser_errors: BrowserErrors
+) -> None:
+    browser_errors.expect("console", "a", at_least=1)
+    browser_errors.expect("console", "b")
+    page.evaluate("console.error('ab'); console.error('a'); console.error('b')")
     browser_errors.assert_clean()
 
 

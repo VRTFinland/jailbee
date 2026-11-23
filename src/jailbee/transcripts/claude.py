@@ -43,6 +43,7 @@ from jailbee.transcripts.base import (
 from jailbee.transcripts.markup import command_name, prompt_text
 
 if TYPE_CHECKING:
+    from collections.abc import Collection, Iterator
     from pathlib import Path
 
     from jailbee.transcripts.base import SessionInfoCache
@@ -59,8 +60,16 @@ TITLE_CHARS = 120
 TITLE_CANDIDATES = 32
 """Once a command fallback exists, inspect at most this many user candidates."""
 
+HEAD_BYTES = 4 * 1024 * 1024
+"""The title search never reads past this many bytes from the start."""
+TAIL_BYTES = 256 * 1024
+"""The last activity and recent models come from this many bytes at the end."""
+TAIL_MAX_BYTES = 4 * 1024 * 1024
+"""How far the tail grows while it holds no timestamp (one huge last record)."""
+READ_CHUNK = 64 * 1024
+
 _TIMESTAMP = re.compile(rb'"timestamp"\s*:\s*"([^"]{1,64})"')
-"""Found without parsing the line: a listing reads every line of every session."""
+"""Found without parsing the line."""
 _USER_RECORD = (b'"type":"user"', b'"type": "user"')
 _MODEL = re.compile(rb'"model"\s*:\s*"([^"]{1,200})"')
 """Candidate model names in a line; only a parse says which one is the record's."""
@@ -210,6 +219,14 @@ def _tool_result(
     return found
 
 
+_INTERRUPTED = "[Request interrupted by user"
+
+
+def _is_notice(text: str) -> bool:
+    """Claude Code's own note in the person's turn, such as an interruption."""
+    return text.startswith(_INTERRUPTED)
+
+
 def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
     """The normalised entries of one JSONL record."""
     message = record.get("message")
@@ -222,9 +239,19 @@ def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
     if kind == "user":
         if record.get("isMeta") is True:
             return []
+        meta = record.get("isCompactSummary") is True
         if isinstance(content, str):
             return (
-                [UserMessage(id=f"{record_id}:0", timestamp=when, text=content)] if content else []
+                [
+                    UserMessage(
+                        id=f"{record_id}:0",
+                        timestamp=when,
+                        text=content,
+                        meta=meta or _is_notice(content),
+                    )
+                ]
+                if content
+                else []
             )
         if not isinstance(content, list):
             return []
@@ -234,7 +261,14 @@ def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
             entry_id = f"{record_id}:{index}"
             block_type = block.get("type")
             if block_type == "text" and isinstance(block.get("text"), str) and block["text"]:
-                found.append(UserMessage(id=entry_id, timestamp=when, text=block["text"]))
+                found.append(
+                    UserMessage(
+                        id=entry_id,
+                        timestamp=when,
+                        text=block["text"],
+                        meta=meta or _is_notice(block["text"]),
+                    )
+                )
             elif block_type == "tool_result":
                 found.extend(_tool_result(block, record, entry_id, when))
     elif kind == "assistant":
@@ -292,10 +326,6 @@ def _time_at(data: bytes, at: int) -> datetime | None:
     return _parse_time(match.group(1).decode("utf-8", "replace"))
 
 
-def _line_around(data: bytes, at: int) -> bytes:
-    return data[data.rfind(b"\n", 0, at) + 1 : (data.find(b"\n", at) + 1 or len(data) + 1) - 1]
-
-
 def _record(line: bytes) -> dict[str, object] | None:
     try:
         record = json.loads(line)
@@ -311,61 +341,141 @@ def _record_model(record: dict[str, object]) -> str | None:
     return _model_name(message.get("model"))
 
 
-def session_info(session_id: str, path: Path) -> SessionInfo | None:
-    """A session's list metadata.
+class _InfoScan:
+    """What a listing gathers from a transcript's lines, fed one line at a time."""
 
-    Sessions run to tens of megabytes and a listing reads every one, so the
-    bytes are searched rather than parsed line by line: the first and last
-    timestamps bound the session, only candidate user lines are parsed until
-    the first typed prompt (falling back to the first command after at most
-    TITLE_CANDIDATES candidates once that command is found), and only a
-    line naming a model not seen yet is parsed to tell whether that
-    is the record's model or a tool input's. A caller listing many sessions
-    should cache the result by the file's size and mtime.
-    """
-    read = _read_bytes(path, 0)
-    if read is None:
-        return None
-    data = read[1]
-    title = ""
-    first_command = ""
-    at = 0
-    candidates = 0
-    while not title and at < len(data):
-        end = data.find(b"\n", at)
-        end = len(data) if end < 0 else end
-        line = data[at:end]
-        at = end + 1
-        if any(marker in line for marker in _USER_RECORD):
-            if first_command and candidates >= TITLE_CANDIDATES:
-                break
-            candidates += 1
+    def __init__(self) -> None:
+        self.title = ""
+        self.first_command = ""
+        self.candidates = 0
+        self.started: datetime | None = None
+        self.models: dict[str, None] = {}
+
+    @property
+    def title_settled(self) -> bool:
+        """The title is found, or a command stands in for it and the candidate
+        budget is spent."""
+        return bool(self.title) or (
+            bool(self.first_command) and self.candidates >= TITLE_CANDIDATES
+        )
+
+    def head_line(self, line: bytes) -> None:
+        if self.started is None:
+            self.started = _time_at(line, line.find(b'"timestamp"'))
+        self.model_line(line)
+        if self.title_settled or not any(marker in line for marker in _USER_RECORD):
+            return
+        self.candidates += 1
+        record = _record(line)
+        users = [e for e in _entries(record, "") if isinstance(e, UserMessage)] if record else []
+        for user in users:
+            if user.meta:
+                continue
+            if not self.first_command:
+                self.first_command = command_name(user.text)
+            typed = prompt_text(user.text)
+            if typed:
+                self.title = one_line(typed[: TITLE_CHARS * 8], TITLE_CHARS)
+                return
+
+    def model_line(self, line: bytes) -> None:
+        """Parse `line` only when it names a model not seen yet: a tool input may
+        name one too, so only the parse tells whether it is the record's."""
+        for match in _MODEL.finditer(line):
+            if match.group(1).decode("utf-8", "replace") in self.models:
+                continue
             record = _record(line)
-            users = (
-                [e for e in _entries(record, "") if isinstance(e, UserMessage)] if record else []
-            )
-            for user in users:
-                if not first_command:
-                    first_command = command_name(user.text)
-                typed = prompt_text(user.text)
-                if typed:
-                    title = one_line(typed[: TITLE_CHARS * 8], TITLE_CHARS)
-                    break
-    models: dict[str, None] = {}
-    for match in _MODEL.finditer(data):
-        if match.group(1).decode("utf-8", "replace") in models:
-            continue
-        record = _record(_line_around(data, match.start()))
-        model = _record_model(record) if record is not None else None
-        if model is not None:
-            models.setdefault(model, None)
+            model = _record_model(record) if record is not None else None
+            if model is not None:
+                self.models.setdefault(model, None)
+            return
+
+
+def _lines(fd: int, start: int, end: int) -> Iterator[tuple[int, bytes]]:
+    """``(offset after the line, line)`` for each line in ``[start, end)``.
+
+    A line still open at ``end`` is yielded only when ``end`` is the end of the
+    file (the last line may lack its newline); otherwise it is not consumed.
+    """
+    size = os.fstat(fd).st_size
+    buffer = b""
+    at = start
+    while at < end:
+        chunk = os.pread(fd, min(READ_CHUNK, end - at), at)
+        if not chunk:
+            break
+        at += len(chunk)
+        buffer += chunk
+        consumed = at - len(buffer)
+        cut = 0
+        while (newline := buffer.find(b"\n", cut)) >= 0:
+            consumed += newline + 1 - cut
+            yield consumed, buffer[cut:newline]
+            cut = newline + 1
+        buffer = buffer[cut:]
+    if buffer and at >= size:
+        yield at, buffer
+
+
+def session_info(session_id: str, path: Path) -> SessionInfo | None:
+    """A session's list metadata, from a bounded head and tail of its transcript.
+
+    Sessions run to tens of megabytes and a listing reads every one, so only
+    the ends are read. The head is read line by line until the title is
+    settled: the first typed prompt, or the first command once
+    TITLE_CANDIDATES user lines held none, and never past HEAD_BYTES; its
+    first timestamp is when the session started. The last TAIL_BYTES (more,
+    up to TAIL_MAX_BYTES, while they hold no timestamp) give the last
+    activity. Models are those named in the head and the tail, in first-use
+    order: a model used only in the middle of a long session is not listed
+    (the transcript itself shows every entry's model). A line is parsed only
+    when it is a title candidate or names a model not seen yet. A caller
+    listing many sessions should cache the result by the file's size and mtime;
+    a change to what is derived here bumps `SESSION_INFO_FORMAT`.
+    """
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            return None
+        size = info.st_size
+        scan = _InfoScan()
+        head_end = 0
+        last_line_time: datetime | None = None
+        for end, line in _lines(fd, 0, min(size, HEAD_BYTES)):
+            head_end = end
+            scan.head_line(line)
+            last_line_time = _time_at(line, line.rfind(b'"timestamp"')) or last_line_time
+            if scan.title_settled:
+                break
+        last_activity = None
+        window = TAIL_BYTES
+        while True:
+            start = max(head_end, size - window)
+            data = os.pread(fd, size - start, start) if start < size else b""
+            if start > head_end:
+                # The cut lands inside a line: drop that partial line.
+                data = data[data.find(b"\n") + 1 :] if b"\n" in data else b""
+            last_activity = _time_at(data, data.rfind(b'"timestamp"'))
+            if last_activity is not None or start <= head_end or window >= TAIL_MAX_BYTES:
+                break
+            window *= 4
+        for line in data.split(b"\n"):
+            scan.model_line(line)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
     return SessionInfo(
         session_id=session_id,
         path=path,
-        title=title or one_line(first_command[: TITLE_CHARS * 8], TITLE_CHARS),
-        started=_time_at(data, data.find(b'"timestamp"')),
-        last_activity=_time_at(data, data.rfind(b'"timestamp"')),
-        models=tuple(models),
+        title=scan.title or one_line(scan.first_command[: TITLE_CHARS * 8], TITLE_CHARS),
+        started=scan.started,
+        last_activity=last_activity or last_line_time,
+        models=tuple(scan.models),
     )
 
 
@@ -379,15 +489,40 @@ def _cached_info(session_id: str, path: Path, cache: SessionInfoCache | None) ->
     return cache.get(path, lambda: session_info(session_id, path), (st.st_size, st.st_mtime_ns))
 
 
-def _session_files(config_home: Path) -> list[tuple[str, Path]]:
-    """Every `<sessionId>.jsonl` directly in a project directory; no links followed."""
+_NOT_IN_NAME = re.compile(r"[^A-Za-z0-9]")
+
+
+def project_dirname(cwd: str) -> str:
+    """The `projects/` directory Claude Code keeps a session started in `cwd`
+    in: every character but an ASCII letter or digit becomes `-`."""
+    return _NOT_IN_NAME.sub("-", cwd)
+
+
+def _in_cwds(project: str, names: Collection[str]) -> bool:
+    """`project` is one of `names`, or a directory below one.
+
+    The encoding is lossy: `/r/a-b` and `/r/a/b` share a name, so a session
+    started in a sibling `/r/a-b` counts as below `/r/a`.
+    """
+    return any(project == name or project.startswith(name + "-") for name in names)
+
+
+def _session_files(
+    config_home: Path, cwds: Collection[str] | None = None
+) -> list[tuple[str, Path]]:
+    """Every `<sessionId>.jsonl` directly in a project directory; no links followed.
+
+    With `cwds`, only the project directories of sessions started there or below."""
     try:
         projects = sorted((config_home / PROJECTS_DIRNAME).iterdir())
     except OSError:
         return []
+    wanted = None if cwds is None else {project_dirname(cwd) for cwd in cwds}
     found: list[tuple[str, Path]] = []
     for project in projects:
         if project.is_symlink():
+            continue
+        if wanted is not None and not _in_cwds(project.name, wanted):
             continue
         try:
             names = sorted(os.listdir(project))
@@ -425,11 +560,14 @@ class ClaudeSource:
         return SessionFiles(paths.transcript, subagents)
 
     def list_sessions(
-        self, config_home: Path, cache: SessionInfoCache | None = None
+        self,
+        config_home: Path,
+        cache: SessionInfoCache | None = None,
+        cwds: Collection[str] | None = None,
     ) -> list[SessionInfo]:
         sessions = [
             info
-            for session_id, path in _session_files(config_home)
+            for session_id, path in _session_files(config_home, cwds)
             if (info := _cached_info(session_id, path, cache)) is not None
         ]
         oldest = datetime.min.replace(tzinfo=UTC)

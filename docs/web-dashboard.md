@@ -15,11 +15,34 @@ Session titles use the first typed prompt, skipping agent wrapper records,
 local command output, caveats and injected context. A session with only slash
 commands uses its first command (for example, `/model`) instead of raw markup.
 Once a command fallback is available, title lookup stops after 32 candidate user
-records rather than parsing a command-only transcript to the end. Task
+records rather than parsing a command-only transcript to the end, and it never
+reads past a transcript's first 4 MiB. Task
 notifications, `!`-mode input/output and prompt hooks are agent metadata too.
 A leading wrapper followed by typed text is split in the transcript: the wrapper
 is shown as metadata, and only the typed text is shown as the prompt. Unknown
-XML-like tags, such as `<example>`, remain part of the typed prompt.
+XML-like tags, such as `<example>`, remain part of the typed prompt. The summary
+Claude Code writes after `/compact` and its "[Request interrupted by user]"
+notices are metadata too: they are shown as context and never become a title.
+
+Session lists stay fast on large transcripts. A list row reads only the
+opening of a transcript (title and start time) and its last 256 KiB (last
+activity and recent model), so a model used only in the middle of a long
+session is not named in the list; the transcript itself shows every entry's
+model. What was read is kept in the state database (`session_info_cache`),
+keyed by the file's path, size and modification time, so a restarted or
+upgraded server rereads only transcripts that changed. The server also reads
+every visible repository's sessions in the background when it starts; no
+request waits for it.
+
+A container page shows its live sessions as soon as they are known (they come
+from the state service's snapshot) and appends the sessions it ran before when
+that separate request answers. A repository lists only the sessions started in
+its own containers' checkout (each container's repository directory, or below
+it): repositories that share one agent config home by mistake do not list each
+other's sessions. Claude names a session's project directory after its working
+directory with every character but letters and digits turned into `-`, so
+`/home/dev/app-api` cannot be told from a directory `api` below
+`/home/dev/app`; a repository `app` then lists `app-api`'s sessions too.
 
 Rows on the front page are styled like the terminal dashboard's: a container
 booting, in autostart, running another background job or in a failed job gets a
@@ -79,6 +102,21 @@ manifests, Makefile or workflow. It can also be started with
 evidence as the `web-e2e-failure` artifact. Unrelated changes do not trigger
 this workflow; the ordinary CI gate stays separate.
 
+### Sweeping your own sessions
+
+`make web-e2e-sweep CLAUDE_HOME=<path>` (default `~/.claude`) renders every
+session and subagent of a Claude home through the same test server and Chrome,
+and writes a Markdown report under `.local/web-e2e-sweep/`. It reads the home
+only, commits nothing and never runs in CI. The report starts with a summary
+line and the unknown entry types across the home, then lists each session with
+a finding: load errors, JS errors, CSP violations, renders slower than
+`SWEEP_SLOW_MS` (default 2000) and entry types the transcript reader neither
+renders nor knowingly skips, each with its first line in the file. Clean
+sessions are only counted. Unlike the browser tests, the sweep records browser
+errors in the report (`BrowserErrors.drain`) instead of failing on them. The
+Makefile's comment on the target describes the
+format in full.
+
 ### Writing browser tests
 
 Each test's `server` has a fresh database and rate limits. `logged_in` performs
@@ -93,10 +131,21 @@ origin over the same database. Tests register at `http://localhost` (a secure
 WebAuthn context with a domain RP ID), log in with the key, and check that a
 removed key is visibly refused. Console, page and CSP checks stay enabled.
 
-The automatic `browser_errors` collector watches all pages, including popups
-and contexts created with `browser.new_context()`. It checks at the end of the
-test body and again at teardown after settling pending browser events. Declare
-only intentional errors, by category, for example:
+The automatic `browser_errors` collector watches all pages and popups in
+function-scoped contexts created through the synchronous Playwright API:
+`browser.new_context()` and `browser.new_page()`, including on a second
+launched browser. Close these pages/contexts in the test or its function-scoped
+fixture teardown; closing them first settles pending reports. Creation from
+module/session-scoped fixtures fails loudly rather than sharing a collector
+between tests. `launch_persistent_context()` is rejected before launch; use
+`browser.new_context()` instead. `page.set_content()` is also rejected: it
+replaces the document without running init scripts and removes CSP listeners;
+use `page.goto()` to navigate. The harness supports the sync API, not async
+Playwright or direct Playwright internals.
+
+It checks at the end of the test body and again at teardown after settling
+pending browser events. Declare only intentional errors, by category, for
+example:
 
 ```python
 browser_errors.expect("console", "intentional message")
@@ -105,10 +154,19 @@ browser_errors.expect("csp", "script-src", at_least=1)
 ```
 
 Strings match literal substrings; compiled regexes must match the whole
-message. Each declaration consumes one hit by default. Extra hits and unmet
-expectations fail the test. The restart tracer deliberately waits for a
-refused WebSocket reconnect and allows only that server's exact connection
-error; ordinary tests do not suppress reconnect errors.
+message. Each declaration consumes one distinct hit by default; `times` sets
+an exact count, while `at_least` sets a minimum with no upper limit. Overlapping
+patterns are matched jointly, not greedily in declaration or arrival order.
+Extra hits and unmet expectations fail the test.
+
+The restart test in `tests_e2e/test_front_page_live.py` deliberately waits for a
+refused WebSocket reconnect. It
+allows only `WebSocket connection to 'ws://127.0.0.1:<server-port>/api/ws'
+failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED`,
+matched as a whole message for that server's actual port. No other connection
+failure shapes are excused, and ordinary tests do not suppress reconnect errors.
+A failed stop is reported directly; the test starts the server again only
+once stopping and observing the expected reconnect have succeeded.
 
 `tests_e2e/test_sessions.py` exercises the hand-written fixture sessions at
 both desktop and phone widths: repository/container lists, Markdown and code,
@@ -124,6 +182,27 @@ e-ink page turns, held transcript messages and manual snapshot refresh. It also
 walks the front page, repository, container, transcript and settings at phone
 width in both display profiles, and checks the linked PWA manifest and decoded
 icons through the real server.
+
+`test_front_page_live.py` covers snapshot additions, changes and removals without
+navigation; phase labels and computed monochrome edges in the e-ink theme;
+the connecting notice during downtime; and current state after a real server
+restart. Its protocol-upgrade test forwards traffic to the real server but
+rewrites the reconnect's auth version to simulate an outdated tab. The real
+server's 4002 rejection must trigger one document reload and a fresh connection,
+then render a subsequent state push before the reload count is checked.
+`test_protocol_reload.py` keeps the client stale across that reload: a tab
+reloads automatically at most once within a minute, then shows
+"This page is out of date; reload" with a manual Reload button. If session
+storage is unavailable, it offers manual reload immediately rather than risk
+a loop.
+
+`tests_e2e/test_corpus.py` walks the recorded corpus
+(`tests/fixtures/transcripts/claude-corpus`, re-recorded with `make web-corpus`)
+as the agent home of repository `toy`: every session opens from the list, every
+tool call folds and expands, every subagent link opens its transcript and
+thinking follows the setting. It parametrises over `corpus.json`, so a
+re-recorded session is covered without editing the tests, and asserts content
+only on the markers the recorder's prompts guarantee.
 
 ## Run it
 
@@ -168,7 +247,16 @@ can be combined:
 | FIDO2 security key or passkey | `jb remote web auth fido2 setup` | See below. `fido2 ls` and `fido2 rm` manage keys. |
 | One-time link | `jb remote web open` | Localhost only, single use. |
 
-A successful login gives the browser a session that slides for 30 days.
+A successful login gives the browser a session that slides for 30 days. The
+login page asks for nothing but the secret: the server names the session after
+the browser's User-Agent ("Firefox on Linux", "Safari on iPhone", "Chrome on
+Android", or "Browser" when it recognises none). The name shows in the header,
+in `jb remote web auth sessions ls` and in the audit log; rename the current
+session under **Settings → This session** (`PUT /api/session`, audited as a
+`rename` event, recording the old and new name). Older clients may still send a
+`device_name`, which is kept. A name is 1-100 characters after trimming and may
+not contain control or format characters (the server answers 422); the CLI also
+prints any such character escaped.
 PIN and TOTP attempts are limited to five a minute, and after five failures
 in a row each further failure doubles the wait before the next attempt:
 2 seconds after the fifth, 4 after the sixth, up to 30 minutes. A successful login by any method (PIN, TOTP, security key or link) resets
@@ -180,7 +268,8 @@ until that lifts. The ways in that the waits do not touch are a security key,
 `serve`, which clears the waits; any successful login lifts the PIN and TOTP
 waits at once. Links and security keys are not limited. An attempt during the
 wait is refused unchecked with HTTP 429 and a `Retry-After` header; the login
-page shows that remaining wait in seconds. It buys no guess, and an attempt
+page shows that remaining wait in seconds below a minute, otherwise in minutes
+rounded up. It buys no guess, and an attempt
 still being checked holds back a parallel one. An
 owner who mistypes up to four times waits not at all, a fifth or sixth time a
 few seconds. The waits are kept in memory, so a restart of `serve` clears
@@ -216,7 +305,7 @@ do not expose the server at all and reach it over an SSH tunnel or a VPN.
 jb remote web auth status           # methods on, devices logged in
 jb remote web auth sessions ls      # logged-in devices
 jb remote web auth sessions revoke ID
-jb remote web auth log [-n 50]      # logins, failures, backoffs, logouts, revocations
+jb remote web auth log [-n 50]      # logins, failures, backoffs, logouts, revocations, renames
 ```
 
 Revoking a session refuses the device's next request and closes its open live
@@ -294,6 +383,19 @@ Open the settings page (the Settings link on the front page) to choose
 a theme (light, dark, e-ink), body and code font sizes, and whether thinking
 blocks are shown. These choices are stored in the browser on that device only.
 
+**Agent context** controls the agent's own wrapper records in a transcript:
+task notifications, system reminders, command output and shell input/output.
+*Hidden* (the default) sends none of them, so they cost neither bandwidth nor
+page weight. *Collapsed* sends a one-line label (for example "Task
+notification" or "Shell: ls") and loads the content from the server only when
+you expand it. *Shown* sends and displays everything. A slash command you typed
+(`/model`, `/clear`) always appears as a one-line label, in every mode. Changing
+the setting reloads the open transcript. The choice is a `meta=hidden|collapsed|shown`
+query parameter on the session and subagent endpoints and a `meta` field on the
+live `subscribe` message; a withheld record's content is served by
+`GET /api/repos/{prefix}/sessions/{agent}/{session_id}/entries/{entry_id}`
+(also under `.../subagents/{agent_id}/`).
+
 The display profile **E-ink** is for e-paper readers and slow-refresh
 screens: no animation, content moves in page turns instead of scrolling, live
 transcript entries are held behind the **N new messages** button until you tap
@@ -308,10 +410,15 @@ the bottom controls, including the device's safe-area inset). A truncated title
 keeps its full text as a tooltip and accessible heading name. Page turns use the
 actual readable height even on short landscape screens, with a stable page grid
 as the header becomes sticky and a last page bounded by the browser's scroll
-limit. Jumping to the reply or scrolling to it hides the button; moving
+limit; a partial keyboard or system scroll stays on its current page so Next
+never skips unread text, and Next stays enabled until the real bottom.
+Jumping aligns the newest reply's start just below the measured header, even
+for a short final reply, with trailing room to scroll it there. Jumping or
+scrolling to the reply hides the button; moving
 away or receiving a newer reply out of view shows it again. In the e-ink display
-profile the same rule applies, but the button turns to the page containing the
-reply, and live entries remain behind the new-messages notice until tapped.
+profile the same rule applies: the button starts a page at the reply, with
+subsequent page turns continuing from there, and live entries remain behind
+the new-messages notice until tapped.
 
 ## Install as an app
 

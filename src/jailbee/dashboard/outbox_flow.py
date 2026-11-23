@@ -2,8 +2,8 @@
 
 Shared by the dashboard box and the standalone `jailbee outbox` app. It holds an
 `OutboxState` (from `jailbee.dashboard.outbox`) and turns intents into
-`jailbee outbox …` children through an injected `OutboxRunner`: quiet runs for
-the short local `ls`/`drop`, detached jobs for the plan, the publish and the
+`jailbee outbox …` children through an injected `OutboxRunner`: off-thread
+quiet runs for local `ls`/`drop`, detached jobs for the plan, the publish and the
 clear (they take the lock and may call `gh`), and a terminal hand-off where a
 child must ask itself (a PR creation — `pr push` — and publishing over SSH).
 
@@ -28,7 +28,7 @@ Textual-free; must not import `jailbee.dashboard.tui`.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Generator, Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import Literal, Protocol
 
@@ -384,6 +384,8 @@ class OutboxController:
             tab="sent" if sent_only else "outbox",
             sent_repo=sent_only,
         )
+        # Frontends may retain a busy mutation across close/reopen; plans are disposable.
+        self.mutation_running = False
         self._publish_token: object | None = None
         # The batch being planned; dropped by a reload or a cancel, so late plans do nothing.
         self._batch_token: object | None = None
@@ -414,6 +416,8 @@ class OutboxController:
     # -- plumbing -----------------------------------------------------------
 
     def _set(self, state: dob.OutboxState) -> None:
+        if state.busy is None:
+            self.mutation_running = False
         self.state = state
         self.on_change(state)
 
@@ -518,11 +522,30 @@ class OutboxController:
         return self._listed(fetched, cursor=cursor, status=status), True
 
     def _after_mutation(self, status: tuple[str, ...], *, prioritize: bool = False) -> None:
-        state, ok = self._reloaded(status=status)
-        if prioritize and not ok and status:
-            state = replace(state, status=(*state.status[len(status) :], *status))
-        self._set(state)
-        self.runner.changed()
+        self.mutation_running = True
+        self.state = replace(self.state, busy=self.state.busy or "refreshing the outbox…")
+
+        def done(result: CliResult) -> None:
+            self.state = replace(self.state, busy=None)
+            fetched = self._parse(result)
+            if isinstance(fetched, str):
+                lines = (fetched, *status) if prioritize and status else (*status, fetched)
+                self._set(replace(self.state, status=lines))
+            else:
+                self._set(self._listed(fetched, cursor=None, status=status))
+            self.runner.changed()
+
+        self._quiet_later(self._ls_argv(), done)
+
+    def _quiet_later(self, argv: list[str], done: Callable[[CliResult], None]) -> None:
+        """Run one step off-thread and deliver failures through the same completion path."""
+        try:
+            self.runner.run_quiet_later(
+                f"outbox-step:{id(self)}", self.state.busy or _LOADING, argv, done
+            )
+        except (OSError, ValueError) as exc:
+            done(CliResult(False, str(exc)))
+        self.on_change(self.state)
 
     def _start(
         self,
@@ -595,18 +618,14 @@ class OutboxController:
 
         Opening and refreshing read every store in the container through a
         `jailbee` child, which takes a second or two: the box must stay usable.
-        While a listing is already on its way this does nothing; while another
-        child is running (a publish) it is a plain `load`, so that child's busy
-        line is never replaced.
+        While a listing or mutation is on its way this does nothing: that
+        child's busy line stays until its completion reloads the outbox.
         """
         if self.sent_only:
             self.load_sent()
             return
-        if self.state.busy == _LOADING:
-            self.on_change(self.state)  # already on its way
-            return
         if self.state.busy is not None:
-            self.load(cursor=cursor)
+            self.on_change(self.state)  # already on its way; mutations reload when done
             return
         status: tuple[str, ...] = ()
         if self.state.question is not None:
@@ -667,7 +686,10 @@ class OutboxController:
         if key is not None and name not in ("answer", "cancel"):
             self.state = replace(self.state, cursor=key)
         key = key if key is not None else self.state.cursor
-        if name in ("delete", "publish", "clear") and self.state.busy:
+        if self.state.busy and (
+            name in ("delete", "publish", "clear")
+            or (name == "scope" and self.state.busy != _LOADING)
+        ):
             self._status(f"busy: {self.state.busy}")
             return
         handler = {
@@ -770,6 +792,28 @@ class OutboxController:
     def _run_delete(self) -> None:
         pending, self._pending_delete = self._pending_delete, None
         keys, shown = pending if pending is not None else (frozenset(), ())
+        self.state = replace(
+            self.state, busy=f"Deleting {len(keys)} from the outbox…", question=None, status=()
+        )
+        marks = self.state.marks
+        self.mutation_running = True
+        steps = self._delete_steps(keys, shown)
+
+        def advance(result: CliResult | None = None) -> None:
+            try:
+                argv = next(steps) if result is None else steps.send(result)
+            except StopIteration as finished:
+                self.state = replace(self.state, marks=self.state.marks - marks)
+                self._after_mutation(finished.value)
+                return
+            self._quiet_later(argv, advance)
+
+        advance()
+
+    def _delete_steps(
+        self, keys: frozenset[dob.RowKey], shown: tuple[dob.ContainerListing, ...]
+    ) -> Generator[list[str], CliResult, tuple[str, ...]]:
+        """Sequence checks and drops; runner completions resume this on the UI thread."""
         status: list[str] = []
         deleted = 0
         groups: dict[tuple[str, str], list[dob.RowKey]] = {}
@@ -781,18 +825,17 @@ class OutboxController:
             if listed is None:
                 status.append(f"{_safe(pid)}: {_CHANGED}")
                 continue
-            done, failure = self._delete_proposal(name, listed, chosen)
+            done, failure = yield from self._delete_proposal(name, listed, chosen)
             deleted += done
             if failure is not None:
                 status.append(f"{_safe(pid)}: {_safe(failure)}")
         if deleted and not status:
             status.append(f"Deleted {deleted} from the outbox.")
-        self.state = replace(self.state, marks=frozenset(), question=None)
-        self._after_mutation(tuple(status))
+        return tuple(status)
 
     def _delete_proposal(
         self, name: str, listed: dob.ProposalItem, chosen: list[dob.RowKey]
-    ) -> tuple[int, str | None]:
+    ) -> Generator[list[str], CliResult, tuple[int, str | None]]:
         """Drops for one proposal, highest index first; (drops done, failure or None)."""
         whole = (name, listed.id, None, None) in chosen
         children = [
@@ -806,7 +849,7 @@ class OutboxController:
         steps: list[dob.RowKey | None] = [None] if whole else list(children)
         done = 0
         for step, key in enumerate(steps):
-            fetched = self._fetch()
+            fetched = self._parse((yield self._ls_argv()))
             if isinstance(fetched, str):
                 return done, fetched
             fresh = _find(fetched, name, listed.id)
@@ -839,7 +882,7 @@ class OutboxController:
                 argv = dob.outbox_drop_argv(
                     name, fresh.id, fresh.revision, action=key[2], comment=key[3]
                 )
-            result = self.runner.run_quiet(argv)
+            result = yield argv
             if not result.ok:
                 return done, result.message or "delete failed"
             done += 1
@@ -910,6 +953,7 @@ class OutboxController:
 
     def _run_publish(self, question: dob.Question, value: str) -> None:
         name, pid, revision, foreign = question.carry
+        self.mutation_running = True
         argv = dob.outbox_apply_argv(
             name, pid, revision, yes=True, draft=value == "draft", foreign=foreign == "foreign"
         )
@@ -1057,14 +1101,16 @@ class OutboxController:
                 status.append(f"{_safe(pid)}: outbox apply exited {rc}")
                 failed = True
         marks = self._unmarked(targets)
-        created: tuple[_Creation, ...] = ()
+
+        def finish(created: tuple[_Creation, ...], lines: tuple[str, ...]) -> None:
+            self.state = replace(self.state, marks=marks - self._creation_keys(created))
+            self._after_mutation((*status, *lines))
+
         if failed and creations:
             status.append("PR creations not run: " + ", ".join(_safe(p.id) for _, p in creations))
-        elif creations:
-            created, lines = self._run_creations(creations)
-            status.extend(lines)
-        self.state = replace(self.state, marks=marks - self._creation_keys(created))
-        self._after_mutation(tuple(status))
+            finish((), ())
+        else:
+            self._run_creations(creations, finish)
 
     def _unmarked(self, targets: Iterable[_BatchTarget]) -> frozenset[dob.RowKey]:
         marks = set(self.state.marks)
@@ -1079,28 +1125,36 @@ class OutboxController:
         return frozenset(keys)
 
     def _run_creations(
-        self, creations: tuple[_Creation, ...]
-    ) -> tuple[tuple[_Creation, ...], tuple[str, ...]]:
-        """Hand off each PR creation in turn; (those that finished, status lines).
-
-        The first that fails, is cancelled or changed since the question stops
-        the rest, and the status names what was not run.
-        """
+        self,
+        creations: tuple[_Creation, ...],
+        done: Callable[[tuple[_Creation, ...], tuple[str, ...]], None],
+    ) -> None:
+        """Verify off-thread, then hand off each PR creation; the first failure stops the rest."""
         finished: list[_Creation] = []
         status: list[str] = []
-        for i, (name, shown) in enumerate(creations):
+
+        def advance(i: int) -> None:
+            if i == len(creations):
+                done(tuple(finished), tuple(status))
+                return
+            name, shown = creations[i]
             pid = _safe(shown.id)
-            handed, ok, lines = self._hand_off_creation(name, shown, None)
-            if handed and ok:
-                finished.append((name, shown))
-                status.extend(f"{pid}: {line}" for line in lines or (self._finished(shown),))
-                continue
-            status.extend(f"{pid}: {line}" for line in lines)
-            rest = [_safe(p.id) for _, p in creations[i + 1 :]]
-            if rest:
-                status.append(f"stopped; not run: {', '.join(rest)}")
-            break
-        return tuple(finished), tuple(status)
+
+            def checked(handed: bool, ok: bool, lines: tuple[str, ...]) -> None:
+                if handed and ok:
+                    finished.append((name, shown))
+                    status.extend(f"{pid}: {line}" for line in lines or (self._finished(shown),))
+                    advance(i + 1)
+                    return
+                status.extend(f"{pid}: {line}" for line in lines)
+                rest = [_safe(p.id) for _, p in creations[i + 1 :]]
+                if rest:
+                    status.append(f"stopped; not run: {', '.join(rest)}")
+                done(tuple(finished), tuple(status))
+
+            self._hand_off_creation(name, shown, None, checked)
+
+        advance(0)
 
     @staticmethod
     def _finished(proposal: dob.ProposalItem) -> str:
@@ -1206,14 +1260,17 @@ class OutboxController:
             self._set(replace(self.state, question=None, status=("Nothing published.",)))
             return
         results: list[str] = []
+        self.mutation_running = True
 
         def finish() -> None:
             # The non-interactive publishes are done: now each PR creation in turn.
             marks = self._unmarked(targets)
-            created, lines = self._run_creations(creations)
-            results.extend(lines)
-            self.state = replace(self.state, marks=marks - self._creation_keys(created))
-            self._after_mutation(tuple(results))
+
+            def created_done(created: tuple[_Creation, ...], lines: tuple[str, ...]) -> None:
+                self.state = replace(self.state, marks=marks - self._creation_keys(created))
+                self._after_mutation((*results, *lines))
+
+            self._run_creations(creations, created_done)
 
         if not targets:
             self.state = replace(self.state, question=None)
@@ -1273,41 +1330,58 @@ class OutboxController:
         if not self.state.abilities.create_pr:
             self._status("creating a PR is not available here")
             return
-        handed, _, lines = self._hand_off_creation(name, listed, key)
-        if handed:
-            self._after_mutation(lines, prioritize=True)
-        else:
-            self._set(replace(self.state, status=lines))
+
+        def done(handed: bool, ok: bool, lines: tuple[str, ...]) -> None:
+            if handed:
+                self._after_mutation(lines, prioritize=True)
+            else:
+                self._set(replace(self.state, busy=None, status=lines))
+
+        self._hand_off_creation(name, listed, key, done)
 
     def _hand_off_creation(
-        self, name: str, listed: dob.ProposalItem, cursor: dob.RowKey | None
-    ) -> tuple[bool, bool, tuple[str, ...]]:
-        """Re-check ``listed`` and hand off its `pr push`; (handed off, succeeded, status).
+        self,
+        name: str,
+        listed: dob.ProposalItem,
+        cursor: dob.RowKey | None,
+        done: Callable[[bool, bool, tuple[str, ...]], None],
+    ) -> None:
+        """Re-check off-thread, then hand off on the UI thread (where the terminal lives)."""
+        self.mutation_running = True
+        self.state = replace(self.state, busy="checking the proposal…", question=None, status=())
 
-        Nothing is handed off for a proposal whose revision, state or scope
-        changed since it was shown, or whose container may not run `pr push`.
-        """
-        state, ok = self._reloaded(cursor=cursor)
-        self.state = replace(state, status=())
-        fresh = _find(state.containers, name, listed.id) if ok else None
-        same = fresh is not None and (fresh.revision, fresh.state, fresh.create_scope) == (
-            listed.revision,
-            listed.state,
-            listed.create_scope,
-        )
-        argv = dob.create_pr_argv(name, listed.create_scope) if same else None
-        if argv is None:
-            return False, False, (*state.status, _PR_CHANGED)
-        if not self.runner.permitted(argv):
-            # Checked per container: the abilities were judged on the first one listed.
-            return False, False, (f"{_safe(name)}: creating a PR is not available here",)
-        rc, diagnostic = self.runner.hand_off_diagnostic(argv)
-        what = "source push" if listed.state == "awaiting-push" else "pr push"
-        if rc == 0:
-            return True, True, ()
-        if diagnostic:
-            return True, False, (diagnostic,)
-        return True, False, (f"{what} did not run" if rc is None else f"{what} exited {rc}",)
+        def checked(result: CliResult) -> None:
+            fetched = self._parse(result)
+            if isinstance(fetched, str):
+                done(False, False, (fetched, _PR_CHANGED))
+                return
+            self.state = self._listed(fetched, cursor=cursor, status=())
+            fresh = _find(fetched, name, listed.id)
+            same = fresh is not None and (fresh.revision, fresh.state, fresh.create_scope) == (
+                listed.revision,
+                listed.state,
+                listed.create_scope,
+            )
+            argv = dob.create_pr_argv(name, listed.create_scope) if same else None
+            if argv is None:
+                done(False, False, (_PR_CHANGED,))
+                return
+            if not self.runner.permitted(argv):
+                # Checked per container: abilities were judged on the first one listed.
+                done(False, False, (f"{_safe(name)}: creating a PR is not available here",))
+                return
+            rc, diagnostic = self.runner.hand_off_diagnostic(argv)
+            what = "source push" if listed.state == "awaiting-push" else "pr push"
+            lines = (
+                ()
+                if rc == 0
+                else (
+                    diagnostic or (f"{what} did not run" if rc is None else f"{what} exited {rc}"),
+                )
+            )
+            done(True, rc == 0, lines)
+
+        self._quiet_later(self._ls_argv(), checked)
 
     # -- clear --------------------------------------------------------------
 
@@ -1367,6 +1441,7 @@ class OutboxController:
 
     def _run_clear(self, question: dob.Question) -> None:
         name, token = question.carry
+        self.mutation_running = True
 
         def done(result: JobResult) -> None:
             self.state = replace(self.state, busy=None)

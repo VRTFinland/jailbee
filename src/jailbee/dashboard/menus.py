@@ -513,7 +513,7 @@ def actions_for_container(
     job_clearable = (
         container.job_phase is not None
         and container.job_pid is not None
-        and background.clearable(container.job_phase, container.job_pid)
+        and background.clearable(container.job_phase, container.job_pid, live=container.job_live)
     )
     actions = menu_actions(
         MenuContext(

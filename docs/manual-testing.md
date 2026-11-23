@@ -5965,6 +5965,10 @@ also registers and logs in with a virtual FIDO2 key against the real setup and
 dashboard servers, and checks visible refusal after key removal; no physical
 security key is needed.
 
+To render your own Claude sessions and get a report of what breaks, run
+`make web-e2e-sweep CLAUDE_HOME=~/.claude` on the host; see
+[Sweeping your own sessions](web-dashboard.md#sweeping-your-own-sessions).
+
 The older manual smoke check below covers a narrower navigation path.
 
 Checks that the built browser app logs in, lists a repo and container, lists
@@ -6015,18 +6019,35 @@ Expected: one `  <session>: <prompt>` line per scripted step, then
 `corpus written to ...`. A `shapes not captured:` line names the shapes
 (tool call, failing tool call, long output, Markdown, subagent, thinking,
 interruption, compaction) this Claude version did not produce; `corpus.json`
-lists them under `missing_shapes`. The recorder deletes its raw sessions,
+lists them under `missing_shapes`. The recorder uses a temporary HOME while
+sharing the logged-in Claude config directory. It deletes its raw sessions,
 project entry in `$CLAUDE_CONFIG_DIR/.claude.json` (or `~/.claude.json`
-without an override), and new shell snapshots, including after a failed run.
-A cleanup error is reported after attempting the remaining cleanup actions. Do not run other Claude sessions
-against that config directory during recording: new shell snapshots are treated
-as recording state.
+without an override), and shell snapshots attributable to its session ids or
+temporary recording directory (its no-op hook directory is on the snapshot's
+`PATH`), including after a failed run. Other sessions' snapshots are
+left alone. Config cleanup re-reads the latest file and replaces it atomically;
+unrelated settings are kept. Cleanup errors are reported after attempting the
+remaining actions, without replacing an original recording error.
 
-The normaliser keeps only known nested transcript fields and redacts effective
-git author/committer identities (including environment and system config),
-short usernames as whole words, and credential-shaped strings. The leak gate
-allows only `/work/toy`, `/home/user` and `/work/claude-tmp` absolute paths;
-identity fields must use toy placeholders. Generic hex blobs of 40 or more
+The normaliser keeps only known nested transcript fields (including common tool
+inputs) and redacts effective git author/committer identities as complete names
+(including environment and system config), short (under five characters) user
+and host names in identity, home-path, shell-prompt (`user@host:~`, `host:~`)
+and `ssh host` contexts, and credential-shaped strings. Paths under the temporary
+HOME become `/home/user`. Words in a name are not individually redacted:
+`Will Read` must not erase the `Read` tool, nor `dev` erase `/dev/null` or
+`npm run dev`. The leak gate is stricter than the normaliser: it finds every
+host, user, container and account name of five or more characters anywhere,
+even inside another word (`claude-<user>-1000`), and each git name word of five
+or more characters that is not a tool or command name; short names also in any
+`@host`, `user@` or `host:` form. A hit stops the
+recording; edit the prompts or the identity rather than loosening the gate.
+The leak gate allows `/work/toy`, `/home/user`,
+`/work/claude-tmp`, system executable directories and `/dev/null`; HTTP(S) URLs
+are not host paths. Other absolute paths, Windows drive/UNC paths and named
+homes (`~name/`) are rejected. Identity fields must use toy placeholders;
+`cwd` may name a subdirectory of `/work/toy`, and standard Claude co-author
+trailers with `noreply@anthropic.com` are allowed. Generic hex blobs of 40 or more
 characters and base64 blobs of 48 or more characters are treated as secrets.
 The ordinary suite applies the same fixed deny list without needing the
 recording host's identity. Still read the diff before committing: it is public,

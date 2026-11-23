@@ -12,7 +12,7 @@ export interface Pager {
     pageCount: ComputedRef<number>
     next(): void
     prev(): void
-    /** Go to the page that holds `el`. */
+    /** Start a page at `el`, continuing page turns from that anchor. */
     goToElement(el: Element): void
     /** Re-measure after the content changed. */
     measure(): void
@@ -25,40 +25,54 @@ export function usePager(topInset: () => number = () => 0): Pager {
     }
 
     const page = ref(0)
+    // A jump can start a new grid at a reply rather than the document origin.
+    // Page zero still starts at zero; its shortened turn never skips content.
+    const gridShift = ref(0)
     const contentHeight = ref(0)
     const viewportHeight = ref(window.innerHeight)
+    // Pages are bounded by the reachable scroll range, not the content height:
+    // the last page is the one the browser can actually scroll to.
     const maxScroll = computed(() => Math.max(0, contentHeight.value - viewportHeight.value))
-    const pageCount = computed(() => Math.ceil(maxScroll.value / pageHeight()) + 1)
+    const pageCount = computed(() => Math.ceil((maxScroll.value + gridShift.value) / pageHeight()) + 1)
+
+    function currentPage(): number {
+        // Only the real bottom is the last page: short of it, Next must still reach the rest.
+        if (window.scrollY >= maxScroll.value) {
+            return pageCount.value - 1
+        }
+        const index = Math.floor((window.scrollY + gridShift.value) / pageHeight())
+        return Math.max(0, Math.min(pageCount.value - 2, index))
+    }
 
     function measure() {
-        const height = Math.max(1, readableBottom() - topInset())
-        if (height !== availableHeight.value) {
-            availableHeight.value = height
-            page.value = Math.max(0, Math.floor(window.scrollY / height))
-        }
+        // Integer steps survive browser scroll-offset rounding without advancing
+        // past the readable area or falling back onto the previous page.
+        const height = Math.max(1, Math.floor(readableBottom() - topInset()))
         contentHeight.value = document.documentElement.scrollHeight
         viewportHeight.value = window.innerHeight
+        if (height !== availableHeight.value) {
+            availableHeight.value = height
+            gridShift.value = 0
+            page.value = currentPage()
+        }
     }
 
     function syncFromScroll() {
         measure()
-        // Only the real bottom is the last page: short of it, Next must still reach the rest.
-        page.value = window.scrollY >= maxScroll.value
-            ? pageCount.value - 1
-            : Math.max(0, Math.min(pageCount.value - 2, Math.round(window.scrollY / pageHeight())))
+        page.value = currentPage()
     }
 
     watch(topInset, () => {
         // A resized header changes the page grid without moving the reader.
         measure()
-        page.value = Math.max(0, Math.floor(window.scrollY / pageHeight()))
+        page.value = currentPage()
     }, {flush: "sync"})
 
     function goTo(index: number) {
         measure()
         const target = Math.min(Math.max(0, index), pageCount.value - 1)
         page.value = target
-        window.scrollTo(0, target * pageHeight())
+        window.scrollTo(0, Math.max(0, target * pageHeight() - gridShift.value))
     }
 
     let observer: ResizeObserver | null = null
@@ -91,7 +105,10 @@ export function usePager(topInset: () => number = () => 0): Pager {
         goToElement: (el) => {
             measure()
             const top = el.getBoundingClientRect().top + window.scrollY
-            goTo(Math.floor(Math.max(0, top - topInset()) / pageHeight()))
+            const target = Math.max(0, Math.round(top - topInset()))
+            const index = Math.ceil(target / pageHeight())
+            gridShift.value = index * pageHeight() - target
+            goTo(index)
         },
         measure,
     }

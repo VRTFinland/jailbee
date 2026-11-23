@@ -48,6 +48,15 @@ class ExpectedError:
         return self.pattern.fullmatch(text) is not None
 
 
+@dataclass(frozen=True)
+class Reported:
+    """What a page reported over some stretch, by kind."""
+
+    console: list[str]
+    page: list[str]
+    csp: list[str]
+
+
 @dataclass
 class BrowserErrors:
     """Everything a browser context reported as an error, by kind."""
@@ -65,6 +74,9 @@ class BrowserErrors:
         context.add_init_script(_LISTENER)
         context.on("console", self._on_console)
         context.on("weberror", self._on_page_error)
+        # Convenience pages already have a document when their context is exposed.
+        for page in context.pages:
+            page.evaluate(_LISTENER)
 
     def _on_console(self, message: ConsoleMessage) -> None:
         if message.type == "error":
@@ -117,31 +129,37 @@ class BrowserErrors:
             for category, _, text in entries
         ]
         slots = [i for i, expected in enumerate(self._expected) for _ in range(expected.minimum)]
+        required = len(slots)
+        slots.extend(
+            i
+            for i, expected in enumerate(self._expected)
+            if expected.maximum is None
+            for _ in entries
+        )
         assigned: dict[int, int] = {}
 
-        def assign(entry: int, seen: set[int]) -> bool:
-            # Reassign an earlier hit when overlapping expectations need it.
-            for slot, expected in enumerate(slots):
-                if expected not in matches[entry] or slot in seen:
+        def assign(slot: int, seen: set[int]) -> bool:
+            # Augment the matching without evicting an already satisfied slot.
+            for entry, candidates in enumerate(matches):
+                if slots[slot] not in candidates or entry in seen:
                     continue
-                seen.add(slot)
-                if slot not in assigned or assign(assigned[slot], seen):
-                    assigned[slot] = entry
+                seen.add(entry)
+                if entry not in assigned or assign(assigned[entry], seen):
+                    assigned[entry] = slot
                     return True
             return False
 
-        for entry in range(len(entries)):
-            assign(entry, set())
-        consumed = set(assigned.values())
+        # Satisfy every minimum before allocating unbounded expectations' extras.
+        for slot in range(len(slots)):
+            assign(slot, set())
         found = [
             f"{label}: {text}"
             for entry, (_, label, text) in enumerate(entries)
-            if entry not in consumed
-            and not any(self._expected[i].maximum is None for i in matches[entry])
+            if entry not in assigned
         ]
         if require_expected:
             for i, expected in enumerate(self._expected):
-                count = sum(slots[slot] == i for slot in assigned)
+                count = sum(slot < required and slots[slot] == i for slot in assigned.values())
                 if count < expected.minimum:
                     found.append(
                         f"unmet {expected.category} expectation {expected.pattern!r}: "
@@ -161,6 +179,19 @@ class BrowserErrors:
             for page in context.pages:
                 with contextlib.suppress(Error):  # closed meanwhile
                     page.evaluate("() => new Promise(resolve => setTimeout(resolve, 0))")
+
+    def drain(self) -> Reported:
+        """Hand over everything reported so far and forget it.
+
+        For a caller that records errors instead of failing on them (the local
+        sweep): settled first, so nothing already sent is left behind.
+        """
+        self.settle()
+        drained = Reported(list(self.console), list(self.page), list(self.csp))
+        self.console.clear()
+        self.page.clear()
+        self.csp.clear()
+        return drained
 
     def assert_clean(self, *, require_expected: bool = True) -> None:
         """Fail on errors; defer unmet declarations until teardown when requested."""

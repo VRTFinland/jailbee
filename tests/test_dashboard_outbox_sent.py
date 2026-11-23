@@ -153,6 +153,7 @@ def test_publish_in_the_box_refreshes_the_sent_list(mocker, tmp_path):
     _rec("just-sent", content="published a moment ago")  # what the publish recorded
     quiet.return_value = tsession.da.CliResult(True, "done", _listing(_container()))
     jobs.started[-1][2](JobResult(0, "", "Published 1 action\n"))  # type: ignore[operator]
+    jobs.poll()  # the post-publication listing arrives asynchronously
 
     state = _state(session)
     assert state.tab == "sent"

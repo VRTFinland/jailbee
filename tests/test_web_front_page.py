@@ -108,7 +108,7 @@ def test_orchestration_relation_survives_the_web_snapshot(
     )
     snap = snapshot_of(repo_group("alpha", child, parent))
     page = json.loads(first_page(client, token, factory, snap))
-    assert page["v"] == 4
+    assert page["v"] == PROTOCOL_VERSION
     rows = page["view"]["repos"][0]["containers"]
     assert [row["name"] for row in rows] == ["alpha-orch", "alpha-task"]
     assert rows[0]["orchestrator"] is True

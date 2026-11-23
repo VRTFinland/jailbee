@@ -476,3 +476,19 @@ def test_apply_column_config_ignores_an_unknown_name():
     out = apply_column_config([_spec("a")], fields=["a", "nosuch"], hide=[])
 
     assert [f.name for f in out] == ["a"]
+
+
+def test_table_only_field_error_uses_per_field_hint() -> None:
+    fields = [
+        FieldSpec[Row](name="a", header="A", cell=lambda r: r.name, json=None, json_hint="use b"),
+    ]
+    with pytest.raises(typer.BadParameter, match="table-only; use b"):
+        table_format._parse_fields("a", fields, "json")
+
+
+def test_table_only_field_error_is_generic_without_hint() -> None:
+    fields = [FieldSpec[Row](name="a", header="A", cell=lambda r: r.name, json=None)]
+    with pytest.raises(typer.BadParameter) as exc:
+        table_format._parse_fields("a", fields, "json")
+    assert "table-only" in str(exc.value)
+    assert "git_status" not in str(exc.value)

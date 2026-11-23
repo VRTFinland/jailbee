@@ -15,8 +15,20 @@ const dashboard = useDashboard()
 const rows = computed(() => dashboard?.state.view?.repos.flatMap(repo => repo.containers) ?? [])
 const info = computed(() => rows.value.find(row => row.name === name.value))
 const children = computed(() => rows.value.filter(row => row.child?.orchestrator === name.value))
-const list = ref<ContainerSessionList | null>(null)
+const live = ref<ContainerSessionList | null>(null)
+const history = ref<ContainerSessionList | null>(null)
+const historyFailed = ref(false)
 const error = ref<string | null>(null)
+/** Live sessions first: they come from the snapshot and render at once. The
+ * history is a request of its own and joins the list when it arrives. */
+const sessions = computed(() => {
+    // The two answers come from different snapshots: a session that went live
+    // in between is in both, and is shown once, as live.
+    const shown = new Set((live.value?.sessions ?? []).map(s => `${s.agent}/${s.session_id}`))
+    const earlier = (history.value?.sessions ?? []).filter(s => !shown.has(`${s.agent}/${s.session_id}`))
+    return [...(live.value?.sessions ?? []), ...earlier]
+})
+const historyPending = computed(() => history.value === null && !historyFailed.value)
 
 const dateFormat = new Intl.DateTimeFormat(undefined, {dateStyle: "medium", timeStyle: "short"})
 
@@ -27,19 +39,24 @@ function when(iso: string): string {
 watch(name, async (selected, _previous, onCleanup) => {
     let current = true
     onCleanup(() => { current = false })
-    list.value = null
+    live.value = null
+    history.value = null
+    historyFailed.value = false
     error.value = null
     await nextTick()
     if (!current) return
     pager.page.value = 0
     window.scrollTo(0, 0)
     pager.measure()
+    const base = `/api/containers/${encodeURIComponent(selected)}/sessions`
+    const liveRequest = apiFetch<ContainerSessionList>(base)
+    const historyRequest = apiFetch<ContainerSessionList>(`${base}/history`)
+    // Settled here so a failure while the live list loads is never unhandled.
+    historyRequest.catch(() => undefined)
     try {
-        const result = await apiFetch<ContainerSessionList>(
-            `/api/containers/${encodeURIComponent(selected)}/sessions`,
-        )
+        const result = await liveRequest
         if (!current) return
-        list.value = result
+        live.value = result
         await nextTick()
         pager.measure()
     } catch (e) {
@@ -51,6 +68,17 @@ watch(name, async (selected, _previous, onCleanup) => {
         } else {
             error.value = "The sessions could not be loaded."
         }
+        return
+    }
+    try {
+        const result = await historyRequest
+        if (!current) return
+        history.value = result
+        await nextTick()
+        pager.measure()
+    } catch {
+        if (!current) return
+        historyFailed.value = true
     }
 }, {immediate: true})
 </script>
@@ -78,11 +106,11 @@ watch(name, async (selected, _previous, onCleanup) => {
         </section>
         <h2>Sessions</h2>
         <p v-if="error" class="notice">{{ error }}</p>
-        <p v-else-if="list === null" class="muted">Loading…</p>
-        <p v-else-if="list.sessions.length === 0" class="muted">No sessions.</p>
-        <ul v-else class="sessions">
+        <p v-else-if="live === null" class="muted">Loading…</p>
+        <p v-else-if="sessions.length === 0 && !historyPending" class="muted">No sessions.</p>
+        <ul v-if="live !== null && sessions.length" class="sessions">
             <li
-                v-for="s in list.sessions"
+                v-for="s in sessions"
                 :key="`${s.agent}/${s.session_id}`"
                 class="session"
                 :data-live="s.live"
@@ -90,7 +118,7 @@ watch(name, async (selected, _previous, onCleanup) => {
                 <router-link
                     :to="{
                         name: 'session',
-                        params: {prefix: list.repo, agent: s.agent, sessionId: s.session_id},
+                        params: {prefix: live.repo, agent: s.agent, sessionId: s.session_id},
                     }"
                 >
                     <span class="title">{{ s.title || "Untitled session" }}</span>
@@ -105,6 +133,8 @@ watch(name, async (selected, _previous, onCleanup) => {
                 </router-link>
             </li>
         </ul>
+        <p v-if="live !== null && historyPending" class="muted">Loading earlier sessions…</p>
+        <p v-else-if="live !== null && historyFailed" class="muted">Earlier sessions could not be loaded.</p>
         <PageNav :pager="pager" />
     </div>
 </template>

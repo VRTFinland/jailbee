@@ -1421,7 +1421,9 @@ preview in the list's place, and Esc, Enter or `v` goes back to the list.
 - **Delete** asks once, "No" first, naming exactly what goes — proposals,
   `action N (kind)` with any dependents, `comment N (path:line)` — and runs
   `outbox drop` pinned to the revision listed; a proposal that changed since
-  it was shown is left alone ("changed; refreshed").
+  it was shown is left alone ("changed; refreshed"). Verification, deletion and
+  the final reload run in the background, with a "Deleting N from the outbox…"
+  busy line; navigation and preview keys remain usable.
 - **Publish** reads the plan (`outbox apply --dry-run -o json`) and shows it
   in the preview with **Publish**, **Publish as draft review** (when the
   proposal has a pending review) and **Cancel**; the publish then runs in the
@@ -1449,7 +1451,11 @@ preview in the list's place, and Esc, Enter or `v` goes back to the list.
 
 An unavailable container is still listed, with the reason in its header
 row and nothing offered that changes it. After every change the manager
-re-lists (and the dashboard refreshes, so the OUTBOX column follows). In the
+re-lists in the background (and the dashboard refreshes, so the OUTBOX column
+follows). While a mutation is busy, another delete, publish, clear or scope
+change is refused; refresh leaves the busy line alone and the completion
+reloads. Closing the dashboard's box does not cancel the work: its result
+appears as a notice without reopening the box. In the
 dashboard over remote SSH a key works, and appears in the hint line, only
 when the session's policy permits its command; `outbox apply -y` is refused there, so `p` hands the
 terminal to the interactive `outbox apply … --revision`, which asks under

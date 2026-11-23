@@ -42,7 +42,7 @@ describe("login link", () => {
             .map(([, init]) => JSON.parse((init as RequestInit).body as string))
         expect(bodies).toHaveLength(1)
         expect(bodies[0]).toMatchObject({method: "link", token: "one-time"})
-        expect(bodies[0].device_name.length).toBeGreaterThan(0)
+        expect(bodies[0]).not.toHaveProperty("device_name")
         expect(getToken()).toBe("tok-9")
         expect(router.currentRoute.value.path).toBe("/")
         expect(router.currentRoute.value.fullPath).not.toContain("one-time")

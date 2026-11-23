@@ -1,11 +1,18 @@
-"""`/api/containers/{name}/sessions`: the sessions of one container."""
+"""`/api/containers/{name}/sessions[/history]`: the sessions of one container.
+
+Two requests, so the live sessions render at once however long the history is.
+"""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 from starlette.concurrency import run_in_threadpool
 
-from jailbee.web.container_sessions import ContainerSessionListView, container_sessions
+from jailbee.web.container_sessions import (
+    ContainerSessionListView,
+    live_sessions,
+    session_history,
+)
 from jailbee.web.deps import Context, RequireSession
 
 router = APIRouter()
@@ -17,13 +24,19 @@ async def sessions_of_container(
 ) -> ContainerSessionListView:
     # An excluded repository's container answers exactly as an unknown one.
     snapshot = await ctx.snapshot()
+    view = await run_in_threadpool(live_sessions, snapshot, name, ctx.scope, ctx.repo_sessions)
+    if view is None:
+        raise HTTPException(status_code=404, detail="Unknown container")
+    return view
+
+
+@router.get("/api/containers/{name}/sessions/history")
+async def session_history_of_container(
+    name: str, ctx: Context, _auth: RequireSession
+) -> ContainerSessionListView:
+    snapshot = await ctx.snapshot()
     view = await run_in_threadpool(
-        container_sessions,
-        snapshot,
-        name,
-        ctx.scope,
-        ctx.deps.engine,
-        ctx.repo_sessions,
+        session_history, snapshot, name, ctx.scope, ctx.deps.engine, ctx.repo_sessions
     )
     if view is None:
         raise HTTPException(status_code=404, detail="Unknown container")

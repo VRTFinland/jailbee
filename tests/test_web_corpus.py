@@ -9,9 +9,11 @@ account, and no credential.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import socket
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from jailbee.transcripts.claude import ClaudeSource
+from scripts import web_corpus
 from scripts.web_corpus import (
     CORPUS_DIR,
     MANIFEST,
@@ -253,6 +256,46 @@ def test_nested_objects_keep_only_known_fields(
     assert "PRIVATE" not in json.dumps(kept)
 
 
+@pytest.mark.parametrize("leaking_tool", range(4))
+def test_common_tool_inputs_survive_and_are_still_scanned(
+    tmp_path: Path, leaking_tool: int
+) -> None:
+    identity = _identity(tmp_path)
+    tools = [
+        {"type": "tool_use", "name": "Grep", "input": {"pattern": "TOY-MARKER"}},
+        {"type": "tool_use", "name": "Write", "input": {"content": "toy text"}},
+        {"type": "tool_use", "name": "WebFetch", "input": {"url": "https://example.invalid/"}},
+        {
+            "type": "tool_use",
+            "name": "TodoWrite",
+            "input": {
+                "todos": [
+                    {
+                        "content": "Read toy",
+                        "status": "pending",
+                        "activeForm": "Reading toy",
+                        "account": "PRIVATE",
+                    }
+                ]
+            },
+        },
+    ]
+    _, project = _normalise(tmp_path, [_user(identity, "", message={"content": tools})])
+    [kept] = _read(next(project.glob("*.jsonl")))
+    expected = json.loads(json.dumps(tools))
+    del expected[3]["input"]["todos"][0]["account"]
+    assert kept["message"] == {"content": expected}
+    assert scan_corpus(project) == {}
+    tool = tools[leaking_tool]
+    key = next(iter(tool["input"]))
+    if key == "todos":
+        tool["input"][key][0]["content"] = "/srv/private"
+    else:
+        tool["input"][key] = "/srv/private"
+    _, project = _normalise(tmp_path, [_user(identity, "", message={"content": tools})])
+    assert scan_corpus(project)
+
+
 def test_names_and_credentials_are_redacted(tmp_path: Path) -> None:
     identity = _identity(tmp_path)
     text = (
@@ -370,7 +413,6 @@ def test_find_leaks_reports_each_identifying_string(tmp_path: Path, leak: str) -
         "/opt/company/config",
         "/workspace/private/repo",
         "/var/lib/private/state",
-        "/usr/bin/python3",
         "/data/private",
         "/home/user2/file",
         "/work/toy-other/file",
@@ -393,6 +435,33 @@ def test_scan_corpus_rejects_non_placeholder_identity(tmp_path: Path, leak: str)
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        "/dev/null /usr/bin/env /usr/bin/python3",
+        "https://example.invalid/docs/page https://example.invalid/",
+        '"cwd": "/work/toy/nested"',
+        "Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+    ],
+)
+def test_find_leaks_allows_system_paths_urls_and_toy_subdirectories(text: str) -> None:
+    assert find_leaks(text) == []
+    assert find_leaks(json.dumps({"message": {"content": text}})) == []
+
+
+def test_scan_corpus_allows_shell_escapes(tmp_path: Path) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(json.dumps({"command": r"printf '\n'"}) + "\n")
+    assert scan_corpus(tmp_path) == {}
+
+
+@pytest.mark.parametrize("path", [r"C:\Users\x\secret", r"\\server\share\x", "~alice/private"])
+def test_scan_corpus_rejects_windows_and_named_home_paths(tmp_path: Path, path: str) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(json.dumps({"message": {"content": path}}) + "\n")
+    assert list(scan_corpus(tmp_path)) == [transcript.name]
+
+
+@pytest.mark.parametrize(
     "credential",
     [
         "sk-0123456789abcdefghijklmnopqrstuvwxyz",
@@ -409,16 +478,63 @@ def test_credentials_are_redacted_and_detected(tmp_path: Path, credential: str) 
     assert record["message"] == {"role": "user", "content": "token: REDACTED"}
 
 
-def test_short_secrets_match_whole_words_only(tmp_path: Path) -> None:
-    identity = Identity(toy_dir="/recording/toy", home="/recording/home", secrets=("ann",))
+@pytest.mark.parametrize("context", ["user dev", "user: dev", "username=dev", '"user": "dev"'])
+def test_identity_redaction_preserves_commands_and_tool_names(tmp_path: Path, context: str) -> None:
+    identity = Identity(toy_dir="/recording/toy", home="/home/dev", secrets=("dev", "Will Read"))
     raw = tmp_path / "raw"
-    _write(raw / f"{RAW_SID}.jsonl", [_user(identity, "ann ANN annual banner")])
+    text = f"npm run dev; /dev/null; dev-ork; Read Edit Bash; Will Read; {context}; /home/dev/x"
+    _write(raw / f"{RAW_SID}.jsonl", [_user(identity, text)])
     out = tmp_path / "out"
     normalise_home(raw, out, identity, [RAW_SID])
     [kept] = _read(next((out / "projects" / TOY_PROJECT).glob("*.jsonl")))
-    assert kept["message"] == {"role": "user", "content": "REDACTED REDACTED annual banner"}
+    assert kept["message"] == {
+        "role": "user",
+        "content": "npm run dev; /dev/null; dev-ork; Read Edit Bash; REDACTED; "
+        + context.replace("dev", "REDACTED")
+        + "; /home/user/x",
+    }
+    assert find_leaks("npm run dev; dev-ork; Read Edit Bash", identity) == []
+    assert find_leaks(context, identity)
+    assert find_leaks("Will Read", identity)
+
+
+def test_short_secrets_match_whole_words_only(tmp_path: Path) -> None:
+    identity = Identity(toy_dir="/recording/toy", home="/recording/home", secrets=("ann",))
+    raw = tmp_path / "raw"
+    _write(raw / f"{RAW_SID}.jsonl", [_user(identity, "user ann user ANN annual banner")])
+    out = tmp_path / "out"
+    normalise_home(raw, out, identity, [RAW_SID])
+    [kept] = _read(next((out / "projects" / TOY_PROJECT).glob("*.jsonl")))
+    assert kept["message"] == {
+        "role": "user",
+        "content": "user REDACTED user REDACTED annual banner",
+    }
     assert find_leaks("annual banner", identity) == []
     assert find_leaks("user ann", identity)
+
+
+def _snapshot(path: str) -> str:
+    """A shell snapshot shaped like Claude Code's own (shell-snapshots/*.sh)."""
+    return (
+        "# Snapshot file\n"
+        "# Unset all aliases to avoid conflicts with functions\n"
+        "unalias -a 2>/dev/null || true\n"
+        "# Shopt\n"
+        "shopt -u array_expand_once\n"
+        "shopt -s sourcepath\n"
+        "# Functions\n"
+        "eval $'__toy_fn () \\n{ \\n    true\\n}'\n"
+        "# Shell Options\n"
+        "set -o braceexpand\n"
+        "set -o hashall\n"
+        "shopt -s expand_aliases\n"
+        "# Aliases\n"
+        "# Check for rg availability\n"
+        "if ! command -v rg >/dev/null 2>&1; then\n"
+        "  alias rg='claude --ripgrep'\n"
+        "fi\n"
+        f"export PATH={path}\n"
+    )
 
 
 @pytest.mark.parametrize("fail", [False, True])
@@ -431,6 +547,7 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
     fail: bool,
     custom_config: bool,
     broken_config: bool,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
@@ -452,7 +569,7 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
         if command == ["claude", "--version"]:
             return subprocess.CompletedProcess(command, 0, "2.1.0 Claude Code", "")
         identity = {
-            "GIT_AUTHOR_IDENT": "Qix Author <author@example.invalid> 123 +0000",
+            "GIT_AUTHOR_IDENT": "Will Read <author@example.invalid> 123 +0000",
             "GIT_COMMITTER_IDENT": "Zed Committer <committer@example.invalid> 123 +0000",
         }
         output = identity.get(command[-1], "") if command[:2] == ["git", "var"] else ""
@@ -480,8 +597,9 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
                         "content": [
                             {
                                 "type": "text",
-                                "text": "Qix Author Zed Committer Qix Zed"
-                                " author@example.invalid committer@example.invalid",
+                                "text": "Will Read Zed Committer Read Edit Bash"
+                                " author@example.invalid committer@example.invalid"
+                                f" saved {kwargs['env']['HOME']}/notes.txt",
                             },
                             {"type": "tool_use", "name": "Bash", "input": {"command": "true"}},
                         ],
@@ -489,13 +607,23 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
                 }
             ],
         )
+        effective_config = (
+            config_file if custom_config else Path(kwargs["env"]["HOME"]) / ".claude.json"
+        )
+        if not broken_config:
+            data = json.loads(effective_config.read_text())
+            data["projects"][str(toy)] = {"private": "recording"}
+            effective_config.write_text(json.dumps(data))
         if broken_config:
             config_file.write_text("{invalid")
-        else:
-            data = json.loads(config_file.read_text())
-            data["projects"][str(toy)] = {"private": "recording"}
-            config_file.write_text(json.dumps(data))
         (snapshots / f"{sid}.sh").write_text("private shell")
+        # Real snapshots carry no session id and no HOME line; the recorder's
+        # own PATH (its no-op hook directory) names the recording root.
+        path = kwargs["env"]["PATH"]
+        (snapshots / "snapshot-bash-1779955948101-z5d7y6.sh").write_text(_snapshot(path))
+        (snapshots / "snapshot-bash-1779955948102-f0r31g.sh").write_text(
+            _snapshot("/home/someone-else/.local/bin:/usr/bin:/bin")
+        )
         process = mocker.Mock()
         process.communicate.return_value = (None, "failed" if fail else "")
         process.returncode = 1 if fail else 0
@@ -503,10 +631,23 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
         return process
 
     mocker.patch("scripts.web_corpus.subprocess.Popen", side_effect=start)
+    original_temp = tempfile.NamedTemporaryFile
+    replace = mocker.spy(os, "replace")
+
+    def create_temp(*args: Any, **kwargs: Any) -> Any:
+        # A different session updates unrelated config after cleanup's first read.
+        data = json.loads(config_file.read_text())
+        data["concurrent"] = 2
+        config_file.write_text(json.dumps(data))
+        return original_temp(*args, **kwargs)
+
+    mocker.patch("scripts.web_corpus.tempfile.NamedTemporaryFile", side_effect=create_temp)
     out = tmp_path / "corpus"
     if broken_config:
-        with pytest.raises(SystemExit, match="cleanup"):
+        with pytest.raises(SystemExit, match="claude exited" if fail else "cleanup"):
             record(out)
+        if fail:
+            assert "cleanup failed" in capsys.readouterr().err
         assert config_file.read_text() == "{invalid"
     elif fail:
         with pytest.raises(SystemExit, match="claude exited"):
@@ -514,13 +655,21 @@ def test_record_redacts_effective_git_identity_and_cleans_its_state(
     else:
         record(out)
         text = "".join(p.read_text() for p in out.rglob("*.jsonl"))
-        assert all(secret not in text for secret in ("Qix", "Author", "Zed", "Committer"))
+        assert all(secret not in text for secret in ("Will Read", "Zed Committer"))
+        assert "Read Edit Bash" in text
+        assert "saved /home/user/notes.txt" in text
     if not broken_config:
-        assert json.loads(config_file.read_text()) == {
-            "projects": {"/existing": {"keep": True}},
-            "other": 1,
-        }
-    assert sorted(p.name for p in snapshots.iterdir()) == ["old.sh"]
+        expected_config = {"projects": {"/existing": {"keep": True}}, "other": 1}
+        if custom_config:
+            expected_config["concurrent"] = 2
+        assert json.loads(config_file.read_text()) == expected_config
+        assert replace.call_count == int(custom_config)
+        if custom_config:
+            assert replace.call_args.args[1] == config_file
+    assert sorted(p.name for p in snapshots.iterdir()) == [
+        "old.sh",
+        "snapshot-bash-1779955948102-f0r31g.sh",
+    ]
     assert not list((config / "projects").iterdir())
 
 
@@ -605,3 +754,90 @@ def test_claude_scratch_paths_name_the_toy_project_only(tmp_path: Path) -> None:
         "00000001-0000-4000-8000-000000000001/tasks/b1.output",
     }
     assert find_leaks("/var/cache/claude-53023", identity) != []
+
+
+# --- The leak gate is stricter than the normaliser --------------------------
+
+
+def _identity_with_git_name(
+    tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, name: str
+) -> Identity:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    mocker.patch("scripts.web_corpus.socket.gethostname", return_value="placeholder-host")
+    mocker.patch("scripts.web_corpus.getpass.getuser", return_value="placeholder-user")
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        ident = f"{name} <author@example.invalid> 123 +0000"
+        return subprocess.CompletedProcess(command, 0, ident, "")
+
+    mocker.patch("scripts.web_corpus.subprocess.run", side_effect=run)
+    return web_corpus._host_identity(tmp_path / "toy", tmp_path / "tmp", tmp_path / "home")
+
+
+def test_host_identity_reports_each_name_part_alone(
+    tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    identity = _identity_with_git_name(tmp_path, mocker, monkeypatch, "Wilhelmina Placeholder")
+
+    assert find_leaks("Hi Wilhelmina", identity)
+    assert find_leaks("Placeholder wrote this", identity)
+    assert find_leaks("PLACEHOLDER", identity)
+
+
+def test_host_identity_skips_tool_words_in_a_name(
+    tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    identity = _identity_with_git_name(tmp_path, mocker, monkeypatch, "Agent Write")
+
+    assert find_leaks("Use the Agent tool, then Write the file", identity) == []
+    assert find_leaks("Agent Write", identity)
+
+
+@pytest.mark.parametrize(
+    "leak",
+    ["claude-someuser-1000", "someuser_backup", "prefix-c-proj-dev-3", "c-proj-dev-3_x"],
+)
+def test_find_leaks_reports_long_secrets_inside_other_words(leak: str) -> None:
+    identity = Identity(
+        toy_dir="/recording/toy",
+        home="/recording/home",
+        secrets=("someuser", "c-proj-dev-3"),
+    )
+    assert find_leaks(f"session in {leak} here", identity)
+
+
+SHORT_NAMES = Identity(toy_dir="/recording/toy", home="/recording/home", secrets=("box7", "ann"))
+
+
+def _normalised_text(tmp_path: Path, identity: Identity, text: str) -> object:
+    raw = tmp_path / "raw"
+    _write(raw / f"{RAW_SID}.jsonl", [_user(identity, text)])
+    out = tmp_path / "out"
+    normalise_home(raw, out, identity, [RAW_SID])
+    [kept] = _read(next((out / "projects" / TOY_PROJECT).glob("*.jsonl")))
+    message = kept["message"]
+    assert isinstance(message, dict)
+    return message["content"]
+
+
+@pytest.mark.parametrize(
+    ("text", "normalised"),
+    [
+        ("dev@box7:~$ ls", "dev@REDACTED:~$ ls"),
+        ("ann@host9:~$ ls", "REDACTED@host9:~$ ls"),
+        ("box7:~$ ls", "REDACTED:~$ ls"),
+        ("ssh box7", "ssh REDACTED"),
+    ],
+)
+def test_short_names_in_prompts_and_ssh_are_redacted_and_detected(
+    tmp_path: Path, text: str, normalised: str
+) -> None:
+    assert find_leaks(text, SHORT_NAMES)
+    assert _normalised_text(tmp_path, SHORT_NAMES, text) == normalised
+
+
+@pytest.mark.parametrize("text", ["box7:/srv", "mail ann@box7", "@box7/pkg", "-v box7:/data"])
+def test_the_gate_catches_short_names_the_normaliser_leaves(tmp_path: Path, text: str) -> None:
+    assert find_leaks(text, SHORT_NAMES)
+    assert _normalised_text(tmp_path, SHORT_NAMES, text) == text

@@ -1,5 +1,5 @@
 .PHONY: install install-gui install-web install-skill check build publish-testpypi \
-        changelog release site site-check docs-serve web web-test web-e2e web-corpus shots
+        changelog release site site-check docs-serve web web-test web-e2e web-e2e-sweep web-corpus shots
 
 # Use bash for recipe lines — the `release` target relies on bash features
 # (`set -euo pipefail`, `read -r -p`) that /bin/sh does not provide.
@@ -90,6 +90,31 @@ web-e2e:
 	uv run --group e2e pytest tests_e2e -q --timeout 300 \
 		--tracing retain-on-failure --screenshot only-on-failure \
 		--output $(E2E_OUTPUT) $(E2E_ARGS)
+
+# Render every session and subagent of a Claude home in the web dashboard and
+# report what broke (#152): `make web-e2e-sweep CLAUDE_HOME=<path>` (default
+# ~/.claude). For the maintainer on the host, never CI. It starts the e2e test
+# server with that home as its only repository's agent home and opens each
+# transcript in the system Chrome. It only reads the home (the file watch is
+# faked) and writes nothing but the report: Markdown at $(SWEEP_REPORT), under
+# the gitignored .local/. The report starts with a summary line (also printed)
+# and the unknown entry types across the home, then one section per session or subagent with a finding, headed
+# `<project dir>/<session id>[/subagents/<agent id>]`, its dashboard URL and
+# one bullet per finding: `load error` (an error page, or nothing rendered in
+# 30 s), `JS error` (console or uncaught error), `CSP violation`, `slow`
+# (navigation to rendered transcript, app start included, over SWEEP_SLOW_MS),
+# `unknown entry type` (a record or content block type the reader neither
+# renders nor knowingly skips, with count and first line) and `unparsable
+# line`. Clean sessions are only counted.
+CLAUDE_HOME ?= $(HOME)/.claude
+SWEEP_SLOW_MS ?= 2000
+SWEEP_REPORT ?= .local/web-e2e-sweep/$(shell date +%Y%m%d-%H%M%S).md
+web-e2e-sweep:
+	@command -v npm >/dev/null 2>&1 || { echo "error: npm not found; the sweep needs the browser app built (Node.js 22.22+ or 24.15+ and npm)" >&2; exit 1; }
+	$(MAKE) web
+	JAILBEE_SWEEP_HOME="$(CLAUDE_HOME)" JAILBEE_SWEEP_REPORT="$(abspath $(SWEEP_REPORT))" \
+		JAILBEE_SWEEP_SLOW_MS="$(SWEEP_SLOW_MS)" \
+		uv run --group e2e pytest tests_e2e/sweep_local.py -q -s --timeout 0 -p no:cacheprovider
 
 # Re-record the web dashboard's corpus of genuine Claude Code sessions
 # (tests/fixtures/transcripts/claude-corpus/). Needs a logged-in `claude`;

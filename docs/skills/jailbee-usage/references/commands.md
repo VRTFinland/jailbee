@@ -453,7 +453,7 @@ indentation and a `Child of` label, not the e-ink job-phase edge style.
 | `jailbee remote web auth pin on\|off` | Allow or refuse PIN login (off needs a TOTP key). |
 | `jailbee remote web auth totp add [--name N]` / `ls` / `rm` | Authenticator-app keys. |
 | `jailbee remote web auth fido2 setup` / `ls` / `rm` | Security keys; `setup` serves a registration page until Ctrl-C. |
-| `jailbee remote web auth sessions ls` / `revoke [ID]` | Logged-in devices; revoke ends a session and its live view. |
+| `jailbee remote web auth sessions ls` / `revoke [ID]` | Logged-in devices, named automatically from the browser ("Firefox on Linux"; rename in the web app's Settings); revoke ends a session and its live view. |
 
 Config: `remote.web.listen`, `port`, `auth.enabled`,
 `auth.allow_unauthenticated_remote`, `excluded_repos` and the shared remote
@@ -928,8 +928,10 @@ unreadable in a container, comparison fields show `?`. Local always wins when
 both refs exist; tracking-ahead/diverged notices describe the last-fetched
 ref, not the remote server. Equal trees can have nonzero ↑/↓ commit counts. The opt-in legacy `target_diff`,
 `ahead_count` and `behind_count` fields are independently sortable and do not
-show target markers. Explicit `--format json --fields sync` returns the same
-structured value as `git_status`; default JSON is unchanged.
+show target markers. `sync` is table-only; use `git_status` for structured
+JSON. Default JSON is unchanged. Saved dashboard column sets migrate once to
+SYNC, removing separate ahead/behind counts; explicit YAML field lists and
+user-added host counts stay unchanged. Settings can restore legacy columns.
 JSON `git_status` names the direct line diff `target_diff` and includes
 `behind_count`, `base_source`, `base_sha`, `tracking_relation`,
 `upstream_ref`, `sync_target` (`kind`, `label`, `sha`, `ref`, `fallback`) and
@@ -1280,6 +1282,11 @@ enabled columns, the table's column widths/order — but never the window size o
 Fresh installs default to the Cards layout.
 
 ### `jailbee job`
+
+Job liveness is sampled with its tracking row, consistently with `jailbee ls`
+and the dashboard snapshot. A worker finishing successfully does not turn an
+older snapshot into a dead-job warning between refreshes. A worker killed
+mid-job still shows as dead on the next snapshot while its tracking row remains.
 
 | Command | Notes |
 |---|---|
@@ -1837,6 +1844,14 @@ and issue manifests — in one place. A proposal is named `pr/<manifest>.json`
 or `issue/<manifest>.json`. Inspection is local and never calls GitHub; over
 remote SSH it is read-only. See [Unified proposal
 management](../../../git-bridge.md#unified-proposal-management).
+
+In the terminal manager and dashboard Outbox box, delete verification, drops
+and post-mutation reloads run in the background. A busy line stays visible while
+navigation and preview keys work; refresh waits for the completion reload,
+and another delete, publish, clear or scope change is refused while busy.
+Closing the dashboard box leaves the work running and reports its result as a notice.
+PR-creation verification is background work too; the interactive `pr push` still
+uses the terminal.
 
 | Command | What it does |
 |---|---|
