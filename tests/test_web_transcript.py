@@ -315,13 +315,17 @@ def test_injected_user_records_are_meta_and_cannot_supply_session_titles(
     assert (body["entries"][0]["meta"], body["title"]) == (True, "Fix the title")
 
 
+@pytest.mark.parametrize(
+    "context",
+    ["Injected context", "Injected <system-reminder>nested</system-reminder> context"],
+)
 def test_a_mixed_user_record_separates_injected_context_from_the_typed_prompt(
-    client: TestClient, home: Path
+    client: TestClient, home: Path, context: str
 ) -> None:
     path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
     path.write_text(
         json.dumps(
-            _record(1, "user", "<system-reminder>Injected context</system-reminder>\nFix **titles**")
+            _record(1, "user", f"<system-reminder>{context}</system-reminder>\nFix **titles**")
         )
         + "\n"
         + json.dumps(_record(2, "user", "A later prompt"))
@@ -333,7 +337,7 @@ def test_a_mixed_user_record_separates_injected_context_from_the_typed_prompt(
     assert body["title"] == "Fix **titles**"
     injected, typed, later = body["entries"]
     assert injected["meta"] is True
-    assert "Injected context" in injected["html"] and "Fix" not in injected["html"]
+    assert "Injected" in injected["html"] and "Fix" not in injected["html"]
     assert typed["meta"] is False
     assert typed["html"] == "<p>Fix <strong>titles</strong></p>"
     assert len({injected["id"], typed["id"], later["id"]}) == 3

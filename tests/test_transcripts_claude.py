@@ -463,6 +463,27 @@ def test_command_only_sessions_have_a_bounded_title_parse_budget(
     assert parsed <= 32
 
 
+@pytest.mark.parametrize(
+    ("candidate", "expected"), [(32, "A prompt at the boundary"), (33, "/model")]
+)
+def test_the_title_budget_keeps_prompts_at_but_not_beyond_its_boundary(
+    home: Path, source: ClaudeSource, candidate: int, expected: str
+) -> None:
+    _write(
+        _transcript(home),
+        _user_text("command", "<command-name>/model</command-name>"),
+        *(
+            _user_text(str(i), "<local-command-stdout>Output</local-command-stdout>")
+            for i in range(candidate - 2)
+        ),
+        _user_text("prompt", "A prompt at the boundary"),
+    )
+
+    info = source.session_info(SID, _transcript(home))
+
+    assert info is not None and info.title == expected
+
+
 def test_a_claude_jb_session_reports_its_gateway_model_names(
     home: Path, source: ClaudeSource
 ) -> None:
