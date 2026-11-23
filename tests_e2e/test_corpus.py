@@ -61,11 +61,13 @@ def open_from_list(page: Page, session: dict[str, Any]) -> None:
 @pytest.mark.parametrize("session", SESSIONS, ids=[s["name"] for s in SESSIONS])
 def test_every_session_opens_with_its_prompts(reader: Page, session: dict[str, Any]) -> None:
     open_from_list(reader, session)
+    # Only what the person typed is a prompt: a slash command, a compaction
+    # summary or an interruption notice is shown as context.
+    typed = [prompt_marker(p) for p in session["prompts"] if not p.startswith("/")]
     prompts = reader.locator(".entry.user:not(.meta)")
-    for prompt in session["prompts"]:
-        if prompt.startswith("/"):
-            continue
-        expect(prompts.filter(has_text=prompt_marker(prompt))).to_have_count(1)
+    expect(prompts).to_have_count(len(typed))
+    for index, marker in enumerate(typed):
+        expect(prompts.nth(index)).to_contain_text(marker)
 
 
 def expand_every_tool_call(page: Page) -> None:
@@ -82,11 +84,10 @@ def expand_every_tool_call(page: Page) -> None:
         expect(call.locator(".tool-body .tool-result")).to_be_visible()
 
 
-@pytest.mark.parametrize(
-    "session",
-    [s for s in SESSIONS if "tool_call" in s["shapes"]],
-    ids=[s["name"] for s in SESSIONS if "tool_call" in s["shapes"]],
-)
+TOOLS = [s for s in SESSIONS if "tool_call" in s["shapes"]]
+
+
+@pytest.mark.parametrize("session", TOOLS, ids=[s["name"] for s in TOOLS])
 def test_tool_calls_fold_and_expand_to_their_results(reader: Page, session: dict[str, Any]) -> None:
     open_from_list(reader, session)
     calls = reader.locator(".tool-call")
@@ -127,7 +128,10 @@ def test_every_subagent_link_opens_its_transcript(
     transcript = reader.locator("article.transcript")
     expect(transcript.locator(".entry.assistant").first).to_be_visible()
     expand_every_tool_call(reader)
-    expect(transcript).to_contain_text("TOY-MARKER-README")
+    # The subagent's task is to read a toy file, so it holds that file's marker.
+    for marker in session["markers"]:
+        if marker.startswith("TOY-MARKER-"):
+            expect(transcript).to_contain_text(marker)
 
     reader.get_by_role("link", name="Parent session").click()
     expect(reader.locator("h1", has_text=prompt_marker(session["prompts"][0]))).to_be_visible()
@@ -158,14 +162,10 @@ def test_thinking_follows_the_setting(reader: Page, session: dict[str, Any]) -> 
     expect(thinking).to_have_count(0)
 
 
-def test_a_compaction_summary_is_context_not_a_prompt(reader: Page) -> None:
-    (session,) = [s for s in SESSIONS if "compaction" in s["shapes"]]
-    open_from_list(reader, session)
-    summary = reader.locator(".entry.user.meta", has_text="This session is being continued")
-    expect(summary).to_have_count(1)
-    expect(
-        reader.locator(".entry.user:not(.meta)", has_text="This session is being continued")
-    ).to_have_count(0)
-    expect(reader.locator(".entry.user:not(.meta)", has_text="CORPUS-AFTER-COMPACT")).to_have_count(
-        1
-    )
+def test_the_manifest_names_every_recorded_transcript() -> None:
+    """A recording the manifest misses would silently go unwalked."""
+    project = CORPUS / "projects" / "-work-toy"
+    assert {p.stem for p in project.glob("*.jsonl")} == {s["session_id"] for s in SESSIONS}
+    assert {p.stem.removeprefix("agent-") for p in project.glob("*/subagents/*.jsonl")} == {
+        a["agent_id"] for _, a in SUBAGENTS
+    }
