@@ -33,9 +33,11 @@ RAW_SID = "3f2a9c1e-8b7d-4e6f-9a1b-2c3d4e5f6a7b"
 
 
 def _identity(tmp_path: Path) -> Identity:
+    # Outside the host-path prefixes `find_leaks` knows, so only the identity
+    # literals can catch them.
     return Identity(
-        toy_dir=str(tmp_path / "rec-x1y2" / "toy"),
-        home="/home/alice",
+        toy_dir="/srv/rec-x1y2/toy",
+        home="/data/alice",
         secrets=("alice@corp.example", "build-host-17"),
     )
 
@@ -110,6 +112,18 @@ def test_paths_point_into_the_toy_repository_only(tmp_path: Path) -> None:
     }
 
 
+def test_a_path_is_rewritten_only_where_it_ends(tmp_path: Path) -> None:
+    identity = _identity(tmp_path)
+    text = f"{identity.home}/x {identity.home}bob/x {identity.toy_dir}2/x {identity.toy_dir}."
+    _, project = _normalise(tmp_path, [_user(identity, text)])
+
+    [record] = _read(next(project.glob("*.jsonl")))
+    assert record["message"] == {
+        "role": "user",
+        "content": f"/home/user/x {identity.home}bob/x /work/toy2/x /work/toy.",
+    }
+
+
 def test_only_transcript_records_and_fields_survive(tmp_path: Path) -> None:
     identity = _identity(tmp_path)
     assistant = {
@@ -172,6 +186,7 @@ def test_names_and_credentials_are_redacted(tmp_path: Path) -> None:
         " keys sk-ant-oat01-AbCdEf123456_789xyz ghp_1234567890abcdefghijABCDEFGHIJ123456"
         " github_pat_11ABCDEFG0123456789_abcdefghijklmnop gho_abcdefghijklmnopqrstuvwxyz0123456789"
         " header Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl"
+        " opaque Bearer s3cr3tOpaqueToken0123456789"
     )
     _, project = _normalise(tmp_path, [_user(identity, text)])
 
@@ -181,7 +196,8 @@ def test_names_and_credentials_are_redacted(tmp_path: Path) -> None:
         "content": "host REDACTED, mail REDACTED or REDACTED,"
         " keys REDACTED REDACTED"
         " REDACTED REDACTED"
-        " header Authorization: Bearer REDACTED",
+        " header Authorization: Bearer REDACTED"
+        " opaque Bearer REDACTED",
     }
 
 
@@ -245,11 +261,16 @@ def test_find_leaks_passes_normalised_text(tmp_path: Path) -> None:
     "leak",
     [
         "{toy}/calc.py",
-        "/home/alice/notes",
+        "/srv/rec-x1y2/other",
+        "-srv-rec-x1y2-toy",
+        "/data/alice/notes",
         "/home/bob/notes",
-        "/tmp/rec-x1y2",
+        "/tmp/claude-1000",
         "/root/.claude",
+        "/mnt/share/x",
+        "/run/user/1000/bus",
         "build-host-17",
+        "BUILD-HOST-17",
         "alice@corp.example",
         "carol@elsewhere.example",
         "sk-ant-oat01-AbCdEf123456_789xyz",
@@ -301,9 +322,15 @@ def test_manifest_matches_the_recorded_sessions() -> None:
     )
     covered: set[str] = set()
     for session in sessions:
-        shapes = detect_shapes(project / f"{session['session_id']}.jsonl")
+        transcript = project / f"{session['session_id']}.jsonl"
+        shapes = detect_shapes(transcript)
         assert session["shapes"] == shapes, session["name"]
         covered.update(shapes)
+        assert session["markers"] and all(m in transcript.read_text() for m in session["markers"])
+        for subagent in session["subagents"]:
+            agent = transcript.with_suffix("") / "subagents" / f"agent-{subagent['agent_id']}"
+            assert agent.with_suffix(".jsonl").is_file()
+            assert subagent["tool_use_id"] in transcript.read_text()
     assert sorted(covered) == sorted(set(SHAPES) - set(manifest["missing_shapes"]))
 
 
@@ -321,14 +348,13 @@ def test_the_reader_lists_and_reads_every_recorded_session() -> None:
 
 def test_claude_scratch_paths_name_the_toy_project_only(tmp_path: Path) -> None:
     identity = _identity(tmp_path)
-    root = str(Path(identity.toy_dir).parent)
     identity = Identity(
         toy_dir=identity.toy_dir,
         home=identity.home,
-        renames=((f"{root}/tmp/claude-53023", "/work/claude-tmp"),),
+        renames=(("/var/cache/claude-53023", "/work/claude-tmp"),),
     )
     encoded = "-" + identity.toy_dir.strip("/").replace("/", "-").replace("_", "-")
-    output = f"{root}/tmp/claude-53023/{encoded}/{RAW_SID}/tasks/b1.output"
+    output = f"/var/cache/claude-53023/{encoded}/{RAW_SID}/tasks/b1.output"
     raw = tmp_path / "raw"
     _write(raw / f"{RAW_SID}.jsonl", [_user(identity, f"written to {output}")])
     normalise_home(raw, tmp_path / "out", identity, [RAW_SID])
@@ -339,4 +365,4 @@ def test_claude_scratch_paths_name_the_toy_project_only(tmp_path: Path) -> None:
         "content": "written to /work/claude-tmp/-work-toy/"
         "00000001-0000-4000-8000-000000000001/tasks/b1.output",
     }
-    assert find_leaks(output, identity) != []
+    assert find_leaks("/var/cache/claude-53023", identity) != []

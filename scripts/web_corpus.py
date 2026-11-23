@@ -31,6 +31,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypedDict
 
 TOY_DIR = "/work/toy"
 """Where the toy repository appears to have been, in every normalised path."""
@@ -52,8 +53,10 @@ _CREDENTIAL = re.compile(
     r"|\bxox[abposr]-[0-9A-Za-z-]{10,}"
     r"|\bAKIA[0-9A-Z]{16}"
     r"|\beyJ[0-9A-Za-z_-]{8,}\.[0-9A-Za-z_-]{8,}\.[0-9A-Za-z_-]{8,}"
+    r"|(?<=Bearer )[0-9A-Za-z._~+/=-]{16,}"
 )
-"""Credential shapes: Anthropic, GitHub, GitLab, Slack and AWS keys and JWTs."""
+"""Credential shapes: Anthropic, GitHub, GitLab, Slack and AWS keys, JWTs and
+bearer tokens."""
 _EMAIL = re.compile(r"[0-9A-Za-z._%+-]+@[0-9A-Za-z.-]+\.[A-Za-z]{2,}")
 TOY_EMAIL = "toy@example.invalid"
 """The toy repository's commit author."""
@@ -123,6 +126,16 @@ def claude_project_name(path: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "-", path)
 
 
+def minted_uuid(n: int) -> str:
+    """The `n`th UUID normalisation mints; session `n` of the recording has it."""
+    return f"{n:08x}-0000-4000-8000-{n:012x}"
+
+
+def _replace_path(text: str, raw: str, new: str) -> str:
+    """`raw` replaced by `new` where it is a whole path or a path's prefix."""
+    return re.sub(re.escape(raw) + r"(?![\w.-]*[\w-])", new.replace("\\", "\\\\"), text)
+
+
 class _Ids:
     """Renumbers ids in first-seen order, so a re-recording diffs cleanly."""
 
@@ -138,8 +151,7 @@ class _Ids:
 
     def uuid(self, raw: str) -> str:
         if raw not in self.uuids:
-            n = len(self.uuids) + 1
-            self.uuids[raw] = f"{n:08x}-0000-4000-8000-{n:012x}"
+            self.uuids[raw] = minted_uuid(len(self.uuids) + 1)
         return self.uuids[raw]
 
     def api_id(self, prefix: str, raw: str) -> str:
@@ -157,13 +169,13 @@ class _Normaliser:
     def text(self, value: str) -> str:
         toy = self.identity.toy_dir.rstrip("/")
         for raw, new in self.identity.renames:
-            value = value.replace(raw, new)
-        value = value.replace(toy, TOY_DIR)
-        value = value.replace(claude_project_name(toy), TOY_PROJECT)
-        value = value.replace(posixpath.dirname(toy), posixpath.dirname(TOY_DIR))
-        value = value.replace(self.identity.home.rstrip("/"), HOME_DIR)
+            value = _replace_path(value, raw, new)
+        value = _replace_path(value, toy, TOY_DIR)
+        value = _replace_path(value, claude_project_name(toy), TOY_PROJECT)
+        value = _replace_path(value, posixpath.dirname(toy), posixpath.dirname(TOY_DIR))
+        value = _replace_path(value, self.identity.home.rstrip("/"), HOME_DIR)
         for secret in self.identity.secrets:
-            value = value.replace(secret, REDACTED)
+            value = re.sub(re.escape(secret), REDACTED, value, flags=re.IGNORECASE)
         value = _CREDENTIAL.sub(REDACTED, value)
         value = _EMAIL.sub(lambda m: m[0] if m[0] in EMAILS_ALLOWED else REDACTED, value)
         for raw, agent in self.ids.agents.items():
@@ -267,7 +279,9 @@ def normalise_home(raw_project: Path, out_home: Path, identity: Identity, order:
 
 
 _NORMAL_UUID = re.compile(r"([0-9a-f]{8})-0000-4000-8000-0000\1")
-_HOST_PATH = re.compile(r"(?<![\w.-])/(?:home|root|tmp|Users|var/folders)(?:/[^\s\"'`)\]]*)?")
+_HOST_PATH = re.compile(
+    r"(?<![\w.-])/(?:home|root|tmp|mnt|media|Users|run/user|var/folders)(?:/[^\s\"'`)\]]*)?"
+)
 
 
 def find_leaks(text: str, identity: Identity | None = None) -> list[str]:
@@ -287,7 +301,8 @@ def find_leaks(text: str, identity: Identity | None = None) -> list[str]:
             *identity.secrets,
             *(raw for raw, _ in identity.renames),
         ]
-        leaks += [literal for literal in literals if literal and literal in text]
+        folded = text.casefold()
+        leaks += [literal for literal in literals if literal and literal.casefold() in folded]
     leaks += _CREDENTIAL.findall(text)
     leaks += [m for m in _EMAIL.findall(text) if m not in EMAILS_ALLOWED]
     leaks += [m for m in _UUID.findall(text) if not _NORMAL_UUID.fullmatch(m)]
@@ -348,10 +363,16 @@ def _is_markdown(text: str) -> bool:
     )
 
 
+def _session_records(session_file: Path) -> list[dict[str, object]]:
+    """A normalised session's records, then its subagents' records."""
+    subagents = sorted((session_file.with_suffix("") / "subagents").glob("agent-*.jsonl"))
+    return [record for path in [session_file, *subagents] for record in _records(path)]
+
+
 def detect_shapes(session_file: Path) -> list[str]:
-    """The `SHAPES` a normalised session (with its subagents) contains."""
+    """The `SHAPES` a normalised session and its subagents contain."""
     found: set[str] = set()
-    for record in _records(session_file):
+    for record in _session_records(session_file):
         if record.get("type") == "system" and record.get("subtype") == "compact_boundary":
             found.add("compaction")
         for block in _blocks(record):
@@ -375,6 +396,50 @@ def detect_shapes(session_file: Path) -> list[str]:
     if subagents.is_dir() and any(subagents.glob("agent-*.jsonl")):
         found.add("subagent")
     return [shape for shape in SHAPES if shape in found]
+
+
+_MARKER = re.compile(r"\b(?:CORPUS|TOY)(?:-[A-Z]+)+\b")
+"""The markers the recorder's prompts and toy files plant."""
+
+
+class Subagent(TypedDict):
+    agent_id: str
+    tool_use_id: str | None
+    description: str | None
+
+
+class SessionDescription(TypedDict):
+    shapes: list[str]
+    markers: list[str]
+    subagents: list[Subagent]
+
+
+def describe_session(session_file: Path) -> SessionDescription:
+    """A normalised session's manifest entry: shapes, markers and subagents.
+
+    Markers are taken from what the user side wrote (prompts and tool
+    results), never from model output, so a re-recording keeps them.
+    """
+    markers: set[str] = set()
+    for record in _session_records(session_file):
+        if record.get("type") == "user":
+            for block in _blocks(record):
+                markers.update(_MARKER.findall(str(block.get("text") or _result_text(block))))
+    subagents: list[Subagent] = []
+    for meta_path in sorted((session_file.with_suffix("") / "subagents").glob("*.meta.json")):
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        subagents.append(
+            {
+                "agent_id": meta_path.name.removeprefix("agent-").removesuffix(".meta.json"),
+                "tool_use_id": meta.get("toolUseId"),
+                "description": meta.get("description"),
+            }
+        )
+    return {
+        "shapes": detect_shapes(session_file),
+        "markers": sorted(markers),
+        "subagents": subagents,
+    }
 
 
 # --- Recording ----------------------------------------------------------------
@@ -499,10 +564,12 @@ def _host_identity(toy_dir: Path, claude_tmp: Path) -> Identity:
         result = subprocess.run(
             ["git", "config", "--global", key], capture_output=True, text=True, check=False
         )
-        secrets.add(result.stdout.strip())
+        value = result.stdout.strip()
+        secrets.update([value, *value.split()])
     for path, keys in (
         (Path("/etc/jailbee/container.json"), ("name", "short_name", "container_prefix", "branch")),
         (Path.home() / ".claude.json", ()),
+        (_config_home() / ".claude.json", ()),
     ):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -513,7 +580,9 @@ def _host_identity(toy_dir: Path, claude_tmp: Path) -> Identity:
         secrets.update(str(data.get(key) or "") for key in keys)
         account = data.get("oauthAccount")
         if isinstance(account, dict):
-            secrets.update(str(value) for value in account.values() if isinstance(value, str))
+            for value in account.values():
+                if isinstance(value, str):
+                    secrets.update([value, *value.split()])
     # A secret this short would match ordinary words; the user's name is in
     # the home path, which is checked separately.
     kept = sorted((s for s in secrets if len(s) >= 5), key=len, reverse=True)
@@ -588,22 +657,34 @@ def _run_step(
     process = subprocess.Popen(
         command, cwd=toy, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True
     )
-    if step.interrupt:
-        deadline = time.monotonic() + STEP_TIMEOUT
-        while time.monotonic() < deadline and process.poll() is None:
-            path = _transcript(toy, session_id)
-            if path.is_file() and '"tool_use"' in path.read_text(encoding="utf-8"):
-                time.sleep(INTERRUPT_GRACE)
-                process.send_signal(signal.SIGINT)
-                break
-            time.sleep(0.5)
+    if step.interrupt and not _interrupt_at_tool_call(process, _transcript(toy, session_id)):
+        process.kill()
+        raise SystemExit(f"error: {session.name}: no tool call to interrupt")
     try:
         _, stderr = process.communicate(timeout=STEP_TIMEOUT)
     except subprocess.TimeoutExpired:
         process.kill()
         raise SystemExit(f"error: claude timed out on {session.name}: {step.prompt!r}") from None
-    if process.returncode != 0 and not step.interrupt:
+    # An interrupted run exits with 130 (or dies of the SIGINT itself).
+    expected = {0, 130, -signal.SIGINT} if step.interrupt else {0}
+    if process.returncode not in expected:
         raise SystemExit(f"error: claude exited {process.returncode}: {stderr.strip()}")
+
+
+def _interrupt_at_tool_call(process: subprocess.Popen[str], transcript: Path) -> bool:
+    """SIGINT `process` once a tool call is in `transcript`; False if none came."""
+    deadline = time.monotonic() + STEP_TIMEOUT
+    while time.monotonic() < deadline and process.poll() is None:
+        try:
+            text = transcript.read_bytes().decode("utf-8", "replace")
+        except OSError:
+            text = ""
+        if '"tool_use"' in text:
+            time.sleep(INTERRUPT_GRACE)
+            process.send_signal(signal.SIGINT)
+            return True
+        time.sleep(0.5)
+    return False
 
 
 def _claude_version(env: dict[str, str]) -> str:
@@ -654,7 +735,11 @@ def record(out_dir: Path) -> list[str]:
             shutil.rmtree(raw_project, ignore_errors=True)
             for _, session_id in sessions:
                 for kind in ("session-env", "file-history", "tasks", "todos"):
-                    shutil.rmtree(_config_home() / kind / session_id, ignore_errors=True)
+                    for path in (_config_home() / kind).glob(f"{session_id}*"):
+                        if path.is_dir() and not path.is_symlink():
+                            shutil.rmtree(path, ignore_errors=True)
+                        else:
+                            path.unlink(missing_ok=True)
 
 
 def _write_corpus(
@@ -676,15 +761,15 @@ def _write_corpus(
         entries = []
         covered: set[str] = set()
         for index, (session, _) in enumerate(sessions, start=1):
-            sid = f"{index:08x}-0000-4000-8000-{index:012x}"
-            shapes = detect_shapes(project / f"{sid}.jsonl")
-            covered.update(shapes)
+            sid = minted_uuid(index)
+            description = describe_session(project / f"{sid}.jsonl")
+            covered.update(description["shapes"])
             entries.append(
                 {
                     "session_id": sid,
                     "name": session.name,
                     "prompts": [step.prompt for step in session.steps],
-                    "shapes": shapes,
+                    **description,
                 }
             )
         missing = [shape for shape in SHAPES if shape not in covered]
@@ -696,12 +781,22 @@ def _write_corpus(
             "missing_shapes": missing,
         }
         (staging / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-        if out_dir.exists():
-            shutil.rmtree(out_dir)
-        shutil.copytree(staging, out_dir)
+        _replace_corpus(staging, out_dir)
         return missing
     finally:
         shutil.rmtree(staging, ignore_errors=True)
+
+
+def _replace_corpus(staging: Path, out_dir: Path) -> None:
+    """Put `staging` at `out_dir`, replacing only an earlier corpus there."""
+    if out_dir.exists() and not (out_dir / MANIFEST).is_file():
+        raise SystemExit(f"error: {out_dir} exists and is not a corpus ({MANIFEST} missing)")
+    incoming = out_dir.with_name(out_dir.name + ".incoming")
+    shutil.rmtree(incoming, ignore_errors=True)
+    shutil.copytree(staging, incoming)
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    incoming.rename(out_dir)
 
 
 def main(argv: list[str] | None = None) -> int:

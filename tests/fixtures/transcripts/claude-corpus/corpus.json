@@ -23,7 +23,17 @@
         "long_output",
         "thinking",
         "compaction"
-      ]
+      ],
+      "markers": [
+        "CORPUS-AFTER-COMPACT",
+        "CORPUS-FAILING",
+        "CORPUS-LONG-OUTPUT",
+        "CORPUS-TOOLS",
+        "TOY-LONG-OUTPUT",
+        "TOY-MARKER-CALC",
+        "TOY-TESTS-PASSED"
+      ],
+      "subagents": []
     },
     {
       "session_id": "00000002-0000-4000-8000-000000000002",
@@ -34,7 +44,11 @@
       "shapes": [
         "markdown",
         "thinking"
-      ]
+      ],
+      "markers": [
+        "CORPUS-MARKDOWN"
+      ],
+      "subagents": []
     },
     {
       "session_id": "00000003-0000-4000-8000-000000000003",
@@ -45,6 +59,17 @@
       "shapes": [
         "tool_call",
         "subagent"
+      ],
+      "markers": [
+        "CORPUS-SUBAGENT",
+        "TOY-MARKER-README"
+      ],
+      "subagents": [
+        {
+          "agent_id": "a0000000000000001",
+          "tool_use_id": "toolu_000007",
+          "description": "Read README marker word"
+        }
       ]
     },
     {
@@ -55,7 +80,11 @@
       ],
       "shapes": [
         "thinking"
-      ]
+      ],
+      "markers": [
+        "CORPUS-THINKING"
+      ],
+      "subagents": []
     },
     {
       "session_id": "00000005-0000-4000-8000-000000000005",
@@ -67,7 +96,11 @@
         "tool_call",
         "tool_error",
         "interrupted"
-      ]
+      ],
+      "markers": [
+        "CORPUS-INTERRUPT"
+      ],
+      "subagents": []
     }
   ],
   "missing_shapes": []
