@@ -164,6 +164,14 @@ class RepoSessions:
         )
         return rows
 
+    def row(self, prefix: str, agent: str, session_id: str) -> SessionRow | None:
+        """One session's list row, found by its id alone; None as `transcript`."""
+        found = self._locate(prefix, agent, session_id)
+        if found is None:
+            return None
+        info = found[3]
+        return SessionRow(info.session_id, agent, info.title, info.last_activity, info.models)
+
     def transcript(self, prefix: str, agent: str, session_id: str) -> SessionTranscript | None:
         """One session read whole; None for an unknown repository, agent or session.
 

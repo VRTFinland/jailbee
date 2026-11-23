@@ -8,7 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page, Route, expect
 
 from jailbee.agent_status import AgentSummary
 from tests.web_fakes import container, repo_group, snapshot_of
@@ -202,3 +202,44 @@ def test_follow_resumes_after_restart_without_losing_or_duplicating_entries(
     page.get_by_text("Reply after restart.", exact=True).scroll_into_view_if_needed()
     expect(page.get_by_text("Reply after restart.", exact=True)).to_be_in_viewport()
     assert_no_horizontal_scroll(page)
+
+
+def test_a_containers_live_sessions_show_while_its_history_is_still_loading(
+    server: E2EServer, logged_in: Page
+) -> None:
+    from datetime import UTC, datetime
+
+    from sqlmodel import Session
+
+    from jailbee.db.models import ContainerSession
+
+    other_id = "22222222-2222-4222-8222-222222222222"
+    stamp = datetime(2026, 11, 2, 9, tzinfo=UTC)
+    with Session(server.engine) as db:
+        db.add(
+            ContainerSession(
+                container_name="work-main",
+                agent="claude",
+                session_id=other_id,
+                first_seen=stamp,
+                last_seen=stamp,
+            )
+        )
+        db.commit()
+    page = logged_in
+    held: list[Route] = []
+    # A slow history: its response is held until the test lets it through.
+    page.route("**/api/containers/*/sessions/history", lambda route: held.append(route))
+
+    page.get_by_role("link", name="work", exact=True).click()
+    page.get_by_role("link", name="main", exact=True).click()
+
+    expect(page.get_by_role("link", name=SESSION_TITLE)).to_contain_text("live")
+    expect(page.get_by_text("Loading earlier sessions…", exact=True)).to_be_visible()
+    expect(page.get_by_role("link", name=OTHER_TITLE)).to_have_count(0)
+    assert len(held) == 1, "the history request is still unanswered"
+
+    held[0].continue_()
+
+    expect(page.get_by_role("link", name=OTHER_TITLE)).to_be_visible()
+    expect(page.get_by_text("Loading earlier sessions…", exact=True)).to_have_count(0)
