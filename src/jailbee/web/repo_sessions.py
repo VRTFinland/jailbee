@@ -18,6 +18,7 @@ from jailbee.transcripts.base import (
     SessionFiles,
     SessionInfo,
     SessionInfoCache,
+    SessionInfoStore,
     TranscriptSource,
     get_source,
 )
@@ -71,9 +72,9 @@ class SessionTranscript:
 class RepoSessions:
     """Lists sessions across a repository's agents; owns the info cache."""
 
-    def __init__(self, homes: AgentHomes) -> None:
+    def __init__(self, homes: AgentHomes, store: SessionInfoStore | None = None) -> None:
         self._homes = homes
-        self._cache = SessionInfoCache()
+        self._cache = SessionInfoCache(store)
 
     def known(self, prefix: str) -> bool:
         return self._homes(prefix) is not None

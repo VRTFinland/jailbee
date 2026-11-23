@@ -134,19 +134,38 @@ class SessionInfo:
     """Every model that answered, in first-use order."""
 
 
+Stamp = tuple[int, int]
+"""A transcript file's ``(size, mtime_ns)``: while it is unchanged, so is its info."""
+
+
+class SessionInfoStore(Protocol):
+    """Where a `SessionInfoCache` keeps its entries beyond the process (a database)."""
+
+    def load(self, path: Path) -> tuple[Stamp, SessionInfo] | None:
+        """The info stored for ``path`` and the stamp it was read at, or None."""
+        ...
+
+    def save(self, path: Path, stamp: Stamp, info: SessionInfo) -> None:
+        """Remember ``info`` for ``path`` at ``stamp``. Never raises."""
+        ...
+
+
 class SessionInfoCache:
     """Remembers `SessionInfo` by the file's path, size and mtime.
 
     Listing reads every transcript; a long-lived caller (the web server) passes
-    one cache so only a file that grew or was rewritten is read again. Owned by
-    the caller, never a module global.
+    one cache so only a file that grew or was rewritten is read again. With a
+    `store`, what was read survives a restart: a miss in memory asks the store
+    before the file is read, and every read is saved to it. Owned by the
+    caller, never a module global.
     """
 
-    def __init__(self) -> None:
-        self._entries: dict[Path, tuple[tuple[int, int], SessionInfo | None]] = {}
+    def __init__(self, store: SessionInfoStore | None = None) -> None:
+        self._entries: dict[Path, tuple[Stamp, SessionInfo | None]] = {}
+        self._store = store
 
     def get(
-        self, path: Path, load: Callable[[], SessionInfo | None], stamp: tuple[int, int] | None
+        self, path: Path, load: Callable[[], SessionInfo | None], stamp: Stamp | None
     ) -> SessionInfo | None:
         """`load()`'s result, reused while `stamp` (size, mtime_ns) is unchanged."""
         if stamp is None:
@@ -154,8 +173,14 @@ class SessionInfoCache:
         hit = self._entries.get(path)
         if hit is not None and hit[0] == stamp:
             return hit[1]
+        stored = self._store.load(path) if self._store is not None else None
+        if stored is not None and stored[0] == stamp:
+            self._entries[path] = stored
+            return stored[1]
         info = load()
         self._entries[path] = (stamp, info)
+        if info is not None and self._store is not None:
+            self._store.save(path, stamp, info)
         return info
 
 

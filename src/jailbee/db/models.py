@@ -531,3 +531,28 @@ class WebFido2Key(SQLModel, table=True):
     last_used_at: datetime | None = Field(
         default=None, sa_column=Column(_UTCDateTime, nullable=True)
     )
+
+
+class SessionInfoRow(SQLModel, table=True):
+    """One agent transcript's session-list row, as last read (#152).
+
+    The web dashboard's `SessionInfoCache` keeps these so a restarted server
+    does not read every transcript again: a row answers while the file's
+    `size` and `mtime_ns` are unchanged. `format` is the reader's
+    `SESSION_INFO_FORMAT`; a row of another format is read again. `models` is
+    a JSON list. Rebuildable: losing the table costs one slow listing.
+    """
+
+    __tablename__ = "session_info_cache"
+
+    path: str = Field(primary_key=True)
+    size: int
+    mtime_ns: int
+    format: int
+    session_id: str
+    title: str
+    started: datetime | None = Field(default=None, sa_column=Column(_UTCDateTime, nullable=True))
+    last_activity: datetime | None = Field(
+        default=None, sa_column=Column(_UTCDateTime, nullable=True)
+    )
+    models: str = "[]"

@@ -184,3 +184,44 @@ def test_without_an_injected_resolver_homes_come_from_the_snapshot(home: Path) -
             ws.receive_text()
             res = client.get("/api/repos/alpha/sessions", headers=headers)
     assert [r["session_id"] for r in res.json()["sessions"]] == [SESSION_A, SESSION_B]
+
+
+def _same_stamp_rewrite(path: Path, old: str, new: str) -> None:
+    """Change the transcript's content but keep its size and mtime."""
+    assert len(old) == len(new)
+    stat = path.stat()
+    path.write_text(path.read_text().replace(old, new))
+    assert path.stat().st_size == stat.st_size
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+
+def test_a_restarted_server_reuses_the_session_info_it_read_before(
+    homes: Homes, home: Path
+) -> None:
+    path = home / "projects" / "-work-repo-other" / f"{SESSION_B}.jsonl"
+    for client in open_client(homes):
+        rows = client.get("/api/repos/alpha/sessions").json()["sessions"]
+        assert rows[1]["title"] == "hello there"
+    _same_stamp_rewrite(path, "hello there", "HELLO THERE")
+
+    for client in open_client(homes):
+        rows = client.get("/api/repos/alpha/sessions").json()["sessions"]
+
+    # Unchanged size and mtime: the stored row answers, the file is not reread.
+    assert rows[1]["title"] == "hello there"
+
+
+def test_a_restarted_server_rereads_a_transcript_that_changed_since(
+    homes: Homes, home: Path
+) -> None:
+    path = home / "projects" / "-work-repo-other" / f"{SESSION_B}.jsonl"
+    for client in open_client(homes):
+        client.get("/api/repos/alpha/sessions")
+    _same_stamp_rewrite(path, "hello there", "HELLO THERE")
+    stat = path.stat()
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1))
+
+    for client in open_client(homes):
+        rows = client.get("/api/repos/alpha/sessions").json()["sessions"]
+
+    assert rows[1]["title"] == "HELLO THERE"

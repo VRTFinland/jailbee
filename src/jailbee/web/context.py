@@ -12,6 +12,7 @@ from jailbee.web.auth import Clock, PinHolder, RateLimiter, SessionStore, utcnow
 from jailbee.web.auth_admin import TotpVerifier
 from jailbee.web.fido2_auth import Fido2Auth
 from jailbee.web.repo_sessions import AgentHomes, RepoSessions, snapshot_homes
+from jailbee.web.session_info_store import DbSessionInfoStore
 from jailbee.web.state import (
     DEFAULT_GRACE_SECONDS,
     DEFAULT_SNAPSHOT_WAIT_SECONDS,
@@ -107,7 +108,10 @@ class WebContext:
             self.deps.engine, clock=self.deps.clock, monotonic=self.deps.monotonic
         )
         self.hub = StateHub(self.deps.snapshot_source, grace_seconds=self.deps.grace_seconds)
-        self.repo_sessions = RepoSessions(self.deps.agent_homes or snapshot_homes(self.hub.latest))
+        self.repo_sessions = RepoSessions(
+            self.deps.agent_homes or snapshot_homes(self.hub.latest),
+            DbSessionInfoStore(self.deps.engine),
+        )
         self.render_cache = RenderCache()
         watch: WatchFactory
         if self.deps.file_watch is None:
