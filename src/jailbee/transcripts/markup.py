@@ -5,18 +5,34 @@ from __future__ import annotations
 import re
 
 _META_WRAPPER = re.compile(
-    r"\A\s*<(command-name|command-message|command-args|local-command-stdout|"
-    r"local-command-caveat|system-reminder)>(.*?)</\1>",
+    r"\s*<(command-[a-z-]+|local-command-[a-z-]+|system-reminder|"
+    r"task-notification|task_notification|bash-input|bash-stdout|bash-stderr|"
+    r"user-prompt-submit-hook|teammate-message|coordinator-task|ide_selection|"
+    r"terminal|webhook-payload)(?:\s+[^<>]*?)?>(.*?)</\1>",
     re.DOTALL,
 )
-"""Known agent wrappers, not arbitrary XML a person may type as a prompt."""
+"""Claude's leading wrappers: command/local-command families, injected reminders,
+background task/monitor notifications, !-mode input/output, prompt-submit hooks,
+teammate/coordinator messages, IDE selections/terminals and webhook payloads.
+The recorded corpus covers commands, reminders and task notifications; the
+remaining names were checked against Claude Code 2.1.330. Attributes are allowed
+on known names (for example teammate_id or nonce). Nested tags belong
+to their outer wrapper. Unknown XML (such as <example>) stays typed text, and a
+known name only counts with a matching closing tag at the start of the text.
+"""
+
+
+def split_prompt(text: str) -> tuple[str, str]:
+    """Separate the leading agent markup from typed text for titles and rendering."""
+    end = 0
+    while match := _META_WRAPPER.match(text, end):
+        end = match.end()
+    return text[:end], text[end:].strip()
 
 
 def prompt_text(text: str) -> str:
     """Keep typed text after any leading agent wrappers."""
-    while match := _META_WRAPPER.match(text):
-        text = text[match.end() :]
-    return text.strip()
+    return split_prompt(text)[1]
 
 
 def is_meta_wrapper(text: str) -> bool:

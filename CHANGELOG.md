@@ -206,8 +206,10 @@ before editing `## Unreleased`.
   and agent state; a container or repository opens its agent sessions, and a
   session opens as a typeset transcript with rendered Markdown, folded tool
   calls, optional thinking, subagent transcripts and live updates. Session
-  titles use the first typed prompt rather than agent wrapper markup, falling
-  back to the first slash command in command-only sessions
+  titles use the first typed prompt rather than agent wrapper markup (including
+  task notifications and `!`-mode input/output), falling back to the first slash
+  command with bounded title lookup in command-only sessions. Mixed records show
+  their injected wrapper as metadata separately from the typed prompt
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Themes
   (light, dark, e-ink) and an e-ink display profile with page turns are chosen
   per device, and the app installs as a PWA with no CDN assets. Login uses a

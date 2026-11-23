@@ -14,6 +14,12 @@ repository, but not attributed to a container.
 Session titles use the first typed prompt, skipping agent wrapper records,
 local command output, caveats and injected context. A session with only slash
 commands uses its first command (for example, `/model`) instead of raw markup.
+Once a command fallback is available, title lookup stops after 32 candidate user
+records rather than parsing a command-only transcript to the end. Task
+notifications, `!`-mode input/output and prompt hooks are agent metadata too.
+A leading wrapper followed by typed text is split in the transcript: the wrapper
+is shown as metadata, and only the typed text is shown as the prompt. Unknown
+XML-like tags, such as `<example>`, remain part of the typed prompt.
 
 Rows on the front page are styled like the terminal dashboard's: a container
 booting, in autostart, running another background job or in a failed job gets a
