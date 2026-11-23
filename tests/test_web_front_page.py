@@ -261,6 +261,41 @@ def test_excluded_repo_appears_nowhere_in_the_message(factory: FakeSourceFactory
     assert "secret" not in raw
 
 
+def test_excluded_orchestrator_is_redacted_from_a_visible_child(
+    factory: FakeSourceFactory,
+) -> None:
+    from jailbee.orchestration.view import ChildView
+
+    snap = snapshot_of(
+        repo_group(
+            "alpha",
+            container("alpha-task", child=ChildView("secret-orch", "working", (), False, ())),
+        ),
+        repo_group("secret", container("secret-orch", repo="secret")),
+    )
+    for client, token in open_client(factory, frozenset({"secret"})):
+        raw = first_page(client, token, factory, snap)
+    assert "secret" not in raw
+    relation = json.loads(raw)["view"]["repos"][0]["containers"][0]["child"]
+    assert relation["orchestrator"] is None
+    assert relation["orchestrator_short_name"] == "hidden orchestrator"
+
+
+def test_cross_repo_orchestrator_uses_its_own_repo_prefix(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    from jailbee.orchestration.view import ChildView
+
+    client, token = started
+    snap = snapshot_of(
+        repo_group("alpha", container("alpha-task", child=ChildView("other-repo-orch", "working", (), False, ()))),
+        repo_group("other-repo"),
+    )
+    page = json.loads(first_page(client, token, factory, snap))
+    child = page["view"]["repos"][0]["containers"][0]["child"]
+    assert child["orchestrator_short_name"] == "orch"
+
+
 def test_the_page_updates_on_each_snapshot(
     started: tuple[TestClient, str], factory: FakeSourceFactory
 ) -> None:

@@ -47,20 +47,42 @@ def front_page_view(snapshot: Snapshot, scope: RemoteRepoScope, now: datetime) -
     shown = nonempty_columns(groups, now=now, enabled=enabled)
     groups = sort_groups(groups, DEFAULT_SORT, shown, now=now)
     containers = [c for g in groups for c in g.containers]
+    prefixes = sorted({g.prefix for g in snapshot.groups} | set(scope.excluded), key=len, reverse=True)
     specs = visible_fields(now, containers, shown)
     return FrontPageView(
         seq=snapshot.seq,
         gathered_at=snapshot.gathered_at,
         columns=[ColumnHead(name=s.name, header=s.header) for s in specs],
         repos=[
-            RepoRow(prefix=group.prefix, containers=_rows(group.containers, specs))
+            RepoRow(prefix=group.prefix, containers=_rows(group.containers, specs, prefixes, scope))
             for group in groups
         ],
     )
 
 
+def _child_relation(
+    info: ContainerInfo, prefixes: list[str], scope: RemoteRepoScope
+) -> ChildRelation | None:
+    if info.child is None:
+        return None
+    parent = info.child.orchestrator
+    prefix = next((p for p in prefixes if parent.startswith(f"{p}-")), info.repo)
+    hidden = not scope.allows(prefix)
+    return ChildRelation(
+        orchestrator=None if hidden else parent,
+        orchestrator_short_name=(
+            "hidden orchestrator" if hidden else parent.removeprefix(f"{prefix}-")
+        ),
+        state=info.child.state,
+        runner=info.child.runner,
+    )
+
+
 def _rows(
-    containers: list[ContainerInfo], specs: list[FieldSpec[ContainerInfo]]
+    containers: list[ContainerInfo],
+    specs: list[FieldSpec[ContainerInfo]],
+    prefixes: list[str],
+    scope: RemoteRepoScope,
 ) -> list[ContainerRow]:
     layout = fork_layout(containers)
     return [
@@ -76,16 +98,7 @@ def _rows(
             child_count=sum(
                 c.child is not None and c.child.orchestrator == info.name for c in containers
             ),
-            child=(
-                ChildRelation(
-                    orchestrator=info.child.orchestrator,
-                    orchestrator_short_name=info.child.orchestrator.removeprefix(f"{info.repo}-"),
-                    state=info.child.state,
-                    runner=info.child.runner,
-                )
-                if info.child is not None
-                else None
-            ),
+            child=_child_relation(info, prefixes, scope),
         )
         for info in containers
     ]

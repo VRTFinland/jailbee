@@ -106,7 +106,7 @@ class ChildRelation(BaseModel):
     """Display-only orchestration facts, without grant or child rights."""
 
     model_config = ConfigDict(frozen=True)
-    orchestrator: str
+    orchestrator: str | None
     orchestrator_short_name: str
     state: str
     runner: str | None

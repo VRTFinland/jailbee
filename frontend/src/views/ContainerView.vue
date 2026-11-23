@@ -57,7 +57,7 @@ watch(name, async (selected, _previous, onCleanup) => {
             <h1>{{ name }}</h1>
         </header>
         <p v-if="info?.child" class="parent">
-            Child of <router-link :to="{name: 'container', params: {name: info.child.orchestrator}}">{{ info.child.orchestrator_short_name }}</router-link>
+            Child of <router-link v-if="info.child.orchestrator" :to="{name: 'container', params: {name: info.child.orchestrator}}">{{ info.child.orchestrator_short_name }}</router-link><span v-else>{{ info.child.orchestrator_short_name }}</span>
             · {{ info.child.state }}<template v-if="info.child.runner"> · {{ info.child.runner }}</template>
         </p>
         <section v-if="info?.orchestrator || children.length" class="children" aria-label="Children">

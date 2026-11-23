@@ -55,7 +55,7 @@ export interface ContainerRow {
     orchestrator: boolean
     child_count: number
     child: {
-        orchestrator: string
+        orchestrator: string | null
         orchestrator_short_name: string
         state: string
         runner: string | null

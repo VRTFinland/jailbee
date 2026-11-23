@@ -49,7 +49,7 @@ function agentLabel(state: string): string {
                     Orchestrator · {{ c.child_count }} {{ c.child_count === 1 ? 'child' : 'children' }}
                 </p>
                 <p v-if="c.child" class="orchestration">
-                    Child of <router-link :to="{name: 'container', params: {name: c.child.orchestrator}}">{{ c.child.orchestrator_short_name }}</router-link>
+                    Child of <router-link v-if="c.child.orchestrator" :to="{name: 'container', params: {name: c.child.orchestrator}}">{{ c.child.orchestrator_short_name }}</router-link><span v-else>{{ c.child.orchestrator_short_name }}</span>
                     · {{ c.child.state }}<template v-if="c.child.runner"> · {{ c.child.runner }}</template>
                     <template v-if="!repo.containers.some(row => row.name === c.child?.orchestrator)"> · orchestrator not listed</template>
                 </p>

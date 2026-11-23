@@ -23,6 +23,8 @@ child's state and runner when known. A child whose orchestrator is absent
 stays visible with a `Child of` label. Container pages link to their children
 or back to their orchestrator. These relationships update with the live
 snapshot; indentation, borders and text keep them readable without colour.
+An orchestrator in an excluded repository is labelled `hidden orchestrator`,
+without its name or a link.
 
 ## Install
 

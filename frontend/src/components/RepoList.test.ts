@@ -56,6 +56,16 @@ describe("RepoList", () => {
         expect(row.text()).toContain("orchestrator not listed")
     })
 
+    it("labels a hidden orchestrator without creating a link", async () => {
+        const wrapper = mountList()
+        const child = {...view.repos[0].containers[1], child: {
+            orchestrator: null, orchestrator_short_name: "hidden orchestrator", state: "working", runner: null,
+        }}
+        await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [child]}]}})
+        expect(wrapper.get(".orchestration").text()).toContain("Child of hidden orchestrator")
+        expect(wrapper.find(".orchestration a").exists()).toBe(false)
+    })
+
     it("groups containers under a heading per repository", () => {
         const wrapper = mountList()
         const repos = wrapper.findAll("section.repo")
