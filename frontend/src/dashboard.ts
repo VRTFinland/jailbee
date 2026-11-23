@@ -7,6 +7,7 @@ import {
     PROTOCOL_VERSION,
     type ClientMessage,
     type FollowKey,
+    type MetaMode,
     type FrontPageView,
     type RenderedEntry,
     type ServerMessage,
@@ -39,6 +40,7 @@ export interface FollowHandlers {
 interface Follow {
     key: FollowKey
     offset: number
+    meta: MetaMode
     handlers: FollowHandlers
 }
 
@@ -85,9 +87,9 @@ export class Dashboard {
     }
 
     /** Follow a transcript from `offset`; resubscribes after reconnects. Returns unfollow. */
-    follow(key: FollowKey, offset: number, handlers: FollowHandlers): () => void {
+    follow(key: FollowKey, offset: number, meta: MetaMode, handlers: FollowHandlers): () => void {
         const id = keyId(key)
-        const entry: Follow = {key, offset, handlers}
+        const entry: Follow = {key, offset, meta, handlers}
         this.follows.set(id, entry)
         if (this.state.connected) this.subscribe(entry)
         return () => {
@@ -105,6 +107,7 @@ export class Dashboard {
             v: PROTOCOL_VERSION,
             key: entry.key,
             offset: entry.offset,
+            meta: entry.meta,
         })
     }
 

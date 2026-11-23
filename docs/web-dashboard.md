@@ -356,6 +356,19 @@ Open the settings page (the Settings link on the front page) to choose
 a theme (light, dark, e-ink), body and code font sizes, and whether thinking
 blocks are shown. These choices are stored in the browser on that device only.
 
+**Agent context** controls the agent's own wrapper records in a transcript:
+task notifications, system reminders, command output and shell input/output.
+*Hidden* (the default) sends none of them, so they cost neither bandwidth nor
+page weight. *Collapsed* sends a one-line label (for example "Task
+notification" or "Shell: ls") and loads the content from the server only when
+you expand it. *Shown* sends and displays everything. A slash command you typed
+(`/model`, `/clear`) always appears as a one-line label, in every mode. Changing
+the setting reloads the open transcript. The choice is a `meta=hidden|collapsed|shown`
+query parameter on the session and subagent endpoints and a `meta` field on the
+live `subscribe` message; a withheld record's content is served by
+`GET /api/repos/{prefix}/sessions/{agent}/{session_id}/entries/{entry_id}`
+(also under `.../subagents/{agent_id}/`).
+
 The display profile **E-ink** is for e-paper readers and slow-refresh
 screens: no animation, content moves in page turns instead of scrolling, live
 transcript entries are held back until you turn the page rather than moving

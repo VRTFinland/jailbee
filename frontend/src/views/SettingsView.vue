@@ -4,6 +4,7 @@
 import {onMounted, ref} from "vue"
 import {fetchSession, renameSession} from "../api"
 import {useDashboard} from "../dashboard"
+import type {MetaMode} from "../protocol"
 import {
     DISPLAY_PROFILES,
     FONT_SIZE_RANGE,
@@ -150,6 +151,23 @@ function number(event: Event): number {
                 />
                 Show thinking
             </label>
+            <label class="choice">
+                Agent context
+                <select
+                    class="agent-context"
+                    :value="settings.agentContext"
+                    @change="updateSettings({agentContext: ($event.target as HTMLSelectElement).value as MetaMode})"
+                >
+                    <option value="hidden">Hidden</option>
+                    <option value="collapsed">Collapsed</option>
+                    <option value="shown">Shown</option>
+                </select>
+            </label>
+            <p class="muted">
+                Task notifications, system reminders and command output the agent writes into the
+                transcript. Hidden sends none of it; Collapsed sends a label and loads the content when
+                opened. Slash commands you typed always show as a line.
+            </p>
         </fieldset>
     </div>
 </template>

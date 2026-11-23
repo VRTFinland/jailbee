@@ -171,7 +171,7 @@ URL = f"/api/repos/alpha/sessions/claude/{SESSION}"
 
 
 def entries(client: TestClient) -> list[dict[str, object]]:
-    res = client.get(URL)
+    res = client.get(URL, params={"meta": "shown"})
     assert res.status_code == 200, res.text
     got: list[dict[str, object]] = res.json()["entries"]
     return got
@@ -312,7 +312,7 @@ def test_injected_user_records_are_meta_and_cannot_supply_session_titles(
         json.dumps(record) + "\n" + json.dumps(_record(2, "user", "Fix the title")) + "\n"
     )
 
-    response = client.get(URL)
+    response = client.get(URL, params={"meta": "shown"})
 
     assert response.status_code == 200
     body = response.json()
@@ -337,7 +337,7 @@ def test_a_compaction_summary_is_meta_and_cannot_supply_the_session_title(
         json.dumps(summary) + "\n" + json.dumps(_record(2, "user", "Fix the title")) + "\n"
     )
 
-    body = client.get(URL).json()
+    body = client.get(URL, params={"meta": "shown"}).json()
 
     assert body["title"] == "Fix the title"
     summarised, typed = body["entries"]
@@ -361,7 +361,7 @@ def test_an_interruption_notice_is_meta_and_cannot_supply_the_session_title(
         + "\n"
     )
 
-    body = client.get(URL).json()
+    body = client.get(URL, params={"meta": "shown"}).json()
 
     assert body["title"] == "Fix the title"
     interrupted, typed = body["entries"]
@@ -387,7 +387,7 @@ def test_a_mixed_user_record_separates_injected_context_from_the_typed_prompt(
         + "\n"
     )
 
-    body = client.get(URL).json()
+    body = client.get(URL, params={"meta": "shown"}).json()
 
     assert body["title"] == "Fix **titles**"
     injected, typed, later = body["entries"]
@@ -410,6 +410,91 @@ def test_an_unknown_xml_tag_stays_typed_text_in_both_title_and_transcript(
     (entry,) = body["entries"]
     assert entry["meta"] is False
     assert "&lt;example&gt;broken&lt;/example&gt;" in entry["html"]
+
+
+def _meta_session(client: TestClient, home: Path) -> None:
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    lines = [
+        _record(1, "user", "<task-notification>Job done</task-notification>"),
+        _record(
+            2,
+            "user",
+            "<command-name>/model</command-name><command-args>opus</command-args>"
+            "<command-message>model</command-message>",
+        ),
+        _record(3, "user", "<system-reminder>Be brief</system-reminder>\nFix **titles**"),
+    ]
+    path.write_text("".join(json.dumps(r) + "\n" for r in lines))
+
+
+def _summary(client: TestClient, mode: str | None) -> list[tuple[object, ...]]:
+    res = client.get(URL, params={"meta": mode} if mode else None)
+    assert res.status_code == 200, res.text
+    return [
+        (e["meta"], e["label"], e["html"] != "", e["expandable"]) for e in res.json()["entries"]
+    ]
+
+
+def test_agent_context_is_hidden_by_default_but_slash_commands_keep_a_label(
+    client: TestClient, home: Path
+) -> None:
+    _meta_session(client, home)
+    rows = _summary(client, None)
+    assert rows == [
+        (True, "Command: /model opus", False, False),
+        (False, None, True, False),
+    ]
+    assert rows == _summary(client, "hidden")
+    assert "Job done" not in client.get(URL).text and "Be brief" not in client.get(URL).text
+
+
+def test_collapsed_agent_context_sends_labels_without_content(
+    client: TestClient, home: Path
+) -> None:
+    _meta_session(client, home)
+    assert _summary(client, "collapsed") == [
+        (True, "Task notification", False, True),
+        (True, "Command: /model opus", False, True),
+        (True, "System reminder", False, True),
+        (False, None, True, False),
+    ]
+    text = client.get(URL, params={"meta": "collapsed"}).text
+    assert "Job done" not in text and "Be brief" not in text
+
+
+def test_shown_agent_context_sends_labels_and_content(client: TestClient, home: Path) -> None:
+    _meta_session(client, home)
+    assert _summary(client, "shown") == [
+        (True, "Task notification", True, False),
+        (True, "Command: /model opus", True, False),
+        (True, "System reminder", True, False),
+        (False, None, True, False),
+    ]
+
+
+def test_an_unknown_agent_context_mode_is_rejected(client: TestClient) -> None:
+    assert client.get(URL, params={"meta": "bogus"}).status_code == 422
+
+
+def test_a_withheld_meta_record_is_fetched_on_expand(client: TestClient, home: Path) -> None:
+    _meta_session(client, home)
+    first = client.get(URL, params={"meta": "collapsed"}).json()["entries"][0]
+    res = client.get(f"{URL}/entries/{first['id']}")
+    assert res.status_code == 200
+    assert res.json()["id"] == first["id"]
+    assert "Job done" in res.json()["html"]
+    mixed = client.get(URL, params={"meta": "collapsed"}).json()["entries"][2]
+    assert mixed["id"].endswith(":meta")
+    assert "Be brief" in client.get(f"{URL}/entries/{mixed['id']}").json()["html"]
+
+
+def test_entry_content_is_404_for_a_typed_prompt_or_unknown_id(
+    client: TestClient, home: Path
+) -> None:
+    _meta_session(client, home)
+    typed = client.get(URL, params={"meta": "shown"}).json()["entries"][-1]
+    assert client.get(f"{URL}/entries/{typed['id']}").status_code == 404
+    assert client.get(f"{URL}/entries/nope").status_code == 404
 
 
 def test_a_subagent_is_referenced_as_data(client: TestClient) -> None:

@@ -117,4 +117,6 @@ class WebContext:
         else:
             watch = self.deps.file_watch
         cache = self.render_cache
-        self.follows = TranscriptFollows(watch, lambda entries: render_entries(entries, cache))
+        self.follows = TranscriptFollows(
+            watch, lambda entries, meta: render_entries(entries, cache, meta)
+        )
