@@ -11,9 +11,9 @@ from playwright.sync_api import Page, expect
 
 from jailbee.web.auth_admin import add_totp_key, list_sessions, revoke_session
 from jailbee.web.login_link import mint
-from tests_e2e.flows import log_in_with_pin
 from tests.web_fakes import FakeClock, snapshot_of
 from tests_e2e.browser_errors import BrowserErrors
+from tests_e2e.flows import log_in_with_pin
 from tests_e2e.server import E2EServer
 
 
@@ -25,8 +25,12 @@ def test_wrong_pin_shows_an_error_and_rate_limit_shows_the_remaining_wait(
     server.push(snapshot_of())
     page.goto(server.url)
     page.get_by_label("This device").fill("hall tablet")
-    browser_errors.expect("console", "Failed to load resource: the server responded with a status of 401", times=5)
-    browser_errors.expect("console", "Failed to load resource: the server responded with a status of 429", times=2)
+    browser_errors.expect(
+        "console", "Failed to load resource: the server responded with a status of 401", times=5
+    )
+    browser_errors.expect(
+        "console", "Failed to load resource: the server responded with a status of 429", times=2
+    )
 
     for _ in range(5):
         page.get_by_label("PIN").fill("000000")
@@ -56,9 +60,7 @@ def test_wrong_pin_shows_an_error_and_rate_limit_shows_the_remaining_wait(
     expect(page.get_by_role("button", name="Log out")).to_be_visible()
 
 
-def test_authenticator_code_signs_in(
-    make_server: Callable[..., E2EServer], page: Page
-) -> None:
+def test_authenticator_code_signs_in(make_server: Callable[..., E2EServer], page: Page) -> None:
     clock = FakeClock()
     server = make_server(clock=clock)
     server.push(snapshot_of())
@@ -77,8 +79,10 @@ def test_authenticator_code_signs_in(
 
 @pytest.mark.parametrize("link_state", ["fresh", "used", "expired"])
 def test_one_time_link_signs_in_only_while_fresh(
-    make_server: Callable[..., E2EServer], page: Page,
-    browser_errors: BrowserErrors, link_state: str
+    make_server: Callable[..., E2EServer],
+    page: Page,
+    browser_errors: BrowserErrors,
+    link_state: str,
 ) -> None:
     clock = FakeClock()
     server = make_server(clock=clock)
@@ -95,7 +99,9 @@ def test_one_time_link_signs_in_only_while_fresh(
         clock.advance(timedelta(seconds=61))
 
     if link_state != "fresh":
-        browser_errors.expect("console", "Failed to load resource: the server responded with a status of 401")
+        browser_errors.expect(
+            "console", "Failed to load resource: the server responded with a status of 401"
+        )
     page.goto(url)
 
     if link_state == "fresh":
@@ -154,7 +160,7 @@ def test_admin_revocation_closes_the_live_socket_and_returns_to_login(
     """)
     log_in_with_pin(page, server.url, server.pin.current, "revoked tablet")
     expect(page.get_by_role("banner")).to_contain_text("revoked tablet")
-    session, = list_sessions(server.engine)
+    (session,) = list_sessions(server.engine)
 
     revoke_session(server.engine, session.id)
     server.push(snapshot_of())
