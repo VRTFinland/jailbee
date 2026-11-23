@@ -579,7 +579,9 @@ def _large_session(path: Path, *, prompt: str | None, middle_bytes: int) -> None
         opening = {
             "type": "user",
             "timestamp": "2026-11-01T10:00:00.000Z",
-            "message": {"content": prompt if prompt is not None else "<command-name>/x</command-name>"},
+            "message": {
+                "content": prompt if prompt is not None else "<command-name>/x</command-name>"
+            },
         }
         stream.write(json.dumps(opening) + "\n")
         early = {
@@ -639,7 +641,9 @@ def test_the_last_activity_is_found_behind_one_huge_last_record(
     huge = {
         "timestamp": "2026-11-03T08:00:00.000Z",
         "type": "user",
-        "message": {"content": [{"type": "tool_result", "tool_use_id": "t", "content": "y" * 900_000}]},
+        "message": {
+            "content": [{"type": "tool_result", "tool_use_id": "t", "content": "y" * 900_000}]
+        },
     }
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(huge))  # the last line, still without its newline

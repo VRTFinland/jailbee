@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+
 class DbSessionInfoStore:
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
