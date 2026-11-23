@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import re
+
 from playwright.sync_api import Page, expect
 
 from tests.web_fakes import container, repo_group, snapshot_of
+from tests_e2e.browser_errors import BrowserErrors
 from tests_e2e.flows import log_in_with_pin
 from tests_e2e.server import E2EServer
 
