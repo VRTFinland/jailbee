@@ -34,6 +34,15 @@ function mayReload(): boolean {
     }
 }
 
+/** A compatible, authenticated connection ends the guard window. */
+function clearReloadGuard(): void {
+    try {
+        sessionStorage.removeItem(RELOAD_KEY)
+    } catch {
+        // Nothing was stored without tab storage.
+    }
+}
+
 export class DashboardSocket {
     private ws: WebSocket | null = null
     private attempt = 0
@@ -74,6 +83,7 @@ export class DashboardSocket {
             const message = JSON.parse(event.data) as ServerMessage
             if (message.type === "hello") {
                 this.attempt = 0
+                clearReloadGuard()
                 this.handlers.onConnectionChange?.(true)
             }
             this.handlers.onMessage(message)
