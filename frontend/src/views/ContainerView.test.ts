@@ -70,6 +70,7 @@ describe("ContainerView", () => {
         const {wrapper} = await mountContainer(vi.fn().mockResolvedValue(jsonResponse(200, list)), dashboard, "alpha-task-a")
         expect(wrapper.get(".parent a").attributes("href")).toBe("/containers/alpha-orch")
         expect(wrapper.get(".parent").text()).toContain("Child of orch · working · codex/opus")
+        expect(wrapper.get(".parent").text()).toContain("orchestrator not listed")
     })
 
     it("loads the selected child's sessions when following a relationship link", async () => {

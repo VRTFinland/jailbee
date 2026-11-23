@@ -27,14 +27,23 @@ coloured edge and a phase label, and a Stopped container is dimmed. The e-ink
 theme has no colour, so phases differ by edge style (dashed, dotted, double,
 heavy) and the label, and a Stopped row is drawn without top, right and bottom edges instead of a fade.
 
-Children appear indented under their orchestrator on the front page and in
-repository container lists, with a child count on the orchestrator and each
-child's state and runner when known. A child whose orchestrator is absent
-stays visible with a `Child of` label. Container pages link to their children
-or back to their orchestrator. These relationships update with the live
-snapshot; indentation, borders and text keep them readable without colour.
+Children in the same repository appear indented under their orchestrator on
+the front page and in repository container lists. Child counts and container
+pages include children across all visible repositories; excluded repositories
+never contribute to counts. Each child shows its state and runner when known.
+A `Child of` label links to the orchestrator even across repositories;
+`orchestrator not listed` means it is absent from the entire visible snapshot,
+not just the current repository. An orchestrator's repository and short name
+come from its snapshot row, with prefix matching only when that row is absent.
 An orchestrator in an excluded repository is labelled `hidden orchestrator`,
 without its name or a link.
+
+Container pages link to their children or back to their orchestrator, resetting
+the page turn and scroll position when following a related-container link.
+These relationships update with the live snapshot. Indentation and the
+`Child of` label distinguish nesting without colour; phase edge styles remain
+reserved for booting, autostart, background jobs and failures, also on nested
+rows in the e-ink theme.
 
 ## Install
 

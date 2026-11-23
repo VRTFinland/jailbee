@@ -208,8 +208,11 @@ before editing `## Unreleased`.
   ([#109](https://github.com/VRTFinland/jailbee/issues/109)). The front page
   shows repositories and containers with the terminal dashboard's core columns
   and agent state. Front-page and repository container lists nest children under
-  their orchestrator, showing child counts, states and runners; container pages
-  link between children and their orchestrator. A container or repository opens
+  their orchestrator, showing child counts across all visible repositories,
+  states and runners; container pages link between children and their
+  orchestrator and reset page turns when following those links. Nesting keeps
+  e-ink phase edges distinct ([#152](https://github.com/VRTFinland/jailbee/issues/152)).
+  A container or repository opens
   its agent sessions, and a session opens as a typeset transcript with rendered
   Markdown, folded tool calls, optional thinking, subagent transcripts and live
   updates. Session titles use the first typed prompt rather than agent wrapper

@@ -435,10 +435,14 @@ hooks); command-only sessions use their first slash command, with title lookup
 bounded to 32 candidate user records once that fallback exists. A leading agent
 wrapper and typed text in one record are displayed separately as metadata and a
 prompt; unknown XML-like tags remain typed text.
-The front page and repository container lists nest children under their
-orchestrator, show its child count and each child's state/runner, and keep
-absent-parent children labelled. Container pages link between parent and
-children; the hierarchy follows live snapshots.
+The front page and repository container lists indent same-repository children
+under their orchestrator, show its child count across all visible repositories
+and each child's state/runner, and keep absent-parent children labelled.
+`orchestrator not listed` means absent from the entire visible snapshot;
+excluded repositories never contribute to counts. Container pages link between
+parent and children across repositories and reset page turns and scroll when
+following those links. The hierarchy follows live snapshots; nesting uses
+indentation and a `Child of` label, not the e-ink job-phase edge style.
 
 | Command | What it does |
 |---|---|

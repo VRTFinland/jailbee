@@ -17,6 +17,9 @@ const containers = computed(() => {
     const view = dashboard?.state.view
     return view ? {...view, repos: view.repos.filter(repo => repo.prefix === prefix.value)} : null
 })
+const listedContainers = computed(() => dashboard?.state.view?.repos.flatMap(
+    repo => repo.containers.map(row => row.name),
+) ?? [])
 const sessions = ref<SessionSummary[] | null>(null)
 const error = ref<string | null>(null)
 
@@ -54,7 +57,7 @@ onMounted(async () => {
         </header>
         <section v-if="containers && containers.repos.length" aria-label="Containers">
             <h2>Containers</h2>
-            <RepoList :view="containers" :show-headings="false" />
+            <RepoList :view="containers" :show-headings="false" :listed-containers="listedContainers" />
         </section>
         <h2>Sessions</h2>
         <p v-if="error" class="notice">{{ error }}</p>

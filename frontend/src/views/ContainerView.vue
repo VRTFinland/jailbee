@@ -29,6 +29,11 @@ watch(name, async (selected, _previous, onCleanup) => {
     onCleanup(() => { current = false })
     list.value = null
     error.value = null
+    await nextTick()
+    if (!current) return
+    pager.page.value = 0
+    window.scrollTo(0, 0)
+    pager.measure()
     try {
         const result = await apiFetch<ContainerSessionList>(
             `/api/containers/${encodeURIComponent(selected)}/sessions`,
@@ -59,6 +64,7 @@ watch(name, async (selected, _previous, onCleanup) => {
         <p v-if="info?.child" class="parent">
             Child of <router-link v-if="info.child.orchestrator" :to="{name: 'container', params: {name: info.child.orchestrator}}">{{ info.child.orchestrator_short_name }}</router-link><span v-else>{{ info.child.orchestrator_short_name }}</span>
             · {{ info.child.state }}<template v-if="info.child.runner"> · {{ info.child.runner }}</template>
+            <template v-if="!rows.some(row => row.name === info?.child?.orchestrator)"> · orchestrator not listed</template>
         </p>
         <section v-if="info?.orchestrator || children.length" class="children" aria-label="Children">
             <h2>Children ({{ children.length }})</h2>

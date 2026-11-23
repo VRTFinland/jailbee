@@ -1,7 +1,15 @@
 <script setup lang="ts">
+import {computed} from "vue"
 import type {FrontPageView} from "../protocol"
 
-withDefaults(defineProps<{view: FrontPageView; showHeadings?: boolean}>(), {showHeadings: true})
+const props = withDefaults(defineProps<{
+    view: FrontPageView
+    showHeadings?: boolean
+    listedContainers?: string[]
+}>(), {showHeadings: true})
+const listed = computed(() => new Set(props.listedContainers ?? props.view.repos.flatMap(
+    repo => repo.containers.map(row => row.name),
+)))
 
 const AGENT_LABELS: Record<string, string> = {
     waiting: "waiting for you",
@@ -51,7 +59,7 @@ function agentLabel(state: string): string {
                 <p v-if="c.child" class="orchestration">
                     Child of <router-link v-if="c.child.orchestrator" :to="{name: 'container', params: {name: c.child.orchestrator}}">{{ c.child.orchestrator_short_name }}</router-link><span v-else>{{ c.child.orchestrator_short_name }}</span>
                     · {{ c.child.state }}<template v-if="c.child.runner"> · {{ c.child.runner }}</template>
-                    <template v-if="!repo.containers.some(row => row.name === c.child?.orchestrator)"> · orchestrator not listed</template>
+                    <template v-if="!listed.has(c.child.orchestrator ?? '')"> · orchestrator not listed</template>
                 </p>
                 <dl class="cells">
                     <template v-for="(col, i) in view.columns" :key="col.name">
@@ -102,7 +110,6 @@ function agentLabel(state: string): string {
 }
 .row.nested {
     margin-left: var(--space-3);
-    border-left-style: double;
 }
 .orchestration {
     margin: var(--space-2) 0 0;
