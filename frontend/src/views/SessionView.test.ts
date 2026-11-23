@@ -9,6 +9,7 @@ import {removeItem} from "../storage"
 import SessionView from "./SessionView.vue"
 
 enableAutoUnmount(afterEach)
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView")
 
 function jsonResponse(status: number, body: unknown): Response {
     return new Response(JSON.stringify(body), {
@@ -78,6 +79,11 @@ async function mountSession(fetchMock: ReturnType<typeof vi.fn>) {
 
 afterEach(() => {
     removeItem("jailbee.showThinking")
+    updateSettings({displayProfile: "normal", showThinking: false})
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    if (originalScrollIntoView) Object.defineProperty(Element.prototype, "scrollIntoView", originalScrollIntoView)
+    else Reflect.deleteProperty(Element.prototype, "scrollIntoView")
     document.body.innerHTML = ""
 })
 
@@ -88,6 +94,8 @@ describe("SessionView", () => {
 
         expect(fetchMock.mock.calls[0][0]).toBe("/api/repos/alpha/sessions/claude/s-1")
         expect(wrapper.get("h1").text()).toBe("Fix the login bug")
+        expect(wrapper.get("h1").attributes("title")).toBe("Fix the login bug")
+        expect(wrapper.get("h1").attributes("aria-label")).toBe("Fix the login bug")
         const answers = wrapper.findAll(".entry.assistant")
         expect(answers).toHaveLength(2)
         expect(answers[0].html()).toContain("<h2>Plan</h2>")
@@ -132,7 +140,7 @@ describe("SessionView", () => {
 
     it("hides Latest answer after jumping or scrolling to the reply, and restores it away", async () => {
         let answerTop = 1200
-        Object.defineProperty(window, "innerHeight", {value: 800, configurable: true})
+        vi.spyOn(window, "innerHeight", "get").mockReturnValue(800)
         vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
             return {
                 top: this.id === "entry-a2" ? answerTop : 0,
@@ -141,7 +149,6 @@ describe("SessionView", () => {
         })
         Element.prototype.scrollIntoView = vi.fn(() => {
             answerTop = 140
-            window.dispatchEvent(new Event("scroll"))
         })
         const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
         expect(wrapper.find(".jump-latest").exists()).toBe(true)
@@ -158,8 +165,30 @@ describe("SessionView", () => {
         window.dispatchEvent(new Event("scroll"))
         await wrapper.vm.$nextTick()
         expect(wrapper.find(".jump-latest").exists()).toBe(false)
-        wrapper.unmount()
-        vi.restoreAllMocks()
+    })
+
+    it.each(["normal", "eink"] as const)("treats a reply behind the measured bottom guard as hidden (%s)", async (displayProfile) => {
+        updateSettings({displayProfile})
+        vi.spyOn(window, "innerHeight", "get").mockReturnValue(800)
+        const guard = document.createElement("div")
+        guard.className = "bottom-guard"
+        document.body.append(guard)
+        let answerTop = displayProfile === "eink" ? 695 : 745
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            if (this.classList.contains("bottom-guard")) return {top: 740, bottom: 800} as DOMRect
+            if (this.classList.contains("page-nav")) return {top: 684, bottom: 740} as DOMRect
+            return {
+                top: this.id === "entry-a2" ? answerTop : 0,
+                bottom: this.id === "entry-a2" ? answerTop + 20 : 120,
+            } as DOMRect
+        })
+        const {wrapper} = await mountSession(vi.fn().mockResolvedValue(jsonResponse(200, transcript)))
+        expect(wrapper.find(".jump-latest").exists()).toBe(true)
+
+        answerTop = displayProfile === "eink" ? 680 : 730
+        window.dispatchEvent(new Event("scroll"))
+        await wrapper.vm.$nextTick()
+        expect(wrapper.find(".jump-latest").exists()).toBe(false)
     })
 
     it("keeps title and context in the header and treats replies hidden behind it as out of view", async () => {
@@ -179,8 +208,6 @@ describe("SessionView", () => {
         window.dispatchEvent(new Event("resize"))
         await wrapper.vm.$nextTick()
         expect(wrapper.find(".jump-latest").exists()).toBe(false)
-        wrapper.unmount()
-        vi.restoreAllMocks()
     })
 
     it("says the session was not found on a 404", async () => {

@@ -6,7 +6,8 @@ import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
 import PageNav from "../components/PageNav.vue"
 import ToolCall from "../components/ToolCall.vue"
-import {RESERVED_PX, usePager} from "../composables/usePager"
+import {readableBottom} from "../composables/readableBottom"
+import {usePager} from "../composables/usePager"
 import {useDashboard} from "../dashboard"
 import type {
     RenderedEntry,
@@ -16,8 +17,10 @@ import type {
 } from "../protocol"
 import {settings} from "../settings"
 
+const header = ref<HTMLElement | null>(null)
 const headerHeight = ref(0)
-const pager = usePager(() => headerHeight.value)
+const headerInset = ref(0)
+const pager = usePager(() => headerInset.value)
 const eink = computed(() => settings.displayProfile === "eink")
 /** E-ink: live entries wait here until the reader taps the notice. */
 const pending = ref<RenderedEntry[]>([])
@@ -40,6 +43,7 @@ const sessionRef = computed(() => ({
 const transcript = ref<TranscriptView | null>(null)
 const error = ref<string | null>(null)
 const thinking = computed(() => settings.showThinking)
+const title = computed(() => transcript.value?.title || (agentId.value === null ? "Untitled session" : "Subagent"))
 
 /** Tool results and subagent refs, by the call they belong to. */
 const byCall = computed(() => {
@@ -75,12 +79,12 @@ const latestAnswer = computed(() => {
     return null
 })
 
-const header = ref<HTMLElement | null>(null)
 const latestVisible = ref(false)
 
 function measureVisibility() {
     const headerRect = header.value?.getBoundingClientRect()
     headerHeight.value = headerRect ? headerRect.bottom - headerRect.top : 0
+    headerInset.value = Math.max(0, headerRect?.bottom ?? 0)
     const el = latestAnswer.value === null ? null : document.getElementById(entryDomId(latestAnswer.value))
     if (el === null) {
         latestVisible.value = false
@@ -88,7 +92,7 @@ function measureVisibility() {
     }
     const rect = el.getBoundingClientRect()
     const top = Math.max(0, headerRect?.bottom ?? 0)
-    const bottom = window.innerHeight - (eink.value ? RESERVED_PX : 32)
+    const bottom = readableBottom()
     // Any visible part counts, including a reply taller than the viewport.
     latestVisible.value = rect.bottom > top && rect.top < bottom && rect.bottom > rect.top
 }
@@ -234,7 +238,7 @@ onMounted(async () => {
             <router-link class="toggle" :to="{name: 'settings'}">Settings</router-link>
             </div>
             <template v-if="transcript">
-                <h1>{{ transcript.title || (agentId === null ? "Untitled session" : "Subagent") }}</h1>
+                <h1 :title="title" :aria-label="title">{{ title }}</h1>
                 <p class="session-meta muted">
                     <span>{{ transcript.agent }}</span>
                     <span v-if="transcript.models.length" class="mono" :title="transcript.models.join(', ')">{{

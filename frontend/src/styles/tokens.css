@@ -116,8 +116,7 @@ button.link {
 body {
     padding-bottom: var(--guard-bottom);
 }
-body::after {
-    content: "";
+.bottom-guard {
     position: fixed;
     left: 0;
     right: 0;
