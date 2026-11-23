@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // Holds the dashboard socket open on every signed-in page (so a deep link or
 // reload of any view is live), and closed on public pages such as login.
-import {onBeforeUnmount, watch} from "vue"
+import {onBeforeUnmount, onMounted, watch} from "vue"
+import {fetchServerMode} from "./api"
 import {useRoute, useRouter} from "vue-router"
 import {useDashboard} from "./dashboard"
 
@@ -23,7 +24,32 @@ watch(
     {immediate: true},
 )
 
-onBeforeUnmount(() => dashboard?.stop())
+// Login has no socket to notice a server replacement. Poll while visible so
+// an already-open tab (including a PWA) follows the temporary setup server too.
+let checkingMode = false
+let modeTimer: ReturnType<typeof setInterval> | undefined
+async function checkMode() {
+    if (checkingMode || document.hidden) return
+    checkingMode = true
+    try {
+        if (await fetchServerMode() === "setup" && route.name !== "setup") {
+            await router.replace({name: "setup"})
+        }
+    } finally {
+        checkingMode = false
+    }
+}
+onMounted(() => {
+    modeTimer = setInterval(() => void checkMode(), 2_000)
+    window.addEventListener("online", checkMode)
+    document.addEventListener("visibilitychange", checkMode)
+})
+onBeforeUnmount(() => {
+    clearInterval(modeTimer)
+    window.removeEventListener("online", checkMode)
+    document.removeEventListener("visibilitychange", checkMode)
+    dashboard?.stop()
+})
 </script>
 
 <template>

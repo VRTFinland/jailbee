@@ -48,6 +48,53 @@ def register_key(page: Page, server: E2EServer) -> str:
     return url
 
 
+@pytest.mark.parametrize(
+    ("path", "stale_token"),
+    [
+        ("/index.html#/login", False),
+        ("/index.html#/", True),
+        ("/#/login", False),
+        ("/#/", True),
+    ],
+)
+def test_setup_mode_routes_old_dashboard_urls_to_key_registration(
+    make_server: Callable[..., E2EServer],
+    page: Page,
+    virtual_key: None,
+    path: str,
+    stale_token: bool,
+) -> None:
+    server = make_server(setup=True)
+    url = f"http://localhost:{server.port}"
+    if stale_token:
+        page.add_init_script("localStorage.setItem('jailbee.token', 'expired-session')")
+    page.goto(f"{url}{path}")
+
+    expect(page.get_by_label("Setup PIN")).to_be_visible(timeout=2_000)
+    page.get_by_label("Key name").fill("Recovered tab key")
+    page.get_by_label("Setup PIN").fill(server.pin.current)
+    page.get_by_role("button", name="Register key", exact=True).click()
+    expect(page.get_by_text("Registered Recovered tab key.", exact=True)).to_be_visible()
+
+
+def test_open_login_tab_switches_to_setup_without_a_reload(
+    make_server: Callable[..., E2EServer], page: Page, virtual_key: None
+) -> None:
+    server = make_server()
+    url = f"http://localhost:{server.port}"
+    page.goto(f"{url}/#/login")
+    expect(page.get_by_label("This device")).to_be_visible()
+
+    server.stop()
+    server.start(setup=True)
+
+    expect(page.get_by_label("Setup PIN")).to_be_visible()
+    page.get_by_label("Key name").fill("Open tab key")
+    page.get_by_label("Setup PIN").fill(server.pin.current)
+    page.get_by_role("button", name="Register key", exact=True).click()
+    expect(page.get_by_text("Registered Open tab key.", exact=True)).to_be_visible()
+
+
 def test_registered_security_key_logs_in_to_the_dashboard(
     make_server: Callable[..., E2EServer], page: Page, virtual_key: None
 ) -> None:

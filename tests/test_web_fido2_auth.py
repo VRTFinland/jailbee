@@ -264,8 +264,17 @@ def test_setup_pin_guessing_is_limited_and_says_when_to_retry(
     assert guess() == (429, "45")
 
 
+def test_dashboard_mode_is_public_and_not_cached(client: TestClient) -> None:
+    response = client.get("/api/mode")
+    assert response.status_code == 200
+    assert response.json() == {"mode": "dashboard"}
+    assert response.headers["cache-control"] == "no-store"
+
+
 def test_setup_mode_lists_nothing_but_its_mode_and_registration(setup_client: TestClient) -> None:
-    assert setup_client.get("/api/mode").json() == {"mode": "setup"}
+    response = setup_client.get("/api/mode")
+    assert response.json() == {"mode": "setup"}
+    assert response.headers["cache-control"] == "no-store"
     assert setup_client.get("/api/auth/methods").status_code == 404
     assert setup_client.post("/api/auth", json={}).status_code == 404
 

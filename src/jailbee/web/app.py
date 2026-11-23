@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.staticfiles import StaticFiles
 
 from jailbee.web.context import WebContext, WebDeps
@@ -51,6 +51,11 @@ def create_app(deps: WebDeps) -> FastAPI:
         ),
     )
     app.add_middleware(SecurityHeaders)
+    @app.get("/api/mode")
+    def mode(response: Response) -> dict[str, str]:
+        response.headers["Cache-Control"] = "no-store"
+        return {"mode": "dashboard"}
+
     app.include_router(auth_routes.router)
     app.include_router(ws_routes.router)
     app.include_router(repo_routes.router)

@@ -5,7 +5,7 @@ import {
     type Router,
     type RouterHistory,
 } from "vue-router"
-import {authIsDisabled, getToken, NO_LOGIN_TOKEN, setToken} from "./api"
+import {authIsDisabled, fetchServerMode, getToken, NO_LOGIN_TOKEN, setToken} from "./api"
 import FrontPage from "./views/FrontPage.vue"
 import RepoView from "./views/RepoView.vue"
 import ContainerView from "./views/ContainerView.vue"
@@ -34,6 +34,9 @@ export const routes: RouteRecordRaw[] = [
 export function createAppRouter(history: RouterHistory = createWebHashHistory()): Router {
     const router = createRouter({history, routes})
     router.beforeEach(async (to) => {
+        if (await fetchServerMode() === "setup") {
+            return to.name === "setup" ? true : {name: "setup", replace: true}
+        }
         if (to.meta.public || getToken()) return true
         if (await authIsDisabled()) {
             setToken(NO_LOGIN_TOKEN)

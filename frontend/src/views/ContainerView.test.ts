@@ -3,6 +3,7 @@ import {describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"
 import {setToken} from "../api"
 import {createAppRouter} from "../router"
+import {withDashboardMode} from "../test-http"
 import ContainerView from "./ContainerView.vue"
 import {DASHBOARD, Dashboard} from "../dashboard"
 import {orchestrationView} from "../test-fixtures"
@@ -37,9 +38,9 @@ const list = {
     ],
 }
 
-async function mountContainer(fetchMock: ReturnType<typeof vi.fn>, dashboard?: Dashboard, name = "alpha-1") {
+async function mountContainer(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>, dashboard?: Dashboard, name = "alpha-1") {
     setToken("tok")
-    vi.stubGlobal("fetch", fetchMock)
+    vi.stubGlobal("fetch", withDashboardMode(fetchMock))
     const router = createAppRouter(createMemoryHistory())
     await router.push(`/containers/${name}`)
     await router.isReady()

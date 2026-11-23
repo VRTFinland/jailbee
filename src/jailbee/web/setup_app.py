@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, StringConstraints
@@ -101,7 +101,8 @@ router = APIRouter(prefix="/api", tags=["setup"])
 
 
 @router.get("/mode")
-def mode() -> dict[str, str]:
+def mode(response: Response) -> dict[str, str]:
+    response.headers["Cache-Control"] = "no-store"
     return {"mode": "setup"}
 
 
