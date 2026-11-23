@@ -111,9 +111,7 @@ def clearable(phase: str, pid: int, *, live: bool | None = None) -> bool:
     return phase in TERMINAL_PHASES or not (worker_alive(pid) if live is None else live)
 
 
-def job_label(
-    phase: str, pid: int, *, kind: str | None = None, live: bool | None = None
-) -> str:
+def job_label(phase: str, pid: int, *, kind: str | None = None, live: bool | None = None) -> str:
     """Plain-text label for a job's state.
 
     A terminal phase speaks for itself. A working phase whose worker has

@@ -14,7 +14,6 @@ from jailbee.db import get_engine
 from jailbee.lifecycle import list_containers, ls_field_specs
 from jailbee.state_service.protocol import Snapshot, decode, encode
 
-
 JOB_CASES = [
     ("autostart", "autostart"),
     ("create", "creating"),
@@ -54,9 +53,12 @@ def test_successful_worker_exit_does_not_turn_a_gathered_job_into_an_error(
     with Session(get_engine()) as session:
         job = background.list_jobs(session, cfg.container_prefix)[name]
     assert containers[0].job_live
-    snapshot = Snapshot(1, datetime.now(UTC), False, [
-        RepoGroup(cfg.container_prefix, str(tmp_path), None, containers)
-    ])
+    snapshot = Snapshot(
+        1,
+        datetime.now(UTC),
+        False,
+        [RepoGroup(cfg.container_prefix, str(tmp_path), None, containers)],
+    )
     decoded = decode(encode(snapshot))
     assert isinstance(decoded, Snapshot)
     container = decoded.groups[0].containers[0]
@@ -120,10 +122,15 @@ def test_worker_killed_mid_phase_still_publishes_one_error(
     cfg = make_cfg(tmp_path)
     name = f"{cfg.container_prefix}-work"
     incus = MagicMock()
-    incus.list_containers.return_value = [{
-        "name": name, "status": "Running", "config": {},
-        "profiles": ["default", f"{cfg.container_prefix}-base"], "state": None,
-    }]
+    incus.list_containers.return_value = [
+        {
+            "name": name,
+            "status": "Running",
+            "config": {},
+            "profiles": ["default", f"{cfg.container_prefix}-base"],
+            "state": None,
+        }
+    ]
     incus.config_get.return_value = None
     alive = mocker.patch("jailbee.background.worker_alive", return_value=True)
     with Session(get_engine()) as session:

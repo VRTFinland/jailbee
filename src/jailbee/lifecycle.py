@@ -4231,7 +4231,9 @@ def ls_field_specs(
 
         if c.job_phase is None:
             return ""
-        label = background.job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind, live=c.job_live)
+        label = background.job_label_or_empty(
+            c.job_phase, c.job_pid, kind=c.job_kind, live=c.job_live
+        )
         if _job_dead(c):
             return f"[red]{label}[/red]"
         return f"[yellow]{label}[/yellow]"
@@ -4241,7 +4243,9 @@ def ls_field_specs(
 
         if c.job_phase is None:
             return None
-        return background.job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind, live=c.job_live)
+        return background.job_label_or_empty(
+            c.job_phase, c.job_pid, kind=c.job_kind, live=c.job_live
+        )
 
     def _created_cell(c: ContainerInfo) -> str:
         if c.created_at is None:

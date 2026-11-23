@@ -775,7 +775,9 @@ def autostart_worker_live(container: ContainerInfo) -> bool:
     return (
         container.job_phase is not None
         and container.job_pid is not None
-        and not background.clearable(container.job_phase, container.job_pid, live=container.job_live)
+        and not background.clearable(
+            container.job_phase, container.job_pid, live=container.job_live
+        )
     )
 
 

@@ -99,7 +99,9 @@ def job_rows(groups: Iterable[RepoGroup]) -> tuple[JobRow, ...]:
                 failed = c.job_phase in background.TERMINAL_PHASES
             else:
                 failed = background.clearable(c.job_phase, c.job_pid, live=c.job_live)
-            label = background.job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind, live=c.job_live)
+            label = background.job_label_or_empty(
+                c.job_phase, c.job_pid, kind=c.job_kind, live=c.job_live
+            )
             rows.append(JobRow(c.name, label or c.job_phase, failed))
     return tuple(rows)
 
