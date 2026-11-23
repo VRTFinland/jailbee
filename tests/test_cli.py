@@ -1027,6 +1027,18 @@ def test_ls_honours_the_configured_field_list(mocker, tmp_path):
     assert "NETWORK" not in result.stdout
 
 
+def test_ls_explicit_legacy_yaml_fields_are_not_migrated(mocker, tmp_path):
+    repo = _setup_repo_with_columns(
+        tmp_path, "ls:\n  fields: [name, target_diff, ahead_count, behind_count]\n"
+    )
+    mocker.patch("jailbee.cli._resolve_config_path", return_value=repo / ".jailbee/config.yaml")
+    _one_container(mocker)
+    result = CliRunner().invoke(app, ["ls"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.stdout
+    assert "SYNC" not in result.stdout
+    assert "DIFF" in result.stdout and "↑" in result.stdout and "↓" in result.stdout
+
+
 def test_ls_fields_flag_beats_the_configured_list(mocker, tmp_path):
     from typer.testing import CliRunner
 

@@ -5960,7 +5960,10 @@ Incus or live agents; failure traces and screenshots land in
 `_build/e2e-results/`. The separate **Web dashboard** GitHub Actions workflow
 runs both on web-related pull requests and `main`/`dev` pushes (or manual
 dispatch) and uploads browser failure evidence. See the
-[testing guide](web-dashboard.md#testing-from-a-checkout).
+[testing guide](web-dashboard.md#testing-from-a-checkout). The browser gate
+also registers and logs in with a virtual FIDO2 key against the real setup and
+dashboard servers, and checks visible refusal after key removal; no physical
+security key is needed.
 
 The older manual smoke check below covers a narrower navigation path.
 

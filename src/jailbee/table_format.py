@@ -11,7 +11,8 @@ Conventions:
   ``--fields`` and what appears as a key in JSON output. Use
   ``snake_case`` and keep it stable across releases.
 * ``cell`` may return Rich markup; ``json`` must return a
-  JSON-serialisable value (use ``None`` for missing data).
+  JSON-serialisable value (use ``None`` for missing data). A ``json=None``
+  callable marks a table-only field, rejected by explicit JSON selection.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ class FieldSpec[T]:
     name: str
     header: str
     cell: Callable[[T], str]
-    json: Callable[[T], Any]
+    json: Callable[[T], Any] | None
     justify: Justify = "left"
     default_table: bool = True
     default_json: bool = True
@@ -71,6 +72,10 @@ class FieldSpec[T]:
     # first click uses: quantities and times largest first, text A→Z.
     sort: Callable[[T], SortKey | None] | None = None
     sort_desc_first: bool = False
+    # For a table-only field (``json=None``): what to suggest when JSON output
+    # is requested for it, e.g. "use git_status for JSON". ``None`` gives a
+    # generic message.
+    json_hint: str | None = None
 
 
 def shows_by_default_in_dashboard[T](field: FieldSpec[T]) -> bool:
@@ -95,7 +100,7 @@ def _parse_fields[T](
     if spec_str is None:
         if fmt == "table":
             return [f for f in all_fields if f.default_table]
-        return [f for f in all_fields if f.default_json]
+        return [f for f in all_fields if f.default_json and f.json is not None]
     requested = [s.strip() for s in spec_str.split(",") if s.strip()]
     if not requested:
         raise typer.BadParameter("--fields must list at least one field name")
@@ -104,6 +109,10 @@ def _parse_fields[T](
         if name not in by_name:
             allowed = ", ".join(sorted(by_name))
             raise typer.BadParameter(f"unknown field {name!r}; allowed: {allowed}")
+        if fmt == "json" and by_name[name].json is None:
+            hint = by_name[name].json_hint
+            suffix = f"; {hint}" if hint else " and has no JSON value"
+            raise typer.BadParameter(f"field {name!r} is table-only{suffix}")
         out.append(by_name[name])
     return out
 
@@ -214,7 +223,7 @@ def emit[T](
     selected = _parse_fields(fields, all_fields, fmt)
 
     if fmt == "json":
-        payload = [{f.name: f.json(r) for f in selected} for r in rows]
+        payload = [{f.name: f.json(r) for f in selected if f.json is not None} for r in rows]
         # Use print() so the output is unstyled and pipeable, regardless
         # of the Rich console's terminal detection.
         print(json.dumps(payload, indent=2, default=str))

@@ -138,7 +138,9 @@ class ContainerInfo:
     # mount rows). None = not read or unreadable, never zero.
     outbox_pr: int | None = None
     outbox_issue: int | None = None
-    job_live: bool = False
+    # Liveness belongs to the gathered phase, not to the later rendering time.
+    # None is an unobserved/hand-built row; real job snapshots carry a bool.
+    job_live: bool | None = None
     # Outbox "Sent" log records of this container's current incarnation; set by
     # the state service's gatherer (never by `list_containers`), 0 = none.
     sent_count: int = 0
@@ -941,7 +943,7 @@ def list_containers(
         for c in out:
             row = ops.get(c.name)
             if row is not None:
-                c.job_live = not background.clearable(row.phase, row.pid)
+                c.job_live = not background.clearable(row.phase, row.pid, live=row.observed_live)
                 c.job_phase = row.phase
                 c.job_pid = row.pid
                 c.job_kind = row.op_kind
@@ -957,7 +959,7 @@ def list_containers(
                     ip=None,
                     memory_limit=None,
                     repo=cfg.container_prefix,
-                    job_live=not background.clearable(row.phase, row.pid),
+                    job_live=not background.clearable(row.phase, row.pid, live=row.observed_live),
                     job_phase=row.phase,
                     job_pid=row.pid,
                     job_kind=row.op_kind,
@@ -3978,11 +3980,11 @@ LS_FIT_DROP_ORDER: tuple[str, ...] = (
     "network",
     "outbox",
     "target_diff",
-    "sync",
     "base",
     "conflict",
     "behind_count",
     "ahead_count",
+    "sync",
     "pr",
     "wt",
     "job",
@@ -4222,14 +4224,16 @@ def ls_field_specs(
         assert c.job_phase is not None
         if c.job_pid is None:
             return c.job_phase in background.TERMINAL_PHASES
-        return background.clearable(c.job_phase, c.job_pid)
+        return background.clearable(c.job_phase, c.job_pid, live=c.job_live)
 
     def _job_cell(c: ContainerInfo) -> str:
         from jailbee import background
 
         if c.job_phase is None:
             return ""
-        label = background.job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind)
+        label = background.job_label_or_empty(
+            c.job_phase, c.job_pid, kind=c.job_kind, live=c.job_live
+        )
         if _job_dead(c):
             return f"[red]{label}[/red]"
         return f"[yellow]{label}[/yellow]"
@@ -4239,7 +4243,9 @@ def ls_field_specs(
 
         if c.job_phase is None:
             return None
-        return background.job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind)
+        return background.job_label_or_empty(
+            c.job_phase, c.job_pid, kind=c.job_kind, live=c.job_live
+        )
 
     def _created_cell(c: ContainerInfo) -> str:
         if c.created_at is None:
@@ -4815,7 +4821,8 @@ def ls_field_specs(
             sort_desc_first=True,
             header="SYNC",
             cell=_sync_cell,
-            json=_git_status_json,
+            json=None,
+            json_hint="use git_status for JSON",
             default_json=False,
         ),
         table_format.FieldSpec(
