@@ -30,7 +30,9 @@ def test_makefile_install_restarts_the_broker() -> None:
     makefile = Path(__file__).resolve().parents[1] / "Makefile"
     recipe = makefile.read_text().split("\ninstall:\n", 1)[1].split("\n\n", 1)[0]
 
-    assert "systemctl --user try-restart jailbee-broker.service" in recipe
+    units_line = next(line for line in recipe.splitlines() if "for unit in" in line)
+    assert "jailbee-broker" in units_line.split()
+    assert 'systemctl --user try-restart "$$unit.service"' in recipe
 
 
 def test_install_writes_unit_and_reports_change(private_home: Path) -> None:
