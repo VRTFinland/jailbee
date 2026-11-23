@@ -4,6 +4,7 @@ import {createMemoryHistory} from "vue-router"
 import {setToken} from "../api"
 import type {TranscriptView} from "../protocol"
 import {createAppRouter} from "../router"
+import {withDashboardMode} from "../test-http"
 import SessionView from "./SessionView.vue"
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -72,9 +73,9 @@ const child: TranscriptView = {
     ],
 }
 
-async function mountAt(path: string, fetchMock: ReturnType<typeof vi.fn>) {
+async function mountAt(path: string, fetchMock: ReturnType<typeof vi.fn<typeof fetch>>) {
     setToken("tok")
-    vi.stubGlobal("fetch", fetchMock)
+    vi.stubGlobal("fetch", withDashboardMode(fetchMock))
     const router = createAppRouter(createMemoryHistory())
     await router.push(path)
     await router.isReady()

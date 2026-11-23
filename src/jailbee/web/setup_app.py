@@ -22,7 +22,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    status,
+)
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, StringConstraints
@@ -32,6 +41,7 @@ from jailbee.web import auth_admin
 from jailbee.web.auth import Clock, PinHolder, RateLimiter, utcnow
 from jailbee.web.deps import RequestRp
 from jailbee.web.fido2_auth import Fido2Auth, Fido2Error
+from jailbee.web.protocol import CLOSE_SETUP_MODE
 from jailbee.web.security_headers import SecurityHeaders
 
 if TYPE_CHECKING:
@@ -101,8 +111,16 @@ router = APIRouter(prefix="/api", tags=["setup"])
 
 
 @router.get("/mode")
-def mode() -> dict[str, str]:
+def mode(response: Response) -> dict[str, str]:
+    response.headers["Cache-Control"] = "no-store"
     return {"mode": "setup"}
+
+
+@router.websocket("/ws")
+async def dashboard_socket(ws: WebSocket) -> None:
+    """Tell an already-open dashboard tab, reconnecting its socket, to open setup."""
+    await ws.accept()
+    await ws.close(code=CLOSE_SETUP_MODE, reason="Setup mode")
 
 
 def _source(request: Request) -> str:

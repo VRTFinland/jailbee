@@ -261,10 +261,13 @@ before editing `## Unreleased`.
   one-time PIN, TOTP or a FIDO2 key (registered in a CLI-started setup mode),
   with 30-day device sessions managed only through `jailbee remote web auth`;
   `jailbee remote web open` logs the local browser in through a one-time link,
-  including when the login page is already open. Login errors show the server's
-  remaining rate-limit wait (minutes for long waits). A protocol mismatch reloads
-  the tab at most once per minute until it connects again, then offers manual
-  reload (above the session title bar) if assets stay stale
+  including when the login page is already open. Open dashboard and login tabs
+  switch automatically to the key-registration view during FIDO2 setup, including
+  bookmarked routes and saved sessions. Login errors distinguish an unavailable
+  endpoint from refused credentials and show the server's remaining rate-limit wait
+  (minutes for long waits). A protocol mismatch reloads the tab at most once per
+  minute until it connects again, then offers manual reload (above the session
+  title bar) if assets stay stale
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)).
   `remote.web` sets the listen address, port, auth and excluded repositories,
   and `enable|disable|status` manage a systemd user unit that restarts the
