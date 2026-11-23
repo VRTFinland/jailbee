@@ -18,19 +18,22 @@ TITLE = "Investigate the long session transcript and keep all of this title acce
 
 
 def record(number: int, kind: str, text: str) -> str:
-    return json.dumps(
-        {
-            "uuid": f"entry-{number}",
-            "sessionId": SESSION,
-            "timestamp": "2026-11-02T10:00:00.000Z",
-            "type": kind,
-            "message": {
-                "role": kind,
-                "content": [{"type": "text", "text": text}] if kind == "assistant" else text,
-                "model": "test-model",
-            },
-        }
-    ) + "\n"
+    return (
+        json.dumps(
+            {
+                "uuid": f"entry-{number}",
+                "sessionId": SESSION,
+                "timestamp": "2026-11-02T10:00:00.000Z",
+                "type": kind,
+                "message": {
+                    "role": kind,
+                    "content": [{"type": "text", "text": text}] if kind == "assistant" else text,
+                    "model": "test-model",
+                },
+            }
+        )
+        + "\n"
+    )
 
 
 def open_transcript(
