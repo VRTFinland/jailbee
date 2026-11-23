@@ -6012,10 +6012,24 @@ Expected: one `  <session>: <prompt>` line per scripted step, then
 `corpus written to ...`. A `shapes not captured:` line names the shapes
 (tool call, failing tool call, long output, Markdown, subagent, thinking,
 interruption, compaction) this Claude version did not produce; `corpus.json`
-lists them under `missing_shapes`. The recorder deletes its raw sessions from
-the Claude home and refuses to write anything `find_leaks` flags. Still read
-the diff before committing: it is public. `uv run pytest
-tests/test_web_corpus.py` then checks the committed files again.
+lists them under `missing_shapes`. The recorder deletes its raw sessions,
+project entry in `$CLAUDE_CONFIG_DIR/.claude.json` (or `~/.claude.json`
+without an override), and new shell snapshots, including after a failed run.
+A cleanup error is reported after attempting the remaining cleanup actions. Do not run other Claude sessions
+against that config directory during recording: new shell snapshots are treated
+as recording state.
+
+The normaliser keeps only known nested transcript fields and redacts effective
+git author/committer identities (including environment and system config),
+short usernames as whole words, and credential-shaped strings. The leak gate
+allows only `/work/toy`, `/home/user` and `/work/claude-tmp` absolute paths;
+identity fields must use toy placeholders. Generic hex blobs of 40 or more
+characters and base64 blobs of 48 or more characters are treated as secrets.
+The ordinary suite applies the same fixed deny list without needing the
+recording host's identity. Still read the diff before committing: it is public,
+and a shape scan cannot identify an arbitrary person's name in prose without
+an identity field. `uv run pytest tests/test_web_corpus.py` checks the committed
+files again.
 
 ## Orchestration broker (real host)
 
