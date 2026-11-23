@@ -696,7 +696,7 @@ class DashboardSession:
         ]
 
     def view(self, hover: Hit | None = None) -> DashboardView:
-        """What to draw now. ``now`` is whole seconds, so an idle view compares equal."""
+        """What to draw now: whole-second clock, subsecond spinner only while running."""
         # A refusal or a service failure may carry a remedy and wraps when long;
         # running jobs are a status line that stays on the border. What is off
         # about one repo or container lives in its own details panel.
@@ -721,11 +721,13 @@ class DashboardSession:
                 for c in g.containers
                 if c.name not in sources and not self._merge_eligible(pick, c.name)
             )
+        now = _now()
+        counts = None if self.queue.empty else self.queue.counts()
         return DashboardView(
             groups=self.groups,
             all_groups=self.all_groups,
             selected=self.selected,
-            now=_now().replace(microsecond=0),
+            now=now.replace(microsecond=0),
             git_enabled=self.git_enabled,
             enabled=self.enabled,
             overlay=self.overlay,
@@ -750,7 +752,8 @@ class DashboardSession:
             ineligible=ineligible,
             transport=self.transport,
             ssh_policy=self.ssh_policy,
-            queue=None if self.queue.empty else self.queue.counts(),
+            queue=counts,
+            queue_frame=now.microsecond // 250_000 if counts and counts.running else 0,
         )
 
     def title(self) -> str:

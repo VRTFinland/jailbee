@@ -482,21 +482,6 @@ class _CropTop:
             yield Segment.line()
 
 
-_BADGE_GAP = "  "
-
-
-def _system_row(view: DashboardView, width: int, *, shown: bool) -> Text:
-    """The queue badge (while the queue holds entries), then the host status in what is left."""
-    line = Text(no_wrap=True, overflow="ellipsis")
-    if view.queue is not None:
-        line.append_text(queue_badge(view.queue))
-        if shown:
-            line.append(_BADGE_GAP)
-    if shown and view.system is not None:
-        line.append_text(system_line(view.system, max(0, width - line.cell_len)))
-    return line
-
-
 class DashboardFrame(Vertical):
     """The whole dashboard inside one rounded border.
 
@@ -641,8 +626,7 @@ class DashboardFrame(Vertical):
         width = max(0, self.app.size.width - FRAME_INSET_COLS)
         height = max(0, self.app.size.height - FRAME_BORDER_ROWS)
         system_shown = view.show_system and view.system is not None
-        # The queue badge shares the status row, and keeps it while the status is hidden.
-        system_row = int((system_shown or view.queue is not None) and height > 0)
+        system_row = int(system_shown and height > 0)
         # The status row is one line above the table; the layout budgets what is left.
         height -= system_row
         console = self.app.console
@@ -656,13 +640,21 @@ class DashboardFrame(Vertical):
                 )
             )
 
-        self.border_title = frame_title(
+        title = frame_title(
             view.groups,
             view.folded,
             git_enabled=view.git_enabled,
             now=view.now,
             marked=len(view.marked),
         )
+        if view.queue is not None:
+            badge = queue_badge(view.queue, frame=view.queue_frame)
+            # Textual reserves two corners, two border strokes and label padding.
+            title_width = max(0, self.app.size.width - 6 - badge.cell_len - 2)
+            title.truncate(title_width, overflow="ellipsis", pad=True)
+            title.append("  ")
+            title.append_text(badge)
+        self.border_title = title
         subtitle, inline = notice_parts(view.notice, wraps=view.notice_wraps)
         if view.update is not None:
             # Below any wrapped notice, so a crop from the top keeps the row.
@@ -755,9 +747,10 @@ class DashboardFrame(Vertical):
         system = self.query_one("#system", Static)
         system.display = bool(system_row)
         if system_row:
-            system_input = (view.system if system_shown else None, view.queue, width)
+            system_input = (view.system, width)
             if system_input != self._system_input:
-                system.update(_system_row(view, width, shown=system_shown))
+                assert view.system is not None
+                system.update(system_line(view.system, width))
                 self._system_input = system_input
         table = self.table
         table.display = layout.table_rows > 0
