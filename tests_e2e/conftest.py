@@ -162,7 +162,9 @@ def collector_guard() -> Iterator[Callable[[BrowserErrors | None], None]]:
             return page
 
         def persistent_context(*args: Any, **kwargs: Any) -> BrowserContext:
-            pytest.fail("launch_persistent_context is not supported by the browser_errors collector")
+            pytest.fail(
+                "launch_persistent_context is not supported by the browser_errors collector"
+            )
 
         patch.setattr(Browser, "new_context", new_context)
         patch.setattr(Browser, "new_page", new_page)

@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 def test_all_servers_are_cleaned_up_when_disposal_fails(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytester.makeconftest('''
+    pytester.makeconftest("""
         pytest_plugins = ["tests_e2e.conftest"]
         import pytest
         from sqlalchemy.engine import Engine
@@ -31,12 +31,12 @@ def test_all_servers_are_cleaned_up_when_disposal_fails(
             monkeypatch.setattr(Engine, "dispose", dispose)
             monkeypatch.setattr(E2EServer, "start", lambda self: None)
             monkeypatch.setattr(E2EServer, "stop", lambda self: print("server stopped"))
-    ''')
-    pytester.makepyfile('''
+    """)
+    pytester.makepyfile("""
         def test_servers(make_server, cleanup_probe):
             make_server()
             make_server()
-    ''')
+    """)
     monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
 
     result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "-s")
@@ -49,7 +49,7 @@ def test_all_servers_are_cleaned_up_when_disposal_fails(
 def test_restart_tracer_preserves_a_stop_failure(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytester.makeconftest('''
+    pytester.makeconftest("""
         pytest_plugins = ["tests_e2e.conftest"]
         import pytest
 
@@ -61,10 +61,10 @@ def test_restart_tracer_preserves_a_stop_failure(
                 pytest.fail("tracer restarted after failed stop")
             monkeypatch.setattr(server, "stop", fail_stop)
             monkeypatch.setattr(server, "start", fail_start)
-    ''')
-    pytester.makepyfile('''
+    """)
+    pytester.makepyfile("""
         from tests_e2e.test_tracer import test_the_dashboard_comes_back_after_a_server_restart
-    ''')
+    """)
     monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
 
     result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--tb=short")

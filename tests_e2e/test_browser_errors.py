@@ -159,17 +159,17 @@ def test_convenience_page_collects_csp_before_navigation(
 ) -> None:
     page = browser.new_page()
     try:
-        page.evaluate('''() => {
+        page.evaluate("""() => {
             const policy = document.createElement("meta")
             policy.httpEquiv = "Content-Security-Policy"
             policy.content = "script-src 'none'"
             document.head.append(policy)
-        }''')
-        page.evaluate('''() => {
+        }""")
+        page.evaluate("""() => {
             const script = document.createElement("script")
             script.textContent = "window.inlineRan = true"
             document.body.append(script)
-        }''')
+        }""")
         browser_errors.settle()
         assert any("script-src" in violation for violation in browser_errors.csp)
     finally:
@@ -181,7 +181,9 @@ def test_convenience_page_collects_csp_before_navigation(
 def test_replacing_the_document_is_rejected_loudly(browser: Browser) -> None:
     page = browser.new_page()
     try:
-        with pytest.raises(pytest.fail.Exception, match="page.set_content replaces collector listeners"):
+        with pytest.raises(
+            pytest.fail.Exception, match=r"page\.set_content replaces collector listeners"
+        ):
             page.set_content("<p>replacement</p>")
     finally:
         page.close()
@@ -191,7 +193,7 @@ def test_errors_in_a_second_launched_browser_fail(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytester.makeconftest('pytest_plugins = ["tests_e2e.conftest"]')
-    pytester.makepyfile('''
+    pytester.makepyfile("""
         def test_error(browser_type, browser_type_launch_args):
             second = browser_type.launch(**browser_type_launch_args)
             try:
@@ -201,7 +203,7 @@ def test_errors_in_a_second_launched_browser_fail(
                 context.close()
             finally:
                 second.close()
-    ''')
+    """)
     monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
 
     result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--output", "results")
@@ -214,10 +216,10 @@ def test_persistent_contexts_are_rejected_before_launch(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytester.makeconftest('pytest_plugins = ["tests_e2e.conftest"]')
-    pytester.makepyfile('''
+    pytester.makepyfile("""
         def test_persistent(browser_type, tmp_path):
             browser_type.launch_persistent_context(tmp_path)
-    ''')
+    """)
     monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
 
     result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--output", "results")
@@ -230,7 +232,7 @@ def test_persistent_contexts_are_rejected_before_launch(
 def test_shared_contexts_are_rejected(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, scope: str
 ) -> None:
-    pytester.makeconftest(f'''
+    pytester.makeconftest(f"""
         pytest_plugins = ["tests_e2e.conftest"]
         import pytest
 
@@ -239,14 +241,16 @@ def test_shared_contexts_are_rejected(
             context = browser.new_context()
             yield context.new_page()
             context.close()
-    ''')
+    """)
     pytester.makepyfile("def test_shared(shared_page): pass")
     monkeypatch.setenv("PYTHONPATH", str(REPO_ROOT))
 
     result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--output", "results")
 
     result.assert_outcomes(errors=1)
-    result.stdout.fnmatch_lines(["*browser contexts require the function-scoped browser_errors collector*"])
+    result.stdout.fnmatch_lines(
+        ["*browser contexts require the function-scoped browser_errors collector*"]
+    )
 
 
 def test_popup_errors_from_a_fixture_created_context_fail(
