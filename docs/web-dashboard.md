@@ -263,9 +263,10 @@ happen through the same HTTPS address you will log in at. `fido2 setup` runs a
 temporary server that serves a registration page instead of the dashboard
 (stop the dashboard first if it uses that port; `--listen` and `--port`
 apply). During setup, open the dashboard's root URL in a fresh browser tab.
-An already-open dashboard or login tab switches to the setup view by itself
-within a few seconds while visible (or when brought back to the foreground),
-even if it has a saved session or a bookmarked login route. Enter the printed
+An already-open tab switches to the setup view by itself, even with a saved
+session or a bookmarked login route: a signed-in page when its live connection
+reconnects (the setup server closes it with code 4003), a login page within a
+few seconds while visible or when brought back to the foreground. Enter the printed
 **setup PIN** on that page and register the key, then press Ctrl-C and start the
 dashboard again. A server that is not accepting logins is reported as unavailable,
 not as a wrong PIN. The setup PIN keeps only the five-a-minute limit, without

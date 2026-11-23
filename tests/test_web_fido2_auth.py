@@ -18,11 +18,13 @@ pytest.importorskip("fastapi")
 pytest.importorskip("fido2")
 
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from jailbee.db import get_engine
 from jailbee.web import auth_admin
 from jailbee.web.app import WebDeps, create_app
 from jailbee.web.auth import PinHolder
+from jailbee.web.protocol import CLOSE_SETUP_MODE
 from jailbee.web.setup_app import SetupDeps, create_setup_app
 from tests.fido2_authenticator import SoftAuthenticator
 from tests.web_fakes import FakeClock, FakeSourceFactory, pin_sequence
@@ -305,3 +307,16 @@ def test_pin_guessing_does_not_lock_out_a_security_key(
     assert last.status_code == 429
 
     assert login(client, key).status_code == 200
+
+
+def test_setup_mode_closes_the_dashboard_socket_with_the_setup_code(
+    setup_client: TestClient,
+) -> None:
+    # An already-open signed-in tab reconnects its socket; the close code is
+    # how it learns to switch to the setup view instead of retrying forever.
+    with (
+        pytest.raises(WebSocketDisconnect) as closed,
+        setup_client.websocket_connect("/api/ws") as ws,
+    ):
+        ws.receive_json()
+    assert closed.value.code == CLOSE_SETUP_MODE == 4003

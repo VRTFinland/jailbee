@@ -13,6 +13,9 @@ const dashboard = useDashboard()
 dashboard?.onUnauthorized(() => {
     void router.push({name: "login"})
 })
+dashboard?.onSetupMode(() => {
+    void router.replace({name: "setup"})
+})
 
 watch(
     () => (route.matched.length === 0 ? null : route.meta.public === true),
@@ -24,12 +27,15 @@ watch(
     {immediate: true},
 )
 
-// Login has no socket to notice a server replacement. Poll while visible so
-// an already-open tab (including a PWA) follows the temporary setup server too.
+// A signed-in page learns of setup mode from its socket (the setup server
+// closes /api/ws with CLOSE_SETUP_MODE). The login page has no socket, so it
+// polls while visible: an already-open login tab or PWA follows the temporary
+// setup server too. Only there, so a plain server restart under a signed-in
+// page adds no failed requests beyond the socket's own retries.
 let checkingMode = false
 let modeTimer: ReturnType<typeof setInterval> | undefined
 async function checkMode() {
-    if (checkingMode || document.hidden) return
+    if (checkingMode || document.hidden || route.name === "setup") return
     checkingMode = true
     try {
         if (await fetchServerMode() === "setup" && route.name !== "setup") {
@@ -40,7 +46,9 @@ async function checkMode() {
     }
 }
 onMounted(() => {
-    modeTimer = setInterval(() => void checkMode(), 2_000)
+    modeTimer = setInterval(() => {
+        if (route.name === "login") void checkMode()
+    }, 2_000)
     window.addEventListener("online", checkMode)
     document.addEventListener("visibilitychange", checkMode)
 })

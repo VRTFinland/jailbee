@@ -457,9 +457,9 @@ indentation and a `Child of` label, not the e-ink job-phase edge style.
 
 For FIDO2 setup, stop the dashboard first if it uses the same port, run
 `jailbee remote web auth fido2 setup`, and open the dashboard's root URL in a
-fresh tab at the same HTTPS address used for login. Visible dashboard/login
-tabs switch to registration automatically within a few seconds; background
-tabs check when brought forward. Enter the setup PIN there, register the key,
+fresh tab at the same HTTPS address used for login. Open dashboard tabs
+switch to registration when their live connection reconnects; login tabs
+within a few seconds while visible, or when brought forward. Enter the setup PIN there, register the key,
 then Ctrl-C and restart the dashboard. A missing or unavailable login endpoint
 is not a wrong PIN.
 

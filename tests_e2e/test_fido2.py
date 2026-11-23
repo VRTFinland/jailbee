@@ -134,10 +134,6 @@ def test_open_tab_switches_to_setup_without_a_reload(
 
     server.stop()
     server.start(setup=True)
-    if signed_in:
-        # Signal reconnection before the socket's retry reaches the setup-only
-        # server (which deliberately has no dashboard WebSocket endpoint).
-        page.evaluate("window.dispatchEvent(new Event('online'))")
 
     expect(page.get_by_label("Setup PIN")).to_be_visible()
     page.get_by_label("Key name").fill("Open tab key")

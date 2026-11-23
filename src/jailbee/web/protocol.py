@@ -31,6 +31,8 @@ CLOSE_UNAUTHORIZED = 4001
 """No valid session token: the browser goes back to the login page."""
 CLOSE_PROTOCOL_MISMATCH = 4002
 """The browser speaks another protocol version: it should reload the app."""
+CLOSE_SETUP_MODE = 4003
+"""The server runs FIDO2 setup mode, not the dashboard: the browser opens the setup view."""
 CLOSE_BAD_MESSAGE = 4400
 """A message that is not valid JSON or not a known message type."""
 
