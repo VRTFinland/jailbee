@@ -1,6 +1,6 @@
 """The web CI contract, read as GitHub Actions' public workflow format."""
 
-import fnmatch
+import re
 from pathlib import Path
 
 import pytest
@@ -8,6 +8,31 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/web.yml"
+
+
+def matches(path: str, pattern: str) -> bool:
+    """GitHub's path glob: ``**`` crosses ``/``, ``*`` and ``?`` do not."""
+    regex = ""
+    i = 0
+    while i < len(pattern):
+        if pattern.startswith("**", i):
+            regex += ".*"
+            i += 2
+        elif pattern[i] == "*":
+            regex += "[^/]*"
+            i += 1
+        elif pattern[i] == "?":
+            regex += "[^/]"
+            i += 1
+        else:
+            regex += re.escape(pattern[i])
+            i += 1
+    return re.fullmatch(regex, path) is not None
+
+
+def test_github_globs_do_not_let_a_single_star_cross_directories():
+    assert matches("frontend/src/App.vue", "frontend/**")
+    assert not matches("frontend/src/App.vue", "frontend/*")
 
 
 def workflow():
@@ -25,6 +50,12 @@ def test_web_ci_runs_for_web_changes_only(event):
         "frontend/src/App.vue",
         "src/jailbee/web/app.py",
         "src/jailbee/transcripts/claude.py",
+        "src/jailbee/state_service/protocol.py",
+        "src/jailbee/dashboard/model.py",
+        "src/jailbee/db/models.py",
+        "src/jailbee/lifecycle.py",
+        "frontend/package-lock.json",
+        "tests/fixtures/transcripts/claude-corpus/corpus.json",
         "tests_e2e/test_tracer.py",
         "tests/web_fakes.py",
         "tests/fixtures/transcripts/claude/projects/toy/session.jsonl",
@@ -33,9 +64,9 @@ def test_web_ci_runs_for_web_changes_only(event):
         "Makefile",
         ".github/workflows/web.yml",
     ):
-        assert any(fnmatch.fnmatchcase(changed, pattern) for pattern in paths), changed
+        assert any(matches(changed, pattern) for pattern in paths), changed
     for changed in ("README.md", "website/index.html", "src/jailbee/pool.py"):
-        assert not any(fnmatch.fnmatchcase(changed, pattern) for pattern in paths), changed
+        assert not any(matches(changed, pattern) for pattern in paths), changed
 
 
 def test_web_ci_runs_make_targets_and_preserves_failure_evidence():
@@ -55,3 +86,4 @@ def test_web_ci_runs_make_targets_and_preserves_failure_evidence():
     artifact = actions["actions/upload-artifact"]
     assert artifact["if"] == "failure()"
     assert artifact["with"]["path"] == "_build/e2e-results/"
+    assert definition["concurrency"]["cancel-in-progress"] == "true"

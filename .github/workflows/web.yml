@@ -8,6 +8,13 @@ on:
       - "frontend/**"
       - "src/jailbee/web/**"
       - "src/jailbee/transcripts/**"
+      # Modules the web server builds its rows and snapshots from.
+      - "src/jailbee/state_service/**"
+      - "src/jailbee/dashboard/**"
+      - "src/jailbee/db/**"
+      - "src/jailbee/lifecycle.py"
+      - "src/jailbee/table_format.py"
+      - "src/jailbee/config/**"
       - "tests_e2e/**"
       - "tests/web_fakes.py"
       - "tests/fixtures/transcripts/**"
@@ -20,6 +27,13 @@ on:
       - "frontend/**"
       - "src/jailbee/web/**"
       - "src/jailbee/transcripts/**"
+      # Modules the web server builds its rows and snapshots from.
+      - "src/jailbee/state_service/**"
+      - "src/jailbee/dashboard/**"
+      - "src/jailbee/db/**"
+      - "src/jailbee/lifecycle.py"
+      - "src/jailbee/table_format.py"
+      - "src/jailbee/config/**"
       - "tests_e2e/**"
       - "tests/web_fakes.py"
       - "tests/fixtures/transcripts/**"
@@ -28,6 +42,10 @@ on:
       - "Makefile"
       - ".github/workflows/web.yml"
   workflow_dispatch:
+# A newer push to the same branch or pull request supersedes a running test.
+concurrency:
+  group: web-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 # Browser tests only; no repository writes or authentication secrets needed.
 permissions:
   contents: read
@@ -62,3 +80,4 @@ jobs:
           name: web-e2e-failure
           path: _build/e2e-results/
           if-no-files-found: ignore
+          retention-days: 14
