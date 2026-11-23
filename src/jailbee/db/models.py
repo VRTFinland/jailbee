@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from pydantic import PrivateAttr
 from sqlalchemy import Boolean, Column, DateTime, Dialect, Integer, TypeDecorator
 from sqlmodel import Field, SQLModel
 
@@ -146,6 +147,16 @@ class BackgroundJob(SQLModel, table=True):
     # a persisted SQLModel field renames its column, which would need a
     # schema migration for something no user ever sees.
     __tablename__ = "background_op"
+
+    # Read-time observation, never a database column or a persisted worker claim.
+    _observed_live: bool | None = PrivateAttr(default=None)
+
+    @property
+    def observed_live(self) -> bool | None:
+        return self._observed_live
+
+    def observe_live(self, live: bool) -> None:
+        self._observed_live = live
 
     container_name: str = Field(primary_key=True)
     container_prefix: str = Field(index=True)

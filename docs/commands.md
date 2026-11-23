@@ -759,7 +759,11 @@ and keeps drawing while it runs; the status line names the running command.
   shows, whoever started them, are listed above the entries as read-only
   rows (`target: phase · job`): they cannot be dismissed, count as running
   in the badge (a failed job or a dead worker counts as ⚠) and go when the
-  job does. Choosing one offers `Show job log` (`l`).
+  job does. Liveness belongs to the gathered snapshot: a normally finishing
+  worker does not turn its older row into a dead-job warning between refreshes.
+  A worker killed mid-job is reported as dead on the next snapshot while its
+  tracking row remains. `jailbee ls` and `jailbee job ls` use the same observation
+  rule. Choosing one offers `Show job log` (`l`).
 - **Critical actions open as a modal and block hand-offs.** `merge` (also `git merge`),
   `git push --merge`, `git pull` and `pr push` (typed on the command line with the verb first) open at once in their entry's
   expanded live screen, so a conflict, a question or a result is not missed.
