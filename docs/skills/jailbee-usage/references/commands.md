@@ -1845,6 +1845,14 @@ or `issue/<manifest>.json`. Inspection is local and never calls GitHub; over
 remote SSH it is read-only. See [Unified proposal
 management](../../../git-bridge.md#unified-proposal-management).
 
+In the terminal manager and dashboard Outbox box, delete verification, drops
+and post-mutation reloads run in the background. A busy line stays visible while
+navigation and preview keys work; refresh waits for the completion reload,
+and another delete, publish, clear or scope change is refused while busy.
+Closing the dashboard box leaves the work running and reports its result as a notice.
+PR-creation verification is background work too; the interactive `pr push` still
+uses the terminal.
+
 | Command | What it does |
 |---|---|
 | `jailbee outbox [CONTAINER]` / `outbox browse [CONTAINER] [--all-repos]` | The full-screen outbox manager on a TTY — this repo's containers, the named one, or (`--all-repos`, `a` inside) every registered repo's, as a tree with a preview: `Space` mark a row and everything under it, `d` delete the marked, `p` publish the marked proposals (or the one under the cursor) after one question (a PR creation runs `pr push`), `X` clear, `v`/`m` preview/raw, `f` full-screen reader, `r` refresh, `q` quit — and the overview table off one. A container with `--all-repos` is exit 2. `browse` is the unambiguous spelling for a container named like a subcommand. Read-only over remote SSH. The Qt dashboard has a native window for it. |

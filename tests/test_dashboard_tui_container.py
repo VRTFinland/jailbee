@@ -988,7 +988,13 @@ def test_outbox_delete_runs_quietly_after_a_yes(mocker, tmp_path):
     quiet = _fake_outbox_ls(mocker)
     child = mocker.patch.object(tsession.subprocess, "run")
 
-    steps = [*container_menu_keys(group, "outbox browse"), "d", "j", "enter"]  # "Yes, delete"
+    def finish_delete(app):
+        # The fake runner delivers one async command per poll: verify, drop, reload.
+        for _ in range(3):
+            app.session.jobs.poll()
+        assert app.session.outbox.state.busy is None
+
+    steps = [*container_menu_keys(group, "outbox browse"), "d", "j", "enter", finish_delete]
     run = drive(mocker, steps, [group])
     assert run.rc == 0
 

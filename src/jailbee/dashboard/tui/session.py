@@ -582,6 +582,8 @@ class DashboardSession:
         self.notice_until = time.monotonic() + STARTUP_NOTICE_SECONDS if startup.notice else 0.0
         # The open Outbox box's controller and the menu its Esc returns to.
         self.outbox: OutboxController | None = None
+        # Retain busy controllers across close/reopen, including visits to another box.
+        self._outbox_running: dict[str, OutboxController] = {}
         # Marks of a closed Outbox box, per container, for the next box of that container.
         self._outbox_marks: dict[str, tuple[frozenset[dob.RowKey], dict[str, str]]] = {}
         # Opens a URL in the desktop's browser; the app sets it (Textual's `App.open_url`).
@@ -2755,6 +2757,11 @@ class DashboardSession:
         if refusal is not None:
             self.set_notice(f"could not list the outbox: {refusal}", seconds=FAILURE_NOTICE_SECONDS)
             return None
+        active = self._outbox_running.get(container)
+        if active is not None and active.state.busy is not None:
+            self._remember_outbox_marks()
+            self.outbox = active
+            return active.state
         controller = OutboxController(
             runner,
             title=container,
@@ -2863,6 +2870,11 @@ class DashboardSession:
         or replaced by a new one for the same container: its outcome must
         neither reopen the box nor overwrite the new one's state.
         """
+        if controller.container is not None and not controller.sent_only:
+            if controller.mutation_running:
+                self._outbox_running[controller.container] = controller
+            elif self._outbox_running.get(controller.container) is controller:
+                del self._outbox_running[controller.container]
         if controller is self.outbox and overlay_key(self.overlay) == overlay_key(state):
             self.overlay = state
         elif state.status and state.status != previous:
