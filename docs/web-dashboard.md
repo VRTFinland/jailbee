@@ -186,6 +186,12 @@ restart catch-up without lost or duplicated replies. Reuse
 watch. Copy the fixture home to a temporary directory before appending; with
 the server stopped the helper only writes, leaving reconnect to catch up.
 
+`tests_e2e/test_display.py` covers visible themes and font sizes after a reload,
+e-ink page turns, held transcript messages and manual snapshot refresh. It also
+walks the front page, repository, container, transcript and settings at phone
+width in both display profiles, and checks the linked PWA manifest and decoded
+icons through the real server.
+
 `test_front_page_live.py` covers snapshot additions, changes and removals without
 navigation; phase labels and computed monochrome edges in the e-ink theme;
 the connecting notice during downtime; and current state after a real server
@@ -197,7 +203,9 @@ then render a subsequent state push before the reload count is checked.
 reloads automatically at most once within a minute, then shows
 "This page is out of date; reload" with a manual Reload button. If session
 storage is unavailable, it offers manual reload immediately rather than risk
-a loop.
+a loop. A connection that authenticates ends that window, so a later
+server upgrade reloads again; the banner sits above a view's sticky header,
+never over it.
 
 `tests_e2e/test_corpus.py` walks the recorded corpus
 (`tests/fixtures/transcripts/claude-corpus`, re-recorded with `make web-corpus`)
@@ -334,8 +342,14 @@ is taken from the browser's `Origin` header. Registration therefore has to
 happen through the same HTTPS address you will log in at. `fido2 setup` runs a
 temporary server that serves a registration page instead of the dashboard
 (stop the dashboard first if it uses that port; `--listen` and `--port`
-apply). Register the key in the browser, then press Ctrl-C and start the
-dashboard again. The setup PIN keeps only the five-a-minute limit, without
+apply). During setup, open the dashboard's root URL in a fresh browser tab.
+An already-open tab switches to the setup view by itself, even with a saved
+session or a bookmarked login route: a signed-in page when its live connection
+reconnects (the setup server closes it with code 4003), a login page within a
+few seconds while visible or when brought back to the foreground. Enter the printed
+**setup PIN** on that page and register the key, then press Ctrl-C and start the
+dashboard again. A server that is not accepting logins is reported as unavailable,
+not as a wrong PIN. The setup PIN keeps only the five-a-minute limit, without
 the backoff: setup mode runs only while you register a key, so do not leave it
 running.
 
@@ -401,16 +415,20 @@ live `subscribe` message; a withheld record's content is served by
 
 The display profile **E-ink** is for e-paper readers and slow-refresh
 screens: no animation, content moves in page turns instead of scrolling, live
-transcript entries are held back until you turn the page rather than moving
-the text you are reading, and the front page refreshes slowly.
+transcript entries are held behind the **N new messages** button until you tap
+it, without moving the text you are reading. The front page refreshes every
+minute, or immediately when you tap **Refresh**. The front-page header wraps
+its controls on narrow screens, including with the e-ink profile's side margins.
 
 Session transcripts keep their title, agent/model context and connection notice
 in a compact header while you read. **Latest answer** appears only when the
 newest assistant reply is outside the readable area (below the header and above
 the bottom controls, including the device's safe-area inset). A truncated title
 keeps its full text as a tooltip and accessible heading name. Page turns use the
-actual readable height even on short landscape screens; a partial keyboard or
-system scroll stays on its current page so Next never skips unread text.
+actual readable height even on short landscape screens, with a stable page grid
+as the header becomes sticky and a last page bounded by the browser's scroll
+limit; a partial keyboard or system scroll stays on its current page so Next
+never skips unread text, and Next stays enabled until the real bottom.
 Jumping aligns the newest reply's start just below the measured header, even
 for a short final reply, with trailing room to scroll it there. Jumping or
 scrolling to the reply hides the button; moving

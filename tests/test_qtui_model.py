@@ -626,3 +626,26 @@ def test_sync_cell_tooltip_names_the_target():
 def test_git_segments_missing_target_shows_one_arrow():
     cc = _cc(wt="clean", behind_count="↓•")
     assert m.git_segments(cc) == [("↓•", "ahead")]
+
+
+def test_an_api_error_is_flagged_like_waiting_and_worded_in_the_tooltip():
+    from jailbee.accounts.models import AgentActivity, AgentApiError
+    from jailbee.agent_status import AgentSummary
+
+    at = datetime.now(UTC) - timedelta(minutes=5)
+    error = AgentApiError("quota", at, 429, "The usage limit has been reached", None, "k")
+    summary = AgentSummary(
+        "claude",
+        "error:quota",
+        at,
+        None,
+        1,
+        activity=AgentActivity(None, "API Error: raw", api_error=error),
+    )
+
+    content = m.card_content(_agent_container(summary), [])
+
+    assert content.agent_waiting is True
+    assert content.agent_tooltip == (
+        "stopped on an API error (quota) 5m ago\n“The usage limit has been reached”"
+    )

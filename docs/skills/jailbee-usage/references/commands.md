@@ -455,6 +455,14 @@ indentation and a `Child of` label, not the e-ink job-phase edge style.
 | `jailbee remote web auth fido2 setup` / `ls` / `rm` | Security keys; `setup` serves a registration page until Ctrl-C. |
 | `jailbee remote web auth sessions ls` / `revoke [ID]` | Logged-in devices, named automatically from the browser ("Firefox on Linux"; rename in the web app's Settings); revoke ends a session and its live view. |
 
+For FIDO2 setup, stop the dashboard first if it uses the same port, run
+`jailbee remote web auth fido2 setup`, and open the dashboard's root URL in a
+fresh tab at the same HTTPS address used for login. Open dashboard tabs
+switch to registration when their live connection reconnects; login tabs
+within a few seconds while visible, or when brought forward. Enter the setup PIN there, register the key,
+then Ctrl-C and restart the dashboard. A missing or unavailable login endpoint
+is not a wrong PIN.
+
 Config: `remote.web.listen`, `port`, `auth.enabled`,
 `auth.allow_unauthenticated_remote`, `excluded_repos` and the shared remote
 policy. Source addresses are never trusted: behind a proxy or tunnel every
@@ -1031,7 +1039,7 @@ ignores `fields` entirely.
 
 Both dashboards use compact presentation, without changing `ls` or JSON:
 ST = state (▶ Running, ■ Stopped, Ⅱ Frozen), LOOSE = empty for strict, red ● plus the remaining auto-revert time (`● 45m`, `● ∞` = no deadline) for loose,
-AGE = elapsed container age, AI = compact agent status (◆ waiting, ● busy,
+AGE = elapsed container age, AI = compact agent status (✖ API error with its kind, ◆ waiting, ● busy,
 ◐ shell = idle with a background job other than the inbox follower, ○ idle) plus the age of the latest real event across live sessions,
 not the time spent in that state. Assistant text, thinking, tool calls and tool
 results count; prompts and metadata do not. Unknown event ages have no duration.
@@ -1853,7 +1861,9 @@ navigation and preview keys work; refresh waits for the completion reload,
 and another delete, publish, clear or scope change is refused while busy.
 Closing the dashboard box leaves the work running and reports its result as a notice.
 PR-creation verification is background work too; the interactive `pr push` still
-uses the terminal.
+uses the terminal, and is not run if the box was closed meanwhile (a notice
+says so). The standalone manager refuses Esc, `q` and Ctrl-C while a mutation
+runs: quitting waits for it to finish.
 
 | Command | What it does |
 |---|---|

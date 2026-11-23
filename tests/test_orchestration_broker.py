@@ -2175,6 +2175,75 @@ def test_idle_uses_repo_threshold_and_retries_delivery(rig: Rig, monkeypatch) ->
     assert _watches(rig)[0].idle_reported_at == NOW.isoformat()
 
 
+def test_api_error_reports_one_blocked_per_episode(rig: Rig, monkeypatch) -> None:
+    from dataclasses import replace as dc_replace
+    from datetime import timedelta
+
+    from jailbee.accounts.models import AgentApiError
+    from jailbee.orchestration import agent_watch
+
+    entry = watch.WatchEntry(
+        "s1",
+        "proj-kid",
+        "spawn",
+        NOW.isoformat(),
+        supervise=True,
+        confirmed=True,
+        idle_since=(NOW - timedelta(hours=1)).isoformat(),
+        idle_token="turn",
+    )
+    watch.save_watch(rig.root, {"proj-orch": [entry]})
+    rig.incus.list_containers.return_value = [_orch(), _child()]
+    monkeypatch.setattr(watch, "read_jobs", lambda: {})
+    monkeypatch.setattr(
+        agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude")
+    )
+    monkeypatch.setattr(agent_watch, "idle_signal", lambda *a, **k: "turn")
+    monkeypatch.setattr(agent_watch, "output_tail", lambda *a, **k: "")
+    quota = AgentApiError("quota", NOW, 429, "The usage limit has been reached", None, "k1")
+    current: list[AgentApiError | None] = [quota]
+    monkeypatch.setattr(agent_watch, "api_error", lambda *a, **k: current[0])
+
+    def kinds(at: int) -> list[tuple[str, str]]:
+        rig.deliver.reset_mock()
+        broker.tick(rig.incus, root=rig.root, journal=rig.journal, now=NOW + timedelta(seconds=at))
+        return [
+            (c.args[3].kind, c.args[3].body)
+            for c in rig.deliver.call_args_list
+            if getattr(c.args[3], "kind", None) in ("blocked", "idle")
+        ]
+
+    first = kinds(0)
+    assert [k for k, _ in first] == ["blocked"]
+    assert "API error (quota): The usage limit has been reached" in first[0][1]
+    assert kinds(2000) == []  # Same episode, and the idle report is held back.
+    current[0] = None
+    assert [k for k, _ in kinds(4000)] == []  # Progress closes it; idle restarts its clock.
+    current[0] = dc_replace(quota, kind="overloaded", key="k2")
+    assert [k for k, _ in kinds(5000)] == ["blocked"]
+
+
+def test_recovered_api_error_never_notifies(rig: Rig, monkeypatch) -> None:
+    from jailbee.orchestration import agent_watch
+
+    entry = watch.WatchEntry(
+        "s1", "proj-kid", "spawn", NOW.isoformat(), supervise=True, confirmed=True
+    )
+    watch.save_watch(rig.root, {"proj-orch": [entry]})
+    rig.incus.list_containers.return_value = [_orch(), _child()]
+    monkeypatch.setattr(watch, "read_jobs", lambda: {})
+    monkeypatch.setattr(
+        agent_watch, "probe", lambda *a, **k: agent_watch.AgentStatus(True, "claude")
+    )
+    monkeypatch.setattr(agent_watch, "idle_signal", lambda *a, **k: None)
+    monkeypatch.setattr(agent_watch, "api_error", lambda *a, **k: None)
+    rig.tick()
+    assert not [
+        c for c in rig.deliver.call_args_list if getattr(c.args[3], "kind", None) == "blocked"
+    ]
+    assert _watches(rig)[0].api_error_key is None
+
+
 def test_startup_rechecks_container_after_queue_launch(rig: Rig, monkeypatch) -> None:
     from jailbee.orchestration import agent_watch
 

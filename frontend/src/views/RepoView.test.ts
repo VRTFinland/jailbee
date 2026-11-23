@@ -3,6 +3,7 @@ import {afterEach, describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"
 import {setToken} from "../api"
 import {createAppRouter} from "../router"
+import {withDashboardMode} from "../test-http"
 import {updateSettings} from "../settings"
 import RepoView from "./RepoView.vue"
 import {DASHBOARD, Dashboard} from "../dashboard"
@@ -34,9 +35,9 @@ const sessions = [
     },
 ]
 
-async function mountRepo(fetchMock: ReturnType<typeof vi.fn>, dashboard?: Dashboard) {
+async function mountRepo(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>, dashboard?: Dashboard) {
     setToken("tok")
-    vi.stubGlobal("fetch", fetchMock)
+    vi.stubGlobal("fetch", withDashboardMode(fetchMock))
     const router = createAppRouter(createMemoryHistory())
     await router.push("/repos/alpha")
     await router.isReady()

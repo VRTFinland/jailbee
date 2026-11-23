@@ -546,6 +546,17 @@ snapshot only warns on stderr there and still prints (exit 0), unlike
   process in `LONGEST` (the longest-running tool process of the agent, by
   process name) running for hours; agent `dead` without done (also reported as
   `blocked`; `starting` means the agent is not launched yet, not dead); `waiting` (also reported as `idle`).
+- Act now: agent `alive:error:<kind>` (also reported once as `blocked`, "agent
+  stopped on an API error"). The agent is alive but its model provider keeps
+  failing; it will not move on its own. On `error:quota` or a persistent
+  `error:rate_limit`, switch the child's runner (`restart --agent-only` with
+  another runner or profile, e.g. the Claude runner instead of an exhausted
+  LiteLLM profile) or wait until the `resets_at` time the message names. On
+  `error:auth`, ask the human/operator to log the agent in again. On
+  `error:overloaded` or `error:other`, retry later with a short prompt
+  (`restart --agent-only`) or tell the human. A stuck agent can still look
+  busy to the idle check; when `--agent-only` refuses, stop the child and
+  restart it with the new runner.
 - Only then message the child.
 
 CPU is measured container-wide and is shown for information only: it never

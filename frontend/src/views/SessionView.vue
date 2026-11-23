@@ -19,8 +19,15 @@ import type {
 import {settings} from "../settings"
 
 const header = ref<HTMLElement | null>(null)
-const headerHeight = ref(0)
-const pager = usePager(() => headerHeight.value)
+// The sticky header's bottom edge: below an app banner, not just its height.
+const readableTop = ref(0)
+const pageEl = ref<HTMLElement | null>(null)
+const pager = usePager(
+    () => readableTop.value,
+    // The bottom spacer lets a short final reply start below the header; page
+    // turns end where the transcript does, not inside that blank room.
+    () => (pageEl.value ? parseFloat(getComputedStyle(pageEl.value).paddingBottom) || 0 : 0),
+)
 const eink = computed(() => settings.displayProfile === "eink")
 /** E-ink: live entries wait here until the reader taps the notice. */
 const pending = ref<RenderedEntry[]>([])
@@ -83,7 +90,7 @@ const latestVisible = ref(false)
 
 function measureVisibility() {
     const headerRect = header.value?.getBoundingClientRect()
-    headerHeight.value = headerRect ? headerRect.bottom - headerRect.top : 0
+    readableTop.value = headerRect ? Math.max(0, headerRect.bottom) : 0
     const el = latestAnswer.value === null ? null : document.getElementById(entryDomId(latestAnswer.value))
     if (el === null) {
         latestVisible.value = false
@@ -268,7 +275,7 @@ watch(
 </script>
 
 <template>
-    <div class="page" :style="{'--session-header-height': `${headerHeight}px`}">
+    <div ref="pageEl" class="page" :style="{'--session-readable-top': `${readableTop}px`}">
         <header ref="header" class="session-header">
             <div class="bar">
             <router-link
@@ -398,11 +405,12 @@ watch(
     max-width: 48rem;
     margin: 0 auto;
     /* Even a short final reply can start just below the sticky header. */
-    padding: 0 var(--space-3) max(5rem, calc(100dvh - var(--session-header-height)));
+    padding: 0 var(--space-3) max(5rem, calc(100dvh - var(--session-readable-top)));
 }
 .session-header {
     position: sticky;
-    top: 0;
+    /* Stick below App's out-of-date banner rather than under it. */
+    top: var(--app-banner-height, 0px);
     z-index: 12;
     padding: var(--space-2) 0;
     background: var(--bg);
@@ -466,7 +474,7 @@ h1 {
 }
 .entry {
     margin: var(--space-4) 0;
-    scroll-margin-top: var(--session-header-height, 0px);
+    scroll-margin-top: var(--session-readable-top, 0px);
 }
 .entry.user {
     padding: var(--space-2) var(--space-3);

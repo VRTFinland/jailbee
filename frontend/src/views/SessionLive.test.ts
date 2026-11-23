@@ -11,6 +11,7 @@ import {
     type TranscriptView,
 } from "../protocol"
 import {createAppRouter} from "../router"
+import {withDashboardMode} from "../test-http"
 import {reloadSettings, updateSettings} from "../settings"
 import type {SocketHandlers} from "../socket"
 import SessionView from "./SessionView.vue"
@@ -39,12 +40,12 @@ async function mountLive(path: string) {
     setToken("tok")
     vi.stubGlobal(
         "fetch",
-        vi.fn().mockResolvedValue(
+        withDashboardMode(vi.fn().mockResolvedValue(
             new Response(JSON.stringify(transcript), {
                 status: 200,
                 headers: {"Content-Type": "application/json"},
             }),
-        ),
+        )),
     )
     let handlers: SocketHandlers | null = null
     const sent: ClientMessage[] = []
