@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import {computed, nextTick, onMounted, ref} from "vue"
+import {computed, nextTick, ref, watch} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {apiFetch, Unauthorized} from "../api"
 import PageNav from "../components/PageNav.vue"
+import {useDashboard} from "../dashboard"
 import {usePager} from "../composables/usePager"
 import type {ContainerSessionList} from "../protocol"
 
@@ -10,6 +11,10 @@ const pager = usePager()
 const route = useRoute()
 const router = useRouter()
 const name = computed(() => String(route.params.name))
+const dashboard = useDashboard()
+const rows = computed(() => dashboard?.state.view?.repos.flatMap(repo => repo.containers) ?? [])
+const info = computed(() => rows.value.find(row => row.name === name.value))
+const children = computed(() => rows.value.filter(row => row.child?.orchestrator === name.value))
 const list = ref<ContainerSessionList | null>(null)
 const error = ref<string | null>(null)
 
@@ -19,14 +24,21 @@ function when(iso: string): string {
     return dateFormat.format(new Date(iso))
 }
 
-onMounted(async () => {
+watch(name, async (selected, _previous, onCleanup) => {
+    let current = true
+    onCleanup(() => { current = false })
+    list.value = null
+    error.value = null
     try {
-        list.value = await apiFetch<ContainerSessionList>(
-            `/api/containers/${encodeURIComponent(name.value)}/sessions`,
+        const result = await apiFetch<ContainerSessionList>(
+            `/api/containers/${encodeURIComponent(selected)}/sessions`,
         )
+        if (!current) return
+        list.value = result
         await nextTick()
         pager.measure()
     } catch (e) {
+        if (!current) return
         if (e instanceof Unauthorized) {
             await router.push({name: "login"})
         } else if (e instanceof Error && e.message.startsWith("API error 404")) {
@@ -35,7 +47,7 @@ onMounted(async () => {
             error.value = "The sessions could not be loaded."
         }
     }
-})
+}, {immediate: true})
 </script>
 
 <template>
@@ -44,6 +56,21 @@ onMounted(async () => {
             <router-link class="back" :to="{name: 'front'}">&larr; Repositories</router-link>
             <h1>{{ name }}</h1>
         </header>
+        <p v-if="info?.child" class="parent">
+            Child of <router-link :to="{name: 'container', params: {name: info.child.orchestrator}}">{{ info.child.orchestrator_short_name }}</router-link>
+            · {{ info.child.state }}<template v-if="info.child.runner"> · {{ info.child.runner }}</template>
+        </p>
+        <section v-if="info?.orchestrator || children.length" class="children" aria-label="Children">
+            <h2>Children ({{ children.length }})</h2>
+            <p v-if="!children.length" class="muted">No children.</p>
+            <ul v-else>
+                <li v-for="child in children" :key="child.name">
+                    <router-link :to="{name: 'container', params: {name: child.name}}">{{ child.cells[0] || child.name }}</router-link>
+                    · {{ child.child?.state }}<template v-if="child.child?.runner"> · {{ child.child.runner }}</template>
+                </li>
+            </ul>
+        </section>
+        <h2>Sessions</h2>
         <p v-if="error" class="notice">{{ error }}</p>
         <p v-else-if="list === null" class="muted">Loading…</p>
         <p v-else-if="list.sessions.length === 0" class="muted">No sessions.</p>
@@ -85,6 +112,8 @@ onMounted(async () => {
 .bar {
     display: flex;
     align-items: baseline;
+    flex-wrap: wrap;
+    overflow-wrap: anywhere;
     gap: var(--space-3);
     padding-bottom: var(--space-2);
     border-bottom: 1px solid var(--border);
@@ -97,6 +126,17 @@ onMounted(async () => {
 .back {
     color: var(--muted);
     text-decoration: none;
+}
+.parent,
+.children {
+    overflow-wrap: anywhere;
+}
+.children li {
+    margin-block: var(--space-2);
+}
+.parent a,
+.children a {
+    color: inherit;
 }
 .notice {
     margin: var(--space-3) 0;

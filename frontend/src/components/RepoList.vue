@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type {FrontPageView} from "../protocol"
 
-defineProps<{view: FrontPageView}>()
+withDefaults(defineProps<{view: FrontPageView; showHeadings?: boolean}>(), {showHeadings: true})
 
 const AGENT_LABELS: Record<string, string> = {
     waiting: "waiting for you",
@@ -18,7 +18,7 @@ function agentLabel(state: string): string {
 <template>
     <p v-if="view.repos.length === 0" class="muted">No repositories.</p>
     <section v-for="repo in view.repos" :key="repo.prefix" class="repo" :data-repo="repo.prefix">
-        <h2 class="repo-heading">
+        <h2 v-if="showHeadings" class="repo-heading">
             <router-link :to="{name: 'repo', params: {prefix: repo.prefix}}">{{
                 repo.prefix
             }}</router-link>
@@ -29,6 +29,7 @@ function agentLabel(state: string): string {
                 v-for="c in repo.containers"
                 :key="c.name"
                 class="row"
+                :class="{nested: c.depth > 0}"
                 :data-container="c.name"
                 :data-agent="c.agent ?? undefined"
                 :data-state="c.state"
@@ -44,6 +45,14 @@ function agentLabel(state: string): string {
                         agentLabel(c.agent)
                     }}</span>
                 </div>
+                <p v-if="c.orchestrator || c.child_count" class="orchestration">
+                    Orchestrator · {{ c.child_count }} {{ c.child_count === 1 ? 'child' : 'children' }}
+                </p>
+                <p v-if="c.child" class="orchestration">
+                    Child of <router-link :to="{name: 'container', params: {name: c.child.orchestrator}}">{{ c.child.orchestrator_short_name }}</router-link>
+                    · {{ c.child.state }}<template v-if="c.child.runner"> · {{ c.child.runner }}</template>
+                    <template v-if="!repo.containers.some(row => row.name === c.child?.orchestrator)"> · orchestrator not listed</template>
+                </p>
                 <dl class="cells">
                     <template v-for="(col, i) in view.columns" :key="col.name">
                         <div v-if="i > 0 && c.cells[i] !== ''" class="cell">
@@ -90,6 +99,18 @@ function agentLabel(state: string): string {
     border-radius: var(--radius);
     background: var(--surface);
     margin-bottom: var(--space-2);
+}
+.row.nested {
+    margin-left: var(--space-3);
+    border-left-style: double;
+}
+.orchestration {
+    margin: var(--space-2) 0 0;
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+}
+.orchestration a {
+    color: inherit;
 }
 .row[data-agent="waiting"] {
     border-left-color: var(--accent);
@@ -155,6 +176,7 @@ function agentLabel(state: string): string {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: var(--space-3);
 }
 .name {
@@ -203,5 +225,7 @@ dt {
 dd {
     margin: 0;
     font-family: var(--font-mono);
+    overflow-wrap: anywhere;
+    min-width: 0;
 }
 </style>

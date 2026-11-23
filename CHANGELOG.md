@@ -203,8 +203,11 @@ before editing `## Unreleased`.
   host-side, read-only browser dashboard, included in every install
   ([#109](https://github.com/VRTFinland/jailbee/issues/109)). The front page
   shows repositories and containers with the terminal dashboard's core columns
-  and agent state; a container or repository opens its agent sessions, and a
-  session opens as a typeset transcript with rendered Markdown, folded tool
+  and agent state. Front-page and repository container lists nest children under
+  their orchestrator, showing child counts, states and runners; container pages
+  link between children and their orchestrator
+  ([#152](https://github.com/VRTFinland/jailbee/issues/152)). A container or
+  repository opens its agent sessions, and a session opens as a typeset transcript with rendered Markdown, folded tool
   calls, optional thinking, subagent transcripts and live updates. Themes
   (light, dark, e-ink) and an e-ink display profile with page turns are chosen
   per device, and the app installs as a PWA with no CDN assets. Login uses a

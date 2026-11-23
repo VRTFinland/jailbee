@@ -9,13 +9,14 @@ import {createAppRouter} from "../router"
 import {reloadSettings, updateSettings} from "../settings"
 import type {SocketHandlers} from "../socket"
 import FrontPage from "./FrontPage.vue"
+import {orchestrationView} from "../test-fixtures"
 
 function viewWith(name: string, seq: number): FrontPageView {
     return {
         seq,
         gathered_at: "2026-11-21T12:00:00Z",
         columns: [{name: "name", header: "NAME"}],
-        repos: [{prefix: "alpha", containers: [{name, indent: "", agent: null, state: "Running", phase: null, cells: [name]}]}],
+        repos: [{prefix: "alpha", containers: [{name, indent: "", agent: null, state: "Running", phase: null, depth: 0, orchestrator: false, child_count: 0, child: null, cells: [name]}]}],
     }
 }
 
@@ -49,6 +50,25 @@ describe("FrontPage", () => {
     afterEach(() => {
         updateSettings({displayProfile: "normal"})
         vi.useRealTimers()
+    })
+
+    it("re-nests an orchestrator and two children on live snapshots without reloading", async () => {
+        const {wrapper, push} = setup()
+        push(orchestrationView())
+        await nextTick()
+        expect(wrapper.findAll("li.row").map(row => row.attributes("data-container"))).toEqual([
+            "alpha-orch", "alpha-task-a", "alpha-task-b",
+        ])
+        expect(wrapper.findAll("li.nested")).toHaveLength(2)
+        const next = orchestrationView()
+        next.seq = 2
+        next.repos[0].containers.pop()
+        next.repos[0].containers[0].child_count = 1
+        push(next)
+        await nextTick()
+        expect(wrapper.findAll("li.nested")).toHaveLength(1)
+        expect(wrapper.text()).not.toContain("task-b")
+        expect(wrapper.text()).toContain("Orchestrator · 1 child")
     })
 
     it("shows every snapshot at once in the normal profile", async () => {

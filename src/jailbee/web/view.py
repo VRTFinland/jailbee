@@ -22,7 +22,7 @@ from jailbee.dashboard.fork_tree import fork_layout, name_prefix
 from jailbee.dashboard.format import row_phase
 from jailbee.dashboard.sorting import DEFAULT_SORT, sort_groups
 from jailbee.dashboard.visibility import visible_repo_groups
-from jailbee.web.protocol import ColumnHead, ContainerRow, FrontPageView, RepoRow
+from jailbee.web.protocol import ChildRelation, ColumnHead, ContainerRow, FrontPageView, RepoRow
 
 if TYPE_CHECKING:
     from jailbee.lifecycle import ContainerInfo
@@ -71,6 +71,21 @@ def _rows(
             state=info.state,
             phase=row_phase(info),
             cells=[_plain(s.cell(info)) for s in specs],
+            depth=layout.depth.get(info.name, 0),
+            orchestrator=info.grant is not None,
+            child_count=sum(
+                c.child is not None and c.child.orchestrator == info.name for c in containers
+            ),
+            child=(
+                ChildRelation(
+                    orchestrator=info.child.orchestrator,
+                    orchestrator_short_name=info.child.orchestrator.removeprefix(f"{info.repo}-"),
+                    state=info.child.state,
+                    runner=info.child.runner,
+                )
+                if info.child is not None
+                else None
+            ),
         )
         for info in containers
     ]

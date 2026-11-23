@@ -18,8 +18,8 @@ const view: FrontPageView = {
         {
             prefix: "alpha",
             containers: [
-                {name: "alpha-1", indent: "", agent: "waiting", state: "Running", phase: "booting", cells: ["1", "▶", "◆ 5m", ""]},
-                {name: "alpha-2", indent: "└ ", agent: null, state: "Stopped", phase: null, cells: ["2", "■", "—", "#7"]},
+                {name: "alpha-1", indent: "", agent: "waiting", state: "Running", phase: "booting", depth: 0, orchestrator: false, child_count: 0, child: null, cells: ["1", "▶", "◆ 5m", ""]},
+                {name: "alpha-2", indent: "└ ", agent: null, state: "Stopped", phase: null, depth: 0, orchestrator: false, child_count: 0, child: null, cells: ["2", "■", "—", "#7"]},
             ],
         },
         {prefix: "empty", containers: []},
@@ -31,6 +31,31 @@ function mountList() {
 }
 
 describe("RepoList", () => {
+    it("visibly nests children and shows orchestration facts without colour", async () => {
+        const wrapper = mountList()
+        const parent = {...view.repos[0].containers[0], orchestrator: true, child_count: 2}
+        const child = {...view.repos[0].containers[1], depth: 1,
+            child: {orchestrator: parent.name, orchestrator_short_name: "1", state: "done", runner: "codex/opus"}}
+        await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [parent, child]}]}})
+        const rows = wrapper.findAll("li.row")
+        expect(rows[0].text()).toContain("Orchestrator · 2 children")
+        expect(rows[1].classes()).toContain("nested")
+        expect(rows[1].text()).toContain("Child of 1 · done · codex/opus")
+        expect(rows[1].get(".orchestration a").attributes("href")).toBe("/containers/alpha-1")
+    })
+
+    it("keeps an absent orchestrator's child visible with its short name", async () => {
+        const wrapper = mountList()
+        const orphan = {...view.repos[0].containers[1], child: {
+            orchestrator: "alpha-missing-parent", orchestrator_short_name: "missing-parent", state: "working", runner: null,
+        }}
+        await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [orphan]}]}})
+        const row = wrapper.get("li.row")
+        expect(row.classes()).not.toContain("nested")
+        expect(row.text()).toContain("Child of missing-parent · working")
+        expect(row.text()).toContain("orchestrator not listed")
+    })
+
     it("groups containers under a heading per repository", () => {
         const wrapper = mountList()
         const repos = wrapper.findAll("section.repo")

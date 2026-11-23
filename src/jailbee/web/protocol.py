@@ -25,7 +25,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 
 CLOSE_UNAUTHORIZED = 4001
 """No valid session token: the browser goes back to the login page."""
@@ -102,6 +102,16 @@ class ColumnHead(BaseModel):
     header: str
 
 
+class ChildRelation(BaseModel):
+    """Display-only orchestration facts, without grant or child rights."""
+
+    model_config = ConfigDict(frozen=True)
+    orchestrator: str
+    orchestrator_short_name: str
+    state: str
+    runner: str | None
+
+
 class ContainerRow(BaseModel):
     """One container: its name, fork-tree indent glyphs, agent state and cells.
 
@@ -120,6 +130,10 @@ class ContainerRow(BaseModel):
     state: str
     phase: str | None
     cells: list[str]
+    depth: int = 0
+    orchestrator: bool = False
+    child_count: int = 0
+    child: ChildRelation | None = None
 
 
 class RepoRow(BaseModel):

@@ -4,6 +4,8 @@ import {createMemoryHistory} from "vue-router"
 import {setToken} from "../api"
 import {createAppRouter} from "../router"
 import ContainerView from "./ContainerView.vue"
+import {DASHBOARD, Dashboard} from "../dashboard"
+import {orchestrationView} from "../test-fixtures"
 
 function jsonResponse(status: number, body: unknown): Response {
     return new Response(JSON.stringify(body), {
@@ -35,18 +37,57 @@ const list = {
     ],
 }
 
-async function mountContainer(fetchMock: ReturnType<typeof vi.fn>) {
+async function mountContainer(fetchMock: ReturnType<typeof vi.fn>, dashboard?: Dashboard, name = "alpha-1") {
     setToken("tok")
     vi.stubGlobal("fetch", fetchMock)
     const router = createAppRouter(createMemoryHistory())
-    await router.push("/containers/alpha-1")
+    await router.push(`/containers/${name}`)
     await router.isReady()
-    const wrapper = mount(ContainerView, {global: {plugins: [router]}})
+    const wrapper = mount(ContainerView, {global: {plugins: [router], provide: dashboard ? {[DASHBOARD]: dashboard} : {}}})
     await flushPromises()
     return {wrapper, router}
 }
 
 describe("ContainerView", () => {
+    it("links an orchestrator's children and updates the list live", async () => {
+        const dashboard = new Dashboard(() => ({start() {}, stop() {}, send() {}}))
+        dashboard.state.view = orchestrationView()
+        const {wrapper} = await mountContainer(vi.fn().mockResolvedValue(jsonResponse(200, list)), dashboard, "alpha-orch")
+        expect(wrapper.findAll(".children a").map(a => a.attributes("href"))).toEqual([
+            "/containers/alpha-task-a", "/containers/alpha-task-b",
+        ])
+        expect(wrapper.get(".children").text()).toContain("working · codex/opus")
+        dashboard.state.view = {...orchestrationView(), repos: [{prefix: "alpha", containers: []}]}
+        await flushPromises()
+        expect(wrapper.findAll(".children a")).toHaveLength(0)
+    })
+
+    it("links a child back to its orchestrator, even when that row is absent", async () => {
+        const dashboard = new Dashboard(() => ({start() {}, stop() {}, send() {}}))
+        const view = orchestrationView()
+        view.repos[0].containers.shift()
+        dashboard.state.view = view
+        const {wrapper} = await mountContainer(vi.fn().mockResolvedValue(jsonResponse(200, list)), dashboard, "alpha-task-a")
+        expect(wrapper.get(".parent a").attributes("href")).toBe("/containers/alpha-orch")
+        expect(wrapper.get(".parent").text()).toContain("Child of orch · working · codex/opus")
+    })
+
+    it("loads the selected child's sessions when following a relationship link", async () => {
+        const dashboard = new Dashboard(() => ({start() {}, stop() {}, send() {}}))
+        dashboard.state.view = orchestrationView()
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(jsonResponse(200, list))
+            .mockResolvedValueOnce(jsonResponse(200, {...list, sessions: []}))
+        const {wrapper} = await mountContainer(fetchMock, dashboard, "alpha-orch")
+        await wrapper.get(".children a").trigger("click")
+        await flushPromises()
+        expect(fetchMock.mock.calls.map(call => call[0])).toEqual([
+            "/api/containers/alpha-orch/sessions", "/api/containers/alpha-task-a/sessions",
+        ])
+        expect(wrapper.text()).not.toContain("Fix the login bug")
+        expect(wrapper.text()).toContain("No sessions")
+    })
+
     it("lists live sessions first, marked live, then the recorded ones", async () => {
         const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, list))
         const {wrapper} = await mountContainer(fetchMock)

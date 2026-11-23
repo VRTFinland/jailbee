@@ -95,6 +95,73 @@ def test_containers_are_grouped_under_their_repo(
     ]
 
 
+def test_orchestration_relation_survives_the_web_snapshot(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    from jailbee.orchestration.view import ChildView, GrantView
+
+    client, token = started
+    parent = container("alpha-orch", grant=GrantView(4, (), (), False, ()))
+    child = container(
+        "alpha-task",
+        child=ChildView("alpha-orch", "working", (), False, (), "codex/opus"),
+    )
+    snap = snapshot_of(repo_group("alpha", child, parent))
+    page = json.loads(first_page(client, token, factory, snap))
+    assert page["v"] == 4
+    rows = page["view"]["repos"][0]["containers"]
+    assert [row["name"] for row in rows] == ["alpha-orch", "alpha-task"]
+    assert rows[0]["orchestrator"] is True
+    assert rows[0]["child_count"] == 1
+    assert rows[0]["child"] is None
+    assert rows[1]["depth"] == 1
+    assert rows[1]["child"] == {
+        "orchestrator": "alpha-orch",
+        "orchestrator_short_name": "orch",
+        "state": "working",
+        "runner": "codex/opus",
+    }
+
+
+def test_absent_orchestrator_keeps_the_child_relation(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    from jailbee.orchestration.view import ChildView
+
+    client, token = started
+    child = container(
+        "alpha-task", child=ChildView("alpha-missing-parent", "imported", (), False, ())
+    )
+    snap = snapshot_of(repo_group("alpha", child))
+    row = json.loads(first_page(client, token, factory, snap))["view"]["repos"][0]["containers"][0]
+    assert row["depth"] == 0
+    assert row["child"] == {
+        "orchestrator": "alpha-missing-parent",
+        "orchestrator_short_name": "missing-parent",
+        "state": "imported",
+        "runner": None,
+    }
+
+
+def test_child_removal_updates_the_orchestrators_count(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    from jailbee.orchestration.view import ChildView, GrantView
+
+    client, token = started
+    parent = container("alpha-orch", grant=GrantView(4, (), (), False, ()))
+    child = container("alpha-task", child=ChildView("alpha-orch", "working", (), False, ()))
+    with client.websocket_connect("/api/ws") as ws:
+        ws.send_text(json.dumps({"type": "auth", "v": PROTOCOL_VERSION, "token": token}))
+        ws.receive_json()
+        factory.only.push(snapshot_of(repo_group("alpha", parent, child), seq=1))
+        assert ws.receive_json()["view"]["repos"][0]["containers"][0]["child_count"] == 1
+        factory.only.push(snapshot_of(repo_group("alpha", parent), seq=2))
+        rows = ws.receive_json()["view"]["repos"][0]["containers"]
+        assert [row["name"] for row in rows] == ["alpha-orch"]
+        assert rows[0]["child_count"] == 0
+
+
 def test_cells_equal_the_dashboard_core_for_the_same_snapshot(
     started: tuple[TestClient, str], factory: FakeSourceFactory
 ) -> None:
