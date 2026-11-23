@@ -353,8 +353,8 @@ def test_a_command_only_session_uses_its_first_command_as_the_title(
         _user_text("caveat", "<local-command-caveat>Local only</local-command-caveat>"),
         _user_text("stdout", "<local-command-stdout>Output</local-command-stdout>"),
         _user_text("reminder", "  <system-reminder>Injected\ncontext</system-reminder>"),
-        _user_text("mixed", "<system-reminder>Injected</system-reminder>\nFix the session titles"),
-        {"type": "user", "isMeta": True, "message": {"content": "Injected context"}},
+        _user_text("task", "<task-notification>Agent finished</task-notification>"),
+        _user_text("bash", "<bash-input>pwd</bash-input>"),
         {
             "type": "user",
             "message": {
@@ -434,6 +434,54 @@ def test_listing_parses_only_candidate_lines_even_when_commands_precede_a_large_
 
     assert info is not None and info.title == "Fix the session titles"
     assert len(parsed) == 2
+
+
+def test_command_only_sessions_have_a_bounded_title_parse_budget(
+    home: Path, source: ClaudeSource, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(
+        _transcript(home),
+        _user_text("command", "<command-name>/model</command-name>"),
+        *(
+            _user_text(str(i), "<local-command-stdout>Output</local-command-stdout>")
+            for i in range(500)
+        ),
+    )
+    loads = json.loads
+    parsed = 0
+
+    def count_loads(data: object) -> object:
+        nonlocal parsed
+        parsed += 1
+        return loads(data)
+
+    monkeypatch.setattr(json, "loads", count_loads)
+
+    info = source.session_info(SID, _transcript(home))
+
+    assert info is not None and info.title == "/model"
+    assert parsed <= 32
+
+
+@pytest.mark.parametrize(
+    ("candidate", "expected"), [(32, "A prompt at the boundary"), (33, "/model")]
+)
+def test_the_title_budget_keeps_prompts_at_but_not_beyond_its_boundary(
+    home: Path, source: ClaudeSource, candidate: int, expected: str
+) -> None:
+    _write(
+        _transcript(home),
+        _user_text("command", "<command-name>/model</command-name>"),
+        *(
+            _user_text(str(i), "<local-command-stdout>Output</local-command-stdout>")
+            for i in range(candidate - 2)
+        ),
+        _user_text("prompt", "A prompt at the boundary"),
+    )
+
+    info = source.session_info(SID, _transcript(home))
+
+    assert info is not None and info.title == expected
 
 
 def test_a_claude_jb_session_reports_its_gateway_model_names(

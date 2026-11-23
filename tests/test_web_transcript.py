@@ -264,6 +264,17 @@ def test_an_agent_wrapper_prompt_is_meta_and_shown_verbatim(client: TestClient) 
         "<local-command-caveat>Local only</local-command-caveat>",
         "<local-command-stdout>Model changed</local-command-stdout>",
         "  <system-reminder>Injected\ncontext</system-reminder>",
+        "<bash-stdout>/work/repo</bash-stdout>",
+        "<bash-stderr>No such file</bash-stderr>",
+        "<user-prompt-submit-hook>Hook context</user-prompt-submit-hook>",
+        "<local-command-stderr>Command failed</local-command-stderr>",
+        "<command-extra>Command context</command-extra>",
+        '<teammate-message teammate_id="reviewer">Review finished</teammate-message>',
+        "<ide_selection>Selected code</ide_selection>",
+        '<terminal name="build">Build output</terminal>',
+        '<coordinator-task nonce="abc">Task context</coordinator-task>',
+        "<task_notification>Monitor event</task_notification>",
+        "<webhook-payload>Event context</webhook-payload>",
     ],
 )
 def test_agent_preambles_are_meta_in_the_rendered_transcript(
@@ -277,6 +288,73 @@ def test_agent_preambles_are_meta_in_the_rendered_transcript(
     assert entry["meta"] is True
     assert '<pre class="meta">' in str(entry["html"])
     assert "&lt;" in str(entry["html"])
+
+
+@pytest.mark.parametrize("wrapper", ["task-notification", "bash-input"])
+def test_injected_user_records_are_meta_and_cannot_supply_session_titles(
+    client: TestClient, home: Path, wrapper: str
+) -> None:
+    if wrapper == "task-notification":
+        corpus = (
+            Path(__file__).parent
+            / "fixtures/transcripts/claude-corpus/projects/-work-toy"
+            / "00000003-0000-4000-8000-000000000003.jsonl"
+        )
+        record = json.loads(corpus.read_text().splitlines()[6])
+    else:
+        record = _record(1, "user", "<bash-input>pwd</bash-input>")
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    path.write_text(
+        json.dumps(record) + "\n" + json.dumps(_record(2, "user", "Fix the title")) + "\n"
+    )
+
+    response = client.get(URL)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["entries"][0]["meta"], body["title"]) == (True, "Fix the title")
+
+
+@pytest.mark.parametrize(
+    "context",
+    ["Injected context", "Injected <system-reminder>nested</system-reminder> context"],
+)
+def test_a_mixed_user_record_separates_injected_context_from_the_typed_prompt(
+    client: TestClient, home: Path, context: str
+) -> None:
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    path.write_text(
+        json.dumps(
+            _record(1, "user", f"<system-reminder>{context}</system-reminder>\nFix **titles**")
+        )
+        + "\n"
+        + json.dumps(_record(2, "user", "A later prompt"))
+        + "\n"
+    )
+
+    body = client.get(URL).json()
+
+    assert body["title"] == "Fix **titles**"
+    injected, typed, later = body["entries"]
+    assert injected["meta"] is True
+    assert "Injected" in injected["html"] and "Fix" not in injected["html"]
+    assert typed["meta"] is False
+    assert typed["html"] == "<p>Fix <strong>titles</strong></p>"
+    assert len({injected["id"], typed["id"], later["id"]}) == 3
+
+
+def test_an_unknown_xml_tag_stays_typed_text_in_both_title_and_transcript(
+    client: TestClient, home: Path
+) -> None:
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    path.write_text(json.dumps(_record(1, "user", "<example>broken</example>")) + "\n")
+
+    body = client.get(URL).json()
+
+    assert body["title"] == "<example>broken</example>"
+    (entry,) = body["entries"]
+    assert entry["meta"] is False
+    assert "&lt;example&gt;broken&lt;/example&gt;" in entry["html"]
 
 
 def test_a_subagent_is_referenced_as_data(client: TestClient) -> None:

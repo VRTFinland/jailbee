@@ -56,6 +56,9 @@ SYNTHETIC_MODEL = "<synthetic>"
 TITLE_CHARS = 120
 """A session title is the first typed prompt (or command) on one line, cut to this."""
 
+TITLE_CANDIDATES = 32
+"""Once a command fallback exists, inspect at most this many user candidates."""
+
 _TIMESTAMP = re.compile(rb'"timestamp"\s*:\s*"([^"]{1,64})"')
 """Found without parsing the line: a listing reads every line of every session."""
 _USER_RECORD = (b'"type":"user"', b'"type": "user"')
@@ -314,7 +317,8 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
     Sessions run to tens of megabytes and a listing reads every one, so the
     bytes are searched rather than parsed line by line: the first and last
     timestamps bound the session, only candidate user lines are parsed until
-    the first typed prompt (falling back to the first command), and only a
+    the first typed prompt (falling back to the first command after at most
+    TITLE_CANDIDATES candidates once that command is found), and only a
     line naming a model not seen yet is parsed to tell whether that
     is the record's model or a tool input's. A caller listing many sessions
     should cache the result by the file's size and mtime.
@@ -326,12 +330,16 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
     title = ""
     first_command = ""
     at = 0
+    candidates = 0
     while not title and at < len(data):
         end = data.find(b"\n", at)
         end = len(data) if end < 0 else end
         line = data[at:end]
         at = end + 1
         if any(marker in line for marker in _USER_RECORD):
+            if first_command and candidates >= TITLE_CANDIDATES:
+                break
+            candidates += 1
             record = _record(line)
             users = (
                 [e for e in _entries(record, "") if isinstance(e, UserMessage)] if record else []

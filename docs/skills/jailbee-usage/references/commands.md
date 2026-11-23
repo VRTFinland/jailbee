@@ -430,7 +430,11 @@ suggestions, in its own style, instead of a generic router message.
 
 Host-side only; included in every install. Full guide: `docs/web-dashboard.md`.
 Session lists are titled by the first typed prompt, ignoring agent wrappers and
-injected context; command-only sessions use their first slash command.
+injected context (including task notifications, `!`-mode input/output and prompt
+hooks); command-only sessions use their first slash command, with title lookup
+bounded to 32 candidate user records once that fallback exists. A leading agent
+wrapper and typed text in one record are displayed separately as metadata and a
+prompt; unknown XML-like tags remain typed text.
 The front page and repository container lists nest children under their
 orchestrator, show its child count and each child's state/runner, and keep
 absent-parent children labelled. Container pages link between parent and

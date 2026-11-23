@@ -13,6 +13,7 @@ import json
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 
 from jailbee.transcripts.base import (
     AssistantText,
@@ -23,7 +24,7 @@ from jailbee.transcripts.base import (
     ToolResult,
     UserMessage,
 )
-from jailbee.transcripts.markup import is_meta_wrapper
+from jailbee.transcripts.markup import is_meta_wrapper, split_prompt
 from jailbee.web.highlight import highlight_json
 from jailbee.web.markdown_render import render_markdown
 from jailbee.web.protocol import (
@@ -160,6 +161,18 @@ def render_entries(entries: Iterable[Entry], cache: RenderCache) -> list[Rendere
     described = subagent_descriptions(entries)
     rendered: list[RenderedEntry] = []
     for e in entries:
+        if isinstance(e, UserMessage):
+            markup, typed = split_prompt(e.text)
+            if markup and typed:
+                rendered.append(
+                    RenderedUser(
+                        id=f"{e.id}:meta",
+                        timestamp=e.timestamp,
+                        html=_pre(markup, "meta"),
+                        meta=True,
+                    )
+                )
+                e = replace(e, text=typed)
         r = render_entry(e, cache)
         if isinstance(r, RenderedSubagent) and r.description is None:
             r = r.model_copy(update={"description": described.get(r.agent_id)})
