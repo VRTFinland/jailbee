@@ -7,7 +7,6 @@ CLI-only (spec #109).
 from __future__ import annotations
 
 import math
-from dataclasses import replace
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
@@ -199,8 +198,13 @@ def rename_session(
     """Rename the caller's own session; the new name shows in the header and the CLI listing."""
     renamed = ctx.sessions.rename(authed.token, body.device_name)
     if renamed is None:
-        # Login switched off: there is no stored session to name.
-        renamed = replace(authed.session, device_name=body.device_name)
+        # Login switched off: there is no stored session to name, so nothing
+        # changes and nothing is audited.
+        return SessionResponse(
+            device_name=authed.session.device_name,
+            created_at=authed.session.created_at,
+            last_used_at=authed.session.last_used_at,
+        )
     auth_admin.record_event(
         ctx.deps.engine,
         "rename",

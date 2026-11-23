@@ -189,3 +189,24 @@ def test_a_rename_touches_only_that_session(client: TestClient, pin: PinHolder) 
     assert client.get("/api/session", headers=bearer(second)).json()["device_name"] == (
         "Chrome on Android"
     )
+
+
+def test_renaming_with_login_off_changes_and_audits_nothing(clock: FakeClock) -> None:
+    deps = WebDeps(
+        snapshot_source=FakeSourceFactory(),
+        engine=get_engine(),
+        clock=clock,
+        monotonic=clock.monotonic,
+        pin=PinHolder(generate=pin_sequence()),
+        auth_enabled=False,
+    )
+    client = TestClient(create_app(deps))
+
+    response = client.put(
+        "/api/session", json={"device_name": "x"}, headers={"host": "localhost:8910"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["device_name"] == "local (no login)"
+    with Session(get_engine()) as s:
+        assert s.exec(select(WebAuthEvent).where(WebAuthEvent.event == "rename")).all() == []
