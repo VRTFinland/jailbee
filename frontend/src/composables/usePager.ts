@@ -18,7 +18,16 @@ export interface Pager {
     measure(): void
 }
 
-export function usePager(topInset: () => number = () => 0): Pager {
+/**
+ * `topInset` reserves a sticky header. `trailingSpace` is room at the document's
+ * end that holds no content (a spacer that lets the last reply scroll to the
+ * top): page turns stop once the content's end is readable, while a jump to an
+ * element may still use that room.
+ */
+export function usePager(
+    topInset: () => number = () => 0,
+    trailingSpace: () => number = () => 0,
+): Pager {
     const availableHeight = ref(1)
     function pageHeight(): number {
         return availableHeight.value
@@ -28,11 +37,13 @@ export function usePager(topInset: () => number = () => 0): Pager {
     // A jump can start a new grid at a reply rather than the document origin.
     // Page zero still starts at zero; its shortened turn never skips content.
     const gridShift = ref(0)
-    const contentHeight = ref(0)
-    const viewportHeight = ref(window.innerHeight)
     // Pages are bounded by the reachable scroll range, not the content height:
-    // the last page is the one the browser can actually scroll to.
-    const maxScroll = computed(() => Math.max(0, contentHeight.value - viewportHeight.value))
+    // the last page is the one the browser can actually scroll to, or the one
+    // that shows the content's end if trailing space lies beyond it.
+    const lastStop = ref(0)
+    // A jump into the trailing space extends the grid to that anchor.
+    const anchorStop = ref(0)
+    const maxScroll = computed(() => Math.max(lastStop.value, anchorStop.value))
     const pageCount = computed(() => Math.ceil((maxScroll.value + gridShift.value) / pageHeight()) + 1)
 
     function currentPage(): number {
@@ -48,11 +59,14 @@ export function usePager(topInset: () => number = () => 0): Pager {
         // Integer steps survive browser scroll-offset rounding without advancing
         // past the readable area or falling back onto the previous page.
         const height = Math.max(1, Math.floor(readableBottom() - topInset()))
-        contentHeight.value = document.documentElement.scrollHeight
-        viewportHeight.value = window.innerHeight
+        const scrollHeight = document.documentElement.scrollHeight
+        const reachable = Math.max(0, scrollHeight - window.innerHeight)
+        const contentEnd = scrollHeight - Math.max(0, trailingSpace())
+        lastStop.value = Math.min(reachable, Math.max(0, Math.ceil(contentEnd - readableBottom())))
         if (height !== availableHeight.value) {
             availableHeight.value = height
             gridShift.value = 0
+            anchorStop.value = 0
             page.value = currentPage()
         }
     }
@@ -72,7 +86,7 @@ export function usePager(topInset: () => number = () => 0): Pager {
         measure()
         const target = Math.min(Math.max(0, index), pageCount.value - 1)
         page.value = target
-        window.scrollTo(0, Math.max(0, target * pageHeight() - gridShift.value))
+        window.scrollTo(0, Math.max(0, Math.min(maxScroll.value, target * pageHeight() - gridShift.value)))
     }
 
     let observer: ResizeObserver | null = null
@@ -108,6 +122,7 @@ export function usePager(topInset: () => number = () => 0): Pager {
             const target = Math.max(0, Math.round(top - topInset()))
             const index = Math.ceil(target / pageHeight())
             gridShift.value = index * pageHeight() - target
+            anchorStop.value = Math.min(target, Math.max(0, document.documentElement.scrollHeight - window.innerHeight))
             goTo(index)
         },
         measure,

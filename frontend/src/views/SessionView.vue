@@ -22,7 +22,13 @@ const header = ref<HTMLElement | null>(null)
 const headerHeight = ref(0)
 /** Header plus the page's top padding: the pager's stable top inset. */
 const headerInset = ref(0)
-const pager = usePager(() => headerInset.value)
+const pageEl = ref<HTMLElement | null>(null)
+const pager = usePager(
+    () => headerInset.value,
+    // The bottom spacer lets a short final reply start below the header; page
+    // turns end where the transcript does, not inside that blank room.
+    () => (pageEl.value ? parseFloat(getComputedStyle(pageEl.value).paddingBottom) || 0 : 0),
+)
 const eink = computed(() => settings.displayProfile === "eink")
 /** E-ink: live entries wait here until the reader taps the notice. */
 const pending = ref<RenderedEntry[]>([])
@@ -275,7 +281,7 @@ watch(
 </script>
 
 <template>
-    <div class="page" :style="{'--session-header-height': `${headerHeight}px`}">
+    <div ref="pageEl" class="page" :style="{'--session-header-height': `${headerHeight}px`}">
         <header ref="header" class="session-header">
             <div class="bar">
             <router-link
