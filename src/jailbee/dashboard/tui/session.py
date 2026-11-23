@@ -571,6 +571,7 @@ class DashboardSession:
         self.overlay: Overlay | None = None
         # Every action started through the action runner, until dismissed.
         self.queue = NotificationQueue()
+        self._queue_frame = 0
         self._following: int | None = None  # the entry whose output screen follows it live
         self._modal_entry: int | None = None  # the critical entry whose modal is open
         # Grant edits made here, shown until the gathered snapshot catches up (see _patch_grant).
@@ -669,6 +670,7 @@ class DashboardSession:
             self._auto_optimize_seq = None
             self._optimize_widths()
         self.column_offset = self._clamped(self.column_offset)
+        self._queue_frame = (self._queue_frame + 1) % 4 if self.queue.counts().running else 0
 
     def _without_dismissed(self, groups: list[RepoGroup]) -> list[RepoGroup]:
         """``groups`` minus the advisories dismissed since the snapshot was gathered.
@@ -753,7 +755,7 @@ class DashboardSession:
             transport=self.transport,
             ssh_policy=self.ssh_policy,
             queue=counts,
-            queue_frame=now.microsecond // 250_000 if counts and counts.running else 0,
+            queue_frame=self._queue_frame if counts and counts.running else 0,
         )
 
     def title(self) -> str:
