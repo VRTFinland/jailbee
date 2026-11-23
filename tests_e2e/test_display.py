@@ -30,7 +30,9 @@ def agent_home(tmp_path: Path) -> Path:
 def server(make_server: Callable[..., E2EServer], agent_home: Path) -> E2EServer:
     server = make_server(agent_homes={"work": [("claude", agent_home)]}.get)
     live = AgentSummary("claude", "busy", None, None, 1, session_ids=(SESSION_ID,))
-    server.push(snapshot_of(repo_group("work", container("work-main", "work", agent_status=(live,)))))
+    server.push(
+        snapshot_of(repo_group("work", container("work-main", "work", agent_status=(live,))))
+    )
     return server
 
 
@@ -115,7 +117,9 @@ def test_eink_page_turns_hold_new_messages_and_refresh_snapshot(
     for number in range(2, total + 1):
         next_page.click()
         # Let the browser deliver scroll/layout events before checking the counter.
-        page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+        page.evaluate(
+            "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
+        )
         expect(indicator).to_have_text(f"Page {number} / {total}")
     expect(next_page).to_be_disabled()
     expect(page.get_by_text("Reading paragraph 39.", exact=True)).to_be_in_viewport()
