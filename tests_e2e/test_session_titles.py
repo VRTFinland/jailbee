@@ -58,7 +58,7 @@ def test_a_mixed_user_record_titles_by_the_typed_text_and_shows_the_reminder_as_
     server = make_server(
         agent_homes=lambda prefix: [("claude", home)] if prefix == "work" else None
     )
-    log_in_with_pin(page, server.url, server.pin.current, "session reader")
+    log_in_with_pin(page, server.url, server.pin.current)
 
     page.goto(f"{server.url}/#/repos/work")
 
