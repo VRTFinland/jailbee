@@ -10,6 +10,7 @@ following links.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -24,6 +25,7 @@ from jailbee.accounts.models import (
     ActivityPaths,
     AgentActivity,
     AgentApiError,
+    ApiErrorKind,
 )
 
 TAIL_BYTES = 64 * 1024
@@ -188,15 +190,7 @@ def parse_tail(raw: bytes, *, now: float | None = None) -> TailActivity:
         kinds = (
             ("text", "thinking", "tool_use") if record["type"] == "assistant" else ("tool_result",)
         )
-        date: datetime | None = None
-        stamp = record.get("timestamp")
-        if isinstance(stamp, str):
-            try:
-                parsed = datetime.fromisoformat(stamp)
-                if parsed.tzinfo is not None and (now is None or parsed.timestamp() <= now):
-                    date = parsed.astimezone(UTC)
-            except (ValueError, OverflowError, OSError):
-                pass
+        date = _record_time(record, now)
         if (
             not failed
             and date is not None
@@ -329,6 +323,7 @@ def classify_api_error(record: dict[str, object], *, now: float | None = None) -
     )[:200]
     lowered = text.lower()
     resets_at: datetime | None = None
+    kind: ApiErrorKind
     if any(marker in lowered or marker in names for marker in _QUOTA_MARKERS):
         kind = "quota"
         resets_at = _resets_at(text, now)
@@ -343,6 +338,10 @@ def classify_api_error(record: dict[str, object], *, now: float | None = None) -
     at = _record_time(record, now)
     uuid = record.get("uuid")
     ident = one_line(uuid, 64) if isinstance(uuid, str) else ""
+    if at is None and not ident:
+        # Nothing names the record: its content does, so another error is another episode.
+        digest = hashlib.sha256(json.dumps(record, sort_keys=True, default=str).encode())
+        ident = f"sha256:{digest.hexdigest()[:32]}"
     return AgentApiError(
         kind=kind,
         at=at,

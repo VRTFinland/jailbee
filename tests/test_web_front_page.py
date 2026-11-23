@@ -217,6 +217,20 @@ def test_cells_equal_the_dashboard_core_for_the_same_snapshot(
     assert cells["agent_compact"].startswith("◆")
 
 
+def test_row_carries_an_api_error_state_and_cell(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    client, token = started
+    info = container("alpha-1", agent_status=(agent("error:<b>quota"),))
+    view = json.loads(first_page(client, token, factory, snapshot_of(repo_group("alpha", info))))[
+        "view"
+    ]
+    row = view["repos"][0]["containers"][0]
+    cells = dict(zip((c["name"] for c in view["columns"]), row["cells"], strict=True))
+    assert row["agent"] == "error:<b>quota"  # the browser renders it as text
+    assert cells["agent_compact"].startswith("✖ <b>quota")
+
+
 @pytest.mark.parametrize("state", ["waiting", "busy", "idle"])
 def test_row_carries_the_agent_state(
     started: tuple[TestClient, str], factory: FakeSourceFactory, state: str

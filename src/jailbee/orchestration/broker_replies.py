@@ -277,7 +277,7 @@ def _settle_agent_watch(
         error = (
             agent_watch.api_error(ctx.cfg, child.full, status, now=ctx.now)
             if status is not None and status.alive
-            else None
+            else agent_watch.UNKNOWN
         )
         updated, error_body = agent_watch.advance_api_error(updated, error)
         if error_body is not None:

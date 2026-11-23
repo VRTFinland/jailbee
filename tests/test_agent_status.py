@@ -493,3 +493,19 @@ def test_an_erroring_agent_ranks_before_a_waiting_one():
 
     assert [s.agent for s in out] == ["b", "a"]
     assert agent_status.urgency("error:quota") < agent_status.urgency("waiting")
+
+
+def test_a_later_event_does_not_outrank_an_api_error_but_breaks_ties_between_errors():
+    def lookup(container, session, host_pid):
+        if session.pid == 10:
+            return AgentActivity("old", None, last_event_at=T0, api_error=_quota())
+        return AgentActivity("new", None, last_event_at=T0 + timedelta(hours=1), api_error=_quota())
+
+    (summary,) = agent_status.match_sessions(
+        {"a": [_s(10, 500, "waiting"), _s(11, 600, "idle")]},
+        {"a": {1010: 500, 1111: 600}},
+        {1010: 10, 1111: 11}.get,
+        lookup,
+    )["a"]
+
+    assert summary.activity is not None and summary.activity.last_tool == "new"

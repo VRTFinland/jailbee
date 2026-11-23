@@ -6,7 +6,8 @@ import json
 import shlex
 import signal
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from enum import Enum
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from jailbee.incus import IncusError
@@ -93,6 +94,31 @@ def _matched_session(
         (s for s in sessions if (s.pid, s.proc_start) == (status.pid, status.proc_start)), None
     )
     return (adapter, session) if session is not None else None
+
+
+def _session_activity(
+    cfg: Config, name: str, status: AgentStatus, *, now: datetime
+) -> tuple[AgentSession, AgentActivity | None] | None:
+    """The prompted process's session and what its transcript says; None if unmatched.
+
+    Adapter formats are undocumented: callers catch what this raises.
+    """
+    matched = _matched_session(cfg, name, status)
+    if matched is None:
+        return None
+    adapter, session = matched
+    paths = adapter.locate_activity(adapter.config_home(cfg), session)
+    activity = adapter.read_activity(paths, now=now.timestamp()) if paths is not None else None
+    return session, activity
+
+
+class Unknown(Enum):
+    """Evidence that could not be read, as distinct from evidence of nothing."""
+
+    UNKNOWN = "unknown"
+
+
+UNKNOWN = Unknown.UNKNOWN
 
 
 def current_session(cfg: Config, name: str, status: AgentStatus) -> str | None:
@@ -185,6 +211,7 @@ def agent_snapshot(
     An open API error makes `state` `error:<kind>`; `session_state` keeps the
     session's own state and `error` holds the kind, time, detail and reset.
     """
+    from jailbee.agent_status import error_state
     from jailbee.orchestration.child_status import clean_text
 
     # No pid ever recorded and no exit status: the agent is not launched yet
@@ -200,12 +227,10 @@ def agent_snapshot(
         "error": None,
     }
     try:
-        matched = _matched_session(cfg, name, status)
-        if matched is None:
+        read = _session_activity(cfg, name, status, now=now)
+        if read is None:
             return snap
-        adapter, session = matched
-        paths = adapter.locate_activity(adapter.config_home(cfg), session)
-        activity = adapter.read_activity(paths, now=now.timestamp()) if paths is not None else None
+        session, activity = read
         result = dict(snap)
         result["state"] = session.state
         result["session_state"] = session.state
@@ -218,7 +243,7 @@ def agent_snapshot(
             error = activity.api_error
             if error is not None:
                 # The session may say idle or busy; the turn itself has failed.
-                result["state"] = f"error:{error.kind}"
+                result["state"] = error_state(error.kind)
                 result["error"] = {
                     "kind": error.kind,
                     "at": error.at.timestamp() if error.at else None,
@@ -258,14 +283,18 @@ def advance_idle(
 
 
 def advance_api_error(
-    entry: WatchEntry, error: AgentApiError | None
+    entry: WatchEntry, error: AgentApiError | None | Unknown
 ) -> tuple[WatchEntry, str | None]:
     """One `blocked` report per API-error episode; progress (None) closes the episode.
+
+    `UNKNOWN` (an unreadable transcript) leaves the episode as it is.
 
     `error` must come from this tick's read: a stale error is never reported.
     The episode key lives on the durable entry, so a broker restart does not
     report it again.
     """
+    if error is UNKNOWN:
+        return entry, None
     if error is None:
         return (replace(entry, api_error_key=None) if entry.api_error_key else entry), None
     if entry.api_error_key == error.key:
@@ -273,25 +302,27 @@ def advance_api_error(
     body = f"[jailbee] child `{entry.child_full}` agent stopped on an API error ({error.kind})"
     if error.detail:
         body += f": {error.detail}"
-    if error.resets_at is not None:
-        body += f"; resets at {error.resets_at.astimezone(UTC).strftime('%Y-%m-%d %H:%M')} UTC"
+    resets = error.resets_text()
+    if resets is not None:
+        body += f"; resets at {resets}"
     return replace(entry, api_error_key=error.key), body
 
 
 def api_error(
     cfg: Config, name: str, status: AgentStatus, *, now: datetime
-) -> AgentApiError | None:
-    """The API error this prompted agent's latest turn ended in, read now; None if unknown."""
+) -> AgentApiError | None | Unknown:
+    """The API error this prompted agent's latest turn ended in, read now.
+
+    None means the transcript was read and shows no open error; `UNKNOWN`
+    that it could not be read, which must not close an episode.
+    """
     try:
-        matched = _matched_session(cfg, name, status)
-        if matched is None:
-            return None
-        adapter, session = matched
-        paths = adapter.locate_activity(adapter.config_home(cfg), session)
-        activity = adapter.read_activity(paths, now=now.timestamp()) if paths is not None else None
-        return activity.api_error if activity is not None else None
+        read = _session_activity(cfg, name, status, now=now)
     except Exception:
-        return None
+        return UNKNOWN
+    if read is None or read[1] is None:
+        return UNKNOWN
+    return read[1].api_error
 
 
 # Read /proc identity as well as kill(0): a reused PID or a zombie is not our agent.

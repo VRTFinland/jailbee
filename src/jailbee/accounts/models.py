@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -279,24 +279,30 @@ class ActivityEvent:
     """When the transcript recorded the step (UTC); None when it carried no valid time."""
 
 
+type ApiErrorKind = Literal["quota", "rate_limit", "auth", "overloaded", "other"]
+
+
 @dataclass(frozen=True)
 class AgentApiError:
     """The API error a session's latest turn ended in, after the agent gave up retrying.
 
-    `kind` is one of `API_ERROR_KINDS`. `detail` is a cleaned, capped one-line
+    `detail` is a cleaned, capped one-line
     summary, never the raw response body. `key` identifies the error record,
     so one episode is reported once.
     """
 
-    kind: str
+    kind: ApiErrorKind
     at: datetime | None
     status: int | None
     detail: str
     resets_at: datetime | None = None
     key: str = ""
 
-
-API_ERROR_KINDS: tuple[str, ...] = ("quota", "rate_limit", "auth", "overloaded", "other")
+    def resets_text(self) -> str | None:
+        """The reset time as people read it (`2026-11-24 03:39 UTC`), or None."""
+        if self.resets_at is None:
+            return None
+        return self.resets_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
 
 @dataclass(frozen=True)

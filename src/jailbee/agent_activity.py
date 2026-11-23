@@ -18,7 +18,6 @@ import logging
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from datetime import UTC
 from typing import TYPE_CHECKING
 
 from jailbee.lifecycle import format_duration_short
@@ -178,6 +177,7 @@ def _describe_api_error(activity: AgentActivity, now: datetime) -> ActivityText:
     head = f"stopped on an API error ({error.kind})"
     if error.at is not None and error.at <= now:
         head += f" {format_duration_short(now - error.at)} ago"
-    if error.resets_at is not None:
-        head += f" · resets {error.resets_at.astimezone(UTC).strftime('%Y-%m-%d %H:%M')} UTC"
+    resets = error.resets_text()
+    if resets is not None:
+        head += f" · resets {resets}"
     return ActivityText(head, None, error.detail or None, activity.recent)

@@ -164,6 +164,19 @@ def summarize(
     return tuple(summary for _, _, summary in ranked)
 
 
+def _speaks_over(found: AgentActivity, chosen: AgentActivity) -> bool:
+    """Whether `found` should speak for the agent instead of the earlier-ranked `chosen`.
+
+    A session stuck on an API error wins; otherwise the later event wins, and
+    the strict comparison keeps rank order for equal or unknown event dates.
+    """
+    if (found.api_error is None) != (chosen.api_error is None):
+        return found.api_error is not None
+    if found.last_event_at is None:
+        return False
+    return chosen.last_event_at is None or found.last_event_at > chosen.last_event_at
+
+
 def _lookup_for(
     container: str, host_pids: Mapping[tuple[int, int], int], activity: ActivityLookup | None
 ) -> Callable[[Sequence[AgentSession]], AgentActivity | None] | None:
@@ -176,17 +189,7 @@ def _lookup_for(
             found = activity(container, session, host_pids[(session.pid, session.proc_start)])
             if found is None:
                 continue
-            # A session stuck on an API error speaks for the agent; otherwise
-            # strict comparison preserves rank order for equal or unknown event dates.
-            if (
-                chosen is None
-                or (found.api_error is not None and chosen.api_error is None)
-                or (
-                    (found.api_error is None) == (chosen.api_error is None)
-                    and found.last_event_at is not None
-                    and (chosen.last_event_at is None or found.last_event_at > chosen.last_event_at)
-                )
-            ):
+            if chosen is None or _speaks_over(found, chosen):
                 chosen = replace(found, state=session.state, since=session.since)
         return chosen
 

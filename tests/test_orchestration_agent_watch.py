@@ -848,3 +848,22 @@ def test_open_api_error_suppresses_idle() -> None:
 
     entry = supervised(confirmed=True, api_error_key="k", idle_since=NOW.isoformat())
     assert advance_idle(entry, "turn", now=NOW + timedelta(hours=1), after=900)[1] is None
+
+
+def test_an_unreadable_transcript_keeps_the_episode_open() -> None:
+    from jailbee.orchestration.agent_watch import UNKNOWN, advance_api_error
+
+    entry, body = advance_api_error(supervised(confirmed=True), _api_error())
+    assert body is not None
+    entry, body = advance_api_error(entry, UNKNOWN)
+    assert body is None and entry.api_error_key is not None
+    assert advance_api_error(entry, _api_error())[1] is None
+
+
+def test_api_error_read_failure_is_unknown_not_progress(tmp_path, mocker):
+    from jailbee.orchestration.agent_watch import UNKNOWN, AgentStatus, api_error
+    from tests.conftest import make_config
+
+    mocker.patch("jailbee.accounts.adapters.base.get_adapter", side_effect=RuntimeError("boom"))
+    status = AgentStatus(True, "claude", pid=123, proc_start=42)
+    assert api_error(make_config(tmp_path), "kid", status, now=NOW) is UNKNOWN

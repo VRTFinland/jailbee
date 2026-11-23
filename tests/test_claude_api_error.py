@@ -217,3 +217,17 @@ def test_read_activity_carries_the_error(tmp_path: Path) -> None:
     assert activity is not None
     assert activity.api_error is not None
     assert activity.api_error.kind == "quota"
+
+
+def test_errors_without_time_or_uuid_still_have_distinct_keys() -> None:
+    def bare(text: str) -> dict[str, object]:
+        record = _error(text=text)
+        del record["timestamp"], record["uuid"]
+        return record
+
+    first = _parse(bare("API Error: one")).api_error
+    second = _parse(bare("API Error: two")).api_error
+
+    assert first is not None and second is not None
+    assert first.key != second.key
+    assert first.key == _parse(bare("API Error: one")).api_error.key  # type: ignore[union-attr]
