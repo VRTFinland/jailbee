@@ -429,6 +429,8 @@ suggestions, in its own style, instead of a generic router message.
 ## Web dashboard
 
 Host-side only; included in every install. Full guide: `docs/web-dashboard.md`.
+Session lists are titled by the first typed prompt, ignoring agent wrappers and
+injected context; command-only sessions use their first slash command.
 
 | Command | What it does |
 |---|---|

@@ -6,6 +6,7 @@ transcripts; the home resolver is injected, so no host config is read.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from collections.abc import Iterator, Sequence
@@ -87,6 +88,27 @@ def test_lists_sessions_newest_first_with_title_activity_and_models(client: Test
     assert first["title"]
     assert isinstance(first["models"], list) and first["models"]
     assert rows[1]["title"] == "hello there"
+
+
+def test_session_list_shows_the_typed_prompt_after_slash_commands(
+    client: TestClient, home: Path
+) -> None:
+    path = home / "projects" / "-work-repo" / f"{SESSION_A}.jsonl"
+    texts = [
+        "<command-name>/model</command-name> <command-message>model</command-message>",
+        "<local-command-caveat>Local only</local-command-caveat>",
+        "<local-command-stdout>Model changed</local-command-stdout>",
+        "Fix the session titles",
+    ]
+    path.write_text(
+        "".join(json.dumps({"type": "user", "message": {"content": text}}) + "\n" for text in texts)
+    )
+
+    res = client.get("/api/repos/alpha/sessions")
+
+    assert res.status_code == 200
+    row = next(r for r in res.json()["sessions"] if r["session_id"] == SESSION_A)
+    assert row["title"] == "Fix the session titles"
 
 
 def test_a_repo_without_agents_has_an_empty_list(client: TestClient) -> None:

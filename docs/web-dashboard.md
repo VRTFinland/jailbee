@@ -11,6 +11,10 @@ runs only while some dashboard (terminal, Qt or web) is connected. A session
 that starts and ends with no dashboard open is still listed under its
 repository, but not attributed to a container.
 
+Session titles use the first typed prompt, skipping agent wrapper records,
+local command output, caveats and injected context. A session with only slash
+commands uses its first command (for example, `/model`) instead of raw markup.
+
 Rows on the front page are styled like the terminal dashboard's: a container
 booting, in autostart, running another background job or in a failed job gets a
 coloured edge and a phase label, and a Stopped container is dimmed. The e-ink
