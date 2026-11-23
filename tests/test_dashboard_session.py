@@ -486,6 +486,7 @@ def test_late_job_result_after_close_is_a_notice(mocker, tmp_path):
     menu = session.overlay
     assert isinstance(menu, MenuState)
     published(JobResult(0, "", "Published 1 action\n"))  # type: ignore[operator]  # the held callback
+    jobs.poll()  # post-publication listing
 
     assert session.overlay is menu  # not reopened
     assert session.notice == "Published 1 action"
@@ -524,6 +525,7 @@ def test_outbox_mutation_refreshes_client(mocker, tmp_path):
     assert isinstance(state, tsession.OutboxState) and state.question is not None
     assert session.client.events == []
     session.outbox_intent("answer", None, "yes")
+    _settle(session)
 
     assert any(c.args[0][:2] == ["outbox", "drop"] for c in quiet.call_args_list)
     assert ("refresh",) in session.client.events

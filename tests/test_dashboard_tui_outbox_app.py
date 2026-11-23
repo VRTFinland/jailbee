@@ -96,7 +96,7 @@ def drive(app: OutboxApp, scenario, size=(100, 30)):  # type: ignore[no-untyped-
 async def listed(app: OutboxApp, pilot) -> None:  # type: ignore[no-untyped-def]
     """Wait for the background listing (it arrives on the app's poll timer)."""
     for _ in range(100):
-        if app.controller.state.busy != LOADING:
+        if app.controller.state.busy is None:
             # The poll clears busy before OptionList has laid out the new rows.
             await pilot.pause()
             return
@@ -341,7 +341,7 @@ def test_publish_pr_creation_in_all_repos_view_is_addressed_at_the_containers_re
 
     async def scenario(pilot):  # type: ignore[no-untyped-def]
         await pilot.press("down", "p")  # the beta-one proposal
-        await pilot.pause()
+        await listed(app, pilot)
 
     drive(app, scenario, size=(160, 30))
     assert handed == [
@@ -360,7 +360,7 @@ def test_publish_pr_creation_refused_when_the_containers_repo_is_unknown(mocker,
 
     async def scenario(pilot):  # type: ignore[no-untyped-def]
         await pilot.press("down", "p")
-        await pilot.pause()
+        await listed(app, pilot)
 
     drive(app, scenario, size=(160, 30))
     fg.assert_not_called()

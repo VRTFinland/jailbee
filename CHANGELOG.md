@@ -328,6 +328,12 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- Deleting from the terminal dashboard's Outbox box or `jailbee outbox` no
+  longer freezes the interface. Revision checks, drops and post-mutation
+  reloads run in the background with a busy line; navigation stays usable,
+  concurrent mutations are refused, and a closed dashboard box reports the
+  result as a notice. PR-creation preflight listing is asynchronous too
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 - **A dashboard left running across a JailBee upgrade stops instead of
   fighting the newer state service.** The "newer wins" rule only applied when
   both sides spoke the same protocol, so an older dashboard of a different
