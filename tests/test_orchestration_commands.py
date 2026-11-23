@@ -145,6 +145,7 @@ def test_build_grant_foreign_issues_none_clears_only_the_foreign_block(cfg):
         {"publish_prs": False},
         {"publish_pr_reviews": True},
         {"publish_pr_comment_edits": True},
+        {"publish_pr_state": True},
         {"publish_rate": 10},
         {"publish_foreign_issues": ()},
     ],
@@ -162,6 +163,7 @@ def test_no_publish_is_exclusive(cfg, changes):
         ("pull_requests", "pr push"),
         ("pr_reviews", "review apply"),
         ("pr_comment_edits", "review apply"),
+        ("pr_state", "review apply"),
     ],
 )
 def test_remote_publish_requires_equivalent_manual_permission(cfg, incus, right, allowed):
@@ -1043,23 +1045,20 @@ def test_profile_default_with_edits_but_no_reviews_is_narrowed(make_cfg, tmp_pat
     )
 
 
-def test_pr_state_right_needs_pr_reviews_and_goes_with_them(cfg):
+def test_pr_state_right_stands_alone(cfg):
     from jailbee.orchestration.grant import PublishRights
 
-    with pytest.raises(GrantError, match="--publish-pr-state needs --publish-pr-reviews"):
-        commands.build_grant(cfg, None, GrantFlags(publish_pr_state=True))
-    rights = commands.build_grant(
-        cfg, None, GrantFlags(publish_pr_reviews=True, publish_pr_state=True)
-    ).publish
-    assert rights.pr_state is True
+    rights = commands.build_grant(cfg, None, GrantFlags(publish_pr_state=True)).publish
+    assert (rights.pr_state, rights.pr_reviews) == (True, False)
     current = Grant(publish=PublishRights(pr_reviews=True, pr_state=True))
     off = commands.build_grant(cfg, current, GrantFlags(publish_pr_reviews=False)).publish
-    assert off.pr_state is False
+    assert (off.pr_state, off.pr_reviews) == (True, False)
+    off = commands.build_grant(cfg, current, GrantFlags(publish_pr_state=False)).publish
+    assert (off.pr_state, off.pr_reviews) == (False, True)
 
 
 def test_publish_summary_names_pr_state():
     from jailbee.orchestration.grant import PublishRights
 
-    assert "PR close/reopen" in commands.publish_summary(
-        PublishRights(pr_reviews=True, pr_state=True)
-    )
+    summary = commands.publish_summary(PublishRights(pr_state=True))
+    assert "PR close/reopen" in summary and "PR reviews" not in summary

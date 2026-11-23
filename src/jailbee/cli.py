@@ -13296,7 +13296,7 @@ def orchestrate_grant_cmd(
         bool | None,
         typer.Option(
             "--publish-pr-state/--no-publish-pr-state",
-            help="Close and reopen bound PRs.",
+            help="Close and reopen any PR of the own repository (no binding needed).",
         ),
     ] = None,
     publish_rate: Annotated[
@@ -13391,14 +13391,6 @@ def orchestrate_grant_cmd(
         and not granted.publish.pr_reviews
     ):
         summary += "; PR comment edits revoked with PR reviews"
-    if (
-        previous
-        and previous[0] is not None
-        and previous[0].publish.pr_state
-        and not granted.publish.pr_state
-        and not granted.publish.pr_reviews
-    ):
-        summary += "; PR state changes revoked with PR reviews"
     success(f"Granted '{short_name(cfg, full)}': {summary}")
     if granted.default_runner is not None:
         for problem in runner_problems(cfg, incus, _load_global(), granted.default_runner):

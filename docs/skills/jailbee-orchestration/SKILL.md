@@ -184,8 +184,10 @@ PR source manifests need `publish.pull_requests`; reviews/replies/descriptions
 need `publish.pr_reviews` and must target bound PRs in the own repository. Editing a
 submitted review comment (a `comment_edit` action) additionally needs
 `publish.pr_comment_edits`, which `pr_reviews` does not imply; revoking
-`pr_reviews` also revokes it. Closing or reopening a bound PR (a `state` action)
-likewise needs `publish.pr_state` and an authored, non-adopted PR binding.
+`pr_reviews` also revokes it. Closing or reopening a PR (a `state` action) needs
+`publish.pr_state` alone: a manifest of only state actions publishes for any PR of
+the own repository, bound or not (`jailbee pr state N [N ...] closed|open` stages
+one manifest per PR); mixed with other actions, those keep their own rules.
 Existing unbound upstream branches, default/base heads, force pushes and
 foreign PRs are refused. New PRs use the default base; updates require an
 authored source-PR binding, not a review-only PR/stacked label or adopted
