@@ -72,7 +72,9 @@ def test_front_page_restart_preserves_a_stop_failure(
 
     result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--tb=short")
 
-    assert result.ret == pytest.ExitCode.TESTS_FAILED
+    # Both tests fail; each teardown also reports the connection refusal it
+    # expected but never saw, because the server never stopped.
+    result.assert_outcomes(failed=2, errors=2)
     result.stdout.fnmatch_lines(["*RuntimeError: tracer stop broke*"])
     assert "tracer restarted after failed stop" not in str(result.stdout)
 

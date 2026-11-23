@@ -131,9 +131,17 @@ def test_partial_keyboard_scroll_keeps_the_current_eink_page(
         "el => el.getBoundingClientRect().top - "
         "document.querySelector('.session-header').getBoundingClientRect().bottom"
     )
-    page.evaluate("height => window.scrollTo(0, height * 0.6)", readable)
-    page.wait_for_function(
-        "document.querySelector('.session-header').getBoundingClientRect().top === 0"
+    # Sync point: the scroll has landed and its handler has run (scroll events
+    # fire before the next animation frame's callbacks).
+    page.evaluate(
+        """async height => {
+            const target = Math.floor(height * 0.6);
+            window.scrollTo(0, target);
+            const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+            while (Math.abs(window.scrollY - target) > 1) await frame();
+            await frame();
+        }""",
+        readable,
     )
     expect(page.locator(".page-indicator")).to_contain_text("Page 1 /")
     readable = page.locator(".page-nav").evaluate(
