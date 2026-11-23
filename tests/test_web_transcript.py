@@ -370,6 +370,20 @@ def test_an_interruption_notice_is_meta_and_cannot_supply_the_session_title(
     assert typed["meta"] is False
 
 
+def test_a_typed_prompt_resembling_an_interruption_notice_stays_a_prompt(
+    client: TestClient, home: Path
+) -> None:
+    """Only Claude Code's bracketed notice is context, not the same words typed."""
+    path = home / "projects" / "-work-repo" / f"{SESSION}.jsonl"
+    path.write_text(json.dumps(_record(1, "user", "Request interrupted by user")) + "\n")
+
+    body = client.get(URL).json()
+
+    assert body["title"] == "Request interrupted by user"
+    (typed,) = body["entries"]
+    assert typed["meta"] is False
+
+
 @pytest.mark.parametrize(
     "context",
     ["Injected context", "Injected <system-reminder>nested</system-reminder> context"],

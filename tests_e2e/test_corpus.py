@@ -165,7 +165,15 @@ def test_thinking_follows_the_setting(reader: Page, session: dict[str, Any]) -> 
 def test_the_manifest_names_every_recorded_transcript() -> None:
     """A recording the manifest misses would silently go unwalked."""
     project = CORPUS / "projects" / "-work-toy"
+    assert list(project.glob("*.jsonl")), f"no recorded transcripts in {project}"
     assert {p.stem for p in project.glob("*.jsonl")} == {s["session_id"] for s in SESSIONS}
     assert {p.stem.removeprefix("agent-") for p in project.glob("*/subagents/*.jsonl")} == {
         a["agent_id"] for _, a in SUBAGENTS
     }
+
+
+def test_every_shape_the_walks_depend_on_was_recorded() -> None:
+    """An empty parameter list would skip its walk instead of failing it."""
+    assert SESSIONS and TOOLS and THINKING and SUBAGENTS
+    shapes = {shape for s in SESSIONS for shape in s["shapes"]}
+    assert {"tool_error", "long_output"} <= shapes
