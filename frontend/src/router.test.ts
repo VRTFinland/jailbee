@@ -17,17 +17,30 @@ describe("server mode routing", () => {
         },
     )
 
-    it("checks the live server again when following a route", async () => {
+    it("asks the server's mode once at start-up, not on every navigation", async () => {
         setToken("session")
-        let mode = "dashboard"
-        vi.stubGlobal("fetch", vi.fn(async () => Response.json({mode})))
+        const fetchMock = vi.fn(async () => Response.json({mode: "dashboard"}))
+        vi.stubGlobal("fetch", fetchMock)
         const router = createAppRouter(createMemoryHistory())
-        await router.push("/repos/alpha")
-        expect(router.currentRoute.value.name).toBe("repo")
 
-        mode = "setup"
+        await router.push("/repos/alpha")
+        await router.push("/settings")
+        await router.push("/containers/alpha-1")
+
+        expect(router.currentRoute.value.name).toBe("container")
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it("keeps every route on setup once setup mode was seen", async () => {
+        setToken("session")
+        const fetchMock = vi.fn(async () => Response.json({mode: "setup"}))
+        vi.stubGlobal("fetch", fetchMock)
+        const router = createAppRouter(createMemoryHistory())
+        await router.push("/")
+
         await router.push("/settings")
 
         expect(router.currentRoute.value.name).toBe("setup")
+        expect(fetchMock).toHaveBeenCalledTimes(1)
     })
 })
