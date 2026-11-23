@@ -338,8 +338,9 @@ Jumping aligns the newest reply's start just below the measured header, even
 for a short final reply, with trailing room to scroll it there. Jumping or
 scrolling to the reply hides the button; moving
 away or receiving a newer reply out of view shows it again. In the e-ink display
-profile the same rule applies, but the button turns to the page containing the
-reply, and live entries remain behind the new-messages notice until tapped.
+profile the same rule applies: the button starts a page at the reply, with
+subsequent page turns continuing from there, and live entries remain behind
+the new-messages notice until tapped.
 
 ## Install as an app
 

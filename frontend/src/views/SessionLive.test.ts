@@ -226,7 +226,10 @@ describe("SessionView in the e-ink profile", () => {
         await append(sessionKey, [answer])
         await wrapper.get(".new-messages").trigger("click")
         await wrapper.get(".jump-latest").trigger("click")
-        expect(scrollTo).toHaveBeenLastCalledWith(0, 1184)
+        expect(scrollTo).toHaveBeenLastCalledWith(0, 1280)
+        await wrapper.get("button.next").trigger("click")
+        expect(scrollTo).toHaveBeenLastCalledWith(0, 1872)
+        await wrapper.get("button.prev").trigger("click")
         expect(wrapper.find(".jump-latest").exists()).toBe(false)
         await wrapper.get("button.prev").trigger("click")
         expect(wrapper.find(".jump-latest").exists()).toBe(true)
@@ -266,7 +269,7 @@ describe("SessionView in the e-ink profile", () => {
         wrapper.unmount()
     })
 
-    it("jumps to the page that holds the latest answer", async () => {
+    it("starts a page at the latest answer", async () => {
         reloadSettings()
         updateSettings({displayProfile: "eink"})
         setPageGeometry(3000, 0) // pages of 800 - 88 = 712px
@@ -280,7 +283,7 @@ describe("SessionView in the e-ink profile", () => {
         await append(sessionKey, [answer])
         await wrapper.get(".new-messages").trigger("click")
         await wrapper.get(".jump-latest").trigger("click")
-        expect(scrollTo).toHaveBeenLastCalledWith(0, 2 * 712)
-        expect(wrapper.get(".page-indicator").text()).toContain("Page 3 /")
+        expect(scrollTo).toHaveBeenLastCalledWith(0, 1500)
+        expect(wrapper.get(".page-indicator").text()).toContain("Page 4 /")
     })
 })

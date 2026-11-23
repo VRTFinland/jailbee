@@ -19,8 +19,7 @@ import {settings} from "../settings"
 
 const header = ref<HTMLElement | null>(null)
 const headerHeight = ref(0)
-const headerInset = ref(0)
-const pager = usePager(() => headerInset.value)
+const pager = usePager(() => headerHeight.value)
 const eink = computed(() => settings.displayProfile === "eink")
 /** E-ink: live entries wait here until the reader taps the notice. */
 const pending = ref<RenderedEntry[]>([])
@@ -84,7 +83,6 @@ const latestVisible = ref(false)
 function measureVisibility() {
     const headerRect = header.value?.getBoundingClientRect()
     headerHeight.value = headerRect ? headerRect.bottom - headerRect.top : 0
-    headerInset.value = Math.max(0, headerRect?.bottom ?? 0)
     const el = latestAnswer.value === null ? null : document.getElementById(entryDomId(latestAnswer.value))
     if (el === null) {
         latestVisible.value = false
@@ -332,7 +330,7 @@ onMounted(async () => {
     max-width: 48rem;
     margin: 0 auto;
     /* Even a short final reply can start just below the sticky header. */
-    padding: var(--space-3) var(--space-3) max(5rem, calc(100dvh - var(--session-header-height)));
+    padding: 0 var(--space-3) max(5rem, calc(100dvh - var(--session-header-height)));
 }
 .session-header {
     position: sticky;

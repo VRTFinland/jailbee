@@ -69,11 +69,16 @@ def assert_latest_starts_below_header(page: Page) -> None:
 
 
 @pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
+@pytest.mark.parametrize("profile", ["normal", "eink"])
 def test_latest_answer_and_sticky_title_follow_the_readable_area(
-    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int, profile: str
 ) -> None:
     page.set_viewport_size({"width": width, "height": 800})
     server, transcript = open_transcript(page, make_server, tmp_path)
+    if profile == "eink":
+        page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink')")
+        page.reload()
+        expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
     latest = page.get_by_role("button", name="Latest answer")
     title = page.get_by_role("heading", name=TITLE, exact=True)
     expect(title).to_have_attribute("title", TITLE)
@@ -102,6 +107,8 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
     with transcript.open("a") as stream:
         stream.write(record(25, "assistant", "The live answer below the fold."))
     server.watches.open[0].fire()
+    if profile == "eink":
+        page.get_by_role("button", name="1 new message — tap to show").click()
     expect(page.get_by_text("The live answer below the fold.", exact=True)).to_be_attached()
     expect(latest).to_be_visible()
     assert page.evaluate("window.scrollY") == position
@@ -127,7 +134,6 @@ def test_partial_keyboard_scroll_keeps_the_current_eink_page(
     page.evaluate("height => window.scrollTo(0, height * 0.6)", readable)
     page.wait_for_function("document.querySelector('.session-header').getBoundingClientRect().top === 0")
     expect(page.locator(".page-indicator")).to_contain_text("Page 1 /")
-    # Once sticky, the header no longer includes the page's top padding.
     readable = page.locator(".page-nav").evaluate(
         "el => Math.floor(el.getBoundingClientRect().top - "
         "document.querySelector('.session-header').getBoundingClientRect().bottom)"

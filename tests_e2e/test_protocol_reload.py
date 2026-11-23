@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from playwright.sync_api import Page, WebSocketRoute, expect
 
 from tests.web_fakes import container, repo_group, snapshot_of
@@ -11,9 +12,16 @@ from tests_e2e.flows import log_in_with_pin
 from tests_e2e.server import E2EServer
 
 
+@pytest.mark.parametrize("storage_available", [True, False], ids=["tab-storage", "blocked-storage"])
 def test_a_client_that_stays_stale_after_reload_stops_and_offers_manual_reload(
-    server: E2EServer, page: Page
+    server: E2EServer, page: Page, storage_available: bool
 ) -> None:
+    if not storage_available:
+        page.add_init_script("""
+            Object.defineProperty(window, 'sessionStorage', {get() {
+                throw new DOMException('Storage blocked', 'SecurityError');
+            }});
+        """)
     closes: list[int | None] = []
     documents: list[str] = []
     stale = True
@@ -46,12 +54,13 @@ def test_a_client_that_stays_stale_after_reload_stops_and_offers_manual_reload(
     expect(page.get_by_role("alert")).to_have_text("This page is out of date; reload.")
     expect(page.get_by_role("button", name="Reload", exact=True)).to_be_visible()
     server.push(snapshot_of(repo_group("work", container("work-unseen", "work"))))
-    assert closes == [4002, 4002]
-    assert documents == [server.url + "/", server.url + "/"]
+    attempts = 2 if storage_available else 1
+    assert closes == [4002] * attempts
+    assert documents == [server.url + "/"] * attempts
 
     # A user-requested retry can recover once current assets become available.
     stale = False
     page.get_by_role("button", name="Reload", exact=True).click()
     expect(page.get_by_role("link", name="unseen", exact=True)).to_be_visible()
     expect(page.get_by_role("alert")).to_have_count(0)
-    assert len(documents) == 3
+    assert len(documents) == attempts + 1
