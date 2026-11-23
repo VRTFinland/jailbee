@@ -756,23 +756,29 @@ def test_claude_scratch_paths_name_the_toy_project_only(tmp_path: Path) -> None:
     assert find_leaks("/var/cache/claude-53023", identity) != []
 
 
-# --- Leak gate strictness (review of ticket 21) -------------------------------
+# --- The leak gate is stricter than the normaliser --------------------------
 
 
-def test_host_identity_reports_each_name_part_alone(
-    tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _identity_with_git_name(
+    tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, name: str
+) -> Identity:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     mocker.patch("scripts.web_corpus.socket.gethostname", return_value="placeholder-host")
     mocker.patch("scripts.web_corpus.getpass.getuser", return_value="placeholder-user")
 
     def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        ident = "Wilhelmina Placeholder <author@example.invalid> 123 +0000"
+        ident = f"{name} <author@example.invalid> 123 +0000"
         return subprocess.CompletedProcess(command, 0, ident, "")
 
     mocker.patch("scripts.web_corpus.subprocess.run", side_effect=run)
-    identity = web_corpus._host_identity(tmp_path / "toy", tmp_path / "tmp", tmp_path / "home")
+    return web_corpus._host_identity(tmp_path / "toy", tmp_path / "tmp", tmp_path / "home")
+
+
+def test_host_identity_reports_each_name_part_alone(
+    tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    identity = _identity_with_git_name(tmp_path, mocker, monkeypatch, "Wilhelmina Placeholder")
 
     assert find_leaks("Hi Wilhelmina", identity)
     assert find_leaks("Placeholder wrote this", identity)
@@ -782,17 +788,7 @@ def test_host_identity_reports_each_name_part_alone(
 def test_host_identity_skips_tool_words_in_a_name(
     tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
-    mocker.patch("scripts.web_corpus.socket.gethostname", return_value="placeholder-host")
-    mocker.patch("scripts.web_corpus.getpass.getuser", return_value="placeholder-user")
-
-    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        ident = "Agent Write <author@example.invalid> 123 +0000"
-        return subprocess.CompletedProcess(command, 0, ident, "")
-
-    mocker.patch("scripts.web_corpus.subprocess.run", side_effect=run)
-    identity = web_corpus._host_identity(tmp_path / "toy", tmp_path / "tmp", tmp_path / "home")
+    identity = _identity_with_git_name(tmp_path, mocker, monkeypatch, "Agent Write")
 
     assert find_leaks("Use the Agent tool, then Write the file", identity) == []
     assert find_leaks("Agent Write", identity)
@@ -811,23 +807,37 @@ def test_find_leaks_reports_long_secrets_inside_other_words(leak: str) -> None:
     assert find_leaks(f"session in {leak} here", identity)
 
 
-@pytest.mark.parametrize(
-    ("text", "normalised"),
-    [
-        ("dev@box7:~$ ls", "dev@REDACTED:~$ ls"),
-        ("ssh box7", "ssh REDACTED"),
-        ("box7:/srv$ ls", "REDACTED:/srv$ ls"),
-        ("mail to ann@box7", "mail to REDACTED@REDACTED"),
-    ],
-)
-def test_short_host_names_are_caught_in_prompt_and_ssh_forms(
-    tmp_path: Path, text: str, normalised: str
-) -> None:
-    identity = Identity(toy_dir="/recording/toy", home="/recording/home", secrets=("box7", "ann"))
-    assert find_leaks(text, identity)
+SHORT_NAMES = Identity(toy_dir="/recording/toy", home="/recording/home", secrets=("box7", "ann"))
+
+
+def _normalised_text(tmp_path: Path, identity: Identity, text: str) -> object:
     raw = tmp_path / "raw"
     _write(raw / f"{RAW_SID}.jsonl", [_user(identity, text)])
     out = tmp_path / "out"
     normalise_home(raw, out, identity, [RAW_SID])
     [kept] = _read(next((out / "projects" / TOY_PROJECT).glob("*.jsonl")))
-    assert kept["message"] == {"role": "user", "content": normalised}
+    message = kept["message"]
+    assert isinstance(message, dict)
+    return message["content"]
+
+
+@pytest.mark.parametrize(
+    ("text", "normalised"),
+    [
+        ("dev@box7:~$ ls", "dev@REDACTED:~$ ls"),
+        ("ann@host9:~$ ls", "REDACTED@host9:~$ ls"),
+        ("box7:~$ ls", "REDACTED:~$ ls"),
+        ("ssh box7", "ssh REDACTED"),
+    ],
+)
+def test_short_names_in_prompts_and_ssh_are_redacted_and_detected(
+    tmp_path: Path, text: str, normalised: str
+) -> None:
+    assert find_leaks(text, SHORT_NAMES)
+    assert _normalised_text(tmp_path, SHORT_NAMES, text) == normalised
+
+
+@pytest.mark.parametrize("text", ["box7:/srv", "mail ann@box7", "@box7/pkg", "-v box7:/data"])
+def test_the_gate_catches_short_names_the_normaliser_leaves(tmp_path: Path, text: str) -> None:
+    assert find_leaks(text, SHORT_NAMES)
+    assert _normalised_text(tmp_path, SHORT_NAMES, text) == text

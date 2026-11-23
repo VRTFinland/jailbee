@@ -234,30 +234,44 @@ SHORT_SECRET = 5
 are matched only in identity, home-path, `user@host`, prompt and ssh forms."""
 
 
-def _short_secret_pattern(secret: str) -> str:
+def _short_secret_pattern(secret: str, *, gate: bool) -> str:
     pattern = re.escape(secret)
-    return (
+    shared = (
         r"(?P<prefix>\b(?:user(?:name)?|author|committer)[\"']?(?:\s*[:=]\s*|\s+)[\"']?)"
         + pattern
         + r"(?![\w.-])|\A"
         + pattern
         + r"\Z"
-        r"|(?:(?<=/home/)|(?<=/Users/)|(?<=~)|(?<=@)|(?<=\bssh ))" + pattern + r"(?![\w-])"
-        r"|(?<![\w.-])" + pattern + r"(?=@[\w-]|:[~/])"
+        r"|(?:(?<=/home/)|(?<=/Users/)|(?<=~)|(?<=\bssh ))" + pattern + r"(?![\w.-])"
+    )
+    if gate:
+        # Any `@host`, `user@` or `host:` form; `@dev/pkg` or `dev:/data`
+        # only stop a recording.
+        return (
+            shared + r"|(?<=@)" + pattern + r"(?![\w-])|(?<![\w.-])" + pattern + r"(?=@[\w-]|:)"
+        )
+    # Only a shell prompt (`user@host:~`, `host:~`), never npm scopes or volumes.
+    return (
+        shared
+        + r"|(?<=[\w-]@)"
+        + pattern
+        + r"(?=:[~/])|(?<![\w./-])"
+        + pattern
+        + r"(?=@[\w-]+:[~/]|:~)"
     )
 
 
 def _secret_pattern(secret: str) -> str:
     """Where the normaliser redacts `secret`: never inside an ordinary word."""
     if len(secret) < SHORT_SECRET:
-        return _short_secret_pattern(secret)
+        return _short_secret_pattern(secret, gate=False)
     return r"(?<![\w-])" + re.escape(secret) + r"(?![\w-])"
 
 
 def _leak_pattern(secret: str) -> str:
     """Where the gate finds `secret`: anywhere, when it is long enough."""
     if len(secret) < SHORT_SECRET:
-        return _short_secret_pattern(secret)
+        return _short_secret_pattern(secret, gate=True)
     return re.escape(secret)
 
 
@@ -285,7 +299,7 @@ NAME_PART_ALLOWED = frozenset(
 """Tool and command words a git name part may be without becoming a secret."""
 
 
-def name_parts(name: str) -> list[str]:
+def reportable_name_words(name: str) -> list[str]:
     """The words of `name` the leak gate looks for on their own."""
     return [
         part
@@ -787,7 +801,7 @@ def _host_identity(toy_dir: Path, claude_tmp: Path, recording_home: Path) -> Ide
         if result.returncode == 0 and match:
             name, email = match.groups()
             secrets.update([name, email])
-            parts.update(name_parts(name))
+            parts.update(reportable_name_words(name))
     for path, keys in (
         (Path("/etc/jailbee/container.json"), ("name", "short_name", "container_prefix", "branch")),
         (Path.home() / ".claude.json", ()),

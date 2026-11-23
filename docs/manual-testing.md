@@ -6028,14 +6028,15 @@ remaining actions, without replacing an original recording error.
 The normaliser keeps only known nested transcript fields (including common tool
 inputs) and redacts effective git author/committer identities as complete names
 (including environment and system config), short (under five characters) user
-and host names in identity, home-path, `user@host`, `host:~` prompt and
-`ssh host` contexts, and credential-shaped strings. Paths under the temporary
+and host names in identity, home-path, shell-prompt (`user@host:~`, `host:~`)
+and `ssh host` contexts, and credential-shaped strings. Paths under the temporary
 HOME become `/home/user`. Words in a name are not individually redacted:
 `Will Read` must not erase the `Read` tool, nor `dev` erase `/dev/null` or
 `npm run dev`. The leak gate is stricter than the normaliser: it finds every
 host, user, container and account name of five or more characters anywhere,
 even inside another word (`claude-<user>-1000`), and each git name word of five
-or more characters that is not a tool or command name. A hit stops the
+or more characters that is not a tool or command name; short names also in any
+`@host`, `user@` or `host:` form. A hit stops the
 recording; edit the prompts or the identity rather than loosening the gate.
 The leak gate allows `/work/toy`, `/home/user`,
 `/work/claude-tmp`, system executable directories and `/dev/null`; HTTP(S) URLs
