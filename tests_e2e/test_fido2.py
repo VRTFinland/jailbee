@@ -163,6 +163,7 @@ def test_registered_security_key_updates_its_counter_and_refuses_a_clone(
     server.start()
     page.goto(f"{url}/#/login")
     previous_count = virtual_key.credential()["signCount"]
+    previous_used = None
     for _ in range(2):
         page.get_by_label("This device").fill("security-key tablet")
         page.get_by_role("button", name="Use security key", exact=True).click()
@@ -172,6 +173,9 @@ def test_registered_security_key_updates_its_counter_and_refuses_a_clone(
         expect(page.get_by_text("No repositories.", exact=True)).to_be_visible()
         (key,) = auth_admin.list_fido2_keys(server.engine)
         assert key.last_used_at is not None
+        if previous_used is not None:
+            assert key.last_used_at > previous_used
+        previous_used = key.last_used_at
         current_count = virtual_key.credential()["signCount"]
         assert current_count > previous_count
         with Session(server.engine) as session:
@@ -196,6 +200,13 @@ def test_registered_security_key_updates_its_counter_and_refuses_a_clone(
     expect(page).to_have_url(f"{url}/#/login")
     assert virtual_key.credential()["signCount"] == previous_count - counter_rollback + 1
     assert auth_admin.list_sessions(server.engine) == []
+    event = auth_admin.recent_events(server.engine)[-1]
+    assert (event.event, event.method, event.device_name) == (
+        "login_failed", "fido2", "security-key tablet"
+    )
+    with Session(server.engine) as session:
+        (stored_key,) = session.exec(select(WebFido2Key)).all()
+        assert stored_key.sign_count == previous_count
 
 
 def test_a_removed_security_key_is_refused_visibly(
