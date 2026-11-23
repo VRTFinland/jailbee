@@ -82,7 +82,6 @@ def test_shell_without_children_is_left_as_claude_said(tmp_path):
     assert (web, ls_json) == ("shell", "shell")
 
 
-
 def test_a_child_gone_before_its_argv_was_read_leaves_shell(tmp_path):
     """The sampler saw the process; its /proc entry vanished before the argv read."""
     info, group = gather(tmp_path, "shell", [(1012, CLAUDE, "python", FOLLOWER)], no_argv={1012})
@@ -107,4 +106,3 @@ def test_non_shell_children_such_as_mcp_servers_are_not_background_jobs(tmp_path
 
     _, web, ls_json = _shown(info, group)
     assert (web, ls_json) == ("idle", "idle")
-
