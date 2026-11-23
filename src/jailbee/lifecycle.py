@@ -4816,6 +4816,7 @@ def ls_field_specs(
             header="SYNC",
             cell=_sync_cell,
             json=None,
+            json_hint="use git_status for JSON",
             default_json=False,
         ),
         table_format.FieldSpec(

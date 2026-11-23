@@ -3154,8 +3154,28 @@ def test_seed_view_state_migrates_retired_diff_with_visible_notice(mocker):
     shown: list[str] = []
     state = dcolumns.seed_view_state(engine, FRONTEND_TUI, on_migration=shown.append)
     assert state.columns == ("name", "sync")
-    assert shown[0] == notice
-    assert "target_diff → sync" in shown[1]
+    # The v4 migration follows, so exactly one notice, naming what the user gets.
+    assert len(shown) == 1
+    assert "ahead_diff → sync" in shown[0]
+    assert "target_diff" not in shown[0]
+
+
+def test_seed_view_state_retired_diff_notice_when_no_v4_migration_follows():
+    from sqlmodel import SQLModel, create_engine
+
+    from jailbee.db.view_prefs import FRONTEND_TUI, ViewState, save_view_state
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    save_view_state(
+        engine,
+        FRONTEND_TUI,
+        ViewState(columns=("name", "ahead_diff"), columns_version=dcolumns.COLUMNS_VERSION),
+    )
+    shown: list[str] = []
+    state = dcolumns.seed_view_state(engine, FRONTEND_TUI, on_migration=shown.append)
+    assert state.columns == ("name", "target_diff")
+    assert shown == [dcolumns.stored_column_migration_notice(("name", "ahead_diff"))]
 
 
 def test_seed_view_state_persists_retired_diff_migration_so_notice_shows_once(mocker):
@@ -3176,7 +3196,7 @@ def test_seed_view_state_persists_retired_diff_migration_so_notice_shows_once(mo
 
     second: list[str] = []
     state = dcolumns.seed_view_state(engine, FRONTEND_QT, on_migration=second.append)
-    assert len(first) == 2
+    assert len(first) == 1
     assert second == []
     assert state.columns == ("name", "sync")
 
@@ -6979,8 +6999,8 @@ def test_seed_view_state_runs_the_diff_rename_and_the_column_set_migration_toget
     state = dcolumns.seed_view_state(engine, FRONTEND_TUI, on_migration=shown.append)
 
     assert state.columns == ("name", "sync", "mem_used", "mem_pct")
-    assert len(shown) == 2
-    assert "ahead_diff" in shown[0] and "mem → mem_used + mem_pct" in shown[1]
+    assert len(shown) == 1
+    assert "ahead_diff → sync" in shown[0] and "mem → mem_used + mem_pct" in shown[0]
 
 
 def test_columns_version_is_the_newest_migration_rule():

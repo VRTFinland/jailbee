@@ -135,8 +135,13 @@ def seed_view_state(
     state = load_view_state(engine, frontend)
     if state.columns is not None:
         notice = stored_column_migration_notice(state.columns)
+        # When the versioned migration follows, it replaces target_diff with
+        # `sync`; its notice then names the retired column instead of this one,
+        # so the user sees one accurate notice rather than two.
+        retired_diff = notice is not None
+        v4_follows = state.columns_version < COLUMNS_VERSION
         if notice is not None:
-            if on_migration is not None:
+            if on_migration is not None and not v4_follows:
                 on_migration(notice)
             # Persist the rename alone, so the notice is shown once rather than
             # on every launch until some unrelated action saves the view. Only
@@ -146,6 +151,8 @@ def seed_view_state(
             save_view_state(engine, frontend, state)
         if state.columns is not None and state.columns_version < COLUMNS_VERSION:
             migrated, applied = migrate_column_set(state.columns, state.columns_version)
+            if retired_diff:
+                applied = [a.replace("target_diff →", "ahead_diff →", 1) for a in applied]
             if applied and on_migration is not None:
                 on_migration(column_set_migration_notice(applied))
             # Written back even when no rule matched, so the version check is

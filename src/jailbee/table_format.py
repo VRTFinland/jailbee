@@ -72,6 +72,10 @@ class FieldSpec[T]:
     # first click uses: quantities and times largest first, text A→Z.
     sort: Callable[[T], SortKey | None] | None = None
     sort_desc_first: bool = False
+    # For a table-only field (``json=None``): what to suggest when JSON output
+    # is requested for it, e.g. "use git_status for JSON". ``None`` gives a
+    # generic message.
+    json_hint: str | None = None
 
 
 def shows_by_default_in_dashboard[T](field: FieldSpec[T]) -> bool:
@@ -106,7 +110,9 @@ def _parse_fields[T](
             allowed = ", ".join(sorted(by_name))
             raise typer.BadParameter(f"unknown field {name!r}; allowed: {allowed}")
         if fmt == "json" and by_name[name].json is None:
-            raise typer.BadParameter(f"field {name!r} is table-only; use git_status for JSON")
+            hint = by_name[name].json_hint
+            suffix = f"; {hint}" if hint else " and has no JSON value"
+            raise typer.BadParameter(f"field {name!r} is table-only{suffix}")
         out.append(by_name[name])
     return out
 
