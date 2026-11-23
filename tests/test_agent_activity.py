@@ -404,3 +404,27 @@ def test_describe_head_keeps_the_subagent_count_when_the_idle_duration_is_droppe
 
     assert text is not None
     assert text.head == "active 25m ago · ~2 subagents"
+
+
+def test_describe_words_an_api_error_instead_of_its_raw_text() -> None:
+    from jailbee.accounts.models import AgentApiError
+
+    error = AgentApiError(
+        "quota",
+        NOW - timedelta(minutes=3),
+        429,
+        "The usage limit has been reached",
+        datetime(2026, 12, 1, 8, 0, tzinfo=UTC),
+        "k",
+    )
+    activity = AgentActivity(
+        "Bash  ls", "API Error: Request rejected (429) {raw}", 0, 0, api_error=error
+    )
+
+    text = aa.describe(_summary(state="error:quota", activity=activity), NOW)
+
+    assert text is not None
+    assert text.lines() == (
+        "stopped on an API error (quota) 3m ago · resets 2026-12-01 08:00 UTC",
+        "“The usage limit has been reached”",
+    )

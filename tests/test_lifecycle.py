@@ -840,6 +840,23 @@ def test_list_containers_populates_base_branch_from_label(make_cfg, tmp_path):
     assert infos[0].git_status is None
 
 
+def test_list_containers_reads_the_containers_own_branch_label(make_cfg, tmp_path):
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    cfg = make_cfg(repo)
+    incus = MagicMock()
+    incus.list_containers.return_value = [
+        _container(
+            name="myrepo-feat-x",
+            user_config={"user.jailbee.mode": "clone", "user.jailbee.branch": "Feat/X"},
+        ),
+        _container(name="myrepo-mounted", user_config={"user.jailbee.mode": "mount"}),
+    ]
+
+    infos = list_containers(cfg, incus)
+    assert [i.branch for i in infos] == ["Feat/X", None]
+
+
 def test_list_containers_base_branch_is_none_when_label_absent(make_cfg, tmp_path):
     repo = tmp_path / "myrepo"
     repo.mkdir()
@@ -11281,8 +11298,54 @@ def test_agent_json_is_a_list_of_objects():
             "since": _AGENT_NOW.isoformat(),
             "waiting_for": "input needed",
             "count": 2,
+            "error": None,
         }
     ]
+
+
+def _errored(kind="quota", detail="The usage limit has been reached"):
+    from dataclasses import replace
+
+    from jailbee.accounts.models import AgentActivity, AgentApiError
+
+    error = AgentApiError(
+        kind,
+        _AGENT_NOW - timedelta(minutes=3),
+        429,
+        detail,
+        datetime(2026, 12, 1, 8, 0, tzinfo=UTC),
+        "k",
+    )
+    return replace(
+        _agent(f"error:{kind}", since=error.at),
+        activity=AgentActivity(None, "API Error: raw body", api_error=error),
+    )
+
+
+def test_agent_cell_shows_an_api_error_in_red():
+    cell = _agent_spec().cell(_running(agent_status=(_errored(),)))
+
+    assert _plain(cell) == "claude: error:quota 3m"
+    assert "[red]" in cell
+
+
+def test_agent_compact_cell_marks_an_api_error():
+    cell = _agent_spec("agent_compact").cell(_running(agent_status=(_errored(),)))
+
+    assert _plain(cell) == "✖ quota 3m"
+    assert "[red]" in cell
+
+
+def test_agent_json_carries_the_api_error():
+    (item,) = _agent_spec().json(_running(agent_status=(_errored(),)))
+
+    assert item["state"] == "error:quota"
+    assert item["error"] == {
+        "kind": "quota",
+        "at": (_AGENT_NOW - timedelta(minutes=3)).isoformat(),
+        "detail": "The usage limit has been reached",
+        "resets_at": "2026-12-01T08:00:00+00:00",
+    }
 
 
 def test_agent_json_without_a_timestamp_has_a_null_since():

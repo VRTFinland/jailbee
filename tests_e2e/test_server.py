@@ -29,7 +29,7 @@ def test_all_servers_are_cleaned_up_when_disposal_fails(
                     raise RuntimeError("disposal broke")
                 print("second engine disposed")
             monkeypatch.setattr(Engine, "dispose", dispose)
-            monkeypatch.setattr(E2EServer, "start", lambda self, **kwargs: None)
+            monkeypatch.setattr(E2EServer, "start", lambda self, **_: None)
             monkeypatch.setattr(E2EServer, "stop", lambda self: print("server stopped"))
     """)
     pytester.makepyfile("""
@@ -72,7 +72,9 @@ def test_front_page_restart_preserves_a_stop_failure(
 
     result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "--tb=short")
 
-    assert result.ret == pytest.ExitCode.TESTS_FAILED
+    # Both tests fail; each teardown also reports the connection refusal it
+    # expected but never saw, because the server never stopped.
+    result.assert_outcomes(failed=2, errors=2)
     result.stdout.fnmatch_lines(["*RuntimeError: tracer stop broke*"])
     assert "tracer restarted after failed stop" not in str(result.stdout)
 

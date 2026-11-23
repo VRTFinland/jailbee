@@ -25,7 +25,15 @@ from jailbee.transcripts.base import (
     ToolResult,
     UserMessage,
 )
-from jailbee.transcripts.markup import command_name, is_meta_wrapper, meta_label, split_prompt
+from jailbee.transcripts.markup import (
+    command_name,
+    interruption_label,
+    is_interruption,
+    is_meta_wrapper,
+    meta_label,
+    prompt_text,
+    split_prompt,
+)
 from jailbee.web.highlight import highlight_json
 from jailbee.web.markdown_render import render_markdown
 from jailbee.web.protocol import (
@@ -40,6 +48,9 @@ from jailbee.web.protocol import (
 )
 
 DEFAULT_CACHE_ENTRIES = 4096
+
+# Shown for a tool result whose whole output was agent context the setting hides.
+EMPTY_RESULT_NOTE = "(output was agent context only)"
 
 
 class RenderCache:
@@ -87,14 +98,16 @@ def _meta_user(
 ) -> RenderedUser | None:
     """An agent wrapper record under the Agent context setting.
 
-    ``hidden`` drops it (a slash command the user typed keeps its label line),
-    ``collapsed`` sends only the label and withholds the content (``expandable``:
-    the browser fetches it on expand), ``shown`` sends everything.
+    ``hidden`` drops it (a slash command the user typed and an interruption
+    notice keep their label line), ``collapsed`` sends only the label and
+    withholds the content (``expandable``: the browser fetches it on expand),
+    ``shown`` sends everything. An interruption notice is its own label, so it
+    is never expandable.
     """
-    is_command = bool(command_name(markup))
-    if mode == "hidden" and not is_command:
+    interrupted = is_interruption(markup)
+    if mode == "hidden" and not interrupted and not command_name(markup):
         return None
-    label = meta_label(markup) or "Agent context"
+    label = interruption_label(markup) if interrupted else meta_label(markup) or "Agent context"
     if mode == "shown":
         return RenderedUser(
             id=entry_id, timestamp=timestamp, html=_pre(markup, "meta"), meta=True, label=label
@@ -105,8 +118,37 @@ def _meta_user(
         html="",
         meta=True,
         label=label,
-        expandable=mode == "collapsed",
+        expandable=mode == "collapsed" and not interrupted,
     )
+
+
+def _context(entry: Entry) -> tuple[str, str] | None:
+    """The agent context an entry carries, as ``(id, markup)``; None without any.
+
+    The id scheme `EntryContent` is fetched by: a whole meta record keeps its
+    entry id; context split from a typed prompt (leading wrappers) or from a
+    tool result (appended ``<system-reminder>`` blocks) is ``<entry id>:meta``.
+    """
+    match entry:
+        case UserMessage():
+            if entry.meta or is_meta_wrapper(entry.text):
+                return entry.id, entry.text
+            markup, typed = split_prompt(entry.text)
+            if markup and typed:
+                return f"{entry.id}:meta", markup
+        case ToolResult() if entry.context:
+            return f"{entry.id}:meta", entry.context
+    return None
+
+
+def entry_content(entries: Iterable[Entry], entry_id: str) -> str | None:
+    """The full HTML of the agent context ``entry_id`` names (see `_context`),
+    rendering nothing else; None when no entry carries it."""
+    for entry in entries:
+        found = _context(entry)
+        if found is not None and found[0] == entry_id:
+            return _pre(found[1], "meta")
+    return None
 
 
 def render_entry(
@@ -144,11 +186,14 @@ def render_entry(
                 model=entry.model,
             )
         case ToolResult():
+            text = entry.text
+            if not text and entry.context and meta == "hidden":
+                text = EMPTY_RESULT_NOTE
             return RenderedToolResult(
                 id=entry.id,
                 timestamp=entry.timestamp,
                 call_id=entry.call_id,
-                html=_pre(entry.text, "tool-output"),
+                html=_pre(text, "tool-output"),
                 truncated=entry.truncated,
                 full_length=entry.full_length,
                 is_error=entry.is_error,
@@ -196,17 +241,17 @@ def render_entries(
     described = subagent_descriptions(entries)
     rendered: list[RenderedEntry] = []
     for e in entries:
-        if isinstance(e, UserMessage) and not e.meta:
-            markup, typed = split_prompt(e.text)
-            if markup and typed:
-                part = _meta_user(f"{e.id}:meta", e.timestamp, markup, meta)
-                if part is not None:
-                    rendered.append(part)
-                e = replace(e, text=typed)
+        context = _context(e)
+        split = None
+        if context is not None and context[0] != e.id:
+            # Context split off an entry is its own meta record: before a
+            # typed prompt, after a tool result.
+            split = _meta_user(context[0], e.timestamp, context[1], meta)
+        before, after = (split, None) if isinstance(e, UserMessage) else (None, split)
+        if isinstance(e, UserMessage) and context is not None and context[0] != e.id:
+            e = replace(e, text=prompt_text(e.text))
         r = render_entry(e, cache, meta)
-        if r is None:
-            continue
-        if isinstance(r, RenderedSubagent) and r.description is None:
+        if r is not None and isinstance(r, RenderedSubagent) and r.description is None:
             r = r.model_copy(update={"description": described.get(r.agent_id)})
-        rendered.append(r)
+        rendered.extend(x for x in (before, r, after) if x is not None)
     return rendered

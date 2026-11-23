@@ -41,7 +41,8 @@ def test_session_list_prefers_the_typed_prompt_and_transcript_marks_clear_as_met
     expect(page.locator(".session .title")).to_have_text(prompt)
     session_link.click()
     expect(page.get_by_role("heading", name=prompt, exact=True)).to_be_visible()
-    expect(page.locator(".entry.user.meta pre.meta")).to_have_text(wrapper)
+    # A typed slash command is a label line in every Agent context mode.
+    expect(page.locator(".entry.user.meta")).to_have_text("Command: /clear")
     expect(page.locator(".entry.user:not(.meta)")).to_have_text(prompt)
 
 
@@ -58,9 +59,14 @@ def test_a_mixed_user_record_titles_by_the_typed_text_and_shows_the_reminder_as_
     server = make_server(
         agent_homes=lambda prefix: [("claude", home)] if prefix == "work" else None
     )
-    log_in_with_pin(page, server.url, server.pin.current, "session reader")
+    log_in_with_pin(page, server.url, server.pin.current)
+    # Reminders are hidden by default; showing agent context renders them as meta.
+    page.evaluate("localStorage.setItem('jailbee.agentContext', 'shown')")
 
+    # A hash-only goto right after a reload can race the app's router; load
+    # the repository's URL afresh instead, as test_agent_context does.
     page.goto(f"{server.url}/#/repos/work")
+    page.reload()
 
     expect(page.locator(".session .title")).to_have_text(typed)
     page.get_by_role("link", name=typed).click()

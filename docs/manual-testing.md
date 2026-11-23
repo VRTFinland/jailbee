@@ -5952,56 +5952,29 @@ pgrep -a tmux                                          # no stray -L outbox-rig 
 
 Never `tmux kill-server`. The private socket vanishes with its last session.
 
-## Web dashboard headless smoke test
+## Web dashboard browser tests
 
-For the automated browser gate, run `make web-test` and `make web-e2e` from
-the checkout. The latter builds the app and uses the system Chrome, without
-Incus or live agents; failure traces and screenshots land in
-`_build/e2e-results/`. The separate **Web dashboard** GitHub Actions workflow
-runs both on web-related pull requests and `main`/`dev` pushes (or manual
-dispatch) and uploads browser failure evidence. See the
-[testing guide](web-dashboard.md#testing-from-a-checkout). The browser gate
-also registers and logs in with a virtual FIDO2 key against the real setup and
-dashboard servers, and checks visible refusal after key removal; no physical
-security key is needed.
+The browser gate runs from the checkout, without Incus or live agents:
+
+```bash
+make web-test        # the browser app's Vitest suite
+make web-e2e         # builds the app, then drives the real server in Chrome
+```
+
+Expected: both pass; `make web-e2e` ends with a `N passed` line. Failure
+traces and screenshots land in `_build/e2e-results/`. The suite logs in with a
+PIN and with a virtual FIDO2 key (no physical key needed), walks the front
+page, sessions, transcripts, settings, the e-ink profile and the recorded
+corpus, and fails on any console error, page error or CSP violation. The
+separate **Web dashboard** GitHub Actions workflow runs both on web-related
+pull requests and `main`/`dev` pushes (or manual dispatch) and uploads browser
+failure evidence. See the
+[testing guide](web-dashboard.md#testing-from-a-checkout).
 
 To render your own Claude sessions and get a report of what breaks, run
 `make web-e2e-sweep CLAUDE_HOME=~/.claude` on the host; see
 [Sweeping your own sessions](web-dashboard.md#sweeping-your-own-sessions).
-
-The older manual smoke check below covers a narrower navigation path.
-
-Checks that the built browser app logs in, lists a repo and container, lists
-sessions and renders a transcript without tripping its Content-Security-Policy,
-against fixture data and without Incus.
-Needs Node.js (for `make web`), the `web` extra and Chrome
-(`/opt/google/chrome/chrome` by default, `--chrome PATH` otherwise). It is not
-part of `uv run pytest`.
-
-```bash
-make web                                   # build the browser app once
-T=$(mktemp -d)
-export XDG_STATE_HOME=$T/state XDG_CONFIG_HOME=$T/config XDG_DATA_HOME=$T/data
-
-# 1. The real app over a fake snapshot (repo "work", container "work-main")
-#    and tests/fixtures/transcripts/claude/ as its Claude home.
-uv run python scripts/web_smoke_server.py --port 8919 &
-SERVER=$!
-sleep 5
-
-# 2. Headless Chrome over CDP: PIN login -> front page -> repo -> session.
-uv run python scripts/web_smoke_check.py --screenshots "$T"
-echo "exit $?"
-
-kill $SERVER
-```
-
-Expected: five `ok` lines and exit 0; `front.png`, `repo.png` and
-`session.png` land in `$T` for a visual check. Add `--no-auth` to both
-scripts to run the same walk with login disabled. The throwaway `XDG_*`
-directories keep the login database away from the real one; the server
-only binds `127.0.0.1`. Use another `--port` (and `--url` for the check) if
-8919 is taken.
+The report lands under `.local/web-e2e-sweep/`.
 
 ## Re-recording the web transcript corpus
 

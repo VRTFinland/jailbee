@@ -4,6 +4,7 @@ import {createMemoryHistory} from "vue-router"
 import {setToken} from "../api"
 import type {TranscriptView} from "../protocol"
 import {createAppRouter} from "../router"
+import {withDashboardMode} from "../test-http"
 import {reloadSettings, updateSettings} from "../settings"
 import {removeItem} from "../storage"
 import SessionView from "./SessionView.vue"
@@ -68,9 +69,9 @@ const transcript: TranscriptView = {
     ],
 }
 
-async function mountSession(fetchMock: ReturnType<typeof vi.fn>) {
+async function mountSession(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>) {
     setToken("tok")
-    vi.stubGlobal("fetch", fetchMock)
+    vi.stubGlobal("fetch", withDashboardMode(fetchMock))
     const router = createAppRouter(createMemoryHistory())
     await router.push("/repos/alpha/sessions/claude/s-1")
     await router.isReady()

@@ -1461,7 +1461,7 @@ def test_v27_database_migrates_to_v28_with_the_session_info_cache_table() -> Non
         assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
 
 
-def test_v28_database_migrates_to_v29_with_a_session_cwd_column() -> None:
+def test_v28_database_migrates_to_v29_with_where_each_session_started() -> None:
     from jailbee.db import _ensure_schema
     from jailbee.db.models import SchemaMeta, SessionInfoRow
 
@@ -1472,8 +1472,10 @@ def test_v28_database_migrates_to_v29_with_a_session_cwd_column() -> None:
         session.commit()
     with engine.begin() as conn:
         conn.exec_driver_sql("ALTER TABLE session_info_cache DROP COLUMN cwd")
+        conn.exec_driver_sql("ALTER TABLE session_info_cache DROP COLUMN git_branch")
 
     _ensure_schema(engine)
+    _ensure_schema(engine)  # replaying the chain is a no-op
 
     with Session(engine) as session:
         session.add(
@@ -1484,10 +1486,12 @@ def test_v28_database_migrates_to_v29_with_a_session_cwd_column() -> None:
                 format=2,
                 session_id="s",
                 title="t",
-                cwd="/home/dev/p",
+                cwd="/p",
+                git_branch="main",
             )
         )
         session.commit()
-        assert session.exec(select(SessionInfoRow)).one().cwd == "/home/dev/p"
+        row = session.exec(select(SessionInfoRow)).one()
+        assert (row.cwd, row.git_branch) == ("/p", "main")
         meta = session.get(SchemaMeta, 1)
         assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION

@@ -171,7 +171,10 @@ def test_agent_ranks_by_urgency():
     def agent(state: str) -> ContainerInfo:
         return _c(agent_status=(AgentSummary("claude", state, NOW, None, 1),))
 
-    keys = [_key("agent", agent(s)) for s in ("waiting", "busy", "shell", "idle", "weird")]
+    keys = [
+        _key("agent", agent(s))
+        for s in ("error:quota", "waiting", "busy", "shell", "idle", "weird")
+    ]
     assert keys == sorted(keys)
     assert _key("agent", _c()) is None
     assert _key("agent_compact", agent("waiting")) == _key("agent", agent("waiting"))

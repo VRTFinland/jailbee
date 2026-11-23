@@ -541,8 +541,9 @@ class SessionInfoRow(SQLModel, table=True):
     does not read every transcript again: a row answers while the file's
     `size` and `mtime_ns` are unchanged. `format` is the reader's
     `SESSION_INFO_FORMAT`; a row of another format is read again. `models` is
-    a JSON list; `cwd` is where the session started (v29). Rebuildable:
-    losing the table costs one slow listing.
+    a JSON list. `cwd` and `git_branch` say where the session started, which
+    attributes it to a container (ticket 28). Rebuildable: losing the table
+    costs one slow listing.
     """
 
     __tablename__ = "session_info_cache"
@@ -559,3 +560,4 @@ class SessionInfoRow(SQLModel, table=True):
     )
     models: str = "[]"
     cwd: str | None = None
+    git_branch: str | None = None

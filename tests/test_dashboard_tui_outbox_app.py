@@ -445,3 +445,57 @@ def test_reader_opens_scrolls_and_closes_with_the_cursor_kept(quiet):
     assert cursor is not None and kept == cursor
     assert "f full" in listed_again
     assert "ISS o/r#42" in listed_again
+
+
+@pytest.mark.parametrize("quit_key", ["escape", "q", "ctrl+c"])
+def test_quit_during_a_delete_is_refused_and_the_delete_completes(mocker, quit_key):
+    """Leaving mid-delete would stop it half-way with no report: the app waits instead."""
+    from threading import Event
+
+    entered, release = Event(), Event()
+    calls: list[list[str]] = []
+    listing = [LISTING]
+
+    def run(argv, *, cwd, timeout=60.0):  # type: ignore[no-untyped-def]
+        calls.append(list(argv))
+        if argv[:2] == ["outbox", "drop"]:
+            entered.set()
+            assert release.wait(5), "test did not release the drop"
+            listing[0] = _listing(_container(_proposal("issue/b.json")))
+            return da.CliResult(True, "done", "")
+        return da.CliResult(True, "done", listing[0])
+
+    mocker.patch.object(da, "run_cli_quiet", side_effect=run)
+    app = make()
+
+    async def scenario(pilot):  # type: ignore[no-untyped-def]
+        try:
+            await pilot.press("d", "down", "enter")  # No is the default; Yes, delete is second
+            assert await asyncio.to_thread(entered.wait, 2), "the drop never started"
+            await pilot.press(quit_key)
+            await pilot.pause()
+            refused = (app.is_running, app.controller.state.status)
+        finally:
+            release.set()
+        await listed(app, pilot)
+        return refused
+
+    still_running, status = drive(app, scenario)
+    assert still_running
+    assert status == ("busy: Deleting 1 from the outbox… — wait for it to finish",)
+    assert sum(argv[:2] == ["outbox", "drop"] for argv in calls) == 1
+    assert app.controller.state.status == ("Deleted 1 from the outbox.",)
+    assert app.return_value is None  # drive's exit, not the refused quit
+
+
+def test_stale_mutation_flag_without_a_busy_line_does_not_trap_quit(quiet):
+    app = make()
+
+    async def scenario(pilot):  # type: ignore[no-untyped-def]
+        app.controller.mutation_running = True
+        assert app.controller.state.busy is None
+        await pilot.press("q")
+        await pilot.pause()
+
+    drive(app, scenario)
+    assert app.return_value == 0

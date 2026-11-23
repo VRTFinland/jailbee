@@ -40,7 +40,12 @@ from jailbee.transcripts.base import (
     UserMessage,
     register,
 )
-from jailbee.transcripts.markup import command_name, prompt_text
+from jailbee.transcripts.markup import (
+    command_name,
+    is_interruption,
+    prompt_text,
+    split_trailing_reminders,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterator
@@ -71,7 +76,6 @@ READ_CHUNK = 64 * 1024
 _TIMESTAMP = re.compile(rb'"timestamp"\s*:\s*"([^"]{1,64})"')
 """Found without parsing the line."""
 _USER_RECORD = (b'"type":"user"', b'"type": "user"')
-_CWD = re.compile(rb'"cwd"\s*:\s*("(?:[^"\\]|\\.){1,4096}")')
 _MODEL = re.compile(rb'"model"\s*:\s*"([^"]{1,200})"')
 """Candidate model names in a line; only a parse says which one is the record's."""
 
@@ -189,7 +193,7 @@ def _tool_result(
     call_id = block.get("tool_use_id")
     if not isinstance(call_id, str):
         return []
-    text = _result_text(block.get("content"))
+    text, context = split_trailing_reminders(_result_text(block.get("content")))
     found: list[Entry] = [
         ToolResult(
             id=entry_id,
@@ -199,6 +203,7 @@ def _tool_result(
             truncated=len(text) > RESULT_CHARS,
             full_length=len(text),
             is_error=block.get("is_error") is True,
+            context=context[:RESULT_CHARS],
         )
     ]
     outcome = record.get("toolUseResult")
@@ -218,14 +223,6 @@ def _tool_result(
                 )
             )
     return found
-
-
-_INTERRUPTED = "[Request interrupted by user"
-
-
-def _is_notice(text: str) -> bool:
-    """Claude Code's own note in the person's turn, such as an interruption."""
-    return text.startswith(_INTERRUPTED)
 
 
 def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
@@ -248,7 +245,7 @@ def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
                         id=f"{record_id}:0",
                         timestamp=when,
                         text=content,
-                        meta=meta or _is_notice(content),
+                        meta=meta or is_interruption(content),
                     )
                 ]
                 if content
@@ -267,7 +264,7 @@ def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
                         id=entry_id,
                         timestamp=when,
                         text=block["text"],
-                        meta=meta or _is_notice(block["text"]),
+                        meta=meta or is_interruption(block["text"]),
                     )
                 )
             elif block_type == "tool_result":
@@ -327,17 +324,6 @@ def _time_at(data: bytes, at: int) -> datetime | None:
     return _parse_time(match.group(1).decode("utf-8", "replace"))
 
 
-def _cwd_in(line: bytes) -> str | None:
-    match = _CWD.search(line)
-    if match is None:
-        return None
-    try:
-        cwd = json.loads(match.group(1))
-    except ValueError:
-        return None
-    return cwd if isinstance(cwd, str) and cwd.startswith("/") else None
-
-
 def _record(line: bytes) -> dict[str, object] | None:
     try:
         record = json.loads(line)
@@ -361,8 +347,9 @@ class _InfoScan:
         self.first_command = ""
         self.candidates = 0
         self.started: datetime | None = None
-        self.cwd: str | None = None
         self.models: dict[str, None] = {}
+        self.cwd: str | None = None
+        self.git_branch: str | None = None
 
     @property
     def title_settled(self) -> bool:
@@ -375,8 +362,8 @@ class _InfoScan:
     def head_line(self, line: bytes) -> None:
         if self.started is None:
             self.started = _time_at(line, line.find(b'"timestamp"'))
-        if self.cwd is None:
-            self.cwd = _cwd_in(line)
+        if self.cwd is None and b'"cwd"' in line:
+            self.place_line(line)
         self.model_line(line)
         if self.title_settled or not any(marker in line for marker in _USER_RECORD):
             return
@@ -392,6 +379,17 @@ class _InfoScan:
             if typed:
                 self.title = one_line(typed[: TITLE_CHARS * 8], TITLE_CHARS)
                 return
+
+    def place_line(self, line: bytes) -> None:
+        """Where the session started: the first record with a ``cwd``, and its
+        ``gitBranch`` (empty or missing is no branch)."""
+        record = _record(line)
+        cwd = record.get("cwd") if record is not None else None
+        if record is None or not isinstance(cwd, str) or not cwd:
+            return
+        self.cwd = cwd
+        branch = record.get("gitBranch")
+        self.git_branch = branch if isinstance(branch, str) and branch else None
 
     def model_line(self, line: bytes) -> None:
         """Parse `line` only when it names a model not seen yet: a tool input may
@@ -439,16 +437,17 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
     the ends are read. The head is read line by line until the title is
     settled: the first typed prompt, or the first command once
     TITLE_CANDIDATES user lines held none, and never past HEAD_BYTES; its
-    first timestamp is when the session started, its first `cwd` where. The
-    last TAIL_BYTES (more, up to TAIL_MAX_BYTES, while they hold no
-    timestamp) give the last activity: the last complete timestamp in that
-    window, even one in a record that began before it. Models are those named
-    in the head and the tail, in first-use order: a model used only in the
-    middle of a long session is not listed (the transcript itself shows every
-    entry's model). A line is parsed only when it is a title candidate or
-    names a model not seen yet. A caller listing many sessions should cache
-    the result by the file's size and mtime; a change to what is derived here
-    bumps `SESSION_INFO_FORMAT`.
+    first timestamp is when the session started, and its first record with a
+    ``cwd`` says where and on which ``gitBranch``. The last TAIL_BYTES (more,
+    up to TAIL_MAX_BYTES, while they hold no timestamp) give the last
+    activity: the last complete timestamp in that window, even one in a
+    record that began before it. Models are those named in the head and the
+    tail, in first-use order: a model used only in the middle of a long
+    session is not listed (the transcript itself shows every entry's model).
+    A line is parsed only when it is a title candidate or names a model not
+    seen yet. A caller listing many sessions should cache the result by the
+    file's size and mtime; a change to what is derived here bumps
+    `SESSION_INFO_FORMAT`.
     """
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -497,6 +496,7 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
         last_activity=last_activity or last_line_time,
         models=tuple(scan.models),
         cwd=scan.cwd,
+        git_branch=scan.git_branch,
     )
 
 

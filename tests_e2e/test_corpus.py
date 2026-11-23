@@ -45,7 +45,7 @@ def server(make_server: Callable[..., E2EServer], corpus_home: Path) -> E2EServe
 
 @pytest.fixture
 def reader(server: E2EServer, page: Page) -> Page:
-    log_in_with_pin(page, server.url, server.pin.current, "corpus reader")
+    log_in_with_pin(page, server.url, server.pin.current)
     return page
 
 
@@ -162,10 +162,40 @@ def test_thinking_follows_the_setting(reader: Page, session: dict[str, Any]) -> 
     expect(thinking).to_have_count(0)
 
 
+NOTICES = {"compaction": "This session is being continued", "interrupted": "Request interrupted"}
+CONTEXT = [s for s in SESSIONS if NOTICES.keys() & set(s["shapes"])]
+
+
+@pytest.mark.parametrize("session", CONTEXT, ids=[s["name"] for s in CONTEXT])
+def test_compaction_and_interruption_notices_follow_the_agent_context_setting(
+    reader: Page, session: dict[str, Any]
+) -> None:
+    notices = [text for shape, text in NOTICES.items() if shape in session["shapes"]]
+    open_from_list(reader, session)
+    transcript = reader.locator("article.transcript")
+    expect(transcript.locator(".entry.user").first).to_be_visible()
+    for text in notices:
+        expect(transcript).not_to_contain_text(text)
+
+    reader.get_by_role("link", name="Settings", exact=True).click()
+    reader.get_by_label("Agent context").select_option("shown")
+    reader.go_back()
+    for text in notices:
+        expect(transcript.locator(".entry.user.meta", has_text=text).first).to_be_visible()
+
+
 def test_the_manifest_names_every_recorded_transcript() -> None:
     """A recording the manifest misses would silently go unwalked."""
     project = CORPUS / "projects" / "-work-toy"
+    assert list(project.glob("*.jsonl")), f"no recorded transcripts in {project}"
     assert {p.stem for p in project.glob("*.jsonl")} == {s["session_id"] for s in SESSIONS}
     assert {p.stem.removeprefix("agent-") for p in project.glob("*/subagents/*.jsonl")} == {
         a["agent_id"] for _, a in SUBAGENTS
     }
+
+
+def test_every_shape_the_walks_depend_on_was_recorded() -> None:
+    """An empty parameter list would skip its walk instead of failing it."""
+    assert SESSIONS and TOOLS and THINKING and SUBAGENTS and CONTEXT
+    shapes = {shape for s in SESSIONS for shape in s["shapes"]}
+    assert {"tool_error", "long_output"} <= shapes

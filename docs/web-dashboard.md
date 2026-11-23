@@ -8,8 +8,17 @@ and is installed as an optional extra.
 
 Which container ran a session is recorded by the shared state service, which
 runs only while some dashboard (terminal, Qt or web) is connected. A session
-that starts and ends with no dashboard open is still listed under its
-repository, but not attributed to a container.
+it never saw (one that started and ended with no dashboard open, or predates
+the recorder) is attributed from its own transcript instead: the directory and
+git branch it started in, and when. It belongs to a container whose branch
+label (the branch the container was created on) is that branch, whose
+repository directory holds that directory, and which already existed when the
+session started; of several, the most recently created one wins (equal times:
+the first name). So a container recreated under the same name does not inherit
+the older one's sessions. A recorded attribution always wins over this one. A
+mount-mode container has no branch label and lists only recorded sessions, and
+a session started after the branch was renamed inside its container names the
+new branch and stays unattributed unless it was recorded.
 
 Session titles use the first typed prompt, skipping agent wrapper records,
 local command output, caveats and injected context. A session with only slash
@@ -36,8 +45,8 @@ every visible repository's sessions in the background when it starts, after
 dropping the stored rows of deleted transcripts; no request waits for it.
 
 A container page shows its live sessions as soon as they are known (they come
-from the state service's snapshot) and appends the sessions it ran before when
-that separate request answers. A repository lists only the sessions started in
+from the state service's snapshot) and appends the sessions it ran before,
+recorded and attributed, newest first, when that separate request answers. A repository lists only the sessions started in
 its own containers' checkout (each container's repository directory, or below
 it): repositories that share one agent config home by mistake do not list each
 other's sessions. Claude names a session's project directory after its working
@@ -179,6 +188,12 @@ restart catch-up without lost or duplicated replies. Reuse
 watch. Copy the fixture home to a temporary directory before appending; with
 the server stopped the helper only writes, leaving reconnect to catch up.
 
+`tests_e2e/test_display.py` covers visible themes and font sizes after a reload,
+e-ink page turns, held transcript messages and manual snapshot refresh. It also
+walks the front page, repository, container, transcript and settings at phone
+width in both display profiles, and checks the linked PWA manifest and decoded
+icons through the real server.
+
 `test_front_page_live.py` covers snapshot additions, changes and removals without
 navigation; phase labels and computed monochrome edges in the e-ink theme;
 the connecting notice during downtime; and current state after a real server
@@ -190,7 +205,9 @@ then render a subsequent state push before the reload count is checked.
 reloads automatically at most once within a minute, then shows
 "This page is out of date; reload" with a manual Reload button. If session
 storage is unavailable, it offers manual reload immediately rather than risk
-a loop.
+a loop. A connection that authenticates ends that window, so a later
+server upgrade reloads again; the banner sits above a view's sticky header,
+never over it.
 
 `tests_e2e/test_corpus.py` walks the recorded corpus
 (`tests/fixtures/transcripts/claude-corpus`, re-recorded with `make web-corpus`)
@@ -198,7 +215,11 @@ as the agent home of repository `toy`: every session opens from the list, every
 tool call folds and expands, every subagent link opens its transcript and
 thinking follows the setting. It parametrises over `corpus.json`, so a
 re-recorded session is covered without editing the tests, and asserts content
-only on the markers the recorder's prompts guarantee.
+only on the markers the recorder's prompts guarantee. Re-record it when Claude
+Code's transcript format changes: `make web-corpus` needs a logged-in `claude`,
+spends a little (haiku) quota on a throwaway toy repository, and refuses output
+that still holds a host, account or credential. Review the diff before
+committing it.
 
 ## Run it
 
@@ -327,8 +348,14 @@ is taken from the browser's `Origin` header. Registration therefore has to
 happen through the same HTTPS address you will log in at. `fido2 setup` runs a
 temporary server that serves a registration page instead of the dashboard
 (stop the dashboard first if it uses that port; `--listen` and `--port`
-apply). Register the key in the browser, then press Ctrl-C and start the
-dashboard again. The setup PIN keeps only the five-a-minute limit, without
+apply). During setup, open the dashboard's root URL in a fresh browser tab.
+An already-open tab switches to the setup view by itself, even with a saved
+session or a bookmarked login route: a signed-in page when its live connection
+reconnects (the setup server closes it with code 4003), a login page within a
+few seconds while visible or when brought back to the foreground. Enter the printed
+**setup PIN** on that page and register the key, then press Ctrl-C and start the
+dashboard again. A server that is not accepting logins is reported as unavailable,
+not as a wrong PIN. The setup PIN keeps only the five-a-minute limit, without
 the backoff: setup mode runs only while you register a key, so do not leave it
 running.
 
@@ -380,30 +407,40 @@ a theme (light, dark, e-ink), body and code font sizes, and whether thinking
 blocks are shown. These choices are stored in the browser on that device only.
 
 **Agent context** controls the agent's own wrapper records in a transcript:
-task notifications, system reminders, command output and shell input/output.
+task notifications, system reminders (including the ones Claude Code appends to
+the end of a tool result; a tag elsewhere in the output is the tool's own text), command output and shell input/output.
 *Hidden* (the default) sends none of them, so they cost neither bandwidth nor
 page weight. *Collapsed* sends a one-line label (for example "Task
 notification" or "Shell: ls") and loads the content from the server only when
 you expand it. *Shown* sends and displays everything. A slash command you typed
-(`/model`, `/clear`) always appears as a one-line label, in every mode. Changing
+(`/model`, `/clear`) and an interruption notice ("Request interrupted by user")
+always appear as a one-line label, in every mode. Changing
 the setting reloads the open transcript. The choice is a `meta=hidden|collapsed|shown`
 query parameter on the session and subagent endpoints and a `meta` field on the
 live `subscribe` message; a withheld record's content is served by
 `GET /api/repos/{prefix}/sessions/{agent}/{session_id}/entries/{entry_id}`
-(also under `.../subagents/{agent_id}/`).
+(also under `.../subagents/{agent_id}/`). A whole wrapper record keeps its entry
+id; context split off another entry (wrappers before a typed prompt, reminders
+after a tool result) is a separate record with the id `<entry id>:meta`. A live
+read whose records are all hidden still sends an `append`, with no entries and
+the new offset.
 
 The display profile **E-ink** is for e-paper readers and slow-refresh
 screens: no animation, content moves in page turns instead of scrolling, live
-transcript entries are held back until you turn the page rather than moving
-the text you are reading, and the front page refreshes slowly.
+transcript entries are held behind the **N new messages** button until you tap
+it, without moving the text you are reading. The front page refreshes every
+minute, or immediately when you tap **Refresh**. The front-page header wraps
+its controls on narrow screens, including with the e-ink profile's side margins.
 
 Session transcripts keep their title, agent/model context and connection notice
 in a compact header while you read. **Latest answer** appears only when the
 newest assistant reply is outside the readable area (below the header and above
 the bottom controls, including the device's safe-area inset). A truncated title
 keeps its full text as a tooltip and accessible heading name. Page turns use the
-actual readable height even on short landscape screens; a partial keyboard or
-system scroll stays on its current page so Next never skips unread text.
+actual readable height even on short landscape screens, with a stable page grid
+as the header becomes sticky and a last page bounded by the browser's scroll
+limit; a partial keyboard or system scroll stays on its current page so Next
+never skips unread text, and Next stays enabled until the real bottom.
 Jumping aligns the newest reply's start just below the measured header, even
 for a short final reply, with trailing room to scroll it there. Jumping or
 scrolling to the reply hides the button; moving

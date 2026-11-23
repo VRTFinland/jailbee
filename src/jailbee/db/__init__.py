@@ -353,14 +353,16 @@ def _migrate_to_v28(conn: Connection) -> None:
 
 
 def _migrate_to_v29(conn: Connection) -> None:
-    """v28 -> v29: add `session_info_cache.cwd` (where a session started).
+    """v28 -> v29 adds `session_info_cache.cwd` and `.git_branch`.
 
-    Guarded by `PRAGMA table_info` so replaying the chain is a no-op. Old
-    rows keep NULL and an older `format`, so they are read again anyway.
+    Rows written before have neither; their `format` is older than the
+    reader's, so they are read again anyway.
     """
     cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(session_info_cache)")}
     if "cwd" not in cols:
         conn.exec_driver_sql("ALTER TABLE session_info_cache ADD COLUMN cwd VARCHAR")
+    if "git_branch" not in cols:
+        conn.exec_driver_sql("ALTER TABLE session_info_cache ADD COLUMN git_branch VARCHAR")
 
 
 # target_version -> non-destructive migration step
