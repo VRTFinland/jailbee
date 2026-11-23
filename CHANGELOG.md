@@ -211,7 +211,9 @@ before editing `## Unreleased`.
   link between children and their orchestrator. A container or repository opens
   its agent sessions, and a session opens as a typeset transcript with rendered
   Markdown, folded tool calls, optional thinking, subagent transcripts and live
-  updates. Session titles use the first typed prompt rather than agent wrapper
+  updates. Following a subagent link or returning to its parent loads that
+  transcript and switches the live subscription instead of retaining the previous
+  document. Session titles use the first typed prompt rather than agent wrapper
   markup, falling back to the first slash command in command-only sessions;
   titles and connection notices stay visible while reading; **Latest answer**
   appears only when the newest reply is out of view, also with e-ink page turns
