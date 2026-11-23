@@ -107,6 +107,10 @@ docs = [
     "markdown>=3.0",
     "jinja2>=3.0",
 ]
+e2e = [
+    "playwright>=1.65.2",
+    "pytest-playwright>=0.10.0",
+]
 
 [tool.uv]
 # `docs` is a default group so that this repo's own containers get it: their

@@ -33,6 +33,9 @@ docs/superpowers/
 # Documentation site build outputs: `_build/docs` is the staged page whitelist,
 # `_site` the assembled Pages artifact (docs + the landing page).
 /_build/
+# pytest-playwright's default artifact directory, for a bare `pytest tests_e2e`
+# (`make web-e2e` writes to _build/e2e-results instead).
+/test-results/
 /_site/
 
 # Intermediate renders: render.sh copies the finished clips into

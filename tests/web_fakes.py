@@ -84,6 +84,14 @@ class FakeSourceFactory:
         assert len(self.made) == 1, f"expected one source, got {len(self.made)}"
         return self.made[0]
 
+    def push(self, snapshot: Snapshot) -> None:
+        """Make ``snapshot`` current: every open source delivers it, and a
+        source made later (a reconnect, a restarted server) starts with it."""
+        self.initial = snapshot
+        for source in self.made:
+            if not source.closed:
+                source.push(snapshot)
+
 
 def container(name: str, repo: str = "alpha", **fields: Any) -> ContainerInfo:
     info = ContainerInfo(
