@@ -118,6 +118,22 @@ def test_one_time_link_signs_in_only_while_fresh(
         expect(page).to_have_url(server.url + "/#/login")
 
 
+def test_a_fresh_link_signs_in_when_the_login_page_is_already_open(
+    server: E2EServer, page: Page
+) -> None:
+    page.goto(server.url)
+    expect(page.get_by_role("button", name="Log in", exact=True)).to_be_visible()
+    token = mint(server.engine)
+    document_started = page.evaluate("performance.timeOrigin")
+
+    page.evaluate("token => { location.hash = '/login?link=' + token }", token)
+
+    expect(page.get_by_role("button", name="Log out")).to_be_visible()
+    expect(page.get_by_text("No repositories.")).to_be_visible()
+    expect(page).to_have_url(server.url + "/#/")
+    assert page.evaluate("performance.timeOrigin") == document_started
+
+
 def test_login_device_name_appears_in_the_header(server: E2EServer, page: Page) -> None:
     log_in_with_pin(page, server.url, server.pin.current, "reading room tablet")
 
