@@ -29,7 +29,7 @@ def test_all_servers_are_cleaned_up_when_disposal_fails(
                     raise RuntimeError("disposal broke")
                 print("second engine disposed")
             monkeypatch.setattr(Engine, "dispose", dispose)
-            monkeypatch.setattr(E2EServer, "start", lambda self: None)
+            monkeypatch.setattr(E2EServer, "start", lambda self, **_: None)
             monkeypatch.setattr(E2EServer, "stop", lambda self: print("server stopped"))
     """)
     pytester.makepyfile("""
