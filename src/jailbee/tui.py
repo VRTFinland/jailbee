@@ -454,7 +454,7 @@ def _choice_widths(containers: list[ContainerInfo]) -> dict[str, int]:
         "behind": max(len(_marked(c, "behind_count")) for c in containers),
         "conflict": max(len(merge_label(c.git_status)[0]) for c in containers),
         "job": max(
-            len(background.job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind))
+            len(background.job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind, live=c.job_live))
             for c in containers
         ),
     }
@@ -501,7 +501,7 @@ def _format_choice_title(c: ContainerInfo, widths: dict[str, int]) -> str:
         f"{conflict:<{widths['conflict']}}"
     )
     if widths["job"]:
-        label = background.job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind)
+        label = background.job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind, live=c.job_live)
         line += f"  {label:<{widths['job']}}"
     return line
 

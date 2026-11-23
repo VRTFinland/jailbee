@@ -391,8 +391,9 @@ def _observe_jobs(session: Session, rows: Sequence[BackgroundJob]) -> dict[str, 
     """
     result: dict[str, BackgroundJob] = {}
     for row in rows:
+        current: BackgroundJob | None = row
         live = not clearable(row.phase, row.pid)
-        if not live:
+        while not live:
             # Bypass the identity map: it still holds the pre-completion row.
             identity = (row.pid, row.started_at)
             current = session.exec(
@@ -401,10 +402,13 @@ def _observe_jobs(session: Session, rows: Sequence[BackgroundJob]) -> dict[str, 
                 .execution_options(populate_existing=True)
             ).first()
             if current is None:
-                continue
-            if (current.pid, current.started_at) != identity:
-                live = not clearable(current.phase, current.pid)
+                break
             row = current
+            if (row.pid, row.started_at) == identity:
+                break
+            live = not clearable(row.phase, row.pid)
+        if current is None:
+            continue
         row.observe_live(live)
         result[row.container_name] = row
     return result

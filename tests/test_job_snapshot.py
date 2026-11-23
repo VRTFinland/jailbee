@@ -81,6 +81,11 @@ def test_successful_worker_exit_does_not_turn_a_gathered_job_into_an_error(
     assert "[red]" not in dashboard_cell(field, container, now)
     job_field = next(f for f in jobs.job_field_specs(now=now, all_repos=False) if f.name == "phase")
     assert "(dead)" not in job_field.cell(job)
+    from jailbee.qtui.model import cell_tooltip
+    from jailbee.tui import container_options
+
+    assert "(dead)" not in cell_tooltip(container, field).split("\n", 1)[1]
+    assert "(dead)" not in container_options([container])[0].title
     assert list_containers(cfg, incus, with_background=True) == []
 
 
@@ -112,6 +117,34 @@ def test_successful_exit_during_job_collection_does_not_publish_a_dead_row(
 
     mocker.patch("jailbee.background.worker_alive", side_effect=finish_before_probe)
     assert list_containers(cfg, incus, with_background=True) == []
+
+
+def test_replacement_job_finishing_during_collection_is_not_dead(
+    tmp_path, monkeypatch, mocker
+):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    name = "repo-work"
+
+    def start(pid):
+        with Session(get_engine()) as session:
+            background.start_job(
+                session, container_name=name, container_prefix="repo", branch="work",
+                pid=pid, log_path="/log", now=datetime.now(UTC),
+            )
+
+    start(4242)
+
+    def probe(pid):
+        if pid == 4242:
+            start(4243)
+        else:
+            with Session(get_engine()) as session:
+                background.delete_job(session, name)
+        return False
+
+    mocker.patch("jailbee.background.worker_alive", side_effect=probe)
+    with Session(get_engine()) as session:
+        assert background.list_jobs(session, "repo") == {}
 
 
 @pytest.mark.parametrize(("kind", "phase"), JOB_CASES)

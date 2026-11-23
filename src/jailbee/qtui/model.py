@@ -347,7 +347,7 @@ def cell_tooltip(c: ContainerInfo, field: FieldSpec[ContainerInfo]) -> str:
                 details.extend(activity.lines())
         detail = "\n".join(details) or "No agent status"
     elif field.name == "job":
-        label = job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind)
+        label = job_label_or_empty(c.job_phase, c.job_pid, kind=c.job_kind, live=c.job_live)
         detail = "\n".join(part for part in (label, c.job_error) if part)
     elif field.name in SYNC_FIELDS:
         detail = f"{_strip_markup(field.cell(c))}\n{sync_target_text(c.git_status)}"
