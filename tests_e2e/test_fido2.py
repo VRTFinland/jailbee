@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page, Route, expect
 
 from jailbee.web import auth_admin
 from tests.web_fakes import snapshot_of
@@ -80,18 +80,20 @@ def test_a_removed_security_key_is_refused_visibly(
     page.goto(f"{url}/#/login")
     page.get_by_label("This device").fill("revoked-key tablet")
 
-    # As on a host, remove the key after the login page offered that method.
-    expect(page.get_by_role("button", name="Use security key", exact=True)).to_be_visible()
-    key = auth_admin.list_fido2_keys(server.engine)[0]
-    auth_admin.remove_fido2_key(server.engine, key.id)
+    def revoke_before_delivery(route: Route) -> None:
+        # Pause the real signed request, not the ceremony or the server response.
+        # This models the host revoking the key while its login is in flight.
+        key = auth_admin.list_fido2_keys(server.engine)[0]
+        auth_admin.remove_fido2_key(server.engine, key.id)
+        route.continue_()
+
+    page.route(f"{url}/api/auth", revoke_before_delivery, times=1)
     browser_errors.expect(
-        "console", "Failed to load resource: the server responded with a status of 404 (Not Found)"
+        "console", "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
     )
     page.get_by_role("button", name="Use security key", exact=True).click()
 
-    expect(page.get_by_role("alert")).to_have_text(
-        "No security key is registered for this address."
-    )
+    expect(page.get_by_role("alert")).to_have_text("The security key was not accepted.")
     expect(page).to_have_url(f"{url}/#/login")
     expect(page.get_by_role("button", name="Use security key", exact=True)).to_be_enabled()
     expect(page.get_by_role("button", name="Log out")).not_to_be_visible()
