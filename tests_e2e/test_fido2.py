@@ -10,6 +10,7 @@ from playwright.sync_api import Page, Route, expect
 from jailbee.web import auth_admin
 from tests.web_fakes import snapshot_of
 from tests_e2e.browser_errors import BrowserErrors
+from tests_e2e.flows import log_in_with_pin
 from tests_e2e.server import E2EServer
 
 
@@ -77,16 +78,25 @@ def test_setup_mode_routes_old_dashboard_urls_to_key_registration(
     expect(page.get_by_text("Registered Recovered tab key.", exact=True)).to_be_visible()
 
 
-def test_open_login_tab_switches_to_setup_without_a_reload(
-    make_server: Callable[..., E2EServer], page: Page, virtual_key: None
+@pytest.mark.parametrize("signed_in", [False, True], ids=["login", "dashboard"])
+def test_open_tab_switches_to_setup_without_a_reload(
+    make_server: Callable[..., E2EServer], page: Page, virtual_key: None, signed_in: bool
 ) -> None:
     server = make_server()
+    server.push(snapshot_of())
     url = f"http://localhost:{server.port}"
-    page.goto(f"{url}/#/login")
-    expect(page.get_by_label("This device")).to_be_visible()
+    if signed_in:
+        log_in_with_pin(page, url, server.pin.current, "open dashboard")
+    else:
+        page.goto(f"{url}/#/login")
+        expect(page.get_by_label("This device")).to_be_visible()
 
     server.stop()
     server.start(setup=True)
+    if signed_in:
+        # Signal reconnection before the socket's retry reaches the setup-only
+        # server (which deliberately has no dashboard WebSocket endpoint).
+        page.evaluate("window.dispatchEvent(new Event('online'))")
 
     expect(page.get_by_label("Setup PIN")).to_be_visible()
     page.get_by_label("Key name").fill("Open tab key")
