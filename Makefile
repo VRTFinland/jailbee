@@ -6,16 +6,18 @@
 SHELL := /bin/bash
 
 # Install/reinstall the `jailbee` CLI globally from the current checkout WITH
-# the optional Qt GUI extra (PySide6) and the optional SSH extra (asyncssh),
-# then run the post-install steps: shell completions for `jailbee` and `jb`,
+# the optional Qt GUI extra (PySide6), the optional SSH extra (asyncssh) and
+# the optional web dashboard extra (FastAPI, uvicorn, ...), then run the post-install steps: shell completions for `jailbee` and `jb`,
 # the egress-refresh user timer, and the bundled agent skills when host-level
 # `install_host_skills` is on (off by default). `jailbee setup` is idempotent
 # and `--yes` keeps it non-interactive (it never edits a shell rc in that
 # mode), so re-running this target is safe. Requires libGL on the host;
 # `jailbee gui` and `jailbee dashboard --gui` work after this, and `jailbee
 # remote ssh enable`/`serve` no longer need a separate `uv tool install`.
+# The web extra brings only the Python side: the browser app is built by
+# `make web` (Node.js and npm), which `make install-web` runs first.
 install:
-	uv tool install '.[gui,ssh]' --force --reinstall
+	uv tool install '.[gui,ssh,web]' --force --reinstall
 	jailbee setup --yes
 	@# The SSH service runs the old code until restarted. try-restart is a
 	@# no-op when the unit is not running, so users without it are unaffected.
@@ -27,6 +29,10 @@ install:
 	@if command -v systemctl >/dev/null 2>&1; then \
 		systemctl --user try-restart jailbee-broker.service; \
 	fi
+	@# And the web dashboard service.
+	@if command -v systemctl >/dev/null 2>&1; then \
+		systemctl --user try-restart jailbee-web.service; \
+	fi
 	@# So does the dashboards' state service, and a reinstall of the same
 	@# version never replaces it (the handshake compares versions only). Open
 	@# dashboards reconnect and respawn it from the new code. The pattern is
@@ -35,18 +41,13 @@ install:
 	@pkill -u "$$(id -u)" -f -- ' -m jailbee [_]state-service$$' || true
 
 # Alias for `make install` — kept for back-compat and discoverability now that
-# `make install` includes the optional Qt GUI and SSH extras by default.
+# `make install` includes the optional Qt GUI, SSH and web extras by default.
 install-gui: install
 
-# `make install` plus the web dashboard: builds the browser app first (needs
-# Node.js and npm) so the installed wheel carries it, adds the `web` extra and
-# restarts the dashboard service if it runs.
+# `make install` with a freshly built browser app: builds it first (needs
+# Node.js and npm) so the installed wheel carries it.
 install-web: web
-	uv tool install '.[gui,ssh,web]' --force --reinstall
-	jailbee setup --yes
-	@if command -v systemctl >/dev/null 2>&1; then \
-		systemctl --user try-restart jailbee-web.service; \
-	fi
+	$(MAKE) install
 
 # Just the bundled agent skills, for when only they changed and host-level
 # `install_host_skills` is on (off by default). `make install` does this too,
