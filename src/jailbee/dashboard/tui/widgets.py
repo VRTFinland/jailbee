@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from functools import cached_property
+from typing import TYPE_CHECKING
 
 from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 from rich.segment import Segment
@@ -21,7 +22,6 @@ from textual.message import Message
 from textual.scroll_view import ScrollView
 from textual.scrollbar import ScrollDown, ScrollLeft, ScrollRight, ScrollTo, ScrollUp
 from textual.strip import Strip
-from textual.theme import Theme
 from textual.widget import Widget
 from textual.widgets import Static
 
@@ -53,6 +53,9 @@ from jailbee.dashboard.tui.layout import FRAME_INSET_COLS, FrameLayout, frame_la
 from jailbee.dashboard.tui.menu_state import MenuState, RepoMenuState
 from jailbee.dashboard.tui.native import OverlayBox, PickerBox, build_box
 from jailbee.dashboard.tui.overlay import NativeState, Overlay, overlay_key
+
+if TYPE_CHECKING:
+    from textual.theme import Theme
 
 _CACHE_MAX = 4096
 
