@@ -136,7 +136,13 @@ def collector_guard() -> Iterator[Callable[[BrowserErrors | None], None]]:
                     errors.settle()
                     close_page(**kwargs)
 
+                def reject_content(*args: Any, **kwargs: Any) -> None:
+                    pytest.fail(
+                        "page.set_content replaces collector listeners; use page.goto instead"
+                    )
+
                 patch.setattr(page, "close", close_page_settled)
+                patch.setattr(page, "set_content", reject_content)
 
             patch.setattr(context, "close", close_settled)
             context.on("page", watch_page)

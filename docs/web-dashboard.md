@@ -77,7 +77,9 @@ launched browser. Close these pages/contexts in the test or its function-scoped
 fixture teardown; closing them first settles pending reports. Creation from
 module/session-scoped fixtures fails loudly rather than sharing a collector
 between tests. `launch_persistent_context()` is rejected before launch; use
-`browser.new_context()` instead. The harness supports the sync API, not async
+`browser.new_context()` instead. `page.set_content()` is also rejected: it
+replaces the document without running init scripts and removes CSP listeners;
+use `page.goto()` to navigate. The harness supports the sync API, not async
 Playwright or direct Playwright internals.
 
 It checks at the end of the test body and again at teardown after settling

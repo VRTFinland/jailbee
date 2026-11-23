@@ -65,6 +65,9 @@ class BrowserErrors:
         context.add_init_script(_LISTENER)
         context.on("console", self._on_console)
         context.on("weberror", self._on_page_error)
+        # Convenience pages already have a document when their context is exposed.
+        for page in context.pages:
+            page.evaluate(_LISTENER)
 
     def _on_console(self, message: ConsoleMessage) -> None:
         if message.type == "error":

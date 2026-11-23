@@ -57,7 +57,10 @@ def test_restart_tracer_preserves_a_stop_failure(
         def stop_failure(logged_in, server, monkeypatch):
             def fail_stop():
                 raise RuntimeError("tracer stop broke")
+            def fail_start():
+                pytest.fail("tracer restarted after failed stop")
             monkeypatch.setattr(server, "stop", fail_stop)
+            monkeypatch.setattr(server, "start", fail_start)
     ''')
     pytester.makepyfile('''
         from tests_e2e.test_tracer import test_the_dashboard_comes_back_after_a_server_restart
@@ -68,7 +71,7 @@ def test_restart_tracer_preserves_a_stop_failure(
 
     assert result.ret == pytest.ExitCode.TESTS_FAILED
     result.stdout.fnmatch_lines(["*RuntimeError: tracer stop broke*"])
-    assert "server already running" not in str(result.stdout)
+    assert "tracer restarted after failed stop" not in str(result.stdout)
 
 
 def test_stop_reports_a_thread_that_survives_forced_exit() -> None:

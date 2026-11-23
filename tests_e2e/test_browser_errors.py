@@ -154,6 +154,39 @@ def test_browser_convenience_page_errors_fail(
     result.stdout.fnmatch_lines(["*console error: convenience kaboom*"])
 
 
+def test_convenience_page_collects_csp_before_navigation(
+    browser: Browser, browser_errors: BrowserErrors
+) -> None:
+    page = browser.new_page()
+    try:
+        page.evaluate('''() => {
+            const policy = document.createElement("meta")
+            policy.httpEquiv = "Content-Security-Policy"
+            policy.content = "script-src 'none'"
+            document.head.append(policy)
+        }''')
+        page.evaluate('''() => {
+            const script = document.createElement("script")
+            script.textContent = "window.inlineRan = true"
+            document.body.append(script)
+        }''')
+        browser_errors.settle()
+        assert any("script-src" in violation for violation in browser_errors.csp)
+    finally:
+        browser_errors.expect("console", "Content Security Policy")
+        browser_errors.expect("csp", "script-src")
+        page.close()
+
+
+def test_replacing_the_document_is_rejected_loudly(browser: Browser) -> None:
+    page = browser.new_page()
+    try:
+        with pytest.raises(pytest.fail.Exception, match="page.set_content replaces collector listeners"):
+            page.set_content("<p>replacement</p>")
+    finally:
+        page.close()
+
+
 def test_errors_in_a_second_launched_browser_fail(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
