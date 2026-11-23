@@ -41,7 +41,7 @@ export function usePager(topInset: () => number = () => 0): Pager {
 
     function syncFromScroll() {
         measure()
-        page.value = Math.max(0, Math.round(window.scrollY / pageHeight()))
+        page.value = Math.max(0, Math.floor(window.scrollY / pageHeight()))
     }
 
     watch(topInset, () => {
