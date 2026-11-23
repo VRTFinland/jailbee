@@ -40,7 +40,12 @@ from jailbee.transcripts.base import (
     UserMessage,
     register,
 )
-from jailbee.transcripts.markup import command_name, prompt_text
+from jailbee.transcripts.markup import (
+    command_name,
+    is_interruption,
+    prompt_text,
+    split_trailing_reminders,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterator
@@ -188,7 +193,7 @@ def _tool_result(
     call_id = block.get("tool_use_id")
     if not isinstance(call_id, str):
         return []
-    text = _result_text(block.get("content"))
+    text, context = split_trailing_reminders(_result_text(block.get("content")))
     found: list[Entry] = [
         ToolResult(
             id=entry_id,
@@ -198,6 +203,7 @@ def _tool_result(
             truncated=len(text) > RESULT_CHARS,
             full_length=len(text),
             is_error=block.get("is_error") is True,
+            context=context[:RESULT_CHARS],
         )
     ]
     outcome = record.get("toolUseResult")
@@ -217,14 +223,6 @@ def _tool_result(
                 )
             )
     return found
-
-
-_INTERRUPTED = "[Request interrupted by user"
-
-
-def _is_notice(text: str) -> bool:
-    """Claude Code's own note in the person's turn, such as an interruption."""
-    return text.startswith(_INTERRUPTED)
 
 
 def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
@@ -247,7 +245,7 @@ def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
                         id=f"{record_id}:0",
                         timestamp=when,
                         text=content,
-                        meta=meta or _is_notice(content),
+                        meta=meta or is_interruption(content),
                     )
                 ]
                 if content
@@ -266,7 +264,7 @@ def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
                         id=entry_id,
                         timestamp=when,
                         text=block["text"],
-                        meta=meta or _is_notice(block["text"]),
+                        meta=meta or is_interruption(block["text"]),
                     )
                 )
             elif block_type == "tool_result":

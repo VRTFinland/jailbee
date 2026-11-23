@@ -110,7 +110,7 @@ describe("subagent transcripts", () => {
     it("fetches and renders the subagent transcript like a session", async () => {
         const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, child))
         const {wrapper} = await mountAt(
-            "/repos/alpha/sessions/claude/s-1/subagents/a1b2c3?meta=hidden",
+            "/repos/alpha/sessions/claude/s-1/subagents/a1b2c3",
             fetchMock,
         )
         expect(fetchMock.mock.calls[0][0]).toBe(
@@ -123,7 +123,7 @@ describe("subagent transcripts", () => {
 
     it("goes back to the parent session", async () => {
         const {wrapper, router} = await mountAt(
-            "/repos/alpha/sessions/claude/s-1/subagents/a1b2c3?meta=hidden",
+            "/repos/alpha/sessions/claude/s-1/subagents/a1b2c3",
             vi.fn().mockResolvedValue(jsonResponse(200, child)),
         )
         await wrapper.get("a.back-to-session").trigger("click")
@@ -134,7 +134,7 @@ describe("subagent transcripts", () => {
 
     it("says the subagent was not found on a 404", async () => {
         const {wrapper} = await mountAt(
-            "/repos/alpha/sessions/claude/s-1/subagents/a1b2c3?meta=hidden",
+            "/repos/alpha/sessions/claude/s-1/subagents/a1b2c3",
             vi.fn().mockResolvedValue(jsonResponse(404, {detail: "x"})),
         )
         expect(wrapper.text()).toContain("Subagent not found")

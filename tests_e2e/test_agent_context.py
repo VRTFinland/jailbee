@@ -42,6 +42,32 @@ def record(number: int, kind: str, text: str) -> str:
     )
 
 
+FILE_REMINDER = "<system-reminder>The file is shorter than the offset</system-reminder>"
+
+
+def tool_records(number: int) -> str:
+    """A Read call whose result carries a reminder Claude Code appended."""
+    call = {"type": "tool_use", "id": "toolu_read", "name": "Read", "input": {"file_path": "a"}}
+    result = {
+        "type": "tool_result",
+        "tool_use_id": "toolu_read",
+        "content": "file body\n\n" + FILE_REMINDER,
+    }
+    return "".join(
+        json.dumps(
+            {
+                "uuid": f"entry-{number + i}",
+                "sessionId": SESSION,
+                "timestamp": "2026-11-02T10:00:00.000Z",
+                "type": kind,
+                "message": {"role": kind, "content": [block], "model": "test-model"},
+            }
+        )
+        + "\n"
+        for i, (kind, block) in enumerate([("assistant", call), ("user", result)])
+    )
+
+
 def open_session(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, mode: str | None
 ) -> list[str]:
@@ -54,6 +80,7 @@ def open_session(
         + record(1, "user", NOTIFICATION)
         + record(2, "user", COMMAND)
         + record(3, "user", REMINDER)
+        + tool_records(5)
         + record(4, "assistant", "Noted.")
     )
     server = make_server(agent_homes={"work": [("claude", home)]}.get)
@@ -81,6 +108,7 @@ def test_hidden_is_the_default_and_leaves_no_meta_in_the_dom(
     expect(page.get_by_text("Command: /model opus", exact=True)).to_be_visible()
     html = page.content()
     assert "Background build finished" not in html and "house style" not in html
+    assert "shorter than the offset" not in html
     assert "Task notification" not in html and "System reminder" not in html
 
 
@@ -91,8 +119,9 @@ def test_collapsed_fetches_content_only_when_expanded(
     page.set_viewport_size({"width": width, "height": 800})
     fetched = open_session(page, make_server, tmp_path, "collapsed")
 
-    expect(page.locator("details.meta-record")).to_have_count(3)
+    expect(page.locator("details.meta-record")).to_have_count(4)
     expect(page.get_by_text("Task notification", exact=True)).to_be_visible()
+    assert "shorter than the offset" not in page.content()
     expect(page.get_by_text("Command: /model opus", exact=True)).to_be_visible()
     expect(page.get_by_text("Background build finished")).to_be_hidden()
     expect(page.get_by_text("house style")).to_be_hidden()
@@ -115,6 +144,7 @@ def test_shown_displays_the_content(
 
     expect(page.get_by_text("Background build finished")).to_be_visible()
     expect(page.get_by_text("house style")).to_be_visible()
+    expect(page.get_by_text("shorter than the offset")).to_be_visible()
     expect(page.get_by_text("Command: /model opus", exact=True)).to_be_visible()
     expect(page.locator("details")).to_have_count(0)
 
@@ -128,4 +158,4 @@ def test_the_settings_control_changes_the_open_transcript(
     page.get_by_label("Agent context").select_option("collapsed")
     page.go_back()
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
-    expect(page.locator("details.meta-record")).to_have_count(3)
+    expect(page.locator("details.meta-record")).to_have_count(4)

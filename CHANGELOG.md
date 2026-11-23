@@ -245,10 +245,11 @@ before editing `## Unreleased`.
   appears only when the newest reply is out of view and aligns its start below
   the header, including short final replies. E-ink page turns never skip unread
   text after partial keyboard scrolling. The agent's own wrapper records (task
-  notifications, system reminders, command output) are hidden by default; the
+  notifications, system reminders, also those appended to tool results, command
+  output) are hidden by default; the
   per-device **Agent context** setting can collapse them to a label that loads
-  its content on expand, or show them, while typed slash commands always show
-  as a label line
+  its content on expand, or show them, while typed slash commands and
+  interruption notices always show as a label line
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Themes
   (light, dark, e-ink) and an e-ink display profile with page turns are chosen
   per device. Page numbering stays stable as the transcript header becomes

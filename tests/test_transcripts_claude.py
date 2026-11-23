@@ -128,6 +128,36 @@ def test_a_long_tool_result_is_truncated_and_says_so(tmp_path: Path, source: Cla
     assert long_output.startswith(result.text)
 
 
+def test_a_reminder_appended_to_a_long_result_survives_the_cut(
+    tmp_path: Path, source: ClaudeSource
+) -> None:
+    """The reminder is split off before truncation, so it never leaks half-cut
+    into the output and never counts toward its length."""
+    path = tmp_path / "t.jsonl"
+    reminder = "<system-reminder>note</system-reminder>"
+    content = [
+        {"type": "text", "text": "x" * 10_000},
+        {"type": "text", "text": reminder},
+    ]
+    _write(
+        path,
+        {
+            "type": "user",
+            "uuid": "r1",
+            "message": {
+                "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": content}]
+            },
+        },
+    )
+
+    (result,) = source.read(path).entries
+
+    assert isinstance(result, ToolResult)
+    assert result.full_length == 10_000
+    assert "system-reminder" not in result.text
+    assert result.context == reminder
+
+
 def test_a_subagent_reference_follows_the_agent_tool_result(
     home: Path, source: ClaudeSource
 ) -> None:
