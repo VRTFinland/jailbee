@@ -441,6 +441,7 @@ def test_a_failing_read_is_logged_not_lost(
     assert any(r.exc_info and "disk on fire" in str(r.exc_info[1]) for r in caplog.records)
 
 
+@pytest.mark.timeout(10)
 def test_a_batch_of_only_hidden_records_still_advances_the_offset(
     started: tuple[TestClient, str], transcript: Path, watches: FakeWatchFactory
 ) -> None:

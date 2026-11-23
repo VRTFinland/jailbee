@@ -49,6 +49,9 @@ from jailbee.web.protocol import (
 
 DEFAULT_CACHE_ENTRIES = 4096
 
+# Shown for a tool result whose whole output was agent context the setting hides.
+EMPTY_RESULT_NOTE = "(output was agent context only)"
+
 
 class RenderCache:
     """HTML by (entry id, text), least recently used dropped beyond ``limit``.
@@ -183,11 +186,14 @@ def render_entry(
                 model=entry.model,
             )
         case ToolResult():
+            text = entry.text
+            if not text and entry.context and meta == "hidden":
+                text = EMPTY_RESULT_NOTE
             return RenderedToolResult(
                 id=entry.id,
                 timestamp=entry.timestamp,
                 call_id=entry.call_id,
-                html=_pre(entry.text, "tool-output"),
+                html=_pre(text, "tool-output"),
                 truncated=entry.truncated,
                 full_length=entry.full_length,
                 is_error=entry.is_error,

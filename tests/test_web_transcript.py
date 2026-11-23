@@ -693,6 +693,16 @@ def test_a_collapsed_tool_result_reminder_is_a_label_fetched_on_expand(
     assert "line one" not in body["html"]
 
 
+def test_a_hidden_reminder_only_tool_result_says_why_it_is_empty(
+    client: TestClient, home: Path
+) -> None:
+    _reminder_session(home, output="")
+    (result,) = [e for e in _kinds(client, "hidden") if e["kind"] == "tool_result"]
+    assert result["html"] == '<pre class="tool-output">(output was agent context only)</pre>'
+    shown = [e for e in _kinds(client, "shown") if e["kind"] == "tool_result"]
+    assert shown[0]["html"] == '<pre class="tool-output"></pre>'
+
+
 def test_a_shown_tool_result_reminder_is_its_own_meta_entry(client: TestClient, home: Path) -> None:
     _reminder_session(home)
     result, reminder = _kinds(client, "shown")[1:]

@@ -146,6 +146,8 @@ def split_trailing_reminders(text: str) -> tuple[str, str]:
 
     Only complete blocks at the very end count, each starting a line (or the
     text); a tag earlier in the output (a file that quotes one) stays output.
+    A ``cat``/``tail`` whose last lines are a reminder block is indistinguishable
+    from an appended one and moves to the context too (accepted).
     """
     end = len(text.rstrip())
     start = end
