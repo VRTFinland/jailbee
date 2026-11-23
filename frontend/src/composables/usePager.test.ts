@@ -124,6 +124,18 @@ describe("page turns", () => {
         expect(wrapper.get(".page-indicator").text()).toBe("Page 1 / 4")
     })
 
+    it("keeps Next enabled after a manual scroll that has not reached the bottom", async () => {
+        // 1388px of content in a 588px viewport: the last reachable scroll is 800px (1.6 pages).
+        fakeLayout(1388)
+        updateSettings({displayProfile: "eink"})
+        const wrapper = mount(Harness, {attachTo: document.body})
+        vi.spyOn(window, "scrollY", "get").mockReturnValue(750)
+        window.dispatchEvent(new Event("scroll"))
+        await wrapper.vm.$nextTick()
+        expect(wrapper.get(".page-indicator").text()).toBe("Page 2 / 3")
+        expect(wrapper.get("button.next").attributes("disabled")).toBeUndefined()
+    })
+
     it("follows the scroll position, e.g. after a keyboard or system scroll", async () => {
         fakeLayout(1750)
         updateSettings({displayProfile: "eink"})

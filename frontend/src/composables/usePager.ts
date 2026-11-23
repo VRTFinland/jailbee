@@ -42,9 +42,10 @@ export function usePager(topInset: () => number = () => 0): Pager {
 
     function syncFromScroll() {
         measure()
+        // Only the real bottom is the last page: short of it, Next must still reach the rest.
         page.value = window.scrollY >= maxScroll.value
             ? pageCount.value - 1
-            : Math.max(0, Math.round(window.scrollY / pageHeight()))
+            : Math.max(0, Math.min(pageCount.value - 2, Math.round(window.scrollY / pageHeight())))
     }
 
     watch(topInset, () => {
