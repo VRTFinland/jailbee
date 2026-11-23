@@ -34,7 +34,6 @@ from tests_e2e.browser_errors import BrowserErrors
 from tests_e2e.flows import log_in_with_pin
 from tests_e2e.server import E2EServer
 
-
 expect.set_options(timeout=10_000)
 
 
