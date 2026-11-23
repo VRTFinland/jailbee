@@ -9,14 +9,15 @@ through an exposed binding, which the page's own CSP cannot block) and as a
 
 from __future__ import annotations
 
+import contextlib
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 
 if TYPE_CHECKING:
-    from playwright.sync_api import BrowserContext, ConsoleMessage, Error
+    from playwright.sync_api import BrowserContext, ConsoleMessage, Error, Page
 
 _BINDING = "__e2eCspViolation"
 _REPORTED = "__e2eCspReported"
@@ -38,17 +39,19 @@ class BrowserErrors:
     console: list[str] = field(default_factory=list)
     page: list[str] = field(default_factory=list)
     csp: list[str] = field(default_factory=list)
-    _expected: list[re.Pattern[str]] = field(default_factory=list)
+    _expected: list[re.Pattern[str]] = field(default_factory=list, init=False)
+    _contexts: list[BrowserContext] = field(default_factory=list, init=False)
 
     def attach(self, context: BrowserContext) -> None:
         """Watch every page of ``context``, present and future."""
+        self._contexts.append(context)
         context.expose_binding(_BINDING, lambda _source, text: self.csp.append(str(text)))
         context.add_init_script(_LISTENER)
         for page in context.pages:
             self._watch(page)
         context.on("page", self._watch)
 
-    def _watch(self, page: Any) -> None:
+    def _watch(self, page: Page) -> None:
         page.on("console", self._on_console)
         page.on("pageerror", self._on_page_error)
 
@@ -71,8 +74,22 @@ class BrowserErrors:
         )
         return [e for e in entries if not any(p.search(e) for p in self._expected)]
 
+    def settle(self) -> None:
+        """Round-trip every open page, so reports the browser already sent are handled.
+
+        Playwright's sync API dispatches events only while it waits on the
+        browser; without this an error raised just before the check is missed.
+        """
+        from playwright.sync_api import Error
+
+        for context in self._contexts:
+            for page in context.pages:
+                with contextlib.suppress(Error):  # closed meanwhile
+                    page.evaluate("0")
+
     def assert_clean(self) -> None:
         """Fail the current test when anything unexpected was reported."""
+        self.settle()
         found = self.unexpected()
         if found:
             pytest.fail("the browser reported errors:\n  " + "\n  ".join(found), pytrace=False)

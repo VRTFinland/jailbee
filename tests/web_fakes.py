@@ -88,7 +88,7 @@ class FakeSourceFactory:
         """Make ``snapshot`` current: every open source delivers it, and a
         source made later (a reconnect, a restarted server) starts with it."""
         self.initial = snapshot
-        for source in self.made:
+        for source in list(self.made):  # the server thread may add one meanwhile
             if not source.closed:
                 source.push(snapshot)
 

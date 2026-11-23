@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 from playwright.sync_api import Browser, BrowserContext, Page, expect
+from sqlalchemy.engine import Engine
 
 from jailbee.db import get_engine
 from jailbee.web import assets
@@ -46,7 +47,7 @@ def _static_dir() -> Path:
     return static
 
 
-def _engine_in(state_home: Path) -> Any:
+def _engine_in(state_home: Path) -> Engine:
     """A real state database under ``state_home``, never the user's own."""
     previous = os.environ.get("XDG_STATE_HOME")
     os.environ["XDG_STATE_HOME"] = str(state_home)

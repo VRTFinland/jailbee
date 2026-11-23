@@ -64,10 +64,10 @@ def test_expected_errors_do_not_fail(watched: tuple[Page, BrowserErrors]) -> Non
     page, errors = watched
 
     break_the_page(page)
-    errors.expect("kaboom")
-    errors.expect("boom")
-    errors.expect("script-src")
-    errors.expect("Content Security Policy")
+    errors.expect("^console error: kaboom$")
+    errors.expect("^page error: Error: boom$")
+    errors.expect("^CSP violation: script-src")
+    errors.expect("^console error: .*Content Security Policy")
 
     errors.assert_clean()
 
