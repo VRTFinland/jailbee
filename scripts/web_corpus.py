@@ -247,7 +247,29 @@ def _short_secret_pattern(secret: str, *, gate: bool) -> str:
     if gate:
         # Any `@host`, `user@` or `host:` form; `@dev/pkg` or `dev:/data`
         # only stop a recording.
-        return shared + r"|(?<=@)" + pattern + r"(?![\w-])|(?<![\w.-])" + pattern + r"(?=@[\w-]|:)"
+        opts = r"(?:-\w+\s+(?:[^\s-]\S*\s+)?)*"
+        return (
+            shared
+            + r"|(?<=@)"
+            + pattern
+            + r"(?![\w-])|(?<![\w.-])"
+            + pattern
+            + r"(?=@[\w-]|:)"
+            # `box7.local`, `ssh -p 22 box7`, `hostname: box7`, `Linux box7 6.8`, `ping box7`
+            + r"|(?<![\w.@-])"
+            + pattern
+            + r"\.[\w-]"
+            + r"|\b(?:ssh|ping)\s+"
+            + opts
+            + pattern
+            + r"(?![\w.-])"
+            + r"|\bhost(?:name)?[\"']?(?:\s*[:=]\s*|\s+)[\"']?"
+            + pattern
+            + r"(?![\w.-])"
+            + r"|\bLinux\s+"
+            + pattern
+            + r"(?![\w.-])"
+        )
     # Only a shell prompt (`user@host:~`, `host:~`), never npm scopes or volumes.
     return (
         shared
@@ -276,18 +298,14 @@ def _leak_pattern(secret: str) -> str:
 NAME_PART_ALLOWED = frozenset(
     {
         "agent",
-        "bash",
+        # A name part "Claude" is let through (too common in transcripts); the
+        # full name is still caught.
         "claude",
-        "edit",
-        "glob",
-        "grep",
         "notebookedit",
         "python",
         "python3",
         "pytest",
-        "read",
         "skill",
-        "task",
         "todowrite",
         "webfetch",
         "websearch",
@@ -785,6 +803,15 @@ SESSIONS = (
 )
 
 
+ACCOUNT_IDENTITY_KEYS = (
+    "emailAddress",
+    "displayName",
+    "accountUuid",
+    "organizationUuid",
+    "organizationName",
+)
+
+
 def _config_home() -> Path:
     return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 
@@ -814,7 +841,9 @@ def _host_identity(toy_dir: Path, claude_tmp: Path, recording_home: Path) -> Ide
         secrets.update(str(data.get(key) or "") for key in keys)
         account = data.get("oauthAccount")
         if isinstance(account, dict):
-            for value in account.values():
+            # Identifying keys only: roles and billing values are ordinary words.
+            for key in ACCOUNT_IDENTITY_KEYS:
+                value = account.get(key)
                 if isinstance(value, str):
                     secrets.add(value)
     kept = sorted((s for s in secrets if s), key=len, reverse=True)

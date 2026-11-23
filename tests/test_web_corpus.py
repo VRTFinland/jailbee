@@ -841,3 +841,51 @@ def test_short_names_in_prompts_and_ssh_are_redacted_and_detected(
 def test_the_gate_catches_short_names_the_normaliser_leaves(tmp_path: Path, text: str) -> None:
     assert find_leaks(text, SHORT_NAMES)
     assert _normalised_text(tmp_path, SHORT_NAMES, text) == text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Linux box7 6.8.0-1 #1 SMP x86_64 GNU/Linux",
+        "box7.local",
+        "ssh -p 22 box7",
+        "ssh  box7",
+        "ssh -o StrictHostKeyChecking=no -p 22 box7",
+        "hostname: box7",
+        "host box7",
+        "ping box7",
+        "ping -c 1 box7",
+    ],
+)
+def test_the_gate_catches_more_short_host_forms(text: str) -> None:
+    assert find_leaks(text, SHORT_NAMES)
+
+
+@pytest.mark.parametrize("text", ["ssh -p 22 otherhost", "Linux kernel 6.8", "box75.local"])
+def test_the_gate_ignores_other_hosts(text: str) -> None:
+    assert find_leaks(text, SHORT_NAMES) == []
+
+
+def test_host_identity_takes_only_identifying_account_values(
+    tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".claude.json").write_text(
+        json.dumps(
+            {
+                "oauthAccount": {
+                    "emailAddress": "person@placeholder.invalid",
+                    "displayName": "Placeholder Person",
+                    "organizationRole": "admin",
+                    "billingType": "stripe_subscription",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    identity = _identity_with_git_name(tmp_path, mocker, monkeypatch, "Toy Person")
+
+    assert "person@placeholder.invalid" in identity.secrets
+    assert "Placeholder Person" in identity.secrets
+    assert "admin" not in identity.secrets
+    assert "stripe_subscription" not in identity.secrets
+    assert find_leaks("the administrator role", identity) == []
