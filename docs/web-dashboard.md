@@ -156,8 +156,9 @@ until that lifts. The ways in that the waits do not touch are a security key,
 `jb remote web open` (a localhost link, for example over SSH) and restarting
 `serve`, which clears the waits; any successful login lifts the PIN and TOTP
 waits at once. Links and security keys are not limited. An attempt during the
-wait is refused unchecked with HTTP 429 and a `Retry-After` header, so it buys
-no guess, and an attempt still being checked holds back a parallel one. An
+wait is refused unchecked with HTTP 429 and a `Retry-After` header; the login
+page shows that remaining wait in seconds. It buys no guess, and an attempt
+still being checked holds back a parallel one. An
 owner who mistypes up to four times waits not at all, a fifth or sixth time a
 few seconds. The waits are kept in memory, so a restart of `serve` clears
 them; under systemd that happens only on an upgrade or a crash, nothing a

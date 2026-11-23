@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // PIN and authenticator-code (TOTP) login. Ported from codereader's LoginView;
 // the server says which methods are on (`GET /api/auth/methods`).
-import {computed, onMounted, ref} from "vue"
+import {computed, onMounted, ref, watch} from "vue"
 import {useRoute, useRouter} from "vue-router"
 import {
     type AuthMethod,
@@ -30,8 +30,7 @@ const device = ref(rememberedDeviceName())
 const error = ref("")
 const loading = ref(false)
 
-onMounted(async () => {
-    const link = route.query.link
+watch(() => route.query.link, async (link) => {
     if (typeof link === "string" && link) {
         // Strip the one-time token from the address before anything else.
         await router.replace({name: "login"})
@@ -42,6 +41,9 @@ onMounted(async () => {
         }
         error.value = result.error
     }
+}, {immediate: true})
+
+onMounted(async () => {
     methods.value = await fetchAuthMethods()
     active.value = codeMethods.value[0] ?? "pin"
 })

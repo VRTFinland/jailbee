@@ -87,7 +87,11 @@ async function login(
         return {ok: true}
     }
     if (res.status === 429) {
-        return {ok: false, error: "Too many attempts. Wait a minute and try again."}
+        const seconds = Math.ceil(Number(res.headers.get("Retry-After")))
+        const wait = Number.isFinite(seconds) && seconds > 0
+            ? `${seconds} ${seconds === 1 ? "second" : "seconds"}`
+            : "a while"
+        return {ok: false, error: `Too many attempts. Wait ${wait} and try again.`}
     }
     return {ok: false, error: refused}
 }
