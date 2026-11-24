@@ -369,7 +369,8 @@ def test_partial_restore_survives_another_clean_stop(tmp_path, monkeypatch):
     snapshot.acknowledge(tmp_path, [ID])
     snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={})
     assert {row["session_id"] for row in snapshot.boot(tmp_path, retain=True)["sessions"]} == {
-        ID, other_id,
+        ID,
+        other_id,
     }
 
 

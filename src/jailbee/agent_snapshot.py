@@ -351,9 +351,16 @@ def boot(home: Path, *, proc: Path = Path("/proc"), retain: bool = False) -> dic
                     for row in fresh["sessions"]:
                         if not isinstance(row, dict) or row.get("ended"):
                             continue
-                        if source == registry and row.get("pid") and _start(proc, str(row["pid"])) == row.get("procStart"):
+                        if (
+                            source == registry
+                            and row.get("pid")
+                            and _start(proc, str(row["pid"])) == row.get("procStart")
+                        ):
                             continue
-                        if not any(isinstance(old, dict) and old.get("session_id") == row.get("session_id") for old in rows):
+                        if not any(
+                            isinstance(old, dict) and old.get("session_id") == row.get("session_id")
+                            for old in rows
+                        ):
                             rows.append(row)
                 _write_snapshot(pending, json.dumps(saved, separators=(",", ":")).encode())
                 result = _boot(home, proc=proc, path=pending, retain=retain)
@@ -362,11 +369,28 @@ def boot(home: Path, *, proc: Path = Path("/proc"), retain: bool = False) -> dic
                 if new_boot and _read(registry) is not None:
                     fresh = _json(registry)
                     fresh_rows = fresh.get("sessions", []) if isinstance(fresh, dict) else []
-                    live_rows = [
-                        row for row in fresh_rows if isinstance(row, dict)
-                        and (row.get("ended") or (row.get("pid") and _start(proc, str(row["pid"])) == row.get("procStart")))
-                    ] if isinstance(fresh_rows, list) else []
-                    _write_snapshot(registry, json.dumps({"version": 1, "source": "capture", "sessions": live_rows}).encode())
+                    live_rows = (
+                        [
+                            row
+                            for row in fresh_rows
+                            if isinstance(row, dict)
+                            and (
+                                row.get("ended")
+                                or (
+                                    row.get("pid")
+                                    and _start(proc, str(row["pid"])) == row.get("procStart")
+                                )
+                            )
+                        ]
+                        if isinstance(fresh_rows, list)
+                        else []
+                    )
+                    _write_snapshot(
+                        registry,
+                        json.dumps(
+                            {"version": 1, "source": "capture", "sessions": live_rows}
+                        ).encode(),
+                    )
                 return result
             frozen = home / SNAPSHOT_RELPATH
             if _read(registry) is None:
@@ -457,7 +481,10 @@ def _boot(
         if retain and not has_snapshot and item is not None:
             _write_snapshot(
                 home / BOOT_RELPATH,
-                json.dumps({**result, "sessions": [*stale, item], "boot_id": _start(proc, "1")}, separators=(",", ":")).encode(),
+                json.dumps(
+                    {**result, "sessions": [*stale, item], "boot_id": _start(proc, "1")},
+                    separators=(",", ":"),
+                ).encode(),
             )
         if _unlink_stale(entry):
             if not has_snapshot and item is not None:
@@ -506,7 +533,10 @@ def _boot(
         if retain and emitted and path != home / BOOT_RELPATH:
             _write_snapshot(
                 home / BOOT_RELPATH,
-                json.dumps({**result, "sessions": emitted, "boot_id": _start(proc, "1")}, separators=(",", ":")).encode(),
+                json.dumps(
+                    {**result, "sessions": emitted, "boot_id": _start(proc, "1")},
+                    separators=(",", ":"),
+                ).encode(),
             )
         if retain and path == home / BOOT_RELPATH:
             result["sessions"] = emitted

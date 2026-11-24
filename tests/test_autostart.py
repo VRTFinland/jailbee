@@ -1493,10 +1493,20 @@ def test_failed_pre_agent_stage_keeps_sessions_for_retry(
 
     cfg = _claude_cfg(tmp_path)
     cfg = cfg.model_copy(
-        update={"autostart": Autostart.model_validate({"on_start": [
-            {"stage": "prepare", "detach": detached, "steps": [{"name": "prepare", "run": "prepare"}]},
-            {"stage": "agents"},
-        ]})}
+        update={
+            "autostart": Autostart.model_validate(
+                {
+                    "on_start": [
+                        {
+                            "stage": "prepare",
+                            "detach": detached,
+                            "steps": [{"name": "prepare", "run": "prepare"}],
+                        },
+                        {"stage": "agents"},
+                    ]
+                }
+            )
+        }
     )
     entry = ResumeEntry("12345678-abcd-1234-abcd-1234567890ab", "/work", ("claude",), "claude")
     if source == "stale":

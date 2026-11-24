@@ -196,14 +196,28 @@ def test_retained_boot_discards_sessions_without_transcripts(make_cfg, tmp_path,
 
     cfg = make_cfg(tmp_path)
     incus = mocker.Mock()
-    incus.exec_capped.return_value = json.dumps({"version": 1, "source": "capture", "sessions": [{
-        "agent": "claude", "session_id": VALID_ID, "cwd": "/work", "launcher": ["claude"], "window": None,
-    }]})
+    incus.exec_capped.return_value = json.dumps(
+        {
+            "version": 1,
+            "source": "capture",
+            "sessions": [
+                {
+                    "agent": "claude",
+                    "session_id": VALID_ID,
+                    "cwd": "/work",
+                    "launcher": ["claude"],
+                    "window": None,
+                }
+            ],
+        }
+    )
     mocker.patch("jailbee.agent_resume.ClaudeAdapter.session_exists", return_value=False)
     assert boot_entries(cfg, incus, "box", retain=True) == []
     incus.exec.assert_called_once_with(
-        "box", ["jailbee", "_agent-snapshot", "--ack-boot", VALID_ID],
-        uid=cfg.container_user.uid, timeout=15,
+        "box",
+        ["jailbee", "_agent-snapshot", "--ack-boot", VALID_ID],
+        uid=cfg.container_user.uid,
+        timeout=15,
     )
 
 
