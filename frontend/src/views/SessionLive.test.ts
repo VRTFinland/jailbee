@@ -193,12 +193,38 @@ describe("SessionView live follow", () => {
         expect(wrapper.find(".new-messages").exists()).toBe(false)
     })
 
+    it("keeps following when layout growth moves the end without a scroll", async () => {
+        setPageGeometry(1000, 200)
+        let bottom = 800
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            return {top: 0, bottom: this.classList.contains("transcript") ? bottom : 0} as DOMRect
+        })
+        const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {})
+        const {append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        bottom = 900
+        window.dispatchEvent(new Event("resize"))
+        await append(sessionKey, [answer])
+        expect(scrollTo).toHaveBeenCalled()
+    })
+
     it("leaves the scroll position alone when the reader was further up", async () => {
         setPageGeometry(5000, 100)
         const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {})
         const {append} = await mountLive("/repos/alpha/sessions/claude/s-1")
         await append(sessionKey, [answer])
         expect(scrollTo).not.toHaveBeenCalled()
+    })
+
+    it("ignores hidden thinking and folded results when choosing unseen entries", async () => {
+        setPageGeometry(5000, 100)
+        const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        const call: RenderedEntry = {kind: "tool_call", id: "c1", timestamp: null, call_id: "c", name: "Bash", summary: "Bash", input_html: "", model: null}
+        await append(sessionKey, [call])
+        await wrapper.get(".new-messages").trigger("click")
+        await append(sessionKey, [{kind: "thinking", id: "t1", timestamp: null, html: "", model: null}, {kind: "tool_result", id: "r1", timestamp: null, call_id: "c", html: "", truncated: false, full_length: 0, is_error: false}])
+        expect(wrapper.find(".new-messages").exists()).toBe(false)
+        await append(sessionKey, [answer])
+        expect(wrapper.find(".new-messages").exists()).toBe(true)
     })
 
     it("keeps the first unseen answer as the New messages jump target", async () => {
@@ -295,11 +321,11 @@ describe("SessionView in the e-ink profile", () => {
         const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
         await append(sessionKey, [answer, second])
         expect(wrapper.findAll(".entry.assistant")).toHaveLength(0)
-        expect(wrapper.get(".new-messages").text()).toBe("New messages ↓")
+        expect(wrapper.get(".new-messages").text()).toBe("2 new messages ↓")
         expect(scrollTo).not.toHaveBeenCalled()
 
         await append(sessionKey, [{...answer, id: "a3"}])
-        expect(wrapper.get(".new-messages").text()).toBe("New messages ↓")
+        expect(wrapper.get(".new-messages").text()).toBe("3 new messages ↓")
     })
 
     it("renders the held entries only when the notice is tapped", async () => {

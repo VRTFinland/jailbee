@@ -89,6 +89,9 @@ const latestAnswer = computed(() => {
 })
 
 const atTranscriptEnd = ref(false)
+const following = ref(false)
+let lastScrollY = window.scrollY
+let programmaticScroll = false
 const answerAhead = ref(false)
 const unseen = ref<RenderedEntry | null>(null)
 const autoFollow = computed(() => !eink.value || settings.einkFollow)
@@ -98,7 +101,7 @@ const jumpAction = computed<"new" | "answer" | "bottom" | null>(() => {
     return answerAhead.value ? "answer" : "bottom"
 })
 const jumpLabel = computed(() => jumpAction.value === null ? null : {
-    new: "New messages ↓",
+    new: pending.value.length ? `${pending.value.length} new ${pending.value.length === 1 ? "message" : "messages"} ↓` : "New messages ↓",
     answer: "Latest answer ↓",
     bottom: "Scroll to bottom ↓",
 }[jumpAction.value])
@@ -120,12 +123,19 @@ function measureVisibility() {
     answerAhead.value = rect.top >= readableBottom()
 }
 
+function onScroll() {
+    measureVisibility()
+    if (atTranscriptEnd.value) following.value = true
+    else if (!programmaticScroll && window.scrollY < lastScrollY) following.value = false
+    lastScrollY = window.scrollY
+}
+
 watch(shown, () => void nextTick(measureVisibility))
 watch(eink, () => void nextTick(measureVisibility))
 
 let layoutObserver: ResizeObserver | null = null
 onMounted(() => {
-    window.addEventListener("scroll", measureVisibility, {passive: true})
+    window.addEventListener("scroll", onScroll, {passive: true})
     window.addEventListener("resize", measureVisibility)
     if (typeof ResizeObserver !== "undefined") {
         layoutObserver = new ResizeObserver(measureVisibility)
@@ -134,7 +144,7 @@ onMounted(() => {
     }
 })
 onBeforeUnmount(() => {
-    window.removeEventListener("scroll", measureVisibility)
+    window.removeEventListener("scroll", onScroll)
     window.removeEventListener("resize", measureVisibility)
     layoutObserver?.disconnect()
 })
@@ -152,11 +162,14 @@ let appendQueue = Promise.resolve()
 
 /** Scroll to the transcript, not the blank space reserved for answer jumps. */
 function scrollToEnd() {
+    programmaticScroll = true
     if (eink.value) pager.end()
     else if (transcriptEl.value) {
         const bottom = transcriptEl.value.getBoundingClientRect().bottom + window.scrollY
         window.scrollTo(0, Math.max(0, Math.ceil(bottom - readableBottom())))
     }
+    lastScrollY = window.scrollY
+    programmaticScroll = false
     measureVisibility()
 }
 
@@ -165,9 +178,16 @@ async function onLiveAppend(entries: RenderedEntry[]) {
     // Read before the DOM grows: document padding and the bottom guard are not
     // transcript content, so browser scrollHeight cannot determine follow mode.
     measureVisibility()
-    const follow = autoFollow.value && atTranscriptEnd.value
-    if (!follow && unseen.value === null) unseen.value = entries[0]
-    if (eink.value && !follow) {
+    const follow = autoFollow.value && following.value
+    const calls = new Set([...transcript.value.entries, ...pending.value, ...entries]
+        .filter((e) => e.kind === "tool_call").map((e) => e.call_id))
+    const visible = entries.filter((e) => {
+        if (e.kind === "thinking") return thinking.value
+        if (e.kind === "tool_result" || e.kind === "subagent") return !calls.has(e.call_id)
+        return true
+    })
+    if (!follow && unseen.value === null) unseen.value = visible[0] ?? null
+    if (eink.value && !follow && (pending.value.length > 0 || visible.length > 0)) {
         pending.value.push(...entries)
         return
     }
@@ -284,6 +304,9 @@ async function load() {
         startFollowing(view)
         await nextTick()
         pager.measure()
+        measureVisibility()
+        following.value = atTranscriptEnd.value
+        lastScrollY = window.scrollY
     } catch (e) {
         if (e instanceof Unauthorized) {
             await router.push({name: "login"})
