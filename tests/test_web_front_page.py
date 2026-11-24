@@ -18,7 +18,8 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 from rich.text import Text
 
-from jailbee.agent_status import AgentSummary
+from jailbee.accounts.models import AgentActivity
+from jailbee.agent_status import AgentSummary, SessionMark
 from jailbee.dashboard import format as dfmt
 from jailbee.dashboard.columns import default_columns, visible_fields
 from jailbee.db import get_engine
@@ -81,11 +82,10 @@ def first_page(client: TestClient, token: str, factory: FakeSourceFactory, snap:
 
 
 def test_snapshot_includes_shared_filter_membership_and_context(
-    started: tuple[TestClient, str], factory: FakeSourceFactory
+    factory: FakeSourceFactory,
 ) -> None:
     from jailbee.orchestration.view import ChildView
 
-    client, token = started
     parent = container("alpha-parent", state="Stopped")
     child = container(
         "alpha-child",
@@ -98,16 +98,79 @@ def test_snapshot_includes_shared_filter_membership_and_context(
             "hidden", container("hidden-busy", repo="hidden", agent_status=(agent("busy"),))
         ),
     )
-    view = json.loads(first_page(client, token, factory, snap))["view"]
+    for client, token in open_client(factory, excluded=frozenset({"hidden"})):
+        raw = first_page(client, token, factory, snap)
+    assert "hidden-busy" not in raw
+    view = json.loads(raw)["view"]
     assert view["filters"]["running"]["context"] == [parent.name]
     assert set(view["filters"]["running"]["visible"]) == {
         parent.name,
         child.name,
         "alpha-idle",
-        "hidden-busy",
     }
-    assert set(view["filters"]["active"]["visible"]) == {parent.name, child.name, "hidden-busy"}
+    assert set(view["filters"]["active"]["visible"]) == {parent.name, child.name}
     assert view["filters"]["active"]["context"] == [parent.name]
+    assert view["filters"]["active"]["indents"] == {parent.name: "", child.name: "└ "}
+
+
+def test_recent_idle_emphasis_and_age_survive_the_snapshot(
+    started: tuple[TestClient, str], factory: FakeSourceFactory
+) -> None:
+    client, token = started
+    fresh = AgentSummary(
+        "claude",
+        "idle",
+        START - timedelta(hours=2),
+        None,
+        20,
+        activity=AgentActivity(
+            None, None, state="idle", last_event_at=START - timedelta(minutes=5)
+        ),
+    )
+    # A second session can be fresh even when the summary's first session is old.
+    mixed = AgentSummary(
+        "claude",
+        "idle",
+        START - timedelta(hours=2),
+        None,
+        2,
+        sessions=(
+            SessionMark("idle", START - timedelta(hours=2)),
+            SessionMark("idle", START - timedelta(minutes=7)),
+        ),
+    )
+    waiting = AgentSummary(
+        "claude",
+        "waiting",
+        START,
+        None,
+        2,
+        activity=AgentActivity(
+            None, None, state="idle", last_event_at=START - timedelta(minutes=5)
+        ),
+        sessions=(SessionMark("waiting", START), SessionMark("idle", START - timedelta(hours=2))),
+    )
+    snap = snapshot_of(
+        repo_group(
+            "alpha",
+            container("alpha-waiting", agent_status=(waiting,)),
+            container("alpha-fresh", agent_status=(fresh,)),
+            container("alpha-mixed", agent_status=(mixed,)),
+            container("alpha-old", agent_status=(agent("idle"),)),
+        )
+    )
+    view = json.loads(first_page(client, token, factory, snap))["view"]
+    rows = {row["name"]: row for row in view["repos"][0]["containers"]}
+    assert rows["alpha-waiting"]["agent"] == "waiting"
+    assert rows["alpha-waiting"]["agent_recent_idle"] == "5m"
+    assert rows["alpha-fresh"]["agent_recent_idle"] == "5m"
+    assert rows["alpha-mixed"]["agent_recent_idle"] == "7m"
+    assert rows["alpha-old"]["agent_recent_idle"] is None
+    assert set(view["filters"]["active"]["visible"]) == {
+        "alpha-waiting",
+        "alpha-fresh",
+        "alpha-mixed",
+    }
 
 
 def test_containers_are_grouped_under_their_repo(

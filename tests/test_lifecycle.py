@@ -11251,7 +11251,7 @@ def test_agent_compact_cell_age_is_the_sessions_own_not_the_agents_event_age():
     )
     a = _agent_marks("waiting", [("waiting", own), ("busy", None)], since=own, activity=activity)
 
-    assert _plain(agent_compact_cell((a,), _AGENT_NOW, activity_age=True)) == "◆ 4m ●"
+    assert _plain(agent_compact_cell((a,), _AGENT_NOW, activity_age=True)) == "◆ 4m ● 3s"
 
 
 def test_agent_compact_cell_narrow_tier_counts_cells_not_characters():
@@ -11965,6 +11965,23 @@ def test_agent_compact_cell_brightens_a_recent_idle_only_when_asked():
     bright = agent_compact_cell(fresh, _AGENT_NOW, recent_idle=timedelta(minutes=30))
     assert bright == "[bold bright_white]○ 29m[/bold bright_white]"
     assert Text.from_markup(bright).plain == "○ 29m"  # valid markup, closes cleanly
+
+
+@pytest.mark.parametrize("max_cells", [None, 5, 1])
+def test_agent_compact_cell_preserves_recent_idle_emphasis_at_every_width(max_cells):
+    from jailbee.lifecycle import agent_compact_cell, agent_compact_is_active
+
+    fresh = (_agent("idle", since=_AGENT_NOW - timedelta(minutes=5)),)
+    cell = agent_compact_cell(
+        fresh,
+        _AGENT_NOW,
+        recent_idle=timedelta(minutes=30),
+        recent_idle_style="bold",
+        activity_age=True,
+        max_cells=max_cells,
+    )
+    assert "[bold]" in cell
+    assert agent_compact_is_active(fresh, _AGENT_NOW, recent_idle=timedelta(minutes=30))
 
 
 def _aliased(name, alias, profiles=None):

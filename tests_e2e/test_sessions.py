@@ -333,6 +333,18 @@ def test_container_history_pages_and_searches_without_hiding_live_sessions(
     expect(page.get_by_text("Page 2 of 2", exact=True)).to_be_visible()
     page.get_by_role("button", name="Previous earlier sessions").click()
     expect(page.get_by_text("Page 1 of 2", exact=True)).to_be_visible()
+    expect(page.locator("li.session")).to_have_count(21)
+    expect(page.get_by_role("button", name="Next earlier sessions")).to_be_enabled()
+    # The last page disappears between clicks. Refetch the remaining page rather
+    # than showing an empty page beyond the end of the history.
+    for n in range(5):
+        sid = f"33333333-3333-4333-8333-{n:012d}"
+        (agent_home / "projects" / "-work-repo" / f"{sid}.jsonl").unlink()
+    page.get_by_role("button", name="Next earlier sessions").click()
+    expect(page.get_by_text("Page 1 of 1", exact=True)).to_be_visible()
+    expect(page.locator("li.session")).to_have_count(21)
+    expect(page.locator("li.session .title").nth(1)).to_have_text("Release task 24")
+    expect(page.get_by_role("button", name="Next earlier sessions")).to_be_disabled()
     assert_no_horizontal_scroll(page)
 
 

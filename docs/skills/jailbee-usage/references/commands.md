@@ -441,7 +441,9 @@ restores it. Answer-start jumps leave long replies in place to read, and only
 jumps reaching the transcript end resume follow.
 The front page and repository container lists have three icon filters: All,
 Running (Incus state Running), and Active (the terminal dashboard's non-grey
-agent marks, including recently active idle sessions). The choice is remembered
+agent marks, including idle sessions with an event less than 30 minutes old,
+regardless of session count or cell width). A bold `idle 5m` label explains
+recent-idle freshness, including on e-ink. The choice is remembered
 per browser and follows snapshots. Nonmatching ancestors stay dimmed for tree
 context; repositories without retained rows disappear, with an `N hidden by
 filter` hint counting omitted containers. The terminal dashboard is unchanged.

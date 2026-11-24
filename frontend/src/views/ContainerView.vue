@@ -96,8 +96,14 @@ watch([name, historyPage, historyQuery], async ([selected, page, query], previou
             `/api/containers/${encodeURIComponent(selected)}/sessions/history?${params}`,
         )
         if (!current) return
-        history.value = result
         historyTotal.value = result.total
+        const lastPage = historyPages.value - 1
+        if (page > lastPage) {
+            // History can shrink between requests; fetch the last valid page.
+            historyPage.value = lastPage
+            return
+        }
+        history.value = result
         await nextTick()
         if (resetPosition) {
             pager.page.value = 0

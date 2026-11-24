@@ -59,6 +59,37 @@ describe("RepoList", () => {
         expect(wrapper.find(".filter-context").exists()).toBe(false)
     })
 
+    it("uses the filtered tree layout for the only visible sibling", async () => {
+        const wrapper = mountList()
+        const parent = view.repos[0].containers[0]
+        const children = ["a", "b", "c"].map(suffix => ({...view.repos[0].containers[1],
+            name: `alpha-${suffix}`, indent: suffix === "c" ? "└ " : "├ ", depth: 1,
+            child: {orchestrator: parent.name, orchestrator_short_name: "1", state: "working", runner: null}}))
+        await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [parent, ...children]}],
+            filters: {active: {visible: [parent.name, "alpha-b"], context: [parent.name],
+                indents: {[parent.name]: "", "alpha-b": "└ "}}}}})
+        await wrapper.get('button[aria-label="Active"]').trigger("click")
+        expect(wrapper.get('[data-container="alpha-b"] .indent').element.textContent).toBe("└ ")
+        await wrapper.get('button[aria-label="All"]').trigger("click")
+        expect(wrapper.get('[data-container="alpha-b"] .indent').element.textContent).toBe("├ ")
+    })
+
+    it("explains recent-idle membership with a highlighted age", async () => {
+        const wrapper = mountList()
+        const fresh = {...view.repos[0].containers[0], agent: "idle", agent_recent_idle: "5m"}
+        await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [fresh]}]}})
+        expect(wrapper.get(".agent").text()).toBe("idle 5m")
+        expect(wrapper.get(".agent").classes()).toContain("agent-recent-idle")
+    })
+
+    it("keeps recent-idle emphasis beside a more urgent session", async () => {
+        const wrapper = mountList()
+        const waiting = {...view.repos[0].containers[0], agent_recent_idle: "5m"}
+        await wrapper.setProps({view: {...view, repos: [{prefix: "alpha", containers: [waiting]}]}})
+        expect(wrapper.findAll(".agent").map(badge => badge.text())).toEqual(["waiting for you", "idle 5m"])
+        expect(wrapper.get(".agent-recent-idle").text()).toBe("idle 5m")
+    })
+
     it("visibly nests children and shows orchestration facts without colour", async () => {
         const wrapper = mountList()
         const parent = {...view.repos[0].containers[0], orchestrator: true, child_count: 2}
