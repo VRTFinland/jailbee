@@ -289,7 +289,10 @@ def run_pr_push(
 
             for proposal in pending:
                 if proposal.own_branch:
-                    warn_plain(f"{proposal.manifest}: own-branch proposal not used for this PR", stderr=True)
+                    warn_plain(
+                        f"{proposal.manifest}: own-branch proposal not used for this PR",
+                        stderr=True,
+                    )
     scope = pr_flow.PrScope.for_repo(cfg)
     pr_flow.assert_pr_inheritance_complete(incus, full)
     state = pr_flow.ContainerLabelState(incus, full, short=short)
@@ -430,10 +433,16 @@ def run_pr_push(
 
         slug = pr_outbox.scope_slug(scope)
         if slug is None or slug.casefold() != selected_source.manifest.repo.casefold():
-            error(f"{selected_own}: proposal targets {selected_source.manifest.repo}, not {slug or 'a configured GitHub repository'}")
+            error(
+                f"{selected_own}: proposal targets {selected_source.manifest.repo}, "
+                f"not {slug or 'a configured GitHub repository'}"
+            )
             raise typer.Exit(2)
         if pr_label != str(selected_source.manifest.pr):
-            error(f"{selected_own}: source targets PR #{selected_source.manifest.pr}, not the container's PR; bind that PR first")
+            error(
+                f"{selected_own}: source targets PR #{selected_source.manifest.pr}, "
+                "not the container's PR; bind that PR first"
+            )
             raise typer.Exit(2)
 
     # A container whose PR jailbee did not create (`jailbee new --pr`, or a PR
@@ -460,7 +469,11 @@ def run_pr_push(
     if selected_base is not None and selected_base != resolved_base:
         from jailbee.tui import warn_plain
 
-        warn_plain(f"{selected_own}: proposed base '{selected_base}' differs from resolved base '{resolved_base}'; using '{resolved_base}'", stderr=True)
+        warn_plain(
+            f"{selected_own}: proposed base '{selected_base}' differs from resolved base "
+            f"'{resolved_base}'; using '{resolved_base}'",
+            stderr=True,
+        )
 
     from jailbee import pr_ai, pr_links, pr_submodule_flow, prompting
 
@@ -470,13 +483,15 @@ def run_pr_push(
 
     management = PrManagement()
     try:
-        from contextlib import ExitStack
         import time
+        from contextlib import ExitStack
 
         with ExitStack() as stack:
-            stack.enter_context(pr_flow.outbox_publication_guard(
-                cfg, incus, full, enabled=not no_outbox, management=management
-            ))
+            stack.enter_context(
+                pr_flow.outbox_publication_guard(
+                    cfg, incus, full, enabled=not no_outbox, management=management
+                )
+            )
             source_store = None
             source_claim = None
             if selected_actionless and selected_source is not None:
@@ -484,12 +499,25 @@ def run_pr_push(
                 from jailbee.outbox.models import OutboxChanged
 
                 source_store = publication_db.open_publications()
-                source_claim = stack.enter_context(source_store.claim(selected_source.uuid, "pr", selected_source.name))
-                if source_store.stored_digest(selected_source.uuid, "pr", selected_source.name) != selected_source.digest:
+                source_claim = stack.enter_context(
+                    source_store.claim(selected_source.uuid, "pr", selected_source.name)
+                )
+                if (
+                    source_store.stored_digest(selected_source.uuid, "pr", selected_source.name)
+                    != selected_source.digest
+                ):
                     raise OutboxChanged(f"{selected_source.name}: proposal changed")
-                journal = source_store.begin(source_claim, digest=selected_source.digest, action_count=1, container_full=full, now=time.time())
+                journal = source_store.begin(
+                    source_claim,
+                    digest=selected_source.digest,
+                    action_count=1,
+                    container_full=full,
+                    now=time.time(),
+                )
                 if journal.actions:
-                    raise OutboxChanged(f"{selected_source.name}: publication already recorded or uncertain")
+                    raise OutboxChanged(
+                        f"{selected_source.name}: publication already recorded or uncertain"
+                    )
             own_text = None
             if selected_own is not None and not selected_actionless:
                 from jailbee import pr_outbox
@@ -586,10 +614,23 @@ def run_pr_push(
             # --- Publish (fetch + push under the chosen name) ---
             # On a foreign PR head the generic push-failure hint's "--as" advice does
             # not apply, so `is_foreign_pr_head` (resolved above) tailors it.
-            if source_store is not None and source_claim is not None and selected_source is not None:
-                if source_store.stored_digest(selected_source.uuid, "pr", selected_source.name) != selected_source.digest:
+            if (
+                source_store is not None
+                and source_claim is not None
+                and selected_source is not None
+            ):
+                if (
+                    source_store.stored_digest(selected_source.uuid, "pr", selected_source.name)
+                    != selected_source.digest
+                ):
                     raise OutboxChanged(f"{selected_source.name}: proposal changed")
-                source_store.mark_prepared(source_claim, selected_source.digest, 0, repo=selected_source.manifest.repo, now=time.time())
+                source_store.mark_prepared(
+                    source_claim,
+                    selected_source.digest,
+                    0,
+                    repo=selected_source.manifest.repo,
+                    now=time.time(),
+                )
             try:
                 publish = sync.publish_branch_from_container(
                     cfg,
@@ -717,7 +758,11 @@ def run_pr_push(
                     foreign_head=is_foreign_pr_head,
                     url=created.url,
                     use_outbox=not no_outbox and not selected_actionless,
-                    **({"strict_description": True} if selected_own is not None and not selected_actionless else {}),
+                    **(
+                        {"strict_description": True}
+                        if selected_own is not None and not selected_actionless
+                        else {}
+                    ),
                     # What the create path already resolved this run, when `gh pr
                     # create` turned out to find an existing PR. Passing it forward is
                     # what keeps the "which pending description?" question to one
@@ -743,8 +788,21 @@ def run_pr_push(
                 # outbox lookup (against the PR's real number) and recorded whatever it
                 # consumed. Recording here as well would burn the action twice.
                 pr_flow.record_outbox_consumption(cfg, incus, full, plan.outbox_source, created.url)
-            if source_store is not None and source_claim is not None and selected_source is not None:
-                source_store.settle(source_claim, selected_source.digest, 0, outcome="applied", url=created.url, issue=created.number, sent=None, now=time.time())
+            if (
+                source_store is not None
+                and source_claim is not None
+                and selected_source is not None
+            ):
+                source_store.settle(
+                    source_claim,
+                    selected_source.digest,
+                    0,
+                    outcome="applied",
+                    url=created.url,
+                    issue=created.number,
+                    sent=None,
+                    now=time.time(),
+                )
             if is_stacked_create and review_target is not None:
                 info(
                     f"PR #{created.number} is stacked on PR #{review_target.parent_number} "

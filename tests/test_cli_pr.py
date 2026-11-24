@@ -275,14 +275,25 @@ def test_own_source_warns_when_base_differs(mocker, tmp_path):
     incus.config_get_checked.return_value = None
     incus.list_containers.return_value[0]["config"] = {"volatile.uuid": "uuid-full"}
     files = StoreFiles("uuid-full")
-    files["own.json"] = json.dumps({"version": 1, "repo": "acme/widgets", "pr": None,
-        "head_sha": None, "base": "other", "source": "refs/heads/feat/foo", "source_sha": "a" * 40,
-        "actions": [{"type": "description", "title": "Title", "body": "Body"}]})
+    files["own.json"] = json.dumps(
+        {
+            "version": 1,
+            "repo": "acme/widgets",
+            "pr": None,
+            "head_sha": None,
+            "base": "other",
+            "source": "refs/heads/feat/foo",
+            "source_sha": "a" * 40,
+            "actions": [{"type": "description", "title": "Title", "body": "Body"}],
+        }
+    )
     mocker.patch("jailbee.branch_pr.own_source_branch", return_value=("feat/foo", 0))
     mocker.patch("jailbee.pr_outbox.pending_pr_text", wraps=pending_text)
     mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
     mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
-    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--source-manifest", "own.json", "--yes"])
+    result = CliRunner().invoke(
+        app, ["pr", "push", "feat-foo", "--source-manifest", "own.json", "--yes"]
+    )
     assert result.exit_code == 0, result.output
     assert "other" in result.output and "main" in result.output
 
@@ -296,12 +307,25 @@ def test_actionless_own_source_uses_own_branch(mocker, tmp_path):
     incus.config_get_checked.return_value = None
     incus.list_containers.return_value[0]["config"] = {"volatile.uuid": "uuid-full"}
     files = StoreFiles("uuid-full")
-    files["own.json"] = json.dumps({"version": 1, "repo": "acme/widgets", "pr": 123,
-        "head_sha": None, "source": "refs/heads/feat/foo", "source_sha": "a" * 40, "actions": []})
+    files["own.json"] = json.dumps(
+        {
+            "version": 1,
+            "repo": "acme/widgets",
+            "pr": 123,
+            "head_sha": None,
+            "source": "refs/heads/feat/foo",
+            "source_sha": "a" * 40,
+            "actions": [],
+        }
+    )
     mocker.patch("jailbee.branch_pr.own_source_branch", return_value=("feat/foo", 0))
-    publish = mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    publish = mocker.patch(
+        "jailbee.sync.publish_branch_from_container", return_value=_publish_result()
+    )
     pinned = mocker.patch("jailbee.branch_pr.publish_source_manifest", return_value=0)
-    result = CliRunner().invoke(app, ["pr", "push", "feat-foo", "--source-manifest", "own.json", "--yes", "--no-ai"])
+    result = CliRunner().invoke(
+        app, ["pr", "push", "feat-foo", "--source-manifest", "own.json", "--yes", "--no-ai"]
+    )
     assert result.exit_code == 0, result.output
     publish.assert_called_once()
     pinned.assert_not_called()
