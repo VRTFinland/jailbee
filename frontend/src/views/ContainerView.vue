@@ -5,7 +5,7 @@ import {apiFetch, Unauthorized} from "../api"
 import PageNav from "../components/PageNav.vue"
 import {useDashboard} from "../dashboard"
 import {usePager} from "../composables/usePager"
-import type {ContainerSessionList} from "../protocol"
+import type {ContainerSessionHistory, ContainerSessionList} from "../protocol"
 
 const pager = usePager()
 const route = useRoute()
@@ -16,7 +16,21 @@ const rows = computed(() => dashboard?.state.view?.repos.flatMap(repo => repo.co
 const info = computed(() => rows.value.find(row => row.name === name.value))
 const children = computed(() => rows.value.filter(row => row.child?.orchestrator === name.value))
 const live = ref<ContainerSessionList | null>(null)
-const history = ref<ContainerSessionList | null>(null)
+const history = ref<ContainerSessionHistory | null>(null)
+const historyPage = ref(0)
+const search = ref("")
+const historyQuery = ref("")
+const historyTotal = ref(0)
+const historyPageSize = 20
+const historyPages = computed(() => Math.max(1, Math.ceil(historyTotal.value / historyPageSize)))
+
+watch(search, (value, _previous, onCleanup) => {
+    const timer = window.setTimeout(() => {
+        historyPage.value = 0
+        historyQuery.value = value.trim()
+    }, 300)
+    onCleanup(() => window.clearTimeout(timer))
+})
 const historyFailed = ref(false)
 const error = ref<string | null>(null)
 /** Live sessions first: they come from the snapshot and render at once. The
@@ -40,19 +54,16 @@ watch(name, async (selected, _previous, onCleanup) => {
     let current = true
     onCleanup(() => { current = false })
     live.value = null
-    history.value = null
-    historyFailed.value = false
+    historyPage.value = 0
+    search.value = ""
+    historyQuery.value = ""
+    historyTotal.value = 0
     error.value = null
-    await nextTick()
-    if (!current) return
     pager.page.value = 0
     window.scrollTo(0, 0)
     pager.measure()
     const base = `/api/containers/${encodeURIComponent(selected)}/sessions`
     const liveRequest = apiFetch<ContainerSessionList>(base)
-    const historyRequest = apiFetch<ContainerSessionList>(`${base}/history`)
-    // Settled here so a failure while the live list loads is never unhandled.
-    historyRequest.catch(() => undefined)
     try {
         const result = await liveRequest
         if (!current) return
@@ -70,15 +81,30 @@ watch(name, async (selected, _previous, onCleanup) => {
         }
         return
     }
+}, {immediate: true})
+
+watch([name, historyPage, historyQuery], async ([selected, page, query], _previous, onCleanup) => {
+    let current = true
+    onCleanup(() => { current = false })
+    history.value = null
+    historyFailed.value = false
     try {
-        const result = await historyRequest
+        const params = new URLSearchParams({limit: String(historyPageSize), offset: String(page * historyPageSize)})
+        if (query) params.set("q", query)
+        const result = await apiFetch<ContainerSessionHistory>(
+            `/api/containers/${encodeURIComponent(selected)}/sessions/history?${params}`,
+        )
         if (!current) return
         history.value = result
+        historyTotal.value = result.total
         await nextTick()
+        pager.page.value = 0
+        window.scrollTo(0, 0)
         pager.measure()
-    } catch {
+    } catch (e) {
         if (!current) return
-        historyFailed.value = true
+        if (e instanceof Unauthorized) await router.push({name: "login"})
+        else historyFailed.value = true
     }
 }, {immediate: true})
 </script>
@@ -107,7 +133,12 @@ watch(name, async (selected, _previous, onCleanup) => {
         <h2>Sessions</h2>
         <p v-if="error" class="notice">{{ error }}</p>
         <p v-else-if="live === null" class="muted">Loading…</p>
-        <p v-else-if="sessions.length === 0 && !historyPending" class="muted">No sessions.</p>
+        <p v-else-if="sessions.length === 0 && !historyPending && !historyFailed && !historyQuery" class="muted">No sessions.</p>
+        <label v-if="live !== null" class="history-search">
+            Search earlier sessions
+            <input v-model="search" type="search" placeholder="Title or session ID" />
+        </label>
+        <p v-if="live !== null && history?.total === 0 && historyQuery" class="muted" role="status">No matches.</p>
         <ul v-if="live !== null && sessions.length" class="sessions">
             <li
                 v-for="s in sessions"
@@ -135,6 +166,11 @@ watch(name, async (selected, _previous, onCleanup) => {
         </ul>
         <p v-if="live !== null && historyPending" class="muted">Loading earlier sessions…</p>
         <p v-else-if="live !== null && historyFailed" class="muted">Earlier sessions could not be loaded.</p>
+        <nav v-if="live !== null" class="history-nav" aria-label="Earlier sessions">
+            <button aria-label="Previous earlier sessions" :disabled="historyPending || historyPage === 0" @click="historyPage--">Previous</button>
+            <span aria-live="polite">Page {{ historyPage + 1 }} of {{ historyPages }}</span>
+            <button aria-label="Next earlier sessions" :disabled="historyPending || historyFailed || historyPage + 1 >= historyPages" @click="historyPage++">Next</button>
+        </nav>
         <PageNav :pager="pager" />
     </div>
 </template>
@@ -182,6 +218,33 @@ watch(name, async (selected, _previous, onCleanup) => {
 }
 .muted {
     color: var(--muted);
+}
+.history-search {
+    display: grid;
+    gap: var(--space-1);
+    margin-block: var(--space-3);
+}
+.history-search input {
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 2.75rem;
+    padding: var(--space-2);
+    font: inherit;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+.history-nav {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+    margin-block: var(--space-3);
+}
+.history-nav button {
+    min-height: 2.75rem;
 }
 .sessions {
     list-style: none;

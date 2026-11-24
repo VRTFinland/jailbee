@@ -140,6 +140,72 @@ def test_a_containers_history_is_its_recorded_sessions_that_are_not_live(
     assert body["sessions"][0]["models"] == ["jb.codex.standard"]
 
 
+def test_history_is_bounded_and_pages_are_newest_first(home: Path) -> None:
+    records = []
+    for n in range(25):
+        sid = f"33333333-3333-4333-8333-{n:012d}"
+        record = {
+            "type": "user",
+            "uuid": f"prompt-{n}",
+            "timestamp": f"2026-11-{n + 1:02d}T09:00:00Z",
+            "sessionId": sid,
+            "cwd": "/work/repo",
+            "message": {"role": "user", "content": f"Release task {n}"},
+        }
+        (home / "projects" / "-work-repo" / f"{sid}.jsonl").write_text(json.dumps(record) + "\n")
+        records.append(seen("alpha-1", "u-1", sid))
+    for client in open_client(home, *records):
+        first = client.get("/api/containers/alpha-1/sessions/history").json()
+        assert len(first["sessions"]) == 20
+        assert first["total"] == 25
+        assert (first["limit"], first["offset"]) == (20, 0)
+        assert [r["title"] for r in first["sessions"]] == [
+            f"Release task {n}" for n in range(24, 4, -1)
+        ]
+        last = client.get("/api/containers/alpha-1/sessions/history?limit=20&offset=20").json()
+        assert [r["title"] for r in last["sessions"]] == [
+            f"Release task {n}" for n in range(4, -1, -1)
+        ]
+        beyond = client.get("/api/containers/alpha-1/sessions/history?offset=100").json()
+        assert beyond["sessions"] == [] and beyond["total"] == 25
+
+
+@pytest.mark.parametrize("query", ["HELLO", "there", SESSION_B, "  hello  "])
+def test_history_searches_titles_and_session_ids_without_hiding_live_sessions(
+    client: TestClient, query: str
+) -> None:
+    body = client.get(
+        "/api/containers/alpha-1/sessions/history", params={"q": query, "limit": 1}
+    ).json()
+    assert [r["session_id"] for r in body["sessions"]] == [SESSION_B]
+    assert body["total"] == 1
+    assert client.get("/api/containers/alpha-1/sessions").json()["sessions"][0]["session_id"] == SESSION_A
+
+
+def test_history_search_has_an_empty_page_for_no_matches(client: TestClient) -> None:
+    body = client.get("/api/containers/alpha-1/sessions/history?q=unfindable").json()
+    assert body["sessions"] == [] and body["total"] == 0
+    empty = client.get("/api/containers/alpha-2/sessions/history").json()
+    assert empty["sessions"] == [] and empty["total"] == 0
+
+
+@pytest.mark.parametrize("query", ["limit=0", "limit=101", "offset=-1", "limit=abc"])
+def test_history_rejects_invalid_page_parameters(client: TestClient, query: str) -> None:
+    assert client.get(f"/api/containers/alpha-1/sessions/history?{query}").status_code == 422
+
+
+def test_history_filters_before_paging_and_can_find_missing_transcripts(home: Path) -> None:
+    for client in open_client(
+        home, seen("alpha-1", "u-1", SESSION_B), seen("alpha-1", "u-1", "gone-from-disk")
+    ):
+        body = client.get("/api/containers/alpha-1/sessions/history?q=gone&limit=1").json()
+        assert [r["session_id"] for r in body["sessions"]] == ["gone-from-disk"]
+        assert body["total"] == 1
+        assert client.get(
+            "/api/containers/alpha-1/sessions/history?q=gone&limit=1&offset=1"
+        ).json()["sessions"] == []
+
+
 def test_a_recreated_container_does_not_inherit_the_old_ones_sessions(client: TestClient) -> None:
     ids = [
         r["session_id"]
