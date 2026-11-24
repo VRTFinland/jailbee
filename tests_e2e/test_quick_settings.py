@@ -220,7 +220,9 @@ def test_quick_settings_icon_does_not_overlap_public_page_content(
 ) -> None:
     server = make_server(setup=public_page == "setup")
     page.set_viewport_size({"width": 320, "height": 320})
-    page.add_init_script("localStorage.setItem('jailbee.bodyFontSize', '24'); localStorage.setItem('jailbee.displayProfile', 'eink')")
+    page.add_init_script(
+        "localStorage.setItem('jailbee.bodyFontSize', '24'); localStorage.setItem('jailbee.displayProfile', 'eink')"
+    )
     page.goto(f"{server.url}/#/{public_page}")
     # Simulate a larger touch target and verify that content tracks its actual size.
     page.evaluate("""() => {
