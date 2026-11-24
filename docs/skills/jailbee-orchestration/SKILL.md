@@ -28,7 +28,8 @@ work needs:
   no development environment (text, docs or skill wording) goes to a fresh
   subagent, or a forked copy of your own agent session where your agent has
   one (not a `fork` child container), when saving your context matters;
-  tiny edits can be done inline.
+  tiny text edits (docs, skill wording, tickets or plans) can be done inline,
+  never code, tests or config, however small.
   Delegation is the default for any reading or writing task larger than a few
   lookups: code surveys across many files, spec drafts, implementation plans,
   long write-ups and code reviews. Reading many files to anchor a plan burns
@@ -45,12 +46,15 @@ work needs:
   when they would otherwise collide with your own tree.
 - **Child containers** have their own checkout, branch, environment and
   long-running agent session. Use one when work benefits from its own
-  development environment: code changes with test suites, services, long
-  multi-step implementation or whole plans. Brief it with your findings and
+  development environment: all code, test and config changes, services, long
+  multi-step implementation or whole plans. Small review findings and feature requests
+  also go to a child; a cheap runner is fine, and one child may group findings.
+  Brief it with your findings and
   acceptance tests. The child implements, tests and commits the plan itself; on `done`,
   merge or stage its work.
 
-Beyond tiny light edits, do the work yourself only when it needs this
+The orchestrator's branch receives code changes only through merges of child work and their conflict resolutions. Never make direct code, test or config changes in the orchestrator's container, even if the work is small or the user asks you to do it yourself.
+Beyond tiny text edits, do other work yourself only when it needs this
 container's own live environment or the user asks you to.
 
 When a skill or plan tells you to dispatch subagents, use them at the

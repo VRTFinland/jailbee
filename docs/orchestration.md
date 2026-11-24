@@ -52,14 +52,17 @@ children, merging work, reviews and conversation with the user.
 
 For each new task, it investigates in its own container, using a subagent
 for anything beyond a few lookups, then chooses the implementation vehicle.
-Work benefiting from its own development environment (code with test suites,
-services, multi-step implementation or whole plans) goes to a child briefed
-with the findings and acceptance tests; the child implements, tests and
-commits, and the orchestrator merges or stages its work on `done`. Light
-text, doc or skill changes go to a fresh subagent (or a forked copy of the
-agent's own session, not a `fork` child container) when saving context
-matters; tiny edits can be done inline. Beyond those tiny edits,
-the orchestrator does the work itself only when it needs its own live
+All code, test and config changes go to a child, including small feature
+requests and review findings; a cheap runner is fine and one child may group
+findings. The child implements, tests and commits; the orchestrator merges
+or stages its work on `done`. Its branch receives code changes only through
+child merges and their conflict resolutions, never direct changes in its own
+container. Light text changes (docs, skill wording, tickets or plans) go to a
+fresh subagent (or a forked copy of the agent's own session, not a `fork` child
+container) when saving context matters; tiny text edits can be done inline.
+No-run text edits may use a subagent in a separate git worktree when they
+would collide with the orchestrator's tree. Beyond those tiny text edits,
+the orchestrator does other work itself only when it needs its own live
 environment or the user asks. Subagents remain the tool for investigation
 and review here, and for plan tasks inside a child.
 
