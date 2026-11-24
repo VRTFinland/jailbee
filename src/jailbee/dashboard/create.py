@@ -94,10 +94,16 @@ def start_create(
             status = result.status if result.status is not None else 1
             lines = [line.strip() for line in output.splitlines() if line.strip()]
             cancellation = any(
-                line in {"Aborted!", "Aborted.", "Error: cancelled"} for line in lines
+                line in {"Aborted!", "Aborted.", "Error: cancelled"}
+                or line.strip("│ ") == "cancelled"
+                for line in lines
             )
-            has_error = any(
-                line.lower().startswith("error:") and line != "Error: cancelled" for line in lines
+            has_error = (
+                any(
+                    line.lower().startswith("error:") and line != "Error: cancelled"
+                    for line in lines
+                )
+                or sum(line.startswith("╭─ Error ") for line in lines) > 1
             )
             if (
                 result.cancelled
