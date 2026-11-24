@@ -94,12 +94,10 @@ def start_create(
             status = result.status if result.status is not None else 1
             lines = [line.strip() for line in output.splitlines() if line.strip()]
             cancellation = any(line in {"Aborted!", "Aborted.", "Error: cancelled"} for line in lines)
-            other_output = [
-                line for line in lines
-                if line not in {"Aborted!", "Aborted.", "Error: cancelled"}
-                and not (line.startswith("Branch '") and line.endswith("already exists in source repo."))
-            ]
-            if result.cancelled and result.error is None and status == 1 and cancellation and not other_output:
+            has_error = any(
+                line.lower().startswith("error:") and line != "Error: cancelled" for line in lines
+            )
+            if result.cancelled and result.error is None and status == 1 and cancellation and not has_error:
                 queue.drop(entry)
                 changed()
                 done(f"'{command}' cancelled")
