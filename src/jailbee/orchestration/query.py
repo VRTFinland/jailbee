@@ -49,9 +49,7 @@ class Queries:
     a connection per call, retaining BEGIN IMMEDIATE for acknowledgement writes.
     """
 
-    def __init__(
-        self, store: BrokerStore, *, live: Mapping[str, LiveQuery] | None = None
-    ) -> None:
+    def __init__(self, store: BrokerStore, *, live: Mapping[str, LiveQuery] | None = None) -> None:
         self._store = store
         self.live = dict(live or {})
         self._snapshot: Mapping[str, ContainerSnapshot] = MappingProxyType({})
@@ -84,7 +82,9 @@ class Queries:
         if op in LIVE_OPS:
             view = self._snapshot.get(uuid)
             if view is None or not view.ready:
-                raise wire.WireError(wire.STORE, "the broker does not know this container yet; retry shortly")
+                raise wire.WireError(
+                    wire.STORE, "the broker does not know this container yet; retry shortly"
+                )
             if args:
                 raise wire.WireError(wire.BAD_REQUEST, f"{op} accepts no arguments")
             handler = self.live.get(op)

@@ -36,7 +36,10 @@ class LiveQuery:
             name: values[name]
             for name, visibility in self.fields.items()
             if name in values
-            and (visibility == "all" or (visibility == "orchestrator" and view.role == "orchestrator"))
+            and (
+                visibility == "all"
+                or (visibility == "orchestrator" and view.role == "orchestrator")
+            )
         }
 
 
@@ -53,8 +56,11 @@ def host_queries(incus: Incus) -> dict[str, LiveQuery]:
             raise wire.WireError(wire.STORE, "calling container is no longer listed; retry shortly")
         devices = caller.get("expanded_devices") or {}
         pool = next(
-            (device.get("pool") for device in devices.values()
-             if device.get("type") == "disk" and device.get("path") == "/"),
+            (
+                device.get("pool")
+                for device in devices.values()
+                if device.get("type") == "disk" and device.get("path") == "/"
+            ),
             None,
         )
         available = None
@@ -80,9 +86,16 @@ def host_queries(incus: Incus) -> dict[str, LiveQuery]:
         }
 
     return {
-        HOST_STATUS: LiveQuery(status, {
-            "load1": "all", "cpus": "all", "memory_total": "all",
-            "memory_available": "all", "storage_pool": "all", "disk_available": "all",
-            "running_containers": "all",
-        }),
+        HOST_STATUS: LiveQuery(
+            status,
+            {
+                "load1": "all",
+                "cpus": "all",
+                "memory_total": "all",
+                "memory_available": "all",
+                "storage_pool": "all",
+                "disk_available": "all",
+                "running_containers": "all",
+            },
+        ),
     }

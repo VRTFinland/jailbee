@@ -1,4 +1,5 @@
 """Container host-status commands through a real local broker socket."""
+# ruff: noqa: F811 - fixtures imported from the sibling test module
 
 import json
 import os
@@ -13,10 +14,13 @@ from typer.testing import CliRunner
 from jailbee.container_cli import container_app
 from tests.test_inbox_socket_cli import FakeBroker, broker, sockdir  # noqa: F401 - shared fixtures
 
-
 STATUS = {
-    "load1": 2.5, "cpus": 8, "memory_total": 17179869184,
-    "memory_available": 6442450944, "storage_pool": "work", "disk_available": 10737418240,
+    "load1": 2.5,
+    "cpus": 8,
+    "memory_total": 17179869184,
+    "memory_available": 6442450944,
+    "storage_pool": "work",
+    "disk_available": 10737418240,
     "running_containers": 3,
 }
 
@@ -65,14 +69,20 @@ import importlib.abc
 import sys
 class Guard(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.split('.')[0] in {'pydantic', 'yaml', 'sqlmodel'} or fullname == 'jailbee.config':
+        if (
+            fullname.split('.')[0] in {'pydantic', 'yaml', 'sqlmodel'}
+            or fullname == 'jailbee.config'
+        ):
             raise AssertionError('host import: ' + fullname)
 sys.meta_path.insert(0, Guard())
 from jailbee.container_cli import container_app
 container_app(args=['host', 'status', '--json'], prog_name='jailbee')
 """
     result = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, timeout=20,
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=20,
         env={**os.environ, "JAILBEE_ORCHESTRATION_SOCKET": str(sockdir / "broker.sock")},
     )
     assert result.returncode == 0, result.stderr
