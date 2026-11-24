@@ -453,8 +453,10 @@ source publication confirmation.
 A single matching own-branch description proposal is also used off a terminal.
 Explicit `--branch`, `--pr`, `--as`, `--stacked`, `--title`, `--body` and
 `--no-outbox` preserve the explicitly requested flow instead of auto-selecting
-it. A numbered source without a description keeps the separate pinned-update
-path. For other sources, off a terminal the command keeps
+it. A matching numbered source without a description uses the same own-branch
+flow, provided its PR matches the container's bound PR. If a selected proposal's
+base differs from the resolved base, the command warns and uses the resolved base.
+An unused own-branch proposal is named in a warning. For other sources, off a terminal the command keeps
 publishing the own branch and prints a pending
 source count on stderr, with `--source-manifest <file>` and `jailbee outbox <name>`
 hints. Explicit `--source-manifest` skips the picker. So does any own-branch option

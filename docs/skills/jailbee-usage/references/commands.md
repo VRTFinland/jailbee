@@ -1558,7 +1558,11 @@ For a pinned imported source use `jailbee pr push NAME --source-manifest
 FILE.json`. It publishes that ref at its recorded SHA independently of the
 container's own PR. An existing PR supplies its actual head and base; a
 conflicting manifest branch is refused. `--title`, `--body`, `--base`,
-`--as`, `--pr` and `--stacked` cannot be combined with this option.
+`--as`, `--pr`, `--stacked`, `--branch` and `--no-outbox` cannot be combined with this option.
+A matching own-branch source uses the ordinary branch flow; if it has no description,
+its numbered PR must match the container's bound PR. A differing proposal base is
+warned about, and the resolved base is used. An unselected own-branch proposal is
+named in a warning.
 Non-fast-forward updates require `--force`. Pending source rows show
 `awaiting-push` and `create_scope`; `outbox apply` (and `p` in the outbox)
 hands them to this PR push. An already-published
