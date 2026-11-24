@@ -4,7 +4,6 @@
 import pytest
 
 from jailbee.orchestration import wire
-
 from tests.test_orchestration_query import Env, env  # noqa: F401 - shared fixture
 
 
