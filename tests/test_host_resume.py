@@ -263,12 +263,18 @@ def test_stop_all_durably_records_intent_before_stopping(host):
 
 
 def test_resume_recovers_interrupted_stop_journal(host, mocker):
-    cfg, _, incus, _ = host
+    cfg, _, _incus, _ = host
     path = state_dir() / "resume-set.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"version": 1, "containers": {}, "stopping": {
-        "one-off": str(cfg.repo_root), "one-work": str(cfg.repo_root)
-    }}))
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "containers": {},
+                "stopping": {"one-off": str(cfg.repo_root), "one-work": str(cfg.repo_root)},
+            }
+        )
+    )
     mocker.patch("jailbee.lifecycle.boot_container")
     mocker.patch("jailbee.create_flow.preflight_cache_pools")
     post = mocker.patch("jailbee.cli._post_start_actions")
@@ -300,11 +306,20 @@ def test_stop_all_continues_after_a_state_write_failure(host, mocker):
     assert set(recorded()) == {"one-work", "two-child", "one-mount"}
 
 
-@pytest.mark.parametrize("service", ["jailbee-registry-mirror", "jailbee-litellm", "jailbee-display", "jailbee-egress-proxy"])
+@pytest.mark.parametrize(
+    "service",
+    ["jailbee-registry-mirror", "jailbee-litellm", "jailbee-display", "jailbee-egress-proxy"],
+)
 def test_host_lifecycle_excludes_service_containers(host, service):
     _, _, incus, _ = host
-    incus.list_containers.return_value = [{"name": service, "status": "Running",
-        "profiles": ["default"], "config": {"boot.autostart": "true"}}]
+    incus.list_containers.return_value = [
+        {
+            "name": service,
+            "status": "Running",
+            "profiles": ["default"],
+            "config": {"boot.autostart": "true"},
+        }
+    ]
     result = CliRunner().invoke(app, ["stop", "--all", "--yes"])
     assert result.exit_code == 0, result.output
     incus.stop.assert_not_called()

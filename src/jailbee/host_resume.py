@@ -66,8 +66,15 @@ def _write_set(state: ResumeSet) -> None:
     fd, temporary = tempfile.mkstemp(prefix=".resume-set-", dir=path.parent)
     try:
         with os.fdopen(fd, "w") as stream:
-            json.dump({"version": 1, "containers": state.containers,
-                       "pending": sorted(state.pending), "stopping": state.stopping}, stream)
+            json.dump(
+                {
+                    "version": 1,
+                    "containers": state.containers,
+                    "pending": sorted(state.pending),
+                    "stopping": state.stopping,
+                },
+                stream,
+            )
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)

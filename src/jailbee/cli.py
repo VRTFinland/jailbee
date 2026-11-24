@@ -5414,7 +5414,8 @@ def resume_cmd(config: ConfigOption = None) -> None:
     from jailbee.incus import Incus
 
     if not run_resume(
-        _load_orphan_base_or_exit(config), Incus(),
+        _load_orphan_base_or_exit(config),
+        Incus(),
         post_start=lambda cfg, incus, name: _post_start_actions(
             cfg, incus, name, no_autostart=False, allow_prompt=True, override="wait"
         ),
