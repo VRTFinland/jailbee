@@ -180,6 +180,36 @@ def test_end_follow_and_new_messages_restore_follow(
 
 
 @pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
+def test_manual_wheel_to_transcript_end_arms_follow_without_a_jump(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int
+) -> None:
+    page.set_viewport_size({"width": width, "height": 800})
+    server, transcript = open_transcript(page, make_server, tmp_path)
+    distance = page.locator(".transcript").evaluate(
+        "el => Math.ceil(el.getBoundingClientRect().bottom - "
+        "document.querySelector('.bottom-guard').getBoundingClientRect().top)"
+    )
+    page.mouse.wheel(0, distance)
+    page.wait_for_function("""() =>
+        document.querySelector('.transcript').getBoundingClientRect().bottom <=
+        document.querySelector('.bottom-guard').getBoundingClientRect().top + 1
+    """)
+    wait_for_scroll_settled(page)
+    # The trailing answer spacer is not part of the transcript end.
+    assert page.evaluate(
+        "window.scrollY + window.innerHeight < document.documentElement.scrollHeight - 100"
+    )
+    with transcript.open("a") as stream:
+        stream.write(record(25, "assistant", "Followed from the content end.\n\n" * 16))
+    server.watches.open[-1].fire()
+    page.wait_for_function("""() => {
+        const entries = document.querySelectorAll('.entry.assistant');
+        return entries.length === 25 && entries[24].getBoundingClientRect().bottom <=
+            document.querySelector('.bottom-guard').getBoundingClientRect().top + 1;
+    }""")
+
+
+@pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
 def test_keyboard_momentum_leaves_follow_off_after_end(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int
 ) -> None:
@@ -210,7 +240,7 @@ def test_keyboard_momentum_leaves_follow_off_after_end(
         }));
     }""")
     page.keyboard.press("PageUp")
-    expect(page.get_by_role("button", name="Scroll to bottom")).to_be_visible()
+    expect(page.locator(".jump-latest")).to_be_visible()
     page.wait_for_function("""() => {
         const frames = window.scrollFrames;
         return frames.some(frame => frame.end) && frames.some(frame => !frame.end);

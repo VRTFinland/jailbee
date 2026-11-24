@@ -305,7 +305,6 @@ async function jump() {
             if (eink.value) pager.goToElement(el)
             else el.scrollIntoView({block: "start"})
         }, true)
-        following.value = atTranscriptEnd.value
     } else {
         following.value = true
         scrollToEnd()
