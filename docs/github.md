@@ -50,7 +50,8 @@ Inside the container, the staging commands are:
 | General PR comment, reply | `jailbee pr comment N --body …`, `jailbee pr reply N --to ID --body …` |
 | Inline review | `jailbee pr review add N --file F --line L --body …`, then `jailbee pr review submit N --body …` |
 | PR title and description | `jailbee pr description N --title … --body-file …` |
-| Branch to publish as a PR | `jailbee pr source …` |
+| Own branch to publish as a PR (default) | `jailbee pr description --new --title … --body-file …` |
+| Another ref to publish as a separate PR | `jailbee pr source …` |
 
 Several related actions can be grouped with `--batch NAME` and staged together
 with `jailbee outbox submit NAME --kind issue|pr`. Review drafts are submitted

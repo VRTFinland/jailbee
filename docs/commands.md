@@ -307,7 +307,7 @@ Listing commands generally treat an omitted target as "all" rather than asking.
 | `jailbee pr bind [<name>] [<number>]` / `jailbee pr unbind [<name>]` | Bind an existing PR without pushing, or remove its binding. Binding (and the adoption on a first `pr push`) also sets the container's base branch to the PR's base, as `jb new --pr` does, and fetches that base on the host best-effort. A base you chose yourself — `jb new --base`, `jb git retarget`, or a stacked PR — is kept (a container created before the marker existed counts as having chosen its base unless that base is the repo's default branch). The choice is permanent once made: a later bind keeps that base, and `jb git retarget` is how to change it. The PR-base fetch is unattended (no credential prompt, 30 s limit) and its failure only warns; a failure to switch warns with the `jb git retarget` command to run (e.g. a stopped container). |
 | `jailbee pr ls` | List PR bindings, including source branch map rows. |
 | `jailbee pr unbind [<name>] --head <branch>` | Forget one source branch binding without removing the container's ordinary PR binding. |
-| `jailbee pr push [<name>] --source-manifest <file>` | Publish the pinned source ref and SHA from a PR outbox manifest, independently of the container's own PR. Existing PRs use their actual head and base; conflicting branch overrides are refused. `--force` permits non-fast-forward updates. Pending sources show `awaiting-push` and `create_scope`; `outbox apply` (or `p` in the outbox) hands such a source to this command. A published source awaiting cleanup may remain `applied`; retry the same push. See the [source manifest examples](https://github.com/VRTFinland/jailbee/blob/main/docs/skills/jailbee-pr-review/references/manifest-schema.md#source-publication-examples). |
+| `jailbee pr push [<name>] --source-manifest <file>` | Publish a PR outbox source proposal. Separate sources push the pinned ref and SHA independently of the container's own PR; a matching own-branch description instead uses the normal PR flow and pushes the tip (see PR source selection). Existing PRs use their actual head and base; conflicting branch overrides are refused. `--force` permits non-fast-forward updates. Pending sources show `awaiting-push` and `create_scope`; `outbox apply` (or `p` in the outbox) hands such a source to this command. A published source awaiting cleanup may remain `applied`; retry the same push. See the [source manifest examples](https://github.com/VRTFinland/jailbee/blob/main/docs/skills/jailbee-pr-review/references/manifest-schema.md#source-publication-examples). |
 | `jailbee pr fetch [<name>] [--all]` | Refresh the host's copy of a PR-bound container's PR head (`refs/jailbee/pr/<N>/head`, the ↓ column's target) now, interactively — git may ask for a passphrase or key touch. `--all` refreshes every PR-bound container (one fetch per PR, one failure does not stop the rest, exit 1 if any failed). A container without a PR is a clear error (exit 1). The dashboard does this on its own every `pr.autofetch_interval` seconds unless [`pr.autofetch`](config.md#pr) is off; its row menu has `Refresh PR head`. |
 | `jailbee pr open [<name>]` | Open the primary PR in a browser; `--stacked` opens the stacked PR instead. |
 | `jailbee submodule pr bind [<name>] [<path>] [<number>]` / `jailbee submodule pr unbind [<name>] [<path>]` | Bind or unbind a submodule PR without pushing. |
@@ -424,9 +424,24 @@ SSH; Qt opens PR flows in a terminal for the same question.
 then pending source PR proposals from its outbox, labelled with title, source
 head, base and manifest file. Picking one runs the same confirmation, validation
 and receipt handling as `--source-manifest <file>`. Cancel publishes nothing.
-An own-branch description is not a separate source. Source proposals are read
-from the host outbox store, keyed by the container's uuid, without entering the
-container; only the source commits come over the git bridge. The PR
+An own-branch description is not a separate source. Stage it with
+`jailbee pr description --new` (the default); `jailbee pr source` is only for
+other refs. Staging refuses the current HEAD SHA or HEAD branch ref unless
+`--allow-same-commit` deliberately keeps a separate pinned head.
+
+A legacy source proposal matches the own branch when its SHA equals HEAD,
+or when its ref names the HEAD branch and its SHA is an ancestor. It replaces
+the "container branch" row with "Open/Update PR for <branch> using the staged
+description"; a single matching proposal is used without a source question.
+Publication pushes the tip, preserves the normal container PR binding and
+submodule/adoption/stacked flow, and uses the staged description. An ancestor
+pin warns about the N newer commits included. Imported child refs never match
+by ancestry alone. An explicit separate-head override keeps its own row.
+The PR menu and outbox publish share this publication path.
+
+Source proposals are read from the host outbox store, keyed by the container's
+uuid; read-only git probes in the container classify own-branch matches.
+Source commits come over the git bridge. The PR
 create/update is journaled in the store: when a run is interrupted during it,
 the proposal reads `uncertain` and the next push asks before publishing again
 (an orchestrator request is refused). Without pending sources there is no extra
@@ -435,7 +450,12 @@ The dashboards' **Create/update PR** offers the same choice: the terminal
 frontend uses the CLI picker; Qt shows a native choice and opens a terminal for
 source publication confirmation.
 
-Off a terminal, the command keeps publishing the own branch and prints a pending
+A single matching own-branch description proposal is also used off a terminal.
+Explicit `--branch`, `--pr`, `--as`, `--stacked`, `--title`, `--body` and
+`--no-outbox` preserve the explicitly requested flow instead of auto-selecting
+it. A numbered source without a description keeps the separate pinned-update
+path. For other sources, off a terminal the command keeps
+publishing the own branch and prints a pending
 source count on stderr, with `--source-manifest <file>` and `jailbee outbox <name>`
 hints. Explicit `--source-manifest` skips the picker. So does any own-branch option
 (`--title`, `--body`, `--base`, `--branch`, `--as`, `--pr`, `--stacked`,

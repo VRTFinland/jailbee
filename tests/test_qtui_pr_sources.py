@@ -28,7 +28,7 @@ def test_request_loads_target_config_and_resolves_full_name(mocker, tmp_path, co
         repo_load.assert_called_once_with(tmp_path)
         load.assert_not_called()
     resolve.assert_called_once_with(cfg, incus, "short")
-    pending.assert_called_once_with(cfg, incus, "full")
+    pending.assert_called_once_with(cfg, incus, "full", classify_own=True)
     assert request.pending == []
 
 

@@ -397,6 +397,15 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- An own-branch PR source proposal no longer competes with "container branch"
+  in the PR picker or fails an update by colliding with the container's own
+  PR label. The PR menu and outbox publish use the same normal PR flow, push
+  the tip with the staged description and preserve its binding; an older
+  own-branch pin warns about newer commits. `pr source` now directs own-branch
+  descriptions to `pr description --new`, with `--allow-same-commit` for a
+  deliberately separate pinned head. Dashboard action exceptions remain in
+  the notification and output log instead of leaving only the manifest text
+  ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
 - **Successful background jobs no longer flash as dead.** A snapshot now keeps
   its gathered job liveness instead of rechecking an exited worker against an
   older phase. Autostart, create, start/restart and destroy stay consistent in
