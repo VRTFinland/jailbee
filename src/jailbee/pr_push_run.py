@@ -624,13 +624,6 @@ def run_pr_push(
                     != selected_source.digest
                 ):
                     raise OutboxChanged(f"{selected_source.name}: proposal changed")
-                source_store.mark_prepared(
-                    source_claim,
-                    selected_source.digest,
-                    0,
-                    repo=selected_source.manifest.repo,
-                    now=time.time(),
-                )
             try:
                 publish = sync.publish_branch_from_container(
                     cfg,
@@ -718,6 +711,18 @@ def run_pr_push(
                 explicit_body=body is not None or is_update_path,
                 confirm=lambda question: prompting.ask_confirm(question, default=False),
             )
+            if (
+                source_store is not None
+                and source_claim is not None
+                and selected_source is not None
+            ):
+                source_store.mark_prepared(
+                    source_claim,
+                    selected_source.digest,
+                    0,
+                    repo=selected_source.manifest.repo,
+                    now=time.time(),
+                )
             try:
                 created = pr_flow.create_or_view_pr(
                     scope,
@@ -734,6 +739,15 @@ def run_pr_push(
                     record_context=f"failed to record the PR label on '{short}'",
                 )
             except pr_mod.PrError as exc:
+                if (
+                    source_store is not None
+                    and source_claim is not None
+                    and selected_source is not None
+                    and is_update_path
+                ):
+                    # Action-less sources require the matching bound PR, so this
+                    # path only looks it up; it cannot have created another PR.
+                    source_store.clear_prepared(source_claim, selected_source.digest, 0)
                 error(str(exc))
                 raise typer.Exit(1) from exc
 
