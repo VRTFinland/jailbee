@@ -13,6 +13,7 @@ const router = useRouter()
 const dashboard = useDashboard()
 
 dashboard?.onUnauthorized(() => {
+    takeResumePath()
     void router.push({name: "login"})
 })
 dashboard?.onSetupMode(() => {
