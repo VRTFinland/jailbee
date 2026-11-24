@@ -1859,11 +1859,15 @@ or `issue/<manifest>.json`. Inspection is local and never calls GitHub; over
 remote SSH it is read-only. See [Unified proposal
 management](../../../git-bridge.md#unified-proposal-management).
 
-In the terminal manager and dashboard Outbox box, delete verification, drops
-and post-mutation reloads run in the background. A busy line stays visible while
-navigation and preview keys work; refresh waits for the completion reload,
-and another delete, publish, clear or scope change is refused while busy.
-Closing the dashboard box leaves the work running and reports its result as a notice.
+In the terminal manager and dashboard Outbox box, drops and post-mutation reloads
+run in the background. Deletion shows `Deleting 2/5…` and removes each successful
+row immediately. Navigation, opening, marking and preview keys work; repeated
+refresh requests coalesce into the final reload. Another confirmed delete queues
+behind the running drops; deleting or publishing a proposal already queued is
+refused by name. Publish, clear and scope changes wait for the delete queue;
+other mutations still refuse concurrent mutations.
+Closing the dashboard box leaves the work running (the delete busy line says so)
+and reports its result as a notice.
 PR-creation verification is background work too; the interactive `pr push` still
 uses the terminal, and is not run if the box was closed meanwhile (a notice
 says so). The standalone manager refuses Esc, `q` and Ctrl-C while a mutation

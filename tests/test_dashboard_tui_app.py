@@ -315,8 +315,8 @@ def test_the_app_module_is_the_only_one_importing_textual():
     assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
 
 
-@pytest.mark.parametrize("blocked_verb", ["ls", "drop"])
-def test_outbox_delete_keeps_keys_live_and_finishes_after_close(mocker, tmp_path, blocked_verb):
+def test_outbox_delete_keeps_keys_live_and_finishes_after_close(mocker, tmp_path):
+    blocked_verb = "drop"
     import asyncio
     from threading import Event, get_ident
 
@@ -371,14 +371,14 @@ def test_outbox_delete_keeps_keys_live_and_finishes_after_close(mocker, tmp_path
                 blocking = True
                 await pilot.press("d", "down", "enter")
                 assert await asyncio.to_thread(entered.wait, 2), "delete command never started"
-                assert controller.state.busy == "Deleting 1 from the outbox…"
-                assert "Deleting 1 from the outbox" in screen_text(app)
+                assert controller.state.busy == "Deleting 1/1… · Esc leaves; deletion continues"
+                assert "Deleting 1/1" in screen_text(app)
                 preview = controller.state.preview
                 await pilot.press("v")
                 assert controller.state.preview != preview
                 assert not release.is_set()  # the key was processed while the child was blocked
                 await pilot.press("r", "p")
-                assert controller.state.busy == "Deleting 1 from the outbox…"
+                assert controller.state.busy == "Deleting 1/1… · Esc leaves; deletion continues"
                 await pilot.press("escape")
                 assert not isinstance(app.session.overlay, tsession.OutboxState)
                 release.set()
@@ -390,9 +390,234 @@ def test_outbox_delete_keeps_keys_live_and_finishes_after_close(mocker, tmp_path
                 release.set()
 
     asyncio.run(scenario())
-    assert [verb for verb, _ in calls] == ["ls", "drop", "ls"]
+    assert [verb for verb, _ in calls] == ["drop", "ls"]
     assert all(thread != ui_thread for _, thread in calls)
     assert notifications and set(notifications) == {ui_thread}
+
+
+@pytest.mark.parametrize("fail_middle", [False, True])
+@pytest.mark.parametrize("queue_extra", [False, True])
+def test_outbox_batch_delete_progress_rows_and_deferred_refresh(
+    mocker, tmp_path, fail_middle, queue_extra
+):
+    import asyncio
+    from threading import Event
+
+    from jailbee.dashboard.jobs import JobRunner
+    from tests.dashboard_fixtures import cfg_group
+    from tests.dashboard_pilot import container_menu_keys, make_app, screen_text
+    from tests.test_dashboard_outbox import _container, _listing, _proposal
+
+    proposals = [_proposal(f"pr/{letter}.json") for letter in "abcd"]
+    entered = [Event() for _ in range(4)]
+    release = [Event() for _ in range(4)]
+    calls = []
+    drops = 0
+
+    def quiet(argv, **kwargs):
+        nonlocal drops
+        calls.append(list(argv))
+        if argv[1] == "drop":
+            index = drops
+            drops += 1
+            entered[index].set()
+            assert release[index].wait(10), "test did not release the drop"
+            if fail_middle and index == 1:
+                return tsession.da.CliResult(False, "locked")
+            proposals[:] = [p for p in proposals if p["id"] != argv[3]]
+            return tsession.da.CliResult(True, "done", "")
+        return tsession.da.CliResult(True, "done", _listing(_container(*proposals)))
+
+    mocker.patch.object(tsession.da, "run_cli_quiet", side_effect=quiet)
+    group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
+    app = make_app(mocker, [group], jobs=JobRunner)
+
+    async def wait_for(pilot, event):
+        async with asyncio.timeout(5):
+            while not event.is_set():
+                app.session.jobs.poll()
+                app.refresh_frame()
+                await pilot.pause(0.001)
+        await pilot.pause()
+
+    async def scenario():
+        async with app.run_test(size=(140, 35)) as pilot:
+            try:
+                for key in container_menu_keys(group, "outbox browse"):
+                    await pilot.press(key)
+                controller = app.session.outbox
+                await _settle_outbox(app, pilot, controller)
+                calls.clear()
+                await pilot.press("space", "down", "space", "down", "space", "d", "down", "enter")
+                await wait_for(pilot, entered[0])
+                assert "Deleting 1/3" in screen_text(app)
+                assert "Esc leaves; deletion continues" in screen_text(app)
+                await pilot.press("down", "space", "r", "r", "enter")
+                assert ("alpha-x", "pr/d.json", None, None) in controller.state.marks
+                assert "pr/d.json" in str(controller.state.expanded)
+                assert [a[1] for a in calls] == ["drop"]
+                if queue_extra:
+                    # Unmark d and ask about a again: the same proposal is reserved.
+                    await pilot.press("space", "home", "d")
+                    assert controller.state.status == ("pr/a.json: already in the delete queue",)
+                    await pilot.pause()
+                    assert "already in the delete queue" in screen_text(app)
+                    await pilot.press("end", "space", "d", "down", "enter")
+                    assert controller.state.question is None
+                    assert "Deleting 1/4" in screen_text(app)
+                release[0].set()
+                await wait_for(pilot, entered[1])
+                assert f"Deleting 2/{4 if queue_extra else 3}" in screen_text(app)
+                assert [p.id for c in controller.state.containers for p in c.proposals] == [
+                    "pr/b.json",
+                    "pr/c.json",
+                    "pr/d.json",
+                ]
+                release[1].set()
+                await wait_for(pilot, entered[2])
+                assert f"Deleting 3/{4 if queue_extra else 3}" in screen_text(app)
+                release[2].set()
+                if queue_extra:
+                    await wait_for(pilot, entered[3])
+                    assert "Deleting 4/4" in screen_text(app)
+                    release[3].set()
+                await _settle_outbox(app, pilot, controller)
+                assert [a[1] for a in calls] == ["drop"] * (4 if queue_extra else 3) + ["ls"]
+                assert (
+                    ("alpha-x", "pr/d.json", None, None) in controller.state.marks
+                ) is not queue_extra
+                remaining = [p.id for c in controller.state.containers for p in c.proposals]
+                assert remaining == (["pr/b.json"] if fail_middle else []) + (
+                    [] if queue_extra else ["pr/d.json"]
+                )
+                if fail_middle:
+                    assert "pr/b.json: locked" in controller.state.status
+                    assert "Deleted 2 from the outbox." in controller.state.status
+                else:
+                    assert controller.state.status == ("Deleted 3 from the outbox.",) + (
+                        ("Deleted 1 from the outbox.",) if queue_extra else ()
+                    )
+            finally:
+                for event in release:
+                    event.set()
+
+    asyncio.run(scenario())
+
+
+def test_delete_progress_counts_children_skipped_by_a_changed_scope(mocker, tmp_path):
+    import asyncio
+
+    from tests.dashboard_pilot import container_menu_keys, screen_text
+    from tests.test_dashboard_outbox import _action, _container, _listing, _proposal
+
+    shown = _proposal(actions=[_action(0), _action(1), _action(2)])
+    changed = _proposal(revision="r2", actions=[_action(0, body="changed"), _action(1)])
+    other = _proposal("pr/b.json")
+    app, group, entered, release, calls, gate = _blocking_outbox_app(
+        mocker,
+        tmp_path,
+        [_listing(_container(shown, other)), _listing(_container(changed, other))],
+        "drop",
+    )
+
+    quiet = tsession.da.run_cli_quiet.side_effect
+
+    def block_b(argv, **kwargs):
+        if argv[1] == "drop" and argv[3] == "pr/b.json":
+            gate["on"] = True
+        return quiet(argv, **kwargs)
+
+    tsession.da.run_cli_quiet.side_effect = block_b
+
+    async def scenario():
+        async with app.run_test(size=(140, 35)) as pilot:
+            try:
+                for key in container_menu_keys(group, "outbox browse"):
+                    await pilot.press(key)
+                controller = app.session.outbox
+                await _settle_outbox(app, pilot, controller)
+                # Expand a; mark its three children, then b, not the parent.
+                await pilot.press(
+                    "enter",
+                    "down",
+                    "space",
+                    "down",
+                    "space",
+                    "down",
+                    "space",
+                    "down",
+                    "space",
+                    "d",
+                    "down",
+                    "enter",
+                )
+                async with asyncio.timeout(5):
+                    while len([a for a in calls if a[1] == "drop"]) < 2:
+                        app.session.jobs.poll()
+                        app.refresh_frame()
+                        await pilot.pause(0.001)
+                assert await asyncio.to_thread(entered.wait, 2)
+                assert "Deleting 4/4" in screen_text(app)
+                release.set()
+                await _settle_outbox(app, pilot, controller)
+                assert "pr/a.json: changed; refreshed" in controller.state.status
+            finally:
+                release.set()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("confirm_during_reload", [False, True])
+def test_delete_question_and_queue_survive_the_final_reload(
+    mocker, tmp_path, confirm_during_reload
+):
+    import asyncio
+
+    from tests.dashboard_pilot import container_menu_keys
+    from tests.test_dashboard_outbox import _container, _listing, _proposal
+
+    a, b = _proposal(), _proposal("pr/b.json")
+    app, group, entered, release, calls, gate = _blocking_outbox_app(
+        mocker,
+        tmp_path,
+        [_listing(_container(a, b)), _listing(_container(b)), _listing(_container())],
+        "ls",
+    )
+
+    async def scenario():
+        async with app.run_test(size=(140, 35)) as pilot:
+            try:
+                for key in container_menu_keys(group, "outbox browse"):
+                    await pilot.press(key)
+                controller = app.session.outbox
+                await _settle_outbox(app, pilot, controller)
+                calls.clear()
+                gate["on"] = True
+                await pilot.press("d", "down", "enter")
+                async with asyncio.timeout(5):
+                    while not entered.is_set():
+                        app.session.jobs.poll()
+                        app.refresh_frame()
+                        await pilot.pause(0.001)
+                await pilot.pause()
+                await pilot.press("d")  # a is gone; b is the highlighted proposal
+                assert controller.state.question is not None
+                if confirm_during_reload:
+                    await pilot.press("down", "enter")
+                release.set()
+                await _settle_outbox(app, pilot, controller)
+                if not confirm_during_reload:
+                    assert controller.state.question is not None
+                    assert controller.state.question.lines[0].startswith("pr/b.json")
+                    await pilot.press("down", "enter")
+                    await _settle_outbox(app, pilot, controller)
+                assert [a[1] for a in calls] == ["drop", "ls", "drop", "ls"]
+                assert [a[3] for a in calls if a[1] == "drop"] == ["pr/a.json", "pr/b.json"]
+                assert not any(c.proposals for c in controller.state.containers)
+            finally:
+                release.set()
+
+    asyncio.run(scenario())
 
 
 def _blocking_outbox_app(mocker, tmp_path, listings, blocked_verb):
