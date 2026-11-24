@@ -51,8 +51,10 @@ to `true`; setting it to `false` consumes a saved snapshot without resuming.
 Rebuild the golden image and create new containers to install the shutdown
 unit and updated launcher; `jailbee apply` alone does not retrofit existing
 containers. Unit tests cover the stop/start integration; a real-container
-restart check remains unverified in this environment. Host reboot and raw
-`incus stop` behavior are unverified and are not covered.
+restart check remains unverified in this environment. For a host reboot, use
+`jailbee stop --all` before it and `jailbee resume` afterwards: see
+[host-wide lifecycle](references/commands.md#host-reboot). Actual host reboot and
+raw `incus stop` smoke tests remain unverified.
 
 ## Repository services
 

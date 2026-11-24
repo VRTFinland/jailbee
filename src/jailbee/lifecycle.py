@@ -3193,6 +3193,7 @@ def boot_container(
     *,
     restart: bool,
     initial_prompt: str | None = None,
+    ensure_running: bool = False,
 ) -> None:
     """Bring a container up, re-attaching GUI sockets in the right order.
 
@@ -3211,6 +3212,8 @@ def boot_container(
     then run autostart".
     ``restart=False`` never reboots — a running container reaching
     `incus start` fails, which is what `jailbee start` should report.
+    ``ensure_running=True`` is the host-reboot recovery path: an Incus-restored
+    running container gets the same wiring without another start or reboot.
     After boot and attachment, its AHEAD base anchor is caught up forward-only.
     """
     from jailbee.runtime_mounts import (
@@ -3288,7 +3291,8 @@ def boot_container(
             # re-create, so a failed restart does not also strand the GUI.
             attach_runtime_devices(cfg, incus, name)
             raise
-    incus.start(name)
+    if not (ensure_running and state == "Running" and not restart):
+        incus.start(name)
     # Clear a failed-refresh guard only after the repaired disk is mounted.
     sync_pr_bindings(incus, name, cfg=cfg)
     attach_runtime_devices(cfg, incus, name)

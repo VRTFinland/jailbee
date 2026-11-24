@@ -73,6 +73,7 @@ HOST_COMMANDS: frozenset[str] = frozenset(
         "rename",
         "repo",
         "restart",
+        "resume",
         "retarget",
         "review",
         "serve",

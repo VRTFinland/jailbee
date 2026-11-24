@@ -74,6 +74,34 @@ use it only when a clean stop hangs.
 
 More: [Commands](commands.md), [Autostart](faq.md#how-do-i-run-setup-steps-or-start-services-automatically)
 
+## Before and after a host reboot
+
+```bash
+jailbee stop --all          # list and confirm every running development container
+# Reboot the host, then:
+jailbee resume
+```
+
+These commands cover all repositories, including mount-mode containers and
+orchestrated children. `stop --all --yes` skips the one confirmation; without
+`--yes`, a non-interactive invocation exits 2. Containers with a live background
+job are skipped with a warning: wait for the job, then repeat the command before
+rebooting. JailBee's registry mirror, LiteLLM, display and egress proxy containers
+are left to their own Incus `boot.autostart` settings.
+
+Successful clean stops, including agent-session capture, are saved in
+`${XDG_STATE_HOME:-~/.local/state}/jailbee/resume-set.json`. Repeating the stop
+preserves earlier entries. `resume` starts that set and repairs running
+containers whose `autostart` tmux session is missing after Incus restarted them.
+Healthy running sessions are left alone. It runs the normal start setup and
+`on_start` autostart (services, agent windows and session restoration), waiting
+for all stages. Each container is reported independently; failures and live-job
+skips on resume exit non-zero, retain retry state, and do not block other
+containers. Repeat `resume` after fixing the failure. Nothing to do exits 0.
+Missing containers or unavailable repository configurations are reported rather
+than silently forgotten. Restricted remote sessions cannot use either
+host-wide operation; ordinary `stop NAME` remains available.
+
 ## Snapshots and rollback
 
 ```bash

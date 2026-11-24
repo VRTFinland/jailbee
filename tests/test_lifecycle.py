@@ -6027,6 +6027,22 @@ def test_boot_container_starts_when_already_stopped(tmp_path, mocker):
     assert events == ["detach", "start", "attach"]
 
 
+@pytest.mark.parametrize(
+    "state, expected",
+    [("Running", ["detach", "attach"]), ("Stopped", ["detach", "start", "attach"])],
+)
+def test_boot_container_resume_ensures_running_without_reboot(tmp_path, mocker, state, expected):
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.list_containers.return_value = [{"name": "feat-x", "status": state}]
+    events = _boot_events(mocker, incus)
+
+    boot_container(cfg, incus, "feat-x", restart=False, ensure_running=True)
+
+    assert events == expected
+    incus.stop.assert_not_called()
+
+
 def test_boot_container_start_mode_detaches_before_starting(tmp_path, mocker):
     """`jailbee start` shares the reboot ordering: a stale device left over
     from a previous boot is detached before the container comes up, not

@@ -681,6 +681,26 @@ effective config. Service definitions still follow the container working tree,
 bounded by the stored approved service-elevation envelope.
 See [Configuration](../../../config.md#where-does-the-autostart-config-come-from).
 
+### Host reboot
+
+On the host, `jailbee stop --all` lists all running development containers
+across repositories and asks one confirmation; scripts must pass `--yes` or
+exit 2. It captures agent sessions, cleanly stops each container, and records
+successful stops in `$XDG_STATE_HOME/jailbee/resume-set.json` (default
+`~/.local/state/jailbee/`). Mount-mode containers and children are included;
+JailBee service containers are excluded. Live background jobs are skipped with
+a warning: repeat the stop after they finish. `--all` excludes NAME and `--force`.
+
+After reboot, `jailbee resume` restores the saved set plus running containers
+without the `autostart` tmux session. It uses normal start setup and waits for
+all `on_start` stages, including services and agent session restore. Healthy
+running sessions stay untouched; failed/incomplete resumes remain retryable
+even if an earlier stage already created tmux. Resume skips live jobs and exits
+non-zero for those skips or failures, continuing with other containers. A no-op
+exits 0. Missing containers/configurations are reported and recorded entries
+are retained. These host-wide operations are refused in restricted remote
+sessions; `stop NAME` remains a container command.
+
 ### `jailbee start|stop|restart [NAME]`
 
 `start` and `restart` re-run autostart (`on_start`). Only `restart` can store
