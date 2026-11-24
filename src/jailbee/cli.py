@@ -1543,7 +1543,10 @@ def config_show(
     # would serialise every entry — including `agents.claude`, which is a
     # ClaudeAgentConfig — through the base AgentConfig shape and silently
     # drop the Claude-only fields (plugins_enabled, seed_onboarding, …).
-    data["agents"] = {name: agent.model_dump(mode="json") for name, agent in cfg.agents.items()}
+    data["agents"] = {
+        **{name: agent.model_dump(mode="json") for name, agent in cfg.agents.items()},
+        **cfg.agent_models().model_dump(mode="json"),
+    }
     typer.echo(yaml.safe_dump(data, sort_keys=False))
 
 
