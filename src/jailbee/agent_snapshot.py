@@ -231,7 +231,12 @@ def _merge_pending(home: Path, proc: Path, source: Path) -> None:
             continue
         candidate = {**saved, "sessions": [*rows, row]}
         if len(json.dumps(candidate, separators=(",", ":")).encode()) + 1 > _LIMIT:
-            remaining.append(row)
+            # A deferred old-boot row is no longer owned by its dead process.
+            # Keep it eligible for retry instead of letting hook pruning drop it.
+            remaining.append(
+                {**row, "pid": "", "procStart": ""}
+                if source == home / REGISTRY_RELPATH else row
+            )
         else:
             rows.append(row)
     _save_pending(path, saved)
@@ -508,8 +513,7 @@ def _boot(
     registered = _json(home / REGISTRY_RELPATH)
     live_ids: set[str] = set()
     if (
-        path != home / SNAPSHOT_RELPATH
-        and isinstance(registered, dict)
+        isinstance(registered, dict)
         and registered.get("boot_id") == _boot_id(proc)
         and isinstance(registered.get("sessions"), list)
     ):

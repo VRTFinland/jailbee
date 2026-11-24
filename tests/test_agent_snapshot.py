@@ -423,6 +423,23 @@ def test_boot_reentry_skips_pending_session_only_while_process_matches(
         assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
 
 
+def test_same_boot_frozen_capture_does_not_relaunch_live_session(tmp_path, monkeypatch):
+    proc = tmp_path / "proc"
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    live(proc, 1)
+    live(proc, 7)
+    monkeypatch.setattr(snapshot.os, "getppid", lambda: 7)
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
+    assert snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"] == []
+    assert snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"] == []
+    assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
+    (proc / "7/stat").unlink()
+    stat = proc / "1/stat"
+    stat.write_text(stat.read_text().replace("777", "888"))
+    assert [row["session_id"] for row in snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]] == [ID]
+
+
 def test_partial_restore_survives_another_clean_stop(tmp_path, monkeypatch):
     other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
     monkeypatch.setattr(snapshot, "PROC", tmp_path / "proc")
@@ -464,9 +481,38 @@ def test_new_boot_hook_cannot_prune_unacknowledged_sessions(
     ] == [ID]
     snapshot.acknowledge(tmp_path, [ID])
     assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
+    (proc / "8/stat").unlink()
+    stat.write_text(stat.read_text().replace("888", "999"))
     assert [row["session_id"] for row in snapshot.boot(tmp_path, proc=proc)["sessions"]] == [
         other_id
     ]
+
+
+def test_registry_overflow_survives_new_boot_hooks(tmp_path, monkeypatch):
+    proc = tmp_path / "proc"
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    live(proc, 1)
+    live(proc, 7)
+    monkeypatch.setattr(snapshot.os, "getppid", lambda: 7)
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    registry = tmp_path / snapshot.REGISTRY_RELPATH
+    payload = json.loads(registry.read_text())
+    payload["sessions"][0]["launcher"] = ["claude", "--append-system-prompt", "x" * 34000]
+    registry.write_text(json.dumps(payload))
+    (proc / "7/stat").unlink()
+    assert len(snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]) == 1
+    other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
+    payload["sessions"][0]["session_id"] = other_id
+    registry.write_text(json.dumps(payload))
+    stat = proc / "1/stat"
+    stat.write_text(stat.read_text().replace("777", "888"))
+    live(proc, 8)
+    monkeypatch.setattr(snapshot.os, "getppid", lambda: 8)
+    new_id = "bbbbbbbb-1234-1234-1234-123456789abc"
+    for _ in range(2):
+        snapshot.register_session(tmp_path, {"session_id": new_id, "cwd": "/new"})
+    snapshot.acknowledge(tmp_path, [ID])
+    assert [row["session_id"] for row in snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]] == [other_id]
 
 
 def test_pending_and_new_capture_are_delivered_in_bounded_batches(tmp_path, monkeypatch):
