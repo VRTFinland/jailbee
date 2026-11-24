@@ -465,7 +465,7 @@ def test_outbox_batch_delete_progress_rows_and_deferred_refresh(
                     assert controller.state.status == ("pr/a.json: already in the delete queue",)
                     await pilot.pause()
                     assert "already in the delete queue" in screen_text(app)
-                    await pilot.press("end", "space", "d", "down", "enter")
+                    await pilot.press("end", "left", "space", "d", "down", "enter")
                     assert controller.state.question is None
                     assert "Deleting 1/4" in screen_text(app)
                 release[0].set()
@@ -489,7 +489,7 @@ def test_outbox_batch_delete_progress_rows_and_deferred_refresh(
                 assert not isinstance(app.session.overlay, tsession.OutboxState)
                 release[3 if queue_extra else 2].set()
                 await _settle_outbox(app, pilot, controller)
-                assert [a[1] for a in calls] == ["drop"] * (4 if queue_extra else 3) + ["ls"]
+                assert [a[1] for a in calls] == ["drop"] * (4 if queue_extra else 3) + ["ls"], calls
                 sent_loader.assert_called_once_with()
                 assert permissions.call_count > 0
                 assert (
@@ -516,8 +516,9 @@ def test_outbox_batch_delete_progress_rows_and_deferred_refresh(
 
 
 @pytest.mark.parametrize("separate_batches", [False, True])
+@pytest.mark.parametrize("first_fails", [False, True])
 def test_finished_proposal_can_be_deleted_again_while_another_drop_runs(
-    mocker, tmp_path, separate_batches
+    mocker, tmp_path, separate_batches, first_fails
 ):
     import asyncio
     from threading import Event
@@ -525,9 +526,9 @@ def test_finished_proposal_can_be_deleted_again_while_another_drop_runs(
     from jailbee.dashboard.jobs import JobRunner
     from tests.dashboard_fixtures import cfg_group
     from tests.dashboard_pilot import container_menu_keys, make_app
-    from tests.test_dashboard_outbox import _container, _listing, _proposal
+    from tests.test_dashboard_outbox import _action, _container, _listing, _proposal
 
-    proposals = [_proposal("pr/a.json"), _proposal("pr/b.json")]
+    proposals = [_proposal("pr/a.json", actions=[_action(0), _action(1)]), _proposal("pr/b.json")]
     entered, release = Event(), Event()
     first_entered, first_release = Event(), Event()
     drops = []
@@ -538,7 +539,14 @@ def test_finished_proposal_can_be_deleted_again_while_another_drop_runs(
             if len(drops) == 1:
                 first_entered.set()
                 assert first_release.wait(10), "test did not release a"
-                return tsession.da.CliResult(False, "locked")
+                if first_fails:
+                    return tsession.da.CliResult(False, "locked")
+                proposals[0]["actions"].pop(1)
+                proposals[0]["revision"] = "r2"
+                return tsession.da.CliResult(True, "done", "")
+            if argv[3] == "pr/a.json":
+                if argv[argv.index("--revision") + 1] != ("r1" if first_fails else "r2"):
+                    return tsession.da.CliResult(False, "proposal changed; refresh required")
             if argv[3] == "pr/b.json":
                 entered.set()
                 assert release.wait(10), "test did not release b"
@@ -557,12 +565,16 @@ def test_finished_proposal_can_be_deleted_again_while_another_drop_runs(
                     await pilot.press(key)
                 controller = app.session.outbox
                 await _settle_outbox(app, pilot, controller)
-                if separate_batches:
-                    await pilot.press("d", "down", "enter")
-                    assert await asyncio.to_thread(first_entered.wait, 2)
-                    await pilot.press("down", "d", "down", "enter")
+                if first_fails:
+                    select = ()
                 else:
-                    await pilot.press("space", "down", "space", "d", "down", "enter")
+                    select = ("enter", "down", "down")  # a's last action
+                if separate_batches:
+                    await pilot.press(*select, "d", "down", "enter")
+                    assert await asyncio.to_thread(first_entered.wait, 2)
+                    await pilot.press("end", "d", "down", "enter")
+                else:
+                    await pilot.press(*select, "space", "end", "space", "d", "down", "enter")
                     assert await asyncio.to_thread(first_entered.wait, 2)
                 first_release.set()
                 async with asyncio.timeout(5):
@@ -579,6 +591,7 @@ def test_finished_proposal_can_be_deleted_again_while_another_drop_runs(
                 release.set()
                 await _settle_outbox(app, pilot, controller)
                 assert drops == ["pr/a.json", "pr/b.json", "pr/a.json"]
+                assert not any(c.proposals for c in controller.state.containers)
             finally:
                 first_release.set()
                 release.set()

@@ -952,6 +952,30 @@ class OutboxController:
                 continue
             before = self._delete_attempted
             done, failure = yield from self._delete_proposal(name, listed, chosen)
+            if done and all(k[2] is not None for k in chosen):
+                # Child drops change the revision and shift indices. Refresh this
+                # proposal before releasing it for another confirmed delete.
+                fetched = self._parse((yield self._ls_argv()))
+                if isinstance(fetched, str):
+                    status.append(fetched)
+                else:
+                    fresh = _find(fetched, name, pid)
+                    containers = tuple(
+                        replace(
+                            c,
+                            proposals=tuple(
+                                replacement
+                                for p in c.proposals
+                                if (replacement := fresh if p.id == pid else p) is not None
+                            ),
+                        )
+                        if c.name == name
+                        else c
+                        for c in self.state.containers
+                    )
+                    self.state = self._listed(
+                        containers, cursor=None, status=self.state.status, refresh_metadata=False
+                    )
             self._deleting.discard((name, pid))
             # Safety refusals skip this proposal's remaining children too: progress
             # counts handled selections, not only successful CLI calls.

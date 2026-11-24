@@ -532,7 +532,7 @@ def test_delete_marked_items_highest_index_first():
     ]
     # The first drop uses the shown revision; subsequent child drops need fresh ones.
     order = [argv[1] for _, argv in runner.calls]
-    assert order == ["ls", "drop", "ls", "drop", "ls", "drop", "ls"]
+    assert order == ["ls", "drop", "ls", "drop", "ls", "drop", "ls", "ls"]
     assert ctl.state.marks == frozenset()
     assert runner.changes == 1
     remaining = ctl.state.containers[0].proposals[0].actions

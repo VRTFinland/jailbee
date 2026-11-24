@@ -1431,7 +1431,8 @@ preview in the list's place, and Esc, Enter or `v` goes back to the list.
   their proposals before the successful-deletion count. Repeated
   `r` requests coalesce into the one final reload. Each proposal's first drop
   uses the shown revision directly; multiple child drops within one proposal
-  re-read between drops to guard changed indices and dependent scope.
+  re-read between drops to guard changed indices and dependent scope, then
+  refresh the edited proposal before releasing it for another delete.
 - **Publish** reads the plan (`outbox apply --dry-run -o json`) and shows it
   in the preview with **Publish**, **Publish as draft review** (when the
   proposal has a pending review) and **Cancel**; the publish then runs in the
