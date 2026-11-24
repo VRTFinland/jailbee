@@ -3421,8 +3421,13 @@ Instructions that apply to every wired agent in every container of every repo â€
 model preferences, house rules â€” go in one file on the host:
 `~/.config/jailbee/AGENTS.md` (`$XDG_CONFIG_HOME/jailbee/AGENTS.md` if set).
 
-Jailbee prepends a built-in container-environment preamble to these optional
-instructions and stages them in `~/.local/share/jailbee/agent-instructions/<agent>/by-file/<file>/`
+Jailbee prepends a five-line container-environment preamble to these optional
+instructions: identify the JailBee container via `/etc/jailbee/container.json`,
+load the **jailbee-container** skill for services, logs, network, outbox, host
+status and model guidance, and use **jailbee-orchestration-child** when the
+agent is a child (by environment variable, first prompt or adoption). Detailed
+environment instructions live in the skill, not the always-loaded preamble.
+Jailbee stages the preamble followed by the host instructions in `~/.local/share/jailbee/agent-instructions/<agent>/by-file/<file>/`
 (`$XDG_DATA_HOME/jailbee/agent-instructions/...` if set), under each
 agent's own file name, and mounts that directory read-only into containers
 where the agent is enabled and has `global_instructions` configured. Currently
@@ -3439,6 +3444,9 @@ model-policy enforcement; they do not configure the agent running on the host.
   `jailbee start`/`restart`, `jailbee ls`, `jailbee shell` and `jailbee tmux`.
   A session reads it when it starts, so an edit reaches the next agent session,
   not one already running. No `jailbee apply` needed after the first.
+  `jailbee apply` also re-stages an updated built-in preamble and bundled skills
+  for running containers through their existing directory mounts; no container
+  restart is needed for these text updates.
 - **No file:** the staged copy contains the built-in preamble alone. Removing
   the source restores that copy on the next refresh.
   Each (agent, file name) pair has its own staging directory, so a repo that
