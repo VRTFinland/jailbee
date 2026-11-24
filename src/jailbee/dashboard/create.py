@@ -100,7 +100,7 @@ def start_create(
                     in_error_box = True
                 elif line.startswith("╰"):
                     in_error_box = False
-                elif line in {"Aborted!", "Aborted.", "Error: cancelled"} or (
+                elif line in {"Aborted!", "Aborted."} or (
                     in_error_box
                     and line.startswith("│")
                     and line.endswith("│")

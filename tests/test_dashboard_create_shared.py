@@ -134,6 +134,8 @@ def test_missing_answer_retries_once_with_live_queue_state(tmp_path, result, out
     "output,expected",
     [
         ("╭─ Error ─╮\n│ disk failure │\n╰──────────────╯\n", "disk failure"),
+        ("disk failure\n╭─ Error ─╮\n│   │\n╰─────────╯\n", "disk failure"),
+        ("│ ordinary text │\n", "│ ordinary text │"),
         ("╭─ Error ─╮\n│ disk failure │\n│ on volume 1 │\n╰──────────────╯\n", "disk failure on volume 1"),
     ],
 )
@@ -149,16 +151,17 @@ def test_create_failure_notice_contains_full_unboxed_message(tmp_path, output, e
     assert notices == [f"{sys.executable} -c failed: {expected}"]
 
 
-def test_bare_cancelled_failure_is_not_a_cancellation(tmp_path):
+@pytest.mark.parametrize("output", ["cancelled\n", "Error: cancelled\n"])
+def test_bare_cancelled_failure_is_not_a_cancellation(tmp_path, output):
     def questions(runs, done, progress):
-        done(ActionOutcome([RunResult(status=1, cancelled=True)], "cancelled\n", ["cancelled\n"]))
+        done(ActionOutcome([RunResult(status=1, cancelled=True)], output, [output]))
 
     queue, notices, _ = _start(
         tmp_path,
         code="import sys; print('confirmation needed'); sys.exit(2)",
         run_questions=questions,
     )
-    assert notices == [f"{sys.executable} -c failed: cancelled"]
+    assert notices == [f"{sys.executable} -c failed: {output.strip()}"]
     assert next(iter(queue)).state == "failed"
 
 

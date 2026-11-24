@@ -44,16 +44,23 @@ class JobResult:
     def failure_line(self) -> str:
         """The last error reason, condensed for a one-line notice."""
         lines = [line.strip() for line in self.stderr.splitlines() if line.strip()]
-        for index in range(len(lines) - 1, -1, -1):
-            line = lines[index]
-            if line.startswith("│") and line.endswith("│"):
-                end = index + 1
-                while index > 0 and lines[index - 1].startswith("│") and lines[index - 1].endswith("│"):
-                    index -= 1
-                return " ".join(part[1:-1].strip() for part in lines[index:end]).strip()
-            if any(not ("─" <= char <= "╿" or char.isspace()) for char in line):
-                return line
-        return ""
+        reasons: list[str] = []
+        box: list[str] | None = None
+        for line in lines:
+            if line.startswith("╭─ Error "):
+                box = []
+            elif box is not None and line.startswith("╰"):
+                reason = " ".join(box).strip()
+                if reason:
+                    reasons.append(reason)
+                box = None
+            elif box is not None and line.startswith("│") and line.endswith("│"):
+                text = line[1:-1].strip()
+                if text:
+                    box.append(text)
+            elif any(not ("─" <= char <= "╿" or char.isspace()) for char in line):
+                reasons.append(line)
+        return reasons[-1] if reasons else ""
 
 
 def needs_terminal(result: JobResult) -> bool:
