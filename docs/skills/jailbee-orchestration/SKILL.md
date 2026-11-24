@@ -47,13 +47,17 @@ work needs:
 - **Child containers** have their own checkout, branch, environment and
   long-running agent session. Use one when work benefits from its own
   development environment: all code, test and config changes, services, long
-  multi-step implementation or whole plans. Small review findings and feature requests
-  also go to a child; a cheap runner is fine, and one child may group findings.
-  Brief it with your findings and
-  acceptance tests. The child implements, tests and commits the plan itself; on `done`,
-  merge or stage its work.
+  multi-step implementation or whole plans.
+  Small review findings and feature requests also go to a child; a cheap
+  runner is fine, and one child may group findings. Brief it with your
+  findings and acceptance tests. The child implements, tests and commits the
+  plan itself; on `done`, merge or stage its work.
 
-The orchestrator's branch receives code changes only through merges of child work and their conflict resolutions. Apart from resolving those conflicts, never make direct code, test or config changes in the orchestrator's container, even if the work is small or the user asks you to do it yourself.
+The orchestrator's branch receives code changes only through
+merges of child work and their conflict resolutions. Apart from resolving
+those conflicts, make no direct code, test or config changes in the
+orchestrator's container, however small the work, unless the user explicitly
+asks you to.
 Beyond tiny text edits, do other work yourself only when it needs this
 container's own live environment or the user asks you to.
 

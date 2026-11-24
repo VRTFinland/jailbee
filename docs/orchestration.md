@@ -57,8 +57,9 @@ requests and review findings; a cheap runner is fine and one child may group
 findings. The child implements, tests and commits; the orchestrator merges
 or stages its work on `done`. Its branch receives code changes only through
 child merges and their conflict resolutions; apart from resolving those
-conflicts, it makes no direct code changes in its own container. Light text changes (docs, skill wording, tickets or plans) go to a
-fresh subagent (or a forked copy of the agent's own session, not a `fork` child
+conflicts, it makes no direct code changes in its own container unless the
+user explicitly asks. Light text changes (docs, skill wording, tickets or
+plans) go to a fresh subagent (or a forked copy of the agent's own session, not a `fork` child
 container) when saving context matters; tiny text edits can be done inline.
 No-run text edits may use a subagent in a separate git worktree when they
 would collide with the orchestrator's tree. Beyond those tiny text edits,
