@@ -301,6 +301,11 @@ async function jump() {
     unseen.value = null
     const el = target === null ? null : document.getElementById(entryDomId(target))
     if (el) {
+        // A short answer's start already exposes the transcript end. Arm follow
+        // from the destination geometry, never an intermediate animation frame.
+        const destinationY = Math.max(0, el.getBoundingClientRect().top + window.scrollY - readableTop.value)
+        const transcriptBottom = transcriptEl.value!.getBoundingClientRect().bottom + window.scrollY
+        following.value = transcriptBottom - destinationY <= readableBottom() + 1
         scrollProgrammatically(() => {
             if (eink.value) pager.goToElement(el)
             else el.scrollIntoView({block: "start"})

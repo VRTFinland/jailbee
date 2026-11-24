@@ -307,6 +307,28 @@ describe("SessionView live follow", () => {
         }
     })
 
+    it("follows an immediate append when an answer-start jump also reaches the end", async () => {
+        setPageGeometry(5000, 0)
+        let y = 0
+        Object.defineProperty(window, "scrollY", {get: () => y, configurable: true})
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            if (this.classList.contains("transcript")) return {top: -y, bottom: 1400 - y} as DOMRect
+            return {top: this.id === "entry-a1" ? 1200 - y : 0, bottom: 0} as DOMRect
+        })
+        const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {})
+        Element.prototype.scrollIntoView = vi.fn(() => { y = 1200 })
+        try {
+            const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+            await append(sessionKey, [answer])
+            await wrapper.get(".jump-latest").trigger("click")
+            await append(sessionKey, [{...answer, id: "a2"}])
+            expect(scrollTo).toHaveBeenCalled()
+            expect(wrapper.find(".new-messages").exists()).toBe(false)
+        } finally {
+            Reflect.deleteProperty(Element.prototype, "scrollIntoView")
+        }
+    })
+
     it("keeps the first unseen answer as the New messages jump target", async () => {
         setPageGeometry(5000, 100)
         vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
