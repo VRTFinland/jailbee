@@ -234,10 +234,14 @@ def register_session(
             for row in rows
             if isinstance(row, dict)
             and row.get("session_id") != sid
-            and (not row.get("ended") or (
-                isinstance(row.get("pid"), str) and bool(row["pid"])
-                and _start(PROC, row["pid"]) == row.get("procStart")
-            ))
+            and (
+                not row.get("ended")
+                or (
+                    isinstance(row.get("pid"), str)
+                    and bool(row["pid"])
+                    and _start(PROC, row["pid"]) == row.get("procStart")
+                )
+            )
             and (ended or not pid or (row.get("pid"), row.get("procStart")) != (pid, start))
         ]
         rows.append(
