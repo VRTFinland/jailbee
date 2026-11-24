@@ -861,6 +861,20 @@ def test_pr_push_does_not_update_head_ref_after_failure(mocker, tmp_path, failur
     update_ref.assert_not_called()
 
 
+def test_pr_push_warns_when_cached_head_ref_cannot_be_updated(mocker, tmp_path):
+    _setup(mocker, tmp_path)
+    mocker.patch("jailbee.sync.publish_branch_from_container", return_value=_publish_result())
+    mocker.patch("jailbee.pr.create_pr", return_value=_pr_created())
+    mocker.patch("jailbee.git.rev_parse", return_value=None)
+    update_ref = mocker.patch("jailbee.git.update_ref", return_value=False)
+
+    result = CliRunner().invoke(app, ["pr", "push", "feat-foo"])
+
+    assert result.exit_code == 0, result.output
+    update_ref.assert_called_once()
+    assert "could not refresh the cached PR head" in result.output
+
+
 def test_pr_push_does_not_refresh_a_foreign_pr_head(mocker, tmp_path):
     labels = {
         "user.jailbee.pr": "123",
@@ -3180,6 +3194,8 @@ def _stacked_setup(
 
 def test_stacked_opens_a_pr_based_on_the_reviewed_head(mocker, tmp_path):
     _incus, publish, create, _retarget = _stacked_setup(mocker, tmp_path)
+    mocker.patch("jailbee.git.rev_parse", return_value=None)
+    update_ref = mocker.patch("jailbee.git.update_ref", return_value=True)
 
     result = CliRunner().invoke(
         app, ["pr", "push", "feat-foo", "--stacked", "--as", "fix/worktime-review", "--no-retarget"]
@@ -3190,6 +3206,12 @@ def test_stacked_opens_a_pr_based_on_the_reviewed_head(mocker, tmp_path):
     kwargs = create.call_args.kwargs
     assert kwargs["head"] == "fix/worktime-review"
     assert kwargs["base"] == "contributor/fix-worktime"  # the reviewed PR's head
+    update_ref.assert_called_once_with(
+        tmp_path,
+        "refs/jailbee/pr/123/head",
+        "def5678",
+        old_oid="",
+    )
 
 
 def test_stacked_records_its_own_labels_and_leaves_the_parent_alone(mocker, tmp_path):

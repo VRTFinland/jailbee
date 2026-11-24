@@ -842,12 +842,16 @@ def run_pr_push(
                 # A force-push may replace a divergent cached head, so ancestry
                 # is not a safe freshness test. Compare-and-swap avoids overwriting
                 # an autofetch that changes the ref after this read.
-                git_mod.update_ref(
+                if not git_mod.update_ref(
                     cfg.repo_root,
                     head_ref,
                     publish.fetch.new_oid,
                     old_oid=cached_sha or "",
-                )
+                ):
+                    warn(
+                        f"PR #{created.number} was published, but JailBee could not refresh "
+                        "the cached PR head; SYNC may be stale until the next head fetch."
+                    )
             # The offer to publish what else the container wrote, deliberately *not*
             # adjacent to `render_pr_outcome`: the description this run consumed is
             # recorded just above (here on the create path, inside `apply_pr_updates`
