@@ -101,6 +101,10 @@ let scrollFrame: number | undefined
 const answerAhead = ref(false)
 const unseen = ref<RenderedEntry | null>(null)
 const autoFollow = computed(() => !eink.value || settings.einkFollow)
+// Allow deferred scroll events to arrive before declaring a jump settled;
+// bound the guard even if layout keeps moving indefinitely.
+const SCROLL_STABLE_FRAMES = 3
+const SCROLL_MAX_FRAMES = 120
 const jumpAction = computed<"new" | "answer" | "bottom" | null>(() => {
     if (pending.value.length || unseen.value) return "new"
     if (atTranscriptEnd.value) return null
@@ -131,8 +135,10 @@ function measureVisibility() {
 
 function onScroll() {
     measureVisibility()
-    if (atTranscriptEnd.value) following.value = true
-    else if (!programmaticScroll && window.scrollY < lastScrollY) following.value = false
+    if (!programmaticScroll) {
+        if (atTranscriptEnd.value) following.value = true
+        else if (window.scrollY < lastScrollY) following.value = false
+    }
     lastScrollY = window.scrollY
 }
 
@@ -143,7 +149,7 @@ function finishProgrammaticScroll() {
 }
 
 /** Scroll events are asynchronous, and smooth scrolling can span many frames. */
-function scrollProgrammatically(scroll: () => void) {
+function scrollProgrammatically(scroll: () => void, followAtDestination = false) {
     finishProgrammaticScroll()
     programmaticScroll = true
     let previousY = window.scrollY
@@ -152,8 +158,11 @@ function scrollProgrammatically(scroll: () => void) {
     const settle = () => {
         stableFrames = window.scrollY === previousY ? stableFrames + 1 : 0
         previousY = window.scrollY
-        if (stableFrames >= 3 || ++frames >= 120) finishProgrammaticScroll()
-        else scrollFrame = requestAnimationFrame(settle)
+        if (stableFrames >= SCROLL_STABLE_FRAMES || ++frames >= SCROLL_MAX_FRAMES) {
+            finishProgrammaticScroll()
+            measureVisibility()
+            if (followAtDestination) following.value = atTranscriptEnd.value
+        } else scrollFrame = requestAnimationFrame(settle)
     }
     scroll()
     scrollFrame = requestAnimationFrame(settle)
@@ -164,9 +173,6 @@ function markScrollIntent() {
     // Real input interrupts a pending jump; every later momentum frame remains
     // a user scroll too, without needing another wheel/touch/key event.
     finishProgrammaticScroll()
-}
-function startScrollbarDrag(event: PointerEvent) {
-    if (event.clientX >= document.documentElement.clientWidth) markScrollIntent()
 }
 function markScrollKey(event: KeyboardEvent) {
     if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markScrollIntent()
@@ -180,7 +186,8 @@ onMounted(() => {
     window.addEventListener("scroll", onScroll, {passive: true})
     window.addEventListener("wheel", markScrollIntent, {passive: true})
     window.addEventListener("touchmove", markScrollIntent, {passive: true})
-    window.addEventListener("pointerdown", startScrollbarDrag, {passive: true})
+    window.addEventListener("pointerdown", markScrollIntent, {passive: true})
+    window.addEventListener("click", markScrollIntent, {capture: true})
     window.addEventListener("keydown", markScrollKey)
     window.addEventListener("resize", measureVisibility)
     if (typeof ResizeObserver !== "undefined") {
@@ -193,7 +200,8 @@ onBeforeUnmount(() => {
     window.removeEventListener("scroll", onScroll)
     window.removeEventListener("wheel", markScrollIntent)
     window.removeEventListener("touchmove", markScrollIntent)
-    window.removeEventListener("pointerdown", startScrollbarDrag)
+    window.removeEventListener("pointerdown", markScrollIntent)
+    window.removeEventListener("click", markScrollIntent, {capture: true})
     finishProgrammaticScroll()
     window.removeEventListener("keydown", markScrollKey)
     window.removeEventListener("resize", measureVisibility)
@@ -296,7 +304,7 @@ async function jump() {
         scrollProgrammatically(() => {
             if (eink.value) pager.goToElement(el)
             else el.scrollIntoView({block: "start"})
-        })
+        }, true)
         following.value = atTranscriptEnd.value
     } else {
         following.value = true

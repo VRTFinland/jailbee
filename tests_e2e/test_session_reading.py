@@ -59,6 +59,18 @@ def open_transcript(
     return server, transcript
 
 
+def wait_for_scroll_settled(page: Page) -> None:
+    page.evaluate("""async () => {
+        let previous = window.scrollY;
+        let stable = 0;
+        while (stable < 4) {
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            stable = previous === window.scrollY ? stable + 1 : 0;
+            previous = window.scrollY;
+        }
+    }""")
+
+
 def assert_latest_starts_below_header(page: Page) -> None:
     page.wait_for_function("""() => {
         const replies = document.querySelectorAll('.entry.assistant');
@@ -182,12 +194,13 @@ def test_keyboard_momentum_leaves_follow_off_after_end(
     expect(page.get_by_text("Followed after manual End.", exact=True)).to_be_in_viewport()
     expect(page.locator(".jump-latest")).to_have_count(0)
 
-    # End includes the answer-jump spacer. One animated PageUp starts with the
+    # Move into the answer-jump spacer. One animated PageUp starts with the
     # transcript end still visible, then leaves it without another key event.
-    page.keyboard.press("End")
-    page.wait_for_function(
-        "() => window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 1"
-    )
+    wait_for_scroll_settled(page)
+    before = page.evaluate("window.scrollY")
+    page.mouse.wheel(0, 200)
+    page.wait_for_function("previous => window.scrollY > previous + 150", arg=before)
+    wait_for_scroll_settled(page)
     page.evaluate("""() => {
         window.scrollFrames = [];
         window.addEventListener('scroll', () => window.scrollFrames.push({
@@ -202,16 +215,7 @@ def test_keyboard_momentum_leaves_follow_off_after_end(
         const frames = window.scrollFrames;
         return frames.some(frame => frame.end) && frames.some(frame => !frame.end);
     }""")
-    # Wait for the browser's keyboard animation to settle, not a fixed sleep.
-    page.evaluate("""async () => {
-        let previous = window.scrollY;
-        let stable = 0;
-        while (stable < 4) {
-            await new Promise(resolve => requestAnimationFrame(resolve));
-            stable = previous === window.scrollY ? stable + 1 : 0;
-            previous = window.scrollY;
-        }
-    }""")
+    wait_for_scroll_settled(page)
     position = page.evaluate("window.scrollY")
     with transcript.open("a") as stream:
         stream.write(record(26, "assistant", "Do not pull the reader back."))

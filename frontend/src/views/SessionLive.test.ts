@@ -292,6 +292,11 @@ describe("SessionView live follow", () => {
             const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
             await append(sessionKey, [answer])
             await wrapper.get(".jump-latest").trigger("click")
+            // An asynchronous jump may pass the end before settling at the
+            // answer's start (e.g. when already in the trailing spacer).
+            y = 3400
+            window.dispatchEvent(new Event("scroll"))
+            y = 1200
             window.dispatchEvent(new Event("scroll"))
             scrollTo.mockClear()
             await append(sessionKey, [{...answer, id: "a2"}])
@@ -353,6 +358,29 @@ describe("SessionView live follow", () => {
         scrollTo.mockClear()
         await append(sessionKey, [{...answer, id: "a3"}])
         expect(scrollTo).toHaveBeenCalled()
+    })
+
+    it("lets a page-turn click interrupt an unfinished automatic follow", async () => {
+        updateSettings({displayProfile: "eink", einkFollow: true})
+        setPageGeometry(5000, 0)
+        let y = 3200
+        Object.defineProperty(window, "scrollY", {get: () => y, configurable: true})
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            if (this.classList.contains("transcript")) return {top: -y, bottom: 4000 - y} as DOMRect
+            if (this.classList.contains("page-nav")) return {top: 800, bottom: 800} as DOMRect
+            return {top: 0, bottom: 0} as DOMRect
+        })
+        const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation((_x, top) => {
+            y = top ?? 0
+            window.dispatchEvent(new Event("scroll"))
+        })
+        const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        await append(sessionKey, [answer])
+        await wrapper.get("button.prev").trigger("click")
+        scrollTo.mockClear()
+        await append(sessionKey, [{...answer, id: "a2"}])
+        expect(scrollTo).not.toHaveBeenCalled()
+        expect(wrapper.get(".new-messages").text()).toBe("1 new message ↓")
     })
 
     it("keeps the connection notice with the session context", async () => {
