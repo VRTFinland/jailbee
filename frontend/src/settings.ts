@@ -11,6 +11,7 @@ import {readItem, writeItem} from "./storage"
 
 export type Theme = "auto" | "light" | "dark" | "eink"
 export const THEMES: readonly Theme[] = ["auto", "light", "dark", "eink"]
+export const THEME_LABELS: Record<Theme, string> = {auto: "Auto", light: "Light", dark: "Dark", eink: "E-ink"}
 /** How the UI behaves: "eink" pages instead of scrolling and never animates. */
 export type DisplayProfile = "normal" | "eink"
 export const DISPLAY_PROFILES: readonly DisplayProfile[] = ["normal", "eink"]

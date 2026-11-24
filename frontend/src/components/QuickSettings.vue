@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import {computed, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
-import {FONT_SIZE_RANGE, settings, THEMES, updateSettings, type Theme} from "../settings"
+import {useRoute} from "vue-router"
+import {FONT_SIZE_RANGE, settings, THEMES, THEME_LABELS, updateSettings} from "../settings"
 
 const props = defineProps<{context?: "containers" | "session" | null}>()
-const themeLabels: Record<Theme, string> = {auto: "Auto", light: "Light", dark: "Dark", eink: "E-ink"}
+const route = useRoute()
 const fonts = [{field: "bodyFontSize", label: "Body", name: "body"}, {field: "codeFontSize", label: "Code", name: "code"}] as const
 const filters = [{mode: "all", label: "All"}, {mode: "running", label: "Running"}, {mode: "active", label: "Active"}] as const
 const filtered = computed(() => props.context === "containers" && settings.containerFilter !== "all")
@@ -25,7 +26,14 @@ function paginate() {
     if (!panel.value) return
     const rows = Array.from(panel.value.querySelectorAll<HTMLElement>(".menu-row"))
     rows.forEach(row => { row.hidden = false })
-    const available = Math.max(1, window.innerHeight - panel.value.getBoundingClientRect().top - 72)
+    const controls = panel.value.querySelector<HTMLElement>(".menu-pages")
+    if (controls) controls.hidden = false
+    const styles = getComputedStyle(panel.value)
+    const inset = parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom)
+        + parseFloat(styles.borderTopWidth) + parseFloat(styles.borderBottomWidth)
+    const guard = document.querySelector(".bottom-guard")?.getBoundingClientRect().height ?? 32
+    const available = Math.max(1, window.innerHeight - panel.value.getBoundingClientRect().top
+        - guard - inset - (controls?.getBoundingClientRect().height ?? 0))
     pages = [[]]
     let height = 0
     for (const row of rows) {
@@ -39,6 +47,7 @@ function paginate() {
     }
     pageCount.value = pages.length
     page.value = Math.min(page.value, pages.length - 1)
+    if (controls) controls.hidden = pageCount.value <= 1
     showPage()
 }
 function showPage() {
@@ -62,13 +71,18 @@ async function close() {
     await nextTick()
     trigger.value?.focus({preventScroll: true})
 }
+watch(() => route.path, () => { if (open.value) void close() })
 async function toggle() {
     if (open.value) return close()
     open.value = true
     page.value = 0
     await nextTick()
     paginate()
-    panel.value?.querySelector<HTMLElement>("button, a, input, select")?.focus({preventScroll: true})
+    focusable()[0]?.focus({preventScroll: true})
+}
+function focusable(): HTMLElement[] {
+    return Array.from(panel.value?.querySelectorAll<HTMLElement>("button:not(:disabled), a, input, select") ?? [])
+        .filter(el => !el.closest("[hidden]"))
 }
 function onKey(event: KeyboardEvent) {
     if (!open.value) return
@@ -83,8 +97,7 @@ function onKey(event: KeyboardEvent) {
         turn(["PageDown", "m"].includes(event.key) ? 1 : -1)
     }
     if (event.key === "Tab") {
-        const controls = Array.from(panel.value?.querySelectorAll<HTMLElement>("button:not(:disabled), a, input, select") ?? [])
-            .filter(el => !el.closest("[hidden]"))
+        const controls = focusable()
         const first = controls[0]
         const last = controls[controls.length - 1]
         if (event.shiftKey && (document.activeElement === first || document.activeElement === panel.value)) {
@@ -124,7 +137,7 @@ onBeforeUnmount(() => {
                     :disabled="settings[font.field] >= FONT_SIZE_RANGE.max"
                     @click="updateSettings({[font.field]: settings[font.field] + 1})">+</button>
             </div>
-            <button type="button" class="menu-row theme-cycle" :aria-label="`Theme: ${themeLabels[settings.theme]}`" @click="cycleTheme">Theme: {{ themeLabels[settings.theme] }}</button>
+            <button type="button" class="menu-row theme-cycle" :aria-label="`Theme: ${THEME_LABELS[settings.theme]}`" @click="cycleTheme">Theme: {{ THEME_LABELS[settings.theme] }}</button>
             <template v-if="context">
                 <div class="menu-row view-heading">View</div>
                 <template v-if="context === 'containers'">
@@ -143,7 +156,7 @@ onBeforeUnmount(() => {
                 </template>
             </template>
             <router-link class="menu-row" :to="{name: 'settings'}" @click="close">Settings</router-link>
-            <nav v-if="pageCount > 1" class="menu-pages" aria-label="Settings pages">
+            <nav class="menu-pages" hidden aria-label="Settings pages">
                 <button type="button" aria-label="Previous settings page" :disabled="page === 0" @click="turn(-1)">&uarr;</button>
                 <span role="status">{{ page + 1 }} / {{ pageCount }}</span>
                 <button type="button" aria-label="Next settings page" :disabled="page === pageCount - 1" @click="turn(1)">&darr;</button>
@@ -159,9 +172,11 @@ onBeforeUnmount(() => {
 .quick-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 20%); z-index: -1; }
 .quick-panel { position: absolute; top: 3rem; right: 0; width: min(22rem, calc(100vw - 2rem)); padding: 0.5rem; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); box-shadow: 0 4px 16px rgb(0 0 0 / 20%); }
 .menu-row { display: flex; align-items: center; gap: 0.5rem; box-sizing: border-box; width: 100%; min-height: 2.75rem; padding: 0.25rem 0.5rem; margin: 0; color: inherit; text-decoration: none; font: inherit; border: 0; background: transparent; text-align: left; }
-.menu-row[hidden] { display: none; }
+.menu-row[hidden], .menu-pages[hidden] { display: none; }
 .menu-row[aria-pressed="true"] { background: var(--notice-bg); outline: 2px solid var(--accent); outline-offset: -2px; }
-.font-row > span { flex: 1; }
+.font-row { flex-wrap: wrap; }
+.font-row > span { flex: 1 1 5rem; }
+.font-row button { flex-shrink: 0; }
 .quick-panel button, .quick-panel select { font: inherit; color: inherit; min-height: 2.75rem; }
 .font-row button, .menu-pages button { min-width: 2.75rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .context-row { justify-content: space-between; flex-wrap: wrap; }

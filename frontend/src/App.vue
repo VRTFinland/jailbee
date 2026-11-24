@@ -110,7 +110,7 @@ onBeforeUnmount(() => {
         <p role="alert">This page is out of date; reload.</p>
         <button type="button" @click="reload">Reload</button>
     </aside>
-    <QuickSettings :key="route.path" :context="settingsContext" />
+    <QuickSettings :context="settingsContext" />
     <!-- Route-specific documents must reload and release their live follow on navigation. -->
     <router-view :key="route.path" />
 </template>

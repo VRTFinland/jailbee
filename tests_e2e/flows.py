@@ -40,6 +40,9 @@ def reveal_setting(page: Page, role: str, name: str) -> None:
     target = panel.get_by_role(role, name=name, exact=True)  # type: ignore[arg-type]  # Shared role-based step.
     while not target.is_visible():
         next_page = panel.get_by_role("button", name="Next settings page")
+        if not next_page.is_visible():
+            # A freshly reloaded route may still be mounting its contextual rows.
+            break
         expect(next_page).to_be_enabled()
         next_page.click()
     expect(target).to_be_visible()

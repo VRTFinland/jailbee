@@ -57,6 +57,24 @@ describe("Quick settings", () => {
         expect(wrapper.find(".view-heading").exists()).toBe(false)
     })
 
+    it("edits the existing e-ink follow preference independently of normal follow", async () => {
+        settings.displayProfile = "eink"
+        const wrapper = await menu("session")
+        await wrapper.get('[aria-label="Follow new messages"]').setValue(true)
+        expect(localStorage.getItem("jailbee.einkFollow")).toBe("1")
+        expect(settings.followNewMessages).toBe(true)
+        await wrapper.get('[aria-label="Follow new messages"]').setValue(false)
+        expect(settings.einkFollow).toBe(false)
+    })
+
+    it("opens with focus inside even when the first font stepper is disabled", async () => {
+        settings.bodyFontSize = 12
+        const wrapper = await menu()
+        expect(document.activeElement).toBe(wrapper.get('[aria-label="Increase body font size"]').element)
+        await wrapper.get('[aria-label="Increase body font size"]').trigger("keydown", {key: "Tab", shiftKey: true})
+        expect(document.activeElement).toBe(wrapper.get('.quick-panel a').element)
+    })
+
     it("paginates whole rows on a short e-ink screen and keeps keyboard focus inside", async () => {
         settings.displayProfile = "eink"
         vi.stubGlobal("innerHeight", 350)

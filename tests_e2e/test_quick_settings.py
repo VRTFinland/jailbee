@@ -86,6 +86,24 @@ def test_menu_context_paging_and_live_preferences(
     expect(page.locator(".filter-notice")).to_have_count(0)
 
 
+def test_large_font_menu_pages_fit_above_the_bottom_guard(logged_in: Page) -> None:
+    page = logged_in
+    page.set_viewport_size({"width": 390, "height": 440})
+    open_settings(page)
+    size = page.get_by_role("slider", name="Body:")
+    size.focus()
+    size.press("End")
+    open_quick_settings(page)
+    panel = page.get_by_role("dialog", name="Quick settings")
+    while True:
+        assert panel.evaluate("el => el.getBoundingClientRect().bottom <= innerHeight - 32")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        next_page = panel.get_by_role("button", name="Next settings page")
+        if not next_page.is_visible() or next_page.is_disabled():
+            break
+        next_page.click()
+
+
 def test_menu_follow_opt_out_keeps_live_entries_from_scrolling(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path
 ) -> None:

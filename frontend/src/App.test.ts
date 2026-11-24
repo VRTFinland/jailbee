@@ -62,6 +62,7 @@ describe("App", () => {
         await wrapper.get('.quick-panel a').trigger("click")
         await flushPromises()
         expect(router.currentRoute.value.name).toBe("settings")
+        expect(wrapper.find(".quick-panel").exists()).toBe(false)
         expect(wrapper.get("input.body-size").element).toHaveProperty("value", "17")
         await wrapper.get("input.body-size").setValue("20")
         await icon().trigger("click")

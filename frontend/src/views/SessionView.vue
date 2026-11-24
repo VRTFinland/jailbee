@@ -529,6 +529,7 @@ watch(
     border-bottom: 1px solid var(--border);
 }
 .bar {
+    min-height: 2.75rem;
     display: flex;
     align-items: baseline;
     justify-content: space-between;
