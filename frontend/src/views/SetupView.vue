@@ -81,8 +81,8 @@ async function submit() {
 <style scoped>
 .setup {
     max-width: 26rem;
-    margin: 4rem auto;
-    padding: 0 var(--space-3);
+    margin: 0 auto;
+    padding: max(4rem, 64px) var(--space-3) 0;
 }
 .form {
     display: flex;

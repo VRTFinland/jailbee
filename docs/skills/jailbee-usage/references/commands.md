@@ -445,7 +445,8 @@ link opens the full settings page; both edit the same per-device localStorage
 preferences without Save. Session/subagent menus add Follow new messages (normal
 on by default, e-ink opt-in), Show thinking and Agent context; container pages add
 no contextual controls. Escape or an outside click closes the menu and restores
-focus to its icon. Short screens paginate whole menu rows with up/down buttons,
+focus to its icon; Escape on the native Agent context select is left to that control.
+Navigation closes the menu without restoring icon focus. Short screens paginate whole menu rows with up/down buttons,
 PageUp/PageDown (also n/m on e-ink), never a scrolling popover; e-ink has no shadow.
 The front page and repository menus have three container filters: All,
 Running (Incus state Running), and Active (the terminal dashboard's non-grey

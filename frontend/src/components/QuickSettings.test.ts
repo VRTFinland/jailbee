@@ -43,7 +43,11 @@ describe("Quick settings", () => {
         const wrapper = await menu("containers")
         await wrapper.get('[aria-label="Active"]').trigger("click")
         expect(localStorage.getItem("jailbee.containerFilter")).toBe("active")
-        expect(wrapper.find(".filter-marker").exists()).toBe(true)
+        const icon = wrapper.get('button[aria-label="Quick settings"]')
+        const description = icon.attributes("aria-describedby")
+        expect(description).toBeTruthy()
+        expect(document.getElementById(description!)?.textContent).toContain("Container filter enabled")
+        expect(wrapper.get('[role="group"][aria-label="Container filter"]').findAll('button')).toHaveLength(3)
         expect(wrapper.find('[aria-label="Show thinking"]').exists()).toBe(false)
         await wrapper.setProps({context: "session"})
         expect(wrapper.find('[aria-label="Active"]').exists()).toBe(false)
@@ -93,6 +97,39 @@ describe("Quick settings", () => {
         ;(wrapper.get('[aria-label="Next settings page"]').element as HTMLButtonElement).focus()
         await wrapper.get('[aria-label="Next settings page"]').trigger("keydown", {key: "Tab"})
         expect(document.activeElement).toBe(wrapper.get('[aria-label="Decrease body font size"]').element)
+    })
+
+    it("does not restore trigger focus on navigation", async () => {
+        const wrapper = await menu()
+        const icon = wrapper.get('button[aria-label="Quick settings"]')
+        await wrapper.get('a').trigger('click')
+        await flushPromises()
+        expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+        expect(document.activeElement).not.toBe(icon.element)
+    })
+
+    it("does not restore trigger focus on a route change", async () => {
+        const router = createRouter({history: createMemoryHistory(), routes: [
+            {path: "/", component: {template: "<div />"}},
+            {path: "/other", component: {template: "<div />"}},
+            {path: "/settings", name: "settings", component: {template: "<div />"}},
+        ]})
+        await router.push("/")
+        const wrapper = mount(QuickSettings, {attachTo: document.body, global: {plugins: [router]}})
+        mounted.push(wrapper)
+        const icon = wrapper.get('button[aria-label="Quick settings"]')
+        await icon.trigger("click")
+        await flushPromises()
+        await router.push("/other")
+        await flushPromises()
+        expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+        expect(document.activeElement).not.toBe(icon.element)
+    })
+
+    it("lets Escape reach a native select without dismissing the menu", async () => {
+        const wrapper = await menu("session")
+        await wrapper.get('select').trigger('keydown', {key: 'Escape'})
+        expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
     })
 
     it("opens from the icon, closes by icon, Escape and backdrop, and restores focus", async () => {
