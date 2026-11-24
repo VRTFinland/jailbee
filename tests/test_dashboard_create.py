@@ -109,9 +109,17 @@ def test_real_cli_cancelled_text_question_leaves_no_failed_entry(mocker, tmp_pat
 
     def spawn(argv, *, cwd, env, prompt_sock):
         return runner.popen_spawn(
-            [sys.executable, "-c", "from tests.test_dashboard_create import run_create_child; run_create_child()",
-             str(config_file), str(created_file), *argv[3:]],
-            cwd=Path(__file__).resolve().parents[1], env=env, prompt_sock=prompt_sock,
+            [
+                sys.executable,
+                "-c",
+                "from tests.test_dashboard_create import run_create_child; run_create_child()",
+                str(config_file),
+                str(created_file),
+                *argv[3:],
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            env=env,
+            prompt_sock=prompt_sock,
         )
 
     def questions(runs, done, progress):
@@ -119,12 +127,29 @@ def test_real_cli_cancelled_text_question_leaves_no_failed_entry(mocker, tmp_pat
             prompts.append(prompt)
             return None
 
-        done(runner.run_actions(runs, transport="none", policy=None, on_prompt=cancel,
-                                spawn=spawn, progress=progress))
+        done(
+            runner.run_actions(
+                runs,
+                transport="none",
+                policy=None,
+                on_prompt=cancel,
+                spawn=spawn,
+                progress=progress,
+            )
+        )
 
-    start_create(jobs, queue, key="new", label="create", argv=[str(fake), "new", "--background"],
-                 cwd=tmp_path, target="new", run_questions=questions, changed=lambda: None,
-                 done=notices.append)
+    start_create(
+        jobs,
+        queue,
+        key="new",
+        label="create",
+        argv=[str(fake), "new", "--background"],
+        cwd=tmp_path,
+        target="new",
+        run_questions=questions,
+        changed=lambda: None,
+        done=notices.append,
+    )
     _drain(jobs)
     assert prompts
     assert queue.empty
