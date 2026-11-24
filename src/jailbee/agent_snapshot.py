@@ -1,6 +1,7 @@
 """Capture and consume container-local agent sessions across restarts."""
 
 import fcntl
+import hashlib
 import json
 import os
 import pwd
@@ -15,6 +16,7 @@ from subprocess import TimeoutExpired
 
 SNAPSHOT_RELPATH = ".local/state/jailbee/agent-sessions.json"
 BOOT_RELPATH = ".local/state/jailbee/boot-agent-sessions.json"
+BOOT_QUEUE_RELPATH = ".local/state/jailbee/boot-agent-queue"
 LAUNCHERS_RELPATH = ".local/state/jailbee/launchers"
 SESSIONS_RELPATH = ".claude/sessions"
 REGISTRY_RELPATH = ".local/state/jailbee/live-agent-sessions.json"
@@ -60,6 +62,11 @@ def _start(proc: Path, pid: str) -> str | None:
         return raw.decode().rsplit(")", 1)[1].split()[19]
     except (UnicodeError, IndexError):
         return None
+
+
+def _boot_id(proc: Path) -> str:
+    kernel = (_read(proc / "sys/kernel/random/boot_id") or b"").decode(errors="replace").strip()
+    return f"{kernel}:{_start(proc, '1') or ''}"
 
 
 def _argv(path: Path) -> list[str]:
@@ -195,6 +202,45 @@ def _lock(fd: int) -> None:
             time.sleep(0.005)
 
 
+def _merge_pending(home: Path, proc: Path, source: Path) -> None:
+    """Durably transfer a bounded batch before pruning its source."""
+    path = home / BOOT_RELPATH
+    saved = _json(path)
+    if not isinstance(saved, dict) or not isinstance(saved.get("sessions"), list):
+        saved = {"version": 1, "source": "capture", "sessions": []}
+    fresh = _json(source)
+    if not isinstance(fresh, dict) or not isinstance(fresh.get("sessions"), list):
+        return
+    rows = saved["sessions"]
+    assert isinstance(rows, list)
+    remaining = []
+    saved["boot_id"] = _boot_id(proc)
+    for row in fresh["sessions"]:
+        if not isinstance(row, dict) or row.get("ended") or (
+            source == home / REGISTRY_RELPATH and row.get("pid")
+            and _start(proc, str(row["pid"])) == row.get("procStart")
+        ):
+            remaining.append(row)
+            continue
+        if any(isinstance(old, dict) and old.get("session_id") == row.get("session_id") for old in rows):
+            continue
+        candidate = {**saved, "sessions": [*rows, row]}
+        if len(json.dumps(candidate, separators=(",", ":")).encode()) + 1 > _LIMIT:
+            payload = json.dumps({"version": 1, "source": "capture", "sessions": [row]}, separators=(",", ":")).encode()
+            if source.parent == home / BOOT_QUEUE_RELPATH:
+                remaining.append(row)
+            else:
+                queued = home / BOOT_QUEUE_RELPATH / (hashlib.sha256(payload).hexdigest() + ".json")
+                _write_snapshot(queued, payload)
+        else:
+            rows.append(row)
+    _write_snapshot(path, json.dumps(saved, separators=(",", ":")).encode())
+    if (source == home / SNAPSHOT_RELPATH or source.parent == home / BOOT_QUEUE_RELPATH) and not remaining:
+        source.unlink(missing_ok=True)
+    else:
+        _write_snapshot(source, json.dumps({**fresh, "sessions": remaining}, separators=(",", ":")).encode())
+
+
 def register_session(
     home: Path,
     data: Mapping[str, object],
@@ -232,6 +278,18 @@ def register_session(
         rows = registry.get("sessions", []) if isinstance(registry, dict) else []
         if not isinstance(rows, list):
             rows = []
+        boot_id = _boot_id(PROC)
+        previous_boot = isinstance(registry, dict) and registry.get("boot_id", ":") != boot_id
+        if previous_boot:
+            _merge_pending(home, PROC, path)
+            registry = _json(path)
+            rows = registry.get("sessions", []) if isinstance(registry, dict) else []
+            if not isinstance(rows, list):
+                rows = []
+        pending = _json(home / BOOT_RELPATH)
+        preserve_frozen = isinstance(pending, dict) and isinstance(pending.get("sessions"), list)
+        if preserve_frozen:
+            _merge_pending(home, PROC, home / SNAPSHOT_RELPATH)
         rows = [
             row
             for row in rows
@@ -260,10 +318,10 @@ def register_session(
             }
         )
         _write_snapshot(
-            path, json.dumps({"version": 1, "source": "capture", "sessions": rows}).encode()
+            path, json.dumps({"version": 1, "source": "capture", "sessions": rows, "boot_id": boot_id}).encode()
         )
         frozen_path = home / SNAPSHOT_RELPATH
-        if not ended:
+        if not ended and not preserve_frozen:
             frozen_path.unlink(missing_ok=True)
         else:
             frozen = _json(frozen_path)
@@ -357,61 +415,13 @@ def boot(home: Path, *, proc: Path = Path("/proc"), retain: bool = False) -> dic
             _lock(fd)
             saved = _json(pending)
             if isinstance(saved, dict) and isinstance(saved.get("sessions"), list):
-                rows = saved["sessions"]
-                boot_id = _start(proc, "1")
-                sources = [home / SNAPSHOT_RELPATH]
-                new_boot = saved.get("boot_id") != boot_id
+                new_boot = saved.get("boot_id") != _boot_id(proc)
+                for queued in _entries(home / BOOT_QUEUE_RELPATH):
+                    _merge_pending(home, proc, queued)
+                _merge_pending(home, proc, home / SNAPSHOT_RELPATH)
                 if new_boot:
-                    sources.append(registry)
-                saved["boot_id"] = boot_id
-                for source in sources:
-                    fresh = _json(source)
-                    if not isinstance(fresh, dict) or not isinstance(fresh.get("sessions"), list):
-                        continue
-                    for row in fresh["sessions"]:
-                        if not isinstance(row, dict) or row.get("ended"):
-                            continue
-                        if (
-                            source == registry
-                            and row.get("pid")
-                            and _start(proc, str(row["pid"])) == row.get("procStart")
-                        ):
-                            continue
-                        if not any(
-                            isinstance(old, dict) and old.get("session_id") == row.get("session_id")
-                            for old in rows
-                        ):
-                            rows.append(row)
-                _write_snapshot(pending, json.dumps(saved, separators=(",", ":")).encode())
-                result = _boot(home, proc=proc, path=pending, retain=retain)
-                # The pending batch now owns these rows, independently of start hooks.
-                (home / SNAPSHOT_RELPATH).unlink(missing_ok=True)
-                if new_boot and _read(registry) is not None:
-                    fresh = _json(registry)
-                    fresh_rows = fresh.get("sessions", []) if isinstance(fresh, dict) else []
-                    live_rows = (
-                        [
-                            row
-                            for row in fresh_rows
-                            if isinstance(row, dict)
-                            and (
-                                row.get("ended")
-                                or (
-                                    row.get("pid")
-                                    and _start(proc, str(row["pid"])) == row.get("procStart")
-                                )
-                            )
-                        ]
-                        if isinstance(fresh_rows, list)
-                        else []
-                    )
-                    _write_snapshot(
-                        registry,
-                        json.dumps(
-                            {"version": 1, "source": "capture", "sessions": live_rows}
-                        ).encode(),
-                    )
-                return result
+                    _merge_pending(home, proc, registry)
+                return _boot(home, proc=proc, path=pending, retain=retain)
             frozen = home / SNAPSHOT_RELPATH
             if _read(registry) is None:
                 return _boot(home, proc=proc, path=frozen, retain=retain)
@@ -446,10 +456,7 @@ def acknowledge(home: Path, session_ids: list[str]) -> None:
             for row in saved["sessions"]
             if not isinstance(row, dict) or row.get("session_id") not in ids
         ]
-        if saved["sessions"]:
-            _write_snapshot(path, json.dumps(saved, separators=(",", ":")).encode())
-        else:
-            path.unlink(missing_ok=True)
+        _write_snapshot(path, json.dumps(saved, separators=(",", ":")).encode())
     finally:
         os.close(fd)
 
@@ -502,7 +509,7 @@ def _boot(
             _write_snapshot(
                 home / BOOT_RELPATH,
                 json.dumps(
-                    {**result, "sessions": [*stale, item], "boot_id": _start(proc, "1")},
+                    {**result, "sessions": [*stale, item], "boot_id": _boot_id(proc)},
                     separators=(",", ":"),
                 ).encode(),
             )
@@ -554,7 +561,7 @@ def _boot(
             _write_snapshot(
                 home / BOOT_RELPATH,
                 json.dumps(
-                    {**result, "sessions": emitted, "boot_id": _start(proc, "1")},
+                    {**result, "sessions": emitted, "boot_id": _boot_id(proc)},
                     separators=(",", ":"),
                 ).encode(),
             )

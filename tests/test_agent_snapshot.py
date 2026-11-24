@@ -348,6 +348,7 @@ def test_retained_boot_acknowledges_only_launched_session_and_preserves_new_hook
     ]
     snapshot.acknowledge(tmp_path, [other_id])
     snapshot.acknowledge(tmp_path, [other_id])
+    assert snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={}) == 1
     assert snapshot.boot(tmp_path)["sessions"] == [
         {
             "agent": "claude",
@@ -372,6 +373,76 @@ def test_partial_restore_survives_another_clean_stop(tmp_path, monkeypatch):
         ID,
         other_id,
     }
+
+
+@pytest.mark.parametrize("read_before_hook", [False, True])
+def test_new_boot_hook_cannot_prune_unacknowledged_sessions(tmp_path, monkeypatch, read_before_hook):
+    proc = tmp_path / "proc"
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    live(proc, 1)
+    live(proc, 7)
+    monkeypatch.setattr(snapshot.os, "getppid", lambda: 7)
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/old"})
+    (proc / "7/stat").unlink()
+    stat = proc / "1/stat"
+    stat.write_text(stat.read_text().replace("777", "888"))
+    if read_before_hook:
+        assert [row["session_id"] for row in snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]] == [ID]
+    live(proc, 8)
+    monkeypatch.setattr(snapshot.os, "getppid", lambda: 8)
+    other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
+    snapshot.register_session(tmp_path, {"session_id": other_id, "cwd": "/new"})
+    assert [row["session_id"] for row in snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]] == [ID]
+    snapshot.acknowledge(tmp_path, [ID])
+    assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
+    assert [row["session_id"] for row in snapshot.boot(tmp_path, proc=proc)["sessions"]] == [other_id]
+
+
+def test_pending_and_new_capture_are_delivered_in_bounded_batches(tmp_path, monkeypatch):
+    other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
+    monkeypatch.setattr(snapshot, "PROC", tmp_path / "proc")
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    path = tmp_path / snapshot.REGISTRY_RELPATH
+    payload = json.loads(path.read_text())
+    payload["sessions"][0]["launcher"] = ["claude", "--append-system-prompt", "x" * 34000]
+    path.write_text(json.dumps(payload))
+    assert len(snapshot.boot(tmp_path, retain=True)["sessions"]) == 1
+    frozen = tmp_path / snapshot.SNAPSHOT_RELPATH
+    payload["sessions"][0]["session_id"] = other_id
+    frozen.write_text(json.dumps(payload))
+    first = snapshot.boot(tmp_path, retain=True)
+    assert [row["session_id"] for row in first["sessions"]] == [ID]
+    snapshot.acknowledge(tmp_path, [ID])
+    second = snapshot.boot(tmp_path, retain=True)
+    assert [row["session_id"] for row in second["sessions"]] == [other_id]
+    snapshot.acknowledge(tmp_path, [other_id])
+    assert snapshot.boot(tmp_path)["sessions"] == []
+
+
+def test_queued_overflow_does_not_mask_new_clean_capture(tmp_path, monkeypatch):
+    proc = tmp_path / "proc"
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    path = tmp_path / snapshot.REGISTRY_RELPATH
+    payload = json.loads(path.read_text())
+    payload["sessions"][0]["launcher"] = ["claude", "--append-system-prompt", "x" * 34000]
+    path.write_text(json.dumps(payload))
+    snapshot.boot(tmp_path, proc=proc, retain=True)
+    other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
+    payload["sessions"][0]["session_id"] = other_id
+    (tmp_path / snapshot.SNAPSHOT_RELPATH).write_text(json.dumps(payload))
+    assert len(snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]) == 1
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    snapshot.acknowledge(tmp_path, [ID])
+    assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
+    delivered = set()
+    for _ in range(2):
+        batch = snapshot.boot(tmp_path, proc=proc, retain=True)
+        ids = [row["session_id"] for row in batch["sessions"]]
+        delivered.update(ids)
+        snapshot.acknowledge(tmp_path, ids)
+    assert delivered == {ID, other_id}
+    assert snapshot.boot(tmp_path, proc=proc)["sessions"] == []
 
 
 def test_window_names_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:
