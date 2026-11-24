@@ -1,7 +1,7 @@
 import {describe, expect, it, vi} from "vitest"
 import {createMemoryHistory} from "vue-router"
 import {setToken} from "./api"
-import {createAppRouter} from "./router"
+import {createAppRouter, takeResumePath} from "./router"
 
 describe("server mode routing", () => {
     it.each(["/login", "/", "/repos/alpha", "/containers/alpha-1", "/settings", "/unknown"])(
@@ -60,5 +60,34 @@ describe("server mode routing", () => {
         await router.push("/repos/alpha")
 
         expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+})
+
+describe("resume path", () => {
+    function setupRouter() {
+        vi.stubGlobal("fetch", vi.fn(async () => Response.json({mode: "setup"})))
+        return createAppRouter(createMemoryHistory())
+    }
+
+    it("is remembered by the guard alone when a signed-in route is sent to setup", async () => {
+        const router = setupRouter()
+        await router.push("/repos/alpha?tab=x")
+        expect(router.currentRoute.value.name).toBe("setup")
+        expect(takeResumePath()).toBe("/repos/alpha?tab=x")
+    })
+
+    it("does not remember a public route, whatever its query", async () => {
+        const router = setupRouter()
+        await router.push("/login?link=secret")
+        expect(takeResumePath()).toBe("/")
+    })
+
+    it("does not outlive the setup episode left by hand", async () => {
+        const router = setupRouter()
+        await router.push("/repos/alpha")
+        vi.stubGlobal("fetch", vi.fn(async () => Response.json({mode: "dashboard"})))
+        setToken("t")
+        await router.push("/settings")
+        expect(takeResumePath()).toBe("/")
     })
 })

@@ -162,6 +162,42 @@ describe("App", () => {
             wrapper.unmount()
         })
 
+        it("does not reopen a device link that was open during setup", async () => {
+            setToken("tok")
+            const {router, wrapper} = await setupTab(["setup", "setup"], "/login?link=x")
+            expect(router.currentRoute.value.name).toBe("setup")
+
+            await vi.advanceTimersByTimeAsync(2_000)
+            await flushPromises()
+
+            expect(router.currentRoute.value.fullPath).toBe("/")
+            wrapper.unmount()
+        })
+
+        it("does not resume an old route after setup was left by hand", async () => {
+            setToken("tok")
+            const {router, wrapper, sockets} = await setupTab(["dashboard", "setup"], "/repos/alpha")
+            sockets[0].handlers.onSetupMode?.()
+            await flushPromises()
+            expect(router.currentRoute.value.name).toBe("setup")
+            // Left by hand (Back / typed URL) while the server is in dashboard mode.
+            await router.push("/login")
+            await flushPromises()
+            expect(router.currentRoute.value.name).toBe("login")
+
+            // A later setup episode, entered from the login poll.
+            vi.stubGlobal("fetch", vi.fn(async () => Response.json({mode: "setup"})))
+            await vi.advanceTimersByTimeAsync(2_000)
+            await flushPromises()
+            expect(router.currentRoute.value.name).toBe("setup")
+            vi.stubGlobal("fetch", vi.fn(async () => Response.json({mode: "dashboard"})))
+            await vi.advanceTimersByTimeAsync(2_000)
+            await flushPromises()
+
+            expect(router.currentRoute.value.fullPath).toBe("/")
+            wrapper.unmount()
+        })
+
         it("does not poll the mode on a signed-in page", async () => {
             setToken("tok")
             const {wrapper, fetchMock} = await setupTab(["dashboard"], "/repos/alpha")

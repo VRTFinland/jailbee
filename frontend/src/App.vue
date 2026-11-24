@@ -16,7 +16,7 @@ dashboard?.onUnauthorized(() => {
     void router.push({name: "login"})
 })
 dashboard?.onSetupMode(() => {
-    rememberResumePath(route.fullPath)
+    rememberResumePath(route)
     void router.replace({name: "setup"})
 })
 

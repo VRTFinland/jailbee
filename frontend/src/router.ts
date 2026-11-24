@@ -1,6 +1,7 @@
 import {
     createRouter,
     createWebHashHistory,
+    type RouteLocationNormalized,
     type RouteRecordRaw,
     type Router,
     type RouterHistory,
@@ -32,9 +33,13 @@ export const routes: RouteRecordRaw[] = [
 
 let resumePath: string | null = null
 
-/** Remembers where the tab was before setup mode took it over. */
-export function rememberResumePath(path: string): void {
-    resumePath = path === "/setup" || path === "/login" ? null : path
+/**
+ * Remembers where the tab was before setup mode took it over. Public routes
+ * (login with a single-use device link, setup itself) are never resumed, so
+ * they clear any older value instead: it must not outlive its setup episode.
+ */
+export function rememberResumePath(to: Pick<RouteLocationNormalized, "fullPath" | "meta">): void {
+    resumePath = to.meta.public === true ? null : to.fullPath
 }
 
 /** The remembered route, once; the front page when there is none. */
@@ -57,7 +62,7 @@ export function createAppRouter(history: RouterHistory = createWebHashHistory())
         const current = await mode
         if (current !== "dashboard") mode = null
         if (current === "setup") {
-            if (to.name !== "setup") rememberResumePath(to.fullPath)
+            if (to.name !== "setup") rememberResumePath(to)
             return to.name === "setup" ? true : {name: "setup", replace: true}
         }
         if (to.meta.public || getToken()) return true
@@ -66,6 +71,10 @@ export function createAppRouter(history: RouterHistory = createWebHashHistory())
             return true
         }
         return {name: "login"}
+    })
+    // Leaving setup by hand (Back, a typed URL) ends the episode.
+    router.afterEach((to, from) => {
+        if (from.name === "setup" && to.name !== "setup") resumePath = null
     })
     return router
 }
