@@ -215,8 +215,50 @@ describe("SessionView live follow", () => {
         expect(scrollTo).not.toHaveBeenCalled()
     })
 
+    it("stops following when later frames of one upward gesture leave the end", async () => {
+        setPageGeometry(5000, 0)
+        let y = 3400
+        Object.defineProperty(window, "scrollY", {get: () => y, configurable: true})
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            return {top: -y, bottom: this.classList.contains("transcript") ? 4000 - y : 0} as DOMRect
+        })
+        const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {})
+        const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        window.dispatchEvent(new Event("wheel"))
+        y = 3300 // The first frame still shows the end.
+        window.dispatchEvent(new Event("scroll"))
+        y = 3000 // Momentum continues without another input event.
+        window.dispatchEvent(new Event("scroll"))
+        await append(sessionKey, [answer])
+        expect(scrollTo).not.toHaveBeenCalled()
+        expect(wrapper.get(".new-messages").text()).toBe("New messages ↓")
+    })
+
+    it("keeps follow through delayed programmatic scroll events while layout grows", async () => {
+        setPageGeometry(5000, 0)
+        let y = 3400
+        let bottom = 4000
+        Object.defineProperty(window, "scrollY", {get: () => y, configurable: true})
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            return {top: -y, bottom: this.classList.contains("transcript") ? bottom - y : 0} as DOMRect
+        })
+        const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {})
+        const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+        window.dispatchEvent(new KeyboardEvent("keydown", {key: "End"}))
+        await append(sessionKey, [answer])
+        // scrollTo's event arrives later, after more layout growth.
+        bottom = 4500
+        y = 3200
+        window.dispatchEvent(new Event("scroll"))
+        scrollTo.mockClear()
+        await append(sessionKey, [{...answer, id: "a2"}])
+        expect(scrollTo).toHaveBeenCalled()
+        expect(wrapper.find(".new-messages").exists()).toBe(false)
+    })
+
     it("ignores hidden thinking and folded results when choosing unseen entries", async () => {
         setPageGeometry(5000, 100)
+        const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {})
         const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
         const call: RenderedEntry = {kind: "tool_call", id: "c1", timestamp: null, call_id: "c", name: "Bash", summary: "Bash", input_html: "", model: null}
         await append(sessionKey, [call])
@@ -224,10 +266,40 @@ describe("SessionView live follow", () => {
         Object.defineProperty(window, "scrollY", {value: 50, configurable: true})
         window.dispatchEvent(new Event("wheel"))
         window.dispatchEvent(new Event("scroll"))
+        // Prove follow is off through its public effect before testing unseen.
+        scrollTo.mockClear()
+        await append(sessionKey, [{kind: "thinking", id: "probe", timestamp: null, html: "", model: null}])
+        expect(scrollTo).not.toHaveBeenCalled()
         await append(sessionKey, [{kind: "thinking", id: "t1", timestamp: null, html: "", model: null}, {kind: "tool_result", id: "r1", timestamp: null, call_id: "c", html: "", truncated: false, full_length: 0, is_error: false}])
         expect(wrapper.find(".new-messages").exists()).toBe(false)
         await append(sessionKey, [answer])
         expect(wrapper.find(".new-messages").exists()).toBe(true)
+    })
+
+    it.each(["normal", "eink"] as const)("does not follow away from a long answer's start (%s)", async (displayProfile) => {
+        updateSettings({displayProfile, einkFollow: true})
+        setPageGeometry(5000, 0)
+        let y = 0
+        Object.defineProperty(window, "scrollY", {get: () => y, configurable: true})
+        vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+            if (this.classList.contains("transcript")) return {top: -y, bottom: 4000 - y} as DOMRect
+            return {top: this.id === "entry-a1" ? 1200 - y : 0, bottom: 0} as DOMRect
+        })
+        const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation((_x, top) => { y = top ?? 0 })
+        const scrollIntoView = vi.fn(() => { y = 1200 })
+        Element.prototype.scrollIntoView = scrollIntoView
+        try {
+            const {wrapper, append} = await mountLive("/repos/alpha/sessions/claude/s-1")
+            await append(sessionKey, [answer])
+            await wrapper.get(".jump-latest").trigger("click")
+            window.dispatchEvent(new Event("scroll"))
+            scrollTo.mockClear()
+            await append(sessionKey, [{...answer, id: "a2"}])
+            expect(scrollTo).not.toHaveBeenCalled()
+            expect(wrapper.get(".new-messages").text().toLowerCase()).toContain("new message")
+        } finally {
+            Reflect.deleteProperty(Element.prototype, "scrollIntoView")
+        }
     })
 
     it("keeps the first unseen answer as the New messages jump target", async () => {

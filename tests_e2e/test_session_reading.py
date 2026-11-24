@@ -167,6 +167,79 @@ def test_end_follow_and_new_messages_restore_follow(
     expect(page.locator(".jump-latest")).to_have_count(0)
 
 
+@pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "phone"])
+def test_keyboard_momentum_leaves_follow_off_after_end(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, width: int
+) -> None:
+    page.set_viewport_size({"width": width, "height": 800})
+    server, transcript = open_transcript(page, make_server, tmp_path)
+    # No jump button: manually reaching an old session's end arms live follow.
+    page.keyboard.press("End")
+    expect(page.locator(".jump-latest")).to_have_count(0)
+    with transcript.open("a") as stream:
+        stream.write(record(25, "assistant", "Followed after manual End."))
+    server.watches.open[-1].fire()
+    expect(page.get_by_text("Followed after manual End.", exact=True)).to_be_in_viewport()
+    expect(page.locator(".jump-latest")).to_have_count(0)
+
+    # End includes the answer-jump spacer. One animated PageUp starts with the
+    # transcript end still visible, then leaves it without another key event.
+    page.keyboard.press("End")
+    page.wait_for_function(
+        "() => window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 1"
+    )
+    page.evaluate("""() => {
+        window.scrollFrames = [];
+        window.addEventListener('scroll', () => window.scrollFrames.push({
+            y: window.scrollY,
+            end: document.querySelector('.transcript').getBoundingClientRect().bottom <=
+                document.querySelector('.bottom-guard').getBoundingClientRect().top + 1,
+        }));
+    }""")
+    page.keyboard.press("PageUp")
+    expect(page.get_by_role("button", name="Scroll to bottom")).to_be_visible()
+    page.wait_for_function("""() => {
+        const frames = window.scrollFrames;
+        return frames.some(frame => frame.end) && frames.some(frame => !frame.end);
+    }""")
+    # Wait for the browser's keyboard animation to settle, not a fixed sleep.
+    page.evaluate("""async () => {
+        let previous = window.scrollY;
+        let stable = 0;
+        while (stable < 4) {
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            stable = previous === window.scrollY ? stable + 1 : 0;
+            previous = window.scrollY;
+        }
+    }""")
+    position = page.evaluate("window.scrollY")
+    with transcript.open("a") as stream:
+        stream.write(record(26, "assistant", "Do not pull the reader back."))
+    server.watches.open[-1].fire()
+    expect(page.locator("button.new-messages")).to_be_visible()
+    assert page.evaluate("window.scrollY") == position
+
+
+@pytest.mark.parametrize("profile", ["normal", "eink"])
+def test_long_answer_jump_does_not_follow_away_from_its_start(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path, profile: str
+) -> None:
+    server, transcript = open_transcript(page, make_server, tmp_path)
+    if profile == "eink":
+        page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink'); "
+                      "localStorage.setItem('jailbee.einkFollow', 'true')")
+        page.reload()
+        expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
+    page.get_by_role("button", name="Latest answer").click()
+    assert_latest_starts_below_header(page)
+    position = page.evaluate("window.scrollY")
+    with transcript.open("a") as stream:
+        stream.write(record(25, "assistant", "Arrived while reading the long answer."))
+    server.watches.open[-1].fire()
+    expect(page.locator("button.new-messages")).to_be_visible()
+    assert page.evaluate("window.scrollY") == position
+
+
 def test_eink_default_holds_new_entries_even_at_the_end(
     page: Page, make_server: Callable[..., E2EServer], tmp_path: Path
 ) -> None:

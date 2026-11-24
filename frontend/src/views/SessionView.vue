@@ -97,9 +97,7 @@ const atTranscriptEnd = ref(false)
 const following = ref(false)
 let lastScrollY = window.scrollY
 let programmaticScroll = false
-let userScrollIntent = false
-let scrollbarDrag = false
-let intentTimer: ReturnType<typeof setTimeout> | undefined
+let scrollFrame: number | undefined
 const answerAhead = ref(false)
 const unseen = ref<RenderedEntry | null>(null)
 const autoFollow = computed(() => !eink.value || settings.einkFollow)
@@ -134,20 +132,42 @@ function measureVisibility() {
 function onScroll() {
     measureVisibility()
     if (atTranscriptEnd.value) following.value = true
-    else if (!programmaticScroll && (userScrollIntent || scrollbarDrag) && window.scrollY < lastScrollY) following.value = false
+    else if (!programmaticScroll && window.scrollY < lastScrollY) following.value = false
     lastScrollY = window.scrollY
-    userScrollIntent = false
+}
+
+function finishProgrammaticScroll() {
+    if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame)
+    scrollFrame = undefined
+    programmaticScroll = false
+}
+
+/** Scroll events are asynchronous, and smooth scrolling can span many frames. */
+function scrollProgrammatically(scroll: () => void) {
+    finishProgrammaticScroll()
+    programmaticScroll = true
+    let previousY = window.scrollY
+    let stableFrames = 0
+    let frames = 0
+    const settle = () => {
+        stableFrames = window.scrollY === previousY ? stableFrames + 1 : 0
+        previousY = window.scrollY
+        if (stableFrames >= 3 || ++frames >= 120) finishProgrammaticScroll()
+        else scrollFrame = requestAnimationFrame(settle)
+    }
+    scroll()
+    scrollFrame = requestAnimationFrame(settle)
+    measureVisibility()
 }
 
 function markScrollIntent() {
-    userScrollIntent = true
-    clearTimeout(intentTimer)
-    intentTimer = setTimeout(() => { userScrollIntent = false }, 250)
+    // Real input interrupts a pending jump; every later momentum frame remains
+    // a user scroll too, without needing another wheel/touch/key event.
+    finishProgrammaticScroll()
 }
 function startScrollbarDrag(event: PointerEvent) {
-    if (event.clientX >= document.documentElement.clientWidth) scrollbarDrag = true
+    if (event.clientX >= document.documentElement.clientWidth) markScrollIntent()
 }
-function endScrollbarDrag() { scrollbarDrag = false }
 function markScrollKey(event: KeyboardEvent) {
     if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markScrollIntent()
 }
@@ -161,8 +181,6 @@ onMounted(() => {
     window.addEventListener("wheel", markScrollIntent, {passive: true})
     window.addEventListener("touchmove", markScrollIntent, {passive: true})
     window.addEventListener("pointerdown", startScrollbarDrag, {passive: true})
-    window.addEventListener("pointerup", endScrollbarDrag, {passive: true})
-    window.addEventListener("pointercancel", endScrollbarDrag, {passive: true})
     window.addEventListener("keydown", markScrollKey)
     window.addEventListener("resize", measureVisibility)
     if (typeof ResizeObserver !== "undefined") {
@@ -176,9 +194,7 @@ onBeforeUnmount(() => {
     window.removeEventListener("wheel", markScrollIntent)
     window.removeEventListener("touchmove", markScrollIntent)
     window.removeEventListener("pointerdown", startScrollbarDrag)
-    window.removeEventListener("pointerup", endScrollbarDrag)
-    window.removeEventListener("pointercancel", endScrollbarDrag)
-    clearTimeout(intentTimer)
+    finishProgrammaticScroll()
     window.removeEventListener("keydown", markScrollKey)
     window.removeEventListener("resize", measureVisibility)
     layoutObserver?.disconnect()
@@ -197,15 +213,13 @@ let appendQueue = Promise.resolve()
 
 /** Scroll to the transcript, not the blank space reserved for answer jumps. */
 function scrollToEnd() {
-    programmaticScroll = true
-    if (eink.value) pager.end()
-    else if (transcriptEl.value) {
-        const bottom = transcriptEl.value.getBoundingClientRect().bottom + window.scrollY
-        window.scrollTo(0, Math.max(0, Math.ceil(bottom - readableBottom())))
-    }
-    lastScrollY = window.scrollY
-    programmaticScroll = false
-    measureVisibility()
+    scrollProgrammatically(() => {
+        if (eink.value) pager.end()
+        else if (transcriptEl.value) {
+            const bottom = transcriptEl.value.getBoundingClientRect().bottom + window.scrollY
+            window.scrollTo(0, Math.max(0, Math.ceil(bottom - readableBottom())))
+        }
+    })
 }
 
 async function onLiveAppend(entries: RenderedEntry[]) {
@@ -270,7 +284,7 @@ onBeforeUnmount(() => {
 })
 
 async function jump() {
-    following.value = true
+    following.value = false
     const firstUnseen = unseen.value
     const target = firstUnseen
         ? (firstUnseen.kind === "assistant" ? firstUnseen.id : null)
@@ -279,10 +293,15 @@ async function jump() {
     unseen.value = null
     const el = target === null ? null : document.getElementById(entryDomId(target))
     if (el) {
-        if (eink.value) pager.goToElement(el)
-        else el.scrollIntoView({block: "start"})
-        measureVisibility()
-    } else scrollToEnd()
+        scrollProgrammatically(() => {
+            if (eink.value) pager.goToElement(el)
+            else el.scrollIntoView({block: "start"})
+        })
+        following.value = atTranscriptEnd.value
+    } else {
+        following.value = true
+        scrollToEnd()
+    }
 }
 
 /** The REST path of this transcript, without the leading `/api/repos/`. */
