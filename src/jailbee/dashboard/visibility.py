@@ -57,8 +57,11 @@ def filter_repo_groups(
             kept.add(parent)
             row = rows[parent]
     return FilteredGroups(
-        [replace(g, containers=[c for c in g.containers if c.name in kept])
-         for g in groups if any(c.name in kept for c in g.containers)],
+        [
+            replace(g, containers=[c for c in g.containers if c.name in kept])
+            for g in groups
+            if any(c.name in kept for c in g.containers)
+        ],
         frozenset(kept - matches),
         len(rows) - len(kept),
     )

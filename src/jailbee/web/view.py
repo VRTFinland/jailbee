@@ -23,7 +23,14 @@ from jailbee.dashboard.fork_tree import fork_layout, name_prefix
 from jailbee.dashboard.format import row_phase
 from jailbee.dashboard.sorting import DEFAULT_SORT, sort_groups
 from jailbee.dashboard.visibility import filter_repo_groups, visible_repo_groups
-from jailbee.web.protocol import ChildRelation, ColumnHead, ContainerFilterRows, ContainerRow, FrontPageView, RepoRow
+from jailbee.web.protocol import (
+    ChildRelation,
+    ColumnHead,
+    ContainerFilterRows,
+    ContainerRow,
+    FrontPageView,
+    RepoRow,
+)
 
 if TYPE_CHECKING:
     from jailbee.lifecycle import ContainerInfo

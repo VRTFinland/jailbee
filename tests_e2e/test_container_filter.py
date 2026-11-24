@@ -21,7 +21,8 @@ def test_filters_keep_dimmed_parent_persist_and_follow_snapshots(
     page.set_viewport_size({"width": width, "height": 800})
     parent = container("work-orch", repo="work", state="Stopped")
     child = container(
-        "work-task", repo="work",
+        "work-task",
+        repo="work",
         agent_status=(AgentSummary("claude", "busy", None, None, 1),),
         child=ChildView(parent.name, "working", (), False, ()),
     )

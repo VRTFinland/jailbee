@@ -87,13 +87,25 @@ def test_snapshot_includes_shared_filter_membership_and_context(
 
     client, token = started
     parent = container("alpha-parent", state="Stopped")
-    child = container("alpha-child", agent_status=(agent("busy"),),
-        child=ChildView(parent.name, "working", (), False, ()))
-    snap = snapshot_of(repo_group("alpha", parent, child, container("alpha-idle")),
-                       repo_group("hidden", container("hidden-busy", repo="hidden", agent_status=(agent("busy"),))))
+    child = container(
+        "alpha-child",
+        agent_status=(agent("busy"),),
+        child=ChildView(parent.name, "working", (), False, ()),
+    )
+    snap = snapshot_of(
+        repo_group("alpha", parent, child, container("alpha-idle")),
+        repo_group(
+            "hidden", container("hidden-busy", repo="hidden", agent_status=(agent("busy"),))
+        ),
+    )
     view = json.loads(first_page(client, token, factory, snap))["view"]
     assert view["filters"]["running"]["context"] == [parent.name]
-    assert set(view["filters"]["running"]["visible"]) == {parent.name, child.name, "alpha-idle", "hidden-busy"}
+    assert set(view["filters"]["running"]["visible"]) == {
+        parent.name,
+        child.name,
+        "alpha-idle",
+        "hidden-busy",
+    }
     assert set(view["filters"]["active"]["visible"]) == {parent.name, child.name, "hidden-busy"}
     assert view["filters"]["active"]["context"] == [parent.name]
 
