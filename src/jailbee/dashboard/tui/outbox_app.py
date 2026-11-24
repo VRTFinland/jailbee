@@ -295,6 +295,7 @@ class OutboxApp(App[int], inherit_bindings=False):
             message.name == "scope"
             and self._container is not None
             and controller.state.abilities.scope
+            and (controller.state.busy is None or controller.state.busy == _LOADING)
         ):
             controller.container = self._container if controller.state.all_repos else None
         controller.intent(message.name, message.row, message.value)

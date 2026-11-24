@@ -1421,9 +1421,14 @@ preview in the list's place, and Esc, Enter or `v` goes back to the list.
 - **Delete** asks once, "No" first, naming exactly what goes — proposals,
   `action N (kind)` with any dependents, `comment N (path:line)` — and runs
   `outbox drop` pinned to the revision listed; a proposal that changed since
-  it was shown is left alone ("changed; refreshed"). Verification, deletion and
-  the final reload run in the background, with a "Deleting N from the outbox…"
-  busy line; navigation and preview keys remain usable.
+  it was shown is left alone with the CLI's stale-revision reason. Deletion and
+  the final reload run in the background, with a "Deleting 2/5…" busy line;
+  each successful drop removes its row immediately. Navigation, opening items,
+  marking and preview keys remain usable. Another confirmed `d` queues behind
+  the current deletes; a proposal already queued is refused by name. Repeated
+  `r` requests coalesce into the one final reload. Each proposal's first drop
+  uses the shown revision directly; multiple child drops within one proposal
+  re-read between drops to guard changed indices and dependent scope.
 - **Publish** reads the plan (`outbox apply --dry-run -o json`) and shows it
   in the preview with **Publish**, **Publish as draft review** (when the
   proposal has a pending review) and **Cancel**; the publish then runs in the
@@ -1452,9 +1457,11 @@ preview in the list's place, and Esc, Enter or `v` goes back to the list.
 An unavailable container is still listed, with the reason in its header
 row and nothing offered that changes it. After every change the manager
 re-lists in the background (and the dashboard refreshes, so the OUTBOX column
-follows). While a mutation is busy, another delete, publish, clear or scope
-change is refused; refresh leaves the busy line alone and the completion
-reloads. Closing the dashboard's box does not cancel the work: its result
+follows). Publish, clear and scope changes wait until the delete queue finishes;
+publication of a queued proposal is refused with that specific reason. During
+other mutations another delete, publish, clear or scope change is refused.
+Closing the dashboard's box does not cancel the work (the delete busy line
+explicitly says Esc leaves and deletion continues): its result
 appears as a notice without reopening the box, and a PR creation (`pr push`)
 still being checked when the box closed is not run ("pr push not run: outbox
 box closed"). In the standalone `jailbee outbox`, Esc, `q` and Ctrl-C are

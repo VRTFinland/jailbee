@@ -482,10 +482,77 @@ def test_quit_during_a_delete_is_refused_and_the_delete_completes(mocker, quit_k
 
     still_running, status = drive(app, scenario)
     assert still_running
-    assert status == ("busy: Deleting 1 from the outbox… — wait for it to finish",)
+    assert status == ("busy: Deleting 1/1… — wait for it to finish",)
     assert sum(argv[:2] == ["outbox", "drop"] for argv in calls) == 1
     assert app.controller.state.status == ("Deleted 1 from the outbox.",)
     assert app.return_value is None  # drive's exit, not the refused quit
+
+
+def test_standalone_delete_queues_while_keys_and_quit_policy_stay_live(mocker):
+    from threading import Event
+
+    proposals = [_proposal(f"pr/{letter}.json") for letter in "abc"]
+    entered = [Event() for _ in proposals]
+    release = [Event() for _ in proposals]
+    calls = []
+    drops = 0
+
+    def run(argv, **kwargs):
+        nonlocal drops
+        calls.append(list(argv))
+        if argv[1] == "drop":
+            index = drops
+            drops += 1
+            entered[index].set()
+            assert release[index].wait(10), "test did not release the drop"
+            proposals[:] = [p for p in proposals if p["id"] != argv[3]]
+            return da.CliResult(True, "done", "")
+        return da.CliResult(True, "done", _listing(_container(*proposals)))
+
+    mocker.patch.object(da, "run_cli_quiet", side_effect=run)
+    app = make(container="alpha-x")
+
+    async def wait_for(pilot, event):
+        async with asyncio.timeout(5):
+            while not event.is_set():
+                app.runner.jobs.poll()
+                await pilot.pause(0.001)
+        await pilot.pause()
+
+    async def scenario(pilot):
+        try:
+            calls.clear()
+            await pilot.press("space", "down", "space", "d", "down", "enter")
+            await wait_for(pilot, entered[0])
+            assert "Deleting 1/2" in screen_text(app)
+            assert "Esc leaves" not in screen_text(app)
+            await pilot.press("a")
+            assert app.controller.container == "alpha-x"
+            assert not app.controller.state.all_repos
+            await pilot.press("down", "space", "r", "d", "down", "enter")
+            assert "Deleting 1/3" in screen_text(app)
+            release[0].set()
+            await wait_for(pilot, entered[1])
+            assert "Deleting 2/3" in screen_text(app)
+            assert [p.id for c in app.controller.state.containers for p in c.proposals] == [
+                "pr/b.json", "pr/c.json"
+            ]
+            release[1].set()
+            await wait_for(pilot, entered[2])
+            assert "Deleting 3/3" in screen_text(app)
+            await pilot.press("q")
+            assert app.is_running
+            release[2].set()
+            await listed(app, pilot)
+            assert [a[1] for a in calls] == ["drop", "drop", "drop", "ls"]
+            assert calls[-1][:3] == ["outbox", "ls", "alpha-x"]
+            await pilot.press("q")
+        finally:
+            for event in release:
+                event.set()
+
+    drive(app, scenario)
+    assert app.return_value == 0
 
 
 def test_stale_mutation_flag_without_a_busy_line_does_not_trap_quit(quiet):

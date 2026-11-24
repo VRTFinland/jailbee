@@ -289,7 +289,7 @@ before editing `## Unreleased`.
   (revoked, or a field such as `max_running_children`) once, naming
   what changed, including a change made while the monitor was reconnecting, so an orchestrator agent can adapt
   ([#147](https://github.com/VRTFinland/jailbee/issues/147)).
-- The outbox manager (dashboard overlay and `jailbee outbox browse`) reads the selected item full screen: `f` shows the preview alone at any width, scrollable, and `f` or Esc returns to the list with the cursor kept ([#144](https://github.com/VRTFinland/jailbee/issues/144)).
+- The outbox manager (dashboard overlay and `jailbee outbox browse`) reads the selected item full screen: `f` shows the preview alone at any width, scrollable, and `f` or Esc returns to the list with the cursor kept ([#144](https://github.com/VRTFinland/jailbee/issues/144)). Multi-item deletion shows per-item progress and removes successful rows immediately; navigation, marking and opening items stay usable, a second confirmed delete queues behind it, and refresh requests coalesce into the final listing. Whole-proposal batches no longer re-list before each drop; the shown revision guards staleness. The dashboard busy line explains that Esc leaves deletion running, while the standalone manager still refuses quit until completion.
 - Agents can correct their own issue and pull-request conversation comments:
   `jailbee issue comment-edit ID --body …` stages a `comment_edit` issue-outbox
   action, and the read-only `jailbee issue comments N` lists comment ids
