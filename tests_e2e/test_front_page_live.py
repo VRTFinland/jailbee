@@ -6,6 +6,8 @@ import json
 import re
 from typing import TYPE_CHECKING
 
+from tests_e2e.flows import open_settings
+
 from playwright.sync_api import Locator, Page, WebSocketRoute, expect
 
 from tests.follower_fixture import CLAUDE, FOLLOWER, WRAPPER, gather
@@ -80,7 +82,7 @@ def test_row_phases_have_distinct_edges_and_labels_in_the_eink_theme(
             )
         )
     )
-    logged_in.get_by_role("link", name="Settings", exact=True).click()
+    open_settings(logged_in)
     logged_in.get_by_role("radio", name="E-ink", exact=True).check()
     logged_in.get_by_role("link", name="JailBee").click()
 

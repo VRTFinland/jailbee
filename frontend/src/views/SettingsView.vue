@@ -15,7 +15,7 @@ import {
     type Theme,
 } from "../settings"
 
-const THEME_LABELS: Record<Theme, string> = {light: "Light", dark: "Dark", eink: "E-ink"}
+const THEME_LABELS: Record<Theme, string> = {auto: "Auto", light: "Light", dark: "Dark", eink: "E-ink"}
 
 const PROFILE_LABELS: Record<DisplayProfile, string> = {
     normal: "Normal (scrolling)",
@@ -150,6 +150,11 @@ function number(event: Event): number {
 
         <fieldset>
             <legend>Sessions</legend>
+            <label class="choice">
+                <input type="checkbox" :checked="settings.followNewMessages"
+                    @change="updateSettings({followNewMessages: ($event.target as HTMLInputElement).checked})" />
+                Follow new messages (normal display)
+            </label>
             <label class="choice">
                 <input
                     class="show-thinking"

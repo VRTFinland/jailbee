@@ -40,7 +40,6 @@ async function signOut() {
             <button v-if="eink" class="refresh link" type="button" @click="refresh">
                 Refresh
             </button>
-            <router-link class="link" :to="{name: 'settings'}">Settings</router-link>
             <button class="link" type="button" @click="signOut">Log out</button>
         </header>
 

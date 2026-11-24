@@ -71,8 +71,8 @@ coloured edge and a phase label, and a Stopped container is dimmed. The e-ink
 theme has no colour, so phases differ by edge style (dashed, dotted, double,
 heavy) and the label, and a Stopped row is drawn without top, right and bottom edges instead of a fade.
 
-The compact icon buttons above the front-page and repository container lists
-filter **All**, **Running** (Incus state Running), or **Active** (a non-grey
+The top-right **Quick settings** menu filters front-page and repository container lists
+by **All**, **Running** (Incus state Running), or **Active** (a non-grey
 agent marker in the terminal dashboard: busy, waiting, shell, API errors, or
 idle with a real event less than 30 minutes old). Recent-idle membership is
 independent of session count or cell width; a bold `idle 5m` label explains its
@@ -81,7 +81,8 @@ membership as time passes, even without a new state snapshot. Tooltips and acces
 name each button; the selected button stays pressed. The choice is remembered
 in this browser and follows live snapshot updates (the e-ink display profile
 keeps its normal slow/on-demand refresh). Repositories with no retained rows
-are hidden while filtering; `N hidden by filter` counts omitted containers.
+are hidden while filtering. A dot on the menu icon and a slim **Showing: Active · show all**
+notice keep a non-All filter visible; **show all** resets it. All has no notice.
 Nonmatching listed ancestors remain dimmed as context above matching children,
 so the tree stays intact. Tree prefixes are recomputed for the retained rows.
 This does not change the terminal dashboard's list.
@@ -428,9 +429,24 @@ allowed, so the current dashboard only reads.
 
 ## Themes and display profile
 
-Open the settings page (the Settings link on the front page) to choose
-a theme (light, dark, e-ink), body and code font sizes, and whether thinking
-blocks are shown. These choices are stored in the browser on that device only.
+Open **Quick settings** from the menu icon in the top-right corner of any page.
+Body and code font-size steppers apply immediately; the theme button cycles
+**Auto / Light / Dark / E-ink**. Auto follows the device's colour scheme, including
+changes while the page is open. Theme colours and display profile remain independent.
+The front-page and repository menus offer container filters; session and subagent
+menus offer **Follow new messages**, **Show thinking**, and **Agent context**.
+Container pages have no contextual section. Follow edits the preference for the
+current display profile: on by default for normal displays, opt-in for e-ink.
+
+**Settings** at the end of the menu opens the full `/settings` page for less
+frequent choices, including display profile and the login session's name.
+Both surfaces edit one live settings store; display choices need no Save and are
+stored in per-device localStorage (in memory when storage is blocked). Existing
+container filter preferences are preserved. Escape, the icon, or a click outside
+the popover closes it and returns focus to the icon. Tab stays inside the open
+popover. Short screens split the menu into whole-row pages with up/down buttons
+and PageUp/PageDown; e-ink also supports **n** (previous) and **m** (next). There is
+no scrolling popover. E-ink uses large touch targets and no shadow.
 
 **Agent context** controls the agent's own wrapper records in a transcript:
 task notifications, system reminders (including the ones Claude Code appends to
@@ -464,7 +480,8 @@ Session transcripts keep their title, agent/model context and connection notice
 in a compact header while you read. One context-aware button handles navigation:
 
 - At the transcript's end, the button is hidden. In the normal display profile,
-  arriving entries keep that end in view; scrolling up stops follow, and reaching
+  arriving entries keep that end in view unless **Follow new messages** is off;
+  scrolling up stops follow, and reaching
   the end by hand or by a jump restores it. This includes keyboard scrolling
   and multi-frame touch or trackpad gestures. Blank room after the transcript
   is not counted as unread content.

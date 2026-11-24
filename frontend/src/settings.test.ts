@@ -20,10 +20,32 @@ describe("settings", () => {
     it("defaults the theme to the device's colour scheme", () => {
         stubScheme(true)
         reloadSettings()
-        expect(settings.theme).toBe("dark")
+        startSettings()
+        expect(settings.theme).toBe("auto")
+        expect(document.documentElement.dataset.theme).toBe("dark")
         stubScheme(false)
         reloadSettings()
-        expect(settings.theme).toBe("light")
+        expect(settings.theme).toBe("auto")
+        // Re-applying the same Auto setting also resolves the current scheme.
+        updateSettings({bodyFontSize: 17})
+        expect(document.documentElement.dataset.theme).toBe("light")
+    })
+
+    it("updates Auto when the device scheme changes without overriding an explicit theme", () => {
+        let dark = false
+        let change: (() => void) | undefined
+        vi.stubGlobal("matchMedia", () => ({
+            get matches() { return dark },
+            addEventListener: (_event: string, listener: () => void) => { change = listener },
+        }))
+        startSettings()
+        expect(document.documentElement.dataset.theme).toBe("light")
+        dark = true
+        change?.()
+        expect(document.documentElement.dataset.theme).toBe("dark")
+        updateSettings({theme: "light"})
+        change?.()
+        expect(document.documentElement.dataset.theme).toBe("light")
     })
 
     it("applies the theme and font sizes to the document root", () => {
@@ -72,7 +94,7 @@ describe("settings", () => {
         localStorage.setItem("jailbee.theme", "neon")
         localStorage.setItem("jailbee.bodyFontSize", "huge")
         reloadSettings()
-        expect(settings.theme).toBe("light")
+        expect(settings.theme).toBe("auto")
         expect(settings.bodyFontSize).toBe(16)
     })
 
@@ -84,7 +106,7 @@ describe("settings", () => {
             throw new Error("denied")
         })
         reloadSettings()
-        expect(settings.theme).toBe("light")
+        expect(settings.theme).toBe("auto")
         expect(settings.showThinking).toBe(false)
         updateSettings({theme: "dark"})
         expect(settings.theme).toBe("dark")

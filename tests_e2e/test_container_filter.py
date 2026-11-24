@@ -13,7 +13,7 @@ from jailbee.accounts.models import AgentActivity
 from jailbee.agent_status import AgentSummary, SessionMark
 from jailbee.orchestration.view import ChildView
 from tests.web_fakes import START, FakeClock, container, repo_group, snapshot_of
-from tests_e2e.flows import log_in_with_pin
+from tests_e2e.flows import log_in_with_pin, open_quick_settings, reveal_setting
 from tests_e2e.server import E2EServer
 
 
@@ -35,12 +35,13 @@ def test_filters_keep_dimmed_parent_persist_and_follow_snapshots(
     server.push(snapshot_of(repo_group("work", parent, child, idle), repo_group("other", stopped)))
     rows = page.locator("li.row")
     expect(rows).to_have_count(4)
+    open_quick_settings(page)
     running = page.get_by_role("button", name="Running", exact=True)
     running.click()
     expect(running).to_have_attribute("aria-pressed", "true")
     expect(rows).to_have_count(3)
     expect(page.locator('[data-repo="other"]')).to_have_count(0)
-    expect(page.get_by_role("status")).to_have_text("1 hidden by filter")
+    expect(page.locator(".filter-notice")).to_have_text("Showing: Running · show all")
     active = page.get_by_role("button", name="Active", exact=True)
     expect(active).to_have_attribute("title", "Active")
     active.click()
@@ -50,19 +51,27 @@ def test_filters_keep_dimmed_parent_persist_and_follow_snapshots(
     expect(rows.first).to_have_css("opacity", "0.5")
     expect(rows.last).to_have_class(re.compile(r"\bnested\b"))
     expect(rows.last.locator(".indent")).to_have_text("└ ")
-    expect(page.get_by_role("status")).to_have_text("2 hidden by filter")
+    expect(page.locator(".filter-notice")).to_have_text("Showing: Active · show all")
+    page.keyboard.press("Escape")
+    expect(page.locator(".filter-marker")).to_be_visible()
     page.reload()
+    reveal_setting(page, "button", "Active")
     expect(active).to_have_attribute("aria-pressed", "true")
+    page.keyboard.press("Escape")
     expect(rows).to_have_count(2)
     page.locator(".repo-heading a").click()
+    reveal_setting(page, "button", "Active")
     expect(active).to_have_attribute("aria-pressed", "true")
+    page.keyboard.press("Escape")
     expect(rows).to_have_count(2)
     child.agent_status = ()
     server.push(snapshot_of(repo_group("work", parent, child, idle), repo_group("other", stopped)))
     expect(rows).to_have_count(0)
-    expect(page.get_by_role("status")).to_have_text("3 hidden by filter")
+    expect(page.locator(".filter-notice")).to_have_text("Showing: Active · show all")
     expect(page.get_by_text("No matching containers.")).to_be_visible()
-    page.get_by_role("button", name="All", exact=True).click()
+    page.get_by_role("button", name="show all", exact=True).click()
+    expect(page.locator(".filter-notice")).to_have_count(0)
+    expect(page.locator(".filter-marker")).to_have_count(0)
     expect(rows).to_have_count(3)
     expect(page.locator(".filter-context")).to_have_count(0)
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
@@ -103,7 +112,9 @@ def test_active_explains_recent_idle_in_a_crowded_session_cell(
     if profile == "eink":
         page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink')")
         page.reload()
+    reveal_setting(page, "button", "Active")
     page.get_by_role("button", name="Active", exact=True).click()
+    page.keyboard.press("Escape")
     expect(page.locator("li.row")).to_have_count(2)
     row = page.locator('[data-container="work-b"]')
     expect(row.locator(".agent")).to_have_count(2)

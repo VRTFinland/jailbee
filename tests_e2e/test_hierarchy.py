@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 
 import pytest
+from tests_e2e.flows import open_settings
+
 from playwright.sync_api import Page, expect
 
 from jailbee.orchestration.view import ChildView, GrantView
@@ -93,7 +95,7 @@ def test_cross_repo_counts_and_missing_parent_labels_agree_across_views(
 
 def test_nested_eink_rows_keep_phase_edges_distinct(server: E2EServer, logged_in: Page) -> None:
     page = logged_in
-    page.get_by_role("link", name="Settings", exact=True).click()
+    open_settings(page)
     page.get_by_role("group", name="Theme", exact=True).get_by_label("E-ink", exact=True).check()
     page.get_by_role("link", name="JailBee", exact=False).last.click()
     parent = container("work-orch", repo="work")
@@ -134,7 +136,7 @@ def test_related_container_navigation_resets_eink_page_and_scroll(
 ) -> None:
     page = logged_in
     page.set_viewport_size({"width": 800, "height": 600})
-    page.get_by_role("link", name="Settings", exact=True).click()
+    open_settings(page)
     page.get_by_role("group", name="Display profile", exact=True).get_by_label(
         re.compile("E-ink")
     ).check()

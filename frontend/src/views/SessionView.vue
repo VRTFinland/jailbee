@@ -100,7 +100,7 @@ let programmaticScroll = false
 let scrollFrame: number | undefined
 const answerAhead = ref(false)
 const unseen = ref<RenderedEntry | null>(null)
-const autoFollow = computed(() => !eink.value || settings.einkFollow)
+const autoFollow = computed(() => eink.value ? settings.einkFollow : settings.followNewMessages)
 // Allow deferred scroll events to arrive before declaring a jump settled;
 // bound the guard even if layout keeps moving indefinitely.
 const SCROLL_STABLE_FRAMES = 3
@@ -408,7 +408,6 @@ watch(
             <router-link v-else class="back" :to="{name: 'repo', params: {prefix}}">
                 &larr; {{ prefix }}
             </router-link>
-            <router-link class="toggle" :to="{name: 'settings'}">Settings</router-link>
             </div>
             <template v-if="transcript">
                 <h1 :title="title">{{ title }}</h1>

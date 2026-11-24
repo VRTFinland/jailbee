@@ -6,6 +6,7 @@ import App from "./App.vue"
 import {DASHBOARD, Dashboard, type SocketLike} from "./dashboard"
 import {createAppRouter, takeResumePath} from "./router"
 import type {SocketHandlers} from "./socket"
+import {reloadSettings, settings} from "./settings"
 
 function harness() {
     const sockets: {handlers: SocketHandlers; started: boolean}[] = []
@@ -50,6 +51,33 @@ afterEach(() => {
 })
 
 describe("App", () => {
+    it("has quick settings on every route, shares full-page settings and resets context on navigation", async () => {
+        reloadSettings()
+        setToken("tok")
+        const {wrapper, router} = await mountAt("/")
+        const icon = () => wrapper.get('[aria-label="Quick settings"][aria-haspopup]')
+        await icon().trigger("click")
+        await wrapper.get('[aria-label="Increase body font size"]').trigger("click")
+        await wrapper.get('[aria-label="Active"]').trigger("click")
+        await wrapper.get('.quick-panel a').trigger("click")
+        await flushPromises()
+        expect(router.currentRoute.value.name).toBe("settings")
+        expect(wrapper.get("input.body-size").element).toHaveProperty("value", "17")
+        await wrapper.get("input.body-size").setValue("20")
+        await icon().trigger("click")
+        expect(wrapper.get(".quick-panel").text()).toContain("Body: 20px")
+        expect(settings.bodyFontSize).toBe(20)
+        await router.push("/containers/alpha-1")
+        await flushPromises()
+        expect(wrapper.find(".quick-panel").exists()).toBe(false)
+        await icon().trigger("click")
+        expect(wrapper.find(".view-heading").exists()).toBe(false)
+        await router.push("/repos/alpha/sessions/claude/session-1")
+        await flushPromises()
+        await icon().trigger("click")
+        expect(wrapper.find('[aria-label="Show thinking"]').exists()).toBe(true)
+    })
+
     it("opens the dashboard socket on a deep link to a signed-in page", async () => {
         setToken("tok")
         const {sockets} = await mountAt("/repos/alpha")

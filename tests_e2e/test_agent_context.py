@@ -6,6 +6,8 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
+from tests_e2e.flows import open_settings
+
 from playwright.sync_api import Page, expect
 
 from tests_e2e.flows import log_in_with_pin
@@ -154,7 +156,7 @@ def test_the_settings_control_changes_the_open_transcript(
 ) -> None:
     server_fetched = open_session(page, make_server, tmp_path, None)
     assert server_fetched == []
-    page.get_by_role("link", name="Settings").click()
+    open_settings(page)
     page.get_by_label("Agent context").select_option("collapsed")
     page.go_back()
     expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()

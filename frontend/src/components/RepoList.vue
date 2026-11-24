@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed} from "vue"
-import type {ContainerFilter, FrontPageView} from "../protocol"
+import type {FrontPageView} from "../protocol"
 import {settings, updateSettings} from "../settings"
 
 const props = withDefaults(defineProps<{
@@ -12,11 +12,6 @@ const listed = computed(() => new Set(props.listedContainers ?? props.view.repos
     repo => repo.containers.map(row => row.name),
 )))
 
-const filterButtons: {mode: ContainerFilter, label: string, path: string}[] = [
-    {mode: "all", label: "All", path: "M3 4h14M3 10h14M3 16h14"},
-    {mode: "running", label: "Running", path: "m6 3 10 7-10 7Z"},
-    {mode: "active", label: "Active", path: "M1 10h4l3-7 4 14 3-7h4"},
-]
 const selection = computed(() => settings.containerFilter === "all" ? null
     : props.view.filters?.[settings.containerFilter] ?? {visible: [], context: []})
 const context = computed(() => new Set(selection.value?.context ?? []))
@@ -29,8 +24,6 @@ const repos = computed(() => {
         })),
     })).filter(repo => repo.containers.length > 0)
 })
-const hidden = computed(() => props.view.repos.reduce((n, r) => n + r.containers.length, 0)
-    - repos.value.reduce((n, r) => n + r.containers.length, 0))
 
 const AGENT_LABELS: Record<string, string> = {
     waiting: "waiting for you",
@@ -55,17 +48,7 @@ function agentLabel(state: string): string {
 </script>
 
 <template>
-    <div class="filter-bar">
-        <div class="filters" role="group" aria-label="Container filter">
-            <button v-for="filter in filterButtons" :key="filter.mode" type="button"
-                :aria-label="filter.label" :title="filter.label"
-                :aria-pressed="settings.containerFilter === filter.mode"
-                @click="updateSettings({containerFilter: filter.mode})">
-                <svg viewBox="0 0 20 20" aria-hidden="true"><path :d="filter.path" /></svg>
-            </button>
-        </div>
-        <span v-if="settings.containerFilter !== 'all'" class="muted" role="status">{{ hidden }} hidden by filter</span>
-    </div>
+    <p v-if="settings.containerFilter !== 'all'" class="filter-notice muted" role="status">Showing: {{ settings.containerFilter === 'active' ? 'Active' : 'Running' }} · <button type="button" @click="updateSettings({containerFilter: 'all'})">show all</button></p>
     <p v-if="repos.length === 0" class="muted">{{ settings.containerFilter === 'all' ? 'No repositories.' : 'No matching containers.' }}</p>
     <section v-for="repo in repos" :key="repo.prefix" class="repo" :data-repo="repo.prefix">
         <h2 v-if="showHeadings" class="repo-heading">
@@ -119,38 +102,8 @@ function agentLabel(state: string): string {
 </template>
 
 <style scoped>
-.filter-bar, .filters {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-}
-.filter-bar {
-    margin-top: var(--space-3);
-}
-.filters button {
-    display: grid;
-    place-items: center;
-    min-width: 2.75rem;
-    min-height: 2.75rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    color: var(--text);
-    background: var(--surface);
-}
-.filters button[aria-pressed="true"] {
-    outline: 2px solid var(--accent);
-    outline-offset: -3px;
-    background: var(--notice-bg);
-}
-.filters svg {
-    width: 1.1rem;
-    height: 1.1rem;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 2;
-    stroke-linejoin: round;
-}
+.filter-notice { margin: var(--space-2) 0 0; font-size: 0.85rem; }
+.filter-notice button { font: inherit; color: var(--accent); background: none; border: 0; text-decoration: underline; padding: 0.5rem 0; min-height: 2.75rem; }
 .row.filter-context[data-container] {
     opacity: 0.5;
 }

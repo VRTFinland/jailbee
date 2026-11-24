@@ -8,6 +8,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from tests_e2e.flows import open_settings
+
 from playwright.sync_api import Page, Route, expect
 
 from jailbee.agent_status import AgentSummary
@@ -166,7 +168,7 @@ def test_thinking_is_hidden_until_enabled_in_settings(session_page: Page) -> Non
     page.get_by_role("link", name="work", exact=True).click()
     open_session(page)
     expect(page.get_by_text("Read auth.py first.", exact=True)).to_have_count(0)
-    page.get_by_role("link", name="Settings", exact=True).click()
+    open_settings(page)
     page.get_by_role("checkbox", name="Show thinking").check()
     page.go_back()
     expect(page.get_by_text("Read auth.py first.", exact=True)).to_be_visible()

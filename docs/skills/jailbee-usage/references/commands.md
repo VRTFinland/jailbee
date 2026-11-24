@@ -439,14 +439,23 @@ Transcripts follow live entries at the end (opt-in on e-ink). Scrolling up,
 including keyboard or touch momentum, stops follow; reaching the end by hand
 restores it. Answer-start jumps leave long replies in place to read, and only
 jumps reaching the transcript end resume follow.
-The front page and repository container lists have three icon filters: All,
+The top-right Quick settings menu is available on every page, with live body/code
+font-size steppers and an Auto / Light / Dark / E-ink theme cycler. Its Settings
+link opens the full settings page; both edit the same per-device localStorage
+preferences without Save. Session/subagent menus add Follow new messages (normal
+on by default, e-ink opt-in), Show thinking and Agent context; container pages add
+no contextual controls. Escape or an outside click closes the menu and restores
+focus to its icon. Short screens paginate whole menu rows with up/down buttons,
+PageUp/PageDown (also n/m on e-ink), never a scrolling popover; e-ink has no shadow.
+The front page and repository menus have three container filters: All,
 Running (Incus state Running), and Active (the terminal dashboard's non-grey
 agent marks, including idle sessions with an event less than 30 minutes old,
 regardless of session count or cell width). A bold `idle 5m` label explains
 recent-idle freshness, including on e-ink. The choice is remembered
 per browser and follows snapshots. Nonmatching ancestors stay dimmed for tree
-context; repositories without retained rows disappear, with an `N hidden by
-filter` hint counting omitted containers. The terminal dashboard is unchanged.
+context; repositories without retained rows disappear. A dot on the menu icon
+and a slim `Showing: Active · show all` notice expose a non-All filter; `show all`
+resets it. All has no notice. The terminal dashboard is unchanged.
 The front page and repository container lists indent same-repository children
 under their orchestrator, show its child count across all visible repositories
 and each child's state/runner, and keep absent-parent children labelled.

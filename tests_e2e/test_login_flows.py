@@ -8,6 +8,8 @@ from datetime import timedelta
 
 import pyotp
 import pytest
+from tests_e2e.flows import open_settings
+
 from playwright.sync_api import Page, expect
 
 from jailbee.web.auth_admin import add_totp_key, list_sessions, revoke_session
@@ -151,7 +153,7 @@ def test_renaming_the_session_in_settings_updates_the_header_and_the_listing(
 ) -> None:
     log_in_with_pin(page, server.url, server.pin.current)
 
-    page.get_by_role("link", name="Settings").click()
+    open_settings(page)
     name = page.get_by_label("Name shown in the header")
     expect(name).to_have_value(re.compile(r"^Chrome on "))
     name.fill("reading room tablet")
