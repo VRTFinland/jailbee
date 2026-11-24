@@ -39,6 +39,34 @@ def test_source_identity_one_bounded_lock_free_call(tmp_path, mocker, branch, ch
     assert run.call_args.kwargs["timeout"] <= 1
 
 
+def test_source_identity_ignores_foreign_repository_environment(tmp_path, monkeypatch, mocker):
+    for name in (
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+    ):
+        monkeypatch.setenv(name, "/foreign")
+    monkeypatch.setenv("PATH", "/bin")
+    run = mocker.patch(
+        "subprocess.run", return_value=CompletedProcess([], 0, "# branch.oid " + "a" * 40, "")
+    )
+    assert git.source_identity(tmp_path) == {"commit": "a" * 40, "dirty": False}
+    env = run.call_args.kwargs["env"]
+    assert env["PATH"] == "/bin"
+    assert not any(
+        name in env
+        for name in (
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_COMMON_DIR",
+            "GIT_OBJECT_DIRECTORY",
+        )
+    )
+
+
 @pytest.mark.parametrize(
     "failure", [FileNotFoundError(), subprocess.TimeoutExpired("git", 1), OSError(), UnicodeError()]
 )

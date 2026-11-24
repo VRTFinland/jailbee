@@ -6,6 +6,7 @@ loading stays unit-testable. Mirrors the `incus.py` wrapper convention.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -52,6 +53,7 @@ def source_identity(repo_root: Path) -> BuildIdentity | None:
                 "--untracked-files=normal",
             ],
             cwd=repo_root,
+            env={key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
             capture_output=True,
             text=True,
             timeout=1,
