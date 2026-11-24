@@ -89,6 +89,18 @@ container_app(args=['host', 'status', '--json'], prog_name='jailbee')
     assert json.loads(result.stdout) == STATUS
 
 
+def test_host_status_broker_read_timeout_exits_four(monkeypatch) -> None:
+    from jailbee.inbox.transport import Client
+
+    def timeout(*args, **kwargs):
+        raise TimeoutError
+
+    monkeypatch.setattr(Client, "call", timeout)
+    result = CliRunner().invoke(container_app, ["host", "status"])
+    assert result.exit_code == 4
+    assert "host broker is not reachable" in result.output
+
+
 def test_host_status_broker_down_retries_then_exits_four(sockdir, monkeypatch) -> None:
     monkeypatch.setenv("JAILBEE_ORCHESTRATION_SOCKET", str(sockdir / "missing.sock"))
     monkeypatch.setenv("JAILBEE_BROKER_RETRY_SECONDS", "0.01")

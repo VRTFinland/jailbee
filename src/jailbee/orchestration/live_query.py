@@ -65,7 +65,7 @@ def host_queries(incus: Incus) -> dict[str, LiveQuery]:
         )
         available = None
         if isinstance(pool, str) and pool:
-            space = incus.storage_pool_resources(pool).get("space") or {}
+            space = incus.storage_pool_resources(pool, timeout=10).get("space") or {}
             total, used = space.get("total"), space.get("used")
             if type(total) is int and type(used) is int and 0 <= used <= total:
                 available = total - used

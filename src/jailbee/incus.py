@@ -1482,14 +1482,14 @@ class Incus:
         pools: list[dict[str, Any]] = json.loads(result.stdout) if result.stdout else []
         return pools
 
-    def storage_pool_resources(self, pool: str) -> dict[str, Any]:
+    def storage_pool_resources(self, pool: str, *, timeout: int | None = None) -> dict[str, Any]:
         """Return the daemon's ``/1.0/storage-pools/<pool>/resources`` document parsed.
 
         ``space`` carries ``used`` and ``total`` in bytes. Read through the
         API (``incus query``) rather than ``incus storage info`` so the
         figures are structured and need no text parsing.
         """
-        result = self._run(["query", f"/1.0/storage-pools/{pool}/resources"])
+        result = self._run(["query", f"/1.0/storage-pools/{pool}/resources"], timeout=timeout)
         resources: dict[str, Any] = json.loads(result.stdout) if result.stdout else {}
         return resources
 
