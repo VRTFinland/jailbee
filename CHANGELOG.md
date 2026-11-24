@@ -17,9 +17,11 @@ before editing `## Unreleased`.
   ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
 - Interactive Claude sessions can resume after an unclean container stop,
   including host crashes and forced Incus stops. The managed plugin keeps a
-  live session registry, removes ended sessions and replaces sessions on
-  resume, fork or `/clear`. Boot entries survive failed autostart stages and
-  are acknowledged individually after a successful agent launch; no golden-image rebuild is needed
+  live session registry, prunes dead processes, excludes headless runs, removes
+  ended sessions even after a cancelled stop and replaces sessions on resume,
+  fork or `/clear`. Clean stops capture only still-live known processes.
+  Boot entries survive failed autostart stages and are acknowledged individually
+  after a successful agent launch; no golden-image rebuild is needed
   ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
 - `jailbee stop --all` captures agent sessions and cleanly stops running development
   containers across repositories before a host reboot, with one confirmation

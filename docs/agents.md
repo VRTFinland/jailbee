@@ -661,7 +661,8 @@ resumes the registered sessions in their own windows with their launcher,
 flags and working directory. A resume, fork or `/clear` replaces the previous
 session for that launcher process. This also covers sessions started outside
 the managed autostart window, including SSH sessions; shell environment,
-non-Claude processes and background sessions are not restored.
+non-Claude processes, background sessions and headless `claude -p` / `--print`
+runs are not restored, even when Claude's PID file is not yet available.
 
 A matching JailBee launcher marker preserves the original `claude-jb` flags.
 Without a valid marker, JailBee uses the captured process command line when
@@ -682,10 +683,15 @@ The live registry ships with the plugin from `/opt/jailbee/app/current`; no
 golden-image rebuild is needed for this update. Restart Claude to load the
 updated hooks. Older containers still need the previously documented rebuild
 and recreation to install the original shutdown unit and `claude-jb` launcher
-markers. Clean-stop capture freezes the registry and merges sessions predating
-the plugin; shutdown-time end hooks cannot erase that frozen snapshot. Ended
-session tombstones prevent stale Claude PID files from reviving closed sessions. Unit tests cover the hook/boot and stop/start integration; real host
-crash and power-loss recovery still need host-side verification.
+markers. Clean-stop capture freezes only sessions whose recorded process is
+still alive (matching PID and process start time), plus sessions without a known
+PID, and merges sessions predating the plugin. Registration prunes dead process
+rows so session churn cannot fill the registry. A normal `SessionEnd` also removes
+the session from a frozen snapshot after a cancelled stop; shutdown-time end hooks
+leave it intact while `/run/nologin` exists. Ended-session tombstones prevent stale
+Claude PID files from reviving closed sessions. Unit tests cover the hook/boot and
+stop/start integration; real host crash and power-loss recovery still need
+host-side verification.
 
 ### Shared credential groups (`credentials`)
 
