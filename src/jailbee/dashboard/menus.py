@@ -124,6 +124,7 @@ def global_menu_actions(
         or permitted(argv, policy, transport=transport)
     ]
 
+
 _PR_MENU_VERBS = frozenset(
     {
         "pr open",

@@ -921,9 +921,7 @@ class MenuBox(OverlayBox):
             self.group = group
             self.index = index
 
-    def __init__(
-        self, spec: ActionMenuState, *, mouse_enabled: Callable[[], bool]
-    ) -> None:
+    def __init__(self, spec: ActionMenuState, *, mouse_enabled: Callable[[], bool]) -> None:
         super().__init__(spec, mouse_enabled=mouse_enabled)
         self.menu = spec
         levels = {item.label for item in menu_entries(spec) if isinstance(item, MenuGroup)}

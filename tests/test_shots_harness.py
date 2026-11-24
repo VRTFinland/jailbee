@@ -44,7 +44,14 @@ def test_docs_shots_show_their_content(tmp_path: Path, monkeypatch: pytest.Monke
     world = load_world(next(p for p in FIXTURES if p.stem == "docs"))
     texts = {p.stem: _svg_text(p.read_text("utf-8")) for p in render_world(world, tmp_path)}
     global_menu = texts["dashboard-global-menu"]
-    for label in ("Global", "Stop all…", "Resume…", "[A] Accounts", "[Q] Notifications", "[F2] Settings"):
+    for label in (
+        "Global",
+        "Stop all…",
+        "Resume…",
+        "[A] Accounts",
+        "[Q] Notifications",
+        "[F2] Settings",
+    ):
         assert label in global_menu
     hero = texts["dashboard-orchestration"]
     # The header runs past DOING: a crop at the default console width loses these.

@@ -38,9 +38,7 @@ def test_git_accelerator_still_works_inside_container_menu(mocker, tmp_path):
     assert run.natives[3].level == "Git →"
 
 
-@pytest.mark.parametrize(
-    ("index", "shortcut"), [(2, "A"), (3, "Q"), (4, "E"), (5, "f2"), (6, "h")]
-)
+@pytest.mark.parametrize(("index", "shortcut"), [(2, "A"), (3, "Q"), (4, "E"), (5, "f2"), (6, "h")])
 def test_global_entries_do_what_their_existing_shortcuts_do(mocker, tmp_path, index, shortcut):
     from jailbee.dashboard.model import RepoGroup
     from jailbee.dashboard.tui import session as tsession
@@ -83,7 +81,10 @@ def test_restrictive_ssh_menu_hides_disallowed_commands_on_the_pilot(mocker):
     policy = RemoteSSHConfig(commands={"mode": "allowlist", "allow": ["version"]})
     run = drive(mocker, ["g"], [], transport="ssh", remote=True, ssh_policy=policy, screens=True)
     assert [item[0] for item in run.trace[1].overlay.actions] == [
-        "Notifications", "Settings", "Help", "Quit"
+        "Notifications",
+        "Settings",
+        "Help",
+        "Quit",
     ]
     assert "[Q] Notifications" in run.screens[1]
     assert "[F2] Settings" in run.screens[1]

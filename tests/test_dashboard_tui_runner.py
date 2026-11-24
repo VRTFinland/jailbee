@@ -175,7 +175,9 @@ def test_global_lifecycle_runs_without_a_repo_and_uses_prompt_channel(mocker, in
             await pilot.press("g")
             await pilot.pause()
             await _apply(pilot, app, Pick(index))
-            await _until(pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "host confirmation")
+            await _until(
+                pilot, lambda: isinstance(app.screen, pm.ConfirmModal), "host confirmation"
+            )
             assert app.screen.prompt.question == "Proceed on the host?"
             await pilot.press("y")
             await _until(pilot, lambda: _finished(app), "host lifecycle result")
@@ -187,7 +189,7 @@ def test_global_lifecycle_runs_without_a_repo_and_uses_prompt_channel(mocker, in
     asyncio.run(asyncio.wait_for(main(), _RUN_SECONDS))
     hand_off.assert_not_called()
     assert spawn.child.answers[0].value is True
-    assert spawn.calls[0]["argv"][-len(argv):] == argv
+    assert spawn.calls[0]["argv"][-len(argv) :] == argv
     assert spawn.calls[0]["cwd"] == Path.home()
 
 

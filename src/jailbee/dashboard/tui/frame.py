@@ -54,10 +54,12 @@ def frame_title(
     title = Text()
     title.append("☰", style=Style(bold=True) + dhit.hit_style("global-menu"))
     title.append(" ")
-    title.append_text(Text.from_markup(
-        f"[bold]🐝 jailbee dashboard[/] · [dim]h/? help[/]"
-        f"  ·  {n_repos} repos · {n_ctr} containers{folded_note}{git_note}  ·  {now:%H:%M:%S}"
-    ))
+    title.append_text(
+        Text.from_markup(
+            f"[bold]🐝 jailbee dashboard[/] · [dim]h/? help[/]"
+            f"  ·  {n_repos} repos · {n_ctr} containers{folded_note}{git_note}  ·  {now:%H:%M:%S}"
+        )
+    )
     return title
 
 
@@ -119,7 +121,8 @@ def queue_badge(counts: QueueCounts, *, accent: str, frame: int = 0) -> Text:
 
 _MENU_LETTERS_NOTE = (
     "A container's or repo's actions are its menu's letters, and they work here "
-    "without Enter (l Lifecycle, …); Enter shows the whole list. g/F10 or ☰ opens Global; Enter then g opens Git (repo: Agent). A letter "
+    "without Enter (l Lifecycle, …); Enter shows the whole list. "
+    "g/F10 or ☰ opens Global; Enter then g opens Git (repo: Agent). A letter "
     "does nothing when its entry is not offered for the highlighted row: a stopped "
     "container has no tmux or shell, and orphan rows are view-only."
 )

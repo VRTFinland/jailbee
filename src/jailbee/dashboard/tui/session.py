@@ -93,8 +93,6 @@ from jailbee.dashboard.egress_data import load_egress_rows
 from jailbee.dashboard.hit import Hit
 from jailbee.dashboard.jobs import JobResult, JobRunner
 from jailbee.dashboard.menus import (
-    global_action_argv,
-    global_menu_actions,
     APPS_RUN_PREFIX,
     ATTACH_VERBS,
     ORPHAN_VERB_PREFIX,
@@ -102,6 +100,8 @@ from jailbee.dashboard.menus import (
     actions_for_container,
     config_edit_reject_note_for_prefix,
     fork_container_argv,
+    global_action_argv,
+    global_menu_actions,
     host_branches,
     new_container_argv,
     new_container_base_default,
@@ -4053,8 +4053,11 @@ class DashboardSession:
                     self.set_notice(str(exc))
                 else:
                     self.run_action(
-                        RepoTarget(Path.home(), None), argv,
-                        style="output", label=" ".join(argv), target="Host",
+                        RepoTarget(Path.home(), None),
+                        argv,
+                        style="output",
+                        label=" ".join(argv),
+                        target="Host",
                     )
                 return None
             return self.handle_key(verb.removeprefix("global-"))
@@ -4209,7 +4212,9 @@ class DashboardSession:
         elif key == "help":
             self.overlay = "help"
         elif key == "global-menu":
-            self.overlay = GlobalMenuState(list(global_menu_actions(self.ssh_policy, transport=self.transport)))
+            self.overlay = GlobalMenuState(
+                list(global_menu_actions(self.ssh_policy, transport=self.transport))
+            )
         elif key == "command":
             self.overlay = CommandState()
         elif key == "settings":
@@ -4872,7 +4877,8 @@ class DashboardSession:
             ):
                 return  # a question or a running publish keeps the focus
         elif overlay is not None and not (
-            isinstance(overlay, (MenuState, RepoMenuState, GlobalMenuState, Picker)) or overlay == "help"
+            isinstance(overlay, (MenuState, RepoMenuState, GlobalMenuState, Picker))
+            or overlay == "help"
         ):
             return  # a prompt, the command line, settings, egress or accounts keep the focus
         if hit is not None and hit.kind == "global-menu":
