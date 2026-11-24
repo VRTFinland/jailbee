@@ -98,6 +98,8 @@ const following = ref(false)
 let lastScrollY = window.scrollY
 let programmaticScroll = false
 let userScrollIntent = false
+let scrollbarDrag = false
+let intentTimer: ReturnType<typeof setTimeout> | undefined
 const answerAhead = ref(false)
 const unseen = ref<RenderedEntry | null>(null)
 const autoFollow = computed(() => !eink.value || settings.einkFollow)
@@ -132,12 +134,20 @@ function measureVisibility() {
 function onScroll() {
     measureVisibility()
     if (atTranscriptEnd.value) following.value = true
-    else if (!programmaticScroll && userScrollIntent && window.scrollY < lastScrollY) following.value = false
+    else if (!programmaticScroll && (userScrollIntent || scrollbarDrag) && window.scrollY < lastScrollY) following.value = false
     lastScrollY = window.scrollY
     userScrollIntent = false
 }
 
-function markScrollIntent() { userScrollIntent = true }
+function markScrollIntent() {
+    userScrollIntent = true
+    clearTimeout(intentTimer)
+    intentTimer = setTimeout(() => { userScrollIntent = false }, 250)
+}
+function startScrollbarDrag(event: PointerEvent) {
+    if (event.clientX >= document.documentElement.clientWidth) scrollbarDrag = true
+}
+function endScrollbarDrag() { scrollbarDrag = false }
 function markScrollKey(event: KeyboardEvent) {
     if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markScrollIntent()
 }
@@ -150,7 +160,9 @@ onMounted(() => {
     window.addEventListener("scroll", onScroll, {passive: true})
     window.addEventListener("wheel", markScrollIntent, {passive: true})
     window.addEventListener("touchmove", markScrollIntent, {passive: true})
-    window.addEventListener("pointerdown", markScrollIntent, {passive: true})
+    window.addEventListener("pointerdown", startScrollbarDrag, {passive: true})
+    window.addEventListener("pointerup", endScrollbarDrag, {passive: true})
+    window.addEventListener("pointercancel", endScrollbarDrag, {passive: true})
     window.addEventListener("keydown", markScrollKey)
     window.addEventListener("resize", measureVisibility)
     if (typeof ResizeObserver !== "undefined") {
@@ -163,7 +175,10 @@ onBeforeUnmount(() => {
     window.removeEventListener("scroll", onScroll)
     window.removeEventListener("wheel", markScrollIntent)
     window.removeEventListener("touchmove", markScrollIntent)
-    window.removeEventListener("pointerdown", markScrollIntent)
+    window.removeEventListener("pointerdown", startScrollbarDrag)
+    window.removeEventListener("pointerup", endScrollbarDrag)
+    window.removeEventListener("pointercancel", endScrollbarDrag)
+    clearTimeout(intentTimer)
     window.removeEventListener("keydown", markScrollKey)
     window.removeEventListener("resize", measureVisibility)
     layoutObserver?.disconnect()
