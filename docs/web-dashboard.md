@@ -8,8 +8,17 @@ and is installed as an optional extra.
 
 Which container ran a session is recorded by the shared state service, which
 runs only while some dashboard (terminal, Qt or web) is connected. A session
-that starts and ends with no dashboard open is still listed under its
-repository, but not attributed to a container.
+it never saw (one that started and ended with no dashboard open, or predates
+the recorder) is attributed from its own transcript instead: the directory and
+git branch it started in, and when. It belongs to a container whose branch
+label (the branch the container was created on) is that branch, whose
+repository directory holds that directory, and which already existed when the
+session started; when several qualify (two containers on one branch) the
+session stays unattributed rather than guessed. So a container recreated under the same name does not inherit
+the older one's sessions. A recorded attribution always wins over this one. A
+mount-mode container has no branch label and lists only recorded sessions, and
+a session started after the branch was renamed inside its container names the
+new branch and stays unattributed unless it was recorded.
 
 Session titles use the first typed prompt, skipping agent wrapper records,
 local command output, caveats and injected context. A session with only slash
@@ -35,8 +44,8 @@ every visible repository's sessions in the background when it starts; no
 request waits for it.
 
 A container page shows its live sessions as soon as they are known (they come
-from the state service's snapshot) and appends the sessions it ran before when
-that separate request answers. A repository lists only the sessions started in
+from the state service's snapshot) and appends the sessions it ran before,
+recorded and attributed, newest first, when that separate request answers. A repository lists only the sessions started in
 its own containers' checkout (each container's repository directory, or below
 it): repositories that share one agent config home by mistake do not list each
 other's sessions. Claude names a session's project directory after its working
@@ -204,7 +213,11 @@ as the agent home of repository `toy`: every session opens from the list, every
 tool call folds and expands, every subagent link opens its transcript and
 thinking follows the setting. It parametrises over `corpus.json`, so a
 re-recorded session is covered without editing the tests, and asserts content
-only on the markers the recorder's prompts guarantee.
+only on the markers the recorder's prompts guarantee. Re-record it when Claude
+Code's transcript format changes: `make web-corpus` needs a logged-in `claude`,
+spends a little (haiku) quota on a throwaway toy repository, and refuses output
+that still holds a host, account or credential. Review the diff before
+committing it.
 
 ## Run it
 
@@ -393,17 +406,23 @@ a theme (light, dark, e-ink), body and code font sizes, and whether thinking
 blocks are shown. These choices are stored in the browser on that device only.
 
 **Agent context** controls the agent's own wrapper records in a transcript:
-task notifications, system reminders, command output and shell input/output.
+task notifications, system reminders (including the ones Claude Code appends to
+the end of a tool result; a tag elsewhere in the output is the tool's own text), command output and shell input/output.
 *Hidden* (the default) sends none of them, so they cost neither bandwidth nor
 page weight. *Collapsed* sends a one-line label (for example "Task
 notification" or "Shell: ls") and loads the content from the server only when
 you expand it. *Shown* sends and displays everything. A slash command you typed
-(`/model`, `/clear`) always appears as a one-line label, in every mode. Changing
+(`/model`, `/clear`) and an interruption notice ("Request interrupted by user")
+always appear as a one-line label, in every mode. Changing
 the setting reloads the open transcript. The choice is a `meta=hidden|collapsed|shown`
 query parameter on the session and subagent endpoints and a `meta` field on the
 live `subscribe` message; a withheld record's content is served by
 `GET /api/repos/{prefix}/sessions/{agent}/{session_id}/entries/{entry_id}`
-(also under `.../subagents/{agent_id}/`).
+(also under `.../subagents/{agent_id}/`). A whole wrapper record keeps its entry
+id; context split off another entry (wrappers before a typed prompt, reminders
+after a tool result) is a separate record with the id `<entry id>:meta`. A live
+read whose records are all hidden still sends an `append`, with no entries and
+the new offset.
 
 The display profile **E-ink** is for e-paper readers and slow-refresh
 screens: no animation, content moves in page turns instead of scrolling, live

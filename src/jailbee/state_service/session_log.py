@@ -126,3 +126,11 @@ def attribution(
             if key not in best or row.last_seen > best[key].last_seen:
                 best[key] = row
     return {key: row.container_name for key, row in best.items()}
+
+
+def recorded_keys(engine: Engine) -> set[tuple[str, str]]:
+    """Every ``(agent, session_id)`` the recorder ever saw, in any container,
+    present or gone: these belong where they were seen, never backfilled."""
+    with Session(engine) as s:
+        rows = s.exec(select(ContainerSession.agent, ContainerSession.session_id).distinct()).all()
+    return {(agent, sid) for agent, sid in rows}

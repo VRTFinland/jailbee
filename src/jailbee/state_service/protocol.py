@@ -64,7 +64,8 @@ from jailbee.update_check import UpdateNotice
 # 37 adds SyncTarget.parent_unknown: the parent's head is unknown (no gather pass).
 # 38 makes ContainerInfo.job_live nullable: None means no gathered observation.
 # 39 adds AgentActivity.api_error (AgentApiError): the API error a session is stuck on.
-PROTOCOL = 39
+# 40 adds ContainerInfo.branch, the branch the container was created on.
+PROTOCOL = 40
 
 
 class ProtocolError(ValueError):

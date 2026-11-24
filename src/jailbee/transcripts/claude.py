@@ -40,7 +40,12 @@ from jailbee.transcripts.base import (
     UserMessage,
     register,
 )
-from jailbee.transcripts.markup import command_name, prompt_text
+from jailbee.transcripts.markup import (
+    command_name,
+    is_interruption,
+    prompt_text,
+    split_trailing_reminders,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterator
@@ -188,7 +193,7 @@ def _tool_result(
     call_id = block.get("tool_use_id")
     if not isinstance(call_id, str):
         return []
-    text = _result_text(block.get("content"))
+    text, context = split_trailing_reminders(_result_text(block.get("content")))
     found: list[Entry] = [
         ToolResult(
             id=entry_id,
@@ -198,6 +203,7 @@ def _tool_result(
             truncated=len(text) > RESULT_CHARS,
             full_length=len(text),
             is_error=block.get("is_error") is True,
+            context=context[:RESULT_CHARS],
         )
     ]
     outcome = record.get("toolUseResult")
@@ -217,14 +223,6 @@ def _tool_result(
                 )
             )
     return found
-
-
-_INTERRUPTED = "[Request interrupted by user"
-
-
-def _is_notice(text: str) -> bool:
-    """Claude Code's own note in the person's turn, such as an interruption."""
-    return text.startswith(_INTERRUPTED)
 
 
 def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
@@ -247,7 +245,7 @@ def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
                         id=f"{record_id}:0",
                         timestamp=when,
                         text=content,
-                        meta=meta or _is_notice(content),
+                        meta=meta or is_interruption(content),
                     )
                 ]
                 if content
@@ -266,7 +264,7 @@ def _entries(record: dict[str, object], record_id: str) -> list[Entry]:
                         id=entry_id,
                         timestamp=when,
                         text=block["text"],
-                        meta=meta or _is_notice(block["text"]),
+                        meta=meta or is_interruption(block["text"]),
                     )
                 )
             elif block_type == "tool_result":
@@ -350,6 +348,8 @@ class _InfoScan:
         self.candidates = 0
         self.started: datetime | None = None
         self.models: dict[str, None] = {}
+        self.cwd: str | None = None
+        self.git_branch: str | None = None
 
     @property
     def title_settled(self) -> bool:
@@ -362,6 +362,8 @@ class _InfoScan:
     def head_line(self, line: bytes) -> None:
         if self.started is None:
             self.started = _time_at(line, line.find(b'"timestamp"'))
+        if self.cwd is None and b'"cwd"' in line:
+            self.place_line(line)
         self.model_line(line)
         if self.title_settled or not any(marker in line for marker in _USER_RECORD):
             return
@@ -377,6 +379,17 @@ class _InfoScan:
             if typed:
                 self.title = one_line(typed[: TITLE_CHARS * 8], TITLE_CHARS)
                 return
+
+    def place_line(self, line: bytes) -> None:
+        """Where the session started: the first record with a ``cwd``, and its
+        ``gitBranch`` (empty or missing is no branch)."""
+        record = _record(line)
+        cwd = record.get("cwd") if record is not None else None
+        if record is None or not isinstance(cwd, str) or not cwd:
+            return
+        self.cwd = cwd
+        branch = record.get("gitBranch")
+        self.git_branch = branch if isinstance(branch, str) and branch else None
 
     def model_line(self, line: bytes) -> None:
         """Parse `line` only when it names a model not seen yet: a tool input may
@@ -424,7 +437,8 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
     the ends are read. The head is read line by line until the title is
     settled: the first typed prompt, or the first command once
     TITLE_CANDIDATES user lines held none, and never past HEAD_BYTES; its
-    first timestamp is when the session started. The last TAIL_BYTES (more,
+    first timestamp is when the session started, and its first record with a
+    ``cwd`` says where and on which ``gitBranch``. The last TAIL_BYTES (more,
     up to TAIL_MAX_BYTES, while they hold no timestamp) give the last
     activity. Models are those named in the head and the tail, in first-use
     order: a model used only in the middle of a long session is not listed
@@ -476,6 +490,8 @@ def session_info(session_id: str, path: Path) -> SessionInfo | None:
         started=scan.started,
         last_activity=last_activity or last_line_time,
         models=tuple(scan.models),
+        cwd=scan.cwd,
+        git_branch=scan.git_branch,
     )
 
 

@@ -1459,3 +1459,41 @@ def test_v27_database_migrates_to_v28_with_the_session_info_cache_table() -> Non
         assert session.exec(select(SessionInfoRow)).one().mtime_ns == 2**62
         meta = session.get(SchemaMeta, 1)
         assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
+
+
+def test_v28_database_migrates_to_v29_with_where_each_session_started() -> None:
+    from jailbee.db import _ensure_schema, _migrate_to_v29
+    from jailbee.db.models import SchemaMeta, SessionInfoRow
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(SchemaMeta(id=1, version=28))
+        session.commit()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE session_info_cache DROP COLUMN cwd")
+        conn.exec_driver_sql("ALTER TABLE session_info_cache DROP COLUMN git_branch")
+
+    _ensure_schema(engine)
+    with engine.begin() as conn:
+        _migrate_to_v29(conn)  # the step itself is idempotent
+        _migrate_to_v29(conn)
+
+    with Session(engine) as session:
+        session.add(
+            SessionInfoRow(
+                path="/h/projects/-p/s.jsonl",
+                size=10,
+                mtime_ns=1,
+                format=2,
+                session_id="s",
+                title="t",
+                cwd="/p",
+                git_branch="main",
+            )
+        )
+        session.commit()
+        row = session.exec(select(SessionInfoRow)).one()
+        assert (row.cwd, row.git_branch) == ("/p", "main")
+        meta = session.get(SchemaMeta, 1)
+        assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION

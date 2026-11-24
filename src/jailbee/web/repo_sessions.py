@@ -89,6 +89,22 @@ class SessionRow:
     title: str
     last_activity: datetime | None
     models: tuple[str, ...]
+    started: datetime | None = None
+    cwd: str | None = None
+    git_branch: str | None = None
+
+    @classmethod
+    def of(cls, agent: str, info: SessionInfo) -> SessionRow:
+        return cls(
+            info.session_id,
+            agent,
+            info.title,
+            info.last_activity,
+            info.models,
+            info.started,
+            info.cwd,
+            info.git_branch,
+        )
 
 
 @dataclass(frozen=True)
@@ -157,8 +173,7 @@ class RepoSessions:
             except KeyError:
                 continue
             rows.extend(
-                SessionRow(i.session_id, agent, i.title, i.last_activity, i.models)
-                for i in source.list_sessions(home, self._cache, cwds)
+                SessionRow.of(agent, i) for i in source.list_sessions(home, self._cache, cwds)
             )
         self._cache.flush()
         rows.sort(
@@ -176,10 +191,7 @@ class RepoSessions:
         for agent, session_id in keys:
             located = self._locate(prefix, agent, session_id, flush=False)
             if located is not None:
-                info = located[3]
-                found[(agent, session_id)] = SessionRow(
-                    info.session_id, agent, info.title, info.last_activity, info.models
-                )
+                found[(agent, session_id)] = SessionRow.of(agent, located[3])
         self._cache.flush()
         return found
 

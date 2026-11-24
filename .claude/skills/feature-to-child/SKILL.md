@@ -90,9 +90,10 @@ uv run pytest -n auto -q
 uv run mypy src/
 uv run ruff check src/ tests/
 uv run ruff format --check src/ tests/
+make web-e2e        # only if the feature touched frontend/ or src/jailbee/web/
 ```
 
-**Done when** all four are clean.
+**Done when** all of them are clean.
 
 ## 9. Close and stage the PR
 

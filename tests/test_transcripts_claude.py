@@ -128,6 +128,36 @@ def test_a_long_tool_result_is_truncated_and_says_so(tmp_path: Path, source: Cla
     assert long_output.startswith(result.text)
 
 
+def test_a_reminder_appended_to_a_long_result_survives_the_cut(
+    tmp_path: Path, source: ClaudeSource
+) -> None:
+    """The reminder is split off before truncation, so it never leaks half-cut
+    into the output and never counts toward its length."""
+    path = tmp_path / "t.jsonl"
+    reminder = "<system-reminder>note</system-reminder>"
+    content = [
+        {"type": "text", "text": "x" * 10_000},
+        {"type": "text", "text": reminder},
+    ]
+    _write(
+        path,
+        {
+            "type": "user",
+            "uuid": "r1",
+            "message": {
+                "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": content}]
+            },
+        },
+    )
+
+    (result,) = source.read(path).entries
+
+    assert isinstance(result, ToolResult)
+    assert result.full_length == 10_000
+    assert "system-reminder" not in result.text
+    assert result.context == reminder
+
+
 def test_a_subagent_reference_follows_the_agent_tool_result(
     home: Path, source: ClaudeSource
 ) -> None:
@@ -686,3 +716,32 @@ def test_infos_a_failed_save_lost_are_saved_by_the_next_flush(
     cache.flush()
 
     assert sorted(p.stem for p in store.saved) == [SID, OTHER_SID]
+
+
+def test_session_info_names_where_and_on_which_branch_the_session_started(
+    tmp_path: Path, source: ClaudeSource
+) -> None:
+    path = tmp_path / "projects" / "-home-dev-repo" / f"{SID}.jsonl"
+    _write(
+        path,
+        {"type": "file-history-snapshot", "messageId": "m"},
+        {**_user_text("one", "Fix it"), "cwd": "/home/dev/repo", "gitBranch": "feat/x"},
+        {**_user_text("two", "And this"), "cwd": "/home/dev/repo/sub", "gitBranch": "other"},
+    )
+
+    info = source.session_info(SID, path)
+
+    assert info is not None
+    assert (info.cwd, info.git_branch) == ("/home/dev/repo", "feat/x")
+
+
+def test_session_info_without_a_cwd_or_branch_names_none(
+    tmp_path: Path, source: ClaudeSource
+) -> None:
+    path = tmp_path / "projects" / "-r" / f"{SID}.jsonl"
+    _write(path, {**_user_text("one", "Fix it"), "cwd": "/r", "gitBranch": ""})
+
+    info = source.session_info(SID, path)
+
+    assert info is not None
+    assert (info.cwd, info.git_branch) == ("/r", None)

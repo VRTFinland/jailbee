@@ -5,7 +5,9 @@ the watch closes when the last one leaves. Every follower keeps its own byte
 offset (the one its browser's REST view was read to), so a browser that
 subscribes late, or after a reconnect, catches up from where it stands. Reads
 use the source's incremental `read_from`, which never consumes a partly
-written line, and an empty read sends nothing.
+written line; an empty read sends nothing, while a read whose entries all
+render to nothing (hidden agent context) sends an empty append with the new
+offset.
 
 Everything here runs on the event loop except the watch callback, which hops
 onto the loop, and the read + render, which run in a worker thread.
@@ -73,8 +75,11 @@ class Follower:
             while True:
                 self._again = False
                 entries, offset = await asyncio.to_thread(self._read)
-                self.offset = offset
-                if entries:
+                advanced, self.offset = offset != self.offset, offset
+                # A batch the Agent context setting renders to nothing still
+                # moves the browser's offset (an empty append), or a reconnect
+                # would read it again.
+                if entries or advanced:
                     await self._deliver(entries, offset)
                 if not self._again:
                     return

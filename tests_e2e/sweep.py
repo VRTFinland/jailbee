@@ -28,7 +28,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeout
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import expect
 
 from jailbee.transcripts.claude import ClaudeSource
@@ -93,6 +93,7 @@ SKIPPED_RECORDS = frozenset(
 )
 """Claude Code bookkeeping records the reader skips on purpose: no conversation."""
 
+_EMPTY = "This session is empty."
 _LOAD_ERROR = re.compile(
     r"Session not found\.|Subagent not found\.|The session could not be loaded\."
 )
@@ -269,8 +270,11 @@ def _render(page: Page, base_url: str, result: SessionResult) -> None:
     started = time.monotonic()
     page.goto(base_url + result.url)
     error = page.get_by_text(_LOAD_ERROR)
+    # An empty session renders a zero-height article, never visible: its
+    # notice counts as rendered.
+    rendered = page.get_by_role("article").or_(page.get_by_text(_EMPTY)).or_(error)
     try:
-        expect(page.get_by_role("article").or_(error)).to_be_visible(timeout=RENDER_TIMEOUT_MS)
+        expect(rendered.first).to_be_visible(timeout=RENDER_TIMEOUT_MS)
     except AssertionError:
         result.load_error = f"nothing rendered within {RENDER_TIMEOUT_MS // 1000} s"
         return
@@ -302,8 +306,10 @@ def run_sweep(
         scan(path, result)
         try:
             _render(page, base_url, result)
-        except PlaywrightTimeout as timeout:
-            result.load_error = f"navigation failed: {timeout.message.splitlines()[0]}"
+        except PlaywrightError as failure:
+            # Timeouts and any other browser failure (a crashed page, a closed
+            # target): one session's load error, never the end of the sweep.
+            result.load_error = f"navigation failed: {failure.message.splitlines()[0]}"
         seen = errors.drain()
         result.js_errors = seen.console + seen.page
         result.csp = seen.csp

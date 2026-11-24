@@ -240,15 +240,18 @@ before editing `## Unreleased`.
   read in the state database across server restarts (filled in the background
   at start-up), list only the sessions started in the repository's own
   containers, and a container page shows its live sessions before its history
-  has loaded ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Session
+  has loaded. A container's history also lists sessions run while no dashboard
+  was open, attributed by the branch, directory and time each started
+  ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Session
   titles and connection notices stay visible while reading; **Latest answer**
   appears only when the newest reply is out of view and aligns its start below
   the header, including short final replies. E-ink page turns never skip unread
   text after partial keyboard scrolling. The agent's own wrapper records (task
-  notifications, system reminders, command output) are hidden by default; the
+  notifications, system reminders, also those appended to tool results, command
+  output) are hidden by default; the
   per-device **Agent context** setting can collapse them to a label that loads
-  its content on expand, or show them, while typed slash commands always show
-  as a label line
+  its content on expand, or show them, while typed slash commands and
+  interruption notices always show as a label line
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Themes
   (light, dark, e-ink) and an e-ink display profile with page turns are chosen
   per device. Page numbering stays stable as the transcript header becomes
