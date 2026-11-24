@@ -42,12 +42,25 @@ class JobResult:
     stdout: str = ""
 
     def failure_line(self) -> str:
-        """The last non-empty stderr line: the reason, for a one-line notice."""
+        """The last error reason, condensed for a one-line notice."""
         lines = [line.strip() for line in self.stderr.splitlines() if line.strip()]
-        for line in reversed(lines):
-            if any(not ("─" <= char <= "╿" or char.isspace()) for char in line):
-                return line
-        return ""
+        reasons: list[str] = []
+        box: list[str] | None = None
+        for line in lines:
+            if line.startswith("╭─ Error "):
+                box = []
+            elif box is not None and line.startswith("╰"):
+                reason = " ".join(box).strip()
+                if reason:
+                    reasons.append(reason)
+                box = None
+            elif box is not None and line.startswith("│") and line.endswith("│"):
+                text = line[1:-1].strip()
+                if text:
+                    box.append(text)
+            elif any(not ("─" <= char <= "╿" or char.isspace()) for char in line):
+                reasons.append(line)
+        return reasons[-1] if reasons else ""
 
 
 def needs_terminal(result: JobResult) -> bool:
