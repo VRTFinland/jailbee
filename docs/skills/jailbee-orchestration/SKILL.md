@@ -53,7 +53,7 @@ work needs:
   acceptance tests. The child implements, tests and commits the plan itself; on `done`,
   merge or stage its work.
 
-The orchestrator's branch receives code changes only through merges of child work and their conflict resolutions. Never make direct code, test or config changes in the orchestrator's container, even if the work is small or the user asks you to do it yourself.
+The orchestrator's branch receives code changes only through merges of child work and their conflict resolutions. Apart from resolving those conflicts, never make direct code, test or config changes in the orchestrator's container, even if the work is small or the user asks you to do it yourself.
 Beyond tiny text edits, do other work yourself only when it needs this
 container's own live environment or the user asks you to.
 
@@ -674,7 +674,7 @@ jailbee inbox send message --to fix-issue-12 --reply-to h-3fa9c012 --text "Use t
    `import_error`, fix the cause and send `import --child C --wait` to retry.
    `on_done_reason` is not an error: the import succeeded, but the child was
    kept instead of destroyed for that reason.
-2. In the merged-fork workflow, `git merge <imported_ref>` (or cherry-pick) and resolve conflicts yourself. For one PR per child, stage the source manifest instead and do not merge.
+2. In the merged-fork workflow, `git merge <imported_ref>` and resolve conflicts yourself. For one PR per child, stage the source manifest instead and do not merge.
    Submodule commits are already local; run `git submodule update` after
    merging so the working trees match their gitlinks.
    Before reusing an imported `refs/jailbee/from/<child>/<branch>`, merge it
