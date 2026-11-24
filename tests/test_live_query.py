@@ -189,6 +189,49 @@ def test_concurrent_status_queries_share_incus_readings(env: Env, monkeypatch, s
     assert env.rig.incus.storage_pool_resources.call_count == 1
 
 
+def test_slow_new_pool_is_coalesced_after_inventory_cache_expires(env: Env, monkeypatch) -> None:
+    from jailbee.orchestration.live_query import host_queries
+
+    now = [100.0]
+    monkeypatch.setattr("jailbee.orchestration.live_query.monotonic", lambda: now[0])
+    env.queries.live = host_queries(env.rig.incus)
+    env.rig.incus.list_containers.return_value = [
+        {
+            "config": {"volatile.uuid": uuid},
+            "expanded_devices": {"root": {"type": "disk", "path": "/", "pool": pool}},
+        }
+        for uuid, pool in (("proj-orch", "work"), ("proj-kid", "other"), ("proj-former", "other"))
+    ]
+    env.rig.incus.storage_pool_resources.return_value = {"space": {"total": 10, "used": 3}}
+    assert env.call("host.status").ok
+    entered, unblock = threading.Event(), threading.Event()
+
+    def slow_pool(pool, **kwargs):
+        entered.set()
+        assert unblock.wait(5)
+        now[0] += 10.0
+        return {"space": {"total": 20, "used": 4}}
+
+    env.rig.incus.storage_pool_resources.side_effect = slow_pool
+    with (
+        _connect_long(env.rig.root / "proj-kid") as first,
+        _connect_long(env.rig.root / "proj-former") as second,
+    ):
+        try:
+            first.sendall(wire.encode_request(wire.Request("host.status")))
+            assert entered.wait(2)
+            second.sendall(wire.encode_request(wire.Request("host.status")))
+            second.settimeout(0.1)
+            with pytest.raises(TimeoutError):
+                second.recv(1)
+        finally:
+            unblock.set()
+        second.settimeout(3)
+        assert wire.decode_response(recv_line(first)).result["disk_available"] == 16
+        assert wire.decode_response(recv_line(second)).result["disk_available"] == 16
+    assert env.rig.incus.storage_pool_resources.call_count == 2
+
+
 @pytest.mark.parametrize(
     "uuid,visible", [("proj-former", False), ("proj-kid", False), ("proj-orch", True)]
 )

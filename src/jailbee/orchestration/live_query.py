@@ -53,7 +53,7 @@ def host_queries(incus: Incus) -> dict[str, LiveQuery]:
     expires = 0.0
     inventory: list[dict[str, Any]] = []
     inventory_error: IncusError | None = None
-    pools: dict[str, dict[str, Any] | IncusError] = {}
+    pools: dict[str, tuple[float, dict[str, Any] | IncusError]] = {}
 
     def readings(uuid: str) -> tuple[list[dict[str, Any]], str | None, int | None]:
         nonlocal expires, inventory, inventory_error
@@ -61,7 +61,9 @@ def host_queries(incus: Incus) -> dict[str, LiveQuery]:
         with lock:
             refresh = monotonic() >= expires
             if refresh:
-                pools.clear()
+                for pool, (until, _) in list(pools.items()):
+                    if monotonic() >= until:
+                        del pools[pool]
                 inventory_error = None
                 try:
                     inventory = incus.list_containers(fast=True, all_projects=True, timeout=10)
@@ -93,12 +95,16 @@ def host_queries(incus: Incus) -> dict[str, LiveQuery]:
         )
         available = None
         if isinstance(pool, str) and pool:
-            if pool not in pools:
+            cached = pools.get(pool)
+            if cached is None or monotonic() >= cached[0]:
+                resources: dict[str, Any] | IncusError
                 try:
-                    pools[pool] = incus.storage_pool_resources(pool, timeout=10)
+                    resources = incus.storage_pool_resources(pool, timeout=10)
                 except IncusError as exc:
-                    pools[pool] = exc
-            resources = pools[pool]
+                    resources = exc
+                pools[pool] = (monotonic() + 2.0, resources)
+            else:
+                resources = cached[1]
             if isinstance(resources, IncusError):
                 raise resources
             space = resources.get("space") or {}
