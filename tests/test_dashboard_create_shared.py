@@ -130,6 +130,38 @@ def test_missing_answer_retries_once_with_live_queue_state(tmp_path, result, out
         assert (result.error or output) in entry.output
 
 
+@pytest.mark.parametrize(
+    "output,expected",
+    [
+        ("╭─ Error ─╮\n│ disk failure │\n╰──────────────╯\n", "disk failure"),
+        ("╭─ Error ─╮\n│ disk failure │\n│ on volume 1 │\n╰──────────────╯\n", "disk failure on volume 1"),
+    ],
+)
+def test_create_failure_notice_contains_full_unboxed_message(tmp_path, output, expected):
+    def questions(runs, done, progress):
+        done(ActionOutcome([RunResult(status=1)], output, [output]))
+
+    _, notices, _ = _start(
+        tmp_path,
+        code="import sys; print('confirmation needed'); sys.exit(2)",
+        run_questions=questions,
+    )
+    assert notices == [f"{sys.executable} -c failed: {expected}"]
+
+
+def test_bare_cancelled_failure_is_not_a_cancellation(tmp_path):
+    def questions(runs, done, progress):
+        done(ActionOutcome([RunResult(status=1, cancelled=True)], "cancelled\n", ["cancelled\n"]))
+
+    queue, notices, _ = _start(
+        tmp_path,
+        code="import sys; print('confirmation needed'); sys.exit(2)",
+        run_questions=questions,
+    )
+    assert notices == [f"{sys.executable} -c failed: cancelled"]
+    assert next(iter(queue)).state == "failed"
+
+
 def test_retry_keeps_create_busy_until_the_prompt_channel_finishes(tmp_path):
     jobs, queue = JobRunner(), NotificationQueue()
     callbacks = []

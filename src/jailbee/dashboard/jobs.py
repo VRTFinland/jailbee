@@ -42,9 +42,15 @@ class JobResult:
     stdout: str = ""
 
     def failure_line(self) -> str:
-        """The last non-empty stderr line: the reason, for a one-line notice."""
+        """The last error reason, condensed for a one-line notice."""
         lines = [line.strip() for line in self.stderr.splitlines() if line.strip()]
-        for line in reversed(lines):
+        for index in range(len(lines) - 1, -1, -1):
+            line = lines[index]
+            if line.startswith("│") and line.endswith("│"):
+                end = index + 1
+                while index > 0 and lines[index - 1].startswith("│") and lines[index - 1].endswith("│"):
+                    index -= 1
+                return " ".join(part[1:-1].strip() for part in lines[index:end]).strip()
             if any(not ("─" <= char <= "╿" or char.isspace()) for char in line):
                 return line
         return ""

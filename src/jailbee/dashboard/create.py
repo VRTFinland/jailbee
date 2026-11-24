@@ -93,11 +93,20 @@ def start_create(
                 return
             status = result.status if result.status is not None else 1
             lines = [line.strip() for line in output.splitlines() if line.strip()]
-            cancellation = any(
-                line in {"Aborted!", "Aborted.", "Error: cancelled"}
-                or line.strip("│ ") == "cancelled"
-                for line in lines
-            )
+            in_error_box = False
+            cancellation = False
+            for line in lines:
+                if line.startswith("╭─ Error "):
+                    in_error_box = True
+                elif line.startswith("╰"):
+                    in_error_box = False
+                elif line in {"Aborted!", "Aborted.", "Error: cancelled"} or (
+                    in_error_box
+                    and line.startswith("│")
+                    and line.endswith("│")
+                    and line[1:-1].strip() == "cancelled"
+                ):
+                    cancellation = True
             has_error = (
                 any(
                     line.lower().startswith("error:") and line != "Error: cancelled"

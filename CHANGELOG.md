@@ -17,8 +17,9 @@ before editing `## Unreleased`.
   refreshes metadata without changing the code handshake or restarting services
   ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
 - Dashboard container creation asks for missing confirmations and retains pre-worker
-  failures in the notification queue; successful handoffs and cancelled questions leave
-  no redundant parent entry ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
+  failures in the notification queue, with readable, unboxed failure notices; successful
+  handoffs and cancelled questions leave no redundant parent entry
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
 - A child agent stuck on an API error (quota or usage limit exhausted, rate limit,
   authentication, provider overloaded) is no longer shown as `alive:busy`: once the
   agent gives up retrying, `jailbee inbox status` shows `alive:error:<kind>` with the
