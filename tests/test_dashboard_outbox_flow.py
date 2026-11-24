@@ -453,9 +453,7 @@ def test_comment_mark_does_not_move_to_another_action():
 
 def test_comment_mark_survives_sibling_comment_deletion():
     before = _proposal(actions=[_action(0, comments=[_comment(0), _comment(1), _comment(2)])])
-    after = _proposal(
-        revision="r2", actions=[_action(0, comments=[{**_comment(1), "index": 0}])]
-    )
+    after = _proposal(revision="r2", actions=[_action(0, comments=[{**_comment(1), "index": 0}])])
     runner = FakeRunner(_listing(before), _listing(after))
     ctl = _controller(runner)
     ctl.load()

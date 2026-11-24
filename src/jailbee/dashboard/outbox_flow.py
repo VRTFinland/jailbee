@@ -1105,9 +1105,7 @@ class OutboxController:
                     return done, _CHANGED
                 fresh = current
                 if any(
-                    _fingerprint(fresh, k) != expected[k]
-                    for k in steps[step:]
-                    if k is not None
+                    _fingerprint(fresh, k) != expected[k] for k in steps[step:] if k is not None
                 ):
                     return done, _CHANGED
             if key is None:
