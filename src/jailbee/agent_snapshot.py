@@ -234,6 +234,10 @@ def register_session(
             for row in rows
             if isinstance(row, dict)
             and row.get("session_id") != sid
+            and (not row.get("ended") or (
+                isinstance(row.get("pid"), str) and bool(row["pid"])
+                and _start(PROC, row["pid"]) == row.get("procStart")
+            ))
             and (ended or not pid or (row.get("pid"), row.get("procStart")) != (pid, start))
         ]
         rows.append(
@@ -258,6 +262,20 @@ def register_session(
 
 
 def capture(home: Path, *, proc: Path = Path("/proc"), windows: Mapping[str, str]) -> int:
+    path = home / REGISTRY_RELPATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path.with_suffix(".lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        _lock(fd)
+        frozen = _json(home / SNAPSHOT_RELPATH)
+        if isinstance(frozen, dict) and isinstance(frozen.get("sessions"), list):
+            return len(frozen["sessions"])
+        return _capture(home, proc=proc, windows=windows)
+    finally:
+        os.close(fd)
+
+
+def _capture(home: Path, *, proc: Path, windows: Mapping[str, str]) -> int:
     registry = _json(home / REGISTRY_RELPATH)
     rows = registry.get("sessions", []) if isinstance(registry, dict) else []
     registered = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []

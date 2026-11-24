@@ -298,7 +298,7 @@ def test_rejects_unsafe_files_and_invalid_snapshot(tmp_path: Path) -> None:
     os.mkfifo(path)
     assert snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={}) == 0
     target = tmp_path / snapshot.SNAPSHOT_RELPATH
-    target.parent.mkdir(parents=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
     target.symlink_to(path)
     assert snapshot.boot(tmp_path, proc=tmp_path / "proc") == {
         "version": 1,

@@ -327,6 +327,8 @@ def test_clean_stop_freezes_registry_before_shutdown_end_hook(tmp_path, monkeypa
     assert runner.invoke(inbox_app, ["hook", "session-start"], input=payload).exit_code == 0
     assert snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={}) == 1
     assert runner.invoke(inbox_app, ["hook", "session-end"], input=payload).exit_code == 0
+    # Both the host stop command and the systemd shutdown unit capture.
+    assert snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={}) == 1
     assert [row["session_id"] for row in snapshot.boot(tmp_path)["sessions"]] == [ID]
     assert snapshot.boot(tmp_path)["sessions"] == []
 
@@ -359,8 +361,9 @@ def test_capture_merges_pre_plugin_sessions_without_reviving_ended_ones(
     assert snapshot.boot(tmp_path)["sessions"] == []
 
 
+@pytest.mark.parametrize("action", ["hook", "capture"])
 def test_concurrent_hook_retries_brief_lock_contention_without_losing_session(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, action
 ):
     import fcntl
     import os
@@ -372,7 +375,9 @@ def test_concurrent_hook_retries_brief_lock_contention_without_losing_session(
 
     monkeypatch.setattr(snapshot, "PROC", tmp_path / "proc")
     path = tmp_path / snapshot.REGISTRY_RELPATH
-    path.parent.mkdir(parents=True)
+    if action == "capture":
+        snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path.with_suffix(".lock"), os.O_CREAT | os.O_RDWR, 0o600)
     fcntl.flock(fd, fcntl.LOCK_EX)
 
@@ -383,7 +388,10 @@ def test_concurrent_hook_retries_brief_lock_contention_without_losing_session(
     thread = threading.Thread(target=release)
     thread.start()
     try:
-        snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+        if action == "capture":
+            assert snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={}) == 1
+        else:
+            snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
         assert [row["session_id"] for row in snapshot.boot(tmp_path)["sessions"]] == [ID]
     finally:
         thread.join()
@@ -426,6 +434,19 @@ def test_new_start_invalidates_snapshot_from_cancelled_shutdown(tmp_path, monkey
     other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
     snapshot.register_session(tmp_path, {"session_id": other_id, "cwd": "/work"})
     assert [row["session_id"] for row in snapshot.boot(tmp_path)["sessions"]] == [other_id]
+
+
+def test_ended_session_churn_does_not_fill_registry(tmp_path, monkeypatch):
+    from jailbee import agent_snapshot as snapshot
+
+    monkeypatch.setattr(snapshot, "PROC", tmp_path / "proc")
+    for number in range(400):
+        sid = f"{number:08x}-1234-1234-1234-123456789abc"
+        snapshot.register_session(tmp_path, {"session_id": sid, "cwd": "/work"})
+        snapshot.register_session(tmp_path, {"session_id": sid}, ended=True)
+    sid = "aaaaaaaa-1234-1234-1234-123456789abc"
+    snapshot.register_session(tmp_path, {"session_id": sid, "cwd": "/work"})
+    assert [row["session_id"] for row in snapshot.boot(tmp_path)["sessions"]] == [sid]
 
 
 @pytest.mark.parametrize("command", ["stop", "session-start", "session-end"])
