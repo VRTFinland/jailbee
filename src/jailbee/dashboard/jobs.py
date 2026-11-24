@@ -44,7 +44,10 @@ class JobResult:
     def failure_line(self) -> str:
         """The last non-empty stderr line: the reason, for a one-line notice."""
         lines = [line.strip() for line in self.stderr.splitlines() if line.strip()]
-        return lines[-1] if lines else ""
+        for line in reversed(lines):
+            if any(not ("─" <= char <= "╿" or char.isspace()) for char in line):
+                return line
+        return ""
 
 
 def needs_terminal(result: JobResult) -> bool:

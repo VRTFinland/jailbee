@@ -85,6 +85,53 @@ def existing_branch(mocker, tmp_path):
     return cfg, JobResult(result.exit_code, result.stderr, result.stdout)
 
 
+def test_real_cli_cancelled_text_question_leaves_no_failed_entry(mocker, tmp_path, existing_branch):
+    import pickle
+
+    from jailbee.dashboard.create import start_create
+    from jailbee.dashboard.notifications import NotificationQueue
+    from tests.test_dashboard_jobs import _drain
+
+    cfg, detached = existing_branch
+    config_file = tmp_path / "cfg.pickle"
+    config_file.write_bytes(pickle.dumps(cfg))
+    created_file = tmp_path / "created"
+    fake = tmp_path / "jailbee"
+    fake.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        f"sys.stderr.write({detached.stderr!r})\n"
+        f"sys.exit({detached.returncode})\n"
+    )
+    fake.chmod(0o755)
+    jobs, queue = JobRunner(), NotificationQueue()
+    notices = []
+    prompts = []
+
+    def spawn(argv, *, cwd, env, prompt_sock):
+        return runner.popen_spawn(
+            [sys.executable, "-c", "from tests.test_dashboard_create import run_create_child; run_create_child()",
+             str(config_file), str(created_file), *argv[3:]],
+            cwd=Path(__file__).resolve().parents[1], env=env, prompt_sock=prompt_sock,
+        )
+
+    def questions(runs, done, progress):
+        def cancel(prompt):
+            prompts.append(prompt)
+            return None
+
+        done(runner.run_actions(runs, transport="none", policy=None, on_prompt=cancel,
+                                spawn=spawn, progress=progress))
+
+    start_create(jobs, queue, key="new", label="create", argv=[str(fake), "new", "--background"],
+                 cwd=tmp_path, target="new", run_questions=questions, changed=lambda: None,
+                 done=notices.append)
+    _drain(jobs)
+    assert prompts
+    assert queue.empty
+    assert notices == [f"'{fake} new' cancelled"]
+    assert not created_file.exists()
+
+
 def test_real_cli_existing_branch_is_recognized_as_needing_a_question(existing_branch):
     _, result = existing_branch
     assert result.returncode == 2
