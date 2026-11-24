@@ -329,7 +329,9 @@ def test_boot_consumes_malformed_and_oversized_records(tmp_path: Path) -> None:
     assert not list(directory.iterdir())
 
 
-def test_retained_boot_acknowledges_only_launched_session_and_preserves_new_hooks(tmp_path, monkeypatch):
+def test_retained_boot_acknowledges_only_launched_session_and_preserves_new_hooks(
+    tmp_path, monkeypatch
+):
     other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
     monkeypatch.setattr(snapshot, "PROC", tmp_path / "proc")
     snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
@@ -341,12 +343,20 @@ def test_retained_boot_acknowledges_only_launched_session_and_preserves_new_hook
     # Hooks may update the live registry before the host acknowledges the launch.
     snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/new"})
     snapshot.acknowledge(tmp_path, [ID])
-    assert [row["session_id"] for row in snapshot.boot(tmp_path, retain=True)["sessions"]] == [other_id]
+    assert [row["session_id"] for row in snapshot.boot(tmp_path, retain=True)["sessions"]] == [
+        other_id
+    ]
     snapshot.acknowledge(tmp_path, [other_id])
     snapshot.acknowledge(tmp_path, [other_id])
-    assert snapshot.boot(tmp_path)["sessions"] == [{
-        "agent": "claude", "session_id": ID, "cwd": "/new", "launcher": ["claude"], "window": None,
-    }]
+    assert snapshot.boot(tmp_path)["sessions"] == [
+        {
+            "agent": "claude",
+            "session_id": ID,
+            "cwd": "/new",
+            "launcher": ["claude"],
+            "window": None,
+        }
+    ]
 
 
 def test_window_names_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -305,7 +305,10 @@ def restore_steps(
         )
         if match is not None:
             result[match] = result[match].model_copy(
-                update={"run": resume_run(entry), "env": {**result[match].env, BOOT_SESSION_ENV: entry.session_id}}
+                update={
+                    "run": resume_run(entry),
+                    "env": {**result[match].env, BOOT_SESSION_ENV: entry.session_id},
+                }
             )
             claimed.add(match)
             continue
@@ -328,7 +331,10 @@ def restore_steps(
                 break
         result.append(
             AutostartStep(
-                name=name, run=resume_run(entry), background=True, continue_on_error=True,
+                name=name,
+                run=resume_run(entry),
+                background=True,
+                continue_on_error=True,
                 env={**env, BOOT_SESSION_ENV: entry.session_id},
             )
         )

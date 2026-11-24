@@ -1482,7 +1482,9 @@ def test_on_start_retains_snapshot_only_when_resume_enabled(tmp_path, mocker, en
 @pytest.mark.parametrize("source", ["snapshot", "registry", "stale"])
 @pytest.mark.parametrize("failure", ["prepare", "claude"])
 @pytest.mark.parametrize("detached", [False, True])
-def test_failed_pre_agent_stage_keeps_sessions_for_retry(tmp_path, mocker, source, failure, detached):
+def test_failed_pre_agent_stage_keeps_sessions_for_retry(
+    tmp_path, mocker, source, failure, detached
+):
     import json
 
     from jailbee import agent_snapshot as snapshot
@@ -1497,17 +1499,36 @@ def test_failed_pre_agent_stage_keeps_sessions_for_retry(tmp_path, mocker, sourc
     if source == "stale":
         record(tmp_path, 1, sessionId=entry.session_id, cwd=entry.cwd)
     else:
-        path = tmp_path / (snapshot.SNAPSHOT_RELPATH if source == "snapshot" else snapshot.REGISTRY_RELPATH)
+        path = tmp_path / (
+            snapshot.SNAPSHOT_RELPATH if source == "snapshot" else snapshot.REGISTRY_RELPATH
+        )
         path.parent.mkdir(parents=True)
-        path.write_text(json.dumps({"version": 1, "source": "capture", "sessions": [{
-            "agent": "claude", "session_id": entry.session_id, "cwd": entry.cwd,
-            "launcher": ["claude"], "window": "claude",
-        }]}))
+        path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "source": "capture",
+                    "sessions": [
+                        {
+                            "agent": "claude",
+                            "session_id": entry.session_id,
+                            "cwd": entry.cwd,
+                            "launcher": ["claude"],
+                            "window": "claude",
+                        }
+                    ],
+                }
+            )
+        )
     incus = mocker.Mock()
     incus.config_get.return_value = None
 
     def read_boot(_container, argv, **kwargs):
-        return json.dumps(snapshot.boot(tmp_path, proc=tmp_path / "proc", **({"retain": True} if "--retain" in argv else {})))
+        return json.dumps(
+            snapshot.boot(
+                tmp_path, proc=tmp_path / "proc", **({"retain": True} if "--retain" in argv else {})
+            )
+        )
 
     def execute(_container, argv, **kwargs):
         if argv[1:2] == ["_agent-snapshot"] and argv[2:3] == ["--ack-boot"]:
@@ -1520,6 +1541,7 @@ def test_failed_pre_agent_stage_keeps_sessions_for_retry(tmp_path, mocker, sourc
     mocker.patch("jailbee.initial_prompt.prompt_pending", return_value=False)
     mocker.patch("jailbee.accounts.adapters.claude.ClaudeAdapter.session_exists", return_value=True)
     _, run_step = _patch_tmux(mocker)
+
     def fail_step(*args, **kwargs):
         if kwargs["name"] == failure or (failure == "claude" and "--resume" in kwargs["command"]):
             raise RuntimeError(f"{failure} failed")
@@ -1528,13 +1550,31 @@ def test_failed_pre_agent_stage_keeps_sessions_for_retry(tmp_path, mocker, sourc
         from jailbee.autostart import run_detached
         from jailbee.background import AutostartJob
 
-        plan = run_autostart(cfg, incus, "box", AutostartTrigger.ON_START, "/work", override="no_wait" if detached else None)
+        plan = run_autostart(
+            cfg,
+            incus,
+            "box",
+            AutostartTrigger.ON_START,
+            "/work",
+            override="no_wait" if detached else None,
+        )
         if detached:
-            run_detached(cfg, incus, AutostartJob(
-                container_name="box", autostart=cfg.autostart, repo_dir="/work", from_trigger="on_start",
-                mirror_endpoint=None, log_path="/tmp/test.log", progress_path="/tmp/test-progress.json",
-                override="no_wait", agent_steps=plan.agent_steps, agents_last=plan.agents_last,
-            ))
+            run_detached(
+                cfg,
+                incus,
+                AutostartJob(
+                    container_name="box",
+                    autostart=cfg.autostart,
+                    repo_dir="/work",
+                    from_trigger="on_start",
+                    mirror_endpoint=None,
+                    log_path="/tmp/test.log",
+                    progress_path="/tmp/test-progress.json",
+                    override="no_wait",
+                    agent_steps=plan.agent_steps,
+                    agents_last=plan.agents_last,
+                ),
+            )
 
     run_step.side_effect = fail_step
     if failure == "prepare":

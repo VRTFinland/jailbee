@@ -327,9 +327,7 @@ def _unlink_stale(path: Path) -> bool:
         return False
 
 
-def boot(
-    home: Path, *, proc: Path = Path("/proc"), retain: bool = False
-) -> dict[str, object]:
+def boot(home: Path, *, proc: Path = Path("/proc"), retain: bool = False) -> dict[str, object]:
     registry = home / REGISTRY_RELPATH
     pending = home / BOOT_RELPATH
     registry.parent.mkdir(parents=True, exist_ok=True)
@@ -370,7 +368,8 @@ def acknowledge(home: Path, session_ids: list[str]) -> None:
             return
         ids = set(session_ids)
         saved["sessions"] = [
-            row for row in saved["sessions"]
+            row
+            for row in saved["sessions"]
             if not isinstance(row, dict) or row.get("session_id") not in ids
         ]
         if saved["sessions"]:
