@@ -87,9 +87,11 @@ def stage(*, force: bool = False, root: Path | None = None) -> StageResult:
         already = previous == target and target.is_dir()
         info = version_info.identity()
         if already and not force:
-            _stamp_identity(target, info)
+            if info is not None:
+                _stamp_identity(target, info)
             return StageResult(target, False)
-        if not target.exists():
+        is_new = not target.exists()
+        if is_new:
             temporary = Path(tempfile.mkdtemp(prefix=name + ".tmp-", dir=root))
             try:
                 shutil.copytree(
@@ -105,7 +107,8 @@ def stage(*, force: bool = False, root: Path | None = None) -> StageResult:
             finally:
                 if temporary.exists():
                     shutil.rmtree(temporary)
-        _stamp_identity(target, info)
+        if is_new or info is not None:
+            _stamp_identity(target, info)
         link = root / (".current-" + uuid.uuid4().hex)
         try:
             link.symlink_to(name)
