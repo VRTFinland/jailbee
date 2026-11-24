@@ -161,7 +161,7 @@ async function submit() {
 .login {
     max-width: 22rem;
     margin: 0 auto;
-    padding: max(4rem, 64px) var(--space-3) 0;
+    padding: max(4rem, calc(var(--quick-trigger-top) + var(--quick-trigger-size) + 0.75rem)) var(--space-3) 4rem;
 }
 .login h1 {
     margin-bottom: var(--space-2);

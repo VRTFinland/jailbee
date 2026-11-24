@@ -86,15 +86,14 @@ function focusable(): HTMLElement[] {
     return Array.from(panel.value?.querySelectorAll<HTMLElement>("button:not(:disabled), a, input, select") ?? [])
         .filter(el => !el.closest("[hidden]"))
 }
-function onKey(event: KeyboardEvent) {
-    if (!open.value) return
+function onPanelKey(event: KeyboardEvent) {
     if (event.key === "Escape") {
-        // Native select popups consume Escape themselves; their open state is not exposed.
-        if (event.target instanceof HTMLSelectElement) return
         event.preventDefault()
         void close()
-        return
     }
+}
+function onKey(event: KeyboardEvent) {
+    if (!open.value) return
     if (["PageDown", "PageUp"].includes(event.key) || (settings.displayProfile === "eink" && ["n", "m"].includes(event.key) && !(event.target instanceof HTMLSelectElement))) {
         event.preventDefault()
         event.stopImmediatePropagation()
@@ -131,7 +130,7 @@ onBeforeUnmount(() => {
             <span v-if="filtered" id="filter-description" class="filter-marker"><span class="visually-hidden">Container filter enabled</span></span>
         </button>
         <div v-if="open" class="quick-backdrop" @click="close()" />
-        <section v-if="open" ref="panel" class="quick-panel" role="dialog" aria-label="Quick settings" aria-modal="true" tabindex="-1">
+        <section v-if="open" ref="panel" class="quick-panel" role="dialog" aria-label="Quick settings" aria-modal="true" tabindex="-1" @keydown="onPanelKey">
             <div v-for="font in fonts" :key="font.field" class="menu-row font-row">
                 <span>{{ font.label }}: {{ settings[font.field] }}px</span>
                 <button type="button" :aria-label="`Decrease ${font.name} font size`"
@@ -170,8 +169,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.quick-settings { position: fixed; top: calc(var(--app-banner-height, 0px) + 0.5rem); right: 0.75rem; z-index: 40; }
-.quick-trigger { position: relative; display: grid; place-items: center; width: 2.75rem; height: 2.75rem; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.quick-settings { position: fixed; top: calc(var(--app-banner-height, 0px) + var(--quick-trigger-top)); right: 0.75rem; z-index: 40; }
+.quick-trigger { position: relative; display: grid; place-items: center; width: var(--quick-trigger-size); height: var(--quick-trigger-size); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .quick-trigger svg { width: 1.25rem; fill: none; stroke: currentColor; stroke-width: 2; }
 .quick-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 20%); z-index: -1; }
 .quick-panel { position: absolute; top: 3rem; right: 0; width: min(22rem, calc(100vw - 2rem)); padding: 0.5rem; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); box-shadow: 0 4px 16px rgb(0 0 0 / 20%); }

@@ -135,7 +135,7 @@ def test_small_viewport_pages_show_every_context_row_in_order(
     expected_rows += (
         ["All", "Running", "Active"]
         if page_context == "containers"
-        else ["Follow new messages", "Show thinking", "Agent context Hidden Collapsed Shown"]
+        else ["Follow new messages", "Show thinking", "Agent context"]
     )
     expected_rows.append("Settings")
     seen: list[str] = []
@@ -146,7 +146,8 @@ def test_small_viewport_pages_show_every_context_row_in_order(
         seen.extend(
             panel.locator(".menu-row:visible").evaluate_all(
                 "rows => rows.map(row => (row.classList.contains('font-row') "
-                "? row.querySelector('span').innerText : row.innerText)"
+                "? row.querySelector('span').innerText : row.classList.contains('context-row') "
+                "? row.childNodes[0].textContent : row.innerText)"
                 ".replace(/\\s+/g, ' ').trim())"
             )
         )
@@ -201,7 +202,8 @@ def test_resizing_menu_clamps_pages_and_keeps_all_rows_reachable(
         seen.extend(
             panel.locator(".menu-row:visible").evaluate_all(
                 "rows => rows.map(row => (row.classList.contains('font-row') "
-                "? row.querySelector('span').innerText : row.innerText)"
+                "? row.querySelector('span').innerText : row.classList.contains('context-row') "
+                "? row.childNodes[0].textContent : row.innerText)"
                 ".replace(/\\s+/g, ' ').trim())"
             )
         )
@@ -217,11 +219,20 @@ def test_quick_settings_icon_does_not_overlap_public_page_content(
     page: Page, make_server: Callable[..., E2EServer], public_page: str
 ) -> None:
     server = make_server(setup=public_page == "setup")
-    page.set_viewport_size({"width": 320, "height": 600})
+    page.set_viewport_size({"width": 320, "height": 320})
+    page.add_init_script(
+        "localStorage.setItem('jailbee.bodyFontSize', '24'); "
+        "localStorage.setItem('jailbee.displayProfile', 'eink')"
+    )
     page.goto(f"{server.url}/#/{public_page}")
+    # Simulate a larger touch target and verify that content tracks its actual size.
+    page.evaluate("""() => {
+        document.documentElement.style.setProperty('--quick-trigger-size', '6rem');
+    }""")
     heading = "JailBee" if public_page == "login" else "Register a security key"
     expect(page.get_by_role("heading", name=heading)).to_be_visible()
     expect(page.locator("main input").first).to_be_visible()
+    page.evaluate("window.scrollTo(0, 0)")
 
     overlaps = page.evaluate("""() => {
         const icon = document.querySelector('.quick-trigger').getBoundingClientRect();
@@ -233,6 +244,18 @@ def test_quick_settings_icon_does_not_overlap_public_page_content(
         });
     }""")
     assert not overlaps
+
+
+def test_escape_on_closed_select_closes_menu_and_restores_focus(
+    page: Page, make_server: Callable[..., E2EServer], tmp_path: Path
+) -> None:
+    open_transcript(page, make_server, tmp_path)
+    reveal_setting(page, "combobox", "Agent context")
+    panel = page.get_by_role("dialog", name="Quick settings")
+    panel.get_by_role("combobox", name="Agent context").focus()
+    page.keyboard.press("Escape")
+    expect(panel).to_have_count(0)
+    expect(page.get_by_role("button", name="Quick settings", exact=True)).to_be_focused()
 
 
 def test_menu_follow_opt_out_keeps_live_entries_from_scrolling(

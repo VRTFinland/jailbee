@@ -30,6 +30,8 @@
        gesture area and screen-edge swipes never trigger a control. */
     --guard-bottom: calc(32px + env(safe-area-inset-bottom, 0px));
     --page-nav-height: 56px;
+    --quick-trigger-size: 2.75rem;
+    --quick-trigger-top: 0.5rem;
 }
 
 /* Themes: startSettings() sets data-theme on <html> (light, dark, eink); the

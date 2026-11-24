@@ -126,10 +126,10 @@ describe("Quick settings", () => {
         expect(document.activeElement).not.toBe(icon.element)
     })
 
-    it("lets Escape reach a native select without dismissing the menu", async () => {
+    it("closes on Escape from a focused select", async () => {
         const wrapper = await menu("session")
         await wrapper.get('select').trigger('keydown', {key: 'Escape'})
-        expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
+        expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
     })
 
     it("opens from the icon, closes by icon, Escape and backdrop, and restores focus", async () => {
