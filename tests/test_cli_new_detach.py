@@ -244,9 +244,12 @@ def _setup_boot(tmp_path: Path, mocker, *, detached: bool):
 
 
 @pytest.mark.parametrize("failure", [False, True])
-def test_start_records_started_before_autostart_and_completes_only_on_success(tmp_path, mocker, failure):
+def test_start_records_started_before_autostart_and_completes_only_on_success(
+    tmp_path, mocker, failure
+):
     from jailbee.autostart import AutostartStepError
     from jailbee.boot_state import MARKER
+
     run = _setup_boot(tmp_path, mocker, detached=False)
     from jailbee.incus import Incus
 
@@ -261,7 +264,9 @@ def test_start_records_started_before_autostart_and_completes_only_on_success(tm
     def autostart(*args, **kwargs):
         events.append("autostart")
         if failure:
-            raise AutostartStepError(container="myrepo-feat-a", step_name="setup", reason="broken stage")
+            raise AutostartStepError(
+                container="myrepo-feat-a", step_name="setup", reason="broken stage"
+            )
         return AutostartPlan(blocking=[], detached=[])
 
     incus.exec.side_effect = execute
@@ -302,7 +307,9 @@ def test_failed_start_remains_resumable_despite_existing_tmux(tmp_path, mocker, 
         return ""
 
     incus.exec.side_effect = execute
-    run.side_effect = AutostartStepError(container="myrepo-feat-a", step_name="setup", reason="broken stage")
+    run.side_effect = AutostartStepError(
+        container="myrepo-feat-a", step_name="setup", reason="broken stage"
+    )
     failed = runner.invoke(app, ["start", "feat-a"])
     assert failed.exit_code == 1, failed.output
     assert state == "started"
@@ -341,7 +348,9 @@ def test_start_marker_failure_warns_once_but_boot_succeeds(tmp_path, mocker, whe
 
 
 @pytest.mark.parametrize("command", ["start", "restart"])
-def test_foreground_does_not_complete_boot_when_deferred_stages_are_still_running(tmp_path, mocker, command):
+def test_foreground_does_not_complete_boot_when_deferred_stages_are_still_running(
+    tmp_path, mocker, command
+):
     from jailbee.boot_state import MARKER
 
     _setup_boot(tmp_path, mocker, detached=True)
@@ -353,7 +362,9 @@ def test_foreground_does_not_complete_boot_when_deferred_stages_are_still_runnin
     result = runner.invoke(app, [command, "feat-a"])
 
     assert result.exit_code == 0, result.output
-    writes = [" ".join(c.args[1]) for c in incus.exec.call_args_list if MARKER in " ".join(c.args[1])]
+    writes = [
+        " ".join(c.args[1]) for c in incus.exec.call_args_list if MARKER in " ".join(c.args[1])
+    ]
     assert len(writes) == 1
     assert "started" in writes[0]
 

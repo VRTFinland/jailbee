@@ -295,7 +295,9 @@ def _cfg_with(make_cfg, tmp_path, block: Autostart):
 
 
 @pytest.mark.parametrize("failure", [False, True])
-def test_detached_boot_is_completed_only_after_all_stages_succeed(tmp_path, mocker, make_cfg, failure):
+def test_detached_boot_is_completed_only_after_all_stages_succeed(
+    tmp_path, mocker, make_cfg, failure
+):
     from jailbee import autostart as autostart_mod
     from jailbee.boot_state import MARKER
 

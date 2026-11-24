@@ -4976,10 +4976,9 @@ def _post_start_actions(
         inject_github_token,
         run_autostart,
     )
+    from jailbee.boot_state import record
     from jailbee.hosts import sync_hosts
     from jailbee.lifecycle import container_repo_dir, current_network_mode
-
-    from jailbee.boot_state import record
 
     marker_written = record(incus, name, "started")
     mirror_endpoint = _mirror_endpoint_or_none(cfg, incus)

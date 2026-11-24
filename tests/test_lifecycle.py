@@ -4657,7 +4657,9 @@ def test_new_boot_marker_tracks_the_whole_autostart_run(tmp_path, mocker, outcom
     def autostart(_cfg, _incus, _name, trigger, **kwargs):
         events.append(trigger.value)
         if outcome == "failure":
-            raise AutostartStepError(container="repo-feat-x", step_name="setup", reason="broken stage")
+            raise AutostartStepError(
+                container="repo-feat-x", step_name="setup", reason="broken stage"
+            )
         return AutostartPlan(
             blocking=[],
             detached=[AutostartStage(stage="deps", steps=[])] if outcome == "detached" else [],
@@ -4667,8 +4669,14 @@ def test_new_boot_marker_tracks_the_whole_autostart_run(tmp_path, mocker, outcom
     mocker.patch("jailbee.agents.ensure_agents", side_effect=ensure_agents)
     mocker.patch("jailbee.autostart.run_autostart", side_effect=autostart)
     opts = NewContainerOptions(
-        container_branch="feat/x", name=None, network="strict", memory="8GiB",
-        cpu=4, from_base="gisgro-base", clone=False, autostart=outcome != "skipped",
+        container_branch="feat/x",
+        name=None,
+        network="strict",
+        memory="8GiB",
+        cpu=4,
+        from_base="gisgro-base",
+        clone=False,
+        autostart=outcome != "skipped",
     )
     if outcome == "failure":
         with pytest.raises(AutostartStepError):
