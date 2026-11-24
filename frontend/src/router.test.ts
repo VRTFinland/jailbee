@@ -47,4 +47,18 @@ describe("server mode routing", () => {
         await router.push("/settings")
         expect(router.currentRoute.value.name).toBe("settings")
     })
+
+    it("keeps a dashboard answer across signed-in and public navigations", async () => {
+        setToken("session")
+        const fetchMock = vi.fn(async () => Response.json({mode: "dashboard"}))
+        vi.stubGlobal("fetch", fetchMock)
+        const router = createAppRouter(createMemoryHistory())
+
+        await router.push("/")
+        await router.push("/login")
+        await router.push("/settings")
+        await router.push("/repos/alpha")
+
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
 })

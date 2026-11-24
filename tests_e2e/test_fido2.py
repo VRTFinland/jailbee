@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -157,6 +158,33 @@ def test_setup_tab_leaves_for_login_when_the_dashboard_returns_without_a_reload(
     # The setup view polls the mode; the marker proves no document reload.
     expect(page.get_by_role("button", name="Use security key", exact=True)).to_be_visible()
     expect(page).to_have_url(f"{url}/index.html#/login")
+    assert page.evaluate("window.__sameDocument") is True
+
+
+def test_signed_in_tab_returns_to_its_page_after_setup_ends_without_a_new_login(
+    make_server: Callable[..., E2EServer], page: Page, virtual_key: VirtualKey
+) -> None:
+    server = make_server()
+    server.push(snapshot_of())
+    url = f"http://localhost:{server.port}"
+    log_in_with_pin(page, url, server.pin.current)
+    page.goto(f"{url}/#/settings")
+    page.evaluate("window.__sameDocument = true")
+
+    server.stop()
+    server.start(setup=True)
+    expect(page.get_by_label("Setup PIN")).to_be_visible()
+
+    # Device sessions persist in the state DB, so the stored token stays valid.
+    # The setup view's poll may land in the gap between the two servers; answer
+    # it as the setup server would, so Chrome logs no refused connection.
+    page.route("**/api/mode", lambda route: route.fulfill(json={"mode": "setup"}))
+    server.stop()
+    server.start()
+    page.unroute("**/api/mode")
+
+    expect(page).to_have_url(re.compile(r"#/settings$"))
+    expect(page.get_by_role("heading", name="Settings", level=1)).to_be_visible()
     assert page.evaluate("window.__sameDocument") is True
 
 

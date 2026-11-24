@@ -2,18 +2,21 @@
 // Holds the dashboard socket open on every signed-in page (so a deep link or
 // reload of any view is live), and closed on public pages such as login.
 import {onBeforeUnmount, onMounted, ref, watch} from "vue"
-import {fetchServerMode} from "./api"
+import {fetchServerMode, getToken} from "./api"
 import {useRoute, useRouter} from "vue-router"
 import {useDashboard} from "./dashboard"
+import {rememberResumePath, takeResumePath} from "./router"
 
 const route = useRoute()
 const router = useRouter()
 const dashboard = useDashboard()
 
 dashboard?.onUnauthorized(() => {
+    takeResumePath()
     void router.push({name: "login"})
 })
 dashboard?.onSetupMode(() => {
+    rememberResumePath(route.fullPath)
     void router.replace({name: "setup"})
 })
 
@@ -53,11 +56,13 @@ function reload() {
 // closes /api/ws with CLOSE_SETUP_MODE). The login page has no socket, so it
 // polls while visible: an already-open login tab or PWA follows the temporary
 // setup server too. The setup view polls as well, to leave once setup ends.
-// Only on those two pages, so a plain server restart under a signed-in
-// page adds no failed requests beyond the socket's own retries.
+// checkMode runs only on those two pages (timer, `online` and visibility
+// alike), so a plain server restart under a signed-in page adds no failed
+// requests beyond the socket's own retries.
 let checkingMode = false
 let modeTimer: ReturnType<typeof setInterval> | undefined
 async function checkMode() {
+    if (route.name !== "login" && route.name !== "setup") return
     if (checkingMode || document.hidden) return
     checkingMode = true
     try {
@@ -65,7 +70,13 @@ async function checkMode() {
         if (mode === "setup" && route.name !== "setup") {
             await router.replace({name: "setup"})
         } else if (mode === "dashboard" && route.name === "setup") {
-            await router.replace({name: "login"})
+            // A stored token is still valid unless the socket says otherwise
+            // (4001); sessions outlive a server restart.
+            if (getToken()) await router.replace(takeResumePath())
+            else {
+                takeResumePath()
+                await router.replace({name: "login"})
+            }
         }
     } finally {
         checkingMode = false
@@ -73,7 +84,7 @@ async function checkMode() {
 }
 onMounted(() => {
     modeTimer = setInterval(() => {
-        if (route.name === "login" || route.name === "setup") void checkMode()
+        void checkMode()
     }, 2_000)
     window.addEventListener("online", checkMode)
     document.addEventListener("visibilitychange", checkMode)

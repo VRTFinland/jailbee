@@ -30,6 +30,20 @@ export const routes: RouteRecordRaw[] = [
     {path: "/:pathMatch(.*)*", redirect: "/"},
 ]
 
+let resumePath: string | null = null
+
+/** Remembers where the tab was before setup mode took it over. */
+export function rememberResumePath(path: string): void {
+    resumePath = path === "/setup" || path === "/login" ? null : path
+}
+
+/** The remembered route, once; the front page when there is none. */
+export function takeResumePath(): string {
+    const path = resumePath ?? "/"
+    resumePath = null
+    return path
+}
+
 /** Hash routing, so bookmarks work behind any reverse-proxy path. */
 export function createAppRouter(history: RouterHistory = createWebHashHistory()): Router {
     const router = createRouter({history, routes})
@@ -43,6 +57,7 @@ export function createAppRouter(history: RouterHistory = createWebHashHistory())
         const current = await mode
         if (current !== "dashboard") mode = null
         if (current === "setup") {
+            if (to.name !== "setup") rememberResumePath(to.fullPath)
             return to.name === "setup" ? true : {name: "setup", replace: true}
         }
         if (to.meta.public || getToken()) return true
