@@ -409,9 +409,12 @@ class OutboxController:
             tuple[frozenset[dob.RowKey], tuple[dob.ContainerListing, ...]]
         ] = []
         self._deleting: set[tuple[str, str]] = set()
+        self._delete_stale: set[tuple[str, str]] = set()
         self._delete_running = False
         self._delete_total = 0
         self._delete_attempted = 0
+        self._delete_deleted = 0
+        self._delete_failed = 0
         self._delete_status: list[str] = []
 
     def revisions(self) -> dict[str, str]:
@@ -483,6 +486,7 @@ class OutboxController:
         *,
         cursor: dob.RowKey | None,
         status: tuple[str, ...],
+        refresh_metadata: bool = True,
     ) -> dob.OutboxState:
         keys = _keys_of(containers)
         candidates: list[dob.RowKey | None] = [cursor, self.state.cursor]
@@ -499,8 +503,10 @@ class OutboxController:
         # A marked proposal or action also covers the rows listed under it since.
         for key in [k for k in marks if k[3] is None]:
             marks |= _subtree(containers, key)
-        # Every proposals listing re-reads the Sent log too: a publish just added records.
-        sent_state = self._fresh_sent()
+        # Local row removals reuse metadata; only a real listing re-reads it.
+        if refresh_metadata:
+            self._delete_stale.clear()
+        sent_state = self._fresh_sent() if refresh_metadata else self.state
         # Nothing pending but records sent: open on the Sent tab, unless the user chose.
         empty = not any(c.proposals for c in containers)
         tab = "sent" if sent_state.sent and empty and not sent_state.tab_touched else sent_state.tab
@@ -512,7 +518,7 @@ class OutboxController:
             marks=frozenset(marks),
             cursor=chosen,
             status=status,
-            abilities=self._abilities(containers),
+            abilities=self._abilities(containers) if refresh_metadata else self.state.abilities,
         )
 
     def _fresh_sent(self) -> dob.OutboxState:
@@ -805,6 +811,15 @@ class OutboxController:
                 *(f"{_safe(k[1])}: already in the delete queue" for k in sorted(conflicts, key=str))
             )
             return
+        if any((k[0], k[1]) in self._delete_stale for k in keys):
+            self._status(
+                *(
+                    f"{_safe(k[1])}: refresh required after deletion"
+                    for k in sorted(keys, key=str)
+                    if (k[0], k[1]) in self._delete_stale
+                )
+            )
+            return
         refused = [(k, r) for k in sorted(keys, key=str) if (r := _block_reason(self.state, k))]
         if refused:
             self._status(*(f"{_safe(k[1])}: {_safe(r)}" for k, r in refused))
@@ -865,10 +880,21 @@ class OutboxController:
                 if self._delete_queue:
                     self._next_delete()
                     return
-                status = tuple(self._delete_status)
+                if self._delete_status:
+                    details = "; ".join(self._delete_status)
+                    summary = (
+                        f"{self._delete_failed} not deleted ({details}); "
+                        f"deleted {self._delete_deleted}"
+                        if self._delete_failed
+                        else f"{details}; deleted {self._delete_deleted}"
+                    )
+                else:
+                    summary = f"Deleted {self._delete_deleted} from the outbox."
+                status = (summary,)
                 self._delete_running = False
                 self._deleting.clear()
                 self._delete_total = self._delete_attempted = 0
+                self._delete_deleted = self._delete_failed = 0
                 self._delete_status = []
                 self._set(replace(self.state, busy=None, status=status))
                 self.runner.changed()
@@ -915,14 +941,15 @@ class OutboxController:
                         )
                     proposals.append(replace(proposal, actions=actions))
             containers.append(replace(container, proposals=tuple(proposals)))
-        self.state = self._listed(tuple(containers), cursor=None, status=self.state.status)
+        self.state = self._listed(
+            tuple(containers), cursor=None, status=self.state.status, refresh_metadata=False
+        )
 
     def _delete_steps(
         self, keys: frozenset[dob.RowKey], shown: tuple[dob.ContainerListing, ...]
     ) -> Generator[list[str], CliResult, tuple[str, ...]]:
         """Sequence checks and drops; runner completions resume this on the UI thread."""
         status: list[str] = []
-        deleted = 0
         groups: dict[tuple[str, str], list[dob.RowKey]] = {}
         for key in sorted(keys, key=str):
             groups.setdefault((key[0], key[1]), []).append(key)
@@ -932,17 +959,67 @@ class OutboxController:
             if listed is None:
                 status.append(f"{_safe(pid)}: {_CHANGED}")
                 self._delete_attempted += len(chosen)
+                self._delete_failed += len(chosen)
+                self._deleting.discard((name, pid))
                 continue
             before = self._delete_attempted
             done, failure = yield from self._delete_proposal(name, listed, chosen)
+            if done and all(k[2] is not None for k in chosen):
+                # Child drops change the revision and shift indices. Refresh this
+                # proposal before releasing it for another confirmed delete.
+                fetched = self._parse((yield self._ls_argv()))
+                if isinstance(fetched, str):
+                    self._delete_stale.add((name, pid))
+                    self.state = replace(
+                        self.state,
+                        marks=frozenset(k for k in self.state.marks if k[:2] != (name, pid)),
+                    )
+                    status.append(fetched)
+                else:
+                    fresh = _find(fetched, name, pid)
+                    previous = _find(self.state.containers, name, pid)
+                    marks = set(self.state.marks)
+                    for marked in self.state.marks:
+                        if marked[:2] != (name, pid) or marked[2] is None:
+                            continue
+                        marks.discard(marked)
+                        if fresh is None or previous is None:
+                            continue
+                        matches = [
+                            candidate
+                            for candidate in _keys_of(
+                                (dob.ContainerListing(name, None, (), (fresh,)),)
+                            )
+                            if candidate[2] is not None
+                            and _fingerprint(fresh, candidate) == _fingerprint(previous, marked)
+                        ]
+                        if len(matches) == 1:
+                            marks.add(matches[0])
+                    self.state = replace(self.state, marks=frozenset(marks))
+                    containers = tuple(
+                        replace(
+                            c,
+                            proposals=tuple(
+                                replacement
+                                for p in c.proposals
+                                if (replacement := fresh if p.id == pid else p) is not None
+                            ),
+                        )
+                        if c.name == name
+                        else c
+                        for c in self.state.containers
+                    )
+                    self.state = self._listed(
+                        containers, cursor=None, status=self.state.status, refresh_metadata=False
+                    )
+            self._deleting.discard((name, pid))
             # Safety refusals skip this proposal's remaining children too: progress
             # counts handled selections, not only successful CLI calls.
             self._delete_attempted += len(chosen) - (self._delete_attempted - before)
-            deleted += done
+            self._delete_deleted += done
             if failure is not None:
+                self._delete_failed += len(chosen) - done
                 status.append(f"{_safe(pid)}: {_safe(failure)}")
-        if deleted:
-            status.append(f"Deleted {deleted} from the outbox.")
         return tuple(status)
 
     def _delete_proposal(
