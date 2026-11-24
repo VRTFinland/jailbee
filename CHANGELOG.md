@@ -28,7 +28,8 @@ before editing `## Unreleased`.
   ended sessions even after a cancelled stop and replaces sessions on resume,
   fork or `/clear`. Clean stops capture only still-live known processes.
   Boot entries survive failed autostart stages and are acknowledged individually
-  after a successful agent launch; no golden-image rebuild is needed
+  after a successful agent launch or a session start/end hook; autostart retries
+  skip sessions whose recorded process is already live. No golden-image rebuild is needed
   ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
 - `jailbee stop --all` captures agent sessions and cleanly stops running development
   containers across repositories before a host reboot, with one confirmation

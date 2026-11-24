@@ -336,7 +336,7 @@ def test_retained_boot_acknowledges_only_launched_session_and_preserves_new_hook
     monkeypatch.setattr(snapshot, "PROC", tmp_path / "proc")
     snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
     snapshot.register_session(tmp_path, {"session_id": other_id, "cwd": "/other"})
-    original = snapshot.boot(tmp_path, proc=tmp_path / "proc", retain=True)
+    original = snapshot.boot(tmp_path, retain=True)
     assert len(original["sessions"]) == 2
     assert snapshot.boot(tmp_path, retain=True) == original
 
@@ -358,6 +358,65 @@ def test_retained_boot_acknowledges_only_launched_session_and_preserves_new_hook
             "window": None,
         }
     ]
+
+
+@pytest.mark.parametrize("ended", [False, True], ids=["session-start", "session-end"])
+def test_hook_acknowledges_pending_session(tmp_path, monkeypatch, ended):
+    proc = tmp_path / "proc"
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    assert len(snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]) == 1
+
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"}, ended=ended)
+    assert not (tmp_path / snapshot.BOOT_RELPATH).exists()
+    if ended:
+        assert snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"] == []
+    else:
+        assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
+
+
+@pytest.mark.parametrize("hook", [False, True])
+def test_pending_ack_waits_for_concurrent_hook_lock(tmp_path, monkeypatch, hook):
+    import fcntl
+    import threading
+
+    monkeypatch.setattr(snapshot, "PROC", tmp_path / "proc")
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    snapshot.boot(tmp_path, retain=True)
+    lock = (tmp_path / snapshot.REGISTRY_RELPATH).with_suffix(".lock")
+    with lock.open("r+") as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX)
+        release = threading.Timer(0.35, lambda: fcntl.flock(owner, fcntl.LOCK_UN))
+        release.start()
+        try:
+            if hook:
+                snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+            else:
+                snapshot.acknowledge(tmp_path, [ID])
+        finally:
+            release.join()
+    assert not (tmp_path / snapshot.BOOT_RELPATH).exists()
+
+
+@pytest.mark.parametrize("start", [None, "777", "888"], ids=["dead", "live", "reused-pid"])
+def test_boot_reentry_skips_pending_session_only_while_process_matches(tmp_path, monkeypatch, start):
+    proc = tmp_path / "proc"
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    batch = snapshot.boot(tmp_path, proc=proc, retain=True)
+    # Model a manually resumed process whose hook/host acknowledgement was lost.
+    path = tmp_path / snapshot.REGISTRY_RELPATH
+    registry = json.loads(path.read_text())
+    registry["sessions"] = [{**batch["sessions"][0], "pid": "7", "procStart": "777", "ended": False}]
+    path.write_text(json.dumps(registry))
+    if start is not None:
+        live(proc, 7, start)
+    result = snapshot.boot(tmp_path, proc=proc, retain=True)
+    assert [row["session_id"] for row in result["sessions"]] == ([] if start == "777" else [ID])
+    if start == "777":
+        assert snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"] == []
+        assert not (tmp_path / snapshot.BOOT_RELPATH).exists()
+        assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
 
 
 def test_partial_restore_survives_another_clean_stop(tmp_path, monkeypatch):
@@ -427,7 +486,7 @@ def test_pending_and_new_capture_are_delivered_in_bounded_batches(tmp_path, monk
     assert snapshot.boot(tmp_path)["sessions"] == []
 
 
-def test_queued_overflow_does_not_mask_new_clean_capture(tmp_path, monkeypatch):
+def test_source_overflow_does_not_mask_new_clean_capture(tmp_path, monkeypatch):
     proc = tmp_path / "proc"
     monkeypatch.setattr(snapshot, "PROC", proc)
     snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
@@ -442,6 +501,7 @@ def test_queued_overflow_does_not_mask_new_clean_capture(tmp_path, monkeypatch):
     assert len(snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]) == 1
     snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
     snapshot.acknowledge(tmp_path, [ID])
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
     assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
     delivered = set()
     for _ in range(2):
