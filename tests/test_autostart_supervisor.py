@@ -294,6 +294,42 @@ def _cfg_with(make_cfg, tmp_path, block: Autostart):
     return make_cfg(tmp_path).model_copy(update={"autostart": block})
 
 
+@pytest.mark.parametrize("failure", [False, True])
+def test_detached_boot_is_completed_only_after_all_stages_succeed(
+    tmp_path, mocker, make_cfg, failure
+):
+    from jailbee import autostart as autostart_mod
+    from jailbee.boot_state import MARKER
+
+    incus = mocker.MagicMock()
+    events = []
+
+    def execute(name, argv, **kwargs):
+        if MARKER in " ".join(argv):
+            events.append(" ".join(argv))
+        return ""
+
+    def stage(*args, **kwargs):
+        events.append("stage")
+        if failure:
+            raise RuntimeError("stage failed")
+
+    incus.exec.side_effect = execute
+    mocker.patch("jailbee.autostart.run_stages", side_effect=stage)
+    mocker.patch("jailbee.autostart.agent_autostart_steps", return_value=[])
+    block = Autostart.model_validate({"on_start": [_stage("deps", detach=True)]})
+    cfg = _cfg_with(make_cfg, tmp_path, block)
+    if failure:
+        with pytest.raises(RuntimeError, match="stage failed"):
+            autostart_mod.run_detached(cfg, incus, _spec(tmp_path, block))
+        assert events == ["stage"]
+    else:
+        autostart_mod.run_detached(cfg, incus, _spec(tmp_path, block))
+        assert len(events) == 2
+        assert events[0] == "stage"
+        assert "handled" in events[1]
+
+
 def test_run_detached_runs_only_the_stages_past_the_boundary(tmp_path, mocker, make_cfg):
     from jailbee import autostart as autostart_mod
 

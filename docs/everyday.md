@@ -92,10 +92,15 @@ are left to their own Incus `boot.autostart` settings.
 Successful clean stops, including agent-session capture, are saved in
 `${XDG_STATE_HOME:-~/.local/state}/jailbee/resume-set.json`. Repeating the stop
 preserves earlier entries; journal updates are locked across concurrent commands.
+Concurrent `stop --all` and `resume` runs are serialized and print a waiting
+message before waiting for the other operation.
 `resume` starts that set and repairs running containers whose boot setup has not
 been handled after Incus restarted them. A volatile `/run` marker records normal
 start setup (including empty plans) or an intentional `--no-autostart` skip;
-both are left alone for that boot. For older boots without a marker, an existing
+both are left alone for that boot. Setup writes `started` before autostart and
+marks the boot handled only after all stages, including detached stages, succeed.
+Interrupted or failed setup remains retryable even if tmux already exists.
+Marker-write failures warn without failing the boot. For older boots without a marker, an existing
 `autostart` tmux session or an empty start plan also counts as healthy. It runs the normal start setup and
 `on_start` autostart (services, agent windows and session restoration), waiting
 for all stages. Each container is reported independently; failures and live-job
