@@ -110,5 +110,19 @@ class SessionOutboxRunner:
 
             return rc, read_diagnostic_text(path)
 
+    def publish(self, argv: Sequence[str], done: Callable[[JobResult], None]) -> None:
+        from jailbee.dashboard.outbox_publish import publish
+
+        repo, full = self._addressed(argv)
+        publish(
+            full,
+            cwd=repo.cwd(),
+            target=self.container,
+            queue=self.session.queue,
+            run_questions=self.session.terminal.run_actions,
+            changed=self.session._queue_changed,
+            done=done,
+        )
+
     def changed(self) -> None:
         self.session.client.refresh()

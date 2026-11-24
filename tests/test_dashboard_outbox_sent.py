@@ -137,22 +137,21 @@ def test_tab_without_sent_records_is_a_status(mocker, tmp_path):
 
 def test_publish_in_the_box_refreshes_the_sent_list(mocker, tmp_path):
     """The last proposal is published: the box lands on a Sent list that has the new record."""
-    from jailbee.dashboard.jobs import JobResult
+    from jailbee.dashboard.runner import ActionOutcome, RunResult
     from tests.test_dashboard_outbox import _container, _listing
 
     quiet = _quiet(mocker)
-    session, _ = bare_session(mocker, [_group(tmp_path, count=0)])  # no records when opened
+    session, terminal = bare_session(mocker, [_group(tmp_path, count=0)])  # no records when opened
+    pending = mocker.patch.object(terminal, "run_actions")
     jobs = _HeldJobs()
     session.jobs = jobs  # type: ignore[assignment]  # test double
     _open_box(session)
     assert _state(session).sent == () and _state(session).tab == "outbox"
 
     session.outbox_intent("publish", ("alpha-x", "pr/a.json", None, None))
-    jobs.started[-1][2](JobResult(0, "", _PLAN))  # type: ignore[operator]  # the plan
-    session.outbox_intent("answer", None, "publish")
     _rec("just-sent", content="published a moment ago")  # what the publish recorded
     quiet.return_value = tsession.da.CliResult(True, "done", _listing(_container()))
-    jobs.started[-1][2](JobResult(0, "", "Published 1 action\n"))  # type: ignore[operator]
+    pending.call_args.args[1](ActionOutcome([RunResult(status=0)], "Published 1 action\n"))
     jobs.poll()  # the post-publication listing arrives asynchronously
 
     state = _state(session)
