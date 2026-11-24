@@ -2813,6 +2813,9 @@ def _new_container(
                 start_plan if detached_from == AutostartTrigger.ON_START.value else None,
             )
 
+    from jailbee.boot_state import record
+
+    record(incus, name, "handled" if opts.autostart else "skipped")
     return name
 
 
@@ -3460,6 +3463,13 @@ def _destroy_container_locked(
 
     _phase("deleting")
     incus.delete(name, force=force)
+
+    from jailbee import host_resume
+
+    try:
+        host_resume.remove(name)
+    except (OSError, ValueError) as exc:
+        warn(f"Could not remove resume entry for '{name}' (continuing): {exc}")
 
     from jailbee import autostart_outcomes
 

@@ -26,6 +26,37 @@ def _host_autostart_config(mocker):
     )
 
 
+@pytest.mark.parametrize("skip", [False, True])
+def test_start_records_boot_decision_even_when_no_tmux_is_needed(mocker, make_cfg, tmp_path, skip):
+    from jailbee.boot_state import MARKER
+    from jailbee.incus import Incus
+
+    cfg = make_cfg(tmp_path)
+    mocker.patch("jailbee.cli._load_or_exit", return_value=cfg)
+    mocker.patch("jailbee.lifecycle.boot_container")
+    mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)
+    mocker.patch("jailbee.lifecycle.current_network_mode", return_value="strict")
+    mocker.patch("jailbee.hosts.sync_hosts")
+    mocker.patch("jailbee.egress_proxy.sync_container")
+    mocker.patch("jailbee.lifecycle.container_repo_dir", return_value="/r")
+    mocker.patch("jailbee.autostart.inject_github_token")
+    mocker.patch("jailbee.agent_resume.boot_entries", return_value=[])
+    mocker.patch("jailbee.autostart_profiles.resolve_profile", return_value=None)
+    mocker.patch("jailbee.autostart.run_autostart", return_value=_NO_DETACHED)
+    mocker.patch("jailbee.cli._post_create_gui_launches")
+    incus = mocker.Mock(spec=Incus)
+    mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "myrepo-work"))
+
+    result = runner.invoke(app, ["start", "myrepo-work", "--no-background"] + (
+        ["--no-autostart"] if skip else []
+    ))
+
+    assert result.exit_code == 0, result.output
+    expected = "skipped" if skip else "handled"
+    assert any(MARKER in " ".join(call.args[1]) and expected in " ".join(call.args[1])
+               for call in incus.exec.call_args_list)
+
+
 def test_start_calls_apply_hosts_for_strict_container(mocker):
     mocker.patch(
         "jailbee.cli._resolve_existing",

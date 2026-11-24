@@ -13,8 +13,9 @@ from jailbee.incus import Incus, IncusError
 
 @pytest.fixture
 def host(mocker, make_cfg, tmp_path):
-    cfg = make_cfg(tmp_path / "one", container_prefix="one")
-    other = make_cfg(tmp_path / "two", container_prefix="two")
+    stages = {"on_start": [{"name": "setup", "run": "true"}]}
+    cfg = make_cfg(tmp_path / "one", container_prefix="one", autostart=stages)
+    other = make_cfg(tmp_path / "two", container_prefix="two", autostart=stages)
     cfg.repo_root.mkdir()
     other.repo_root.mkdir()
     mocker.patch("jailbee.cli._load_orphan_base_or_exit", return_value=cfg)
@@ -114,6 +115,8 @@ def test_stop_all_confirmation(host, mocker, answer, expected):
         assert incus.stop.call_count == 3
     else:
         incus.stop.assert_not_called()
+    if answer != "y\n":
+        assert result.output.count("  one-work") == 1
     if answer is None:
         assert "--yes" in result.output
 
@@ -197,10 +200,165 @@ def test_resume_keeps_failures_and_live_boot_entries(host, mocker):
     assert "Resumed: one-mount" in result.output
 
 
+def test_resume_no_stages_planned_does_not_require_tmux(host, mocker):
+    from jailbee.config import Autostart
+
+    cfg, _, incus, _ = host
+    empty = cfg.model_copy(update={"autostart": Autostart()})
+    mocker.patch("jailbee.cli._load_orphan_base_or_exit", return_value=empty)
+    incus.list_containers.return_value = incus.list_containers.return_value[:1]
+    incus.exec.return_value = "missing"
+    start = mocker.patch("jailbee.lifecycle.boot_container")
+
+    result = CliRunner().invoke(app, ["resume"])
+
+    assert result.exit_code == 0, result.output
+    assert "Nothing to resume" in result.output
+    start.assert_not_called()
+
+
+@pytest.mark.parametrize("marker", ["handled", "skipped"])
+def test_resume_honours_this_boot_decision_even_without_tmux(host, mocker, marker):
+    _, _, incus, _ = host
+    incus.list_containers.return_value = incus.list_containers.return_value[:1]
+    incus.exec.return_value = marker
+    start = mocker.patch("jailbee.lifecycle.boot_container")
+
+    result = CliRunner().invoke(app, ["resume"])
+
+    assert result.exit_code == 0, result.output
+    assert "Nothing to resume" in result.output
+    start.assert_not_called()
+
+
+def test_resume_repairs_a_new_boot_after_volatile_marker_disappears(host, mocker):
+    _, _, incus, _ = host
+    incus.list_containers.return_value = incus.list_containers.return_value[:1]
+    incus.exec.return_value = "skipped"
+    start = mocker.patch("jailbee.lifecycle.boot_container")
+    post = mocker.patch("jailbee.cli._post_start_actions")
+    mocker.patch("jailbee.create_flow.preflight_cache_pools")
+    assert CliRunner().invoke(app, ["resume"]).exit_code == 0
+    start.assert_not_called()
+
+    incus.exec.return_value = "missing"  # /run and tmux were cleared by a reboot.
+    result = CliRunner().invoke(app, ["resume"])
+
+    assert result.exit_code == 0, result.output
+    start.assert_called_once()
+    post.assert_called_once()
+    assert "Resumed: one-work" in result.output
+
+
 def test_resume_nothing_to_do(host):
     result = CliRunner().invoke(app, ["resume"])
     assert result.exit_code == 0, result.output
     assert "Nothing to resume" in result.output
+
+
+@pytest.mark.parametrize("section", ["containers", "stopping"])
+def test_resume_drops_vanished_container_without_loading_its_repository(host, mocker, section):
+    cfg, _, incus, _ = host
+    incus.list_containers.return_value = []
+    path = state_dir() / "resume-set.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {"version": 1, "containers": {}, section: {"one-gone": str(cfg.repo_root)}}
+    path.write_text(json.dumps(data))
+    load = mocker.patch("jailbee.config.load_repo_config")
+    mocker.patch("jailbee.dashboard.model.registered_repo_roots", return_value=[])
+
+    result = CliRunner().invoke(app, ["resume"])
+
+    assert result.exit_code == 0, result.output
+    assert "Dropping one-gone: container no longer exists" in result.output
+    assert recorded() == {}
+    assert json.loads(path.read_text())["stopping"] == {}
+    load.assert_not_called()
+
+
+def test_resume_reports_unloadable_repository_once_and_keeps_existing_entries(host, mocker):
+    from jailbee.config import ConfigError
+
+    cfg, other, incus, _ = host
+    incus.list_containers.return_value = [
+        {"name": "two-a", "status": "Stopped", "profiles": ["two-base"]},
+        {"name": "two-b", "status": "Stopped", "profiles": ["two-base"]},
+    ]
+    entries = dict.fromkeys(["two-a", "two-b", "two-gone"], str(other.repo_root))
+    path = state_dir() / "resume-set.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"version": 1, "containers": entries}))
+    load = mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigError("config removed"))
+
+    result = CliRunner().invoke(app, ["resume"])
+
+    assert result.exit_code == 1, result.output
+    assert result.output.count("config removed") == 1
+    assert "restore the repository configuration" in result.output
+    assert "jailbee orphan destroy" in result.output
+    assert recorded() == {"two-a": str(other.repo_root), "two-b": str(other.repo_root)}
+    load.assert_called_once_with(other.repo_root)
+    incus.start.assert_not_called()
+
+
+def test_destroy_cleans_all_resume_journal_sections(host, mocker):
+    from jailbee.lifecycle import destroy_container
+
+    cfg, _, incus, _ = host
+    incus.exists.return_value = True
+    incus.list_containers.return_value = []
+    mocker.patch("jailbee.pool.release_all")
+    mocker.patch("jailbee.agent_private.release")
+    mocker.patch("jailbee.git.list_refs", return_value=[])
+    mocker.patch("jailbee.submodules.prune_host_submodule_refs")
+    mocker.patch("jailbee.host_teardown.snapshot")
+    mocker.patch("jailbee.host_teardown.cleanup")
+    mocker.patch("jailbee.egress_scope.drop_container_acl")
+    mocker.patch("jailbee.egress_scope.sync_bridge_extras")
+    path = state_dir() / "resume-set.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "version": 1,
+        "containers": {"one-off": str(cfg.repo_root), "one-keep": str(cfg.repo_root)},
+        "pending": ["one-off"],
+        "stopping": {"one-off": str(cfg.repo_root)},
+    }))
+
+    destroy_container(cfg, incus, "one-off", force=True)
+
+    incus.delete.assert_called_once_with("one-off", force=True)
+    assert recorded() == {"one-keep": str(cfg.repo_root)}
+    assert json.loads(path.read_text())["pending"] == []
+    assert json.loads(path.read_text())["stopping"] == {}
+
+
+@pytest.mark.parametrize("command", [["stop", "--all", "--yes"], ["resume"]])
+def test_journal_writes_hold_a_stable_exclusive_lock(host, mocker, command):
+    import fcntl
+    import os
+
+    _, _, incus, _ = host
+    incus.list_containers.return_value = incus.list_containers.return_value[:1]
+    incus.exec.return_value = "missing"
+    mocker.patch("jailbee.lifecycle.boot_container")
+    mocker.patch("jailbee.cli._post_start_actions")
+    mocker.patch("jailbee.create_flow.preflight_cache_pools")
+    replace = os.replace
+    writes = 0
+
+    def check_locked(source, target):
+        nonlocal writes
+        with target.with_suffix(".lock").open("a") as lock:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        writes += 1
+        replace(source, target)
+
+    mocker.patch("jailbee.host_resume.os.replace", side_effect=check_locked)
+    result = CliRunner().invoke(app, command)
+
+    assert result.exit_code == 0, result.output
+    assert writes >= 2
 
 
 def test_repeated_stop_preserves_earlier_set(host):
@@ -303,7 +461,10 @@ def test_stop_all_continues_after_a_state_write_failure(host, mocker):
     assert result.exit_code == 1, result.output
     assert "disk temporarily unavailable" in result.output
     assert incus.stop.call_count == 3
-    assert set(recorded()) == {"one-work", "two-child", "one-mount"}
+    journal = json.loads((state_dir() / "resume-set.json").read_text())
+    assert set(journal["containers"]) | set(journal["stopping"]) == {
+        "one-work", "two-child", "one-mount"
+    }
 
 
 @pytest.mark.parametrize(
@@ -316,9 +477,10 @@ def test_host_lifecycle_excludes_service_containers(host, service):
         {
             "name": service,
             "status": "Running",
-            "profiles": ["default"],
+            "profiles": ["default", f"{service}-profile"],
             "config": {"boot.autostart": "true"},
-        }
+        },
+        {"name": "one-off", "status": "Stopped", "profiles": ["one-base"]},
     ]
     result = CliRunner().invoke(app, ["stop", "--all", "--yes"])
     assert result.exit_code == 0, result.output

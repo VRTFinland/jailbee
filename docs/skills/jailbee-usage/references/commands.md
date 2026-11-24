@@ -692,13 +692,17 @@ JailBee service containers are excluded. Live background jobs are skipped with
 a warning: repeat the stop after they finish. `--all` excludes NAME and `--force`.
 
 After reboot, `jailbee resume` restores the saved set plus running containers
-without the `autostart` tmux session. It uses normal start setup and waits for
-all `on_start` stages, including services and agent session restore. Healthy
-running sessions stay untouched; failed/incomplete resumes remain retryable
-even if an earlier stage already created tmux. Resume skips live jobs and exits
-non-zero for those skips or failures, continuing with other containers. A no-op
-exits 0. Missing containers/configurations are reported and recorded entries
-are retained. These host-wide operations are refused in restricted remote
+needing boot setup. A volatile `/run` marker records handled setup (including
+empty plans) or intentional `--no-autostart` skips; these boots stay untouched.
+Older boots without a marker fall back to the `autostart` tmux session or an
+empty start plan. It uses normal start setup and waits for all `on_start` stages,
+including services and agent session restore. Failed/incomplete resumes remain
+retryable even if an earlier stage already created tmux. Resume skips live jobs
+and exits non-zero for those skips or failures, continuing with other containers.
+A no-op exits 0. Vanished containers are dropped with an info line; `destroy`
+also removes their entries. Unavailable configs are reported once per repository
+per invocation, retaining entries for existing containers: restore the config
+and retry, or use `jailbee orphan destroy`. Journal updates are locked. These host-wide operations are refused in restricted remote
 sessions; `stop NAME` remains a container command.
 
 ### `jailbee start|stop|restart [NAME]`
