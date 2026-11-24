@@ -881,6 +881,8 @@ def add_entry(
     if isinstance(value, dict):
         if key is None:
             raise ValueError("a model-map entry needs a key name")
+        if spec.path == ("agents",) and key in AGENT_SETTINGS_KEYS:
+            raise ValueError(f"Agent name `{key}` is reserved for settings; choose another name.")
         value[key] = {}
         return stage(state, spec.path, value), key
     value.append({})

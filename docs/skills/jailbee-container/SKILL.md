@@ -80,6 +80,9 @@ and consult each model's `label`, `use_for`, `avoid_for` and `notes`. This is th
 user's effective repo guidance, read live from host config; changes need no
 `apply` or restart. An empty map gives a hint to configure `agents.models` in
 `~/.config/jailbee/global.yaml`; JailBee supplies no model recommendations.
+The broker caches unchanged config files without running git; host-status
+refreshes cannot hold up model queries. Invalid config or a missing repo config
+is refused with an explanation, not reported as an unreachable broker.
 Runner availability and permissions still come from `jailbee inbox runners`.
 
 ### Health and waiting

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from jailbee.config.errors import ConfigError
 from jailbee.incus import IncusError
 from jailbee.orchestration import wire
 from jailbee.orchestration.live_query import LIVE_OPS, LiveQuery
@@ -77,6 +78,10 @@ class Queries:
             detail = " ".join(str(exc).split())
             log.warning("broker: query %r unavailable: %s", request.op, detail)
             return wire.fail(wire.REFUSED, f"host status unavailable: {detail}")
+        except ConfigError as exc:
+            detail = " ".join(str(exc).split())
+            log.warning("broker: query %r config invalid: %s", request.op, detail)
+            return wire.fail(wire.REFUSED, f"configuration error: {detail}")
         except Exception:
             log.exception("broker: query %r failed", request.op)
             return wire.fail(wire.REFUSED, "broker error")

@@ -2578,12 +2578,18 @@ The repo's `.jailbee/config.yaml` and the host-local `repos/<prefix>.yaml` may
 override individual model fields: setting `haiku.use_for` keeps the global
 `haiku.label` and all other models. The host-local layer wins over the repo
 layer, which wins over global. Both keys have their own fields in the config
-editor; they are not agent entries.
+editor; they are not agent entries. `models` is a reserved agent name: rename
+an existing agent with that name (for example to `models-agent`) and update its
+references. `models: null` is accepted as an empty map.
 
 Inside **any** container, run `jailbee agent models` (or `--json`) before choosing
 a subagent or child-runner model, and follow `model_policy`. It queries the
 broker for the calling container's effective repo config on every invocation.
-Host config edits are visible on the next query, without `apply` or a restart.
+Unchanged config files reuse a per-repo cache without git detection; edits to
+the global, repo or host-local layer are visible on the next query, without
+`apply` or a restart. Model queries have a separate worker and lock from slow
+host-status refreshes. Invalid YAML or a container without a repo config is
+refused with a clear explanation, not an unreachable-broker error.
 An empty map prints a configuration hint; JSON always returns
 `{"models": {}, "model_policy": ""}` for the unconfigured case.
 

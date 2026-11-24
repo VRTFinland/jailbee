@@ -97,6 +97,31 @@ def test_container_model_guidance_output(broker: FakeBroker, sockdir, monkeypatc
     assert [(r.op, r.args) for r in broker.requests] == [("agent.models", {})]
 
 
+def test_agent_named_models_gets_actionable_config_error(tmp_path):
+    with pytest.raises(ConfigError, match="reserved.*rename") as error:
+        load_config_from_layers(
+            {},
+            {"agents": {"models": {"command": "my-agent", "preset": "codex"}}},
+            tmp_path / "repo" / ".jailbee" / "config.yaml",
+            origin="repo",
+            local_raw={},
+            skip_git=True,
+        )
+    assert "validation error" not in str(error.value)
+
+
+def test_null_models_is_an_empty_map(tmp_path):
+    cfg = load_config_from_layers(
+        {},
+        {"agents": {"models": None}},
+        tmp_path / "repo" / ".jailbee" / "config.yaml",
+        origin="repo",
+        local_raw={},
+        skip_git=True,
+    )
+    assert cfg.agent_models().model_dump() == {"models": {}, "model_policy": ""}
+
+
 def test_model_guidance_defaults_are_opinion_free(tmp_path):
     cfg = load_config_from_layers(
         {},

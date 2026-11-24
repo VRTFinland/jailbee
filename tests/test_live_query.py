@@ -329,6 +329,20 @@ def test_caller_absent_from_inventory_is_retryable(env: Env) -> None:
     assert response.error_detail == "calling container is no longer listed; retry shortly"
 
 
+def test_new_caller_refreshes_cached_inventory_before_reply(env: Env) -> None:
+    from jailbee.orchestration.live_query import host_queries
+
+    env.queries.live = host_queries(env.rig.incus)
+    env.rig.incus.reset_mock()
+    env.rig.incus.list_containers.side_effect = [
+        [{"config": {"volatile.uuid": "proj-orch"}}],
+        [{"config": {"volatile.uuid": uuid}} for uuid in ("proj-orch", "proj-kid")],
+    ]
+    assert env.call("host.status").ok
+    assert env.call("host.status", uuid="proj-kid").ok
+    assert env.rig.incus.list_containers.call_count == 2
+
+
 def test_missing_live_handler_is_refused_not_retried(env: Env) -> None:
     response = env.call("host.status")
     assert response.error_code == wire.REFUSED
@@ -382,6 +396,88 @@ def test_model_map_uses_callers_repo_and_reloads_host_config(env: Env, monkeypat
     assert updated.result["models"]["haiku"]["label"] == "updated"
     assert updated.result["model_policy"] == "Updated policy."
     assert env.memory.requests.empty()
+
+
+def test_model_queries_reuse_unchanged_files_without_git(env: Env, mocker) -> None:
+    from jailbee.orchestration.live_query import host_queries
+
+    path = env.rig.cfg.repo_root / ".jailbee" / "config.yaml"
+    path.parent.mkdir()
+    path.write_text("container_prefix: proj\nagents: {models: {haiku: {label: cheap}}}\n")
+    upstream = mocker.patch("jailbee.config.loader.detect_upstream_remote")
+    branch = mocker.patch("jailbee.config.loader.detect_default_branch")
+    reads = mocker.spy(type(path), "read_text")
+    env.queries.live = host_queries(env.rig.incus)
+    assert env.call("agent.models").result["models"]["haiku"]["label"] == "cheap"
+    count = reads.call_count
+    assert env.call("agent.models").ok
+    assert reads.call_count == count
+    upstream.assert_not_called()
+    branch.assert_not_called()
+    path.write_text("container_prefix: proj\nagents: {models: {haiku: {label: changed}}}\n")
+    assert env.call("agent.models").result["models"]["haiku"]["label"] == "changed"
+
+
+def test_slow_host_refresh_cannot_starve_model_queries(env: Env) -> None:
+    from jailbee.orchestration.live_query import host_queries
+
+    path = env.rig.cfg.repo_root / ".jailbee" / "config.yaml"
+    path.parent.mkdir()
+    path.write_text("container_prefix: proj\n")
+    entered, unblock = threading.Event(), threading.Event()
+
+    def slow_inventory(**kwargs):
+        entered.set()
+        assert unblock.wait(10)
+        return [{"config": {"volatile.uuid": "proj-orch"}}]
+
+    env.rig.incus.list_containers.side_effect = slow_inventory
+    env.queries.live = host_queries(env.rig.incus)
+    with (
+        _connect_long(env.rig.root / "proj-orch") as first,
+        _connect_long(env.rig.root / "proj-kid") as second,
+        _connect_long(env.rig.root / "proj-orch") as models,
+    ):
+        try:
+            first.sendall(wire.encode_request(wire.Request("host.status")))
+            assert entered.wait(2)
+            second.sendall(wire.encode_request(wire.Request("host.status")))
+            models.settimeout(1)
+            models.sendall(wire.encode_request(wire.Request("agent.models")))
+            assert wire.decode_response(recv_line(models)).result == {
+                "models": {}, "model_policy": ""
+            }
+        finally:
+            unblock.set()
+
+
+def test_bad_model_config_is_refused_without_traceback(env: Env, caplog) -> None:
+    from jailbee.orchestration.live_query import host_queries
+
+    path = env.rig.cfg.repo_root / ".jailbee" / "config.yaml"
+    path.parent.mkdir()
+    path.write_text("agents: [\n")
+    env.queries.live = host_queries(env.rig.incus)
+    response = env.call("agent.models")
+    assert response.error_code == wire.REFUSED
+    assert "YAML" in response.error_detail
+    assert str(path) in response.error_detail
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelname == "WARNING"
+    assert record.exc_info is None
+    assert "\n" not in record.getMessage()
+
+
+def test_missing_model_repo_is_a_permanent_refusal(env: Env) -> None:
+    from jailbee.orchestration.live_query import host_queries
+    from jailbee.orchestration.query import ContainerSnapshot
+
+    env.queries.publish_container("proj-orch", ContainerSnapshot("plain", True, "{}", None))
+    env.queries.live = host_queries(env.rig.incus)
+    response = env.call("agent.models")
+    assert response.error_code == wire.REFUSED
+    assert response.error_detail == "calling container has no repository config"
 
 
 def test_host_status_keeps_cpu_count_when_proc_readings_are_unavailable(
