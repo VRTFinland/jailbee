@@ -552,6 +552,7 @@ def launch_background(
             pid=proc.pid,
             log_path=str(log_path),
             now=_dt.now().astimezone(),
+            spawned_by=opts.spawned_by,
         ),
         f"record the new job row for {container_name}",
     )

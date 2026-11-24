@@ -951,6 +951,10 @@ def list_containers(
             row = ops.get(c.name)
             if row is not None:
                 c.job_live = not background.clearable(row.phase, row.pid, live=row.observed_live)
+                if row.spawned_by is not None:
+                    # Keep the child in its placeholder's sort position as Incus
+                    # begins reporting the real instance.
+                    c.created_at = row.started_at
                 c.job_phase = row.phase
                 c.job_pid = row.pid
                 c.job_kind = row.op_kind
@@ -971,6 +975,8 @@ def list_containers(
                     job_pid=row.pid,
                     job_kind=row.op_kind,
                     job_error=row.error_msg,
+                    child=view.parse_child_view(row.spawned_by, None, None),
+                    created_at=row.started_at if row.spawned_by is not None else None,
                 )
             )
 
