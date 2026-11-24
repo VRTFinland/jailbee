@@ -479,7 +479,7 @@ class DashboardApp(App[int], inherit_bindings=False):
 
     def on_menu_box_chosen(self, message: MenuBox.Chosen) -> None:
         if self._native_current(message.key):
-            self.session.menu_chosen(message.verb, message.group, message.index)
+            self._after(self.session.menu_chosen(message.verb, message.group, message.index))
         self._after_native()
 
     def on_egress_box_add(self, message: EgressBox.Add) -> None:

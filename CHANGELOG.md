@@ -33,7 +33,9 @@ before editing `## Unreleased`.
   containers across repositories before a host reboot, with one confirmation
   (`--yes` for scripts). `jailbee resume` restores that saved set and autostart
   in containers Incus already rebooted, leaves healthy sessions alone, skips live
-  jobs and retains failed resumes for retry
+  jobs and retains failed resumes for retry. The terminal dashboard offers both
+  in a global menu (`g`, F10 or the title's ☰), alongside Accounts, Notifications,
+  Global config, Settings, Help and Quit; remote policy hides disallowed entries
   ([#149](https://github.com/VRTFinland/jailbee/issues/149)).
 - `jailbee --version` and `jailbee version` include the source commit when
   known, with `-dirty` for uncommitted source changes. Editable installs read

@@ -43,6 +43,16 @@ def test_docs_shots_show_their_content(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.delenv("LINES", raising=False)
     world = load_world(next(p for p in FIXTURES if p.stem == "docs"))
     texts = {p.stem: _svg_text(p.read_text("utf-8")) for p in render_world(world, tmp_path)}
+    global_menu = texts["dashboard-global-menu"]
+    for label in (
+        "Global",
+        "Stop all…",
+        "Resume…",
+        "[A] Accounts",
+        "[Q] Notifications",
+        "[F2] Settings",
+    ):
+        assert label in global_menu
     hero = texts["dashboard-orchestration"]
     # The header runs past DOING: a crop at the default console width loses these.
     header_line = next(line for line in hero.splitlines() if "NAME" in line)
@@ -73,6 +83,7 @@ def test_docs_fixture_tree_and_shots() -> None:
     assert {g.prefix for g in world.groups} == {"invoicer", "storefront"}
     assert 25 <= sum(len(g.containers) for g in world.groups) <= 30
     assert [n for k, n in world.steps if k == "shot"] == [
+        "dashboard-global-menu",
         "dashboard-orchestration",
         "dashboard-menu",
         "dashboard-card",

@@ -334,6 +334,9 @@ queue:
     state: running
     output: "Step 4/9: installing the stacks\nStep 5/9: provisioning node\n"
 steps:
+  - key: g
+  - shot: dashboard-global-menu
+  - key: escape
   - shot: dashboard-orchestration
   - select: retries
   - key: enter

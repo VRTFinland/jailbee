@@ -24,7 +24,8 @@ directly under it:
 ![The dashboard with an orchestrator and its children](images/dashboard/dashboard-orchestration.png)
 
 Enter opens the menu of the highlighted row. Every entry shows its own key in
-brackets, and the same letters work in the table without Enter:
+brackets. Most letters also work in the table without Enter; `g` is reserved
+for the global menu (`Enter`, then `g` still opens Git or the repo agent picker):
 
 ![A container's menu](images/dashboard/dashboard-menu.png)
 
@@ -84,6 +85,7 @@ list. (Source of truth: `KEY_BINDINGS` in
 | `Esc` | close a menu, panel or help; cancel; clear marks |
 | `Space` | mark a container, fold a repo (in Settings: toggle) |
 | `Shift+↑`/`Shift+↓` | mark while moving |
+| `g` / `F10` / click `☰` | open the global menu |
 | `n` | create a container in this repo |
 | `e` / `E` | edit this repo's config (`E`: the global one) |
 | `A` | credential groups and stored logins |
@@ -108,6 +110,7 @@ entry appears only when it would do something.
 
 | Row | Entries |
 |---|---|
+| Global (`g` / `F10` / `☰`) | `Stop all…`, `Resume…`, `Accounts` (`A`), `Notifications` (`Q`), `Global config` (`E`), `Settings` (`F2`), `Help` (`h` / `?`), `Quit` (`q`) |
 | Container | `Attach tmux`, `Open shell`, `Launch →`, `Outbox` (`Outbox (N pending)` first while something is staged), `Git →`, `PR →`, `Lifecycle →` (restart, stop, destroy), `Network →`, `Fork…`, `Rename…`, `Memory…`, `Snapshots…`, `Mounts…`, `Orchestration…`, `Autostart →`, `Services…`, `Credential group…` |
 | Repo header | `New container…`, `New from PR…`, `Credential group…`, `Accounts…`, `Agent…`, `Network →` (Egress), `Apply config…`, `Diagnostics →`, `Prune stale containers…`, `Fold`/`Unfold`, and while an upgrade is owed `Run base build`, `Dismiss notice…`, `Upgrade all repos…`; `Sent…` lists everything published for the repo |
 | Orphan repo | `Fold`/`Unfold` only |
@@ -116,6 +119,15 @@ entry appears only when it would do something.
 
 Over remote SSH an entry appears only when the session's policy permits its
 command. The sections below describe each menu in full.
+
+The global menu belongs to no row and opens even with an empty table.
+`Stop all…` runs `jailbee stop --all`; `Resume…` runs `jailbee resume`,
+without a repo selector. Both use the action runner: CLI confirmation questions
+appear as modals, and output and results stay in the notification queue.
+Escape or a click outside closes the menu, like a container menu. Global config
+is unavailable over remote SSH, as with the existing `E` shortcut.
+
+![The global menu](images/dashboard/dashboard-global-menu.png)
 
 ## Common tasks
 
@@ -207,7 +219,7 @@ Live, auto-refreshing TUI of containers across all repos; the Outbox box has a S
 ### Menu letters
 
 - Every menu entry shows its own key in brackets (`[g] Git →`), scoped to the level that is open: pressing it is Enter on that entry, so `g` `u` updates from base and `l` `D` destroys.
-- The same letters work in the table without Enter — `g` on a highlighted container opens `Git →` — so the table keeps only the keys no menu has.
+- Most letters work in the table without Enter; `g` / `F10` opens Global instead. Use `Enter`, then `g` for `Git →` or the repo agent picker.
 - Every entry has a fixed letter, so a key never moves when another entry comes or goes; only `Launch →` apps take a free letter of their label.
 
 ### The command line
