@@ -86,8 +86,8 @@ function focusable(): HTMLElement[] {
     return Array.from(panel.value?.querySelectorAll<HTMLElement>("button:not(:disabled), a, input, select") ?? [])
         .filter(el => !el.closest("[hidden]"))
 }
-function onPanelKey(event: KeyboardEvent) {
-    if (event.key === "Escape") {
+function onEscape(event: KeyboardEvent) {
+    if (open.value && event.key === "Escape") {
         event.preventDefault()
         void close()
     }
@@ -114,10 +114,12 @@ function onKey(event: KeyboardEvent) {
 }
 onMounted(() => {
     window.addEventListener("keydown", onKey, true)
+    window.addEventListener("keydown", onEscape)
     window.addEventListener("resize", paginate)
 })
 onBeforeUnmount(() => {
     window.removeEventListener("keydown", onKey, true)
+    window.removeEventListener("keydown", onEscape)
     window.removeEventListener("resize", paginate)
 })
 </script>
@@ -130,7 +132,7 @@ onBeforeUnmount(() => {
             <span v-if="filtered" id="filter-description" class="filter-marker"><span class="visually-hidden">Container filter enabled</span></span>
         </button>
         <div v-if="open" class="quick-backdrop" @click="close()" />
-        <section v-if="open" ref="panel" class="quick-panel" role="dialog" aria-label="Quick settings" aria-modal="true" tabindex="-1" @keydown="onPanelKey">
+        <section v-if="open" ref="panel" class="quick-panel" role="dialog" aria-label="Quick settings" aria-modal="true" tabindex="-1">
             <div v-for="font in fonts" :key="font.field" class="menu-row font-row">
                 <span>{{ font.label }}: {{ settings[font.field] }}px</span>
                 <button type="button" :aria-label="`Decrease ${font.name} font size`"
