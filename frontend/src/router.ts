@@ -34,7 +34,7 @@ let resumePath: string | null = null
 
 /** Remembers where the tab was before setup mode took it over. */
 export function rememberResumePath(path: string): void {
-    if (path !== "/setup" && path !== "/login") resumePath = path
+    resumePath = path === "/setup" || path === "/login" ? null : path
 }
 
 /** The remembered route, once; the front page when there is none. */

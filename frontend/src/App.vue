@@ -2,11 +2,10 @@
 // Holds the dashboard socket open on every signed-in page (so a deep link or
 // reload of any view is live), and closed on public pages such as login.
 import {onBeforeUnmount, onMounted, ref, watch} from "vue"
-import {fetchServerMode} from "./api"
+import {fetchServerMode, getToken} from "./api"
 import {useRoute, useRouter} from "vue-router"
 import {useDashboard} from "./dashboard"
 import {rememberResumePath, takeResumePath} from "./router"
-import {getToken} from "./api"
 
 const route = useRoute()
 const router = useRouter()

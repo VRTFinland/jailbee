@@ -46,6 +46,7 @@ afterEach(() => {
     clearToken()
     takeResumePath()
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
 })
 
 describe("App", () => {
