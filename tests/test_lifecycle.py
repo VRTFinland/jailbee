@@ -6027,7 +6027,10 @@ def test_boot_container_starts_when_already_stopped(tmp_path, mocker):
     assert events == ["detach", "start", "attach"]
 
 
-@pytest.mark.parametrize("state, expected", [("Running", ["detach", "attach"]), ("Stopped", ["detach", "start", "attach"])])
+@pytest.mark.parametrize(
+    "state, expected",
+    [("Running", ["detach", "attach"]), ("Stopped", ["detach", "start", "attach"])],
+)
 def test_boot_container_resume_ensures_running_without_reboot(tmp_path, mocker, state, expected):
     cfg = _cfg_for_new(tmp_path)
     incus = MagicMock()

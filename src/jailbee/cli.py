@@ -5423,9 +5423,7 @@ def _resume_container(cfg: "Config", incus: "IncusType", name: str) -> None:
     _preflight_cache_pools(cfg)
     boot_container(cfg, incus, name, restart=False, ensure_running=True)
     # Complete all stages before removing the entry from the durable resume set.
-    _post_start_actions(
-        cfg, incus, name, no_autostart=False, allow_prompt=True, override="wait"
-    )
+    _post_start_actions(cfg, incus, name, no_autostart=False, allow_prompt=True, override="wait")
     _clear_superseded_boot_job(cfg, name)
 
 

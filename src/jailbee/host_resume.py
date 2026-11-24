@@ -29,12 +29,18 @@ def _read_set() -> tuple[dict[str, str], set[str]]:
     try:
         data = json.loads(path.read_text())
         entries = data["containers"]
-        if data["version"] != 1 or not isinstance(entries, dict) or not all(
-            isinstance(name, str) and isinstance(root, str) for name, root in entries.items()
+        if (
+            data["version"] != 1
+            or not isinstance(entries, dict)
+            or not all(
+                isinstance(name, str) and isinstance(root, str) for name, root in entries.items()
+            )
         ):
             raise ValueError("unsupported resume set")
         pending = data.get("pending", [])
-        if not isinstance(pending, list) or not all(isinstance(name, str) and name in entries for name in pending):
+        if not isinstance(pending, list) or not all(
+            isinstance(name, str) and name in entries for name in pending
+        ):
             raise ValueError("invalid pending resume entries")
         return dict(entries), set(pending)
     except (ValueError, KeyError, TypeError) as exc:
@@ -172,7 +178,8 @@ def run_resume(
                 present = incus.exec(
                     name,
                     [
-                        "bash", "-lc",
+                        "bash",
+                        "-lc",
                         f"if tmux has-session -t {shlex.quote('=' + SESSION_NAME)} 2>/dev/null; "
                         "then printf present; else printf missing; fi",
                     ],
