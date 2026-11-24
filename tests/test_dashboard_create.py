@@ -161,8 +161,8 @@ def test_existing_branch_create_asks_in_a_modal_and_preserves_decline_hint(
 
             await _until(pilot, modal_ready, "branch reuse modal")
             await pilot.press(answer)
-            await _until(pilot, lambda: any(e.finished for e in app.session.queue), "create result")
-            assert not any(e.state == "failed" for e in app.session.queue)
+            await _until(pilot, lambda: not app.session.jobs.busy("new:myrepo:dev-2"), "create result")
+            assert not any(e.state == "failed" for e in app.session.queue), list(app.session.queue)
             if answer == "n":
                 assert "Pick a different name" in app.session.notice
             await pilot.press("ctrl+c")
