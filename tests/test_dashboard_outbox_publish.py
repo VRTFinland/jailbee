@@ -27,9 +27,8 @@ def test_cli_declined_publication_is_not_success(
     from jailbee.remote_ssh.session import child_environment
 
     if kind == "optional-ai":
-        from tests.test_cli_pr import _setup, _publish_result, _pr_created
-
         from tests.conftest import mock_pr_agent
+        from tests.test_cli_pr import _pr_created, _publish_result, _setup
 
         cfg, _ = _setup(mocker, tmp_path)
         mock_pr_agent(cfg, True)
@@ -224,8 +223,8 @@ def test_status_is_only_the_outcome_while_queue_keeps_full_log(tmp_path, status)
     output = (
         f"Plan: https://github.com/o/r/pull/1\nDescription preview\n{conclusion}\n"
         "Nothing published. Additional comments can be posted later.\n"
-        if not status else
-        f"Error: {conclusion}\nStopped here; still pending: b.json\n"
+        if not status
+        else f"Error: {conclusion}\nStopped here; still pending: b.json\n"
     )
 
     def questions(runs, done, progress):
@@ -252,12 +251,21 @@ def test_declining_optional_questions_does_not_cancel_successful_pr(tmp_path):
     url = "https://github.com/o/r/pull/42"
 
     def questions(runs, done, progress):
-        done(ActionOutcome([RunResult(status=0, declined=True)], f"PR #42 created: {url}\nNothing published. Comments stay pending.\n"))
+        done(
+            ActionOutcome(
+                [RunResult(status=0, declined=True)],
+                f"PR #42 created: {url}\nNothing published. Comments stay pending.\n",
+            )
+        )
 
     publish(
-        ["pr", "push", "alpha-x"], route=lambda argv: ActionRun(list(argv), tmp_path),
-        target="alpha-x", queue=queue, run_questions=questions,
-        changed=lambda: None, done=completed.append,
+        ["pr", "push", "alpha-x"],
+        route=lambda argv: ActionRun(list(argv), tmp_path),
+        target="alpha-x",
+        queue=queue,
+        run_questions=questions,
+        changed=lambda: None,
+        done=completed.append,
     )
     assert next(iter(queue)).state == "done"
     assert completed == [JobResult(0, "", f"PR #42 created: {url}")]

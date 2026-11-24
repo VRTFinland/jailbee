@@ -21,8 +21,10 @@ def _summary(status: int, output: str) -> str:
     # Success receipts precede optional follow-up plans and advice. Never turn
     # URLs in a preview into outcomes: require a receipt marker or a bare URL.
     receipts = [
-        line for line in lines
-        if "https://" in line and (
+        line
+        for line in lines
+        if "https://" in line
+        and (
             line.startswith(("✓", "opened PR #", "updated PR #", "PR #", "Draft PR #", "https://"))
             or ": applied" in line
         )
