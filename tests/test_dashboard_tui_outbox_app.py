@@ -535,7 +535,8 @@ def test_standalone_delete_queues_while_keys_and_quit_policy_stay_live(mocker):
             await wait_for(pilot, entered[1])
             assert "Deleting 2/3" in screen_text(app)
             assert [p.id for c in app.controller.state.containers for p in c.proposals] == [
-                "pr/b.json", "pr/c.json"
+                "pr/b.json",
+                "pr/c.json",
             ]
             release[1].set()
             await wait_for(pilot, entered[2])

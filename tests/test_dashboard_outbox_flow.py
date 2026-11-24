@@ -381,7 +381,11 @@ def test_delete_stays_busy_across_async_steps_and_refuses_concurrent_mutations()
     ctl.intent("refresh", None)
     for intent in ("publish", "clear"):
         ctl.intent(intent, None)
-        expected = "pr/a.json: already in the delete queue" if intent == "publish" else "clear must wait for the delete queue to finish"
+        expected = (
+            "pr/a.json: already in the delete queue"
+            if intent == "publish"
+            else "clear must wait for the delete queue to finish"
+        )
         assert ctl.state.status == (expected,)
     ctl.intent("delete", None)
     assert ctl.state.status == ("pr/a.json: already in the delete queue",)

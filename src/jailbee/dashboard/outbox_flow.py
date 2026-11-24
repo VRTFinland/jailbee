@@ -706,7 +706,12 @@ class OutboxController:
             selected = _covered(self.state.marks) or ({key} if key is not None else set())
             conflicts = [k for k in selected if (k[0], k[1]) in self._deleting]
             if name == "publish" and conflicts:
-                self._status(*(f"{_safe(k[1])}: already in the delete queue" for k in sorted(conflicts, key=str)))
+                self._status(
+                    *(
+                        f"{_safe(k[1])}: already in the delete queue"
+                        for k in sorted(conflicts, key=str)
+                    )
+                )
             else:
                 self._status(f"{name} must wait for the delete queue to finish")
             return
@@ -796,7 +801,9 @@ class OutboxController:
             return
         conflicts = [k for k in keys if (k[0], k[1]) in self._deleting]
         if conflicts:
-            self._status(*(f"{_safe(k[1])}: already in the delete queue" for k in sorted(conflicts, key=str)))
+            self._status(
+                *(f"{_safe(k[1])}: already in the delete queue" for k in sorted(conflicts, key=str))
+            )
             return
         refused = [(k, r) for k in sorted(keys, key=str) if (r := _block_reason(self.state, k))]
         if refused:
@@ -833,7 +840,9 @@ class OutboxController:
         self._delete_total += len(keys)
         # Consume only the confirmed marks; marks made while deleting belong to the user.
         consumed = set().union(*(_subtree(shown, k) for k in keys)) if keys else set()
-        self.state = replace(self.state, question=None, marks=self.state.marks - consumed, status=())
+        self.state = replace(
+            self.state, question=None, marks=self.state.marks - consumed, status=()
+        )
         if self._delete_running:
             self._set(replace(self.state, busy=self._delete_busy()))
             return
@@ -900,7 +909,9 @@ class OutboxController:
                     else:
                         actions = tuple(
                             replace(a, comments=tuple(c for c in a.comments if c.index != key[3]))
-                            if a.index == key[2] else a for a in actions
+                            if a.index == key[2]
+                            else a
+                            for a in actions
                         )
                     proposals.append(replace(proposal, actions=actions))
             containers.append(replace(container, proposals=tuple(proposals)))
@@ -961,7 +972,9 @@ class OutboxController:
                 if current is None:
                     return done, _CHANGED
                 fresh = current
-                if any(_fingerprint(fresh, k) != expected[k] for k in steps[step:] if k is not None):
+                if any(
+                    _fingerprint(fresh, k) != expected[k] for k in steps[step:] if k is not None
+                ):
                     return done, _CHANGED
             if key is None:
                 # Archive consent is what the question showed, not a later listing's.

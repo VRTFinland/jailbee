@@ -397,7 +397,9 @@ def test_outbox_delete_keeps_keys_live_and_finishes_after_close(mocker, tmp_path
 
 @pytest.mark.parametrize("fail_middle", [False, True])
 @pytest.mark.parametrize("queue_extra", [False, True])
-def test_outbox_batch_delete_progress_rows_and_deferred_refresh(mocker, tmp_path, fail_middle, queue_extra):
+def test_outbox_batch_delete_progress_rows_and_deferred_refresh(
+    mocker, tmp_path, fail_middle, queue_extra
+):
     import asyncio
     from threading import Event
 
@@ -467,7 +469,9 @@ def test_outbox_batch_delete_progress_rows_and_deferred_refresh(mocker, tmp_path
                 await wait_for(pilot, entered[1])
                 assert f"Deleting 2/{4 if queue_extra else 3}" in screen_text(app)
                 assert [p.id for c in controller.state.containers for p in c.proposals] == [
-                    "pr/b.json", "pr/c.json", "pr/d.json"
+                    "pr/b.json",
+                    "pr/c.json",
+                    "pr/d.json",
                 ]
                 release[1].set()
                 await wait_for(pilot, entered[2])
@@ -479,14 +483,20 @@ def test_outbox_batch_delete_progress_rows_and_deferred_refresh(mocker, tmp_path
                     release[3].set()
                 await _settle_outbox(app, pilot, controller)
                 assert [a[1] for a in calls] == ["drop"] * (4 if queue_extra else 3) + ["ls"]
-                assert (("alpha-x", "pr/d.json", None, None) in controller.state.marks) is not queue_extra
+                assert (
+                    ("alpha-x", "pr/d.json", None, None) in controller.state.marks
+                ) is not queue_extra
                 remaining = [p.id for c in controller.state.containers for p in c.proposals]
-                assert remaining == (["pr/b.json"] if fail_middle else []) + ([] if queue_extra else ["pr/d.json"])
+                assert remaining == (["pr/b.json"] if fail_middle else []) + (
+                    [] if queue_extra else ["pr/d.json"]
+                )
                 if fail_middle:
                     assert "pr/b.json: locked" in controller.state.status
                     assert "Deleted 2 from the outbox." in controller.state.status
                 else:
-                    assert controller.state.status == ("Deleted 3 from the outbox.",) + (("Deleted 1 from the outbox.",) if queue_extra else ())
+                    assert controller.state.status == ("Deleted 3 from the outbox.",) + (
+                        ("Deleted 1 from the outbox.",) if queue_extra else ()
+                    )
             finally:
                 for event in release:
                     event.set()
@@ -504,8 +514,10 @@ def test_delete_progress_counts_children_skipped_by_a_changed_scope(mocker, tmp_
     changed = _proposal(revision="r2", actions=[_action(0, body="changed"), _action(1)])
     other = _proposal("pr/b.json")
     app, group, entered, release, calls, gate = _blocking_outbox_app(
-        mocker, tmp_path,
-        [_listing(_container(shown, other)), _listing(_container(changed, other))], "drop"
+        mocker,
+        tmp_path,
+        [_listing(_container(shown, other)), _listing(_container(changed, other))],
+        "drop",
     )
 
     quiet = tsession.da.run_cli_quiet.side_effect
@@ -525,7 +537,20 @@ def test_delete_progress_counts_children_skipped_by_a_changed_scope(mocker, tmp_
                 controller = app.session.outbox
                 await _settle_outbox(app, pilot, controller)
                 # Expand a; mark its three children, then b, not the parent.
-                await pilot.press("enter", "down", "space", "down", "space", "down", "space", "down", "space", "d", "down", "enter")
+                await pilot.press(
+                    "enter",
+                    "down",
+                    "space",
+                    "down",
+                    "space",
+                    "down",
+                    "space",
+                    "down",
+                    "space",
+                    "d",
+                    "down",
+                    "enter",
+                )
                 async with asyncio.timeout(5):
                     while len([a for a in calls if a[1] == "drop"]) < 2:
                         app.session.jobs.poll()
@@ -543,7 +568,9 @@ def test_delete_progress_counts_children_skipped_by_a_changed_scope(mocker, tmp_
 
 
 @pytest.mark.parametrize("confirm_during_reload", [False, True])
-def test_delete_question_and_queue_survive_the_final_reload(mocker, tmp_path, confirm_during_reload):
+def test_delete_question_and_queue_survive_the_final_reload(
+    mocker, tmp_path, confirm_during_reload
+):
     import asyncio
 
     from tests.dashboard_pilot import container_menu_keys
@@ -551,8 +578,10 @@ def test_delete_question_and_queue_survive_the_final_reload(mocker, tmp_path, co
 
     a, b = _proposal(), _proposal("pr/b.json")
     app, group, entered, release, calls, gate = _blocking_outbox_app(
-        mocker, tmp_path,
-        [_listing(_container(a, b)), _listing(_container(b)), _listing(_container())], "ls"
+        mocker,
+        tmp_path,
+        [_listing(_container(a, b)), _listing(_container(b)), _listing(_container())],
+        "ls",
     )
 
     async def scenario():
