@@ -90,7 +90,11 @@ def operation() -> Iterator[None]:
     path = _state_path().with_name("resume-operation.lock")
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with path.open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            info_plain("Waiting for another stop/resume operation...")
+            fcntl.flock(lock, fcntl.LOCK_EX)
         try:
             yield
         finally:
@@ -343,7 +347,7 @@ def _resume(
                     if name in entries:
                         remove(name)
                     continue
-                if present != "missing":
+                if present not in ("missing", "started"):
                     raise ValueError("cannot determine autostart session state")
             attempted = True
             # An incomplete run may create tmux before a later stage fails.

@@ -687,6 +687,10 @@ def run_detached(
                     )
         finally:
             incus.config_unset(spec.container_name, "user.jailbee.autostart_in_progress")
+        if not spec.rerun:
+            from jailbee.boot_state import record
+
+            record(incus, spec.container_name, "handled")
 
 
 def _detach_mounts(

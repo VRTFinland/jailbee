@@ -4628,6 +4628,69 @@ def test_new_container_attaches_runtime_devices_after_start(tmp_path, mocker):
     assert events == ["start", "attach"]
 
 
+@pytest.mark.parametrize("outcome", ["success", "failure", "detached", "write-failure", "skipped"])
+def test_new_boot_marker_tracks_the_whole_autostart_run(tmp_path, mocker, outcome):
+    from jailbee.autostart import AutostartStepError
+    from jailbee.autostart_plan import AutostartPlan
+    from jailbee.boot_state import MARKER
+    from jailbee.config import AutostartStage
+
+    cfg = _cfg_for_new(tmp_path)
+    incus = MagicMock()
+    incus.exists.return_value = False
+    events = []
+    marker = None
+
+    def execute(name, argv, **kwargs):
+        nonlocal marker
+        script = " ".join(argv)
+        if MARKER in script:
+            events.append(script)
+            if outcome == "write-failure":
+                raise IncusError("marker unavailable")
+            marker = script.split("printf '%s' ", 1)[1].split()[0]
+        return ""
+
+    def ensure_agents(*args, **kwargs):
+        assert marker == "started" or outcome == "write-failure"
+
+    def autostart(_cfg, _incus, _name, trigger, **kwargs):
+        events.append(trigger.value)
+        if outcome == "failure":
+            raise AutostartStepError(container="repo-feat-x", step_name="setup", reason="broken stage")
+        return AutostartPlan(
+            blocking=[],
+            detached=[AutostartStage(stage="deps", steps=[])] if outcome == "detached" else [],
+        )
+
+    incus.exec.side_effect = execute
+    mocker.patch("jailbee.agents.ensure_agents", side_effect=ensure_agents)
+    mocker.patch("jailbee.autostart.run_autostart", side_effect=autostart)
+    opts = NewContainerOptions(
+        container_branch="feat/x", name=None, network="strict", memory="8GiB",
+        cpu=4, from_base="gisgro-base", clone=False, autostart=outcome != "skipped",
+    )
+    if outcome == "failure":
+        with pytest.raises(AutostartStepError):
+            new_container(cfg, incus, opts)
+    else:
+        assert new_container(cfg, incus, opts) == "repo-feat-x"
+
+    assert "started" in events[0]
+    if outcome == "success":
+        assert events[1:3] == ["on_create", "on_start"]
+        assert "handled" in events[3]
+        assert marker == "handled"
+    elif outcome == "skipped":
+        assert marker == "skipped"
+    elif outcome == "write-failure":
+        assert marker is None
+        assert len(events) == 3
+    else:
+        assert marker == "started"
+        assert len(events) == 2
+
+
 def test_new_container_runs_both_on_create_and_on_start(tmp_path, mocker):
     """`gie new` transitions the container into running state, so on_start
     steps must execute on this first launch — not only on subsequent

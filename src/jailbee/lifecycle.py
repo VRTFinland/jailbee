@@ -2484,6 +2484,9 @@ def _new_container(
             groups.set_container_group(cfg, incus, name, wanted)
 
     incus.start(name)
+    from jailbee.boot_state import record
+
+    marker_written = record(incus, name, "started")
     # Clear a failed-refresh guard only after the repaired disk is mounted.
     sync_pr_bindings(incus, name, cfg=cfg)
 
@@ -2753,6 +2756,7 @@ def _new_container(
         from jailbee.autostart_profiles import SERVICES_KEY, encode_names
 
         incus.config_set(name, SERVICES_KEY, encode_names(opts.autostart_services))
+    detached_from: str | None = None
     if opts.autostart:
         from jailbee.autostart_profiles import selection
         from jailbee.services.autostart import ENVELOPE_KEY, approval_envelope
@@ -2786,9 +2790,7 @@ def _new_container(
         # run: everything after it — the entire `on_start` trigger included —
         # belongs to whoever takes the hand-off, so this process must not run
         # it as well. `run_detached` resumes from the trigger it is told.
-        detached_from: str | None = (
-            AutostartTrigger.ON_CREATE.value if create_plan.detached else None
-        )
+        detached_from = AutostartTrigger.ON_CREATE.value if create_plan.detached else None
         if detached_from is None:
             # `incus.start` above transitioned the container into the running
             # state, so on_start steps apply on this first launch too.
@@ -2813,9 +2815,8 @@ def _new_container(
                 start_plan if detached_from == AutostartTrigger.ON_START.value else None,
             )
 
-    from jailbee.boot_state import record
-
-    record(incus, name, "handled" if opts.autostart else "skipped")
+    if detached_from is None and marker_written:
+        record(incus, name, "handled" if opts.autostart else "skipped")
     return name
 
 

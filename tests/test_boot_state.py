@@ -6,7 +6,7 @@ from jailbee.boot_state import MARKER, record
 from jailbee.incus import Incus, IncusError
 
 
-@pytest.mark.parametrize("decision", ["handled", "skipped"])
+@pytest.mark.parametrize("decision", ["started", "handled", "skipped"])
 def test_record_writes_decision_under_run(mocker, decision):
     incus = mocker.Mock(spec=Incus)
 
@@ -19,9 +19,13 @@ def test_record_writes_decision_under_run(mocker, decision):
     )
 
 
-def test_record_does_not_hide_failed_persistence(mocker):
+@pytest.mark.parametrize("failure", [IncusError("container stopped"), OSError("exec failed")])
+def test_record_warns_once_without_failing_boot(mocker, capsys, failure):
     incus = mocker.Mock(spec=Incus)
-    incus.exec.side_effect = IncusError("container stopped")
+    incus.exec.side_effect = failure
 
-    with pytest.raises(IncusError, match="container stopped"):
-        record(incus, "repo-work", "handled")
+    assert record(incus, "repo-work", "handled") is False
+
+    output = capsys.readouterr().out
+    assert output.count("cannot record autostart boot state") == 1
+    assert str(failure) in output

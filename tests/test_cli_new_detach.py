@@ -243,6 +243,121 @@ def _setup_boot(tmp_path: Path, mocker, *, detached: bool):
     return run_autostart
 
 
+@pytest.mark.parametrize("failure", [False, True])
+def test_start_records_started_before_autostart_and_completes_only_on_success(tmp_path, mocker, failure):
+    from jailbee.autostart import AutostartStepError
+    from jailbee.boot_state import MARKER
+    run = _setup_boot(tmp_path, mocker, detached=False)
+    from jailbee.incus import Incus
+
+    incus = Incus()
+    events = []
+
+    def execute(name, argv, **kwargs):
+        if MARKER in " ".join(argv):
+            events.append(" ".join(argv))
+        return ""
+
+    def autostart(*args, **kwargs):
+        events.append("autostart")
+        if failure:
+            raise AutostartStepError(container="myrepo-feat-a", step_name="setup", reason="broken stage")
+        return AutostartPlan(blocking=[], detached=[])
+
+    incus.exec.side_effect = execute
+    run.side_effect = autostart
+    result = runner.invoke(app, ["start", "feat-a"])
+
+    assert result.exit_code == (1 if failure else 0), result.output
+    assert "started" in events[0]
+    assert events[1] == "autostart"
+    if failure:
+        assert len(events) == 2
+    else:
+        assert len(events) == 3
+        assert "handled" in events[2]
+
+
+@pytest.mark.parametrize("previous", [None, "skipped"])
+def test_failed_start_remains_resumable_despite_existing_tmux(tmp_path, mocker, previous):
+    from jailbee.autostart import AutostartStepError
+    from jailbee.boot_state import MARKER
+
+    run = _setup_boot(tmp_path, mocker, detached=False)
+    from jailbee.incus import Incus
+
+    incus = Incus()
+    incus.list_containers.return_value = [
+        {"name": "myrepo-feat-a", "status": "Running", "profiles": ["myrepo-base"]}
+    ]
+    state = previous
+
+    def execute(name, argv, **kwargs):
+        nonlocal state
+        script = " ".join(argv)
+        if MARKER in script and "chmod" in script:
+            state = script.split("printf '%s' ", 1)[1].split()[0]
+        elif "has-session" in script:
+            return state or "present"
+        return ""
+
+    incus.exec.side_effect = execute
+    run.side_effect = AutostartStepError(container="myrepo-feat-a", step_name="setup", reason="broken stage")
+    failed = runner.invoke(app, ["start", "feat-a"])
+    assert failed.exit_code == 1, failed.output
+    assert state == "started"
+
+    from jailbee.cli import _load_or_exit
+
+    cfg = _load_or_exit(None)
+    mocker.patch("jailbee.cli._load_orphan_base_or_exit", return_value=cfg)
+    mocker.patch("jailbee.dashboard.model.registered_repo_roots", return_value=[])
+    run.side_effect = None
+    result = runner.invoke(app, ["resume"])
+
+    assert result.exit_code == 0, result.output
+    assert "Resumed: myrepo-feat-a" in result.output
+    assert state == "handled"
+
+
+@pytest.mark.parametrize("when", ["started", "handled"])
+def test_start_marker_failure_warns_once_but_boot_succeeds(tmp_path, mocker, when):
+    from jailbee.boot_state import MARKER
+    from jailbee.incus import IncusError
+
+    _setup_boot(tmp_path, mocker, detached=False)
+    from jailbee.incus import Incus
+
+    def execute(name, argv, **kwargs):
+        if MARKER in " ".join(argv) and when in " ".join(argv):
+            raise IncusError("marker unavailable")
+        return ""
+
+    Incus().exec.side_effect = execute
+    result = runner.invoke(app, ["start", "feat-a"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.count("cannot record autostart boot state") == 1
+
+
+@pytest.mark.parametrize("command", ["start", "restart"])
+def test_foreground_does_not_complete_boot_when_deferred_stages_are_still_running(tmp_path, mocker, command):
+    from jailbee.boot_state import MARKER
+
+    _setup_boot(tmp_path, mocker, detached=True)
+    from jailbee.incus import Incus
+
+    incus = Incus()
+    mocker.patch("jailbee.cli._spawn_autostart_worker")
+
+    result = runner.invoke(app, [command, "feat-a"])
+
+    assert result.exit_code == 0, result.output
+    writes = [" ".join(c.args[1]) for c in incus.exec.call_args_list if MARKER in " ".join(c.args[1])]
+    assert len(writes) == 1
+    assert "started" in writes[0]
+
+
 def test_start_spawns_the_autostart_worker_when_a_stage_detaches(tmp_path, mocker):
     _setup_boot(tmp_path, mocker, detached=True)
     spawn = mocker.patch("jailbee.cli._spawn_autostart_worker")

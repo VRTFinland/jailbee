@@ -232,6 +232,22 @@ def test_resume_honours_this_boot_decision_even_without_tmux(host, mocker, marke
     start.assert_not_called()
 
 
+def test_resume_repairs_started_boot_even_when_tmux_was_already_created(host, mocker):
+    _, _, incus, _ = host
+    incus.list_containers.return_value = incus.list_containers.return_value[:1]
+    incus.exec.return_value = "started"
+    start = mocker.patch("jailbee.lifecycle.boot_container")
+    post = mocker.patch("jailbee.cli._post_start_actions")
+    mocker.patch("jailbee.create_flow.preflight_cache_pools")
+
+    result = CliRunner().invoke(app, ["resume"])
+
+    assert result.exit_code == 0, result.output
+    start.assert_called_once()
+    post.assert_called_once()
+    assert "Resumed: one-work" in result.output
+
+
 def test_resume_repairs_a_new_boot_after_volatile_marker_disappears(host, mocker):
     _, _, incus, _ = host
     incus.list_containers.return_value = incus.list_containers.return_value[:1]
@@ -391,6 +407,34 @@ def test_journal_writes_hold_a_stable_exclusive_lock(host, mocker, command):
 
     assert result.exit_code == 0, result.output
     assert writes >= 2
+
+
+@pytest.mark.parametrize("command", [["stop", "--all", "--yes"], ["resume"]])
+def test_contended_operation_reports_waiting_before_blocking(host, mocker, command):
+    import fcntl
+
+    _, _, incus, _ = host
+    incus.list_containers.return_value = []
+    attempts = []
+    from jailbee import host_resume
+
+    waiting = mocker.spy(host_resume, "info_plain")
+
+    def flock(lock, flags):
+        if not str(lock.name).endswith("resume-operation.lock"):
+            return
+        attempts.append(flags)
+        if flags == fcntl.LOCK_EX | fcntl.LOCK_NB:
+            raise BlockingIOError("operation busy")
+        if flags == fcntl.LOCK_EX:
+            waiting.assert_called_once_with("Waiting for another stop/resume operation...")
+
+    mocker.patch("jailbee.host_resume.fcntl.flock", side_effect=flock)
+    result = CliRunner().invoke(app, command)
+
+    assert result.exit_code == 0, result.output
+    assert result.output.count("Waiting for another stop/resume operation") == 1
+    assert attempts == [fcntl.LOCK_EX | fcntl.LOCK_NB, fcntl.LOCK_EX, fcntl.LOCK_UN]
 
 
 def test_repeated_stop_preserves_earlier_set(host):

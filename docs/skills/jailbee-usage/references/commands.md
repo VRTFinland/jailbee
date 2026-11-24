@@ -699,6 +699,9 @@ a warning: repeat the stop after they finish. `--all` excludes NAME and `--force
 After reboot, `jailbee resume` restores the saved set plus running containers
 needing boot setup. A volatile `/run` marker records handled setup (including
 empty plans) or intentional `--no-autostart` skips; these boots stay untouched.
+New setup writes `started` before autostart and marks the boot handled only after
+all stages, including detached stages, succeed. Interrupted or failed setup is
+retryable even if tmux exists. Marker-write failures warn without failing boot.
 Older boots without a marker fall back to the `autostart` tmux session or an
 empty start plan. It uses normal start setup and waits for all `on_start` stages,
 including services and agent session restore. Failed/incomplete resumes remain
@@ -707,7 +710,9 @@ and exits non-zero for those skips or failures, continuing with other containers
 A no-op exits 0. Vanished containers are dropped with an info line; `destroy`
 also removes their entries. Unavailable configs are reported once per repository
 per invocation, retaining entries for existing containers: restore the config
-and retry, or use `jailbee orphan destroy`. Journal updates are locked. These host-wide operations are refused in restricted remote
+and retry, or use `jailbee orphan destroy`. Journal updates are locked. Concurrent
+`stop --all` and `resume` runs print a waiting message before waiting for the other
+operation. These host-wide operations are refused in restricted remote
 sessions; `stop NAME` remains a container command.
 
 ### `jailbee start|stop|restart [NAME]`

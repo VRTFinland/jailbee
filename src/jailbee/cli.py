@@ -4979,6 +4979,9 @@ def _post_start_actions(
     from jailbee.hosts import sync_hosts
     from jailbee.lifecycle import container_repo_dir, current_network_mode
 
+    from jailbee.boot_state import record
+
+    marker_written = record(incus, name, "started")
     mirror_endpoint = _mirror_endpoint_or_none(cfg, incus)
     mode = current_network_mode(cfg, incus, name)
     sync_hosts(cfg, incus, name, mode, mirror_endpoint=mirror_endpoint)
@@ -5037,9 +5040,8 @@ def _post_start_actions(
         from jailbee.agent_resume import boot_entries
 
         boot_entries(cfg, incus, name)
-        from jailbee.boot_state import record
-
-        record(incus, name, "skipped")
+        if marker_written:
+            record(incus, name, "skipped")
         return
 
     profile = resolve_profile(cfg, incus, name)
@@ -5081,9 +5083,9 @@ def _post_start_actions(
         on_detach(
             cfg.autostart, AutostartTrigger.ON_START.value, repo_dir, bool(cfg.services), plan
         )
-    from jailbee.boot_state import record
-
-    record(incus, name, "handled")
+    # A detached continuation owns completion, even if its handler ran inline.
+    if not plan.detached and marker_written:
+        record(incus, name, "handled")
 
 
 def _clear_superseded_boot_job(cfg: "Config", full_name: str) -> None:

@@ -34,7 +34,10 @@ before editing `## Unreleased`.
   containers across repositories before a host reboot, with one confirmation
   (`--yes` for scripts). `jailbee resume` restores that saved set and autostart
   in containers Incus already rebooted, leaves handled/skipped boots and empty
-  start plans alone, skips live jobs and retains failed resumes for retry;
+  start plans alone, skips live jobs and retains failed or interrupted autostart
+  for retry, even when tmux already exists. Boot setup is handled only after
+  detached stages succeed; marker-write failures warn without failing the boot.
+  Concurrent stop/resume commands report when waiting for each other;
   destroyed containers are dropped and unavailable repository configs receive a
   recovery hint. The terminal dashboard offers both in a global menu (`g`, F10
   or the title's ☰), alongside Accounts, Notifications, Global config, Settings,
