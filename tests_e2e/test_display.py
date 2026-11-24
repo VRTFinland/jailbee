@@ -141,7 +141,9 @@ def test_eink_page_turns_hold_new_messages_and_refresh_snapshot(
     expect(page.get_by_text("Held reply one.", exact=True)).to_have_count(1)
     expect(page.get_by_text("Held reply two.", exact=True)).to_have_count(1)
     first = page.get_by_text("Held reply one.", exact=True).locator("xpath=ancestor::section")
-    header_bottom = page.locator(".session-header").evaluate("el => el.getBoundingClientRect().bottom")
+    header_bottom = page.locator(".session-header").evaluate(
+        "el => el.getBoundingClientRect().bottom"
+    )
     assert abs(first.evaluate("el => el.getBoundingClientRect().top") - header_bottom) <= 1
 
 
