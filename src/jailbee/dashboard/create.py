@@ -98,9 +98,13 @@ def start_create(
                 or line.strip("│ ") == "cancelled"
                 for line in lines
             )
-            has_error = any(
-                line.lower().startswith("error:") and line != "Error: cancelled" for line in lines
-            ) or sum(line.startswith("╭─ Error ") for line in lines) > 1
+            has_error = (
+                any(
+                    line.lower().startswith("error:") and line != "Error: cancelled"
+                    for line in lines
+                )
+                or sum(line.startswith("╭─ Error ") for line in lines) > 1
+            )
             if (
                 result.cancelled
                 and result.error is None
