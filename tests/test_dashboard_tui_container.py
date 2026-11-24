@@ -1030,7 +1030,8 @@ def test_outbox_publish_defers_plan_and_questions_to_the_channel_child(mocker, t
     group = cfg_group(tmp_path, (ci("alpha-x", "alpha"),))
     _fake_outbox_ls(mocker)
     child = mocker.patch.object(
-        tsession.subprocess, "run",
+        tsession.subprocess,
+        "run",
         return_value=mocker.Mock(returncode=0, stdout="Published 1 action\n", stderr=""),
     )
     wait = patch_pause(mocker)
@@ -1042,7 +1043,14 @@ def test_outbox_publish_defers_plan_and_questions_to_the_channel_child(mocker, t
     flags = ["--config", str(group.config_path)]
     child.assert_called_once()
     assert child.call_args.args[0] == [
-        "jailbee", "outbox", "apply", "alpha-x", "pr/a.json", "--revision", "r1", *flags,
+        "jailbee",
+        "outbox",
+        "apply",
+        "alpha-x",
+        "pr/a.json",
+        "--revision",
+        "r1",
+        *flags,
     ]
     assert any("output of jailbee outbox apply" in line for line in _boxes(run)[-1].status)
     wait.assert_not_called()
