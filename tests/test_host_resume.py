@@ -279,7 +279,7 @@ def test_resume_drops_vanished_container_without_loading_its_repository(host, mo
 def test_resume_reports_unloadable_repository_once_and_keeps_existing_entries(host, mocker):
     from jailbee.config import ConfigError
 
-    cfg, other, incus, _ = host
+    _cfg, other, incus, _ = host
     incus.list_containers.return_value = [
         {"name": "two-a", "status": "Stopped", "profiles": ["two-base"]},
         {"name": "two-b", "status": "Stopped", "profiles": ["two-base"]},
@@ -288,7 +288,9 @@ def test_resume_reports_unloadable_repository_once_and_keeps_existing_entries(ho
     path = state_dir() / "resume-set.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"version": 1, "containers": entries}))
-    load = mocker.patch("jailbee.config.load_repo_config", side_effect=ConfigError("config removed"))
+    load = mocker.patch(
+        "jailbee.config.load_repo_config", side_effect=ConfigError("config removed")
+    )
 
     result = CliRunner().invoke(app, ["resume"])
 
@@ -317,12 +319,16 @@ def test_destroy_cleans_all_resume_journal_sections(host, mocker):
     mocker.patch("jailbee.egress_scope.sync_bridge_extras")
     path = state_dir() / "resume-set.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({
-        "version": 1,
-        "containers": {"one-off": str(cfg.repo_root), "one-keep": str(cfg.repo_root)},
-        "pending": ["one-off"],
-        "stopping": {"one-off": str(cfg.repo_root)},
-    }))
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "containers": {"one-off": str(cfg.repo_root), "one-keep": str(cfg.repo_root)},
+                "pending": ["one-off"],
+                "stopping": {"one-off": str(cfg.repo_root)},
+            }
+        )
+    )
 
     destroy_container(cfg, incus, "one-off", force=True)
 
@@ -463,7 +469,9 @@ def test_stop_all_continues_after_a_state_write_failure(host, mocker):
     assert incus.stop.call_count == 3
     journal = json.loads((state_dir() / "resume-set.json").read_text())
     assert set(journal["containers"]) | set(journal["stopping"]) == {
-        "one-work", "two-child", "one-mount"
+        "one-work",
+        "two-child",
+        "one-mount",
     }
 
 

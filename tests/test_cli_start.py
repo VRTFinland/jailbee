@@ -47,14 +47,16 @@ def test_start_records_boot_decision_even_when_no_tmux_is_needed(mocker, make_cf
     incus = mocker.Mock(spec=Incus)
     mocker.patch("jailbee.cli._resolve_existing", return_value=(incus, "myrepo-work"))
 
-    result = runner.invoke(app, ["start", "myrepo-work", "--no-background"] + (
-        ["--no-autostart"] if skip else []
-    ))
+    result = runner.invoke(
+        app, ["start", "myrepo-work", "--no-background"] + (["--no-autostart"] if skip else [])
+    )
 
     assert result.exit_code == 0, result.output
     expected = "skipped" if skip else "handled"
-    assert any(MARKER in " ".join(call.args[1]) and expected in " ".join(call.args[1])
-               for call in incus.exec.call_args_list)
+    assert any(
+        MARKER in " ".join(call.args[1]) and expected in " ".join(call.args[1])
+        for call in incus.exec.call_args_list
+    )
 
 
 def test_start_calls_apply_hosts_for_strict_container(mocker):
