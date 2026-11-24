@@ -44,8 +44,15 @@ async def session_history_of_container(
 ) -> ContainerSessionHistoryView:
     snapshot = await ctx.snapshot()
     view = await run_in_threadpool(
-        session_history, snapshot, name, ctx.scope, ctx.deps.engine, ctx.repo_sessions,
-        limit, offset, q,
+        session_history,
+        snapshot,
+        name,
+        ctx.scope,
+        ctx.deps.engine,
+        ctx.repo_sessions,
+        limit,
+        offset,
+        q,
     )
     if view is None:
         raise HTTPException(status_code=404, detail="Unknown container")

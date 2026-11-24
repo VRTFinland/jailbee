@@ -219,7 +219,8 @@ def session_history(
     needle = query.strip().casefold()
     if needle:
         views = [
-            view for view in views
+            view
+            for view in views
             if needle in view.title.casefold() or needle in view.session_id.casefold()
         ]
     views.sort(key=lambda view: (_newest_first(view), view.agent, view.session_id))

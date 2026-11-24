@@ -269,10 +269,22 @@ def test_container_history_pages_and_searches_without_hiding_live_sessions(
         )
     server = make_server(agent_homes={"work": [("claude", agent_home)]}.get)
     active = AgentSummary("claude", "busy", None, None, 1, session_ids=(SESSION_ID,))
-    server.push(snapshot_of(repo_group("work", container(
-        "work-main", "work", branch="main", repo_dir="/work/repo", uuid="u-main",
-        created_at=datetime(2026, 11, 1, tzinfo=UTC), agent_status=(active,),
-    ))))
+    server.push(
+        snapshot_of(
+            repo_group(
+                "work",
+                container(
+                    "work-main",
+                    "work",
+                    branch="main",
+                    repo_dir="/work/repo",
+                    uuid="u-main",
+                    created_at=datetime(2026, 11, 1, tzinfo=UTC),
+                    agent_status=(active,),
+                ),
+            )
+        )
+    )
     log_in_with_pin(page, server.url, server.pin.current)
     page.set_viewport_size({"width": 390, "height": 844})
     if profile == "eink":

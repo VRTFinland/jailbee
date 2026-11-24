@@ -179,7 +179,10 @@ def test_history_searches_titles_and_session_ids_without_hiding_live_sessions(
     ).json()
     assert [r["session_id"] for r in body["sessions"]] == [SESSION_B]
     assert body["total"] == 1
-    assert client.get("/api/containers/alpha-1/sessions").json()["sessions"][0]["session_id"] == SESSION_A
+    assert (
+        client.get("/api/containers/alpha-1/sessions").json()["sessions"][0]["session_id"]
+        == SESSION_A
+    )
 
 
 def test_history_search_has_an_empty_page_for_no_matches(client: TestClient) -> None:
@@ -201,9 +204,12 @@ def test_history_filters_before_paging_and_can_find_missing_transcripts(home: Pa
         body = client.get("/api/containers/alpha-1/sessions/history?q=gone&limit=1").json()
         assert [r["session_id"] for r in body["sessions"]] == ["gone-from-disk"]
         assert body["total"] == 1
-        assert client.get(
-            "/api/containers/alpha-1/sessions/history?q=gone&limit=1&offset=1"
-        ).json()["sessions"] == []
+        assert (
+            client.get("/api/containers/alpha-1/sessions/history?q=gone&limit=1&offset=1").json()[
+                "sessions"
+            ]
+            == []
+        )
 
 
 def test_a_recreated_container_does_not_inherit_the_old_ones_sessions(client: TestClient) -> None:
