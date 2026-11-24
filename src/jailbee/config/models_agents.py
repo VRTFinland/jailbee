@@ -15,6 +15,7 @@ from pydantic import (
     ConfigDict,
     Field,
     SecretStr,
+    ValidationError,
     ValidationInfo,
     field_validator,
     model_validator,
@@ -63,14 +64,16 @@ class AgentModelGuidance(BaseModel):
     def _models_mapping(cls, value: object) -> object:
         if value is None:
             return {}
-        if isinstance(value, dict) and any(
-            key in {"preset", *AgentConfig.model_fields} and not isinstance(entry, dict)
-            for key, entry in value.items()
-        ):
-            raise ConfigError(
-                "`agents.models` is reserved for model guidance; rename the agent "
-                "(for example to `models-agent`) and update references to it"
-            )
+        if isinstance(value, dict) and {"preset", *AgentConfig.model_fields}.intersection(value):
+            try:
+                # Model aliases may legitimately share an agent field's name.
+                for entry in value.values():
+                    ModelGuidance.model_validate(entry)
+            except ValidationError:
+                raise ConfigError(
+                    "`agents.models` is reserved for model guidance; rename the agent "
+                    "(for example to `models-agent`) and update references to it"
+                ) from None
         return value
 
 

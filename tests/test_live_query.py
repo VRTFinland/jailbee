@@ -329,6 +329,22 @@ def test_caller_absent_from_inventory_is_retryable(env: Env) -> None:
     assert response.error_detail == "calling container is no longer listed; retry shortly"
 
 
+def test_missing_caller_refresh_is_rate_limited(env: Env, monkeypatch) -> None:
+    from jailbee.orchestration.live_query import host_queries
+
+    now = [100.0]
+    monkeypatch.setattr("jailbee.orchestration.live_query.monotonic", lambda: now[0])
+    env.queries.live = host_queries(env.rig.incus)
+    env.rig.incus.reset_mock()
+    env.rig.incus.list_containers.return_value = []
+    for _ in range(3):
+        assert env.call("host.status").error_code == wire.STORE
+    assert env.rig.incus.list_containers.call_count == 1
+    now[0] += 2.1
+    assert env.call("host.status").error_code == wire.STORE
+    assert env.rig.incus.list_containers.call_count == 2
+
+
 def test_new_caller_refreshes_cached_inventory_before_reply(env: Env) -> None:
     from jailbee.orchestration.live_query import host_queries
 
@@ -416,6 +432,29 @@ def test_model_queries_reuse_unchanged_files_without_git(env: Env, mocker) -> No
     branch.assert_not_called()
     path.write_text("container_prefix: proj\nagents: {models: {haiku: {label: changed}}}\n")
     assert env.call("agent.models").result["models"]["haiku"]["label"] == "changed"
+
+
+def test_model_cache_tracks_local_layer_after_prefix_change(env: Env, mocker) -> None:
+    from jailbee.config.local_layer import local_config_path
+    from jailbee.orchestration.live_query import host_queries
+
+    path = env.rig.cfg.repo_root / ".jailbee" / "config.yaml"
+    path.parent.mkdir()
+    path.write_text("container_prefix: proj\n")
+    local = local_config_path("renamed")
+    local.parent.mkdir(parents=True, exist_ok=True)
+    local.write_text("agents: {model_policy: First local policy}\n")
+    env.queries.live = host_queries(env.rig.incus)
+    assert env.call("agent.models").result["model_policy"] == ""
+    path.write_text("container_prefix: renamed\n")
+    assert env.call("agent.models").result["model_policy"] == "First local policy"
+    reads = mocker.spy(type(path), "read_text")
+    assert env.call("agent.models").result["model_policy"] == "First local policy"
+    reads.assert_not_called()
+    local.write_text("agents: {model_policy: Edited local policy}\n")
+    assert env.call("agent.models").result["model_policy"] == "Edited local policy"
+    local.unlink()
+    assert env.call("agent.models").result["model_policy"] == ""
 
 
 def test_slow_host_refresh_cannot_starve_model_queries(env: Env) -> None:

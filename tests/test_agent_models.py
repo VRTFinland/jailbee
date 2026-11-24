@@ -97,11 +97,15 @@ def test_container_model_guidance_output(broker: FakeBroker, sockdir, monkeypatc
     assert [(r.op, r.args) for r in broker.requests] == [("agent.models", {})]
 
 
-def test_agent_named_models_gets_actionable_config_error(tmp_path):
+@pytest.mark.parametrize(
+    "entry",
+    [{"command": "my-agent", "preset": "codex"}, {"env": {"FOO": "bar"}}],
+)
+def test_agent_named_models_gets_actionable_config_error(tmp_path, entry):
     with pytest.raises(ConfigError, match=r"reserved.*rename") as error:
         load_config_from_layers(
             {},
-            {"agents": {"models": {"command": "my-agent", "preset": "codex"}}},
+            {"agents": {"models": entry}},
             tmp_path / "repo" / ".jailbee" / "config.yaml",
             origin="repo",
             local_raw={},
