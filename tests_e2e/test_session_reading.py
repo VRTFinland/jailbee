@@ -99,15 +99,17 @@ def test_latest_answer_and_sticky_title_follow_the_readable_area(
 
     # Stay on a visible answer, but not at the end: appended answers must not
     # scroll the reader away, and must bring the jump button back.
-    page.locator(".entry.assistant").last.evaluate(
-        "el => window.scrollTo(0, window.scrollY + el.getBoundingClientRect().top - 300)"
+    page.mouse.wheel(0, -180)
+    page.wait_for_function(
+        "() => document.querySelector('.entry.assistant:last-child')"
+        ".getBoundingClientRect().top > 150"
     )
     expect(latest).to_be_hidden()
     position = page.evaluate("window.scrollY")
     with transcript.open("a") as stream:
         stream.write(record(25, "assistant", "The live answer below the fold."))
     server.watches.open[0].fire()
-    new_messages = page.get_by_role("button", name="New messages")
+    new_messages = page.locator("button.new-messages")
     expect(new_messages).to_be_visible()
     assert page.evaluate("window.scrollY") == position
     expect(title).to_be_in_viewport()
@@ -145,7 +147,7 @@ def test_end_follow_and_new_messages_restore_follow(
     if profile == "eink":
         expect(page.get_by_role("button", name="Next", exact=False).last).to_be_disabled()
 
-    page.evaluate("window.scrollTo(0, 600)")
+    page.mouse.wheel(0, -100000)
     expect(page.get_by_role("button", name="Latest answer")).to_be_visible()
     position = page.evaluate("window.scrollY")
     # A non-answer first unseen entry makes this jump go straight to the end.
@@ -153,9 +155,9 @@ def test_end_follow_and_new_messages_restore_follow(
         stream.write(record(26, "user", "New prompt while reading earlier replies."))
         stream.write(record(27, "assistant", "Follow is restored."))
     server.watches.open[-1].fire()
-    page.get_by_role("button", name="New messages").wait_for()
+    page.locator("button.new-messages").wait_for()
     assert page.evaluate("window.scrollY") == position
-    page.get_by_role("button", name="New messages").click()
+    page.locator("button.new-messages").click()
     expect(page.get_by_text("Follow is restored.", exact=True)).to_be_in_viewport()
     expect(page.locator(".jump-latest")).to_have_count(0)
     with transcript.open("a") as stream:
@@ -180,10 +182,10 @@ def test_eink_default_holds_new_entries_even_at_the_end(
     with transcript.open("a") as stream:
         stream.write(record(25, "assistant", "Held even at the end."))
     server.watches.open[-1].fire()
-    expect(page.get_by_role("button", name="New messages")).to_be_visible()
+    expect(page.locator("button.new-messages")).to_be_visible()
     expect(page.get_by_text("Held even at the end.", exact=True)).to_have_count(0)
     assert page.evaluate("window.scrollY") == position
-    page.get_by_role("button", name="New messages").click()
+    page.locator("button.new-messages").click()
     expect(page.get_by_text("Held even at the end.", exact=True)).to_be_in_viewport()
 
 

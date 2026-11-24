@@ -146,6 +146,21 @@ def test_live_append_and_latest_answer_jump(
     assert_no_horizontal_scroll(page)
 
 
+def test_manual_scroll_to_end_rearms_follow(
+    session_page: Page, server: E2EServer, agent_home: Path
+) -> None:
+    page = session_page
+    path = session_path(agent_home)
+    append_entry(server, path, "\n\n".join(f"Old paragraph {n}." for n in range(50)))
+    page.get_by_role("link", name="work", exact=True).click()
+    open_session(page)
+    page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+    expect(page.locator(".jump-latest")).to_have_count(0)
+    append_entry(server, path, "A reply after manual scrolling.")
+    expect(page.get_by_text("A reply after manual scrolling.", exact=True)).to_be_in_viewport()
+    expect(page.locator(".jump-latest")).to_have_count(0)
+
+
 def test_thinking_is_hidden_until_enabled_in_settings(session_page: Page) -> None:
     page = session_page
     page.get_by_role("link", name="work", exact=True).click()

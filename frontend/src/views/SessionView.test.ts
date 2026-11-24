@@ -226,7 +226,7 @@ describe("SessionView", () => {
         expect(wrapper.get(".jump-latest").text()).toBe("Scroll to bottom ↓")
     })
 
-    it("keeps title and context in the header and treats replies hidden behind it as out of view", async () => {
+    it("keeps title and context in the header while offering the transcript end", async () => {
         let answerTop = 10
         vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
             return {

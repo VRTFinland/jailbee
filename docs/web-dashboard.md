@@ -448,8 +448,8 @@ the new offset.
 
 The display profile **E-ink** is for e-paper readers and slow-refresh
 screens: no animation, content moves in page turns instead of scrolling, live
-transcript entries are held behind the **New messages ↓** button until you tap
-it. **Follow new messages on e-ink** in Settings opts into automatic follow at
+visible transcript entries are held behind a counted **2 new messages ↓** button until
+you tap it, revealing them and moving to the first new answer or the end. **Follow new messages on e-ink** in Settings opts into automatic follow at
 the transcript's end, using the pager's last content page rather than continuous
 scrolling. It is off by default and remembered on this device. The front page refreshes every
 minute, or immediately when you tap **Refresh**. The front-page header wraps
@@ -468,8 +468,8 @@ in a compact header while you read. One context-aware button handles navigation:
   **Scroll to bottom ↓**, which jumps to the end and resumes follow.
 - **New messages ↓** takes priority when entries arrive while follow is off. It
   jumps to the first unseen entry's start if that entry is an answer; otherwise
-  it jumps to the end. A jump to a long answer's start does not resume follow
-  until you reach the end. E-ink keeps the new entries held until this tap.
+  it jumps to the end. The button resumes follow; e-ink keeps the new entries
+  held until this tap.
 
 A truncated title keeps its full text as a tooltip and accessible heading name.
 Page turns reserve the header, bottom controls and device safe-area inset, even
