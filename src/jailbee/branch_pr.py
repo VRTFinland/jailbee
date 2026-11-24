@@ -147,8 +147,10 @@ def own_source_branch(
         return None
 
 
-def pending_source_manifests(cfg: Config, incus: Incus, full: str) -> list[PendingSource]:
-    """Source proposals from the host store, never letting an unreadable store block a push."""
+def pending_source_manifests(
+    cfg: Config, incus: Incus, full: str, *, classify_own: bool = False
+) -> list[PendingSource]:
+    """Read the host store; publication pickers may opt into read-only container git probes."""
     from jailbee import pr_outbox
     from jailbee.incus import IncusError
     from jailbee.orchestration.store import StoreError
@@ -172,7 +174,7 @@ def pending_source_manifests(cfg: Config, incus: Incus, full: str) -> list[Pendi
             if len(source) == 40 and all(c in "0123456789abcdefABCDEF" for c in source)
             else source
         )
-        own = own_source_branch(cfg, incus, full, manifest)
+        own = own_source_branch(cfg, incus, full, manifest) if classify_own else None
         pending.append(
             PendingSource(
                 item.name,

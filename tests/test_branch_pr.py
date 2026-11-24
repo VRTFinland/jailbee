@@ -244,7 +244,7 @@ def test_pending_classifies_own_commit_not_merged_child(
         return ""
 
     p["incus"].exec.side_effect = probe
-    (proposal,) = pending_source_manifests(p["cfg"], p["incus"], "full")
+    (proposal,) = pending_source_manifests(p["cfg"], p["incus"], "full", classify_own=True)
     assert proposal.own_branch == ("topic" if own else None)
     assert proposal.newer_commits == newer
 

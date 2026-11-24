@@ -229,7 +229,9 @@ def run_pr_push(
 
     short = short_name(cfg, full)
     pending = (
-        [] if source_manifest is not None else branch_pr.pending_source_manifests(cfg, incus, full)
+        []
+        if source_manifest is not None
+        else branch_pr.pending_source_manifests(cfg, incus, full, classify_own=True)
     )
     if (
         len(pending) == 1
