@@ -155,6 +155,13 @@ export interface ContainerSessionList {
     sessions: ContainerSession[]
 }
 
+/** One server-side page from `GET /api/containers/{name}/sessions/history`. */
+export interface ContainerSessionHistory extends ContainerSessionList {
+    total: number
+    limit: number
+    offset: number
+}
+
 // ---- a session's transcript (REST now; the WebSocket's live appends reuse RenderedEntry) ----
 // Every `html` / `input_html` field is rendered and sanitised by the server
 // (raw HTML escaped, unsafe link schemes dropped): it is the only HTML

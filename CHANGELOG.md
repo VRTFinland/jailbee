@@ -258,7 +258,9 @@ before editing `## Unreleased`.
   read in the state database across server restarts (filled in the background
   at start-up), list only the sessions started in the repository's own
   containers, and a container page shows its live sessions before its history
-  has loaded. A container's history also lists sessions run while no dashboard
+  has loaded, keeps live sessions on top, and fetches earlier sessions in pages
+  of 20 with Previous/Next controls and debounced server-side title/session-ID
+  search, including in the e-ink profile. A container's history also lists sessions run while no dashboard
   was open, attributed by the branch, directory and time each started
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Session
   titles and connection notices stay visible while reading. One jump button

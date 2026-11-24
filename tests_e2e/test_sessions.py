@@ -231,7 +231,7 @@ def test_a_containers_live_sessions_show_while_its_history_is_still_loading(
     page = logged_in
     held: list[Route] = []
     # A slow history: its response is held until the test lets it through.
-    page.route("**/api/containers/*/sessions/history", lambda route: held.append(route))
+    page.route("**/api/containers/*/sessions/history?*", lambda route: held.append(route))
 
     page.get_by_role("link", name="work", exact=True).click()
     page.get_by_role("link", name="main", exact=True).click()
@@ -245,6 +245,80 @@ def test_a_containers_live_sessions_show_while_its_history_is_still_loading(
 
     expect(page.get_by_role("link", name=OTHER_TITLE)).to_be_visible()
     expect(page.get_by_text("Loading earlier sessions…", exact=True)).to_have_count(0)
+
+
+@pytest.mark.parametrize("profile", ["normal", "eink"])
+def test_container_history_pages_and_searches_without_hiding_live_sessions(
+    make_server: Callable[..., E2EServer], agent_home: Path, page: Page, profile: str
+) -> None:
+    import json
+    from datetime import UTC, datetime
+
+    for n in range(25):
+        sid = f"33333333-3333-4333-8333-{n:012d}"
+        record = {
+            "type": "user",
+            "uuid": f"past-{n}",
+            "timestamp": f"2026-11-{n + 1:02d}T09:00:00Z",
+            "sessionId": sid,
+            "cwd": "/work/repo",
+            "gitBranch": "main",
+            "message": {"role": "user", "content": f"Release task {n:02d}"},
+        }
+        (agent_home / "projects" / "-work-repo" / f"{sid}.jsonl").write_text(
+            json.dumps(record) + "\n"
+        )
+    server = make_server(agent_homes={"work": [("claude", agent_home)]}.get)
+    active = AgentSummary("claude", "busy", None, None, 1, session_ids=(SESSION_ID,))
+    server.push(
+        snapshot_of(
+            repo_group(
+                "work",
+                container(
+                    "work-main",
+                    "work",
+                    branch="main",
+                    repo_dir="/work/repo",
+                    uuid="u-main",
+                    created_at=datetime(2026, 11, 1, tzinfo=UTC),
+                    agent_status=(active,),
+                ),
+            )
+        )
+    )
+    log_in_with_pin(page, server.url, server.pin.current)
+    page.set_viewport_size({"width": 390, "height": 844})
+    if profile == "eink":
+        page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink')")
+        page.reload()
+    page.get_by_role("link", name="work", exact=True).click()
+    page.get_by_role("link", name="main", exact=True).click()
+    expect(page.get_by_text("Page 1 of 2", exact=True)).to_be_visible()
+    expect(page.locator("li.session")).to_have_count(21)
+    expect(page.locator("li.session .title").nth(1)).to_have_text("Release task 24")
+    expect(page.get_by_role("button", name="Previous earlier sessions")).to_be_disabled()
+    page.get_by_role("button", name="Next earlier sessions").click()
+    expect(page.get_by_text("Page 2 of 2", exact=True)).to_be_visible()
+    expect(page.locator("li.session")).to_have_count(6)
+    expect(page.locator("li.session").first).to_contain_text(SESSION_TITLE)
+    expect(page.locator("li.session .title").nth(1)).to_have_text("Release task 04")
+    expect(page.get_by_role("button", name="Next earlier sessions")).to_be_disabled()
+    search = page.get_by_role("searchbox", name="Search earlier sessions")
+    search.fill("RELEASE TASK 23")
+    expect(page.get_by_text("Page 1 of 1", exact=True)).to_be_visible()
+    expect(page.locator("li.session")).to_have_count(2)
+    expect(page.get_by_role("link", name="Release task 23")).to_be_visible()
+    search.fill("does not exist")
+    expect(page.get_by_text("No matches.", exact=True)).to_be_visible()
+    expect(page.locator("li.session")).to_have_count(1)
+    expect(page.get_by_role("link", name=SESSION_TITLE)).to_be_visible()
+    search.fill("")
+    expect(page.locator("li.session")).to_have_count(21)
+    page.get_by_role("button", name="Next earlier sessions").click()
+    expect(page.get_by_text("Page 2 of 2", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Previous earlier sessions").click()
+    expect(page.get_by_text("Page 1 of 2", exact=True)).to_be_visible()
+    assert_no_horizontal_scroll(page)
 
 
 def test_a_container_page_lists_a_past_session_the_recorder_never_saw(

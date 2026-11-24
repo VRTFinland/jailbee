@@ -45,8 +45,17 @@ every visible repository's sessions in the background when it starts, after
 dropping the stored rows of deleted transcripts; no request waits for it.
 
 A container page shows its live sessions as soon as they are known (they come
-from the state service's snapshot) and appends the sessions it ran before,
-recorded and attributed, newest first, when that separate request answers. A repository lists only the sessions started in
+from the state service's snapshot) and keeps them at the top, independently of
+history paging or search. Earlier sessions are recorded and attributed, newest
+first, and fetched separately in pages of 20. **Previous** and **Next** buttons
+work in both normal and e-ink display profiles; there is no infinite scroll.
+**Search earlier sessions** searches titles (the first prompt) and session IDs
+on the server after a short typing pause, resets to the first page, and shows
+**No matches** for an empty result. Clearing it restores the history. The history
+endpoint `/api/containers/{name}/sessions/history` accepts `limit` (1–100,
+default 20), `offset` (default 0) and `q` (case-insensitive substring); the response
+includes the matching `total`, `limit` and `offset` alongside the sessions.
+A repository lists only the sessions started in
 its own containers' checkout (each container's repository directory, or below
 it): repositories that share one agent config home by mistake do not list each
 other's sessions. Claude names a session's project directory after its working

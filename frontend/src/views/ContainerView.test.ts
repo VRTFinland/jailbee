@@ -32,6 +32,9 @@ const liveList = {
 
 const historyList = {
     ...liveList,
+    total: 1,
+    limit: 20,
+    offset: 0,
     sessions: [
         {
             session_id: "s-past",
@@ -47,7 +50,7 @@ const historyList = {
 /** A fetch that answers the live and the history request with these bodies. */
 function serve(live: unknown = liveList, history: unknown = historyList, status = 200) {
     return vi.fn<typeof fetch>((input) => Promise.resolve(
-        jsonResponse(status, String(input).endsWith("/sessions/history") ? history : live),
+        jsonResponse(status, String(input).includes("/sessions/history?") ? history : live),
     ))
 }
 
@@ -63,6 +66,119 @@ async function mountContainer(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>,
 }
 
 describe("ContainerView", () => {
+    it("pages earlier sessions on the server and leaves live sessions on top", async () => {
+        const fetchMock = vi.fn<typeof fetch>((input) => {
+            const url = new URL(String(input), "http://localhost")
+            const offset = Number(url.searchParams.get("offset"))
+            return Promise.resolve(jsonResponse(200, url.pathname.endsWith("/history")
+                ? {...historyList, total: 21, limit: 20, offset, sessions: [{...historyList.sessions[0], title: offset ? "Older page" : "Newest page"}]}
+                : liveList))
+        })
+        const {wrapper} = await mountContainer(fetchMock)
+        expect(wrapper.text()).toContain("Page 1 of 2")
+        expect(wrapper.get('button[aria-label="Previous earlier sessions"]').attributes("disabled")).toBeDefined()
+        await wrapper.get('button[aria-label="Next earlier sessions"]').trigger("click")
+        await flushPromises()
+        expect(String(fetchMock.mock.calls.at(-1)![0])).toContain("limit=20&offset=20")
+        expect(wrapper.text()).toContain("Page 2 of 2")
+        expect(wrapper.findAll("li.session")[0].text()).toContain("Fix the login bug")
+        expect(wrapper.text()).toContain("Older page")
+        expect(wrapper.text()).not.toContain("Newest page")
+        expect(wrapper.get('button[aria-label="Next earlier sessions"]').attributes("disabled")).toBeDefined()
+        await wrapper.get('button[aria-label="Previous earlier sessions"]').trigger("click")
+        await flushPromises()
+        expect(wrapper.text()).toContain("Newest page")
+        expect(fetchMock.mock.calls.filter(call => String(call[0]).endsWith("/sessions"))).toHaveLength(1)
+        wrapper.unmount()
+    })
+
+    it("debounces server search, resets the history page and shows no matches without hiding live sessions", async () => {
+        const fetchMock = vi.fn<typeof fetch>((input) => {
+            const url = new URL(String(input), "http://localhost")
+            const searching = url.searchParams.has("q")
+            return Promise.resolve(jsonResponse(200, url.pathname.endsWith("/history")
+                ? {...historyList, total: searching ? 0 : 21, sessions: searching ? [] : historyList.sessions}
+                : liveList))
+        })
+        const {wrapper} = await mountContainer(fetchMock)
+        await wrapper.get('button[aria-label="Next earlier sessions"]').trigger("click")
+        await flushPromises()
+        const calls = fetchMock.mock.calls.length
+        vi.useFakeTimers()
+        try {
+            const search = wrapper.get('input[type="search"]')
+            await search.setValue("no")
+            await vi.advanceTimersByTimeAsync(200)
+            await search.setValue("no & matches")
+            await vi.advanceTimersByTimeAsync(299)
+            expect(fetchMock).toHaveBeenCalledTimes(calls)
+            await vi.advanceTimersByTimeAsync(1)
+            await flushPromises()
+            const url = new URL(String(fetchMock.mock.calls.at(-1)![0]), "http://localhost")
+            expect(url.searchParams.get("q")).toBe("no & matches")
+            expect(url.searchParams.get("offset")).toBe("0")
+            expect(fetchMock).toHaveBeenCalledTimes(calls + 1)
+            expect(wrapper.text()).toContain("No matches")
+            expect(wrapper.text()).toContain("Page 1 of 1")
+            expect(wrapper.findAll("li.session")).toHaveLength(1)
+            expect(wrapper.text()).toContain("Fix the login bug")
+            await search.setValue("")
+            await vi.advanceTimersByTimeAsync(300)
+            await flushPromises()
+            expect(wrapper.text()).not.toContain("No matches")
+            expect(wrapper.findAll("li.session")).toHaveLength(2)
+        } finally {
+            wrapper.unmount()
+            vi.useRealTimers()
+        }
+    })
+
+    it("ignores an old search response after the search is cleared", async () => {
+        let answerSearch: (r: Response) => void = () => {}
+        const fetchMock = vi.fn<typeof fetch>((input) => String(input).includes("q=old")
+            ? new Promise<Response>(resolve => { answerSearch = resolve })
+            : serve()(input))
+        const {wrapper} = await mountContainer(fetchMock)
+        vi.useFakeTimers()
+        try {
+            const search = wrapper.get('input[type="search"]')
+            await search.setValue("old")
+            await vi.advanceTimersByTimeAsync(300)
+            expect(wrapper.text()).toContain("Loading earlier sessions")
+            await search.setValue("")
+            await vi.advanceTimersByTimeAsync(300)
+            await flushPromises()
+            answerSearch(jsonResponse(200, {...historyList, total: 0, sessions: []}))
+            await flushPromises()
+            expect(wrapper.findAll("li.session")).toHaveLength(2)
+            expect(wrapper.text()).not.toContain("No matches")
+        } finally {
+            wrapper.unmount()
+            vi.useRealTimers()
+        }
+    })
+
+    it("resets search and pagination when navigating to another container", async () => {
+        const fetchMock = serve(liveList, {...historyList, total: 21})
+        const {wrapper, router} = await mountContainer(fetchMock)
+        await wrapper.get('button[aria-label="Next earlier sessions"]').trigger("click")
+        await flushPromises()
+        vi.useFakeTimers()
+        try {
+            await wrapper.get('input[type="search"]').setValue("unfinished")
+            await router.push("/containers/alpha-2")
+            await flushPromises()
+            await vi.advanceTimersByTimeAsync(300)
+            await flushPromises()
+            expect((wrapper.get('input[type="search"]').element as HTMLInputElement).value).toBe("")
+            expect(String(fetchMock.mock.calls.at(-1)![0])).toBe("/api/containers/alpha-2/sessions/history?limit=20&offset=0")
+            expect(wrapper.text()).toContain("Page 1 of 2")
+        } finally {
+            wrapper.unmount()
+            vi.useRealTimers()
+        }
+    })
+
     it("links an orchestrator's children and updates the list live", async () => {
         const dashboard = new Dashboard(() => ({start() {}, stop() {}, send() {}}))
         dashboard.state.view = orchestrationView()
@@ -97,9 +213,9 @@ describe("ContainerView", () => {
         await flushPromises()
         expect(fetchMock.mock.calls.map(call => call[0])).toEqual([
             "/api/containers/alpha-orch/sessions",
-            "/api/containers/alpha-orch/sessions/history",
+            "/api/containers/alpha-orch/sessions/history?limit=20&offset=0",
             "/api/containers/alpha-task-a/sessions",
-            "/api/containers/alpha-task-a/sessions/history",
+            "/api/containers/alpha-task-a/sessions/history?limit=20&offset=0",
         ])
         expect(wrapper.text()).not.toContain("Fix the login bug")
         expect(wrapper.text()).toContain("No sessions")
@@ -138,7 +254,7 @@ describe("ContainerView", () => {
 
     it("shows the live sessions while the history is still loading", async () => {
         let answerHistory: (r: Response) => void = () => {}
-        const fetchMock = vi.fn<typeof fetch>((url) => String(url).endsWith("/sessions/history")
+        const fetchMock = vi.fn<typeof fetch>((url) => String(url).includes("/sessions/history?")
             ? new Promise<Response>(resolve => { answerHistory = resolve })
             : Promise.resolve(jsonResponse(200, liveList)))
         const {wrapper} = await mountContainer(fetchMock)
@@ -148,14 +264,18 @@ describe("ContainerView", () => {
         expect(wrapper.text()).toContain("Loading earlier sessions…")
         expect(wrapper.text()).not.toContain("No sessions")
 
+        const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {})
+        scroll.mockClear()
         answerHistory(jsonResponse(200, historyList))
         await flushPromises()
+        expect(scroll).not.toHaveBeenCalled()
+        scroll.mockRestore()
         expect(wrapper.findAll("li.session")).toHaveLength(2)
         expect(wrapper.text()).not.toContain("Loading earlier sessions…")
     })
 
     it("keeps the live sessions when the history fails", async () => {
-        const fetchMock = vi.fn<typeof fetch>((url) => Promise.resolve(String(url).endsWith("/sessions/history")
+        const fetchMock = vi.fn<typeof fetch>((url) => Promise.resolve(String(url).includes("/sessions/history?")
             ? jsonResponse(500, {detail: "x"})
             : jsonResponse(200, liveList)))
         const {wrapper} = await mountContainer(fetchMock)
