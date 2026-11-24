@@ -5407,6 +5407,28 @@ def start(
     _clear_superseded_boot_job(cfg, name)
 
 
+@app.command("resume")
+def resume_cmd(config: ConfigOption = None) -> None:
+    """Resume all repositories after a host reboot or `stop --all`."""
+    from jailbee.host_resume import run_resume
+    from jailbee.incus import Incus
+
+    if not run_resume(_load_orphan_base_or_exit(config), Incus(), start=_resume_container):
+        raise typer.Exit(1)
+
+
+def _resume_container(cfg: "Config", incus: "IncusType", name: str) -> None:
+    from jailbee.lifecycle import boot_container
+
+    _preflight_cache_pools(cfg)
+    boot_container(cfg, incus, name, restart=False, ensure_running=True)
+    # Complete all stages before removing the entry from the durable resume set.
+    _post_start_actions(
+        cfg, incus, name, no_autostart=False, allow_prompt=True, override="wait"
+    )
+    _clear_superseded_boot_job(cfg, name)
+
+
 @app.command("mem")
 def mem_cmd(
     name: ContainerArg = None,
@@ -5527,6 +5549,12 @@ def rename_cmd(
 @app.command()
 def stop(
     name: ContainerArg = None,
+    all: Annotated[
+        bool, typer.Option("--all", help="Stop running JailBee containers across all repositories.")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Confirm --all without prompting.")
+    ] = False,
     force: Annotated[
         bool,
         typer.Option(
@@ -5542,10 +5570,20 @@ def stop(
     ] = False,
     config: ConfigOption = None,
 ) -> None:
-    """Stop a running container."""
+    """Stop a container, or save and stop all repositories before a reboot."""
     from jailbee.lifecycle import short_name
-    from jailbee.stopping import stop_container
 
+    if all:
+        from jailbee.host_resume import run_stop_all
+        from jailbee.incus import Incus
+
+        if name is not None or force:
+            error("--all cannot be combined with a container name or --force.")
+            raise typer.Exit(2)
+        cfg = _load_orphan_base_or_exit(config)
+        if not run_stop_all(cfg, Incus(), yes=yes, stop=_clean_stop):
+            raise typer.Exit(1)
+        return
     cfg = _load_or_exit(config)
     incus, name = _resolve_existing(cfg, name)
     if not force:
@@ -5556,13 +5594,25 @@ def stop(
     # No force fallback here: this container holds the user's work, so a
     # shutdown that will not finish is reported (with what is blocking it)
     # rather than turned into a power cut behind their back.
-    with _stop_job_row(cfg, name):
-        if not force:
-            from jailbee.agent_resume import capture
+    if force:
+        from jailbee.stopping import stop_container
 
-            capture(cfg, incus, name)
-        stop_container(incus, name, force=force, label=short_name(cfg, name))
+        with _stop_job_row(cfg, name):
+            stop_container(incus, name, force=True, label=short_name(cfg, name))
+    else:
+        _clean_stop(cfg, incus, name)
     success(f"Stopped: {short_name(cfg, name)}")
+
+
+def _clean_stop(cfg: "Config", incus: "IncusType", name: str) -> None:
+    from jailbee.agent_resume import capture
+    from jailbee.lifecycle import short_name
+    from jailbee.stopping import stop_container
+
+    _refuse_while_autostart_runs(cfg, name)
+    with _stop_job_row(cfg, name):
+        capture(cfg, incus, name)
+        stop_container(incus, name, label=short_name(cfg, name))
 
 
 @contextlib.contextmanager

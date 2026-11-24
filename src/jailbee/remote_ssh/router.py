@@ -279,6 +279,7 @@ _HOST_COMMANDS: frozenset[str] = frozenset(
         "init",
         "apply",
         "upgrade",
+        "resume",
         "base build",
         "base seed",
         "base prune",
@@ -594,6 +595,8 @@ _REMOTE_DENIED_PARAMS: dict[str, frozenset[str]] = {
     # capability. A dashboard command inside a console must not forge it.
     "dashboard": frozenset({"remote_policy_json"}),
     "new": frozenset({"mount"}),
+    # Host-wide shutdown must not escape the selected repository's policy.
+    "stop": frozenset({"all"}),
     "net egress add": frozenset({"repo"}),
     "net egress rm": frozenset({"repo"}),
     "pr push": frozenset({"web", "yes"}),
