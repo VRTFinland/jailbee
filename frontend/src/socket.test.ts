@@ -1,5 +1,5 @@
 import {afterEach, describe, expect, it, vi} from "vitest"
-import {clearToken, setToken} from "./api"
+import {clearToken, getToken, setToken} from "./api"
 import {DashboardSocket, type SocketHandlers} from "./socket"
 
 class FakeWebSocket {
@@ -45,8 +45,10 @@ describe("DashboardSocket close codes", () => {
     })
 
     it("4001 clears the session and reports unauthorized only", () => {
+        setToken("session")
         const {handlers, close} = connect()
         close(4001)
+        expect(getToken()).toBeNull()
         expect(handlers.onUnauthorized).toHaveBeenCalledTimes(1)
         expect(handlers.onSetupMode).not.toHaveBeenCalled()
         expect(handlers.onOutdated).not.toHaveBeenCalled()
