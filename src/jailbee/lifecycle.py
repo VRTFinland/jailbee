@@ -971,6 +971,8 @@ def list_containers(
                     job_pid=row.pid,
                     job_kind=row.op_kind,
                     job_error=row.error_msg,
+                    child=view.parse_child_view(row.spawned_by, None, None),
+                    created_at=row.started_at if row.spawned_by is not None else None,
                 )
             )
 

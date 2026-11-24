@@ -171,6 +171,7 @@ class BackgroundJob(SQLModel, table=True):
     log_path: str
     error_msg: str | None = None
     op_kind: str = Field(default=JOB_CREATE)
+    spawned_by: str | None = None
     started_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
     updated_at: datetime = Field(sa_column=Column(_UTCDateTime, nullable=False))
 

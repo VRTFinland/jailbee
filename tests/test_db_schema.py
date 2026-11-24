@@ -1461,6 +1461,41 @@ def test_v27_database_migrates_to_v28_with_the_session_info_cache_table() -> Non
         assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
 
 
+def test_v29_database_migrates_background_spawned_by() -> None:
+    from jailbee.db import _ensure_schema, _migrate_to_v30
+    from jailbee.db.models import BackgroundJob, SchemaMeta
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(SchemaMeta(id=1, version=29))
+        session.commit()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE background_op DROP COLUMN spawned_by")
+
+    _ensure_schema(engine)
+    with engine.begin() as conn:
+        _migrate_to_v30(conn)
+        _migrate_to_v30(conn)
+
+    with Session(engine) as session:
+        job = BackgroundJob(
+            container_name="alpha-child",
+            container_prefix="alpha",
+            phase="starting",
+            pid=1,
+            log_path="/tmp/job.log",
+            started_at=datetime(2026, 11, 24, tzinfo=UTC),
+            updated_at=datetime(2026, 11, 24, tzinfo=UTC),
+            spawned_by="alpha-parent",
+        )
+        session.add(job)
+        session.commit()
+        assert session.get(BackgroundJob, "alpha-child").spawned_by == "alpha-parent"
+        meta = session.get(SchemaMeta, 1)
+        assert meta is not None and meta.version == CURRENT_SCHEMA_VERSION
+
+
 def test_v28_database_migrates_to_v29_with_where_each_session_started() -> None:
     from jailbee.db import _ensure_schema, _migrate_to_v29
     from jailbee.db.models import SchemaMeta, SessionInfoRow

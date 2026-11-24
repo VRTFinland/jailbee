@@ -404,6 +404,9 @@ before editing `## Unreleased`.
 
 ### Fixed
 
+- A newly spawned child's creating row appears beneath its orchestrator from the
+  first dashboard refresh, rather than moving there after the instance appears
+  ([#146](https://github.com/VRTFinland/jailbee/issues/146)).
 - An own-branch PR source proposal no longer competes with "container branch"
   in the PR picker or fails an update by colliding with the container's own
   PR label. The PR menu and outbox publish use the same normal PR flow, push
