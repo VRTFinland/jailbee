@@ -112,6 +112,32 @@ def test_ssh_menu_omits_terminal_config_editor_even_when_command_policy_allows_i
     assert "global-config-edit-global" not in verbs
 
 
+def test_remote_terminal_without_ssh_transport_hides_and_refuses_config_editor(mocker):
+    from jailbee.dashboard.tui.session import REMOTE_CONFIG_EDIT_NOTE
+
+    run = drive(mocker, ["g", "escape", "E"], [], remote=True)
+    assert "global-config-edit-global" not in [
+        item[1] for item in run.trace[1].overlay.actions
+    ]
+    assert run.last.notice == REMOTE_CONFIG_EDIT_NOTE
+
+
+def test_web_global_actions_omit_terminal_only_entries_and_top_level_settings():
+    from jailbee.config.models_remote import RemoteWebConfig
+
+    policy = RemoteWebConfig(commands={"mode": "full"})
+    assert menus.global_menu_actions(policy, transport="web", frontend="web") == [
+        ("Accounts", "global-accounts"),
+        ("Notifications", "global-queue"),
+        ("Help", "global-help"),
+    ]
+    restrictive = RemoteWebConfig(commands={"mode": "allowlist", "allow": ["version"]})
+    assert menus.global_menu_actions(restrictive, transport="web", frontend="web") == [
+        ("Notifications", "global-queue"),
+        ("Help", "global-help"),
+    ]
+
+
 def test_shared_global_menu_filters_commands_with_the_remote_policy():
     assert menus.global_menu_actions() == [
         ("Stop all…", "global-stop-all"),

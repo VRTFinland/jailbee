@@ -445,7 +445,7 @@ Transcripts follow live entries at the end (opt-in on e-ink). Scrolling up,
 including keyboard or touch momentum, stops follow; reaching the end by hand
 restores it. Answer-start jumps leave long replies in place to read, and only
 jumps reaching the transcript end resume follow.
-The top-right Quick settings menu is available on every page, with live body/code
+The left-edge ☰ (Quick settings) menu is available on every page, with live body/code
 font-size steppers and an Auto / Light / Dark / E-ink theme cycler. Its Settings
 link opens the full settings page; both edit the same per-device localStorage
 preferences without Save. Session/subagent menus add Follow new messages (normal

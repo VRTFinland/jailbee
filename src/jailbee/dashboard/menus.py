@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from jailbee.config.models_remote import RemotePolicy
 from jailbee.dashboard import actions as dact
@@ -103,8 +103,17 @@ def global_action_argv(verb: str) -> list[str] | None:
     return commands.get(verb)
 
 
+def terminal_config_edit_available(*, remote: bool, transport: Transport) -> bool:
+    """The terminal editor needs a local terminal, not a remote hand-off."""
+    return not remote and transport == "none"
+
+
 def global_menu_actions(
-    policy: RemotePolicy | None = None, *, transport: Transport = "none"
+    policy: RemotePolicy | None = None,
+    *,
+    transport: Transport = "none",
+    frontend: Literal["terminal", "web"] = "terminal",
+    remote: bool = False,
 ) -> list[tuple[str, str]]:
     """Host-wide menu leaves shared by frontends, filtered by the actual command policy."""
     items = [
@@ -120,8 +129,14 @@ def global_menu_actions(
     return [
         item
         for item in items
-        # The terminal config editor has no remote SSH hand-off, even on an unrestricted host.
-        if not (transport == "ssh" and item[1] == "global-config-edit-global")
+        if not (frontend == "web" and item[1] in {"global-quit", "global-settings"})
+        and not (
+            item[1] == "global-config-edit-global"
+            and (
+                frontend == "web"
+                or not terminal_config_edit_available(remote=remote, transport=transport)
+            )
+        )
         and (
             (argv := global_action_argv(item[1])) is None
             or permitted(argv, policy, transport=transport)
