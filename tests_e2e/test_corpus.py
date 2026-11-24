@@ -174,8 +174,14 @@ def test_compaction_and_interruption_notices_follow_the_agent_context_setting(
     open_from_list(reader, session)
     transcript = reader.locator("article.transcript")
     expect(transcript.locator(".entry.user").first).to_be_visible()
-    for text in notices:
-        expect(transcript).not_to_contain_text(text)
+    for shape, text in NOTICES.items():
+        if shape not in session["shapes"]:
+            continue
+        # An interruption keeps its label line in every mode, like a slash command.
+        if shape == "interrupted":
+            expect(transcript).to_contain_text(text)
+        else:
+            expect(transcript).not_to_contain_text(text)
 
     reader.get_by_role("link", name="Settings", exact=True).click()
     reader.get_by_label("Agent context").select_option("shown")

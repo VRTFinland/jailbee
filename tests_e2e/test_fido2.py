@@ -142,6 +142,24 @@ def test_open_tab_switches_to_setup_without_a_reload(
     expect(page.get_by_text("Registered Open tab key.", exact=True)).to_be_visible()
 
 
+def test_setup_tab_leaves_for_login_when_the_dashboard_returns_without_a_reload(
+    make_server: Callable[..., E2EServer], page: Page, virtual_key: VirtualKey
+) -> None:
+    server = make_server(setup=True)
+    server.push(snapshot_of())
+    url = register_key(page, server)
+    page.evaluate("window.__sameDocument = true")
+
+    # The CLI stops setup mode and starts the dashboard at the very same origin.
+    server.stop()
+    server.start()
+
+    # The setup view polls the mode; the marker proves no document reload.
+    expect(page.get_by_role("button", name="Use security key", exact=True)).to_be_visible()
+    expect(page).to_have_url(f"{url}/index.html#/login")
+    assert page.evaluate("window.__sameDocument") is True
+
+
 @pytest.mark.parametrize("counter_rollback", [1, 2], ids=["equal-counter", "lower-counter"])
 def test_registered_security_key_updates_its_counter_and_refuses_a_clone(
     make_server: Callable[..., E2EServer],

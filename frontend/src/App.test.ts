@@ -84,4 +84,48 @@ describe("App", () => {
         await flushPromises()
         expect(router.currentRoute.value.name).toBe("login")
     })
+
+    describe("setup view", () => {
+        afterEach(() => {
+            vi.useRealTimers()
+        })
+
+        async function setupTab(modes: string[]) {
+            vi.useFakeTimers()
+            const fetchMock = vi.fn(async () => Response.json({mode: modes.shift() ?? "dashboard"}))
+            vi.stubGlobal("fetch", fetchMock)
+            const {dashboard} = harness()
+            const router = createAppRouter(createMemoryHistory())
+            await router.push("/login")
+            const wrapper = mount(App, {global: {plugins: [router], provide: {[DASHBOARD]: dashboard}}})
+            await flushPromises()
+            return {router, wrapper, fetchMock}
+        }
+
+        it("polls while visible and leaves for login once setup mode ends", async () => {
+            const {router, wrapper} = await setupTab(["setup", "setup", "setup"])
+            expect(router.currentRoute.value.name).toBe("setup")
+
+            await vi.advanceTimersByTimeAsync(2_000)
+            expect(router.currentRoute.value.name).toBe("setup")
+            await vi.advanceTimersByTimeAsync(2_000)
+            await flushPromises()
+
+            expect(router.currentRoute.value.name).toBe("login")
+            wrapper.unmount()
+        })
+
+        it("does not poll while the page is hidden", async () => {
+            const {router, wrapper, fetchMock} = await setupTab(["setup"])
+            vi.spyOn(document, "hidden", "get").mockReturnValue(true)
+            const before = fetchMock.mock.calls.length
+
+            await vi.advanceTimersByTimeAsync(6_000)
+
+            expect(fetchMock.mock.calls.length).toBe(before)
+            expect(router.currentRoute.value.name).toBe("setup")
+            wrapper.unmount()
+            vi.restoreAllMocks()
+        })
+    })
 })

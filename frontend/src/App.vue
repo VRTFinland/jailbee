@@ -52,16 +52,20 @@ function reload() {
 // A signed-in page learns of setup mode from its socket (the setup server
 // closes /api/ws with CLOSE_SETUP_MODE). The login page has no socket, so it
 // polls while visible: an already-open login tab or PWA follows the temporary
-// setup server too. Only there, so a plain server restart under a signed-in
+// setup server too. The setup view polls as well, to leave once setup ends.
+// Only on those two pages, so a plain server restart under a signed-in
 // page adds no failed requests beyond the socket's own retries.
 let checkingMode = false
 let modeTimer: ReturnType<typeof setInterval> | undefined
 async function checkMode() {
-    if (checkingMode || document.hidden || route.name === "setup") return
+    if (checkingMode || document.hidden) return
     checkingMode = true
     try {
-        if (await fetchServerMode() === "setup" && route.name !== "setup") {
+        const mode = await fetchServerMode()
+        if (mode === "setup" && route.name !== "setup") {
             await router.replace({name: "setup"})
+        } else if (mode === "dashboard" && route.name === "setup") {
+            await router.replace({name: "login"})
         }
     } finally {
         checkingMode = false
@@ -69,7 +73,7 @@ async function checkMode() {
 }
 onMounted(() => {
     modeTimer = setInterval(() => {
-        if (route.name === "login") void checkMode()
+        if (route.name === "login" || route.name === "setup") void checkMode()
     }, 2_000)
     window.addEventListener("online", checkMode)
     document.addEventListener("visibilitychange", checkMode)
