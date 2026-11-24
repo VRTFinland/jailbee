@@ -842,11 +842,14 @@ def run_pr_push(
                 # A force-push may replace a divergent cached head, so ancestry
                 # is not a safe freshness test. Compare-and-swap avoids overwriting
                 # an autofetch that changes the ref after this read.
-                if not git_mod.update_ref(
-                    cfg.repo_root,
-                    head_ref,
-                    publish.fetch.new_oid,
-                    old_oid=cached_sha or "",
+                if (
+                    not git_mod.update_ref(
+                        cfg.repo_root,
+                        head_ref,
+                        publish.fetch.new_oid,
+                        old_oid=cached_sha or "",
+                    )
+                    and git_mod.rev_parse(cfg.repo_root, head_ref) != publish.fetch.new_oid
                 ):
                     warn(
                         f"PR #{created.number} was published, but JailBee could not refresh "
