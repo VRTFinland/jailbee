@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import os
 import threading
-from time import monotonic
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from time import monotonic
 from typing import TYPE_CHECKING, Any, Literal
 
 from jailbee import sysstat

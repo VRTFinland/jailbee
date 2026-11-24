@@ -6,9 +6,8 @@ import threading
 
 import pytest
 
-from tests.test_orchestration_listener import _connect_long, recv_line
-
 from jailbee.orchestration import wire
+from tests.test_orchestration_listener import _connect_long, recv_line
 from tests.test_orchestration_query import Env, env  # noqa: F401 - shared fixture
 
 
@@ -139,9 +138,7 @@ def test_host_status_is_live_for_every_container_role(
 
 
 @pytest.mark.parametrize("source", ["inventory", "pool"])
-def test_concurrent_status_queries_share_incus_readings(
-    env: Env, monkeypatch, source: str
-) -> None:
+def test_concurrent_status_queries_share_incus_readings(env: Env, monkeypatch, source: str) -> None:
     from jailbee.orchestration.live_query import host_queries
 
     env.queries.live = host_queries(env.rig.incus)
@@ -157,7 +154,8 @@ def test_concurrent_status_queries_share_incus_readings(
     env.rig.incus.storage_pool_resources.return_value = {"space": {"total": 10, "used": 3}}
     entered, unblock = threading.Event(), threading.Event()
     operation = (
-        env.rig.incus.list_containers if source == "inventory"
+        env.rig.incus.list_containers
+        if source == "inventory"
         else env.rig.incus.storage_pool_resources
     )
     value = operation.return_value
@@ -171,9 +169,10 @@ def test_concurrent_status_queries_share_incus_readings(
         return value
 
     operation.side_effect = blocked
-    with _connect_long(env.rig.root / "proj-orch") as first, _connect_long(
-        env.rig.root / "proj-kid"
-    ) as second:
+    with (
+        _connect_long(env.rig.root / "proj-orch") as first,
+        _connect_long(env.rig.root / "proj-kid") as second,
+    ):
         try:
             first.sendall(wire.encode_request(wire.Request("host.status")))
             assert entered.wait(2)
@@ -220,13 +219,18 @@ def test_expected_incus_failures_return_clear_error_without_traceback(
     from jailbee.orchestration.live_query import host_queries
 
     env.queries.live = host_queries(env.rig.incus)
-    env.rig.incus.list_containers.return_value = [{
-        "config": {"volatile.uuid": "proj-orch"},
-        "expanded_devices": {"root": {"type": "disk", "path": "/", "pool": "work"}},
-    }]
+    env.rig.incus.list_containers.return_value = [
+        {
+            "config": {"volatile.uuid": "proj-orch"},
+            "expanded_devices": {"root": {"type": "disk", "path": "/", "pool": "work"}},
+        }
+    ]
     error = IncusTimeoutError if timed_out else IncusError
-    operation = (env.rig.incus.list_containers if source == "inventory"
-                 else env.rig.incus.storage_pool_resources)
+    operation = (
+        env.rig.incus.list_containers
+        if source == "inventory"
+        else env.rig.incus.storage_pool_resources
+    )
     operation.side_effect = error("Incus unavailable\nsecond line")
     response = env.call("host.status")
     assert response.error_code == wire.REFUSED
@@ -248,13 +252,18 @@ def test_incus_failures_are_coalesced_then_retried_after_ttl(env: Env, monkeypat
     monkeypatch.setattr("jailbee.orchestration.live_query.monotonic", lambda: now[0])
     env.queries.live = host_queries(env.rig.incus)
     env.rig.incus.reset_mock()
-    env.rig.incus.list_containers.return_value = [{
-        "config": {"volatile.uuid": "proj-orch"},
-        "expanded_devices": {"root": {"type": "disk", "path": "/", "pool": "work"}},
-    }]
+    env.rig.incus.list_containers.return_value = [
+        {
+            "config": {"volatile.uuid": "proj-orch"},
+            "expanded_devices": {"root": {"type": "disk", "path": "/", "pool": "work"}},
+        }
+    ]
     env.rig.incus.storage_pool_resources.return_value = {"space": {"total": 10, "used": 3}}
-    operation = (env.rig.incus.list_containers if source == "inventory"
-                 else env.rig.incus.storage_pool_resources)
+    operation = (
+        env.rig.incus.list_containers
+        if source == "inventory"
+        else env.rig.incus.storage_pool_resources
+    )
     operation.side_effect = IncusTimeoutError("timed out")
     for _ in range(2):
         assert env.call("host.status").error_code == wire.REFUSED
