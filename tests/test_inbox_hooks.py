@@ -108,10 +108,10 @@ def test_end_hook_removes_session_even_with_clean_stop_snapshot(tmp_path, monkey
     runner = CliRunner()
     payload = json.dumps({"session_id": sid, "cwd": "/work"})
     assert runner.invoke(inbox_app, ["hook", "session-start"], input=payload).exit_code == 0
-    assert snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={}) == 1
     result = runner.invoke(inbox_app, ["hook", "session-end"], input=payload)
     assert result.exit_code == 0
     assert result.stdout == ""
+    assert snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={}) == 0
     assert snapshot.boot(tmp_path, proc=tmp_path / "proc")["sessions"] == []
 
 
@@ -310,6 +310,107 @@ def test_hook_registry_failures_are_silent_and_keep_resume_context(
     finally:
         if lock is not None:
             os.close(lock)
+
+
+def test_clean_stop_freezes_registry_before_shutdown_end_hook(tmp_path, monkeypatch, set_role):
+    import pwd
+    from types import SimpleNamespace
+
+    from jailbee import agent_snapshot as snapshot
+    from tests.test_agent_snapshot import ID
+
+    monkeypatch.setattr(snapshot, "PROC", tmp_path / "proc")
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(tmp_path)))
+    set_role("plain")
+    runner = CliRunner()
+    payload = json.dumps({"session_id": ID, "cwd": "/work", "reason": "other"})
+    assert runner.invoke(inbox_app, ["hook", "session-start"], input=payload).exit_code == 0
+    assert snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={}) == 1
+    assert runner.invoke(inbox_app, ["hook", "session-end"], input=payload).exit_code == 0
+    assert [row["session_id"] for row in snapshot.boot(tmp_path)["sessions"]] == [ID]
+    assert snapshot.boot(tmp_path)["sessions"] == []
+
+
+def test_capture_merges_pre_plugin_sessions_without_reviving_ended_ones(tmp_path, monkeypatch, set_role):
+    import pwd
+    from types import SimpleNamespace
+
+    from jailbee import agent_snapshot as snapshot
+    from tests.test_agent_snapshot import ID, live, record
+
+    proc = tmp_path / "proc"
+    other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
+    record(tmp_path, 7)
+    record(tmp_path, 8, sessionId=other_id)
+    live(proc, 7)
+    live(proc, 8)
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    monkeypatch.setattr(snapshot.os, "getppid", lambda: 7)
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(tmp_path)))
+    set_role("plain")
+    runner = CliRunner()
+    payload = json.dumps({"session_id": ID, "cwd": "/work"})
+    runner.invoke(inbox_app, ["hook", "session-start"], input=payload)
+    runner.invoke(inbox_app, ["hook", "session-end"], input=payload)
+    assert snapshot.capture(tmp_path, proc=proc, windows={}) == 1
+    assert [row["session_id"] for row in snapshot.boot(tmp_path)["sessions"]] == [other_id]
+    assert snapshot.boot(tmp_path)["sessions"] == []
+
+
+def test_concurrent_hook_retries_brief_lock_contention_without_losing_session(tmp_path, monkeypatch):
+    import fcntl
+    import os
+    import threading
+    import time
+
+    from jailbee import agent_snapshot as snapshot
+    from tests.test_agent_snapshot import ID
+
+    monkeypatch.setattr(snapshot, "PROC", tmp_path / "proc")
+    path = tmp_path / snapshot.REGISTRY_RELPATH
+    path.parent.mkdir(parents=True)
+    fd = os.open(path.with_suffix(".lock"), os.O_CREAT | os.O_RDWR, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    def release():
+        time.sleep(0.02)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    thread = threading.Thread(target=release)
+    thread.start()
+    try:
+        snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+        assert [row["session_id"] for row in snapshot.boot(tmp_path)["sessions"]] == [ID]
+    finally:
+        thread.join()
+        os.close(fd)
+
+
+def test_node_launcher_clear_replaces_session_before_claude_pid_file_exists(tmp_path, monkeypatch):
+    from jailbee import agent_snapshot as snapshot
+    from tests.test_agent_snapshot import ID, live
+
+    proc = tmp_path / "proc"
+    live(proc, 7)
+    (proc / "7" / "cmdline").write_bytes(b"node\0/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js\0--model\0opus\0")
+    monkeypatch.setattr(snapshot, "PROC", proc)
+    monkeypatch.setattr(snapshot.os, "getppid", lambda: 7)
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
+    snapshot.register_session(tmp_path, {"session_id": other_id, "cwd": "/work", "source": "clear"})
+    assert snapshot.boot(tmp_path)["sessions"] == [{"agent": "claude", "session_id": other_id,
+        "cwd": "/work", "launcher": ["claude", "--model", "opus"], "window": None}]
+
+
+def test_new_start_invalidates_snapshot_from_cancelled_shutdown(tmp_path, monkeypatch):
+    from jailbee import agent_snapshot as snapshot
+    from tests.test_agent_snapshot import ID
+
+    monkeypatch.setattr(snapshot, "PROC", tmp_path / "proc")
+    snapshot.register_session(tmp_path, {"session_id": ID, "cwd": "/work"})
+    snapshot.capture(tmp_path, proc=tmp_path / "proc", windows={})
+    snapshot.register_session(tmp_path, {"session_id": ID}, ended=True)
+    other_id = "aaaaaaaa-1234-1234-1234-123456789abc"
+    snapshot.register_session(tmp_path, {"session_id": other_id, "cwd": "/work"})
+    assert [row["session_id"] for row in snapshot.boot(tmp_path)["sessions"]] == [other_id]
 
 
 @pytest.mark.parametrize("command", ["stop", "session-start", "session-end"])

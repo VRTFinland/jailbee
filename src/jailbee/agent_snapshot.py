@@ -8,6 +8,7 @@ import re
 import stat
 import sys
 import tempfile
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from subprocess import TimeoutExpired
@@ -150,6 +151,9 @@ def _hook_process(home: Path, proc: Path) -> tuple[str, str, list[str], str | No
     for _ in range(32):
         start = _start(proc, pid)
         args = _argv(proc / pid / "cmdline")
+        if (len(args) > 1 and Path(args[0]).name in {"node", "nodejs", "bun"}
+                and (Path(args[1]).name == "claude" or args[1].endswith("/@anthropic-ai/claude-code/cli.js"))):
+            args = ["claude", *args[2:]]
         if start is None:
             break
         launcher = _launcher(home, pid, start, args)
@@ -169,6 +173,19 @@ def _hook_process(home: Path, proc: Path) -> tuple[str, str, list[str], str | No
             break
         pid = parent
     return "", "", ["claude"], None
+
+
+def _lock(fd: int) -> None:
+    # Serialize ordinary concurrent hooks, but never wait on a stuck owner.
+    deadline = time.monotonic() + 0.2
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.005)
 
 
 def register_session(
@@ -201,7 +218,7 @@ def register_session(
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path.with_suffix(".lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _lock(fd)
         registry = _json(path)
         rows = registry.get("sessions", []) if isinstance(registry, dict) else []
         if not isinstance(rows, list):
@@ -213,36 +230,41 @@ def register_session(
             and row.get("session_id") != sid
             and (ended or not pid or (row.get("pid"), row.get("procStart")) != (pid, start))
         ]
-        if not ended:
-            rows.append(
-                {
-                    "agent": "claude",
-                    "session_id": sid,
-                    "cwd": cwd,
-                    "launcher": launcher,
-                    "window": window,
-                    "pid": pid,
-                    "procStart": start,
-                }
-            )
+        rows.append(
+            {
+                "agent": "claude",
+                "session_id": sid,
+                "cwd": cwd,
+                "launcher": launcher,
+                "window": window,
+                "pid": pid,
+                "procStart": start,
+                "ended": ended,
+            }
+        )
         _write_snapshot(
             path, json.dumps({"version": 1, "source": "capture", "sessions": rows}).encode()
         )
+        if not ended:
+            (home / SNAPSHOT_RELPATH).unlink(missing_ok=True)
     finally:
         os.close(fd)
 
 
 def capture(home: Path, *, proc: Path = Path("/proc"), windows: Mapping[str, str]) -> int:
     registry = _json(home / REGISTRY_RELPATH)
-    if isinstance(registry, dict) and isinstance(registry.get("sessions"), list):
-        return len(registry["sessions"])
-    sessions: list[dict[str, object]] = []
+    rows = registry.get("sessions", []) if isinstance(registry, dict) else []
+    registered = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    sessions: list[dict[str, object]] = [row for row in registered if not row.get("ended")]
     for path in _entries(home / SESSIONS_RELPATH):
         data = _record(path)
         if data is None or data.get("kind") != "interactive":
             continue
         pid, start = str(data["pid"]), str(data["procStart"])
         if _start(proc, pid) != start:
+            continue
+        if any(row.get("session_id") == data["sessionId"]
+               or (row.get("pid"), row.get("procStart")) == (pid, start) for row in registered):
             continue
         tmux = data.get("tmux")
         # An attached client runs in a session grouped with autostart, which
@@ -256,7 +278,7 @@ def capture(home: Path, *, proc: Path = Path("/proc"), windows: Mapping[str, str
         sessions.append(
             _item(data, _launcher(home, pid, start, _argv(proc / pid / "cmdline")), window)
         )
-    if sessions:
+    if sessions or isinstance(registry, dict):
         payload = json.dumps({"version": 1, "source": "capture", "sessions": sessions}).encode(
             "utf-8"
         )
@@ -281,6 +303,12 @@ def boot(home: Path, *, proc: Path = Path("/proc")) -> dict[str, object]:
         fd = os.open(registry.with_suffix(".lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            frozen = home / SNAPSHOT_RELPATH
+            if _read(frozen) is not None:
+                result = _boot(home, proc=proc, path=frozen)
+                remaining = _read(frozen)
+                _write_snapshot(registry, remaining or b'{"version":1,"source":"capture","sessions":[]}')
+                return result
             return _boot(home, proc=proc, path=registry, registry=True)
         finally:
             os.close(fd)
@@ -359,7 +387,8 @@ def _boot(home: Path, *, proc: Path, path: Path, registry: bool = False) -> dict
             and isinstance(item.get("session_id"), str)
             and item["session_id"] in unconsumed
         ]
-        emitted = [item for item in entries if item not in blocked]
+        emitted = [item for item in entries if item not in blocked
+                   and not (isinstance(item, dict) and item.get("ended"))]
         while (
             len(json.dumps({**result, "sessions": emitted}, separators=(",", ":")).encode()) + 1
             > _LIMIT
@@ -383,7 +412,7 @@ def _boot(home: Path, *, proc: Path, path: Path, registry: bool = False) -> dict
     entries = result["sessions"]
     if isinstance(entries, list):
         result["sessions"] = [
-            {key: value for key, value in row.items() if key not in {"pid", "procStart"}}
+            {key: value for key, value in row.items() if key not in {"pid", "procStart", "ended"}}
             if isinstance(row, dict)
             else row
             for row in entries

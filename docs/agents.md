@@ -669,8 +669,8 @@ it names `claude` or `claude-jb`; otherwise it falls back to plain `claude`.
 Plain `claude` sessions do not need a marker. Hook payloads do not provide the
 launcher argv, so the start hook reads the owning process and matching launcher
 marker at registration time. Hook bookkeeping is best effort, with a
-nonblocking registry lock and a bounded tmux query; failures never block the
-Claude session. Only saved transcripts can be resumed, and boot consumes each
+registry lock retried for at most 200 ms and a 200 ms tmux query timeout;
+failures never prevent the Claude session from starting or ending. Only saved transcripts can be resumed, and boot consumes each
 entry once. Set `autostart.resume_agent_sessions: false` to consume the saved
 sessions without resuming them.
 
@@ -678,8 +678,9 @@ The live registry ships with the plugin from `/opt/jailbee/app/current`; no
 golden-image rebuild is needed for this update. Restart Claude to load the
 updated hooks. Older containers still need the previously documented rebuild
 and recreation to install the original shutdown unit and `claude-jb` launcher
-markers. Clean-stop capture remains a fallback for sessions predating the
-registry. Unit tests cover the hook/boot and stop/start integration; real host
+markers. Clean-stop capture freezes the registry and merges sessions predating
+the plugin; shutdown-time end hooks cannot erase that frozen snapshot. Ended
+session tombstones prevent stale Claude PID files from reviving closed sessions. Unit tests cover the hook/boot and stop/start integration; real host
 crash and power-loss recovery still need host-side verification.
 
 ### Shared credential groups (`credentials`)
