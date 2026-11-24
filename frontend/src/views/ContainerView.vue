@@ -83,7 +83,8 @@ watch(name, async (selected, _previous, onCleanup) => {
     }
 }, {immediate: true})
 
-watch([name, historyPage, historyQuery], async ([selected, page, query], _previous, onCleanup) => {
+watch([name, historyPage, historyQuery], async ([selected, page, query], previous, onCleanup) => {
+    const resetPosition = previous?.[0] === selected
     let current = true
     onCleanup(() => { current = false })
     history.value = null
@@ -98,8 +99,10 @@ watch([name, historyPage, historyQuery], async ([selected, page, query], _previo
         history.value = result
         historyTotal.value = result.total
         await nextTick()
-        pager.page.value = 0
-        window.scrollTo(0, 0)
+        if (resetPosition) {
+            pager.page.value = 0
+            window.scrollTo(0, 0)
+        }
         pager.measure()
     } catch (e) {
         if (!current) return

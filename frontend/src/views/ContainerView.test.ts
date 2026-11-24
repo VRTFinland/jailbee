@@ -264,8 +264,12 @@ describe("ContainerView", () => {
         expect(wrapper.text()).toContain("Loading earlier sessions…")
         expect(wrapper.text()).not.toContain("No sessions")
 
+        const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {})
+        scroll.mockClear()
         answerHistory(jsonResponse(200, historyList))
         await flushPromises()
+        expect(scroll).not.toHaveBeenCalled()
+        scroll.mockRestore()
         expect(wrapper.findAll("li.session")).toHaveLength(2)
         expect(wrapper.text()).not.toContain("Loading earlier sessions…")
     })
