@@ -21,12 +21,14 @@ import {settings} from "../settings"
 const header = ref<HTMLElement | null>(null)
 // The sticky header's bottom edge: below an app banner, not just its height.
 const readableTop = ref(0)
-const pageEl = ref<HTMLElement | null>(null)
+const transcriptEl = ref<HTMLElement | null>(null)
 const pager = usePager(
     () => readableTop.value,
     // The bottom spacer lets a short final reply start below the header; page
     // turns end where the transcript does, not inside that blank room.
-    () => (pageEl.value ? parseFloat(getComputedStyle(pageEl.value).paddingBottom) || 0 : 0),
+    () => transcriptEl.value
+        ? document.documentElement.scrollHeight - (transcriptEl.value.getBoundingClientRect().bottom + window.scrollY)
+        : 0,
 )
 const eink = computed(() => settings.displayProfile === "eink")
 /** E-ink: live entries wait here until the reader taps the notice. */
@@ -86,21 +88,36 @@ const latestAnswer = computed(() => {
     return null
 })
 
-const latestVisible = ref(false)
+const atTranscriptEnd = ref(false)
+const answerAhead = ref(false)
+const unseen = ref<RenderedEntry | null>(null)
+const autoFollow = computed(() => !eink.value || settings.einkFollow)
+const jumpAction = computed<"new" | "answer" | "bottom" | null>(() => {
+    if (pending.value.length || unseen.value) return "new"
+    if (atTranscriptEnd.value) return null
+    return answerAhead.value ? "answer" : "bottom"
+})
+const jumpLabel = computed(() => jumpAction.value === null ? null : {
+    new: "New messages ↓",
+    answer: "Latest answer ↓",
+    bottom: "Scroll to bottom ↓",
+}[jumpAction.value])
 
 function measureVisibility() {
     const headerRect = header.value?.getBoundingClientRect()
     readableTop.value = headerRect ? Math.max(0, headerRect.bottom) : 0
+    const content = transcriptEl.value?.getBoundingClientRect()
+    atTranscriptEnd.value = !!content && content.bottom <= readableBottom() + 1
+    if (atTranscriptEnd.value && pending.value.length === 0) unseen.value = null
     const el = latestAnswer.value === null ? null : document.getElementById(entryDomId(latestAnswer.value))
     if (el === null) {
-        latestVisible.value = false
+        answerAhead.value = false
         return
     }
     const rect = el.getBoundingClientRect()
-    const top = Math.max(0, headerRect?.bottom ?? 0)
-    const bottom = readableBottom()
-    // Any visible part counts, including a reply taller than the viewport.
-    latestVisible.value = rect.bottom > top && rect.top < bottom && rect.bottom > rect.top
+    // Once the answer's start is visible or passed, offer the end, not a jump
+    // backwards to an answer the reader has already reached.
+    answerAhead.value = rect.top >= readableBottom()
 }
 
 watch(shown, () => void nextTick(measureVisibility))
@@ -130,34 +147,36 @@ function entryDomId(id: string): string {
 const dashboard = useDashboard()
 let unfollow: (() => void) | null = null
 let unmounted = false
+// Finish each DOM update and its follow jump before measuring the next frame.
+let appendQueue = Promise.resolve()
 
-/** Within this many pixels of the bottom counts as "at the end". */
-const AT_END_SLACK_PX = 48
-
-function atEnd(): boolean {
-    const page = document.documentElement
-    return window.scrollY + window.innerHeight >= page.scrollHeight - AT_END_SLACK_PX
+/** Scroll to the transcript, not the blank space reserved for answer jumps. */
+function scrollToEnd() {
+    if (eink.value) pager.end()
+    else if (transcriptEl.value) {
+        const bottom = transcriptEl.value.getBoundingClientRect().bottom + window.scrollY
+        window.scrollTo(0, Math.max(0, Math.ceil(bottom - readableBottom())))
+    }
+    measureVisibility()
 }
 
-/**
- * New entries from the live subscription. Normal profile: append in place,
- * and scroll along only if the reader was already at the end. E-ink: hold
- * them back and raise a notice, so the screen does not repaint under the
- * reader; `applyPending` shows them.
- */
 async function onLiveAppend(entries: RenderedEntry[]) {
-    if (transcript.value === null) return
-    if (eink.value) {
+    if (transcript.value === null || entries.length === 0) return
+    // Read before the DOM grows: document padding and the bottom guard are not
+    // transcript content, so browser scrollHeight cannot determine follow mode.
+    measureVisibility()
+    const follow = autoFollow.value && atTranscriptEnd.value
+    if (!follow && unseen.value === null) unseen.value = entries[0]
+    if (eink.value && !follow) {
         pending.value.push(...entries)
         return
     }
-    const follow = atEnd()
     transcript.value.entries.push(...entries)
     await nextTick()
-    if (follow) window.scrollTo({top: document.documentElement.scrollHeight})
+    if (follow) scrollToEnd()
+    else measureVisibility()
 }
 
-/** Show the held entries (no scrolling: the reader stays on their page). */
 async function applyPending() {
     if (transcript.value === null || pending.value.length === 0) return
     transcript.value.entries.push(...pending.value)
@@ -166,12 +185,16 @@ async function applyPending() {
     pager.measure()
 }
 
-watch(eink, (on) => {
-    if (!on) void applyPending()
+watch(autoFollow, async () => {
+    const follow = autoFollow.value && atTranscriptEnd.value
+    await applyPending()
+    if (follow) scrollToEnd()
+    else measureVisibility()
 })
 
 function startFollowing(view: TranscriptView) {
     if (unmounted) return // left before the transcript arrived
+    const activeTranscript = transcript.value
     unfollow = dashboard?.follow(
         {
             prefix: prefix.value,
@@ -181,7 +204,11 @@ function startFollowing(view: TranscriptView) {
         },
         view.offset,
         settings.agentContext,
-        {onAppend: (entries) => void onLiveAppend(entries)},
+        {onAppend: (entries) => {
+            appendQueue = appendQueue.then(async () => {
+                if (!unmounted && transcript.value === activeTranscript) await onLiveAppend(entries)
+            })
+        }},
     ) ?? null
 }
 
@@ -191,13 +218,19 @@ onBeforeUnmount(() => {
     unfollow = null
 })
 
-function jumpToLatest() {
-    if (latestAnswer.value === null) return
-    const el = document.getElementById(entryDomId(latestAnswer.value))
-    if (el === null) return
-    if (eink.value) pager.goToElement(el)
-    else el.scrollIntoView({block: "start"})
-    measureVisibility()
+async function jump() {
+    const firstUnseen = unseen.value
+    const target = firstUnseen
+        ? (firstUnseen.kind === "assistant" ? firstUnseen.id : null)
+        : (jumpAction.value === "answer" ? latestAnswer.value : null)
+    await applyPending()
+    unseen.value = null
+    const el = target === null ? null : document.getElementById(entryDomId(target))
+    if (el) {
+        if (eink.value) pager.goToElement(el)
+        else el.scrollIntoView({block: "start"})
+        measureVisibility()
+    } else scrollToEnd()
 }
 
 /** The REST path of this transcript, without the leading `/api/repos/`. */
@@ -246,6 +279,7 @@ async function load() {
         loadedContent.value = {}
         contentFailed.value = {}
         pending.value = []
+        unseen.value = null
         transcript.value = view
         startFollowing(view)
         await nextTick()
@@ -275,7 +309,7 @@ watch(
 </script>
 
 <template>
-    <div ref="pageEl" class="page" :style="{'--session-readable-top': `${readableTop}px`}">
+    <div class="page" :style="{'--session-readable-top': `${readableTop}px`}">
         <header ref="header" class="session-header">
             <div class="bar">
             <router-link
@@ -305,7 +339,7 @@ watch(
         <p v-else-if="transcript === null" class="muted">Loading…</p>
         <template v-else>
             <p v-if="transcript.entries.length === 0" class="muted">This session is empty.</p>
-            <article class="transcript">
+            <article ref="transcriptEl" class="transcript">
                 <template v-for="e in shown" :key="e.id">
                     <section
                         v-if="e.kind === 'user'"
@@ -380,20 +414,13 @@ watch(
                 </template>
             </article>
             <button
-                v-if="pending.length > 0"
-                type="button"
-                class="new-messages"
-                @click="applyPending"
-            >
-                {{ pending.length }} new {{ pending.length === 1 ? "message" : "messages" }} &mdash; tap to show
-            </button>
-            <button
-                v-if="latestAnswer && !latestVisible"
+                v-if="jumpLabel"
                 type="button"
                 class="jump-latest"
-                @click="jumpToLatest"
+                :class="{'new-messages': pending.length > 0 || unseen !== null}"
+                @click="jump"
             >
-                Latest answer &darr;
+                {{ jumpLabel }}
             </button>
         </template>
         <PageNav :pager="pager" />
@@ -613,18 +640,9 @@ h1 {
     cursor: pointer;
 }
 .new-messages {
-    position: fixed;
-    left: var(--space-3);
-    bottom: calc(var(--guard-bottom) + var(--space-3));
-    z-index: 11;
-    min-height: 2.75rem;
-    padding: var(--space-2) var(--space-3);
-    font: inherit;
     color: var(--text);
     background: var(--notice-bg);
     border: 2px solid var(--border-strong);
-    border-radius: var(--radius);
-    cursor: pointer;
 }
 /* In e-ink the bar owns the bottom edge: the buttons sit above it. */
 :root[data-profile="eink"] .jump-latest,

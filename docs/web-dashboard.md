@@ -428,27 +428,35 @@ the new offset.
 
 The display profile **E-ink** is for e-paper readers and slow-refresh
 screens: no animation, content moves in page turns instead of scrolling, live
-transcript entries are held behind the **N new messages** button until you tap
-it, without moving the text you are reading. The front page refreshes every
+transcript entries are held behind the **New messages ↓** button until you tap
+it. **Follow new messages on e-ink** in Settings opts into automatic follow at
+the transcript's end, using the pager's last content page rather than continuous
+scrolling. It is off by default and remembered on this device. The front page refreshes every
 minute, or immediately when you tap **Refresh**. The front-page header wraps
 its controls on narrow screens, including with the e-ink profile's side margins.
 
 Session transcripts keep their title, agent/model context and connection notice
-in a compact header while you read. **Latest answer** appears only when the
-newest assistant reply is outside the readable area (below the header and above
-the bottom controls, including the device's safe-area inset). A truncated title
-keeps its full text as a tooltip and accessible heading name. Page turns use the
-actual readable height even on short landscape screens, with a stable page grid
-as the header becomes sticky and a last page bounded by the browser's scroll
-limit; a partial keyboard or system scroll stays on its current page so Next
-never skips unread text, and Next stays enabled until the real bottom.
-Jumping aligns the newest reply's start just below the measured header, even
-for a short final reply, with trailing room to scroll it there. Jumping or
-scrolling to the reply hides the button; moving
-away or receiving a newer reply out of view shows it again. In the e-ink display
-profile the same rule applies: the button starts a page at the reply, with
-subsequent page turns continuing from there, and live entries remain behind
-the new-messages notice until tapped.
+in a compact header while you read. One context-aware button handles navigation:
+
+- At the transcript's end, the button is hidden. In the normal display profile,
+  arriving entries keep that end in view; scrolling up stops follow, and reaching
+  the end by hand or by a jump restores it. Blank room after the transcript is
+  not counted as unread content.
+- **Latest answer ↓** jumps to the newest assistant reply's start when it is out
+  of view and you are not already reading inside that reply. Its start aligns
+  below the header, including any out-of-date banner. A long reply then offers
+  **Scroll to bottom ↓**, which jumps to the end and resumes follow.
+- **New messages ↓** takes priority when entries arrive while follow is off. It
+  jumps to the first unseen entry's start if that entry is an answer; otherwise
+  it jumps to the end. A jump to a long answer's start does not resume follow
+  until you reach the end. E-ink keeps the new entries held until this tap.
+
+A truncated title keeps its full text as a tooltip and accessible heading name.
+Page turns reserve the header, bottom controls and device safe-area inset, even
+on short landscape screens. A partial keyboard or system scroll stays on its
+current page so Next never skips unread text. Answer jumps start a new page at
+the reply, with subsequent page turns continuing from there; end jumps stop on
+the last content page, not in the blank space reserved for short answer jumps.
 
 ## Install as an app
 

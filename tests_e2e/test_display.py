@@ -129,10 +129,10 @@ def test_eink_page_turns_hold_new_messages_and_refresh_snapshot(
     assert page.evaluate("window.scrollY") == start
 
     append_entry(server, path, "Held reply one.")
-    expect(page.get_by_role("button", name="1 new message", exact=False)).to_be_visible()
+    expect(page.get_by_role("button", name="New messages", exact=False)).to_be_visible()
     expect(page.get_by_text("Held reply one.", exact=True)).to_have_count(0)
     append_entry(server, path, "Held reply two.")
-    held = page.get_by_role("button", name="2 new messages", exact=False)
+    held = page.get_by_role("button", name="New messages", exact=False)
     expect(held).to_be_visible()
     expect(page.get_by_text("Held reply two.", exact=True)).to_have_count(0)
     assert page.evaluate("window.scrollY") == start
@@ -140,8 +140,7 @@ def test_eink_page_turns_hold_new_messages_and_refresh_snapshot(
     expect(held).to_have_count(0)
     expect(page.get_by_text("Held reply one.", exact=True)).to_have_count(1)
     expect(page.get_by_text("Held reply two.", exact=True)).to_have_count(1)
-    assert page.evaluate("window.scrollY") == start
-    page.get_by_role("button", name="Latest answer", exact=False).click()
+    expect(page.get_by_text("Held reply one.", exact=True)).to_be_in_viewport()
     expect(page.get_by_text("Held reply two.", exact=True)).to_be_in_viewport()
 
 

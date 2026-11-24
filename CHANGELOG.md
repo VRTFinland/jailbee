@@ -256,9 +256,12 @@ before editing `## Unreleased`.
   has loaded. A container's history also lists sessions run while no dashboard
   was open, attributed by the branch, directory and time each started
   ([#152](https://github.com/VRTFinland/jailbee/issues/152)). Session
-  titles and connection notices stay visible while reading; **Latest answer**
-  appears only when the newest reply is out of view and aligns its start below
-  the header, including short final replies. E-ink page turns never skip unread
+  titles and connection notices stay visible while reading. One jump button
+  offers **Latest answer**, **Scroll to bottom** or **New messages** as needed,
+  stays hidden at the transcript's end and aligns answer starts below the header.
+  Normal displays follow new entries at the end and stop when scrolled up;
+  e-ink holds entries until tapped unless per-device follow is enabled, which
+  follows on the pager's last content page. E-ink page turns never skip unread
   text after partial keyboard scrolling. The agent's own wrapper records (task
   notifications, system reminders, also those appended to tool results, command
   output) are hidden by default; the

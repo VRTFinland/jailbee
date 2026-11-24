@@ -44,6 +44,14 @@ describe("settings", () => {
         expect(readItem("jailbee.showThinking")).toBe("1")
     })
 
+    it("keeps e-ink follow off by default and remembers opting in", () => {
+        expect(settings.einkFollow).toBe(false)
+        updateSettings({einkFollow: true})
+        reloadSettings()
+        expect(settings.einkFollow).toBe(true)
+        expect(readItem("jailbee.einkFollow")).toBe("1")
+    })
+
     it("keeps font sizes within a readable range", () => {
         updateSettings({bodyFontSize: 4, codeFontSize: 400})
         expect(settings.bodyFontSize).toBe(12)
