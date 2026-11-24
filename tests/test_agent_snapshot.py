@@ -437,7 +437,9 @@ def test_same_boot_frozen_capture_does_not_relaunch_live_session(tmp_path, monke
     (proc / "7/stat").unlink()
     stat = proc / "1/stat"
     stat.write_text(stat.read_text().replace("777", "888"))
-    assert [row["session_id"] for row in snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]] == [ID]
+    assert [
+        row["session_id"] for row in snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]
+    ] == [ID]
 
 
 def test_partial_restore_survives_another_clean_stop(tmp_path, monkeypatch):
@@ -512,7 +514,9 @@ def test_registry_overflow_survives_new_boot_hooks(tmp_path, monkeypatch):
     for _ in range(2):
         snapshot.register_session(tmp_path, {"session_id": new_id, "cwd": "/new"})
     snapshot.acknowledge(tmp_path, [ID])
-    assert [row["session_id"] for row in snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]] == [other_id]
+    assert [
+        row["session_id"] for row in snapshot.boot(tmp_path, proc=proc, retain=True)["sessions"]
+    ] == [other_id]
 
 
 def test_pending_and_new_capture_are_delivered_in_bounded_batches(tmp_path, monkeypatch):

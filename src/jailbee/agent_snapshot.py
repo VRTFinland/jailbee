@@ -234,8 +234,7 @@ def _merge_pending(home: Path, proc: Path, source: Path) -> None:
             # A deferred old-boot row is no longer owned by its dead process.
             # Keep it eligible for retry instead of letting hook pruning drop it.
             remaining.append(
-                {**row, "pid": "", "procStart": ""}
-                if source == home / REGISTRY_RELPATH else row
+                {**row, "pid": "", "procStart": ""} if source == home / REGISTRY_RELPATH else row
             )
         else:
             rows.append(row)
