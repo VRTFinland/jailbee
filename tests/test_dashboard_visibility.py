@@ -54,8 +54,16 @@ def test_active_includes_recent_idle_events_but_not_just_recent_state() -> None:
 def test_active_ignores_recent_idle_highlight_lost_when_the_cell_is_abbreviated() -> None:
     info = container(
         "alpha-one",
-        agent_status=(AgentSummary("claude", "idle", START, None, 20,
-            activity=AgentActivity(None, None, state="idle", last_event_at=START)),),
+        agent_status=(
+            AgentSummary(
+                "claude",
+                "idle",
+                START,
+                None,
+                20,
+                activity=AgentActivity(None, None, state="idle", last_event_at=START),
+            ),
+        ),
     )
     assert not container_matches_filter(info, "active", now=START)
 

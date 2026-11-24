@@ -3832,10 +3832,15 @@ def agent_compact_is_active(
     statuses: Sequence[AgentSummary], now: datetime, *, recent_idle: timedelta
 ) -> bool:
     """Whether any dashboard agent mark is coloured rather than dim/unclassified."""
-    cell = Text.from_markup(agent_compact_cell(
-        statuses, now, recent_idle=recent_idle, activity_age=True,
-        max_cells=AGENT_COMPACT_MAX_CELLS,
-    ))
+    cell = Text.from_markup(
+        agent_compact_cell(
+            statuses,
+            now,
+            recent_idle=recent_idle,
+            activity_age=True,
+            max_cells=AGENT_COMPACT_MAX_CELLS,
+        )
+    )
     # Inspect the final cell so abbreviation and per-state age suppression cannot
     # leave Active disagreeing with the dashboard's visible marks.
     return any(
