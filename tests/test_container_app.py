@@ -53,7 +53,7 @@ def test_commit_only_change_restamps_without_copy_or_handshake_change(
 
 
 @pytest.mark.parametrize("interactive", [False, True])
-def test_normal_container_call_refreshes_commit_only_metadata(
+def test_normal_container_call_preserves_snapshot_without_provenance_work(
     tmp_path, monkeypatch, mocker, interactive
 ):
     import json
@@ -64,9 +64,7 @@ def test_normal_container_call_refreshes_commit_only_metadata(
     )
     staged = container_app.stage().path
     handshake = (staged / "VERSION").read_text()
-    monkeypatch.setattr(
-        "jailbee.version_info.identity", lambda: {"commit": "b" * 40, "dirty": False}
-    )
+    mocker.patch("jailbee.version_info.identity", side_effect=AssertionError("no git discovery"))
     mocker.patch.object(container_app, "stage", side_effect=AssertionError("no staging"))
     incus = Mock()
     incus.exec_bytes.return_value = ExecResult(0, b"ok", b"")
@@ -77,7 +75,7 @@ def test_normal_container_call_refreshes_commit_only_metadata(
     else:
         container_app.run_in_container(Mock(), incus, "one", ["version"], uid=123)
         assert incus.exec_bytes.call_count == 1
-    assert json.loads((staged / "jailbee/_build_info.json").read_text())["commit"] == "b" * 40
+    assert json.loads((staged / "jailbee/_build_info.json").read_text())["commit"] == "a" * 40
     assert (staged / "VERSION").read_text() == handshake
 
 
