@@ -25,7 +25,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-PROTOCOL_VERSION = 5
+PROTOCOL_VERSION = 6
 
 CLOSE_UNAUTHORIZED = 4001
 """No valid session token: the browser goes back to the login page."""
@@ -285,6 +285,14 @@ class TranscriptView(BaseModel):
     """Byte offset the entries were read to: where a live `Subscribe` resumes."""
 
 
+class ContainerFilterRows(BaseModel):
+    """Shared-core filter result, scoped before projection; names only, no duplicate cells."""
+
+    model_config = ConfigDict(frozen=True)
+    visible: list[str]
+    context: list[str]
+
+
 class FrontPageView(BaseModel):
     """The whole front page, sent in full on every snapshot."""
 
@@ -293,6 +301,7 @@ class FrontPageView(BaseModel):
     gathered_at: datetime
     columns: list[ColumnHead]
     repos: list[RepoRow]
+    filters: dict[Literal["running", "active"], ContainerFilterRows] = Field(default_factory=dict)
 
 
 class ServerHello(_Message):

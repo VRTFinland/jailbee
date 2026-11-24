@@ -52,6 +52,16 @@ describe("settings", () => {
         expect(readItem("jailbee.einkFollow")).toBe("1")
     })
 
+    it("remembers the container filter and rejects unknown values", () => {
+        expect(settings.containerFilter).toBe("all")
+        updateSettings({containerFilter: "active"})
+        reloadSettings()
+        expect(settings.containerFilter).toBe("active")
+        localStorage.setItem("jailbee.containerFilter", "paused")
+        reloadSettings()
+        expect(settings.containerFilter).toBe("all")
+    })
+
     it("keeps font sizes within a readable range", () => {
         updateSettings({bodyFontSize: 4, codeFontSize: 400})
         expect(settings.bodyFontSize).toBe(12)

@@ -61,6 +61,17 @@ coloured edge and a phase label, and a Stopped container is dimmed. The e-ink
 theme has no colour, so phases differ by edge style (dashed, dotted, double,
 heavy) and the label, and a Stopped row is drawn without top, right and bottom edges instead of a fade.
 
+The compact icon buttons above the front-page and repository container lists
+filter **All**, **Running** (Incus state Running), or **Active** (a non-grey
+agent marker in the terminal dashboard: busy, waiting, shell, API errors, or
+idle with a real event less than 30 minutes old). Tooltips and accessible labels
+name each button; the selected button stays pressed. The choice is remembered
+in this browser and follows live snapshot updates (the e-ink display profile
+keeps its normal slow/on-demand refresh). Repositories with no retained rows
+are hidden while filtering; `N hidden by filter` counts omitted containers.
+Nonmatching listed ancestors remain dimmed as context above matching children,
+so the tree stays intact. This does not change the terminal dashboard's list.
+
 Children in the same repository appear indented under their orchestrator on
 the front page and in repository container lists. Child counts and container
 pages include children across all visible repositories; excluded repositories

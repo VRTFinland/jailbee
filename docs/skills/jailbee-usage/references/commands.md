@@ -435,6 +435,12 @@ hooks); command-only sessions use their first slash command, with title lookup
 bounded to 32 candidate user records once that fallback exists. A leading agent
 wrapper and typed text in one record are displayed separately as metadata and a
 prompt; unknown XML-like tags remain typed text.
+The front page and repository container lists have three icon filters: All,
+Running (Incus state Running), and Active (the terminal dashboard's non-grey
+agent marks, including recently active idle sessions). The choice is remembered
+per browser and follows snapshots. Nonmatching ancestors stay dimmed for tree
+context; repositories without retained rows disappear, with an `N hidden by
+filter` hint counting omitted containers. The terminal dashboard is unchanged.
 The front page and repository container lists indent same-repository children
 under their orchestrator, show its child count across all visible repositories
 and each child's state/runner, and keep absent-parent children labelled.
