@@ -3856,16 +3856,19 @@ def agent_compact_marks(
         entries = [(m.state, m.since) for m in summary.sessions] or [(summary.state, None)] * max(
             summary.count, 1
         )
+        activity = summary.activity
+        event = activity.last_event_at if activity is not None else None
+        event_state = activity.state if activity is not None else None
+        # Activity belongs to the latest-event session, not necessarily the
+        # most urgent one. Legacy activity without a state belongs to the first.
+        event_index = next(
+            (i for i, (state, _) in enumerate(entries) if event_state in (None, state)), None
+        )
         for i, (state, stamp) in enumerate(entries):
-            if i == 0:
-                # Agent-wide stamps describe only the most urgent session.
-                activity = summary.activity
-                event = activity.last_event_at if activity is not None else None
-                event_state = activity.state if activity is not None else None
-                if activity_age and event is not None and event_state in (None, state):
-                    stamp = event
-                elif stamp is None and not activity_age:
-                    stamp = summary.since
+            if activity_age and event is not None and i == event_index:
+                stamp = event
+            elif i == 0 and stamp is None and not activity_age:
+                stamp = summary.since
             colour = _AGENT_GLYPHS.get(state, ("?", None))[1]
             emphasized = state in ("waiting", "busy", "shell") or state.startswith(ERROR_PREFIX)
             if state.startswith(ERROR_PREFIX):

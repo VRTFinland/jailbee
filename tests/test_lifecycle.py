@@ -11250,7 +11250,7 @@ def test_agent_compact_cell_age_is_the_sessions_own_not_the_agents_event_age():
     )
     a = _agent_marks("waiting", [("waiting", own), ("busy", None)], since=own, activity=activity)
 
-    assert _plain(agent_compact_cell((a,), _AGENT_NOW, activity_age=True)) == "◆ 4m ●"
+    assert _plain(agent_compact_cell((a,), _AGENT_NOW, activity_age=True)) == "◆ 4m ● 3s"
 
 
 def test_agent_compact_cell_narrow_tier_counts_cells_not_characters():
