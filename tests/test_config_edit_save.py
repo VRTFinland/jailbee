@@ -96,13 +96,22 @@ def test_github_reset_preserves_other_children_and_other_layers(tmp_path):
 @pytest.mark.parametrize("policy", ["patch", "regenerate"])
 @pytest.mark.parametrize("agents_first", [False, True])
 def test_agent_edits_preserve_model_guidance_and_save_model_edits(tmp_path, policy, agents_first):
-    layers = _layers(tmp_path, global_text="agents:\n  models:\n    haiku: {label: cheap}\n  model_policy: Prefer cheap models.\n  default_runner: {agent: claude}\n  claude: {enabled: true}\n")
+    layers = _layers(
+        tmp_path,
+        global_text=(
+            "agents:\n  models:\n    haiku: {label: cheap}\n"
+            "  model_policy: Prefer cheap models.\n  default_runner: {agent: claude}\n"
+            "  claude: {enabled: true}\n"
+        ),
+    )
     specs = global_specs()
     assert ("agents", "models") in {s.path for s in specs}
     assert ("agents", "model_policy") in {s.path for s in specs}
     origins = resolve(specs, layers)
     assert set(origins[("agents",)].value) == {"claude"}
-    state = st.open_editor(layer="global", specs=specs, origins=origins, layer_raw=layers.global_raw)
+    state = st.open_editor(
+        layer="global", specs=specs, origins=origins, layer_raw=layers.global_raw
+    )
     if agents_first:
         state = st.stage(state, ("agents",), {"codex": {"enabled": True}})
     state = st.stage(state, ("agents", "models", "haiku", "label"), "coding")
@@ -114,7 +123,12 @@ def test_agent_edits_preserve_model_guidance_and_save_model_edits(tmp_path, poli
     assert validate(layers, "global", changes) is None
     commit(build_plan(layers, "global", changes, specs, policy))
     saved = yaml.safe_load(layers.global_path.read_text())["agents"]
-    assert saved == {"models": {"haiku": {"label": "coding"}}, "model_policy": "Updated policy.", "default_runner": {"agent": "claude"}, "codex": {"enabled": True}}
+    assert saved == {
+        "models": {"haiku": {"label": "coding"}},
+        "model_policy": "Updated policy.",
+        "default_runner": {"agent": "claude"},
+        "codex": {"enabled": True},
+    }
 
 
 def test_auto_picks_the_documented_default_per_layer():

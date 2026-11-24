@@ -601,7 +601,8 @@ def _build_config_from_dict(
     try:
         guidance = AgentModelGuidance.model_validate(
             {k: v for k, v in raw_agents.items() if k in {"models", "model_policy"}}
-            if isinstance(raw_agents, dict) else {}
+            if isinstance(raw_agents, dict)
+            else {}
         )
         raw = resolve_agents_raw(raw)
     except (ConfigError, ValidationError) as e:

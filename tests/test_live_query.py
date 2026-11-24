@@ -92,22 +92,35 @@ def test_model_map_uses_callers_repo_and_reloads_host_config(env: Env, monkeypat
     )
     global_path = default_global_config_path()
     global_path.parent.mkdir(parents=True, exist_ok=True)
-    global_path.write_text("agents:\n  models:\n    haiku: {label: cheap}\n  model_policy: Prefer cheap models.\n")
+    global_path.write_text(
+        "agents:\n  models:\n    haiku: {label: cheap}\n  model_policy: Prefer cheap models.\n"
+    )
     # An unrelated caller must not get this repo's overrides.
     other_root = root / "other"
     (other_root / ".jailbee").mkdir(parents=True)
     (other_root / ".jailbee" / "config.yaml").write_text("container_prefix: other\n")
-    env.queries.publish_container("unknown", ContainerSnapshot("plain", True, "{}", None, make_config(other_root)))
-    env.queries.publish_container("proj-former", ContainerSnapshot("plain", True, "{}", None, env.rig.cfg))
+    env.queries.publish_container(
+        "unknown", ContainerSnapshot("plain", True, "{}", None, make_config(other_root))
+    )
+    env.queries.publish_container(
+        "proj-former", ContainerSnapshot("plain", True, "{}", None, env.rig.cfg)
+    )
     env.queries.live = host_queries(env.rig.incus)
     monkeypatch.setattr("jailbee.config.loader.detect_upstream_remote", lambda *a: None)
     monkeypatch.setattr("jailbee.config.loader.detect_default_branch", lambda *a: "main")
 
     result = env.call("agent.models", uuid=uuid)
     assert result.ok, result
-    assert result.result == {"models": {"haiku": {"label": "cheap", "use_for": "small fixes", "avoid_for": "", "notes": ""}}, "model_policy": "Prefer cheap models."}
+    assert result.result == {
+        "models": {
+            "haiku": {"label": "cheap", "use_for": "small fixes", "avoid_for": "", "notes": ""}
+        },
+        "model_policy": "Prefer cheap models.",
+    }
     assert env.call("agent.models", uuid="unknown").result["models"]["haiku"]["use_for"] == ""
-    global_path.write_text("agents:\n  models:\n    haiku: {label: updated}\n  model_policy: Updated policy.\n")
+    global_path.write_text(
+        "agents:\n  models:\n    haiku: {label: updated}\n  model_policy: Updated policy.\n"
+    )
     updated = env.call("agent.models", uuid=uuid)
     assert updated.result["models"]["haiku"]["label"] == "updated"
     assert updated.result["model_policy"] == "Updated policy."

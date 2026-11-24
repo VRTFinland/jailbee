@@ -62,11 +62,16 @@ def test_host_status_retries_missing_socket_until_broker_starts(sockdir, monkeyp
             server.close()
 
 
-@pytest.mark.parametrize("command,op,payload", [
-    (["host", "status"], "host.status", STATUS),
-    (["agent", "models"], "agent.models", {"models": {}, "model_policy": ""}),
-])
-def test_live_commands_avoid_host_dependencies(broker: FakeBroker, sockdir, command, op, payload) -> None:
+@pytest.mark.parametrize(
+    "command,op,payload",
+    [
+        (["host", "status"], "host.status", STATUS),
+        (["agent", "models"], "agent.models", {"models": {}, "model_policy": ""}),
+    ],
+)
+def test_live_commands_avoid_host_dependencies(
+    broker: FakeBroker, sockdir, command, op, payload
+) -> None:
     broker.on(op, payload)
     script = """
 import importlib.abc
