@@ -80,7 +80,7 @@ def test_resume_restores_stopped_and_running_without_session(host, mocker):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"version": 1, "containers": {"one-off": str(cfg.repo_root)}}))
     post = mocker.patch("jailbee.cli._post_start_actions")
-    mocker.patch("jailbee.cli._preflight_cache_pools")
+    mocker.patch("jailbee.create_flow.preflight_cache_pools")
     mocker.patch("jailbee.cli._mirror_endpoint_or_none", return_value=None)
     # The real boot path is covered separately; leave its start call observable.
     mocker.patch(
@@ -177,7 +177,7 @@ def test_resume_keeps_failures_and_live_boot_entries(host, mocker):
             op_kind="boot",
         )
     mocker.patch("jailbee.lifecycle.boot_container")
-    mocker.patch("jailbee.cli._preflight_cache_pools")
+    mocker.patch("jailbee.create_flow.preflight_cache_pools")
     post = mocker.patch(
         "jailbee.cli._post_start_actions", side_effect=[IncusError("boot failed"), None]
     )
@@ -222,7 +222,7 @@ def test_resume_retains_running_failure_for_retry_even_if_session_now_exists(hos
 
     incus.exec.side_effect = probe
     start = mocker.patch("jailbee.lifecycle.boot_container")
-    mocker.patch("jailbee.cli._preflight_cache_pools")
+    mocker.patch("jailbee.create_flow.preflight_cache_pools")
     post = mocker.patch("jailbee.cli._post_start_actions", side_effect=IncusError("stage failed"))
     first = CliRunner().invoke(app, ["resume"])
     assert first.exit_code == 1, first.output
@@ -245,6 +245,73 @@ def test_resume_does_not_treat_transport_failure_as_missing_session(host, mocker
     assert result.exit_code == 1, result.output
     start.assert_not_called()
     assert "transport unavailable" in result.output
+
+
+def test_stop_all_durably_records_intent_before_stopping(host):
+    cfg, _, incus, _ = host
+    incus.list_containers.return_value = incus.list_containers.return_value[:1]
+
+    def stop(name, **kwargs):
+        data = json.loads((state_dir() / "resume-set.json").read_text())
+        assert data["stopping"] == {"one-work": str(cfg.repo_root)}
+        assert data["containers"] == {}
+
+    incus.stop.side_effect = stop
+    result = CliRunner().invoke(app, ["stop", "--all", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert recorded() == {"one-work": str(cfg.repo_root)}
+
+
+def test_resume_recovers_interrupted_stop_journal(host, mocker):
+    cfg, _, incus, _ = host
+    path = state_dir() / "resume-set.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"version": 1, "containers": {}, "stopping": {
+        "one-off": str(cfg.repo_root), "one-work": str(cfg.repo_root)
+    }}))
+    mocker.patch("jailbee.lifecycle.boot_container")
+    mocker.patch("jailbee.create_flow.preflight_cache_pools")
+    post = mocker.patch("jailbee.cli._post_start_actions")
+    result = CliRunner().invoke(app, ["resume"])
+    assert result.exit_code == 0, result.output
+    assert [c.args[2] for c in post.call_args_list] == ["one-off"]
+    assert recorded() == {}
+
+
+def test_stop_all_continues_after_a_state_write_failure(host, mocker):
+    import os
+
+    _, _, incus, _ = host
+    replace = os.replace
+    writes = 0
+
+    def flaky_write(source, target):
+        nonlocal writes
+        writes += 1
+        if writes == 3:
+            raise OSError("disk temporarily unavailable")
+        replace(source, target)
+
+    mocker.patch("jailbee.host_resume.os.replace", side_effect=flaky_write)
+    result = CliRunner().invoke(app, ["stop", "--all", "--yes"])
+    assert result.exit_code == 1, result.output
+    assert "disk temporarily unavailable" in result.output
+    assert incus.stop.call_count == 3
+    assert set(recorded()) == {"one-work", "two-child", "one-mount"}
+
+
+@pytest.mark.parametrize("service", ["jailbee-registry-mirror", "jailbee-litellm", "jailbee-display", "jailbee-egress-proxy"])
+def test_host_lifecycle_excludes_service_containers(host, service):
+    _, _, incus, _ = host
+    incus.list_containers.return_value = [{"name": service, "status": "Running",
+        "profiles": ["default"], "config": {"boot.autostart": "true"}}]
+    result = CliRunner().invoke(app, ["stop", "--all", "--yes"])
+    assert result.exit_code == 0, result.output
+    incus.stop.assert_not_called()
+    result = CliRunner().invoke(app, ["resume"])
+    assert result.exit_code == 0, result.output
+    incus.exec.assert_not_called()
+    incus.start.assert_not_called()
 
 
 def test_host_lifecycle_is_blocked_in_restricted_remote_sessions():

@@ -5413,18 +5413,14 @@ def resume_cmd(config: ConfigOption = None) -> None:
     from jailbee.host_resume import run_resume
     from jailbee.incus import Incus
 
-    if not run_resume(_load_orphan_base_or_exit(config), Incus(), start=_resume_container):
+    if not run_resume(
+        _load_orphan_base_or_exit(config), Incus(),
+        post_start=lambda cfg, incus, name: _post_start_actions(
+            cfg, incus, name, no_autostart=False, allow_prompt=True, override="wait"
+        ),
+        clear_boot=_clear_superseded_boot_job,
+    ):
         raise typer.Exit(1)
-
-
-def _resume_container(cfg: "Config", incus: "IncusType", name: str) -> None:
-    from jailbee.lifecycle import boot_container
-
-    _preflight_cache_pools(cfg)
-    boot_container(cfg, incus, name, restart=False, ensure_running=True)
-    # Complete all stages before removing the entry from the durable resume set.
-    _post_start_actions(cfg, incus, name, no_autostart=False, allow_prompt=True, override="wait")
-    _clear_superseded_boot_job(cfg, name)
 
 
 @app.command("mem")
@@ -5579,7 +5575,7 @@ def stop(
             error("--all cannot be combined with a container name or --force.")
             raise typer.Exit(2)
         cfg = _load_orphan_base_or_exit(config)
-        if not run_stop_all(cfg, Incus(), yes=yes, stop=_clean_stop):
+        if not run_stop_all(cfg, Incus(), yes=yes, stop=_stop_cleanly):
             raise typer.Exit(1)
         return
     cfg = _load_or_exit(config)
@@ -5598,19 +5594,14 @@ def stop(
         with _stop_job_row(cfg, name):
             stop_container(incus, name, force=True, label=short_name(cfg, name))
     else:
-        _clean_stop(cfg, incus, name)
+        _stop_cleanly(cfg, incus, name)
     success(f"Stopped: {short_name(cfg, name)}")
 
 
-def _clean_stop(cfg: "Config", incus: "IncusType", name: str) -> None:
-    from jailbee.agent_resume import capture
-    from jailbee.lifecycle import short_name
-    from jailbee.stopping import stop_container
+def _stop_cleanly(cfg: "Config", incus: "IncusType", name: str) -> None:
+    from jailbee.stopping import clean_stop
 
-    _refuse_while_autostart_runs(cfg, name)
-    with _stop_job_row(cfg, name):
-        capture(cfg, incus, name)
-        stop_container(incus, name, label=short_name(cfg, name))
+    clean_stop(cfg, incus, name, job=_stop_job_row)
 
 
 @contextlib.contextmanager

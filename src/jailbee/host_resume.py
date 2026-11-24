@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,10 +23,17 @@ def _state_path() -> Path:
     return state_dir() / "resume-set.json"
 
 
-def _read_set() -> tuple[dict[str, str], set[str]]:
+@dataclass
+class ResumeSet:
+    containers: dict[str, str] = field(default_factory=dict)
+    pending: set[str] = field(default_factory=set)
+    stopping: dict[str, str] = field(default_factory=dict)
+
+
+def _read_set() -> ResumeSet:
     path = _state_path()
     if not path.exists():
-        return {}, set()
+        return ResumeSet()
     try:
         data = json.loads(path.read_text())
         entries = data["containers"]
@@ -42,18 +50,24 @@ def _read_set() -> tuple[dict[str, str], set[str]]:
             isinstance(name, str) and name in entries for name in pending
         ):
             raise ValueError("invalid pending resume entries")
-        return dict(entries), set(pending)
+        stopping = data.get("stopping", {})
+        if not isinstance(stopping, dict) or not all(
+            isinstance(name, str) and isinstance(root, str) for name, root in stopping.items()
+        ):
+            raise ValueError("invalid stopping entries")
+        return ResumeSet(dict(entries), set(pending), dict(stopping))
     except (ValueError, KeyError, TypeError) as exc:
         raise ValueError(f"Cannot read {path}: {exc}") from exc
 
 
-def _write_set(entries: dict[str, str], pending: set[str]) -> None:
+def _write_set(state: ResumeSet) -> None:
     path = _state_path()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=".resume-set-", dir=path.parent)
     try:
         with os.fdopen(fd, "w") as stream:
-            json.dump({"version": 1, "containers": entries, "pending": sorted(pending)}, stream)
+            json.dump({"version": 1, "containers": state.containers,
+                       "pending": sorted(state.pending), "stopping": state.stopping}, stream)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
@@ -109,9 +123,10 @@ def run_stop_all(
         "Stop all listed containers?", destructive=True, alternative="--yes", detail=detail
     ):
         return True
-    entries, pending = _read_set()
+    state = _read_set()
+    entries, pending = state.containers, state.pending
     # Check persistence before stopping anything; preserve earlier batches.
-    _write_set(entries, pending)
+    _write_set(state)
     configs = _configs(cfg)
     ok = True
     for container in containers:
@@ -122,15 +137,19 @@ def run_stop_all(
             if _live_job(target, container.name):
                 warn_plain(f"Skipping {container.name}: live background job.")
                 continue
+            # Journal before the side effect; recovery checks whether it stopped.
+            state.stopping[container.name] = str(target.repo_root)
+            _write_set(state)
             stop(target, incus, container.name)
+            entries[container.name] = str(target.repo_root)
+            pending.discard(container.name)
+            del state.stopping[container.name]
+            _write_set(state)
+            success(f"Stopped: {container.name}")
         except Exception as exc:
             error_plain(f"{container.name}: {exc}")
             ok = False
             continue
-        entries[container.name] = str(target.repo_root)
-        pending.discard(container.name)
-        _write_set(entries, pending)
-        success(f"Stopped: {container.name}")
     return ok
 
 
@@ -138,7 +157,8 @@ def run_resume(
     cfg: Config,
     incus: Incus,
     *,
-    start: Callable[[Config, Incus, str], None],
+    post_start: Callable[[Config, Incus, str], None],
+    clear_boot: Callable[[Config, str], None],
 ) -> bool:
     """Restore the saved set and repair autostart missing after Incus boots."""
     import shlex
@@ -147,10 +167,20 @@ def run_resume(
     from jailbee.lifecycle import list_containers
     from jailbee.tmux import SESSION_NAME
 
-    entries, pending = _read_set()
+    state = _read_set()
+    entries, pending = state.containers, state.pending
     configs = _configs(cfg)
     containers = list_containers(cfg, incus, all_repos=True)
     by_name = {c.name: c for c in containers}
+    # A process can die after Incus stopped an instance but before committing
+    # the successful set. Only stopped (or vanished) journal entries need resume.
+    for name, root in list(state.stopping.items()):
+        container = by_name.get(name)
+        if container is None or container.state != "Running":
+            entries.setdefault(name, root)
+        del state.stopping[name]
+    if entries or pending or _state_path().exists():
+        _write_set(state)
     candidates = dict.fromkeys(entries)
     for running in containers:
         if running.state == "Running":
@@ -189,7 +219,7 @@ def run_resume(
                 if present == "present":
                     if name in entries:
                         del entries[name]
-                        _write_set(entries, pending)
+                        _write_set(state)
                     continue
                 if present != "missing":
                     raise ValueError("cannot determine autostart session state")
@@ -198,16 +228,22 @@ def run_resume(
             # Keep that retry distinct from a healthy, already-running session.
             entries[name] = str(target.repo_root)
             pending.add(name)
-            _write_set(entries, pending)
-            start(target, incus, name)
+            _write_set(state)
+            from jailbee.create_flow import Interaction, preflight_cache_pools
+            from jailbee.lifecycle import boot_container
+
+            preflight_cache_pools(target, confirm=Interaction.terminal().confirm)
+            boot_container(target, incus, name, restart=False, ensure_running=True)
+            post_start(target, incus, name)
+            clear_boot(target, name)
+            entries.pop(name, None)
+            pending.discard(name)
+            _write_set(state)
+            success(f"Resumed: {name}")
         except Exception as exc:
             error_plain(f"{name}: {exc}")
             ok = False
             continue
-        entries.pop(name, None)
-        pending.discard(name)
-        _write_set(entries, pending)
-        success(f"Resumed: {name}")
     if not attempted and ok:
         info_plain("Nothing to resume.")
     return ok

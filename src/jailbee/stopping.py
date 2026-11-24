@@ -24,7 +24,14 @@ So every jailbee stop goes through here:
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import AbstractContextManager
+from typing import TYPE_CHECKING
+
 from jailbee.incus import Incus, IncusError
+
+if TYPE_CHECKING:
+    from jailbee.config import Config
 from jailbee.tui import status_with_elapsed, warn, warn_plain
 
 # Seconds of clean shutdown before jailbee stops waiting. Two minutes is well
@@ -114,6 +121,24 @@ def diagnose_stuck_shutdown(incus: Incus, name: str) -> str:
         f"{title}:\n" + "\n".join(f"  {line}" for line in body.splitlines())
         for title, body in sections
     )
+
+
+def clean_stop(
+    cfg: Config,
+    incus: Incus,
+    name: str,
+    *,
+    job: Callable[[Config, str], AbstractContextManager[None]],
+) -> None:
+    """Capture sessions and cleanly stop, retaining the shared job bookkeeping."""
+    from jailbee.agent_resume import capture
+    from jailbee.autostart_status import refuse_while_running
+    from jailbee.lifecycle import short_name
+
+    refuse_while_running(cfg, name)
+    with job(cfg, name):
+        capture(cfg, incus, name)
+        stop_container(incus, name, label=short_name(cfg, name))
 
 
 def stop_container(
