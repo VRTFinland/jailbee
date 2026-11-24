@@ -286,15 +286,21 @@ def test_resume_reports_unloadable_repository_once_and_keeps_existing_entries(ho
         {"name": "two-a", "status": "Running", "profiles": ["two-base"]},
         {"name": "two-b", "status": "Running", "profiles": ["two-base"]},
     ]
+    from datetime import UTC, datetime
+
     from sqlmodel import Session
 
     from jailbee.db import get_engine
     from jailbee.db.models import RegisteredRepo
 
-    from datetime import UTC, datetime
-
     with Session(get_engine()) as session:
-        session.add(RegisteredRepo(container_prefix="two", repo_root=str(other.repo_root), registered_at=datetime.now(UTC)))
+        session.add(
+            RegisteredRepo(
+                container_prefix="two",
+                repo_root=str(other.repo_root),
+                registered_at=datetime.now(UTC),
+            )
+        )
         session.commit()
     entries = dict.fromkeys(["two-a", "two-b", "two-gone"], str(other.repo_root)) if saved else {}
     path = state_dir() / "resume-set.json"

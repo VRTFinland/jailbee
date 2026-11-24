@@ -246,7 +246,9 @@ def _resume(
     from jailbee.db.models import RegisteredRepo
 
     with Session(get_engine()) as session:
-        roots = {r.container_prefix: Path(r.repo_root) for r in session.exec(select(RegisteredRepo))}
+        roots = {
+            r.container_prefix: Path(r.repo_root) for r in session.exec(select(RegisteredRepo))
+        }
     containers = list_containers(cfg, incus, all_repos=True)
     by_name = {c.name: c for c in containers}
     with _edit_set() as state:
@@ -276,6 +278,7 @@ def _resume(
             repo_root = Path(entries[name]) if name in entries else roots.get(container.repo or "")
             if target is None and repo_root is not None:
                 from jailbee.config import ConfigError
+
                 if repo_root not in failures:
                     try:
                         target = load_repo_config(repo_root)
