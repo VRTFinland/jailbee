@@ -263,7 +263,8 @@ before editing `## Unreleased`.
   `jailbee remote web open` logs the local browser in through a one-time link,
   including when the login page is already open. Open dashboard and login tabs
   switch automatically to the key-registration view during FIDO2 setup, including
-  bookmarked routes and saved sessions. Login errors distinguish an unavailable
+  bookmarked routes and saved sessions, and the setup view returns to the login
+  page by itself once the dashboard is running again. Login errors distinguish an unavailable
   endpoint from refused credentials and show the server's remaining rate-limit wait
   (minutes for long waits). A protocol mismatch reloads the tab at most once per
   minute until it connects again, then offers manual reload (above the session

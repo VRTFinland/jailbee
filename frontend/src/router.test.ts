@@ -31,16 +31,20 @@ describe("server mode routing", () => {
         expect(fetchMock).toHaveBeenCalledTimes(1)
     })
 
-    it("keeps every route on setup once setup mode was seen", async () => {
+    it("leaves setup on the next navigation once the server is back in dashboard mode", async () => {
         setToken("session")
-        const fetchMock = vi.fn(async () => Response.json({mode: "setup"}))
+        let mode = "setup"
+        const fetchMock = vi.fn(async () => Response.json({mode}))
         vi.stubGlobal("fetch", fetchMock)
         const router = createAppRouter(createMemoryHistory())
         await router.push("/")
-
-        await router.push("/settings")
-
         expect(router.currentRoute.value.name).toBe("setup")
-        expect(fetchMock).toHaveBeenCalledTimes(1)
+
+        mode = "dashboard"
+        await router.push("/login")
+
+        expect(router.currentRoute.value.name).toBe("login")
+        await router.push("/settings")
+        expect(router.currentRoute.value.name).toBe("settings")
     })
 })

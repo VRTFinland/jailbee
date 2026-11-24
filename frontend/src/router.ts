@@ -33,13 +33,16 @@ export const routes: RouteRecordRaw[] = [
 /** Hash routing, so bookmarks work behind any reverse-proxy path. */
 export function createAppRouter(history: RouterHistory = createWebHashHistory()): Router {
     const router = createRouter({history, routes})
-    // The server's mode is asked once, on the first navigation, so later clicks
-    // cost no request. A server replaced while the tab is open is noticed by
-    // App.vue instead (the socket's setup close code, or the login page's poll).
+    // A dashboard answer is kept, so later clicks cost no request; a server
+    // replaced while the tab is open is noticed by App.vue instead (the socket's
+    // setup close code, or the login and setup views' poll). Setup mode is never
+    // kept: setup ends with Ctrl-C, so each navigation asks again.
     let mode: Promise<"setup" | "dashboard" | null> | null = null
     router.beforeEach(async (to) => {
         mode ??= fetchServerMode()
-        if (await mode === "setup") {
+        const current = await mode
+        if (current !== "dashboard") mode = null
+        if (current === "setup") {
             return to.name === "setup" ? true : {name: "setup", replace: true}
         }
         if (to.meta.public || getToken()) return true

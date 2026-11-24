@@ -339,7 +339,8 @@ session or a bookmarked login route: a signed-in page when its live connection
 reconnects (the setup server closes it with code 4003), a login page within a
 few seconds while visible or when brought back to the foreground. Enter the printed
 **setup PIN** on that page and register the key, then press Ctrl-C and start the
-dashboard again. A server that is not accepting logins is reported as unavailable,
+dashboard again; the open setup view notices that (it polls within a few
+seconds while visible) and moves to the login page without a reload. A server that is not accepting logins is reported as unavailable,
 not as a wrong PIN. The setup PIN keeps only the five-a-minute limit, without
 the backoff: setup mode runs only while you register a key, so do not leave it
 running.
