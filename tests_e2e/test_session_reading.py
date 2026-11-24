@@ -260,8 +260,10 @@ def test_long_answer_jump_does_not_follow_away_from_its_start(
 ) -> None:
     server, transcript = open_transcript(page, make_server, tmp_path)
     if profile == "eink":
-        page.evaluate("localStorage.setItem('jailbee.displayProfile', 'eink'); "
-                      "localStorage.setItem('jailbee.einkFollow', 'true')")
+        page.evaluate(
+            "localStorage.setItem('jailbee.displayProfile', 'eink'); "
+            "localStorage.setItem('jailbee.einkFollow', 'true')"
+        )
         page.reload()
         expect(page.get_by_role("heading", name=TITLE, exact=True)).to_be_visible()
     page.get_by_role("button", name="Latest answer").click()
