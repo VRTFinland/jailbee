@@ -195,7 +195,9 @@ def _action(proposal: dob.ProposalItem, index: int) -> dob.ActionItem | None:
     return next((a for a in proposal.actions if a.index == index), None)
 
 
-def _fingerprint(proposal: dob.ProposalItem, key: dob.RowKey) -> tuple[object, ...] | None:
+def _fingerprint(
+    proposal: dob.ProposalItem, key: dob.RowKey, *, parent_comments: bool = True
+) -> tuple[object, ...] | None:
     """What identifies a marked child across a re-list: kind and text, not index alone."""
     if key[2] is None:
         return None
@@ -207,7 +209,8 @@ def _fingerprint(proposal: dob.ProposalItem, key: dob.RowKey) -> tuple[object, .
     comment = next((c for c in action.comments if c.index == key[3]), None)
     if comment is None:
         return None
-    return ("comment", action.kind, comment.label, comment.text)
+    parent = _action_print(action) if parent_comments else (action.kind, action.title, action.body)
+    return ("comment", parent, comment.label, comment.text)
 
 
 def _action_print(action: dob.ActionItem) -> tuple[object, ...]:
@@ -911,6 +914,13 @@ class OutboxController:
                 self._delete_status.extend(finished.value)
                 self._next_delete()
                 return
+            except Exception as exc:
+                self._delete_failed += max(1, self._delete_total - self._delete_deleted - self._delete_failed)
+                self._delete_status.append(f"delete failed: {_safe(exc)}")
+                self._deleting.clear()
+                self._delete_queue.clear()
+                self._next_delete()
+                return
             self.state = replace(self.state, busy=self._delete_busy())
             self._quiet_later(argv, advance)
 
@@ -978,6 +988,30 @@ class OutboxController:
                 else:
                     fresh = _find(fetched, name, pid)
                     previous = _find(self.state.containers, name, pid)
+                    candidates = (
+                        _keys_of((dob.ContainerListing(name, None, (), (fresh,)),))
+                        if fresh is not None
+                        else set()
+                    )
+
+                    def matching(key: dob.RowKey) -> list[dob.RowKey]:
+                        if fresh is None or previous is None:
+                            return []
+                        return [
+                            candidate for candidate in candidates
+                            if candidate[2] is not None
+                            and _fingerprint(fresh, candidate) == _fingerprint(previous, key)
+                        ]
+
+                    cursor = self.state.cursor
+                    if cursor is not None and cursor[:2] == (name, pid) and cursor[2] is not None:
+                        matches = matching(cursor)
+                        if len(matches) == 1:
+                            cursor = matches[0]
+                        else:
+                            old_cursor = cursor
+                            peers = [k for k in candidates if k[2] is not None and (k[3] is None) == (old_cursor[3] is None)]
+                            cursor = min(peers, key=lambda k: (abs((k[2] or 0) - (old_cursor[2] or 0)), abs((k[3] or 0) - (old_cursor[3] or 0)))) if peers else (name, pid, None, None)
                     marks = set(self.state.marks)
                     for marked in self.state.marks:
                         if marked[:2] != (name, pid) or marked[2] is None:
@@ -985,14 +1019,7 @@ class OutboxController:
                         marks.discard(marked)
                         if fresh is None or previous is None:
                             continue
-                        matches = [
-                            candidate
-                            for candidate in _keys_of(
-                                (dob.ContainerListing(name, None, (), (fresh,)),)
-                            )
-                            if candidate[2] is not None
-                            and _fingerprint(fresh, candidate) == _fingerprint(previous, marked)
-                        ]
+                        matches = matching(marked)
                         if len(matches) == 1:
                             marks.add(matches[0])
                     self.state = replace(self.state, marks=frozenset(marks))
@@ -1010,7 +1037,7 @@ class OutboxController:
                         for c in self.state.containers
                     )
                     self.state = self._listed(
-                        containers, cursor=None, status=self.state.status, refresh_metadata=False
+                        containers, cursor=cursor, status=self.state.status, refresh_metadata=False
                     )
             self._deleting.discard((name, pid))
             # Safety refusals skip this proposal's remaining children too: progress
@@ -1034,7 +1061,7 @@ class OutboxController:
             and not (k[3] is not None and (name, listed.id, k[2], None) in chosen)
         ]
         children.sort(key=lambda k: (k[2] or 0, -1 if k[3] is None else k[3]), reverse=True)
-        expected = {k: _fingerprint(listed, k) for k in children}
+        expected = {k: _fingerprint(listed, k, parent_comments=False) for k in children}
         steps: list[dob.RowKey | None] = [None] if whole else list(children)
         done = 0
         for step, key in enumerate(steps):
@@ -1050,7 +1077,8 @@ class OutboxController:
                     return done, _CHANGED
                 fresh = current
                 if any(
-                    _fingerprint(fresh, k) != expected[k] for k in steps[step:] if k is not None
+                    _fingerprint(fresh, k, parent_comments=False) != expected[k]
+                    for k in steps[step:] if k is not None
                 ):
                     return done, _CHANGED
             if key is None:
