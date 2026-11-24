@@ -221,7 +221,7 @@ def test_status_is_only_the_outcome_while_queue_keeps_full_log(tmp_path, status)
         "opened PR #42 Title: https://github.com/o/r/pull/42" if not status else "permission denied"
     )
     output = (
-        f"Plan: https://github.com/o/r/pull/1\nDescription preview\n{conclusion}\n"
+        f"Plan: https://github.com/o/r/pull/1\nDescription preview\nhttps://example.com/design\n{conclusion}\n"
         "Nothing published. Additional comments can be posted later.\n"
         if not status
         else f"Error: {conclusion}\nStopped here; still pending: b.json\n"

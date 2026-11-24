@@ -825,7 +825,7 @@ def test_closing_the_box_during_pr_preflight_still_publishes(mocker, tmp_path):
                 from jailbee.dashboard.runner import ActionOutcome, RunResult
 
                 url = "https://github.com/o/r/pull/42"
-                published.call_args.args[1](ActionOutcome([RunResult(status=0)], url))
+                published.call_args.args[1](ActionOutcome([RunResult(status=0)], f"PR #42 created: {url}"))
                 await _settle_outbox(app, pilot, controller)
                 assert not isinstance(app.session.overlay, tsession.OutboxState)
                 assert url in app.session.notice

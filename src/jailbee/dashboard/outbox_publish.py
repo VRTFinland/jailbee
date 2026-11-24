@@ -19,13 +19,13 @@ def _summary(status: int, output: str) -> str:
             return errors[-1].removeprefix("Error:").removeprefix("✗").strip()
         return JobResult(status, output).failure_line()
     # Success receipts precede optional follow-up plans and advice. Never turn
-    # URLs in a preview into outcomes: require a receipt marker or a bare URL.
+    # URLs in a preview into outcomes: require a receipt marker.
     receipts = [
         line
         for line in lines
         if "https://" in line
         and (
-            line.startswith(("✓", "opened PR #", "updated PR #", "PR #", "Draft PR #", "https://"))
+            line.startswith(("✓", "opened PR #", "updated PR #", "PR #", "Draft PR #"))
             or ": applied" in line
         )
     ]
