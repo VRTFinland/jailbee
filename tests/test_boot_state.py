@@ -13,10 +13,17 @@ def test_record_writes_decision_under_run(mocker, decision):
     record(incus, "repo-work", decision)
 
     assert MARKER.startswith("/run/")
-    incus.exec.assert_called_once_with(
-        "repo-work",
-        ["bash", "-c", f"printf '%s' {decision} > {MARKER} && chmod 644 {MARKER}"],
-    )
+    incus.exec.assert_called_once()
+    script = incus.exec.call_args.args[1][2]
+    assert f"printf '%s' {decision}" in script
+    assert '> "$temporary"' in script
+    assert f'mv -f "$temporary" {MARKER}' in script
+    assert script.index('chmod 644 "$temporary"') < script.index('mv -f')
+    assert 'rm -f "$temporary"' in script
+    if decision == "handled":
+        assert f'$(cat {MARKER} 2>/dev/null)' in script
+        assert '!= started' in script
+        assert script.index('!= started') < script.index("printf")
 
 
 @pytest.mark.parametrize("failure", [IncusError("container stopped"), OSError("exec failed")])
