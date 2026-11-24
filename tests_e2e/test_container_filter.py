@@ -10,7 +10,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from jailbee.accounts.models import AgentActivity
-from jailbee.agent_status import AgentSummary
+from jailbee.agent_status import AgentSummary, SessionMark
 from jailbee.orchestration.view import ChildView
 from tests.web_fakes import START, FakeClock, container, repo_group, snapshot_of
 from tests_e2e.flows import log_in_with_pin
@@ -84,12 +84,16 @@ def test_active_explains_recent_idle_in_a_crowded_session_cell(
     children[1].agent_status = (
         AgentSummary(
             "claude",
-            "idle",
-            START - timedelta(hours=2),
-            None,
+            "waiting",
+            START,
+            "permission",
             20,
             activity=AgentActivity(
                 None, None, state="idle", last_event_at=START - timedelta(minutes=5)
+            ),
+            sessions=(
+                SessionMark("waiting", START),
+                SessionMark("idle", START - timedelta(hours=2)),
             ),
         ),
     )
@@ -102,10 +106,14 @@ def test_active_explains_recent_idle_in_a_crowded_session_cell(
     page.get_by_role("button", name="Active", exact=True).click()
     expect(page.locator("li.row")).to_have_count(2)
     row = page.locator('[data-container="work-b"]')
-    expect(row.locator(".agent")).to_have_text("idle 5m")
-    expect(row.locator(".agent")).to_have_css("font-weight", "700")
+    expect(row.locator(".agent")).to_have_count(2)
+    expect(row.locator(".agent").nth(0)).to_have_text("waiting for you")
+    expect(row.locator(".agent").nth(1)).to_have_text("idle 5m")
+    expect(row.locator(".agent").nth(1)).to_have_css("font-weight", "700")
     expect(row.locator(".indent")).to_have_text("└ ")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     page.get_by_role("link", name="work", exact=True).click()
-    expect(row.locator(".agent")).to_have_text("idle 5m")
+    expect(row.locator(".agent")).to_have_count(2)
+    expect(row.locator(".agent").nth(1)).to_have_text("idle 5m")
     expect(row.locator(".indent")).to_have_text("└ ")
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

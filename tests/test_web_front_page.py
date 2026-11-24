@@ -113,6 +113,50 @@ def test_snapshot_includes_shared_filter_membership_and_context(
     assert view["filters"]["active"]["indents"] == {parent.name: "", child.name: "└ "}
 
 
+def test_idle_age_and_active_filter_advance_without_a_new_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jailbee.web.routes import ws_routes
+
+    monkeypatch.setattr(ws_routes, "TIME_REFRESH_SECONDS", 0.01, raising=False)
+    clock = FakeClock()
+    idle = AgentSummary(
+        "claude",
+        "idle",
+        START,
+        None,
+        1,
+        activity=AgentActivity(None, None, state="idle", last_event_at=START),
+    )
+    factory = FakeSourceFactory(
+        initial=snapshot_of(repo_group("alpha", container("alpha-one", agent_status=(idle,))))
+    )
+    pin = PinHolder(generate=pin_sequence())
+    deps = WebDeps(
+        snapshot_source=factory,
+        engine=get_engine(),
+        clock=clock,
+        monotonic=clock.monotonic,
+        pin=pin,
+    )
+    with TestClient(create_app(deps)) as client:
+        token = client.post(
+            "/api/auth", json={"method": "pin", "pin": pin.current, "device_name": "test"}
+        ).json()["token"]
+        with client.websocket_connect("/api/ws") as ws:
+            ws.send_text(json.dumps({"type": "auth", "v": PROTOCOL_VERSION, "token": token}))
+            ws.receive_json()
+            first = ws.receive_json()["view"]
+            assert first["filters"]["active"]["visible"] == ["alpha-one"]
+            clock.advance(timedelta(minutes=1))
+            second = ws.receive_json()["view"]
+            assert second["repos"][0]["containers"][0]["agent_recent_idle"] == "1m"
+            clock.advance(timedelta(minutes=29))
+            third = ws.receive_json()["view"]
+            assert third["seq"] == first["seq"]
+            assert third["filters"]["active"]["visible"] == []
+
+
 def test_recent_idle_emphasis_and_age_survive_the_snapshot(
     started: tuple[TestClient, str], factory: FakeSourceFactory
 ) -> None:

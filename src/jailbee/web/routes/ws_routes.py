@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 router = APIRouter()
 
 AUTH_TIMEOUT_SECONDS = 10.0
+TIME_REFRESH_SECONDS = 10.0
 
 
 async def _authenticate(ws: WebSocket, ctx: WebContext) -> tuple[str, SessionInfo] | None:
@@ -109,10 +110,13 @@ async def _push(
     ctx: WebContext, subscriber: Subscriber, authorized: Authorized, outbox: _Outbox
 ) -> None:
     """Send what changed on each wake-up; stop once the session is revoked."""
-    last_seq: int | None = None
+    last_view: FrontPage | None = None
     last_status: str | None = None
     while True:
-        await subscriber.wait()
+        try:
+            await asyncio.wait_for(subscriber.wait(), timeout=TIME_REFRESH_SECONDS)
+        except TimeoutError:
+            pass
         if not await authorized():
             return
         status = ctx.hub.status()
@@ -120,11 +124,11 @@ async def _push(
             last_status = status
             await outbox.send(Status(message=status))
         snapshot = ctx.hub.latest()
-        if snapshot is not None and snapshot.seq != last_seq:
-            last_seq = snapshot.seq
-            await outbox.send(
-                FrontPage(view=front_page_view(snapshot, ctx.scope, ctx.deps.clock()))
-            )
+        if snapshot is not None:
+            page = FrontPage(view=front_page_view(snapshot, ctx.scope, ctx.deps.clock()))
+            if page != last_view:
+                last_view = page
+                await outbox.send(page)
 
 
 async def _receive(ws: WebSocket, follows: ConnectionFollows) -> None:
