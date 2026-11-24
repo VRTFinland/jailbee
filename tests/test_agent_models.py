@@ -114,6 +114,20 @@ def test_agent_named_models_gets_actionable_config_error(tmp_path, entry):
     assert "validation error" not in str(error.value)
 
 
+def test_invalid_guidance_beside_agent_field_alias_reports_the_actual_model(tmp_path):
+    with pytest.raises(ConfigError) as error:
+        load_config_from_layers(
+            {},
+            {"agents": {"models": {"env": {"label": "Environment"}, "haiku": {"typo": "x"}}}},
+            tmp_path / "repo" / ".jailbee" / "config.yaml",
+            origin="repo",
+            local_raw={},
+            skip_git=True,
+        )
+    assert "haiku.typo" in str(error.value)
+    assert "rename" not in str(error.value)
+
+
 def test_null_models_is_an_empty_map(tmp_path):
     cfg = load_config_from_layers(
         {},

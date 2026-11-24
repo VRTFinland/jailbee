@@ -67,8 +67,8 @@ class AgentModelGuidance(BaseModel):
         if isinstance(value, dict) and {"preset", *AgentConfig.model_fields}.intersection(value):
             try:
                 # Model aliases may legitimately share an agent field's name.
-                for entry in value.values():
-                    ModelGuidance.model_validate(entry)
+                for key in {"preset", *AgentConfig.model_fields}.intersection(value):
+                    ModelGuidance.model_validate(value[key])
             except ValidationError:
                 raise ConfigError(
                     "`agents.models` is reserved for model guidance; rename the agent "
