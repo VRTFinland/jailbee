@@ -789,7 +789,7 @@ async def _settle_outbox(app, pilot, controller):
     await pilot.pause()
 
 
-def test_closing_the_box_during_pr_preflight_runs_no_terminal_hand_off(mocker, tmp_path):
+def test_closing_the_box_during_pr_preflight_still_publishes(mocker, tmp_path):
     import asyncio
 
     from tests.dashboard_pilot import container_menu_keys
@@ -818,15 +818,24 @@ def test_closing_the_box_during_pr_preflight_runs_no_terminal_hand_off(mocker, t
                 await pilot.press("escape")
                 assert not isinstance(app.session.overlay, tsession.OutboxState)
                 release.set()
+                async with asyncio.timeout(5):
+                    while not published.called:
+                        app.session.jobs.poll()
+                        await pilot.pause(0.001)
+                from jailbee.dashboard.runner import ActionOutcome, RunResult
+
+                url = "https://github.com/o/r/pull/42"
+                published.call_args.args[1](ActionOutcome([RunResult(status=0)], url))
                 await _settle_outbox(app, pilot, controller)
                 assert not isinstance(app.session.overlay, tsession.OutboxState)
-                assert app.session.notice == "pr push not run: outbox box closed"
+                assert url in app.session.notice
+                assert next(iter(app.session.queue)).state == "done"
             finally:
                 release.set()
 
     asyncio.run(scenario())
     handed.assert_not_called()
-    published.assert_not_called()
+    published.assert_called_once()
 
 
 def test_pr_preflight_with_the_box_open_runs_the_action_runner_once(mocker, tmp_path):

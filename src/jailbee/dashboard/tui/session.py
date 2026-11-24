@@ -655,7 +655,7 @@ class DashboardSession:
         jobs = job_rows(self.groups)
         if jobs != self.queue.jobs:
             self.queue.set_jobs(jobs)
-            self._queue_changed()
+            self.queue_changed()
         # Every refresh: a column appears once it has content (a mount attached,
         # a container turned loose) and goes once it has none.
         self._recompute_shown()
@@ -938,7 +938,7 @@ class DashboardSession:
             )
             for i, run in enumerate(runs)
         ]
-        self._queue_changed()
+        self.queue_changed()
         # A critical action's result is the modal's (or, once sent to the
         # background, the queue's): no output screen of its own on the end.
         if any((e := self.queue.get(i)) is not None and e.critical for i in ids):
@@ -991,7 +991,7 @@ class DashboardSession:
             (found := self.queue.get(self._following)) is None or found.finished
         ):
             self._following = None
-        self._queue_changed()
+        self.queue_changed()
 
     def _drop_entry(self, entry_id: int, why: str) -> None:
         """Forget an entry that never ran; a modal it opened says why and goes on closing."""
@@ -1027,7 +1027,7 @@ class DashboardSession:
         self._modal_entry = None
         self._following = None
         self.queue.send_to_background(entry_id)
-        self._queue_changed()
+        self.queue_changed()
         self._open_next_modal()
 
     def _hand_off_refused(self) -> bool:
@@ -1044,7 +1044,7 @@ class DashboardSession:
 
     def _entry_output(self, entry_id: int, chunk: str) -> None:
         self.queue.append(entry_id, chunk)
-        self._queue_changed()
+        self.queue_changed()
         if entry_id == self._following:
             found = self.queue.get(entry_id)
             if found is not None:
@@ -1052,7 +1052,7 @@ class DashboardSession:
 
     def _entry_question(self, entry_id: int, asking: bool) -> None:
         self.queue.set_awaiting(entry_id, asking)
-        self._queue_changed()
+        self.queue_changed()
 
     def after_hand_off(self, attention_before: frozenset[tuple[str, str | int]]) -> None:
         """Back from a tmux hand-off: show the queue if something new waits on the user.
@@ -1065,7 +1065,7 @@ class DashboardSession:
         if self.overlay is None and not self.queue.attention_items() <= attention_before:
             self.open_queue()
 
-    def _queue_changed(self) -> None:
+    def queue_changed(self) -> None:
         """Redraw an open queue list or entry from the queue as it is now."""
         overlay = self.overlay
         if not isinstance(overlay, Picker):
@@ -1516,7 +1516,7 @@ class DashboardSession:
                 cwd=repo.cwd(),
                 target=what,
                 run_questions=self.terminal.run_actions,
-                changed=self._queue_changed,
+                changed=self.queue_changed,
                 done=finished,
             )
         except ValueError:
@@ -4651,7 +4651,7 @@ class DashboardSession:
                 self._drop_bulk_entry(entry_id)
                 batch.pending.discard(name)
                 raise
-        self._queue_changed()
+        self.queue_changed()
         self._settle(batch)
 
     def _bulk_child_done(
@@ -4662,7 +4662,7 @@ class DashboardSession:
             if len(output) > OUTPUT_KEEP_CHARS:
                 output = OUTPUT_DROPPED_MARKER + output[-OUTPUT_KEEP_CHARS:]
             self.queue.finish(entry_id, result.returncode, output)
-            self._queue_changed()
+            self.queue_changed()
         batch.finish(name, result)
         self.client.refresh()
         self._settle(batch)

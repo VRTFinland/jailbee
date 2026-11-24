@@ -138,7 +138,11 @@ Choose `Outbox` in a container's menu, mark proposals with `Space`, press `p`
 to publish or `d` to delete. Publication runs inside the dashboard: CLI questions
 open as modals, and output and the final URL or failure reason stay in the
 notification queue. Marked proposals share one preview question; a single
-proposal uses the CLI's own publication question. The Sent tab
+proposal uses the CLI's own publication question. Declining or cancelling that
+question never counts as a successful publication. Closing the box with Esc
+leaves confirmed work running, including later PR creations in a marked batch;
+its outcomes stay in the queue. Status notices show only the final outcome,
+while the queue detail keeps the full output. The Sent tab
 (`Tab`) lists what was published; `o` opens the selected URL in your browser.
 A click outside the box closes it and then acts on what was clicked, like a
 container menu; it is ignored while a question is open or a publish is running.
